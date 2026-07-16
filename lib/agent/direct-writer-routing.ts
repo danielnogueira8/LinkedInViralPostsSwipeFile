@@ -383,6 +383,50 @@ export function isDirectFindAndModelEligible(
   return !freeTextLayersOpenChoice(instruction);
 }
 
+export type DirectLeadMagnetEligibility = DirectWritingContext & {
+  userInstruction: string;
+  isRefine: boolean;
+  hasModelSource: boolean;
+};
+
+/**
+ * THIN PATH lead-magnet. A lead-magnet post is a from-scratch original post with
+ * the giveaway framing; the caller only consults this AFTER it has resolved the
+ * lead-magnet RESOURCE (activeLeadMagnetForDirect) — that resolution is the real
+ * "this is a lead-magnet drafting turn" signal, and the CTA is hard-enforced
+ * downstream, so the strong model can write it directly.
+ *
+ * Because the resource is the source, source-DISCOVERY phrasing ("find the most
+ * recent lead-magnet post and adapt it") is expected, not unsafe — the found
+ * post is never used as a structural source (engine task is `original`, not
+ * `source`). So unlike the original-post gate, this does NOT reject discovery.
+ * It rejects only what genuinely changes the DELIVERABLE OR THE ROUTE — a second
+ * external action, a partial/hook deliverable, more than one post — which the
+ * single-post direct engine cannot honor. Everything else the resolved-resource
+ * signal already vouched for.
+ */
+export function isDirectLeadMagnetEligible(
+  input: DirectLeadMagnetEligibility,
+): boolean {
+  const instruction = input.userInstruction.trim();
+  if (
+    !directWritingContextReady({ ...input, hasLeadMagnet: false }) ||
+    input.isRefine ||
+    input.hasModelSource ||
+    !instruction ||
+    requestsDurableOrAction(instruction) ||
+    requestsPartialTargetVariation(instruction) ||
+    requestsPartialTextDeliverable(instruction) ||
+    DIRECT_PARTIAL_REQUEST_RE.test(instruction)
+  ) {
+    return false;
+  }
+  const count = requestedDirectPostCount(instruction);
+  if (count !== null && count !== 1) return false;
+  if (count === null && MULTI_DELIVERABLE_RE.test(instruction)) return false;
+  return !freeTextLayersOpenChoice(instruction);
+}
+
 /** One already-resolved source, one complete post, and no external action. */
 export function isDirectFixedSourcePostEligible(
   input: DirectFixedSourcePostEligibility,

@@ -37,6 +37,7 @@ import {
   directWriterEnabledForWorkspace,
   isDirectFindAndModelEligible,
   isDirectFixedSourcePostEligible,
+  isDirectLeadMagnetEligible,
   isDirectMultiPostEligible,
   isDirectRefineEligible,
   isDirectOriginalPostEligible,
@@ -2925,20 +2926,27 @@ export async function executeChatTurn(
   // (leadMagnetBlock) and the CTA is HARD-enforced downstream by
   // transformDraftCandidate (rejects a draft that doesn't mention the resource),
   // so a lead-magnet post can be written by the strong model without ever
-  // shipping without its comment-CTA. Thin-path only: it reuses the
-  // original-post eligibility with hasLeadMagnet forced false (the engine owns
-  // it now); when the flag is off, lead-magnet stays on the heavy path exactly
-  // as before.
+  // shipping without its comment-CTA. Thin-path only; when the flag is off,
+  // lead-magnet stays on the heavy path exactly as before.
+  //
+  // Uses isDirectLeadMagnetEligible (not the original-post gate): a find-and-
+  // adapt lead-magnet — "find the most recent lead-magnet post in my swipe file
+  // and adapt it into a lead-magnet post about X" — is discovery-phrased, which
+  // the original gate rejects. But for a lead-magnet the RESOURCE is the source
+  // (already resolved here), and the found post is never used as a structural
+  // source (the engine task is `original`), so that discovery rejection is a
+  // false blocker that would otherwise strand this journey on GLM. The
+  // lead-magnet gate tolerates discovery while still rejecting everything
+  // genuinely unsafe.
   const activeLeadMagnetForDirect = Boolean(
     activeLeadMagnetCampaign && leadMagnetBlock.trim(),
   );
   const useDirectLeadMagnet =
     thinPathEnabled &&
     activeLeadMagnetForDirect &&
-    isDirectOriginalPostEligible({
+    isDirectLeadMagnetEligible({
       userInstruction: effectiveUserInstruction,
       ...directWritingContext,
-      hasLeadMagnet: false,
       hasModelSource: Boolean(modelSourceId),
       isRefine: skipDecision,
     });

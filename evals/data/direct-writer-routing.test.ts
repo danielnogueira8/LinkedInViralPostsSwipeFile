@@ -3,6 +3,7 @@ import {
   directWriterEnabledForWorkspace,
   isDirectFindAndModelEligible,
   isDirectFixedSourcePostEligible,
+  isDirectLeadMagnetEligible,
   isDirectMultiPostEligible,
   isDirectPartialTextEligible,
   isDirectRefineEligible,
@@ -685,6 +686,106 @@ describe("thin-path find-and-model eligibility", () => {
         voiceResolved: false,
         userInstruction: FIND_AND_MODEL,
         sourceResolved: true,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("thin-path lead-magnet eligibility", () => {
+  // hasLeadMagnet is TRUE at the call site (the resource resolved); the gate
+  // overrides it internally because the engine owns the block now — so the
+  // context passed here mirrors reality.
+  const CONTEXT = {
+    enabled: true,
+    hasAttachments: false,
+    hasLeadMagnet: true,
+    hasCreatorStyle: false,
+    voiceResolved: true,
+    isRefine: false,
+    hasModelSource: false,
+  };
+  // The exact prod prompt that FAILED (ran on GLM → factuality gate rejected
+  // "4 Specialized Agents" → hard fail). Discovery-phrased, which the original
+  // gate rejects — but for a lead-magnet the RESOURCE is the source, so it must
+  // route to the thin Gemini engine.
+  const FIND_AND_ADAPT_LEAD_MAGNET =
+    "Find the most recent high-performing lead-magnet post in my swipe file and adapt it into a lead-magnet post in my voice about a free cold-email teardown checklist.";
+  // A from-scratch lead-magnet post — the previously-supported shape.
+  const FROM_SCRATCH_LEAD_MAGNET =
+    "Write a lead-magnet post in my voice about a free cold-email teardown checklist. Tell readers to comment to get the link.";
+
+  test("accepts the find-and-adapt lead-magnet prompt (discovery-tolerant)", () => {
+    expect(
+      isDirectLeadMagnetEligible({
+        ...CONTEXT,
+        userInstruction: FIND_AND_ADAPT_LEAD_MAGNET,
+      }),
+    ).toBe(true);
+  });
+
+  test("still accepts the from-scratch lead-magnet prompt", () => {
+    expect(
+      isDirectLeadMagnetEligible({
+        ...CONTEXT,
+        userInstruction: FROM_SCRATCH_LEAD_MAGNET,
+      }),
+    ).toBe(true);
+  });
+
+  test("the original-post gate rejects the discovery phrasing (why this gate exists)", () => {
+    // Documents the regression: isDirectOriginalPostEligible — the gate the
+    // lead-magnet route used to call — rejects "find … in my swipe file",
+    // stranding the journey on GLM.
+    expect(
+      isDirectOriginalPostEligible({
+        ...CONTEXT,
+        hasLeadMagnet: false,
+        userInstruction: FIND_AND_ADAPT_LEAD_MAGNET,
+      }),
+    ).toBe(false);
+  });
+
+  test("still fails closed on a second external action or a partial deliverable", () => {
+    // The gate rejects what changes the DELIVERABLE or the ROUTE — a single-post
+    // direct engine can't schedule/send, and can't produce hooks/ideas. (Note:
+    // the resolved-resource signal the caller checks first is what vouches this
+    // is a lead-magnet drafting turn, so this gate only screens the deliverable
+    // shape; it deliberately does NOT re-litigate discovery phrasing.)
+    for (const userInstruction of [
+      // a second, external action
+      "Write a lead-magnet post about my checklist, then schedule it for Monday.",
+      // a partial deliverable, not a full post
+      "Give me 5 hook ideas for a lead-magnet post about my checklist.",
+      // versions of a single element, not a post
+      "Give me 4 versions of the hook for my lead-magnet post.",
+    ]) {
+      expect(
+        isDirectLeadMagnetEligible({ ...CONTEXT, userInstruction }),
+      ).toBe(false);
+    }
+  });
+
+  test("rejects a refine and requires the direct context to be ready", () => {
+    expect(
+      isDirectLeadMagnetEligible({
+        ...CONTEXT,
+        userInstruction: FROM_SCRATCH_LEAD_MAGNET,
+        isRefine: true,
+      }),
+    ).toBe(false);
+    expect(
+      isDirectLeadMagnetEligible({
+        ...CONTEXT,
+        userInstruction: FROM_SCRATCH_LEAD_MAGNET,
+        voiceResolved: false,
+      }),
+    ).toBe(false);
+    // A pre-attached model source is a different journey (structural modeling).
+    expect(
+      isDirectLeadMagnetEligible({
+        ...CONTEXT,
+        userInstruction: FROM_SCRATCH_LEAD_MAGNET,
+        hasModelSource: true,
       }),
     ).toBe(false);
   });
