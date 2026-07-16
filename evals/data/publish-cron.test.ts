@@ -1,4 +1,5 @@
 import { describe, test, expect, vi, beforeEach } from "vitest";
+import { toUnicodeStyle } from "@/lib/markdown/unicode-styles";
 
 // ---------------------------------------------------------------------------
 // The LinkedIn publisher (publishDueDrafts in lib/publishing.ts), run by the
@@ -276,6 +277,53 @@ describe("publishDueDrafts", () => {
     expect(publishSpy).toHaveBeenCalledWith(
       expect.objectContaining({ content: "latest body", firstComment: "latest comment" }),
     );
+  });
+
+  // A markdown-model draft (meta.markdown) publishes the LinkedIn-normalized
+  // caption, not the raw markdown — so LinkedIn never receives literal "**"/"##".
+  test("a markdown draft publishes the converted caption (Unicode bold, no raw markdown)", async () => {
+    seedConnection();
+    seedDueDraft({
+      body: "## Heading\n\n**bold** point\n\n- one\n- two",
+      meta: { markdown: true },
+    });
+
+    await publishDueDrafts(NOW);
+
+    const sent = publishSpy.mock.calls[0][0] as { content: string };
+    expect(sent.content).toContain(toUnicodeStyle("Heading", "bold"));
+    expect(sent.content).toContain(toUnicodeStyle("bold", "bold"));
+    expect(sent.content).toContain("• one");
+    expect(sent.content).not.toMatch(/[*#`]/);
+    expect(draft().schedule_status).toBe("published");
+  });
+
+  test("a non-markdown draft publishes its body verbatim (raw '*'/'#' survive)", async () => {
+    // Guards the gate: a plain draft that legitimately contains markdown-ish
+    // chars is NOT rewritten (only meta.markdown drafts are converted).
+    seedConnection();
+    seedDueDraft({ body: "3 * 4 = 12 and #hiring", meta: null });
+
+    await publishDueDrafts(NOW);
+
+    expect(publishSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ content: "3 * 4 = 12 and #hiring" }),
+    );
+  });
+
+  test("a markdown draft over the cap AFTER conversion fails without calling LinkedIn", async () => {
+    // Raw is 1,604 chars (under 3,000); bolded it is ~3,200 code units (over).
+    // The cap must be measured on the converted caption or an over-limit post
+    // would reach LinkedIn.
+    seedConnection();
+    seedDueDraft({ body: `**${"a".repeat(1600)}**`, meta: { markdown: true } });
+
+    const summary = await publishDueDrafts(NOW);
+
+    expect(summary.failed).toBe(1);
+    expect(draft().schedule_status).toBe("failed");
+    expect(String(draft().publish_error)).toMatch(/3,000 character limit/i);
+    expect(publishSpy).not.toHaveBeenCalled();
   });
 
   test("a due-query database error fails the run instead of reporting zero due posts", async () => {
