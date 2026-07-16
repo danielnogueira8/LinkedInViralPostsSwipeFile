@@ -46,4 +46,33 @@ describe("AvatarImg", () => {
     // The fallback is NOT rendered while the image is showing.
     expect(out).not.toContain('id="fb"');
   });
+
+  test("with a fallbackSrc, the primary src is still shown FIRST", () => {
+    // The fallbackSrc only takes over on the primary's runtime onError (the
+    // LinkedIn URL expiring); on first paint we show the primary.
+    const out = html({
+      src: "https://media.licdn.com/expiring.jpg",
+      fallbackSrc: "https://img.clerk.com/durable.jpg",
+      fallback,
+    });
+    expect(out).toContain('src="https://media.licdn.com/expiring.jpg"');
+    expect(out).not.toContain("img.clerk.com");
+  });
+
+  test("no primary src but a fallbackSrc → renders the fallbackSrc <img>, not initials", () => {
+    // e.g. voice.avatar_url is null but the Clerk photo exists.
+    const out = html({
+      src: null,
+      fallbackSrc: "https://img.clerk.com/durable.jpg",
+      fallback,
+    });
+    expect(out).toContain("<img");
+    expect(out).toContain('src="https://img.clerk.com/durable.jpg"');
+    expect(out).not.toContain('id="fb"');
+  });
+
+  test("neither src nor fallbackSrc → the node fallback (initials)", () => {
+    expect(html({ src: null, fallbackSrc: null, fallback })).toContain('id="fb"');
+    expect(html({ src: "", fallbackSrc: undefined, fallback })).toContain('id="fb"');
+  });
 });
