@@ -116,6 +116,71 @@ describe("searchNews", () => {
     expect(discovery.messages[0].content).toContain("today's schedule");
   });
 
+  test("falls back to a distinct model when primary news discovery times out", async () => {
+    const timeout = new Error("news discovery exceeded its budget");
+    timeout.name = "TimeoutError";
+    completeChat
+      .mockRejectedValueOnce(timeout)
+      .mockResolvedValueOnce({
+        text: "Grounded source: https://news.example/x",
+        usage: { prompt_tokens: 80, completion_tokens: 30 },
+        toolArgs: null,
+      })
+      .mockResolvedValueOnce({
+        text: "",
+        usage: { prompt_tokens: 30, completion_tokens: 10 },
+        toolArgs: { results: [story("2026-07-11", "Recovered result")] },
+      });
+
+    const { results } = await searchNews({
+      query: "AI product announcement",
+      workspaceId: "ws1",
+      now: NOW,
+    });
+
+    expect(results).toHaveLength(1);
+    const models = completeChat.mock.calls.map((call) => call[0].model);
+    expect(models[1]).not.toBe(models[0]);
+    expect(models[2]).toBe(models[1]);
+    expect(logOpenRouterUsage).toHaveBeenCalledTimes(2);
+  });
+
+  test("does not start a fallback after the shared Cowork deadline aborts", async () => {
+    const controller = new AbortController();
+    completeChat.mockImplementationOnce(async () => {
+      controller.abort();
+      const timeout = new Error("route deadline");
+      timeout.name = "TimeoutError";
+      throw timeout;
+    });
+
+    await expect(
+      searchNews({
+        query: "AI product announcement",
+        workspaceId: "ws1",
+        now: NOW,
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow("route deadline");
+    expect(completeChat).toHaveBeenCalledTimes(1);
+  });
+
+  test("does not start a fallback without enough route time to normalize and draft", async () => {
+    const timeout = new Error("primary discovery timed out");
+    timeout.name = "TimeoutError";
+    completeChat.mockRejectedValueOnce(timeout);
+
+    await expect(
+      searchNews({
+        query: "AI product announcement",
+        workspaceId: "ws1",
+        now: NOW,
+        deadlineAtMs: Date.now() + 59_000,
+      }),
+    ).rejects.toThrow("primary discovery timed out");
+    expect(completeChat).toHaveBeenCalledTimes(1);
+  });
+
   test("defaults discovery and normalization to DEFAULT_NEWS_MODEL", async () => {
     // DEFAULT_NEWS_MODEL follows OPENROUTER_CHAT_MODEL when that model supports
     // native news search; otherwise it stays on the cheap Haiku fallback. Either

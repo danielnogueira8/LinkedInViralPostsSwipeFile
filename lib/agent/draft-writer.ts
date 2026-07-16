@@ -1,10 +1,14 @@
 import {
-  CHAT_MODEL,
   completeChat,
   type ChatMessage,
   type Usage,
 } from "@/lib/openrouter";
-import { distinctFallbackModel } from "@/lib/agent/model-routing";
+export {
+  FALLBACK_DRAFT_WRITER_MODEL,
+  PRIMARY_DRAFT_WRITER_MODEL,
+  THIN_DRAFT_WRITER_FALLBACK_MODEL,
+  THIN_DRAFT_WRITER_MODEL,
+} from "@/lib/agent/model-config";
 
 // Mirrors completeChat's reasoningEffort union (openrouter.ts). Kept local so
 // this module doesn't depend on an un-exported inline type.
@@ -12,19 +16,10 @@ export type ReasoningEffort = "minimal" | "low" | "medium" | "high";
 
 // Drafting models default to the one app-wide chat model (OPENROUTER_CHAT_MODEL)
 // so drafting uses the SAME model as everything else unless pinned via the
-// per-writer env vars below. The fallback stays a DIFFERENT model on purpose: a
+// per-writer env vars in model-config.ts. The fallback stays a DIFFERENT model on purpose: a
 // fallback is the cross-model safety net for when the primary's provider fails
 // or its circuit opens, so it must not be the same model as the primary (a
 // same-model "fallback" is useless — the same outage takes both out).
-export const PRIMARY_DRAFT_WRITER_MODEL =
-  process.env.OPENROUTER_DIRECT_WRITER_MODEL || CHAT_MODEL;
-export const FALLBACK_DRAFT_WRITER_MODEL =
-  distinctFallbackModel(
-    PRIMARY_DRAFT_WRITER_MODEL,
-    process.env.OPENROUTER_DIRECT_WRITER_FALLBACK_MODEL ||
-      "anthropic/claude-sonnet-5",
-    ["google/gemini-3.5-flash"],
-  );
 
 // THIN PATH writer models. The thin drafting path (see draft-engine `lean`
 // mode) runs the writer with reasoning ON and no taste machinery, so its raw
@@ -34,15 +29,6 @@ export const FALLBACK_DRAFT_WRITER_MODEL =
 // of the app. Env-overridable so a retired preview slug is a one-line env change
 // (OpenRouter drops `-preview` slugs on graduation — see
 // lead-magnet-image-generation.ts). `anthropic/claude-sonnet-5` is the fallback.
-export const THIN_DRAFT_WRITER_MODEL =
-  process.env.OPENROUTER_THIN_WRITER_MODEL || CHAT_MODEL;
-export const THIN_DRAFT_WRITER_FALLBACK_MODEL =
-  distinctFallbackModel(
-    THIN_DRAFT_WRITER_MODEL,
-    process.env.OPENROUTER_THIN_WRITER_FALLBACK_MODEL ||
-      "anthropic/claude-sonnet-5",
-    ["google/gemini-3.5-flash"],
-  );
 
 export type DraftWriterStage = "primary" | "repair" | "fallback";
 

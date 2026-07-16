@@ -171,6 +171,7 @@ type ToolFn = (
 export interface ToolExecutionContext {
   telemetry?: CoworkTurnTelemetry;
   adapterHealth?: AdapterHealthRegistry;
+  deadlineAtMs?: number;
 }
 
 function err(message: string): ToolResult {
@@ -868,6 +869,7 @@ const searchNewsTool: ToolFn = async (args, workspaceId, signal, context) => {
       query,
       workspaceId,
       signal,
+      deadlineAtMs: context?.deadlineAtMs,
       telemetry: context?.telemetry,
       adapterHealth: context?.adapterHealth,
     });
