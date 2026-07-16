@@ -6,6 +6,7 @@ import {
   extractLeadMagnetSelection,
   extractModelSourceId,
   latestAttachedModelSourceId,
+  modelSourceIdForTurn,
   firstSourceImage,
   leadMagnetToolCall,
   latestLeadMagnetSelection,
@@ -33,6 +34,36 @@ type DbRow = {
 };
 
 describe("model-source history", () => {
+  test("a refinement owns its target provenance instead of a historical chat source", () => {
+    const historicalId = "11111111-1111-1111-1111-111111111111";
+    const rows = [
+      {
+        role: "user",
+        tool_calls: [modelSourceToolCall(historicalId)],
+      },
+    ];
+
+    expect(
+      modelSourceIdForTurn({
+        explicitId: "22222222-2222-2222-2222-222222222222",
+        isRefine: true,
+        rows,
+      }),
+    ).toBe("22222222-2222-2222-2222-222222222222");
+    expect(
+      modelSourceIdForTurn({
+        isRefine: false,
+        rows,
+      }),
+    ).toBe(historicalId);
+    expect(
+      modelSourceIdForTurn({
+        isRefine: true,
+        rows,
+      }),
+    ).toBeNull();
+  });
+
   test("template sources are restored into future model history", () => {
     const marker = modelSourceToolCall("11111111-1111-1111-1111-111111111111");
     const rows: DbRow[] = [

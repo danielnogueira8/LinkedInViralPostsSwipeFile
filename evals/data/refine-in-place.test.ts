@@ -712,6 +712,17 @@ describe("buildHookOnlyRefineMessage — enriched refine prompt", () => {
       `Keep it in my voice. Here's the current post:\n"""\nThe body.\n"""`;
     expect(built).toBe(expected);
   });
+
+  test.each([
+    "Punchier hook.",
+    "Punchier hook!",
+    "Punchier hook?",
+  ])("does not duplicate terminal punctuation in %s", (instruction) => {
+    const built = buildHookOnlyRefineMessage(instruction, "The body.");
+
+    expect(built).toContain(`${instruction} Rewrite ONLY the hook`);
+    expect(built).not.toContain(`${instruction}. Rewrite ONLY the hook`);
+  });
 });
 
 // ---------------------------------------------------------------------------

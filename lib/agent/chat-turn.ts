@@ -1016,6 +1016,23 @@ export function latestAttachedModelSourceId(
   return null;
 }
 
+/**
+ * Resolve source ownership for the current turn.
+ *
+ * A structured refinement gets provenance only from its target artifact. It
+ * must never inherit whichever source happened to appear earlier in the chat.
+ * Other continuation turns keep the established source-recovery behavior, and
+ * an explicit attachment always wins.
+ */
+export function modelSourceIdForTurn(input: {
+  explicitId?: string;
+  isRefine: boolean;
+  rows: readonly { role: string; tool_calls: ToolCall[] | null }[];
+}): string | null {
+  if (input.explicitId) return input.explicitId;
+  return input.isRefine ? null : latestAttachedModelSourceId(input.rows);
+}
+
 export function extractLeadMagnetSelection(
   toolCalls: ToolCall[] | null | undefined,
 ): { id: string; title: string; selection: "manual" | "auto" } | null {
@@ -2279,15 +2296,18 @@ export async function executeChatTurn(
     }
 
     // Resolve the model source that stamps the draft's "Source post" chip.
-    // Prefer this turn's explicit `modelSourceId`; on a continuation turn (an
-    // ask_user answer or a plain follow-up) the client no longer re-sends it,
-    // so fall back to the most recent source attached earlier in this chat.
+    // Prefer this turn's explicit `modelSourceId`. A structured refinement
+    // owns only the source already stamped on its target artifact, while other
+    // continuation turns keep the existing historical source recovery.
     // `sourcesById` already holds every historical model source (loaded above),
     // so this is a lookup, not another query. Without it the modeled draft's
     // provenance/chip is lost across the ask→answer boundary even though the
     // source text still reaches the model.
-    const effectiveModelSourceId =
-      modelSourceId ?? latestAttachedModelSourceId(dbRows);
+    const effectiveModelSourceId = modelSourceIdForTurn({
+      explicitId: modelSourceId,
+      isRefine: skipDecision,
+      rows: dbRows,
+    });
     currentModelSource = effectiveModelSourceId
       ? (sourcesById.get(effectiveModelSourceId) ?? null)
       : null;

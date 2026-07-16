@@ -170,6 +170,54 @@ function done(events: AgentEvent[]) {
 }
 
 describe("DraftEngine", () => {
+  test.each([
+    {
+      name: "repairs punctuation drift on the requested line",
+      candidate: `${COMPLETE_POST}\n\n#SWIPEIN_QA_20260716`,
+    },
+    {
+      name: "appends a requested line the writer omitted",
+      candidate: COMPLETE_POST,
+    },
+  ])("enforces an exact final-line contract: $name", async ({ candidate }) => {
+    const writer = new ScriptedWriter([
+      { text: candidate, finishReason: "stop", usage: usage(180, 90) },
+    ]);
+    const result = await collect(writer, {
+      lean: true,
+      userInstruction:
+        "Write one original post. End with this exact final line: #SWIPEIN_QA_20260716.",
+    });
+
+    const body = artifacts(result.events)[0]?.body ?? "";
+    expect(body.endsWith("\n\n#SWIPEIN_QA_20260716.")).toBe(true);
+    expect(body.match(/#SWIPEIN_QA_20260716\.?/g)).toHaveLength(1);
+  });
+
+  test("repairs an already-drifted ending when a refinement says to preserve the exact final line", async () => {
+    const target = {
+      ...REFINE_TARGET,
+      body: `${COMPLETE_POST}\n\n#SWIPEIN_QA_20260716`,
+    };
+    const writer = new ScriptedWriter([
+      { text: "Your public work is the career moat you own.", finishReason: "stop", usage: usage(120, 30) },
+    ]);
+    const result = await collect(writer, {
+      lean: true,
+      task: {
+        kind: "refine",
+        instruction:
+          "Make the hook punchier and keep the exact final line #SWIPEIN_QA_20260716.",
+        focus: "hook",
+        target,
+      },
+    });
+
+    expect(artifacts(result.events)[0]?.body.endsWith(
+      "\n\n#SWIPEIN_QA_20260716.",
+    )).toBe(true);
+  });
+
   test("writes a grounded research post with evidence in the tool-free writer prompt", async () => {
     const writer = new ScriptedWriter([
       { text: COMPLETE_POST, finishReason: "stop", usage: usage(180, 90) },
@@ -340,7 +388,7 @@ describe("DraftEngine", () => {
     ]);
     const prompt = JSON.stringify(writer.requests[0].messages);
     expect(prompt).toContain("CURRENT POST");
-    expect(prompt).toContain("Return exactly one complete replacement post");
+    expect(prompt).toContain("Return only the replacement hook");
     expect(prompt).not.toContain(
       "Vary the STRUCTURE of every from-scratch post",
     );
@@ -1451,6 +1499,33 @@ describe("DraftEngine", () => {
 });
 
 describe("DraftEngine — thin path (lean mode)", () => {
+  test("uses a bounded low-latency request for a deterministic hook refinement", async () => {
+    const writer = new ScriptedWriter([
+      { text: "Your reputation is the career moat you own.", finishReason: "stop", usage: usage(120, 30) },
+    ]);
+    const result = await collect(writer, {
+      lean: true,
+      task: {
+        kind: "refine",
+        instruction: "Make the hook punchier.",
+        focus: "hook",
+        target: REFINE_TARGET,
+      },
+    });
+
+    expect(artifacts(result.events)[0]?.body).toContain(
+      "Your reputation is the career moat you own.",
+    );
+    expect(writer.requests[0]).toMatchObject({
+      reasoning: "minimal",
+      maxTokens: 512,
+      timeoutMs: 30_000,
+    });
+    expect(JSON.stringify(writer.requests[0].messages)).toContain(
+      "Return only the replacement hook",
+    );
+  });
+
   test("uses the strong thin-path models with reasoning ON", async () => {
     const writer = new ScriptedWriter([
       { text: COMPLETE_POST, finishReason: "stop", usage: usage(200, 120) },
