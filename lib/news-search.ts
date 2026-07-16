@@ -1,4 +1,5 @@
 import {
+  CHAT_MODEL,
   completeChat,
   logOpenRouterUsage,
   SUPPORTED_NEWS_MODELS,
@@ -45,11 +46,16 @@ export const NEWS_MAX_AGE_DAYS = (() => {
 export const NEWS_MAX_RESULTS = 5;
 
 // News search is a two-call pipeline (grounded discovery + structured
-// normalization), so a premium reasoning model compounds quickly. Haiku is the
-// default because live A/B testing found the correct sources at roughly a
-// quarter of Gemini Flash Lite's native-search cost while returning normal URLs
-// the pipeline could preserve. The final post still uses the main chat model.
-export const DEFAULT_NEWS_MODEL = "anthropic/claude-haiku-4.5";
+// normalization) that relies on OpenRouter's NATIVE web search, which only a
+// FEW models support well (SUPPORTED_NEWS_MODELS — models that return normal
+// URLs the pipeline can preserve). So news can't follow OPENROUTER_CHAT_MODEL
+// unconditionally like the rest of the app: if the app-wide chat model is one of
+// the supported models, news uses it too (unified); otherwise it falls back to
+// this cheap, known-good default. Pin OPENROUTER_NEWS_MODEL to override.
+const NEWS_FALLBACK_MODEL = "anthropic/claude-haiku-4.5";
+export const DEFAULT_NEWS_MODEL = SUPPORTED_NEWS_MODELS.includes(CHAT_MODEL)
+  ? CHAT_MODEL
+  : NEWS_FALLBACK_MODEL;
 
 export function resolveNewsModel(
   env: { OPENROUTER_NEWS_MODEL?: string } = {

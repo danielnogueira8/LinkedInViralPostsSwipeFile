@@ -15,7 +15,7 @@ import {
   deterministicRefusal,
   deterministicScopeAsk,
 } from "@/lib/agent/decide";
-import type { ChatMessage } from "@/lib/openrouter";
+import { CHAT_MODEL, type ChatMessage } from "@/lib/openrouter";
 
 // ---------------------------------------------------------------------------
 // The decision pre-pass — a Sonnet-4.6 (via OpenRouter) judgment call that
@@ -114,8 +114,10 @@ describe("decisionLayerEnabled / model config", () => {
     expect(decisionLayerEnabled()).toBe(true);
   });
 
-  test("defaults to Sonnet 5 on OpenRouter", () => {
-    expect(DECISION_MODEL).toBe("anthropic/claude-sonnet-5");
+  test("defaults to the one app-wide chat model (OPENROUTER_CHAT_MODEL)", () => {
+    // Normalized: the decision pre-pass uses the SAME model as the rest of the
+    // app unless pinned via OPENROUTER_DECISION_MODEL.
+    expect(DECISION_MODEL).toBe(CHAT_MODEL);
   });
 });
 

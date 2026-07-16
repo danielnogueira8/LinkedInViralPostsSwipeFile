@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
+import { CHAT_MODEL } from "@/lib/openrouter";
 import type { AgentEvent } from "@/lib/agent/contracts";
 import type { ActionOrchestratorRoute } from "@/lib/agent/action-orchestrator-routing";
 import {
@@ -359,8 +360,10 @@ function mutationPlan(): { actions: MutationAction[] } {
 }
 
 describe("action orchestrator contract", () => {
-  test("pins the intended cross-provider planner pair", () => {
-    expect(PRIMARY_ACTION_ORCHESTRATOR_MODEL).toBe("anthropic/claude-sonnet-5");
+  test("primary follows the one app-wide chat model; fallback is independent", () => {
+    // Normalized: the orchestrator primary defaults to OPENROUTER_CHAT_MODEL so
+    // every text-LLM call uses the SAME model. The fallback stays its own model.
+    expect(PRIMARY_ACTION_ORCHESTRATOR_MODEL).toBe(CHAT_MODEL);
     expect(FALLBACK_ACTION_ORCHESTRATOR_MODEL).toBe("google/gemini-3.5-flash");
   });
 

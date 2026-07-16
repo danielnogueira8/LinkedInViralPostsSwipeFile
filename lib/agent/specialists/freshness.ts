@@ -19,6 +19,7 @@
 //   • Runs ONCE per turn/batch (not per draft) — it's a turn-level constraint.
 
 import {
+  CHAT_MODEL,
   completeChat,
   logOpenRouterUsage,
   UsagePersistenceError,
@@ -34,10 +35,10 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { createHash } from "node:crypto";
 import type { RecentDraft } from "@/lib/recent-drafts";
 
-// Sonnet 5 by default (same rationale as sameness/decide — judgment work).
-// Env-swappable for A/B or a cheaper tier.
+// Defaults to the one app-wide chat model (OPENROUTER_CHAT_MODEL) so every
+// text-LLM call uses the SAME model unless pinned via OPENROUTER_FRESHNESS_MODEL.
 export const FRESHNESS_MODEL =
-  process.env.OPENROUTER_FRESHNESS_MODEL || "anthropic/claude-sonnet-5";
+  process.env.OPENROUTER_FRESHNESS_MODEL || CHAT_MODEL;
 
 // ON by default. AGENT_FRESHNESS_TRACKER=0 disables — a one-flag kill switch;
 // with it off the generation prompt is unchanged from before this feature.

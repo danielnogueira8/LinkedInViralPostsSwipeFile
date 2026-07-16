@@ -13,6 +13,8 @@ import {
 import { INCOMPLETE_ORIGINAL_POST_BODY } from "@/evals/fixtures/cowork-incidents";
 import { buildHookOnlyRefineMessage } from "@/lib/hook-splice";
 import { POST_INTENTS } from "@/lib/post-intents";
+import { CHAT_MODEL } from "@/lib/openrouter";
+import { PRIMARY_DRAFT_WRITER_MODEL } from "@/lib/agent/draft-writer";
 import { PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL } from "@/lib/agent/read-only-orchestrator";
 import {
   FALLBACK_ACTION_ORCHESTRATOR_MODEL,
@@ -145,7 +147,7 @@ describe("production-shaped Cowork outcome harness", () => {
       // Provider-reported usage cost is authoritative when present; the
       // pricing table is only the fallback for responses that omit it.
       costUsd: 0.0042,
-      modelStages: [{ kind: "chat", model: "z-ai/glm-5.2" }],
+      modelStages: [{ kind: "chat", model: CHAT_MODEL }],
     });
     expect(report.safe.latencyMs).toBeGreaterThanOrEqual(0);
     expect(report.persisted.messages.map((message) => message.role)).toEqual([
@@ -203,7 +205,7 @@ describe("production-shaped Cowork outcome harness", () => {
       inputTokens: 210,
       outputTokens: 95,
       modelStages: [
-        { kind: "cowork_direct_writer", model: "qwen/qwen3.7-plus" },
+        { kind: "cowork_direct_writer", model: PRIMARY_DRAFT_WRITER_MODEL },
       ],
     });
     expect(report.observed.agentProviderRounds).toBe(0);
@@ -211,7 +213,7 @@ describe("production-shaped Cowork outcome harness", () => {
     expect(report.observed.directWriterRequests).toHaveLength(1);
     expect(report.observed.directWriterRequests[0]).toMatchObject({
       stage: "primary",
-      model: "qwen/qwen3.7-plus",
+      model: PRIMARY_DRAFT_WRITER_MODEL,
       reasoning: "none",
     });
     expect(Object.keys(report.observed.directWriterRequests[0])).not.toContain(
@@ -257,7 +259,7 @@ describe("production-shaped Cowork outcome harness", () => {
     expect(report.observed.agentProviderRounds).toBe(0);
     expect(report.observed.directWriterRequests).toHaveLength(1);
     expect(report.safe.modelStages).toEqual([
-      { kind: "cowork_direct_writer", model: "qwen/qwen3.7-plus" },
+      { kind: "cowork_direct_writer", model: PRIMARY_DRAFT_WRITER_MODEL },
     ]);
   });
 
@@ -1446,7 +1448,7 @@ describe("production-shaped Cowork outcome harness", () => {
         kind: "cowork_orchestrator",
         model: PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL,
       },
-      { kind: "cowork_direct_writer", model: "qwen/qwen3.7-plus" },
+      { kind: "cowork_direct_writer", model: PRIMARY_DRAFT_WRITER_MODEL },
     ]);
   });
 

@@ -46,6 +46,9 @@ export const LEAD_MAGNET_IMAGE_COST_RESERVE_USD = Number(
 export const LEAD_MAGNET_IMAGE_FALLBACK_MODEL =
   process.env.OPENROUTER_IMAGE_FALLBACK_MODEL?.trim() ||
   "google/gemini-3.1-flash-image";
+// VISION (reads the source-post image) — modality-separate, so it does NOT
+// follow OPENROUTER_CHAT_MODEL (a text-only chat model couldn't read the image).
+// Keeps its own vision-capable default; pin OPENROUTER_IMAGE_ANALYSIS_MODEL.
 export const LEAD_MAGNET_IMAGE_ANALYSIS_MODEL =
   process.env.OPENROUTER_IMAGE_ANALYSIS_MODEL || "google/gemini-3.5-flash";
 const LEAD_MAGNET_IMAGE_ANALYSIS_PROMPT_VERSION = 1;

@@ -7,7 +7,13 @@ import { describe, test, expect, vi, beforeEach } from "vitest";
 
 const completeChat = vi.fn();
 const logOpenRouterUsage = vi.fn(async () => undefined);
-vi.mock("@/lib/openrouter", () => ({ completeChat, logOpenRouterUsage }));
+// CHAT_MODEL is exported because PATTERN_MODEL now defaults to it (one model
+// everywhere). Provide a stable value so PATTERN_MODEL resolves in the mock.
+vi.mock("@/lib/openrouter", () => ({
+  CHAT_MODEL: "z-ai/glm-5.2",
+  completeChat,
+  logOpenRouterUsage,
+}));
 
 // A per-table fake supabase whose responses we set per test.
 type Resp = { rows?: unknown[]; single?: unknown };

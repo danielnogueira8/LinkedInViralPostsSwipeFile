@@ -1,4 +1,5 @@
 import {
+  CHAT_MODEL,
   completeChat,
   logOpenRouterUsage,
   UsagePersistenceError,
@@ -13,12 +14,11 @@ import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
 import { editDraftBody, type EditorModelRewrite } from "./editor";
 import { aiTellMetrics, looksCorruptedDraft } from "./nets";
 
-// GLM-5.2, not Sonnet 5. AI-tell repair is a NARROW, forced-tool-schema copy
-// edit ("fix only these listed AI-writing patterns in this draft") — a bounded
-// rewrite, not open-ended judgment — so it doesn't need the frontier tier the
-// decide/sameness/freshness judgment passes use. GLM-5.2 is ~2x cheaper in and
-// ~2.4x cheaper out. Overridable via OPENROUTER_AI_TELL_MODEL if quality dips.
-const DEFAULT_AI_TELL_MODEL = "z-ai/glm-5.2";
+// Defaults to the one app-wide chat model (OPENROUTER_CHAT_MODEL) so every
+// text-LLM call uses the SAME model unless pinned via OPENROUTER_AI_TELL_MODEL.
+// (AI-tell repair is a narrow, forced-tool copy edit — a bounded rewrite, not
+// open judgment — so a cheaper pin here is reasonable if you want one.)
+const DEFAULT_AI_TELL_MODEL = CHAT_MODEL;
 
 export function resolveAiTellModel(value = process.env.OPENROUTER_AI_TELL_MODEL): string {
   return value?.trim() || DEFAULT_AI_TELL_MODEL;

@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { AgentEvent } from "@/lib/agent/contracts";
 import type { DraftEngineInput } from "@/lib/agent/draft-engine";
-import { UsagePersistenceError, type Usage } from "@/lib/openrouter";
+import { CHAT_MODEL, UsagePersistenceError, type Usage } from "@/lib/openrouter";
 import {
   FALLBACK_READ_ONLY_ORCHESTRATOR_MODEL,
   OpenRouterReadOnlyOrchestratorAdapter,
   PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL,
+  PRIMARY_WEB_RESEARCH_MODEL,
   ReadOnlyPlanSchema,
   boundedReadOnlyPlannerHistory,
   inspectAttachmentEvidence,
@@ -155,10 +156,10 @@ async function collect(
 }
 
 describe("read-only orchestrator plan contract", () => {
-  test("pins the intended cross-provider planner pair", () => {
-    expect(PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL).toBe(
-      "anthropic/claude-sonnet-5",
-    );
+  test("primary follows the one app-wide chat model; fallback is independent", () => {
+    // Normalized: the orchestrator primary defaults to OPENROUTER_CHAT_MODEL so
+    // every text-LLM call uses the SAME model. The fallback stays its own model.
+    expect(PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL).toBe(CHAT_MODEL);
     expect(FALLBACK_READ_ONLY_ORCHESTRATOR_MODEL).toBe(
       "google/gemini-3.5-flash",
     );
@@ -361,7 +362,7 @@ describe("read-only orchestrator plan contract", () => {
     });
 
     expect(requestedModels).toEqual([
-      "anthropic/claude-haiku-4.5",
+      PRIMARY_WEB_RESEARCH_MODEL,
       FALLBACK_READ_ONLY_ORCHESTRATOR_MODEL,
     ]);
     expect(result.attempts).toHaveLength(2);

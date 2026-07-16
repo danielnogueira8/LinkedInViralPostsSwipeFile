@@ -19,6 +19,7 @@ const { createCoworkTurnTelemetry } =
   await import("@/lib/agent/cowork-telemetry");
 
 const {
+  DEFAULT_NEWS_MODEL,
   filterFreshNews,
   resolveNewsModel,
   searchNews,
@@ -115,23 +116,28 @@ describe("searchNews", () => {
     expect(discovery.messages[0].content).toContain("today's schedule");
   });
 
-  test("defaults discovery and normalization to Haiku", async () => {
+  test("defaults discovery and normalization to DEFAULT_NEWS_MODEL", async () => {
+    // DEFAULT_NEWS_MODEL follows OPENROUTER_CHAT_MODEL when that model supports
+    // native news search; otherwise it stays on the cheap Haiku fallback. Either
+    // way, both news calls use the resolved default.
     completeChat.mockResolvedValueOnce({ text: "No results", toolArgs: null })
       .mockResolvedValueOnce({ text: "", toolArgs: { results: [] } });
     await searchNews({ query: "any topic", workspaceId: "ws1", now: NOW });
-    expect(completeChat.mock.calls[0][0].model).toBe("anthropic/claude-haiku-4.5");
-    expect(completeChat.mock.calls[1][0].model).toBe("anthropic/claude-haiku-4.5");
+    expect(completeChat.mock.calls[0][0].model).toBe(DEFAULT_NEWS_MODEL);
+    expect(completeChat.mock.calls[1][0].model).toBe(DEFAULT_NEWS_MODEL);
   });
 
-  test("OPENROUTER_NEWS_MODEL overrides the default", () => {
+  test("OPENROUTER_NEWS_MODEL overrides the default (only for a supported model)", () => {
+    // A supported override wins.
     expect(resolveNewsModel({ OPENROUTER_NEWS_MODEL: "anthropic/claude-haiku-4.5" })).toBe(
       "anthropic/claude-haiku-4.5",
     );
-    expect(resolveNewsModel({ OPENROUTER_NEWS_MODEL: "  " })).toBe(
-      "anthropic/claude-haiku-4.5",
-    );
+    // Blank or unsupported override falls back to the resolved DEFAULT_NEWS_MODEL
+    // (which follows OPENROUTER_CHAT_MODEL when that model is news-capable, else
+    // the cheap Haiku fallback) — never an unsupported model.
+    expect(resolveNewsModel({ OPENROUTER_NEWS_MODEL: "  " })).toBe(DEFAULT_NEWS_MODEL);
     expect(resolveNewsModel({ OPENROUTER_NEWS_MODEL: "some/unpriced-model" })).toBe(
-      "anthropic/claude-haiku-4.5",
+      DEFAULT_NEWS_MODEL,
     );
   });
 
