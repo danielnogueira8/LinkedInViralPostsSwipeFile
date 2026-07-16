@@ -201,7 +201,7 @@
       "preferred_seam": "browser",
       "existing_coverage": [
         "evals/data/mcp-clerk-auth.test.ts",
-        "evals/data/personal-workspace.test.ts",
+        "evals/data/clerk-webhook-purge.test.ts",
         "e2e/smoke.spec.ts",
         "e2e/critical-journeys.spec.ts"
       ],
