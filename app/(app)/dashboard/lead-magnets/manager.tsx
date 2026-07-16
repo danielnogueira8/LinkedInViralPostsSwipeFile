@@ -639,8 +639,8 @@ function LeadMagnetForm({
             placeholder="Example: LinkedIn Content Audit Checklist"
           />
         </div>
-        <div className="grid gap-2 sm:grid-cols-[1fr_180px]">
-          <div className="grid gap-2">
+        <div className="grid gap-x-4 gap-y-1.5 sm:grid-cols-[2fr_1fr]">
+          <div className="grid content-start gap-1.5">
             <Label htmlFor="lead-cta-url">CTA link</Label>
             <Input
               id="lead-cta-url"
@@ -648,11 +648,8 @@ function LeadMagnetForm({
               onChange={(e) => setCtaUrl(e.target.value)}
               placeholder="https://calendly.com/you/strategy-call"
             />
-            <p className="text-xs leading-5 text-muted-foreground">
-              Used only on the public resource page, not in generated lead magnet post copy.
-            </p>
           </div>
-          <div className="grid gap-2">
+          <div className="grid content-start gap-1.5">
             <Label htmlFor="lead-cta-label">CTA label</Label>
             <Input
               id="lead-cta-label"
@@ -661,6 +658,9 @@ function LeadMagnetForm({
               placeholder="Book a call"
             />
           </div>
+          <p className="text-xs leading-5 text-muted-foreground sm:col-span-2">
+            Used only on the public resource page, not in generated lead magnet post copy.
+          </p>
         </div>
         <LeadMagnetMarkdownEditor value={markdown} onChange={setMarkdown} />
       </div>
@@ -1142,8 +1142,8 @@ function GenerateForm({
             className="min-h-36"
           />
         </div>
-        <div className="grid gap-2 sm:grid-cols-[1fr_180px]">
-          <div className="grid gap-2">
+        <div className="grid gap-x-4 gap-y-1.5 sm:grid-cols-[2fr_1fr]">
+          <div className="grid content-start gap-1.5">
             <Label htmlFor="lead-ai-cta-url">CTA link</Label>
             <Input
               id="lead-ai-cta-url"
@@ -1151,11 +1151,8 @@ function GenerateForm({
               onChange={(e) => setCtaUrl(e.target.value)}
               placeholder="https://calendly.com/you/strategy-call"
             />
-            <p className="text-xs leading-5 text-muted-foreground">
-              Used only on the public resource page, not in generated lead magnet post copy.
-            </p>
           </div>
-          <div className="grid gap-2">
+          <div className="grid content-start gap-1.5">
             <Label htmlFor="lead-ai-cta-label">CTA label</Label>
             <Input
               id="lead-ai-cta-label"
@@ -1164,6 +1161,9 @@ function GenerateForm({
               placeholder="Book a call"
             />
           </div>
+          <p className="text-xs leading-5 text-muted-foreground sm:col-span-2">
+            Used only on the public resource page, not in generated lead magnet post copy.
+          </p>
         </div>
         {saving && (
           <div className="rounded-2xl border border-primary/20 bg-primary/[0.04] p-4">
