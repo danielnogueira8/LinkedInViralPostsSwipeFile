@@ -48,6 +48,15 @@ describe("direct refine policy", () => {
     ).toBe(false);
   });
 
+  test("treats an exact final-line preservation constraint as non-actionable", () => {
+    const instruction =
+      "Make the hook punchier and keep the exact final line #SWIPEIN_QA_20260716.";
+
+    expect(directRefineFocusSignals(instruction)).toEqual(["hook"]);
+    expect(hasMixedDirectRefineFocuses(instruction)).toBe(false);
+    expect(isExclusiveHookRefine(instruction)).toBe(true);
+  });
+
   test("uses an explicit or light shortening target instead of always forcing 15%", () => {
     expect(requestedShortenReduction("Make it 10% shorter")).toBe(0.1);
     expect(requestedShortenReduction("Make it 10.5% shorter")).toBe(0.105);

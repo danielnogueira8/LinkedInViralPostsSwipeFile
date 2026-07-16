@@ -278,6 +278,7 @@ describe("direct refine eligibility", () => {
       "Make it exactly 800 characters.",
       "Rewrite it to 800 characters.",
       "Keep it at 800 characters.",
+      "Make the hook punchier and keep the exact final line #SWIPEIN_QA_20260716.",
     ]) {
       expect(isDirectRefineEligible({ ...REFINE, refineInstruction })).toBe(
         true,

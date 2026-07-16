@@ -25,6 +25,8 @@ const COMPOUND_SEPARATOR_RE =
   /\b(?:as\s+well\s+as|along\s+with|together\s+with|and|also|plus|then|while|whilst|whereas|but)\b|[;:+]|\n+|,(?=\s+\p{L})|\.(?=\s+\p{L})|\s+[&/—–-]\s+/iu;
 const BENIGN_PRESERVATION_CLAUSE_RE =
   /^(?:please\s+)?(?:(?:keep|leave|preserve|retain|maintain)\s+(?:(?:the|this|that|my|your|our|its|original|current|existing|same|core|main|all|other)\s+){0,3}(?:everything\s+else|rest|remainder|body|middle|ending|cta|post|argument|meaning|message|point|idea|voice|tone|style|facts?|details?|structure|format)(?:\s+of\s+(?:(?:the|this|that|current|original)\s+)?(?:post|body))?(?:\s+(?:unchanged|intact|the\s+same|as\s+is))?|(?:keep|maintain)\s+it\s+(?:in|with)\s+(?:(?:my|your|our|the|same)\s+)?(?:voice|tone|style)(?:\s+(?:unchanged|intact|the\s+same|as\s+is))?|(?:do\s+not|don(?:'|’)?t)\s+(?:(?:otherwise|materially|substantially)\s+)?(?:change|edit|rewrite|rework|alter|touch|remove|lose|drop|invent|add)\b.*|without\s+(?:(?:otherwise|materially|substantially)\s+)?(?:changing|editing|rewriting|reworking|altering|touching|removing|losing|dropping|inventing|adding)\b.*|(?:same|unchanged|intact|as\s+is)\b)[.!?]*$/i;
+const EXACT_LINE_PRESERVATION_CLAUSE_RE =
+  /^(?:please\s+)?(?:keep|leave|preserve|retain|maintain)\s+(?:the\s+)?exact\s+(?:final|last)\s+line(?:\s+exactly)?(?:\s+.+)?$/i;
 const GENERAL_MODIFIER_CONTINUATION_RE =
   /^(?:more|less)\s+(?:direct|story[ -]?driven|narrative|conversational|personal|punchy|engaging|clear|confident|contrarian|specific|practical|emotional)[.!?]*$/i;
 const COURTESY_CLAUSE_RE = /^(?:please|thanks?|thank\s+you)[.!?]*$/i;
@@ -42,16 +44,29 @@ export const MAX_DIRECT_SHORTEN_PERCENTAGE = 50;
 export function directRefineFocusSignals(
   instruction: string,
 ): DirectRefineFocus[] {
+  const clauses = COMPOUND_SEPARATOR_RE.test(instruction)
+    ? instruction
+        .split(new RegExp(COMPOUND_SEPARATOR_RE.source, "giu"))
+        .map((clause) => clause.trim())
+        .filter(Boolean)
+    : [instruction];
+  const actionableInstruction = clauses
+    .filter(
+      (clause) =>
+        !BENIGN_PRESERVATION_CLAUSE_RE.test(clause) &&
+        !EXACT_LINE_PRESERVATION_CLAUSE_RE.test(clause),
+    )
+    .join(" ");
   const signals: DirectRefineFocus[] = [];
   // Detect the requested element literally here. The older
   // isHookFocusedRefine helper deliberately suppresses hook detection when a
   // whole-post term is present; that is useful for its single splice policy,
   // but would hide compound requests such as "shorten the entire post and
   // tighten the hook" from this fail-closed router.
-  if (HOOK_REFINE_RE.test(instruction)) signals.push("hook");
-  if (CTA_REFINE_RE.test(instruction)) signals.push("cta");
-  if (SHORTEN_REFINE_RE.test(instruction)) signals.push("shorten");
-  if (GENERAL_REWRITE_RE.test(instruction)) signals.push("general");
+  if (HOOK_REFINE_RE.test(actionableInstruction)) signals.push("hook");
+  if (CTA_REFINE_RE.test(actionableInstruction)) signals.push("cta");
+  if (SHORTEN_REFINE_RE.test(actionableInstruction)) signals.push("shorten");
+  if (GENERAL_REWRITE_RE.test(actionableInstruction)) signals.push("general");
   return signals;
 }
 
@@ -75,6 +90,7 @@ export function hasUnrecognizedCompoundRefineClause(
     (clause) =>
       directRefineFocusSignals(clause).length === 0 &&
       !BENIGN_PRESERVATION_CLAUSE_RE.test(clause) &&
+      !EXACT_LINE_PRESERVATION_CLAUSE_RE.test(clause) &&
       !(
         instructionSignals.includes("general") &&
         GENERAL_MODIFIER_CONTINUATION_RE.test(clause)
