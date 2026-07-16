@@ -143,3 +143,98 @@ describe("agent loop — explicit deliverable contract", () => {
     expect(turn.artifacts.filter((a) => a.kind === "post")).toHaveLength(2);
   });
 });
+
+describe("agent loop — standalone hooks are never a card (render_post net)", () => {
+  // Repro of the live bug (Luna): "give me 6 hooks" → the model called render_post
+  // and shipped a full-post CARD instead of the hooks. The server net must bounce
+  // that render_post so the model re-emits the hooks as plain numbered text (no card).
+  test("a hooks request that calls render_post is rejected; NO card is created", async () => {
+    setStubScript({
+      rounds: [
+        {
+          toolCalls: [
+            {
+              name: "render_post",
+              args: {
+                body: "Most founders don't need better content.\n\nThey need to stop waiting for perfect content.",
+              },
+            },
+          ],
+        },
+        {
+          text: [
+            "1. Most founders don't need better content.",
+            "2. Stop waiting for the perfect post.",
+            "3. Your notes app is where good posts go to die.",
+            "4. Volume beats polish, every time.",
+            "5. The post you almost deleted is the one that lands.",
+            "6. You don't think your way to a voice — you post your way there.",
+          ].join("\n"),
+          finishReason: "stop",
+        },
+      ],
+    });
+    const turn = await runStubbedAgent([
+      {
+        role: "user",
+        content:
+          "Give me 6 scroll-stopping hooks for a LinkedIn post about why founders should post before their content is perfect. Number them 1 to 6.",
+      },
+    ]);
+
+    // The whole point: hooks never become a card.
+    expect(turn.artifacts.filter((a) => a.kind === "post")).toHaveLength(0);
+    expect(turn.artifacts).toHaveLength(0);
+    // The render_post call was rejected (so the model retried with text).
+    expect(
+      turn.toolResults.some((r) => r.name === "render_post" && !r.ok),
+    ).toBe(true);
+  });
+
+  test("one-shot + fail-open: a second render_post on a hooks turn is NOT re-rejected", async () => {
+    // Loop-safety: after ONE rejection the net stops firing, so a stubborn model
+    // that re-renders gets its card (the per-turn render cap still bounds it).
+    setStubScript({
+      rounds: [
+        {
+          toolCalls: [{ name: "render_post", args: { body: "Full post, not hooks.\n\nSecond paragraph." } }],
+        },
+        {
+          toolCalls: [{ name: "render_post", args: { body: "Full post again.\n\nSecond paragraph." } }],
+        },
+        { text: "Done.", finishReason: "stop" },
+      ],
+    });
+    const turn = await runStubbedAgent([
+      { role: "user", content: "give me 5 hooks about pricing" },
+    ]);
+
+    // First render rejected, second accepted → exactly one card, no infinite loop.
+    expect(
+      turn.toolResults.filter((r) => r.name === "render_post" && !r.ok),
+    ).toHaveLength(1);
+    expect(turn.artifacts.filter((a) => a.kind === "post")).toHaveLength(1);
+  });
+
+  test("the net does NOT fire on a real post request (no false positive)", async () => {
+    // A normal single-post request must still produce a card via render_post.
+    setStubScript({
+      rounds: [
+        {
+          toolCalls: [
+            { name: "render_post", args: { body: "A real post about pricing.\n\nWith a real second paragraph." } },
+          ],
+        },
+        { text: "Done.", finishReason: "stop" },
+      ],
+    });
+    const turn = await runStubbedAgent([
+      { role: "user", content: "Write a post about pricing psychology" },
+    ]);
+
+    expect(turn.artifacts.filter((a) => a.kind === "post")).toHaveLength(1);
+    expect(
+      turn.toolResults.some((r) => r.name === "render_post" && !r.ok),
+    ).toBe(false);
+  });
+});

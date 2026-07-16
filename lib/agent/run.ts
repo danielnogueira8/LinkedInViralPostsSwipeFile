@@ -1430,6 +1430,19 @@ export async function* runAgent(opts: {
   const ordinaryDraftTarget = ordinaryDraftTurn
     ? requestedOrdinaryDraftTarget(latestUserMsg, opts.isRefine)
     : null;
+  // A STANDALONE-HOOKS turn: the user asked us to PRODUCE hooks as the
+  // deliverable (e.g. "give me 6 hooks", "some opener options"), which the system
+  // prompt says must be plain numbered TEXT, never a card. This is distinct from
+  // EDITING an existing post's hook ("make the hook punchier"), which legitimately
+  // re-renders the whole post via render_post — that resolves to a SINGULAR hook
+  // target (count 1) and/or a refine, so the count>=2 gate excludes it with no
+  // false positives on post edits. A model that ignores the prompt and calls
+  // render_post on a hooks request gets bounced by the net below.
+  const hooksRequestTurn =
+    !opts.isRefine &&
+    !hasAttachedModelSource &&
+    ordinaryDraftTarget?.kind === "hook" &&
+    ordinaryDraftTarget.count >= 2;
 
   // Create the combined turn signal before the two prepasses so cancellation
   // reaches both while they run concurrently.
@@ -1732,6 +1745,11 @@ export async function* runAgent(opts: {
   // one rejection the next render is accepted whatever its length (fail-open).
   const shortenCtx = opts.isRefine ? shortenRefineContext(history) : null;
   let shortenNudgeUsed = false;
+  // Set once render_post is rejected for a standalone-hooks turn (see
+  // hooksRequestTurn). One-shot, mirroring shortenNudgeUsed: after one rejection
+  // a second render is accepted (fail-open) so a stubborn model can't loop, and
+  // the per-turn render cap still bounds the worst case.
+  let hooksRenderRejected = false;
   // The agent's task plan for this turn (write_plan / update_plan). Drives the
   // client's live checklist; finalized before the done event so no step is left
   // hanging "active". Stays empty (and emits nothing) for simple one-shot turns.
@@ -2529,6 +2547,26 @@ export async function* runAgent(opts: {
               ok: false,
               error:
                 "The verified news search returned no fresh stories, so do not render an evergreen or memory-based draft. Tell the user no fresh news was found and stop.",
+            };
+          } else if (
+            hooksRequestTurn &&
+            !hooksRenderRejected &&
+            tc.function.name === "render_post"
+          ) {
+            // Standalone-hooks net: the user asked for HOOKS (a numbered-text
+            // deliverable, never a card), but the model called render_post — which
+            // would wrongly ship a draft card (and, worse, often a full post
+            // instead of the hooks). Reject ONCE with a corrective error so the
+            // model re-emits the hooks as plain numbered text in its reply. The
+            // rejected render never became an artifact. Deliberately does NOT set
+            // renderCapHit — arming it would let promoteLeakedDraft salvage the
+            // hooks text back into a card, defeating the whole fix. One-shot +
+            // the render cap keep it loop-safe.
+            hooksRenderRejected = true;
+            result = {
+              ok: false,
+              error:
+                "The user asked for HOOKS, not a full post. Hooks are NEVER rendered as cards. Do not call render_post — write the hooks as plain text in your normal reply: a numbered list, one hook per line (the opener text only, no post body). Produce exactly the number requested.",
             };
           } else if (
             shortenCtx &&
