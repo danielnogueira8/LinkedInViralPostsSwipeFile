@@ -132,6 +132,12 @@ describe("searchNews", () => {
     expect(resolveNewsModel({ OPENROUTER_NEWS_MODEL: "anthropic/claude-haiku-4.5" })).toBe(
       "anthropic/claude-haiku-4.5",
     );
+    // Luna supports the OpenRouter web plugin and is the app-wide production
+    // model. Keep it in the news-capable registry so an explicit override does
+    // not silently fall back to Haiku.
+    expect(resolveNewsModel({ OPENROUTER_NEWS_MODEL: "openai/gpt-5.6-luna" })).toBe(
+      "openai/gpt-5.6-luna",
+    );
     // Blank or unsupported override falls back to the resolved DEFAULT_NEWS_MODEL
     // (which follows OPENROUTER_CHAT_MODEL when that model is news-capable, else
     // the cheap Haiku fallback) — never an unsupported model.
