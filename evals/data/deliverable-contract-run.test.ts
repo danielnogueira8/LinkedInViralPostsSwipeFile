@@ -241,9 +241,10 @@ describe("agent loop — standalone hooks are never a card (render_post net)", (
     ).toBe(true);
   });
 
-  test("one-shot + fail-open: a second render_post on a hooks turn is NOT re-rejected", async () => {
-    // Loop-safety: after ONE rejection the net stops firing, so a stubborn model
-    // that re-renders gets its card (the per-turn render cap still bounds it).
+  test("a stubborn second render_post is also rejected and never creates a card", async () => {
+    // The partial-text contract is fail-closed: repeated model mistakes must not
+    // turn a hooks request into a full-post card. The agent loop already has a
+    // hard round cap, so accepting the wrong artifact is not needed for safety.
     setStubScript({
       rounds: [
         {
@@ -259,11 +260,11 @@ describe("agent loop — standalone hooks are never a card (render_post net)", (
       { role: "user", content: "give me 5 hooks about pricing" },
     ]);
 
-    // First render rejected, second accepted → exactly one card, no infinite loop.
+    // Both wrong renders are rejected and no card leaks through.
     expect(
       turn.toolResults.filter((r) => r.name === "render_post" && !r.ok),
-    ).toHaveLength(1);
-    expect(turn.artifacts.filter((a) => a.kind === "post")).toHaveLength(1);
+    ).toHaveLength(2);
+    expect(turn.artifacts.filter((a) => a.kind === "post")).toHaveLength(0);
   });
 
   test("the net does NOT fire on a real post request (no false positive)", async () => {

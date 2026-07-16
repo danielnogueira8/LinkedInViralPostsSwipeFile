@@ -210,7 +210,7 @@ describe("columnCollapse — Notion-style show-more threshold", () => {
 // or status from the server must never crash the board or land in a phantom
 // column.
 // ---------------------------------------------------------------------------
-import { normalizeDraft } from "@/app/(app)/dashboard/draft-editor-modal";
+import { normalizeDraft } from "@/lib/draft-view";
 
 describe("normalizeDraft — API row → board Draft", () => {
   const row = {

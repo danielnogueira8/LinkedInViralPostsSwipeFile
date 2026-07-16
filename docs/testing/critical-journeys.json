@@ -146,12 +146,16 @@
     {
       "id": "schedule-publish-idempotency",
       "capability": "Scheduling and publishing",
-      "invariant": "Scheduling and publishing are idempotent across edits, retries, duplicate responses, expired tokens, and stale claims.",
+      "invariant": "Scheduling and publishing are idempotent across edits, retries, duplicate responses, expired tokens, and stale claims; Markdown-emitting drafts preserve literal content and use the same canonical caption for preview, copy, length validation, and publish.",
       "preferred_seam": "api-contract",
       "existing_coverage": [
         "evals/data/schedule-endpoint.test.ts",
         "evals/data/publish-cron.test.ts",
         "evals/data/draft-mutation-publish-lock.test.ts",
+        "evals/data/markdown-to-linkedin.test.ts",
+        "evals/data/markdown-mode.test.ts",
+        "evals/data/draft-lifecycle.test.ts",
+        "evals/data/drafts-board.test.ts",
         "e2e/draft-lifecycle.spec.ts"
       ],
       "status": "protected",

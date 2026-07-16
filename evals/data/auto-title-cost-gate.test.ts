@@ -79,6 +79,8 @@ vi.mock("@/lib/openrouter", async (orig) => ({
   logOpenRouterUsage: async () => undefined,
 }));
 
+const { CHAT_MODEL } = await import("@/lib/openrouter");
+
 const { POST } = await import("@/app/api/chats/[id]/title/route");
 
 function call() {
@@ -113,7 +115,7 @@ describe("auto-title cost gate", () => {
     // under test is "the cap gate doesn't block a healthy workspace".)
     expect(completeChatSpy).toHaveBeenCalledTimes(1);
     expect(completeChatSpy.mock.calls[0]?.[0]).toMatchObject({
-      model: "z-ai/glm-5.2",
+      model: CHAT_MODEL,
       glmReasoning: "none",
       maxTokens: 24,
     });

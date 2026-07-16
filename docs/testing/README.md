@@ -107,7 +107,9 @@ journey fails on unexpected console errors or page exceptions.
 The complete post lifecycle is split at the irreversible boundary. Deterministic
 API-contract tests prove draft metadata/media preservation and publishing worker
 idempotency (duplicate claims, transient retries, expired tokens, lost or stale
-claims, and terminal outcomes). `e2e/draft-lifecycle.spec.ts` follows a real
+claims, and terminal outcomes). Markdown-emitting drafts additionally prove one
+canonical raw → preview → copy → length-check → publish conversion, with durable
+format provenance across batch, chat, board, and model-switch history. `e2e/draft-lifecycle.spec.ts` follows a real
 Cowork save into the Posts board and through review and scheduling controls while
 explicitly failing if any browser request reaches a publish or Zernio endpoint.
 

@@ -1,14 +1,10 @@
 import { currentUser } from "@clerk/nextjs/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { DraftsList, type DraftStatus, type Draft } from "./drafts-list";
-import { leadMagnetContextFromMeta } from "@/lib/draft-lead-magnet";
+import { normalizeDraft } from "@/lib/draft-view";
 import type { PostPreviewAuthor } from "../draft-editor-modal";
 import { PageHeader, PageShell } from "@/components/app-surface";
-import {
-  REVIEW_DRAFT_COLS,
-  sourceUrlFromMeta as sourceUrlFromMetaShared,
-  type ReviewDraftRow,
-} from "@/lib/batch/review-draft";
+import { REVIEW_DRAFT_COLS, type ReviewDraftRow } from "@/lib/batch/review-draft";
 
 // Saved posts — the drafts the user kept via "Save draft" in the chat, plus any
 // authored on the board (rows in chat_artifacts). Rendered as a Notion-style
@@ -62,28 +58,7 @@ export default async function DraftsPage() {
   const rows = (drafts ?? []) as DraftRow[];
   for (const row of rows) {
     if (isBoardStatus(row.status)) {
-      board.push({
-        id: row.id,
-        title: row.title,
-        body: row.body,
-        kind: (row.kind === "hook" || row.kind === "lead_magnet"
-          ? row.kind
-          : "post") as Draft["kind"],
-        status: row.status,
-        planToPostOn: row.plan_to_post_on,
-        chatId: row.chat_id,
-        createdAt: row.created_at,
-        sourceUrl: sourceUrlFromMetaShared(row.meta),
-        leadMagnet: leadMagnetContextFromMeta(row.meta),
-        scheduledAt: row.scheduled_at,
-        scheduleStatus: row.schedule_status as Draft["scheduleStatus"],
-        firstComment: row.first_comment,
-        publishedAt: row.published_at,
-        publishError: row.publish_error,
-        mediaAttachments: Array.isArray(row.media_attachments)
-          ? (row.media_attachments as Draft["mediaAttachments"])
-          : [],
-      });
+      board.push(normalizeDraft(row));
     }
     // else: 'pending_review' / 'rejected' / unknown → not surfaced here.
     // pending_review drafts live in Cowork's batch chat now (see PR).

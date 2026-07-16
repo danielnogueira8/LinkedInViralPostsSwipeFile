@@ -28,6 +28,7 @@ import {
 } from "@/lib/agent/adapter-health";
 import { runCoworkAdapterAttempt } from "@/lib/agent/cowork-adapter-attempt";
 import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
+import { distinctFallbackModel } from "@/lib/agent/model-routing";
 
 export type { ActionCheckpoint, ActionCheckpointRepository };
 
@@ -39,8 +40,12 @@ export type { ActionCheckpoint, ActionCheckpointRepository };
 export const PRIMARY_ACTION_ORCHESTRATOR_MODEL =
   process.env.OPENROUTER_ACTION_ORCHESTRATOR_MODEL || CHAT_MODEL;
 export const FALLBACK_ACTION_ORCHESTRATOR_MODEL =
-  process.env.OPENROUTER_ACTION_ORCHESTRATOR_FALLBACK_MODEL ||
-  "google/gemini-3.5-flash";
+  distinctFallbackModel(
+    PRIMARY_ACTION_ORCHESTRATOR_MODEL,
+    process.env.OPENROUTER_ACTION_ORCHESTRATOR_FALLBACK_MODEL ||
+      "google/gemini-3.5-flash",
+    ["anthropic/claude-sonnet-5"],
+  );
 export const ACTION_ORCHESTRATOR_DEADLINE_MS = 85_000;
 
 const ActionIdSchema = z
@@ -550,6 +555,7 @@ export type ActionOrchestratorInput = {
   confirmedTargetIds?: string[];
   signal?: AbortSignal;
   cancellationProbe?: (signal: AbortSignal) => Promise<boolean>;
+  onModelUsed?: (model: string) => void;
   telemetry?: CoworkTurnTelemetry;
 };
 
@@ -1460,6 +1466,7 @@ async function* executeActionOrchestrator(
           watcher.deadlineExceeded() ? "deadline" : "cancelled",
       });
       plan = result.value;
+      input.onModelUsed?.(adapter.model);
       break;
     } catch (error) {
       rethrowUsagePersistence(error);

@@ -14,6 +14,7 @@ vi.mock("@/lib/openrouter", async (original) => {
 const { repairAiTells, resolveAiTellModel } = await import(
   "@/lib/agent/specialists/ai-tell-repair"
 );
+const { CHAT_MODEL } = await import("@/lib/openrouter");
 
 beforeEach(() => {
   completeChat.mockReset();
@@ -21,10 +22,9 @@ beforeEach(() => {
 });
 
 describe("conditional AI-tell repair", () => {
-  test("falls back to GLM-5.2 when the model env is absent or blank", () => {
-    // AI-tell repair is a narrow copy-edit, not frontier judgment — cheaper tier.
-    expect(resolveAiTellModel(undefined)).toBe("z-ai/glm-5.2");
-    expect(resolveAiTellModel("   ")).toBe("z-ai/glm-5.2");
+  test("falls back to the configured chat model when its override is absent or blank", () => {
+    expect(resolveAiTellModel(undefined)).toBe(CHAT_MODEL);
+    expect(resolveAiTellModel("   ")).toBe(CHAT_MODEL);
     expect(resolveAiTellModel("custom/model")).toBe("custom/model");
   });
 
@@ -47,7 +47,7 @@ describe("conditional AI-tell repair", () => {
     expect(result.repaired).toBe(true);
     expect(result.detected).toContain("rule-of-three");
     expect(completeChat).toHaveBeenCalledTimes(1);
-    expect(completeChat.mock.calls[0][0].model).toBe("z-ai/glm-5.2");
+    expect(completeChat.mock.calls[0][0].model).toBe(CHAT_MODEL);
   });
 
   test("fails open when the rewrite still contains an AI tell", async () => {

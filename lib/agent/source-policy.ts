@@ -34,6 +34,8 @@ const PARTIAL_DELIVERABLE_RE =
   /\b(?:linkedin\s+)?(?:post\s+)?(?:ideas?|angles?|outlines?|titles?|hooks?|openers?)\b(?!\s+(?:style|structure|pattern|mechanics?|format|approach|framework))/i;
 const EXPLICIT_PARTIAL_BOUNDARY_RE =
   /\b(?:do\s+not|don(?:'|’)?t|dont)\s+(?:write|draft|create|generate)\s+(?:any\s+)?(?:full\s+)?(?:linkedin\s+)?posts?\b|\b(?:ideas?|angles?|outlines?|titles?|hooks?|openers?)\s+(?:only|not\s+(?:full\s+)?posts?)\b/i;
+const PARTIAL_FOR_POST_CONTEXT_RE =
+  /\b(?:ideas?|angles?|outlines?|titles?|hooks?|openers?)\b[\s\S]{0,80}?\bfor\s+(?:a|an|one|the)\s+(?:linkedin\s+)?post\b/i;
 const DIRECT_FULL_POST_RE =
   /\b(?:write|draft|create|generate|give|make|rewrite|refine|shorten|tighten|adapt|mimic|model)\b[\s\S]{0,80}?\b(?:a|an|one|\d{1,2})?\s*(?:full\s+)?(?:linkedin\s+)?posts?\b(?!\s+(?:ideas?|angles?|outlines?|titles?|hooks?|openers?))/i;
 const SOURCE_TO_FULL_POST_RE =
@@ -67,7 +69,12 @@ export function withoutSourceDiscoveryOptOut(text: string): string {
  */
 export function requestsPartialTextDeliverable(text: string): boolean {
   if (!PARTIAL_DELIVERABLE_RE.test(text)) return false;
-  if (EXPLICIT_PARTIAL_BOUNDARY_RE.test(text)) return true;
+  if (
+    EXPLICIT_PARTIAL_BOUNDARY_RE.test(text) ||
+    PARTIAL_FOR_POST_CONTEXT_RE.test(text)
+  ) {
+    return true;
+  }
   return !DIRECT_FULL_POST_RE.test(text) && !SOURCE_TO_FULL_POST_RE.test(text);
 }
 

@@ -147,7 +147,10 @@ import {
   type ContentBlock,
   type ToolCall,
 } from "@/lib/openrouter";
-import { markdownModeForModel } from "@/lib/markdown/mode";
+import {
+  contentFormatForModel,
+  stampDraftFormat,
+} from "@/lib/markdown/mode";
 import {
   AUTOMATIC_LEAD_MAGNET_IMAGE_GENERATION_ENABLED,
   shouldGenerateLeadMagnetImage,
@@ -3300,6 +3303,10 @@ export async function executeChatTurn(
       // history).
       let streamedText = "";
       let persisted = false;
+      let responseModel = CHAT_MODEL;
+      const recordResponseModel = (model: string) => {
+        responseModel = model;
+      };
       let latestPlanSteps: PlanStep[] = [];
       // Persist the current plan to chats.live_plan so a client that navigated
       // away mid-turn and came back can restore the literal checklist (not just a
@@ -3431,16 +3438,12 @@ export async function executeChatTurn(
         // copy) normalizes the body. For a non-markdown model this adds nothing —
         // the meta is untouched — keeping Haiku/GLM/Gemini drafts byte-identical
         // and the OPENROUTER_CHAT_MODEL rollback clean.
-        const markdownDraft = markdownModeForModel(CHAT_MODEL);
         const persistArtifacts = artifacts.map((a) => {
           if (a.kind === "cite") {
             return {
               ...a,
               meta: { postId: (a.meta as { postId?: string })?.postId },
             };
-          }
-          if (markdownDraft) {
-            return { ...a, meta: { ...(a.meta ?? {}), markdown: true } };
           }
           return a;
         });
@@ -3455,6 +3458,7 @@ export async function executeChatTurn(
           outputTokens: tokens?.output ?? null,
           toolMessages: toolMessages ?? [],
           terminalReason,
+          contentFormat: contentFormatForModel(responseModel),
         });
         if (asstErr) {
           // THE critical failure: the reply wasn't stored. Metric it (grep
@@ -3559,6 +3563,7 @@ export async function executeChatTurn(
               transformCandidate: transformDraftCandidate,
               finalTransformCandidate: transformDraftCandidate,
               telemetry: coworkTelemetry,
+              onModelUsed: recordResponseModel,
               // Thin path: strong reasoning model + corruption-only nets.
               lean: thinPathEnabled,
               // Lead-magnet framing for the writer prompt (only set on a
@@ -3592,6 +3597,7 @@ export async function executeChatTurn(
               cancellationProbe: (probeSignal) =>
                 isCancelRequested(chatId, turnStartedAtMs, probeSignal),
               telemetry: coworkTelemetry,
+              onModelUsed: recordResponseModel,
             },
             { turnDeadlineMs: remainingReliableMs },
           ));
@@ -3640,6 +3646,7 @@ export async function executeChatTurn(
                 transformCandidate: transformDraftCandidate,
                 finalTransformCandidate: transformDraftCandidate,
                 telemetry: coworkTelemetry,
+                onModelUsed: recordResponseModel,
                 // Thin path: research/news/grounded posts write with the strong
                 // model (Gemini) too. The grounded task keeps its grounding +
                 // factual-specificity gates ON even in lean mode (see
@@ -3649,6 +3656,7 @@ export async function executeChatTurn(
               },
               signal,
               telemetry: coworkTelemetry,
+              onModelUsed: recordResponseModel,
             },
             { turnDeadlineMs: remainingReliableMs },
           ));
@@ -3861,6 +3869,12 @@ export async function executeChatTurn(
                 ),
                 appliedCreatorStyle,
               );
+              if (isDraftArtifact(tagged) && coworkContract.kind === "post") {
+                tagged = {
+                  ...tagged,
+                  meta: stampDraftFormat(tagged.meta, responseModel),
+                };
+              }
               const citeSourceRef = modelSourceReference
                 ? null
                 : sourceReferenceFromCiteArtifacts(pendingCiteArtifacts);

@@ -13,7 +13,11 @@ import {
 import { resolveDraftKind } from "@/lib/post-type";
 import { localDateForInstant } from "@/lib/schedule-local-date";
 import { LINKEDIN_MAX_CHARS } from "@/lib/zernio";
-import { draftEgressBody } from "@/lib/markdown/mode";
+import {
+  draftEgressBody,
+  mergeDraftContentFormat,
+  type ContentFormat,
+} from "@/lib/markdown/mode";
 
 export const BOARD_DRAFT_STATUSES = ["idea", "drafting", "ready", "posted"] as const;
 const MAX_MUTATION_ATTEMPTS = 3;
@@ -257,6 +261,7 @@ export class DraftLifecycle {
       kind?: DraftKind;
       planToPostOn?: string | null;
       mediaAttachments?: PostMediaAttachment[];
+      contentFormat?: ContentFormat;
     },
   ): Promise<DraftCommandOutcome<DraftRecord>> {
     // The public PATCH command does not accept a client lifecycle version. Its
@@ -305,6 +310,9 @@ export class DraftLifecycle {
       if (input.kind !== undefined) patch.kind = input.kind;
       if (input.planToPostOn !== undefined) patch.planToPostOn = input.planToPostOn;
       if (input.mediaAttachments !== undefined) patch.mediaAttachments = input.mediaAttachments;
+      if (input.contentFormat !== undefined) {
+        patch.meta = mergeDraftContentFormat(current.meta, input.contentFormat);
+      }
       if (input.title !== undefined) {
         patch.title = input.title?.trim() || deriveDraftTitle(input.body ?? current.body);
       } else if (

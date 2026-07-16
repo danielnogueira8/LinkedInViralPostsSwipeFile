@@ -114,6 +114,30 @@ describe("markdownToLinkedIn — links and code", () => {
     expect(out).toBe("before\nconst x = 1;\nafter");
     expect(out).not.toContain("```");
   });
+
+  test("code content is literal and is never interpreted as emphasis or a heading", () => {
+    expect(markdownToLinkedIn("`price * quantity #forecast`")).toBe(
+      "price * quantity #forecast",
+    );
+    expect(
+      markdownToLinkedIn(
+        "```ts\nconst total = price * quantity; // #forecast\n```",
+      ),
+    ).toBe("const total = price * quantity; // #forecast");
+  });
+
+  test("preserves URL fragments instead of treating their hash as markdown", () => {
+    expect(markdownToLinkedIn("Read https://example.com/guide#section-2")).toBe(
+      "Read https://example.com/guide#section-2",
+    );
+  });
+
+  test("preserves text that resembles the converter's internal sentinels", () => {
+    const sentinelLike = "\uE000code0\uE001 literal and `real * code`";
+    expect(markdownToLinkedIn(sentinelLike)).toBe(
+      "\uE000code0\uE001 literal and real * code",
+    );
+  });
 });
 
 describe("markdownToLinkedIn — safe on plain (Haiku-style) prose", () => {
@@ -135,6 +159,12 @@ describe("markdownToLinkedIn — safe on plain (Haiku-style) prose", () => {
       "## Habits\n\n**1. Post before you're ready.**\n- ship *rough*\n- track `signals`";
     const once = markdownToLinkedIn(md);
     expect(markdownToLinkedIn(once)).toBe(once);
+  });
+
+  test("literal hashtags and multiplication operators survive", () => {
+    const post = "Keep #AI and #FounderMode. Revenue = price * quantity.";
+    expect(markdownToLinkedIn(post)).toBe(post);
+    expect(hasResidualMarkdown(post)).toBe(false);
   });
 });
 
@@ -179,14 +209,12 @@ describe("markdownToLinkedIn — the LOAD-BEARING invariant: no markdown leaks",
     "a `code` span and\n```\nfenced\n```",
     "a [link](https://x.com) here",
     "***bold italic***",
-    "unbalanced ** star and lone # hash and stray ` tick",
     "mix: **bold [link](u)** with `code` in a ## heading",
   ];
 
-  test.each(CASES)("output has no *, #, backtick, or link shape: %s", (md) => {
+  test.each(CASES)("output has no recognized markdown syntax: %s", (md) => {
     const out = markdownToLinkedIn(md);
     expect(hasResidualMarkdown(out)).toBe(false);
-    expect(out).not.toMatch(/[*#`]/);
   });
 
   test("hasResidualMarkdown flags raw markdown but not converted output", () => {
@@ -194,5 +222,6 @@ describe("markdownToLinkedIn — the LOAD-BEARING invariant: no markdown leaks",
     expect(hasResidualMarkdown("## heading")).toBe(true);
     expect(hasResidualMarkdown("[t](u)")).toBe(true);
     expect(hasResidualMarkdown(`${BOLD("clean")} text • bullet`)).toBe(false);
+    expect(hasResidualMarkdown("Keep #AI and 3 * 4")).toBe(false);
   });
 });
