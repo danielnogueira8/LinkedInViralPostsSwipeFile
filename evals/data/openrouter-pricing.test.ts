@@ -88,6 +88,13 @@ describe("openRouterCost — GPT-5.6 Luna pricing", () => {
     expect(openRouterCost("openai/gpt-5.6-luna", 0, M)).toBeCloseTo(6, 6);
     expect(openRouterCost("openai/gpt-5.6-luna", M, 0, M)).toBeCloseTo(0.1, 6);
   });
+
+  test("prices Luna cache writes at $1.25/M when exact provider cost is absent", () => {
+    expect(openRouterCost("openai/gpt-5.6-luna", M, 0, 0, M)).toBeCloseTo(
+      1.25,
+      6,
+    );
+  });
 });
 
 describe("openRouterCost — Qwen 3.7 Plus direct-writer pricing", () => {
@@ -132,6 +139,24 @@ describe("openRouterCost — Sonnet 5 pricing row retained (intro, not live)", (
 });
 
 describe("openRouterUsageCost — exact provider cost", () => {
+  test("reports cache-write tokens and estimates their Luna write premium", () => {
+    expect(
+      openRouterUsageCost("openai/gpt-5.6-luna", {
+        prompt_tokens: 1_000_000,
+        completion_tokens: 0,
+        prompt_tokens_details: {
+          cached_tokens: 0,
+          cache_write_tokens: 1_000_000,
+        },
+      }),
+    ).toMatchObject({
+      inputTokens: 1_000_000,
+      cachedInputTokens: 0,
+      cacheWriteTokens: 1_000_000,
+      costUsd: 1.25,
+    });
+  });
+
   test("uses exact image API cost when OpenRouter returns it", () => {
     expect(
       openRouterUsageCost("google/gemini-3.1-flash-lite-image", {

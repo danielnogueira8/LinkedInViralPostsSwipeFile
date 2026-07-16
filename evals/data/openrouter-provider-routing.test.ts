@@ -297,6 +297,28 @@ describe("OpenRouter provider routing", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
+  test("streamChat sends a stable session id for provider-sticky chat routing", async () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "test-key");
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      expect(body.session_id).toBe("chat-123");
+      return new Response("data: [DONE]\n\n", {
+        headers: { "content-type": "text/event-stream" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    for await (const delta of streamChat({
+      model: "openai/gpt-5.6-luna",
+      sessionId: "chat-123",
+      messages: [{ role: "user", content: "refine this post" }],
+    })) {
+      expect(delta).toBeDefined();
+    }
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   test("streamChat explicitly uses high reasoning for the GLM-5.2 agent", async () => {
     vi.stubEnv("OPENROUTER_API_KEY", "test-key");
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {

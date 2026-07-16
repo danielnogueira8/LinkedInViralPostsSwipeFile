@@ -440,7 +440,10 @@ export type Usage = {
   completion_tokens?: number;
   cost?: number;
   // OpenRouter surfaces cached prompt tokens here when the provider supports it
-  prompt_tokens_details?: { cached_tokens?: number };
+  prompt_tokens_details?: {
+    cached_tokens?: number;
+    cache_write_tokens?: number;
+  };
   // Numeric count only. Cowork never records provider reasoning text.
   completion_tokens_details?: { reasoning_tokens?: number };
 };
@@ -574,6 +577,8 @@ export async function completeChat(opts: {
   // Callers with tighter UX budgets (for example image preprocessing) can
   // lower this while still composing with user cancellation.
   timeoutMs?: number;
+  // Stable workflow identifier used by OpenRouter for provider-sticky routing.
+  sessionId?: string;
 }): Promise<CompleteResult> {
   const model = opts.model || BACKGROUND_MODEL;
   const body: Record<string, unknown> = {
@@ -585,6 +590,7 @@ export async function completeChat(opts: {
     // for plugin fees and keeps env-selectable models from falling back to a
     // stale local price estimate during non-plugin normalization calls.
     usage: { include: true },
+    ...(opts.sessionId ? { session_id: opts.sessionId } : {}),
   };
   const reasoning = opts.disableReasoning
     ? { enabled: false }
@@ -795,6 +801,9 @@ export async function* streamChat(opts: {
   // forced-final-answer path). Default behavior is unchanged ("auto" when
   // tools are present, undefined when not).
   toolChoice?: "auto" | "required" | "none";
+  // Stable chat identifier keeps consecutive turns on one provider cache
+  // without globally pinning every OpenRouter model.
+  sessionId?: string;
 }): AsyncGenerator<StreamDelta> {
   const model = opts.model || CHAT_MODEL;
   const body: Record<string, unknown> = {
@@ -809,6 +818,7 @@ export async function* streamChat(opts: {
     stream_options: { include_usage: true },
     max_tokens: opts.maxTokens ?? 4096,
     provider: openRouterProviderPreferences(),
+    ...(opts.sessionId ? { session_id: opts.sessionId } : {}),
   };
   // Streamed GLM chat is always substantive agent work. Keep this structurally
   // fixed to High; only one-shot mechanical callers may opt out of reasoning.
@@ -1002,11 +1012,16 @@ export const SUPPORTED_NEWS_MODELS = Object.keys(NEWS_SEARCH_MODEL_PRICING);
 
 const OPENROUTER_PRICING: Record<
   string,
-  { input: number; output: number; cachedInput: number }
+  { input: number; output: number; cachedInput: number; cacheWrite?: number }
 > = {
   ...NEWS_SEARCH_MODEL_PRICING,
   "qwen/qwen3.7-plus": { input: 0.32, output: 1.28, cachedInput: 0.064 },
-  "openai/gpt-5.6-luna": { input: 1.0, output: 6.0, cachedInput: 0.1 },
+  "openai/gpt-5.6-luna": {
+    input: 1.0,
+    output: 6.0,
+    cachedInput: 0.1,
+    cacheWrite: 1.25,
+  },
   "z-ai/glm-5.1": { input: 1.4, output: 4.4, cachedInput: 0.26 },
   "z-ai/glm-5": { input: 1.0, output: 3.2, cachedInput: 0.2 },
   // Retained for historical usage rows and explicit env overrides.
@@ -1035,13 +1050,22 @@ export function openRouterCost(
   inputTokens: number,
   outputTokens: number,
   cachedInputTokens = 0,
+  cacheWriteTokens = 0,
 ): number {
   const p = OPENROUTER_PRICING[model] ?? OPENROUTER_PRICING["z-ai/glm-5.1"];
-  // cached tokens are billed at the cheaper cache-read rate; the rest at full
-  const freshInput = Math.max(0, inputTokens - cachedInputTokens);
+  const boundedCached = Math.min(Math.max(0, cachedInputTokens), inputTokens);
+  const boundedCacheWrite = Math.min(
+    Math.max(0, cacheWriteTokens),
+    Math.max(0, inputTokens - boundedCached),
+  );
+  const freshInput = Math.max(
+    0,
+    inputTokens - boundedCached - boundedCacheWrite,
+  );
   return (
     (freshInput * p.input +
-      cachedInputTokens * p.cachedInput +
+      boundedCached * p.cachedInput +
+      boundedCacheWrite * (p.cacheWrite ?? p.input) +
       outputTokens * p.output) /
     1_000_000
   );
@@ -1055,11 +1079,14 @@ export function openRouterUsageCost(
   outputTokens: number;
   reasoningTokens: number;
   cachedInputTokens: number;
+  cacheWriteTokens: number;
   costUsd: number;
 } {
   const inputTokens = usage?.prompt_tokens ?? 0;
   const outputTokens = usage?.completion_tokens ?? 0;
   const cachedInputTokens = usage?.prompt_tokens_details?.cached_tokens ?? 0;
+  const cacheWriteTokens =
+    usage?.prompt_tokens_details?.cache_write_tokens ?? 0;
   const reasoningTokens =
     usage?.completion_tokens_details?.reasoning_tokens ?? 0;
   const exactCost = typeof usage?.cost === "number" && Number.isFinite(usage.cost)
@@ -1070,7 +1097,16 @@ export function openRouterUsageCost(
     outputTokens,
     reasoningTokens,
     cachedInputTokens,
-    costUsd: exactCost ?? openRouterCost(model, inputTokens, outputTokens, cachedInputTokens),
+    cacheWriteTokens,
+    costUsd:
+      exactCost ??
+      openRouterCost(
+        model,
+        inputTokens,
+        outputTokens,
+        cachedInputTokens,
+        cacheWriteTokens,
+      ),
   };
 }
 
@@ -1086,6 +1122,7 @@ export async function logOpenRouterUsage(
     outputTokens,
     reasoningTokens,
     cachedInputTokens: cached,
+    cacheWriteTokens: cacheWrite,
     costUsd,
   } = openRouterUsageCost(model, usage);
   try {
@@ -1101,6 +1138,7 @@ export async function logOpenRouterUsage(
       meta: {
         ...(meta ?? {}),
         cached_input_tokens: cached,
+        cache_write_tokens: cacheWrite,
         reasoning_tokens: reasoningTokens,
       },
     });
