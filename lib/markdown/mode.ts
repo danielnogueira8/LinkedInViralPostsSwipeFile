@@ -11,13 +11,32 @@
 // only thing that turns markdown ON is an explicit boolean-true flag. Anything
 // else → false → today's exact behavior.
 
+import { markdownToLinkedIn } from "@/lib/markdown/to-linkedin";
+
+// The ONLY writer models that emit markdown we must convert. Add a model here
+// (and nowhere else) to opt it into markdown handling. Everything absent —
+// Haiku, GLM, Gemini, Qwen — writes LinkedIn-ready plain text already and takes
+// the untouched legacy path, so flipping OPENROUTER_CHAT_MODEL back to any of
+// them is a clean rollback. Matched case-insensitively against the full slug.
+export const MARKDOWN_MODELS: readonly string[] = ["openai/gpt-5.6-luna"];
+
+/**
+ * Does this model emit markdown that our egress must normalize? This is the
+ * gate PR 4 uses at DRAFT CREATION to decide whether to stamp meta.markdown
+ * (which every egress point then reads via draftMarkdownEnabled). Kept separate
+ * from the meta check so the "is this a markdown model" policy lives in one list.
+ */
+export function markdownModeForModel(model: string | null | undefined): boolean {
+  if (!model) return false;
+  const slug = model.toLowerCase();
+  return MARKDOWN_MODELS.some((m) => m.toLowerCase() === slug);
+}
+
 export function draftMarkdownEnabled(
   meta: Record<string, unknown> | null | undefined,
 ): boolean {
   return meta?.markdown === true;
 }
-
-import { markdownToLinkedIn } from "@/lib/markdown/to-linkedin";
 
 /**
  * The body as it should EGRESS from the app — copied to clipboard or sent to

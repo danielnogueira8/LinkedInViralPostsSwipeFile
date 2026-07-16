@@ -5,6 +5,7 @@ import { useCopiedFlag } from "@/lib/use-copied-flag";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { fetchJson } from "@/lib/api-fetch";
+import { draftEgressBody } from "@/lib/markdown/mode";
 import { localDateFromDatetimeInput } from "@/lib/schedule-local-date";
 import {
   MessageSquare,
@@ -296,7 +297,11 @@ export function DraftEditorModal({
 
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(trimmed || draft?.body || "");
+      // For a markdown-model draft, copy the LinkedIn-ready form (matches publish
+      // and the card copy). `trimmed` is the live-edited body; fall back to the
+      // saved body. draftEgressBody is a no-op unless meta.markdown is set.
+      const raw = trimmed || draft?.body || "";
+      await navigator.clipboard.writeText(draftEgressBody(raw, draft?.meta));
       markCopied();
     } catch {
       toast.error("Couldn't copy to clipboard.");
@@ -1733,6 +1738,10 @@ export function normalizeDraft(row: {
     chatId: row.chat_id,
     createdAt: row.created_at,
     leadMagnet: leadMagnetContextFromMeta(row.meta),
+    meta:
+      row.meta && typeof row.meta === "object"
+        ? (row.meta as Record<string, unknown>)
+        : null,
     mediaAttachments: Array.isArray(row.media_attachments)
       ? (row.media_attachments as PostMediaAttachment[])
       : [],

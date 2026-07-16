@@ -385,6 +385,7 @@ export function ChatWorkspace({
   initialVoiceReady,
   initialNextAction,
   author,
+  markdownMode = false,
 }: {
   initialChats: ChatSummary[];
   initialChatId: string | null;
@@ -396,6 +397,11 @@ export function ChatWorkspace({
   initialVoiceReady: boolean;
   initialNextAction: CoworkNextAction;
   author: Author;
+  // True when the app-wide writer model emits markdown (GPT-5.6 Luna). Only the
+  // assistant's PROSE render reads this (draft bodies gate on their own persisted
+  // meta.markdown). Defaults false → the untouched legacy render for every other
+  // model, so this is a no-op unless Luna is the active OPENROUTER_CHAT_MODEL.
+  markdownMode?: boolean;
 }) {
   const [chats, setChats] = useState<ChatSummary[]>(initialChats);
   const [chatSession] = useState(() =>
@@ -4032,6 +4038,7 @@ export function ChatWorkspace({
                     }
                     void send(text, { forceRefine: true });
                   }}
+                  markdownMode={markdownMode}
                 />
               ))}
               {/* Live worker board for the batch chat — bridges the silence
@@ -5333,6 +5340,7 @@ function MessageBubble({
   message,
   onRetry,
   onAnswer,
+  markdownMode = false,
 }: {
   message: Message;
   // Re-runs the exact user task that produced this failed assistant turn.
@@ -5340,6 +5348,8 @@ function MessageBubble({
   // Submit handler for the clarifying-question card (ask_user): sends the
   // composed answer as the next user message.
   onAnswer: (text: string, ask: AskQuestion, actionSelectionIds: string[]) => void;
+  // App-wide markdown model (Luna): normalize the assistant's prose on render.
+  markdownMode?: boolean;
 }) {
   if (message.role === "user") {
     return (
@@ -5473,7 +5483,7 @@ function MessageBubble({
           never restyled. */}
       {message.text && (
         <div className="text-[15px] leading-7 whitespace-pre-wrap text-foreground">
-          {renderRichText(message.text, "chat", message.streaming)}
+          {renderRichText(message.text, "chat", message.streaming, markdownMode)}
         </div>
       )}
 

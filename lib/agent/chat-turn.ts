@@ -141,11 +141,13 @@ import {
   completeChat,
   logOpenRouterUsage,
   markPersistedToolState,
+  CHAT_MODEL,
   UsagePersistenceError,
   type ChatMessage,
   type ContentBlock,
   type ToolCall,
 } from "@/lib/openrouter";
+import { markdownModeForModel } from "@/lib/markdown/mode";
 import {
   AUTOMATIC_LEAD_MAGNET_IMAGE_GENERATION_ENABLED,
   shouldGenerateLeadMagnetImage,
@@ -3422,15 +3424,26 @@ export async function executeChatTurn(
         // Persist cite artifacts as a bare postId reference — drop the resolved
         // meta.card snapshot. Engagement counts drift and LinkedIn media URLs
         // expire (~weekly), so the card is RE-RESOLVED fresh on chat load
-        // rather than stored stale. post/hook artifacts persist as-is.
-        const persistArtifacts = artifacts.map((a) =>
-          a.kind === "cite"
-            ? {
-                ...a,
-                meta: { postId: (a.meta as { postId?: string })?.postId },
-              }
-            : a,
-        );
+        // rather than stored stale.
+        //
+        // post/hook drafts: stamp meta.markdown when the writer model emits
+        // markdown (GPT-5.6 Luna), so every downstream egress (render, publish,
+        // copy) normalizes the body. For a non-markdown model this adds nothing —
+        // the meta is untouched — keeping Haiku/GLM/Gemini drafts byte-identical
+        // and the OPENROUTER_CHAT_MODEL rollback clean.
+        const markdownDraft = markdownModeForModel(CHAT_MODEL);
+        const persistArtifacts = artifacts.map((a) => {
+          if (a.kind === "cite") {
+            return {
+              ...a,
+              meta: { postId: (a.meta as { postId?: string })?.postId },
+            };
+          }
+          if (markdownDraft) {
+            return { ...a, meta: { ...(a.meta ?? {}), markdown: true } };
+          }
+          return a;
+        });
         const { error: asstErr } = await persistChatAssistantTurn({
           sb: sbRaw,
           chatId,

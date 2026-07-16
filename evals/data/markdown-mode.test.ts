@@ -1,5 +1,10 @@
 import { describe, test, expect } from "vitest";
-import { draftMarkdownEnabled, draftEgressBody } from "@/lib/markdown/mode";
+import {
+  draftMarkdownEnabled,
+  draftEgressBody,
+  markdownModeForModel,
+  MARKDOWN_MODELS,
+} from "@/lib/markdown/mode";
 import { toUnicodeStyle } from "@/lib/markdown/unicode-styles";
 
 // ---------------------------------------------------------------------------
@@ -11,6 +16,39 @@ import { toUnicodeStyle } from "@/lib/markdown/unicode-styles";
 // ---------------------------------------------------------------------------
 
 const BOLD = (s: string) => toUnicodeStyle(s, "bold");
+
+describe("markdownModeForModel", () => {
+  test("true for a model on the MARKDOWN_MODELS allowlist (GPT-5.6 Luna)", () => {
+    expect(markdownModeForModel("openai/gpt-5.6-luna")).toBe(true);
+  });
+
+  test("matches case-insensitively on the full slug", () => {
+    expect(markdownModeForModel("OpenAI/GPT-5.6-Luna")).toBe(true);
+  });
+
+  test("false for non-markdown writer models (Haiku, GLM, Gemini, Qwen)", () => {
+    expect(markdownModeForModel("anthropic/claude-haiku-4.5")).toBe(false);
+    expect(markdownModeForModel("z-ai/glm-5.2")).toBe(false);
+    expect(markdownModeForModel("google/gemini-3.1-pro-preview")).toBe(false);
+    expect(markdownModeForModel("qwen/qwen3.7-plus")).toBe(false);
+  });
+
+  test("false for null/undefined/empty (no model resolved)", () => {
+    expect(markdownModeForModel(null)).toBe(false);
+    expect(markdownModeForModel(undefined)).toBe(false);
+    expect(markdownModeForModel("")).toBe(false);
+  });
+
+  test("a partial/substring match does NOT count (exact slug only)", () => {
+    // Guards against a loose includes() — a different openai model must be off.
+    expect(markdownModeForModel("openai/gpt-5.6")).toBe(false);
+    expect(markdownModeForModel("gpt-5.6-luna")).toBe(false);
+  });
+
+  test("the allowlist is exactly Luna (change is intentional, not accidental)", () => {
+    expect([...MARKDOWN_MODELS]).toEqual(["openai/gpt-5.6-luna"]);
+  });
+});
 
 describe("draftMarkdownEnabled", () => {
   test("true only for an explicit boolean-true flag", () => {
