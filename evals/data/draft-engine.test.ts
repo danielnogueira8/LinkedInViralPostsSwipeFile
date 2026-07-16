@@ -1475,6 +1475,20 @@ describe("DraftEngine — thin path (lean mode)", () => {
     expect(writer.requests.at(-1)?.model).toBe(THIN_DRAFT_WRITER_FALLBACK_MODEL);
   });
 
+  test("reports the model that actually produced a fallback draft", async () => {
+    const onModelUsed = vi.fn();
+    const writer = new ScriptedWriter([
+      new Error("primary boom"),
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(200, 120) },
+    ]);
+
+    await collect(writer, { lean: true, onModelUsed });
+
+    expect(onModelUsed).toHaveBeenLastCalledWith(
+      THIN_DRAFT_WRITER_FALLBACK_MODEL,
+    );
+  });
+
   test("KEEP nets still run: an em-dash is stripped even in lean mode", async () => {
     // The input() helper passes a NO-OP edit specialist, but lean mode forces
     // the real leanFinalizerSpecialists (editDraftBodySync) — so the

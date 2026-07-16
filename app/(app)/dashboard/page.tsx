@@ -4,7 +4,7 @@ import { scopedSupabase } from "@/lib/supabase-scoped";
 import { rehydrateCites } from "@/lib/cite-resolve";
 import type { CustomSkill } from "@/lib/custom-skills";
 import { CHAT_MODEL } from "@/lib/openrouter";
-import { markdownModeForModel } from "@/lib/markdown/mode";
+import { contentFormatForModel } from "@/lib/markdown/mode";
 import { ChatWorkspace, type Author, type CoworkNextAction } from "./chat-workspace";
 
 // The workspace home is now a Claude-Cowork-style chat where users run the
@@ -30,6 +30,7 @@ type MessageRow = {
   id: string;
   role: "user" | "assistant" | "tool";
   content: string;
+  content_format: "legacy" | "plain" | "markdown" | null;
   tool_calls: unknown;
   artifacts: unknown;
   created_at: string;
@@ -146,7 +147,7 @@ export default async function ChatPage({
       .from("chat_messages")
       // tool_calls included so hydrate() can reconstruct an AskCard from a
       // persisted ask_user tool call — survives a hard refresh (bug 1).
-      .select("id, role, content, tool_calls, artifacts, created_at")
+      .select("id, role, content, content_format, tool_calls, artifacts, created_at")
       .eq("chat_id", activeId)
       .eq("workspace_id", sb.workspaceId)
       .order("created_at", { ascending: true });
@@ -179,14 +180,15 @@ export default async function ChatPage({
           initialCustomSkills={initialCustomSkills}
           initialVoiceReady={voiceReady}
           initialNextAction={initialNextAction}
-          // App-wide: is the writer model one that emits markdown (Luna)? Drives
-          // whether the assistant's PROSE is normalized on render. Draft bodies
-          // gate on their own persisted meta.markdown, not this.
-          markdownMode={markdownModeForModel(CHAT_MODEL)}
+          writerContentFormat={contentFormatForModel(CHAT_MODEL)}
           initialMessages={messages.map((m) => ({
             id: m.id,
             role: m.role,
             content: m.content,
+            content_format:
+              m.content_format === "markdown" || m.content_format === "plain"
+                ? m.content_format
+                : null,
             // tool_calls MUST ride through to hydrate() — it reconstructs the
             // ask_user checkboxes + the /skill bubble badge from the persisted
             // synthetic tool calls. We SELECT it above, but the map used to

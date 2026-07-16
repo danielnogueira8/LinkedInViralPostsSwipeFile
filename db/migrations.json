@@ -1,7 +1,7 @@
 {
   "generatedBy": "npm run migrations:metadata",
-  "highest": 96,
-  "count": 96,
+  "highest": 97,
+  "count": 97,
   "files": [
     "migration-001-progress.sql",
     "migration-002-usage.sql",
@@ -98,6 +98,7 @@
     "migration-093-retire-google-sheet-source.sql",
     "migration-094-delete-chat-message-artifact.sql",
     "migration-095-chat-action-checkpoints.sql",
-    "migration-096-cowork-rollout-health.sql"
+    "migration-096-cowork-rollout-health.sql",
+    "migration-097-chat-message-content-format.sql"
   ]
 }

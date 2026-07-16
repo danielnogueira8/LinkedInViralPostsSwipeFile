@@ -174,6 +174,7 @@ export type DraftEngineInput = {
   transformCandidate?: DraftCandidateTransform;
   finalTransformCandidate?: DraftCandidateTransform;
   onFinalizerDecision?: (decision: DraftFinalizerDecision) => void;
+  onModelUsed?: (model: string) => void;
   telemetry?: CoworkTurnTelemetry;
   // THIN PATH. When true, the engine drafts with a STRONG reasoning model
   // (Gemini 3.1 Pro → Sonnet 5) and drops the "taste" machinery: the source-
@@ -717,8 +718,8 @@ function attemptRequest(opts: {
       : DIRECT_WRITER_MAX_TOKENS,
     timeoutMs: opts.input.lean ? THIN_WRITER_TIMEOUT_MS : DIRECT_WRITER_TIMEOUT_MS,
     signal: opts.signal,
-    // Reasoning ON for the strong thin-path model (that's where its quality is);
-    // OFF for the legacy Qwen/GLM direct writer.
+    // Reasoning ON for the strong thin-path model; the legacy path leaves the
+    // model/provider default untouched for cross-model compatibility.
     reasoning: opts.input.lean ? "medium" : "none",
   };
 }
@@ -1355,6 +1356,7 @@ export async function* runDraftEngine(
           ? "deadline"
           : "cancelled",
     });
+    input.onModelUsed?.(model);
     return result.response;
   };
 

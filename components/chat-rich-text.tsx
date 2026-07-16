@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { markdownToLinkedIn } from "@/lib/markdown/to-linkedin";
+import { contentBodyForFormat } from "@/lib/markdown/mode";
 
 const INLINE_RE =
   /(\*\*|__)(?=\S)(.+?)(?<=\S)\1|(?<![A-Za-z0-9])_(?=\S)(.+?)(?<=\S)_(?![A-Za-z0-9])|\*(?=\S)([^*\n]+?)(?<=\S)\*/g;
@@ -49,7 +49,7 @@ const ORDERED_RE = /^\d{1,3}\.\s+/;
 // the saved-drafts surface pass neither arg → default false, so a completed
 // message always promotes its final list item.
 // `markdown` opt-in (4th arg): only for text written by a markdown-EMITTING
-// model (GPT-5.6 Luna), gated by the caller via `meta.markdown`. When true we
+// model (GPT-5.6 Luna), gated by the caller's durable content format. When true we
 // first run the text through markdownToLinkedIn — the SAME converter the
 // publish/copy paths use — so the on-screen preview is WYSIWYG-identical to what
 // ships to LinkedIn: `**bold**`/`## heading` → Unicode bold, `- ` → "• ",
@@ -66,7 +66,7 @@ export function renderRichText(
   markdown = false,
 ): ReactNode {
   if (!rawText) return rawText;
-  const text = markdown ? markdownToLinkedIn(rawText) : rawText;
+  const text = contentBodyForFormat(rawText, markdown ? "markdown" : "plain");
   const chat = mode === "chat";
   // Fast path: nothing block-level → just inline formatting. In chat mode we
   // also early-out only when there's no list marker at a line start.

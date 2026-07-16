@@ -299,6 +299,39 @@ describe("DraftLifecycle command outcomes", () => {
     expect(manual.ok && manual.value.title).toBe("Campaign 12");
   });
 
+  test("an AI rewrite updates format provenance without discarding existing metadata", async () => {
+    repository.rows.set(
+      "draft-1",
+      draft({ meta: { source: "model_source", source_post_id: "post-1" } }),
+    );
+
+    const markdown = await lifecycle.mutate("draft-1", {
+      body: "**Rewritten by Luna**",
+      contentFormat: "markdown",
+    });
+    expect(markdown).toMatchObject({
+      ok: true,
+      value: {
+        meta: {
+          source: "model_source",
+          source_post_id: "post-1",
+          markdown: true,
+        },
+      },
+    });
+
+    const plain = await lifecycle.mutate("draft-1", {
+      body: "Rewritten by a plain-text model",
+      contentFormat: "plain",
+    });
+    expect(plain).toMatchObject({
+      ok: true,
+      value: {
+        meta: { source: "model_source", source_post_id: "post-1" },
+      },
+    });
+  });
+
   test("scheduling returns explicit connection and transition rejections", async () => {
     repository.rows.set("draft-1", draft());
     const disconnected = new DraftLifecycle(repository, {

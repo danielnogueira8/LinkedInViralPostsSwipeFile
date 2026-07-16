@@ -1006,6 +1006,7 @@ const OPENROUTER_PRICING: Record<
 > = {
   ...NEWS_SEARCH_MODEL_PRICING,
   "qwen/qwen3.7-plus": { input: 0.32, output: 1.28, cachedInput: 0.064 },
+  "openai/gpt-5.6-luna": { input: 1.0, output: 6.0, cachedInput: 0.1 },
   "z-ai/glm-5.1": { input: 1.4, output: 4.4, cachedInput: 0.26 },
   "z-ai/glm-5": { input: 1.0, output: 3.2, cachedInput: 0.2 },
   // Retained for historical usage rows and explicit env overrides.
@@ -1024,6 +1025,10 @@ const OPENROUTER_PRICING: Record<
   // output/cachedInput mirror input to keep the cost math well-defined.
   "openai/text-embedding-3-small": { input: 0.02, output: 0.02, cachedInput: 0.02 },
 };
+
+export function hasOpenRouterPricing(model: string): boolean {
+  return Object.hasOwn(OPENROUTER_PRICING, model);
+}
 
 export function openRouterCost(
   model: string,

@@ -9,6 +9,38 @@ import {
   type RawDbMessage,
 } from "@/lib/chat-hydration";
 
+test("assistant message content format survives canonical hydration", () => {
+  const rows: RawDbMessage[] = [
+    {
+      id: "assistant-1",
+      role: "assistant",
+      content: "**Durable markdown**",
+      content_format: "markdown",
+      artifacts: null,
+    },
+    {
+      id: "assistant-2",
+      role: "assistant",
+      content: "Plain historical reply",
+      content_format: "plain",
+      artifacts: null,
+    },
+    {
+      id: "assistant-legacy",
+      role: "assistant",
+      content: "Ambiguous pre-migration reply",
+      content_format: "legacy",
+      artifacts: null,
+    },
+  ];
+
+  expect(hydrate(rows).map((message) => message.contentFormat)).toEqual([
+    "markdown",
+    "plain",
+    undefined,
+  ]);
+});
+
 test("the persisted user row replaces an optimistic overlay id before Retry", () => {
   const run = {
     userMsg: {

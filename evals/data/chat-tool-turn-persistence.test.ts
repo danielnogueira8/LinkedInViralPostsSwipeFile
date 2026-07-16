@@ -30,6 +30,7 @@ describe("chat assistant tool-turn persistence", () => {
         outputTokens: 5,
         toolMessages,
         terminalReason: "done",
+        contentFormat: "markdown",
       }),
     ).resolves.toEqual({ error: null });
 
@@ -40,6 +41,7 @@ describe("chat assistant tool-turn persistence", () => {
         p_tool_calls: toolCalls,
         p_tool_messages: [toolMessages[1]],
         p_terminal_reason: "done",
+        p_content_format: "markdown",
       }),
     );
   });

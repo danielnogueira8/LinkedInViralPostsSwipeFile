@@ -2380,7 +2380,7 @@ describe("production-shaped Cowork outcome harness", () => {
         id: targetId,
         title: "Career leverage",
         body: expectedBody,
-        meta: { skills: ["storytelling"] },
+        meta: expect.objectContaining({ skills: ["storytelling"] }),
       }),
     ]);
     expect(report.persisted.drafts).toEqual([
@@ -2466,7 +2466,7 @@ describe("production-shaped Cowork outcome harness", () => {
           id: targetId,
           title: "Career leverage",
           body: expectedBody,
-          meta: { durable: true },
+          meta: expect.objectContaining({ durable: true }),
         }),
       ]);
     },

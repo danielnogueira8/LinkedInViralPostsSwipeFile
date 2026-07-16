@@ -3,6 +3,7 @@ import type { Artifact, AskQuestion, PlanStep } from "@/lib/agent/contracts";
 import { isNoModelFormatId, noModelFormatLabel } from "@/lib/agent/no-model-format-catalog";
 import { recoverDoneOption } from "@/lib/chat-ask";
 import type { LeadMagnetResourceType } from "@/lib/lead-magnets";
+import type { ContentFormat } from "@/lib/markdown/mode";
 
 export type AppliedLeadMagnet = {
   id?: string;
@@ -33,6 +34,7 @@ export type Message = {
   id: string;
   role: "user" | "assistant";
   text: string;
+  contentFormat?: ContentFormat;
   clientTurnId?: string;
   transportRecoveryRequested?: boolean;
   userStopRequested?: boolean;
@@ -55,6 +57,7 @@ export type ChatRun = {
   userMsg: Message;
   assistantId: string;
   rawText: string;
+  contentFormat?: ContentFormat;
   tools: ToolChip[];
   plan: PlanStep[];
   artifacts: Artifact[];
@@ -72,6 +75,7 @@ export type RawDbMessage = {
   id: string;
   role: "user" | "assistant" | "tool";
   content: string;
+  content_format?: ContentFormat | "legacy" | null;
   artifacts: Artifact[] | null;
   client_turn_id?: string | null;
   transport_recovery_requested_at?: string | null;
@@ -333,6 +337,10 @@ export function hydrate(rows: RawDbMessage[]): Message[] {
         ? stripAskQuestionFromText(text, parsedAsk.question)
         : text,
       artifacts: row.artifacts ?? undefined,
+      ...(row.role === "assistant" &&
+      (row.content_format === "markdown" || row.content_format === "plain")
+        ? { contentFormat: row.content_format }
+        : {}),
       ...(row.role === "user" && row.client_turn_id
         ? { clientTurnId: row.client_turn_id }
         : {}),

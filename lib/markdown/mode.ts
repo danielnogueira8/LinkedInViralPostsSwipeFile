@@ -1,9 +1,8 @@
 // Single source of truth for "should this draft be treated as markdown?".
 //
 // A draft written by a markdown-EMITTING model (GPT-5.6 Luna) carries
-// `meta.markdown === true`, stamped at draft creation (PR 4). Every EGRESS point
-// — the render preview (PR 2), the publish path, and the copy-to-clipboard
-// buttons (PR 3) — asks THIS function, so the gate lives in exactly one place and
+// `meta.markdown === true`, stamped at draft creation. Every egress point asks
+// this module, so the gate lives in exactly one place and
 // a non-markdown model (Haiku / GLM / Gemini, meta.markdown absent) always takes
 // the untouched legacy path.
 //
@@ -18,18 +17,49 @@ import { markdownToLinkedIn } from "@/lib/markdown/to-linkedin";
 // Haiku, GLM, Gemini, Qwen — writes LinkedIn-ready plain text already and takes
 // the untouched legacy path, so flipping OPENROUTER_CHAT_MODEL back to any of
 // them is a clean rollback. Matched case-insensitively against the full slug.
-export const MARKDOWN_MODELS: readonly string[] = ["openai/gpt-5.6-luna"];
+const MARKDOWN_MODELS: readonly string[] = ["openai/gpt-5.6-luna"];
+export type ContentFormat = "plain" | "markdown";
+
+export function contentFormatForModel(
+  model: string | null | undefined,
+): ContentFormat {
+  if (!model) return "plain";
+  const slug = model.toLowerCase();
+  return MARKDOWN_MODELS.some((candidate) => candidate.toLowerCase() === slug)
+    ? "markdown"
+    : "plain";
+}
 
 /**
- * Does this model emit markdown that our egress must normalize? This is the
- * gate PR 4 uses at DRAFT CREATION to decide whether to stamp meta.markdown
- * (which every egress point then reads via draftMarkdownEnabled). Kept separate
- * from the meta check so the "is this a markdown model" policy lives in one list.
+ * Stamp generated-draft metadata with the format of the model that produced
+ * the body. Plain rewrites remove an inherited markdown flag, which matters
+ * when a draft created by Luna is later rewritten after a model rollback.
  */
-export function markdownModeForModel(model: string | null | undefined): boolean {
-  if (!model) return false;
-  const slug = model.toLowerCase();
-  return MARKDOWN_MODELS.some((m) => m.toLowerCase() === slug);
+export function stampDraftFormat(
+  meta: Record<string, unknown> | null | undefined,
+  model: string | null | undefined,
+): Record<string, unknown> {
+  const next = { ...(meta ?? {}) };
+  if (contentFormatForModel(model) === "markdown") next.markdown = true;
+  else delete next.markdown;
+  return next;
+}
+
+export function mergeDraftContentFormat(
+  meta: Record<string, unknown> | null | undefined,
+  format: ContentFormat,
+): Record<string, unknown> {
+  const next = { ...(meta ?? {}) };
+  if (format === "markdown") next.markdown = true;
+  else delete next.markdown;
+  return next;
+}
+
+export function contentBodyForFormat(
+  body: string,
+  format: ContentFormat,
+): string {
+  return format === "markdown" ? markdownToLinkedIn(body) : body;
 }
 
 export function draftMarkdownEnabled(
@@ -53,5 +83,8 @@ export function draftEgressBody(
   body: string,
   meta: Record<string, unknown> | null | undefined,
 ): string {
-  return draftMarkdownEnabled(meta) ? markdownToLinkedIn(body) : body;
+  return contentBodyForFormat(
+    body,
+    draftMarkdownEnabled(meta) ? "markdown" : "plain",
+  );
 }

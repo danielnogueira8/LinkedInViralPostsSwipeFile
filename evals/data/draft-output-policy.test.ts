@@ -350,6 +350,19 @@ describe("partial text and source opt-out policy", () => {
     ).toBe(false);
   });
 
+  test("treats hooks for a post as the deliverable, not the referenced post", () => {
+    expect(
+      requestsPartialTextDeliverable(
+        "Give me 6 scroll-stopping hooks for a LinkedIn post about why founders should post before their content is perfect.",
+      ),
+    ).toBe(true);
+    expect(
+      requestsPartialTextDeliverable(
+        "Give me one LinkedIn post about why strong hooks matter.",
+      ),
+    ).toBe(false);
+  });
+
   test("keeps voice-dependent partial requests on the agent path", () => {
     expect(
       isSelfContainedPartialTextRequest(

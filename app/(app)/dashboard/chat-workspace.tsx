@@ -91,7 +91,12 @@ import {
 } from "@/lib/hook-splice";
 import { isExclusiveHookRefine } from "@/lib/agent/direct-refine-policy";
 import { copyToClipboard } from "@/lib/clipboard";
-import { draftEgressBody } from "@/lib/markdown/mode";
+import {
+  contentBodyForFormat,
+  draftEgressBody,
+  draftMarkdownEnabled,
+  type ContentFormat,
+} from "@/lib/markdown/mode";
 import { localDateFromDatetimeInput } from "@/lib/schedule-local-date";
 import { suggestedScheduleLocalInput } from "@/lib/next-open-schedule-day";
 import { useCopiedFlag } from "@/lib/use-copied-flag";
@@ -385,7 +390,7 @@ export function ChatWorkspace({
   initialVoiceReady,
   initialNextAction,
   author,
-  markdownMode = false,
+  writerContentFormat = "plain",
 }: {
   initialChats: ChatSummary[];
   initialChatId: string | null;
@@ -397,11 +402,7 @@ export function ChatWorkspace({
   initialVoiceReady: boolean;
   initialNextAction: CoworkNextAction;
   author: Author;
-  // True when the app-wide writer model emits markdown (GPT-5.6 Luna). Only the
-  // assistant's PROSE render reads this (draft bodies gate on their own persisted
-  // meta.markdown). Defaults false → the untouched legacy render for every other
-  // model, so this is a no-op unless Luna is the active OPENROUTER_CHAT_MODEL.
-  markdownMode?: boolean;
+  writerContentFormat?: ContentFormat;
 }) {
   const [chats, setChats] = useState<ChatSummary[]>(initialChats);
   const [chatSession] = useState(() =>
@@ -2610,6 +2611,7 @@ export function ChatWorkspace({
         userMsg,
         assistantId,
         rawText: "",
+        contentFormat: writerContentFormat,
         tools: [],
         plan: [],
         artifacts: [],
@@ -3213,6 +3215,7 @@ export function ChatWorkspace({
     setAttachments,
     chatSession,
     setActiveId,
+    writerContentFormat,
   ]);
 
   // Stop the active chat's in-flight run — really stop it, not just cancel
@@ -3903,9 +3906,10 @@ export function ChatWorkspace({
           ) : (
             <div className={cn("mx-auto flex max-w-4xl flex-col pb-2", isBatchChat ? "gap-3" : "gap-7")}>
               {messages.map((m) => (
-                <MessageBubble
-                  key={m.id}
-                  message={m}
+                  <MessageBubble
+                    key={m.id}
+                    message={m}
+                    legacyContentFormat={writerContentFormat}
                   onRetry={async () => {
                     let originalTask = retryTask(messages, m.id);
                     let canonicalSettledWithoutRetry = false;
@@ -4038,7 +4042,6 @@ export function ChatWorkspace({
                     }
                     void send(text, { forceRefine: true });
                   }}
-                  markdownMode={markdownMode}
                 />
               ))}
               {/* Live worker board for the batch chat — bridges the silence
@@ -5340,7 +5343,7 @@ function MessageBubble({
   message,
   onRetry,
   onAnswer,
-  markdownMode = false,
+  legacyContentFormat,
 }: {
   message: Message;
   // Re-runs the exact user task that produced this failed assistant turn.
@@ -5348,8 +5351,7 @@ function MessageBubble({
   // Submit handler for the clarifying-question card (ask_user): sends the
   // composed answer as the next user message.
   onAnswer: (text: string, ask: AskQuestion, actionSelectionIds: string[]) => void;
-  // App-wide markdown model (Luna): normalize the assistant's prose on render.
-  markdownMode?: boolean;
+  legacyContentFormat: ContentFormat;
 }) {
   if (message.role === "user") {
     return (
@@ -5483,7 +5485,12 @@ function MessageBubble({
           never restyled. */}
       {message.text && (
         <div className="text-[15px] leading-7 whitespace-pre-wrap text-foreground">
-          {renderRichText(message.text, "chat", message.streaming, markdownMode)}
+          {renderRichText(
+            message.text,
+            "chat",
+            message.streaming,
+            (message.contentFormat ?? legacyContentFormat) === "markdown",
+          )}
         </div>
       )}
 
@@ -5493,7 +5500,10 @@ function MessageBubble({
           visible on touch. */}
       {message.text && !message.streaming && (
         <MessageCopyButton
-          text={message.text}
+          text={contentBodyForFormat(
+            message.text,
+            message.contentFormat ?? legacyContentFormat,
+          )}
           className="-ml-1.5 self-start opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
         />
       )}
@@ -6130,7 +6140,8 @@ function BatchPreviewCard({
   const title = (artifact.title ?? "").trim() || "Draft";
   const displayBody =
     artifact.kind === "post" ? normalizePostBody(artifact.body) : artifact.body;
-  const preview = compactBatchDraftPreview(title, displayBody);
+  const linkedInBody = draftEgressBody(displayBody, artifact.meta);
+  const preview = compactBatchDraftPreview(title, linkedInBody);
   // The auto-selected lead-magnet resource for this batch draft. Shown as a
   // "Giveaway: X" pill so the user sees which resource got attached without
   // opening the full artifact card. Uses the same reader as ArtifactCard.
@@ -6158,7 +6169,7 @@ function BatchPreviewCard({
   const copy = async () => {
     // For a markdown-model draft, copy the LinkedIn-ready form (Unicode bold, "• "
     // bullets, no raw markdown) so pasting into LinkedIn matches publish.
-    if (await copyToClipboard(draftEgressBody(displayBody, artifact.meta))) {
+    if (await copyToClipboard(linkedInBody)) {
       markCopied();
     }
   };
@@ -6237,7 +6248,7 @@ function BatchPreviewCard({
       </button>
       {expanded && (
         <div className="whitespace-pre-wrap px-4 pb-3 text-sm leading-relaxed">
-          {displayBody}
+          {linkedInBody}
         </div>
       )}
       {/* Generated lead-magnet image — the credit-spend feedback surface. Three
@@ -6670,7 +6681,12 @@ function ArtifactCard({
       const res = await fetch(`/api/drafts/${refiningDraftId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ body }),
+        body: JSON.stringify({
+          body,
+          content_format: draftMarkdownEnabled(artifact.meta)
+            ? "markdown"
+            : "plain",
+        }),
       });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || "Failed to update post");
@@ -6689,18 +6705,29 @@ function ArtifactCard({
   const save = canUpdateOriginal ? updateOriginal : saveAsNew;
 
   const persistScheduleChanges = async (draftId: string, errorMessage: string) => {
-    if (!dirty && !scheduleMediaChanged) return;
+    // A refine artifact is newer than the Posts row even when the user has not
+    // edited it locally (`dirty` compares against the artifact, not the row).
+    // Always carry its body + format back to the original before scheduling.
+    const shouldPersistBody = dirty || canUpdateOriginal;
+    if (!shouldPersistBody && !scheduleMediaChanged) return;
     const res = await fetch(`/api/drafts/${draftId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        ...(dirty ? { body } : {}),
+        ...(shouldPersistBody ? { body } : {}),
+        ...(shouldPersistBody && canUpdateOriginal
+          ? {
+              content_format: draftMarkdownEnabled(artifact.meta)
+                ? "markdown"
+                : "plain",
+            }
+          : {}),
         media_attachments: scheduleMediaAttachments,
       }),
     });
     const data = await res.json();
     if (!data.ok) throw new Error(data.error || errorMessage);
-    if (dirty) onBodyChange?.(body);
+    if (shouldPersistBody) onBodyChange?.(body);
     setSaved(true);
   };
 

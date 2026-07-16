@@ -1,5 +1,10 @@
 import { describe, test, expect } from "vitest";
-import { openRouterCost, openRouterUsageCost, CHAT_MODEL } from "@/lib/openrouter";
+import {
+  openRouterCost,
+  openRouterUsageCost,
+  hasOpenRouterPricing,
+  CHAT_MODEL,
+} from "@/lib/openrouter";
 import { DECISION_MODEL } from "@/lib/agent/decide";
 
 // ---------------------------------------------------------------------------
@@ -31,15 +36,7 @@ describe("openRouterCost — pricing-table correctness", () => {
   test("the DECISION_MODEL slug is actually in the price table (no GLM-5.1 fallback)", () => {
     // If decide.ts's model id ever drifts from a pricing key, the rate would
     // silently revert to the GLM-5.1 fallback and under-count decision spend.
-    // Prove the DECISION_MODEL's exact slug prices DIFFERENTLY from the fallback
-    // → it's a real entry. (Whatever OPENROUTER_CHAT_MODEL resolves to must be a
-    // priced entry; the default glm-5.2 is, and is distinct from the glm-5.1
-    // fallback.) Skip only in the degenerate case where the model IS the
-    // fallback slug itself.
-    if (DECISION_MODEL === "z-ai/glm-5.1") return;
-    const decision = openRouterCost(DECISION_MODEL, M, M);
-    const glmFallback = openRouterCost("z-ai/glm-5.1", M, M);
-    expect(decision).not.toBeCloseTo(glmFallback, 6);
+    expect(hasOpenRouterPricing(DECISION_MODEL)).toBe(true);
   });
 
   test("a realistic decision call (~800 in / 120 out) costs a fraction of a cent", () => {
@@ -60,7 +57,7 @@ describe("openRouterCost — pricing-table correctness", () => {
 // pin the GLM-5.2 rate AND prove CHAT_MODEL is priced by its OWN entry (not the
 // generic GLM-5.1 fallback that unknown models land on).
 // ---------------------------------------------------------------------------
-describe("openRouterCost — GLM-5.2 chat pricing", () => {
+describe("openRouterCost — chat-model pricing", () => {
   test("prices GLM-5.2 at $0.93 in / $3.00 out", () => {
     expect(openRouterCost("z-ai/glm-5.2", M, M)).toBeCloseTo(3.93, 6);
     expect(openRouterCost("z-ai/glm-5.2", M, 0)).toBeCloseTo(0.93, 6);
@@ -71,15 +68,8 @@ describe("openRouterCost — GLM-5.2 chat pricing", () => {
     expect(openRouterCost("z-ai/glm-5.2", M, 0, M)).toBeCloseTo(0.18, 6);
   });
 
-  test("CHAT_MODEL is GLM-5.2 and priced by its own entry (not the GLM-5.1 fallback)", () => {
-    // The exact model the chat agent runs on must be priced by its own row, or
-    // the monthly cost cap mis-counts. The unknown-model fallback is GLM-5.1
-    // ($1.4/$4.4); GLM-5.2 ($0.93/$3) is cheaper, so a distinct number proves
-    // CHAT_MODEL resolved to a real GLM-5.2 entry rather than falling through.
-    const chat = openRouterCost(CHAT_MODEL, M, M);
-    const glmFallback = openRouterCost("z-ai/glm-5.1", M, M);
-    expect(chat).not.toBeCloseTo(glmFallback, 6);
-    expect(chat).toBeCloseTo(3.93, 6); // and it's the GLM-5.2 rate specifically
+  test("the configured CHAT_MODEL has an explicit pricing row", () => {
+    expect(hasOpenRouterPricing(CHAT_MODEL)).toBe(true);
   });
 
   test("a typical chat turn (~15k in incl. 14k cached, ~1.5k out) is a small fraction of a cent", () => {
@@ -88,6 +78,15 @@ describe("openRouterCost — GLM-5.2 chat pricing", () => {
     const cost = openRouterCost("z-ai/glm-5.2", 15_000, 1_500, 14_000);
     expect(cost).toBeCloseTo(0.00795, 5);
     expect(cost).toBeLessThan(0.02);
+  });
+});
+
+describe("openRouterCost — GPT-5.6 Luna pricing", () => {
+  test("prices Luna at $1 input / $6 output / $0.10 cache read", () => {
+    expect(openRouterCost("openai/gpt-5.6-luna", M, M)).toBeCloseTo(7, 6);
+    expect(openRouterCost("openai/gpt-5.6-luna", M, 0)).toBeCloseTo(1, 6);
+    expect(openRouterCost("openai/gpt-5.6-luna", 0, M)).toBeCloseTo(6, 6);
+    expect(openRouterCost("openai/gpt-5.6-luna", M, 0, M)).toBeCloseTo(0.1, 6);
   });
 });
 

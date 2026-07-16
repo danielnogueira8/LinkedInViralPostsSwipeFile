@@ -2,8 +2,8 @@ import { describe, test, expect } from "vitest";
 import {
   draftMarkdownEnabled,
   draftEgressBody,
-  markdownModeForModel,
-  MARKDOWN_MODELS,
+  contentFormatForModel,
+  stampDraftFormat,
 } from "@/lib/markdown/mode";
 import { toUnicodeStyle } from "@/lib/markdown/unicode-styles";
 
@@ -17,36 +17,31 @@ import { toUnicodeStyle } from "@/lib/markdown/unicode-styles";
 
 const BOLD = (s: string) => toUnicodeStyle(s, "bold");
 
-describe("markdownModeForModel", () => {
-  test("true for a model on the MARKDOWN_MODELS allowlist (GPT-5.6 Luna)", () => {
-    expect(markdownModeForModel("openai/gpt-5.6-luna")).toBe(true);
+describe("contentFormatForModel", () => {
+  test("markdown for GPT-5.6 Luna", () => {
+    expect(contentFormatForModel("openai/gpt-5.6-luna")).toBe("markdown");
   });
 
   test("matches case-insensitively on the full slug", () => {
-    expect(markdownModeForModel("OpenAI/GPT-5.6-Luna")).toBe(true);
+    expect(contentFormatForModel("OpenAI/GPT-5.6-Luna")).toBe("markdown");
   });
 
-  test("false for non-markdown writer models (Haiku, GLM, Gemini, Qwen)", () => {
-    expect(markdownModeForModel("anthropic/claude-haiku-4.5")).toBe(false);
-    expect(markdownModeForModel("z-ai/glm-5.2")).toBe(false);
-    expect(markdownModeForModel("google/gemini-3.1-pro-preview")).toBe(false);
-    expect(markdownModeForModel("qwen/qwen3.7-plus")).toBe(false);
+  test("plain for non-markdown writer models (Haiku, GLM, Gemini, Qwen)", () => {
+    expect(contentFormatForModel("anthropic/claude-haiku-4.5")).toBe("plain");
+    expect(contentFormatForModel("z-ai/glm-5.2")).toBe("plain");
+    expect(contentFormatForModel("google/gemini-3.1-pro-preview")).toBe("plain");
+    expect(contentFormatForModel("qwen/qwen3.7-plus")).toBe("plain");
   });
 
-  test("false for null/undefined/empty (no model resolved)", () => {
-    expect(markdownModeForModel(null)).toBe(false);
-    expect(markdownModeForModel(undefined)).toBe(false);
-    expect(markdownModeForModel("")).toBe(false);
+  test("plain for null/undefined/empty (no model resolved)", () => {
+    expect(contentFormatForModel(null)).toBe("plain");
+    expect(contentFormatForModel(undefined)).toBe("plain");
+    expect(contentFormatForModel("")).toBe("plain");
   });
 
-  test("a partial/substring match does NOT count (exact slug only)", () => {
-    // Guards against a loose includes() — a different openai model must be off.
-    expect(markdownModeForModel("openai/gpt-5.6")).toBe(false);
-    expect(markdownModeForModel("gpt-5.6-luna")).toBe(false);
-  });
-
-  test("the allowlist is exactly Luna (change is intentional, not accidental)", () => {
-    expect([...MARKDOWN_MODELS]).toEqual(["openai/gpt-5.6-luna"]);
+  test("a partial/substring match remains plain (exact slug only)", () => {
+    expect(contentFormatForModel("openai/gpt-5.6")).toBe("plain");
+    expect(contentFormatForModel("gpt-5.6-luna")).toBe("plain");
   });
 });
 
@@ -63,6 +58,23 @@ describe("draftMarkdownEnabled", () => {
     // Truthy-but-not-true values must NOT enable it (defensive against junk jsonb).
     expect(draftMarkdownEnabled({ markdown: "true" })).toBe(false);
     expect(draftMarkdownEnabled({ markdown: 1 })).toBe(false);
+  });
+});
+
+describe("draft format provenance", () => {
+  test("stamps markdown drafts while preserving unrelated metadata", () => {
+    expect(
+      stampDraftFormat({ source: "weekly_batch" }, "openai/gpt-5.6-luna"),
+    ).toEqual({ source: "weekly_batch", markdown: true });
+  });
+
+  test("a plain-model rewrite removes inherited markdown provenance", () => {
+    expect(
+      stampDraftFormat(
+        { source: "model_source", markdown: true },
+        "anthropic/claude-haiku-4.5",
+      ),
+    ).toEqual({ source: "model_source" });
   });
 });
 

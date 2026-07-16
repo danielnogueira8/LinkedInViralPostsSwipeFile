@@ -10,9 +10,10 @@
 //   • blockquotes → the "> " marker is dropped
 //   • horizontal rules (---, ***, ___) → dropped
 //
-// HARD INVARIANT: the output contains NO markdown metacharacters that could leak
-// to LinkedIn as literal syntax — no unescaped `*`, `_`, `#`, backtick, or the
-// `[...](...)` link shape. `assertNoMarkdown` proves it and the tests assert it.
+// Only recognized markdown constructs are rewritten. Literal characters remain
+// literal: hashtags, URL fragments, multiplication operators, and code content
+// must survive byte-for-byte. A broad "remove markdown characters" cleanup is
+// unsafe because the same characters have ordinary meanings in LinkedIn posts.
 //
 // SELF-CONTAINED on purpose: no markdown-parser dependency. This runs on model
 // output (derived from untrusted scraped content upstream), so a small, auditable
@@ -38,12 +39,46 @@ const ITALIC_STAR_RE = /(?<![*\w])\*(?=\S)([^*\n]+?)(?<=\S)\*(?![*\w])/g;
 const LINK_RE = /\[([^\]\n]+)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
 // `code` → code (drop the backticks). Non-greedy, no inner backtick.
 const INLINE_CODE_RE = /`([^`\n]+)`/g;
+const RAW_URL_RE = /https?:\/\/[^\s<>()]+/g;
+
+function protect(
+  input: string,
+  pattern: RegExp,
+  namespace: "code" | "url",
+): { text: string; restore: (value: string) => string } {
+  const sentinelEnd = String.fromCodePoint(0xe001);
+  let sentinelStart = String.fromCodePoint(0xe000);
+  while (input.includes(`${sentinelStart}${namespace}`)) {
+    sentinelStart += String.fromCodePoint(0xe000);
+  }
+  const values: string[] = [];
+  const text = input.replace(pattern, (match, ...groups: unknown[]) => {
+    const value = pattern === INLINE_CODE_RE && typeof groups[0] === "string"
+      ? groups[0]
+      : match;
+    const token = `${sentinelStart}${namespace}${values.length}${sentinelEnd}`;
+    values.push(value);
+    return token;
+  });
+  return {
+    text,
+    restore: (value) =>
+      value.replace(
+        new RegExp(`${sentinelStart}${namespace}(\\d+)${sentinelEnd}`, "g"),
+        (_match, index: string) => values[Number(index)] ?? "",
+      ),
+  };
+}
 
 function transformInline(line: string): string {
-  let out = line;
-  // Order matters: links first (their brackets shouldn't be touched by emphasis),
-  // then bold (before italic), then italics, then inline code last.
+  // Code is literal, so protect it before any emphasis pass. Links are expanded
+  // before raw URLs are protected, allowing emphasis in link labels while the
+  // destination (including #fragments) remains untouched.
+  const code = protect(line, INLINE_CODE_RE, "code");
+  let out = code.text;
   out = out.replace(LINK_RE, (_m, text: string, url: string) => `${text} (${url})`);
+  const urls = protect(out, RAW_URL_RE, "url");
+  out = urls.text;
   out = out.replace(BOLD_RE, (_m, _marker, inner: string) =>
     toUnicodeStyle(inner, "bold"),
   );
@@ -53,8 +88,7 @@ function transformInline(line: string): string {
   out = out.replace(ITALIC_STAR_RE, (_m, inner: string) =>
     toUnicodeStyle(inner, "italic"),
   );
-  out = out.replace(INLINE_CODE_RE, (_m, inner: string) => inner);
-  return out;
+  return code.restore(urls.restore(out));
 }
 
 // ---- block-level line classifiers -------------------------------------------
@@ -99,7 +133,7 @@ export function markdownToLinkedIn(md: string): string {
     const heading = rawLine.match(HEADING_RE);
     if (heading) {
       const text = transformInline(heading[2].trim());
-      out.push(toUnicodeStyle(stripResidualMarks(text), "bold"));
+      out.push(toUnicodeStyle(text, "bold"));
       continue;
     }
 
@@ -130,9 +164,7 @@ export function markdownToLinkedIn(md: string): string {
     out.push(transformInline(rawLine));
   }
 
-  // Belt-and-suspenders: strip any markdown metacharacter that survived (e.g. an
-  // unmatched "*" or a stray "#"), so the LinkedIn output is guaranteed clean.
-  return stripResidualMarks(out.join("\n"));
+  return out.join("\n");
 }
 
 // Map a run of leading spaces (list indentation) to a normalized 2-spaces/level.
@@ -141,20 +173,20 @@ function normalizeIndent(raw: string): string {
   return "  ".repeat(Math.min(level, 4));
 }
 
-// Remove any leftover markdown emphasis/heading/code characters that weren't part
-// of a matched construct (unbalanced `*`, stray `#` mid-line, lone backtick).
-// Underscores are LEFT ALONE here — they're common in normal prose/handles and we
-// only strip them when they form a matched _italic_ pair above.
-function stripResidualMarks(text: string): string {
-  return text.replace(/[*#`]/g, "");
-}
-
 /**
- * Test/guard helper: true when `text` still contains a markdown metacharacter
- * that could render as literal syntax on LinkedIn. The converter's output must
- * always make this false.
+ * Test/guard helper: true when `text` still contains a recognized markdown
+ * construct. Literal marker characters alone are not markdown.
  */
 export function hasResidualMarkdown(text: string): boolean {
-  // Any *, #, or backtick is a leak. A bare "[x](y)" link shape is a leak too.
-  return /[*#`]/.test(text) || /\[[^\]\n]+\]\([^)\s]+\)/.test(text);
+  return (
+    /^\s{0,3}#{1,6}\s+/m.test(text) ||
+    /^\s{0,3}>\s?/m.test(text) ||
+    /^\s*[-*+]\s+/m.test(text) ||
+    /^\s*`{3,}/m.test(text) ||
+    /\[[^\]\n]+\]\([^)\s]+\)/.test(text) ||
+    /`[^`\n]+`/.test(text) ||
+    /(\*\*|__)(?=\S)[^\n]+?(?<=\S)\1/.test(text) ||
+    /(?<![*\w])\*(?=\S)[^*\n]+?(?<=\S)\*(?![*\w])/.test(text) ||
+    /(?<![A-Za-z0-9_])_(?=\S)[^_\n]+?(?<=\S)_(?![A-Za-z0-9_])/.test(text)
+  );
 }

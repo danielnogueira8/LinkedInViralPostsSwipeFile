@@ -111,16 +111,10 @@ export function isTurnRunning(
 // cheaper frees its share the moment it's released. Kept in sync with the DB
 // default (p_turn_cost_estimate).
 //
-// When the decision pre-pass is ON (the default now — AGENT_DECISION_LAYER != 0),
-// each turn ALSO makes a Sonnet-4.6 call BEFORE this reservation's turn work —
-// Sonnet is ~10-25× GLM's per-token rate. The decision call is small (last ~6
-// turns, maxTokens 300 → ~$0.006-0.008), so a heavy GLM turn + a decision call
-// can nudge just over the base $0.05 estimate. Add headroom for it when the
-// layer is enabled so the reservation still bounds concurrent overshoot. (The
-// hard $10 ceiling always holds via the post-turn actual-cost reconciliation;
-// this only keeps the in-flight *reservation* honest.) Kept in sync with
-// decisionLayerEnabled() in decide.ts — read locally (not imported) to avoid
-// pulling the decide module's supabase/openrouter deps into the rate limiter.
+// The decision pre-pass and the main turn now both default to CHAT_MODEL. The
+// base $0.05 plus $0.01 pre-pass headroom covers the current Luna workload and
+// the retained Sonnet/Gemini A/B models; cost-reserves.test.ts pins representative
+// token volumes against the configured model's explicit price row.
 const BASE_TURN_COST_ESTIMATE_USD = numEnv("CHAT_TURN_COST_ESTIMATE_USD", 0.05);
 const DECISION_LAYER_ON = process.env.AGENT_DECISION_LAYER !== "0";
 // Per-turn cost reservation = base GLM turn estimate + a Sonnet decision-layer
@@ -161,16 +155,15 @@ export function turnCostEstimateForContent(
 // budget-protection weight. Estimates are conservative (round up) so the pre-
 // check errs toward blocking slightly early rather than letting a workspace
 // tip over the monthly cap.
-//   VOICE: an Apify scrape + an 8000-token GLM-5.2 reasoning call.
+//   VOICE: an Apify scrape + an 8000-token CHAT_MODEL reasoning call.
 //   BATCH: seven post generations (5 regular + 2 lead-magnet); each headless
 //     completeChat is a small self-contained turn.
 //   VISION_PER_IMAGE: one Claude-Sonnet-4.6 vision call (~700 output tokens)
 //     used by the chat stream to summarize an attached image.
 export const VOICE_JOB_COST_RESERVE_USD = 0.25; // ~$0.19 typical + margin
-// Batch reserve headroom: 7 headless generations (~$0.045 each) + 7 sameness
-// passes (~$0.010 each Sonnet call over ~4-5K prompt tokens). ~$0.39 typical;
-// 0.50 gives comfortable margin for a lead-magnet batch that stacks a couple
-// of retries on top.
+// Batch reserve headroom: seven CHAT_MODEL generations plus sameness passes and
+// retry margin. The reserve intentionally remains conservative across Luna and
+// the retained A/B models.
 export const BATCH_JOB_COST_RESERVE_USD = 0.5;
 export const VISION_CALL_COST_RESERVE_USD = 0.03; // ~700 tokens Sonnet-4.6 + margin
 // One grounded news search (search_news tool): ~$0.02 Exa web-plugin fee

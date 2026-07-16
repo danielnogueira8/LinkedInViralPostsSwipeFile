@@ -36,6 +36,7 @@ export type SessionViewMessage<Tool, Plan, Ask, Artifact, Recoverable> = {
   id: string;
   role: "user" | "assistant";
   text: string;
+  contentFormat?: "plain" | "markdown";
   files?: string[];
   tools?: Tool[];
   plan?: Plan[];
@@ -51,6 +52,7 @@ export function runOverlay<Tool, Plan, Ask, Artifact extends { kind: string }, R
     userMsg: SessionViewMessage<Tool, Plan, Ask, Artifact, Recoverable>;
     assistantId: string;
     rawText: string;
+    contentFormat?: "plain" | "markdown";
     tools: Tool[];
     plan: Plan[];
     ask?: Ask;
@@ -69,6 +71,7 @@ export function runOverlay<Tool, Plan, Ask, Artifact extends { kind: string }, R
     id: run.assistantId,
     role: "assistant" as const,
     text: stripArtifactFences(run.rawText),
+    contentFormat: run.contentFormat,
     tools: run.tools,
     plan: run.plan,
     ask: run.ask,

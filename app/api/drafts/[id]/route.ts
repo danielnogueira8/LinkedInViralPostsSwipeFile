@@ -52,6 +52,7 @@ const patchSchema = z
       .nullable()
       .optional(),
     media_attachments: postMediaAttachmentsSchema.optional(),
+    content_format: z.enum(["plain", "markdown"]).optional(),
   })
   .refine(
     (v) =>
@@ -60,7 +61,8 @@ const patchSchema = z
       v.status !== undefined ||
       v.kind !== undefined ||
       v.plan_to_post_on !== undefined ||
-      v.media_attachments !== undefined,
+      v.media_attachments !== undefined ||
+      v.content_format !== undefined,
     { message: "Nothing to update" },
   );
 
@@ -100,6 +102,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       kind: input.kind,
       planToPostOn: input.plan_to_post_on,
       mediaAttachments: input.media_attachments,
+      contentFormat: input.content_format,
     });
     if (!outcome.ok) return outcomeResponse(outcome);
     revalidatePath("/dashboard/posts");

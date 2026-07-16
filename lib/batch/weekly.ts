@@ -76,6 +76,7 @@ import { enqueueLeadMagnetImageJob } from "@/lib/lead-magnet-image-jobs";
 import type { PostMediaAttachment } from "@/lib/post-media";
 import { trackedAccountIds } from "@/lib/supabase-scoped";
 import { buildWeeklyDraftSystemBlocks } from "@/lib/batch/weekly-draft-prompt";
+import { stampDraftFormat } from "@/lib/markdown/mode";
 
 // How many drafts a batch produces, and how many of those are sourced from a
 // lead-magnet post (adapted with the user's lead_magnet_style when present).
@@ -1512,6 +1513,7 @@ export async function runWeeklyBatch(opts: {
         is_lead_magnet: isLeadMagnet,
         generated_at: nowIso,
       };
+      meta = stampDraftFormat(meta, CHAT_MODEL) as BatchDraftMeta;
       const leadMagnetForImage: LeadMagnetImageContext | null = campaign
         ? campaignImageContext(campaign)
         : null;

@@ -4,6 +4,7 @@ import {
   type ChatMessage,
   type Usage,
 } from "@/lib/openrouter";
+import { distinctFallbackModel } from "@/lib/agent/model-routing";
 
 // Mirrors completeChat's reasoningEffort union (openrouter.ts). Kept local so
 // this module doesn't depend on an un-exported inline type.
@@ -18,8 +19,12 @@ export type ReasoningEffort = "minimal" | "low" | "medium" | "high";
 export const PRIMARY_DRAFT_WRITER_MODEL =
   process.env.OPENROUTER_DIRECT_WRITER_MODEL || CHAT_MODEL;
 export const FALLBACK_DRAFT_WRITER_MODEL =
-  process.env.OPENROUTER_DIRECT_WRITER_FALLBACK_MODEL ||
-  "anthropic/claude-sonnet-5";
+  distinctFallbackModel(
+    PRIMARY_DRAFT_WRITER_MODEL,
+    process.env.OPENROUTER_DIRECT_WRITER_FALLBACK_MODEL ||
+      "anthropic/claude-sonnet-5",
+    ["google/gemini-3.5-flash"],
+  );
 
 // THIN PATH writer models. The thin drafting path (see draft-engine `lean`
 // mode) runs the writer with reasoning ON and no taste machinery, so its raw
@@ -32,7 +37,12 @@ export const FALLBACK_DRAFT_WRITER_MODEL =
 export const THIN_DRAFT_WRITER_MODEL =
   process.env.OPENROUTER_THIN_WRITER_MODEL || CHAT_MODEL;
 export const THIN_DRAFT_WRITER_FALLBACK_MODEL =
-  process.env.OPENROUTER_THIN_WRITER_FALLBACK_MODEL || "anthropic/claude-sonnet-5";
+  distinctFallbackModel(
+    THIN_DRAFT_WRITER_MODEL,
+    process.env.OPENROUTER_THIN_WRITER_FALLBACK_MODEL ||
+      "anthropic/claude-sonnet-5",
+    ["google/gemini-3.5-flash"],
+  );
 
 export type DraftWriterStage = "primary" | "repair" | "fallback";
 
@@ -43,10 +53,9 @@ export type DraftWriterRequest = {
   maxTokens: number;
   timeoutMs: number;
   signal?: AbortSignal;
-  // "none" disables reasoning (the legacy Qwen/GLM direct writer — those models
-  // don't benefit and it keeps latency down). A ReasoningEffort keeps reasoning
-  // ON, which is where a strong reasoning model (Gemini 3.1 Pro, Sonnet) earns
-  // its quality — the thin path passes "medium".
+  // "none" means no explicit reasoning override. This avoids excluding a
+  // provider that cannot accept OpenRouter's reasoning controls when the writer
+  // model changes. A ReasoningEffort explicitly opts the thin path into it.
   reasoning: "none" | ReasoningEffort;
 };
 
@@ -70,7 +79,7 @@ export const openRouterDraftWriter: DraftWriterAdapter = {
       signal: request.signal,
       timeoutMs: request.timeoutMs,
       ...(request.reasoning === "none"
-        ? { disableReasoning: true }
+        ? {}
         : { reasoningEffort: request.reasoning }),
     });
     return {

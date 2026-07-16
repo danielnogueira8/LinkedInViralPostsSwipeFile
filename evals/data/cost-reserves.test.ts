@@ -6,7 +6,9 @@ import {
   READ_ONLY_ORCHESTRATOR_COST_RESERVE_USD,
   MAX_VISION_CALLS_PER_TURN,
   hasCostAllowanceForEstimate,
+  turnCostEstimate,
 } from "@/lib/agent/rate-limit";
+import { CHAT_MODEL, hasOpenRouterPricing, openRouterCost } from "@/lib/openrouter";
 
 // The default monthly budget ($5). Kept as a literal rather than importing
 // the module's own MONTHLY_BUDGET_USD (env-configurable at runtime → shouldn't
@@ -26,6 +28,14 @@ const DEFAULT_MONTHLY_BUDGET_USD = 5;
 // ---------------------------------------------------------------------------
 
 describe("cost reserves for non-chat LLM paths — sanity", () => {
+  test("the configured chat model has an explicit rate and fits the representative turn reserve", () => {
+    expect(hasOpenRouterPricing(CHAT_MODEL)).toBe(true);
+    const mainTurn = openRouterCost(CHAT_MODEL, 15_000, 1_500, 14_000);
+    const decision = openRouterCost(CHAT_MODEL, 800, 120);
+    expect(mainTurn + decision).toBeLessThanOrEqual(
+      turnCostEstimate(0.05, true),
+    );
+  });
   test.each([
     ["VOICE_JOB_COST_RESERVE_USD", VOICE_JOB_COST_RESERVE_USD],
     ["BATCH_JOB_COST_RESERVE_USD", BATCH_JOB_COST_RESERVE_USD],

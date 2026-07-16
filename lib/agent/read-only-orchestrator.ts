@@ -25,6 +25,7 @@ import {
 } from "@/lib/agent/adapter-health";
 import { runCoworkAdapterAttempt } from "@/lib/agent/cowork-adapter-attempt";
 import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
+import { distinctFallbackModel } from "@/lib/agent/model-routing";
 
 // Primary defaults to the one app-wide chat model (OPENROUTER_CHAT_MODEL) so
 // every text-LLM call uses the SAME model unless pinned via
@@ -32,8 +33,12 @@ import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
 export const PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL =
   process.env.OPENROUTER_READ_ONLY_ORCHESTRATOR_MODEL || CHAT_MODEL;
 export const FALLBACK_READ_ONLY_ORCHESTRATOR_MODEL =
-  process.env.OPENROUTER_READ_ONLY_ORCHESTRATOR_FALLBACK_MODEL ||
-  "google/gemini-3.5-flash";
+  distinctFallbackModel(
+    PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL,
+    process.env.OPENROUTER_READ_ONLY_ORCHESTRATOR_FALLBACK_MODEL ||
+      "google/gemini-3.5-flash",
+    ["anthropic/claude-sonnet-5"],
+  );
 // Leave five seconds inside the 90-second complex-turn SLO for the caller to
 // persist and flush the terminal event after this generator completes.
 export const READ_ONLY_ORCHESTRATOR_DEADLINE_MS = 85_000;
@@ -908,8 +913,12 @@ function safeHttpUrl(value: string): string | null {
 export const PRIMARY_WEB_RESEARCH_MODEL =
   process.env.OPENROUTER_WEB_RESEARCH_MODEL || CHAT_MODEL;
 export const FALLBACK_WEB_RESEARCH_MODEL =
-  process.env.OPENROUTER_WEB_RESEARCH_FALLBACK_MODEL ||
-  FALLBACK_READ_ONLY_ORCHESTRATOR_MODEL;
+  distinctFallbackModel(
+    PRIMARY_WEB_RESEARCH_MODEL,
+    process.env.OPENROUTER_WEB_RESEARCH_FALLBACK_MODEL ||
+      FALLBACK_READ_ONLY_ORCHESTRATOR_MODEL,
+    ["anthropic/claude-sonnet-5", "google/gemini-3.5-flash"],
+  );
 
 export type WebResearchResult = {
   sources: DraftEngineGroundedSource[];
@@ -945,7 +954,6 @@ export const runGroundedWebResearch: RunWebResearch = async (input) => {
             model,
             maxTokens: 1_200,
             timeoutMs: 30_000,
-            disableReasoning: true,
             plugins: [{ id: "web", max_results: 6 }],
             signal: input.signal,
             messages: [
@@ -1145,7 +1153,6 @@ export const inspectAttachmentEvidence: InspectAttachments = async (input) => {
             model,
             maxTokens: 2_000,
             timeoutMs: 25_000,
-            disableReasoning: true,
             tools: [ATTACHMENT_EVIDENCE_TOOL],
             forceTool: "report_attachment_evidence",
             signal: input.signal,
@@ -1268,6 +1275,7 @@ export type ReadOnlyOrchestratorInput = {
   draftEngineInput: DraftEngineInput;
   signal?: AbortSignal;
   cancellationProbe?: (signal: AbortSignal) => Promise<boolean>;
+  onModelUsed?: (model: string) => void;
   telemetry?: CoworkTurnTelemetry;
 };
 
@@ -1766,6 +1774,7 @@ async function* runReadOnlyOrchestratorCore(
         cancellationReason: () =>
           input.deadlineExceeded() ? "deadline" : "cancelled",
       });
+      input.onModelUsed?.(adapter.model);
       if (await input.cancellationBoundary()) {
         yield completedDone({
           content: interruptionContent(

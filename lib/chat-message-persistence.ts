@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ToolCall } from "@/lib/openrouter";
+import type { ContentFormat } from "@/lib/markdown/mode";
 
 export async function persistChatAssistantTurn(opts: {
   sb: SupabaseClient;
@@ -12,6 +13,7 @@ export async function persistChatAssistantTurn(opts: {
   outputTokens: number | null;
   toolMessages: Array<{ content: string; tool_call_id: string | null }>;
   terminalReason: "done" | "ask" | "cancelled" | "deadline" | "error";
+  contentFormat: ContentFormat;
 }): Promise<{ error: { message: string } | null }> {
   const declaredCallIds = new Set((opts.toolCalls ?? []).map((call) => call.id));
   const matchingToolMessages = opts.toolMessages.filter(
@@ -29,6 +31,7 @@ export async function persistChatAssistantTurn(opts: {
     p_output_tokens: opts.outputTokens,
     p_tool_messages: matchingToolMessages,
     p_terminal_reason: opts.terminalReason,
+    p_content_format: opts.contentFormat,
   });
   return { error: error ? { message: error.message } : null };
 }

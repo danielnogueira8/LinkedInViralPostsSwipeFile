@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { fetchJson } from "@/lib/api-fetch";
 import { draftEgressBody } from "@/lib/markdown/mode";
+import { LINKEDIN_MAX_CHARS } from "@/lib/linkedin-format";
 import { localDateFromDatetimeInput } from "@/lib/schedule-local-date";
 import {
   MessageSquare,
@@ -44,8 +45,8 @@ import { DraftEditor } from "./draft-editor";
 import { cn } from "@/lib/utils";
 import { POST_INTENTS } from "@/lib/post-intents";
 import { AvatarImg } from "@/components/avatar-img";
-import type { Draft, DraftStatus, DraftKind } from "./posts/drafts-list";
-import { leadMagnetContextFromMeta } from "@/lib/draft-lead-magnet";
+import type { Draft, DraftStatus, DraftKind } from "@/lib/draft-view";
+import { normalizeDraft } from "@/lib/draft-view";
 import {
   MAX_LINKEDIN_IMAGES,
   validatePostMediaFile,
@@ -203,6 +204,7 @@ export function DraftEditorModal({
   }
 
   const trimmed = body.trim();
+  const linkedInBody = draftEgressBody(body, draft?.meta);
   const dirty = trimmed !== (draft?.body ?? "").trim();
   const mediaAttachments = isNew ? newMedia : draft?.mediaAttachments ?? [];
   const busy = saving || handing;
@@ -620,7 +622,7 @@ export function DraftEditorModal({
                   />
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <EditorStat label="Characters" value={body.length.toLocaleString()} />
+                      <EditorStat label="Characters" value={linkedInBody.length.toLocaleString()} />
                       <EditorStat label="Paragraphs" value={paragraphCount.toLocaleString()} />
                     </div>
                     <div className="inline-flex rounded-full border border-border bg-card/80 p-0.5 shadow-soft">
@@ -666,7 +668,7 @@ export function DraftEditorModal({
                 ) : (
                   <LinkedInPostPreview
                     author={author}
-                    body={body}
+                    body={linkedInBody}
                     attachments={mediaAttachments}
                   />
                 )}
@@ -1706,48 +1708,6 @@ function PropRow({
   );
 }
 
-// Coerce the API row (loose strings from JSON) into the board's Draft shape.
-// Exported for the unit test; kept in sync with drafts-list's Draft type.
-export function normalizeDraft(row: {
-  id: string;
-  title: string | null;
-  body: string;
-  kind: string;
-  status: string;
-  plan_to_post_on: string | null;
-  chat_id: string | null;
-  created_at: string;
-  meta?: unknown;
-  media_attachments?: unknown;
-}): Draft {
-  const status: DraftStatus =
-    row.status === "idea" ||
-    row.status === "drafting" ||
-    row.status === "ready" ||
-    row.status === "posted"
-      ? row.status
-      : "idea";
-  return {
-    id: row.id,
-    title: row.title,
-    body: row.body,
-    kind:
-      row.kind === "hook" || row.kind === "lead_magnet" ? row.kind : "post",
-    status,
-    planToPostOn: row.plan_to_post_on,
-    chatId: row.chat_id,
-    createdAt: row.created_at,
-    leadMagnet: leadMagnetContextFromMeta(row.meta),
-    meta:
-      row.meta && typeof row.meta === "object"
-        ? (row.meta as Record<string, unknown>)
-        : null,
-    mediaAttachments: Array.isArray(row.media_attachments)
-      ? (row.media_attachments as PostMediaAttachment[])
-      : [],
-  };
-}
-
 // ISO instant → the value a <input type="datetime-local"> expects (local wall
 // time, no zone, minute precision). Returns "" for null/invalid.
 function isoToLocalInput(iso: string | null | undefined): string {
@@ -1765,8 +1725,6 @@ function localInputToIso(v: string): string | null {
   const d = new Date(v); // parsed as LOCAL time
   return isNaN(d.getTime()) ? null : d.toISOString();
 }
-
-const LINKEDIN_MAX = 3000;
 
 // The "Publish to LinkedIn" control in the draft editor. Turns the draft into a
 // real, timed auto-publish via the Zernio cron (POST /api/drafts/[id]/schedule),
@@ -1817,7 +1775,8 @@ function ScheduleRow({
   // Successfully published — the cron flipped schedule_status='published' and
   // stamped published_at. The card should show WHEN, not the picker/connect prompt.
   const published = draft.scheduleStatus === "published";
-  const overLimit = draft.body.length > LINKEDIN_MAX;
+  const publishBody = draftEgressBody(draft.body, draft.meta);
+  const overLimit = publishBody.length > LINKEDIN_MAX_CHARS;
   const hasMedia = (draft.mediaAttachments?.length ?? 0) > 0;
   const mediaExpiry = mediaExpiryMs(draft.mediaAttachments ?? []);
   const mediaTooLate =
@@ -2014,8 +1973,8 @@ function ScheduleRow({
         />
         <div className="flex items-center gap-2">
           <span className={cn("text-xs", overLimit ? "text-destructive" : "text-muted-foreground")}>
-            {draft.body.length}/{LINKEDIN_MAX}
-            {overLimit && ` — trim ${draft.body.length - LINKEDIN_MAX}`}
+            {publishBody.length}/{LINKEDIN_MAX_CHARS}
+            {overLimit && ` — trim ${publishBody.length - LINKEDIN_MAX_CHARS}`}
           </span>
           <Button
             size="sm"
