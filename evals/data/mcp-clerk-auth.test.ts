@@ -3,7 +3,7 @@ import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
 
 type Membership = {
   createdAt: number;
-  organization: { id: string };
+  organization: { id: string; createdBy?: string | null };
 };
 
 let memberships: Membership[] = [];
@@ -35,12 +35,13 @@ function req(url = "https://example.com/api/mcp", headers?: HeadersInit): Reques
 
 describe("MCP Clerk auth workspace binding", () => {
   beforeEach(() => {
+    // Default: one org the user owns (their personal workspace).
     memberships = [
-      { createdAt: 1, organization: { id: "org_one" } },
+      { createdAt: 1, organization: { id: "org_one", createdBy: "user_1" } },
     ];
   });
 
-  test("uses the only workspace when the user has one membership", async () => {
+  test("uses the user's own workspace when they have one membership", async () => {
     const info = await verifyToken(req(), "bearer");
 
     expect(info?.extra?.workspaceId).toBe("org_one");
@@ -49,8 +50,8 @@ describe("MCP Clerk auth workspace binding", () => {
 
   test("uses an explicit workspace from the connector URL when the user is a member", async () => {
     memberships = [
-      { createdAt: 1, organization: { id: "org_one" } },
-      { createdAt: 2, organization: { id: "org_two" } },
+      { createdAt: 1, organization: { id: "org_one", createdBy: "user_1" } },
+      { createdAt: 2, organization: { id: "org_two", createdBy: "user_2" } },
     ];
 
     const info = await verifyToken(req("https://example.com/api/mcp?workspace_id=org_two"), "bearer");
@@ -60,8 +61,8 @@ describe("MCP Clerk auth workspace binding", () => {
 
   test("uses X-Workspace-Id when provided", async () => {
     memberships = [
-      { createdAt: 1, organization: { id: "org_one" } },
-      { createdAt: 2, organization: { id: "org_two" } },
+      { createdAt: 1, organization: { id: "org_one", createdBy: "user_1" } },
+      { createdAt: 2, organization: { id: "org_two", createdBy: "user_2" } },
     ];
 
     const info = await verifyToken(req("https://example.com/api/mcp", {
@@ -71,10 +72,34 @@ describe("MCP Clerk auth workspace binding", () => {
     expect(info?.extra?.workspaceId).toBe("org_two");
   });
 
-  test("rejects multi-workspace tokens without an explicit workspace", async () => {
+  // The fix: a multi-org user (e.g. old dev orgs + the prod org) with no explicit
+  // workspace hint used to be REJECTED, which made Claude loop on "connect
+  // again". Now we bind to the user's canonical personal workspace — the org
+  // they CREATED — the same org the dashboard uses.
+  test("multi-org + no hint → binds to the org the user CREATED (canonical personal)", async () => {
     memberships = [
-      { createdAt: 1, organization: { id: "org_one" } },
-      { createdAt: 2, organization: { id: "org_two" } },
+      { createdAt: 1, organization: { id: "org_member_only", createdBy: "someone_else" } },
+      { createdAt: 2, organization: { id: "org_mine", createdBy: "user_1" } },
+    ];
+
+    const info = await verifyToken(req(), "bearer");
+
+    expect(info?.extra?.workspaceId).toBe("org_mine");
+  });
+
+  test("no hint + no OWNED org (only member of others) → rejected (never bind to a foreign org)", async () => {
+    memberships = [
+      { createdAt: 1, organization: { id: "org_a", createdBy: "someone_else" } },
+      { createdAt: 2, organization: { id: "org_b", createdBy: "another" } },
+    ];
+
+    await expect(verifyToken(req(), "bearer")).resolves.toBeUndefined();
+  });
+
+  test("no hint + MULTIPLE owned orgs (ambiguous) → rejected (can't safely pick)", async () => {
+    memberships = [
+      { createdAt: 1, organization: { id: "org_x", createdBy: "user_1" } },
+      { createdAt: 2, organization: { id: "org_y", createdBy: "user_1" } },
     ];
 
     await expect(verifyToken(req(), "bearer")).resolves.toBeUndefined();
