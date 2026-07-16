@@ -2,6 +2,7 @@ import { cache } from "react";
 import { supabaseAdmin } from "./supabase";
 import { requireWorkspaceId } from "./workspace";
 import { retryRead } from "./retry-read";
+import { encodePostgrestValue } from "./postgrest";
 
 /**
  * Workspace-scoped Supabase client.
@@ -104,15 +105,6 @@ export const scopedSupabase = cache(async function scopedSupabase() {
   };
 });
 
-// PostgREST .or() values containing reserved characters (commas, parens,
-// dots in some positions) must be wrapped in double quotes. We always
-// quote when the value contains anything outside the safe character set;
-// safe values pass through unquoted to keep query logs readable.
-function encodePostgrestValue(v: string): string {
-  if (/^[A-Za-z0-9_-]+$/.test(v)) return v;
-  // Escape embedded backslashes and double quotes per PostgREST grammar.
-  return `"${v.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
-}
 
 /**
  * For routes that need to query global tables (accounts/posts/templates) but

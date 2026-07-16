@@ -10,10 +10,25 @@
 --   OLD (org): org_3GakrmAVKMpNIR5jipFPeAVnDyf
 --   NEW (user): user_3GakrmqrbJ7DbKiyvbCmkMokcbK
 --
--- This is a single-user prod workspace, so it's a clean 1:1 org→user swap with
--- NO merge conflicts (unlike the earlier dev→prod merge). Every table gets a
--- plain UPDATE; the composite-unique tables can't collide because one org maps
--- to exactly one user that owns no rows under any other id.
+-- This is a single-user prod workspace, so it's a clean 1:1 org→user swap.
+-- Every table gets a plain UPDATE.
+--
+-- ⚠️ CORRECTION / LESSON FOR ANY REUSE (this file already ran in prod as-is):
+--   The original claim that "composite-unique tables can't collide because the
+--   target user owns no rows under any other id" was FALSE. `publishing_connections`
+--   (unique on (workspace_id, network)) DID have a pre-existing user-keyed row,
+--   so its plain UPDATE at line 44 could not move the org row onto the same key.
+--   Because the whole script is one transaction, a real collision would RAISE
+--   `duplicate key ...` and roll back the ENTIRE re-key — not silently skip a row.
+--   (Here the org row for publishing_connections was inert and got left as an
+--   orphan shell; see delete-orphan-org-publishing-connection.sql.)
+--   If you COPY this for another org→user cutover where the target user may
+--   already own rows, do NOT use a bare UPDATE on any unique-keyed table. Use:
+--       delete from T where workspace_id = OLD
+--         and exists (select 1 from T t2 where t2.workspace_id = NEW
+--                     and t2.<unique cols> = T.<unique cols>);   -- drop losers
+--       update T set workspace_id = NEW where workspace_id = OLD;  -- move rest
+--   or an `update ... where not exists (...)` guard per unique key.
 --
 -- Org ids are inlined as string literals (NOT psql \set vars) so they also work
 -- if any DO $$ block is added later. Run as ONE transaction. Snapshot the DB
