@@ -1,7 +1,7 @@
 "use client";
 
 import { Check, Copy } from "lucide-react";
-import { toast } from "sonner";
+import { copyToClipboard } from "@/lib/clipboard";
 import { useCopiedFlag } from "@/lib/use-copied-flag";
 
 type CopyButtonProps = {
@@ -26,12 +26,8 @@ function CopyButton({
   const [copied, markCopied] = useCopiedFlag();
 
   async function handleCopy() {
-    try {
-      await navigator.clipboard.writeText(value);
+    if (await copyToClipboard(value, successMessage, errorMessage)) {
       markCopied();
-      toast.success(successMessage);
-    } catch {
-      toast.error(errorMessage);
     }
   }
 

@@ -5,6 +5,7 @@ import { useCopiedFlag } from "@/lib/use-copied-flag";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { fetchJson } from "@/lib/api-fetch";
+import { copyToClipboard } from "@/lib/clipboard";
 import { draftEgressBody } from "@/lib/markdown/mode";
 import { LINKEDIN_MAX_CHARS } from "@/lib/linkedin-format";
 import { localDateFromDatetimeInput } from "@/lib/schedule-local-date";
@@ -298,15 +299,17 @@ export function DraftEditorModal({
   };
 
   const copy = async () => {
-    try {
-      // For a markdown-model draft, copy the LinkedIn-ready form (matches publish
-      // and the card copy). `trimmed` is the live-edited body; fall back to the
-      // saved body. draftEgressBody is a no-op unless meta.markdown is set.
-      const raw = trimmed || draft?.body || "";
-      await navigator.clipboard.writeText(draftEgressBody(raw, draft?.meta));
+    // For a markdown-model draft, copy the LinkedIn-ready form (matches publish
+    // and the card copy). `trimmed` is the live-edited body; fall back to the
+    // saved body. draftEgressBody is a no-op unless meta.markdown is set.
+    const raw = trimmed || draft?.body || "";
+    if (
+      await copyToClipboard(
+        draftEgressBody(raw, draft?.meta),
+        "Copied to clipboard",
+      )
+    ) {
       markCopied();
-    } catch {
-      toast.error("Couldn't copy to clipboard.");
     }
   };
 
