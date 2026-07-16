@@ -102,7 +102,6 @@ import { suggestedScheduleLocalInput } from "@/lib/next-open-schedule-day";
 import { useCopiedFlag } from "@/lib/use-copied-flag";
 import { resolveIntent } from "@/lib/post-intents";
 import { AvatarImg } from "@/components/avatar-img";
-import type { CitedPost } from "@/lib/cite-resolve";
 import { Button } from "@/components/ui/button";
 import { normalizePostBody } from "@/lib/post-body-normalize";
 import { looksCorruptedDraft } from "@/lib/agent/specialists/nets";
@@ -5444,12 +5443,6 @@ function MessageBubble({
     draftRendered,
   );
   const status = agentStatus({ ...message, tools: activityTools });
-  // Cited source posts attached to this message, with their resolved card.
-  // Defensive: only render a cite whose meta.card actually resolved.
-  const citeCards = (message.artifacts ?? [])
-    .filter((a) => a.kind === "cite")
-    .map((a) => ({ id: a.id, card: (a.meta?.card as CitedPost | undefined) }))
-    .filter((c): c is { id: string; card: CitedPost } => !!c.card);
 
   return (
     <div className="group flex flex-col gap-3">
@@ -5508,17 +5501,12 @@ function MessageBubble({
         />
       )}
 
-      {/* Cited source posts — compact one-line LINKS, not full preview cards, so
-          the chat stays clean. Each links out to the original post (or, lacking a
-          URL, is omitted). The agent references them in its prose; this is just a
-          "see the source" affordance. */}
-      {citeCards.length > 0 && (
-        <div className="flex flex-col gap-1">
-          {citeCards.map((c) => (
-            <SourceLink key={c.id} post={c.card} />
-          ))}
-        </div>
-      )}
+      {/* Cited source posts are intentionally NOT rendered in the chat. A "what's
+          working" analysis references many posts but the model cited only some,
+          which read as an inconsistent, partial source list. Sources belong on
+          DRAFTS (a modeled draft shows its "Source post" link via meta.source_url),
+          not floating under chat prose. The cite artifacts still carry draft
+          source metadata upstream; they just no longer render as chat cards. */}
 
       {/* Clarifying question (ask_user): an interactive card with the agent's
           options + a free-text box. Shown once the turn settles; submitting
@@ -5696,45 +5684,6 @@ function AskCard({
         </Button>
       </div>
     </div>
-  );
-}
-
-// A cited swipe-file post, rendered as a COMPACT one-line link rather than a full
-// preview card — so the agent can reference several sources without cluttering
-// the chat. Shows the author + a short snippet and links out to the original
-// post. If there's no URL to open, falls back to non-clickable text (the agent's
-// prose already named the post, so this is just a "go see it" affordance).
-function SourceLink({ post }: { post: CitedPost }) {
-  const name = post.authorName || "a source post";
-  const snippet = (post.text ?? "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 70);
-  const label = (
-    <>
-      <FileText className="h-3.5 w-3.5 shrink-0 opacity-70" />
-      <span className="font-medium shrink-0">{name}</span>
-      {snippet && (
-        <span className="truncate text-muted-foreground">· {snippet}</span>
-      )}
-    </>
-  );
-  const cls =
-    "group inline-flex max-w-full items-center gap-1.5 rounded-full border border-border bg-card/80 px-2.5 py-1.5 text-xs text-foreground shadow-sm";
-  if (!post.postUrl) {
-    return <div className={cls}>{label}</div>;
-  }
-  return (
-    <a
-      href={post.postUrl}
-      target="_blank"
-      rel="noopener noreferrer"
-      className={cn(cls, "hover:bg-accent/60 transition-colors")}
-      title={`Open ${name}'s post in a new tab`}
-    >
-      {label}
-      <ExternalLink className="h-3 w-3 shrink-0 opacity-50 group-hover:opacity-100 transition-opacity" />
-    </a>
   );
 }
 
