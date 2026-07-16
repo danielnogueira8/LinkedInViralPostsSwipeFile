@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Bold,
-  Italic,
   List,
   ListOrdered,
   Smile,
@@ -101,6 +100,13 @@ export function DraftEditor({
     left: number;
   } | null>(null);
   const [askBusy, setAskBusy] = useState(false);
+  // Where to anchor the "Rewriting…" indicator. The prompt box (askState) closes
+  // the instant a rewrite starts so the edit can stream into the textarea, but
+  // the request has real latency before the first token — without this the user
+  // sees nothing at all during that window. We keep the last anchor here so a
+  // small working indicator can sit over the selection for the whole in-flight
+  // period (including the pre-first-token wait).
+  const [askBusyPos, setAskBusyPos] = useState<{ top: number; left: number } | null>(null);
 
   const openAsk = useCallback(() => {
     const ta = taRef.current;
@@ -140,6 +146,9 @@ export function DraftEditor({
     const after = value.slice(askState.end);
     const start = askState.start;
     // The prompt box closes immediately; the edit happens live in the textarea.
+    // Keep its anchor so the "Rewriting…" indicator can sit there until the
+    // request resolves (covers the latency before the first streamed token).
+    setAskBusyPos({ top: askState.top, left: askState.left });
     setAskState(null);
     let rewritten = "";
     let errored: string | null = null;
@@ -212,6 +221,7 @@ export function DraftEditor({
       toast.error((e as Error).message);
     } finally {
       setAskBusy(false);
+      setAskBusyPos(null);
     }
   }
 
@@ -280,7 +290,7 @@ export function DraftEditor({
   const over = count > LINKEDIN_MAX_CHARS;
 
   return (
-    // Bold/Italic/lists/Ask-AI live in the floating toolbar that pops over a
+    // Bold/lists/Ask-AI live in the floating toolbar that pops over a
     // selection. Emoji needs a cursor (not a selection), so it sits on a small
     // always-visible bar above the textarea.
     <div className={cn("flex flex-col gap-2", className)}>
@@ -336,7 +346,6 @@ export function DraftEditor({
           left={floatPos.left}
           onAsk={openAsk}
           onBold={() => onStyle("bold")}
-          onItalic={() => onStyle("italic")}
           onBullet={() => applyToSelection(toggleBulletList)}
           onNumber={() => applyToSelection(toggleNumberedList)}
         />
@@ -351,6 +360,22 @@ export function DraftEditor({
           onSubmit={submitAsk}
           onClose={() => setAskState(null)}
         />
+      )}
+
+      {/* Working indicator: once the prompt closes and the rewrite is in flight,
+          show a spinner over the selection so it's clear the AI is running —
+          even during the latency before the first streamed token arrives. */}
+      {askBusy && askBusyPos && !askState && (
+        <div
+          className="fixed z-30 -translate-x-1/2 -translate-y-full"
+          style={{ top: askBusyPos.top - 8, left: askBusyPos.left }}
+          aria-live="polite"
+        >
+          <div className="flex items-center gap-1.5 rounded-lg border border-border bg-white px-2.5 py-1.5 text-xs font-medium text-muted-foreground shadow-lg">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            Rewriting…
+          </div>
+        </div>
       )}
 
       {/* Character counter — LinkedIn truncates the preview at ~210 and caps at
@@ -385,7 +410,6 @@ function FloatingToolbar({
   left,
   onAsk,
   onBold,
-  onItalic,
   onBullet,
   onNumber,
 }: {
@@ -393,7 +417,6 @@ function FloatingToolbar({
   left: number;
   onAsk: () => void;
   onBold: () => void;
-  onItalic: () => void;
   onBullet: () => void;
   onNumber: () => void;
 }) {
@@ -425,9 +448,6 @@ function FloatingToolbar({
         <div className="mx-0.5 h-4 w-px bg-muted" />
         <FloatButton label="Bold" onMouseDown={press(onBold)}>
           <Bold className="h-3.5 w-3.5" />
-        </FloatButton>
-        <FloatButton label="Italic" onMouseDown={press(onItalic)}>
-          <Italic className="h-3.5 w-3.5" />
         </FloatButton>
         <div className="mx-0.5 h-4 w-px bg-muted" />
         <FloatButton label="Bulleted list" onMouseDown={press(onBullet)}>
