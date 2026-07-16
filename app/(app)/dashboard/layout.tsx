@@ -9,14 +9,13 @@ import Image from "next/image";
 import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import { supabaseAdmin } from "@/lib/supabase";
-import { resolvePersonalWorkspaceForUser } from "@/lib/personal-workspace";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const { userId, orgId } = await auth();
+  // workspace_id == the Clerk user id (1 user = 1 workspace). A signed-in user
+  // always has one, so there's no org to provision or select — the old
+  // resolve-personal-org + /select-workspace bounce is gone.
+  const { userId } = await auth();
   if (!userId) redirect("/sign-in");
-
-  const personalWorkspaceId = await resolvePersonalWorkspaceForUser(userId);
-  if (orgId !== personalWorkspaceId) redirect("/select-workspace");
 
   // First-time onboarding gate. Welcome lives outside this layout (/welcome)
   // so we can redirect freely without re-entering. Existing users who already
@@ -26,7 +25,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
     sb
       .from("settings")
       .select("key")
-      .eq("workspace_id", orgId)
+      .eq("workspace_id", userId)
       .eq("key", "onboarded_at")
       .maybeSingle(),
   ]);
@@ -35,12 +34,12 @@ export default async function DashboardLayout({ children }: { children: React.Re
     const { count: trackedCount } = await sb
       .from("workspace_accounts")
       .select("account_id", { count: "exact", head: true })
-      .eq("workspace_id", orgId);
+      .eq("workspace_id", userId);
 
     if ((trackedCount ?? 0) > 0) {
       await sb.from("settings").upsert(
         {
-          workspace_id: orgId,
+          workspace_id: userId,
           key: "onboarded_at",
           value: { at: new Date().toISOString(), backfilled: true },
           updated_at: new Date().toISOString(),

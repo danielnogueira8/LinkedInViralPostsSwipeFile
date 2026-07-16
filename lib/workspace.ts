@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 
 export class NoWorkspaceError extends Error {
   constructor() {
-    super("No active workspace. Create or select a Clerk organization first.");
+    super("You're not signed in.");
     this.name = "NoWorkspaceError";
   }
 }
@@ -12,13 +12,13 @@ export class NoWorkspaceError extends Error {
  * Map a thrown error to a JSON `{ ok: false, error }` response for API routes.
  *
  * `scopedSupabase()` calls `requireWorkspaceId()`, which throws
- * `NoWorkspaceError` when the session has no active org. Routes that don't
+ * `NoWorkspaceError` when the request has no Clerk session. Routes that don't
  * catch it let the throw bubble into Next's default 500 handler, which returns
  * an HTML error page — and `fetchJson` then either mislabels it
  * `Request failed (500)` or (on some statuses) `AuthExpiredError`, hiding the
  * real cause. Funnel route errors through here so the client always gets the
- * proper envelope: 400 for the recoverable no-workspace case (the user just
- * needs to select/create an org), 500 for anything genuinely server-side.
+ * proper envelope: 400 for the recoverable no-session case, 500 for anything
+ * genuinely server-side.
  */
 export function errorResponse(e: unknown): NextResponse {
   if (e instanceof NoWorkspaceError) {
@@ -32,21 +32,26 @@ export function errorResponse(e: unknown): NextResponse {
 
 /**
  * Resolve the current workspace_id from the Clerk session.
- * workspace_id == Clerk org_id (we don't keep a local workspaces table).
  *
- * Throws if the user has no active organization. Server-side only.
+ * workspace_id == Clerk USER id. Each user is their own workspace (1:1); there
+ * is no organization layer. (Historically workspace_id was the Clerk org_id,
+ * which required an org to exist + be the active session org — that indirection
+ * caused the sign-up "no personal org" wall, the select-workspace bounce, and
+ * the MCP multi-org auth loop. Keying on the user id removes all of it.)
+ *
+ * Throws if the request has no Clerk session. Server-side only.
  */
 export async function requireWorkspaceId(): Promise<string> {
-  const { orgId } = await auth();
-  if (!orgId) throw new NoWorkspaceError();
-  return orgId;
+  const { userId } = await auth();
+  if (!userId) throw new NoWorkspaceError();
+  return userId;
 }
 
 /**
  * Same as above but returns null instead of throwing — for routes that can
- * render a "create your first workspace" empty state.
+ * render a signed-out empty state instead of erroring.
  */
 export async function getWorkspaceId(): Promise<string | null> {
-  const { orgId } = await auth();
-  return orgId ?? null;
+  const { userId } = await auth();
+  return userId ?? null;
 }
