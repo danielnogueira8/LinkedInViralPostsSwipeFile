@@ -16,6 +16,7 @@ import {
   toggleStyle,
   toggleBulletList,
   toggleNumberedList,
+  applyRewriteBoundary,
   EMOJI_GROUPS,
   LINKEDIN_MAX_CHARS,
   LINKEDIN_SEE_MORE_CHARS,
@@ -145,6 +146,9 @@ export function DraftEditor({
     const before = value.slice(0, askState.start);
     const after = value.slice(askState.end);
     const start = askState.start;
+    // Snapshot the original selection so we can preserve the line breaks it
+    // carried at its edges when we settle the rewrite (see applyRewriteBoundary).
+    const originalSelection = askState.selected;
     // The prompt box closes immediately; the edit happens live in the textarea.
     // Keep its anchor so the "Rewriting…" indicator can sit there until the
     // request resolves (covers the latency before the first streamed token).
@@ -196,10 +200,10 @@ export function DraftEditor({
         }
       });
       if (errored) throw new Error(errored);
-      // Settle on a trimmed result (the old non-streaming path trimmed too, so
-      // a stray leading/trailing newline from the model doesn't survive). Only
-      // re-render if trimming actually changed something.
-      const finalText = rewritten.trim();
+      // Settle the rewrite, preserving the line breaks the original selection
+      // carried at its edges (a "\n\n" paragraph break in the selection used to
+      // get trimmed away, merging two paragraphs). Only re-render if it changed.
+      const finalText = applyRewriteBoundary(rewritten, originalSelection);
       if (finalText !== rewritten) onChange(before + finalText + after);
       // Final focus + re-select so the user can immediately act on the result.
       requestAnimationFrame(() => {
@@ -321,6 +325,13 @@ export function DraftEditor({
             onClose={() => setEmojiOpen(false)}
           />
         )}
+        {/* Discovery hint: the AI-edit toolbar only appears on a text selection,
+            so it's easy to miss. Surface it here, to the right of the emoji
+            button. Hidden on very narrow widths to avoid crowding the bar. */}
+        <span className="ml-2 hidden items-center gap-1 text-[11px] text-muted-foreground sm:inline-flex">
+          <AiIcon className="h-3 w-3" aria-hidden />
+          Select any text to edit it with AI
+        </span>
       </div>
 
       <textarea
