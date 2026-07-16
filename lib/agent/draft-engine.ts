@@ -145,6 +145,7 @@ export type DraftEngineTask =
 
 export type DraftEngineInput = {
   workspaceId: string;
+  sessionId?: string;
   userInstruction: string;
   task?: DraftEngineTask;
   voiceResult: ToolResult;
@@ -718,6 +719,7 @@ function attemptRequest(opts: {
       : DIRECT_WRITER_MAX_TOKENS,
     timeoutMs: opts.input.lean ? THIN_WRITER_TIMEOUT_MS : DIRECT_WRITER_TIMEOUT_MS,
     signal: opts.signal,
+    sessionId: opts.input.sessionId,
     // Reasoning ON for the strong thin-path model; the legacy path leaves the
     // model/provider default untouched for cross-model compatibility.
     reasoning: opts.input.lean ? "medium" : "none",

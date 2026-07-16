@@ -53,6 +53,7 @@ export type DraftWriterRequest = {
   maxTokens: number;
   timeoutMs: number;
   signal?: AbortSignal;
+  sessionId?: string;
   // "none" means no explicit reasoning override. This avoids excluding a
   // provider that cannot accept OpenRouter's reasoning controls when the writer
   // model changes. A ReasoningEffort explicitly opts the thin path into it.
@@ -78,6 +79,7 @@ export const openRouterDraftWriter: DraftWriterAdapter = {
       maxTokens: request.maxTokens,
       signal: request.signal,
       timeoutMs: request.timeoutMs,
+      sessionId: request.sessionId,
       ...(request.reasoning === "none"
         ? {}
         : { reasoningEffort: request.reasoning }),

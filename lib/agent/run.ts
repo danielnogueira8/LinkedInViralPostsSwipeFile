@@ -2285,6 +2285,7 @@ export async function* runAgent(opts: {
                 )
               : toolDefs;
             for await (const delta of streamChat({
+              sessionId: chatId,
               messages: working,
               tools: roundToolDefs,
               // On the first round of a content task, force a tool call so GLM
@@ -3693,6 +3694,7 @@ export async function* runAgent(opts: {
       const forcedMessages = [...working, deliveryNudge];
       try {
         for await (const delta of streamChat({
+          sessionId: chatId,
           messages: forcedMessages,
           // no `tools` → the model cannot emit tool calls this round; the
           // deliveryNudge routes the deliverable through a fenced block instead.

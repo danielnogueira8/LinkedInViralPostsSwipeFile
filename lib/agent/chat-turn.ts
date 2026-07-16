@@ -3543,6 +3543,7 @@ export async function executeChatTurn(
           return observeTurn(
             deps.runDraftEngine({
               workspaceId,
+              sessionId: chatId,
               userInstruction: effectiveUserInstruction,
               task: directWriterTask,
               voiceResult: preloadedVoiceResult!,
