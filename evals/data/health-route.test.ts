@@ -18,6 +18,24 @@ vi.mock("@/lib/supabase", () => ({
   supabaseAdmin: () => ({ from: () => chain }),
 }));
 
+const modelRouting = {
+  planner: {
+    news: { strategy: "server_compiled", model: null },
+    read_only: { primary: "planner-primary", fallback: "planner-fallback" },
+  },
+  search: { primary: "search-primary", fallback: "search-fallback" },
+  writer: {
+    primary: "writer-primary",
+    fallback: "writer-fallback",
+    thin_primary: "thin-primary",
+    thin_fallback: "thin-fallback",
+  },
+};
+
+vi.mock("@/lib/agent/model-config", () => ({
+  activeCoworkModelRouting: () => modelRouting,
+}));
+
 const { GET } = await import("@/app/api/health/route");
 
 beforeEach(() => {
@@ -36,6 +54,7 @@ test("returns a healthy public response without implementation details", async (
 
   expect(response.status).toBe(200);
   expect(body).toMatchObject({ ok: true, db: "up" });
+  expect(body.models).toEqual(modelRouting);
   expect(body).not.toHaveProperty("error");
 });
 
@@ -47,6 +66,7 @@ test("does not expose database errors in the public response", async () => {
 
   expect(response.status).toBe(503);
   expect(body).toMatchObject({ ok: false, db: "down" });
+  expect(body.models).toEqual(modelRouting);
   expect(body).not.toHaveProperty("error");
   expect(console.error).toHaveBeenCalledWith(
     expect.stringContaining("health_check_failed"),

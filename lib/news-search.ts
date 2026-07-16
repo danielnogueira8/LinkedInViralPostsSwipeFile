@@ -1,8 +1,7 @@
 import {
-  CHAT_MODEL,
   completeChat,
   logOpenRouterUsage,
-  SUPPORTED_NEWS_MODELS,
+  UsagePersistenceError,
   type ToolDef,
 } from "@/lib/openrouter";
 import {
@@ -11,12 +10,24 @@ import {
 } from "@/lib/agent/adapter-health";
 import { runCoworkAdapterAttempt } from "@/lib/agent/cowork-adapter-attempt";
 import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
+import {
+  FALLBACK_NEWS_MODEL,
+  PRIMARY_NEWS_MODEL,
+} from "@/lib/agent/model-config";
+
+export {
+  DEFAULT_NEWS_MODEL,
+  FALLBACK_NEWS_MODEL,
+  PRIMARY_NEWS_MODEL,
+  resolveNewsModel,
+} from "@/lib/agent/model-config";
 
 // ---------------------------------------------------------------------------
 // News search for newsjacking. The newsjacking skill needs REAL, RECENT news —
 // the chat model's training data is stale and it happily hallucinates
-// "announcements". This module grounds it: one OpenRouter web-discovery call
-// (Exa-backed), followed by a separate structured normalization call,
+// "announcements". This module grounds it: one bounded OpenRouter web-discovery
+// attempt (Exa-backed), with one cross-model fallback when needed, followed by
+// a separate structured normalization call,
 // then a strict freshness filter (default ≤14 days) so a
 // stale or undated story can never be presented to the agent as "news".
 //
@@ -45,30 +56,20 @@ export const NEWS_MAX_AGE_DAYS = (() => {
 // results ≈ $0.02/search). Also the max stories returned to the agent.
 export const NEWS_MAX_RESULTS = 5;
 
-// News search is a two-call pipeline (grounded discovery + structured
-// normalization) that relies on OpenRouter's NATIVE web search, which only a
+// News search is a grounded-discovery + structured-normalization pipeline that
+// relies on OpenRouter's NATIVE web search, which only a
 // FEW models support well (SUPPORTED_NEWS_MODELS — models that return normal
 // URLs the pipeline can preserve). So news can't follow OPENROUTER_CHAT_MODEL
 // unconditionally like the rest of the app: if the app-wide chat model is one of
 // the supported models, news uses it too (unified); otherwise it falls back to
 // this cheap, known-good default. Pin OPENROUTER_NEWS_MODEL to override.
-const NEWS_FALLBACK_MODEL = "anthropic/claude-haiku-4.5";
-export const DEFAULT_NEWS_MODEL = SUPPORTED_NEWS_MODELS.includes(CHAT_MODEL)
-  ? CHAT_MODEL
-  : NEWS_FALLBACK_MODEL;
-
-export function resolveNewsModel(
-  env: { OPENROUTER_NEWS_MODEL?: string } = {
-    OPENROUTER_NEWS_MODEL: process.env.OPENROUTER_NEWS_MODEL,
-  },
-): string {
-  const configured = env.OPENROUTER_NEWS_MODEL?.trim();
-  return configured && SUPPORTED_NEWS_MODELS.includes(configured)
-    ? configured
-    : DEFAULT_NEWS_MODEL;
-}
-
-const NEWS_MODEL = resolveNewsModel();
+// Three bounded calls (primary discovery, fallback discovery, normalization)
+// must fit inside Cowork's route-wide deadline and still leave time to write.
+const NEWS_STAGE_TIMEOUT_MS = 20_000;
+// A fallback is useful only if the route can still afford that discovery,
+// normalization, and a bounded writer window after it succeeds.
+const NEWS_FALLBACK_MIN_REMAINING_MS =
+  NEWS_STAGE_TIMEOUT_MS * 2 + 20_000;
 
 // Structured output contract for the search call. Forcing this tool means we
 // parse JSON, never prose.
@@ -153,6 +154,7 @@ export async function searchNews(opts: {
   workspaceId: string;
   now?: Date; // injectable for tests
   signal?: AbortSignal;
+  deadlineAtMs?: number;
   telemetry?: CoworkTurnTelemetry;
   adapterHealth?: AdapterHealthRegistry;
 }): Promise<{ results: NewsResult[]; searched: number }> {
@@ -164,53 +166,81 @@ export async function searchNews(opts: {
   // fills the tool with an empty list and returns zero URL citations. Let the
   // grounded web turn finish first, then normalize that evidence separately.
   const registry = opts.adapterHealth ?? coworkAdapterHealth;
-  const discoveryAttempt = await runCoworkAdapterAttempt({
-    registry,
-    adapterKey: `cowork_news_discovery:${NEWS_MODEL}`,
-    signal: opts.signal,
-    call: () =>
-      completeChat({
-        model: NEWS_MODEL,
-        maxTokens: 1800,
-        timeoutMs: 30_000,
-        plugins: [{ id: "web", max_results: NEWS_MAX_RESULTS }],
-        signal: opts.signal,
-        messages: [
-          {
-            role: "system",
-            content:
-              `You are a news research assistant. Today is ${today}. ` +
-              `Search the live web for timely developments about the user's topic within the last ${NEWS_MAX_AGE_DAYS} days. ` +
-              `For ongoing events, include current results, live updates, today's schedule, upcoming fixtures, previews, and newly confirmed developments, not only breaking announcements. ` +
-              `Return up to ${NEWS_MAX_RESULTS} candidates with title, full URL, publication or last-updated date, source, and a factual summary. ` +
-              `Only report stories you actually found in the search results — never invent or fill from memory. ` +
-              `Prefer primary or established sources. If nothing timely exists, say so plainly.`,
-          },
-          {
-            role: "user",
-            content:
-              `Topic: ${opts.query.slice(0, 500)}\n` +
-              `Today: ${today}\n` +
-              `Search specifically for the latest coverage, results, schedules, announcements, and developments relevant right now.`,
-          },
-        ],
-      }),
-    validate: (response) => response,
-    persistUsage: (response) =>
-      logOpenRouterUsage(
-        "news_search",
-        NEWS_MODEL,
-        response.usage,
-        opts.workspaceId,
-        { phase: "discovery" },
-      ),
-    usage: (response) => response.usage,
-    telemetry: opts.telemetry,
-    stage: "news_discovery",
-    attempt: 1,
-    model: NEWS_MODEL,
-    rejectedReasonCode: "invalid_news_discovery",
-  });
+  const runDiscovery = (model: string, attempt: number, fallbackReason?: string) =>
+    runCoworkAdapterAttempt({
+      registry,
+      adapterKey: `cowork_news_discovery:${model}`,
+      signal: opts.signal,
+      call: () =>
+        completeChat({
+          model,
+          maxTokens: 1800,
+          timeoutMs: NEWS_STAGE_TIMEOUT_MS,
+          plugins: [{ id: "web", max_results: NEWS_MAX_RESULTS }],
+          signal: opts.signal,
+          messages: [
+            {
+              role: "system",
+              content:
+                `You are a news research assistant. Today is ${today}. ` +
+                `Search the live web for timely developments about the user's topic within the last ${NEWS_MAX_AGE_DAYS} days. ` +
+                `For ongoing events, include current results, live updates, today's schedule, upcoming fixtures, previews, and newly confirmed developments, not only breaking announcements. ` +
+                `Return up to ${NEWS_MAX_RESULTS} candidates with title, full URL, publication or last-updated date, source, and a factual summary. ` +
+                `Only report stories you actually found in the search results — never invent or fill from memory. ` +
+                `Prefer primary or established sources. If nothing timely exists, say so plainly.`,
+            },
+            {
+              role: "user",
+              content:
+                `Topic: ${opts.query.slice(0, 500)}\n` +
+                `Today: ${today}\n` +
+                `Search specifically for the latest coverage, results, schedules, announcements, and developments relevant right now.`,
+            },
+          ],
+        }),
+      validate: (response) => response,
+      persistUsage: (response) =>
+        logOpenRouterUsage(
+          "news_search",
+          model,
+          response.usage,
+          opts.workspaceId,
+          { phase: "discovery" },
+        ),
+      usage: (response) => response.usage,
+      telemetry: opts.telemetry,
+      stage: "news_discovery",
+      attempt,
+      model,
+      fallbackReason,
+      rejectedReasonCode: "invalid_news_discovery",
+    });
+
+  let discoveryAttempt;
+  let discoveryModel = PRIMARY_NEWS_MODEL;
+  try {
+    discoveryAttempt = await runDiscovery(PRIMARY_NEWS_MODEL, 1);
+  } catch (error) {
+    // The caller's signal represents cancellation or the route-wide deadline.
+    // A local stage timeout leaves time for one cross-model recovery; an outer
+    // abort must stop immediately instead of starting more paid work.
+    const remainingMs = opts.deadlineAtMs
+      ? opts.deadlineAtMs - Date.now()
+      : Number.POSITIVE_INFINITY;
+    if (
+      opts.signal?.aborted ||
+      error instanceof UsagePersistenceError ||
+      remainingMs < NEWS_FALLBACK_MIN_REMAINING_MS
+    ) {
+      throw error;
+    }
+    discoveryModel = FALLBACK_NEWS_MODEL;
+    discoveryAttempt = await runDiscovery(
+      FALLBACK_NEWS_MODEL,
+      2,
+      "primary_news_discovery_failed",
+    );
+  }
   const discovery = discoveryAttempt.value;
 
   if (!discovery.text.trim() && !(discovery.citations?.length > 0)) {
@@ -234,13 +264,13 @@ export async function searchNews(opts: {
 
   const normalizationAttempt = await runCoworkAdapterAttempt({
     registry,
-    adapterKey: `cowork_news_normalize:${NEWS_MODEL}`,
+    adapterKey: `cowork_news_normalize:${discoveryModel}`,
     signal: opts.signal,
     call: () =>
       completeChat({
-        model: NEWS_MODEL,
+        model: discoveryModel,
         maxTokens: 1500,
-        timeoutMs: 30_000,
+        timeoutMs: NEWS_STAGE_TIMEOUT_MS,
         tools: [NEWS_RESULTS_TOOL],
         forceTool: "report_news_results",
         signal: opts.signal,
@@ -264,7 +294,7 @@ export async function searchNews(opts: {
     persistUsage: (response) =>
       logOpenRouterUsage(
         "news_search_normalize",
-        NEWS_MODEL,
+        discoveryModel,
         response.usage,
         opts.workspaceId,
         { phase: "normalize" },
@@ -273,7 +303,7 @@ export async function searchNews(opts: {
     telemetry: opts.telemetry,
     stage: "news_normalize",
     attempt: 1,
-    model: NEWS_MODEL,
+    model: discoveryModel,
     rejectedReasonCode: "invalid_news_normalization",
   });
   const normalized = normalizationAttempt.value;

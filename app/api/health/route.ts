@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { activeCoworkModelRouting } from "@/lib/agent/model-config";
 
 // Public liveness/health check for external uptime monitors (Vercel monitors,
 // UptimeRobot, BetterStack, etc.). Unauthenticated ON PURPOSE — a monitor can't
@@ -35,6 +36,7 @@ export async function GET() {
         {
           ok: false,
           db: "down",
+          models: activeCoworkModelRouting(),
           latency_ms: Date.now() - startedAt,
         },
         { status: 503 },
@@ -44,6 +46,7 @@ export async function GET() {
     return NextResponse.json({
       ok: true,
       db: "up",
+      models: activeCoworkModelRouting(),
       latency_ms: Date.now() - startedAt,
     });
   } catch (e) {
@@ -52,6 +55,7 @@ export async function GET() {
       {
         ok: false,
         db: "down",
+        models: activeCoworkModelRouting(),
         latency_ms: Date.now() - startedAt,
       },
       { status: 503 },

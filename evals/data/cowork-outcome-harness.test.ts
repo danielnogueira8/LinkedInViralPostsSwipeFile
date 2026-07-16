@@ -1438,7 +1438,7 @@ describe("production-shaped Cowork outcome harness", () => {
 
     expect(report.pass, report.failureCodes.join(", ")).toBe(true);
     expect(report.observed.agentProviderRounds).toBe(0);
-    expect(report.observed.readOnlyPlannerRequests).toHaveLength(1);
+    expect(report.observed.readOnlyPlannerRequests).toHaveLength(0);
     expect(report.observed.readOnlyTools.map((tool) => tool.name)).toEqual([
       "search_news",
     ]);
@@ -1447,10 +1447,6 @@ describe("production-shaped Cowork outcome harness", () => {
       "tools",
     );
     expect(report.safe.modelStages).toEqual([
-      {
-        kind: "cowork_orchestrator",
-        model: PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL,
-      },
       { kind: "cowork_direct_writer", model: PRIMARY_DRAFT_WRITER_MODEL },
     ]);
   });
@@ -1784,7 +1780,7 @@ describe("production-shaped Cowork outcome harness", () => {
     expect(sequence.pass, JSON.stringify(sequence.attempts)).toBe(true);
     expect(sequence.attempts[1]?.observed.agentProviderRounds).toBe(0);
     expect(sequence.attempts[1]?.observed.readOnlyPlannerRequests).toHaveLength(
-      1,
+      0,
     );
   });
 
