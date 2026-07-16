@@ -165,6 +165,11 @@ export default async function ChatPage({
   const author: Author = {
     name: (voice?.display_name as string | null) || clerkName,
     avatarUrl: (voice?.avatar_url as string | null) || user?.imageUrl || null,
+    // Clerk's photo as a durable backup: voice.avatar_url is a LinkedIn CDN URL
+    // that expires, so when it 404s the draft card falls back to this rather than
+    // straight to initials. (When avatarUrl already IS the Clerk URL, AvatarImg
+    // de-dupes so it's a harmless no-op.)
+    fallbackAvatarUrl: user?.imageUrl || null,
     headline: (voice?.headline as string | null) || null,
   };
 

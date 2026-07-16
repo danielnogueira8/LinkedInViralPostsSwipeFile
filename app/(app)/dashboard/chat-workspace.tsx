@@ -350,6 +350,9 @@ type Attachment = {
 export type Author = {
   name: string;
   avatarUrl: string | null;
+  // A durable backup avatar (the Clerk-hosted photo) tried when avatarUrl — a
+  // LinkedIn CDN URL that expires — fails to load, before falling to initials.
+  fallbackAvatarUrl: string | null;
   headline: string | null;
 };
 
@@ -6950,10 +6953,11 @@ function ArtifactCard({
       <div className="flex items-center gap-2.5 px-3.5 pt-3.5 shrink-0">
         <AvatarImg
           src={author.avatarUrl}
+          fallbackSrc={author.fallbackAvatarUrl}
           className="h-10 w-10 rounded-xl object-cover shrink-0"
           fallback={
-            // Initials placeholder when the avatar is absent OR the LinkedIn CDN
-            // URL has expired (handled inside AvatarImg's onError).
+            // Initials placeholder when no avatar loads: the LinkedIn CDN URL
+            // expired AND the Clerk backup also failed (both tried by AvatarImg).
             <div className="h-10 w-10 rounded-xl bg-muted text-muted-foreground flex items-center justify-center text-sm font-semibold shrink-0">
               {initials || "in"}
             </div>
@@ -8491,6 +8495,7 @@ function EmptyState({
         <div className="flex items-center gap-3.5 text-left">
         <AvatarImg
           src={author.avatarUrl}
+          fallbackSrc={author.fallbackAvatarUrl}
           className="h-14 w-14 shrink-0 rounded-2xl object-cover ring-1 ring-border"
           fallback={
             <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-muted ring-1 ring-border">
