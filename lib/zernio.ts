@@ -417,14 +417,22 @@ export function parseZernioAnalyticsPosts(payload: unknown): ZernioPostAnalytics
   for (const p of posts) {
     if (!p || typeof p !== "object") continue;
     const o = p as Record<string, unknown>;
+    // Field precedence matters. Zernio's /analytics returns a DIFFERENT `_id`
+    // (its own analytics-record id) than the `post._id` createLinkedInPost
+    // returned at publish time — which we stored as zernio_post_id. The original
+    // publish id comes back on the analytics row as `latePostId`, so it MUST be
+    // tried before `_id`; otherwise we'd match on the wrong `_id` and the join to
+    // our artifacts never connects (the "reported>0 but matched=0" bug).
     const postId =
       typeof o.postId === "string"
         ? o.postId
-        : typeof o._id === "string"
-          ? o._id
-          : typeof o.id === "string"
-            ? o.id
-            : null;
+        : typeof o.latePostId === "string"
+          ? o.latePostId
+          : typeof o._id === "string"
+            ? o._id
+            : typeof o.id === "string"
+              ? o.id
+              : null;
     if (!postId) continue;
     out.push({
       postId,

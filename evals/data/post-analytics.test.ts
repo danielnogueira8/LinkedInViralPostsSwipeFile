@@ -61,6 +61,42 @@ describe("parseZernioAnalyticsPosts — defensive shape handling", () => {
     expect(out[0].saves).toBeNull(); // absent metric → null, not 0
   });
 
+  test("latePostId wins over a different _id (the real Zernio /analytics shape)", () => {
+    // Zernio's analytics row carries its OWN analytics-record _id, which is NOT
+    // the id we stored at publish (that comes back as `latePostId`). We must key
+    // on latePostId, or the join to our artifacts misses (reported>0, matched=0).
+    const out = parseZernioAnalyticsPosts({
+      posts: [
+        {
+          _id: "6a5884523d50078def9adc24", // analytics-record id — NOT ours
+          latePostId: "6a58818e9d7b7d4880c26c5e", // the publish id we stored
+          impressions: 120,
+          likes: 8,
+        },
+      ],
+    });
+    expect(out).toHaveLength(1);
+    expect(out[0].postId).toBe("6a58818e9d7b7d4880c26c5e"); // matches zernio_post_id
+    expect(out[0].postId).not.toBe("6a5884523d50078def9adc24");
+    expect(out[0].impressions).toBe(120);
+  });
+
+  test("explicit postId still wins over latePostId (precedence order)", () => {
+    const out = parseZernioAnalyticsPosts({
+      posts: [{ postId: "explicit", latePostId: "late", _id: "mongo" }],
+    });
+    expect(out[0].postId).toBe("explicit");
+  });
+
+  test("falls back to _id / id when no postId or latePostId", () => {
+    expect(
+      parseZernioAnalyticsPosts({ posts: [{ _id: "only-id" }] })[0].postId,
+    ).toBe("only-id");
+    expect(
+      parseZernioAnalyticsPosts({ posts: [{ id: "bare-id" }] })[0].postId,
+    ).toBe("bare-id");
+  });
+
   test("nested metrics object + postId key + alias keys", () => {
     const out = parseZernioAnalyticsPosts({
       posts: [
