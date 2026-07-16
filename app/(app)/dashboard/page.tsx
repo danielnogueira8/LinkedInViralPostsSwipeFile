@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import { currentUser } from "@clerk/nextjs/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { rehydrateCites } from "@/lib/cite-resolve";
+import { rehydrateDraftLifecycle } from "@/lib/draft-lifecycle-rehydrate";
 import type { CustomSkill } from "@/lib/custom-skills";
 import { CHAT_MODEL } from "@/lib/openrouter";
 import { contentFormatForModel } from "@/lib/markdown/mode";
@@ -154,6 +155,7 @@ export default async function ChatPage({
     messages = (msgs ?? []) as MessageRow[];
     // Re-resolve cited source-post cards (only the postId is persisted).
     messages = await rehydrateCites(messages, sb.workspaceId);
+    messages = await rehydrateDraftLifecycle(messages, sb.workspaceId);
   }
 
   // Author identity for the LinkedIn-style draft preview. Prefer the voice
