@@ -91,6 +91,22 @@ export function toggleStyle(selection: string, style: FormatStyle): string {
     : toStyle(selection, style);
 }
 
+// Settle an AI rewrite of a selected span back into place, preserving the
+// LINE BREAKS the user's selection carried at its edges. The model often adds
+// or drops stray edge whitespace, so we trim its own leading/trailing
+// whitespace — but if the ORIGINAL selection started/ended with whitespace
+// (most importantly a "\n\n" paragraph break at the edge of the span), we
+// re-apply exactly that, so the rewrite doesn't merge two paragraphs into one.
+// Pure + exported so the "Ask AI removes a line break" fix is unit-tested.
+export function applyRewriteBoundary(
+  rewritten: string,
+  originalSelection: string,
+): string {
+  const lead = originalSelection.match(/^\s*/)?.[0] ?? "";
+  const trail = originalSelection.match(/\s*$/)?.[0] ?? "";
+  return lead + rewritten.trim() + trail;
+}
+
 // LinkedIn renders no real bullets, so list tools prefix lines with a bullet
 // glyph. We toggle the prefix per line across the selection.
 const BULLET = "• ";
