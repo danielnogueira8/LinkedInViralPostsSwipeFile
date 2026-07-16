@@ -17,9 +17,14 @@ test.describe("Cowork draft lifecycle", () => {
     for (const id of draftsToDelete.splice(0)) {
       try {
         const result = await page.evaluate(async (draftId) => {
-          const unschedule = await fetch(`/api/drafts/${draftId}/schedule`, { method: "DELETE" });
+          const current = await fetch(`/api/drafts/${draftId}`, { cache: "no-store" });
+          const currentPayload = await current.json();
+          const isScheduled = currentPayload?.draft?.schedule_status === "scheduled";
+          const unscheduleStatus = isScheduled
+            ? (await fetch(`/api/drafts/${draftId}/schedule`, { method: "DELETE" })).status
+            : 204;
           const remove = await fetch(`/api/drafts/${draftId}`, { method: "DELETE" });
-          return { unscheduleStatus: unschedule.status, removeStatus: remove.status };
+          return { unscheduleStatus, removeStatus: remove.status };
         }, id);
         if (result.unscheduleStatus >= 500 || result.removeStatus >= 300) {
           cleanupFailures.push(
@@ -249,6 +254,182 @@ test.describe("Cowork draft lifecycle", () => {
     });
     expect(externalPublishAttempted).toBe(false);
   });
+
+  test("generates, refines, copies, saves, schedules, and cancels one Cowork draft", async ({
+    page,
+    context,
+  }) => {
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    await page.goto("/dashboard");
+    const chat = await createChat(page, `Cowork full lifecycle ${Date.now()}`);
+    chatsToDelete.push(chat.id);
+
+    const artifactId = "e2e-cowork-full-lifecycle-artifact";
+    const originalBody =
+      "Reliable content systems make the next action obvious.\n\nStart by making every handoff explicit.";
+    const refinedBody =
+      "Your content workflow is only as reliable as its vaguest handoff.\n\nStart by making every handoff explicit.";
+    let currentArtifact = {
+      id: artifactId,
+      kind: "post",
+      title: `Cowork full lifecycle post ${Date.now()}`,
+      body: originalBody,
+      meta: {},
+    };
+    let streamCount = 0;
+
+    await page.route(`**/api/chats/${chat.id}/stream`, async (route) => {
+      streamCount += 1;
+      const payload = route.request().postDataJSON() as {
+        refineTargetId?: string;
+        refineInstruction?: string;
+      };
+      if (streamCount === 1) {
+        expect(payload.refineTargetId).toBeUndefined();
+      } else {
+        expect(payload).toMatchObject({
+          refineTargetId: artifactId,
+          refineInstruction: "Make the hook punchier",
+        });
+        currentArtifact = { ...currentArtifact, body: refinedBody };
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: "text/event-stream",
+        body:
+          sse("artifact", currentArtifact) +
+          sse("done", { artifacts: [currentArtifact] }),
+      });
+    });
+
+    await page.route(`**/api/chats/${chat.id}`, async (route) => {
+      if (route.request().method() === "PATCH") {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ ok: true, updated: true }),
+        });
+        return;
+      }
+      if (route.request().method() !== "GET") {
+        await route.continue();
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ok: true,
+          chat: { ...chat, running: false },
+          messages: streamCount
+            ? [
+                {
+                  id: "e2e-full-lifecycle-assistant",
+                  role: "assistant",
+                  content: "Here is the draft.",
+                  tool_calls: null,
+                  tool_call_id: null,
+                  artifacts: [currentArtifact],
+                  created_at: new Date().toISOString(),
+                },
+              ]
+            : [],
+        }),
+      });
+    });
+    await page.route(`**/api/chats/${chat.id}/artifacts`, async (route) => {
+      if (route.request().method() === "PATCH") {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ ok: true, updated: true }),
+        });
+        return;
+      }
+      await route.continue();
+    });
+    await page.route("**/api/integrations/linkedin", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ok: true, connection: { connected: true } }),
+      });
+    });
+
+    let externalPublishAttempted = false;
+    const failIfPublishing = async (route: Route) => {
+      externalPublishAttempted = true;
+      await route.abort("blockedbyclient");
+      throw new Error(
+        `Lifecycle browser test attempted irreversible publishing: ${route.request().url()}`,
+      );
+    };
+    await page.route("**/api/cron/publish-scheduled**", failIfPublishing);
+    await page.route("**/api/drafts/*/publish**", failIfPublishing);
+    await page.route("**/*zernio*", failIfPublishing);
+
+    await page.goto(`/dashboard?chat=${chat.id}`);
+    const composer = page.getByPlaceholder("What do you want to write?");
+    await composer.fill("Write one post about reliable content workflows.");
+    await page.getByRole("button", { name: "Send message" }).click();
+    await expect(page.getByText(originalBody.split("\n")[0])).toBeVisible();
+
+    await page.getByRole("button", { name: "Refine", exact: true }).click();
+    await page.getByPlaceholder("Or describe a change…").fill("Make the hook punchier");
+    await page.getByRole("button", { name: "Refine", exact: true }).last().click();
+    await expect(page.getByText(refinedBody.split("\n")[0])).toBeVisible();
+    expect(streamCount).toBe(2);
+
+    await page.getByRole("button", { name: /^Copy$/ }).last().click();
+    await expect(page.getByRole("button", { name: "Copied" }).last()).toBeVisible();
+    await expect
+      .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+      .toBe(refinedBody);
+
+    const saveResponsePromise = page.waitForResponse(
+      (response) =>
+        response.url().includes(`/api/chats/${chat.id}/artifacts`) &&
+        response.request().method() === "POST",
+    );
+    await page.getByRole("button", { name: "Save draft" }).click();
+    const saveResponse = await saveResponsePromise;
+    const savePayload = (await saveResponse.json()) as {
+      ok: boolean;
+      artifact: { id: string };
+    };
+    expect(saveResponse.ok()).toBe(true);
+    expect(savePayload.ok).toBe(true);
+    draftsToDelete.push(savePayload.artifact.id);
+    await expect(page.getByRole("button", { name: "Saved" })).toBeDisabled();
+    await expect.poll(() => readDraft(page, savePayload.artifact.id)).toMatchObject({
+      body: refinedBody,
+      chat_id: chat.id,
+      status: "drafting",
+    });
+
+    await page.getByRole("button", { name: "Schedule", exact: true }).click();
+    await page.getByLabel("Publish date and time").fill(futureDatetimeLocal());
+    await page.getByLabel("First comment").fill("Full lifecycle first comment.");
+    await page.getByRole("button", { name: "Schedule", exact: true }).last().click();
+    await expect(page.getByText(/Scheduled for/)).toBeVisible();
+    await expect.poll(() => readScheduleState(savePayload.artifact.id)).toMatchObject({
+      schedule_status: "scheduled",
+      first_comment: "Full lifecycle first comment.",
+    });
+
+    await page.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect.poll(() => readScheduleState(savePayload.artifact.id)).toMatchObject({
+      schedule_status: null,
+      scheduled_at: null,
+    });
+    await expect(
+      page.getByRole("button", {
+        name: "Schedule",
+        description: "Schedule this draft to publish on LinkedIn",
+      }),
+    ).toBeVisible();
+    expect(externalPublishAttempted).toBe(false);
+  });
 });
 
 async function createChat(page: Page, title: string) {
@@ -295,6 +476,10 @@ function futureDatetimeLocal() {
   const date = new Date(Date.now() + 36 * 60 * 60 * 1000);
   const pad = (value: number) => String(value).padStart(2, "0");
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function sse(event: string, data: unknown): string {
+  return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 }
 
 async function readScheduleState(id: string) {
