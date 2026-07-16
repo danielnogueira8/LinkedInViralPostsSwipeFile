@@ -70,6 +70,20 @@ describe("mapZernioError — classifies the recurring failures", () => {
     expect(mapZernioError(403, "token revoked").kind).toBe("token_expired");
   });
 
+  test("402 / plan-limit body → billing, PERMANENT (not a publish-retry)", () => {
+    // A real Zernio plan/quota/payment block. The old default branch mislabeled
+    // this as "Publishing failed (402). Please try again." — wrong on a connect
+    // action and wrong to suggest retrying a billing limit.
+    expect(mapZernioError(402, "").kind).toBe("billing");
+    expect(mapZernioError(403, "Payment required — plan limit reached").kind).toBe("billing");
+    expect(mapZernioError(400, "upgrade your plan to add more accounts").kind).toBe("billing");
+    expect(mapZernioError(400, "quota exceeded").kind).toBe("billing");
+    // Copy must NOT say "publishing" or "try again" (works for connect + publish).
+    const msg = mapZernioError(402, "").message;
+    expect(msg).not.toMatch(/publishing failed/i);
+    expect(msg).not.toMatch(/try again/i);
+  });
+
   test("'preflight' body → preflight", () => {
     expect(mapZernioError(400, "Publishing failed during preflight checks").kind).toBe("preflight");
   });

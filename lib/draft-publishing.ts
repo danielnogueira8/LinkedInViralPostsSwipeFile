@@ -494,10 +494,14 @@ export async function publishDueDrafts(nowIso: string): Promise<{
           );
         }
       }
-      // Duplicate (422) is permanent → fail now. Transient may retry next tick
-      // until the attempt cap.
+      // Duplicate (422) and billing (402, plan/quota limit) are permanent → fail
+      // now; retrying can't fix either. Transient may retry next tick until the
+      // attempt cap.
       const attempts = await bumpAttempts(currentRow);
-      const retryable = err.kind !== "duplicate" && attempts < MAX_PUBLISH_ATTEMPTS;
+      const retryable =
+        err.kind !== "duplicate" &&
+        err.kind !== "billing" &&
+        attempts < MAX_PUBLISH_ATTEMPTS;
       if (retryable) {
         // Back to 'scheduled' so a later tick retries; keep the error visible.
         const { error: retryPersistError } = await sb
