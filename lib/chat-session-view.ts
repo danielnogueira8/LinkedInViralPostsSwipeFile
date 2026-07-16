@@ -32,7 +32,7 @@ export function sameFiles(a?: string[], b?: string[]): boolean {
   return a.every((file, index) => file === b[index]);
 }
 
-export type SessionViewMessage<Tool, Plan, Ask, Artifact, Recoverable> = {
+export type SessionViewMessage<Tool, Plan, Ask, Artifact, Recoverable, Usage = unknown> = {
   id: string;
   role: "user" | "assistant";
   text: string;
@@ -44,12 +44,20 @@ export type SessionViewMessage<Tool, Plan, Ask, Artifact, Recoverable> = {
   artifacts?: Artifact[];
   draftRendered?: boolean;
   recoverable?: Recoverable;
+  usage?: Usage;
   streaming?: boolean;
 };
 
-export function runOverlay<Tool, Plan, Ask, Artifact extends { kind: string }, Recoverable>(
+export function runOverlay<
+  Tool,
+  Plan,
+  Ask,
+  Artifact extends { kind: string },
+  Recoverable,
+  Usage,
+>(
   run: {
-    userMsg: SessionViewMessage<Tool, Plan, Ask, Artifact, Recoverable>;
+    userMsg: SessionViewMessage<Tool, Plan, Ask, Artifact, Recoverable, Usage>;
     assistantId: string;
     rawText: string;
     contentFormat?: "plain" | "markdown";
@@ -58,10 +66,11 @@ export function runOverlay<Tool, Plan, Ask, Artifact extends { kind: string }, R
     ask?: Ask;
     artifacts: Artifact[];
     recoverable?: Recoverable;
+    usage?: Usage;
     streaming: boolean;
   },
-  base: SessionViewMessage<Tool, Plan, Ask, Artifact, Recoverable>[] = [],
-): SessionViewMessage<Tool, Plan, Ask, Artifact, Recoverable>[] {
+  base: SessionViewMessage<Tool, Plan, Ask, Artifact, Recoverable, Usage>[] = [],
+): SessionViewMessage<Tool, Plan, Ask, Artifact, Recoverable, Usage>[] {
   const lastUser = [...base].reverse().find((message) => message.role === "user");
   const alreadyInBase =
     Boolean(lastUser) &&
@@ -80,6 +89,7 @@ export function runOverlay<Tool, Plan, Ask, Artifact extends { kind: string }, R
       (artifact) => artifact.kind === "post" || artifact.kind === "hook",
     ),
     recoverable: run.recoverable,
+    usage: run.usage,
     streaming: run.streaming,
   };
   return [...(alreadyInBase ? [] : [run.userMsg]), assistant];

@@ -23,7 +23,10 @@ import {
   coworkAdapterHealth,
   type AdapterHealthRegistry,
 } from "@/lib/agent/adapter-health";
-import { runCoworkAdapterAttempt } from "@/lib/agent/cowork-adapter-attempt";
+import {
+  providerModelAttribution,
+  runCoworkAdapterAttempt,
+} from "@/lib/agent/cowork-adapter-attempt";
 import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
 import { distinctFallbackModel } from "@/lib/agent/model-routing";
 import {
@@ -678,6 +681,7 @@ export type ReadOnlyPlannerRequest = {
 export type ReadOnlyPlannerResponse = {
   toolArgs: Record<string, unknown> | null;
   usage?: Usage;
+  model?: string;
 };
 
 export type ReadOnlyOrchestratorAdapter = {
@@ -866,7 +870,11 @@ export class OpenRouterReadOnlyOrchestratorAdapter
         },
       ],
     });
-    return { toolArgs: response.toolArgs, usage: response.usage };
+    return {
+      toolArgs: response.toolArgs,
+      usage: response.usage,
+      model: response.model,
+    };
   }
 }
 
@@ -1786,15 +1794,23 @@ async function* runReadOnlyOrchestratorCore(
           const used = tokenCounts(response.usage);
           inputTokens += used.input;
           outputTokens += used.output;
+          const attribution = providerModelAttribution(
+            adapter.model,
+            response.model,
+          );
           await deps.recordUsage(
             "cowork_orchestrator",
-            adapter.model,
+            attribution.model,
             response.usage,
             input.workspaceId,
-            { stage: index === 0 ? "primary" : "fallback" },
+            {
+              stage: index === 0 ? "primary" : "fallback",
+              ...attribution.metadata,
+            },
           );
         },
         usage: (response) => response.usage,
+        responseModel: (response) => response.model,
         telemetry: input.telemetry,
         stage: index === 0 ? "orchestrator_primary" : "orchestrator_fallback",
         attempt: index + 1,
@@ -1804,7 +1820,9 @@ async function* runReadOnlyOrchestratorCore(
         cancellationReason: () =>
           input.deadlineExceeded() ? "deadline" : "cancelled",
       });
-      input.onModelUsed?.(adapter.model);
+      input.onModelUsed?.(
+        providerModelAttribution(adapter.model, result.response.model).model,
+      );
       if (await input.cancellationBoundary()) {
         yield completedDone({
           content: interruptionContent(

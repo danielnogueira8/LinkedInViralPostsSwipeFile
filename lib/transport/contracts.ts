@@ -4,6 +4,7 @@ import {
   AskQuestionSchema,
   PlanStepSchema,
 } from "@/lib/agent/contracts";
+import { CoworkTurnUsageWireSchema } from "@/lib/cowork-turn-usage";
 
 export const ApiErrorSchema = z.object({
   ok: z.literal(false),
@@ -102,7 +103,12 @@ const ChatSseFrameSchema = z.discriminatedUnion("event", [
   z.object({ event: z.literal("artifact"), data: ArtifactSchema }),
   z.object({
     event: z.literal("done"),
-    data: z.object({ artifacts: z.array(ArtifactSchema) }).passthrough(),
+    data: z
+      .object({
+        artifacts: z.array(ArtifactSchema),
+        usage: CoworkTurnUsageWireSchema.optional(),
+      })
+      .passthrough(),
   }),
   z.object({
     event: z.literal("error"),

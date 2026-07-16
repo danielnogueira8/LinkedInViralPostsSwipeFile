@@ -53,6 +53,18 @@ describe("Cowork v2 structured telemetry", () => {
       outcome: "accepted",
       provenanceStatus: "verified",
     });
+    expect(telemetry.snapshotUsage()).toEqual({
+      total_credits: 4,
+      total_cost_usd: 0.02,
+      stages: [
+        {
+          kind: "writing",
+          credits: 4,
+          cost_usd: 0.02,
+          models: ["qwen/qwen3.7-plus", "z-ai/glm-5.2"],
+        },
+      ],
+    });
     now = 1_250;
     telemetry.finish({
       deliveredContract: { kind: "post", deliveredCount: 1 },
@@ -253,6 +265,10 @@ describe("Cowork v2 structured telemetry", () => {
       input_tokens: 1_000,
       output_tokens: 500,
       charged_cost_usd: 0.1,
+    });
+    expect(telemetry.snapshotUsage()).toMatchObject({
+      total_credits: 20,
+      stages: [{ kind: "writing", credits: 20, cost_usd: 0.1 }],
     });
   });
 

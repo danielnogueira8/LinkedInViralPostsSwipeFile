@@ -5,10 +5,12 @@ export function createSentryOptions({
   dsn,
   environment,
   nodeEnv,
+  release,
 }: {
   dsn: string | undefined;
   environment: string | undefined;
   nodeEnv: string | undefined;
+  release?: string | undefined;
 }) {
   const resolvedEnvironment = environment ?? nodeEnv;
   const enabled = nodeEnv === "production" && resolvedEnvironment === "production";
@@ -17,6 +19,12 @@ export function createSentryOptions({
     dsn: dsn ?? SWIPEIN_SENTRY_DSN,
     enabled,
     environment: resolvedEnvironment,
+    ...(release
+      ? {
+          release,
+          initialScope: { tags: { deployment_id: release } },
+        }
+      : {}),
     sendDefaultPii: false,
     tracesSampleRate: enabled ? 0.1 : 0,
   };

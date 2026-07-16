@@ -107,6 +107,11 @@ const nextConfig: NextConfig = {
     // VERCEL_ENV is server-only by default. Expose only its non-sensitive
     // deployment label so preview events do not get grouped as production.
     NEXT_PUBLIC_VERCEL_ENV: process.env.VERCEL_ENV ?? process.env.NODE_ENV,
+    // Tag client-side recoverable errors (including hydration mismatches) with
+    // the exact deployment that produced them. This lets us distinguish a real
+    // render bug from a one-off rolling-deploy/version-skew event.
+    NEXT_PUBLIC_SWIPEIN_DEPLOYMENT_ID:
+      process.env.VERCEL_GIT_COMMIT_SHA ?? process.env.NEXT_DEPLOYMENT_ID,
   },
   turbopack: {
     root: __dirname,

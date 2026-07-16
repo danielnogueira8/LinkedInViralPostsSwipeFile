@@ -196,6 +196,14 @@ import {
   WeeklyBatchSlotsResponseSchema,
 } from "@/lib/transport/contracts";
 import { partitionCoworkStarters } from "@/lib/cowork-starter-policy";
+import {
+  parseCoworkTurnUsage,
+  researchSourcesFromArtifact,
+} from "@/lib/cowork-turn-usage";
+import {
+  ResearchSources,
+  TaskUsageSummary,
+} from "./cowork-trust-details";
 
 export type { Artifact } from "@/lib/agent/contracts";
 
@@ -2861,6 +2869,9 @@ export function ChatWorkspace({
             // on screen) so a freshly generated post is immediately visible.
             if (chatId === activeIdRef.current) setPanelOpen(true);
             bump();
+          } else if (event === "done") {
+            run.usage = parseCoworkTurnUsage(data.usage) ?? undefined;
+            bump();
           } else if (event === "error") {
             const code = String(data.code ?? "");
             const message = (data.message as string) || "";
@@ -5502,6 +5513,10 @@ function MessageBubble({
         />
       )}
 
+      {message.usage && !message.streaming && (
+        <TaskUsageSummary usage={message.usage} />
+      )}
+
       {/* Cited source posts are intentionally NOT rendered in the chat. A "what's
           working" analysis references many posts but the model cited only some,
           which read as an inconsistent, partial source list. Sources belong on
@@ -6559,6 +6574,7 @@ function ArtifactCard({
     const v = (artifact.meta as { source_url?: unknown } | undefined)?.source_url;
     return typeof v === "string" && /^https?:\/\//i.test(v) ? v : null;
   })();
+  const researchSources = researchSourcesFromArtifact(artifact.meta);
   const draftLeadMagnet = artifactLeadMagnet(artifact);
   const draftLeadMagnetHref = leadMagnetHref?.(draftLeadMagnet) ?? null;
   const generatedImageStatus = generatedLeadMagnetImageStatus(artifact);
@@ -7087,6 +7103,8 @@ function ArtifactCard({
           href={draftLeadMagnetHref}
         />
       )}
+
+      <ResearchSources sources={researchSources} />
 
       <CoworkDraftFeedback
         key={artifact.id}

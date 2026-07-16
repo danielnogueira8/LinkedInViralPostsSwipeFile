@@ -50,6 +50,7 @@ export type DraftWriterResponse = {
   text: string;
   finishReason: string | null;
   usage?: Usage;
+  model?: string;
 };
 
 /** Tool-free by construction: the adapter interface exposes no tools field. */
@@ -74,6 +75,7 @@ export const openRouterDraftWriter: DraftWriterAdapter = {
       text: result.text,
       finishReason: result.finishReason,
       usage: result.usage,
+      model: result.model,
     };
   },
 };

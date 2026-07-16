@@ -386,6 +386,20 @@ export function projectMonthlyUsage(
   return { used, limit, boundBy: costProjected > messages ? "cost" : "messages" };
 }
 
+// Converts one turn's provider spend into the same unit as the credits pill.
+// This is a cost-equivalent estimate, not an authoritative before/after monthly
+// counter delta: the monthly projection also has cumulative rounding and a
+// message-count floor. Keep the conversion here beside projectMonthlyUsage so
+// telemetry and billing cannot silently drift to different formulas.
+export function costEquivalentCredits(
+  costUsd: number,
+  budgetUsd: number = MONTHLY_BUDGET_USD,
+  limit: number = MONTHLY_MESSAGE_LIMIT,
+): number {
+  if (costUsd <= 0 || budgetUsd <= 0 || limit <= 0) return 1;
+  return Math.max(1, Math.round((costUsd / budgetUsd) * limit));
+}
+
 // Sum this month's spend from usage_events rows, tolerant of missing/garbage
 // cost_usd (a NULL or non-number contributes 0, never NaN — a single bad row
 // must not poison the whole cost gate). Pure + exported so the money arithmetic
