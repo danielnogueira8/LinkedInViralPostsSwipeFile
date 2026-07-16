@@ -1005,6 +1005,12 @@ export async function* streamChat(opts: {
 export const NEWS_SEARCH_MODEL_PRICING = {
   "google/gemini-3.1-flash-lite": { input: 0.25, output: 1.5, cachedInput: 0.025 },
   "anthropic/claude-haiku-4.5": { input: 1.0, output: 5.0, cachedInput: 0.1 },
+  "openai/gpt-5.6-luna": {
+    input: 1.0,
+    output: 6.0,
+    cachedInput: 0.1,
+    cacheWrite: 1.25,
+  },
   "z-ai/glm-5.2": { input: 0.93, output: 3.0, cachedInput: 0.18 },
 } as const;
 
@@ -1016,12 +1022,6 @@ const OPENROUTER_PRICING: Record<
 > = {
   ...NEWS_SEARCH_MODEL_PRICING,
   "qwen/qwen3.7-plus": { input: 0.32, output: 1.28, cachedInput: 0.064 },
-  "openai/gpt-5.6-luna": {
-    input: 1.0,
-    output: 6.0,
-    cachedInput: 0.1,
-    cacheWrite: 1.25,
-  },
   "z-ai/glm-5.1": { input: 1.4, output: 4.4, cachedInput: 0.26 },
   "z-ai/glm-5": { input: 1.0, output: 3.2, cachedInput: 0.2 },
   // Retained for historical usage rows and explicit env overrides.

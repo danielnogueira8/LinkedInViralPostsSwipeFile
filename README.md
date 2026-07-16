@@ -32,7 +32,7 @@ Copy your keys into `.env.local`. The **required** variables (the app cannot fun
 
 Other integrations are configured as needed: Clerk (`CLERK_*`), Apify (`APIFY_API_TOKEN`, `APIFY_ACTOR_ID`), Zernio (`ZERNIO_API_KEY`), and the optional `HEALTH_DIGEST_WEBHOOK` (Slack/Discord URL for the daily cost digest and cron-failure alerts). Many tuning knobs (`OPENROUTER_*_MODEL`, `AGENT_*`, `VIRAL_*`) have safe in-code defaults.
 
-Newsjacking uses `anthropic/claude-haiku-4.5` for grounded discovery and result normalization by default. Set `OPENROUTER_NEWS_MODEL` to `google/gemini-3.1-flash-lite`, `anthropic/claude-haiku-4.5`, or `z-ai/glm-5.2` to override only that research pipeline without changing the main Cowork writer model.
+Newsjacking follows the app-wide chat model when it supports grounded discovery, otherwise it falls back to `anthropic/claude-haiku-4.5`. Set `OPENROUTER_NEWS_MODEL` to `openai/gpt-5.6-luna`, `google/gemini-3.1-flash-lite`, `anthropic/claude-haiku-4.5`, or `z-ai/glm-5.2` to override only that research pipeline without changing the main Cowork writer model.
 
 ### 3. Local dev
 
