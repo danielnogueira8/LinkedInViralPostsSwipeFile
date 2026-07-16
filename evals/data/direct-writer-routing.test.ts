@@ -113,6 +113,23 @@ describe("direct original-post eligibility", () => {
     ).toBe(true);
   });
 
+  test.each([
+    "Write one short original LinkedIn post in my voice about why dependable systems beat heroic effort. Do not search. End with this exact final line: #SWIPEIN_QA.",
+    "Draft a concise LinkedIn post about pricing discipline. Do not search.",
+    "Create one punchy original post about founder-led sales. Do not search.",
+    "Write a detailed LinkedIn post about why retention compounds. Do not search.",
+  ])(
+    "keeps a full post with ordinary writing modifiers on the direct lane: %s",
+    (userInstruction) => {
+      expect(
+        isDirectOriginalPostEligible({
+          ...BASE,
+          userInstruction,
+        }),
+      ).toBe(true);
+    },
+  );
+
   test("resumes a self-contained clarification answer as an original post", () => {
     expect(
       isDirectOriginalPostEligible({
