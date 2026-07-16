@@ -1,6 +1,7 @@
 import { describe, test, expect } from "vitest";
 import { isValidElement, type ReactNode } from "react";
 import { renderRichText, renderInline } from "@/components/chat-rich-text";
+import { toUnicodeStyle } from "@/lib/markdown/unicode-styles";
 
 // ---------------------------------------------------------------------------
 // Unit tests for the chat rich-text renderer — specifically the chat-only list
@@ -278,5 +279,110 @@ describe("renderInline — bold/italic marker edge cases", () => {
     expect(elementsOfType(out, "strong")).toHaveLength(0);
     expect(elementsOfType(out, "em")).toHaveLength(0);
     expect(textOf(out)).toBe("just plain words");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The `markdown` opt-in (4th arg — PR 2 of markdown-support-for-Luna). When a
+// draft was written by a markdown-EMITTING model, the caller passes markdown=true
+// and the renderer first normalizes the body via markdownToLinkedIn — so the
+// preview is WYSIWYG-identical to what the publish/copy paths send to LinkedIn
+// (Unicode bold, "• " bullets, "text (url)" links, NO markdown metacharacters).
+// markdown=false (the default, every non-markdown model) stays byte-for-byte
+// legacy. Signature: renderRichText(text, mode, streaming, markdown).
+// ---------------------------------------------------------------------------
+
+const BOLD = (s: string) => toUnicodeStyle(s, "bold");
+
+describe("renderRichText — markdown=false is byte-identical to the legacy path", () => {
+  const CASES = [
+    ["- a\n- b", "draft"],
+    ["Steps:\n1. Ship it\n2. Get feedback", "draft"],
+    ["> a quote", "draft"],
+    ["Patterns:\n- One\n- Two\n", "chat"],
+    ["a **bold** and *italic* line", "chat"],
+    ["plain sentence, nothing special", "chat"],
+  ] as const;
+
+  test.each(CASES)("explicit markdown=false matches the legacy call: %s (%s)", (input, mode) => {
+    const legacy = renderRichText(input, mode);
+    const explicit = renderRichText(input, mode, false, false);
+    expect(textOf(explicit)).toBe(textOf(legacy));
+    expect(elementsOfType(explicit, "ul").length).toBe(elementsOfType(legacy, "ul").length);
+    expect(elementsOfType(explicit, "ol").length).toBe(elementsOfType(legacy, "ol").length);
+    expect(elementsOfType(explicit, "strong").length).toBe(elementsOfType(legacy, "strong").length);
+    expect(elementsOfType(explicit, "em").length).toBe(elementsOfType(legacy, "em").length);
+  });
+
+  test("markdown=false leaves raw markdown LITERAL (conversion is gated, not always-on)", () => {
+    const out = renderRichText("## Heading\nbody", "draft", false, false);
+    expect(textOf(out)).toContain("## Heading");
+    expect(textOf(out)).not.toContain(BOLD("Heading"));
+  });
+});
+
+describe("renderRichText — markdown=true renders a Luna draft as LinkedIn plain text", () => {
+  test("**bold** and ## headings become Unicode bold (no raw * or #)", () => {
+    const out = renderRichText("## The 3 Levels\n\nthis is **bold** text", "draft", false, true);
+    const t = textOf(out);
+    expect(t).toContain(BOLD("The 3 Levels"));
+    expect(t).toContain(BOLD("bold"));
+    expect(t).not.toMatch(/[*#]/);
+    // No markdown markers survive → renderInline emits no <strong>/<em>.
+    expect(elementsOfType(out, "strong")).toHaveLength(0);
+    expect(elementsOfType(out, "em")).toHaveLength(0);
+  });
+
+  test('markdown links [text](url) flatten to "text (url)" — never an <a> element', () => {
+    const out = renderRichText("see [my guide](https://x.com/g) now", "draft", false, true);
+    const t = textOf(out);
+    expect(t).toBe("see my guide (https://x.com/g) now");
+    // The lethal-trifecta invariant: untrusted text is NEVER an href. No anchors.
+    expect(elementsOfType(out, "a")).toHaveLength(0);
+    expect(t).not.toContain("](");
+    expect(t).not.toContain("[my guide]");
+  });
+
+  test("in chat mode, converted '- ' bullets become a real <ul> (via the '•' path)", () => {
+    const luna = "You get:\n\n- Clear pillars\n- A rhythm\n- Formats that perform";
+    const out = renderRichText(luna, "chat", false, true);
+    // markdownToLinkedIn turns "- " into "• "; chat mode promotes "• " runs to <ul>.
+    expect(elementsOfType(out, "ul")).toHaveLength(1);
+    expect(elementsOfType(out, "li").length).toBe(3);
+    expect(textOf(out)).not.toMatch(/^- /m);
+  });
+
+  test("a full Luna draft round-trips to clean plain text (no leaks, no anchors)", () => {
+    const LUNA = [
+      "Most content falls into three levels.",
+      "",
+      "**Level 1: Posting randomly**",
+      "",
+      "You post when inspired. See [the guide](https://ex.com/g).",
+      "",
+      "**Level 2: Posting intentionally**",
+      "",
+      "- Clear content pillars",
+      "- A repeatable rhythm",
+      "",
+      "The goal is not to post *more*. It is `consistency`.",
+    ].join("\n");
+    const out = renderRichText(LUNA, "draft", false, true);
+    const t = textOf(out);
+    expect(t).toContain(BOLD("Level 1: Posting randomly"));
+    expect(t).toContain(BOLD("Level 2: Posting intentionally"));
+    expect(t).toContain("the guide (https://ex.com/g)");
+    expect(t).toContain("consistency"); // backticks stripped, content kept
+    // HARD INVARIANT: nothing that could leak to LinkedIn as literal syntax.
+    expect(t).not.toMatch(/[*#`]/);
+    expect(t).not.toMatch(/\[[^\]\n]+\]\([^)\s]+\)/);
+    expect(elementsOfType(out, "a")).toHaveLength(0);
+  });
+
+  test("markdown=true on already-plain Haiku prose is a harmless no-op", () => {
+    const post = "One group grows.\n\nThe other quits around month three.";
+    expect(textOf(renderRichText(post, "draft", false, true))).toBe(
+      textOf(renderRichText(post, "draft", false, false)),
+    );
   });
 });

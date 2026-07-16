@@ -104,6 +104,10 @@ export type Draft = {
   publishError?: string | null;
   mediaAttachments?: PostMediaAttachment[];
   leadMagnet?: DraftLeadMagnetContext | null;
+  // The draft's jsonb meta. Only `markdown` is read on the client (whether this
+  // draft was written by a markdown model → copy/publish normalize the body).
+  // Optional so existing constructors that don't set it still compile.
+  meta?: Record<string, unknown> | null;
 };
 
 // Reconcile a fresh server snapshot into the current client list — ADD-ONLY.

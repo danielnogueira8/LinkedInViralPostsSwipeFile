@@ -328,6 +328,42 @@ describe("DraftLifecycle command outcomes", () => {
     expect(cancelled.ok && cancelled.value.planToPostOn).toBe("2099-12-31");
   });
 
+  // markdown-model drafts (meta.markdown): the LinkedIn caption is the
+  // markdownToLinkedIn form, whose Unicode bold chars are astral (2 UTF-16 code
+  // units each). The cap MUST be checked on the CONVERTED length — a body that
+  // fits as raw markdown can exceed 3,000 once bolded.
+  describe("markdown-draft caption cap", () => {
+    // 1,604 raw chars ("**" + 1,600 letters + "**") → under 3,000. Bolded, each
+    // letter is astral, so the converted caption is ~3,200 code units → over.
+    const rawUnderConvertedOver = `**${"a".repeat(1600)}**`;
+
+    test("rejects when the CONVERTED body exceeds the cap (markdown on)", async () => {
+      repository.rows.set(
+        "draft-1",
+        draft({ body: rawUnderConvertedOver, meta: { markdown: true } }),
+      );
+      const res = await lifecycle.schedule("draft-1", { scheduledAt: future });
+      expect(res).toMatchObject({ ok: false, reason: "linkedin_length", status: 400 });
+    });
+
+    test("the SAME body is accepted when markdown is off (raw length is under)", async () => {
+      // Proves the rejection above is driven by conversion, not the raw body:
+      // without meta.markdown the raw 1,604-char string is measured and passes.
+      repository.rows.set("draft-1", draft({ body: rawUnderConvertedOver, meta: null }));
+      const res = await lifecycle.schedule("draft-1", { scheduledAt: future });
+      expect(res.ok).toBe(true);
+    });
+
+    test("a short markdown draft still schedules fine (no false rejection)", async () => {
+      repository.rows.set(
+        "draft-1",
+        draft({ body: "## Hi\n\n**bold** and a point.", meta: { markdown: true } }),
+      );
+      const res = await lifecycle.schedule("draft-1", { scheduledAt: future });
+      expect(res.ok).toBe(true);
+    });
+  });
+
   test("direct uploads enforce expiry while library media remains schedulable", async () => {
     repository.rows.set(
       "draft-1",

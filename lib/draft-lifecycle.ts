@@ -13,6 +13,7 @@ import {
 import { resolveDraftKind } from "@/lib/post-type";
 import { localDateForInstant } from "@/lib/schedule-local-date";
 import { LINKEDIN_MAX_CHARS } from "@/lib/zernio";
+import { draftEgressBody } from "@/lib/markdown/mode";
 
 export const BOARD_DRAFT_STATUSES = ["idea", "drafting", "ready", "posted"] as const;
 const MAX_MUTATION_ATTEMPTS = 3;
@@ -363,10 +364,16 @@ export class DraftLifecycle {
     ) {
       return rejected("locked", DRAFT_SCHEDULING_CONFLICT, 409);
     }
-    if (draft.body.length > LINKEDIN_MAX_CHARS) {
+    // Measure the caption LinkedIn will actually receive. A markdown-model draft
+    // (meta.markdown) publishes as its markdownToLinkedIn form, whose Unicode
+    // bold chars are astral (2 UTF-16 units each) — so we must cap-check the
+    // CONVERTED length here too, matching the publish path, or an over-limit post
+    // could pass schedule and then fail at publish.
+    const publishBody = draftEgressBody(draft.body, draft.meta);
+    if (publishBody.length > LINKEDIN_MAX_CHARS) {
       return rejected(
         "linkedin_length",
-        `This post is ${draft.body.length} characters — LinkedIn's limit is ${LINKEDIN_MAX_CHARS}. Trim ${draft.body.length - LINKEDIN_MAX_CHARS} characters, then schedule.`,
+        `This post is ${publishBody.length} characters — LinkedIn's limit is ${LINKEDIN_MAX_CHARS}. Trim ${publishBody.length - LINKEDIN_MAX_CHARS} characters, then schedule.`,
         400,
       );
     }

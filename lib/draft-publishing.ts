@@ -22,6 +22,7 @@ import {
   type PostMediaAttachment,
 } from "@/lib/post-media";
 import { ensureZernioMediaAttachments } from "@/lib/media-library";
+import { draftEgressBody } from "@/lib/markdown/mode";
 
 export type PublishingConnection = {
   id: string;
@@ -277,6 +278,7 @@ type DueRow = {
   status: string;
   first_comment: string | null;
   media_attachments?: unknown;
+  meta?: Record<string, unknown> | null;
 };
 
 // Publish every due draft. Returns a small summary for the cron's log. Each row
@@ -300,7 +302,7 @@ export async function publishDueDrafts(nowIso: string): Promise<{
   const sb = supabaseAdmin();
   const { data, error: dueError } = await sb
     .from("chat_artifacts")
-    .select("id, workspace_id, body, status, first_comment, media_attachments")
+    .select("id, workspace_id, body, status, first_comment, media_attachments, meta")
     .eq("schedule_status", "scheduled")
     .lte("scheduled_at", nowIso)
     .order("scheduled_at", { ascending: true })
@@ -329,13 +331,22 @@ export async function publishDueDrafts(nowIso: string): Promise<{
       .lte("scheduled_at", nowIso)
       // Return the current publish payload atomically with the claim so an edit
       // made after the initial scan is not lost to the stale scan snapshot.
-      .select("id, workspace_id, body, status, first_comment, media_attachments")
+      .select("id, workspace_id, body, status, first_comment, media_attachments, meta")
       .maybeSingle();
     throwOnDbError(claimError);
     if (!claimed) continue; // another tick got it — skip
     const currentRow = claimed as DueRow;
 
-    if (currentRow.body.length > LINKEDIN_MAX_CHARS) {
+    // The exact caption we will send. For a markdown-model draft (meta.markdown)
+    // that's the LinkedIn-normalized form (Unicode bold, "• " bullets, no raw
+    // markdown); otherwise the body verbatim. The cap MUST be checked on THIS
+    // string, not currentRow.body: Unicode bold chars are astral (2 UTF-16 code
+    // units each), so the converted caption's .length can exceed the raw body's
+    // — and LinkedIn counts those chars the same way (2), so .length is the right
+    // measure. Checking the raw body would let an over-limit post through.
+    const outgoingContent = draftEgressBody(currentRow.body, currentRow.meta);
+
+    if (outgoingContent.length > LINKEDIN_MAX_CHARS) {
       await failRow(
         currentRow,
         `This post is over LinkedIn's ${LINKEDIN_MAX_CHARS.toLocaleString("en-US")} character limit. Trim it, then reschedule.`,
@@ -412,7 +423,7 @@ export async function publishDueDrafts(nowIso: string): Promise<{
     }
     const result = await createLinkedInPost({
       accountId: conn.zernio_account_id,
-      content: currentRow.body,
+      content: outgoingContent,
       requestId: currentRow.id,
       firstComment: currentRow.first_comment,
       mediaItems: mediaAttachments.length ? toZernioMediaItems(mediaAttachments) : undefined,
