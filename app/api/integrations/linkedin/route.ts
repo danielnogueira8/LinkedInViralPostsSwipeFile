@@ -52,6 +52,19 @@ function originFrom(req: Request): string {
 export async function POST(req: Request) {
   try {
     const workspaceId = await requireWorkspaceId();
+    // Already connected? Don't re-initiate. Zernio's /connect rejects starting a
+    // new OAuth flow on a profile that already has an active LinkedIn account
+    // (a 400 that used to surface as a nonsensical "Publishing failed" toast on
+    // the CONNECT screen). Short-circuit with a clear signal the client can act
+    // on (e.g. skip the onboarding step / show "Connected").
+    const existing = await getConnection(workspaceId);
+    if (canPublish(existing)) {
+      return NextResponse.json({
+        ok: true,
+        alreadyConnected: true,
+        displayName: existing?.display_name ?? null,
+      });
+    }
     // Ensure the workspace has a Zernio profile (created once, reused), then
     // get the hosted auth URL pointing back at our finalize callback.
     const profileId = await ensureProfile(workspaceId);

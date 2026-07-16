@@ -44,7 +44,16 @@ export type ZernioErrorKind =
 
 export type ZernioError = { kind: ZernioErrorKind; message: string; status: number };
 
-export function mapZernioError(status: number, bodyText: string): ZernioError {
+// `context` shapes only the GENERIC fallback copy (the typed branches —
+// duplicate / token_expired / billing — read correctly for both). Defaults to
+// "publish" so every existing caller is unchanged; the connect flow passes
+// "connect" so a bare 4xx on starting OAuth isn't mislabeled "Publishing failed"
+// (which nonsensically appeared on the Connect screen).
+export function mapZernioError(
+  status: number,
+  bodyText: string,
+  context: "connect" | "publish" = "publish",
+): ZernioError {
   const b = (bodyText || "").toLowerCase();
   if (status === 422 || b.includes("duplicate")) {
     return {
@@ -92,13 +101,19 @@ export function mapZernioError(status: number, bodyText: string): ZernioError {
     return {
       kind: "transient",
       status,
-      message: "Publishing failed after several attempts. This is usually temporary — try again shortly.",
+      message:
+        context === "connect"
+          ? "Couldn't reach LinkedIn to connect after several attempts. This is usually temporary — try again shortly."
+          : "Publishing failed after several attempts. This is usually temporary — try again shortly.",
     };
   }
   return {
     kind: status >= 500 ? "transient" : "other",
     status,
-    message: `Publishing failed (${status}). Please try again.`,
+    message:
+      context === "connect"
+        ? `Couldn't start connecting to LinkedIn (${status}). Please try again.`
+        : `Publishing failed (${status}). Please try again.`,
   };
 }
 
@@ -344,7 +359,7 @@ export async function getConnectUrl(opts: {
   );
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(mapZernioError(res.status, text).message);
+    throw new Error(mapZernioError(res.status, text, "connect").message);
   }
   const data = (await res.json().catch(() => ({}))) as { authUrl?: string };
   if (!data.authUrl) throw new Error("Zernio did not return an auth URL.");
