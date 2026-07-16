@@ -91,6 +91,7 @@ import {
 } from "@/lib/hook-splice";
 import { isExclusiveHookRefine } from "@/lib/agent/direct-refine-policy";
 import { copyToClipboard } from "@/lib/clipboard";
+import { draftEgressBody } from "@/lib/markdown/mode";
 import { localDateFromDatetimeInput } from "@/lib/schedule-local-date";
 import { suggestedScheduleLocalInput } from "@/lib/next-open-schedule-day";
 import { useCopiedFlag } from "@/lib/use-copied-flag";
@@ -6145,7 +6146,9 @@ function BatchPreviewCard({
     (generatedImageStatus?.status === "failed" ||
       generatedImageStatus?.status === "skipped");
   const copy = async () => {
-    if (await copyToClipboard(displayBody)) {
+    // For a markdown-model draft, copy the LinkedIn-ready form (Unicode bold, "• "
+    // bullets, no raw markdown) so pasting into LinkedIn matches publish.
+    if (await copyToClipboard(draftEgressBody(displayBody, artifact.meta))) {
       markCopied();
     }
   };
@@ -6590,7 +6593,8 @@ function ArtifactCard({
 
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(body);
+      // markdown-model draft → copy the LinkedIn-ready form (matches publish).
+      await navigator.clipboard.writeText(draftEgressBody(body, artifact.meta));
       markCopied();
     } catch {
       toast.error("Couldn't copy — your browser blocked clipboard access.");
