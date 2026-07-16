@@ -14,6 +14,7 @@ import { toast } from "sonner";
 export async function copyToClipboard(
   text: string,
   successMessage = "Copied",
+  errorMessage = "Couldn't copy — copy it manually",
 ): Promise<boolean> {
   try {
     if (
@@ -26,7 +27,7 @@ export async function copyToClipboard(
     toast.success(successMessage);
     return true;
   } catch {
-    toast.error("Couldn't copy — copy it manually");
+    toast.error(errorMessage);
     return false;
   }
 }

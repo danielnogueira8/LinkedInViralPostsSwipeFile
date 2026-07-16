@@ -6565,12 +6565,14 @@ function ArtifactCard({
   const generatedImageStatus = generatedLeadMagnetImageStatus(artifact);
 
   const copy = async () => {
-    try {
-      // markdown-model draft → copy the LinkedIn-ready form (matches publish).
-      await navigator.clipboard.writeText(draftEgressBody(body, artifact.meta));
+    // markdown-model draft → copy the LinkedIn-ready form (matches publish).
+    if (
+      await copyToClipboard(
+        draftEgressBody(body, artifact.meta),
+        "Copied to clipboard",
+      )
+    ) {
       markCopied();
-    } catch {
-      toast.error("Couldn't copy — your browser blocked clipboard access.");
     }
   };
 
