@@ -208,6 +208,7 @@ describe("OpenRouter provider routing", () => {
       "fetch",
       vi.fn(async () =>
         Response.json({
+          model: "openai/gpt-5.6-luna-20260715",
           choices: [
             {
               message: {
@@ -242,6 +243,7 @@ describe("OpenRouter provider routing", () => {
         content: "Fresh result",
       },
     ]);
+    expect(result.model).toBe("openai/gpt-5.6-luna-20260715");
   });
 
   test("completeChat applies a bounded deadline even when the caller omits a signal", async () => {

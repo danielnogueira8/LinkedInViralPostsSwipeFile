@@ -55,7 +55,11 @@ class ScriptedAdapter implements ActionOrchestratorAdapter {
   constructor(
     readonly model: string,
     private readonly script: Array<
-      | { toolArgs: Record<string, unknown> | null; usage?: ReturnType<typeof usage> }
+      | {
+          toolArgs: Record<string, unknown> | null;
+          usage?: ReturnType<typeof usage>;
+          model?: string;
+        }
       | Error
     >,
   ) {}
@@ -704,8 +708,9 @@ describe("checkpointed action execution", () => {
   });
 
   test("checkpoints a successful mutation and sends its operation key to the executor", async () => {
+    const providerModel = "openai/gpt-5.6-luna-20260715";
     const planner = new ScriptedAdapter(PRIMARY_ACTION_ORCHESTRATOR_MODEL, [
-      { toolArgs: mutationPlan(), usage: usage(80, 20) },
+      { toolArgs: mutationPlan(), usage: usage(80, 20), model: providerModel },
     ]);
     const checkpoints = new MemoryCheckpoints();
     const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
@@ -731,6 +736,16 @@ describe("checkpointed action execution", () => {
     });
     expect(calls.map((call) => call.name)).toEqual(["list_drafts"]);
     expect(checkpoints.executions).toEqual(checkpoints.claims);
+    expect(result.recorded[0]).toMatchObject([
+      "cowork_action_orchestrator",
+      providerModel,
+      expect.anything(),
+      "ws-1",
+      {
+        stage: "primary",
+        requested_model: PRIMARY_ACTION_ORCHESTRATOR_MODEL,
+      },
+    ]);
     expect([...checkpoints.rows.values()][0]).toMatchObject({
       status: "committed",
       actionType: "move_on_board",

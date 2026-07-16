@@ -8,7 +8,10 @@ import {
   coworkAdapterHealth,
   type AdapterHealthRegistry,
 } from "@/lib/agent/adapter-health";
-import { runCoworkAdapterAttempt } from "@/lib/agent/cowork-adapter-attempt";
+import {
+  providerModelAttribution,
+  runCoworkAdapterAttempt,
+} from "@/lib/agent/cowork-adapter-attempt";
 import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
 import {
   FALLBACK_NEWS_MODEL,
@@ -199,15 +202,21 @@ export async function searchNews(opts: {
           ],
         }),
       validate: (response) => response,
-      persistUsage: (response) =>
-        logOpenRouterUsage(
+      persistUsage: (response) => {
+        const attribution = providerModelAttribution(model, response.model);
+        return logOpenRouterUsage(
           "news_search",
-          model,
+          attribution.model,
           response.usage,
           opts.workspaceId,
-          { phase: "discovery" },
-        ),
+          {
+            phase: "discovery",
+            ...attribution.metadata,
+          },
+        );
+      },
       usage: (response) => response.usage,
+      responseModel: (response) => response.model,
       telemetry: opts.telemetry,
       stage: "news_discovery",
       attempt,
@@ -291,15 +300,24 @@ export async function searchNews(opts: {
       }
       return response;
     },
-    persistUsage: (response) =>
-      logOpenRouterUsage(
-        "news_search_normalize",
+    persistUsage: (response) => {
+      const attribution = providerModelAttribution(
         discoveryModel,
+        response.model,
+      );
+      return logOpenRouterUsage(
+          "news_search_normalize",
+          attribution.model,
         response.usage,
         opts.workspaceId,
-        { phase: "normalize" },
-      ),
+        {
+          phase: "normalize",
+          ...attribution.metadata,
+        },
+      );
+    },
     usage: (response) => response.usage,
+    responseModel: (response) => response.model,
     telemetry: opts.telemetry,
     stage: "news_normalize",
     attempt: 1,

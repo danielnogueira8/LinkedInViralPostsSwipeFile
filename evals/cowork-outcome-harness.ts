@@ -529,6 +529,7 @@ async function runCoworkOutcomeScenarioWithStore(
       toolArgs: null,
       finishReason: "stop",
       usage: undefined,
+      model: "openai/gpt-5.6-luna",
       citations: [],
     })) as ChatTurnDependencies["completeChat"],
     fetchRecentPostDrafts: async () => [],

@@ -1,6 +1,9 @@
 import { describe, expect, test, vi } from "vitest";
 import { AdapterHealthRegistry } from "@/lib/agent/adapter-health";
-import { runCoworkAdapterAttempt } from "@/lib/agent/cowork-adapter-attempt";
+import {
+  providerModelAttribution,
+  runCoworkAdapterAttempt,
+} from "@/lib/agent/cowork-adapter-attempt";
 import { createCoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
 
 function health() {
@@ -13,6 +16,19 @@ function health() {
 }
 
 describe("Cowork adapter attempt boundary", () => {
+  test("attributes provider aliases centrally", () => {
+    expect(
+      providerModelAttribution("requested/luna", "provider/luna-versioned"),
+    ).toEqual({
+      model: "provider/luna-versioned",
+      metadata: { requested_model: "requested/luna" },
+    });
+    expect(providerModelAttribution("requested/luna", " ")).toEqual({
+      model: "requested/luna",
+      metadata: {},
+    });
+  });
+
   test("persists usage once and records an accepted validated response", async () => {
     const persistUsage = vi.fn(async () => undefined);
     const sink = vi.fn();
@@ -49,6 +65,47 @@ describe("Cowork adapter attempt boundary", () => {
     expect(sink.mock.calls[0][0].stage_attempts[0]).toMatchObject({
       stage: "writer_primary",
       outcome: "accepted",
+    });
+  });
+
+  test("records the provider-returned model while retaining the requested model", async () => {
+    const sink = vi.fn();
+    const telemetry = createCoworkTurnTelemetry(
+      {
+        traceId: "attempt-routed-model",
+        workspaceId: "ws-1",
+        route: "direct_writer",
+        requestedContract: { kind: "post", expectedCount: 1 },
+      },
+      sink,
+    );
+    await runCoworkAdapterAttempt({
+      registry: health(),
+      adapterKey: "writer:luna",
+      call: async () => ({
+        text: "complete",
+        model: "openai/gpt-5.6-luna-20260715",
+        usage: { prompt_tokens: 2, completion_tokens: 1, cost: 0.001 },
+      }),
+      validate: (response) => response.text,
+      persistUsage: async () => undefined,
+      usage: (response) => response.usage,
+      responseModel: (response) => response.model,
+      telemetry,
+      stage: "writer_primary",
+      attempt: 1,
+      model: "openai/gpt-5.6-luna",
+      rejectedReasonCode: "empty_output",
+    });
+    await telemetry.finish({
+      deliveredContract: { kind: "post", deliveredCount: 1 },
+      provenanceStatus: "not_required",
+      terminalOutcome: "delivered",
+    });
+
+    expect(sink.mock.calls[0][0].stage_attempts[0]).toMatchObject({
+      model: "openai/gpt-5.6-luna-20260715",
+      requested_model: "openai/gpt-5.6-luna",
     });
   });
 

@@ -38,10 +38,13 @@ describe("createSentryOptions", () => {
         dsn: "https://public@example.ingest.sentry.io/1",
         environment: "production",
         nodeEnv: "production",
+        release: "67d093b",
       }),
     ).toMatchObject({
       enabled: true,
       environment: "production",
+      release: "67d093b",
+      initialScope: { tags: { deployment_id: "67d093b" } },
       tracesSampleRate: 0.1,
     });
   });

@@ -44,7 +44,24 @@ describe("validated transport contracts", () => {
       ["ask", { question: "Which?", options: ["A", "B"], allowOther: true }],
       ["preference_saved", { id: "p1", rule: "No hashtags" }],
       ["artifact", { id: "a1", kind: "post", title: "Draft", body: "A complete post" }],
-      ["done", { artifacts: [] }],
+      [
+        "done",
+        {
+          artifacts: [],
+          usage: {
+            total_credits: 2,
+            total_cost_usd: 0.01,
+            stages: [
+              {
+                kind: "writing",
+                credits: 2,
+                cost_usd: 0.01,
+                models: ["openai/gpt-5.6-luna"],
+              },
+            ],
+          },
+        },
+      ],
       ["error", { message: "Stopped", code: "cancelled" }],
     ] as const;
     for (const [event, data] of frames) {

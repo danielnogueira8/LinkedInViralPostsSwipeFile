@@ -11,6 +11,7 @@ function response(
     toolArgs,
     finishReason: "tool_calls",
     usage: { prompt_tokens: 10, completion_tokens: 5, cost: 0.001 },
+    model: "openai/gpt-5.6-luna",
     citations: [],
   };
 }

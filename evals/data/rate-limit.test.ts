@@ -7,6 +7,7 @@ import {
   sumUsageCost,
   isOverCostCap,
   hasCostAllowanceForEstimate,
+  costEquivalentCredits,
   DECISION_LAYER_COST_USD,
 } from "@/lib/agent/rate-limit";
 
@@ -74,6 +75,17 @@ describe("projectMonthlyUsage — credits-pill arithmetic", () => {
 
   test("limit is echoed back unchanged", () => {
     expect(projectMonthlyUsage(0, 0, BUDGET, 500).limit).toBe(500);
+  });
+});
+
+describe("costEquivalentCredits — per-turn estimate", () => {
+  test("uses the same spend-to-credit scale as monthly usage", () => {
+    expect(costEquivalentCredits(0.02, 5, 1000)).toBe(4);
+  });
+
+  test("keeps a paid turn visible at the one-message floor", () => {
+    expect(costEquivalentCredits(0, 5, 1000)).toBe(1);
+    expect(costEquivalentCredits(0.001, 5, 1000)).toBe(1);
   });
 });
 

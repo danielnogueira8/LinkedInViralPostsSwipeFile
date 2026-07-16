@@ -807,3 +807,50 @@ describe("hydrate — re-attaches selected post format to the user message", () 
     expect(hydrate(rows)[0].postFormat).toBeUndefined();
   });
 });
+
+test("assistant task usage survives canonical hydration", () => {
+  const usage = {
+    total_credits: 4,
+    total_cost_usd: 0.02,
+    stages: [
+      {
+        kind: "research",
+        credits: 2,
+        cost_usd: 0.01,
+        models: ["openai/gpt-5.6-luna"],
+      },
+      {
+        kind: "writing",
+        credits: 2,
+        cost_usd: 0.01,
+        models: ["openai/gpt-5.6-luna"],
+      },
+    ],
+  };
+  const rows: RawDbMessage[] = [
+    {
+      id: "a-usage",
+      role: "assistant",
+      content: "Your draft is ready.",
+      artifacts: null,
+      tool_calls: [
+        {
+          id: "_turn_usage",
+          type: "function",
+          function: {
+            name: "_turn_usage",
+            arguments: JSON.stringify(usage),
+          },
+        },
+      ],
+    },
+  ];
+
+  expect(hydrate(rows)[0].usage).toMatchObject({
+    totalCredits: 4,
+    stages: [
+      { kind: "research", credits: 2 },
+      { kind: "writing", credits: 2 },
+    ],
+  });
+});

@@ -62,7 +62,10 @@ import {
   coworkAdapterHealth,
   type AdapterHealthRegistry,
 } from "@/lib/agent/adapter-health";
-import { runCoworkAdapterAttempt } from "@/lib/agent/cowork-adapter-attempt";
+import {
+  providerModelAttribution,
+  runCoworkAdapterAttempt,
+} from "@/lib/agent/cowork-adapter-attempt";
 import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
 import {
   enforceExactFinalLine,
@@ -1385,15 +1388,20 @@ export async function* runDraftEngine(
         const used = tokens(response.usage);
         inputTokens += used.input;
         outputTokens += used.output;
+        const attribution = providerModelAttribution(model, response.model);
         await deps.recordUsage(
           "cowork_direct_writer",
-          model,
+          attribution.model,
           response.usage,
           input.workspaceId,
-          { stage },
+          {
+            stage,
+            ...attribution.metadata,
+          },
         );
       },
       usage: (response) => response.usage,
+      responseModel: (response) => response.model,
       telemetry: input.telemetry,
       stage: `writer_${stage}`,
       attempt,
@@ -1407,7 +1415,9 @@ export async function* runDraftEngine(
           ? "deadline"
           : "cancelled",
     });
-    input.onModelUsed?.(model);
+    input.onModelUsed?.(
+      providerModelAttribution(model, result.response.model).model,
+    );
     return result.response;
   };
 
