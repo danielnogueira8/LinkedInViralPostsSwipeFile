@@ -11,7 +11,10 @@ import {
   type CoworkOutcomeScenario,
 } from "@/evals/cowork-outcome-harness";
 import { INCOMPLETE_ORIGINAL_POST_BODY } from "@/evals/fixtures/cowork-incidents";
-import { buildHookOnlyRefineMessage } from "@/lib/hook-splice";
+import {
+  buildHookOnlyRefineMessage,
+  splicePreservedBody,
+} from "@/lib/hook-splice";
 import { POST_INTENTS } from "@/lib/post-intents";
 import { CHAT_MODEL } from "@/lib/openrouter";
 import { PRIMARY_DRAFT_WRITER_MODEL } from "@/lib/agent/draft-writer";
@@ -2546,6 +2549,55 @@ describe("production-shaped Cowork outcome harness", () => {
     expect(report.pass, report.failureCodes.join(", ")).toBe(true);
     expect(report.observed.agentProviderRounds).toBe(2);
     expect(report.observed.directWriterRequests).toHaveLength(0);
+  });
+
+  test("refines a hook while preserving an exact tagged final line", async () => {
+    const targetId = "00000000-0000-4000-8000-000000000597";
+    const finalLine = "#SWIPEIN_QA_20260716.";
+    const targetBody = `${COMPLETE_POST}\n\n${finalLine}`;
+    const revisedBody = `${SECOND_POST}\n\n${finalLine}`;
+    const expectedBody = splicePreservedBody(targetBody, revisedBody);
+    const instruction =
+      `Make the hook punchier and keep the exact final line ${finalLine}`;
+    const report = await runCoworkOutcomeScenario({
+      id: "hook-refine-preserve-exact-final-line",
+      request: {
+        message: buildHookOnlyRefineMessage(instruction, targetBody),
+        skipDecision: true,
+        refineTargetId: targetId,
+        refineInstruction: instruction,
+        hookOnly: true,
+        hookOnlyOriginalBody: targetBody,
+      },
+      seed: {
+        messageArtifact: {
+          id: targetId,
+          kind: "post",
+          title: "Career leverage",
+          body: targetBody,
+        },
+      },
+      model: {
+        provider: renderProvider([revisedBody]),
+        directWriter: [
+          {
+            text: revisedBody,
+            finishReason: "stop",
+            usage: usage(220, 90, 0.00019),
+          },
+        ],
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [expectedBody],
+        actionNames: [],
+      },
+    });
+
+    expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+    expect(report.observed.agentProviderRounds).toBe(0);
+    expect(report.observed.directWriterRequests).toHaveLength(1);
+    expect(report.persisted.artifacts[0]?.body.endsWith(finalLine)).toBe(true);
   });
 
   test("cancelling a direct refine leaves the original unchanged and emits no replacement", async () => {
