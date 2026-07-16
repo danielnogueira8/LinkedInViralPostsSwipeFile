@@ -13,6 +13,7 @@ import {
 import { runTool } from "@/lib/agent/tools";
 import { wrapUntrustedDelimited } from "@/lib/agent/untrusted";
 import {
+  CHAT_MODEL,
   completeChat,
   logOpenRouterUsage,
   UsagePersistenceError,
@@ -30,9 +31,13 @@ import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
 
 export type { ActionCheckpoint, ActionCheckpointRepository };
 
+// Primary defaults to the one app-wide chat model (OPENROUTER_CHAT_MODEL) so
+// every text-LLM call uses the SAME model unless pinned via
+// OPENROUTER_ACTION_ORCHESTRATOR_MODEL. The fallback stays independent (safety
+// net only). Note: the orchestrator plans multi-step tool actions — keep the
+// chat model tool-calling-capable, or pin a capable model here.
 export const PRIMARY_ACTION_ORCHESTRATOR_MODEL =
-  process.env.OPENROUTER_ACTION_ORCHESTRATOR_MODEL ||
-  "anthropic/claude-sonnet-5";
+  process.env.OPENROUTER_ACTION_ORCHESTRATOR_MODEL || CHAT_MODEL;
 export const FALLBACK_ACTION_ORCHESTRATOR_MODEL =
   process.env.OPENROUTER_ACTION_ORCHESTRATOR_FALLBACK_MODEL ||
   "google/gemini-3.5-flash";

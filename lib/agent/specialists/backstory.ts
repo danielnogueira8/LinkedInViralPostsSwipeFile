@@ -25,6 +25,7 @@
 // failure can never break generation.
 
 import {
+  CHAT_MODEL,
   completeChat,
   logOpenRouterUsage,
   UsagePersistenceError,
@@ -39,8 +40,11 @@ import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
 import { supabaseAdmin } from "@/lib/supabase";
 import type { VoiceProfile } from "@/lib/claude";
 
+// Defaults to the one app-wide chat model (OPENROUTER_CHAT_MODEL) so every
+// text-LLM call uses the SAME model unless this task is pinned via
+// OPENROUTER_BACKSTORY_MODEL. See lib/openrouter.ts CHAT_MODEL.
 export const BACKSTORY_MODEL =
-  process.env.OPENROUTER_BACKSTORY_MODEL || "anthropic/claude-sonnet-5";
+  process.env.OPENROUTER_BACKSTORY_MODEL || CHAT_MODEL;
 
 // ON by default. AGENT_BACKSTORY_EXTRACT=0 disables — the profile keeps facts
 // embedded (today's behavior), no extraction call, no separate retrieval block.

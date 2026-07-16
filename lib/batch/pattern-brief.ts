@@ -1,5 +1,5 @@
 import { supabaseAdmin } from "@/lib/supabase";
-import { completeChat, logOpenRouterUsage } from "@/lib/openrouter";
+import { CHAT_MODEL, completeChat, logOpenRouterUsage } from "@/lib/openrouter";
 import { selectAllRows } from "@/lib/db-paginate";
 
 // The weekly pattern-mining brief (viral-learning loop, PR 4). Once a week we
@@ -10,12 +10,13 @@ import { selectAllRows } from "@/lib/db-paginate";
 // the writer prompt, so the writer's guidance auto-updates from real outcomes
 // instead of being hand-maintained.
 //
-// This is the one reasoning-heavy job in the loop, so it runs on Sonnet (via
-// OpenRouter). It runs weekly per workspace, so absolute cost is trivial.
+// This is the one reasoning-heavy job in the loop. It runs weekly per
+// workspace, so absolute cost is trivial.
 
-// Sonnet via OpenRouter — the analytical job. Env-overridable for pinning/A-B.
+// Defaults to the one app-wide chat model (OPENROUTER_CHAT_MODEL) so every
+// text-LLM call uses the SAME model unless pinned via OPENROUTER_PATTERN_MODEL.
 export const PATTERN_MODEL =
-  process.env.OPENROUTER_PATTERN_MODEL || "anthropic/claude-sonnet-5";
+  process.env.OPENROUTER_PATTERN_MODEL || CHAT_MODEL;
 
 // The settings KV key the brief lives under (per workspace).
 export const PATTERN_BRIEF_KEY = "viral_pattern_brief";

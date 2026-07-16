@@ -3,16 +3,18 @@ import { openRouterCost, openRouterUsageCost, CHAT_MODEL } from "@/lib/openroute
 import { DECISION_MODEL } from "@/lib/agent/decide";
 
 // ---------------------------------------------------------------------------
-// Cost-table correctness. The decision pre-pass runs on Sonnet 5 via
-// OpenRouter; if its model id isn't in the pricing table, openRouterCost falls
-// back to the GLM-5.1 rate and under-counts decision spend (so the monthly
-// cost cap undercounts it). These pin the Sonnet rate AND prove the decision
-// model's exact slug is priced — guarding against a silent fallback regression.
+// Cost-table correctness. If a model's id isn't in the pricing table,
+// openRouterCost falls back to the GLM-5.1 rate and under-counts spend (so the
+// monthly cost cap undercounts it). These pin the Sonnet 5 rate (still used as a
+// fallback for the thin writer + orchestrators) AND prove the DECISION_MODEL's
+// exact slug is priced — guarding against a silent fallback regression. NOTE:
+// DECISION_MODEL now defaults to OPENROUTER_CHAT_MODEL (one model everywhere),
+// so these no longer assume it's Sonnet.
 // ---------------------------------------------------------------------------
 
 const M = 1_000_000;
 
-describe("openRouterCost — Sonnet 5 decision pricing", () => {
+describe("openRouterCost — pricing-table correctness", () => {
   test("prices Sonnet 5 at $2 in / $10 out", () => {
     // 1M input + 1M output → $2 + $10 = $12.
     expect(openRouterCost("anthropic/claude-sonnet-5", M, M)).toBeCloseTo(12, 6);
@@ -26,20 +28,23 @@ describe("openRouterCost — Sonnet 5 decision pricing", () => {
     expect(openRouterCost("anthropic/claude-sonnet-5", M, 0, M)).toBeCloseTo(0.2, 6);
   });
 
-  test("the DECISION_MODEL slug is actually in the price table (no GLM fallback)", () => {
-    // If decide.ts's model id ever drifts from the pricing key, the Sonnet rate
-    // would silently revert to the GLM-5.1 fallback. Prove the exact slug used
-    // by the decision call prices DIFFERENTLY from GLM-5.1 → it's a real entry.
-    const sonnet = openRouterCost(DECISION_MODEL, M, M);
+  test("the DECISION_MODEL slug is actually in the price table (no GLM-5.1 fallback)", () => {
+    // If decide.ts's model id ever drifts from a pricing key, the rate would
+    // silently revert to the GLM-5.1 fallback and under-count decision spend.
+    // Prove the DECISION_MODEL's exact slug prices DIFFERENTLY from the fallback
+    // → it's a real entry. (Whatever OPENROUTER_CHAT_MODEL resolves to must be a
+    // priced entry; the default glm-5.2 is, and is distinct from the glm-5.1
+    // fallback.) Skip only in the degenerate case where the model IS the
+    // fallback slug itself.
+    if (DECISION_MODEL === "z-ai/glm-5.1") return;
+    const decision = openRouterCost(DECISION_MODEL, M, M);
     const glmFallback = openRouterCost("z-ai/glm-5.1", M, M);
-    expect(sonnet).not.toBeCloseTo(glmFallback, 6);
-    expect(sonnet).toBeCloseTo(12, 6); // and it's the Sonnet rate specifically
+    expect(decision).not.toBeCloseTo(glmFallback, 6);
   });
 
   test("a realistic decision call (~800 in / 120 out) costs a fraction of a cent", () => {
     const cost = openRouterCost(DECISION_MODEL, 800, 120);
-    // 800×$2/M + 120×$10/M = $0.0016 + $0.0012 = $0.0028.
-    expect(cost).toBeCloseTo(0.0028, 6);
+    expect(cost).toBeGreaterThan(0);
     expect(cost).toBeLessThan(0.01);
   });
 

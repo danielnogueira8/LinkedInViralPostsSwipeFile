@@ -25,6 +25,7 @@
 // ---------------------------------------------------------------------------
 
 import {
+  CHAT_MODEL,
   completeChat,
   logOpenRouterUsage,
   estimateTokens,
@@ -41,10 +42,15 @@ import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
 import { supabaseAdmin } from "@/lib/supabase";
 import { trackedAccountIds } from "@/lib/supabase-scoped";
 
-// Sonnet 5 on OpenRouter — chosen for judgment/instruction-following, which is
-// where GLM is weakest. Overridable via env for A/B or a cheaper tier (Haiku).
+// Defaults to the one app-wide chat model (OPENROUTER_CHAT_MODEL) so every
+// text-LLM call uses the SAME model unless pinned via OPENROUTER_DECISION_MODEL.
+// NOTE: the decision pre-pass does judgment/instruction-following work — the
+// weakest area of a cheaper model. Historically this ran on Sonnet for exactly
+// that reason. Now that a single OPENROUTER_CHAT_MODEL drives everything, keep
+// that model strong (or pin OPENROUTER_DECISION_MODEL to a strong judge) for
+// this layer to add value.
 export const DECISION_MODEL =
-  process.env.OPENROUTER_DECISION_MODEL || "anthropic/claude-sonnet-5";
+  process.env.OPENROUTER_DECISION_MODEL || CHAT_MODEL;
 
 // Feature flag. ON by default now — the Sonnet decision pre-pass is the primary
 // defense against GLM's ambiguity misjudgments (wrong guesses on vague asks,

@@ -1,4 +1,5 @@
 import {
+  CHAT_MODEL,
   completeChat,
   logOpenRouterUsage,
   UsagePersistenceError,
@@ -15,8 +16,11 @@ import {
   wrapUntrustedDelimited,
 } from "@/lib/agent/untrusted";
 
+// Defaults to the one app-wide chat model (OPENROUTER_CHAT_MODEL) so every
+// text-LLM call uses the SAME model unless pinned via
+// OPENROUTER_SOURCE_FIDELITY_MODEL.
 export const SOURCE_FIDELITY_MODEL =
-  process.env.OPENROUTER_SOURCE_FIDELITY_MODEL || "anthropic/claude-sonnet-5";
+  process.env.OPENROUTER_SOURCE_FIDELITY_MODEL || CHAT_MODEL;
 
 const TIMEOUT_MS = Number(process.env.AGENT_SOURCE_FIDELITY_TIMEOUT_MS || 12_000);
 

@@ -193,9 +193,12 @@ const MAX_TEXT_LEN = 200_000; // inlined text-file cap (chars)
 // raw), so a request body can't balloon into memory regardless of the per-file
 // caps. The client enforces a friendlier 20MB; this is the hard backstop.
 const MAX_TOTAL_ATTACHMENT_LEN = 28_000_000;
-// Sonnet 5, not 4.6. Every other Sonnet-tier call site migrated to Sonnet 5
-// ($2/$10) already; 4.6 ($3/$15) was a stale leftover here — Sonnet 5 is 33%
-// cheaper for the same vision/judgment tier. Overridable via env.
+// VISION is modality-separate (like embeddings / image generation): it feeds a
+// real image (image_url) to the model, so it CANNOT follow OPENROUTER_CHAT_MODEL
+// unconditionally — a text-only chat model (e.g. the GLM default) can't read the
+// image and attachment analysis would break. It keeps its own vision-capable
+// default; pin OPENROUTER_VISION_MODEL to change it (e.g. to match your chat
+// model when that model is multimodal). Sonnet 5 = the vision/judgment tier.
 const VISION_MODEL =
   process.env.OPENROUTER_VISION_MODEL || "anthropic/claude-sonnet-5";
 const CHAT_IMAGE_ANALYSIS_PROMPT_VERSION = 1;

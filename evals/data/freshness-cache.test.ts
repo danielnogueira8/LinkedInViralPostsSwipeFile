@@ -26,8 +26,12 @@ vi.mock("@/lib/supabase", () => ({
   }),
 }));
 
-const { computeFreshnessConstraint, freshnessHistoryHash, FRESHNESS_PROMPT_VERSION } =
-  await import("@/lib/agent/specialists/freshness");
+const {
+  computeFreshnessConstraint,
+  freshnessHistoryHash,
+  FRESHNESS_MODEL,
+  FRESHNESS_PROMPT_VERSION,
+} = await import("@/lib/agent/specialists/freshness");
 const { createCoworkTurnTelemetry } =
   await import("@/lib/agent/cowork-telemetry");
 
@@ -49,7 +53,7 @@ describe("freshness constraint cache", () => {
     maybeSingle.mockResolvedValue({
       data: {
         history_hash: freshnessHistoryHash(priorDrafts),
-        model: "anthropic/claude-sonnet-5",
+        model: FRESHNESS_MODEL,
         prompt_version: FRESHNESS_PROMPT_VERSION,
         markers: [],
       },
@@ -66,7 +70,7 @@ describe("freshness constraint cache", () => {
     maybeSingle.mockResolvedValue({
       data: {
         history_hash: "old-hash",
-        model: "anthropic/claude-sonnet-5",
+        model: FRESHNESS_MODEL,
         prompt_version: FRESHNESS_PROMPT_VERSION,
         markers: ["old marker"],
       },

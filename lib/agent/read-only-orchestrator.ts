@@ -9,6 +9,7 @@ import type { ReadOnlyOrchestratorRoute } from "@/lib/agent/read-only-orchestrat
 import { runTool, toolSummary } from "@/lib/agent/tools";
 import { safeFilename } from "@/lib/agent/untrusted";
 import {
+  CHAT_MODEL,
   completeChat,
   logOpenRouterUsage,
   UsagePersistenceError,
@@ -25,9 +26,11 @@ import {
 import { runCoworkAdapterAttempt } from "@/lib/agent/cowork-adapter-attempt";
 import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
 
+// Primary defaults to the one app-wide chat model (OPENROUTER_CHAT_MODEL) so
+// every text-LLM call uses the SAME model unless pinned via
+// OPENROUTER_READ_ONLY_ORCHESTRATOR_MODEL. The fallback stays independent.
 export const PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL =
-  process.env.OPENROUTER_READ_ONLY_ORCHESTRATOR_MODEL ||
-  "anthropic/claude-sonnet-5";
+  process.env.OPENROUTER_READ_ONLY_ORCHESTRATOR_MODEL || CHAT_MODEL;
 export const FALLBACK_READ_ONLY_ORCHESTRATOR_MODEL =
   process.env.OPENROUTER_READ_ONLY_ORCHESTRATOR_FALLBACK_MODEL ||
   "google/gemini-3.5-flash";
@@ -897,8 +900,13 @@ function safeHttpUrl(value: string): string | null {
   }
 }
 
+// Primary defaults to the one app-wide chat model (OPENROUTER_CHAT_MODEL) so
+// grounded web research uses the SAME model unless pinned via
+// OPENROUTER_WEB_RESEARCH_MODEL. This is a text LLM call that adds OpenRouter's
+// web plugin — keep the chat model web-grounding-capable, or pin a model here
+// (Haiku was the prior cheap default). The fallback stays independent.
 export const PRIMARY_WEB_RESEARCH_MODEL =
-  process.env.OPENROUTER_WEB_RESEARCH_MODEL || "anthropic/claude-haiku-4.5";
+  process.env.OPENROUTER_WEB_RESEARCH_MODEL || CHAT_MODEL;
 export const FALLBACK_WEB_RESEARCH_MODEL =
   process.env.OPENROUTER_WEB_RESEARCH_FALLBACK_MODEL ||
   FALLBACK_READ_ONLY_ORCHESTRATOR_MODEL;

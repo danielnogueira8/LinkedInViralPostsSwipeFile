@@ -25,6 +25,7 @@
 //     lib/recent-drafts.truncateForPrompt; here we cap the count too.
 
 import {
+  CHAT_MODEL,
   completeChat,
   logOpenRouterUsage,
   UsagePersistenceError,
@@ -41,11 +42,10 @@ import { looksCorruptedDraft } from "./nets";
 import { editDraftBodySync } from "./editor";
 import type { RecentDraft } from "@/lib/recent-drafts";
 
-// Sonnet 5 by default — the judgment/instruction-following work here is
-// exactly where GLM is weakest, and we already run Sonnet for the decision
-// layer. Overridable via env for A/B or a cheaper tier (Haiku).
+// Defaults to the one app-wide chat model (OPENROUTER_CHAT_MODEL) so every
+// text-LLM call uses the SAME model unless pinned via OPENROUTER_SAMENESS_MODEL.
 export const SAMENESS_MODEL =
-  process.env.OPENROUTER_SAMENESS_MODEL || "anthropic/claude-sonnet-5";
+  process.env.OPENROUTER_SAMENESS_MODEL || CHAT_MODEL;
 
 // Feature flag. ON by default (per the user's request that every draft go
 // through this pass). Set AGENT_SAMENESS_CHECK=0 to disable — a one-flag
