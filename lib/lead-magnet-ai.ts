@@ -214,17 +214,52 @@ export async function claimLeadMagnetGeneration(
   return { claimId: String(claim.claim_id), usedBefore: Number(claim.used_before ?? 0) };
 }
 
-export function validateLeadMagnetAdapterResponse(
+// Extract a usable (title, markdown) pair from a lead-magnet completion,
+// tolerant of the model dropping the structured tool args. Some models
+// (notably gpt-5.6-luna on the fuller prod prompt) emit the markdown as reply
+// TEXT instead of `toolArgs.markdown_body`, or omit the title from the tool
+// call — the forced tool_choice guarantees a call is MADE, not that every field
+// lands. When the tool arg is missing we fall back to `response.text` (body)
+// and to the markdown's first `# ` heading (title), which is exactly what the
+// downstream persist path already trusts. Exported so validation and the
+// generator agree on one salvage definition.
+export function salvageLeadMagnetContent(
   response: Awaited<ReturnType<typeof completeChat>>,
-): Awaited<ReturnType<typeof completeChat>> {
-  const title =
+): { title: string; markdown: string } {
+  const argTitle =
     typeof response.toolArgs?.title === "string"
       ? response.toolArgs.title.trim()
       : "";
   const markdown =
-    typeof response.toolArgs?.markdown_body === "string"
+    typeof response.toolArgs?.markdown_body === "string" &&
+    response.toolArgs.markdown_body.trim().length > 0
       ? response.toolArgs.markdown_body.trim()
-      : "";
+      : (response.text ?? "").trim();
+  // Title fallback: first markdown H1, else the first non-empty line (trimmed of
+  // leading #), so a text-only response still yields a title.
+  let title = argTitle;
+  if (!title && markdown) {
+    const h1 = markdown.match(/^\s*#\s+(.+?)\s*$/m);
+    if (h1) {
+      title = h1[1].trim();
+    } else {
+      const firstLine = markdown.split("\n").find((l) => l.trim().length > 0);
+      if (firstLine) title = firstLine.replace(/^#+\s*/, "").trim().slice(0, 90);
+    }
+  }
+  return { title, markdown };
+}
+
+export function validateLeadMagnetAdapterResponse(
+  response: Awaited<ReturnType<typeof completeChat>>,
+): Awaited<ReturnType<typeof completeChat>> {
+  // Accept a response with a usable body in EITHER the structured tool arg OR
+  // the reply text (salvage). Only reject when neither yields a real guide —
+  // that's the true "the model gave us nothing" failure, not "the model put the
+  // markdown in the wrong field". The old check read only toolArgs and threw
+  // even when response.text held a complete guide, which surfaced as a 500
+  // ("Adapter response validation failed") on models that answer in text.
+  const { title, markdown } = salvageLeadMagnetContent(response);
   if (!title || markdown.length < 80) {
     throw new Error(
       "Lead magnet response was missing its required structured title or markdown body.",
@@ -396,13 +431,15 @@ async function generateClaimedLeadMagnet(opts: {
     repairUsed = true;
   }
 
-  let title =
-    typeof res.toolArgs?.title === "string" ? res.toolArgs.title.trim() : "";
-  let rawMarkdown =
-    typeof res.toolArgs?.markdown_body === "string"
-      ? res.toolArgs.markdown_body.trim()
-      : res.text.trim();
-  let markdown = prepareGeneratedLeadMagnetMarkdown({ title, markdown: rawMarkdown });
+  // Use the SAME salvage the validator used, so a response that passed
+  // validation via response.text (not toolArgs) also persists correctly rather
+  // than tripping the final !title guard below.
+  let salvaged = salvageLeadMagnetContent(res);
+  let title = salvaged.title;
+  let markdown = prepareGeneratedLeadMagnetMarkdown({
+    title,
+    markdown: salvaged.markdown,
+  });
   let assessment = assessGeneratedLeadMagnetMarkdown(markdown);
   if (!repairUsed && !assessment.passed) {
     const repair = await runRepair({
@@ -412,12 +449,12 @@ async function generateClaimedLeadMagnet(opts: {
     });
     const repaired = repair.response;
     res = repaired;
-    title = typeof repaired.toolArgs?.title === "string" ? repaired.toolArgs.title.trim() : title;
-    rawMarkdown =
-      typeof repaired.toolArgs?.markdown_body === "string"
-        ? repaired.toolArgs.markdown_body.trim()
-        : repaired.text.trim();
-    markdown = prepareGeneratedLeadMagnetMarkdown({ title, markdown: rawMarkdown });
+    salvaged = salvageLeadMagnetContent(repaired);
+    title = salvaged.title || title;
+    markdown = prepareGeneratedLeadMagnetMarkdown({
+      title,
+      markdown: salvaged.markdown,
+    });
     assessment = assessGeneratedLeadMagnetMarkdown(markdown);
   }
   const selectionSummary =
