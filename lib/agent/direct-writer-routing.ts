@@ -72,7 +72,7 @@ const DIRECT_PARTIAL_REQUEST_RE =
 const AMBIGUOUS_POST_RE =
   /^\s*(?:please\s+)?(?:write|draft|create|make)(?:\s+me)?\s+(?:a|one)?\s*(?:linkedin\s+)?post[.!?]?\s*$/i;
 const FULL_POST_REQUEST_RE =
-  /\b(?:(?:write|draft|create|make|generate)\s+(?:me\s+)?|give\s+me\s+)(?:(?:a|an|one)\s+)?(?:(?:original|complete|full)\s+)?(?:linkedin\s+)?post\b/i;
+  /\b(?:(?:write|draft|create|make|generate)\s+(?:me\s+)?|give\s+me\s+)(?:(?:a|an|one)\s+)?(?:(?:short|concise|brief|punchy|detailed|in-depth|long-form|long|original|complete|full)\s+){0,4}(?:linkedin\s+)?post\b/i;
 const NEGATED_WRITING_RE =
   /\b(?:do\s+not|don(?:'|’)?t|dont|never|no\s+need\s+to)\s+(?:(?:please|just|actually|go\s+ahead\s+and)\s+|(?:want|need|ask)\s+(?:me|you|us|them)\s+to\s+){0,3}(?:write|draft|create|generate|give|make|produce|prepare|model|mimic|adapt|rewrite|rework|remix|turn|change|edit|refine|tighten|shorten|strengthen)\b|\bwithout\s+(?:writing|drafting|creating|generating|giving|modeling|modelling|adapting|rewriting|changing|editing|refining|tightening|shortening|strengthening)\b/i;
 const META_WRITING_DISCUSSION_RE =

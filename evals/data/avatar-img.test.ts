@@ -1,7 +1,7 @@
 import { describe, test, expect } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { AvatarImg } from "@/components/avatar-img";
+import { AvatarImg, selectAvatarCandidate } from "@/components/avatar-img";
 
 // ---------------------------------------------------------------------------
 // Unit tests for AvatarImg — the fix for the disappearing draft profile pic.
@@ -20,6 +20,44 @@ const html = (props: Parameters<typeof AvatarImg>[0]) =>
   renderToStaticMarkup(createElement(AvatarImg, props));
 
 describe("AvatarImg", () => {
+  test("a newly supplied photo is tried after every previous candidate failed", () => {
+    const failed = [
+      "https://media.licdn.com/expired.jpg",
+      "https://img.clerk.com/old.jpg",
+    ];
+
+    expect(
+      selectAvatarCandidate(
+        "https://media.licdn.com/fresh.jpg",
+        "https://img.clerk.com/new.jpg",
+        failed,
+      ),
+    ).toBe("https://media.licdn.com/fresh.jpg");
+  });
+
+  test("the durable backup is selected after the primary URL fails", () => {
+    expect(
+      selectAvatarCandidate(
+        "https://media.licdn.com/expired.jpg",
+        "https://img.clerk.com/durable.jpg",
+        ["https://media.licdn.com/expired.jpg"],
+      ),
+    ).toBe("https://img.clerk.com/durable.jpg");
+  });
+
+  test("the placeholder is selected only after every current URL failed", () => {
+    expect(
+      selectAvatarCandidate(
+        "https://media.licdn.com/expired.jpg",
+        "https://img.clerk.com/expired.jpg",
+        [
+          "https://media.licdn.com/expired.jpg",
+          "https://img.clerk.com/expired.jpg",
+        ],
+      ),
+    ).toBeUndefined();
+  });
+
   test("no src → renders the fallback, never an <img> (no broken-image icon)", () => {
     const out = html({ src: null, fallback });
     expect(out).toContain('id="fb"');
