@@ -119,8 +119,10 @@ export function buildHookOnlyRefineMessage(
   instruction: string,
   draftBody: string,
 ): string {
+  const normalizedInstruction = instruction.trim();
+  const sentenceBoundary = /[.!?…]$/.test(normalizedInstruction) ? " " : ". ";
   const instr =
-    `${instruction}. Rewrite ONLY the hook — the first 1-2 lines. You may lightly adjust the next 1-2 lines so they still flow from the new hook, but leave the rest of the post EXACTLY as given: every other word and line break unchanged, blank lines between paragraphs kept. Do NOT rewrite the body.`;
+    `${normalizedInstruction}${sentenceBoundary}Rewrite ONLY the hook — the first 1-2 lines. You may lightly adjust the next 1-2 lines so they still flow from the new hook, but leave the rest of the post EXACTLY as given: every other word and line break unchanged, blank lines between paragraphs kept. Do NOT rewrite the body.`;
   return (
     `Refine this post: ${instr}\n\n` +
     `Keep it in my voice. Here's the current post:\n` +

@@ -3334,13 +3334,11 @@ export function ChatWorkspace({
         });
       }
       const noun = kind === "hook" ? "hook" : "post";
-      const instr = hookOnly
-        ? `${instruction}. Rewrite ONLY the hook — the first 1-2 lines. You may lightly adjust the next 1-2 lines so they still flow from the new hook, but leave the rest of the post EXACTLY as given: every other word and line break unchanged, blank lines between paragraphs kept. Do NOT rewrite the body.`
-        : instruction;
-      const message =
-        `Refine this ${noun}: ${instr}\n\n` +
-        `Keep it in my voice. Here's the current ${noun}:\n` +
-        `"""\n${draftBody}\n"""`;
+      const message = hookOnly
+        ? buildHookOnlyRefineMessage(instruction, draftBody)
+        : `Refine this ${noun}: ${instruction}\n\n` +
+          `Keep it in my voice. Here's the current ${noun}:\n` +
+          `"""\n${draftBody}\n"""`;
       // Inherit the skill(s) the SOURCE draft was produced under, so the refine
       // stays guided by that skill AND the new card keeps its /skill badge.
       // The draft's meta.skills holds the slugs; map them to ids via the loaded
