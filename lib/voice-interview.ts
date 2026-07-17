@@ -144,10 +144,33 @@ function renderAnswers(answers: InterviewAnswer[], voice: VoiceProfile | null): 
   return `${voiceBlock}The founder's interview answers:\n\n${qa}`;
 }
 
+function extractContext(toolArgs: Record<string, unknown> | null | undefined): string[] {
+  const raw = (toolArgs?.context ?? []) as unknown;
+  return Array.isArray(raw)
+    ? raw
+        .filter((c): c is string => typeof c === "string")
+        .map((c) => c.trim())
+        .filter(Boolean)
+        .slice(0, 12)
+    : [];
+}
+
 // Synthesize the raw interview answers into voice-matched context statements.
-// Returns the sanitized answers actually used + the distilled context. Throws
-// on transport/API failure (the route surfaces it). Empty context is possible
-// (all answers skipped) — the caller decides what to persist.
+// Returns the sanitized answers actually used + the distilled context.
+//
+// Two distinct "empty context" cases, handled differently:
+//   - Zero real answers (all skipped): a legitimate empty result — no model
+//     call is made, no throw, the caller persists an empty interview.
+//   - Real answers were given but the model's tool call comes back empty/
+//     malformed: NOT legitimate — the user did their part. Retried once
+//     (transient forced-tool-call flakiness), and if still empty, THROWS
+//     rather than silently returning an empty result. A malformed result
+//     used to be persisted as a 200-success with interview_context:[], which
+//     collapsed the UI to an unreachable state (see voice-interview-card.tsx —
+//     "Edit answers" only shows when context.length > 0). Throwing lets the
+//     route's existing catch surface a real error and skip the DB write
+//     entirely, so the user's prior state (if any) is untouched and the form
+//     stays open for a retry.
 export async function synthesizeInterviewContext(opts: {
   answers: unknown;
   voice: VoiceProfile | null;
@@ -157,27 +180,28 @@ export async function synthesizeInterviewContext(opts: {
   const answers = sanitizeInterviewAnswers(opts.answers);
   if (answers.length === 0) return { answers: [], context: [] };
 
-  const res = await completeChat({
-    model: VOICE_MODEL,
-    maxTokens: 2000,
-    tools: [INTERVIEW_TOOL],
-    forceTool: INTERVIEW_TOOL_NAME,
-    signal: opts.signal,
-    messages: [
-      { role: "system", content: INTERVIEW_SYSTEM },
-      { role: "user", content: renderAnswers(answers, opts.voice) },
-    ],
-  });
+  const attempt = async (): Promise<string[]> => {
+    const res = await completeChat({
+      model: VOICE_MODEL,
+      maxTokens: 2000,
+      tools: [INTERVIEW_TOOL],
+      forceTool: INTERVIEW_TOOL_NAME,
+      signal: opts.signal,
+      messages: [
+        { role: "system", content: INTERVIEW_SYSTEM },
+        { role: "user", content: renderAnswers(answers, opts.voice) },
+      ],
+    });
+    await logOpenRouterUsage("voice_interview", VOICE_MODEL, res.usage, opts.workspaceId);
+    return extractContext(res.toolArgs);
+  };
 
-  await logOpenRouterUsage("voice_interview", VOICE_MODEL, res.usage, opts.workspaceId);
-
-  const raw = (res.toolArgs?.context ?? []) as unknown;
-  const context = Array.isArray(raw)
-    ? raw
-        .filter((c): c is string => typeof c === "string")
-        .map((c) => c.trim())
-        .filter(Boolean)
-        .slice(0, 12)
-    : [];
+  let context = await attempt();
+  if (context.length === 0) context = await attempt();
+  if (context.length === 0) {
+    throw new Error(
+      "Couldn't build context from your answers — please try again.",
+    );
+  }
   return { answers, context };
 }
