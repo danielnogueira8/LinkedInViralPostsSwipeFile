@@ -3,6 +3,7 @@ import {
   groupDraftsForBoard,
   columnCollapse,
   mergeServerDrafts,
+  boardColumnForDraft,
   COLUMN_PREVIEW_COUNT,
   type Draft,
 } from "@/app/(app)/dashboard/posts/drafts-list";
@@ -117,6 +118,50 @@ describe("groupDraftsForBoard — grouping by status", () => {
     const g = groupDraftsForBoard([], "", "all");
     expect(Object.keys(g).sort()).toEqual(["drafting", "idea", "posted", "ready", "scheduled"]);
     expect(g.idea).toEqual([]);
+  });
+});
+
+// Bug-hunt fix (task #187): applyMeta's mobile-column selector used to fall
+// back to a `drafts` CLOSURE snapshot (potentially stale by the time an async
+// caller's response lands) instead of the merged draft's real status. The fix
+// routes the mobile column through boardColumnForDraft — the SAME function
+// that already derives the desktop grouping — applied to the freshly-merged
+// draft. These pin the exact scenario from the bug: a schedule cancellation
+// (scheduleStatus -> null) with no accompanying status change in the patch.
+describe("boardColumnForDraft — single source of truth for board/mobile column", () => {
+  test("a cancelled schedule (scheduleStatus -> null) resolves to the draft's OWN current status", () => {
+    // This is the merged draft applyMeta computes: { ...current, ...patch }
+    // where patch = { scheduleStatus: null } and current.status is 'drafting'
+    // (NOT 'idea' — a stale snapshot from a prior render would wrongly say
+    // 'idea' if it read an outdated closure instead of the merged draft).
+    const merged = draft({ id: "d1", status: "drafting", scheduleStatus: null });
+    expect(boardColumnForDraft(merged)).toBe("drafting");
+  });
+
+  test("a patch with BOTH a status change and scheduleStatus->scheduled prefers the schedule lane", () => {
+    // scheduling always wins over a stale/simultaneous status field — matches
+    // the desktop grouping's precedence (scheduleStatus checked first).
+    const merged = draft({ id: "d1", status: "posted", scheduleStatus: "scheduled" });
+    expect(boardColumnForDraft(merged)).toBe("scheduled");
+  });
+
+  test("scheduled/publishing map to the Scheduled lane; published maps to Posted", () => {
+    expect(
+      boardColumnForDraft(draft({ id: "a", status: "ready", scheduleStatus: "scheduled" })),
+    ).toBe("scheduled");
+    expect(
+      boardColumnForDraft(draft({ id: "b", status: "ready", scheduleStatus: "publishing" })),
+    ).toBe("scheduled");
+    expect(
+      boardColumnForDraft(draft({ id: "c", status: "ready", scheduleStatus: "published" })),
+    ).toBe("posted");
+  });
+
+  test("no scheduleStatus (null/undefined/'failed') falls through to the draft's real status", () => {
+    expect(boardColumnForDraft(draft({ id: "a", status: "ready" }))).toBe("ready");
+    expect(
+      boardColumnForDraft(draft({ id: "b", status: "ready", scheduleStatus: "failed" })),
+    ).toBe("ready");
   });
 });
 
