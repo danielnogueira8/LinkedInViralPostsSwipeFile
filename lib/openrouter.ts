@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "./supabase";
 import { holdWorkspaceCostClaims } from "./workspace-cost-claims";
+import { providerModelAttribution } from "./agent/cowork-adapter-attempt";
 
 // ---------------------------------------------------------------------------
 // OpenRouter client (OpenAI-compatible Chat Completions)
@@ -259,6 +260,12 @@ export type EmbedResult = {
 type RawEmbeddingResponse = {
   data?: Array<{ embedding?: number[]; index?: number }>;
   usage?: { prompt_tokens?: number };
+  // OpenRouter doesn't consistently document echoing a served-model field on
+  // /embeddings (unlike /chat/completions, which reliably does — see
+  // completeChat's `model` parsing above). Parsed opportunistically: if
+  // present, it's the real served model; if absent, callers fall back to the
+  // requested alias exactly as before this field was added.
+  model?: string;
 };
 
 // Embed a batch of texts via OpenRouter's OpenAI-compatible /embeddings
@@ -337,17 +344,18 @@ export async function embedText(
     return vec;
   });
   const promptTokens = parsed.usage?.prompt_tokens ?? 0;
+  const attribution = providerModelAttribution(model, parsed.model);
   if (opts.workspaceId) {
     // Best-effort cost logging; never let a logging failure fail the embed.
     await logOpenRouterUsage(
       "embed_posts",
-      model,
+      attribution.model,
       { prompt_tokens: promptTokens, completion_tokens: 0 },
       opts.workspaceId,
-      { count: texts.length },
+      { count: texts.length, ...attribution.metadata },
     ).catch(() => undefined);
   }
-  return { embeddings, model, promptTokens };
+  return { embeddings, model: attribution.model, promptTokens };
 }
 
 // ---------------------------------------------------------------------------
@@ -537,6 +545,11 @@ type RawImageGeneration = {
     image_url?: string | { url?: string };
   }>;
   usage?: Usage;
+  // Parsed opportunistically, same rationale as RawEmbeddingResponse.model —
+  // OpenRouter doesn't consistently document echoing a served-model field on
+  // /images. Undefined here just means callers keep using the requested
+  // model, exactly as before this field was added.
+  model?: string;
 };
 
 function imageUrlFromGenerationData(
@@ -678,6 +691,9 @@ export type ImageGenerationResult = {
   b64Json: string;
   mimeType: string;
   usage: Usage | undefined;
+  // The provider-served model, when OpenRouter's response includes one;
+  // otherwise the requested model (see RawImageGeneration.model).
+  model: string;
 };
 
 export async function generateImage(opts: {
@@ -689,8 +705,9 @@ export async function generateImage(opts: {
   signal?: AbortSignal;
 }): Promise<ImageGenerationResult> {
   const outputFormat = opts.outputFormat ?? "png";
+  const requestedModel = opts.model || IMAGE_GENERATION_MODEL;
   const body: Record<string, unknown> = {
-    model: opts.model || IMAGE_GENERATION_MODEL,
+    model: requestedModel,
     prompt: opts.prompt,
     n: 1,
     output_format: outputFormat,
@@ -745,6 +762,7 @@ export async function generateImage(opts: {
     b64Json,
     mimeType: outputFormat === "jpeg" ? "image/jpeg" : `image/${outputFormat}`,
     usage: parsed.usage,
+    model: providerModelAttribution(requestedModel, parsed.model).model,
   };
 }
 
