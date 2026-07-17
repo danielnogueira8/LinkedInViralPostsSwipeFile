@@ -20,6 +20,7 @@ import {
 } from "@/lib/draft-lifecycle";
 import { createSupabaseDraftLifecycleRepository } from "@/lib/draft-lifecycle-supabase";
 import {
+  dbErrorContent,
   errorContent,
   jsonContent,
   notFoundContent,
@@ -144,11 +145,14 @@ function draftForMcp(draft: DraftRecord) {
 }
 
 function trackedCreatorFailure(error: unknown) {
-  return errorContent(
-    error instanceof TrackedCreatorError
-      ? error.message
-      : ((error as Error)?.message ?? "Unexpected error"),
-  );
+  // A TrackedCreatorError's message is an app-level, caller-facing message
+  // (e.g. "niche is required") — safe to forward. Anything else is an
+  // unexpected error (DB failure, bad filter value tripping a PostgREST
+  // parse error, etc.) whose raw .message can leak schema/column/constraint
+  // internals, so it goes through the same sanitized path as every other
+  // query failure instead of being forwarded verbatim.
+  if (error instanceof TrackedCreatorError) return errorContent(error.message);
+  return dbErrorContent("tracked_creators", error);
 }
 
 export function registerSwipeTools(server: McpServer) {
@@ -214,7 +218,7 @@ export function registerSwipeTools(server: McpServer) {
         if (args.post_type) q = q.eq("post_type", args.post_type);
 
         const { data, error } = await q;
-        if (error) return errorContent(error.message);
+        if (error) return dbErrorContent("search_viral_posts", error);
         const posts = (data ?? []).map(normalizeEmbed);
         return jsonContent({ ok: true, count: posts.length, posts });
       } catch (e) {
@@ -276,7 +280,7 @@ export function registerSwipeTools(server: McpServer) {
           .select("niche, accounts!inner(niche, archived_at)")
           .eq("workspace_id", workspaceId)
           .is("accounts.archived_at", null);
-        if (error) return errorContent(error.message);
+        if (error) return dbErrorContent("list_niches", error);
 
         const counts = new Map<string, number>();
         for (const row of (data ?? []) as Array<{
@@ -348,7 +352,7 @@ export function registerSwipeTools(server: McpServer) {
         // posts" doesn't silently include lead-magnet posts.
         if (post_type) q = q.eq("post_type", post_type);
         const { data, error } = await q;
-        if (error) return errorContent(error.message);
+        if (error) return dbErrorContent("get_top_from_batch", error);
         return jsonContent({
           ok: true,
           scrape: {
@@ -707,7 +711,7 @@ export function registerSwipeTools(server: McpServer) {
           )
           .eq("workspace_id", workspaceId)
           .maybeSingle();
-        if (error) return errorContent(error.message);
+        if (error) return dbErrorContent("get_voice", error);
         if (!data || data.status !== "ready" || !data.profile) {
           return jsonContent({
             ok: false,
@@ -903,7 +907,7 @@ export function registerSwipeTools(server: McpServer) {
               .maybeSingle();
             if (row) return jsonContent({ ok: true, alreadySaved: true, saved: row });
           }
-          return errorContent(error?.message ?? "insert failed");
+          return dbErrorContent("save_post", error ?? new Error("insert failed"));
         }
 
         return jsonContent({
@@ -913,7 +917,7 @@ export function registerSwipeTools(server: McpServer) {
           ...(categoryWarning ? { category_warning: categoryWarning } : {}),
         });
       } catch (e) {
-        return errorContent((e as Error).message);
+        return dbErrorContent("save_post", e);
       }
     },
   );
@@ -942,10 +946,10 @@ export function registerSwipeTools(server: McpServer) {
           .eq("workspace_id", workspaceId)
           .order("saved_at", { ascending: false })
           .limit(limit);
-        if (error) return errorContent(error.message);
+        if (error) return dbErrorContent("list_saved_posts", error);
         return jsonContent({ ok: true, count: (data ?? []).length, saved: data ?? [] });
       } catch (e) {
-        return errorContent((e as Error).message);
+        return dbErrorContent("list_saved_posts", e);
       }
     },
   );
