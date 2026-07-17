@@ -27,6 +27,7 @@ import {
   type Usage,
 } from "@/lib/openrouter";
 import { runTool } from "@/lib/agent/tools";
+import { providerModelAttribution } from "@/lib/agent/cowork-adapter-attempt";
 import { runWithConcurrency } from "@/lib/bounded-concurrency";
 // Pure nets come from the shared specialists module (NOT run.ts), so the batch
 // worker doesn't drag the 3000-line agent-loop module in for a regex. The
@@ -722,7 +723,14 @@ async function generateDraftBody(opts: {
   // (evals / direct callers) to skip the sameness pass entirely.
   workspaceId?: string;
   priorDrafts?: RecentDraft[];
-}): Promise<{ body: string | null; usage: Usage | undefined }> {
+}): Promise<{
+  body: string | null;
+  usage: Usage | undefined;
+  // The provider-served model from the LAST completeChat attempt (may differ
+  // from the requested CHAT_MODEL alias). Undefined only when every attempt
+  // failed at the transport layer before a response came back.
+  model: string | undefined;
+}> {
   // NOTE: the weekly batch is a MODELING flow — it adapts a picked source post,
   // so it deliberately gets NO viral-learning RAG (exemplars / pattern brief).
   // RAG lives only on the ORIGINAL-drafting chat flows (lib/agent/run.ts), where
@@ -737,6 +745,7 @@ async function generateDraftBody(opts: {
   // cap for every call we actually made — even when we ultimately reject the
   // output (a rejected draft still cost money). Returns body:null on failure.
   let usage: Usage | undefined;
+  let model: string | undefined;
   const addUsage = (u: Usage | undefined) => {
     if (!u) return;
     const previous = usage;
@@ -773,9 +782,10 @@ async function generateDraftBody(opts: {
         signal: opts.signal,
       });
     } catch {
-      return { body: null, usage }; // transport error — skip this source
+      return { body: null, usage, model }; // transport error — skip this source
     }
     addUsage(res.usage);
+    model = res.model;
     // Deterministic anti-slop + shape nets via the SAME shared editor the agent
     // loop's render path uses — a headless call must clean drafts itself, and
     // now it does it through one function instead of open-coding the nets.
@@ -859,7 +869,7 @@ async function generateDraftBody(opts: {
           );
         }
       }
-      return { body: cleaned, usage };
+      return { body: cleaned, usage, model };
     }
     // Retry once with a corrective nudge; a second failure → skip this source.
     if (attempt === 0) {
@@ -876,7 +886,7 @@ async function generateDraftBody(opts: {
       );
     }
   }
-  return { body: null, usage };
+  return { body: null, usage, model };
 }
 
 // ---------------------------------------------------------------------------
@@ -1520,12 +1530,18 @@ export async function runWeeklyBatch(opts: {
         priorDrafts: priorPostDrafts,
       });
       // Log spend (whether or not the draft is usable — the call cost money).
+      // Attribute to the provider-served model, not the requested alias.
+      const draftAttribution = providerModelAttribution(CHAT_MODEL, generated.model);
       await logOpenRouterUsage(
         "weekly_batch_draft",
-        CHAT_MODEL,
+        draftAttribution.model,
         generated.usage,
         workspaceId,
-        { batch_id: batchId, source_post_id: current.id ?? null },
+        {
+          batch_id: batchId,
+          source_post_id: current.id ?? null,
+          ...draftAttribution.metadata,
+        },
       );
       if (!generated.body) {
         const replacement = nextBackfillSource(isLeadMagnet);
