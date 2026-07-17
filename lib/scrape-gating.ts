@@ -20,6 +20,15 @@ import { selectAllRows, idChunks } from "./db-paginate";
 const DAILY_POSTER_THRESHOLD = 4; // posts in last 7d
 const GATE_HOURS = 36; // skip if scraped within the last 36h
 const WARMUP_DAYS = 7; // always scrape creators with <7d of scrape history
+// A killed pipeline run (Vercel's 300s maxDuration) gets reclaimed by the
+// background-job stale sweep and re-executed with the SAME runId — but its
+// per-account usage_events writes from the killed attempt already happened
+// minutes ago, well inside GATE_HOURS's 36h cadence window, which exists to
+// space out routine scrapes, not to recognize a same-run resume. Without this,
+// a retry re-pays Apify for every account the killed attempt already
+// successfully scraped. Scoped tight (an hour) so it only catches a genuine
+// same-run resume, never masks a legitimate next-day re-scrape.
+const RESUME_DEDUPE_HOURS = 1;
 
 export type GatingDecision = {
   account_id: string;
@@ -177,4 +186,38 @@ export async function decideScrapeGates(
     decisions.push({ account_id: acc.id, handle, scrape: true, reason: "due" });
   }
   return decisions;
+}
+
+// A pipeline run reclaimed and re-executed after a mid-flight kill (the
+// background-job stale sweep) reuses the SAME accounts list decideScrapeGates
+// already approved — GATE_HOURS's 36h window doesn't help here since the
+// killed attempt's usage_events writes are only minutes old. This narrower,
+// tightly-scoped check excludes accounts already scraped within
+// RESUME_DEDUPE_HOURS, so a retry doesn't re-pay Apify for work the killed
+// attempt already completed. Only call this for a run that's resuming (an
+// existing runId), never for a fresh cron start — the normal GATE_HOURS
+// cadence is what governs that case.
+export async function excludeRecentlyScrapedInResume<
+  T extends { id: string; linkedin_handle: string },
+>(accounts: T[]): Promise<T[]> {
+  if (accounts.length === 0) return accounts;
+  const sb = supabaseAdmin();
+  const cutoff = new Date(
+    Date.now() - RESUME_DEDUPE_HOURS * 60 * 60 * 1000,
+  ).toISOString();
+  const { data: recentEvents, error } = await sb
+    .from("usage_events")
+    .select("meta")
+    .eq("provider", "apify")
+    .eq("kind", "profile_posts")
+    .gte("ts", cutoff);
+  if (error) throw error;
+  const recentlyScrapedHandles = new Set(
+    (recentEvents ?? [])
+      .map((ev) => (ev.meta as { username?: string } | null)?.username?.toLowerCase())
+      .filter((h): h is string => !!h),
+  );
+  return accounts.filter(
+    (a) => !recentlyScrapedHandles.has(a.linkedin_handle.toLowerCase()),
+  );
 }
