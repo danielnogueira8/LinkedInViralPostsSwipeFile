@@ -133,3 +133,37 @@ export const trackedAccountIds = cache(
     return (data ?? []).map((r) => r.account_id as string);
   },
 );
+
+/**
+ * The most recent successful scrape run "relevant" to a workspace: either a
+ * run that workspace itself triggered (runs.workspace_id = workspaceId), or
+ * a global daily-cron run (runs.workspace_id IS NULL — see
+ * db/migration-011-multi-tenancy.sql). Deliberately excludes OTHER
+ * workspaces' triggered runs.
+ *
+ * Without this, "get the latest scrape" queries picked the single most
+ * recent run across ALL workspaces with no filter at all — so workspace B
+ * triggering a manual re-scrape would skew workspace A's "recent posts"
+ * freshness window and displayed scrape date to B's run, even though A's own
+ * posts/accounts stayed correctly scoped. Centralizing here so every caller
+ * (Cowork's get_top_from_batch tool, the weekly batch, the hosted MCP tool)
+ * gets the fix once instead of re-implementing the same unscoped query.
+ */
+export async function latestRelevantScrape(
+  workspaceId: string,
+): Promise<{ started_at: string; finished_at: string | null } | null> {
+  const sb = supabaseAdmin();
+  const { data, error } = await retryRead<
+    { started_at: string; finished_at: string | null }[]
+  >(() =>
+    sb
+      .from("runs")
+      .select("started_at, finished_at")
+      .eq("status", "ok")
+      .or(`workspace_id.eq.${encodePostgrestValue(workspaceId)},workspace_id.is.null`)
+      .order("started_at", { ascending: false })
+      .limit(1),
+  );
+  if (error) throw error;
+  return data?.[0] ?? null;
+}
