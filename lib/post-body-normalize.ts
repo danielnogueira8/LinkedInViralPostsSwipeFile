@@ -1,4 +1,9 @@
-const SENTENCE_SPLIT_RE = /(?<=[a-z0-9"'”’)\]])([.!?])\s+(?=["'“‘(A-Z0-9])/g;
+// A number immediately before the punctuation is virtually never a genuine
+// sentence boundary — it's a date ("July 19."), an age, a list marker, or a
+// decimal fragment, not the end of a clause. So this only splits after a
+// LETTER (or closing punctuation) precedes the mark; numbers never trigger a
+// split here. Real sentence boundaries elsewhere in the text still split fine.
+const SENTENCE_SPLIT_RE = /(?<=[a-z"'”’)\]])([.!?])\s+(?=["'“‘(A-Z0-9])/g;
 // Inline list markers that belong at the START of their own line on LinkedIn.
 // The writer (Qwen or GLM) sometimes emits a list as one run-on line —
 // "Here's what's inside: -> a -> b -> c" — instead of one item per line. On
