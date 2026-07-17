@@ -45,6 +45,20 @@ describe("styleRegenCooldown — 30-day gate off the last success", () => {
   });
 });
 
+describe("STYLE_STALE_GENERATING_MS — safely exceeds the worker's own lease", () => {
+  // REGRESSION: generation runs as a background job with a 15-minute worker
+  // lease (DEFAULT_STALE_AFTER_SECS, lib/background-jobs.ts) that a capacity-
+  // contention requeue can extend further. A staleness window shorter than
+  // that lease (this used to be 8 minutes, sized for an old inline-after()
+  // flow no longer in use) declares a still-legitimately-running job "failed",
+  // triggering a premature regenerate that enqueues a SECOND job while the
+  // first is still executing — real duplicate Apify/LLM spend.
+  test("the staleness window is not shorter than the background-job lease", () => {
+    const WORKER_LEASE_MS = 15 * 60 * 1000;
+    expect(STYLE_STALE_GENERATING_MS).toBeGreaterThan(WORKER_LEASE_MS);
+  });
+});
+
 describe("isLiveGeneratingStyle", () => {
   test("fresh generating rows are live", () => {
     expect(
