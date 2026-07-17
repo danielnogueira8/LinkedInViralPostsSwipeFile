@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabase";
 import { requestedDirectPostCount } from "@/lib/agent/direct-deliverable-policy";
+import { selectAllRows } from "@/lib/db-paginate";
 
 // ---------------------------------------------------------------------------
 // Chat rate limiting + cost cap.
@@ -436,24 +437,32 @@ export async function getMonthlyUsage(
   try {
     const sb = supabaseAdmin();
     const monthStart = startOfMonthIso();
-    const [msgRes, costRes] = await Promise.all([
+    // usage_events isn't only written by chat turns — voice/creator-style/
+    // lead-magnet/batch ops all share this same cost pool AND a free-cost
+    // Zernio row per LinkedIn publish (never budget-gated) — so a busy
+    // workspace can exceed PostgREST's 1000-row default well before the cost
+    // cap trips. selectAllRows pages past that instead of silently
+    // undercounting spend.
+    const [msgRes, costRows] = await Promise.all([
       sb
         .from("chat_messages")
         .select("id", { count: "exact", head: true })
         .eq("workspace_id", workspaceId)
         .eq("role", "user")
         .gte("created_at", monthStart),
-      sb
-        .from("usage_events")
-        .select("cost_usd")
-        .eq("workspace_id", workspaceId)
-        .gte("ts", monthStart),
+      selectAllRows<{ cost_usd: number | null }>(() =>
+        sb
+          .from("usage_events")
+          .select("cost_usd")
+          .eq("workspace_id", workspaceId)
+          .gte("ts", monthStart),
+      ).catch(() => null),
     ]);
     if (msgRes.error) throw msgRes.error;
     const messages = msgRes.count ?? 0;
     // Cost read is best-effort — if it fails, fall back to the message count
     // alone (the message cap still enforces; we just can't reflect cost here).
-    const spent = costRes.error ? 0 : sumUsageCost(costRes.data);
+    const spent = costRows ? sumUsageCost(costRows) : 0;
     return projectMonthlyUsage(messages, spent, MONTHLY_BUDGET_USD, limit);
   } catch (e) {
     console.error("getMonthlyUsage fail", (e as Error).message);
@@ -461,23 +470,37 @@ export async function getMonthlyUsage(
   }
 }
 
+// Shared read for the monthly cost gate below — pages past PostgREST's
+// 1000-row default via selectAllRows (usage_events is written by chat AND
+// voice/creator-style/lead-magnet/batch ops sharing this same cost pool, plus
+// a free-cost Zernio row per LinkedIn publish that no budget check gates, so
+// a busy workspace's row count isn't bounded by chat spend alone). Rethrows
+// on failure so both callers keep their existing fail-closed behavior.
+async function readMonthlySpend(workspaceId: string, monthStart: string): Promise<number> {
+  const sb = supabaseAdmin();
+  const rows = await selectAllRows<{ cost_usd: number | null }>(() =>
+    sb
+      .from("usage_events")
+      .select("cost_usd")
+      .eq("workspace_id", workspaceId)
+      .gte("ts", monthStart),
+  );
+  return sumUsageCost(rows);
+}
+
 // Monthly COST cap only (the count caps are enforced atomically in
 // claimChatTurn). The cost ceiling is what protects the plan margin.
 export async function checkChatRateLimit(
   workspaceId: string,
 ): Promise<RateLimitResult> {
-  const sb = supabaseAdmin();
-
   // Monthly cost cap — the hard money ceiling that protects the plan margin.
   // Unlike the count caps, this FAILS CLOSED: if we can't read spend, we block
   // rather than let unbounded cost through on a DB blip / load spike.
   const monthStart = startOfMonthIso();
-  const { data: rows, error: costErr } = await sb
-    .from("usage_events")
-    .select("cost_usd")
-    .eq("workspace_id", workspaceId)
-    .gte("ts", monthStart);
-  if (costErr) {
+  let spent: number;
+  try {
+    spent = await readMonthlySpend(workspaceId, monthStart);
+  } catch {
     return {
       ok: false,
       reason: "monthly",
@@ -486,7 +509,6 @@ export async function checkChatRateLimit(
       retryAfterSec: 30,
     };
   }
-  const spent = sumUsageCost(rows);
   if (isOverCostCap(spent, MONTHLY_BUDGET_USD)) {
     return { ok: false, reason: "monthly", message: COST_CAP_MSG };
   }
@@ -498,14 +520,11 @@ export async function checkChatCostAllowance(
   workspaceId: string,
   estimatedExtraUsd: number,
 ): Promise<RateLimitResult> {
-  const sb = supabaseAdmin();
   const monthStart = startOfMonthIso();
-  const { data: rows, error: costErr } = await sb
-    .from("usage_events")
-    .select("cost_usd")
-    .eq("workspace_id", workspaceId)
-    .gte("ts", monthStart);
-  if (costErr) {
+  let spent: number;
+  try {
+    spent = await readMonthlySpend(workspaceId, monthStart);
+  } catch {
     return {
       ok: false,
       reason: "monthly",
@@ -514,7 +533,6 @@ export async function checkChatCostAllowance(
       retryAfterSec: 30,
     };
   }
-  const spent = sumUsageCost(rows);
   if (!hasCostAllowanceForEstimate(spent, MONTHLY_BUDGET_USD, estimatedExtraUsd)) {
     return { ok: false, reason: "monthly", message: COST_CAP_MSG };
   }
