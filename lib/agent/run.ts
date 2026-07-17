@@ -18,6 +18,7 @@ import {
   type Artifact,
   type AskQuestion,
 } from "@/lib/agent/contracts";
+import { sanitizeToolProtocolHistory } from "@/lib/agent/history";
 import { coworkAdapterHealth } from "@/lib/agent/adapter-health";
 import { providerModelAttribution } from "@/lib/agent/cowork-adapter-attempt";
 import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
@@ -3720,7 +3721,21 @@ export async function* runAgent(opts: {
             ? `You are out of tool calls, but the user is still owed exactly ${contractBeforeForcedFinal.remaining} more ${deliverableContract.kind}${contractBeforeForcedFinal.remaining === 1 ? "" : "s"}. Deliver exactly that many now, each inside its own \`\`\`${deliverableContract.kind} fenced block. Do not emit any other deliverable kind or repeat an existing one.`
             : "You are out of tool calls, but you have NOT delivered what the user asked for yet. Do it now in this reply: if they wanted a post, write the complete, finished post inside a ```post fenced block; if they wanted a hook (or hooks), use ```hook fenced block(s). Put only the deliverable inside the fence and any brief framing outside it. Do NOT apologize about limits and do NOT ask them to narrow the request — just deliver the finished result from what you've already gathered.",
       };
-      const forcedMessages = [...working, deliveryNudge];
+      // sanitizeToolProtocolHistory before reuse: `working`'s LAST message can
+      // be an assistant tool_calls entry with no matching tool-role responses
+      // — specifically the MAX_TOTAL_TOOL_CALLS exit (see the `hitToolCap`
+      // break above), which appends the assistant message BEFORE the cap
+      // check, then breaks BEFORE the dispatch loop that would append the
+      // matching tool results. Reusing that shape as-is makes this call
+      // provider-reject on transcript-shape validation alone (most
+      // OpenAI-compatible providers require every tool_calls entry to have a
+      // matching tool response), which the bare catch below swallowed
+      // silently — wasting a guaranteed-to-fail call and falling through to
+      // the generic fallback instead of ever attempting this graceful
+      // delivery. Sanitizing strips the orphaned tool_calls (keeping any
+      // assistant text) so this call is well-formed regardless of which exit
+      // path reached it.
+      const forcedMessages = [...sanitizeToolProtocolHistory(working), deliveryNudge];
       try {
         for await (const delta of streamChat({
           sessionId: chatId,
