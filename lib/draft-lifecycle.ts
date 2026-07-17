@@ -287,7 +287,19 @@ export class DraftLifecycle {
     for (let attempt = 0; attempt < MAX_MUTATION_ATTEMPTS; attempt += 1) {
       const current = await this.repository.find(id);
       if (!current) return rejected("not_found", "Draft not found", 404);
-      if (current.scheduleStatus === "publishing" || current.scheduleStatus === "published") {
+      // 'scheduled' is included alongside 'publishing'/'published': without it,
+      // a status mutation (e.g. the editor's Status dropdown) could flip a
+      // still-queued draft to 'posted' while schedule_status/scheduled_at stay
+      // untouched — the board then shows "Posted" (implying already published)
+      // even though the cron (which reads only schedule_status/scheduled_at,
+      // never status) will still auto-publish it later at the original time.
+      // The user must cancel the schedule first, which is the one write path
+      // (cancelSchedule) that's allowed to touch a scheduled row.
+      if (
+        current.scheduleStatus === "scheduled" ||
+        current.scheduleStatus === "publishing" ||
+        current.scheduleStatus === "published"
+      ) {
         return rejected("locked", DRAFT_MUTATION_CONFLICT, 409);
       }
       if (

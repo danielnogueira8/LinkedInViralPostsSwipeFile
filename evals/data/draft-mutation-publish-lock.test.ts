@@ -86,13 +86,18 @@ describe("draft mutation publish lock", () => {
   );
 
   test("PATCH uses a compare-at-write filter so a concurrent claim wins", async () => {
+    // NOT 'scheduled' — that's now rejected earlier by the app-layer
+    // scheduled-draft mutation lock (see draft-lifecycle.test.ts) before ever
+    // reaching the repository's CAS write. This test targets the write-side
+    // guard specifically: an unscheduled draft (null) that loses the race.
+    state.current = { ...state.current, schedule_status: null };
     state.updateResult = null;
 
     const response = await PATCH(patchRequest({ body: "New" }), ctx);
 
     expect(response.status).toBe(409);
     expect(state.filters).toContain(
-      "schedule_status.is.null,schedule_status.in.(scheduled,failed)",
+      "schedule_status.is.null,schedule_status.eq.failed",
     );
   });
 

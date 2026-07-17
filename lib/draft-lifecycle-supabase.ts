@@ -7,6 +7,7 @@ import {
 import {
   SCHEDULABLE_DRAFT_STATUSES,
   SCHEDULABLE_SCHEDULE_STATUS_FILTER,
+  MUTATABLE_SCHEDULE_STATUS_FILTER,
 } from "@/lib/draft-scheduling";
 import type { PostMediaAttachment } from "@/lib/post-media";
 
@@ -177,7 +178,10 @@ export function createSupabaseDraftLifecycleRepository(
         .eq("id", id)
         .eq("workspace_id", workspaceId)
         .eq("lifecycle_version", expectedVersion)
-        .or(SCHEDULABLE_SCHEDULE_STATUS_FILTER)
+        // Excludes 'scheduled' on purpose (narrower than schedule()/remove()'s
+        // SCHEDULABLE_SCHEDULE_STATUS_FILTER) — a generic field mutation must
+        // not silently succeed on a queued draft; see MUTATABLE_SCHEDULE_STATUS_FILTER.
+        .or(MUTATABLE_SCHEDULE_STATUS_FILTER)
         .select(DRAFT_COLUMNS)
         .maybeSingle();
       if (error) throw error;

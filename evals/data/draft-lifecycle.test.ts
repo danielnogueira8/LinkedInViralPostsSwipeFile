@@ -228,6 +228,47 @@ describe("DraftLifecycle command outcomes", () => {
     });
   });
 
+  // Bug-hunt fix (task #189): a mutation on a still-'scheduled' draft (e.g.
+  // the editor's Status dropdown) used to succeed, flipping `status` to
+  // 'posted' while schedule_status/scheduled_at stayed untouched — the board
+  // then showed "Posted" even though the publish cron (which reads only
+  // schedule_status/scheduled_at) would still fire it later at the original
+  // time. Now blocked the same way 'publishing'/'published' already were.
+  test("rejects a mutation while a draft is still 'scheduled' — must cancel first", async () => {
+    repository.rows.set(
+      "draft-1",
+      draft({ scheduleStatus: "scheduled", scheduledAt: future }),
+    );
+
+    await expect(
+      lifecycle.mutate("draft-1", { status: "posted" }),
+    ).resolves.toMatchObject({ ok: false, reason: "locked", status: 409 });
+    // The board status is untouched — no desync between what's shown and
+    // what the cron will actually do.
+    expect(repository.rows.get("draft-1")?.status).toBe("ready");
+    expect(repository.rows.get("draft-1")?.scheduleStatus).toBe("scheduled");
+
+    // Cancelling the schedule first, THEN mutating, is the correct path and
+    // still works — this fix only blocks mutating WHILE scheduled.
+    await lifecycle.cancelSchedule("draft-1");
+    await expect(
+      lifecycle.mutate("draft-1", { status: "posted" }),
+    ).resolves.toMatchObject({ ok: true });
+    expect(repository.rows.get("draft-1")?.status).toBe("posted");
+  });
+
+  // remove() is intentionally NOT part of this fix — deleting a scheduled
+  // draft is a legitimate, existing action (the whole row disappears, so
+  // there's no "desynced label" risk the way a partial mutate() has).
+  test("deleting a scheduled draft is still allowed (unaffected by the mutate lock)", async () => {
+    repository.rows.set(
+      "draft-1",
+      draft({ scheduleStatus: "scheduled", scheduledAt: future }),
+    );
+    await expect(lifecycle.remove("draft-1")).resolves.toMatchObject({ ok: true });
+    expect(repository.rows.has("draft-1")).toBe(false);
+  });
+
   test("review drafts can only be approved or rejected", async () => {
     repository.rows.set("draft-1", draft({ status: "pending_review" }));
     await expect(
