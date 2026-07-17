@@ -61,7 +61,10 @@ import {
   type CoworkRoute,
   type CoworkTurnTelemetry,
 } from "@/lib/agent/cowork-telemetry";
-import { runCoworkAdapterAttempt } from "@/lib/agent/cowork-adapter-attempt";
+import {
+  runCoworkAdapterAttempt,
+  providerModelAttribution,
+} from "@/lib/agent/cowork-adapter-attempt";
 import { coworkAdapterHealth } from "@/lib/agent/adapter-health";
 import {
   coworkRolloutRuntimeHealth,
@@ -942,15 +945,18 @@ async function describeImageAttachment(
         if (!text) throw new Error("Image description was empty.");
         return text;
       },
-      persistUsage: (response) =>
-        logOpenRouterUsage(
+      persistUsage: (response) => {
+        const attribution = providerModelAttribution(VISION_MODEL, response.model);
+        return logOpenRouterUsage(
           "chat_image_attachment_vision",
-          VISION_MODEL,
+          attribution.model,
           response.usage,
           workspaceId,
-          { filename },
-        ),
+          { filename, ...attribution.metadata },
+        );
+      },
       usage: (response) => response.usage,
+      responseModel: (response) => response.model,
       telemetry,
       stage: "setup_vision",
       attempt,

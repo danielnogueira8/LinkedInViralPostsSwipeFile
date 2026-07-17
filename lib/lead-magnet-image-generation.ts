@@ -18,6 +18,7 @@ import type { PostMediaAttachment } from "@/lib/post-media";
 import type { LeadMagnetMetadata } from "@/lib/lead-magnets";
 import type { Artifact } from "@/lib/agent/contracts";
 import { wrapUntrustedDelimited } from "@/lib/agent/untrusted";
+import { providerModelAttribution } from "@/lib/agent/cowork-adapter-attempt";
 import {
   imageAnalysisInputHash,
   readImageAnalysisCache,
@@ -275,15 +276,20 @@ export async function analyzeSourceImageLayout(opts: {
     ],
     signal: opts.signal,
   });
+  const analyzeAttribution = providerModelAttribution(
+    LEAD_MAGNET_IMAGE_ANALYSIS_MODEL,
+    res.model,
+  );
   await logOpenRouterUsage(
     "lead_magnet_image_analyze",
-    LEAD_MAGNET_IMAGE_ANALYSIS_MODEL,
+    analyzeAttribution.model,
     res.usage,
     opts.workspaceId,
     {
       source_post_id: opts.sourcePostId,
       lead_magnet_id: opts.leadMagnetId ?? null,
       lead_magnet_title: opts.leadMagnetTitle,
+      ...analyzeAttribution.metadata,
     },
   );
   const text = res.text.trim().slice(0, 2200);

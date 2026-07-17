@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
 import { completeChat, CHAT_MODEL, logOpenRouterUsage } from "@/lib/openrouter";
+import { providerModelAttribution } from "@/lib/agent/cowork-adapter-attempt";
 import { checkChatRateLimit, MONTHLY_BUDGET_USD } from "@/lib/agent/rate-limit";
 import { neutralizeMarkers } from "@/lib/agent/untrusted";
 import {
@@ -147,7 +148,7 @@ export async function POST(_req: Request, { params }: Ctx) {
     const userText = neutralizeMarkers(String(firstUser.content ?? "")).slice(0, 1200);
     const asstText = neutralizeMarkers(String(firstAssistant?.content ?? "")).slice(0, 800);
 
-    const { text, usage } = await completeChat({
+    const { text, usage, model: servedModel } = await completeChat({
       model: CHAT_MODEL,
       maxTokens: 24,
       // A title is a tiny mechanical output. Do not let reasoning consume its
@@ -168,7 +169,14 @@ export async function POST(_req: Request, { params }: Ctx) {
     // Attribute the (tiny) cost to the workspace. Awaited so the cost is
     // committed before the response returns (consistent with every other
     // logOpenRouterUsage call site — see the no-void lint rule).
-    await logOpenRouterUsage("chat-title", CHAT_MODEL, usage, sb.workspaceId);
+    const titleAttribution = providerModelAttribution(CHAT_MODEL, servedModel);
+    await logOpenRouterUsage(
+      "chat-title",
+      titleAttribution.model,
+      usage,
+      sb.workspaceId,
+      titleAttribution.metadata,
+    );
     usagePersisted = true;
 
     const title = cleanTitle(text);

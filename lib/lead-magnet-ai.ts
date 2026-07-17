@@ -31,7 +31,10 @@ import {
   coworkAdapterHealth,
   type AdapterHealthRegistry,
 } from "@/lib/agent/adapter-health";
-import { runCoworkAdapterAttempt } from "@/lib/agent/cowork-adapter-attempt";
+import {
+  runCoworkAdapterAttempt,
+  providerModelAttribution,
+} from "@/lib/agent/cowork-adapter-attempt";
 import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
 
 export const LEAD_MAGNET_GENERATION_COST_RESERVE_USD = 0.05;
@@ -370,15 +373,18 @@ async function generateClaimedLeadMagnet(opts: {
           ],
         }),
       validate: validateLeadMagnetAdapterResponse,
-      persistUsage: (response) =>
-        logOpenRouterUsage(
+      persistUsage: (response) => {
+        const attribution = providerModelAttribution(BACKGROUND_MODEL, response.model);
+        return logOpenRouterUsage(
           "lead_magnet_generate_repair",
-          BACKGROUND_MODEL,
+          attribution.model,
           response.usage,
           opts.workspaceId,
-          { user_id: opts.userId },
-        ),
+          { user_id: opts.userId, ...attribution.metadata },
+        );
+      },
       usage: (response) => response.usage,
+      responseModel: (response) => response.model,
       telemetry: opts.telemetry,
       stage: "setup_lead_magnet_repair",
       attempt: 2,
@@ -405,15 +411,18 @@ async function generateClaimedLeadMagnet(opts: {
           messages,
         }),
       validate: validateLeadMagnetAdapterResponse,
-      persistUsage: (response) =>
-        logOpenRouterUsage(
+      persistUsage: (response) => {
+        const attribution = providerModelAttribution(BACKGROUND_MODEL, response.model);
+        return logOpenRouterUsage(
           "lead_magnet_generate",
-          BACKGROUND_MODEL,
+          attribution.model,
           response.usage,
           opts.workspaceId,
-          { user_id: opts.userId },
-        ),
+          { user_id: opts.userId, ...attribution.metadata },
+        );
+      },
       usage: (response) => response.usage,
+      responseModel: (response) => response.model,
       telemetry: opts.telemetry,
       stage: "setup_lead_magnet_primary",
       attempt: 1,

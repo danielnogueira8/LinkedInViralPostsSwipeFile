@@ -9,7 +9,10 @@ import {
   coworkAdapterHealth,
   type AdapterHealthRegistry,
 } from "@/lib/agent/adapter-health";
-import { runCoworkAdapterAttempt } from "@/lib/agent/cowork-adapter-attempt";
+import {
+  runCoworkAdapterAttempt,
+  providerModelAttribution,
+} from "@/lib/agent/cowork-adapter-attempt";
 import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
 import {
   INJECTION_GUARD,
@@ -219,14 +222,18 @@ export async function reviewModeledDraft(opts: {
             retryInstruction || fallback.retryInstruction,
         };
       },
-      persistUsage: (res) =>
-        logOpenRouterUsage(
+      persistUsage: (res) => {
+        const attribution = providerModelAttribution(SOURCE_FIDELITY_MODEL, res.model);
+        return logOpenRouterUsage(
           "source_fidelity",
-          SOURCE_FIDELITY_MODEL,
+          attribution.model,
           res.usage,
           opts.workspaceId,
-        ),
+          attribution.metadata,
+        );
+      },
       usage: (res) => res.usage,
+      responseModel: (res) => res.model,
       telemetry: opts.telemetry,
       stage: "finalizer_source_fidelity",
       attempt: 1,

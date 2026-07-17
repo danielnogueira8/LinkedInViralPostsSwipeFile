@@ -1,6 +1,7 @@
 import { supabaseAdmin } from "@/lib/supabase";
 import { CHAT_MODEL, completeChat, logOpenRouterUsage } from "@/lib/openrouter";
 import { selectAllRows } from "@/lib/db-paginate";
+import { providerModelAttribution } from "@/lib/agent/cowork-adapter-attempt";
 
 // The weekly pattern-mining brief (viral-learning loop, PR 4). Once a week we
 // sample a workspace's VIRAL vs NON-VIRAL scraped posts and ask a strong model
@@ -134,9 +135,11 @@ export async function generatePatternBrief(
   // weekly cron) an unhandled throw here would reject the whole slice and drop
   // the other workspaces' briefs — violating this module's "never throws on one
   // workspace" contract. So swallow it (the brief itself already succeeded).
-  await logOpenRouterUsage("pattern_brief", PATTERN_MODEL, res.usage, workspaceId, {
+  const patternAttribution = providerModelAttribution(PATTERN_MODEL, res.model);
+  await logOpenRouterUsage("pattern_brief", patternAttribution.model, res.usage, workspaceId, {
     sample_viral: sample.viral.length,
     sample_mediocre: sample.mediocre.length,
+    ...patternAttribution.metadata,
   }).catch((e) => {
     console.warn(`pattern-brief usage-log failed for ${workspaceId}: ${(e as Error).message}`);
   });

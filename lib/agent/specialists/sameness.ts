@@ -36,7 +36,10 @@ import {
   coworkAdapterHealth,
   type AdapterHealthRegistry,
 } from "@/lib/agent/adapter-health";
-import { runCoworkAdapterAttempt } from "@/lib/agent/cowork-adapter-attempt";
+import {
+  runCoworkAdapterAttempt,
+  providerModelAttribution,
+} from "@/lib/agent/cowork-adapter-attempt";
 import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
 import { looksCorruptedDraft } from "./nets";
 import { editDraftBodySync } from "./editor";
@@ -319,15 +322,18 @@ export async function checkSameness(opts: {
       },
       persistUsage: async (res) => {
         if (opts.workspaceId) {
+          const attribution = providerModelAttribution(SAMENESS_MODEL, res.model);
           await logOpenRouterUsage(
             "sameness",
-            SAMENESS_MODEL,
+            attribution.model,
             res.usage,
             opts.workspaceId,
+            attribution.metadata,
           );
         }
       },
       usage: (res) => res.usage,
+      responseModel: (res) => res.model,
       telemetry: opts.telemetry,
       stage: "finalizer_sameness",
       attempt: 1,
