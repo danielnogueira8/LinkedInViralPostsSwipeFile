@@ -18,6 +18,7 @@ Convention: `[ ]` pending · `[~]` PR open, not merged · `[x]` merged. PR numbe
 - [~] **Supabase `{error}` results silently treated as success** — PR [#1184](https://github.com/danielnogueira8/LinkedInViralPostsSwipeFile/pull/1184). Investigated first: every genuinely critical write already checks `error`/throws (draft lifecycle, publishing, templates, creator-style/voice ops, `chat-turn.ts persistAssistant`). The only real gaps were two intentionally best-effort writes whose failures were previously invisible — `writeBatchChatMessage` (weekly-batch transcript inserts) and `patchRow` (creator-style generation status updates) — now `console.warn` on the discarded error instead of silently swallowing it. Scope narrower than the original title implied; no orphan-row bug found.
 - [~] **Weekly rewrites not revalidated after transformation** — PR [#1185](https://github.com/danielnogueira8/LinkedInViralPostsSwipeFile/pull/1185). Confirmed real: `weekly.ts`'s sameness-rewrite pass ran after the 120-3200 char gate with no recheck, unlike `run.ts`'s finalizer-backed loop. `isAcceptableRewrite`/`checkSameness` gained an optional `maxChars` bound (checked against the post-edit cleaned body); `weekly.ts` passes it + adds a final min-length recheck, falling back to the pre-rewrite body on either failure.
 - [~] **Lead-magnet sanitization corrupts Markdown code blocks** — PR [#1186](https://github.com/danielnogueira8/LinkedInViralPostsSwipeFile/pull/1186). Confirmed real: `sanitizeGeneratedLeadMagnetMarkdown` + `normalizeCollapsedMarkdownTables` ran their whitespace/em-dash/table regexes over the whole body with no fenced-block exclusion, even though lead magnets are explicitly prompted to produce copy-ready code/config snippets. Both now track fence state line-by-line (mirroring `to-linkedin.ts`'s `FENCE_RE` pattern) and skip normalization inside a fence — no AST rewrite needed, a targeted guard was enough.
+- [~] **Below-contract lead magnets shown without warning** — PR [#1187](https://github.com/danielnogueira8/LinkedInViralPostsSwipeFile/pull/1187). Confirmed real, and worse than described: `is_public` was hardcoded `true` regardless of the quality gate, so a below-contract resource was immediately publicly shareable with zero indication. Added `leadMagnetQualityWarning(metadata)` (mirrors `creatorStyleQualityWarning` — read-time-derived, no new column, no blocking write) rendered on the dashboard card + preview/share dialog. Public-page (`/lm/[slug]`) gating deliberately left as a separate product decision, not built here.
 
 ---
 
@@ -40,7 +41,6 @@ Convention: `[ ]` pending · `[~]` PR open, not merged · `[x]` merged. PR numbe
 
 ## MEDIUM severity
 
-- [ ] **Below-contract lead magnets shown without warning** — backend stores `review_suggested` but UI doesn't display it. Fix: fail closed until minimum assessment passes, or show a prominent "Needs review" state.
 - [ ] **Pattern-brief cron uncheckpointed, no cost reservation** — all-workspaces cron can exceed deadline; one persistence error can abort later workspaces. Fix: one idempotent job per workspace, provider/cost locks, cursor state, isolated persistence outcomes.
 - [ ] **"Latest scrape" lookup can cross workspaces** — some Cowork/weekly/MCP paths don't restrict the scrape-run lookup correctly. Fix: centralize `latestRelevantScrape(workspaceId)`, restricted to current workspace + intentionally-global data.
 - [ ] **Weekly source dedup stops at unordered 500-row scan** — older used sources can repeat as history grows. Fix: normalize source usage into an indexed table, EXISTS lookup instead of scanning capped JSON history.
@@ -60,6 +60,7 @@ Convention: `[ ]` pending · `[~]` PR open, not merged · `[x]` merged. PR numbe
 - [ ] **Model-attribution follow-up: `lib/batch/weekly.ts` `generateDraftBody`** — its return type doesn't carry `model` at all; needs threading through before it can log the served model instead of the requested alias.
 - [ ] **Model-attribution follow-up: `lib/agent/run.ts` `streamChat()` multi-round loop** — `StreamDelta` has no `model` field, and a single turn can span multiple rounds/models. Needs a design call (which round's model to log), not a blind swap like PR #1183's other sites.
 - [ ] **Model-attribution follow-up: `lib/openrouter.ts` `embedText()`/`generateImage()`** — their raw provider responses never parse a served-model field at all, so only the requested alias is knowable today.
+- [ ] **Lead-magnet public-page gating decision** — deferred from PR #1187: should `/lm/[slug]` block/warn on a `quality_status: "review_suggested"` resource, or is a dashboard-only warning enough? A product call, not a blind fix.
 
 ## Meta
 
