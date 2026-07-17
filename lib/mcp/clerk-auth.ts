@@ -29,7 +29,13 @@ export async function verifyToken(
       ...info,
       extra: { ...(info.extra ?? {}), userId, workspaceId: userId },
     };
-  } catch {
+  } catch (error) {
+    // A normal expired/rotated token fails inside verifyClerkToken and is
+    // handled by the `!info` branch above without throwing — anything that
+    // lands here is unexpected (Clerk API outage, rate limit, network blip)
+    // and would otherwise be indistinguishable from routine token expiry in
+    // the Vercel logs, since both surface as a plain 401.
+    console.error("Unexpected error verifying MCP bearer token", error);
     return undefined;
   }
 }
