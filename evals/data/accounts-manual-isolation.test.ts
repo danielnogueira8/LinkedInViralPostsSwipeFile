@@ -61,6 +61,10 @@ function builderFor(table: string) {
       filters.set(`neq:${column}`, value);
       return chain;
     },
+    or: (expr: string) => {
+      filters.set("or", expr);
+      return chain;
+    },
     is: () => chain,
     limit: () => chain,
     then: (resolve: (value: { data: unknown[]; error: null }) => unknown) => {
@@ -92,6 +96,19 @@ function builderFor(table: string) {
     },
     single: async () => {
       if (table === "accounts" && operation === "update" && updatePayload) {
+        // Mirrors the real .or("manual_owner_workspace_id.is.null,...eq.<ws>")
+        // guard: an UPDATE that matches zero rows under RLS/the OR filter
+        // resolves with an error, same as real PostgREST + .single().
+        const orExpr = filters.get("or") as string | undefined;
+        const matchesOr =
+          !orExpr ||
+          orExpr.split(",").some((clause) => {
+            if (clause.endsWith(".is.null")) return state.account.manual_owner_workspace_id === null;
+            const eqMatch = clause.match(/\.eq\.(.+)$/);
+            if (eqMatch) return state.account.manual_owner_workspace_id === decodeURIComponent(eqMatch[1]);
+            return false;
+          });
+        if (!matchesOr) return { data: null, error: { message: "no rows matched" } };
         state.accountUpdates.push(updatePayload);
         state.account = { ...state.account, ...updatePayload } as Account;
         return { data: state.account, error: null };

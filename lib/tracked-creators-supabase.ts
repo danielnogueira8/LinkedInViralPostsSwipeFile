@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { visibleCategoriesOr } from "@/lib/categories";
+import { encodePostgrestValue } from "@/lib/postgrest";
 import type {
   TrackedCreatorAccount,
   TrackedCreatorIdentifier,
@@ -182,10 +183,20 @@ export function createSupabaseTrackedCreatorsRepository(
     },
 
     async updateAccount(id, patch) {
+      // Defense-in-depth: an account is writable by this workspace only if
+      // it's an unowned global-baseline row (manual_owner_workspace_id is
+      // null — the shared scraped catalog every workspace may sync fields
+      // on) or it's manually owned BY this workspace. The one caller
+      // (TrackedCreators in lib/tracked-creators.ts) already enforces this
+      // in the app layer before calling here; this makes the SQL itself
+      // correct rather than relying solely on that caller never regressing.
       const { data, error } = await db
         .from("accounts")
         .update(accountPatch(patch))
         .eq("id", id)
+        .or(
+          `manual_owner_workspace_id.is.null,manual_owner_workspace_id.eq.${encodePostgrestValue(workspaceId)}`,
+        )
         .select(ACCOUNT_COLUMNS)
         .single();
       if (error) throw error;
