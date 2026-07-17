@@ -123,12 +123,17 @@ describe("buildStylePromptBlock — the injectable Cowork block", () => {
     expect(block).toMatch(/their specific client results/);
   });
 
-  test("is bounded by STYLE_PROMPT_BLOCK_MAX", () => {
+  test("is bounded by STYLE_PROMPT_BLOCK_MAX, and the anti-copy guard survives truncation", () => {
     const huge: CreatorStyleProfile = {
       ...full,
       voice_traits: Array.from({ length: 8 }, () => "x".repeat(2000)),
     };
-    expect(buildStylePromptBlock(huge).length).toBeLessThanOrEqual(STYLE_PROMPT_BLOCK_MAX);
+    const block = buildStylePromptBlock(huge);
+    expect(block.length).toBeLessThanOrEqual(STYLE_PROMPT_BLOCK_MAX);
+    // REGRESSION: the guard used to be appended before the length cap, so a
+    // long enough profile silently truncated it away. It must always survive.
+    expect(block).toMatch(/NEVER copy/i);
+    expect(block).toMatch(/write original/i);
   });
 });
 
