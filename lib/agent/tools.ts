@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabaseAdmin } from "@/lib/supabase";
-import { trackedAccountIds } from "@/lib/supabase-scoped";
+import { trackedAccountIds, latestRelevantScrape } from "@/lib/supabase-scoped";
 import { DraftLifecycle, type DraftRecord } from "@/lib/draft-lifecycle";
 import { createSupabaseDraftLifecycleRepository } from "@/lib/draft-lifecycle-supabase";
 import { parseDayStart, parseDayEnd, sinceCutoff } from "@/lib/mcp/util";
@@ -582,14 +582,7 @@ const getTopFromBatch: ToolFn = async (args, workspaceId) => {
     if (accountIds.length === 0)
       return { ok: true, posts: [], note: "Workspace tracks no accounts." };
     const sb = supabaseAdmin();
-    const { data: lastRun, error: runErr } = await sb
-      .from("runs")
-      .select("started_at, finished_at")
-      .eq("status", "ok")
-      .order("started_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (runErr) return err(runErr.message);
+    const lastRun = await latestRelevantScrape(workspaceId);
     if (!lastRun?.started_at)
       return { ok: true, posts: [], note: "No successful scrape run found yet." };
     const limit = typeof args.limit === "number" ? args.limit : 5;
