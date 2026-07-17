@@ -111,9 +111,14 @@ describe("sweepDeletedMedia — orchestration", () => {
           if (table === "chat_artifacts") {
             return {
               select: () => ({
-                not: async () => ({
-                  data: opts.draftsError ? null : opts.drafts,
-                  error: opts.draftsError ?? null,
+                not: () => ({
+                  // selectAllRows pages via .range(from, to); return this
+                  // page's slice and let the caller stop once a page comes
+                  // back short of DB_PAGE (1000) rows.
+                  range: async (from: number, to: number) => {
+                    if (opts.draftsError) return { data: null, error: opts.draftsError };
+                    return { data: opts.drafts.slice(from, to + 1), error: null };
+                  },
                 }),
               }),
             };
@@ -183,5 +188,35 @@ describe("sweepDeletedMedia — orchestration", () => {
 
   test("grace period is 7 days", () => {
     expect(MEDIA_SWEEP_GRACE_MS).toBe(7 * 24 * 60 * 60 * 1000);
+  });
+
+  test("a reference past the 1000-row PostgREST page cap is still seen (pagination, not truncation)", async () => {
+    // The bug this guards: the old single-shot select() silently capped at
+    // 1000 rows, so a draft sorting past row 1000 was invisible — its
+    // referenced asset would be misclassified purgeable and hard-deleted.
+    // Build 1001 drafts with the referencing one LAST, past the first page.
+    const drafts: Array<{ media_attachments: PostMediaAttachment[] | null }> = Array.from(
+      { length: 1000 },
+      () => ({ media_attachments: null }),
+    );
+    drafts.push({ media_attachments: [attachment("a1")] });
+    const { client, removeSpy, deletedIds } = fakeClient({
+      candidates: [{ id: "a1", storage_bucket: "media-assets", storage_path: "ws/a1.png" }],
+      drafts,
+    });
+    const result = await sweepDeletedMedia(new Date("2026-02-01T00:00:00.000Z"), client as never);
+    expect(result).toEqual({ candidates: 1, purged: 0, stillReferenced: 1, errors: [] });
+    expect(removeSpy).not.toHaveBeenCalled();
+    expect(deletedIds).toEqual([]);
+  });
+
+  test("a drafts-query failure on a later page returns a clean error result, not a throw", async () => {
+    const { client } = fakeClient({
+      candidates: [{ id: "a1", storage_bucket: "b", storage_path: "p" }],
+      drafts: [],
+      draftsError: { message: "db down mid-scan" },
+    });
+    const result = await sweepDeletedMedia(new Date(), client as never);
+    expect(result).toEqual({ candidates: 1, purged: 0, stillReferenced: 0, errors: ["db down mid-scan"] });
   });
 });
