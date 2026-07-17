@@ -1580,9 +1580,12 @@ describe("ask_user — clarifying questions", () => {
                 options: ["Just idea #5", "All 5 ideas"],
               },
             },
-            // The model also queued a draft in the same round — it must NOT run
-            // (ask ends the turn before later tools dispatch).
-            { name: "render_post", args: { body: "should NOT render" } },
+            // The model also queued a draft in the same round. ask_user is
+            // sorted last within the round precisely so a call like this one
+            // — positioned after ask_user in the model's raw output — still
+            // dispatches instead of being silently stranded (bug-hunt #191):
+            // it runs, THEN the ask ends the turn.
+            { name: "render_post", args: { body: "should render" } },
           ],
         },
         { text: "unreachable", finishReason: "stop" },
@@ -1598,9 +1601,15 @@ describe("ask_user — clarifying questions", () => {
     if (ask.ask.options.length !== 2) throw new Error("ask should carry the 2 options");
     if (ask.ask.allowOther !== true) throw new Error("allowOther should default true");
 
-    // The turn did NOT proceed to the queued render_post (ask is terminal).
+    // The queued render_post DID dispatch (ordered before ask_user regardless
+    // of the model's raw call order) — nothing from the round is stranded.
     const posts = t.artifacts.filter((a) => a.kind === "post");
-    if (posts.length !== 0) throw new Error(`ask must end the turn before later tools; got ${posts.length} posts`);
+    if (posts.length !== 1) throw new Error(`render_post queued alongside ask_user must still dispatch; got ${posts.length} posts`);
+
+    // The ask still ends the turn — no further rounds run after it.
+    if (t.events.some((e) => e.type === "text" && e.delta === "unreachable")) {
+      throw new Error("the turn continued past the ask into the next scripted round");
+    }
 
     // The question persists in the done content (reload context), no error, not empty.
     if (!t.finalContent.includes("Did you mean idea #5")) {
