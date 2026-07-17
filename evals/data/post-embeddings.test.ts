@@ -86,6 +86,30 @@ describe("embedText: OpenRouter embeddings client", () => {
     expect(res.promptTokens).toBe(42);
   });
 
+  test("uses the provider-served model when the response echoes one, else falls back to the requested alias", async () => {
+    // OpenRouter doesn't consistently document echoing a served-model field on
+    // /embeddings — this proves both branches: when it IS present, embedText
+    // reports it (and cost logging would attribute to it); when absent, the
+    // requested model is used exactly as before this field was added.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        const body = JSON.stringify({
+          data: [{ embedding: vec(0.1), index: 0 }],
+          usage: { prompt_tokens: 3 },
+          model: "openai/text-embedding-3-small-served-variant",
+        });
+        return new Response(body, { status: 200, headers: { "Content-Type": "application/json" } });
+      }),
+    );
+    const served = await embedText(["a"]);
+    expect(served.model).toBe("openai/text-embedding-3-small-served-variant");
+
+    vi.stubGlobal("fetch", vi.fn(async () => embeddingResponse([vec(0.1)])));
+    const fallback = await embedText(["a"]);
+    expect(fallback.model).toBe(EMBEDDING_MODEL);
+  });
+
   test("reorders vectors by the provider's index field (never trusts array order)", async () => {
     // Provider returns them out of order; embedText must sort by `index`.
     vi.stubGlobal(
