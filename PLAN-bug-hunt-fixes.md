@@ -24,6 +24,7 @@ Convention: `[ ]` pending · `[~]` PR open, not merged · `[x]` merged. PR numbe
 - [~] **Weekly source dedup stops at unordered 500-row scan** — PR [#1190](https://github.com/danielnogueira8/LinkedInViralPostsSwipeFile/pull/1190). Both halves confirmed literally true, but the "500" cap is currently unreachable dead weight — the existing 56-day `ADAPTED_HORIZON_DAYS` filter alone bounds matching rows to ~56-70 at normal cadence, an order of magnitude under 500. The "unordered" defect is real regardless (no ordering guarantee absent `ORDER BY`, so an over-cap history would be non-deterministic, not a predictable recency horizon). Fixed with a one-line `.order("created_at", desc)` before the limit, matching this file's existing ordering convention elsewhere. Full table-normalization fix the backlog proposed is unwarranted at this scale — deferred. No new test: `architecture-boundaries.test.ts` forbids importing `weekly.ts` internals directly from tests.
 - [x] **Production loading Clerk DEV credentials — FALSE ALARM (already resolved)**. Live-verified: navigated the browser to `https://tryswipein.com/sign-in`, checked loaded scripts — production loads `clerk.tryswipein.com/npm/@clerk/clerk-js@6/dist/clerk.browser.js`, not `*.clerk.accounts.dev`. Confirms the prod Clerk cutover (PR #1166/#1173, already in memory) is live and correct. No code change needed; closing as verified-stale rather than building a fix for a non-existent problem.
 - [~] **trackedAccountIds unpaginated roster read feeds unbounded `.in()`** — PR [#1191](https://github.com/danielnogueira8/LinkedInViralPostsSwipeFile/pull/1191). Query-shape claim confirmed, but unreachable at current scale (third finding this session with this shape): `MANUAL_ACCOUNT_LIMIT = 50` keeps every workspace far under both the 1000-row PostgREST cap and the 200-id `.in()` chunk threshold every downstream call site uses raw. Added a `console.error` guard firing only at the exact 1000-row truncation signature — turns a future silent-data-loss bug into a loud log — rather than adding `selectAllRows` pagination (real complexity, loses this function's documented `retryRead`/`cache()` interaction) for a cap that can't currently be hit.
+- [~] **lead-magnets/creator-styles/content-templates GET lists unpaginated** — PR [#1192](https://github.com/danielnogueira8/LinkedInViralPostsSwipeFile/pull/1192). Only lead-magnets is reachable — creator styles (cap 10) and content templates (cap 100) are unreachable at current scale, same shape as several other findings this session. Lead magnets have NO total-count cap (only a 10/month AI-generation limit; manual/URL imports unbounded), so a long-lived workspace can plausibly exceed 1000 over time. Swapped the bare `.select()` for `selectAllRows`; scoped to just this one route.
 
 ---
 
@@ -46,7 +47,7 @@ Convention: `[ ]` pending · `[~]` PR open, not merged · `[x]` merged. PR numbe
 
 ## MEDIUM severity
 
-- [ ] **lead-magnets/creator-styles/content-templates GET lists unpaginated** — `app/api/lead-magnets/route.ts` GET, `app/api/creator-styles/route.ts` GET, `app/api/content-templates/route.ts` GET all silently cap at 1000 rows. Fix: `selectAllRows` or a sane `.limit()`.
+_(all shipped — see Shipped section above)_
 
 ## LOW severity
 
