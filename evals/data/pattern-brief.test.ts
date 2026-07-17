@@ -37,6 +37,9 @@ vi.mock("@/lib/supabase", () => ({
         return { then: (r: (v: { error: null }) => unknown) => r({ error: null }) };
       };
       chain.maybeSingle = async () => ({ data: resp.single ?? null, error: null });
+      // selectAllRows (workspace listing) pages via .range(); a single page
+      // covering all rows is enough for these tests (well under DB_PAGE=1000).
+      chain.range = async () => ({ data: resp.rows ?? [], error: null });
       chain.then = (resolve: (v: { data: unknown; error: null }) => unknown) =>
         resolve({ data: resp.rows ?? [], error: null });
       return chain;
@@ -48,6 +51,7 @@ const {
   renderPatternBriefBlock,
   getPatternBrief,
   generatePatternBrief,
+  runWeeklyPatternBriefs,
   PATTERN_BRIEF_KEY,
 } = await import("@/lib/batch/pattern-brief");
 
@@ -172,5 +176,56 @@ describe("generatePatternBrief", () => {
     const out = await generatePatternBrief("ws-1");
     expect(out).toBeNull();
     expect(completeChat).not.toHaveBeenCalled();
+  });
+});
+
+describe("runWeeklyPatternBriefs", () => {
+  test("processes every workspace when well under the deadline", async () => {
+    tables.workspace_accounts = {
+      rows: [{ workspace_id: "ws-1" }, { workspace_id: "ws-2" }, { workspace_id: "ws-3" }],
+    };
+    // Below the viral floor for every workspace (posts table shared by all) —
+    // keeps this test about the loop/deadline, not the model call.
+    tables.posts = { rows: [{ text: "one" }] };
+
+    const out = await runWeeklyPatternBriefs({ startedAt: Date.now() });
+    expect(out.workspaces).toBe(3);
+    expect(out.skipped).toBe(3);
+    expect(out.generated).toBe(0);
+    expect(out.deadlineHit).toBe(false);
+  });
+
+  test("self-stops before the route's maxDuration instead of running until killed", async () => {
+    tables.workspace_accounts = {
+      rows: [{ workspace_id: "ws-1" }, { workspace_id: "ws-2" }, { workspace_id: "ws-3" }],
+    };
+    tables.posts = { rows: [{ text: "one" }] };
+
+    // startedAt far enough in the past that the very first deadline check
+    // (before workspace 0) already trips — proves the function stops
+    // starting new slices rather than letting Vercel hard-kill it mid-flight.
+    const longAgo = Date.now() - 250_000;
+    const out = await runWeeklyPatternBriefs({ startedAt: longAgo });
+    expect(out.deadlineHit).toBe(true);
+    expect(out.generated).toBe(0);
+    expect(out.skipped).toBe(0);
+    expect(out.workspaces).toBe(3);
+  });
+
+  test("one workspace's failure never aborts the others (not the backlog's original claim)", async () => {
+    tables.workspace_accounts = {
+      rows: [{ workspace_id: "ws-1" }, { workspace_id: "ws-2" }],
+    };
+    tables.posts = {
+      rows: Array.from({ length: 6 }, (_, i) => ({ text: `viral post ${i} body here` })),
+    };
+    completeChat.mockRejectedValue(new Error("openrouter 500"));
+
+    const out = await runWeeklyPatternBriefs({ startedAt: Date.now() });
+    expect(out.deadlineHit).toBe(false);
+    expect(out.workspaces).toBe(2);
+    // Both workspaces hit the model failure path (generatePatternBrief → null)
+    // and are counted as skipped, not thrown — the run completes cleanly.
+    expect(out.skipped).toBe(2);
   });
 });

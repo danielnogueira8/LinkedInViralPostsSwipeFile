@@ -14,7 +14,10 @@ export const maxDuration = 300;
 //
 // Runs weekly (vercel.json). Per-workspace failures are swallowed inside
 // runWeeklyPatternBriefs (a workspace with too little signal is skipped), so one
-// bad workspace never fails the whole run. Same CRON_SECRET Bearer auth as the
+// bad workspace never fails the whole run. runWeeklyPatternBriefs also
+// self-stops before this route's maxDuration would kill it mid-flight; a run
+// that hits the deadline logs it and returns deadlineHit:true rather than
+// getting hard-killed with no summary. Same CRON_SECRET Bearer auth as the
 // other cron routes.
 // -----------------------------------------------------------------------------
 export async function GET(req: Request) {
