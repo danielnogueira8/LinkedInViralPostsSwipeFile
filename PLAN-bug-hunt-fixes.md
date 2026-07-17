@@ -51,12 +51,12 @@ _(all shipped — see Shipped section above)_
 
 ## LOW severity
 
-- [ ] **Publishing subsystem: 4 lower-severity findings** (bundle into one PR or split, judgment call at fix time):
-  1. Network-error-after-success retry can theoretically double-post (`zernio.ts`, mitigated by request-id).
-  2. DELETE of a `scheduled` draft can race the cron claim, orphaning a publish with no board record (`draft-lifecycle-supabase.ts remove`).
-  3. `firstComment` has no LinkedIn length re-check at publish time, only at the schedule HTTP route (`draft-publishing.ts:428`).
-  4. `VIDEO_MIME` accepts AVI for direct post attach but the library path rejects it — inconsistent, wasted publish retries (`post-media.ts:22` vs `media-library.ts:46`).
-  5. Media re-persist write (`draft-publishing.ts:416-423`) isn't CAS-guarded on `schedule_status`, unlike every other terminal write in that function.
+- [x] **Publishing subsystem: 5 lower-severity findings** — SHIPPED (3 fixed, 2 already-fixed/mitigated, no code needed). [PR #1205](https://github.com/danielnogueira8/LinkedInViralPostsSwipeFile/pull/1205), full suite green (3461 passed).
+  1. Network-error-after-success retry can theoretically double-post (`zernio.ts`) — ALREADY MITIGATED by the existing `requestId` dedupe (`createLinkedInPost` passes `currentRow.id`). No change needed.
+  2. DELETE of a `scheduled` draft can race the cron claim (`draft-lifecycle-supabase.ts remove`) — ALREADY FIXED by an earlier PR (task #78): `remove()` already does a pre-check (`"conflict"` if `publishing`/`published`) + a CAS-guarded DELETE scoped to `null/scheduled/failed`. No change needed.
+  3. `firstComment` has no LinkedIn length re-check at publish time — FIXED. Added a re-check mirroring the existing body-length guard (`draft-publishing.ts`).
+  4. `VIDEO_MIME` accepted AVI for direct post attach but the library path rejected it — FIXED. Removed AVI from the shared `VIDEO_MIME` set (`lib/post-media.ts`, the single source of truth) instead of special-casing it downstream; LinkedIn's publish API doesn't support AVI at all.
+  5. Media re-persist write wasn't CAS-guarded on `schedule_status` — FIXED. Added `.eq("schedule_status", "publishing")`, matching every other terminal write in the publish loop.
 - [ ] **accounts.updateAccount unscoped write depends entirely on app-layer ownership check** — `lib/tracked-creators-supabase.ts:184-193` has no `.eq(manual_owner_workspace_id)` in the SQL; safe today only because the one caller (`lib/tracked-creators.ts:495`) gates first. Fix: add the `.eq` guard directly to `updateAccount` for defense-in-depth.
 - [ ] **Model-attribution follow-up: `lib/batch/weekly.ts` `generateDraftBody`** — its return type doesn't carry `model` at all; needs threading through before it can log the served model instead of the requested alias.
 - [ ] **Model-attribution follow-up: `lib/agent/run.ts` `streamChat()` multi-round loop** — `StreamDelta` has no `model` field, and a single turn can span multiple rounds/models. Needs a design call (which round's model to log), not a blind swap like PR #1183's other sites.
