@@ -771,6 +771,10 @@ export type StreamDelta = {
   // usage arrives on the final chunk when stream_options.include_usage is set
   usage?: Usage;
   fileAnnotations?: FileAnnotation[];
+  // The provider-served model, present on every chunk per the chat-completions
+  // streaming spec (same field completeChat already relies on for its
+  // non-streamed responses — see CompleteResult.model).
+  model?: string;
 };
 
 type RawStreamChunk = {
@@ -787,6 +791,7 @@ type RawStreamChunk = {
     finish_reason?: string | null;
   }[];
   usage?: Usage;
+  model?: string;
   // OpenRouter surfaces mid-stream provider errors (rate limit, upstream 5xx,
   // content filter) as an in-band `data: {"error": {...}}` frame — no choices,
   // no finish_reason. We must NOT swallow it: see parseRecord.
@@ -941,6 +946,14 @@ export async function* streamChat(opts: {
       delta.usage !== undefined ||
       delta.fileAnnotations !== undefined
     ) {
+      // Only stamp `model` onto a delta that's ALREADY yield-worthy for
+      // another reason — a model-only chunk (typically the very first SSE
+      // frame, before any content) must stay a silent no-op exactly as
+      // before this field existed, so this never changes the stream's shape
+      // or introduces an extra yielded delta downstream.
+      if (typeof parsed.model === "string" && parsed.model.trim()) {
+        delta.model = parsed.model.trim();
+      }
       return delta;
     }
     return null;

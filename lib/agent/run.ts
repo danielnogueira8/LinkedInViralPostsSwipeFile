@@ -19,6 +19,7 @@ import {
   type AskQuestion,
 } from "@/lib/agent/contracts";
 import { coworkAdapterHealth } from "@/lib/agent/adapter-health";
+import { providerModelAttribution } from "@/lib/agent/cowork-adapter-attempt";
 import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
 import {
   TOOL_DEFS,
@@ -1897,6 +1898,12 @@ export async function* runAgent(opts: {
   let totalOutput = 0;
   let totalCached = 0;
   let totalChargedCost = 0;
+  // The served model from the MOST RECENT round with usage — a turn can span
+  // several streamChat rounds, but they all request the same CHAT_MODEL alias
+  // (no per-round model switching exists in this loop), so the last round's
+  // served model is the right one to attribute the turn's total cost to.
+  // Falls back to CHAT_MODEL if no round ever returned one.
+  let lastServedModel: string | undefined;
   let estimatedRetryAttempts = 0;
   const allToolMessages: ChatMessage[] = [];
   let finalText = "";
@@ -2456,6 +2463,7 @@ export async function* runAgent(opts: {
         }
         if (delta.finishReason !== undefined) finishReason = delta.finishReason;
         if (delta.usage) usage = delta.usage;
+        if (delta.model) lastServedModel = delta.model;
         if (delta.fileAnnotations?.length) {
           const byHash = new Map(
             [...fileAnnotations, ...delta.fileAnnotations].map((annotation) => [
@@ -3708,6 +3716,7 @@ export async function* runAgent(opts: {
             forced += delta.text;
           }
           if (delta.usage) forcedUsage = delta.usage;
+          if (delta.model) lastServedModel = delta.model;
           if (delta.finishReason !== undefined) {
             forcedFinishReason = delta.finishReason;
           }
@@ -4297,9 +4306,17 @@ export async function* runAgent(opts: {
     // (claim_chat_turn, migration 046) must see this turn's real cost the instant
     // its reservation is freed, or a concurrent claim could briefly under-count.
     if (totalInput || totalOutput) {
+      // Attribution only (the tag logged against this usage row) — cost math
+      // above stays on CHAT_MODEL, the requested alias, since the pricing
+      // table is keyed by it and a served-model variant string might not be a
+      // recognized pricing key. lastServedModel comes from the MOST RECENT
+      // round with usage (every round in this loop requests the same
+      // CHAT_MODEL alias — no per-round model switching exists here — so the
+      // last round's served model is the right one to attribute to).
+      const turnAttribution = providerModelAttribution(CHAT_MODEL, lastServedModel);
       await logOpenRouterUsage(
         opts.chatKind || "chat",
-        CHAT_MODEL,
+        turnAttribution.model,
         {
           prompt_tokens: totalInput,
           completion_tokens: totalOutput,
@@ -4307,9 +4324,12 @@ export async function* runAgent(opts: {
           cost: totalChargedCost,
         },
         workspaceId,
-        estimatedRetryAttempts > 0
-          ? { estimated_retry_attempts: estimatedRetryAttempts }
-          : undefined,
+        {
+          ...(estimatedRetryAttempts > 0
+            ? { estimated_retry_attempts: estimatedRetryAttempts }
+            : {}),
+          ...turnAttribution.metadata,
+        },
       );
     }
 
