@@ -142,8 +142,16 @@ describe("get_top_from_batch — query shape", () => {
     expect(order.args[0]).toBe("reactions");
     expect((order.args[1] as { ascending: boolean }).ascending).toBe(false);
 
-    // is_viral = true
-    const viral = postsQ.filters.find((f) => f.method === "eq" && f.args[0] === "is_viral");
+    // Scoped to THIS workspace's per-workspace classification (backlog #153) —
+    // never the global posts.is_viral column, which two workspaces tracking
+    // the same creator would otherwise share.
+    const wsScope = postsQ.filters.find(
+      (f) => f.method === "eq" && f.args[0] === "workspace_post_classification.workspace_id",
+    );
+    expect(wsScope?.args[1]).toBe("ws-1");
+    const viral = postsQ.filters.find(
+      (f) => f.method === "eq" && f.args[0] === "workspace_post_classification.is_viral",
+    );
     expect(viral?.args[1]).toBe(true);
     // scoped to the tracked account ids
     const inAcc = postsQ.filters.find((f) => f.method === "in" && f.args[0] === "account_id");
@@ -417,7 +425,15 @@ describe("search_viral_posts — query shape", () => {
     await runTool("search_viral_posts", {}, "ws-1");
 
     const q = queryFor(dbRef.current, "posts")!;
-    const viral = q.filters.find((f) => f.method === "eq" && f.args[0] === "is_viral");
+    // Scoped to THIS workspace's per-workspace classification (backlog #153),
+    // never the global posts.is_viral column.
+    const wsScope = q.filters.find(
+      (f) => f.method === "eq" && f.args[0] === "workspace_post_classification.workspace_id",
+    );
+    expect(wsScope?.args[1]).toBe("ws-1");
+    const viral = q.filters.find(
+      (f) => f.method === "eq" && f.args[0] === "workspace_post_classification.is_viral",
+    );
     expect(viral?.args[1]).toBe(true);
     const order = q.filters.find((f) => f.method === "order")!;
     expect(order.args[0]).toBe("viral_score");

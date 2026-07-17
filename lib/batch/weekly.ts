@@ -625,12 +625,16 @@ async function loadBatchSourceImage(opts: {
   // reference. The generated image is styled after the fallback but the
   // draft's own body is what the visual analysis pass reads for content,
   // so the output stays on-topic for the batch draft.
+  // Scoped to THIS workspace's per-workspace classification (backlog #153),
+  // never the global posts.is_viral column two workspaces tracking the same
+  // creator would otherwise share.
   const { data: fallbackRows } = await sb
     .from("posts")
-    .select("id, media_type, media_urls")
+    .select("id, media_type, media_urls, workspace_post_classification!inner(is_viral)")
     .in("account_id", accountIds)
     .eq("post_type", "lead_magnet")
-    .eq("is_viral", true)
+    .eq("workspace_post_classification.workspace_id", opts.workspaceId)
+    .eq("workspace_post_classification.is_viral", true)
     .eq("media_type", "image")
     .order("posted_at", { ascending: false })
     .limit(10);

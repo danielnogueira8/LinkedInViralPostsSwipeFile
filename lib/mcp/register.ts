@@ -62,8 +62,13 @@ const SORT_COLUMN = {
 // accounts.id/handle/profile_pic_url, scraped_at [top-level scrape date is
 // surfaced separately], visual_kind, is_viral [constant — every query filters
 // is_viral=true]). Keeps text + engagement + author name/niche + post_url/id.
+// workspace_post_classification!inner(is_viral) is embedded (not filtered on
+// the GLOBAL posts.is_viral column two workspaces tracking the same creator
+// would otherwise share — backlog #153 / migration-075) and filtered per-query
+// via .eq("workspace_post_classification.workspace_id", workspaceId)
+// .eq("workspace_post_classification.is_viral", true).
 const POST_COLS =
-  "id, text, post_url, posted_at, reactions, comments, reposts, media_type, post_type, accounts!inner(name, niche)";
+  "id, text, post_url, posted_at, reactions, comments, reposts, media_type, post_type, accounts!inner(name, niche), workspace_post_classification!inner(is_viral)";
 
 const NO_ROWS_SENTINEL = "00000000-0000-0000-0000-000000000000";
 
@@ -74,9 +79,14 @@ const NO_ROWS_SENTINEL = "00000000-0000-0000-0000-000000000000";
 // fixed 7-day window for simplicity.)
 const TOP_BATCH_WINDOW_DAYS = 7;
 
-function normalizeEmbed<T extends { accounts: unknown }>(p: T) {
+// Drops the workspace_post_classification join wrapper (a query filter, not a
+// field the model needs) and unwraps the accounts embed.
+function normalizeEmbed<
+  T extends { accounts: unknown; workspace_post_classification?: unknown },
+>(p: T) {
+  const { workspace_post_classification: _wpc, ...rest } = p;
   return {
-    ...p,
+    ...rest,
     accounts: Array.isArray(p.accounts) ? (p.accounts[0] ?? null) : p.accounts,
   };
 }
@@ -185,7 +195,8 @@ export function registerSwipeTools(server: McpServer) {
           .from("posts")
           .select(POST_COLS)
           .in("account_id", accountIds.length ? accountIds : [NO_ROWS_SENTINEL])
-          .eq("is_viral", true)
+          .eq("workspace_post_classification.workspace_id", workspaceId)
+          .eq("workspace_post_classification.is_viral", true)
           .is("accounts.archived_at", null)
           .order(sortCol, { ascending, nullsFirst: false })
           .limit(limit);
@@ -326,7 +337,8 @@ export function registerSwipeTools(server: McpServer) {
           .from("posts")
           .select(POST_COLS)
           .in("account_id", accountIds)
-          .eq("is_viral", true)
+          .eq("workspace_post_classification.workspace_id", workspaceId)
+          .eq("workspace_post_classification.is_viral", true)
           .is("accounts.archived_at", null)
           .gte("posted_at", sinceIso)
           .order("reactions", { ascending: false, nullsFirst: false })
