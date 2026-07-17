@@ -8,7 +8,7 @@ import { recoverStalePending } from "@/lib/voice-recovery";
 export const VOICE_REGEN_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
 export const VOICE_FAILED_RETRY_BACKOFF_MS = 60 * 1000;
 export const VOICE_PROFILE_COLS =
-  "id, linkedin_handle, profile_url, display_name, avatar_url, headline, profile, summary, source_post_count, status, error, model, generated_at, created_at, pending_started_at";
+  "id, linkedin_handle, profile_url, display_name, avatar_url, headline, profile, summary, source_post_count, status, error, model, generated_at, interview_updated_at, created_at, pending_started_at";
 
 type Failure = {
   ok: false;
