@@ -116,7 +116,7 @@ describe("synthesizeInterviewContext", () => {
   });
 
   test("the voice profile is passed into the synthesis prompt when present", async () => {
-    completeChat.mockResolvedValue({ text: "", toolArgs: { context: [] } });
+    completeChat.mockResolvedValue({ text: "", toolArgs: { context: ["A statement."] } });
     await synthesizeInterviewContext({
       answers: [{ question: "Q", answer: "A" }],
       voice: { summary: "Blunt SaaS founder voice", tone: ["direct"] } as never,
@@ -127,13 +127,54 @@ describe("synthesizeInterviewContext", () => {
     expect(userMsg).toContain("Blunt SaaS founder voice");
   });
 
-  test("malformed tool output → empty context, no throw", async () => {
-    completeChat.mockResolvedValue({ text: "prose", toolArgs: null });
+  // ---------------------------------------------------------------------------
+  // REGRESSION: malformed tool output used to return { context: [] } as a
+  // silent "success" — the route then persisted interview_context:[] as a
+  // 200, which collapsed VoiceInterviewCard into an unreachable state (no
+  // summary box because context is empty, no form because `expanded` had
+  // already flipped false, no "Edit answers" button because that only shows
+  // when context.length > 0). The user did their part (answered questions);
+  // a malformed model result is our failure, not theirs, and must not be
+  // saved as if it succeeded.
+  // ---------------------------------------------------------------------------
+  test("REGRESSION: malformed tool output retries once, then throws instead of silently succeeding", async () => {
+    completeChat
+      .mockResolvedValueOnce({ text: "prose", toolArgs: null })
+      .mockResolvedValueOnce({ text: "prose", toolArgs: null });
+    await expect(
+      synthesizeInterviewContext({
+        answers: [{ question: "Q", answer: "A" }],
+        voice: null,
+        workspaceId: "ws1",
+      }),
+    ).rejects.toThrow(/couldn't build context/i);
+    expect(completeChat).toHaveBeenCalledTimes(2);
+  });
+
+  test("empty {context:[]} on the first attempt, real context on the retry → succeeds", async () => {
+    completeChat
+      .mockResolvedValueOnce({ text: "", toolArgs: { context: [] } })
+      .mockResolvedValueOnce({ text: "", toolArgs: { context: ["I write for solo founders."] } });
     const out = await synthesizeInterviewContext({
       answers: [{ question: "Q", answer: "A" }],
       voice: null,
       workspaceId: "ws1",
     });
-    expect(out.context).toEqual([]);
+    expect(out.context).toEqual(["I write for solo founders."]);
+    expect(completeChat).toHaveBeenCalledTimes(2);
+  });
+
+  test("a usable result on the first attempt never retries", async () => {
+    completeChat.mockResolvedValueOnce({
+      text: "",
+      toolArgs: { context: ["I cut a client's churn 40%."] },
+    });
+    const out = await synthesizeInterviewContext({
+      answers: [{ question: "Q", answer: "A" }],
+      voice: null,
+      workspaceId: "ws1",
+    });
+    expect(out.context).toEqual(["I cut a client's churn 40%."]);
+    expect(completeChat).toHaveBeenCalledTimes(1);
   });
 });

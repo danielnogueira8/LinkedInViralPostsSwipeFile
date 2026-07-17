@@ -71,7 +71,12 @@ export function VoiceInterviewCard({
       );
       if (!data.ok) throw new Error(data.error || "Couldn't process the interview.");
       onSaved(data.voice);
-      setExpanded(false);
+      // Only collapse into the read-only summary if there's actually a
+      // summary to show — never collapse to a state with no form AND no
+      // context (the server now throws on malformed/empty output instead of
+      // returning a false "success", but this stays as defense-in-depth).
+      const savedContext = data.voice?.profile?.interview_context ?? [];
+      if (savedContext.length > 0) setExpanded(false);
       toast.success("Interview saved — your answers now shape every draft.");
     } catch (e) {
       toast.error((e as Error).message);
@@ -98,9 +103,12 @@ export function VoiceInterviewCard({
               </CardDescription>
             </div>
           </div>
-          {context.length > 0 && !expanded ? (
+          {/* Always reachable — even if a save somehow lands with empty
+              context, the user must never be stuck looking at a bare header
+              with no way back into the form. */}
+          {!expanded ? (
             <Button variant="ghost" size="sm" onClick={() => setExpanded(true)}>
-              Edit answers
+              {context.length > 0 ? "Edit answers" : "Answer questions"}
             </Button>
           ) : null}
         </div>
