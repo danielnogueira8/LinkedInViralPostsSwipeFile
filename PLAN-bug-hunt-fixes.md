@@ -1,0 +1,72 @@
+# Bug-hunt fix backlog
+
+Source: full-app read-only bug hunt (org→user migration audit + 6 parallel subsystem hunters) + a pasted architectural-review list. Each item ships as its own PR: small, well-tested, no bundling. Check items off as PRs merge.
+
+Convention: `[ ]` pending · `[~]` PR open, not merged · `[x]` merged. PR numbers filled in as opened.
+
+---
+
+## Shipped
+
+- [x] **media-sweep.ts unpaginated scan can purge a still-referenced asset** — PR [#1177](https://github.com/danielnogueira8/LinkedInViralPostsSwipeFile/pull/1177), merged. Reference scan now pages via `selectAllRows` past the PostgREST 1000-row cap.
+- [~] **Interview-first users get incorrect 7-day voice cooldown** — PR [#1178](https://github.com/danielnogueira8/LinkedInViralPostsSwipeFile/pull/1178). New `interview_updated_at` column (migration-099, **user already ran it in Supabase**) separate from `generated_at`.
+- [~] **Empty creator-style model output can become "ready"** — PR [#1179](https://github.com/danielnogueira8/LinkedInViralPostsSwipeFile/pull/1179). `isUsableCreatorStyleProfile` semantic gate + one bounded retry before failing the row.
+- [~] **Creator-style description mixes user content with system warnings** — PR [#1180](https://github.com/danielnogueira8/LinkedInViralPostsSwipeFile/pull/1180). `creatorStyleQualityWarning(sampleCount)` derives the low-sample notice at read time instead of overwriting the user's own `description`.
+
+---
+
+## HIGH severity
+
+- [ ] **Lean path skips factual/grounding safeguards** — Cowork's lean path disables factual safeguards; ordinary drafting/refinement can invent personal experiences, clients, metrics, timelines. Fix: make correctness checks (factual specificity, unsupported first-person claims, source fidelity, grounding) invariant across every model/path — lean may skip stylistic passes only, never correctness.
+- [ ] **salvageGroundedDraft can expose a failed-grounding draft as saveable** — if finalization fails on grounded/news drafting, the last body can leak as if it succeeded. Fix: only emit an artifact when the finalizer returns ok; exhaustion → typed recoverable error, never a saveable draft.
+- [ ] **Source-based Cowork drafts bypass source fidelity in lean mode** — lean source-modeling skips checks preventing claims absent from the source. Fix: separate correctness specialists from taste specialists; source/grounding fidelity always executes.
+- [ ] **Weekly-batch retries not idempotent** — a fatal sibling can requeue the job while other concurrent slots keep running; no unique slot identity → possible duplicate/overproduced posts. Fix: durable slot ledger, unique `(workspace_id, batch_id, slot_index)` key, idempotent artifact keys, persisted source selection, resumable terminal states.
+- [ ] **Workspace viral thresholds contaminate other workspaces** — workspace settings modify global `posts.is_viral`; Swipe/Cowork/weekly/pattern-briefs/MCP/RAG all read that global value. Fix: canonical workspace-scoped classification query via `workspace_post_classification`; stop mutating global column. **Check first**: may partially overlap already-merged PR #79 (per-workspace viral classification migration) — verify what's left before building.
+- [ ] **match_post_embeddings RPC publicly executable + unbounded** — SECURITY DEFINER, default public execution grant, no result cap. Fix: REVOKE from PUBLIC/anon/authenticated, GRANT only service_role; SQL-side max results, ideally workspace scope. **Verify the claim against the actual migration SQL first** — this specific claim wasn't independently confirmed by this session's hunters.
+- [ ] **Fully-failed Apify scrape recorded as successful** — per-account failures collapse into result objects while the aggregate run finishes "done", blocking normal recovery. Fix: typed account outcomes; `attempted>0 && succeeded===0` → fail+retry; represent mixed outcomes as explicit partial.
+- [ ] **Scrape pipeline can exceed worker deadline, replays paid work** — profile scraping alone can exceed 300s, then embeddings+hooks, no checkpoints. Fix: durable chunked stages with cursors/leases/heartbeats/deadline-aware yielding; resume from last completed stage.
+- [ ] **Background-job lifecycle has competing authorities** — voice/style read paths mark jobs failed after 5-8min while the worker lease stays valid 15min; capacity waits can be longer → duplicate paid work. Fix: `background_jobs` is sole lifecycle authority; execution timeout starts only when a worker owns the job; distinguish capacity contention from cost-cap denial.
+- [ ] **Creator-style generations have no run identity** — an older job can overwrite a newer regeneration; deleting a generating style doesn't reliably cancel provider work. Fix: `generation_id` per run, required in every provider preflight + DB CAS; invalidate on delete.
+- [ ] **Voice generation and interview data can erase each other** — both workflows replace the same JSON doc under different locks, no versioning. Fix: store synthesized voice mechanics separately from interview context, compose at read time; or one workspace voice lock + `profile_version` CAS + field-owner merges.
+- [ ] **Long creator-style output can truncate the mandatory anti-copy guard** — guard appended then the whole prompt sliced to 4000 chars. Fix: bound every field individually, reserve space for invariants, truncate optional sections, append the fixed guard last.
+- [ ] **Paid-operation accounting incomplete, can fail open** — Apify spend lacks reliable workspace attribution; usage insert errors can be ignored; pipeline embedding costs absent. Fix: one idempotent paid-operation ledger, unique operation key, actual settlement, mandatory persistence before releasing reservations.
+- [ ] **Credit/cost totals can be understated** — monthly calc depends on capped raw-row scans; some provider summaries omit OpenRouter. Fix: aggregate usage in SQL by workspace/provider/billing window; include every provider; treat aggregation errors as hard failures.
+
+## MEDIUM severity
+
+- [ ] **Weekly rewrites not revalidated after transformation** — sameness repairs can produce content outside the 120-3200 char contract. Fix: run the canonical finalizer after every rewrite.
+- [ ] **Supabase `{error}` results silently treated as success** — several critical ops only catch thrown exceptions; weekly queue failure can leave an orphan chat. Fix: centralize DB calls behind repositories that unwrap `{data,error}`; transaction/RPC for weekly run+chat+opening message+job creation.
+- [ ] **Model attribution logs requested alias, not response.model** — weekly/voice/creator-style/interview/lead-magnet paths often log the requested alias. Fix: record requested AND provider-reported model through one attribution seam.
+- [ ] **Lead-magnet sanitization corrupts Markdown code blocks** — global whitespace cleanup changes Python/YAML indentation, tables, literal content. Fix: normalize prose through a Markdown AST, preserve fenced/inline code, tables, URLs byte-for-byte.
+- [ ] **Malformed interview output saved as success, UI has no recovery** — UI collapses with no way to reopen the form (empty context). Fix: require valid nonempty context when answers were provided; retry once, else fail without mutation; always expose edit/retry.
+- [ ] **Concurrent template creation can exceed 100-template cap** — count and insert are separate ops (TOCTOU). Fix: enforce quota in one transactional DB function/trigger with a workspace advisory lock.
+- [ ] **Below-contract lead magnets shown without warning** — backend stores `review_suggested` but UI doesn't display it. Fix: fail closed until minimum assessment passes, or show a prominent "Needs review" state.
+- [ ] **Pattern-brief cron uncheckpointed, no cost reservation** — all-workspaces cron can exceed deadline; one persistence error can abort later workspaces. Fix: one idempotent job per workspace, provider/cost locks, cursor state, isolated persistence outcomes.
+- [ ] **"Latest scrape" lookup can cross workspaces** — some Cowork/weekly/MCP paths don't restrict the scrape-run lookup correctly. Fix: centralize `latestRelevantScrape(workspaceId)`, restricted to current workspace + intentionally-global data.
+- [ ] **Weekly source dedup stops at unordered 500-row scan** — older used sources can repeat as history grows. Fix: normalize source usage into an indexed table, EXISTS lookup instead of scanning capped JSON history.
+- [ ] **Production loading Clerk DEV credentials** — live console loaded `*.clerk.accounts.dev` with the dev-key warning. Fix: set live Clerk keys in prod Vercel env, verify origins/webhooks, redeploy, add smoke assertion. **Verify still true first** — memory says the prod Clerk cutover already happened; this may be stale.
+- [ ] **trackedAccountIds unpaginated roster read feeds unbounded `.in()`** — `lib/supabase-scoped.ts:129-131`, no `.limit()`/pagination; a >1000-creator workspace silently loses accounts past row 1000 in swipe feed/post-document/saved-posts auth. Also feeds unbounded `.in()` in `lib/swipe-query.ts` (needs `selectInChunks`/`idChunks`).
+- [ ] **lead-magnets/creator-styles/content-templates GET lists unpaginated** — `app/api/lead-magnets/route.ts` GET, `app/api/creator-styles/route.ts` GET, `app/api/content-templates/route.ts` GET all silently cap at 1000 rows. Fix: `selectAllRows` or a sane `.limit()`.
+
+## LOW severity
+
+- [ ] **Publishing subsystem: 4 lower-severity findings** (bundle into one PR or split, judgment call at fix time):
+  1. Network-error-after-success retry can theoretically double-post (`zernio.ts`, mitigated by request-id).
+  2. DELETE of a `scheduled` draft can race the cron claim, orphaning a publish with no board record (`draft-lifecycle-supabase.ts remove`).
+  3. `firstComment` has no LinkedIn length re-check at publish time, only at the schedule HTTP route (`draft-publishing.ts:428`).
+  4. `VIDEO_MIME` accepts AVI for direct post attach but the library path rejects it — inconsistent, wasted publish retries (`post-media.ts:22` vs `media-library.ts:46`).
+  5. Media re-persist write (`draft-publishing.ts:416-423`) isn't CAS-guarded on `schedule_status`, unlike every other terminal write in that function.
+- [ ] **accounts.updateAccount unscoped write depends entirely on app-layer ownership check** — `lib/tracked-creators-supabase.ts:184-193` has no `.eq(manual_owner_workspace_id)` in the SQL; safe today only because the one caller (`lib/tracked-creators.ts:495`) gates first. Fix: add the `.eq` guard directly to `updateAccount` for defense-in-depth.
+
+## Meta
+
+- [ ] **Re-run the 3 hunt agents that hit the session limit** — Cowork chat agent loop, generation pipelines/claims, frontend/UI hunters died mid-run on a session-limit API error and only returned partial fragments. Re-run for real verified findings (3 of 6 hunters succeeded cleanly: IDOR routes, shared-bookmarks/accounts, pagination/list routes — those are reflected above).
+
+---
+
+## Notes for whoever picks up an item
+
+- Read the real current code before trusting a one-line summary above — some items may already be partially addressed by prior PRs (viral-threshold item explicitly flagged; others may have shifted since the hunt).
+- Every PR: `tsc --noEmit` + `eslint` on touched files + full `vitest run` (must stay green, note the before/after count) + a migration through `npm run migrations:metadata`/`migrations:check` if the DB shape changes.
+- Migrations are staged in the PR; the user runs them manually in Supabase (this repo's standing convention) — call that out explicitly in the PR description.
+- Branch from `origin/main`, not a stacked branch — this repo's Vercel/GitHub webhook has been flaky, so keep history straight to avoid stranding commits off main.
