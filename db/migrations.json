@@ -1,7 +1,7 @@
 {
   "generatedBy": "npm run migrations:metadata",
-  "highest": 98,
-  "count": 98,
+  "highest": 99,
+  "count": 99,
   "files": [
     "migration-001-progress.sql",
     "migration-002-usage.sql",
@@ -100,6 +100,7 @@
     "migration-095-chat-action-checkpoints.sql",
     "migration-096-cowork-rollout-health.sql",
     "migration-097-chat-message-content-format.sql",
-    "migration-098-workspace-id-is-user-id.sql"
+    "migration-098-workspace-id-is-user-id.sql",
+    "migration-099-voice-interview-updated-at.sql"
   ]
 }

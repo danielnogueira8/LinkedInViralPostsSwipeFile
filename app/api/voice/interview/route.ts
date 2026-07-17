@@ -22,7 +22,7 @@ export const runtime = "nodejs";
 export const maxDuration = 30;
 
 const VOICE_COLS =
-  "id, linkedin_handle, profile_url, display_name, avatar_url, headline, profile, summary, source_post_count, status, error, model, generated_at, created_at, pending_started_at";
+  "id, linkedin_handle, profile_url, display_name, avatar_url, headline, profile, summary, source_post_count, status, error, model, generated_at, interview_updated_at, created_at, pending_started_at";
 
 const bodySchema = z.object({
   answers: z
@@ -122,11 +122,19 @@ export async function POST(req: Request) {
       nextProfile.summary ||
       "Context interview completed — answers are used to write in your voice.";
 
+    // interview_updated_at records "the interview was last saved" — distinct
+    // from generated_at ("a real synthesis run completed"), which drives the
+    // 7-day voice-refresh cooldown (voiceRegenCooldown). Saving interview
+    // answers is never a synthesis run, so it must never touch generated_at:
+    // an interview-first user (no scrape yet) would otherwise hit the
+    // cooldown wall the first time they try to actually generate their voice.
+    const interviewUpdatedAt = new Date().toISOString();
+
     let saved;
     if (existing) {
       const { data, error } = await sb.raw
         .from("voice_profiles")
-        .update({ profile: nextProfile, summary })
+        .update({ profile: nextProfile, summary, interview_updated_at: interviewUpdatedAt })
         .eq("workspace_id", sb.workspaceId)
         .select(VOICE_COLS)
         .single();
@@ -134,6 +142,9 @@ export async function POST(req: Request) {
       saved = data;
     } else {
       // Standalone: create a minimal ready row that carries only the interview.
+      // status:"ready" reflects the ROW being usable (interview_context is
+      // drafting-ready), not that a synthesis run happened — generated_at
+      // stays null so a later real generation isn't blocked by the cooldown.
       const { data, error } = await sb.raw
         .from("voice_profiles")
         .insert({
@@ -142,7 +153,7 @@ export async function POST(req: Request) {
           profile: nextProfile,
           summary,
           model: "interview",
-          generated_at: new Date().toISOString(),
+          interview_updated_at: interviewUpdatedAt,
         })
         .select(VOICE_COLS)
         .single();

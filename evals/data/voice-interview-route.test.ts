@@ -135,6 +135,39 @@ describe("POST /api/voice/interview", () => {
     expect((row.summary as string).length).toBeGreaterThan(0);
   });
 
+  // ---------------------------------------------------------------------------
+  // REGRESSION (audit finding, fixed): the standalone INSERT used to stamp
+  // `generated_at`, the SAME column voiceRegenCooldown() reads to gate the
+  // 7-day voice-refresh cooldown. An interview-first user (who never ran a
+  // real synthesis via POST /api/voice) would immediately hit "you can
+  // refresh your voice again in 7 days" the first time they tried to
+  // actually generate their voice from a scrape. generated_at means "a
+  // synthesis run completed"; saving interview answers is not that.
+  // interview_updated_at is the separate, correct timestamp for this event.
+  // ---------------------------------------------------------------------------
+  test("REGRESSION: standalone interview save never stamps generated_at (would falsely start the 7-day cooldown)", async () => {
+    state.existing = null;
+    const res = await POST(req({ answers: ANSWERS }));
+    expect(res.status).toBe(200);
+    const row = state.insertPayload!;
+    expect(row.generated_at).toBeUndefined();
+    expect(typeof row.interview_updated_at).toBe("string");
+  });
+
+  test("REGRESSION: interview save on an EXISTING profile also never touches generated_at", async () => {
+    state.existing = {
+      id: "row1",
+      status: "ready",
+      profile: { summary: "My voice" },
+      summary: "My voice",
+    };
+    const res = await POST(req({ answers: ANSWERS }));
+    expect(res.status).toBe(200);
+    const update = state.updatePayload!;
+    expect(update.generated_at).toBeUndefined();
+    expect(typeof update.interview_updated_at).toBe("string");
+  });
+
   test("synthesis is given the existing profile as the voice anchor", async () => {
     state.existing = { id: "row1", status: "ready", profile: { summary: "Blunt founder" }, summary: "Blunt founder" };
     await POST(req({ answers: ANSWERS }));
