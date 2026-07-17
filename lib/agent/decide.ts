@@ -37,7 +37,10 @@ import {
   coworkAdapterHealth,
   type AdapterHealthRegistry,
 } from "@/lib/agent/adapter-health";
-import { runCoworkAdapterAttempt } from "@/lib/agent/cowork-adapter-attempt";
+import {
+  runCoworkAdapterAttempt,
+  providerModelAttribution,
+} from "@/lib/agent/cowork-adapter-attempt";
 import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
 import { supabaseAdmin } from "@/lib/supabase";
 import { trackedAccountIds } from "@/lib/supabase-scoped";
@@ -659,16 +662,19 @@ export async function decideTurn(
         }
         return parseDecision(toolArgs);
       },
-      persistUsage: (response) =>
-        opts.workspaceId
-          ? logOpenRouterUsage(
-              "decide",
-              DECISION_MODEL,
-              response.usage,
-              opts.workspaceId,
-            )
-          : Promise.resolve(),
+      persistUsage: (response) => {
+        if (!opts.workspaceId) return Promise.resolve();
+        const attribution = providerModelAttribution(DECISION_MODEL, response.model);
+        return logOpenRouterUsage(
+          "decide",
+          attribution.model,
+          response.usage,
+          opts.workspaceId,
+          attribution.metadata,
+        );
+      },
       usage: (response) => response.usage,
+      responseModel: (response) => response.model,
       telemetry: opts.telemetry,
       stage: "legacy_decision_prepass",
       attempt: 1,

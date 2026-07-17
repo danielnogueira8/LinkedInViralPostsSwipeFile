@@ -9,6 +9,7 @@ import {
   type InterviewAnswer,
   type VoiceProfile,
 } from "@/lib/claude";
+import { providerModelAttribution } from "@/lib/agent/cowork-adapter-attempt";
 
 // ---------------------------------------------------------------------------
 // Voice context interview. The set of questions a high-paying ghostwriter asks
@@ -192,7 +193,14 @@ export async function synthesizeInterviewContext(opts: {
         { role: "user", content: renderAnswers(answers, opts.voice) },
       ],
     });
-    await logOpenRouterUsage("voice_interview", VOICE_MODEL, res.usage, opts.workspaceId);
+    const attribution = providerModelAttribution(VOICE_MODEL, res.model);
+    await logOpenRouterUsage(
+      "voice_interview",
+      attribution.model,
+      res.usage,
+      opts.workspaceId,
+      attribution.metadata,
+    );
     return extractContext(res.toolArgs);
   };
 

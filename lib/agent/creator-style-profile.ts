@@ -8,6 +8,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { trackedAccountIds } from "@/lib/supabase-scoped";
 import { runProfileHistory } from "@/lib/apify";
 import { INJECTION_GUARD, wrapUntrustedXml } from "@/lib/agent/untrusted";
+import { providerModelAttribution } from "@/lib/agent/cowork-adapter-attempt";
 import {
   sanitizeCreatorStyleProfile,
   isUsableCreatorStyleProfile,
@@ -269,11 +270,13 @@ export async function generateCreatorStyleProfile(opts: {
       tools: [CREATOR_STYLE_TOOL],
       forceTool: CREATOR_STYLE_TOOL_NAME,
     });
+    const attribution = providerModelAttribution(REASONING_MODEL, res.model);
     await logOpenRouterUsage(
       "synthesize_creator_style",
-      REASONING_MODEL,
+      attribution.model,
       res.usage,
       opts.workspaceId,
+      attribution.metadata,
     );
     if (res.finishReason === "length") {
       throw new Error("Creator style synthesis was truncated (hit the output limit).");
