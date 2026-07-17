@@ -97,3 +97,27 @@ describe("weekly draft prompt policy", () => {
     expect(prompt).not.toContain("raw private answer text");
   });
 });
+
+// Pins the house-style rules into the always-on writing brain. These are the
+// rules the user explicitly asked for; a future edit that drops them (or fat-
+// fingers the constant) gets caught here instead of silently regressing voice.
+describe("always-on writing brain — house-style rules", () => {
+  it("GLOBAL_WRITING_SKILL bans vague determiners in favor of numbers", () => {
+    expect(GLOBAL_WRITING_SKILL).toContain("Numbers over vague determiners");
+  });
+
+  it("GLOBAL_WRITING_SKILL biases toward blunt over hedged", () => {
+    expect(GLOBAL_WRITING_SKILL).toContain("Be blunt");
+  });
+
+  it("GLOBAL_WRITING_SKILL cuts hollow adverbs WITHOUT a blanket ban (voice-safe)", () => {
+    expect(GLOBAL_WRITING_SKILL).toContain("Cut hollow adverbs");
+    // The scalpel framing must survive: it explicitly keeps meaning-carrying
+    // adverbs + the user's own voice, so the rule can't flatten a real voice.
+    expect(GLOBAL_WRITING_SKILL).toContain("not a blanket ban");
+  });
+
+  it("POST_STRUCTURE_SKILL enforces one big idea per post", () => {
+    expect(POST_STRUCTURE_SKILL).toContain("ONE post = ONE big idea");
+  });
+});

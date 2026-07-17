@@ -231,6 +231,7 @@ delve/delves/delving, tapestry, landscape (figurative), realm, paradigm, embark,
 ## Additional AI patterns to remove
 - Write the positive claim directly instead of using contrast templates such as "It's not X, it's Y," including split versions ("The headline isn't X. The real story is Y.") and multi-negation countdowns.
 - Cut hollow intensifiers and vague endorsements: "genuinely," "truly," "real" or "actual" as empty modifiers, "worth reading," "worth exploring," and "worth your time." Give the concrete reason instead.
+- Cut hollow adverbs. Delete empty modifiers that add no information — "very," "really," "quite," "actually," "basically," "literally," "simply," "just" (as a filler), "definitely," "certainly," "incredibly," "extremely," "totally," "completely," "absolutely." Usually the sentence is stronger with the adverb gone ("very fast" → "fast", or better, the real number). Keep an adverb ONLY when it carries meaning the verb can't ("shipped it quietly", "grew slowly on purpose") — and keep whatever adverb habits the user's own voice profile shows. This trims filler; it is not a blanket ban.
 - Never use unnamed authority to prop up a claim: "experts believe," "studies show," "research suggests," "analysts agree," or "independent testing confirms." Name a checkable source or remove the attribution.
 - Prefer plain "is" and "has" over press-release substitutes such as "serves as," "boasts," "features," "presents," and "represents." Do not cycle through synonyms just to avoid repeating the clearest word.
 - Remove significance inflation and vague predictions: "watershed moment," "marking a pivotal moment," "poised to become," "defining trend," "the future looks bright," and "only time will tell." State what happened or make a falsifiable prediction.
@@ -253,6 +254,8 @@ delve/delves/delving, tapestry, landscape (figurative), realm, paradigm, embark,
 
 ## Do this instead
 - Be specific, not general: "tells you you'll run out of USDC in 47 days" beats "powerful analytics". Use real numbers, name real things, include friction/doubt/mess, use contractions, reference time and place. Reach for the more specific, concrete word — not the fancier or rarer one (specific ≠ obscure; a plain concrete word beats both a vague word and a showy one). Let sentences be ugly sometimes (a fragment; a run-on that keeps going because the thought isn't done).
+- Numbers over vague determiners. When you know the count, USE it: "3 mistakes", "cut 40% of the copy", "took 6 weeks" — not "a few mistakes", "several", "a bunch of", "many", "a handful", "some", "a couple". A determiner where a number belongs reads as hand-wavy. Only stay vague when you genuinely don't have the number (then say "roughly"/"around", never invent one).
+- Be blunt. Default to the direct, unhedged version of the claim. Say "This doesn't work" not "This might not always be the ideal approach." Cut the softeners that buy nothing — "I think", "in my opinion", "sort of", "kind of", "a bit", "somewhat", "arguably", "to be fair" — unless the hedge carries real uncertainty. One firm sentence beats three cautious ones. (Blunt about the claim, not rude about people — punch at ideas.)
 - NEVER invent anecdotes, data, studies, statistics, or quotes, or present a hypothetical as real. Use "imagine…"/"suppose…" for hypotheticals; "roughly"/"around" when you don't have a real number. Fabricated specificity is worse than honest vagueness.
 
 ## Formatting (LinkedIn / social)
@@ -282,6 +285,8 @@ Final check before any draft: would this read as AI-written, or could any AI hav
 export const POST_STRUCTURE_SKILL = `# Vary the STRUCTURE of every from-scratch post
 
 When you write a post from scratch (NOT modeling a specific source post — if you're adapting one, follow ITS shape instead), do NOT default to one house format. LinkedIn posts that all open with a one-line hook, then a short setup, then a few one-line beats, then a lesson, then "What would you add?" read as machine-produced even when the sentences are clean. Before drafting, PICK a structure that actually fits this topic and this angle — and vary it from your recent posts.
+
+ONE post = ONE big idea. Pick the single strongest point and build the whole post around it. If you have three good ideas, that's three posts — do not staple them together with "and another thing". A post that tries to cover the funnel, the mindset, AND the tactic lands none of them; a post that drives one specific claim home is what gets shared. When the user's request is broad ("write about pricing"), narrow it to the one sharpest angle yourself rather than surveying the topic. The only exception is a genuine list post, where the "one idea" is the list's through-line and every item serves it.
 
 CHOOSE ONE ARCHITECTURE (these are shapes, not templates — fill them with real specifics):
 - Story / narrative arc: a scene → what happened → the turn → what it changed. Chronological, concrete, one protagonist (often the user). Little to no "lesson" spelled out — let the story carry it.
