@@ -241,6 +241,22 @@ export function isUsableCreatorStyleProfile(profile: CreatorStyleProfile): boole
 // ---------------------------------------------------------------------------
 
 export function buildStylePromptBlock(profile: CreatorStyleProfile): string {
+  // Anti-copying guardrails are ALWAYS present, even if the model omitted
+  // them, so the block can never ship without the do-not-copy contract. Built
+  // FIRST and appended LAST, outside the length cap below — a verbose profile
+  // (long voice_traits/hook_patterns/etc — nothing bounds per-field string
+  // length, only item count) must never be able to push this guard past the
+  // truncation point and silently drop it.
+  const avoid = profile.avoid_copying.length
+    ? profile.avoid_copying
+    : [
+        "the creator's personal stories, anecdotes, and unique examples",
+        "their specific claims, results, numbers, and case studies",
+        "their exact phrases, signature lines, and wording",
+        "their identity, name, and biographical details",
+      ];
+  const guard = `\nNEVER copy (write original content instead):\n${avoid.map((a) => `- ${a}`).join("\n")}`;
+
   const lines: string[] = [];
   if (profile.summary) lines.push(profile.summary);
   const bullet = (label: string, items: string[]) => {
@@ -270,18 +286,9 @@ export function buildStylePromptBlock(profile: CreatorStyleProfile): string {
   bullet("Rhythm & cadence", profile.rhythm_rules);
   bullet("CTA habits", profile.cta_patterns);
   bullet("Post-format preferences", profile.post_format_preferences);
-  // Anti-copying guardrails are ALWAYS present, even if the model omitted them,
-  // so the block can never ship without the do-not-copy contract.
-  const avoid = profile.avoid_copying.length
-    ? profile.avoid_copying
-    : [
-        "the creator's personal stories, anecdotes, and unique examples",
-        "their specific claims, results, numbers, and case studies",
-        "their exact phrases, signature lines, and wording",
-        "their identity, name, and biographical details",
-      ];
-  lines.push(
-    `\nNEVER copy (write original content instead):\n${avoid.map((a) => `- ${a}`).join("\n")}`,
-  );
-  return lines.join("\n").trim().slice(0, STYLE_PROMPT_BLOCK_MAX);
+
+  // -1 reserves room for the newline joining variable content to the guard.
+  const variableBudget = Math.max(0, STYLE_PROMPT_BLOCK_MAX - guard.length - 1);
+  const variableContent = lines.join("\n").trim().slice(0, variableBudget);
+  return (variableContent ? `${variableContent}\n${guard}` : guard.trim()).trim();
 }
