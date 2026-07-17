@@ -75,6 +75,27 @@ export async function runVoiceGeneration(
     }
 
     const meta = pickProfileMeta(posts);
+    // A context interview can complete while this generation run is still in
+    // flight (both write the same row). Interview answers/context live inside
+    // `profile` too, but this synthesis never produces them — re-read the
+    // row's current values right before writing so this success write can't
+    // silently erase interview data saved mid-run.
+    const { data: preWrite } = await sb.raw
+      .from("voice_profiles")
+      .select("profile")
+      .eq("workspace_id", sb.workspaceId)
+      .maybeSingle();
+    const existingProfile = preWrite?.profile as
+      | { interview_answers?: unknown; interview_context?: unknown }
+      | null
+      | undefined;
+    if (existingProfile?.interview_answers !== undefined) {
+      profile.interview_answers = existingProfile.interview_answers as typeof profile.interview_answers;
+    }
+    if (existingProfile?.interview_context !== undefined) {
+      profile.interview_context = existingProfile.interview_context as typeof profile.interview_context;
+    }
+
     const { data: updated, error: upErr } = await sb.raw
       .from("voice_profiles")
       .update({
