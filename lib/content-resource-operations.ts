@@ -97,27 +97,50 @@ export async function createCategoryResource(input: {
   return { ok: true, value: { id: String(data.id), label: String(data.label) } };
 }
 
+// Atomic: claim_content_template_slot (migration 100) takes a per-workspace
+// advisory lock and counts + inserts INSIDE that lock, closing the
+// count-then-insert TOCTOU race a plain SELECT-count-then-INSERT has (two
+// concurrent creates could both read a below-cap count and both proceed).
 export async function createTemplateResource(input: {
   db: SupabaseClient;
   workspaceId: string;
   data: TemplateInput;
 }): Promise<OperationResult<ContentTemplate>> {
   const { db, workspaceId, data: request } = input;
-  const { count, error: countError } = await db
-    .from("content_templates")
-    .select("id", { count: "exact", head: true })
-    .eq("workspace_id", workspaceId);
-  if (countError) throw countError;
-  if ((count ?? 0) >= TEMPLATES_PER_WORKSPACE_MAX) {
-    return { ok: false, status: 409, error: `You've reached the limit of ${TEMPLATES_PER_WORKSPACE_MAX} templates. Delete one to add another.` };
-  }
   const { data, error } = await db
-    .from("content_templates")
-    .insert({ ...request, source: "custom", workspace_id: workspaceId })
-    .select(TEMPLATE_COLS)
+    .rpc("claim_content_template_slot", {
+      p_workspace_id: workspaceId,
+      p_max_templates: TEMPLATES_PER_WORKSPACE_MAX,
+      p_title: request.title,
+      p_category: request.category,
+      p_body: request.body,
+      p_source: "custom",
+      p_origin_post_id: null,
+    })
     .single();
   if (error) throw error;
-  return { ok: true, value: data as ContentTemplate };
+  const row = data as ContentTemplate & { over_cap: boolean };
+  if (row.over_cap) {
+    return {
+      ok: false,
+      status: 409,
+      error: `You've reached the limit of ${TEMPLATES_PER_WORKSPACE_MAX} templates. Delete one to add another.`,
+    };
+  }
+  return {
+    ok: true,
+    value: {
+      id: row.id,
+      workspace_id: row.workspace_id,
+      title: row.title,
+      category: row.category,
+      body: row.body,
+      source: row.source,
+      origin_post_id: row.origin_post_id,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+    },
+  };
 }
 
 export async function createSkillResource(input: {
