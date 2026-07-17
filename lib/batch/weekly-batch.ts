@@ -86,10 +86,25 @@ export class WeeklyBatch {
     const now = d.now();
     if (await d.inFlight(input.workspaceId, now)) return alreadyRunning();
     const batchId = d.randomId();
-    const claim = await d.claim(input.workspaceId, batchId);
+    let claim = await d.claim(input.workspaceId, batchId);
     if (!claim.ok) {
-      if (claim.conflict) return alreadyRunning();
-      throw claim.error;
+      if (!claim.conflict) throw claim.error;
+      // batchInFlight() just said "not in flight" (the prior row is past the
+      // stale window), but the DB-level unique-active-run index still sees a
+      // 'pending'/'running' row and rejected the insert with 23505 — the row
+      // itself is only ever flipped to 'failed' by latestBatchRun (the status-
+      // poll path), which batchInFlight never calls. Without this, a retry
+      // with no prior status GET in flight gets stuck on 409s past the stale
+      // window batchInFlight already agreed the run was dead — contradicting
+      // this module's own "a genuine retry is never blocked" invariant. Reuse
+      // the SAME stale-recovery latestBatchRun already does for the poll path
+      // (flip stale -> failed), then retry the claim exactly once.
+      await d.latest(input.workspaceId, now);
+      claim = await d.claim(input.workspaceId, batchId);
+      if (!claim.ok) {
+        if (claim.conflict) return alreadyRunning();
+        throw claim.error;
+      }
     }
 
     const nowIso = new Date(now).toISOString();
