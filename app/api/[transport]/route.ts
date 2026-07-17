@@ -1,4 +1,5 @@
 import { createMcpHandler, withMcpAuth } from "mcp-handler";
+import type { Implementation } from "@modelcontextprotocol/sdk/types.js";
 import { registerSwipeTools } from "@/lib/mcp/register";
 import { verifyToken } from "@/lib/mcp/clerk-auth";
 
@@ -13,7 +14,27 @@ const baseHandler = createMcpHandler(
     registerSwipeTools(server);
   },
   {
-    serverInfo: { name: "linkedin-swipe-mcp", version: "0.1.0" },
+    // mcp-handler's own ServerOptions type declares serverInfo as only
+    // {name, version} — narrower than what it actually forwards at runtime
+    // (the wrapper destructures and passes the object straight through to
+    // the SDK's McpServer, which accepts the full Implementation shape).
+    // Spec-correct per MCP 2025-11-25 (serverInfo.icons), but Claude.ai's
+    // connector UI doesn't render it yet (tracked upstream as
+    // anthropics/claude-ai-mcp#152) — this is forward-compatible for when
+    // it does, and for any other MCP client that already supports it.
+    serverInfo: {
+      name: "linkedin-swipe-mcp",
+      version: "0.1.0",
+      title: "SwipeIn",
+      websiteUrl: "https://www.tryswipein.com",
+      icons: [
+        {
+          src: "https://www.tryswipein.com/swipeInIcon.png",
+          mimeType: "image/png",
+          sizes: ["1254x1254"],
+        },
+      ],
+    } as Implementation,
   },
   {
     basePath: "/api",
