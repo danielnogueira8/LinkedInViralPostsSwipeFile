@@ -28,6 +28,7 @@ export type ContentPreference = {
   id: string;
   workspace_id: string;
   rule: string;
+  detail: string | null;
   source: PreferenceSource;
   created_at: string;
   updated_at: string;
@@ -37,6 +38,14 @@ export type ContentPreference = {
 // makes the injected block small and the model likely to actually follow it —
 // a rule the length of a paragraph reads as prose the model can skim past.
 export const PREF_RULE_MAX = 160;
+
+// Optional longer supporting note stored alongside the rule — the "why", a
+// number, a date, a caveat that doesn't fit a one-line imperative but is real,
+// useful context an LLM (or the user) may want the agent to have. Unlike
+// `rule`, this is free-form and NOT normalized to a single line; it's still
+// injected every turn (see renderPreferencesBlock) so it stays bounded, just
+// more generously than the rule itself.
+export const PREF_DETAIL_MAX = 1_000;
 
 // Per-workspace ceiling on stored rules. Bounds storage AND — since every rule
 // is injected every turn — the worst-case prompt cost. 20 rules × 160 chars ≈
@@ -50,12 +59,13 @@ export const PREFS_PER_WORKSPACE_MAX = 20;
 // guaranteed regardless of any future change to the storage cap). Newest first.
 export const PREFS_INJECTED_MAX = 20;
 
-// Belt-and-suspenders total-char bound on the injected block's rule text. Even
-// at the per-rule + count caps the block is ~3.2k chars; this guards against a
-// future cap bump silently growing every prompt. If the rules would exceed it,
-// we inject the newest that fit and drop the rest (they're still stored/editable
-// in the UI — just not force-fed into this turn).
-export const PREFS_INJECTED_CHARS_MAX = 4_000;
+// Belt-and-suspenders total-char bound on the injected block's rule + detail
+// text combined. Raised from the rule-only era to leave room for details
+// (worst case ~20 rules × (160 + 1000) ≈ 23k chars ≈ 5.8k tokens) while still
+// guarding against a future cap bump silently growing every prompt unbounded.
+// If the rules would exceed it, we inject the newest that fit and drop the
+// rest (they're still stored/editable in the UI — just not force-fed here).
+export const PREFS_INJECTED_CHARS_MAX = 24_000;
 
 // Normalize a raw rule into a single clean imperative line: collapse internal
 // whitespace/newlines (a rule is one line, never multi-paragraph), trim, and
@@ -66,6 +76,20 @@ export function normalizePreferenceRule(raw: string): string {
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, PREF_RULE_MAX);
+}
+
+// Normalize a raw detail: unlike the rule, this can be multi-line/multi-
+// sentence prose, so only collapse runs of blank lines/whitespace at the
+// edges and clamp to the cap — never flatten it to one line. Empty input
+// (including whitespace-only) normalizes to "" so callers can treat that as
+// "no detail" uniformly.
+export function normalizePreferenceDetail(raw: string | null | undefined): string {
+  if (!raw) return "";
+  return raw
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim()
+    .slice(0, PREF_DETAIL_MAX);
 }
 
 // A comparison key for dedup: case-insensitive, punctuation-insensitive, so
@@ -93,7 +117,8 @@ export function isDuplicatePreference(
   return existing.some((p) => preferenceDedupKey(p.rule) === key);
 }
 
-// Body of a create/update request. Rule is normalized then required non-empty.
+// Body of a create/update request. Rule is normalized then required non-empty;
+// detail is optional and normalized to "" (not present) when omitted/blank.
 export const preferenceInputSchema = z.object({
   rule: z
     .string()
@@ -102,6 +127,11 @@ export const preferenceInputSchema = z.object({
     .max(PREF_RULE_MAX * 3) // pre-normalization slack; normalize clamps to max
     .transform(normalizePreferenceRule)
     .refine((r) => r.length > 0, "Rule must contain text"),
+  detail: z
+    .string()
+    .max(PREF_DETAIL_MAX * 2) // pre-normalization slack; normalize clamps to max
+    .optional()
+    .transform((d) => normalizePreferenceDetail(d)),
 });
 
 export type PreferenceInput = z.infer<typeof preferenceInputSchema>;
@@ -114,7 +144,7 @@ export type PreferenceInput = z.infer<typeof preferenceInputSchema>;
 // prompt is byte-identical to a turn without this feature (no empty block).
 // ---------------------------------------------------------------------------
 export function renderPreferencesBlock(
-  prefs: ReadonlyArray<{ rule: string }> | null | undefined,
+  prefs: ReadonlyArray<{ rule: string; detail?: string | null }> | null | undefined,
 ): string {
   if (!prefs || prefs.length === 0) return "";
   const lines: string[] = [];
@@ -122,10 +152,15 @@ export function renderPreferencesBlock(
   for (const p of prefs.slice(0, PREFS_INJECTED_MAX)) {
     const rule = normalizePreferenceRule(p?.rule ?? "");
     if (!rule) continue;
-    // +3 accounts for the "- " bullet + newline we add per line.
-    if (chars + rule.length + 3 > PREFS_INJECTED_CHARS_MAX) break;
+    const detail = normalizePreferenceDetail(p?.detail);
+    // A rule line is "- <rule>" (+3 for the bullet/newline); a detail, when
+    // present, is an indented follow-up line "  <detail>" (+3 likewise) so the
+    // model reads it as context for the rule directly above, not a new rule.
+    const entryChars = rule.length + 3 + (detail ? detail.length + 3 : 0);
+    if (chars + entryChars > PREFS_INJECTED_CHARS_MAX) break;
     lines.push(`- ${rule}`);
-    chars += rule.length + 3;
+    if (detail) lines.push(`  ${detail}`);
+    chars += entryChars;
   }
   if (lines.length === 0) return "";
   return [

@@ -9,7 +9,7 @@ import {
 
 export const runtime = "nodejs";
 
-const PREF_COLS = "id, workspace_id, rule, source, created_at, updated_at";
+const PREF_COLS = "id, workspace_id, rule, detail, source, created_at, updated_at";
 
 // -----------------------------------------------------------------------------
 // /api/preferences/[id] — edit or delete one preference. Workspace-scoped: the
@@ -58,7 +58,11 @@ export async function PATCH(
 
     const { data, error } = await sb.raw
       .from("content_preferences")
-      .update({ rule: parsed.data.rule, updated_at: new Date().toISOString() })
+      .update({
+        rule: parsed.data.rule,
+        detail: parsed.data.detail || null,
+        updated_at: new Date().toISOString(),
+      })
       .eq("id", id)
       .eq("workspace_id", sb.workspaceId)
       .select(PREF_COLS)

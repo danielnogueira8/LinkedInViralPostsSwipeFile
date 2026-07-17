@@ -36,7 +36,7 @@ export default async function VoicePage() {
   // fetch flash. Workspace-scoped (scopedSupabase + RLS).
   const preferencesPromise = sb.raw
     .from("content_preferences")
-    .select("id, workspace_id, rule, source, created_at, updated_at")
+    .select("id, workspace_id, rule, detail, source, created_at, updated_at")
     .eq("workspace_id", sb.workspaceId)
     .order("created_at", { ascending: false })
     .limit(PREFS_PER_WORKSPACE_MAX);

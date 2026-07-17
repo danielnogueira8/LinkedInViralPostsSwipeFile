@@ -10,15 +10,26 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { StatusPill } from "@/components/app-surface";
-import { Plus, Trash2, Pencil, Loader2, Check, X, ListPlus } from "lucide-react";
+import {
+  Plus,
+  Trash2,
+  Pencil,
+  Loader2,
+  Check,
+  X,
+  ListPlus,
+  NotebookText,
+} from "lucide-react";
 import { AiIcon } from "@/components/ai-icon";
 import { toast } from "sonner";
 import { fetchJson } from "@/lib/api-fetch";
 import { byId, removeById, reinsertById } from "@/lib/optimistic";
 import {
   PREF_RULE_MAX,
+  PREF_DETAIL_MAX,
   PREFS_PER_WORKSPACE_MAX,
   type ContentPreference,
 } from "@/lib/preferences";
@@ -41,6 +52,8 @@ export function PreferencesManager({
 }) {
   const [prefs, setPrefs] = useState(initial);
   const [adding, setAdding] = useState("");
+  const [addingDetail, setAddingDetail] = useState("");
+  const [showAddDetail, setShowAddDetail] = useState(false);
   const [busy, setBusy] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] =
@@ -60,12 +73,14 @@ export function PreferencesManager({
       }>("/api/preferences", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ rule }),
+        body: JSON.stringify({ rule, detail: addingDetail.trim() || undefined }),
       });
       if (!data?.ok || !data.preference)
         throw new Error(data?.error || "Failed to add");
       setPrefs((cur) => [data.preference as ContentPreference, ...cur]);
       setAdding("");
+      setAddingDetail("");
+      setShowAddDetail(false);
       toast.success("Preference saved");
     } catch (e) {
       toast.error((e as Error).message);
@@ -90,7 +105,7 @@ export function PreferencesManager({
     }
   };
 
-  const saveEdit = async (id: string, rule: string) => {
+  const saveEdit = async (id: string, rule: string, detail: string) => {
     const trimmed = rule.trim();
     if (!trimmed) return toast.error("A preference can't be empty.");
     try {
@@ -101,7 +116,7 @@ export function PreferencesManager({
       }>(`/api/preferences/${id}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ rule: trimmed }),
+        body: JSON.stringify({ rule: trimmed, detail: detail.trim() || undefined }),
       });
       if (!data?.ok || !data.preference)
         throw new Error(data?.error || "Failed to save");
@@ -133,28 +148,51 @@ export function PreferencesManager({
       </CardHeader>
       <CardContent className="space-y-4">
         {/* Add a new rule inline */}
-        <div className="flex items-start gap-2">
-          <Input
-            value={adding}
-            onChange={(e) => setAdding(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                add();
-              }
-            }}
-            placeholder="e.g. Never use em-dashes"
-            maxLength={PREF_RULE_MAX}
-            disabled={atCap || busy}
-          />
-          <Button onClick={add} disabled={atCap || busy || !adding.trim()}>
-            {busy ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Plus className="h-4 w-4" />
-            )}
-            Add
-          </Button>
+        <div className="space-y-2">
+          <div className="flex items-start gap-2">
+            <Input
+              value={adding}
+              onChange={(e) => setAdding(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !showAddDetail) {
+                  e.preventDefault();
+                  add();
+                }
+              }}
+              placeholder="e.g. Never use em-dashes"
+              maxLength={PREF_RULE_MAX}
+              disabled={atCap || busy}
+            />
+            <Button onClick={add} disabled={atCap || busy || !adding.trim()}>
+              {busy ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Plus className="h-4 w-4" />
+              )}
+              Add
+            </Button>
+          </div>
+          {showAddDetail ? (
+            <Textarea
+              value={addingDetail}
+              onChange={(e) => setAddingDetail(e.target.value)}
+              placeholder="Optional: the why, a number, a date, a caveat — real context Cowork should have alongside the rule above."
+              maxLength={PREF_DETAIL_MAX}
+              rows={2}
+              disabled={atCap || busy}
+              className="text-sm"
+            />
+          ) : (
+            <button
+              type="button"
+              onClick={() => setShowAddDetail(true)}
+              disabled={atCap || busy}
+              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+            >
+              <NotebookText className="h-3.5 w-3.5" />
+              Add context (optional)
+            </button>
+          )}
         </div>
         {atCap && (
           <p className="text-xs text-amber-600">
@@ -185,7 +223,7 @@ export function PreferencesManager({
                 editing={editingId === p.id}
                 onStartEdit={() => setEditingId(p.id)}
                 onCancelEdit={() => setEditingId(null)}
-                onSaveEdit={(rule) => saveEdit(p.id, rule)}
+                onSaveEdit={(rule, detail) => saveEdit(p.id, rule, detail)}
                 onDelete={() => setConfirmDelete(p)}
               />
             ))}
@@ -220,55 +258,70 @@ function PreferenceRow({
   editing: boolean;
   onStartEdit: () => void;
   onCancelEdit: () => void;
-  onSaveEdit: (rule: string) => void;
+  onSaveEdit: (rule: string, detail: string) => void;
   onDelete: () => void;
 }) {
   const [draft, setDraft] = useState(pref.rule);
+  const [draftDetail, setDraftDetail] = useState(pref.detail ?? "");
 
   if (editing) {
     return (
-      <li className="flex items-center gap-2 p-2">
-        <Input
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              onSaveEdit(draft);
-            }
-            if (e.key === "Escape") onCancelEdit();
-          }}
-          maxLength={PREF_RULE_MAX}
-          autoFocus
+      <li className="space-y-2 p-2">
+        <div className="flex items-center gap-2">
+          <Input
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") onCancelEdit();
+            }}
+            maxLength={PREF_RULE_MAX}
+            autoFocus
+          />
+          <Button
+            size="icon"
+            variant="ghost"
+            onClick={() => onSaveEdit(draft, draftDetail)}
+            aria-label="Save"
+          >
+            <Check className="h-4 w-4" />
+          </Button>
+          <Button
+            size="icon"
+            variant="ghost"
+            onClick={() => {
+              setDraft(pref.rule);
+              setDraftDetail(pref.detail ?? "");
+              onCancelEdit();
+            }}
+            aria-label="Cancel"
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+        <Textarea
+          value={draftDetail}
+          onChange={(e) => setDraftDetail(e.target.value)}
+          placeholder="Optional context — the why, a number, a date, a caveat."
+          maxLength={PREF_DETAIL_MAX}
+          rows={2}
+          className="text-sm"
         />
-        <Button
-          size="icon"
-          variant="ghost"
-          onClick={() => onSaveEdit(draft)}
-          aria-label="Save"
-        >
-          <Check className="h-4 w-4" />
-        </Button>
-        <Button
-          size="icon"
-          variant="ghost"
-          onClick={() => {
-            setDraft(pref.rule);
-            onCancelEdit();
-          }}
-          aria-label="Cancel"
-        >
-          <X className="h-4 w-4" />
-        </Button>
       </li>
     );
   }
 
   return (
-    <li className="group flex items-center gap-2 p-3">
-      <span className="flex-1 text-sm break-words">{pref.rule}</span>
+    <li className="group flex items-start gap-2 p-3">
+      <div className="min-w-0 flex-1 space-y-1">
+        <span className="block text-sm break-words">{pref.rule}</span>
+        {pref.detail && (
+          <span className="block text-xs text-muted-foreground break-words">
+            {pref.detail}
+          </span>
+        )}
+      </div>
       {pref.source === "learned" && (
-        <StatusPill tone="brand" className="h-5 px-2 text-[10px]">
+        <StatusPill tone="brand" className="h-5 shrink-0 px-2 text-[10px]">
           <AiIcon className="h-3 w-3" aria-hidden />
           Learned
         </StatusPill>

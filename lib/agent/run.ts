@@ -398,7 +398,7 @@ function buildMessages(
   // system block — same slot as the date/skill blocks, so the cached SYSTEM
   // prefix (and its breakpoint) is untouched and a warm turn stays warm. Empty
   // → no block, so a workspace with no prefs is byte-identical to before.
-  preferenceRules: ReadonlyArray<{ rule: string }> = [],
+  preferenceRules: ReadonlyArray<{ rule: string; detail?: string | null }> = [],
   // Recent explicit thumbs up/down feedback. This is soft memory — it informs
   // taste and structure, but hard preferences and current instructions win.
   feedbackMemory: ReadonlyArray<
@@ -1561,7 +1561,7 @@ export async function* runAgent(opts: {
     try {
       const { data } = await supabaseAdmin()
         .from("content_preferences")
-        .select("id, workspace_id, rule, source, created_at, updated_at")
+        .select("id, workspace_id, rule, detail, source, created_at, updated_at")
         .eq("workspace_id", workspaceId)
         .order("created_at", { ascending: false })
         .limit(PREFS_PER_WORKSPACE_MAX);
@@ -3062,6 +3062,7 @@ export async function* runAgent(opts: {
             workspaceId,
             parsedArgs?.rule,
             preferences,
+            parsedArgs?.detail,
           );
           if (outcome.ok && outcome.saved) {
             // Reflect it locally so a later round this turn sees the new rule,
@@ -3071,6 +3072,7 @@ export async function* runAgent(opts: {
                 id: outcome.id,
                 workspace_id: workspaceId,
                 rule: outcome.rule,
+                detail: typeof parsedArgs?.detail === "string" ? parsedArgs.detail : null,
                 source: "learned",
                 created_at: "",
                 updated_at: "",

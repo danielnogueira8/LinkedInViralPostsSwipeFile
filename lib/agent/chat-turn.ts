@@ -2184,7 +2184,7 @@ export async function executeChatTurn(
         return await waitForChatSetup(
           sbRaw
             .from("content_preferences")
-            .select("id, workspace_id, rule, source, created_at, updated_at")
+            .select("id, workspace_id, rule, detail, source, created_at, updated_at")
             .eq("workspace_id", workspaceId)
             .order("created_at", { ascending: false })
             .limit(PREFS_PER_WORKSPACE_MAX),

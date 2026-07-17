@@ -1463,6 +1463,11 @@ export const TOOL_DEFS: ToolDef[] = [
             description:
               "The durable preference as ONE short imperative line, in the user's intent — e.g. \"Never use em-dashes\", \"Keep every post under 900 characters\", \"Don't open posts with a question\", \"Never use hashtags\". No preamble, no explanation, just the rule itself.",
           },
+          detail: {
+            type: "string",
+            description:
+              "OPTIONAL. Real supporting context that doesn't fit in one short line but is genuinely useful to have on every future turn — the 'why', specific numbers, dates, or a caveat the user gave alongside the rule. E.g. rule \"Cite current traction numbers, not older ones\" with detail \"Grew 50,000+ followers collectively for LinkedIn clients and built $150,000+ in client pipeline; do not cite a specific client count.\" Leave this out entirely for a simple rule that's already complete on its own — don't pad it with restated rule text or invented detail.",
+          },
         },
         required: ["rule"],
       },

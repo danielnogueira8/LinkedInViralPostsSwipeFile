@@ -157,6 +157,7 @@ describe("MCP public resource tools", () => {
     )[1];
     expect(insertQuery.filters.find((filter) => filter.method === "insert")?.args[0]).toEqual({
       rule: "Never use em dashes.",
+      detail: null,
       source: "user",
       workspace_id: "ws-1",
     });

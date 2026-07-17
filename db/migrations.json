@@ -1,7 +1,7 @@
 {
   "generatedBy": "npm run migrations:metadata",
-  "highest": 103,
-  "count": 103,
+  "highest": 104,
+  "count": 104,
   "files": [
     "migration-001-progress.sql",
     "migration-002-usage.sql",
@@ -105,6 +105,7 @@
     "migration-100-template-cap-race.sql",
     "migration-101-batch-slot-idempotency.sql",
     "migration-102-lock-match-post-embeddings.sql",
-    "migration-103-gtm-outreach-category.sql"
+    "migration-103-gtm-outreach-category.sql",
+    "migration-104-preference-detail.sql"
   ]
 }

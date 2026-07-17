@@ -29,7 +29,7 @@ export const CUSTOM_CATEGORY_LIMIT = 50;
 export const CATEGORY_COLS = "id, label";
 export const TEMPLATE_COLS = "id, workspace_id, title, category, body, source, origin_post_id, created_at, updated_at";
 export const SKILL_COLS = "id, workspace_id, name, description, body, created_at, updated_at";
-export const PREF_COLS = "id, workspace_id, rule, source, created_at, updated_at";
+export const PREF_COLS = "id, workspace_id, rule, detail, source, created_at, updated_at";
 export const BRAND_COLS = "id, name, brand_colors, notes, logo_url, font_primary, font_secondary, created_at";
 
 export const brandInputSchema = z.object({
@@ -189,7 +189,12 @@ export async function createPreferenceResource(input: {
   }
   const { data, error } = await db
     .from("content_preferences")
-    .insert({ rule: request.rule, source: "user", workspace_id: workspaceId })
+    .insert({
+      rule: request.rule,
+      detail: request.detail || null,
+      source: "user",
+      workspace_id: workspaceId,
+    })
     .select(PREF_COLS)
     .single();
   if (error) throw error;
