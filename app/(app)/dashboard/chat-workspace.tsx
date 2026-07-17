@@ -7097,6 +7097,24 @@ function ArtifactCard({
         </ScrollableBody>
       )}
 
+      {/* "Why I wrote it this way" — the collaborator note. Stamped onto
+          meta.rationale ONLY by the interactive render_post tool (never batch/
+          MCP), and only when it passed the generic-rationale net server-side.
+          The source guard is belt-and-suspenders: a weekly-batch draft never
+          carries a rationale, but this keeps the note strictly off batch cards
+          even if meta ever drifted. Absent rationale → nothing renders. */}
+      {typeof artifact.meta?.rationale === "string" &&
+        artifact.meta.rationale.trim() &&
+        artifact.meta?.source !== "weekly_batch" && (
+          <div className="flex items-start gap-1.5 px-3 pb-1 text-[11px] leading-relaxed text-muted-foreground">
+            <Lightbulb
+              className="h-3 w-3 mt-0.5 shrink-0 text-primary/70"
+              aria-hidden
+            />
+            <span>{artifact.meta.rationale.trim()}</span>
+          </div>
+        )}
+
       {draftLeadMagnet && (
         <CoworkLeadMagnetResource
           leadMagnet={draftLeadMagnet}

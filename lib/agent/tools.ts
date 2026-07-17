@@ -1331,6 +1331,12 @@ export const TOOL_DEFS: ToolDef[] = [
             description:
               "Required when this draft models/adapts one specific post returned by search_viral_posts, get_post, or get_top_from_batch. Pass that post's exact id so the app can attach the verified source link to the draft. Omit only for genuinely original posts that do not model one source.",
           },
+          rationale: {
+            type: "string",
+            maxLength: 240,
+            description:
+              "OPTIONAL. One short first-person sentence naming the single most important CRAFT choice you made in THIS specific draft and why it fits this user — e.g. 'Opened on the failure instead of the win — vulnerability out-earns flexes in founder-LinkedIn' or 'Cut the stats and led with the client's exact words to keep it human.' It renders as a small note under the card so the post feels co-authored, not machine-generated. MUST be specific to this draft. NEVER write empty praise like 'I used an engaging hook', 'crafted a compelling opener', 'kept it conversational to resonate with your audience' — a generic rationale is dropped, so if you have nothing concrete and true to say, omit this entirely.",
+          },
         },
         required: ["body"],
       },

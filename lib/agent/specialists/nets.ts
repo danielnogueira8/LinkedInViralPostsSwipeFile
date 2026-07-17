@@ -258,3 +258,55 @@ export function aiTellMetrics(body: string): string[] {
   if (hashtags.length >= 6) tells.push("hashtag-stuffing");
   return tells;
 }
+
+// Quality gate for the optional "why I wrote it this way" one-liner the writer
+// attaches to a draft (meta.rationale). The rationale is a BONUS: it makes the
+// app feel like a collaborator that reasoned about a real choice ("Opened on
+// the failure — vulnerability out-earns wins in founder-LinkedIn"), NOT a
+// vending machine. But a GENERIC rationale ("I used an engaging tone to hook
+// your audience") is worse than none — it's the exact AI-slop we strip from
+// bodies, relocated into a caption. So a rationale that trips this net is
+// DROPPED (the card renders as it does today), never surfaced and never used
+// to reject the draft itself. This is a precision-over-recall filter: it should
+// only fire on rationales that are unmistakably empty filler, not on borderline
+// ones (a false negative just ships a mediocre note; a false positive silently
+// eats a good one). Returns a reason tag when the rationale is too generic to
+// show, or null when it's specific enough to keep.
+export function rationaleTooGeneric(raw: string): string | null {
+  const text = raw.trim();
+  // Too short to say anything specific, or suspiciously long (a rationale is
+  // one line, not a paragraph — a long one is usually the model dumping the
+  // post's thesis or narrating, not explaining a craft choice).
+  if (text.length < 15) return "too-short";
+  if (text.length > 240) return "too-long";
+
+  const lower = text.toLowerCase();
+
+  // Empty-praise vocabulary: adjectives that describe the OUTPUT as good
+  // without naming a concrete move. "Engaging", "compelling", "powerful",
+  // "punchy", "attention-grabbing" etc. paired with generic nouns (hook, tone,
+  // opening, structure, CTA) is the signature of a content-free rationale.
+  const emptyPraise: RegExp[] = [
+    /\b(?:engaging|compelling|powerful|punchy|strong|attention[- ]?grabbing|scroll[- ]?stopping|impactful|effective|captivating|resonant)\s+(?:hook|opener|opening|tone|voice|structure|cta|call to action|narrative|story|angle|framing|intro|line|copy|post)\b/,
+    // "to hook/engage/resonate with your audience" — the payoff clause that
+    // restates the obvious goal of every post instead of a specific reason.
+    /\bto\s+(?:hook|engage|grab|captivate|resonate with|connect with|draw in|speak to)\s+(?:your|the)\s+(?:audience|reader|readers|ideal client)/,
+    // "designed/crafted/written (it) to maximize engagement" and cousins. The
+    // optional "it"/"this" object covers "structured it to maximize reach".
+    /\b(?:designed|crafted|wrote|written|structured|built|tailored|optimi[sz]ed)\s+(?:it|this|the post)?\s*(?:to|for)\s+(?:maximi[sz]e|drive|boost|increase|spark)?\s*(?:engagement|reach|impact|virality|clicks|reactions)/,
+    // Bare "kept it conversational/authentic/relatable" with nothing else — the
+    // whole rationale is a single generic style adjective and nothing concrete.
+    /^(?:i\s+)?(?:kept it|made it|wrote it)\s+(?:conversational|authentic|relatable|genuine|human|natural|approachable|professional)\.?$/,
+  ];
+  if (emptyPraise.some((re) => re.test(lower))) return "empty-praise";
+
+  // Reuse the body-level tell library: a rationale carrying chatbot artifacts
+  // ("great question", "I hope this helps") or AI-vocabulary ("delve",
+  // "at its core") is filler by the same standard we apply to the post.
+  const bodyTells = aiTellMetrics(text).filter(
+    (t) => t === "chatbot-artifact" || t === "ai-vocabulary" || t === "filler-phrase",
+  );
+  if (bodyTells.length > 0) return bodyTells[0];
+
+  return null;
+}
