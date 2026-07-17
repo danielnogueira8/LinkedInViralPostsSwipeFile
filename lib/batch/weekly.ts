@@ -365,6 +365,13 @@ async function adaptedSourceIds(
     .eq("meta->>source", "weekly_batch")
     // Only recently-adapted posts count against the pool (see ADAPTED_HORIZON).
     .gte("created_at", sinceIso)
+    // Most-recent-first so that IF the 56-day window ever exceeds 500 rows
+    // (far above normal cadence today), the truncated-off rows are the
+    // OLDEST ones — i.e. still-correct dedup for the posts most likely to be
+    // re-surfaced as candidates. Without an explicit order, Postgres/PostgREST
+    // gives no ordering guarantee, so which 500 rows survive the cap would be
+    // plan-dependent and non-deterministic instead of a predictable horizon.
+    .order("created_at", { ascending: false })
     .limit(500);
   const ids = new Set<string>();
   for (const row of data ?? []) {
