@@ -585,7 +585,16 @@ export async function runDailyPipeline(
     }
 
     clearInterval(interval);
-    await persist({ phase: "done", phase_msg: "Done", finished: true });
+    // A run that attempted at least one account but scraped zero posts (every
+    // account errored or came back with no data) is a failure, not a success —
+    // otherwise latestRelevantScrape() treats a wasted Apify call as fresh data.
+    const allFailed = toScrape.length > 0 && postsCount === 0;
+    await persist({
+      phase: allFailed ? "error" : "done",
+      phase_msg: allFailed ? "All accounts failed or returned no data" : "Done",
+      finished: true,
+      error: allFailed ? "all accounts failed or returned no data" : undefined,
+    });
     return { runId, postsCount, viralCount };
   } catch (e) {
     clearInterval(interval);
