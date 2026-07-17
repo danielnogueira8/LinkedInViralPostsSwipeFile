@@ -223,13 +223,29 @@ function titlesDescribeSameResource(a: string, b: string): boolean {
   return overlap / Math.min(aTokens.size, bTokens.size) >= 0.7;
 }
 
+const LEAD_MAGNET_FENCE_RE = /^\s*(```|~~~)/;
+
+// Prose-only whitespace/em-dash cleanup — must never touch a fenced code
+// block's contents (YAML/Python indentation, literal em dashes in a code
+// comment, etc. are semantic there, not typos to normalize).
+function sanitizeProseLine(line: string): string {
+  return line
+    .replace(/\s*—\s*/g, " - ")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/[ \t]+$/, "");
+}
+
 export function sanitizeGeneratedLeadMagnetMarkdown(markdown: string): string {
-  return normalizeCollapsedMarkdownTables(
-    markdown
-      .replace(/\s*—\s*/g, " - ")
-      .replace(/[ \t]{2,}/g, " ")
-      .replace(/[ \t]+\n/g, "\n"),
-  ).trim();
+  let inFence = false;
+  const cleaned = markdown
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .map((line) => {
+      if (LEAD_MAGNET_FENCE_RE.test(line)) inFence = !inFence;
+      return inFence ? line : sanitizeProseLine(line);
+    })
+    .join("\n");
+  return normalizeCollapsedMarkdownTables(cleaned).trim();
 }
 
 export function splitLeadMagnetCreatorImage(
