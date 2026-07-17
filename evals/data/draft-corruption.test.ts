@@ -318,6 +318,35 @@ describe("normalizePostBody — injects paragraph breaks into a wall of text", (
     expect(normalizePostBody(body)).toBe(body);
   });
 
+  // Live-observed: "It's Sunday, July 19. But the story has already started."
+  // got a paragraph break inserted after "19." — the sentence-split net can't
+  // tell a date from a sentence boundary. A real sentence essentially never
+  // ends on a bare 1-2 digit number (dates, ages, list markers do), so the net
+  // now skips exactly that case while still splitting after longer numbers
+  // (years) and ordinary letter-ending sentences.
+  test("does not split a wall of text after a bare date-like number (July 19.)", () => {
+    const body =
+      "It's Sunday, July 19. But the story has already started. " +
+      "Three founders are already awake, already building, already shipping. " +
+      "The rest of us are still asleep, still scrolling, still waiting for Monday.";
+    const out = normalizePostBody(body);
+    expect(out).toContain("July 19. But the story");
+    expect(out).not.toContain("July 19.\n\n");
+  });
+
+  test("does not split after ANY number, including a year — the net only splits after letters", () => {
+    // A number right before the mark is never treated as a sentence boundary
+    // (dates, ages, list items, years — all ambiguous), but the rest of the
+    // wall still gets normal paragraph breaks.
+    const body =
+      "The company was founded in 2024. It grew from zero to a million dollars in revenue in just eighteen months flat, which nobody thought possible at the time. " +
+      "Nobody believed it would work when we started, not even the people writing the checks. Everybody was wrong.";
+    const out = normalizePostBody(body);
+    expect(out).not.toContain("2024.\n\n");
+    expect(out).toContain("time.\n\n");
+    expect(out).toContain("checks.\n\n");
+  });
+
   test("trims trailing whitespace", () => {
     expect(normalizePostBody("A short post.   \n  ")).toBe("A short post.");
   });
