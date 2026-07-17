@@ -6,6 +6,7 @@ import {
   extractDeliverables,
   leadMagnetPromptContext,
   leadMagnetInputSchema,
+  leadMagnetQualityWarning,
   makePublicSlug,
   monthStartIso,
   normalizeLeadMagnetMetadata,
@@ -27,6 +28,31 @@ vi.mock("node:dns/promises", () => ({
 describe("lead magnets", () => {
   test("uses a ten-per-user AI monthly limit", () => {
     expect(LEAD_MAGNET_AI_MONTHLY_LIMIT).toBe(10);
+  });
+
+  describe("leadMagnetQualityWarning", () => {
+    test("returns null when quality_status is passed", () => {
+      expect(leadMagnetQualityWarning({ quality_status: "passed" })).toBeNull();
+    });
+
+    test("returns null when quality_status is absent (pre-gate legacy rows)", () => {
+      expect(leadMagnetQualityWarning({})).toBeNull();
+    });
+
+    test("surfaces the first issue when review_suggested with warnings", () => {
+      expect(
+        leadMagnetQualityWarning({
+          quality_status: "review_suggested",
+          quality_warnings: ["The guide is too short to be genuinely useful."],
+        }),
+      ).toBe("This resource may need review: The guide is too short to be genuinely useful.");
+    });
+
+    test("falls back to a generic message when review_suggested with no issues listed", () => {
+      expect(leadMagnetQualityWarning({ quality_status: "review_suggested" })).toBe(
+        "This resource may need review before sharing.",
+      );
+    });
   });
 
   test("computes a UTC month boundary for monthly caps", () => {
