@@ -1706,6 +1706,11 @@ describe("DraftEngine — thin path (lean mode)", () => {
     const shipped = artifacts(result.events);
     expect(shipped).toHaveLength(1);
     expect(shipped[0].id).toMatch(/^art_salvage_/);
+    // The unverified status is stamped ON THE ARTIFACT, not just the
+    // ephemeral chat message — so it survives into chat_artifacts.meta and is
+    // still visible whenever this draft is opened later on the board, long
+    // after the transcript disclaimer has scrolled out of view.
+    expect(shipped[0].meta).toEqual({ needs_verification: true });
     // And the user is told to verify — the caveat is on the done message.
     const doneEvent = done(result.events);
     expect(doneEvent?.message.content).toMatch(/^Your draft is ready\./);

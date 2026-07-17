@@ -1359,7 +1359,18 @@ export async function* runDraftEngine(
     if (looksCorruptedDraft(cleaned)) return null;
     if (cleaned.length > RENDER_POST_MAX_CHARS) return null;
     const title = cleaned.split("\n", 1)[0].slice(0, 60).trim() || "Draft post";
-    return { id: `art_salvage_${writerAttempt}`, kind: "post", title, body: cleaned };
+    return {
+      id: `art_salvage_${writerAttempt}`,
+      kind: "post",
+      title,
+      body: cleaned,
+      // Stamped on the artifact itself (not just the ephemeral chat text) so
+      // the unverified status survives into chat_artifacts.meta and is still
+      // visible whenever this draft is viewed later on the board — the chat
+      // disclaimer alone disappears from view the moment the transcript
+      // scrolls past it.
+      meta: { needs_verification: true },
+    };
   };
 
   const call = async (
