@@ -816,8 +816,18 @@ async function generateDraftBody(opts: {
           priorDrafts: opts.priorDrafts,
           workspaceId: opts.workspaceId,
           signal: opts.signal,
+          maxChars: MAX_DRAFT_BODY,
         });
-        if (sameness.rewrote) {
+        // isAcceptableRewrite already guards corruption/shrink/maxChars; the
+        // one gap it doesn't cover is OUR minimum (its own floor is a %-of-
+        // input ratio, not this app's MIN_DRAFT_BODY) — recheck here rather
+        // than let a too-short rewrite skip the gate this function already
+        // enforced above.
+        if (
+          sameness.rewrote &&
+          sameness.body.length >= MIN_DRAFT_BODY &&
+          sameness.body.length <= MAX_DRAFT_BODY
+        ) {
           console.log(
             JSON.stringify({
               batch_sameness_rewrote: {
@@ -828,6 +838,16 @@ async function generateDraftBody(opts: {
             }),
           );
           cleaned = sameness.body;
+        } else if (sameness.rewrote) {
+          console.log(
+            JSON.stringify({
+              batch_sameness_rejected: {
+                workspace_id: opts.workspaceId,
+                reason: "out_of_length_contract",
+                length: sameness.body.length,
+              },
+            }),
+          );
         } else if (sameness.overlapMarkers.length > 0) {
           console.log(
             JSON.stringify({

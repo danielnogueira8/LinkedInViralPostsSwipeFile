@@ -217,6 +217,7 @@ export function parseSamenessArgs(args: unknown): {
 export function isAcceptableRewrite(
   input: string,
   rewritten: string,
+  maxChars = Number.POSITIVE_INFINITY,
 ): { ok: true } | { ok: false; reason: string } {
   const clean = rewritten.trim();
   if (!clean) return { ok: false, reason: "empty" };
@@ -224,6 +225,13 @@ export function isAcceptableRewrite(
   // 60% floor mirrors the AI-Tell editor's rewrite guard.
   if (clean.length < Math.floor(input.trim().length * 0.6)) {
     return { ok: false, reason: "too_short" };
+  }
+  // Upper bound mirrors the AI-Tell editor's maxChars guard — a rewrite that
+  // pads the body past the caller's length contract must not silently ship
+  // (callers like the weekly batch persist this body with no finalizer pass
+  // afterward, so this is the only length recheck it gets).
+  if (clean.length > maxChars) {
+    return { ok: false, reason: "too_long" };
   }
   // Reuse the corruption detector — a rewrite must not leak tool-call XML,
   // fence markers, or JSON key fragments.
@@ -241,6 +249,10 @@ export async function checkSameness(opts: {
   signal?: AbortSignal;
   adapterHealth?: AdapterHealthRegistry;
   telemetry?: CoworkTurnTelemetry;
+  // Reject a rewrite whose cleaned body exceeds this length instead of
+  // shipping it unchecked — see isAcceptableRewrite. Omit to skip the check
+  // (callers that re-finalize/re-length-check afterward, e.g. draft-finalizer.ts).
+  maxChars?: number;
 }): Promise<SamenessResult> {
   const pass: SamenessResult = {
     body: opts.body,
@@ -302,12 +314,17 @@ export async function checkSameness(opts: {
           parsed.rewrittenBody &&
           parsed.overlapMarkers.length >= 2
         ) {
-          const guard = isAcceptableRewrite(opts.body, parsed.rewrittenBody);
+          const cleanedBody = editDraftBodySync(parsed.rewrittenBody, "post").body;
+          const guard = isAcceptableRewrite(
+            opts.body,
+            cleanedBody,
+            opts.maxChars,
+          );
           if (!guard.ok) {
             throw new Error(`Rejected sameness rewrite: ${guard.reason}`);
           }
           return {
-            body: editDraftBodySync(parsed.rewrittenBody, "post").body,
+            body: cleanedBody,
             rewrote: true,
             overlapMarkers: parsed.overlapMarkers,
             reason: parsed.reason,
