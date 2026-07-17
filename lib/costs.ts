@@ -4,6 +4,7 @@ export type CostSummary = {
   total: number;
   anthropic: number;
   apify: number;
+  openrouter: number;
   anthropic_input_tokens: number;
   anthropic_output_tokens: number;
   apify_units: number;
@@ -14,7 +15,7 @@ export type CostsData = {
   today: CostSummary;
   last7: CostSummary;
   last30: CostSummary;
-  daily: { day: string; anthropic: number; apify: number; total: number }[];
+  daily: { day: string; anthropic: number; apify: number; openrouter: number; total: number }[];
   kinds: { key: string; provider: string; kind: string; count: number; cost: number }[];
   recent: {
     ts: string;
@@ -56,6 +57,7 @@ export async function loadCosts(): Promise<CostsData> {
       total: 0,
       anthropic: 0,
       apify: 0,
+      openrouter: 0,
       anthropic_input_tokens: 0,
       anthropic_output_tokens: 0,
       apify_units: 0,
@@ -72,6 +74,9 @@ export async function loadCosts(): Promise<CostsData> {
         out.apify += Number(e.cost_usd ?? 0);
         out.apify_units += Number(e.units ?? 0);
       }
+      if (e.provider === "openrouter") {
+        out.openrouter += Number(e.cost_usd ?? 0);
+      }
       out.calls += 1;
     }
     return out;
@@ -81,15 +86,20 @@ export async function loadCosts(): Promise<CostsData> {
   const allFrom7d = allEvents.filter((e) => e.ts >= sevenDays);
   const allFrom30d = allEvents.filter((e) => e.ts >= thirtyDays);
 
-  const byDay = new Map<string, { anthropic: number; apify: number }>();
+  const byDay = new Map<string, { anthropic: number; apify: number; openrouter: number }>();
   for (const e of allFrom30d) {
     const day = e.ts.slice(0, 10);
-    const cur = byDay.get(day) ?? { anthropic: 0, apify: 0 };
+    const cur = byDay.get(day) ?? { anthropic: 0, apify: 0, openrouter: 0 };
     if (e.provider === "anthropic") cur.anthropic += Number(e.cost_usd ?? 0);
     if (e.provider === "apify") cur.apify += Number(e.cost_usd ?? 0);
+    if (e.provider === "openrouter") cur.openrouter += Number(e.cost_usd ?? 0);
     byDay.set(day, cur);
   }
-  const daily = Array.from(byDay.entries()).sort().map(([day, v]) => ({ day, ...v, total: v.anthropic + v.apify }));
+  // Sum every tracked provider, not a hardcoded pair — a day's total silently
+  // excluded OpenRouter spend before openrouter was added to this breakdown.
+  const daily = Array.from(byDay.entries())
+    .sort()
+    .map(([day, v]) => ({ day, ...v, total: v.anthropic + v.apify + v.openrouter }));
 
   const byKind = new Map<string, { count: number; cost: number; provider: string }>();
   for (const e of allFrom30d) {
