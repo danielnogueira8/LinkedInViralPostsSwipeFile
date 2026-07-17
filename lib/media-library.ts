@@ -43,9 +43,6 @@ export function validateLibraryMediaFile(input: {
 }): { ok: true; type: PostMediaType; normalizedContentType: string } | { ok: false; error: string } {
   const validation = validatePostMediaFile(input);
   if (!validation.ok) return validation;
-  if (validation.normalizedContentType === "video/x-msvideo") {
-    return { ok: false, error: "Unsupported media type. Use JPG, PNG, GIF, WebP, MP4, MOV, WebM, or PDF." };
-  }
   if (input.size > MEDIA_LIBRARY_MAX_FILE_BYTES) {
     return { ok: false, error: "Media library uploads can be up to 50 MB." };
   }
