@@ -1162,6 +1162,13 @@ function firstLine(text: string | null | undefined, max = 90): string {
 // Create all the slot rows up front (status 'queued'), one per source, so the
 // board can render every lane with its source the instant a batch starts.
 // Best-effort: a failure here just means no live lanes (the run still works).
+//
+// Upsert on (workspace_id, batch_id, slot_index) — migration-101 — rather than
+// a raw insert: a requeued job re-runs this with the SAME batch_id, and a raw
+// insert would have created a second row per slot instead of colliding with
+// the first. onConflict "do nothing" (via ignoreDuplicates) preserves
+// whatever status/artifact_id the first attempt's slot already has — the
+// worker below re-checks that status and skips a slot that's already filed.
 async function createBatchSlots(
   workspaceId: string,
   batchId: string,
@@ -1180,9 +1187,38 @@ async function createBatchSlots(
     status: "queued" as const,
   }));
   try {
-    await supabaseAdmin().from("batch_draft_slots").insert(rows);
+    await supabaseAdmin()
+      .from("batch_draft_slots")
+      .upsert(rows, {
+        onConflict: "workspace_id,batch_id,slot_index",
+        ignoreDuplicates: true,
+      });
   } catch {
     /* no lanes — the run still proceeds */
+  }
+}
+
+// A requeued job's slot may already be 'filed' from the prior attempt (see
+// createBatchSlots above). Re-drafting it would both waste money and create a
+// second chat_artifacts row for the same logical slot. Best-effort: a read
+// failure here just means the worker proceeds as if nothing was filed yet
+// (the pre-migration-101 behavior), not a hard stop.
+async function slotAlreadyFiled(
+  workspaceId: string,
+  batchId: string,
+  slotIndex: number,
+): Promise<boolean> {
+  try {
+    const { data } = await supabaseAdmin()
+      .from("batch_draft_slots")
+      .select("status")
+      .eq("workspace_id", workspaceId)
+      .eq("batch_id", batchId)
+      .eq("slot_index", slotIndex)
+      .maybeSingle();
+    return (data as { status?: string } | null)?.status === "filed";
+  } catch {
+    return false;
   }
 }
 
@@ -1399,6 +1435,19 @@ export async function runWeeklyBatch(opts: {
     { post, isLeadMagnet }: { post: SourcePost; isLeadMagnet: boolean },
     slotIndex: number,
   ): Promise<void> => {
+    // A requeued job (see createBatchSlots) can start a worker for a slot the
+    // PRIOR attempt already filed before a sibling's fatal error aborted the
+    // run. Re-drafting would double-spend and double-insert. Skip entirely —
+    // the slot row (and its chat_artifacts draft) from the first attempt
+    // stands.
+    if (await slotAlreadyFiled(workspaceId, batchId, slotIndex)) {
+      console.log(
+        JSON.stringify({
+          batch_slot_already_filed_skip: { workspace_id: workspaceId, batch_id: batchId, slot_index: slotIndex },
+        }),
+      );
+      return;
+    }
     let current: SourcePost | undefined = post;
     while (current) {
       sourceAttemptCount++;

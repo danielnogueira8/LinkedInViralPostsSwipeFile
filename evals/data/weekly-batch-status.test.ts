@@ -157,9 +157,10 @@ describe("WeeklyBatch.run — progress publishing", () => {
     expect(stages.some((s) => /finding/i.test(s))).toBe(true);
     expect(stages.some((s) => /dispatched 1 writer/i.test(s))).toBe(true);
     expect(stages.some((s) => /1 draft ready to review/i.test(s))).toBe(true);
-    // Per-worker slots are created up front and advanced to 'filed'.
+    // Per-worker slots are created up front (upsert — migration-101) and
+    // advanced to 'filed'.
     const slotWrites = dbRef.current.queries.filter((q) => q.table === "batch_draft_slots");
-    expect(slotWrites.some((q) => q.filters.some((f) => f.method === "insert"))).toBe(true);
+    expect(slotWrites.some((q) => q.filters.some((f) => f.method === "upsert"))).toBe(true);
     const updates = slotWrites.flatMap((q) => q.filters.filter((f) => f.method === "update"));
     const statuses = updates.map((u) => (u.args[0] as { status?: string }).status);
     expect(statuses).toContain("drafting");
@@ -315,14 +316,50 @@ describe("WeeklyBatch.run — worker slot lifecycle", () => {
       return { ok: true, posts: [{ id: "r1", text: "Regular hook line", post_url: null, post_type: "regular" }] };
     };
     await weeklyBatch.run({ workspaceId: "ws", batchId: "b1", nowIso: "2026-07-02T00:00:00.000Z", runId: "run-1" });
-    const insert = dbRef.current.queries
+    // createBatchSlots upserts (migration-101: unique per workspace/batch/slot
+    // so a requeued job doesn't double-insert a slot the prior attempt already
+    // filed), not a raw insert.
+    const upsert = dbRef.current.queries
       .filter((q) => q.table === "batch_draft_slots")
-      .flatMap((q) => q.filters.filter((f) => f.method === "insert"))[0];
-    const rows = insert.args[0] as Array<Record<string, unknown>>;
+      .flatMap((q) => q.filters.filter((f) => f.method === "upsert"))[0];
+    const rows = upsert.args[0] as Array<Record<string, unknown>>;
     // Lead-magnet lane first, then regular — each with its post-type label.
     expect(rows.map((r) => r.skill_label)).toEqual(["Lead Magnet Post", "Regular Post"]);
     expect(rows.map((r) => r.source_first_line)).toEqual(["Giveaway hook", "Regular hook line"]);
     expect(rows.every((r) => r.status === "queued")).toBe(true);
+    expect(upsert.args[1]).toMatchObject({
+      onConflict: "workspace_id,batch_id,slot_index",
+      ignoreDuplicates: true,
+    });
+  });
+
+  test("a requeued job skips a slot the prior attempt already filed (no duplicate draft)", async () => {
+    // Simulates a retry: batch_draft_slots already has this slot at status
+    // 'filed' from a first attempt that a fatal sibling error aborted. The
+    // requeued run must not re-draft or re-insert a chat_artifacts row for it.
+    dbRef.current = makeFakeSupabase({
+      chat_artifacts: { single: { id: "d1", title: "t", body: "b" } },
+      batch_draft_slots: { single: { status: "filed" } },
+    });
+    toolRef.current = () => ({
+      ok: true,
+      posts: [{ id: "r1", text: "Regular hook line", post_url: null, post_type: "regular" }],
+    });
+    const res = await weeklyBatch.run({
+      workspaceId: "ws", batchId: "b1", nowIso: "2026-07-02T00:00:00.000Z", runId: "run-1",
+    });
+    expect(res.drafts.length).toBe(0);
+    // No writer call, no new chat_artifacts insert for this slot.
+    const artifactInserts = dbRef.current.queries
+      .filter((q) => q.table === "chat_artifacts")
+      .flatMap((q) => q.filters.filter((f) => f.method === "insert"));
+    expect(artifactInserts).toHaveLength(0);
+    // The slot is never bumped to 'drafting' — the worker returned before
+    // touching it.
+    const slotUpdates = dbRef.current.queries
+      .filter((q) => q.table === "batch_draft_slots")
+      .flatMap((q) => q.filters.filter((f) => f.method === "update"));
+    expect(slotUpdates).toHaveLength(0);
   });
 
   test("a short first regular source backfills and still files the slot", async () => {
