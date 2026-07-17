@@ -104,6 +104,7 @@ vi.mock("@/lib/apify", () => ({
 vi.mock("@/lib/scrape-gating", () => ({
   decideScrapeGates: async (accounts: Array<{ id: string }>) =>
     accounts.map((account) => ({ account_id: account.id, scrape: true })),
+  excludeRecentlyScrapedInResume: async <T,>(accounts: T[]) => accounts,
 }));
 vi.mock("@/lib/viral", () => ({
   getThresholds: async () => ({ min_reactions: 50, min_comments: 50 }),
