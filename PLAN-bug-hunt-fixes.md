@@ -12,6 +12,7 @@ Convention: `[ ]` pending · `[~]` PR open, not merged · `[x]` merged. PR numbe
 - [x] **Interview-first users get incorrect 7-day voice cooldown** — PR [#1178](https://github.com/danielnogueira8/LinkedInViralPostsSwipeFile/pull/1178). New `interview_updated_at` column (migration-099, user ran it in Supabase) separate from `generated_at`.
 - [x] **Empty creator-style model output can become "ready"** — PR [#1179](https://github.com/danielnogueira8/LinkedInViralPostsSwipeFile/pull/1179). `isUsableCreatorStyleProfile` semantic gate + one bounded retry before failing the row.
 - [x] **Creator-style description mixes user content with system warnings** — PR [#1180](https://github.com/danielnogueira8/LinkedInViralPostsSwipeFile/pull/1180). `creatorStyleQualityWarning(sampleCount)` derives the low-sample notice at read time instead of overwriting the user's own `description`.
+- [~] **Malformed interview output saved as success, UI has no recovery** — PR [#1181](https://github.com/danielnogueira8/LinkedInViralPostsSwipeFile/pull/1181). `synthesizeInterviewContext` retries once then throws instead of silently returning empty context; "Edit answers" button always reachable.
 
 ---
 
@@ -38,7 +39,6 @@ Convention: `[ ]` pending · `[~]` PR open, not merged · `[x]` merged. PR numbe
 - [ ] **Supabase `{error}` results silently treated as success** — several critical ops only catch thrown exceptions; weekly queue failure can leave an orphan chat. Fix: centralize DB calls behind repositories that unwrap `{data,error}`; transaction/RPC for weekly run+chat+opening message+job creation.
 - [ ] **Model attribution logs requested alias, not response.model** — weekly/voice/creator-style/interview/lead-magnet paths often log the requested alias. Fix: record requested AND provider-reported model through one attribution seam.
 - [ ] **Lead-magnet sanitization corrupts Markdown code blocks** — global whitespace cleanup changes Python/YAML indentation, tables, literal content. Fix: normalize prose through a Markdown AST, preserve fenced/inline code, tables, URLs byte-for-byte.
-- [ ] **Malformed interview output saved as success, UI has no recovery** — UI collapses with no way to reopen the form (empty context). Fix: require valid nonempty context when answers were provided; retry once, else fail without mutation; always expose edit/retry.
 - [ ] **Concurrent template creation can exceed 100-template cap** — count and insert are separate ops (TOCTOU). Fix: enforce quota in one transactional DB function/trigger with a workspace advisory lock.
 - [ ] **Below-contract lead magnets shown without warning** — backend stores `review_suggested` but UI doesn't display it. Fix: fail closed until minimum assessment passes, or show a prominent "Needs review" state.
 - [ ] **Pattern-brief cron uncheckpointed, no cost reservation** — all-workspaces cron can exceed deadline; one persistence error can abort later workspaces. Fix: one idempotent job per workspace, provider/cost locks, cursor state, isolated persistence outcomes.
