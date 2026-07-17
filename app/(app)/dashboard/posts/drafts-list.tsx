@@ -128,7 +128,7 @@ export function groupDraftsForBoard(
   return groups;
 }
 
-function boardColumnForDraft(draft: Draft): BoardColumnId {
+export function boardColumnForDraft(draft: Draft): BoardColumnId {
   if (draft.scheduleStatus === "scheduled" || draft.scheduleStatus === "publishing") {
     return "scheduled";
   }
@@ -364,16 +364,24 @@ export function DraftsList({
   // in sync so the card name / dot / column update instantly. Also re-points the
   // mobile column when status changes so the moved card stays visible.
   const applyMeta = (id: string, patch: Partial<Draft>) => {
-    setDrafts((d) => d.map((x) => (x.id === id ? { ...x, ...patch } : x)));
-    if (patch.status) setMobileCol(patch.status);
-    if (patch.scheduleStatus === "scheduled" || patch.scheduleStatus === "publishing") {
-      setMobileCol("scheduled");
-    } else if (patch.scheduleStatus === "published") {
-      setMobileCol("posted");
-    } else if (patch.scheduleStatus === null) {
-      const nextStatus = patch.status ?? drafts.find((d) => d.id === id)?.status;
-      if (nextStatus) setMobileCol(nextStatus);
-    }
+    // Derive the mobile column from the MERGED draft (via boardColumnForDraft
+    // — the single source of truth this file already uses for the desktop
+    // column grouping and the status dot), read out of the SAME functional
+    // update as the patch itself — never the `drafts` closure. That closure
+    // can be stale by the time an async caller's response lands (e.g.
+    // ScheduleRow's cancel() captures onMeta before an overlapping
+    // Status-dropdown change re-renders with a newer closure), which used to
+    // snap the mobile tab back to a status the draft no longer has.
+    let nextColumn: BoardColumnId | undefined;
+    setDrafts((d) =>
+      d.map((x) => {
+        if (x.id !== id) return x;
+        const merged = { ...x, ...patch };
+        nextColumn = boardColumnForDraft(merged);
+        return merged;
+      }),
+    );
+    if (nextColumn) setMobileCol(nextColumn);
   };
 
   // A draft created on the board (via the modal). Prepend it so it's visible
