@@ -4,12 +4,7 @@ import {
   stripEmDashes,
   aiTellMetrics,
 } from "@/lib/agent/specialists/nets";
-import {
-  normalizePostBody,
-  normalizeNumberedListicleHeadings,
-  normalizeSentenceFinalNumberBreaks,
-  normalizeInlineArrowLists,
-} from "@/lib/post-body-normalize";
+import { normalizePostBody } from "@/lib/post-body-normalize";
 import { extractArtifacts } from "@/lib/agent/artifact-policy";
 
 // ---------------------------------------------------------------------------
@@ -120,146 +115,24 @@ describe("looksCorruptedDraft — does NOT false-positive on real posts", () => 
 // breaks injected so it doesn't render as an unreadable wall. Must be
 // conservative: never touch a body that's already formatted, never shatter a
 // deliberate short post.
+//
+// The list-heading/number-range/arrow-list repair nets that used to live here
+// were removed (2026-07): they existed to repair GLM/Qwen's list-formatting
+// mistakes, but a live test against the current writer model (10 adversarial
+// prompts targeting exactly those failure modes — number ranges, ages next to
+// lists, arrow bullets, dense lists, and a date next to a list) produced zero
+// misfires. The model formats lists correctly on its own now, so the repair
+// nets were dead code that only added surface area (and caused the July-19
+// date-splitting bug below). What remains is just the dense-block fallback.
 // ---------------------------------------------------------------------------
 
 describe("normalizePostBody — injects paragraph breaks into a wall of text", () => {
-  test("normalizeSentenceFinalNumberBreaks repairs the split sentence-final number", () => {
-    const body =
-      "competing at anything before you turn\n" +
-      "20. Here's what gaming taught me.";
-    expect(normalizeSentenceFinalNumberBreaks(body)).toBe(
-      "competing at anything before you turn 20.\n\n" +
-        "Here's what gaming taught me.",
-    );
-  });
-
-  // Live-observed (output-quality live audit, 2/2 refine runs): GLM breaks the
-  // line before a RANGE's second number ("steps 3 through / 9. Activation…"),
-  // leaving "9." at line start — which renders as a numbered-list item. The
-  // previous line ends mid-phrase ("through", no punctuation) and the
-  // continuation starts with an arbitrary capitalized word, so the net must
-  // accept any sentence-cased continuation when the expecting-word guard holds.
-  test("repairs a range's second number split onto its own line (steps 3 through / 9.)", () => {
-    const body =
-      "We didn't add tooltips. We deleted steps 3 through\n" +
-      "9. Activation went from 31% to 58% in six weeks.";
-    expect(normalizeSentenceFinalNumberBreaks(body)).toBe(
-      "We didn't add tooltips. We deleted steps 3 through 9.\n\n" +
-        "Activation went from 31% to 58% in six weeks.",
-    );
-  });
-
-  test("repairs a sentence-ending number split onto a fake numbered-list line", () => {
-    const body =
-      "But they miss what actually happens when you spend 10,000 hours\n" +
-      "competing at anything before you turn\n" +
-      "20. Here's what gaming taught me that no business book ever did:";
-
-    expect(normalizePostBody(body)).toBe(
-      "But they miss what actually happens when you spend 10,000 hours\n" +
-        "competing at anything before you turn 20.\n\n" +
-        "Here's what gaming taught me that no business book ever did:",
-    );
-  });
-
-  test("repairs a sentence-ending number before an arrow-led next point", () => {
-    const body =
-      "→ Generic openers that smell like ChatGPT.\n" +
-      "→ \"Let's talk about...\" intros nobody finishes.\n" +
-      "→ Lists of 7 things that could've been\n" +
-      "2. → Hooks that hedge instead of punch.\n" +
-      "→ Posts written for likes, not for buyers.";
-
-    expect(normalizePostBody(body)).toBe(
-      "→ Generic openers that smell like ChatGPT.\n" +
-        "→ \"Let's talk about...\" intros nobody finishes.\n" +
-        "→ Lists of 7 things that could've been 2.\n\n" +
-        "→ Hooks that hedge instead of punch.\n" +
-        "→ Posts written for likes, not for buyers.",
-    );
-  });
-
-  test("does not rewrite a real numbered list item after a complete sentence", () => {
-    const body =
-      "The first lesson is simple.\n" +
-      "2. Here's the second lesson.\n\n" +
-      "Keep going.";
-
-    expect(normalizePostBody(body)).toBe(body);
-  });
-
-  test("does not rewrite a real numbered list item after a colon intro", () => {
+  test("does not rewrite a real numbered list — any existing newline is left untouched", () => {
     const body =
       "Three things I learned:\n" +
       "1. The first one.\n" +
       "2. The second one.";
 
-    expect(normalizePostBody(body)).toBe(body);
-  });
-
-  test("repairs a numbered listicle heading split across its own block", () => {
-    const body =
-      "1. The obvious tell.\n\n" +
-      "Every line has one.\n\n" +
-      "2.\n\n" +
-      "The rule of three.\n\n" +
-      "'Not faster.\n\n" +
-      "Not cheaper.\n\n" +
-      "Better.' If your post keeps grouping things in threes, the model picked that rhythm for you.";
-
-    expect(normalizePostBody(body)).toBe(
-      "1. The obvious tell.\n\n" +
-        "Every line has one.\n\n" +
-        "2. The rule of three.\n\n" +
-        "'Not faster.\n\n" +
-        "Not cheaper.\n\n" +
-        "Better.' If your post keeps grouping things in threes, the model picked that rhythm for you.",
-    );
-  });
-
-  test("repairs a later orphaned listicle heading without touching the body copy", () => {
-    const body =
-      "2. Keep the simple thing simple.\n\n" +
-      "Complexity compounds faster than value.\n\n" +
-      "3.\n\n" +
-      "Remove, don't add.\n\n" +
-      "The best code I ever wrote was code I deleted.\n\n" +
-      "The best posts I ever wrote were the ones where I cut half the lines.";
-
-    expect(normalizePostBody(body)).toBe(
-      "2. Keep the simple thing simple.\n\n" +
-        "Complexity compounds faster than value.\n\n" +
-        "3. Remove, don't add.\n\n" +
-        "The best code I ever wrote was code I deleted.\n\n" +
-        "The best posts I ever wrote were the ones where I cut half the lines.",
-    );
-  });
-
-  test("repairs a split first heading when the marker is glued to the intro", () => {
-    const body =
-      "Three AI writing tells I catch every day: 1.\n\n" +
-      "Em dashes everywhere.\n\n" +
-      "One dash turns into five.\n\n" +
-      "2.\n\n" +
-      "The rule of three.\n\n" +
-      "Humans rarely think in tidy triads.";
-
-    expect(normalizePostBody(body)).toBe(
-      "Three AI writing tells I catch every day:\n" +
-        "1. Em dashes everywhere.\n\n" +
-        "One dash turns into five.\n\n" +
-        "2. The rule of three.\n\n" +
-        "Humans rarely think in tidy triads.",
-    );
-  });
-
-  test("does not merge a bare numbered line into quoted body copy", () => {
-    const body = "2.\n\n'Not faster.\n\nNot cheaper.\n\nBetter.'";
-    expect(normalizeNumberedListicleHeadings(body)).toBe(body);
-  });
-
-  test("does not touch already-correct numbered headings", () => {
-    const body = "2. The rule of three.\n\nReal writing mixes the counts.";
     expect(normalizePostBody(body)).toBe(body);
   });
 
@@ -351,104 +224,29 @@ describe("normalizePostBody — injects paragraph breaks into a wall of text", (
     expect(normalizePostBody("A short post.   \n  ")).toBe("A short post.");
   });
 
-  // Regression: a leaked listicle salvaged by the FORCED-FINAL round used to
-  // ship RAW (that one salvage path skipped stripEmDashes + normalizePostBody),
-  // so its "1." rendered split from its heading. This locks the contract that
-  // running the body through the shared net repairs every item — number line +
-  // heading joined, body below — which is what the salvage path now does.
-  test("repairs a full multi-item listicle: every marker joins its heading", () => {
-    const leakedBody =
-      "AI slop comes from four layers being weak: 1.\n\n" +
-      "The prompt.\n\n" +
-      "Write a post about leadership.\n\n" +
-      "2.\n\n" +
-      "The voice.\n\n" +
-      "If you don't teach the model how you talk, it defaults to LinkedIn.\n\n" +
-      "3.\n\n" +
-      "The edit.\n\n" +
-      "The draft is the raw material, not the post.\n\n" +
-      "4.\n\n" +
-      "The opinion.\n\n" +
-      "AI can't have one.";
-
-    const out = normalizePostBody(leakedBody);
-    // Each number is now glued to its heading on one line, body follows below.
-    expect(out).toContain("1. The prompt.");
-    expect(out).toContain("2. The voice.");
-    expect(out).toContain("3. The edit.");
-    expect(out).toContain("4. The opinion.");
-    // And no orphaned bare-number line survives.
-    expect(out).not.toMatch(/^\s*\d+\.\s*$/m);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// normalizeInlineArrowLists — the flattened-arrow-list net. GLM/Qwen sometimes
-// emit a modeled list-CTA post's items as ONE run-on line with inline arrows
-// ("Here's what's inside: → a → b → c") instead of one item per line, which on
-// LinkedIn reads as an unreadable wall. This net splits any line carrying 2+
-// item-markers back into one-per-line, matching how the source was formatted.
-// Real reported bug (2026-07-15): a modeled "Claude kit" list-CTA post came out
-// with its entire "what's inside" list flattened.
-// ---------------------------------------------------------------------------
-describe("normalizeInlineArrowLists — splits a flattened arrow list", () => {
-  test("the real reported flattened list — one item per line", () => {
+  // Live-observed: "It's Sunday, July 19. But the story has already started."
+  // got a paragraph break inserted after "19." — the sentence-split net can't
+  // tell a date from a sentence boundary. A number right before the mark is
+  // never treated as a sentence boundary now (dates, ages, list markers), only
+  // a letter is — so this can't recur regardless of number length.
+  test("does not split a wall of text after a date/number (July 19.)", () => {
     const body =
-      "I packaged the whole system into a free resource.\n\n" +
-      "Here's what's inside: → Copy-paste prompts for specialized agents → " +
-      "Workflow checklist from topic brief to published post → Hook scoring " +
-      "rubric to self-grade every opening line → Content brief template that " +
-      "feeds the agent pipeline\n\n" +
-      "Comment \"CLAUDE\" and I will send it.";
-    const out = normalizeInlineArrowLists(body);
-    // The lead-in keeps its own line; every arrow item gets its own line.
-    expect(out).toContain("Here's what's inside:\n→ Copy-paste prompts");
-    expect(out).toContain("\n→ Workflow checklist");
-    expect(out).toContain("\n→ Hook scoring rubric");
-    expect(out).toContain("\n→ Content brief template");
-    // The surrounding paragraphs are untouched.
-    expect(out.startsWith("I packaged the whole system into a free resource."))
-      .toBe(true);
-    expect(out).toContain('Comment "CLAUDE" and I will send it.');
-    // No line still carries two arrows.
-    for (const line of out.split("\n")) {
-      expect((line.match(/→/g) ?? []).length).toBeLessThanOrEqual(1);
-    }
-  });
-
-  test("ASCII '->' bullets are split too", () => {
-    const out = normalizeInlineArrowLists(
-      "What's inside: -> 500+ prompts -> 150+ skills -> 100+ agents",
-    );
-    expect(out).toBe(
-      "What's inside:\n-> 500+ prompts\n-> 150+ skills\n-> 100+ agents",
-    );
-  });
-
-  test("idempotent — an already-split list is unchanged", () => {
-    const clean =
-      "Here's what's inside:\n→ Copy-paste prompts\n→ Workflow checklist\n→ Hook rubric";
-    expect(normalizeInlineArrowLists(clean)).toBe(clean);
-  });
-
-  test("a single mid-line arrow is prose, not a list — left inline", () => {
-    const prose = "We went from MVP -> scale in six weeks.";
-    expect(normalizeInlineArrowLists(prose)).toBe(prose);
-  });
-
-  test("arrows glued to words with no spaces are not touched", () => {
-    const glued = "The a->b->c pipeline is fast.";
-    expect(normalizeInlineArrowLists(glued)).toBe(glued);
-  });
-
-  test("normalizePostBody runs the arrow-list split end-to-end", () => {
-    // The body already has newlines (paragraph breaks), so the old wall-of-text
-    // fallback would bail — this proves the arrow split runs regardless.
-    const body =
-      "One conversation per agent, each with a single job.\n\n" +
-      "Here's what's inside: → prompts → checklist → rubric";
+      "It's Sunday, July 19. But the story has already started. " +
+      "Three founders are already awake, already building, already shipping. " +
+      "The rest of us are still asleep, still scrolling, still waiting for Monday.";
     const out = normalizePostBody(body);
-    expect(out).toContain("Here's what's inside:\n→ prompts\n→ checklist\n→ rubric");
+    expect(out).toContain("July 19. But the story");
+    expect(out).not.toContain("July 19.\n\n");
+  });
+
+  test("does not split after ANY number, including a year — only letters trigger a split", () => {
+    const body =
+      "The company was founded in 2024. It grew from zero to a million dollars in revenue in just eighteen months flat, which nobody thought possible at the time. " +
+      "Nobody believed it would work when we started, not even the people writing the checks. Everybody was wrong.";
+    const out = normalizePostBody(body);
+    expect(out).not.toContain("2024.\n\n");
+    expect(out).toContain("time.\n\n");
+    expect(out).toContain("checks.\n\n");
   });
 });
 
@@ -475,8 +273,8 @@ describe("extractArtifacts — corruption gate on the legacy fence path", () => 
     expect(arts[0].body).toContain("cold outreach is dead");
   });
 
-  test("normalizes split numbered headings in a clean fenced post", () => {
-    const text = "```post\n1.\n\nThe rule of three.\n\nReal writing mixes the counts.\n```";
+  test("passes a clean fenced post body through untouched", () => {
+    const text = "```post\n1. The rule of three.\n\nReal writing mixes the counts.\n```";
     const arts = extractArtifacts(text);
     expect(arts).toHaveLength(1);
     expect(arts[0].body).toBe(

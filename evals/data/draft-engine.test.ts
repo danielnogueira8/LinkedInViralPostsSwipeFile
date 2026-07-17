@@ -1589,26 +1589,22 @@ describe("DraftEngine — thin path (lean mode)", () => {
     expect(body).toContain("leverage, and it compounds"); // rewritten to a comma
   });
 
-  test("KEEP nets still run: a flattened arrow list is split one-per-line", async () => {
-    const flattened = [
-      "Here's the exact system I run every single week to stay consistent.",
-      "",
-      "It took me a long time to make it this simple, but here is the whole thing.",
-      "",
-      "The system: → a weekly brief → three rough drafts → one polished post → a first-hour reply plan",
-    ].join("\n");
+  test("KEEP nets still run: a dense wall of text gets paragraph breaks in lean mode", async () => {
+    // Proves lean mode still runs normalizePostBody's dense-block fallback
+    // (the list-heading/arrow-list repair nets were removed — see
+    // lib/post-body-normalize.ts — since a live test showed the writer model
+    // formats lists correctly on its own and those nets never fired).
+    const dense =
+      "Here's the exact system I run every single week to stay consistent, and it took me a long time to make it this simple. " +
+      "I used to think consistency meant grinding harder, but it actually meant removing every decision I had to make in the moment. " +
+      "Now I just follow the same four steps every week without debating any of them, and that alone changed everything.";
     const writer = new ScriptedWriter([
-      { text: flattened, finishReason: "stop", usage: usage(180, 90) },
+      { text: dense, finishReason: "stop", usage: usage(180, 90) },
     ]);
     const result = await collect(writer, { lean: true });
 
     const body = artifacts(result.events)[0]?.body ?? "";
-    expect(body).toContain("The system:\n→ a weekly brief");
-    expect(body).toContain("\n→ three rough drafts");
-    // No line still carries two arrows.
-    for (const line of body.split("\n")) {
-      expect((line.match(/→/g) ?? []).length).toBeLessThanOrEqual(1);
-    }
+    expect(body).toContain("\n\n");
   });
 
   test("DROP taste gate: a draft that source-fidelity WOULD reject still ships", async () => {
