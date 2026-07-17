@@ -37,6 +37,7 @@ import { byId, removeById, reinsertById } from "@/lib/optimistic";
 import {
   STYLE_NAME_MAX,
   sanitizeCreatorStyleProfile,
+  creatorStyleQualityWarning,
   type CreatorStyleRow,
 } from "@/lib/creator-styles";
 import { StyleDetailDrawer } from "./style-detail-drawer";
@@ -440,6 +441,12 @@ function StyleCard({
           <>
             {row.description && (
               <p className="line-clamp-3 text-sm leading-relaxed text-muted-foreground">{row.description}</p>
+            )}
+            {creatorStyleQualityWarning(row.sample_count) && (
+              <div className="flex items-start gap-1.5 rounded-md border border-amber-500/15 bg-amber-500/10 px-2.5 py-1.5 text-xs text-amber-700">
+                <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
+                <span>{creatorStyleQualityWarning(row.sample_count)}</span>
+              </div>
             )}
             {tags.length > 0 && (
               <div className="flex flex-wrap gap-1.5">

@@ -15,7 +15,6 @@ import {
   type CreatorStyleProfile,
   STYLE_SOURCE_MAX,
   STYLE_SAVED_PICK_MAX,
-  STYLE_LOW_SAMPLE_THRESHOLD,
 } from "@/lib/creator-styles";
 
 // We pull the creator's latest STYLE_SOURCE_MAX (30) posts live from Apify when
@@ -369,7 +368,6 @@ export async function runCreatorStyleGeneration(opts: {
       posts,
     });
     const promptBlock = buildStylePromptBlock(profile);
-    const lowSample = posts.length < STYLE_LOW_SAMPLE_THRESHOLD;
 
     // Persist source references (distilled — first line + url, NOT full bodies).
     // Clear any prior references first (a regenerate re-runs this), best-effort.
@@ -393,6 +391,11 @@ export async function runCreatorStyleGeneration(opts: {
       );
     }
 
+    // description is a user-owned field (see creatorStyleUpdateSchema) —
+    // generation must never write into it. The low-sample warning is derived
+    // from sample_count at read time (creatorStyleQualityWarning) instead, so
+    // it never clobbers the user's own description and clears itself
+    // automatically once a regenerate crosses STYLE_LOW_SAMPLE_THRESHOLD.
     await patchRow({
       status: "ready",
       error: null,
@@ -403,13 +406,6 @@ export async function runCreatorStyleGeneration(opts: {
       // the in-flight marker so stale-recovery leaves the finished row alone.
       generated_at: new Date().toISOString(),
       generating_started_at: null,
-      ...(lowSample
-        ? {
-            description: `Built from only ${posts.length} post${
-              posts.length === 1 ? "" : "s"
-            } — style quality may be weaker. Regenerate once more of this creator's posts are scraped.`,
-          }
-        : {}),
     });
   } catch (e) {
     await fail(
