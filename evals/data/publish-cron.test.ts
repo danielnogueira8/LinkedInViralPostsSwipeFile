@@ -19,6 +19,7 @@ type Row = Record<string, unknown>;
 const db: { drafts: Row[]; conns: Row[] } = { drafts: [], conns: [] };
 let beforeClaim: (() => void) | null = null;
 let beforeFail: (() => void) | null = null;
+let beforeMediaPersist: (() => void) | null = null;
 let connectionReadError = false;
 let disconnectWriteError = false;
 let dbFailure:
@@ -132,6 +133,15 @@ function makeClient() {
         ) {
           return resolve({ data: null, error: new Error("media state unavailable") });
         }
+        if (
+          table === "chat_artifacts" &&
+          Array.isArray(pendingUpdate?.media_attachments) &&
+          beforeMediaPersist
+        ) {
+          const mutate = beforeMediaPersist;
+          beforeMediaPersist = null;
+          mutate();
+        }
         if (pendingUpdate) {
           if (
             table === "chat_artifacts" &&
@@ -218,6 +228,7 @@ beforeEach(() => {
   publishSpy.mockReset();
   beforeClaim = null;
   beforeFail = null;
+  beforeMediaPersist = null;
   connectionReadError = false;
   disconnectWriteError = false;
   dbFailure = null;
@@ -534,6 +545,34 @@ describe("publishDueDrafts", () => {
     );
   });
 
+  test("an oversized firstComment fails locally without calling LinkedIn", async () => {
+    // The schedule route's zod schema caps firstComment at 3,000 chars when
+    // SET, but nothing re-checked it here — an edit made after scheduling (or
+    // a row from before that cap existed) could carry a longer value straight
+    // through to Zernio, wasting a publish attempt.
+    seedConnection();
+    seedDueDraft({ first_comment: "x".repeat(3001) });
+
+    const summary = await publishDueDrafts(NOW);
+
+    expect(summary.failed).toBe(1);
+    expect(draft().schedule_status).toBe("failed");
+    expect(String(draft().publish_error)).toMatch(/first comment.*3,000 character limit/i);
+    expect(publishSpy).not.toHaveBeenCalled();
+  });
+
+  test("a first comment at exactly the limit is allowed through", async () => {
+    seedConnection();
+    seedDueDraft({ first_comment: "x".repeat(3000) });
+
+    const summary = await publishDueDrafts(NOW);
+
+    expect(summary.published).toBe(1);
+    expect(publishSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ firstComment: "x".repeat(3000) }),
+    );
+  });
+
   test("malformed media fails locally without calling Zernio", async () => {
     seedConnection();
     seedDueDraft({
@@ -663,6 +702,44 @@ describe("stale 'publishing' sweep (orphan recovery)", () => {
     expect(retry.staleSwept).toBe(0);
     expect(retry.published).toBe(1);
     expect(draft().schedule_status).toBe("published");
+  });
+
+  test("the media re-persist write is a no-op when the row is no longer 'publishing'", async () => {
+    // Something moves the row out of 'publishing' AFTER the claim but BEFORE
+    // the media-attachments re-persist write — mirrors a concurrent sweep or
+    // a user unscheduling mid-publish. The write is CAS-guarded on
+    // schedule_status='publishing', so it must not resurrect/overwrite a row
+    // this tick no longer owns.
+    seedConnection();
+    seedDueDraft({
+      media_attachments: [
+        {
+          id: "m1",
+          name: "photo.jpg",
+          mimeType: "image/jpeg",
+          size: 1024,
+          type: "image",
+          url: "https://media.zernio.com/temp/photo.jpg",
+          uploadedAt: "2026-07-03T10:00:00.000Z",
+        },
+      ],
+    });
+    const originalMedia = JSON.stringify(draft().media_attachments);
+    beforeMediaPersist = () => {
+      draft().schedule_status = "scheduled";
+      draft().scheduled_at = "2026-07-03T23:00:00.000Z";
+    };
+
+    await publishDueDrafts(NOW);
+
+    // The guarded write matched zero rows and was dropped — the row's DB
+    // state stays exactly what the race left it as, not resurrected toward
+    // 'publishing'-owned state. (The in-flight publish attempt still
+    // proceeds with the media it already resolved locally — the CAS guard
+    // only protects the DB row, this fix doesn't add mid-flight cancellation.)
+    expect(draft().schedule_status).toBe("scheduled");
+    expect(draft().scheduled_at).toBe("2026-07-03T23:00:00.000Z");
+    expect(JSON.stringify(draft().media_attachments)).toBe(originalMedia);
   });
 
   test("the terminal success write is a no-op when the row is no longer 'publishing'", async () => {
