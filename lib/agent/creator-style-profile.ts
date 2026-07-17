@@ -334,11 +334,16 @@ export async function runCreatorStyleGeneration(opts: {
 }): Promise<void> {
   const sb = supabaseAdmin();
   const patchRow = async (patch: Record<string, unknown>) => {
-    await sb
+    const { error } = await sb
       .from("creator_style_profiles")
       .update({ ...patch, updated_at: new Date().toISOString() })
       .eq("id", opts.profileId)
       .eq("workspace_id", opts.workspaceId);
+    if (error) {
+      console.warn(
+        `creator-style patchRow failed for ${opts.profileId}: ${error.message}`,
+      );
+    }
   };
   // A failed run clears generating_started_at so stale-recovery doesn't later
   // re-flip an already-failed row, and leaves generated_at untouched (a failure
