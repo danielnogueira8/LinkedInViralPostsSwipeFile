@@ -33,7 +33,7 @@ import {
   SKILL_COLS,
   TEMPLATE_COLS,
 } from "@/lib/content-resource-operations";
-import { errorContent, jsonContent, notFoundContent } from "./util";
+import { dbErrorContent, errorContent, jsonContent, notFoundContent } from "./util";
 
 type Extra = RequestHandlerExtra<ServerRequest, ServerNotification>;
 type WorkspaceResolver = (extra: Extra) => string | null;
@@ -83,7 +83,7 @@ export function registerPublicResourceTools(
       if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
       const draft = await drafts(workspaceId).find(id);
       return draft ? jsonContent({ ok: true, draft: draftRecordToApi(draft) }) : notFoundContent("Draft", id);
-    } catch (e) { return errorContent((e as Error).message); }
+    } catch (e) { return dbErrorContent("mcp_resource_tool", e); }
   });
 
   server.registerTool("create_draft", {
@@ -118,7 +118,7 @@ export function registerPublicResourceTools(
         deduped: result.outcome === "deduped",
         draft: draftRecordToApi(result.draft),
       });
-    } catch (e) { return errorContent((e as Error).message); }
+    } catch (e) { return dbErrorContent("mcp_resource_tool", e); }
   });
 
   server.registerTool("list_categories", {
@@ -130,9 +130,9 @@ export function registerPublicResourceTools(
       const { workspaceId } = ids(extra, workspaceFromExtra);
       if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
       const { data, error } = await loadVisibleCategories(supabaseAdmin(), workspaceId, "id, label, is_curated, workspace_id");
-      if (error) return errorContent((error as Error).message);
+      if (error) return dbErrorContent("list_categories", error);
       return jsonContent({ ok: true, count: data?.length ?? 0, categories: data ?? [] });
-    } catch (e) { return errorContent((e as Error).message); }
+    } catch (e) { return dbErrorContent("mcp_resource_tool", e); }
   });
 
   server.registerTool("create_category", {
@@ -151,7 +151,7 @@ export function registerPublicResourceTools(
       return result.ok
         ? jsonContent({ ok: true, category: result.value, existed: result.existed ?? false })
         : errorContent(result.error);
-    } catch (e) { return errorContent((e as Error).message); }
+    } catch (e) { return dbErrorContent("mcp_resource_tool", e); }
   });
 
   server.registerTool("list_templates", {
@@ -163,10 +163,10 @@ export function registerPublicResourceTools(
       const { workspaceId } = ids(extra, workspaceFromExtra);
       if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
       const { data, error } = await supabaseAdmin().from("content_templates").select(TEMPLATE_COLS).eq("workspace_id", workspaceId).order("created_at", { ascending: false });
-      if (error) return errorContent(error.message);
+      if (error) return dbErrorContent("list_templates", error);
       const templates = [...BUILTIN_TEMPLATES, ...(data ?? [])];
       return jsonContent({ ok: true, count: templates.length, templates });
-    } catch (e) { return errorContent((e as Error).message); }
+    } catch (e) { return dbErrorContent("mcp_resource_tool", e); }
   });
 
   server.registerTool("get_template", {
@@ -187,7 +187,7 @@ export function registerPublicResourceTools(
       const { data, error } = await supabaseAdmin().from("content_templates").select(TEMPLATE_COLS).eq("id", id).eq("workspace_id", workspaceId).maybeSingle();
       if (error) return notFoundContent("Template", id);
       return data ? jsonContent({ ok: true, template: data }) : notFoundContent("Template", id);
-    } catch (e) { return errorContent((e as Error).message); }
+    } catch (e) { return dbErrorContent("mcp_resource_tool", e); }
   });
 
   server.registerTool("create_template", {
@@ -208,7 +208,7 @@ export function registerPublicResourceTools(
       return result.ok
         ? jsonContent({ ok: true, template: result.value })
         : errorContent(result.error);
-    } catch (e) { return errorContent((e as Error).message); }
+    } catch (e) { return dbErrorContent("mcp_resource_tool", e); }
   });
 
   server.registerTool("list_skills", {
@@ -220,9 +220,9 @@ export function registerPublicResourceTools(
       const { workspaceId } = ids(extra, workspaceFromExtra);
       if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
       const { data, error } = await supabaseAdmin().from("custom_skills").select(SKILL_COLS).eq("workspace_id", workspaceId).order("created_at", { ascending: false });
-      if (error) return errorContent(error.message);
+      if (error) return dbErrorContent("list_skills", error);
       return jsonContent({ ok: true, count: data?.length ?? 0, skills: data ?? [] });
-    } catch (e) { return errorContent((e as Error).message); }
+    } catch (e) { return dbErrorContent("mcp_resource_tool", e); }
   });
 
   server.registerTool("get_skill", {
@@ -240,7 +240,7 @@ export function registerPublicResourceTools(
       const { data, error } = await query.maybeSingle();
       if (error) return notFoundContent("Skill", lookup);
       return data ? jsonContent({ ok: true, skill: data }) : notFoundContent("Skill", lookup);
-    } catch (e) { return errorContent((e as Error).message); }
+    } catch (e) { return dbErrorContent("mcp_resource_tool", e); }
   });
 
   server.registerTool("create_skill", {
@@ -261,7 +261,7 @@ export function registerPublicResourceTools(
       return result.ok
         ? jsonContent({ ok: true, skill: result.value })
         : errorContent(result.error);
-    } catch (e) { return errorContent((e as Error).message); }
+    } catch (e) { return dbErrorContent("mcp_resource_tool", e); }
   });
 
   server.registerTool("list_lead_magnets", {
@@ -283,7 +283,7 @@ export function registerPublicResourceTools(
         .eq("workspace_id", workspaceId)
         .order("updated_at", { ascending: false })
         .range(offset, offset + limit - 1);
-      if (error) return errorContent(error.message);
+      if (error) return dbErrorContent("list_lead_magnets", error);
       return jsonContent({
         ok: true,
         count: data?.length ?? 0,
@@ -291,7 +291,7 @@ export function registerPublicResourceTools(
         offset,
         lead_magnets: data ?? [],
       });
-    } catch (e) { return errorContent((e as Error).message); }
+    } catch (e) { return dbErrorContent("mcp_resource_tool", e); }
   });
 
   server.registerTool("get_lead_magnet", {
@@ -305,7 +305,7 @@ export function registerPublicResourceTools(
       const { data, error } = await supabaseAdmin().from("lead_magnets").select(LEAD_MAGNET_COLS).eq("id", id).eq("workspace_id", workspaceId).maybeSingle();
       if (error) return notFoundContent("Lead magnet", id);
       return data ? jsonContent({ ok: true, lead_magnet: coerceLeadMagnet(data as LeadMagnet) }) : notFoundContent("Lead magnet", id);
-    } catch (e) { return errorContent((e as Error).message); }
+    } catch (e) { return dbErrorContent("mcp_resource_tool", e); }
   });
 
   server.registerTool("create_lead_magnet", {
@@ -328,7 +328,7 @@ export function registerPublicResourceTools(
       return result.ok
         ? jsonContent({ ok: true, lead_magnet: result.value })
         : errorContent(result.error);
-    } catch (e) { return errorContent((e as Error).message); }
+    } catch (e) { return dbErrorContent("mcp_resource_tool", e); }
   });
 
   server.registerTool("list_preferences", {
@@ -340,9 +340,9 @@ export function registerPublicResourceTools(
       const { workspaceId } = ids(extra, workspaceFromExtra);
       if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
       const { data, error } = await supabaseAdmin().from("content_preferences").select(PREF_COLS).eq("workspace_id", workspaceId).order("created_at", { ascending: false });
-      if (error) return errorContent(error.message);
+      if (error) return dbErrorContent("list_preferences", error);
       return jsonContent({ ok: true, count: data?.length ?? 0, preferences: data ?? [] });
-    } catch (e) { return errorContent((e as Error).message); }
+    } catch (e) { return dbErrorContent("mcp_resource_tool", e); }
   });
 
   server.registerTool("create_preference", {
@@ -363,7 +363,7 @@ export function registerPublicResourceTools(
       return result.ok
         ? jsonContent({ ok: true, preference: result.value })
         : errorContent(result.error);
-    } catch (e) { return errorContent((e as Error).message); }
+    } catch (e) { return dbErrorContent("mcp_resource_tool", e); }
   });
 
   registerVoiceTool(server, workspaceFromExtra);
@@ -387,7 +387,7 @@ function registerVoiceTool(server: McpServer, workspaceFromExtra: WorkspaceResol
       return result.ok
         ? jsonContent({ ok: true, accepted: true, voice: result.voice })
         : errorContent(result.error);
-    } catch (e) { return errorContent((e as Error).message); }
+    } catch (e) { return dbErrorContent("mcp_resource_tool", e); }
   });
 }
 
@@ -401,9 +401,9 @@ function registerCreatorStyleTools(server: McpServer, workspaceFromExtra: Worksp
       const { workspaceId } = ids(extra, workspaceFromExtra);
       if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
       const { data, error } = await supabaseAdmin().from("creator_style_profiles").select(STYLE_COLS).eq("workspace_id", workspaceId).order("created_at", { ascending: false });
-      if (error) return errorContent(error.message);
+      if (error) return dbErrorContent("list_creator_styles", error);
       return jsonContent({ ok: true, count: data?.length ?? 0, styles: data ?? [] });
-    } catch (e) { return errorContent((e as Error).message); }
+    } catch (e) { return dbErrorContent("mcp_resource_tool", e); }
   });
 
   server.registerTool("get_creator_style", {
@@ -419,9 +419,9 @@ function registerCreatorStyleTools(server: McpServer, workspaceFromExtra: Worksp
       if (error) return notFoundContent("Creator style", id);
       if (!data) return notFoundContent("Creator style", id);
       const { data: sources, error: sourceError } = await sb.from("creator_style_profile_sources").select("id, source_first_line, source_url").eq("profile_id", id).eq("workspace_id", workspaceId).order("created_at", { ascending: false });
-      if (sourceError) return errorContent(sourceError.message);
+      if (sourceError) return dbErrorContent("get_creator_style", sourceError);
       return jsonContent({ ok: true, style: data, sources: sources ?? [] });
-    } catch (e) { return errorContent((e as Error).message); }
+    } catch (e) { return dbErrorContent("mcp_resource_tool", e); }
   });
 
   server.registerTool("create_creator_style", {
@@ -442,6 +442,6 @@ function registerCreatorStyleTools(server: McpServer, workspaceFromExtra: Worksp
       return result.ok
         ? jsonContent({ ok: true, accepted: true, style: result.style })
         : errorContent(result.error);
-    } catch (e) { return errorContent((e as Error).message); }
+    } catch (e) { return dbErrorContent("mcp_resource_tool", e); }
   });
 }

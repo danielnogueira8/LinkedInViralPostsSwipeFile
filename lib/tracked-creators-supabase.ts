@@ -76,9 +76,8 @@ function applyListFilters<
   let q = query;
   if (!input.includeArchived) q = q.is("accounts.archived_at", null);
   if (input.niche) {
-    q = q.or(
-      `niche.eq.${input.niche},and(niche.is.null,accounts.niche.eq.${input.niche})`,
-    );
+    const niche = encodePostgrestValue(input.niche);
+    q = q.or(`niche.eq.${niche},and(niche.is.null,accounts.niche.eq.${niche})`);
   }
   if (input.search) {
     const search = input.search.replace(/[%_]/g, "");

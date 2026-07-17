@@ -57,3 +57,15 @@ export function notFoundContent(entity: string, id: string) {
     isError: true,
   };
 }
+
+// The list/create/insert counterpart to notFoundContent: every DB-error branch
+// on those paths used to do `errorContent(error.message)`, forwarding the raw
+// PostgrestError text (which can name real schema/column/constraint internals,
+// e.g. a bad filter value tripping a Postgres parse error) straight to the MCP
+// client. This logs the real error server-side (so it's still debuggable) and
+// returns a generic, safe message to the caller instead — the query-failure
+// equivalent of notFoundContent's id-lookup sanitization above.
+export function dbErrorContent(context: string, error: unknown) {
+  console.error(`[mcp:${context}]`, error);
+  return errorContent("Something went wrong processing that request.");
+}
