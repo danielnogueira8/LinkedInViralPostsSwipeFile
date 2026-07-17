@@ -20,9 +20,32 @@
 -- 'filed' when the worker starts — so a requeued run picks up only the slots
 -- that didn't finish, not the ones that already did.
 --
--- Run order: idempotent (drop-then-create constraint via a DO block guard).
--- Safe to re-run. No data migration needed — pre-existing duplicate rows (if
--- any) are historical and not touched.
+-- Live-confirmed: applying this constraint to prod without a dedup step
+-- failed with a duplicate-key error — this bug already produced real
+-- duplicate rows.
+--
+-- Run order: idempotent (drop-then-create constraint via a DO block guard;
+-- the dedup delete is also safe to re-run — it's a no-op once no duplicates
+-- remain). This app already produced duplicate rows pre-fix, so the
+-- constraint would fail to create without cleaning those up first.
+--
+-- Dedup rule per (workspace_id, batch_id, slot_index) group: keep the 'filed'
+-- row if one exists (it has a real chat_artifacts draft attached — the row
+-- most likely to be linked from elsewhere), otherwise keep the most recently
+-- updated row. Delete the rest.
+
+delete from batch_draft_slots s
+using (
+  select
+    id,
+    row_number() over (
+      partition by workspace_id, batch_id, slot_index
+      order by (status = 'filed') desc, updated_at desc
+    ) as rn
+  from batch_draft_slots
+) ranked
+where s.id = ranked.id
+  and ranked.rn > 1;
 
 do $$
 begin
