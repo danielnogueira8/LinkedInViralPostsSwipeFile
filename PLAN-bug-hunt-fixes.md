@@ -6,12 +6,12 @@ Convention: `[ ]` pending · `[~]` PR open, not merged · `[x]` merged. PR numbe
 
 ---
 
-## Shipped
+## Shipped (all merged)
 
-- [x] **media-sweep.ts unpaginated scan can purge a still-referenced asset** — PR [#1177](https://github.com/danielnogueira8/LinkedInViralPostsSwipeFile/pull/1177), merged. Reference scan now pages via `selectAllRows` past the PostgREST 1000-row cap.
-- [~] **Interview-first users get incorrect 7-day voice cooldown** — PR [#1178](https://github.com/danielnogueira8/LinkedInViralPostsSwipeFile/pull/1178). New `interview_updated_at` column (migration-099, **user already ran it in Supabase**) separate from `generated_at`.
-- [~] **Empty creator-style model output can become "ready"** — PR [#1179](https://github.com/danielnogueira8/LinkedInViralPostsSwipeFile/pull/1179). `isUsableCreatorStyleProfile` semantic gate + one bounded retry before failing the row.
-- [~] **Creator-style description mixes user content with system warnings** — PR [#1180](https://github.com/danielnogueira8/LinkedInViralPostsSwipeFile/pull/1180). `creatorStyleQualityWarning(sampleCount)` derives the low-sample notice at read time instead of overwriting the user's own `description`.
+- [x] **media-sweep.ts unpaginated scan can purge a still-referenced asset** — PR [#1177](https://github.com/danielnogueira8/LinkedInViralPostsSwipeFile/pull/1177). Reference scan now pages via `selectAllRows` past the PostgREST 1000-row cap.
+- [x] **Interview-first users get incorrect 7-day voice cooldown** — PR [#1178](https://github.com/danielnogueira8/LinkedInViralPostsSwipeFile/pull/1178). New `interview_updated_at` column (migration-099, user ran it in Supabase) separate from `generated_at`.
+- [x] **Empty creator-style model output can become "ready"** — PR [#1179](https://github.com/danielnogueira8/LinkedInViralPostsSwipeFile/pull/1179). `isUsableCreatorStyleProfile` semantic gate + one bounded retry before failing the row.
+- [x] **Creator-style description mixes user content with system warnings** — PR [#1180](https://github.com/danielnogueira8/LinkedInViralPostsSwipeFile/pull/1180). `creatorStyleQualityWarning(sampleCount)` derives the low-sample notice at read time instead of overwriting the user's own `description`.
 
 ---
 
