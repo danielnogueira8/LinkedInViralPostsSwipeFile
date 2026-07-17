@@ -12,12 +12,31 @@ import { median } from "./viral";
 const FETCH_CAP = 20000;
 const MISSING_ID = "00000000-0000-0000-0000-000000000000";
 
-async function scopedIds(): Promise<{ sb: Awaited<ReturnType<typeof scopedSupabase>>; idFilter: string[] }> {
+async function scopedIds(): Promise<{
+  sb: Awaited<ReturnType<typeof scopedSupabase>>;
+  idFilter: string[];
+  workspaceId: string;
+}> {
   const sb = await scopedSupabase();
   const accountIds = await trackedAccountIds(sb.workspaceId);
   // A non-empty sentinel keeps the `.in()` valid (and matching nothing) when
   // the workspace tracks no accounts, instead of returning everyone's data.
-  return { sb, idFilter: accountIds.length ? accountIds : [MISSING_ID] };
+  return {
+    sb,
+    idFilter: accountIds.length ? accountIds : [MISSING_ID],
+    workspaceId: sb.workspaceId,
+  };
+}
+
+// A post has a workspace_post_classification row when this workspace has
+// reclassified it (app/api/settings/route.ts's dual-write); posts not yet
+// touched by a threshold save have no row. Treat "no row" as not-viral for
+// this workspace, same as before this workspace ever saved thresholds.
+type ClassificationRow = { workspace_post_classification: Array<{ is_viral: boolean }> | { is_viral: boolean } | null };
+function isViralForWorkspace(row: ClassificationRow): boolean {
+  const wpc = row.workspace_post_classification;
+  const first = Array.isArray(wpc) ? wpc[0] : wpc;
+  return first?.is_viral === true;
 }
 
 export type PostTypeRow = {
@@ -35,20 +54,25 @@ export type PostTypeRow = {
  * regular ones for the creators I track, or just feel like they should."
  */
 export async function fetchPostTypeBoard(): Promise<PostTypeRow[]> {
-  const { sb, idFilter } = await scopedIds();
+  const { sb, idFilter, workspaceId } = await scopedIds();
+  // Reads viral status via THIS workspace's per-workspace classification
+  // (backlog #153), never the global posts.is_viral column.
   const { data, error } = await sb.raw
     .from("posts")
-    .select("post_type, viral_score, is_viral")
+    .select("post_type, viral_score, workspace_post_classification(is_viral)")
+    .eq("workspace_post_classification.workspace_id", workspaceId)
     .in("account_id", idFilter)
     .limit(FETCH_CAP);
   if (error) throw new Error(`Failed to load post-type board: ${error.message}`);
 
   const buckets = new Map<string, { scores: number[]; viral: number }>();
-  for (const p of data ?? []) {
-    const type = (p.post_type as string | null) ?? "regular";
+  for (const p of (data ?? []) as unknown as Array<
+    { post_type: string | null; viral_score: number | null } & ClassificationRow
+  >) {
+    const type = p.post_type ?? "regular";
     const b = buckets.get(type) ?? { scores: [], viral: 0 };
     b.scores.push(Number(p.viral_score ?? 0));
-    if (p.is_viral) b.viral += 1;
+    if (isViralForWorkspace(p)) b.viral += 1;
     buckets.set(type, b);
   }
 
@@ -122,10 +146,13 @@ function etDayHour(iso: string): { day: number; hour: number } | null {
  * creators they track tend to land their biggest posts.
  */
 export async function fetchTimeHeatmap(): Promise<TimeHeatmap> {
-  const { sb, idFilter } = await scopedIds();
+  const { sb, idFilter, workspaceId } = await scopedIds();
+  // Reads viral status via THIS workspace's per-workspace classification
+  // (backlog #153), never the global posts.is_viral column.
   const { data, error } = await sb.raw
     .from("posts")
-    .select("posted_at, viral_score, is_viral")
+    .select("posted_at, viral_score, workspace_post_classification(is_viral)")
+    .eq("workspace_post_classification.workspace_id", workspaceId)
     .in("account_id", idFilter)
     .not("posted_at", "is", null)
     .limit(FETCH_CAP);
@@ -133,8 +160,10 @@ export async function fetchTimeHeatmap(): Promise<TimeHeatmap> {
 
   const buckets = new Map<string, { scores: number[]; viral: number }>();
   let totalPosts = 0;
-  for (const p of data ?? []) {
-    const at = p.posted_at as string | null;
+  for (const p of (data ?? []) as unknown as Array<
+    { posted_at: string | null; viral_score: number | null } & ClassificationRow
+  >) {
+    const at = p.posted_at;
     if (!at) continue;
     const dh = etDayHour(at);
     if (!dh) continue;
@@ -142,7 +171,7 @@ export async function fetchTimeHeatmap(): Promise<TimeHeatmap> {
     const key = `${dh.day}:${dh.hour}`;
     const b = buckets.get(key) ?? { scores: [], viral: 0 };
     b.scores.push(Number(p.viral_score ?? 0));
-    if (p.is_viral) b.viral += 1;
+    if (isViralForWorkspace(p)) b.viral += 1;
     buckets.set(key, b);
   }
 
@@ -180,10 +209,13 @@ export type NicheRow = {
  * a "which spaces are hot" overview across everything the workspace tracks.
  */
 export async function fetchNicheScoreboard(): Promise<NicheRow[]> {
-  const { sb, idFilter } = await scopedIds();
+  const { sb, idFilter, workspaceId } = await scopedIds();
+  // Reads viral status via THIS workspace's per-workspace classification
+  // (backlog #153), never the global posts.is_viral column.
   const { data, error } = await sb.raw
     .from("posts")
-    .select("viral_score, is_viral, account_id, accounts!inner(niche)")
+    .select("viral_score, account_id, accounts!inner(niche), workspace_post_classification(is_viral)")
+    .eq("workspace_post_classification.workspace_id", workspaceId)
     .in("account_id", idFilter)
     .limit(FETCH_CAP);
   if (error) throw new Error(`Failed to load niche scoreboard: ${error.message}`);
@@ -192,13 +224,19 @@ export async function fetchNicheScoreboard(): Promise<NicheRow[]> {
     string,
     { scores: number[]; viral: number; creators: Set<string> }
   >();
-  for (const p of data ?? []) {
+  for (const p of (data ?? []) as unknown as Array<
+    {
+      viral_score: number | null;
+      account_id: string;
+      accounts: { niche?: string | null } | { niche?: string | null }[] | null;
+    } & ClassificationRow
+  >) {
     const acc = Array.isArray(p.accounts) ? p.accounts[0] ?? null : p.accounts;
-    const niche = ((acc as { niche?: string | null } | null)?.niche ?? "").trim() || "Uncategorized";
+    const niche = (acc?.niche ?? "").trim() || "Uncategorized";
     const b = buckets.get(niche) ?? { scores: [], viral: 0, creators: new Set<string>() };
     b.scores.push(Number(p.viral_score ?? 0));
-    if (p.is_viral) b.viral += 1;
-    b.creators.add(p.account_id as string);
+    if (isViralForWorkspace(p)) b.viral += 1;
+    b.creators.add(p.account_id);
     buckets.set(niche, b);
   }
 

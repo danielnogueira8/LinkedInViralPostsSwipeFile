@@ -126,17 +126,28 @@ export function normalizeToolCallArguments(name: string, raw: string): string {
 //   is_viral — every query filters is_viral=true, so it's a constant → no signal.
 // Keeps text + engagement + author name/niche + post_url/id (for citing). This
 // is the same "stop shipping fields the model never consumes" cut as #437.
+// workspace_post_classification!inner(is_viral) is embedded (not filtered on
+// posts.is_viral, the GLOBAL column two workspaces tracking the same creator
+// would otherwise share — see backlog #153 / migration-075) and filtered in
+// each query via .eq("workspace_post_classification.workspace_id", workspaceId)
+// .eq("workspace_post_classification.is_viral", true). normalizeEmbed strips
+// the join wrapper before the row reaches the model.
 const POST_COLS =
-  "id, text, post_url, posted_at, reactions, comments, reposts, media_type, post_type, accounts!inner(name, niche)";
+  "id, text, post_url, posted_at, reactions, comments, reposts, media_type, post_type, accounts!inner(name, niche), workspace_post_classification!inner(is_viral)";
 
 
 // Sentinel UUID that matches no rows, used so an `.in("account_id", [])` never
 // degenerates into "no filter" (which would leak other workspaces' posts).
 const NO_ROWS_SENTINEL = "00000000-0000-0000-0000-000000000000";
 
-function normalizeEmbed<T extends { accounts: unknown }>(p: T) {
+// Drops the workspace_post_classification join wrapper entirely (it's a query
+// filter, not a field the model needs) and unwraps the accounts embed.
+function normalizeEmbed<
+  T extends { accounts: unknown; workspace_post_classification?: unknown },
+>(p: T) {
+  const { workspace_post_classification: _wpc, ...rest } = p;
   return {
-    ...p,
+    ...rest,
     accounts: Array.isArray(p.accounts) ? (p.accounts[0] ?? null) : p.accounts,
   };
 }
@@ -249,7 +260,8 @@ const searchViralPosts: ToolFn = async (args, workspaceId, signal) => {
       .from("posts")
       .select(POST_COLS)
       .in("account_id", accountIds.length ? accountIds : [NO_ROWS_SENTINEL])
-      .eq("is_viral", true)
+      .eq("workspace_post_classification.workspace_id", workspaceId)
+      .eq("workspace_post_classification.is_viral", true)
       .is("accounts.archived_at", null)
       .order(sortCol, { ascending, nullsFirst: false })
       .limit(fetchLimit);
@@ -619,7 +631,8 @@ const getTopFromBatch: ToolFn = async (args, workspaceId) => {
       .from("posts")
       .select(POST_COLS)
       .in("account_id", accountIds)
-      .eq("is_viral", true)
+      .eq("workspace_post_classification.workspace_id", workspaceId)
+      .eq("workspace_post_classification.is_viral", true)
       .is("accounts.archived_at", null)
       .gte("posted_at", sinceIso)
       .order("reactions", { ascending: false, nullsFirst: false })
