@@ -200,6 +200,7 @@ function creatorStyleJob(overrides: Record<string, unknown> = {}) {
       profileId: "style-1",
       sourceAccountId: "account-1",
       savedPostIds: null,
+      runToken: "2026-01-01T00:00:00.000Z",
     },
     ...overrides,
   });
@@ -518,6 +519,7 @@ describe("background weekly batch worker", () => {
       profileId: "style-1",
       sourceAccountId: "account-1",
       savedPostIds: null,
+      runToken: "2026-01-01T00:00:00.000Z",
     });
     expect(mocks.markJobDone).toHaveBeenCalledWith(
       expect.objectContaining({ id: "style-job-1", locked_by: "worker-1" }),

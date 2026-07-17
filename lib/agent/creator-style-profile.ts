@@ -334,17 +334,29 @@ export async function runCreatorStyleGeneration(opts: {
   profileId: string;
   sourceAccountId?: string | null;
   savedPostIds?: string[] | null;
+  // The generating_started_at value stamped when THIS run was claimed. Every
+  // write below is conditioned on it (mirrors runVoiceGeneration's runToken
+  // pattern) so a run that stale-recovery already declared dead can't clobber
+  // a newer run's result if it finishes late. null only for jobs enqueued
+  // before this field existed (no guard, best-effort during rollout).
+  runToken?: string | null;
 }): Promise<void> {
   const sb = supabaseAdmin();
   const patchRow = async (patch: Record<string, unknown>) => {
-    const { error } = await sb
+    let query = sb
       .from("creator_style_profiles")
       .update({ ...patch, updated_at: new Date().toISOString() })
       .eq("id", opts.profileId)
       .eq("workspace_id", opts.workspaceId);
+    if (opts.runToken) query = query.eq("generating_started_at", opts.runToken);
+    const { data, error } = await query.select("id");
     if (error) {
       console.warn(
         `creator-style patchRow failed for ${opts.profileId}: ${error.message}`,
+      );
+    } else if (opts.runToken && (!data || data.length === 0)) {
+      console.warn(
+        `creator-style stale run result dropped (superseded) for ${opts.profileId}`,
       );
     }
   };
@@ -354,12 +366,10 @@ export async function runCreatorStyleGeneration(opts: {
   const fail = (message: string) =>
     patchRow({ status: "failed", error: message, generating_started_at: null });
   try {
-    // Stamp the run start so a run that dies mid-flight (this job's function
-    // gets torn down) is recoverable as stale rather than stuck forever. The
-    // create route flips the row to 'generating' but doesn't set this; the
-    // regenerate route sets it too — stamping here covers both entry points.
-    await patchRow({ generating_started_at: new Date().toISOString() });
-
+    // Both entry points (create + regenerate) already stamp
+    // generating_started_at with opts.runToken when they claim the row —
+    // re-stamping it here would break the CAS guard on every write below by
+    // changing the value they're conditioned on.
     const posts = await fetchStyleSourcePosts({
       workspaceId: opts.workspaceId,
       sourceAccountId: opts.sourceAccountId,
