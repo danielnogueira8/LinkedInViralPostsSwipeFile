@@ -13,7 +13,8 @@ Convention: `[ ]` pending · `[~]` PR open, not merged · `[x]` merged. PR numbe
 - [x] **Empty creator-style model output can become "ready"** — PR [#1179](https://github.com/danielnogueira8/LinkedInViralPostsSwipeFile/pull/1179). `isUsableCreatorStyleProfile` semantic gate + one bounded retry before failing the row.
 - [x] **Creator-style description mixes user content with system warnings** — PR [#1180](https://github.com/danielnogueira8/LinkedInViralPostsSwipeFile/pull/1180). `creatorStyleQualityWarning(sampleCount)` derives the low-sample notice at read time instead of overwriting the user's own `description`.
 - [x] **Malformed interview output saved as success, UI has no recovery** — PR [#1181](https://github.com/danielnogueira8/LinkedInViralPostsSwipeFile/pull/1181). `synthesizeInterviewContext` retries once then throws instead of silently returning empty context; "Edit answers" button always reachable.
-- [~] **Concurrent template creation can exceed 100-template cap** — PR [#1182](https://github.com/danielnogueira8/LinkedInViralPostsSwipeFile/pull/1182). `claim_content_template_slot` RPC (migration-100, needs to be run in Supabase) closes the count-then-insert TOCTOU race via a per-workspace advisory lock. Same race still open for categories/skills — separate follow-ups.
+- [x] **Concurrent template creation can exceed 100-template cap** — PR [#1182](https://github.com/danielnogueira8/LinkedInViralPostsSwipeFile/pull/1182). `claim_content_template_slot` RPC (migration-100, user ran it in Supabase) closes the count-then-insert TOCTOU race via a per-workspace advisory lock. Same race still open for categories/skills — separate follow-ups (see below).
+- [~] **Model attribution logs requested alias, not actual response.model** — PR [#1183](https://github.com/danielnogueira8/LinkedInViralPostsSwipeFile/pull/1183). `providerModelAttribution` wired into 15 call sites (9 `runCoworkAdapterAttempt` + 6 direct `completeChat`) so `usage_events` and telemetry log what OpenRouter actually served, not the requested constant. 3 sites need a follow-up (see below: weekly.ts, run.ts streaming, embedText/generateImage).
 
 ---
 
@@ -38,7 +39,6 @@ Convention: `[ ]` pending · `[~]` PR open, not merged · `[x]` merged. PR numbe
 
 - [ ] **Weekly rewrites not revalidated after transformation** — sameness repairs can produce content outside the 120-3200 char contract. Fix: run the canonical finalizer after every rewrite.
 - [ ] **Supabase `{error}` results silently treated as success** — several critical ops only catch thrown exceptions; weekly queue failure can leave an orphan chat. Fix: centralize DB calls behind repositories that unwrap `{data,error}`; transaction/RPC for weekly run+chat+opening message+job creation.
-- [ ] **Model attribution logs requested alias, not response.model** — weekly/voice/creator-style/interview/lead-magnet paths often log the requested alias. Fix: record requested AND provider-reported model through one attribution seam.
 - [ ] **Lead-magnet sanitization corrupts Markdown code blocks** — global whitespace cleanup changes Python/YAML indentation, tables, literal content. Fix: normalize prose through a Markdown AST, preserve fenced/inline code, tables, URLs byte-for-byte.
 - [ ] **Below-contract lead magnets shown without warning** — backend stores `review_suggested` but UI doesn't display it. Fix: fail closed until minimum assessment passes, or show a prominent "Needs review" state.
 - [ ] **Pattern-brief cron uncheckpointed, no cost reservation** — all-workspaces cron can exceed deadline; one persistence error can abort later workspaces. Fix: one idempotent job per workspace, provider/cost locks, cursor state, isolated persistence outcomes.
@@ -57,6 +57,9 @@ Convention: `[ ]` pending · `[~]` PR open, not merged · `[x]` merged. PR numbe
   4. `VIDEO_MIME` accepts AVI for direct post attach but the library path rejects it — inconsistent, wasted publish retries (`post-media.ts:22` vs `media-library.ts:46`).
   5. Media re-persist write (`draft-publishing.ts:416-423`) isn't CAS-guarded on `schedule_status`, unlike every other terminal write in that function.
 - [ ] **accounts.updateAccount unscoped write depends entirely on app-layer ownership check** — `lib/tracked-creators-supabase.ts:184-193` has no `.eq(manual_owner_workspace_id)` in the SQL; safe today only because the one caller (`lib/tracked-creators.ts:495`) gates first. Fix: add the `.eq` guard directly to `updateAccount` for defense-in-depth.
+- [ ] **Model-attribution follow-up: `lib/batch/weekly.ts` `generateDraftBody`** — its return type doesn't carry `model` at all; needs threading through before it can log the served model instead of the requested alias.
+- [ ] **Model-attribution follow-up: `lib/agent/run.ts` `streamChat()` multi-round loop** — `StreamDelta` has no `model` field, and a single turn can span multiple rounds/models. Needs a design call (which round's model to log), not a blind swap like PR #1183's other sites.
+- [ ] **Model-attribution follow-up: `lib/openrouter.ts` `embedText()`/`generateImage()`** — their raw provider responses never parse a served-model field at all, so only the requested alias is knowable today.
 
 ## Meta
 
