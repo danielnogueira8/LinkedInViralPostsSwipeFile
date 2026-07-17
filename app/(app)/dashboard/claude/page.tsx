@@ -21,7 +21,9 @@ import { requireWorkspaceId } from "@/lib/workspace";
 import { PUBLIC_MCP_TOOLS } from "@/lib/mcp/public-tools";
 import { SWIPEIN_MCP_INSTRUCTIONS } from "@/lib/mcp/llms-instructions";
 
-const CONNECTOR_URL_BASE = "https://tryswipein.com/api/mcp";
+// The apex domain 307-redirects to www; MCP clients don't follow redirects on
+// the initialize POST, so the connector URL must be the canonical www host.
+const CONNECTOR_URL_BASE = "https://www.tryswipein.com/api/mcp";
 
 const SETUP_STEPS: { title: string; body: React.ReactNode }[] = [
   {
