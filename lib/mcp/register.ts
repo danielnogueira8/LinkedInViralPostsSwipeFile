@@ -22,6 +22,7 @@ import { createSupabaseDraftLifecycleRepository } from "@/lib/draft-lifecycle-su
 import {
   errorContent,
   jsonContent,
+  notFoundContent,
   parseDayEnd,
   parseDayStart,
   sinceCutoff,
@@ -235,7 +236,7 @@ export function registerSwipeTools(server: McpServer) {
         const workspaceId = workspaceFromExtra(extra);
         if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
         const accountIds = await trackedAccountIds(workspaceId);
-        if (accountIds.length === 0) return errorContent(`No post found with id ${id}`);
+        if (accountIds.length === 0) return notFoundContent("Post", id);
 
         const sb = supabaseAdmin();
         const { data, error } = await sb
@@ -244,8 +245,8 @@ export function registerSwipeTools(server: McpServer) {
           .eq("id", id)
           .in("account_id", accountIds)
           .maybeSingle();
-        if (error) return errorContent(error.message);
-        if (!data) return errorContent(`No post found with id ${id}`);
+        if (error) return notFoundContent("Post", id);
+        if (!data) return notFoundContent("Post", id);
         return jsonContent({ ok: true, post: normalizeEmbed(data) });
       } catch (e) {
         return errorContent((e as Error).message);
@@ -397,12 +398,16 @@ export function registerSwipeTools(server: McpServer) {
       try {
         const workspaceId = workspaceFromExtra(extra);
         if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
-        const rows = await trackedCreatorsForWorkspace(workspaceId).list({
+        const creators = trackedCreatorsForWorkspace(workspaceId);
+        const filters = {
           niche: args.niche,
           search: args.search,
           includeArchived: args.include_archived,
-          limit: args.limit,
-        });
+        };
+        const [rows, total] = await Promise.all([
+          creators.list({ ...filters, limit: args.limit }),
+          creators.listTotal(filters),
+        ]);
         const accounts = rows.map((account) => ({
           id: account.id,
           name: account.name,
@@ -416,7 +421,10 @@ export function registerSwipeTools(server: McpServer) {
           effective_niche: account.effectiveNiche,
           tracked_at: account.trackedAt,
         }));
-        return jsonContent({ ok: true, count: accounts.length, accounts });
+        // count = rows returned this page; total = rows matching the same
+        // filters overall — so a caller can tell "50 of 132" apart from
+        // "that's everything" instead of count implying completeness.
+        return jsonContent({ ok: true, count: accounts.length, total, accounts });
       } catch (e) {
         return trackedCreatorFailure(e);
       }
@@ -790,7 +798,7 @@ export function registerSwipeTools(server: McpServer) {
           .string()
           .optional()
           .describe(
-            "Optional niche tag — one of the curated category ids (e.g. 'linkedin', 'ai', 'outreach'). Invalid values are silently dropped.",
+            "Optional niche tag — one of the curated category ids (e.g. 'linkedin-content', 'ai', 'outreach'; call list_categories for the full, current list). An unrecognized id is dropped rather than failing the save — the response's category_warning field says so when that happens.",
           ),
       },
     },
@@ -826,13 +834,19 @@ export function registerSwipeTools(server: McpServer) {
         // Validate the optional category against the categories this workspace
         // may use (curated globals + its own custom ones). FK violation here
         // would crash the save with a 23503 instead of a helpful "invalid
-        // category" message, so we drop unknown/foreign values silently — the
-        // user's note still gets persisted.
+        // category" message, so we drop unknown/foreign values rather than
+        // failing the save — but never SILENTLY: category_warning tells the
+        // caller their tag didn't stick, instead of them assuming it did.
         let categoryId: string | null = null;
+        let categoryWarning: string | null = null;
         const rawCategory = args.category?.trim();
         if (rawCategory) {
           const catResult = await validateCategoryId(sb, rawCategory, workspaceId);
-          categoryId = catResult.ok ? catResult.categoryId : null;
+          if (catResult.ok) {
+            categoryId = catResult.categoryId;
+          } else {
+            categoryWarning = `"${rawCategory}" isn't a category this workspace can use — saved without a category. Call list_categories for valid ids.`;
+          }
         }
 
         const [oembed, probedUrn] = await Promise.all([
@@ -892,7 +906,12 @@ export function registerSwipeTools(server: McpServer) {
           return errorContent(error?.message ?? "insert failed");
         }
 
-        return jsonContent({ ok: true, alreadySaved: false, saved: inserted });
+        return jsonContent({
+          ok: true,
+          alreadySaved: false,
+          saved: inserted,
+          ...(categoryWarning ? { category_warning: categoryWarning } : {}),
+        });
       } catch (e) {
         return errorContent((e as Error).message);
       }

@@ -62,6 +62,33 @@ function accountPatch(
   return row;
 }
 
+// Shared between list() and listTotal() so a total is always computed under
+// the SAME filters a page was drawn from, never silently drifting apart.
+function applyListFilters<
+  Q extends {
+    is: (col: string, val: null) => Q;
+    or: (filter: string, opts?: { foreignTable: string }) => Q;
+  },
+>(
+  query: Q,
+  input: { niche?: string; search?: string; includeArchived?: boolean },
+): Q {
+  let q = query;
+  if (!input.includeArchived) q = q.is("accounts.archived_at", null);
+  if (input.niche) {
+    q = q.or(
+      `niche.eq.${input.niche},and(niche.is.null,accounts.niche.eq.${input.niche})`,
+    );
+  }
+  if (input.search) {
+    const search = input.search.replace(/[%_]/g, "");
+    q = q.or(`name.ilike.%${search}%,linkedin_handle.ilike.%${search}%`, {
+      foreignTable: "accounts",
+    });
+  }
+  return q;
+}
+
 export function createSupabaseTrackedCreatorsRepository(
   db: SupabaseClient,
   workspaceId: string,
@@ -297,20 +324,7 @@ export function createSupabaseTrackedCreatorsRepository(
         .eq("workspace_id", workspaceId)
         .order("name", { foreignTable: "accounts", ascending: true })
         .limit(input.limit ?? 50);
-      if (!input.includeArchived)
-        query = query.is("accounts.archived_at", null);
-      if (input.niche) {
-        query = query.or(
-          `niche.eq.${input.niche},and(niche.is.null,accounts.niche.eq.${input.niche})`,
-        );
-      }
-      if (input.search) {
-        const search = input.search.replace(/[%_]/g, "");
-        query = query.or(
-          `name.ilike.%${search}%,linkedin_handle.ilike.%${search}%`,
-          { foreignTable: "accounts" },
-        );
-      }
+      query = applyListFilters(query, input);
       const { data, error } = await query;
       if (error) throw error;
       return (
@@ -333,6 +347,23 @@ export function createSupabaseTrackedCreatorsRepository(
             ]
           : [];
       });
+    },
+
+    // Same filters as list(), but a head-only exact count query instead of a
+    // limited row fetch — so a caller can show "N of TOTAL" without list()
+    // itself needing to return every row to compute a total.
+    async listTotal(input = {}) {
+      let query = db
+        .from("workspace_accounts")
+        .select(`niche, accounts!inner(${ACCOUNT_COLUMNS})`, {
+          count: "exact",
+          head: true,
+        })
+        .eq("workspace_id", workspaceId);
+      query = applyListFilters(query, input);
+      const { count, error } = await query;
+      if (error) throw error;
+      return count ?? 0;
     },
   };
 }
