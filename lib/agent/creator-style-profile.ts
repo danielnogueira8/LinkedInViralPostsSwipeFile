@@ -10,6 +10,7 @@ import { runProfileHistory } from "@/lib/apify";
 import { INJECTION_GUARD, wrapUntrustedXml } from "@/lib/agent/untrusted";
 import {
   sanitizeCreatorStyleProfile,
+  isUsableCreatorStyleProfile,
   buildStylePromptBlock,
   type CreatorStyleProfile,
   STYLE_SOURCE_MAX,
@@ -278,14 +279,29 @@ export async function generateCreatorStyleProfile(opts: {
     if (res.finishReason === "length") {
       throw new Error("Creator style synthesis was truncated (hit the output limit).");
     }
-    if (res.toolArgs) return sanitizeCreatorStyleProfile(res.toolArgs);
-    throw new Error("Creator style synthesis returned no usable result.");
+    if (!res.toolArgs) {
+      throw new Error("Creator style synthesis returned no usable result.");
+    }
+    const profile = sanitizeCreatorStyleProfile(res.toolArgs);
+    // sanitizeCreatorStyleProfile is a pure coercion — it happily turns an
+    // empty/near-empty tool payload ({}) into a fully-shaped-but-blank
+    // profile instead of throwing. Gate on SEMANTIC usability here so a blank
+    // profile doesn't sail through and get persisted as a ready style with
+    // nothing for buildStylePromptBlock to inject beyond the fixed
+    // anti-copying footer.
+    if (!isUsableCreatorStyleProfile(profile)) {
+      throw new Error("Creator style synthesis returned no usable result.");
+    }
+    return profile;
   };
 
   try {
     return await attempt();
   } catch (e) {
-    // One retry — a truncated/empty forced-tool call is usually transient.
+    // One bounded retry — a truncated/empty/unusable forced-tool call is
+    // usually transient. A second unusable result is treated as a genuine
+    // failure (runCreatorStyleGeneration's caller marks the row 'failed'),
+    // not retried again.
     if (/truncated|no usable/i.test((e as Error).message)) {
       return await attempt();
     }

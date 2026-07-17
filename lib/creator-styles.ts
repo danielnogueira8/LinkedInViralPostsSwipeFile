@@ -196,6 +196,29 @@ export function sanitizeCreatorStyleProfile(input: unknown): CreatorStyleProfile
   };
 }
 
+// sanitizeCreatorStyleProfile is a PURE, non-throwing coercion — it must
+// always return a fully-shaped object (existing rows read through it too), so
+// {} in is {summary:"", voice_traits:[], ...} out, never a throw. That means
+// a model call that returns an empty/near-empty tool payload sails through
+// sanitization looking "valid" and can be persisted as a ready style with
+// nothing useful in it. This is the SEMANTIC gate the generation call site
+// applies on top: a usable profile needs a real summary plus at least one
+// concrete mechanic (a hook, a structure, or a few voice traits/formatting/
+// rhythm/CTA rules) — otherwise there's nothing for buildStylePromptBlock to
+// inject beyond the fixed anti-copying footer.
+const MIN_USABLE_MECHANICS = 2;
+export function isUsableCreatorStyleProfile(profile: CreatorStyleProfile): boolean {
+  if (!profile.summary || profile.summary.trim().length < 10) return false;
+  const mechanicsCount =
+    profile.voice_traits.length +
+    profile.hook_patterns.length +
+    profile.structure_patterns.length +
+    profile.formatting_rules.length +
+    profile.rhythm_rules.length +
+    profile.cta_patterns.length;
+  return mechanicsCount >= MIN_USABLE_MECHANICS;
+}
+
 // ---------------------------------------------------------------------------
 // Prompt block — distills profile_json into the concise, directly-injectable
 // Cowork block (mechanics + anti-copying guardrails). NO example bodies. Bounded
