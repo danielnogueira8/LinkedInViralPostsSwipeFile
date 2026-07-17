@@ -6,13 +6,20 @@ import type { scopedSupabase } from "@/lib/supabase-scoped";
 // same style. The first generate (no generated_at yet) is always allowed.
 export const STYLE_REGEN_COOLDOWN_MS = 30 * 24 * 60 * 60 * 1000;
 
-// A 'generating' run is kicked off in after() and can be torn down mid-flight
-// (the tab closed, the function timed out) before it flips the row to
-// ready/failed — leaving the card stuck "Distilling…" forever. Any read path
-// recovers a run whose generating_started_at is older than this ceiling. Sits
-// well past the route's 300s cap (plus cold-start + slow-LinkedIn headroom) so a
-// legitimately in-flight run is never killed.
-export const STYLE_STALE_GENERATING_MS = 8 * 60 * 1000;
+// Generation runs as a background job (runCreatorStyleGeneration via
+// lib/background-job-worker.ts), not synchronously in the request — it can be
+// torn down mid-flight before it flips the row to ready/failed, leaving the
+// card stuck "Distilling…" forever. Any read path recovers a run whose
+// generating_started_at is older than this ceiling. The worker's lease/
+// provider-lock TTL is DEFAULT_STALE_AFTER_SECS/DEFAULT_PROVIDER_LOCK_TTL_SECS
+// = 15 minutes (lib/background-jobs.ts), and a capacity-contention requeue
+// resets that clock again without failing the job — a window shorter than the
+// worker's own lease declares a still-legitimately-running job "failed",
+// triggering a premature regenerate that enqueues a SECOND job while the
+// first is still executing (real duplicate Apify+LLM spend). 20 minutes
+// matches the same safety margin lib/scrape-jobs.ts uses over its own
+// 15-minute-lease analog (SCRAPE_ACTIVE_WINDOW_MS).
+export const STYLE_STALE_GENERATING_MS = 20 * 60 * 1000;
 
 export const STYLE_STALE_GENERATING_MESSAGE =
   "Generation was interrupted (the tab may have closed or the run timed out). Please try again.";

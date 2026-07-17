@@ -1,17 +1,19 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-// A voice generation run is synchronous and capped at the route's maxDuration
-// (120s). The row is written `pending` up front (with `pending_started_at`),
-// then the scrape + synthesis run inline. If the user hard-navigates, reloads,
-// or closes the tab mid-run, the request is aborted and the serverless function
-// torn down before it can flip the row to `ready`/`failed` — leaving it stuck
-// `pending` forever, which the Voice tab renders as an eternal "Analyzing…"
-// spinner with no escape.
-//
-// The staleness ceiling sits well past the 120s cap (cold starts, slow
-// LinkedIn) so we never kill a legitimately in-flight run, while still
-// recovering a genuinely dead one promptly.
-export const STALE_PENDING_MS = 5 * 60 * 1000;
+// Generation now runs as a background job (runVoiceGenerationBackgroundJob,
+// lib/background-job-worker.ts), not the old synchronous route this constant
+// was originally sized for (120s maxDuration). The worker's lease/provider-lock
+// TTL is DEFAULT_STALE_AFTER_SECS/DEFAULT_PROVIDER_LOCK_TTL_SECS = 15 minutes
+// (lib/background-jobs.ts) — a job can legitimately still be `running` up to
+// that long, and a capacity-contention requeue (Apify/OpenRouter provider
+// locks full) resets the clock again without failing the job. A read-path
+// staleness window shorter than the worker's own lease would declare a still-
+// legitimately-running worker "failed", triggering a premature user retry that
+// enqueues a SECOND job while the first is still executing — real duplicate
+// Apify/OpenRouter spend, not just a false "failed" reading. 20 minutes matches
+// the same safety margin lib/scrape-jobs.ts uses over its own 15-minute-lease
+// analog (SCRAPE_ACTIVE_WINDOW_MS).
+export const STALE_PENDING_MS = 20 * 60 * 1000;
 
 // The friendly, retryable message a recovered row carries. Shown in the "failed"
 // card so the user knows what happened and that retrying is safe.
