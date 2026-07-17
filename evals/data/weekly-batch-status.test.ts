@@ -13,13 +13,25 @@ const dbRef: { current: FakeDb } = { current: makeFakeSupabase({}) };
 vi.mock("@/lib/supabase", () => ({ supabaseAdmin: () => dbRef.current.client }));
 
 // completeChat + usage stubbed (this file is about run-state, not generation).
-const chatQueue: Array<{ text?: string; finishReason?: string }> = [];
+const chatQueue: Array<{ text?: string; finishReason?: string; model?: string }> = [];
 const providerConcurrency = { delayMs: 0, active: 0, peak: 0 };
+// Captures every logOpenRouterUsage call so the model-attribution test below
+// can assert what model string actually got logged (not just that a call
+// happened — the other tests in this file don't care and use the no-op).
+const usageLogCalls: Array<{ label: string; model: string; metadata?: unknown }> = [];
 vi.mock("@/lib/openrouter", async (orig) => {
   const actual = await orig<typeof import("@/lib/openrouter")>();
   return {
     ...actual,
-    logOpenRouterUsage: async () => undefined,
+    logOpenRouterUsage: async (
+      label: string,
+      model: string,
+      _usage: unknown,
+      _workspaceId: unknown,
+      metadata?: unknown,
+    ) => {
+      usageLogCalls.push({ label, model, metadata });
+    },
     completeChat: async (opts: { messages?: Array<{ content?: string }> }) => {
       providerConcurrency.active += 1;
       providerConcurrency.peak = Math.max(providerConcurrency.peak, providerConcurrency.active);
@@ -29,13 +41,25 @@ vi.mock("@/lib/openrouter", async (orig) => {
         }
         const next = chatQueue.shift();
         if (next) {
-          return { text: next.text ?? "A".repeat(300), toolArgs: null, finishReason: next.finishReason ?? "stop", usage: { prompt_tokens: 10, completion_tokens: 10 } };
+          return {
+            text: next.text ?? "A".repeat(300),
+            toolArgs: null,
+            finishReason: next.finishReason ?? "stop",
+            usage: { prompt_tokens: 10, completion_tokens: 10 },
+            model: next.model ?? "z-ai/glm-5.2",
+          };
         }
         const transcript = (opts.messages ?? []).map((m) => m.content ?? "").join("\n");
         const text = transcript.includes("UNADAPTABLE_SOURCE")
           ? "no"
           : `${"A".repeat(300)} checklist prompt story created generated profile banner pack body`;
-        return { text, toolArgs: null, finishReason: "stop", usage: { prompt_tokens: 10, completion_tokens: 10 } };
+        return {
+          text,
+          toolArgs: null,
+          finishReason: "stop",
+          usage: { prompt_tokens: 10, completion_tokens: 10 },
+          model: "z-ai/glm-5.2",
+        };
       } finally {
         providerConcurrency.active -= 1;
       }
@@ -116,6 +140,7 @@ beforeEach(() => {
   providerConcurrency.delayMs = 0;
   providerConcurrency.active = 0;
   providerConcurrency.peak = 0;
+  usageLogCalls.length = 0;
 });
 
 describe("WeeklyBatch.run — progress publishing", () => {
@@ -165,6 +190,32 @@ describe("WeeklyBatch.run — progress publishing", () => {
     const statuses = updates.map((u) => (u.args[0] as { status?: string }).status);
     expect(statuses).toContain("drafting");
     expect(statuses).toContain("filed");
+  });
+
+  test("logs the provider-served model, not the requested CHAT_MODEL alias", async () => {
+    // Regression: generateDraftBody used to log the requested alias regardless
+    // of what OpenRouter actually served (weekly.ts model-attribution follow-up).
+    dbRef.current = makeFakeSupabase({
+      chat_artifacts: { single: { id: "d1", title: "t", body: "b" } },
+    });
+    toolRef.current = (name, args) => {
+      const a = args as { post_type?: string };
+      if (a.post_type === "lead_magnet") return { ok: true, posts: [] };
+      return { ok: true, posts: [{ id: "r1", text: "fresh source post text here", post_url: null, post_type: "regular" }] };
+    };
+    // The mocked completeChat above returns model: "z-ai/glm-5.2" by default —
+    // deliberately different from CHAT_MODEL's real default so a fallback to
+    // the requested alias would be caught.
+    chatQueue.push({ model: "z-ai/glm-5.2-served-variant" });
+    await weeklyBatch.run({
+      workspaceId: "ws", batchId: "b1", nowIso: "2026-07-02T00:00:00.000Z", runId: "run-1",
+    });
+    const draftCall = usageLogCalls.find((c) => c.label === "weekly_batch_draft");
+    expect(draftCall).toBeDefined();
+    expect(draftCall?.model).toBe("z-ai/glm-5.2-served-variant");
+    expect(draftCall?.metadata).toMatchObject({
+      requested_model: expect.any(String),
+    });
   });
 
   test("caps real provider fanout at four while filing every source", async () => {
