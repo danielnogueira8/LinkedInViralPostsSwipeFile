@@ -81,13 +81,49 @@ describe("WeeklyBatch", () => {
     expect(deps.claim).not.toHaveBeenCalled();
   });
 
-  it("normalizes a claim conflict to the same in-flight outcome", async () => {
+  it("normalizes a claim conflict to the same in-flight outcome when the run is genuinely fresh", async () => {
+    // latest() runs its own stale check and does NOT flip a fresh row, so the
+    // retried claim conflicts again — a real overlap stays correctly blocked.
     const deps = dependencies({
       claim: vi.fn(async () => ({ ok: false as const, conflict: true, error: new Error("duplicate") })),
+      latest: vi.fn(async () => ({ id: "batch-0", status: "running" })) as never,
     });
     await expect(new WeeklyBatch(deps).start({ workspaceId: "ws-1", userId: "user-1" }))
       .resolves.toMatchObject({ ok: false, status: 409, reason: "in_flight" });
+    expect(deps.latest).toHaveBeenCalledTimes(1);
+    expect(deps.claim).toHaveBeenCalledTimes(2);
     expect(deps.enqueue).not.toHaveBeenCalled();
+  });
+
+  // Bug-hunt fix (task #185): batchInFlight() already agreed the prior run is
+  // stale (age > BATCH_RUN_STALE_MS), so the claim's 23505 conflict comes ONLY
+  // from the DB-level unique-active-run index still seeing a 'pending'/
+  // 'running' row that latestBatchRun (the status-poll path) hasn't flipped
+  // yet. A retry with no prior status GET in flight must not get stuck on 409s
+  // past the stale window — start() now calls latest() itself (which flips a
+  // stale row to 'failed') and retries the claim once before giving up.
+  it("recovers a stale-but-still-'pending' run on conflict and completes the start", async () => {
+    let claimAttempt = 0;
+    const deps = dependencies({
+      claim: vi.fn(async (_workspaceId, id) => {
+        claimAttempt++;
+        // First insert collides with the still-pending stale row (23505).
+        // Second attempt (after latest() flips it) succeeds.
+        return claimAttempt === 1
+          ? { ok: false as const, conflict: true, error: new Error("duplicate") }
+          : { ok: true as const, id };
+      }),
+      // Simulates latestBatchRun's own stale-flip side effect — the row is no
+      // longer 'pending'/'running' in the DB by the time the retry inserts.
+      latest: vi.fn(async () => ({ id: "batch-0", status: "failed" })) as never,
+    });
+    const outcome = await new WeeklyBatch(deps).start({ workspaceId: "ws-1", userId: "user-1" });
+
+    expect(outcome).toMatchObject({ ok: true, status: "queued", batchId: "batch-1" });
+    expect(deps.latest).toHaveBeenCalledTimes(1);
+    expect(deps.latest).toHaveBeenCalledWith("ws-1", expect.any(Number));
+    expect(deps.claim).toHaveBeenCalledTimes(2);
+    expect(deps.enqueue).toHaveBeenCalledOnce();
   });
 
   it("propagates a non-conflict claim failure", async () => {
