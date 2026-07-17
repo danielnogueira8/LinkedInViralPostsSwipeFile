@@ -36,9 +36,16 @@ describe("post media validation", () => {
     expect(classifyPostMedia("image/webp")).toBe("image");
     expect(classifyPostMedia("video/mp4")).toBe("video");
     expect(classifyPostMedia("video/quicktime")).toBe("video");
-    expect(classifyPostMedia("video/x-msvideo")).toBe("video");
     expect(classifyPostMedia("video/webm")).toBe("video");
     expect(classifyPostMedia("application/pdf")).toBe("document");
+  });
+
+  // REGRESSION: AVI used to be accepted here but rejected by
+  // validateLibraryMediaFile, so a direct-attach AVI could pass initial
+  // validation and only fail (or be silently rejected by LinkedIn) later,
+  // wasting a publish attempt. Rejected at the single source of truth now.
+  test("REGRESSION: AVI (video/x-msvideo) is rejected — LinkedIn's publish API doesn't support it", () => {
+    expect(classifyPostMedia("video/x-msvideo")).toBeNull();
   });
 
   test("rejects unsupported media types and empty files", () => {

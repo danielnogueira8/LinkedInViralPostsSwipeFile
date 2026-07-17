@@ -1,8 +1,17 @@
+const FENCE_RE = /^\s*(```|~~~)/;
+
 export function normalizeCollapsedMarkdownTables(markdown: string): string {
+  let inFence = false;
   return markdown
     .replace(/\r\n/g, "\n")
     .split("\n")
-    .map((line) => expandCollapsedTableLine(line))
+    .map((line) => {
+      if (FENCE_RE.test(line)) inFence = !inFence;
+      // Never rewrite a "table" line sitting inside a fenced code block —
+      // it's literal content (e.g. a markdown example in a code sample),
+      // not an actual table to normalize.
+      return inFence ? line : expandCollapsedTableLine(line);
+    })
     .join("\n");
 }
 

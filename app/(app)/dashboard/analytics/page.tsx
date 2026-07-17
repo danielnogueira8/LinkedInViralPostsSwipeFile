@@ -94,6 +94,7 @@ export default async function AnalyticsPage() {
     <PageShell>
       <PageHeader
         title="Analytics"
+        description="Track impressions, reach, and engagement for posts published through SwipeIn."
         meta={
           <SurfaceHelp title="LinkedIn performance of posts published through SwipeIn. Metrics come from your connected LinkedIn account (via Zernio) and refresh daily; posts published outside SwipeIn don't appear here." />
         }

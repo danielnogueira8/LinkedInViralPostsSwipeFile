@@ -346,6 +346,10 @@ async function runCreatorStyleBackgroundJob(job: BackgroundJob): Promise<{
   const savedPostIds = getStringArrayPayload(job, "savedPostIds", {
     optional: true,
   });
+  // Jobs enqueued before this field existed have no runToken — fall back to
+  // null, which runCreatorStyleGeneration treats as "no CAS guard" so those
+  // in-flight jobs still complete normally during the rollout.
+  const runToken = getStringPayload(job, "runToken", { optional: true });
 
   if (sourceAccountId) {
     const apifyLocked = await acquireProviderLock({
@@ -382,6 +386,7 @@ async function runCreatorStyleBackgroundJob(job: BackgroundJob): Promise<{
     profileId,
     sourceAccountId,
     savedPostIds,
+    runToken,
   });
   await markJobDone(
     job,

@@ -3,13 +3,13 @@ import { describe, expect, test } from "vitest";
 
 const migration = readFileSync(
   new URL(
-    "../../db/migration-098-gtm-outreach-category.sql",
+    "../../db/migration-103-gtm-outreach-category.sql",
     import.meta.url,
   ),
   "utf8",
 );
 
-describe("migration 098 GTM/Outreach catalog", () => {
+describe("migration 103 GTM/Outreach catalog", () => {
   test("renames the stable outreach category and synchronizes legacy niches", () => {
     expect(migration).toMatch(
       /update categories[\s\S]*label\s*=\s*'GTM\/Outreach'[\s\S]*id\s*=\s*'outreach'/i,
@@ -29,7 +29,7 @@ describe("migration 098 GTM/Outreach catalog", () => {
     expect(migration).toContain("on conflict ((lower(linkedin_handle)))");
   });
 
-  test("advances deployment readiness to schema version 98", () => {
-    expect(migration).toContain("values (true, 98, now())");
+  test("advances deployment readiness to schema version 103", () => {
+    expect(migration).toContain("values (true, 103, now())");
   });
 });

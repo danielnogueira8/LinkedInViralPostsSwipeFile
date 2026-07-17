@@ -1,6 +1,7 @@
 import { supabaseAdmin } from "@/lib/supabase";
 import { CHAT_MODEL, completeChat, logOpenRouterUsage } from "@/lib/openrouter";
 import { selectAllRows } from "@/lib/db-paginate";
+import { providerModelAttribution } from "@/lib/agent/cowork-adapter-attempt";
 
 // The weekly pattern-mining brief (viral-learning loop, PR 4). Once a week we
 // sample a workspace's VIRAL vs NON-VIRAL scraped posts and ask a strong model
@@ -134,9 +135,11 @@ export async function generatePatternBrief(
   // weekly cron) an unhandled throw here would reject the whole slice and drop
   // the other workspaces' briefs — violating this module's "never throws on one
   // workspace" contract. So swallow it (the brief itself already succeeded).
-  await logOpenRouterUsage("pattern_brief", PATTERN_MODEL, res.usage, workspaceId, {
+  const patternAttribution = providerModelAttribution(PATTERN_MODEL, res.model);
+  await logOpenRouterUsage("pattern_brief", patternAttribution.model, res.usage, workspaceId, {
     sample_viral: sample.viral.length,
     sample_mediocre: sample.mediocre.length,
+    ...patternAttribution.metadata,
   }).catch((e) => {
     console.warn(`pattern-brief usage-log failed for ${workspaceId}: ${(e as Error).message}`);
   });
@@ -216,19 +219,54 @@ export async function listWorkspacesWithTrackedAccounts(): Promise<string[]> {
   return [...new Set(rows.map((r) => r.workspace_id))];
 }
 
+// The route's maxDuration (300s). This module has no way to read that config
+// directly, so it's duplicated here as the wall-clock budget this function
+// self-stops against — see the deadline check below.
+const CRON_BUDGET_MS = 300_000;
+// Stop starting new workspace slices once this much of the budget remains.
+// Generous margin: one in-flight slice can itself take up to
+// PATTERN_TIMEOUT_MS (60s), and the route needs time left to respond after
+// this function returns.
+const CRON_DEADLINE_MARGIN_MS = 75_000;
+
 // The weekly cron body: regenerate the pattern brief for every workspace with
 // tracked accounts, bounded-concurrency. Per-workspace failures are swallowed
 // by generatePatternBrief (returns null), so one bad workspace never aborts the
-// run. Returns a summary for the cron log.
+// run. Self-stops before the route's maxDuration would kill it mid-flight
+// (rather than getting hard-killed with no summary logged) — any workspaces
+// left unprocessed are picked up on the NEXT weekly run, same as before this
+// change; there's no cursor, so a run that regularly runs out of time will
+// keep re-starting from the same DB-order front of the list. That's a real
+// but narrower gap than "one error aborts the rest" (already false — see
+// generatePatternBrief's per-workspace try/catch) and is logged explicitly
+// rather than left silent.
 export async function runWeeklyPatternBriefs(
-  opts: { concurrency?: number; signal?: AbortSignal } = {},
-): Promise<{ workspaces: number; generated: number; skipped: number }> {
+  opts: {
+    concurrency?: number;
+    signal?: AbortSignal;
+    // Testing/observability seam: override the wall-clock start the deadline
+    // check measures against. Defaults to now.
+    startedAt?: number;
+  } = {},
+): Promise<{ workspaces: number; generated: number; skipped: number; deadlineHit: boolean }> {
   const workspaces = await listWorkspacesWithTrackedAccounts();
   const concurrency = opts.concurrency ?? 4;
+  const startedAt = opts.startedAt ?? Date.now();
   let generated = 0;
   let skipped = 0;
+  let deadlineHit = false;
 
   for (let i = 0; i < workspaces.length; i += concurrency) {
+    if (Date.now() - startedAt > CRON_BUDGET_MS - CRON_DEADLINE_MARGIN_MS) {
+      deadlineHit = true;
+      const remaining = workspaces.length - i;
+      console.warn(
+        JSON.stringify({
+          pattern_briefs_deadline_hit: { processed: i, remaining, total: workspaces.length },
+        }),
+      );
+      break;
+    }
     const slice = workspaces.slice(i, i + concurrency);
     const results = await Promise.all(
       slice.map((ws) => generatePatternBrief(ws, { signal: opts.signal })),
@@ -238,5 +276,5 @@ export async function runWeeklyPatternBriefs(
       else skipped += 1;
     }
   }
-  return { workspaces: workspaces.length, generated, skipped };
+  return { workspaces: workspaces.length, generated, skipped, deadlineHit };
 }

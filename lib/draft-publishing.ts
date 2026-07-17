@@ -355,6 +355,24 @@ export async function publishDueDrafts(nowIso: string): Promise<{
       continue;
     }
 
+    // The schedule route's zod schema caps firstComment at LINKEDIN_MAX_CHARS
+    // when it's SET, but nothing re-checks it here — an edit made after
+    // scheduling (or a row from before that cap existed) could carry a
+    // longer value straight through to Zernio, wasting a publish attempt.
+    // Mirrors the body check above: re-validate the exact string being sent,
+    // not just trust the value already made it into the row.
+    if (
+      currentRow.first_comment &&
+      currentRow.first_comment.length > LINKEDIN_MAX_CHARS
+    ) {
+      await failRow(
+        currentRow,
+        `This post's first comment is over LinkedIn's ${LINKEDIN_MAX_CHARS.toLocaleString("en-US")} character limit. Trim it, then reschedule.`,
+      );
+      failed++;
+      continue;
+    }
+
     // ---- Resolve the workspace's connection (never client input).
     let conn: PublishingConnection | null;
     try {
@@ -418,7 +436,13 @@ export async function publishDueDrafts(nowIso: string): Promise<{
         .from("chat_artifacts")
         .update({ media_attachments: mediaAttachments })
         .eq("id", currentRow.id)
-        .eq("workspace_id", currentRow.workspace_id);
+        .eq("workspace_id", currentRow.workspace_id)
+        // CAS: only re-persist media if we still own the claim. Unlike the
+        // terminal writes below, a lost race here doesn't need special
+        // handling beyond skipping the write — the row already left our
+        // control (deleted, or swept stale), so writing media into it would
+        // resurrect state on a row this tick no longer owns.
+        .eq("schedule_status", "publishing");
       throwOnDbError(mediaPersistError);
     }
     const result = await createLinkedInPost({
@@ -494,10 +518,14 @@ export async function publishDueDrafts(nowIso: string): Promise<{
           );
         }
       }
-      // Duplicate (422) is permanent → fail now. Transient may retry next tick
-      // until the attempt cap.
+      // Duplicate (422) and billing (402, plan/quota limit) are permanent → fail
+      // now; retrying can't fix either. Transient may retry next tick until the
+      // attempt cap.
       const attempts = await bumpAttempts(currentRow);
-      const retryable = err.kind !== "duplicate" && attempts < MAX_PUBLISH_ATTEMPTS;
+      const retryable =
+        err.kind !== "duplicate" &&
+        err.kind !== "billing" &&
+        attempts < MAX_PUBLISH_ATTEMPTS;
       if (retryable) {
         // Back to 'scheduled' so a later tick retries; keep the error visible.
         const { error: retryPersistError } = await sb

@@ -70,6 +70,20 @@ describe("mapZernioError — classifies the recurring failures", () => {
     expect(mapZernioError(403, "token revoked").kind).toBe("token_expired");
   });
 
+  test("402 / plan-limit body → billing, PERMANENT (not a publish-retry)", () => {
+    // A real Zernio plan/quota/payment block. The old default branch mislabeled
+    // this as "Publishing failed (402). Please try again." — wrong on a connect
+    // action and wrong to suggest retrying a billing limit.
+    expect(mapZernioError(402, "").kind).toBe("billing");
+    expect(mapZernioError(403, "Payment required — plan limit reached").kind).toBe("billing");
+    expect(mapZernioError(400, "upgrade your plan to add more accounts").kind).toBe("billing");
+    expect(mapZernioError(400, "quota exceeded").kind).toBe("billing");
+    // Copy must NOT say "publishing" or "try again" (works for connect + publish).
+    const msg = mapZernioError(402, "").message;
+    expect(msg).not.toMatch(/publishing failed/i);
+    expect(msg).not.toMatch(/try again/i);
+  });
+
   test("'preflight' body → preflight", () => {
     expect(mapZernioError(400, "Publishing failed during preflight checks").kind).toBe("preflight");
   });
@@ -81,6 +95,26 @@ describe("mapZernioError — classifies the recurring failures", () => {
   test("a bare 5xx → transient; a bare non-duplicate 4xx → other", () => {
     expect(mapZernioError(503, "").kind).toBe("transient");
     expect(mapZernioError(418, "").kind).toBe("other");
+  });
+
+  test("context defaults to publish — bare 4xx copy is the publish wording", () => {
+    // The default arg keeps every existing caller byte-identical.
+    expect(mapZernioError(400, "").message).toMatch(/publishing failed \(400\)/i);
+    expect(mapZernioError(500, "max retries").message).toMatch(/publishing failed/i);
+  });
+
+  test("connect context — bare 4xx / retries copy says 'connect', never 'publishing'", () => {
+    // getConnectUrl passes "connect": a bare failure while STARTING OAuth must
+    // not surface the nonsensical "Publishing failed" toast on the Connect screen.
+    const bare = mapZernioError(400, "", "connect").message;
+    expect(bare).toMatch(/connect/i);
+    expect(bare).not.toMatch(/publish/i);
+    const retries = mapZernioError(500, "max retries reached", "connect").message;
+    expect(retries).toMatch(/connect/i);
+    expect(retries).not.toMatch(/publish/i);
+    // Kinds are unchanged by context — only the fallback copy differs.
+    expect(mapZernioError(400, "", "connect").kind).toBe("other");
+    expect(mapZernioError(500, "max retries reached", "connect").kind).toBe("transient");
   });
 });
 

@@ -1,6 +1,11 @@
 import { openRouterUsageCost, type Usage } from "@/lib/openrouter";
 import type { AgentEvent } from "@/lib/agent/contracts";
 import { recordCoworkRolloutHealth } from "@/lib/agent/cowork-rollout-health";
+import { costEquivalentCredits } from "@/lib/agent/rate-limit";
+import type {
+  CoworkTurnUsageWire,
+  CoworkUsageStageKind,
+} from "@/lib/cowork-turn-usage";
 
 export type CoworkRoute =
   | "setup"
@@ -38,6 +43,7 @@ export type CoworkTelemetryAttempt = {
   stage: string;
   attempt: number;
   model?: string;
+  requestedModel?: string;
   provider?: "openrouter" | "database" | "server";
   outcome: CoworkAttemptOutcome;
   reasonCode?: string;
@@ -50,6 +56,7 @@ type SafeAttempt = {
   stage: string;
   attempt: number;
   model?: string;
+  requested_model?: string;
   provider?: "openrouter" | "database" | "server";
   outcome: CoworkAttemptOutcome;
   reason_code?: string;
@@ -112,6 +119,37 @@ function boundedModel(value: string | undefined): string | undefined {
   return value.replace(/[^a-zA-Z0-9._:/-]+/g, "_").slice(0, 128);
 }
 
+const USAGE_STAGE_PREFIXES: ReadonlyArray<{
+  kind: CoworkUsageStageKind;
+  prefixes: readonly string[];
+}> = [
+  { kind: "planning", prefixes: ["orchestrator_", "planner_"] },
+  {
+    kind: "research",
+    prefixes: ["research_", "news_", "search_", "inspect_", "freshness_"],
+  },
+  {
+    kind: "writing",
+    prefixes: [
+      "writer",
+      "finalizer",
+      "repair_",
+      "sameness_",
+      "source_fidelity_",
+      "backstory_",
+      "ai_tell_",
+    ],
+  },
+];
+
+function usageStageKind(stage: string): CoworkUsageStageKind {
+  return (
+    USAGE_STAGE_PREFIXES.find((rule) =>
+      rule.prefixes.some((prefix) => stage.startsWith(prefix)),
+    )?.kind ?? "other"
+  );
+}
+
 export function defaultCoworkTelemetrySink(
   record: CoworkTurnTelemetryRecord,
 ): void | Promise<void> {
@@ -140,6 +178,10 @@ export function createCoworkTurnTelemetry(
   let reasoningTokens = 0;
   let cachedInputTokens = 0;
   let chargedCostUsd = 0;
+  const usageByStage = new Map<
+    CoworkUsageStageKind,
+    { cost: number; models: string[] }
+  >();
   let finished = false;
   let latestProvenanceStatus: CoworkProvenanceStatus = "not_required";
   let rolloutMode: CoworkTurnTelemetryRecord["rollout_mode"];
@@ -179,6 +221,14 @@ export function createCoworkTurnTelemetry(
       reasoningTokens += usage.reasoningTokens;
       cachedInputTokens += usage.cachedInputTokens;
       chargedCostUsd += usage.costUsd;
+      if (usage.costUsd > 0) {
+        const kind = usageStageKind(safeCode(attempt.stage) ?? "unknown");
+        const current = usageByStage.get(kind) ?? { cost: 0, models: [] };
+        current.cost += usage.costUsd;
+        const model = boundedModel(attempt.model);
+        if (model && !current.models.includes(model)) current.models.push(model);
+        usageByStage.set(kind, current);
+      }
       // Keep the emitted line bounded without losing the authoritative usage
       // totals for long multi-draft turns.
       if (attempts.length >= MAX_DETAILED_ATTEMPTS) return;
@@ -187,6 +237,10 @@ export function createCoworkTurnTelemetry(
         attempt: boundedInteger(attempt.attempt, 100),
         ...(boundedModel(attempt.model)
           ? { model: boundedModel(attempt.model) }
+          : {}),
+        ...(boundedModel(attempt.requestedModel) &&
+        boundedModel(attempt.requestedModel) !== boundedModel(attempt.model)
+          ? { requested_model: boundedModel(attempt.requestedModel) }
           : {}),
         ...(attempt.provider ? { provider: attempt.provider } : {}),
         outcome: attempt.outcome,
@@ -203,6 +257,45 @@ export function createCoworkTurnTelemetry(
         cached_input_tokens: usage.cachedInputTokens,
         charged_cost_usd: usage.costUsd,
       });
+    },
+    snapshotUsage(): CoworkTurnUsageWire {
+      const order = ["planning", "research", "writing", "other"] as const;
+      const totalCredits = costEquivalentCredits(chargedCostUsd);
+      const stageRows = order.flatMap((kind) => {
+        const stage = usageByStage.get(kind);
+        if (!stage) return [];
+        return [
+          {
+            kind,
+            cost_usd: Number(stage.cost.toFixed(8)),
+            models: stage.models.slice(0, 8),
+          },
+        ];
+      });
+      const rawCredits = stageRows.map((stage) =>
+        chargedCostUsd > 0
+          ? (stage.cost_usd / chargedCostUsd) * totalCredits
+          : 0,
+      );
+      const stageCredits = rawCredits.map(Math.floor);
+      let remaining =
+        totalCredits - stageCredits.reduce((sum, value) => sum + value, 0);
+      const remainderOrder = rawCredits
+        .map((value, index) => ({ index, remainder: value - Math.floor(value) }))
+        .sort((a, b) => b.remainder - a.remainder || a.index - b.index);
+      for (const item of remainderOrder) {
+        if (remaining <= 0) break;
+        stageCredits[item.index] += 1;
+        remaining -= 1;
+      }
+      return {
+        total_credits: totalCredits,
+        total_cost_usd: Number(chargedCostUsd.toFixed(8)),
+        stages: stageRows.map((stage, index) => ({
+          ...stage,
+          credits: stageCredits[index],
+        })),
+      };
     },
     recordFinalizer(input: {
       outcome: "accepted" | "rejected";

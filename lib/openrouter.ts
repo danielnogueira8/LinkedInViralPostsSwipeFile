@@ -508,10 +508,14 @@ export type CompleteResult = {
   toolArgs: Record<string, unknown> | null;
   finishReason: string | null;
   usage: Usage | undefined;
+  // Provider-confirmed model slug. OpenRouter may return a dated/canonical
+  // variant of the requested alias, so operational logs must use this value.
+  model: string;
   citations: Array<{ url: string; title: string; content: string }>;
 };
 
 type RawCompletion = {
+  model?: string;
   choices?: {
     message?: {
       content?: string | null;
@@ -649,6 +653,10 @@ export async function completeChat(opts: {
     toolArgs,
     finishReason: choice?.finish_reason ?? null,
     usage: parsed.usage,
+    model:
+      typeof parsed.model === "string" && parsed.model.trim()
+        ? parsed.model.trim()
+        : model,
     citations: (choice?.message?.annotations ?? [])
       .map((annotation) => annotation.url_citation)
       .filter(

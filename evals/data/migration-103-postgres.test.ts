@@ -28,14 +28,14 @@ function run(command: string, args: string[], cwd: string): string {
   return `${result.stdout}${result.stderr}`;
 }
 
-describe("migration 098 PostgreSQL behavior", () => {
+describe("migration 103 PostgreSQL behavior", () => {
   const postgresTest = hasPostgres ? test : test.skip;
 
   postgresTest(
     "renames outreach and promotes Divyanshi idempotently",
     () => {
       const root = process.cwd();
-      const temp = mkdtempSync(join(tmpdir(), "migration-098-postgres-"));
+      const temp = mkdtempSync(join(tmpdir(), "migration-103-postgres-"));
       const data = join(temp, "data");
       const socket = join(temp, "socket");
       mkdirSync(socket);
@@ -91,9 +91,9 @@ describe("migration 098 PostgreSQL behavior", () => {
             root,
           ).trim();
 
-        psqlFile(join(root, "evals/fixtures/migration-098-fixture.sql"));
-        psqlFile(join(root, "db/migration-098-gtm-outreach-category.sql"));
-        psqlFile(join(root, "db/migration-098-gtm-outreach-category.sql"));
+        psqlFile(join(root, "evals/fixtures/migration-103-fixture.sql"));
+        psqlFile(join(root, "db/migration-103-gtm-outreach-category.sql"));
+        psqlFile(join(root, "db/migration-103-gtm-outreach-category.sql"));
 
         expect(
           query("select label from public.categories where id = 'outreach'"),
@@ -122,7 +122,7 @@ describe("migration 098 PostgreSQL behavior", () => {
         ).toBe("1");
         expect(
           query("select version from public.app_schema_version where singleton"),
-        ).toBe("98");
+        ).toBe("103");
       } finally {
         if (started && existsSync(join(data, "postmaster.pid"))) {
           spawnSync("pg_ctl", ["-D", data, "-m", "fast", "stop"], {

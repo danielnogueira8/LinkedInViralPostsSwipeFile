@@ -4,6 +4,7 @@ import { useDeferredValue, useEffect, useMemo, useRef, useState, type KeyboardEv
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
+  AlertCircle,
   BookOpen,
   ChevronLeft,
   ChevronRight,
@@ -57,6 +58,7 @@ import { cn } from "@/lib/utils";
 import {
   LEAD_MAGNET_BODY_MAX,
   LEAD_MAGNET_TITLE_MAX,
+  leadMagnetQualityWarning,
   type LeadMagnet,
 } from "@/lib/lead-magnets";
 import {
@@ -527,6 +529,13 @@ function LeadMagnetCard({
 
         <p className="line-clamp-2 text-sm leading-6 text-muted-foreground">{summary}</p>
 
+        {leadMagnetQualityWarning(item.metadata) && (
+          <div className="flex items-start gap-1.5 rounded-md border border-amber-500/15 bg-amber-500/10 px-2.5 py-1.5 text-xs text-amber-700">
+            <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
+            <span>{leadMagnetQualityWarning(item.metadata)}</span>
+          </div>
+        )}
+
         <div className="space-y-2">
           <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/80">Inside this resource</div>
           {deliverables.length ? (
@@ -639,8 +648,8 @@ function LeadMagnetForm({
             placeholder="Example: LinkedIn Content Audit Checklist"
           />
         </div>
-        <div className="grid gap-2 sm:grid-cols-[1fr_180px]">
-          <div className="grid gap-2">
+        <div className="grid gap-x-4 gap-y-1.5 sm:grid-cols-[2fr_1fr]">
+          <div className="grid content-start gap-1.5">
             <Label htmlFor="lead-cta-url">CTA link</Label>
             <Input
               id="lead-cta-url"
@@ -648,11 +657,8 @@ function LeadMagnetForm({
               onChange={(e) => setCtaUrl(e.target.value)}
               placeholder="https://calendly.com/you/strategy-call"
             />
-            <p className="text-xs leading-5 text-muted-foreground">
-              Used only on the public resource page, not in generated lead magnet post copy.
-            </p>
           </div>
-          <div className="grid gap-2">
+          <div className="grid content-start gap-1.5">
             <Label htmlFor="lead-cta-label">CTA label</Label>
             <Input
               id="lead-cta-label"
@@ -661,6 +667,9 @@ function LeadMagnetForm({
               placeholder="Book a call"
             />
           </div>
+          <p className="text-xs leading-5 text-muted-foreground sm:col-span-2">
+            Used only on the public resource page, not in generated lead magnet post copy.
+          </p>
         </div>
         <LeadMagnetMarkdownEditor value={markdown} onChange={setMarkdown} />
       </div>
@@ -1142,8 +1151,8 @@ function GenerateForm({
             className="min-h-36"
           />
         </div>
-        <div className="grid gap-2 sm:grid-cols-[1fr_180px]">
-          <div className="grid gap-2">
+        <div className="grid gap-x-4 gap-y-1.5 sm:grid-cols-[2fr_1fr]">
+          <div className="grid content-start gap-1.5">
             <Label htmlFor="lead-ai-cta-url">CTA link</Label>
             <Input
               id="lead-ai-cta-url"
@@ -1151,11 +1160,8 @@ function GenerateForm({
               onChange={(e) => setCtaUrl(e.target.value)}
               placeholder="https://calendly.com/you/strategy-call"
             />
-            <p className="text-xs leading-5 text-muted-foreground">
-              Used only on the public resource page, not in generated lead magnet post copy.
-            </p>
           </div>
-          <div className="grid gap-2">
+          <div className="grid content-start gap-1.5">
             <Label htmlFor="lead-ai-cta-label">CTA label</Label>
             <Input
               id="lead-ai-cta-label"
@@ -1164,6 +1170,9 @@ function GenerateForm({
               placeholder="Book a call"
             />
           </div>
+          <p className="text-xs leading-5 text-muted-foreground sm:col-span-2">
+            Used only on the public resource page, not in generated lead magnet post copy.
+          </p>
         </div>
         {saving && (
           <div className="rounded-2xl border border-primary/20 bg-primary/[0.04] p-4">
@@ -1285,6 +1294,15 @@ function LeadMagnetPreview({
           <ExternalLink className="h-4 w-4" /> Open public page
         </Button>
       </div>
+      {leadMagnetQualityWarning(item.metadata) && (
+        <div className="mt-4 flex items-start gap-2 rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2.5 text-xs text-amber-700">
+          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>
+            {leadMagnetQualityWarning(item.metadata)} This resource is already publicly
+            shareable — review it before sending the link.
+          </span>
+        </div>
+      )}
       {(summary || deliverables.length > 0 || ctas.length > 0) && (
         <div className="mt-5 rounded-2xl border border-border/60 bg-muted/30 p-4">
           <div className="mb-2 flex items-center gap-2 text-sm font-medium text-foreground">

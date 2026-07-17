@@ -41,6 +41,13 @@ const CSP_DIRECTIVES = {
     "'unsafe-eval'",
     "https://*.clerk.accounts.dev",
     "https://*.clerk.com",
+    // Clerk PRODUCTION serves its frontend API + hosted Account Portal from the
+    // app's own custom domain (clerk./accounts.<domain>), NOT *.clerk.com — a
+    // CSP wildcard only covers subdomains of the stated parent, so *.clerk.com
+    // does NOT match clerk.tryswipein.com. Without these, clerk.browser.js is
+    // blocked and the embedded <SignIn/> renders blank in production.
+    "https://clerk.tryswipein.com",
+    "https://accounts.tryswipein.com",
     "https://challenges.cloudflare.com",
     "https://va.vercel-scripts.com",
     "https://vercel.live",
@@ -63,6 +70,9 @@ const CSP_DIRECTIVES = {
     "'self'",
     "https://*.clerk.accounts.dev",
     "https://*.clerk.com",
+    // Production Clerk frontend API (custom domain) — see script-src note.
+    "https://clerk.tryswipein.com",
+    "https://accounts.tryswipein.com",
     "https://*.supabase.co",
     "wss://*.supabase.co",
     "https://va.vercel-scripts.com",
@@ -74,6 +84,9 @@ const CSP_DIRECTIVES = {
     "'self'",
     "https://*.clerk.accounts.dev",
     "https://*.clerk.com",
+    // Production Clerk custom domain (hosted components / portal frames).
+    "https://clerk.tryswipein.com",
+    "https://accounts.tryswipein.com",
     "https://challenges.cloudflare.com",
     "https://vercel.live",
   ],
@@ -107,6 +120,11 @@ const nextConfig: NextConfig = {
     // VERCEL_ENV is server-only by default. Expose only its non-sensitive
     // deployment label so preview events do not get grouped as production.
     NEXT_PUBLIC_VERCEL_ENV: process.env.VERCEL_ENV ?? process.env.NODE_ENV,
+    // Tag client-side recoverable errors (including hydration mismatches) with
+    // the exact deployment that produced them. This lets us distinguish a real
+    // render bug from a one-off rolling-deploy/version-skew event.
+    NEXT_PUBLIC_SWIPEIN_DEPLOYMENT_ID:
+      process.env.VERCEL_GIT_COMMIT_SHA ?? process.env.NEXT_DEPLOYMENT_ID,
   },
   turbopack: {
     root: __dirname,

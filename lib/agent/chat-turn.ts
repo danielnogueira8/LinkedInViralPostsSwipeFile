@@ -61,7 +61,10 @@ import {
   type CoworkRoute,
   type CoworkTurnTelemetry,
 } from "@/lib/agent/cowork-telemetry";
-import { runCoworkAdapterAttempt } from "@/lib/agent/cowork-adapter-attempt";
+import {
+  runCoworkAdapterAttempt,
+  providerModelAttribution,
+} from "@/lib/agent/cowork-adapter-attempt";
 import { coworkAdapterHealth } from "@/lib/agent/adapter-health";
 import {
   coworkRolloutRuntimeHealth,
@@ -74,6 +77,7 @@ import {
 } from "@/lib/agent/cowork-rollout";
 import { deriveDeliverableContract } from "@/lib/agent/deliverable-contract";
 import { encodeChatSseFrame } from "@/lib/transport/contracts";
+import type { CoworkTurnUsageWire } from "@/lib/cowork-turn-usage";
 import {
   configuredSseHeartbeatInterval,
   startSseHeartbeat,
@@ -553,6 +557,7 @@ const LEAD_MAGNET_TOOL_NAME = "_lead_magnet_selected";
 // (cut-off / stalled, including before SSE headers). hydrate() reads it back so
 // the one-click Retry banner survives the canonical reload.
 const RECOVERABLE_TOOL_NAME = "_recoverable";
+const TURN_USAGE_TOOL_NAME = "_turn_usage";
 
 // Build the synthetic marker persisted on the assistant row for a recoverable
 // turn. Carries the code + message so hydrate can rebuild the exact banner.
@@ -569,6 +574,17 @@ function recoverableToolCall(marker: {
         code: String(marker.code ?? ""),
         message: marker.message,
       }),
+    },
+  };
+}
+
+function turnUsageToolCall(usage: CoworkTurnUsageWire): ToolCall {
+  return {
+    id: TURN_USAGE_TOOL_NAME,
+    type: "function",
+    function: {
+      name: TURN_USAGE_TOOL_NAME,
+      arguments: JSON.stringify(usage),
     },
   };
 }
@@ -929,15 +945,18 @@ async function describeImageAttachment(
         if (!text) throw new Error("Image description was empty.");
         return text;
       },
-      persistUsage: (response) =>
-        logOpenRouterUsage(
+      persistUsage: (response) => {
+        const attribution = providerModelAttribution(VISION_MODEL, response.model);
+        return logOpenRouterUsage(
           "chat_image_attachment_vision",
-          VISION_MODEL,
+          attribution.model,
           response.usage,
           workspaceId,
-          { filename },
-        ),
+          { filename, ...attribution.metadata },
+        );
+      },
       usage: (response) => response.usage,
+      responseModel: (response) => response.model,
       telemetry,
       stage: "setup_vision",
       attempt,
@@ -4015,12 +4034,14 @@ export async function executeChatTurn(
               // If a recoverable error preceded this done, stash the marker on
               // the assistant row so hydrate can re-derive the Continue banner
               // after the post-stream reload (recoverable is otherwise live-only).
-              const doneToolCalls = recoverableMarker
-                ? [
-                    ...(ev.message.tool_calls ?? []),
-                    recoverableToolCall(recoverableMarker),
-                  ]
-                : ev.message.tool_calls;
+              const turnUsage = coworkTelemetry.snapshotUsage();
+              const doneToolCalls = [
+                ...(ev.message.tool_calls ?? []),
+                ...(recoverableMarker
+                  ? [recoverableToolCall(recoverableMarker)]
+                  : []),
+                turnUsageToolCall(turnUsage),
+              ];
               const saved = await persistAssistant(
                 ev.message.content,
                 doneToolCalls,
@@ -4055,7 +4076,7 @@ export async function executeChatTurn(
                   error: persistenceError,
                 };
               }
-              send(controller, "done", { artifacts });
+              send(controller, "done", { artifacts, usage: turnUsage });
               break;
             }
             case "error":

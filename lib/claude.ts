@@ -9,6 +9,7 @@ import { z } from "zod";
 import { HOOK_PATTERNS, type HookPattern } from "./hooks";
 import { classifyPost } from "./post-type";
 import { INJECTION_GUARD, wrapUntrustedXml } from "./agent/untrusted";
+import { providerModelAttribution } from "./agent/cowork-adapter-attempt";
 
 // All background tasks run on GLM-5.2 via OpenRouter — one platform, one
 // balance, one model. (templatize + hook extraction use BACKGROUND_MODEL, voice
@@ -64,7 +65,14 @@ export async function extractHookWithClaude(
       { role: "user", content: wrapUntrustedXml("post", postText) },
     ],
   });
-  await logOpenRouterUsage("extract_hook", BACKGROUND_MODEL, res.usage, workspaceId);
+  const hookAttribution = providerModelAttribution(BACKGROUND_MODEL, res.model);
+  await logOpenRouterUsage(
+    "extract_hook",
+    hookAttribution.model,
+    res.usage,
+    workspaceId,
+    hookAttribution.metadata,
+  );
   const raw = res.text.trim();
   if (!raw) throw new Error("Empty response from the model");
   const coerced = parseHookExtractionText(raw);
@@ -451,7 +459,14 @@ export async function synthesizeVoice(
       tools: [hasLeadMagnets ? VOICE_TOOL_WITH_LEAD_MAGNET : VOICE_TOOL],
       forceTool: VOICE_TOOL_NAME,
     });
-    await logOpenRouterUsage("synthesize_voice", REASONING_MODEL, res.usage, workspaceId);
+    const voiceAttribution = providerModelAttribution(REASONING_MODEL, res.model);
+    await logOpenRouterUsage(
+      "synthesize_voice",
+      voiceAttribution.model,
+      res.usage,
+      workspaceId,
+      voiceAttribution.metadata,
+    );
     if (res.finishReason === "length") {
       // Output cap hit → a forced tool call can be truncated mid-arguments,
       // leaving them partial/invalid. Bail distinctly so the retry path kicks in.

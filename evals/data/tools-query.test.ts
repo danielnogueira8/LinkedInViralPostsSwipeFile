@@ -34,6 +34,28 @@ vi.mock("@/lib/supabase", () => ({
 }));
 vi.mock("@/lib/supabase-scoped", () => ({
   trackedAccountIds: async () => trackedRef.current,
+  // Mirrors the real latestRelevantScrape's query shape against the same fake
+  // db each test configures via `runs: { single: RUN }` — so existing
+  // fixtures (written for the pre-fix .maybeSingle() call) keep working.
+  latestRelevantScrape: async () => {
+    type Chainable = {
+      select: (s: string) => Chainable;
+      eq: (c: string, v: unknown) => Chainable;
+      or: (e: string) => Chainable;
+      order: (c: string, o: unknown) => Chainable;
+      limit: (n: number) => Chainable;
+      maybeSingle: () => Promise<{ data: unknown; error: unknown }>;
+    };
+    const { data, error } = await (dbRef.current.client.from("runs") as Chainable)
+      .select("started_at, finished_at")
+      .eq("status", "ok")
+      .or("workspace_id.eq.ws-1,workspace_id.is.null")
+      .order("started_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    return data as { started_at: string; finished_at: string | null } | null;
+  },
 }));
 
 // Import lazily AFTER the mocks are registered.

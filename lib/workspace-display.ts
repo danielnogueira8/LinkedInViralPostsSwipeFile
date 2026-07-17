@@ -20,35 +20,25 @@ export type WorkspaceDisplay = {
 // an acceptable trade vs. crashing.
 
 /**
- * Resolve ONE workspace_id (Clerk org_id) into a display record.
+ * Resolve ONE workspace_id (a Clerk USER id — workspace_id == user id) into a
+ * display record: the owner's name + primary email, for the "Shared by …" chip.
  */
 const resolveOne = cache(
   async (workspaceId: string): Promise<WorkspaceDisplay> => {
     try {
       const client = await clerkClient();
-      const org = await client.organizations.getOrganization({
-        organizationId: workspaceId,
-      });
-      let displayName: string = org.name || "Shared library";
-      let email: string | null = null;
-      if (org.createdBy) {
-        try {
-          const user = await client.users.getUser(org.createdBy);
-          const full =
-            [user.firstName, user.lastName].filter(Boolean).join(" ").trim() ||
-            user.fullName ||
-            null;
-          email =
-            user.emailAddresses?.find((e) => e.id === user.primaryEmailAddressId)
-              ?.emailAddress ?? user.emailAddresses?.[0]?.emailAddress ?? null;
-          if (full) displayName = full;
-          else if (email) displayName = email.split("@")[0];
-        } catch {
-          // Owner user could've been deleted — keep the org-name fallback.
-        }
-      }
-      return { workspaceId, name: displayName, email };
+      const user = await client.users.getUser(workspaceId);
+      const email =
+        user.emailAddresses?.find((e) => e.id === user.primaryEmailAddressId)
+          ?.emailAddress ?? user.emailAddresses?.[0]?.emailAddress ?? null;
+      const full =
+        [user.firstName, user.lastName].filter(Boolean).join(" ").trim() ||
+        user.fullName ||
+        null;
+      const name = full || (email ? email.split("@")[0] : "Shared library");
+      return { workspaceId, name, email };
     } catch {
+      // The owner user could've been deleted — fall back to a neutral label.
       return { workspaceId, name: "Shared library", email: null };
     }
   },

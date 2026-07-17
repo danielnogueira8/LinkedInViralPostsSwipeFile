@@ -7,6 +7,17 @@ import {
 import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
 import type { Usage } from "@/lib/openrouter";
 
+export function providerModelAttribution(
+  requestedModel: string,
+  reportedModel: string | undefined,
+): { model: string; metadata: Record<string, string> } {
+  const model = reportedModel?.trim() || requestedModel;
+  return {
+    model,
+    metadata: model !== requestedModel ? { requested_model: requestedModel } : {},
+  };
+}
+
 export type CoworkAdapterAttemptInput<TResponse, TValue> = {
   registry: AdapterHealthRegistry;
   adapterKey: string;
@@ -15,6 +26,7 @@ export type CoworkAdapterAttemptInput<TResponse, TValue> = {
   validate: (response: TResponse) => TValue | Promise<TValue>;
   persistUsage: (response: TResponse) => Promise<void>;
   usage: (response: TResponse) => Usage | undefined;
+  responseModel?: (response: TResponse) => string | undefined;
   telemetry?: CoworkTurnTelemetry;
   stage: string;
   attempt: number;
@@ -43,6 +55,11 @@ export async function runCoworkAdapterAttempt<TResponse, TValue>(
   const startedAt = Date.now();
   let response: TResponse | null = null;
   let result: { value: TValue; latencyMs: number };
+  const observedModel = () =>
+    providerModelAttribution(
+      input.model,
+      response === null ? undefined : input.responseModel?.(response),
+    ).model;
 
   try {
     result = await runHealthyAdapter({
@@ -66,7 +83,8 @@ export async function runCoworkAdapterAttempt<TResponse, TValue>(
     input.telemetry?.recordAttempt({
       stage: input.stage,
       attempt: input.attempt,
-      model: input.model,
+      model: observedModel(),
+      requestedModel: input.model,
       provider: "openrouter",
       outcome: response
         ? "rejected"
@@ -99,7 +117,8 @@ export async function runCoworkAdapterAttempt<TResponse, TValue>(
   input.telemetry?.recordAttempt({
     stage: input.stage,
     attempt: input.attempt,
-    model: input.model,
+    model: observedModel(),
+    requestedModel: input.model,
     provider: "openrouter",
     outcome: "accepted",
     ...(input.fallbackReason ? { fallbackReason: input.fallbackReason } : {}),

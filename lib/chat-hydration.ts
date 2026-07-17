@@ -4,6 +4,10 @@ import { isNoModelFormatId, noModelFormatLabel } from "@/lib/agent/no-model-form
 import { recoverDoneOption } from "@/lib/chat-ask";
 import type { LeadMagnetResourceType } from "@/lib/lead-magnets";
 import type { ContentFormat } from "@/lib/markdown/mode";
+import {
+  parseCoworkTurnUsage,
+  type CoworkTurnUsage,
+} from "@/lib/cowork-turn-usage";
 
 export type AppliedLeadMagnet = {
   id?: string;
@@ -50,6 +54,7 @@ export type Message = {
   draftRendered?: boolean;
   ask?: AskQuestion;
   recoverable?: RecoverableError;
+  usage?: CoworkTurnUsage;
   streaming?: boolean;
 };
 
@@ -63,6 +68,7 @@ export type ChatRun = {
   artifacts: Artifact[];
   ask?: AskQuestion;
   recoverable?: RecoverableError;
+  usage?: CoworkTurnUsage;
   stopped?: boolean;
   streaming: boolean;
   ctrl: AbortController;
@@ -237,6 +243,12 @@ function extractPersistedRecoverable(
   };
 }
 
+function extractPersistedTurnUsage(
+  calls: RawDbMessage["tool_calls"],
+): CoworkTurnUsage | undefined {
+  return parseCoworkTurnUsage(toolArgs(calls, "_turn_usage")) ?? undefined;
+}
+
 function extractPersistedPostFormat(
   calls: RawDbMessage["tool_calls"],
 ): string | undefined {
@@ -322,6 +334,10 @@ export function hydrate(rows: RawDbMessage[]): Message[] {
       !pairedUser?.user_stop_requested_at
         ? extractPersistedRecoverable(row.tool_calls)
         : undefined;
+    const usage =
+      row.role === "assistant"
+        ? extractPersistedTurnUsage(row.tool_calls)
+        : undefined;
     const skills =
       row.role === "user" ? extractPersistedSkills(row.tool_calls) : undefined;
     const postFormat =
@@ -355,6 +371,7 @@ export function hydrate(rows: RawDbMessage[]): Message[] {
         : {}),
       ...(parsedAsk && isLast ? { ask: parsedAsk } : {}),
       ...(recoverable ? { recoverable } : {}),
+      ...(usage ? { usage } : {}),
       ...(skills?.length ? { skills } : {}),
       ...(postFormat ? { postFormat } : {}),
       ...(creatorStyle ? { creatorStyle } : {}),

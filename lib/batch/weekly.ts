@@ -365,6 +365,13 @@ async function adaptedSourceIds(
     .eq("meta->>source", "weekly_batch")
     // Only recently-adapted posts count against the pool (see ADAPTED_HORIZON).
     .gte("created_at", sinceIso)
+    // Most-recent-first so that IF the 56-day window ever exceeds 500 rows
+    // (far above normal cadence today), the truncated-off rows are the
+    // OLDEST ones — i.e. still-correct dedup for the posts most likely to be
+    // re-surfaced as candidates. Without an explicit order, Postgres/PostgREST
+    // gives no ordering guarantee, so which 500 rows survive the cap would be
+    // plan-dependent and non-deterministic instead of a predictable horizon.
+    .order("created_at", { ascending: false })
     .limit(500);
   const ids = new Set<string>();
   for (const row of data ?? []) {
@@ -809,8 +816,18 @@ async function generateDraftBody(opts: {
           priorDrafts: opts.priorDrafts,
           workspaceId: opts.workspaceId,
           signal: opts.signal,
+          maxChars: MAX_DRAFT_BODY,
         });
-        if (sameness.rewrote) {
+        // isAcceptableRewrite already guards corruption/shrink/maxChars; the
+        // one gap it doesn't cover is OUR minimum (its own floor is a %-of-
+        // input ratio, not this app's MIN_DRAFT_BODY) — recheck here rather
+        // than let a too-short rewrite skip the gate this function already
+        // enforced above.
+        if (
+          sameness.rewrote &&
+          sameness.body.length >= MIN_DRAFT_BODY &&
+          sameness.body.length <= MAX_DRAFT_BODY
+        ) {
           console.log(
             JSON.stringify({
               batch_sameness_rewrote: {
@@ -821,6 +838,16 @@ async function generateDraftBody(opts: {
             }),
           );
           cleaned = sameness.body;
+        } else if (sameness.rewrote) {
+          console.log(
+            JSON.stringify({
+              batch_sameness_rejected: {
+                workspace_id: opts.workspaceId,
+                reason: "out_of_length_contract",
+                length: sameness.body.length,
+              },
+            }),
+          );
         } else if (sameness.overlapMarkers.length > 0) {
           console.log(
             JSON.stringify({
@@ -974,15 +1001,19 @@ async function writeBatchChatMessage(
   artifacts?: ChatArtifact[],
 ): Promise<void> {
   try {
-    await supabaseAdmin().from("chat_messages").insert({
+    const { error } = await supabaseAdmin().from("chat_messages").insert({
       chat_id: chatId,
       workspace_id: workspaceId,
       role: "assistant",
       content,
       artifacts: artifacts && artifacts.length ? artifacts : null,
     });
-  } catch {
+    if (error) {
+      console.warn(`writeBatchChatMessage failed for chat ${chatId}: ${error.message}`);
+    }
+  } catch (e) {
     /* transcript is presentation — a dropped message never breaks the batch */
+    console.warn(`writeBatchChatMessage threw for chat ${chatId}: ${(e as Error).message}`);
   }
 }
 
@@ -1151,6 +1182,13 @@ function firstLine(text: string | null | undefined, max = 90): string {
 // Create all the slot rows up front (status 'queued'), one per source, so the
 // board can render every lane with its source the instant a batch starts.
 // Best-effort: a failure here just means no live lanes (the run still works).
+//
+// Upsert on (workspace_id, batch_id, slot_index) — migration-101 — rather than
+// a raw insert: a requeued job re-runs this with the SAME batch_id, and a raw
+// insert would have created a second row per slot instead of colliding with
+// the first. onConflict "do nothing" (via ignoreDuplicates) preserves
+// whatever status/artifact_id the first attempt's slot already has — the
+// worker below re-checks that status and skips a slot that's already filed.
 async function createBatchSlots(
   workspaceId: string,
   batchId: string,
@@ -1169,9 +1207,38 @@ async function createBatchSlots(
     status: "queued" as const,
   }));
   try {
-    await supabaseAdmin().from("batch_draft_slots").insert(rows);
+    await supabaseAdmin()
+      .from("batch_draft_slots")
+      .upsert(rows, {
+        onConflict: "workspace_id,batch_id,slot_index",
+        ignoreDuplicates: true,
+      });
   } catch {
     /* no lanes — the run still proceeds */
+  }
+}
+
+// A requeued job's slot may already be 'filed' from the prior attempt (see
+// createBatchSlots above). Re-drafting it would both waste money and create a
+// second chat_artifacts row for the same logical slot. Best-effort: a read
+// failure here just means the worker proceeds as if nothing was filed yet
+// (the pre-migration-101 behavior), not a hard stop.
+async function slotAlreadyFiled(
+  workspaceId: string,
+  batchId: string,
+  slotIndex: number,
+): Promise<boolean> {
+  try {
+    const { data } = await supabaseAdmin()
+      .from("batch_draft_slots")
+      .select("status")
+      .eq("workspace_id", workspaceId)
+      .eq("batch_id", batchId)
+      .eq("slot_index", slotIndex)
+      .maybeSingle();
+    return (data as { status?: string } | null)?.status === "filed";
+  } catch {
+    return false;
   }
 }
 
@@ -1388,6 +1455,19 @@ export async function runWeeklyBatch(opts: {
     { post, isLeadMagnet }: { post: SourcePost; isLeadMagnet: boolean },
     slotIndex: number,
   ): Promise<void> => {
+    // A requeued job (see createBatchSlots) can start a worker for a slot the
+    // PRIOR attempt already filed before a sibling's fatal error aborted the
+    // run. Re-drafting would double-spend and double-insert. Skip entirely —
+    // the slot row (and its chat_artifacts draft) from the first attempt
+    // stands.
+    if (await slotAlreadyFiled(workspaceId, batchId, slotIndex)) {
+      console.log(
+        JSON.stringify({
+          batch_slot_already_filed_skip: { workspace_id: workspaceId, batch_id: batchId, slot_index: slotIndex },
+        }),
+      );
+      return;
+    }
     let current: SourcePost | undefined = post;
     while (current) {
       sourceAttemptCount++;

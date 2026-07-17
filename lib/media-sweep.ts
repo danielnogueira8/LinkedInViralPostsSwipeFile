@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabaseAdmin } from "@/lib/supabase";
 import type { PostMediaAttachment } from "@/lib/post-media";
+import { selectAllRows } from "@/lib/db-paginate";
 
 // ---------------------------------------------------------------------------
 // Reference-aware deferred GC for media library assets.
@@ -86,19 +87,40 @@ export async function sweepDeletedMedia(
 
   // Every draft's media_attachments could reference ANY asset (drafts aren't
   // scoped by which asset they reference), so this scans all chat_artifacts
-  // with a non-empty attachments array. Fine at this codebase's current
-  // scale; if that ever becomes a real cost, narrow with a workspace filter
-  // per candidate batch instead of a full-table scan.
-  const { data: draftRows, error: draftsErr } = await sb
-    .from("chat_artifacts")
-    .select("media_attachments")
-    .not("media_attachments", "is", null);
-  if (draftsErr) {
-    return { candidates: candidates.length, purged: 0, stillReferenced: 0, errors: [draftsErr.message] };
+  // with a non-empty attachments array. PostgREST silently caps any single
+  // read at 1000 rows — past that, this used to look "done" while actually
+  // missing rows, so a still-referenced asset past row 1000 would be
+  // misclassified as purgeable and hard-deleted. selectAllRows pages through
+  // with .range() so every row is seen regardless of table size.
+  let draftRows: { media_attachments: PostMediaAttachment[] | null }[];
+  try {
+    draftRows = await selectAllRows(() =>
+      sb
+        .from("chat_artifacts")
+        .select("media_attachments")
+        .not("media_attachments", "is", null) as unknown as {
+        range: (
+          from: number,
+          to: number,
+        ) => PromiseLike<{
+          data: { media_attachments: PostMediaAttachment[] | null }[] | null;
+          error: unknown;
+        }>;
+      },
+    );
+  } catch (e) {
+    // selectAllRows re-throws PostgREST's raw error value, which is a plain
+    // { message, ... } object, not an Error instance — extract .message
+    // rather than letting it stringify to "[object Object]".
+    const message =
+      e instanceof Error
+        ? e.message
+        : typeof e === "object" && e && "message" in e
+          ? String((e as { message: unknown }).message)
+          : String(e);
+    return { candidates: candidates.length, purged: 0, stillReferenced: 0, errors: [message] };
   }
-  const liveAttachmentArrays = (draftRows ?? []).map(
-    (r) => r.media_attachments as PostMediaAttachment[] | null,
-  );
+  const liveAttachmentArrays = draftRows.map((r) => r.media_attachments);
 
   const { purgeable, stillReferencedIds } = partitionSweepCandidates(
     candidates,

@@ -2,6 +2,7 @@ import { expect, test, vi } from "vitest";
 
 const runOneProfile = vi.fn(async () => []);
 const tablesRead: string[] = [];
+const runUpdates: Array<Record<string, unknown>> = [];
 
 function fakeSupabase() {
   return {
@@ -28,8 +29,9 @@ function fakeSupabase() {
             data: table === "runs" ? { status: "running", error: null } : null,
             error: null,
           }),
-        update: () => {
+        update: (value: Record<string, unknown>) => {
           operation = "update";
+          if (table === "runs") runUpdates.push(value);
           return builder;
         },
         then: (
@@ -74,6 +76,7 @@ vi.mock("@/lib/apify", () => ({ runOneProfile, normalizePost: vi.fn() }));
 vi.mock("@/lib/scrape-gating", () => ({
   decideScrapeGates: async (accounts: Array<{ id: string }>) =>
     accounts.map((account) => ({ account_id: account.id, scrape: true })),
+  excludeRecentlyScrapedInResume: async <T,>(accounts: T[]) => accounts,
 }));
 vi.mock("@/lib/viral", () => ({
   getThresholds: async () => ({ min_reactions: 50, min_comments: 50 }),
@@ -111,4 +114,16 @@ test("the global daily scrape still covers the active global catalog", async () 
   expect(runOneProfile).toHaveBeenCalledTimes(2);
   expect(runOneProfile).toHaveBeenCalledWith("tracked");
   expect(runOneProfile).toHaveBeenCalledWith("untracked");
+});
+
+test("a run where every account returns no data is marked as failed, not ok", async () => {
+  runOneProfile.mockClear();
+  runUpdates.length = 0;
+
+  await runDailyPipeline(undefined, { runId: "global-run" });
+
+  const terminalUpdate = runUpdates.find((u) => !!u.finished_at);
+  expect(terminalUpdate).toBeDefined();
+  expect(terminalUpdate!.status).toBe("error");
+  expect(terminalUpdate!.error).toBeTruthy();
 });

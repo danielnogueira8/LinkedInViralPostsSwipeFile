@@ -1,7 +1,7 @@
 {
   "generatedBy": "npm run migrations:metadata",
-  "highest": 98,
-  "count": 98,
+  "highest": 103,
+  "count": 103,
   "files": [
     "migration-001-progress.sql",
     "migration-002-usage.sql",
@@ -100,6 +100,11 @@
     "migration-095-chat-action-checkpoints.sql",
     "migration-096-cowork-rollout-health.sql",
     "migration-097-chat-message-content-format.sql",
-    "migration-098-gtm-outreach-category.sql"
+    "migration-098-workspace-id-is-user-id.sql",
+    "migration-099-voice-interview-updated-at.sql",
+    "migration-100-template-cap-race.sql",
+    "migration-101-batch-slot-idempotency.sql",
+    "migration-102-lock-match-post-embeddings.sql",
+    "migration-103-gtm-outreach-category.sql"
   ]
 }

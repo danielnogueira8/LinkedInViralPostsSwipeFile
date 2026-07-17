@@ -19,7 +19,13 @@ export type PostMediaAttachment = {
 };
 
 const IMAGE_MIME = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
-const VIDEO_MIME = new Set(["video/mp4", "video/quicktime", "video/x-msvideo", "video/webm"]);
+// AVI (video/x-msvideo) is deliberately excluded — LinkedIn's publish API
+// doesn't support it, so accepting it here only let a file pass this gate
+// and then fail (or get silently rejected) downstream, wasting a publish
+// attempt. media-library.ts used to special-case-reject it after the fact;
+// rejecting it at the single source of truth means every caller (direct
+// attach, media library, Zernio upload) is consistent.
+const VIDEO_MIME = new Set(["video/mp4", "video/quicktime", "video/webm"]);
 const DOCUMENT_MIME = new Set(["application/pdf"]);
 
 export const POST_MEDIA_MAX_BYTES: Record<PostMediaType, number> = {
@@ -108,7 +114,7 @@ export function validatePostMediaFile(input: {
   if (!type) {
     return {
       ok: false,
-      error: "Unsupported media type. Use JPG, PNG, GIF, WebP, MP4, MOV, AVI, WebM, or PDF.",
+      error: "Unsupported media type. Use JPG, PNG, GIF, WebP, MP4, MOV, WebM, or PDF.",
     };
   }
 

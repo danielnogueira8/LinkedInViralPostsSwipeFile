@@ -8,13 +8,14 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { trackedAccountIds } from "@/lib/supabase-scoped";
 import { runProfileHistory } from "@/lib/apify";
 import { INJECTION_GUARD, wrapUntrustedXml } from "@/lib/agent/untrusted";
+import { providerModelAttribution } from "@/lib/agent/cowork-adapter-attempt";
 import {
   sanitizeCreatorStyleProfile,
+  isUsableCreatorStyleProfile,
   buildStylePromptBlock,
   type CreatorStyleProfile,
   STYLE_SOURCE_MAX,
   STYLE_SAVED_PICK_MAX,
-  STYLE_LOW_SAMPLE_THRESHOLD,
 } from "@/lib/creator-styles";
 
 // We pull the creator's latest STYLE_SOURCE_MAX (30) posts live from Apify when
@@ -269,23 +270,40 @@ export async function generateCreatorStyleProfile(opts: {
       tools: [CREATOR_STYLE_TOOL],
       forceTool: CREATOR_STYLE_TOOL_NAME,
     });
+    const attribution = providerModelAttribution(REASONING_MODEL, res.model);
     await logOpenRouterUsage(
       "synthesize_creator_style",
-      REASONING_MODEL,
+      attribution.model,
       res.usage,
       opts.workspaceId,
+      attribution.metadata,
     );
     if (res.finishReason === "length") {
       throw new Error("Creator style synthesis was truncated (hit the output limit).");
     }
-    if (res.toolArgs) return sanitizeCreatorStyleProfile(res.toolArgs);
-    throw new Error("Creator style synthesis returned no usable result.");
+    if (!res.toolArgs) {
+      throw new Error("Creator style synthesis returned no usable result.");
+    }
+    const profile = sanitizeCreatorStyleProfile(res.toolArgs);
+    // sanitizeCreatorStyleProfile is a pure coercion — it happily turns an
+    // empty/near-empty tool payload ({}) into a fully-shaped-but-blank
+    // profile instead of throwing. Gate on SEMANTIC usability here so a blank
+    // profile doesn't sail through and get persisted as a ready style with
+    // nothing for buildStylePromptBlock to inject beyond the fixed
+    // anti-copying footer.
+    if (!isUsableCreatorStyleProfile(profile)) {
+      throw new Error("Creator style synthesis returned no usable result.");
+    }
+    return profile;
   };
 
   try {
     return await attempt();
   } catch (e) {
-    // One retry — a truncated/empty forced-tool call is usually transient.
+    // One bounded retry — a truncated/empty/unusable forced-tool call is
+    // usually transient. A second unusable result is treated as a genuine
+    // failure (runCreatorStyleGeneration's caller marks the row 'failed'),
+    // not retried again.
     if (/truncated|no usable/i.test((e as Error).message)) {
       return await attempt();
     }
@@ -316,14 +334,31 @@ export async function runCreatorStyleGeneration(opts: {
   profileId: string;
   sourceAccountId?: string | null;
   savedPostIds?: string[] | null;
+  // The generating_started_at value stamped when THIS run was claimed. Every
+  // write below is conditioned on it (mirrors runVoiceGeneration's runToken
+  // pattern) so a run that stale-recovery already declared dead can't clobber
+  // a newer run's result if it finishes late. null only for jobs enqueued
+  // before this field existed (no guard, best-effort during rollout).
+  runToken?: string | null;
 }): Promise<void> {
   const sb = supabaseAdmin();
   const patchRow = async (patch: Record<string, unknown>) => {
-    await sb
+    let query = sb
       .from("creator_style_profiles")
       .update({ ...patch, updated_at: new Date().toISOString() })
       .eq("id", opts.profileId)
       .eq("workspace_id", opts.workspaceId);
+    if (opts.runToken) query = query.eq("generating_started_at", opts.runToken);
+    const { data, error } = await query.select("id");
+    if (error) {
+      console.warn(
+        `creator-style patchRow failed for ${opts.profileId}: ${error.message}`,
+      );
+    } else if (opts.runToken && (!data || data.length === 0)) {
+      console.warn(
+        `creator-style stale run result dropped (superseded) for ${opts.profileId}`,
+      );
+    }
   };
   // A failed run clears generating_started_at so stale-recovery doesn't later
   // re-flip an already-failed row, and leaves generated_at untouched (a failure
@@ -331,12 +366,10 @@ export async function runCreatorStyleGeneration(opts: {
   const fail = (message: string) =>
     patchRow({ status: "failed", error: message, generating_started_at: null });
   try {
-    // Stamp the run start so a run that dies mid-flight (this job's function
-    // gets torn down) is recoverable as stale rather than stuck forever. The
-    // create route flips the row to 'generating' but doesn't set this; the
-    // regenerate route sets it too — stamping here covers both entry points.
-    await patchRow({ generating_started_at: new Date().toISOString() });
-
+    // Both entry points (create + regenerate) already stamp
+    // generating_started_at with opts.runToken when they claim the row —
+    // re-stamping it here would break the CAS guard on every write below by
+    // changing the value they're conditioned on.
     const posts = await fetchStyleSourcePosts({
       workspaceId: opts.workspaceId,
       sourceAccountId: opts.sourceAccountId,
@@ -353,7 +386,6 @@ export async function runCreatorStyleGeneration(opts: {
       posts,
     });
     const promptBlock = buildStylePromptBlock(profile);
-    const lowSample = posts.length < STYLE_LOW_SAMPLE_THRESHOLD;
 
     // Persist source references (distilled — first line + url, NOT full bodies).
     // Clear any prior references first (a regenerate re-runs this), best-effort.
@@ -377,6 +409,11 @@ export async function runCreatorStyleGeneration(opts: {
       );
     }
 
+    // description is a user-owned field (see creatorStyleUpdateSchema) —
+    // generation must never write into it. The low-sample warning is derived
+    // from sample_count at read time (creatorStyleQualityWarning) instead, so
+    // it never clobbers the user's own description and clears itself
+    // automatically once a regenerate crosses STYLE_LOW_SAMPLE_THRESHOLD.
     await patchRow({
       status: "ready",
       error: null,
@@ -387,13 +424,6 @@ export async function runCreatorStyleGeneration(opts: {
       // the in-flight marker so stale-recovery leaves the finished row alone.
       generated_at: new Date().toISOString(),
       generating_started_at: null,
-      ...(lowSample
-        ? {
-            description: `Built from only ${posts.length} post${
-              posts.length === 1 ? "" : "s"
-            } — style quality may be weaker. Regenerate once more of this creator's posts are scraped.`,
-          }
-        : {}),
     });
   } catch (e) {
     await fail(

@@ -98,10 +98,20 @@ export function PublishingCard() {
     if (busy) return;
     setBusy(true);
     try {
-      const data = await fetchJson<{ ok: boolean; authUrl?: string; error?: string }>(
-        "/api/integrations/linkedin",
-        { method: "POST" },
-      );
+      const data = await fetchJson<{
+        ok: boolean;
+        authUrl?: string;
+        alreadyConnected?: boolean;
+        error?: string;
+      }>("/api/integrations/linkedin", { method: "POST" });
+      // Already connected — don't start a new OAuth flow. Re-sync the card so it
+      // shows the connected state and let the user know.
+      if (data.ok && data.alreadyConnected) {
+        toast.success("LinkedIn is already connected.");
+        await load();
+        setBusy(false);
+        return;
+      }
       if (!data.ok || !data.authUrl) throw new Error(data.error || "Couldn't start connecting.");
       // Hand off to Zernio's hosted OAuth; it redirects back to our finalize
       // callback, which bounces to /settings?linkedin=connected.

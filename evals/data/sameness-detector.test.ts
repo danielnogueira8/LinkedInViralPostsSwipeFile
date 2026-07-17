@@ -157,6 +157,27 @@ describe("isAcceptableRewrite", () => {
       "This is a fresh take on the same idea but written from a different angle. Similar length, same voice, no biographical crutch.";
     expect(isAcceptableRewrite(input, rewrite)).toEqual({ ok: true });
   });
+
+  test("rewrite exceeding maxChars → rejected as too_long", () => {
+    const rewrite =
+      "This is a fresh take on the same idea but written from a different angle. Similar length, same voice, no biographical crutch.";
+    expect(isAcceptableRewrite(input, rewrite, 50)).toEqual({
+      ok: false,
+      reason: "too_long",
+    });
+  });
+
+  test("rewrite within maxChars → accepted", () => {
+    const rewrite =
+      "This is a fresh take on the same idea but written from a different angle. Similar length, same voice, no biographical crutch.";
+    expect(isAcceptableRewrite(input, rewrite, 3200)).toEqual({ ok: true });
+  });
+
+  test("no maxChars supplied → no upper bound enforced", () => {
+    const rewrite = "x".repeat(5000);
+    const longInput = "y".repeat(5000);
+    expect(isAcceptableRewrite(longInput, rewrite)).toEqual({ ok: true });
+  });
 });
 
 describe("buildSamenessUserContent — batch prompt caching", () => {

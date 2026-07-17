@@ -62,7 +62,10 @@ import {
   coworkAdapterHealth,
   type AdapterHealthRegistry,
 } from "@/lib/agent/adapter-health";
-import { runCoworkAdapterAttempt } from "@/lib/agent/cowork-adapter-attempt";
+import {
+  providerModelAttribution,
+  runCoworkAdapterAttempt,
+} from "@/lib/agent/cowork-adapter-attempt";
 import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
 import {
   enforceExactFinalLine,
@@ -1356,7 +1359,18 @@ export async function* runDraftEngine(
     if (looksCorruptedDraft(cleaned)) return null;
     if (cleaned.length > RENDER_POST_MAX_CHARS) return null;
     const title = cleaned.split("\n", 1)[0].slice(0, 60).trim() || "Draft post";
-    return { id: `art_salvage_${writerAttempt}`, kind: "post", title, body: cleaned };
+    return {
+      id: `art_salvage_${writerAttempt}`,
+      kind: "post",
+      title,
+      body: cleaned,
+      // Stamped on the artifact itself (not just the ephemeral chat text) so
+      // the unverified status survives into chat_artifacts.meta and is still
+      // visible whenever this draft is viewed later on the board — the chat
+      // disclaimer alone disappears from view the moment the transcript
+      // scrolls past it.
+      meta: { needs_verification: true },
+    };
   };
 
   const call = async (
@@ -1385,15 +1399,20 @@ export async function* runDraftEngine(
         const used = tokens(response.usage);
         inputTokens += used.input;
         outputTokens += used.output;
+        const attribution = providerModelAttribution(model, response.model);
         await deps.recordUsage(
           "cowork_direct_writer",
-          model,
+          attribution.model,
           response.usage,
           input.workspaceId,
-          { stage },
+          {
+            stage,
+            ...attribution.metadata,
+          },
         );
       },
       usage: (response) => response.usage,
+      responseModel: (response) => response.model,
       telemetry: input.telemetry,
       stage: `writer_${stage}`,
       attempt,
@@ -1407,7 +1426,9 @@ export async function* runDraftEngine(
           ? "deadline"
           : "cancelled",
     });
-    input.onModelUsed?.(model);
+    input.onModelUsed?.(
+      providerModelAttribution(model, result.response.model).model,
+    );
     return result.response;
   };
 

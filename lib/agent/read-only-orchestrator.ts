@@ -23,22 +23,25 @@ import {
   coworkAdapterHealth,
   type AdapterHealthRegistry,
 } from "@/lib/agent/adapter-health";
-import { runCoworkAdapterAttempt } from "@/lib/agent/cowork-adapter-attempt";
+import {
+  providerModelAttribution,
+  runCoworkAdapterAttempt,
+} from "@/lib/agent/cowork-adapter-attempt";
 import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
 import { distinctFallbackModel } from "@/lib/agent/model-routing";
+import {
+  FALLBACK_READ_ONLY_ORCHESTRATOR_MODEL,
+  PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL,
+} from "@/lib/agent/model-config";
+
+export {
+  FALLBACK_READ_ONLY_ORCHESTRATOR_MODEL,
+  PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL,
+} from "@/lib/agent/model-config";
 
 // Primary defaults to the one app-wide chat model (OPENROUTER_CHAT_MODEL) so
 // every text-LLM call uses the SAME model unless pinned via
 // OPENROUTER_READ_ONLY_ORCHESTRATOR_MODEL. The fallback stays independent.
-export const PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL =
-  process.env.OPENROUTER_READ_ONLY_ORCHESTRATOR_MODEL || CHAT_MODEL;
-export const FALLBACK_READ_ONLY_ORCHESTRATOR_MODEL =
-  distinctFallbackModel(
-    PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL,
-    process.env.OPENROUTER_READ_ONLY_ORCHESTRATOR_FALLBACK_MODEL ||
-      "google/gemini-3.5-flash",
-    ["anthropic/claude-sonnet-5"],
-  );
 // Leave five seconds inside the 90-second complex-turn SLO for the caller to
 // persist and flush the terminal event after this generator completes.
 export const READ_ONLY_ORCHESTRATOR_DEADLINE_MS = 85_000;
@@ -678,6 +681,7 @@ export type ReadOnlyPlannerRequest = {
 export type ReadOnlyPlannerResponse = {
   toolArgs: Record<string, unknown> | null;
   usage?: Usage;
+  model?: string;
 };
 
 export type ReadOnlyOrchestratorAdapter = {
@@ -866,7 +870,11 @@ export class OpenRouterReadOnlyOrchestratorAdapter
         },
       ],
     });
-    return { toolArgs: response.toolArgs, usage: response.usage };
+    return {
+      toolArgs: response.toolArgs,
+      usage: response.usage,
+      model: response.model,
+    };
   }
 }
 
@@ -1574,6 +1582,7 @@ function completedDone(input: {
 type ReadOnlyOrchestratorRuntimeInput = ReadOnlyOrchestratorInput & {
   cancellationBoundary: () => Promise<boolean>;
   deadlineExceeded: () => boolean;
+  deadlineAtMs: number;
 };
 
 function interruptionReason(
@@ -1596,15 +1605,18 @@ function createReadOnlyCancellationWatcher(
   dependencies: ReadOnlyOrchestratorDependencies,
 ): {
   signal: AbortSignal;
+  deadlineAtMs: number;
   boundary: () => Promise<boolean>;
   deadlineExceeded: () => boolean;
   stop: () => Promise<void>;
 } {
   const serverCancellation = new AbortController();
   const deadline = new AbortController();
+  const deadlineMs = Math.max(1, dependencies.turnDeadlineMs);
+  const deadlineAtMs = Date.now() + deadlineMs;
   const deadlineTimer = setTimeout(
     () => deadline.abort(),
-    Math.max(1, dependencies.turnDeadlineMs),
+    deadlineMs,
   );
   const signal = AbortSignal.any(
     [input.signal, serverCancellation.signal, deadline.signal].filter(
@@ -1649,6 +1661,7 @@ function createReadOnlyCancellationWatcher(
     : null;
   return {
     signal,
+    deadlineAtMs,
     deadlineExceeded: () => deadline.signal.aborted,
     boundary: async () => {
       if (signal.aborted) return true;
@@ -1676,10 +1689,26 @@ async function* runReadOnlyOrchestratorCore(
 ): AsyncGenerator<AgentEvent> {
   const authoritativeInstruction =
     input.route.authoritativeInstruction ?? input.userInstruction;
-  // Ambiguity is already a deterministic route result. Keep the clarification
-  // fully server-owned so planner prose can never masquerade as a deliverable.
+  // News research and ambiguity are already deterministic route results. Keep
+  // them server-owned so a planner cannot add search steps, redirect the query,
+  // or turn prose into a deliverable.
   let plan: ReadOnlyPlan | null =
-    input.route.kind === "ambiguous_read_only"
+    input.route.kind === "news_research"
+      ? {
+          actions: [
+            {
+              id: "news",
+              type: "search_news",
+              query: authoritativeResearchQuery(authoritativeInstruction),
+            },
+            {
+              id: "draft",
+              type: "draft_post",
+              evidenceActionIds: ["news"],
+            },
+          ],
+        }
+      : input.route.kind === "ambiguous_read_only"
       ? {
           actions: [
             {
@@ -1706,6 +1735,15 @@ async function* runReadOnlyOrchestratorCore(
           ],
         }
       : null;
+  if (input.route.kind === "news_research") {
+    input.telemetry?.recordAttempt({
+      stage: "orchestrator_server_plan",
+      attempt: 1,
+      provider: "server",
+      outcome: "accepted",
+      latencyMs: 0,
+    });
+  }
   let inputTokens = 0;
   let outputTokens = 0;
 
@@ -1756,15 +1794,23 @@ async function* runReadOnlyOrchestratorCore(
           const used = tokenCounts(response.usage);
           inputTokens += used.input;
           outputTokens += used.output;
+          const attribution = providerModelAttribution(
+            adapter.model,
+            response.model,
+          );
           await deps.recordUsage(
             "cowork_orchestrator",
-            adapter.model,
+            attribution.model,
             response.usage,
             input.workspaceId,
-            { stage: index === 0 ? "primary" : "fallback" },
+            {
+              stage: index === 0 ? "primary" : "fallback",
+              ...attribution.metadata,
+            },
           );
         },
         usage: (response) => response.usage,
+        responseModel: (response) => response.model,
         telemetry: input.telemetry,
         stage: index === 0 ? "orchestrator_primary" : "orchestrator_fallback",
         attempt: index + 1,
@@ -1774,7 +1820,9 @@ async function* runReadOnlyOrchestratorCore(
         cancellationReason: () =>
           input.deadlineExceeded() ? "deadline" : "cancelled",
       });
-      input.onModelUsed?.(adapter.model);
+      input.onModelUsed?.(
+        providerModelAttribution(adapter.model, result.response.model).model,
+      );
       if (await input.cancellationBoundary()) {
         yield completedDone({
           content: interruptionContent(
@@ -2015,6 +2063,7 @@ async function* runReadOnlyOrchestratorCore(
               {
                 telemetry: input.telemetry,
                 adapterHealth: deps.adapterHealth,
+                deadlineAtMs: input.deadlineAtMs,
               },
             ),
         });
@@ -2477,6 +2526,7 @@ export async function* runReadOnlyOrchestrator(
         signal: watcher.signal,
         cancellationBoundary: watcher.boundary,
         deadlineExceeded: watcher.deadlineExceeded,
+        deadlineAtMs: watcher.deadlineAtMs,
       },
       deps,
     );

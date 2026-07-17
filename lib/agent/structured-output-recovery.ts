@@ -12,6 +12,15 @@ const MAX_PLAN_LABEL_LEN = 80;
 
 export function promoteLeakedDraft(
   text: string,
+  opts: {
+    // When true, accept a reply that is ENTIRELY the post — no "here's the
+    // revised version:" lead-in required. Only safe on a REFINE turn, where the
+    // whole reply is meant to BE the rewritten post. gpt-5.6-luna often returns
+    // a refine as the clean post text with no lead-in (unlike GLM, which the
+    // lead-in detector was tuned for), so without this the refine silently
+    // produces no updated draft and the user sees the stale prior one.
+    allowLeadInless?: boolean;
+  } = {},
 ): { body: string; note: string; kind: "post" } | null {
   const trimmed = text.trim();
   if (!trimmed) return null;
@@ -27,7 +36,20 @@ export function promoteLeakedDraft(
       splitAt = colonMatch.index + colonMatch[0].length;
     }
   }
-  if (splitAt < 0) return null;
+  // No lead-in separator. On a refine turn we still salvage: the entire reply is
+  // the candidate body (no note). Off a refine turn we bail, as before, so a
+  // normal conversational reply is never mistaken for a leaked draft.
+  if (splitAt < 0) {
+    if (!opts.allowLeadInless) return null;
+    const body = trimmed;
+    if (/```/.test(body) || looksCorruptedDraft(body)) return null;
+    // Same post-shape floor as the lead-in path: long enough + multi-paragraph
+    // (or very long). A short one-liner is not a post.
+    if (body.length >= 200 && (/\n[ \t]*\n/.test(body) || body.length >= 400)) {
+      return { body, note: "", kind: "post" };
+    }
+    return null;
+  }
   const note = trimmed.slice(0, splitAt).replace(/\s*-{3,}\s*$/, "").trim();
   const body = trimmed.slice(splitAt).trim();
   if (/```/.test(body) || looksCorruptedDraft(body)) return null;

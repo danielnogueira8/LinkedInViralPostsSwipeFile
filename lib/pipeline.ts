@@ -14,7 +14,7 @@ import {
   qualifiesForHookLibrary,
   normalizeHookForDedupe,
 } from "./hooks";
-import { decideScrapeGates } from "./scrape-gating";
+import { decideScrapeGates, excludeRecentlyScrapedInResume } from "./scrape-gating";
 import { SCRAPE_RUN_REPLACED_ERROR } from "./scrape-jobs";
 import {
   postsNeedingEmbeddingForAccounts,
@@ -40,22 +40,53 @@ export type AccountProgress = {
 
 export type Phase = "scraping" | "templating" | "classifying" | "hooks" | "done" | "error";
 
-async function pool<T>(items: T[], size: number, fn: (item: T, idx: number) => Promise<void>): Promise<void> {
+async function pool<T>(
+  items: T[],
+  size: number,
+  fn: (item: T, idx: number) => Promise<void>,
+  // Checked before claiming each new item. Once true, in-flight work finishes
+  // but no new item is started — lets a caller yield cleanly before a hard
+  // platform timeout instead of being killed mid-write.
+  shouldStop?: () => boolean,
+): Promise<{ stoppedEarly: boolean }> {
   let i = 0;
+  let stoppedEarly = false;
   const workers = Array.from({ length: Math.min(size, items.length) }, async () => {
     while (i < items.length) {
+      if (shouldStop?.()) {
+        stoppedEarly = true;
+        return;
+      }
       const idx = i++;
       await fn(items[idx], idx);
     }
   });
   await Promise.all(workers);
+  return { stoppedEarly };
 }
+
+// The route's maxDuration (app/api/cron/jobs/route.ts, 300s Vercel Pro max).
+// This module has no way to read that config directly, so it's duplicated
+// here as the wall-clock budget the scrape pool self-stops against — mirrors
+// the identical pattern in lib/batch/pattern-brief.ts.
+const CRON_BUDGET_MS = 300_000;
+// Stop starting new account scrapes once this much of the budget remains.
+// Generous margin: one in-flight Apify call can itself take real time, and
+// downstream stages (viral stats, embeddings, hooks) still need to run after
+// the scrape pool returns.
+const CRON_DEADLINE_MARGIN_MS = 90_000;
 
 export async function runDailyPipeline(
   workspaceId?: string,
-  opts?: { runId?: string },
+  opts?: {
+    runId?: string;
+    // Testing seam: override the wall-clock start the deadline check measures
+    // against. Defaults to now.
+    startedAt?: number;
+  },
 ): Promise<{ runId: string; postsCount: number; viralCount: number }> {
   const sb = supabaseAdmin();
+  const pipelineStartedAt = opts?.startedAt ?? Date.now();
   let runId: string;
   if (opts?.runId) {
     runId = opts.runId;
@@ -179,8 +210,18 @@ export async function runDailyPipeline(
     // upsert-overwrites don't hide the last scrape time.
     const gates = await decideScrapeGates(accounts);
     const gateByAccount = new Map(gates.map((g) => [g.account_id, g] as const));
-    const toScrape = accounts.filter((a) => gateByAccount.get(a.id)?.scrape !== false);
+    let toScrape = accounts.filter((a) => gateByAccount.get(a.id)?.scrape !== false);
     const skipped = accounts.filter((a) => gateByAccount.get(a.id)?.scrape === false);
+
+    // A run resuming after a mid-flight kill (background-job stale sweep
+    // reclaims + re-executes with the same runId) already paid Apify for
+    // whatever it scraped before dying — GATE_HOURS's 36h cadence window is
+    // too coarse to catch a same-run resume minutes later. Only applies when
+    // this call carries a runId (a retry-capable invocation), never a fresh
+    // ad-hoc/cron start.
+    if (opts?.runId) {
+      toScrape = await excludeRecentlyScrapedInResume(toScrape);
+    }
 
     // Record skipped creators in progress so the dashboard reflects them.
     for (let i = 0; i < skipped.length; i++) {
@@ -274,7 +315,10 @@ export async function runDailyPipeline(
       }
     }
 
-    await pool(toScrape, 6, async (acc, idx) => {
+    const { stoppedEarly } = await pool(
+      toScrape,
+      6,
+      async (acc, idx) => {
       const startedAt = Date.now();
       progress.set(acc.linkedin_handle, {
         index: idx, name: acc.name, handle: acc.linkedin_handle,
@@ -407,7 +451,16 @@ export async function runDailyPipeline(
         });
         dirty = true;
       }
-    });
+      },
+      () => Date.now() - pipelineStartedAt > CRON_BUDGET_MS - CRON_DEADLINE_MARGIN_MS,
+    );
+    if (stoppedEarly) {
+      console.warn(
+        JSON.stringify({
+          scrape_pipeline_deadline_hit: { runId, accountsAttempted: toScrape.length },
+        }),
+      );
+    }
 
     // Refresh per-creator viral track record (migration 029) for the accounts
     // we just scraped, so the swipe card can show "viral N/M (X%)" without a
@@ -585,7 +638,16 @@ export async function runDailyPipeline(
     }
 
     clearInterval(interval);
-    await persist({ phase: "done", phase_msg: "Done", finished: true });
+    // A run that attempted at least one account but scraped zero posts (every
+    // account errored or came back with no data) is a failure, not a success —
+    // otherwise latestRelevantScrape() treats a wasted Apify call as fresh data.
+    const allFailed = toScrape.length > 0 && postsCount === 0;
+    await persist({
+      phase: allFailed ? "error" : "done",
+      phase_msg: allFailed ? "All accounts failed or returned no data" : "Done",
+      finished: true,
+      error: allFailed ? "all accounts failed or returned no data" : undefined,
+    });
     return { runId, postsCount, viralCount };
   } catch (e) {
     clearInterval(interval);

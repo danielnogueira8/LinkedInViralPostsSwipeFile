@@ -8,6 +8,7 @@ import {
   PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL,
   PRIMARY_WEB_RESEARCH_MODEL,
   ReadOnlyPlanSchema,
+  authoritativeResearchQuery,
   boundedReadOnlyPlannerHistory,
   inspectAttachmentEvidence,
   parseReadOnlyPlan,
@@ -1274,6 +1275,60 @@ describe("read-only orchestrator plan contract", () => {
 });
 
 describe("read-only orchestrator execution", () => {
+  test("compiles the exact newsjacking request into search_news then draft_post without a planner", async () => {
+    const instruction =
+      "Newsjack the most significant AI product announcement from the last 24 hours. Search the web and verify the event with current sources, then write one original LinkedIn post in my voice connecting it to what founders should do differently. Return one complete post.";
+    const planner = new ScriptedPlanner(PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL, [
+      new Error("the deterministic news route must not invoke a planner"),
+    ]);
+    const runTool = vi.fn(
+      async (name: string, args: Record<string, unknown>) => {
+        void name;
+        void args;
+        return {
+          ok: true,
+          max_age_days: 14,
+          searched: 1,
+          results: [
+            {
+              title: "A verified AI product announcement",
+              url: "https://example.com/verified-announcement",
+              published_at: "2026-07-16",
+              summary: "A current, verified product announcement.",
+            },
+          ],
+        };
+      },
+    );
+
+    const result = await collect(
+      input({
+        userInstruction: instruction,
+        history: [{ role: "user", content: instruction }],
+        draftEngineInput: {
+          ...input().draftEngineInput,
+          userInstruction: instruction,
+        },
+      }),
+      [planner],
+      runTool,
+    );
+
+    expect(planner.requests).toHaveLength(0);
+    expect(runTool).toHaveBeenCalledTimes(1);
+    expect(runTool.mock.calls[0][0]).toBe("search_news");
+    expect(runTool.mock.calls[0][1]).toEqual({
+      query: authoritativeResearchQuery(instruction),
+    });
+    expect(result.draftInputs).toHaveLength(1);
+    expect(result.events).toContainEqual(
+      expect.objectContaining({
+        type: "artifact",
+        artifact: expect.objectContaining({ kind: "post" }),
+      }),
+    );
+  });
+
   test("aborts the entire complex lane at one route-wide deadline", async () => {
     const planner: ReadOnlyOrchestratorAdapter = {
       model: PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL,
@@ -1287,7 +1342,7 @@ describe("read-only orchestrator execution", () => {
         }),
     };
     const result = await collect(
-      input(),
+      input({ route: { kind: "web_research", expectsDraft: true } }),
       [planner],
       vi.fn(async () => ({ ok: false })),
       { turnDeadlineMs: 5 },
@@ -1431,14 +1486,14 @@ describe("read-only orchestrator execution", () => {
         toolArgs: {
           actions: [
             {
-              id: "news",
-              type: "search_news",
+              id: "research",
+              type: "search_web",
               query: "cryptocurrency prices",
             },
             {
               id: "write",
               type: "draft_post",
-              evidenceActionIds: ["news"],
+              evidenceActionIds: ["research"],
             },
           ],
         },
@@ -1449,11 +1504,11 @@ describe("read-only orchestrator execution", () => {
       {
         toolArgs: {
           actions: [
-            { id: "news", type: "search_news", query: "OpenAI announcement" },
+            { id: "research", type: "search_web", query: "OpenAI announcement" },
             {
               id: "write",
               type: "draft_post",
-              evidenceActionIds: ["news"],
+              evidenceActionIds: ["research"],
             },
           ],
         },
@@ -1463,22 +1518,25 @@ describe("read-only orchestrator execution", () => {
     const dispatchedQueries: unknown[] = [];
 
     const result = await collect(
-      input(),
+      input({ route: { kind: "web_research", expectsDraft: true } }),
       [primary, fallback],
-      async (_name, args) => {
-        dispatchedQueries.push(args.query);
-        return {
-          ok: true,
-          max_age_days: 14,
-          results: [
-            {
-              title: "OpenAI announcement",
-              url: "https://openai.com/news/announcement",
-              published_at: "2026-07-14",
-              summary: "OpenAI announced a product update.",
-            },
-          ],
-        };
+      vi.fn(async () => ({ ok: false })),
+      {
+        runWebResearch: async ({ query }) => {
+          dispatchedQueries.push(query);
+          return {
+            attempts: [],
+            sources: [
+              {
+                id: "https://openai.com/news/announcement",
+                kind: "web",
+                title: "OpenAI announcement",
+                url: "https://openai.com/news/announcement",
+                text: "OpenAI announced a product update.",
+              },
+            ],
+          };
+        },
       },
     );
 
@@ -1553,7 +1611,11 @@ describe("read-only orchestrator execution", () => {
       }),
     );
     expect(toolContexts).toEqual([
-      { telemetry: successTelemetry, adapterHealth },
+      {
+        telemetry: successTelemetry,
+        adapterHealth,
+        deadlineAtMs: expect.any(Number),
+      },
     ]);
 
     const failureSink = vi.fn();
@@ -1610,11 +1672,11 @@ describe("read-only orchestrator execution", () => {
       {
         toolArgs: {
           actions: [
-            { id: "news", type: "search_news", query: "OpenAI announcement" },
+            { id: "research", type: "search_web", query: "OpenAI announcement" },
             {
               id: "write",
               type: "draft_post",
-              evidenceActionIds: ["news"],
+              evidenceActionIds: ["research"],
             },
           ],
         },
@@ -1623,27 +1685,32 @@ describe("read-only orchestrator execution", () => {
     ]);
     const dispatched: string[] = [];
 
-    const result = await collect(input(), [primary, fallback], async (name) => {
-      dispatched.push(name);
-      return {
-        ok: true,
-        max_age_days: 14,
-        searched: 1,
-        results: [
-          {
-            title: "OpenAI launches a verified product",
-            url: "https://openai.com/news/product",
-            source: "OpenAI",
-            published_at: "2026-07-14",
-            summary: "The company announced a new product.",
-          },
-        ],
-      };
-    });
+    const result = await collect(
+      input({ route: { kind: "web_research", expectsDraft: true } }),
+      [primary, fallback],
+      vi.fn(async () => ({ ok: false })),
+      {
+        runWebResearch: async () => {
+          dispatched.push("search_web");
+          return {
+            attempts: [],
+            sources: [
+              {
+                id: "https://openai.com/news/product",
+                kind: "web",
+                title: "OpenAI launches a verified product",
+                url: "https://openai.com/news/product",
+                text: "The company announced a new product.",
+              },
+            ],
+          };
+        },
+      },
+    );
 
     expect(primary.requests).toHaveLength(1);
     expect(fallback.requests).toHaveLength(1);
-    expect(dispatched).toEqual(["search_news"]);
+    expect(dispatched).toEqual(["search_web"]);
     expect(result.draftInputs).toHaveLength(1);
     expect(result.recorded.map((args) => args[1])).toEqual([
       PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL,
@@ -1675,11 +1742,11 @@ describe("read-only orchestrator execution", () => {
       {
         toolArgs: {
           actions: [
-            { id: "news", type: "search_news", query: "OpenAI announcement" },
+            { id: "research", type: "search_web", query: "OpenAI announcement" },
             {
               id: "write",
               type: "draft_post",
-              evidenceActionIds: ["news"],
+              evidenceActionIds: ["research"],
             },
           ],
         },
@@ -1687,21 +1754,24 @@ describe("read-only orchestrator execution", () => {
       },
     ]);
     const result = await collect(
-      input(),
+      input({ route: { kind: "web_research", expectsDraft: true } }),
       [primary, fallback],
-      async () => ({
-        ok: true,
-        max_age_days: 14,
-        results: [
-          {
-            title: "OpenAI announcement",
-            url: "https://openai.com/news/announcement",
-            published_at: "2026-07-14",
-            summary: "OpenAI announced a product update.",
-          },
-        ],
-      }),
-      { adapterHealth: health },
+      vi.fn(async () => ({ ok: false })),
+      {
+        adapterHealth: health,
+        runWebResearch: async () => ({
+          attempts: [],
+          sources: [
+            {
+              id: "https://openai.com/news/announcement",
+              kind: "web",
+              title: "OpenAI announcement",
+              url: "https://openai.com/news/announcement",
+              text: "OpenAI announced a product update.",
+            },
+          ],
+        }),
+      },
     );
 
     expect(primary.requests).toHaveLength(0);
@@ -1714,11 +1784,11 @@ describe("read-only orchestrator execution", () => {
       {
         toolArgs: {
           actions: [
-            { id: "news", type: "search_news", query: "OpenAI announcement" },
+            { id: "research", type: "search_web", query: "OpenAI announcement" },
             {
               id: "write",
               type: "draft_post",
-              evidenceActionIds: ["news"],
+              evidenceActionIds: ["research"],
             },
           ],
         },
@@ -1730,11 +1800,16 @@ describe("read-only orchestrator execution", () => {
     ]);
 
     await expect(
-      collect(input(), [primary, fallback], vi.fn(async () => ({ ok: true })), {
-        recordUsage: vi.fn(async () => {
-          throw new UsagePersistenceError("usage insert failed");
-        }),
-      }),
+      collect(
+        input({ route: { kind: "web_research", expectsDraft: true } }),
+        [primary, fallback],
+        vi.fn(async () => ({ ok: true })),
+        {
+          recordUsage: vi.fn(async () => {
+            throw new UsagePersistenceError("usage insert failed");
+          }),
+        },
+      ),
     ).rejects.toThrow("usage insert failed");
     expect(primary.requests).toHaveLength(1);
     expect(fallback.requests).toHaveLength(0);
@@ -2115,8 +2190,8 @@ describe("read-only orchestrator execution", () => {
     const done = result.events.find((event) => event.type === "done");
     expect(done?.type === "done" && done.terminalReason).toBe("cancelled");
     expect(done?.type === "done" && done.message).toMatchObject({
-      inputTokens: 391,
-      outputTokens: 138,
+      inputTokens: 321,
+      outputTokens: 123,
     });
   });
 

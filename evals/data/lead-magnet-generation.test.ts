@@ -73,6 +73,48 @@ describe("lead magnet generation guidance", () => {
     ).toBe("# Kit\n\nUse this - then ship it.\n\n- Step 1 - audit the hook");
   });
 
+  test("preserves indentation and em dashes inside a fenced code block", () => {
+    const markdown = [
+      "Run this:",
+      "",
+      "```yaml",
+      "steps:",
+      "  - name: setup",
+      "    run: pip  install requests  # note — see docs",
+      "```",
+      "",
+      "Then ship it — that's it.",
+    ].join("\n");
+
+    expect(sanitizeGeneratedLeadMagnetMarkdown(markdown)).toBe(
+      [
+        "Run this:",
+        "",
+        "```yaml",
+        "steps:",
+        "  - name: setup",
+        "    run: pip  install requests  # note — see docs",
+        "```",
+        "",
+        "Then ship it - that's it.",
+      ].join("\n"),
+    );
+  });
+
+  test("leaves a table-shaped example line untouched inside a fence", () => {
+    const markdown = [
+      "Example table syntax:",
+      "",
+      "```markdown",
+      "| a | b |c|",
+      "```",
+    ].join("\n");
+
+    expect(sanitizeGeneratedLeadMagnetMarkdown(markdown)).toBe(
+      ["Example table syntax:", "", "```markdown", "| a | b |c|", "```"].join("\n"),
+    );
+  });
+
   test("repairs collapsed one-line markdown tables from generated resources", () => {
     const markdown = sanitizeGeneratedLeadMagnetMarkdown(
       "| Step | Agent | Input | Output | Time | |---|---|---|---|---| | 1 | You | Topic idea | Topic brief | 5 min | | 2 | Hook Creator | Brief | Hooks | 3 min |",

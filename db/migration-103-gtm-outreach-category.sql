@@ -71,7 +71,7 @@ on conflict ((lower(linkedin_handle))) do update set
   synced_at = excluded.synced_at;
 
 insert into public.app_schema_version (singleton, version, updated_at)
-values (true, 98, now())
+values (true, 103, now())
 on conflict (singleton) do update
 set version = excluded.version, updated_at = excluded.updated_at;
 

@@ -133,6 +133,18 @@ export const leadMagnetImportSchema = z.object({
     .refine((url) => isHttpUrl(url), "Use an http or https public URL."),
 });
 
+// Derived at read time from metadata.quality_status (set once at generation
+// time by assessGeneratedLeadMagnetMarkdown — see lib/lead-magnet-ai.ts).
+// Mirrors creatorStyleQualityWarning's pattern: a pure function over an
+// existing field, no separate gating column, no blocking write path.
+export function leadMagnetQualityWarning(metadata: LeadMagnetMetadata): string | null {
+  if (metadata.quality_status !== "review_suggested") return null;
+  const [firstIssue] = metadata.quality_warnings ?? [];
+  return firstIssue
+    ? `This resource may need review: ${firstIssue}`
+    : "This resource may need review before sharing.";
+}
+
 function isHttpUrl(url: string): boolean {
   try {
     const protocol = new URL(url).protocol;

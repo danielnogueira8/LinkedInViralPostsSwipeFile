@@ -2,6 +2,7 @@ import { cache } from "react";
 import { supabaseAdmin } from "./supabase";
 import { requireWorkspaceId } from "./workspace";
 import { retryRead } from "./retry-read";
+import { encodePostgrestValue } from "./postgrest";
 
 /**
  * Workspace-scoped Supabase client.
@@ -104,15 +105,6 @@ export const scopedSupabase = cache(async function scopedSupabase() {
   };
 });
 
-// PostgREST .or() values containing reserved characters (commas, parens,
-// dots in some positions) must be wrapped in double quotes. We always
-// quote when the value contains anything outside the safe character set;
-// safe values pass through unquoted to keep query logs readable.
-function encodePostgrestValue(v: string): string {
-  if (/^[A-Za-z0-9_-]+$/.test(v)) return v;
-  // Escape embedded backslashes and double quotes per PostgREST grammar.
-  return `"${v.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
-}
 
 /**
  * For routes that need to query global tables (accounts/posts/templates) but
@@ -138,6 +130,51 @@ export const trackedAccountIds = cache(
       sb.from("workspace_accounts").select("account_id").eq("workspace_id", workspaceId),
     );
     if (error) throw error;
-    return (data ?? []).map((r) => r.account_id as string);
+    const rows = data ?? [];
+    // No .range() pagination here on purpose — MANUAL_ACCOUNT_LIMIT (50,
+    // lib/account-tracking.ts) keeps every workspace far under PostgREST's
+    // silent 1000-row cap, so paginating would be unreachable complexity.
+    // This warns loudly instead if that ever stops being true (a raised cap,
+    // a bug bypassing it) rather than silently truncating the roster.
+    if (rows.length >= 1000) {
+      console.error(
+        `trackedAccountIds(${workspaceId}) returned ${rows.length} rows — hit PostgREST's 1000-row cap. MANUAL_ACCOUNT_LIMIT no longer bounds this; needs selectAllRows pagination.`,
+      );
+    }
+    return rows.map((r) => r.account_id as string);
   },
 );
+
+/**
+ * The most recent successful scrape run "relevant" to a workspace: either a
+ * run that workspace itself triggered (runs.workspace_id = workspaceId), or
+ * a global daily-cron run (runs.workspace_id IS NULL — see
+ * db/migration-011-multi-tenancy.sql). Deliberately excludes OTHER
+ * workspaces' triggered runs.
+ *
+ * Without this, "get the latest scrape" queries picked the single most
+ * recent run across ALL workspaces with no filter at all — so workspace B
+ * triggering a manual re-scrape would skew workspace A's "recent posts"
+ * freshness window and displayed scrape date to B's run, even though A's own
+ * posts/accounts stayed correctly scoped. Centralizing here so every caller
+ * (Cowork's get_top_from_batch tool, the weekly batch, the hosted MCP tool)
+ * gets the fix once instead of re-implementing the same unscoped query.
+ */
+export async function latestRelevantScrape(
+  workspaceId: string,
+): Promise<{ started_at: string; finished_at: string | null } | null> {
+  const sb = supabaseAdmin();
+  const { data, error } = await retryRead<
+    { started_at: string; finished_at: string | null }[]
+  >(() =>
+    sb
+      .from("runs")
+      .select("started_at, finished_at")
+      .eq("status", "ok")
+      .or(`workspace_id.eq.${encodePostgrestValue(workspaceId)},workspace_id.is.null`)
+      .order("started_at", { ascending: false })
+      .limit(1),
+  );
+  if (error) throw error;
+  return data?.[0] ?? null;
+}

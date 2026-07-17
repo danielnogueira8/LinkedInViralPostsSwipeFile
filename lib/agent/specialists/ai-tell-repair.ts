@@ -9,7 +9,10 @@ import {
   coworkAdapterHealth,
   type AdapterHealthRegistry,
 } from "@/lib/agent/adapter-health";
-import { runCoworkAdapterAttempt } from "@/lib/agent/cowork-adapter-attempt";
+import {
+  runCoworkAdapterAttempt,
+  providerModelAttribution,
+} from "@/lib/agent/cowork-adapter-attempt";
 import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
 import { editDraftBody, type EditorModelRewrite } from "./editor";
 import { aiTellMetrics, looksCorruptedDraft } from "./nets";
@@ -115,15 +118,18 @@ function buildRewrite(
         },
         persistUsage: async (res) => {
           if (workspaceId) {
+            const attribution = providerModelAttribution(model, res.model);
             await logOpenRouterUsage(
               "ai-tell-repair",
-              model,
+              attribution.model,
               res.usage,
               workspaceId,
+              attribution.metadata,
             );
           }
         },
         usage: (res) => res.usage,
+        responseModel: (res) => res.model,
         telemetry,
         stage: "finalizer_ai_tell",
         attempt: 1,

@@ -11,7 +11,7 @@ import {
   TrackedCreators,
 } from "@/lib/tracked-creators";
 import { createSupabaseTrackedCreatorsRepository } from "@/lib/tracked-creators-supabase";
-import { trackedAccountIds } from "@/lib/supabase-scoped";
+import { trackedAccountIds, latestRelevantScrape } from "@/lib/supabase-scoped";
 import { validateCategoryId } from "@/lib/categories";
 import { canPublish, getConnection } from "@/lib/publishing";
 import {
@@ -310,14 +310,7 @@ export function registerSwipeTools(server: McpServer) {
         }
 
         const sb = supabaseAdmin();
-        const { data: lastRun, error: runErr } = await sb
-          .from("runs")
-          .select("started_at, finished_at")
-          .eq("status", "ok")
-          .order("started_at", { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        if (runErr) return errorContent(runErr.message);
+        const lastRun = await latestRelevantScrape(workspaceId);
         if (!lastRun?.started_at) {
           return jsonContent({ ok: true, posts: [], note: "No successful scrape run found yet." });
         }

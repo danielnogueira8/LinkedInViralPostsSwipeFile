@@ -9,9 +9,8 @@ import { Toaster } from "@/components/ui/sonner";
 export const dynamic = "force-dynamic";
 
 export default async function WelcomePage() {
-  const { userId, orgId } = await auth();
+  const { userId } = await auth();
   if (!userId) redirect("/sign-in");
-  if (!orgId) redirect("/dashboard");
 
   const sb = await scopedSupabase();
 

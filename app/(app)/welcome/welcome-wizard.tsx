@@ -124,10 +124,19 @@ export function WelcomeWizard({ categories }: { categories: WelcomeCategory[] })
   async function connectLinkedIn() {
     setBusy(true);
     try {
-      const data = await fetchJson<{ ok: boolean; authUrl?: string; error?: string }>(
-        "/api/integrations/linkedin?returnTo=welcome",
-        { method: "POST" },
-      );
+      const data = await fetchJson<{
+        ok: boolean;
+        authUrl?: string;
+        alreadyConnected?: boolean;
+        error?: string;
+      }>("/api/integrations/linkedin?returnTo=welcome", { method: "POST" });
+      // Already connected (e.g. the connection survived a workspace change) —
+      // don't start a new OAuth flow; just confirm and let the user move on.
+      if (data.ok && data.alreadyConnected) {
+        toast.success("LinkedIn is already connected.");
+        setBusy(false);
+        return;
+      }
       if (!data.ok || !data.authUrl) {
         throw new Error(data.error || "Couldn't start connecting.");
       }

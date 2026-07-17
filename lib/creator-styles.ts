@@ -93,6 +93,21 @@ export const STYLE_SAVED_PICK_MAX = 20;
 // low-confidence (quality may be weaker).
 export const STYLE_LOW_SAMPLE_THRESHOLD = 5;
 
+// Low-sample quality warning — DERIVED from sample_count at read time, not
+// stored. `description` is a plain user-owned field (editable via
+// creatorStyleUpdateSchema); a generation run must never write into it, or it
+// (a) clobbers whatever name the user typed for the style, and (b) goes stale
+// forever once the user regenerates with more samples (nothing ever clears
+// it, since sample_count only exists on the row, not in the text). Deriving
+// from sample_count means the warning tracks the row's actual state and
+// disappears automatically the moment a regenerate crosses the threshold.
+export function creatorStyleQualityWarning(sampleCount: number): string | null {
+  if (sampleCount <= 0 || sampleCount >= STYLE_LOW_SAMPLE_THRESHOLD) return null;
+  return `Built from only ${sampleCount} post${
+    sampleCount === 1 ? "" : "s"
+  } — style quality may be weaker. Regenerate once more of this creator's posts are scraped.`;
+}
+
 // The status values that a valid style can be in.
 export const CREATOR_STYLE_STATUSES = ["ready", "generating", "failed"] as const;
 export function isCreatorStyleStatus(v: unknown): v is CreatorStyleStatus {
@@ -196,6 +211,29 @@ export function sanitizeCreatorStyleProfile(input: unknown): CreatorStyleProfile
   };
 }
 
+// sanitizeCreatorStyleProfile is a PURE, non-throwing coercion — it must
+// always return a fully-shaped object (existing rows read through it too), so
+// {} in is {summary:"", voice_traits:[], ...} out, never a throw. That means
+// a model call that returns an empty/near-empty tool payload sails through
+// sanitization looking "valid" and can be persisted as a ready style with
+// nothing useful in it. This is the SEMANTIC gate the generation call site
+// applies on top: a usable profile needs a real summary plus at least one
+// concrete mechanic (a hook, a structure, or a few voice traits/formatting/
+// rhythm/CTA rules) — otherwise there's nothing for buildStylePromptBlock to
+// inject beyond the fixed anti-copying footer.
+const MIN_USABLE_MECHANICS = 2;
+export function isUsableCreatorStyleProfile(profile: CreatorStyleProfile): boolean {
+  if (!profile.summary || profile.summary.trim().length < 10) return false;
+  const mechanicsCount =
+    profile.voice_traits.length +
+    profile.hook_patterns.length +
+    profile.structure_patterns.length +
+    profile.formatting_rules.length +
+    profile.rhythm_rules.length +
+    profile.cta_patterns.length;
+  return mechanicsCount >= MIN_USABLE_MECHANICS;
+}
+
 // ---------------------------------------------------------------------------
 // Prompt block — distills profile_json into the concise, directly-injectable
 // Cowork block (mechanics + anti-copying guardrails). NO example bodies. Bounded
@@ -203,6 +241,22 @@ export function sanitizeCreatorStyleProfile(input: unknown): CreatorStyleProfile
 // ---------------------------------------------------------------------------
 
 export function buildStylePromptBlock(profile: CreatorStyleProfile): string {
+  // Anti-copying guardrails are ALWAYS present, even if the model omitted
+  // them, so the block can never ship without the do-not-copy contract. Built
+  // FIRST and appended LAST, outside the length cap below — a verbose profile
+  // (long voice_traits/hook_patterns/etc — nothing bounds per-field string
+  // length, only item count) must never be able to push this guard past the
+  // truncation point and silently drop it.
+  const avoid = profile.avoid_copying.length
+    ? profile.avoid_copying
+    : [
+        "the creator's personal stories, anecdotes, and unique examples",
+        "their specific claims, results, numbers, and case studies",
+        "their exact phrases, signature lines, and wording",
+        "their identity, name, and biographical details",
+      ];
+  const guard = `\nNEVER copy (write original content instead):\n${avoid.map((a) => `- ${a}`).join("\n")}`;
+
   const lines: string[] = [];
   if (profile.summary) lines.push(profile.summary);
   const bullet = (label: string, items: string[]) => {
@@ -232,18 +286,9 @@ export function buildStylePromptBlock(profile: CreatorStyleProfile): string {
   bullet("Rhythm & cadence", profile.rhythm_rules);
   bullet("CTA habits", profile.cta_patterns);
   bullet("Post-format preferences", profile.post_format_preferences);
-  // Anti-copying guardrails are ALWAYS present, even if the model omitted them,
-  // so the block can never ship without the do-not-copy contract.
-  const avoid = profile.avoid_copying.length
-    ? profile.avoid_copying
-    : [
-        "the creator's personal stories, anecdotes, and unique examples",
-        "their specific claims, results, numbers, and case studies",
-        "their exact phrases, signature lines, and wording",
-        "their identity, name, and biographical details",
-      ];
-  lines.push(
-    `\nNEVER copy (write original content instead):\n${avoid.map((a) => `- ${a}`).join("\n")}`,
-  );
-  return lines.join("\n").trim().slice(0, STYLE_PROMPT_BLOCK_MAX);
+
+  // -1 reserves room for the newline joining variable content to the guard.
+  const variableBudget = Math.max(0, STYLE_PROMPT_BLOCK_MAX - guard.length - 1);
+  const variableContent = lines.join("\n").trim().slice(0, variableBudget);
+  return (variableContent ? `${variableContent}\n${guard}` : guard.trim()).trim();
 }
