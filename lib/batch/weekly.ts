@@ -974,15 +974,19 @@ async function writeBatchChatMessage(
   artifacts?: ChatArtifact[],
 ): Promise<void> {
   try {
-    await supabaseAdmin().from("chat_messages").insert({
+    const { error } = await supabaseAdmin().from("chat_messages").insert({
       chat_id: chatId,
       workspace_id: workspaceId,
       role: "assistant",
       content,
       artifacts: artifacts && artifacts.length ? artifacts : null,
     });
-  } catch {
+    if (error) {
+      console.warn(`writeBatchChatMessage failed for chat ${chatId}: ${error.message}`);
+    }
+  } catch (e) {
     /* transcript is presentation — a dropped message never breaks the batch */
+    console.warn(`writeBatchChatMessage threw for chat ${chatId}: ${(e as Error).message}`);
   }
 }
 
