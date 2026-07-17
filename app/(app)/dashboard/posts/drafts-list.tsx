@@ -950,10 +950,11 @@ function EmptyColumn() {
 // A status → dot-color map so the minimal card carries a glance-able stage cue
 // (the column already groups by status, but the dot helps on the mobile single-
 // column view and reinforces the pipeline color language).
-const STATUS_DOT: Record<DraftStatus, string> = {
+const STATUS_DOT: Record<BoardColumnId, string> = {
   idea: "bg-amber-500",
   drafting: "bg-sky-500",
   ready: "bg-emerald-500",
+  scheduled: "bg-primary",
   posted: "bg-muted-foreground/40",
 };
 
@@ -998,6 +999,7 @@ function DraftCard({
   const publishedDate = formatShortDate(draft.publishedAt);
   const mediaCount = draft.mediaAttachments?.length ?? 0;
   const badge = kindBadge(draft.kind);
+  const column = boardColumnForDraft(draft);
 
   return (
     <div
@@ -1032,12 +1034,12 @@ function DraftCard({
         canDrag ? "cursor-grab active:cursor-grabbing" : "cursor-pointer",
         dragging && "opacity-40",
       )}
-      title={`Open post. ${STATUS_HELP[draft.status]}`}
+      title={`Open post. ${STATUS_HELP[column]}`}
     >
       <div className="flex items-start gap-2.5">
         <span
-          className={cn("mt-1.5 h-2 w-2 shrink-0 rounded-full", STATUS_DOT[draft.status])}
-          title={STATUS_HELP[draft.status]}
+          className={cn("mt-1.5 h-2 w-2 shrink-0 rounded-full", STATUS_DOT[column])}
+          title={STATUS_HELP[column]}
           aria-hidden
         />
         <div className="min-w-0 flex-1">
