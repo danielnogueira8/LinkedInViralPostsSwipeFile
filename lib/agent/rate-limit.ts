@@ -170,6 +170,11 @@ export const VISION_CALL_COST_RESERVE_USD = 0.03; // ~700 tokens Sonnet-4.6 + ma
 // One grounded news search (search_news tool): ~$0.02 Exa web-plugin fee
 // (5 results at $4/1k) + a few hundred small-model tokens + margin.
 export const NEWS_SEARCH_COST_RESERVE_USD = 0.05;
+// POST /api/rewrite ("Ask for changes" on a selection): worst-case input is
+// the full draft (~20k chars) + voice profile (~4k chars) + selection (~8k
+// chars) as context, up to 1200 output tokens on CHAT_MODEL. Conservative
+// margin since CHAT_MODEL can be swapped to a pricier writer model.
+export const REWRITE_COST_RESERVE_USD = 0.05;
 // Dedicated read-only orchestration can spend on two planner providers, one
 // grounded search or multi-file inspection, the writer fallback chain, and
 // finalizer specialists. Reserve the whole bounded lane before any model call
