@@ -27,11 +27,7 @@ import {
   stripEmDashes,
   aiTellMetrics,
 } from "./nets";
-import {
-  normalizePostBody,
-  normalizeNumberedListicleHeadings,
-  normalizeSentenceFinalNumberBreaks,
-} from "@/lib/post-body-normalize";
+import { normalizePostBody } from "@/lib/post-body-normalize";
 import {
   EditorResultSchema,
   type EditorResult,
@@ -115,20 +111,14 @@ function deterministicClean(
     return { body: deAshed.replace(/\s+$/, ""), fixed };
   }
 
-  // Decompose normalizePostBody so each category reflects what ACTUALLY changed
-  // (the old coarse heuristics false-positived broken_list on already-clean
-  // lists and false-negatived dense_paragraph when the input had a trailing
-  // newline). normalizePostBody = the two list/number fixes, then a dense-block
-  // paragraph split — so we run the list fixes first, compare, then compare the
-  // final normalize against that intermediate to isolate the dense-split.
+  // normalizePostBody is now just the dense-block paragraph split (the list-
+  // heading/number repair nets were removed: the live writer model formats
+  // lists correctly on its own, so those nets never fired — see the "broken
+  // list" category history in AI_TELL_CATEGORIES for context on why it can
+  // still appear in old telemetry but won't be reported going forward).
   const trimmed = deAshed.replace(/\s+$/, "");
-  const listFixed = normalizeSentenceFinalNumberBreaks(
-    normalizeNumberedListicleHeadings(trimmed),
-  );
-  if (listFixed !== trimmed) fixed.push("broken_list");
-
   const normalized = normalizePostBody(deAshed);
-  if (normalized !== listFixed) fixed.push("dense_paragraph");
+  if (normalized !== trimmed) fixed.push("dense_paragraph");
 
   return { body: normalized, fixed };
 }

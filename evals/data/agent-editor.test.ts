@@ -55,18 +55,13 @@ describe("AI-Tell Editor — deterministic (model off)", () => {
     expect(r.fixedCategories).toContain("dense_paragraph");
   });
 
-  test("a well-formed numbered list with trailing whitespace → NO false broken_list", async () => {
-    // Regression: the old heuristic reported broken_list for ANY body containing
-    // "1. " even when nothing was repaired. Here normalize only trims trailing
-    // whitespace — broken_list must NOT be reported.
-    const r = await editDraftBody("1. First\n2. Second\n3. Third\n   ");
-    expect(r.fixedCategories).not.toContain("broken_list");
-  });
-
-  test("a genuinely broken list heading → reports broken_list", async () => {
-    // A lone number line split from its heading is what normalize actually fixes.
-    const r = await editDraftBody("1.\nDo the thing\n\n2.\nDo the next thing");
-    expect(r.fixedCategories).toContain("broken_list");
+  test("a well-formed numbered list is left untouched (no broken_list category)", () => {
+    // The list-heading/number repair nets were removed (the live writer model
+    // formats lists correctly on its own — see lib/post-body-normalize.ts).
+    // A numbered list with any newline is untouched by normalizePostBody's
+    // remaining dense-block-only fallback, so broken_list never fires now.
+    const body = "1. First\n2. Second\n3. Third";
+    expect(normalizePostBody(body)).toBe(body);
   });
 
   test("dense block ending in a trailing newline → dense_paragraph still reported", async () => {
