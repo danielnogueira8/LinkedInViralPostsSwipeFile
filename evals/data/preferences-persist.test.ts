@@ -50,6 +50,35 @@ describe("persistLearnedPreference", () => {
     expect(payload.rule).toBe("Never use em-dashes");
   });
 
+  test("passes an optional detail through, normalized, to the insert", async () => {
+    dbRef.current = makeFakeSupabase({
+      content_preferences: { single: { id: "pref-2" } },
+    });
+    await persistLearnedPreference(
+      WS,
+      "Cite current traction numbers",
+      [],
+      "  Grew 50,000+ followers; built $150,000+ in pipeline.  ",
+    );
+    const q = queryFor(dbRef.current, "content_preferences")!;
+    const insert = q.filters.find((f) => f.method === "insert")!;
+    const payload = insert.args[0] as Record<string, unknown>;
+    expect(payload.detail).toBe(
+      "Grew 50,000+ followers; built $150,000+ in pipeline.",
+    );
+  });
+
+  test("omitting detail inserts null, not undefined or empty string", async () => {
+    dbRef.current = makeFakeSupabase({
+      content_preferences: { single: { id: "pref-3" } },
+    });
+    await persistLearnedPreference(WS, "Never use hashtags", []);
+    const q = queryFor(dbRef.current, "content_preferences")!;
+    const insert = q.filters.find((f) => f.method === "insert")!;
+    const payload = insert.args[0] as Record<string, unknown>;
+    expect(payload.detail).toBeNull();
+  });
+
   test("a restated rule is a no-op success (no insert)", async () => {
     const out = await persistLearnedPreference(WS, "never use em dashes!", [
       { rule: "Never use em-dashes" },

@@ -1,11 +1,13 @@
 import { describe, test, expect } from "vitest";
 import {
   normalizePreferenceRule,
+  normalizePreferenceDetail,
   preferenceDedupKey,
   isDuplicatePreference,
   renderPreferencesBlock,
   preferenceInputSchema,
   PREF_RULE_MAX,
+  PREF_DETAIL_MAX,
   PREFS_INJECTED_MAX,
   PREFS_INJECTED_CHARS_MAX,
 } from "@/lib/preferences";
@@ -32,6 +34,29 @@ describe("normalizePreferenceRule", () => {
   test("empty / whitespace-only → empty string", () => {
     expect(normalizePreferenceRule("   \n  ")).toBe("");
     expect(normalizePreferenceRule("")).toBe("");
+  });
+});
+
+describe("normalizePreferenceDetail", () => {
+  test("null/undefined/empty → empty string", () => {
+    expect(normalizePreferenceDetail(null)).toBe("");
+    expect(normalizePreferenceDetail(undefined)).toBe("");
+    expect(normalizePreferenceDetail("")).toBe("");
+    expect(normalizePreferenceDetail("   ")).toBe("");
+  });
+
+  test("preserves multi-line/multi-sentence content, unlike normalizePreferenceRule", () => {
+    const raw = "Grew 50,000+ followers.\n\nBuilt $150,000+ in pipeline.";
+    expect(normalizePreferenceDetail(raw)).toBe(raw);
+  });
+
+  test("collapses runs of blank lines and trims edges", () => {
+    expect(normalizePreferenceDetail("  a\n\n\n\nb  ")).toBe("a\n\nb");
+  });
+
+  test("clamps to PREF_DETAIL_MAX", () => {
+    const long = "a".repeat(PREF_DETAIL_MAX + 200);
+    expect(normalizePreferenceDetail(long).length).toBe(PREF_DETAIL_MAX);
   });
 });
 
@@ -109,6 +134,35 @@ describe("renderPreferencesBlock", () => {
     ]);
     expect(block.split("\n").filter((l) => l.startsWith("- ")).length).toBe(1);
   });
+
+  test("renders detail as an indented line under its rule when present", () => {
+    const block = renderPreferencesBlock([
+      {
+        rule: "Cite current traction numbers",
+        detail: "Grew 50,000+ followers; built $150,000+ in pipeline.",
+      },
+      { rule: "Never use hashtags" },
+    ]);
+    const lines = block.split("\n");
+    const ruleIdx = lines.indexOf("- Cite current traction numbers");
+    expect(ruleIdx).toBeGreaterThanOrEqual(0);
+    expect(lines[ruleIdx + 1]).toBe(
+      "  Grew 50,000+ followers; built $150,000+ in pipeline.",
+    );
+    // A rule with no detail gets no follow-up line.
+    expect(block).not.toContain("undefined");
+    expect(block).not.toContain("null");
+  });
+
+  test("a rule with no detail (undefined/null/empty) emits no follow-up line", () => {
+    const block = renderPreferencesBlock([
+      { rule: "Never use hashtags", detail: undefined },
+      { rule: "Keep posts under 900 characters", detail: null },
+      { rule: "No em-dashes", detail: "" },
+    ]);
+    expect(block.split("\n").filter((l) => l.startsWith("- ")).length).toBe(3);
+    expect(block.split("\n").filter((l) => l.startsWith("  ")).length).toBe(0);
+  });
 });
 
 describe("preferenceInputSchema", () => {
@@ -120,5 +174,27 @@ describe("preferenceInputSchema", () => {
   test("rejects an empty rule", () => {
     expect(preferenceInputSchema.safeParse({ rule: "   " }).success).toBe(false);
     expect(preferenceInputSchema.safeParse({}).success).toBe(false);
+  });
+
+  test("detail is optional — omitting it normalizes to empty string", () => {
+    const parsed = preferenceInputSchema.parse({ rule: "no hashtags" });
+    expect(parsed.detail).toBe("");
+  });
+
+  test("accepts and normalizes a detail alongside the rule", () => {
+    const parsed = preferenceInputSchema.parse({
+      rule: "no hashtags",
+      detail: "  The user finds hashtags spammy on LinkedIn.  ",
+    });
+    expect(parsed.detail).toBe("The user finds hashtags spammy on LinkedIn.");
+  });
+
+  test("rejects a detail far past the pre-normalization slack", () => {
+    expect(
+      preferenceInputSchema.safeParse({
+        rule: "no hashtags",
+        detail: "a".repeat(PREF_DETAIL_MAX * 2 + 1),
+      }).success,
+    ).toBe(false);
   });
 });

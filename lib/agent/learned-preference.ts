@@ -2,6 +2,7 @@ import {
   PREFS_PER_WORKSPACE_MAX,
   isDuplicatePreference,
   normalizePreferenceRule,
+  normalizePreferenceDetail,
 } from "@/lib/preferences";
 import { supabaseAdmin } from "@/lib/supabase";
 
@@ -11,6 +12,7 @@ export async function persistLearnedPreference(
   workspaceId: string,
   rawRule: unknown,
   existing: ReadonlyArray<{ rule: string }>,
+  rawDetail?: unknown,
 ): Promise<
   | { ok: true; saved: true; id: string; rule: string }
   | { ok: true; saved: false; reason: "duplicate" | "cap"; rule: string }
@@ -26,6 +28,9 @@ export async function persistLearnedPreference(
         'remember_preference requires a non-empty "rule" string — one short imperative line.',
     };
   }
+  const detail = normalizePreferenceDetail(
+    typeof rawDetail === "string" ? rawDetail : undefined,
+  );
   if (isDuplicatePreference(rule, existing)) {
     return { ok: true, saved: false, reason: "duplicate", rule };
   }
@@ -35,7 +40,12 @@ export async function persistLearnedPreference(
   try {
     const { data, error } = await supabaseAdmin()
       .from("content_preferences")
-      .insert({ workspace_id: workspaceId, rule, source: "learned" })
+      .insert({
+        workspace_id: workspaceId,
+        rule,
+        detail: detail || null,
+        source: "learned",
+      })
       .select("id")
       .single();
     if (error) throw error;
