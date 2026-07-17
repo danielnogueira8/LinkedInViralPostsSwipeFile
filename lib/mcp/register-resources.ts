@@ -102,7 +102,7 @@ export function registerPublicResourceTools(
       const { workspaceId } = ids(extra, workspaceFromExtra);
       if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
       if (!args.title?.trim() && !args.body?.trim()) return errorContent("Give the post a name or some content.");
-      const draft = await drafts(workspaceId).create({
+      const result = await drafts(workspaceId).create({
         title: args.title,
         body: args.body ?? "",
         kind: args.kind,
@@ -110,7 +110,14 @@ export function registerPublicResourceTools(
         planToPostOn: args.plan_to_post_on,
         mediaAttachments: args.media_attachments,
       });
-      return jsonContent({ ok: true, draft: draftRecordToApi(draft) });
+      // A retried call (timeout, an LLM calling the tool twice) with the same
+      // body returns the existing draft instead of inserting a duplicate —
+      // deduped tells the caller which happened.
+      return jsonContent({
+        ok: true,
+        deduped: result.outcome === "deduped",
+        draft: draftRecordToApi(result.draft),
+      });
     } catch (e) { return errorContent((e as Error).message); }
   });
 
