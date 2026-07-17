@@ -93,6 +93,21 @@ export const STYLE_SAVED_PICK_MAX = 20;
 // low-confidence (quality may be weaker).
 export const STYLE_LOW_SAMPLE_THRESHOLD = 5;
 
+// Low-sample quality warning — DERIVED from sample_count at read time, not
+// stored. `description` is a plain user-owned field (editable via
+// creatorStyleUpdateSchema); a generation run must never write into it, or it
+// (a) clobbers whatever name the user typed for the style, and (b) goes stale
+// forever once the user regenerates with more samples (nothing ever clears
+// it, since sample_count only exists on the row, not in the text). Deriving
+// from sample_count means the warning tracks the row's actual state and
+// disappears automatically the moment a regenerate crosses the threshold.
+export function creatorStyleQualityWarning(sampleCount: number): string | null {
+  if (sampleCount <= 0 || sampleCount >= STYLE_LOW_SAMPLE_THRESHOLD) return null;
+  return `Built from only ${sampleCount} post${
+    sampleCount === 1 ? "" : "s"
+  } — style quality may be weaker. Regenerate once more of this creator's posts are scraped.`;
+}
+
 // The status values that a valid style can be in.
 export const CREATOR_STYLE_STATUSES = ["ready", "generating", "failed"] as const;
 export function isCreatorStyleStatus(v: unknown): v is CreatorStyleStatus {

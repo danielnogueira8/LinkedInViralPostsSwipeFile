@@ -17,6 +17,7 @@ import { fetchJson } from "@/lib/api-fetch";
 import { cn } from "@/lib/utils";
 import {
   sanitizeCreatorStyleProfile,
+  creatorStyleQualityWarning,
   type CreatorStyleRow,
   type CreatorStyleProfile,
 } from "@/lib/creator-styles";
@@ -125,6 +126,13 @@ export function StyleDetailDrawer({
             <X className="h-[18px] w-[18px]" />
           </button>
         </div>
+
+        {row && creatorStyleQualityWarning(row.sample_count) && (
+          <div className="mx-4 mt-3 flex items-start gap-1.5 rounded-md border border-amber-500/15 bg-amber-500/10 px-2.5 py-1.5 text-xs text-amber-700">
+            <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
+            <span>{creatorStyleQualityWarning(row.sample_count)}</span>
+          </div>
+        )}
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-4 py-4">
