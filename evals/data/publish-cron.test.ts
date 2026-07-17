@@ -545,6 +545,75 @@ describe("publishDueDrafts", () => {
     );
   });
 
+  // Bug-hunt fix #186: the 7-day direct-media TTL was only ever checked at
+  // schedule() time, never re-checked at the ACTUAL publish moment — a draft
+  // can sit in 'scheduled' status for the full 7 days before this cron tick
+  // reaches it. Confirms publishDueDrafts now fails locally (never calling
+  // Zernio) when a zernio-source attachment's uploadedAt is past the TTL by
+  // the time this tick runs, and that a fresh attachment (or a library
+  // attachment, which is re-uploaded fresh regardless of age) still publishes.
+  test("zernio media that expired BEFORE this publish tick fails locally without calling LinkedIn", async () => {
+    seedConnection();
+    seedDueDraft({
+      media_attachments: [
+        {
+          id: "m1",
+          name: "photo.jpg",
+          mimeType: "image/jpeg",
+          size: 1024,
+          type: "image",
+          url: "https://media.zernio.com/temp/photo.jpg",
+          uploadedAt: "2026-06-25T12:00:00.000Z", // 8 days before NOW — past the 7-day TTL
+        },
+      ],
+    });
+
+    const summary = await publishDueDrafts(NOW);
+
+    expect(summary).toEqual({ due: 1, published: 0, failed: 1, staleSwept: 0 });
+    expect(draft().schedule_status).toBe("failed");
+    expect(String(draft().publish_error)).toMatch(/expired/i);
+    expect(String(draft().publish_error)).toMatch(/7 days/i);
+    expect(publishSpy).not.toHaveBeenCalled();
+  });
+
+  test("zernio media still within the 7-day TTL at publish time is sent normally", async () => {
+    seedConnection();
+    seedDueDraft({
+      media_attachments: [
+        {
+          id: "m1",
+          name: "photo.jpg",
+          mimeType: "image/jpeg",
+          size: 1024,
+          type: "image",
+          url: "https://media.zernio.com/temp/photo.jpg",
+          uploadedAt: "2026-06-30T12:00:00.000Z", // 3 days before NOW — inside the TTL
+        },
+      ],
+    });
+
+    const summary = await publishDueDrafts(NOW);
+
+    expect(summary).toEqual({ due: 1, published: 1, failed: 0, staleSwept: 0 });
+    expect(draft().schedule_status).toBe("published");
+    expect(publishSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mediaItems: [{ url: "https://media.zernio.com/temp/photo.jpg", type: "image" }],
+      }),
+    );
+  });
+
+  test("no media attachments never trips the expiry check", async () => {
+    seedConnection();
+    seedDueDraft({ media_attachments: [] });
+
+    const summary = await publishDueDrafts(NOW);
+
+    expect(summary.published).toBe(1);
+    expect(draft().schedule_status).toBe("published");
+  });
+
   test("an oversized firstComment fails locally without calling LinkedIn", async () => {
     // The schedule route's zod schema caps firstComment at 3,000 chars when
     // SET, but nothing re-checked it here — an edit made after scheduling (or

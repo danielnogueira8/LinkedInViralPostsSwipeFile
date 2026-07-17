@@ -22,6 +22,7 @@ import {
   type PostMediaAttachment,
 } from "@/lib/post-media";
 import { ensureZernioMediaAttachments } from "@/lib/media-library";
+import { earliestZernioMediaExpiry } from "@/lib/draft-scheduling";
 import { draftEgressBody } from "@/lib/markdown/mode";
 
 export type PublishingConnection = {
@@ -417,6 +418,25 @@ export async function publishDueDrafts(nowIso: string): Promise<{
     const mediaError = validatePostMediaSet(mediaAttachments);
     if (mediaError) {
       await failRow(currentRow, mediaError);
+      failed++;
+      continue;
+    }
+    // Re-check the 7-day direct-upload TTL at the ACTUAL publish moment, not
+    // just at schedule() time. A draft can sit in 'scheduled' status for up
+    // to 7 days (that's the whole point of the TTL) before this cron tick
+    // reaches it, and ensureZernioMediaAttachments below passes zernio-source
+    // attachments straight through unchanged — it only refreshes 'library'
+    // attachments. Without this, a post that passed the schedule-time check
+    // could reach the live LinkedIn call with a stale/expired media URL, with
+    // the outcome then depending entirely on undocumented Zernio behavior.
+    // Failing here (same message family as the schedule-time rejection) is a
+    // predictable, actionable failure instead of an unpredictable live one.
+    const zernioExpiresAt = earliestZernioMediaExpiry(mediaAttachments);
+    if (zernioExpiresAt !== null && new Date(nowIso).getTime() > zernioExpiresAt) {
+      await failRow(
+        currentRow,
+        "The attached media expired before this post could publish (direct uploads are only valid for 7 days). Attach it from the library instead, or re-upload and reschedule.",
+      );
       failed++;
       continue;
     }
