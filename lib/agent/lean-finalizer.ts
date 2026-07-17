@@ -1,45 +1,26 @@
 import { editDraftBodySync } from "@/lib/agent/specialists/editor";
+import { repairAiTells } from "@/lib/agent/specialists/ai-tell-repair";
+import { checkSameness } from "@/lib/agent/specialists/sameness";
+import { reviewModeledDraft } from "@/lib/agent/specialists/source-fidelity";
 import type { DraftFinalizerSpecialists } from "@/lib/agent/draft-finalizer";
 
-// Lean finalizer specialists for the THIN drafting path.
+// Finalizer specialists for the THIN drafting path.
 //
 // The draft finalizer runs a fixed pipeline of "specialists" on every candidate:
 //   edit → repairAiTells → checkSameness → (later) reviewSourceFidelity
-// The default specialists make up to three EXTRA model calls per draft (an
-// ai-tell rewrite, a sameness rewrite, and a Sonnet source-fidelity judgment
-// that BLOCKS the draft when it fires). Those police TASTE — they exist because
-// the legacy GLM writer needed babysitting. A strong reasoning model (the thin
-// path's Gemini 3.1 Pro / Sonnet) writes better than those gates police, so on
-// the thin path we swap them for no-ops.
 //
-// We KEEP `edit` (editDraftBodySync) — that's the DETERMINISTIC, model-free
-// corruption/structure net: em-dash strip + list/whitespace normalization
-// (normalizePostBody, incl. the inline-arrow-list splitter). It catches broken
-// RENDERING, not style, so it stays. The other structural safeguards inside the
-// finalizer (security redaction, the hard character cap, corrupt-fence
-// rejection) are NOT specialist-gated — they always run — so this override
-// doesn't touch them.
-//
-// The three no-ops each return the specialists' real success shape so the
-// finalizer's downstream code is unchanged: it sees "nothing to repair / no
-// sameness overlap / fidelity passed" and accepts the model's own output.
+// All four run on the thin path, same as the heavy path — Luna (CHAT_MODEL) is
+// a strong writer, but these specialists check different things than raw
+// writing quality: AI-tell polish (repairAiTells), cross-draft variety
+// (checkSameness), and structural/mechanical family-resemblance to the
+// selected source when modeling one (reviewSourceFidelity — its actual prompt
+// judges "does this open/build/land like the source", NOT deep factual
+// fidelity; it explicitly does not fail for changed topic/examples/numbers).
+// Live-tested (2026-07): re-enabling these costs up to 3 extra model calls per
+// draft, same as the heavy path always paid.
 export const leanFinalizerSpecialists: DraftFinalizerSpecialists = {
-  // KEEP: deterministic, model-free cleanup (em-dash + normalizePostBody).
   edit: editDraftBodySync,
-  // DROP: no second model pass to "fix AI tells". Report the body unchanged.
-  repairAiTells: async ({ body }) => ({ body, repaired: false, detected: [] }),
-  // DROP: no anti-repetition rewrite. Report no overlap so the body passes as-is.
-  checkSameness: async ({ body }) => ({
-    body,
-    rewrote: false,
-    overlapMarkers: [],
-    reason: "Sameness review skipped on the thin path.",
-  }),
-  // DROP: no Sonnet source-fidelity gate. Always pass — the strong model is
-  // trusted to adapt the source itself.
-  reviewSourceFidelity: async () => ({
-    pass: true,
-    reasons: [],
-    retryInstruction: "",
-  }),
+  repairAiTells,
+  checkSameness,
+  reviewSourceFidelity: reviewModeledDraft,
 };

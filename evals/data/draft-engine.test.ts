@@ -1,5 +1,47 @@
-import { describe, expect, test, vi } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { AgentEvent } from "@/lib/agent/contracts";
+
+// Lean mode now uses the SAME real specialists as the heavy path (see
+// lib/agent/lean-finalizer.ts) — repairAiTells/checkSameness/reviewSourceFidelity
+// all make real completeChat() calls, which this hermetic suite has no
+// network/API-key access for. Mocked here to pass-through/no-op by default —
+// mirrors the established pattern in evals/data/agent-output-integrity.test.ts
+// — so lean-mode tests exercise draft-engine's own logic, not these specialists'
+// real judgment. A test that needs to assert on their behavior can override
+// the stub's return queue.
+const leanFidelityStub = vi.hoisted(() => ({
+  verdicts: [] as Array<{ pass: boolean; reasons: string[]; retryInstruction: string }>,
+}));
+const leanSamenessStub = vi.hoisted(() => ({
+  results: [] as Array<{ body: string; rewrote: boolean; overlapMarkers: string[]; reason: string }>,
+}));
+const leanAiTellStub = vi.hoisted(() => ({
+  results: [] as Array<{ body: string; repaired: boolean; detected: string[] }>,
+}));
+vi.mock("@/lib/agent/specialists/source-fidelity", async (importOriginal) => {
+  const orig = await importOriginal<typeof import("@/lib/agent/specialists/source-fidelity")>();
+  return {
+    ...orig,
+    reviewModeledDraft: async () =>
+      leanFidelityStub.verdicts.shift() ?? { pass: true, reasons: [], retryInstruction: "" },
+  };
+});
+vi.mock("@/lib/agent/specialists/sameness", async (importOriginal) => {
+  const orig = await importOriginal<typeof import("@/lib/agent/specialists/sameness")>();
+  return {
+    ...orig,
+    checkSameness: async ({ body }: { body: string }) =>
+      leanSamenessStub.results.shift() ?? { body, rewrote: false, overlapMarkers: [], reason: "" },
+  };
+});
+vi.mock("@/lib/agent/specialists/ai-tell-repair", async (importOriginal) => {
+  const orig = await importOriginal<typeof import("@/lib/agent/specialists/ai-tell-repair")>();
+  return {
+    ...orig,
+    repairAiTells: async ({ body }: { body: string }) =>
+      leanAiTellStub.results.shift() ?? { body, repaired: false, detected: [] },
+  };
+});
 import { UsagePersistenceError } from "@/lib/openrouter";
 import {
   GROUNDED_EVIDENCE_TEXT_BUDGET_CHARS,
@@ -1502,6 +1544,12 @@ describe("DraftEngine", () => {
 });
 
 describe("DraftEngine — thin path (lean mode)", () => {
+  beforeEach(() => {
+    leanFidelityStub.verdicts = [];
+    leanSamenessStub.results = [];
+    leanAiTellStub.results = [];
+  });
+
   test("uses a bounded low-latency request for a deterministic hook refinement", async () => {
     const writer = new ScriptedWriter([
       { text: "Your reputation is the career moat you own.", finishReason: "stop", usage: usage(120, 30) },
@@ -1607,10 +1655,12 @@ describe("DraftEngine — thin path (lean mode)", () => {
     expect(body).toContain("\n\n");
   });
 
-  test("DROP taste gate: a draft that source-fidelity WOULD reject still ships", async () => {
-    // Wire a source-modeling turn whose input.finalizerSpecialists include a
-    // fidelity reviewer that ALWAYS rejects. In the heavy path that blocks the
-    // draft; in lean mode the reviewer is no-op'd, so the draft ships.
+  test("lean mode uses ITS OWN real specialists, not a caller-supplied override", async () => {
+    // Lean mode's specialists (leanFinalizerSpecialists) are the real
+    // repairAiTells/checkSameness/reviewSourceFidelity — same as the heavy
+    // path — NOT a caller-injected finalizerSpecialists override. A caller
+    // that passes finalizerSpecialists alongside lean:true is ignored; lean
+    // always uses its own fixed set (see draft-engine.ts's lean ? … : … gate).
     const writer = new ScriptedWriter([
       { text: COMPLETE_POST, finishReason: "stop", usage: usage(180, 90) },
     ]);
@@ -1630,9 +1680,35 @@ describe("DraftEngine — thin path (lean mode)", () => {
       },
     });
 
-    // Ships despite the "always reject" reviewer — because lean bypassed it.
+    // The caller's override never runs — lean mode's own real reviewer does
+    // instead, and it passes a genuinely clean, on-topic modeled post.
     expect(artifacts(result.events).map((a) => a.body)).toEqual([COMPLETE_POST]);
     expect(alwaysReject).not.toHaveBeenCalled();
+  });
+
+  test("lean mode's real reviewSourceFidelity can still reject a bad modeled draft", async () => {
+    // Regression guard for the restore: lean mode's fidelity check is now the
+    // REAL reviewModeledDraft (mocked here, but wired through the actual
+    // module path draft-engine.ts imports) — it must be able to reject, not
+    // just always pass. Proves the pipeline actually calls into it.
+    leanFidelityStub.verdicts = [
+      { pass: false, reasons: ["unrelated structure"], retryInstruction: "match the source's shape" },
+    ];
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(180, 90) },
+      { text: DISTINCT_COMPLETE_POST, finishReason: "stop", usage: usage(180, 90) },
+    ]);
+    const result = await collect(writer, {
+      lean: true,
+      task: {
+        kind: "source",
+        source: { id: "src-1", text: "A punchy source post about shipping." },
+      },
+    });
+
+    // First candidate rejected by the real (mocked) fidelity check, retried,
+    // second candidate accepted (stub queue is empty → default pass-through).
+    expect(artifacts(result.events).map((a) => a.body)).toEqual([DISTINCT_COMPLETE_POST]);
   });
 
   test("a GROUNDED (research) turn writes with the thin model", async () => {
