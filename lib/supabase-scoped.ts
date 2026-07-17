@@ -130,7 +130,18 @@ export const trackedAccountIds = cache(
       sb.from("workspace_accounts").select("account_id").eq("workspace_id", workspaceId),
     );
     if (error) throw error;
-    return (data ?? []).map((r) => r.account_id as string);
+    const rows = data ?? [];
+    // No .range() pagination here on purpose — MANUAL_ACCOUNT_LIMIT (50,
+    // lib/account-tracking.ts) keeps every workspace far under PostgREST's
+    // silent 1000-row cap, so paginating would be unreachable complexity.
+    // This warns loudly instead if that ever stops being true (a raised cap,
+    // a bug bypassing it) rather than silently truncating the roster.
+    if (rows.length >= 1000) {
+      console.error(
+        `trackedAccountIds(${workspaceId}) returned ${rows.length} rows — hit PostgREST's 1000-row cap. MANUAL_ACCOUNT_LIMIT no longer bounds this; needs selectAllRows pagination.`,
+      );
+    }
+    return rows.map((r) => r.account_id as string);
   },
 );
 
