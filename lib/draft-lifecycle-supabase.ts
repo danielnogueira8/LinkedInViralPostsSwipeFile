@@ -147,6 +147,26 @@ export function createSupabaseDraftLifecycleRepository(
       return fromRow(data as unknown as DraftRow);
     },
 
+    async createStandalone(input) {
+      const { data, error } = await db.rpc("save_standalone_draft", {
+        p_workspace_id: workspaceId,
+        p_kind: input.kind,
+        p_status: input.status,
+        p_title: input.title,
+        p_body: input.body,
+        p_meta: input.meta,
+        p_media_attachments: input.mediaAttachments,
+        p_plan_to_post_on: input.planToPostOn ?? null,
+      });
+      if (error) throw error;
+      const result = data as unknown as {
+        outcome: "saved" | "deduped";
+        draft: DraftRow;
+      };
+      if (!result.draft) throw new Error("save_standalone_draft returned no draft");
+      return { outcome: result.outcome, draft: fromRow(result.draft) };
+    },
+
     async mutate(id, patch, expectedVersion) {
       const { data, error } = await db
         .from("chat_artifacts")

@@ -42,7 +42,7 @@ export async function POST(req: Request) {
   try {
     const sb = await scopedSupabase();
     const input = createDraftSchema.parse(await req.json());
-    const draft = await new DraftLifecycle(
+    const result = await new DraftLifecycle(
       createSupabaseDraftLifecycleRepository(sb.raw, sb.workspaceId),
     ).create({
       body: input.body,
@@ -53,7 +53,13 @@ export async function POST(req: Request) {
       mediaAttachments: input.media_attachments,
     });
     revalidatePath("/dashboard/posts");
-    return NextResponse.json({ ok: true, draft: draftRecordToApi(draft) });
+    // A double-click on "New post" with identical (empty/default) content
+    // returns the existing draft instead of creating a duplicate blank post.
+    return NextResponse.json({
+      ok: true,
+      deduped: result.outcome === "deduped",
+      draft: draftRecordToApi(result.draft),
+    });
   } catch (e) {
     return errorResponse(e);
   }

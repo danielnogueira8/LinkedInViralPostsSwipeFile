@@ -73,6 +73,22 @@ export type DraftLifecycleRepository = {
     planToPostOn?: string | null;
     savedBy?: string | null;
   }): Promise<DraftRecord>;
+  // A standalone draft (chat_id always null — no chat exists to dedup within,
+  // unlike saveChatDraft) with the SAME retry-safety saveChatDraft already
+  // has for chat-saved ones: create_draft (MCP) and POST /api/drafts ("New
+  // post") both go through here, and a retried call — an MCP client
+  // re-sending after a timeout, a double-click — should return the existing
+  // draft instead of inserting a twin. Content-only dedup key, windowed
+  // (not "ever"), since there's no chat_id to scope against.
+  createStandalone(input: {
+    kind: DraftKind;
+    status: DraftStatus;
+    title: string | null;
+    body: string;
+    meta: Record<string, unknown> | null;
+    mediaAttachments: PostMediaAttachment[];
+    planToPostOn?: string | null;
+  }): Promise<{ outcome: "saved" | "deduped"; draft: DraftRecord }>;
   mutate(
     id: string,
     patch: Partial<DraftRecord>,
@@ -154,8 +170,7 @@ export class DraftLifecycle {
     mediaAttachments?: PostMediaAttachment[];
   }) {
     const kind = resolveDraftKind(input.kind, input.body);
-    return this.repository.create({
-      chatId: null,
+    return this.repository.createStandalone({
       kind,
       status: input.status ?? defaultDraftStatus(kind),
       title: input.title?.trim() || deriveDraftTitle(input.body),

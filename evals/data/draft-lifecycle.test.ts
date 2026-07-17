@@ -70,6 +70,16 @@ class MemoryRepository implements DraftLifecycleRepository {
     this.rows.set(row.id, row);
     return row;
   }
+  async createStandalone(
+    input: Parameters<DraftLifecycleRepository["createStandalone"]>[0],
+  ) {
+    const existing = [...this.rows.values()].find(
+      (row) => row.chatId === null && row.body === input.body,
+    );
+    if (existing) return { outcome: "deduped" as const, draft: existing };
+    const created = await this.create({ ...input, chatId: null });
+    return { outcome: "saved" as const, draft: created };
+  }
   async mutate(
     id: string,
     patch: Partial<DraftRecord>,
@@ -157,7 +167,8 @@ describe("DraftLifecycle command outcomes", () => {
       savedBy: "user-1",
     });
 
-    expect(board.status).toBe("drafting");
+    expect(board.outcome).toBe("saved");
+    expect(board.draft.status).toBe("drafting");
     expect(chat).toMatchObject({ ok: true, value: { deduped: false } });
     if (chat.ok) expect(chat.value.draft.chatId).toBe("chat-1");
   });
@@ -171,6 +182,35 @@ describe("DraftLifecycle command outcomes", () => {
 
     expect(second).toMatchObject({ ok: true, value: { deduped: true } });
     expect(repository.rows.size).toBe(1);
+  });
+
+  test("standalone create (create_draft MCP tool, POST /api/drafts) is idempotent by body — a retried call returns the existing draft, not a duplicate", async () => {
+    const first = await lifecycle.create({ body: "Same standalone post" });
+    const second = await lifecycle.create({ body: "Same standalone post" });
+
+    expect(first.outcome).toBe("saved");
+    expect(second.outcome).toBe("deduped");
+    expect(second.draft.id).toBe(first.draft.id);
+    expect(repository.rows.size).toBe(1);
+  });
+
+  test("standalone create dedup is scoped to chat_id null — a chat-saved draft with the same body doesn't collide", async () => {
+    const chat = await lifecycle.saveFromChat({ chatId: "chat-1", body: "Shared text" });
+    const board = await lifecycle.create({ body: "Shared text" });
+
+    expect(chat.ok && chat.value.deduped).toBe(false);
+    expect(board.outcome).toBe("saved");
+    expect(repository.rows.size).toBe(2);
+  });
+
+  test("standalone create with genuinely different content is never deduped", async () => {
+    const first = await lifecycle.create({ body: "First post" });
+    const second = await lifecycle.create({ body: "A totally different post" });
+
+    expect(first.outcome).toBe("saved");
+    expect(second.outcome).toBe("saved");
+    expect(second.draft.id).not.toBe(first.draft.id);
+    expect(repository.rows.size).toBe(2);
   });
 
   test("rejects mutations and deletion after the publish lock is held", async () => {
