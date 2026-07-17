@@ -79,11 +79,11 @@ function fakeSupabaseAdmin() {
         return {
           update: (patch: Record<string, unknown>) => {
             updatePayloads.push(patch);
-            return {
-              eq: () => ({
-                eq: async () => ({ data: null, error: null }),
-              }),
+            const chain = {
+              eq: () => chain,
+              select: async () => ({ data: [{ id: "style1" }], error: null }),
             };
+            return chain;
           },
         };
       }

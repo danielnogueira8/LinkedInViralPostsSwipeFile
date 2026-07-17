@@ -80,6 +80,7 @@ export async function startCreatorStyleGeneration(input: {
       }
     }
 
+    const runToken = new Date().toISOString();
     const { data: row, error } = await db
       .from("creator_style_profiles")
       .insert({
@@ -90,7 +91,7 @@ export async function startCreatorStyleGeneration(input: {
         creator_avatar_url: creator?.profile_pic_url ?? null,
         source_account_id: request.sourceAccountId ?? null,
         status: "generating",
-        generating_started_at: new Date().toISOString(),
+        generating_started_at: runToken,
       })
       .select(CREATOR_STYLE_COLS)
       .single();
@@ -100,7 +101,12 @@ export async function startCreatorStyleGeneration(input: {
       await enqueueBackgroundJob({
         workspaceId,
         type: "creator_style_generation",
-        payload: { profileId: row.id, sourceAccountId: request.sourceAccountId ?? null, savedPostIds: request.savedPostIds ?? null },
+        payload: {
+          profileId: row.id,
+          sourceAccountId: request.sourceAccountId ?? null,
+          savedPostIds: request.savedPostIds ?? null,
+          runToken,
+        },
         progress: { stage: "Queued", profileId: row.id },
         sb: db,
       });

@@ -101,12 +101,13 @@ export async function POST(
     // future dead run can be recovered as stale. The .eq("status", ...) below is
     // a compare-and-swap: only ONE of two racing regenerates wins the flip, so
     // even a sub-millisecond double-POST can't launch two background jobs.
+    const runToken = new Date().toISOString();
     const { data: claimed } = await sb.raw
       .from("creator_style_profiles")
       .update({
         status: "generating",
         error: null,
-        generating_started_at: new Date().toISOString(),
+        generating_started_at: runToken,
         updated_at: new Date().toISOString(),
       })
       .eq("id", id)
@@ -130,6 +131,7 @@ export async function POST(
           profileId: id,
           sourceAccountId,
           savedPostIds,
+          runToken,
         },
         progress: { stage: "Queued", profileId: id },
         sb: sb.raw,
