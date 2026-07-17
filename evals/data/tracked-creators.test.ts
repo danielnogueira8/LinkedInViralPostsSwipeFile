@@ -121,6 +121,9 @@ class MemoryRepository implements TrackedCreatorsRepository {
       trackedAt: "2026-01-01T00:00:00.000Z",
     }));
   }
+  async listTotal() {
+    return this.memberships.size;
+  }
 }
 
 function account(
@@ -228,6 +231,22 @@ describe("TrackedCreators", () => {
     expect(first.account.id).toBe(second.account.id);
     expect(repo.accounts).toHaveLength(1);
     expect(repo.memberships.has(first.account.id)).toBe(true);
+  });
+
+  test("stores a percent-encoded handle segment decoded, not raw", async () => {
+    const repo = new MemoryRepository("workspace-a");
+    const creators = new TrackedCreators(repo, {
+      fetchProfileMeta: async () => ({ name: null, picUrl: null }),
+    });
+
+    // "à" in the handle arrives percent-encoded, as LinkedIn URLs do.
+    const result = await creators.add({
+      profileUrl: "https://www.linkedin.com/in/rom%C3%A0n-czerny-11b773199",
+      duplicate: "return_existing",
+    });
+
+    expect(result.account.linkedinHandle).toBe("romàn-czerny-11b773199");
+    expect(result.account.linkedinHandle).not.toContain("%");
   });
 
   test("keeps the web duplicate response while centralizing the rule", async () => {
@@ -377,6 +396,21 @@ describe("TrackedCreators", () => {
     expect(await creators.list()).toEqual([]);
     await creators.restore({ id: existing.id });
     expect(await creators.list()).toHaveLength(1);
+  });
+
+  test("listTotal reflects the tracked count independent of list()'s own limit", async () => {
+    const repo = new MemoryRepository("workspace-a");
+    for (let i = 0; i < 3; i++) {
+      const a = account({ id: `account-${i}` });
+      repo.accounts.set(a.id, a);
+      repo.memberships.set(a.id, null);
+    }
+    const creators = new TrackedCreators(repo);
+
+    expect(await creators.listTotal()).toBe(3);
+    // A caller can page with a small limit while listTotal reports the real
+    // total — the "count = page size, not completeness" gap this closes.
+    expect((await creators.list()).length).toBe(3);
   });
 
   test("bulk category tracking ignores foreign categories", async () => {

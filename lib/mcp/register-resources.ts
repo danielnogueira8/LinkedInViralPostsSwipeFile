@@ -33,7 +33,7 @@ import {
   SKILL_COLS,
   TEMPLATE_COLS,
 } from "@/lib/content-resource-operations";
-import { errorContent, jsonContent } from "./util";
+import { errorContent, jsonContent, notFoundContent } from "./util";
 
 type Extra = RequestHandlerExtra<ServerRequest, ServerNotification>;
 type WorkspaceResolver = (extra: Extra) => string | null;
@@ -55,6 +55,16 @@ function drafts(workspaceId: string) {
   return new DraftLifecycle(createSupabaseDraftLifecycleRepository(db, workspaceId));
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// list_lead_magnets' row shape: everything in LEAD_MAGNET_COLS except
+// markdown_body (up to LEAD_MAGNET_BODY_MAX = 60,000 chars/row), which is
+// what made an unpaginated list of a real workspace's lead magnets blow past
+// a client's response-size limit. get_lead_magnet still returns the full
+// body for one at a time.
+const LEAD_MAGNET_LIST_COLS =
+  "id, workspace_id, user_id, title, source_url, source_type, public_slug, is_public, metadata, created_at, updated_at";
+
 function exactlyOne(args: { id?: string; name?: string }) {
   return Number(Boolean(args.id)) + Number(Boolean(args.name)) === 1;
 }
@@ -72,7 +82,7 @@ export function registerPublicResourceTools(
       const { workspaceId } = ids(extra, workspaceFromExtra);
       if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
       const draft = await drafts(workspaceId).find(id);
-      return draft ? jsonContent({ ok: true, draft: draftRecordToApi(draft) }) : errorContent("Draft not found.");
+      return draft ? jsonContent({ ok: true, draft: draftRecordToApi(draft) }) : notFoundContent("Draft", id);
     } catch (e) { return errorContent((e as Error).message); }
   });
 
@@ -162,9 +172,14 @@ export function registerPublicResourceTools(
       if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
       const builtin = BUILTIN_TEMPLATES.find((template) => template.id === id);
       if (builtin) return jsonContent({ ok: true, template: builtin });
+      // Workspace-created templates are the only ones stored in Postgres (id
+      // uuid); a builtin id like "builtin:client-win-story" would otherwise
+      // reach the query below and surface a raw "invalid input syntax for
+      // type uuid" driver error instead of a clean not-found.
+      if (!UUID_RE.test(id)) return notFoundContent("Template", id);
       const { data, error } = await supabaseAdmin().from("content_templates").select(TEMPLATE_COLS).eq("id", id).eq("workspace_id", workspaceId).maybeSingle();
-      if (error) return errorContent(error.message);
-      return data ? jsonContent({ ok: true, template: data }) : errorContent("Template not found.");
+      if (error) return notFoundContent("Template", id);
+      return data ? jsonContent({ ok: true, template: data }) : notFoundContent("Template", id);
     } catch (e) { return errorContent((e as Error).message); }
   });
 
@@ -213,10 +228,11 @@ export function registerPublicResourceTools(
       if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
       if (!exactlyOne(args)) return errorContent("Provide exactly one of: id, name.");
       let query = supabaseAdmin().from("custom_skills").select(SKILL_COLS).eq("workspace_id", workspaceId).limit(1);
+      const lookup = args.id ?? args.name!;
       query = args.id ? query.eq("id", args.id) : query.eq("name", args.name!);
       const { data, error } = await query.maybeSingle();
-      if (error) return errorContent(error.message);
-      return data ? jsonContent({ ok: true, skill: data }) : errorContent("Skill not found.");
+      if (error) return notFoundContent("Skill", lookup);
+      return data ? jsonContent({ ok: true, skill: data }) : notFoundContent("Skill", lookup);
     } catch (e) { return errorContent((e as Error).message); }
   });
 
@@ -243,16 +259,31 @@ export function registerPublicResourceTools(
 
   server.registerTool("list_lead_magnets", {
     title: "List lead magnets",
-    description: "List the workspace's saved lead magnets, newest first.",
-    inputSchema: {},
-  }, async (_args, extra) => {
+    description: "List the workspace's saved lead magnets, newest first (trimmed rows — no markdown_body; use get_lead_magnet for the full content of one).",
+    inputSchema: {
+      limit: z.number().int().min(1).max(50).optional().describe("Max rows to return. Default 20, max 50."),
+      offset: z.number().int().min(0).optional().describe("Rows to skip, for paging past the first page."),
+    },
+  }, async (args, extra) => {
     try {
       const { workspaceId } = ids(extra, workspaceFromExtra);
       if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
-      const { data, error } = await supabaseAdmin().from("lead_magnets").select(LEAD_MAGNET_COLS).eq("workspace_id", workspaceId).order("updated_at", { ascending: false });
+      const limit = args.limit ?? 20;
+      const offset = args.offset ?? 0;
+      const { data, error, count } = await supabaseAdmin()
+        .from("lead_magnets")
+        .select(LEAD_MAGNET_LIST_COLS, { count: "exact" })
+        .eq("workspace_id", workspaceId)
+        .order("updated_at", { ascending: false })
+        .range(offset, offset + limit - 1);
       if (error) return errorContent(error.message);
-      const leadMagnets = ((data ?? []) as LeadMagnet[]).map(coerceLeadMagnet);
-      return jsonContent({ ok: true, count: leadMagnets.length, lead_magnets: leadMagnets });
+      return jsonContent({
+        ok: true,
+        count: data?.length ?? 0,
+        total: count ?? 0,
+        offset,
+        lead_magnets: data ?? [],
+      });
     } catch (e) { return errorContent((e as Error).message); }
   });
 
@@ -265,8 +296,8 @@ export function registerPublicResourceTools(
       const { workspaceId } = ids(extra, workspaceFromExtra);
       if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
       const { data, error } = await supabaseAdmin().from("lead_magnets").select(LEAD_MAGNET_COLS).eq("id", id).eq("workspace_id", workspaceId).maybeSingle();
-      if (error) return errorContent(error.message);
-      return data ? jsonContent({ ok: true, lead_magnet: coerceLeadMagnet(data as LeadMagnet) }) : errorContent("Lead magnet not found.");
+      if (error) return notFoundContent("Lead magnet", id);
+      return data ? jsonContent({ ok: true, lead_magnet: coerceLeadMagnet(data as LeadMagnet) }) : notFoundContent("Lead magnet", id);
     } catch (e) { return errorContent((e as Error).message); }
   });
 
@@ -378,8 +409,8 @@ function registerCreatorStyleTools(server: McpServer, workspaceFromExtra: Worksp
       if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
       const sb = supabaseAdmin();
       const { data, error } = await sb.from("creator_style_profiles").select(STYLE_COLS).eq("id", id).eq("workspace_id", workspaceId).maybeSingle();
-      if (error) return errorContent(error.message);
-      if (!data) return errorContent("Creator style not found.");
+      if (error) return notFoundContent("Creator style", id);
+      if (!data) return notFoundContent("Creator style", id);
       const { data: sources, error: sourceError } = await sb.from("creator_style_profile_sources").select("id, source_first_line, source_url").eq("profile_id", id).eq("workspace_id", workspaceId).order("created_at", { ascending: false });
       if (sourceError) return errorContent(sourceError.message);
       return jsonContent({ ok: true, style: data, sources: sources ?? [] });

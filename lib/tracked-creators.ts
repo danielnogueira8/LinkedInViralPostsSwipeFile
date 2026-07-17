@@ -73,6 +73,15 @@ export type TrackedCreatorsRepository = {
     includeArchived?: boolean;
     limit?: number;
   }): Promise<TrackedCreatorListRow[]>;
+  // Total rows list() would match with the SAME filters but no limit — lets a
+  // caller show "50 of 132" instead of count-equals-page-size implying
+  // completeness. Deliberately separate from list() rather than folded into
+  // its return shape, so every existing list() caller stays untouched.
+  listTotal(input?: {
+    niche?: string;
+    search?: string;
+    includeArchived?: boolean;
+  }): Promise<number>;
 };
 
 export type TrackedCreatorErrorCode =
@@ -104,7 +113,17 @@ export function normalizeLinkedInProfileUrl(raw: string): string | null {
 }
 
 function handleFromProfileUrl(profileUrl: string): string {
-  return profileUrl.split("/in/")[1] ?? "creator";
+  const raw = profileUrl.split("/in/")[1];
+  if (!raw) return "creator";
+  // LinkedIn percent-encodes non-ASCII handle chars (e.g. à -> %C3%A0) in the
+  // profile URL; decode so the stored handle matches what a caller passing
+  // the handle directly (decoded) would look up. Malformed encoding falls
+  // back to the raw segment rather than throwing.
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
 }
 
 function displayNameFromHandle(handle: string): string {
@@ -141,8 +160,20 @@ function normalizedIdentifier(
     }
     return { profileUrl };
   }
-  if (identifier.handle)
-    return { handle: identifier.handle.trim().toLowerCase() };
+  if (identifier.handle) {
+    const trimmed = identifier.handle.trim();
+    // Decode so a caller passing a percent-encoded handle (copy-pasted from
+    // a URL, say) still matches the decoded form now stored — see
+    // handleFromProfileUrl. A plain, already-decoded handle round-trips
+    // through decodeURIComponent unchanged.
+    let decoded = trimmed;
+    try {
+      decoded = decodeURIComponent(trimmed);
+    } catch {
+      // Not valid percent-encoding — use as-is.
+    }
+    return { handle: decoded.toLowerCase() };
+  }
   return { id: identifier.id!.trim() };
 }
 
@@ -233,6 +264,10 @@ export class TrackedCreators {
       effectiveNiche: workspaceNiche ?? account.niche,
       trackedAt,
     }));
+  }
+
+  async listTotal(input?: Parameters<TrackedCreatorsRepository["listTotal"]>[0]) {
+    return this.repository.listTotal(input);
   }
 
   async add(input: {

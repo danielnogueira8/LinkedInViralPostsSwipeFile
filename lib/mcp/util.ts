@@ -39,3 +39,21 @@ export function errorContent(message: string) {
     isError: true,
   };
 }
+
+// One not-found envelope for every get_* tool, instead of each handler
+// hand-writing its own wording (which had drifted: with/without the id,
+// different punctuation, "No X found with id Y" vs "X not found."). Also the
+// single place a raw DB error on a lookup-by-id query gets coerced into this
+// same clean shape, so a malformed/mistyped id can never leak a driver
+// message (e.g. Postgres's "invalid input syntax for type uuid") to the
+// caller — see get_template's non-uuid id schema, the one path that could
+// actually reach a uuid-cast error today.
+export function notFoundContent(entity: string, id: string) {
+  return {
+    content: [{
+      type: "text" as const,
+      text: JSON.stringify({ ok: false, code: "not_found", error: `${entity} not found`, id }),
+    }],
+    isError: true,
+  };
+}

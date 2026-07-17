@@ -109,6 +109,153 @@ describe("MCP public resource tools", () => {
     expect(queryFor(dbRef.current, "content_templates")).toBeUndefined();
   });
 
+  test("get_template on an unknown non-builtin id returns a clean not-found, never a raw DB error", async () => {
+    // A non-UUID id (no matching builtin either) used to reach the DB's
+    // uuid-typed id column and leak "invalid input syntax for type uuid".
+    const result = json(
+      await tools().get_template({ id: "builtin:does-not-exist" }, extra()),
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      code: "not_found",
+      error: "Template not found",
+      id: "builtin:does-not-exist",
+    });
+    // The uuid-shape guard means this never reaches the database at all.
+    expect(queryFor(dbRef.current, "content_templates")).toBeUndefined();
+  });
+
+  test("get_template on a well-formed but unknown UUID also returns a clean not-found", async () => {
+    dbRef.current = makeFakeSupabase({ content_templates: { single: null } });
+    const result = json(
+      await tools().get_template(
+        { id: "11111111-1111-1111-1111-111111111111" },
+        extra(),
+      ),
+    );
+    expect(result).toEqual({
+      ok: false,
+      code: "not_found",
+      error: "Template not found",
+      id: "11111111-1111-1111-1111-111111111111",
+    });
+  });
+
+  test("get_draft on an unknown id returns the shared not-found envelope", async () => {
+    const result = json(
+      await tools().get_draft(
+        { id: "11111111-1111-1111-1111-111111111111" },
+        extra(),
+      ),
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      code: "not_found",
+      error: "Draft not found",
+      id: "11111111-1111-1111-1111-111111111111",
+    });
+  });
+
+  test("get_skill on an unknown id returns the shared not-found envelope", async () => {
+    const result = json(await tools().get_skill({ id: "11111111-1111-1111-1111-111111111111" }, extra()));
+    expect(result).toEqual({
+      ok: false,
+      code: "not_found",
+      error: "Skill not found",
+      id: "11111111-1111-1111-1111-111111111111",
+    });
+  });
+
+  test("get_skill on an unknown name returns the shared not-found envelope with the name as id", async () => {
+    const result = json(await tools().get_skill({ name: "does-not-exist" }, extra()));
+    expect(result).toEqual({
+      ok: false,
+      code: "not_found",
+      error: "Skill not found",
+      id: "does-not-exist",
+    });
+  });
+
+  test("get_lead_magnet on an unknown id returns the shared not-found envelope", async () => {
+    const result = json(
+      await tools().get_lead_magnet(
+        { id: "11111111-1111-1111-1111-111111111111" },
+        extra(),
+      ),
+    );
+    expect(result).toEqual({
+      ok: false,
+      code: "not_found",
+      error: "Lead magnet not found",
+      id: "11111111-1111-1111-1111-111111111111",
+    });
+  });
+
+  test("get_creator_style on an unknown id returns the shared not-found envelope", async () => {
+    const result = json(
+      await tools().get_creator_style(
+        { id: "11111111-1111-1111-1111-111111111111" },
+        extra(),
+      ),
+    );
+    expect(result).toEqual({
+      ok: false,
+      code: "not_found",
+      error: "Creator style not found",
+      id: "11111111-1111-1111-1111-111111111111",
+    });
+  });
+
+  test("get_post on an unknown id returns the shared not-found envelope", async () => {
+    const result = json(
+      await tools().get_post(
+        { id: "11111111-1111-1111-1111-111111111111" },
+        extra(),
+      ),
+    );
+    expect(result).toEqual({
+      ok: false,
+      code: "not_found",
+      error: "Post not found",
+      id: "11111111-1111-1111-1111-111111111111",
+    });
+  });
+
+  test("list_lead_magnets returns trimmed rows (no markdown_body) and respects limit/offset", async () => {
+    dbRef.current = makeFakeSupabase({
+      lead_magnets: {
+        rows: [
+          { id: "lm-1", title: "Guide One", public_slug: "guide-one" },
+          { id: "lm-2", title: "Guide Two", public_slug: "guide-two" },
+        ],
+      },
+    });
+
+    const result = json(
+      await tools().list_lead_magnets({ limit: 1, offset: 1 }, extra()),
+    );
+
+    expect(result.ok).toBe(true);
+    // markdown_body was never in the select — a real row could never carry it.
+    expect(result.lead_magnets).toEqual([
+      { id: "lm-2", title: "Guide Two", public_slug: "guide-two" },
+    ]);
+    const query = queryFor(dbRef.current, "lead_magnets")!;
+    expect(query.selectArg).not.toContain("markdown_body");
+    const range = query.filters.find((f) => f.method === "range");
+    // offset=1, limit=1 -> range(1, 1)
+    expect(range?.args).toEqual([1, 1]);
+  });
+
+  test("list_lead_magnets defaults to limit 20, offset 0 when unset", async () => {
+    dbRef.current = makeFakeSupabase({ lead_magnets: { rows: [] } });
+    await tools().list_lead_magnets({}, extra());
+    const query = queryFor(dbRef.current, "lead_magnets")!;
+    const range = query.filters.find((f) => f.method === "range");
+    expect(range?.args).toEqual([0, 19]);
+  });
+
   test("create_lead_magnet stamps both authenticated workspace and user", async () => {
     dbRef.current = makeFakeSupabase({
       lead_magnets: {

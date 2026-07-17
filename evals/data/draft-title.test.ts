@@ -11,9 +11,21 @@ describe("deriveDraftTitle — first line, capped", () => {
   test("takes the first line", () => {
     expect(deriveDraftTitle("Hello world\n\nrest of body")).toBe("Hello world");
   });
-  test("caps at 60 chars", () => {
+  test("a single word with no spaces past the cap hard-cuts, then adds an ellipsis", () => {
     const long = "x".repeat(100);
-    expect(deriveDraftTitle(long)).toHaveLength(60);
+    expect(deriveDraftTitle(long)).toBe(`${"x".repeat(60)}…`);
+  });
+  test("cuts on the last word boundary within budget, not mid-word", () => {
+    const body =
+      "Stop waiting for the perfect post. (It is costing you clients)";
+    const title = deriveDraftTitle(body);
+    expect(title.endsWith("…")).toBe(true);
+    expect(title.length).toBeLessThanOrEqual(61); // 60-char budget + the ellipsis
+    // The word right before the ellipsis is a COMPLETE word from the body,
+    // never a fragment like "cost" (from "costing") cut mid-word.
+    const bodyWords = body.split(" ");
+    const kept = title.slice(0, -1).trim().split(" ");
+    expect(bodyWords).toContain(kept[kept.length - 1]);
   });
   test("trims and falls back when empty", () => {
     expect(deriveDraftTitle("   \n more")).toBe("Untitled post");

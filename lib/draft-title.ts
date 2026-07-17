@@ -3,8 +3,19 @@
 // create route, the PATCH route, and the "re-derive on body change" logic all
 // agree on the exact rule.
 
+const TITLE_MAX = 60;
+
 export function deriveDraftTitle(body: string): string {
-  return body.split("\n")[0].slice(0, 60).trim() || "Untitled post";
+  const firstLine = body.split("\n")[0].trim();
+  if (firstLine.length <= TITLE_MAX) return firstLine || "Untitled post";
+  // Cut on the last word boundary within budget rather than a raw char
+  // slice, so the title reads as a summary ("Stop waiting for the
+  // perfect…") instead of stopping mid-word. Falls back to a hard cut only
+  // when there's no whitespace at all in the budget (one giant "word").
+  const cut = firstLine.slice(0, TITLE_MAX);
+  const lastSpace = cut.lastIndexOf(" ");
+  const trimmed = lastSpace > 0 ? cut.slice(0, lastSpace) : cut;
+  return `${trimmed.trim()}…`;
 }
 
 // Whether `title` looks auto-derived from `body` (rather than a name the user
