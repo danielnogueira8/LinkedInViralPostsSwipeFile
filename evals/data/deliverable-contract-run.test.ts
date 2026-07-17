@@ -289,3 +289,86 @@ describe("agent loop — standalone hooks are never a card (render_post net)", (
     ).toBe(false);
   });
 });
+
+describe("agent loop — 'why I wrote it this way' rationale (meta.rationale)", () => {
+  test("a specific rationale is stamped onto the draft's meta", async () => {
+    setStubScript({
+      rounds: [
+        {
+          toolCalls: [
+            {
+              name: "render_post",
+              args: {
+                body: "A real post about pricing.\n\nWith a real second paragraph.",
+                rationale:
+                  "Led with the client's exact objection so it reads like you're in the room.",
+              },
+            },
+          ],
+        },
+        { text: "Done.", finishReason: "stop" },
+      ],
+    });
+    const turn = await runStubbedAgent([
+      { role: "user", content: "Write a post about pricing psychology" },
+    ]);
+
+    const post = turn.artifacts.find((a) => a.kind === "post");
+    expect(post).toBeDefined();
+    expect(post?.meta?.rationale).toBe(
+      "Led with the client's exact objection so it reads like you're in the room.",
+    );
+  });
+
+  test("a generic rationale is dropped; the draft still ships with no note", async () => {
+    setStubScript({
+      rounds: [
+        {
+          toolCalls: [
+            {
+              name: "render_post",
+              args: {
+                body: "A real post about pricing.\n\nWith a real second paragraph.",
+                rationale: "I used an engaging hook to resonate with your audience.",
+              },
+            },
+          ],
+        },
+        { text: "Done.", finishReason: "stop" },
+      ],
+    });
+    const turn = await runStubbedAgent([
+      { role: "user", content: "Write a post about pricing psychology" },
+    ]);
+
+    const post = turn.artifacts.find((a) => a.kind === "post");
+    expect(post).toBeDefined();
+    // Draft is unaffected — only the caption is suppressed.
+    expect(post?.meta?.rationale).toBeUndefined();
+  });
+
+  test("no rationale arg → no meta.rationale, unchanged behavior", async () => {
+    setStubScript({
+      rounds: [
+        {
+          toolCalls: [
+            {
+              name: "render_post",
+              args: {
+                body: "A real post about pricing.\n\nWith a real second paragraph.",
+              },
+            },
+          ],
+        },
+        { text: "Done.", finishReason: "stop" },
+      ],
+    });
+    const turn = await runStubbedAgent([
+      { role: "user", content: "Write a post about pricing psychology" },
+    ]);
+
+    const post = turn.artifacts.find((a) => a.kind === "post");
+    expect(post).toBeDefined();
+    expect(post?.meta?.rationale).toBeUndefined();
+  });
+});

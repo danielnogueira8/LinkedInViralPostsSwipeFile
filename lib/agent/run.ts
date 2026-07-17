@@ -54,6 +54,7 @@ import { INJECTION_GUARD } from "@/lib/agent/untrusted";
 // deterministic editor pass below rather than the runtime's public surface.
 import {
   normalizeDraftKey,
+  rationaleTooGeneric,
 } from "@/lib/agent/specialists/nets";
 // The deterministic AI-Tell Editor pass — the single entry point every draft
 // path now cleans through (em-dash strip + per-kind paragraph normalization).
@@ -333,6 +334,7 @@ Producing posts (use the render_post tool):
 - SHORTENING is TRIMMING, not gutting. When the user says "shorten"/"make it shorter"/"tighten", cut the fat — redundant lines, filler, weak examples — but KEEP it a complete, coherent post: the hook, the core point, the payoff, and real paragraph breaks. Aim for roughly 20–40% shorter unless they name a target; a light "tighten" trims less. NEVER collapse a full post into one or two sentences or a bare hook — a post that no longer makes sense on its own is a failed refine, not a short one. If they want something tiny (e.g. "turn this into a one-liner"), that's an explicit instruction — follow it; otherwise preserve the post's shape.
 - For numbered listicle POSTS, use the right item spacing for the source/format. If each item has a short title plus explanation, write it as \`1. The em-dash epidemic.\` then a BLANK LINE, then the explanation paragraph. Do NOT flatten it into \`1. The em-dash epidemic. Every other sentence...\` unless the source post deliberately uses compact one-line items. The number and title belong together; the explanation earns its own paragraph.
 - If you ever can't render a post (e.g. you hit the draft limit), DO NOT paste the post text into your chat reply as prose. The post body belongs ONLY inside render_post. Write a one-line note instead and stop.
+- "Why I wrote it this way" — when you render a finished post, you MAY pass an optional \`rationale\`: ONE short first-person sentence naming the single most important CRAFT choice you made in THIS draft and why it fits THIS user. It shows as a small note under the card so the post feels co-authored, not machine-generated. Good: "Opened on the failure instead of the win — vulnerability out-earns flexes in founder-LinkedIn." / "Cut the stats and led with the client's exact words to keep it human." / "Kept the list to three so it stays skimmable on mobile." BAD (never write these — they get dropped): "I used an engaging hook", "crafted a compelling opener", "kept it conversational to resonate with your audience", or anything that praises the output without naming a concrete, specific move. It must be TRUE of this exact draft. If you have nothing specific and honest to say, OMIT it entirely — a missing note is fine, a generic one is not. Do NOT repeat the rationale in your chat reply.
 
 Producing hooks (PLAIN TEXT ONLY — hooks are NEVER cards):
 - Hooks do NOT get their own cards. There is no hook tool. When the user asks for hooks (e.g. "give me 5 hooks", "some opener options"), write them DIRECTLY in your chat reply as a numbered list — one hook per line, the opener text only, no "Original:" / "Yours:" labels. Produce exactly the number requested. Any framing (which viral post it's adapted from, the angle) goes in the same reply, next to each hook.
@@ -1013,9 +1015,26 @@ async function dispatchRenderTool(
         rejectionCode: finalized.rejection.code,
       };
     }
+    // "Why I wrote it this way" — optional collaborator note. Only a SPECIFIC,
+    // first-person craft rationale is kept; a generic one ("engaging hook to
+    // resonate with your audience") is dropped silently so the card renders as
+    // it does today. Never blocks the draft — the caption is a bonus, not a
+    // gate. This is chat-only by construction: render_post is exclusive to the
+    // interactive agent loop, so batch/MCP drafts never carry meta.rationale.
+    const rawRationale =
+      typeof parsedArgs.rationale === "string"
+        ? parsedArgs.rationale.trim()
+        : "";
+    const artifact =
+      rawRationale && rationaleTooGeneric(rawRationale) === null
+        ? {
+            ...finalized.artifact,
+            meta: { ...(finalized.artifact.meta ?? {}), rationale: rawRationale },
+          }
+        : finalized.artifact;
     return {
       result: { ok: true, rendered: true, kind: "post" },
-      artifacts: [finalized.artifact],
+      artifacts: [artifact],
       sourcePostId: finalized.sourcePostId,
     };
   }
