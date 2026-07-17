@@ -3009,8 +3009,16 @@ export async function* runAgent(opts: {
 
       const draftArtifactsBeforeRound = countDraftArtifacts(allArtifacts);
       const toolFailuresBeforeRound = toolCallsFailed;
+      // ask_user ENDS the round (see below) — anything ordered after it in a
+      // multi-tool-call round would never be dispatched (no tool_start/tool_end,
+      // no matching tool response), yet finalToolCalls still persists the FULL
+      // round's ids, producing a malformed transcript with a silently-dropped
+      // call (bug-hunt #191). Sorting it last guarantees every other call in
+      // the round is dispatched — and gets a real tool response — before the
+      // ask can break the loop.
       const orderedToolCalls = [...toolCalls].sort((left, right) => {
-        const priority = (name: string) => (name === "get_voice" ? 0 : 1);
+        const priority = (name: string) =>
+          name === "get_voice" ? 0 : name === ASK_TOOL_NAME ? 2 : 1;
         return priority(left.function.name) - priority(right.function.name);
       });
       for (const tc of orderedToolCalls) {
