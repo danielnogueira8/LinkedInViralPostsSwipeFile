@@ -70,7 +70,7 @@ export type ModelingSourcePool<T> = {
 
 type RankedCandidate<T> = SelectedModelingSource<T> & {
   selectionIndex: number;
-  selectionEligible: boolean;
+  selectionRelevant: boolean;
   selectionRejected: boolean;
   selectionQuality: number;
 };
@@ -240,7 +240,7 @@ function withoutSelectionMetadata<T extends ModelingSourceCandidate>(
 ): SelectedModelingSource<T> {
   const selected = { ...candidate } as Record<string, unknown>;
   delete selected.selectionIndex;
-  delete selected.selectionEligible;
+  delete selected.selectionRelevant;
   delete selected.selectionQuality;
   delete selected.selectionRejected;
   return selected as SelectedModelingSource<T>;
@@ -260,6 +260,7 @@ function rotateQualityPool<T>(
   while (
     eligible < ranked.length &&
     eligible < maxPool &&
+    ranked[eligible].selectionRelevant === ranked[0]?.selectionRelevant &&
     !ranked[eligible].already_used &&
     !ranked[eligible].recently_surfaced &&
     bestQuality - ranked[eligible].selectionQuality <= QUALITY_ROTATION_TOLERANCE
@@ -379,16 +380,21 @@ export function selectModelingSourcePool<T extends ModelingSourceCandidate>(
         already_used: input.usedIds.has(candidate.id),
         recently_surfaced: surfacedIds.has(candidate.id),
         selectionIndex,
-        selectionEligible: matchesTopicInBody(candidate, topicAnchors),
+        // Relevance is a priority tier, never an admission gate. A modeled
+        // source contributes writing mechanics; its subject matter will be
+        // adapted to the client. Rejecting every off-topic source made a
+        // healthy modelable pool look empty whenever no post happened to
+        // share literal words with the request or voice profile.
+        selectionRelevant: matchesTopicInBody(candidate, topicAnchors),
         selectionRejected: modelability.reject !== null,
         selectionQuality: modelability.score * 0.65 + relevance * 0.35,
       };
     })
-    .filter(
-      (candidate) =>
-        !candidate.selectionRejected && candidate.selectionEligible,
-    )
+    .filter((candidate) => !candidate.selectionRejected)
     .sort((left, right) => {
+      const relevanceDiff =
+        Number(right.selectionRelevant) - Number(left.selectionRelevant);
+      if (relevanceDiff !== 0) return relevanceDiff;
       const usedDiff = Number(left.already_used) - Number(right.already_used);
       if (usedDiff !== 0) return usedDiff;
       const surfacedDiff =

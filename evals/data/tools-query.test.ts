@@ -766,6 +766,64 @@ That makes the lesson practical and repeatable for the reader.`;
     ).toBe(1);
   });
 
+  test("exact-count modeling returns a complete modelable pool when no source topic literally matches command text", async () => {
+    const structured = (topic: string) => `${topic} becomes useful when the system is concrete.
+
+1. Start with the reader's real constraint.
+2. Explain one change they can make.
+3. Close with a practical next action.
+
+That gives the reader enough detail to apply the lesson without losing its nuance.`;
+    dbRef.current = makeFakeSupabase({
+      posts: {
+        rows: [
+          {
+            id: "content-source",
+            text: structured("Content writing"),
+            post_url: "https://linkedin.com/posts/content-source",
+            viral_score: 100,
+            accounts: [{ name: "Writer", niche: "content" }],
+          },
+          {
+            id: "sales-source",
+            text: structured("Enterprise sales"),
+            post_url: "https://linkedin.com/posts/sales-source",
+            viral_score: 90,
+            accounts: [{ name: "Seller", niche: "sales" }],
+          },
+          {
+            id: "leadership-source",
+            text: structured("Founder leadership"),
+            post_url: "https://linkedin.com/posts/leadership-source",
+            viral_score: 80,
+            accounts: [{ name: "Founder", niche: "leadership" }],
+          },
+        ],
+      },
+    });
+
+    const result = (await runTool(
+      "search_viral_posts",
+      { sort: "viral", dir: "desc", strict_ranking: true, limit: 3 },
+      "ws-exact-modeled-pool",
+      undefined,
+      {
+        modelingSelection: {
+          userInstruction:
+            "Find exactly 3 top-performing regular posts in my swipe file and rewrite each one in my voice on a topic that fits me. Keep each source's structure and hook style, but make the content original. Create exactly one draft per source.",
+        },
+        requireResolvableModelingSourceUrl: true,
+      },
+    )) as { ok: boolean; posts: { id: string }[] };
+
+    expect(result.ok).toBe(true);
+    expect(result.posts.map((post) => post.id)).toEqual([
+      "content-source",
+      "sales-source",
+      "leadership-source",
+    ]);
+  });
+
   test("one-to-one auto-modeling requires a source URL without changing generic retrieval", async () => {
     const structured = (topic: string) => `${topic} works better with a clear system.
 
