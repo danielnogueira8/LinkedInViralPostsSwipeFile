@@ -472,10 +472,33 @@ async function nextRotationCursor(
       { onConflict: "workspace_id,key" },
     );
     if (signal) writeQuery = writeQuery.abortSignal(signal);
-    await writeQuery;
+    // Supabase resolves with { error } on a failed write rather than throwing
+    // — an unchecked `await` here silently treats a permanently-failing
+    // upsert as success, so the cursor never advances (always reads back 0)
+    // and rotation quietly stops. Log it: this is the exact failure mode that
+    // would deterministically reproduce "always picks the same post."
+    const { error: writeError } = await writeQuery;
+    if (writeError) {
+      console.warn(
+        JSON.stringify({
+          top_batch_rotation_cursor_write_failed: {
+            workspace_id: workspaceId,
+            message: writeError.message,
+          },
+        }),
+      );
+    }
     return current;
   } catch (error) {
     if (signal?.aborted) throw error;
+    console.warn(
+      JSON.stringify({
+        top_batch_rotation_cursor_error: {
+          workspace_id: workspaceId,
+          message: (error as Error).message,
+        },
+      }),
+    );
     return 0; // best-effort: no rotation on error, exactly today's behavior
   }
 }
