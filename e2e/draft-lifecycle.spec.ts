@@ -7,6 +7,7 @@ test.describe("Cowork draft lifecycle", () => {
   let consoleGuard: ReturnType<typeof failOnConsoleErrors>;
   const draftsToDelete: string[] = [];
   const chatsToDelete: string[] = [];
+  const connectionRestorers: Array<() => Promise<void>> = [];
 
   test.beforeEach(async ({ page }, testInfo) => {
     consoleGuard = failOnConsoleErrors(page, testInfo);
@@ -44,6 +45,13 @@ test.describe("Cowork draft lifecycle", () => {
         if (status >= 300) cleanupFailures.push(`chat ${id}: delete ${status}`);
       } catch (error) {
         cleanupFailures.push(`chat ${id}: ${(error as Error).message}`);
+      }
+    }
+    for (const restore of connectionRestorers.splice(0)) {
+      try {
+        await restore();
+      } catch (error) {
+        cleanupFailures.push(`publishing connection: ${(error as Error).message}`);
       }
     }
     let consoleFailure: Error | null = null;
@@ -166,7 +174,11 @@ test.describe("Cowork draft lifecycle", () => {
       throw new Error(`Lifecycle browser test attempted irreversible publishing: ${route.request().url()}`);
     }
 
-    await page.goto(`/dashboard?chat=${chat.id}`);
+    await page.evaluate((chatId) => {
+      const url = new URL(window.location.href);
+      url.searchParams.set("chat", chatId);
+      window.history.pushState({}, "", url);
+    }, chat.id);
     await expect(page.getByText("Three lessons from building a dependable publishing workflow.")).toBeVisible({
       timeout: 15_000,
     });
@@ -197,10 +209,20 @@ test.describe("Cowork draft lifecycle", () => {
     });
     expect(saved.meta).toMatchObject({ source: "modeled_post", source_url: sourceUrl });
     expect(saved.media_attachments).toEqual(artifact.media_attachments);
+    connectionRestorers.push(await activateTestPublishingConnection(savePayload.artifact.id));
 
+    await page.route("**/api/integrations/linkedin", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ok: true, connection: { connected: true } }),
+      });
+    });
     await page.goto("/dashboard/posts");
     await expect(page.getByRole("heading", { name: /^Posts$/ })).toBeVisible();
-    await page.getByText(artifactTitle, { exact: true }).click();
+    await page
+      .getByRole("button", { name: new RegExp(`^${artifactTitle} `) })
+      .click();
     const dialog = page.getByRole("dialog");
     await expect(dialog).toBeVisible();
 
@@ -219,13 +241,6 @@ test.describe("Cowork draft lifecycle", () => {
         media_attachments: artifact.media_attachments,
       });
 
-    await page.route("**/api/integrations/linkedin", async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({ ok: true, connection: { connected: true } }),
-      });
-    });
     const scheduleAt = futureDatetimeLocal();
     await dialog.getByLabel("Publish date and time").fill(scheduleAt);
     await dialog.getByLabel("First comment").fill("Lifecycle test first comment.");
@@ -406,6 +421,7 @@ test.describe("Cowork draft lifecycle", () => {
       chat_id: chat.id,
       status: "drafting",
     });
+    connectionRestorers.push(await activateTestPublishingConnection(savePayload.artifact.id));
 
     await page.getByRole("button", { name: "Schedule", exact: true }).click();
     await page.getByLabel("Publish date and time").fill(futureDatetimeLocal());
@@ -503,4 +519,70 @@ async function readScheduleState(id: string) {
   }>;
   if (!rows[0]) throw new Error("Scheduled draft fixture disappeared");
   return rows[0];
+}
+
+async function activateTestPublishingConnection(draftId: string): Promise<() => Promise<void>> {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) throw new Error("Supabase E2E credentials are missing");
+  const headers = {
+    apikey: key,
+    authorization: `Bearer ${key}`,
+    "content-type": "application/json",
+  };
+  const draftQuery = new URLSearchParams({
+    id: `eq.${draftId}`,
+    select: "workspace_id",
+    limit: "1",
+  });
+  const draftResponse = await fetch(`${url}/rest/v1/chat_artifacts?${draftQuery}`, { headers });
+  if (!draftResponse.ok) throw new Error(`Failed to read draft workspace (${draftResponse.status})`);
+  const workspaceId = (await draftResponse.json() as Array<{ workspace_id: string }>)[0]?.workspace_id;
+  if (!workspaceId) throw new Error("Saved draft has no workspace identity");
+
+  const connectionQuery = new URLSearchParams({
+    workspace_id: `eq.${workspaceId}`,
+    network: "eq.linkedin",
+    select: "status,zernio_account_id",
+    limit: "1",
+  });
+  const endpoint = `${url}/rest/v1/publishing_connections?${connectionQuery}`;
+  const existingResponse = await fetch(endpoint, { headers });
+  if (!existingResponse.ok) {
+    throw new Error(`Failed to read publishing fixture (${existingResponse.status})`);
+  }
+  const existing = (await existingResponse.json() as Array<{
+    status: string;
+    zernio_account_id: string | null;
+  }>)[0];
+  const writeResponse = existing
+    ? await fetch(endpoint, {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({ status: "active", zernio_account_id: "e2e-account" }),
+      })
+    : await fetch(`${url}/rest/v1/publishing_connections`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          workspace_id: workspaceId,
+          network: "linkedin",
+          status: "active",
+          zernio_account_id: "e2e-account",
+        }),
+      });
+  if (!writeResponse.ok) {
+    throw new Error(`Failed to create publishing fixture (${writeResponse.status})`);
+  }
+
+  return async () => {
+    const response = existing
+      ? await fetch(endpoint, {
+          method: "PATCH",
+          headers,
+          body: JSON.stringify(existing),
+        })
+      : await fetch(endpoint, { method: "DELETE", headers });
+    if (!response.ok) throw new Error(`Failed to restore publishing fixture (${response.status})`);
+  };
 }

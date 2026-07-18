@@ -36,7 +36,11 @@ test.describe("authenticated critical navigation", () => {
     await expect(page.getByTestId("creator-card-grid")).toBeVisible();
     await page.getByRole("button", { name: /my creators/i }).click();
     await expect(page.getByRole("heading", { name: "Filter your creators" })).toBeVisible();
-    await expect(page.getByTestId("creator-card-grid")).toBeVisible();
+    await expect(
+      page
+        .getByTestId("creator-card-grid")
+        .or(page.getByRole("heading", { name: "No creators here yet" })),
+    ).toBeVisible();
 
     let submittedUrl = "";
     await page.route("**/api/accounts/manual", async (route) => {

@@ -63,6 +63,16 @@ describe("creator discovery catalog", () => {
     ).toEqual(["founder-led growth", "content systems"]);
   });
 
+  test("shows no discovery tags when the display limit is zero", () => {
+    expect(
+      selectDisplayDiscoveryTags(
+        ["founder-led growth", "content systems"],
+        "LinkedIn/Personal Brand",
+        0,
+      ),
+    ).toEqual([]);
+  });
+
   test("shows a focused creator shortlist and reveals one useful batch at a time", () => {
     expect(getCreatorDisplayWindow(104, 12, 12)).toEqual({
       visibleCount: 12,
@@ -163,6 +173,20 @@ describe("creator discovery catalog", () => {
 
     expect(pack.map((row) => row.id)).toEqual(["a1", "g1", "a2", "g2"]);
     expect(pack.some((row) => row.id === "private")).toBe(false);
+  });
+
+  test("duplicate selected topic ids cannot duplicate creators in a starter pack", () => {
+    const rows = [
+      creator({ id: "a1", categoryId: "ai" }),
+      creator({ id: "a2", categoryId: "ai", isFeatured: false }),
+    ];
+
+    const pack = selectStarterPack(rows, {
+      categoryIds: ["ai", "ai"],
+      limit: 2,
+    });
+
+    expect(pack.map((row) => row.id)).toEqual(["a1", "a2"]);
   });
 
   test("migration seeds baseline ownership and prevents normalized-handle duplicates", () => {

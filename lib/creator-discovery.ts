@@ -46,6 +46,10 @@ export function selectDisplayDiscoveryTags(
   categoryLabel: string | null,
   limit: number,
 ): string[] {
+  const safeLimit = Number.isFinite(limit)
+    ? Math.max(0, Math.floor(limit))
+    : 0;
+  if (safeLimit === 0) return [];
   const categoryKey = categoryLabel ? normalizeDisplayTag(categoryLabel) : null;
   const seen = new Set<string>();
   const selected: string[] = [];
@@ -56,7 +60,7 @@ export function selectDisplayDiscoveryTags(
     if (!key || key === categoryKey || seen.has(key)) continue;
     seen.add(key);
     selected.push(tag);
-    if (selected.length === limit) break;
+    if (selected.length === safeLimit) break;
   }
 
   return selected;
@@ -133,15 +137,16 @@ export function selectStarterPack(
 ): DiscoveryCreator[] {
   const limit = Math.max(0, Math.min(input.limit ?? 8, 24));
   if (limit === 0) return [];
+  const categoryIds = [...new Set(input.categoryIds)];
 
   const globalCreators = rankDiscoveryCreators(
     creators.filter(isGlobalBaselineCreator),
-    { categoryIds: input.categoryIds, sort: "best-match" },
+    { categoryIds, sort: "best-match" },
   );
-  if (input.categoryIds.length === 0) return globalCreators.slice(0, limit);
+  if (categoryIds.length === 0) return globalCreators.slice(0, limit);
 
   const byCategory = new Map<string, DiscoveryCreator[]>();
-  for (const categoryId of input.categoryIds) byCategory.set(categoryId, []);
+  for (const categoryId of categoryIds) byCategory.set(categoryId, []);
   for (const creator of globalCreators) {
     if (creator.categoryId) byCategory.get(creator.categoryId)?.push(creator);
   }
@@ -150,7 +155,7 @@ export function selectStarterPack(
   let index = 0;
   while (pack.length < limit) {
     let added = false;
-    for (const categoryId of input.categoryIds) {
+    for (const categoryId of categoryIds) {
       const next = byCategory.get(categoryId)?.[index];
       if (!next) continue;
       pack.push(next);

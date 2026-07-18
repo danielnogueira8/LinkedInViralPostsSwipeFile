@@ -51,7 +51,10 @@ export async function drainBackgroundJobs(opts?: {
   workerId?: string;
 }): Promise<JobDrainResult> {
   const workerId = opts?.workerId ?? jobWorkerId("cron");
-  const limit = Math.max(1, Math.min(opts?.limit ?? DEFAULT_JOB_DRAIN_LIMIT, 20));
+  const requestedLimit = opts?.limit ?? DEFAULT_JOB_DRAIN_LIMIT;
+  const limit = Number.isFinite(requestedLimit)
+    ? Math.max(1, Math.min(Math.floor(requestedLimit), 20))
+    : DEFAULT_JOB_DRAIN_LIMIT;
   const result: JobDrainResult = {
     workerId,
     claimed: 0,
@@ -164,7 +167,13 @@ async function runBackgroundJobClaimed(job: BackgroundJob): Promise<{
       console.warn(
         JSON.stringify({ background_job_lease_lost: { job_id: job.id } }),
       );
-      return { completed: 0, failed: 0, requeued: 0, unsupported: 0 };
+      return {
+        completed: 0,
+        failed: 0,
+        requeued: 0,
+        unsupported: 0,
+        holdCostClaim: true,
+      };
     }
     const message = (e as Error)?.message || "Background job failed.";
     const holdCostClaim = e instanceof UsagePersistenceError;
@@ -180,7 +189,13 @@ async function runBackgroundJobClaimed(job: BackgroundJob): Promise<{
         console.warn(
           JSON.stringify({ background_job_lease_lost: { job_id: job.id } }),
         );
-        return { completed: 0, failed: 0, requeued: 0, unsupported: 0 };
+        return {
+          completed: 0,
+          failed: 0,
+          requeued: 0,
+          unsupported: 0,
+          holdCostClaim: true,
+        };
       }
       throw settleError;
     }

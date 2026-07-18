@@ -874,6 +874,11 @@ const getVoice: ToolFn = async (_args, workspaceId, signal, context) =>
 const listAccounts: ToolFn = async (args, workspaceId) => {
   try {
     const sb = supabaseAdmin();
+    const requestedLimit = args.limit;
+    const limit =
+      typeof requestedLimit === "number" && Number.isFinite(requestedLimit)
+        ? Math.min(200, Math.max(1, Math.floor(requestedLimit)))
+        : 50;
     let q = sb
       .from("workspace_accounts")
       .select(
@@ -881,7 +886,7 @@ const listAccounts: ToolFn = async (args, workspaceId) => {
       )
       .eq("workspace_id", workspaceId)
       .order("name", { foreignTable: "accounts", ascending: true })
-      .limit(typeof args.limit === "number" ? Math.min(args.limit, 200) : 50);
+      .limit(limit);
 
     if (!args.include_archived) q = q.is("accounts.archived_at", null);
     if (args.niche) {

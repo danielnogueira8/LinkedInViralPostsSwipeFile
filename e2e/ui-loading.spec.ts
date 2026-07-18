@@ -48,7 +48,7 @@ test.describe("UI loading and performance guardrails", () => {
     await expect(page.getByRole("button", { name: /new session/i }).first()).toBeVisible({
       timeout: 5_000,
     });
-    await expect(page.getByPlaceholder(/ask for a post or hook/i)).toBeVisible({
+    await expect(page.getByPlaceholder("What do you want to write?")).toBeVisible({
       timeout: 5_000,
     });
     await expect(page.locator("main, [role=main]").first()).toBeVisible();
