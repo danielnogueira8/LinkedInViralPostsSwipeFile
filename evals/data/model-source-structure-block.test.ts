@@ -112,7 +112,7 @@ describe("modelSourceStructureSkeleton — feeds the finalizer's coarse structur
     });
     expect(skeleton).toBeDefined();
     expect(skeleton?.hasList).toBe(true);
-    expect(skeleton?.listMarker).toBe("→");
+    expect(skeleton?.listMarker).toEqual({ kind: "bullet", glyph: "→" });
   });
 
   test("returns undefined (not an empty skeleton) for a refine source — the gate must never fire", () => {

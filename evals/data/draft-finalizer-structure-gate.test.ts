@@ -135,6 +135,63 @@ describe("DraftFinalizer — coarse structure gate", () => {
     expect(result.ok).toBe(true);
   });
 
+  test("accepts a faithful rewrite when source visual beats share blank-line paragraphs", async () => {
+    // Production regression: this is the shape of the first source selected by
+    // the four-post live request. The source uses visible emoji-led beats inside
+    // one blank-line paragraph, while the user's voice spaces equivalent beats
+    // apart. Counting only blank-line paragraphs made the source look like four
+    // beats and rejected the faithful nine-beat rewrite before semantic QA.
+    const source = [
+      "We recently reached an anniversary we never imagined at the start.",
+      "",
+      "I still remember the early milestones:\n🔹A reader shared what the work changed for them.\n🔹A teammate noticed the community growing.\n🔹A quiet launch reached the right people.\n🔹The work started travelling without us pushing it.",
+      "",
+      "Those moments made the long days worthwhile.",
+      "",
+      "The real achievement was the people who found something useful here.",
+    ].join("\n");
+    const draft = [
+      "I used to measure content by the obvious numbers.",
+      "",
+      "Now I notice the quieter signals.",
+      "",
+      "🔹A founder says a post helped clarify their offer.",
+      "",
+      "🔹A writer finally publishes the idea they kept delaying.",
+      "",
+      "🔹A useful conversation starts with the right buyer.",
+      "",
+      "🔹A useful idea reaches someone who needed it that day.",
+      "",
+      "Those moments matter more than another spike in reach.",
+      "",
+      "They show that the work travelled beyond the feed.",
+      "",
+      "That is the kind of content worth making consistently.",
+    ].join("\n");
+    const specialists = passThroughSpecialists();
+    const finalizer = createDraftFinalizer({
+      workspaceId: "ws-1",
+      priorDrafts: [],
+      specialists,
+      structureSkeleton: computeStructureSkeleton(source),
+    });
+
+    const result = await finalizer.finalize({
+      origin: "render_tool",
+      body: draft,
+      provenance: {
+        ...PROVENANCE,
+        discoveredSources: [
+          { id: "11111111-1111-4111-8111-111111111111", text: source },
+        ],
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(specialists.reviewSourceFidelity).toHaveBeenCalledOnce();
+  });
+
   test("revalidates the final body after a specialist rewrites its layout", async () => {
     const specialists = passThroughSpecialists();
     specialists.checkSameness = vi.fn(async () => ({

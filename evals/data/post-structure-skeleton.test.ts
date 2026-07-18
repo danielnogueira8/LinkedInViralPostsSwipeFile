@@ -31,8 +31,102 @@ describe("computeStructureSkeleton", () => {
       "Here's what changed:\n→ faster onboarding\n→ better retention\n→ higher NPS\n\nThat's the whole story.",
     );
     expect(s.hasList).toBe(true);
-    expect(s.listMarker).toBe("→");
+    expect(s.listMarker).toEqual({ kind: "bullet", glyph: "→" });
     expect(s.listItemCount).toBe(3);
+  });
+
+  test("detects emoji-led source beats as a list instead of flattening them into prose", () => {
+    const s = computeStructureSkeleton(
+      "The moments I remember:\n🔹A reader sent a thoughtful note.\n🔹A teammate saw the work spread.\n🔹A quiet launch found the right people.\n\nThat was the real milestone.",
+    );
+
+    expect(s.hasList).toBe(true);
+    expect(s.listMarker).toEqual({ kind: "emoji" });
+    expect(s.listItemCount).toBe(3);
+    expect(s.layout.map((beat) => beat.kind)).toEqual([
+      "prose",
+      "list",
+      "prose",
+    ]);
+  });
+
+  test("does not mistake a single decorative emoji opener for a list", () => {
+    const s = computeStructureSkeleton(
+      "🔹A milestone worth celebrating.\n\nThe rest of this post is ordinary prose.",
+    );
+
+    expect(s.hasList).toBe(false);
+    expect(s.listItemCount).toBe(0);
+    expect(s.layout.map((beat) => beat.kind)).toEqual(["prose"]);
+  });
+
+  test("does not group unrelated decorative emoji openers into a list", () => {
+    const s = computeStructureSkeleton(
+      "🎉 We launched the new workflow.\n\n💡 Here is what surprised me.\n\n🧭 This is where we are going next.",
+    );
+
+    expect(s.hasList).toBe(false);
+    expect(s.layout.map((beat) => beat.kind)).toEqual(["prose"]);
+  });
+
+  test("does not group repeated decorative emoji across paragraph boundaries into a list", () => {
+    const s = computeStructureSkeleton(
+      "💡 First observation.\n\n💡 Second observation.",
+    );
+
+    expect(s.hasList).toBe(false);
+    expect(s.layout.map((beat) => beat.kind)).toEqual(["prose"]);
+  });
+
+  test("recognizes a contiguous mixed-emoji block as one emoji-led list", () => {
+    const s = computeStructureSkeleton(
+      "The checklist:\n✅ Do this.\n⚠️ Avoid that.\n👩🏽‍💻 Ship the fix.\n\nThen verify it.",
+    );
+
+    expect(s.listMarker).toEqual({ kind: "emoji" });
+    expect(s.listItemCount).toBe(3);
+    expect(s.layout.map((beat) => beat.kind)).toEqual([
+      "prose",
+      "list",
+      "prose",
+    ]);
+  });
+
+  test("recognizes three repeated emoji-led item paragraphs as a spaced list", () => {
+    const s = computeStructureSkeleton(
+      "🔹 First item.\n\n🔹 Second item.\n\n🔹 Third item.",
+    );
+
+    expect(s.listMarker).toEqual({ kind: "emoji" });
+    expect(s.listItemCount).toBe(3);
+    expect(s.layout.map((beat) => beat.kind)).toEqual(["list"]);
+  });
+
+  test("recognizes repeated emoji markers by Unicode class rather than a marker whitelist", () => {
+    for (const source of [
+      "✅Check the hook.\n✅Check the proof.\n✅Check the close.",
+      "🧭 Pick a direction.\n🧭 Remove distractions.\n🧭 Keep publishing.",
+    ]) {
+      const s = computeStructureSkeleton(source);
+      expect(s).toMatchObject({
+        hasList: true,
+        listMarker: { kind: "emoji" },
+        listItemCount: 3,
+      });
+    }
+  });
+
+  test("recognizes Unicode keycap graphemes without treating plain digits as emoji", () => {
+    const keycaps = computeStructureSkeleton(
+      "1️⃣ First step.\n2️⃣ Second step.\n3️⃣ Third step.",
+    );
+    const plainDigits = computeStructureSkeleton(
+      "1 First statement.\n2 Second statement.\n3 Third statement.",
+    );
+
+    expect(keycaps.listMarker).toEqual({ kind: "emoji" });
+    expect(keycaps.listItemCount).toBe(3);
+    expect(plainDigits.hasList).toBe(false);
   });
 
   test("no list present", () => {
@@ -42,9 +136,9 @@ describe("computeStructureSkeleton", () => {
     expect(s.listItemCount).toBe(0);
   });
 
-  test("normalizes numbered list markers to '1.'", () => {
+  test("normalizes numbered list markers to an ordered marker kind", () => {
     const s = computeStructureSkeleton("Steps:\n1. do this\n2. do that\n3. done");
-    expect(s.listMarker).toBe("1.");
+    expect(s.listMarker).toEqual({ kind: "ordered" });
     expect(s.listItemCount).toBe(3);
   });
 
@@ -90,6 +184,16 @@ describe("renderStructureSkeletonReference", () => {
     expect(ref.toLowerCase()).toContain("can flex");
   });
 
+  test("describes normalized emoji markers as an emoji-led list", () => {
+    const s = computeStructureSkeleton(
+      "🔹Write the hook.\n🔹Build the argument.\n🔹Land the close.",
+    );
+    const ref = renderStructureSkeletonReference(s);
+
+    expect(ref).toContain("emoji-led list");
+    expect(ref).not.toContain('"emoji" list');
+  });
+
   test("omits list guidance entirely when the source has no list", () => {
     const s = computeStructureSkeleton("Just prose here, nothing more, no list to speak of.");
     const ref = renderStructureSkeletonReference(s);
@@ -125,6 +229,30 @@ describe("checkStructureMatch", () => {
     expect(mismatch?.code).toBe("wrong_list_marker");
   });
 
+  test("treats different emoji glyphs as the same marker style", () => {
+    const source = computeStructureSkeleton(
+      "The source checklist:\n🔹 Keep the hook clear.\n🔹 Support the argument.\n🔹 Land the close with care.",
+    );
+    const draft = computeStructureSkeleton(
+      "The adapted checklist:\n✅ Make the opener useful.\n⚠️ Remove unsupported claims.\n🚀 Publish only after verification.",
+    );
+
+    expect(checkStructureMatch(source, draft)).toBeNull();
+  });
+
+  test("compares marker style for every list beat, not only the dominant list", () => {
+    const source = computeStructureSkeleton(
+      "Start here.\n→ First arrow item.\n→ Second arrow item.\n\nNow the steps:\n1. First numbered item.\n2. Second numbered item.",
+    );
+    const draft = computeStructureSkeleton(
+      "Start here.\n→ First adapted item.\n→ Second adapted item.\n\nNow the next block:\n→ Another adapted item.\n→ Final adapted item.",
+    );
+
+    expect(checkStructureMatch(source, draft)?.code).toBe(
+      "wrong_list_marker",
+    );
+  });
+
   test("flags a list that moves to a different structural position", () => {
     const source = computeStructureSkeleton(
       "A sharp opening makes people stop.\n\n→ name the tension\n→ show the cost\n\nThen land the practical takeaway with a direct close.",
@@ -148,7 +276,9 @@ describe("checkStructureMatch", () => {
       ).join("\n\n"),
     );
 
-    expect(checkStructureMatch(source, draft)?.code).toBe("paragraph_density");
+    expect(checkStructureMatch(source, draft)?.code).toBe(
+      "visual_line_density",
+    );
   });
 
   test("does NOT flag a source with no list when the draft also has none", () => {
@@ -215,7 +345,7 @@ describe("structureMismatchRepairInstruction", () => {
       "missing_list",
       "wrong_list_marker",
       "layout_order",
-      "paragraph_density",
+      "visual_line_density",
       "too_short",
       "too_long",
     ] as const;
