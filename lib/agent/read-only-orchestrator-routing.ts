@@ -6,6 +6,7 @@ import {
 import { requestedDirectPostCount } from "@/lib/agent/direct-deliverable-policy";
 import { coworkRolloutDecision } from "@/lib/agent/cowork-rollout";
 import type { coworkRolloutRuntimeHealth } from "@/lib/agent/cowork-rollout-health";
+import type { PostType } from "@/lib/post-type";
 
 export const READ_ONLY_ORCHESTRATOR_ROUTE_KINDS = [
   "news_research",
@@ -27,6 +28,7 @@ export type ReadOnlyOrchestratorRoute = {
   minimumSources?: number;
   workspaceSearchMode?: "diverse" | "strict_top";
   workspaceSince?: "1d" | "7d" | "30d";
+  workspacePostType?: PostType;
   clarificationReason?: "outcome" | "research_topic";
   authoritativeInstruction?: string;
 };
@@ -94,23 +96,49 @@ const SOURCE_COUNT_WORDS: Record<string, number> = {
   ten: 10,
 };
 
+const SOURCE_TRANSFORMATION_RE =
+  /\b(?:sources?|examples?|posts?)\b[^.!?]{0,160}(?:,\s*|\s+(?:and(?:\s+then)?|then|to)\s+)(?:please\s+)?(?:rewrite|rework|remix|model|mimic|adapt|turn\s+(?:it|them|these|those)\s+into)\b/i;
+
+function requestedExplicitSourceCount(instruction: string): number | null {
+  const explicitCounts = [...instruction.matchAll(SOURCE_COUNT_RE)].map(
+    (match) => {
+      const value = match[1]?.toLowerCase() ?? "";
+      return Number(value) || SOURCE_COUNT_WORDS[value] || 0;
+    },
+  );
+  return explicitCounts.length > 0 ? Math.max(...explicitCounts) : null;
+}
+
 function requestedSourceMinimum(instruction: string): number {
   // Requests can put the output first ("write one post after finding three
   // posts"). Taking the first match would undercount the research requirement.
   // The maximum is deliberately conservative: asking for one extra source is
   // preferable to drafting from fewer sources than the user explicitly asked
   // us to compare.
-  const explicitCounts = [...instruction.matchAll(SOURCE_COUNT_RE)].map(
-    (match) => {
-      const value = match[1]?.toLowerCase() ?? "";
-      return Number(value) || SOURCE_COUNT_WORDS[value] || 2;
-    },
-  );
+  const explicitCount = requestedExplicitSourceCount(instruction);
   return Math.max(
     2,
     /\bseveral\b/i.test(instruction) ? 3 : 2,
-    ...explicitCounts,
+    explicitCount ?? 0,
   );
+}
+
+function requestedTransformationDraftCount(
+  instruction: string,
+  researchClause: string,
+): number | null {
+  if (!SOURCE_TRANSFORMATION_RE.test(instruction)) return null;
+  return requestedExplicitSourceCount(researchClause);
+}
+
+function requestedWorkspacePostType(
+  researchClause: string,
+): PostType | undefined {
+  if (/\blead[-\s]?magnet\s+posts?\b/i.test(researchClause)) {
+    return "lead_magnet";
+  }
+  if (/\bregular\s+posts?\b/i.test(researchClause)) return "regular";
+  return undefined;
 }
 
 function sourceResearchClause(instruction: string): string {
@@ -325,6 +353,12 @@ export function compileReadOnlyOrchestratorRoute(
   }
 
   const explicitDraftCount = requestedDirectPostCount(instruction);
+  const researchClause = sourceResearchClause(instruction);
+  const transformationDraftCount = requestedTransformationDraftCount(
+    instruction,
+    researchClause,
+  );
+  const workspacePostType = requestedWorkspacePostType(researchClause);
   const writingOutputClause = instruction.match(
     /\b(?:write|draft|create|generate|make|produce|prepare|give\s+me)\b[\s\S]{0,180}?\b(?:linkedin\s+)?posts?\b/i,
   )?.[0] ?? "";
@@ -338,10 +372,10 @@ export function compileReadOnlyOrchestratorRoute(
   const expectsDraft =
     FULL_POST_REQUEST_RE.test(instruction) &&
     (!hasPluralPostTarget || explicitDraftCount !== null);
-  const expectedDrafts = explicitDraftCount ?? 1;
+  const expectedDrafts =
+    explicitDraftCount ?? transformationDraftCount ?? 1;
   const needsFileInspection =
     input.hasAttachments && FILE_INSPECTION_RE.test(instruction);
-  const researchClause = sourceResearchClause(instruction);
   const needsNews =
     !FIRST_PARTY_NEWS_CONTEXT_RE.test(instruction) &&
     (EXPLICIT_NEWS_TOPIC_RE.test(instruction) ||
@@ -410,6 +444,7 @@ export function compileReadOnlyOrchestratorRoute(
             ...(requestedWorkspaceWindow(researchClause)
               ? { workspaceSince: requestedWorkspaceWindow(researchClause) }
               : {}),
+            ...(workspacePostType ? { workspacePostType } : {}),
           }
         : {}),
     };
@@ -436,6 +471,7 @@ export function compileReadOnlyOrchestratorRoute(
       ...(requestedWorkspaceWindow(researchClause)
         ? { workspaceSince: requestedWorkspaceWindow(researchClause) }
         : {}),
+      ...(workspacePostType ? { workspacePostType } : {}),
     };
   }
   if (RESEARCH_RE.test(instruction)) {
