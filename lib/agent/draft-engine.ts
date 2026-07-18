@@ -655,6 +655,7 @@ function compileMessages(input: DraftEngineInput): ChatMessage[] {
           INJECTION_GUARD,
           writingSkill,
           skills,
+          creatorStyle,
           preferences,
           feedback,
         ]

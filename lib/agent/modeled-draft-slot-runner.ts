@@ -119,6 +119,17 @@ type SourceTask = Extract<
 function validatedVariation(
   input: ModeledDraftSlotInput,
 ): SourceTask["variation"] {
+  const validStandaloneSlot =
+    Number.isInteger(input.slot.index) &&
+    input.slot.index >= 0 &&
+    input.slot.index < MAX_MODELED_BATCH_COUNT;
+
+  if (!validStandaloneSlot) {
+    throw new RangeError(
+      `Invalid modeled draft slot index: expected a zero-based integer below ${MAX_MODELED_BATCH_COUNT}.`,
+    );
+  }
+
   if (!input.batch) return undefined;
 
   const { count, previousBodies } = input.batch;

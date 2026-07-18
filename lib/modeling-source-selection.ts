@@ -11,12 +11,12 @@ const QUALITY_ROTATION_TOLERANCE = 0.05;
 
 const STOP_TERMS = new Set([
   "a", "about", "after", "all", "an", "and", "another", "any", "as",
-  "at", "be", "best", "but", "by", "choose", "content", "create", "draft", "file",
+  "at", "be", "best", "but", "by", "choose", "content", "create", "draft", "each", "file",
   "find", "fit", "fits", "for", "from", "get", "give", "high", "i", "in",
   "into", "it", "keep", "make", "me", "model", "modeled", "modelling", "my",
-  "of", "on", "one", "original", "performing", "post", "posts", "regular",
+  "its", "linkedin", "of", "on", "one", "original", "performing", "please", "post", "posts", "regular",
   "hook", "rewrite", "show", "source", "sources", "structure", "style", "swipe",
-  "that", "the", "their", "this", "to", "top", "topic", "use", "viral", "voice", "want", "with",
+  "that", "the", "their", "them", "this", "to", "top", "topic", "use", "viral", "voice", "want", "with",
   "write", "writes", "you",
 ]);
 
@@ -70,6 +70,7 @@ export type ModelingSourcePool<T> = {
 
 type RankedCandidate<T> = SelectedModelingSource<T> & {
   selectionIndex: number;
+  selectionEligible: boolean;
   selectionRejected: boolean;
   selectionQuality: number;
 };
@@ -95,15 +96,31 @@ function normalizedTerm(value: string): string {
   return lower;
 }
 
-function termsOf(value: unknown, maxChars: number): string[] {
+function tokenizedTermsOf(value: unknown, maxChars: number): string[] {
   if (typeof value !== "string") return [];
-  const tokens = (value
+  return (value
     .slice(0, maxChars)
     .match(/[\p{L}\p{N}][\p{L}\p{N}'’\-]*/gu) ?? [])
     .map(normalizedTerm);
+}
+
+function lexicalTermsOf(value: unknown, maxChars: number): string[] {
+  return tokenizedTermsOf(value, maxChars).filter((term) => term.length >= 2);
+}
+
+function isStopTerm(term: string): boolean {
+  return (
+    STOP_TERMS.has(term) ||
+    (term.includes("-") &&
+      term.split("-").every((component) => STOP_TERMS.has(component)))
+  );
+}
+
+function termsOf(value: unknown, maxChars: number): string[] {
+  const tokens = tokenizedTermsOf(value, maxChars);
   const terms: string[] = [];
   for (const term of tokens) {
-    if (term.length < 2 || STOP_TERMS.has(term)) continue;
+    if (term.length < 2 || isStopTerm(term)) continue;
     terms.push(term);
   }
   // Preserve multiword topics whose individual words are generic in command
@@ -114,7 +131,7 @@ function termsOf(value: unknown, maxChars: number): string[] {
     const left = tokens[index];
     const right = tokens[index + 1];
     if (left.length < 2 || right.length < 2) continue;
-    if (STOP_TERMS.has(left) && STOP_TERMS.has(right)) continue;
+    if (isStopTerm(left) && isStopTerm(right)) continue;
     terms.push(`${left} ${right}`);
   }
   return terms;
@@ -159,6 +176,27 @@ function relevanceAnchors(context: ModelingClientContext | undefined): Map<strin
   return anchors;
 }
 
+function topicEligibilityAnchors(
+  context: ModelingClientContext | undefined,
+): Set<string> {
+  const anchors = new Map<string, number>();
+  addAnchors(anchors, context?.userInstruction, 1);
+  addAnchorCollection(anchors, context?.voiceAnchors?.topics, 1);
+  const topicTerms = new Set<string>();
+  for (const anchor of anchors.keys()) {
+    topicTerms.add(anchor);
+    for (const component of anchor.split(" ")) {
+      // `content` is intentionally a command stop word by itself, but becomes
+      // topical inside phrases such as "content writing". Other stop words are
+      // only grammatical glue and must never make an unrelated body eligible.
+      if (!isStopTerm(component) || component === "content") {
+        topicTerms.add(component);
+      }
+    }
+  }
+  return topicTerms;
+}
+
 function accountFields(value: unknown): { name: string; niche: string } {
   const account = recordOf(Array.isArray(value) ? value[0] : value);
   return {
@@ -186,11 +224,23 @@ function relevanceScore(
   return totalWeight > 0 ? matchedWeight / totalWeight : 0;
 }
 
+function matchesTopicInBody(
+  candidate: ModelingSourceCandidate,
+  topicAnchors: ReadonlySet<string>,
+): boolean {
+  if (topicAnchors.size === 0) return true;
+  const bodyTerms = new Set(
+    lexicalTermsOf(candidate.text, MAX_CANDIDATE_TEXT_CHARS),
+  );
+  return [...topicAnchors].some((anchor) => bodyTerms.has(anchor));
+}
+
 function withoutSelectionMetadata<T extends ModelingSourceCandidate>(
   candidate: RankedCandidate<T>,
 ): SelectedModelingSource<T> {
   const selected = { ...candidate } as Record<string, unknown>;
   delete selected.selectionIndex;
+  delete selected.selectionEligible;
   delete selected.selectionQuality;
   delete selected.selectionRejected;
   return selected as SelectedModelingSource<T>;
@@ -312,6 +362,7 @@ export function selectModelingSourcePool<T extends ModelingSourceCandidate>(
   }
 
   const anchors = relevanceAnchors(input.clientContext);
+  const topicAnchors = topicEligibilityAnchors(input.clientContext);
   const surfacedIds = input.surfacedIds ?? new Set<string>();
   const ranked: RankedCandidate<T>[] = uniqueCandidates
     .map((candidate, selectionIndex) => {
@@ -328,11 +379,15 @@ export function selectModelingSourcePool<T extends ModelingSourceCandidate>(
         already_used: input.usedIds.has(candidate.id),
         recently_surfaced: surfacedIds.has(candidate.id),
         selectionIndex,
+        selectionEligible: matchesTopicInBody(candidate, topicAnchors),
         selectionRejected: modelability.reject !== null,
         selectionQuality: modelability.score * 0.65 + relevance * 0.35,
       };
     })
-    .filter((candidate) => !candidate.selectionRejected)
+    .filter(
+      (candidate) =>
+        !candidate.selectionRejected && candidate.selectionEligible,
+    )
     .sort((left, right) => {
       const usedDiff = Number(left.already_used) - Number(right.already_used);
       if (usedDiff !== 0) return usedDiff;

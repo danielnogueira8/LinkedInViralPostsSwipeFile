@@ -159,6 +159,21 @@ describe("runModeledDraftSlot", () => {
     expect(runner).not.toHaveBeenCalled();
   });
 
+  test.each([-1, 1.5, 5])(
+    "rejects invalid standalone slot index %s before invoking the engine",
+    async (index) => {
+      const runner = vi.fn<ModeledDraftSlotRunner>();
+
+      await expect(
+        runModeledDraftSlot(
+          { ...slotInput, slot: { id: `invalid-slot-${index}`, index } },
+          { runDraftEngine: runner },
+        ),
+      ).rejects.toThrow(/slot index/i);
+      expect(runner).not.toHaveBeenCalled();
+    },
+  );
+
   test("replaces artifact-supplied provenance with the canonical source", async () => {
     const result = await runModeledDraftSlot(
       {

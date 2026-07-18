@@ -766,6 +766,64 @@ That makes the lesson practical and repeatable for the reader.`;
     ).toBe(1);
   });
 
+  test("one-to-one auto-modeling requires a source URL without changing generic retrieval", async () => {
+    const structured = (topic: string) => `${topic} works better with a clear system.
+
+1. Start with the real constraint.
+2. Explain one useful change.
+3. Close with the next action.
+
+That makes the lesson practical and repeatable for the reader.`;
+    const pool = {
+      posts: {
+        rows: [
+          {
+            id: "top-without-chip",
+            text: structured("Content strategy"),
+            post_url: null,
+            viral_score: 100,
+            accounts: [{ name: "No URL", niche: "content strategy" }],
+          },
+          {
+            id: "modelable-with-chip",
+            text: structured("Content strategy"),
+            post_url: "HTTPS://www.linkedin.com/posts/modelable-with-chip",
+            viral_score: 90,
+            accounts: [{ name: "With URL", niche: "content strategy" }],
+          },
+        ],
+      },
+    };
+
+    dbRef.current = makeFakeSupabase(pool);
+    const modeled = (await runTool(
+      "search_viral_posts",
+      { sort: "viral", dir: "desc", strict_ranking: true, limit: 1 },
+      "ws-modeled-url",
+      undefined,
+      {
+        modelingSelection: {
+          userInstruction: "Model a content strategy post in my voice.",
+        },
+        requireResolvableModelingSourceUrl: true,
+      },
+    )) as { posts: { id: string; post_url?: string }[] };
+    expect(modeled.posts).toEqual([
+      expect.objectContaining({
+        id: "modelable-with-chip",
+        post_url: "https://www.linkedin.com/posts/modelable-with-chip",
+      }),
+    ]);
+
+    dbRef.current = makeFakeSupabase(pool);
+    const generic = (await runTool(
+      "search_viral_posts",
+      { sort: "viral", dir: "desc", strict_ranking: true, limit: 1 },
+      "ws-generic-url",
+    )) as { posts: { id: string }[] };
+    expect(generic.posts[0].id).toBe("top-without-chip");
+  });
+
   test("ordinary mimic discovery preserves legacy ordering instead of applying modeling policy", async () => {
     dbRef.current = makeFakeSupabase({
       posts: {

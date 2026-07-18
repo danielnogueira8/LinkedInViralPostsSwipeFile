@@ -19,20 +19,30 @@ const MAX_RESERVE_SOURCES = 5;
 const MAX_SOURCE_TEXT_CHARS = 20_000;
 const MAX_SOURCE_REPLACEMENTS_PER_SLOT = 1;
 const MODELED_DRAFT_CONCURRENCY = 2;
+const MODELED_DRAFT_BATCH_MAX_DURATION_MS = 240_000;
+const MODELED_DRAFT_STORE_CLEANUP_MS = 5_000;
+const MAX_GENERATION_CONTEXT_CHARS = 250_000;
 
-export type ModeledDraftBatchSource = CanonicalWorkspaceModelingSource;
+export type ModeledDraftBatchSource = Omit<
+  CanonicalWorkspaceModelingSource,
+  "url"
+> &
+  Readonly<{ url: string }>;
 export type ModeledPostArtifact = Artifact & { kind: "post" };
 
-export type ModeledDraftSlotCheckpoint = Readonly<{
+type ModeledDraftSlotBase = Readonly<{
   index: number;
-  state: "assigned" | "candidate" | "accepted";
   sourceIndex: number;
   sourceHistory: readonly number[];
   replacements: number;
-  candidateBody?: string;
-  artifact?: ModeledPostArtifact;
   lastFailureCode?: string;
 }>;
+
+export type ModeledDraftSlotCheckpoint = ModeledDraftSlotBase &
+  Readonly<
+    | { state: "assigned"; artifact?: never }
+    | { state: "accepted"; artifact: ModeledPostArtifact }
+  >;
 
 export type AcquiredModeledDraftBatch = Readonly<{
   batchId: string;
@@ -50,8 +60,9 @@ export type ModeledDraftBatchAcquireResult =
       batchId: string;
       artifacts: readonly ModeledPostArtifact[];
     }
-  | { kind: "busy" }
+  | { kind: "busy"; batchId: string }
   | { kind: "conflict" }
+  | { kind: "insufficient_sources" }
   | { kind: "unavailable" };
 
 export interface ModeledDraftBatchRepository {
@@ -61,14 +72,15 @@ export interface ModeledDraftBatchRepository {
     requestHash: string;
     requestedCount: number;
     sources: readonly ModeledDraftBatchSource[];
+    signal: AbortSignal;
   }): Promise<ModeledDraftBatchAcquireResult>;
   acceptSlot(input: {
     batchId: string;
     leaseToken: string;
     slotIndex: number;
     sourceIndex: number;
-    expectedState: "assigned" | "candidate";
     artifact: ModeledPostArtifact;
+    signal: AbortSignal;
   }): Promise<boolean>;
   replaceSlotSource(input: {
     batchId: string;
@@ -76,10 +88,12 @@ export interface ModeledDraftBatchRepository {
     slotIndex: number;
     sourceIndex: number;
     failureCode: string;
+    signal: AbortSignal;
   }): Promise<boolean>;
   complete(input: {
     batchId: string;
     leaseToken: string;
+    signal: AbortSignal;
   }): Promise<
     | { kind: "complete"; artifacts: readonly ModeledPostArtifact[] }
     | { kind: "incomplete" }
@@ -88,7 +102,8 @@ export interface ModeledDraftBatchRepository {
   release(input: {
     batchId: string;
     leaseToken: string;
-    reason: ModeledDraftBatchIncompleteReason;
+    reason: ModeledDraftBatchReleaseReason;
+    signal: AbortSignal;
   }): Promise<void>;
 }
 
@@ -102,6 +117,11 @@ export type ModeledDraftBatchIncompleteReason =
   | "source_pool_exhausted"
   | "protocol_error"
   | "store_unavailable";
+
+export type ModeledDraftBatchReleaseReason = Exclude<
+  ModeledDraftBatchIncompleteReason,
+  "busy"
+>;
 
 export type ModeledDraftBatchResult =
   | {
@@ -147,17 +167,63 @@ export type ModeledDraftBatchDependencies = Readonly<{
   now: () => number;
 }>;
 
-function requestHash(input: ExecuteModeledDraftBatchInput): string {
-  return createHash("sha256")
-    .update(
-      JSON.stringify({
-        version: 1,
-        workspaceId: input.workspaceId,
-        instruction: input.instruction,
-        count: input.count,
-      }),
-    )
-    .digest("hex");
+function canonicalJson(value: unknown, seen = new Set<object>()): string {
+  if (value === null) return "null";
+  if (typeof value === "string" || typeof value === "boolean") {
+    return JSON.stringify(value);
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new TypeError("Non-finite context number");
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    if (seen.has(value)) throw new TypeError("Cyclic generation context");
+    seen.add(value);
+    const serialized = `[${value.map((item) => canonicalJson(item, seen)).join(",")}]`;
+    seen.delete(value);
+    return serialized;
+  }
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    if (seen.has(record)) throw new TypeError("Cyclic generation context");
+    seen.add(record);
+    const fields = Object.keys(record)
+      .filter((key) => record[key] !== undefined)
+      .sort()
+      .map(
+        (key) => `${JSON.stringify(key)}:${canonicalJson(record[key], seen)}`,
+      );
+    seen.delete(record);
+    return `{${fields.join(",")}}`;
+  }
+  throw new TypeError("Unsupported generation context value");
+}
+
+function requestHash(input: ExecuteModeledDraftBatchInput): string | null {
+  try {
+    const context = canonicalJson({
+      version: 2,
+      workspaceId: input.workspaceId,
+      instruction: input.instruction,
+      count: input.count,
+      generation: {
+        voiceResult: input.engineInput.voiceResult,
+        preferences: input.engineInput.preferences,
+        feedbackMemory: input.engineInput.feedbackMemory,
+        priorPostDrafts: input.engineInput.priorPostDrafts,
+        format: input.engineInput.format ?? null,
+        customSkillBodies: input.engineInput.customSkillBodies ?? [],
+        customSkillNames: input.engineInput.customSkillNames ?? [],
+        leadMagnetBlock: input.engineInput.leadMagnetBlock ?? null,
+        creatorStyleBlock: input.engineInput.creatorStyleBlock ?? null,
+        lean: input.engineInput.lean ?? false,
+      },
+    });
+    if (context.length > MAX_GENERATION_CONTEXT_CHARS) return null;
+    return createHash("sha256").update(context).digest("hex");
+  } catch {
+    return null;
+  }
 }
 
 function validSourcePool(
@@ -167,6 +233,14 @@ function validSourcePool(
   if (sources.length > maximum) return false;
   const ids = new Set<string>();
   return sources.every((source) => {
+    if (
+      source === null ||
+      typeof source !== "object" ||
+      typeof source.id !== "string" ||
+      typeof source.text !== "string"
+    ) {
+      return false;
+    }
     const id = source.id.trim();
     const text = source.text.trim();
     if (
@@ -176,16 +250,37 @@ function validSourcePool(
       ids.has(id) ||
       !text ||
       source.text.length > MAX_SOURCE_TEXT_CHARS ||
-      (source.url !== undefined &&
-        (source.url !== source.url.trim() ||
-          source.url.length > 2_048 ||
-          !/^https?:\/\//i.test(source.url)))
+      !isCanonicalModeledSourceUrl(source.url)
     ) {
       return false;
     }
     ids.add(id);
     return true;
   });
+}
+
+export function isCanonicalModeledSourceUrl(
+  value: unknown,
+): value is string {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > 2_048 ||
+    value !== value.trim()
+  ) {
+    return false;
+  }
+  try {
+    const parsed = new URL(value);
+    return (
+      (parsed.protocol === "https:" || parsed.protocol === "http:") &&
+      parsed.username === "" &&
+      parsed.password === "" &&
+      parsed.href === value
+    );
+  } catch {
+    return false;
+  }
 }
 
 function validRequest(input: ExecuteModeledDraftBatchInput): boolean {
@@ -198,6 +293,8 @@ function validRequest(input: ExecuteModeledDraftBatchInput): boolean {
     !Number.isInteger(input.count) ||
     input.count < 2 ||
     input.count > MAX_MODELED_DRAFTS ||
+    (input.deadlineAtMs !== undefined &&
+      !Number.isFinite(input.deadlineAtMs)) ||
     input.engineInput.workspaceId !== input.workspaceId
   ) {
     return false;
@@ -217,16 +314,19 @@ function replayArtifactIsCanonical(
     ? provenance.sources
     : [];
   const provenanceSource = recordOf(provenanceSources[0]);
+  const sourceUrl = meta?.source_url;
+  const provenanceUrl = provenanceSource?.url;
   return (
     meta?.modeled_draft_slot_id === `${batchId}:slot-${slotIndex}` &&
     meta.modeled_draft_slot_index === slotIndex &&
     meta.source === "model_source" &&
     typeof sourceId === "string" &&
+    provenance?.route === "workspace_research" &&
     provenanceSources.length === 1 &&
     provenanceSource?.id === sourceId &&
     provenanceSource.kind === "workspace_post" &&
-    (typeof meta.source_url !== "string" ||
-      provenanceSource.url === meta.source_url)
+    isCanonicalModeledSourceUrl(sourceUrl) &&
+    provenanceUrl === sourceUrl
   );
 }
 
@@ -243,22 +343,27 @@ function orderedArtifacts(
   if (slots.length !== requestedCount) return null;
   const artifacts: ModeledPostArtifact[] = [];
   const ids = new Set<string>();
-  const bodies = new Set<string>();
+  const bodies: string[] = [];
   for (let index = 0; index < requestedCount; index += 1) {
     const slot = slots.find((candidate) => candidate.index === index);
     if (!slot || slot.state !== "accepted" || !slot.artifact) return null;
     const bodyKey = normalizeDraftKey(slot.artifact.body);
-    if (!slot.artifact.id || ids.has(slot.artifact.id) || !bodyKey || bodies.has(bodyKey)) {
+    if (
+      !slot.artifact.id ||
+      ids.has(slot.artifact.id) ||
+      !bodyKey ||
+      bodies.some((body) => areDraftsNearDuplicate(body, slot.artifact.body))
+    ) {
       return null;
     }
     ids.add(slot.artifact.id);
-    bodies.add(bodyKey);
+    bodies.push(slot.artifact.body);
     artifacts.push(slot.artifact);
   }
   return artifacts;
 }
 
-function canonicalArtifactForSlot(input: {
+export function artifactMatchesModeledDraftSlotContract(input: {
   artifact: ModeledPostArtifact;
   batchId: string;
   slotIndex: number;
@@ -270,25 +375,22 @@ function canonicalArtifactForSlot(input: {
     meta?.modeled_draft_slot_index !== input.slotIndex ||
     meta?.source !== "model_source" ||
     meta?.source_post_id !== input.source.id ||
-    (input.source.url
-      ? meta.source_url !== input.source.url
-      : typeof meta.source_url === "string")
+    meta.source_url !== input.source.url
   ) {
     return false;
   }
-  const provenance = meta.research_provenance;
-  if (!provenance || typeof provenance !== "object") return false;
-  const provenanceSources = (provenance as { sources?: unknown }).sources;
+  const provenance = recordOf(meta.research_provenance);
+  if (provenance?.route !== "workspace_research") return false;
+  const provenanceSources = provenance.sources;
+  const provenanceSource = Array.isArray(provenanceSources)
+    ? recordOf(provenanceSources[0])
+    : null;
   return (
     Array.isArray(provenanceSources) &&
     provenanceSources.length === 1 &&
-    provenanceSources[0] !== null &&
-    typeof provenanceSources[0] === "object" &&
-    (provenanceSources[0] as { id?: unknown }).id === input.source.id &&
-    (provenanceSources[0] as { kind?: unknown }).kind === "workspace_post" &&
-    (input.source.url
-      ? (provenanceSources[0] as { url?: unknown }).url === input.source.url
-      : typeof (provenanceSources[0] as { url?: unknown }).url !== "string")
+    provenanceSource?.id === input.source.id &&
+    provenanceSource.kind === "workspace_post" &&
+    provenanceSource.url === input.source.url
   );
 }
 
@@ -350,20 +452,7 @@ function acquiredCheckpointIsCanonical(
     }
 
     if (slot.state === "assigned") {
-      if (slot.candidateBody !== undefined || slot.artifact !== undefined) {
-        return false;
-      }
-      continue;
-    }
-    if (slot.state === "candidate") {
-      if (
-        typeof slot.candidateBody !== "string" ||
-        !slot.candidateBody.trim() ||
-        slot.candidateBody.length > RENDER_POST_MAX_CHARS ||
-        slot.artifact !== undefined
-      ) {
-        return false;
-      }
+      if (slot.artifact !== undefined) return false;
       continue;
     }
     if (
@@ -372,7 +461,7 @@ function acquiredCheckpointIsCanonical(
       slot.artifact.kind !== "post" ||
       !slot.artifact.body.trim() ||
       slot.artifact.body.length > RENDER_POST_MAX_CHARS ||
-      !canonicalArtifactForSlot({
+      !artifactMatchesModeledDraftSlotContract({
         artifact: slot.artifact,
         batchId: checkpoint.batchId,
         slotIndex: slot.index,
@@ -410,7 +499,7 @@ function nextReserveSourceIndex(
 
 function outcomeReason(
   outcome: Exclude<ModeledDraftSlotOutcome, { kind: "accepted" | "rejected" }>,
-): ModeledDraftBatchIncompleteReason {
+): ModeledDraftBatchReleaseReason {
   if (outcome.kind === "cancelled") return "cancelled";
   if (outcome.kind === "deadline") return "deadline";
   if (outcome.kind === "reviewer_unavailable") return "reviewer_unavailable";
@@ -425,148 +514,396 @@ function isUsagePersistenceError(error: unknown): boolean {
   );
 }
 
+class ModeledBatchAbortError extends Error {
+  constructor() {
+    super("Modeled draft batch operation aborted");
+    this.name = "AbortError";
+  }
+}
+
+function abortable<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(new ModeledBatchAbortError());
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(new ModeledBatchAbortError());
+    signal.addEventListener("abort", abort, { once: true });
+    operation.then(
+      (value) => {
+        signal.removeEventListener("abort", abort);
+        resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", abort);
+        reject(error);
+      },
+    );
+  });
+}
+
+function interruptionReason(input: {
+  deadlineController: AbortController;
+  deadlineAtMs?: number;
+  now: () => number;
+}): "cancelled" | "deadline" {
+  return input.deadlineController.signal.aborted ||
+    (input.deadlineAtMs !== undefined && input.now() >= input.deadlineAtMs)
+    ? "deadline"
+    : "cancelled";
+}
+
 export async function executeModeledDraftBatch(
   input: ExecuteModeledDraftBatchInput,
   dependencies: ModeledDraftBatchDependencies,
 ): Promise<ModeledDraftBatchResult> {
   const usage = { inputTokens: 0, outputTokens: 0 };
-  if (!validRequest(input)) {
+  const expectedRequestHash = requestHash(input);
+  if (!validRequest(input) || !expectedRequestHash) {
     return { kind: "failed", reason: "invalid_request", usage };
   }
-  if (input.sources.length < input.count) {
-    return { kind: "failed", reason: "insufficient_sources", usage };
-  }
-
-  let acquired: ModeledDraftBatchAcquireResult;
-  try {
-    acquired = await dependencies.repository.acquire({
-      workspaceId: input.workspaceId,
-      operationKey: input.operationKey,
-      requestHash: requestHash(input),
-      requestedCount: input.count,
-      sources: input.sources,
-    });
-  } catch {
-    return {
-      kind: "incomplete",
-      reason: "store_unavailable",
-      preservedSlots: 0,
-      requestedCount: input.count,
-      usage,
-    };
-  }
-  if (acquired.kind === "conflict") {
-    return { kind: "failed", reason: "state_conflict", usage };
-  }
-  if (acquired.kind === "unavailable") {
-    return {
-      kind: "incomplete",
-      reason: "store_unavailable",
-      preservedSlots: 0,
-      requestedCount: input.count,
-      usage,
-    };
-  }
-  if (acquired.kind === "busy") {
-    return {
-      kind: "incomplete",
-      reason: "busy",
-      preservedSlots: 0,
-      requestedCount: input.count,
-      usage,
-    };
-  }
-  if (acquired.kind === "complete") {
-    if (
-      acquired.artifacts.some(
-        (artifact, index) =>
-          !replayArtifactIsCanonical(artifact, acquired.batchId, index),
-      )
-    ) {
-      return { kind: "failed", reason: "state_corrupt", usage };
-    }
-    const slots = acquired.artifacts.map((artifact, index) => ({
-      index,
-      state: "accepted" as const,
-      sourceIndex: index,
-      sourceHistory: [index],
-      replacements: 0,
-      artifact,
-    }));
-    const artifacts = orderedArtifacts(input.count, slots);
-    return artifacts
-      ? { kind: "complete", batchId: acquired.batchId, artifacts, usage }
-      : { kind: "failed", reason: "state_corrupt", usage };
-  }
-
-  const checkpoint = acquired.checkpoint;
-  const expectedRequestHash = requestHash(input);
-  if (!acquiredCheckpointIsCanonical(checkpoint, expectedRequestHash, input.count)) {
-    return { kind: "failed", reason: "state_corrupt", usage };
-  }
-  let slots = checkpoint.slots.map((slot) => ({ ...slot }));
-
   const deadlineController = new AbortController();
   const fatalController = new AbortController();
+  const now = dependencies.now();
+  const requestedRemaining =
+    input.deadlineAtMs === undefined
+      ? MODELED_DRAFT_BATCH_MAX_DURATION_MS
+      : input.deadlineAtMs - now;
+  const remaining = Math.min(
+    MODELED_DRAFT_BATCH_MAX_DURATION_MS,
+    requestedRemaining,
+  );
   let deadlineTimer: ReturnType<typeof setTimeout> | null = null;
-  if (input.deadlineAtMs !== undefined) {
-    const remaining = input.deadlineAtMs - dependencies.now();
-    if (remaining <= 0) deadlineController.abort();
-    else deadlineTimer = setTimeout(() => deadlineController.abort(), remaining);
-  }
-  const signals = [
-    input.signal,
-    input.engineInput.signal,
-    deadlineController.signal,
-    fatalController.signal,
-  ].filter((signal): signal is AbortSignal => signal !== undefined);
-  const signal = AbortSignal.any(signals);
+  if (remaining <= 0) deadlineController.abort();
+  else deadlineTimer = setTimeout(() => deadlineController.abort(), remaining);
 
-  const incomplete = async (
+  const stopSignal = AbortSignal.any(
+    [input.signal, input.engineInput.signal, deadlineController.signal].filter(
+      (signal): signal is AbortSignal => signal !== undefined,
+    ),
+  );
+  const runSignal = AbortSignal.any([stopSignal, fatalController.signal]);
+  const stoppedReason = (): "cancelled" | "deadline" =>
+    interruptionReason({
+      deadlineController,
+      deadlineAtMs: input.deadlineAtMs,
+      now: dependencies.now,
+    });
+  const unacquiredIncomplete = (
     reason: ModeledDraftBatchIncompleteReason,
-  ): Promise<ModeledDraftBatchResult> => {
-    await dependencies.repository
-      .release({
-        batchId: checkpoint.batchId,
-        leaseToken: checkpoint.leaseToken,
-        reason,
-      })
-      .catch(() => {});
-    return {
-      kind: "incomplete",
-      batchId: checkpoint.batchId,
-      reason,
-      preservedSlots: preservedCount(slots),
-      requestedCount: input.count,
-      usage,
-    };
-  };
+    batchId?: string,
+    preservedSlots = 0,
+  ): ModeledDraftBatchResult => ({
+    kind: "incomplete",
+    ...(batchId ? { batchId } : {}),
+    reason,
+    preservedSlots,
+    requestedCount: input.count,
+    usage,
+  });
 
   try {
-    while (slots.some((slot) => slot.state !== "accepted")) {
-      if (signal.aborted) {
-        return incomplete(
-          deadlineController.signal.aborted && !input.signal?.aborted
-            ? "deadline"
-            : "cancelled",
+    if (stopSignal.aborted) return unacquiredIncomplete(stoppedReason());
+
+    let acquired: ModeledDraftBatchAcquireResult;
+    try {
+      acquired = await abortable(
+        dependencies.repository.acquire({
+          workspaceId: input.workspaceId,
+          operationKey: input.operationKey,
+          requestHash: expectedRequestHash,
+          requestedCount: input.count,
+          sources: input.sources,
+          signal: stopSignal,
+        }),
+        stopSignal,
+      );
+    } catch {
+      return unacquiredIncomplete(
+        stopSignal.aborted ? stoppedReason() : "store_unavailable",
+      );
+    }
+
+    const releaseCheckpoint = async (
+      checkpoint: AcquiredModeledDraftBatch,
+      reason: ModeledDraftBatchReleaseReason,
+    ): Promise<void> => {
+      const cleanupSignal = AbortSignal.timeout(MODELED_DRAFT_STORE_CLEANUP_MS);
+      await abortable(
+        dependencies.repository.release({
+          batchId: checkpoint.batchId,
+          leaseToken: checkpoint.leaseToken,
+          reason,
+          signal: cleanupSignal,
+        }),
+        cleanupSignal,
+      ).catch(() => {});
+    };
+
+    if (stopSignal.aborted) {
+      if (acquired.kind === "acquired") {
+        await releaseCheckpoint(acquired.checkpoint, stoppedReason());
+        return unacquiredIncomplete(
+          stoppedReason(),
+          acquired.checkpoint.batchId,
+          preservedCount(acquired.checkpoint.slots),
         );
       }
+      const knownBatchId =
+        acquired.kind === "complete" || acquired.kind === "busy"
+          ? acquired.batchId
+          : undefined;
+      return unacquiredIncomplete(
+        stoppedReason(),
+        knownBatchId,
+        acquired.kind === "complete" ? acquired.artifacts.length : 0,
+      );
+    }
+    if (acquired.kind === "conflict") {
+      return { kind: "failed", reason: "state_conflict", usage };
+    }
+    if (acquired.kind === "insufficient_sources") {
+      return { kind: "failed", reason: "insufficient_sources", usage };
+    }
+    if (acquired.kind === "unavailable") {
+      return unacquiredIncomplete("store_unavailable");
+    }
+    if (acquired.kind === "busy") {
+      return unacquiredIncomplete("busy", acquired.batchId);
+    }
+    if (acquired.kind === "complete") {
+      if (
+        acquired.artifacts.some(
+          (artifact, index) =>
+            !replayArtifactIsCanonical(artifact, acquired.batchId, index),
+        )
+      ) {
+        return { kind: "failed", reason: "state_corrupt", usage };
+      }
+      const replaySlots = acquired.artifacts.map((artifact, index) => ({
+        index,
+        state: "accepted" as const,
+        sourceIndex: index,
+        sourceHistory: [index],
+        replacements: 0,
+        artifact,
+      }));
+      const artifacts = orderedArtifacts(input.count, replaySlots);
+      if (stopSignal.aborted) {
+        return unacquiredIncomplete(
+          stoppedReason(),
+          acquired.batchId,
+          artifacts?.length ?? 0,
+        );
+      }
+      return artifacts
+        ? { kind: "complete", batchId: acquired.batchId, artifacts, usage }
+        : { kind: "failed", reason: "state_corrupt", usage };
+    }
+
+    const checkpoint = acquired.checkpoint;
+    if (
+      !acquiredCheckpointIsCanonical(
+        checkpoint,
+        expectedRequestHash,
+        input.count,
+      )
+    ) {
+      await releaseCheckpoint(checkpoint, "protocol_error");
+      return { kind: "failed", reason: "state_corrupt", usage };
+    }
+    let slots = checkpoint.slots.map((slot) => ({ ...slot }));
+
+    const incomplete = async (
+      reason: ModeledDraftBatchReleaseReason,
+    ): Promise<ModeledDraftBatchResult> => {
+      await releaseCheckpoint(checkpoint, reason);
+      return unacquiredIncomplete(
+        reason,
+        checkpoint.batchId,
+        preservedCount(slots),
+      );
+    };
+
+    let fatalError: unknown = null;
+    let stateCorrupt = false;
+    let mutationTail: Promise<void> = Promise.resolve();
+    const enqueueMutation = (mutation: () => Promise<void>): Promise<void> => {
+      const current = mutationTail.then(mutation, mutation);
+      mutationTail = current.catch(() => {});
+      return current;
+    };
+
+    while (slots.some((slot) => slot.state !== "accepted")) {
+      if (stopSignal.aborted) return incomplete(stoppedReason());
       const acceptedBodies = slots.flatMap((slot) =>
-        slot.state === "accepted" && slot.artifact ? [slot.artifact.body] : [],
+        slot.state === "accepted" ? [slot.artifact.body] : [],
       );
       const pending = slots
         .filter((slot) => slot.state !== "accepted")
         .sort((left, right) => left.index - right.index)
         .slice(0, MODELED_DRAFT_CONCURRENCY);
-      const outcomes = await Promise.all(
-        pending.map(async (slot): Promise<ModeledDraftSlotOutcome> => {
+      const stopReasons: Array<{
+        slotIndex: number;
+        reason: ModeledDraftBatchReleaseReason;
+      }> = [];
+
+      const processOutcome = async (
+        outcome: ModeledDraftSlotOutcome,
+      ): Promise<void> => {
+        usage.inputTokens += outcome.inputTokens;
+        usage.outputTokens += outcome.outputTokens;
+        if (stopSignal.aborted) return;
+        const slot = slots.find(
+          (candidate) => candidate.index === outcome.slot.index,
+        );
+        if (!slot || slot.state === "accepted") {
+          stateCorrupt = true;
+          return;
+        }
+        if (outcome.kind === "accepted") {
           const source = checkpoint.sources[slot.sourceIndex];
-          const slotIdentity = {
-            id: `${checkpoint.batchId}:slot-${slot.index}`,
-            index: slot.index,
-          };
-          try {
-            return await dependencies.runSlot({
+          const duplicate = slots.some(
+            (candidate) =>
+              candidate.state === "accepted" &&
+              areDraftsNearDuplicate(
+                candidate.artifact.body,
+                outcome.artifact.body,
+              ),
+          );
+          if (
+            !duplicate &&
+            artifactMatchesModeledDraftSlotContract({
+              artifact: outcome.artifact,
+              batchId: checkpoint.batchId,
+              slotIndex: slot.index,
+              source,
+            })
+          ) {
+            if (stopSignal.aborted) return;
+            let saved = false;
+            try {
+              saved = await abortable(
+                dependencies.repository.acceptSlot({
+                  batchId: checkpoint.batchId,
+                  leaseToken: checkpoint.leaseToken,
+                  slotIndex: slot.index,
+                  sourceIndex: slot.sourceIndex,
+                  artifact: outcome.artifact,
+                  signal: stopSignal,
+                }),
+                stopSignal,
+              );
+            } catch {
+              if (!stopSignal.aborted) {
+                stopReasons.push({
+                  slotIndex: slot.index,
+                  reason: "store_unavailable",
+                });
+              }
+              return;
+            }
+            if (!saved) {
+              stopReasons.push({
+                slotIndex: slot.index,
+                reason: "store_unavailable",
+              });
+              return;
+            }
+            slots = slots.map((candidate) =>
+              candidate.index === slot.index
+                ? {
+                    ...candidate,
+                    state: "accepted" as const,
+                    artifact: outcome.artifact,
+                  }
+                : candidate,
+            );
+            return;
+          }
+          if (!duplicate) {
+            stopReasons.push({
+              slotIndex: slot.index,
+              reason: "protocol_error",
+            });
+            return;
+          }
+        } else if (outcome.kind !== "rejected") {
+          stopReasons.push({
+            slotIndex: slot.index,
+            reason: outcomeReason(outcome),
+          });
+          return;
+        }
+
+        if (slot.replacements >= MAX_SOURCE_REPLACEMENTS_PER_SLOT) {
+          stopReasons.push({
+            slotIndex: slot.index,
+            reason: "slot_exhausted",
+          });
+          return;
+        }
+        const reserveIndex = nextReserveSourceIndex(checkpoint, slots);
+        if (reserveIndex === null) {
+          stopReasons.push({
+            slotIndex: slot.index,
+            reason: "source_pool_exhausted",
+          });
+          return;
+        }
+        const failureCode =
+          outcome.kind === "rejected" ? outcome.code : "duplicate";
+        if (stopSignal.aborted) return;
+        let replaced = false;
+        try {
+          replaced = await abortable(
+            dependencies.repository.replaceSlotSource({
+              batchId: checkpoint.batchId,
+              leaseToken: checkpoint.leaseToken,
+              slotIndex: slot.index,
+              sourceIndex: reserveIndex,
+              failureCode,
+              signal: stopSignal,
+            }),
+            stopSignal,
+          );
+        } catch {
+          if (!stopSignal.aborted) {
+            stopReasons.push({
+              slotIndex: slot.index,
+              reason: "store_unavailable",
+            });
+          }
+          return;
+        }
+        if (!replaced) {
+          stopReasons.push({
+            slotIndex: slot.index,
+            reason: "store_unavailable",
+          });
+          return;
+        }
+        slots = slots.map((candidate) =>
+          candidate.index === slot.index
+            ? {
+                index: candidate.index,
+                state: "assigned" as const,
+                sourceIndex: reserveIndex,
+                sourceHistory: [...candidate.sourceHistory, reserveIndex],
+                replacements: candidate.replacements + 1,
+                lastFailureCode: failureCode,
+              }
+            : candidate,
+        );
+      };
+
+      const workers = pending.map(async (slot): Promise<void> => {
+        const source = checkpoint.sources[slot.sourceIndex];
+        const slotIdentity = {
+          id: `${checkpoint.batchId}:slot-${slot.index}`,
+          index: slot.index,
+        };
+        let outcome: ModeledDraftSlotOutcome;
+        try {
+          outcome = await abortable(
+            dependencies.runSlot({
               slot: slotIdentity,
               source,
               batch: {
@@ -585,136 +922,74 @@ export async function executeModeledDraftBatch(
                     createdAt: new Date(index).toISOString(),
                   })),
                 ],
-                signal,
+                signal: runSignal,
               },
-            });
-          } catch (error) {
-            if (isUsagePersistenceError(error)) {
-              fatalController.abort();
-              throw error;
-            }
-            const kind = signal.aborted
-              ? deadlineController.signal.aborted && !input.signal?.aborted
-                ? "deadline"
-                : "cancelled"
-              : "writer_error";
-            return {
-              kind,
-              slot: slotIdentity,
-              inputTokens: 0,
-              outputTokens: 0,
-            };
-          }
-        }),
-      );
-
-      let stopReason: ModeledDraftBatchIncompleteReason | null = null;
-      for (const outcome of outcomes.sort((left, right) => left.slot.index - right.slot.index)) {
-        usage.inputTokens += outcome.inputTokens;
-        usage.outputTokens += outcome.outputTokens;
-        const slot = slots.find((candidate) => candidate.index === outcome.slot.index);
-        if (!slot || slot.state === "accepted") {
-          return { kind: "failed", reason: "state_corrupt", usage };
-        }
-        if (outcome.kind === "accepted") {
-          const source = checkpoint.sources[slot.sourceIndex];
-          const duplicate = slots.some(
-            (candidate) =>
-              candidate.state === "accepted" &&
-              candidate.artifact &&
-              areDraftsNearDuplicate(candidate.artifact.body, outcome.artifact.body),
+            }),
+            runSignal,
           );
-          if (
-            !duplicate &&
-            canonicalArtifactForSlot({
-              artifact: outcome.artifact,
-              batchId: checkpoint.batchId,
-              slotIndex: slot.index,
-              source,
-            })
-          ) {
-            const saved = await dependencies.repository
-              .acceptSlot({
-                batchId: checkpoint.batchId,
-                leaseToken: checkpoint.leaseToken,
-                slotIndex: slot.index,
-                sourceIndex: slot.sourceIndex,
-                expectedState:
-                  slot.state === "candidate" ? "candidate" : "assigned",
-                artifact: outcome.artifact,
-              })
-              .catch(() => false);
-            if (!saved) {
-              stopReason = "store_unavailable";
-              continue;
-            }
-            slots = slots.map((candidate) =>
-              candidate.index === slot.index
-                ? { ...candidate, state: "accepted" as const, artifact: outcome.artifact }
-                : candidate,
-            );
-            continue;
+        } catch (error) {
+          if (isUsagePersistenceError(error)) {
+            fatalError ??= error;
+            fatalController.abort();
+            return;
           }
-          if (!duplicate) {
-            stopReason = "protocol_error";
-            continue;
-          }
-        } else if (outcome.kind !== "rejected") {
-          stopReason = outcomeReason(outcome);
-          continue;
+          if (runSignal.aborted) return;
+          outcome = {
+            kind: "writer_error",
+            slot: slotIdentity,
+            inputTokens: 0,
+            outputTokens: 0,
+          };
         }
-
-        if (slot.replacements >= MAX_SOURCE_REPLACEMENTS_PER_SLOT) {
-          stopReason = "slot_exhausted";
-          continue;
+        await enqueueMutation(() => processOutcome(outcome));
+      });
+      const settled = await Promise.allSettled(workers);
+      for (const worker of settled) {
+        if (worker.status === "rejected") {
+          fatalError ??= worker.reason;
+          fatalController.abort();
         }
-        const reserveIndex = nextReserveSourceIndex(checkpoint, slots);
-        if (reserveIndex === null) {
-          stopReason = "source_pool_exhausted";
-          continue;
-        }
-        const failureCode =
-          outcome.kind === "rejected" ? outcome.code : "duplicate";
-        const replaced = await dependencies.repository
-          .replaceSlotSource({
-            batchId: checkpoint.batchId,
-            leaseToken: checkpoint.leaseToken,
-            slotIndex: slot.index,
-            sourceIndex: reserveIndex,
-            failureCode,
-          })
-          .catch(() => false);
-        if (!replaced) {
-          stopReason = "store_unavailable";
-          continue;
-        }
-        slots = slots.map((candidate) =>
-          candidate.index === slot.index
-            ? {
-                ...candidate,
-                state: "assigned" as const,
-                sourceIndex: reserveIndex,
-                sourceHistory: [...candidate.sourceHistory, reserveIndex],
-                replacements: candidate.replacements + 1,
-                lastFailureCode: failureCode,
-                artifact: undefined,
-              }
-            : candidate,
-        );
       }
+      await mutationTail;
+      if (fatalError) {
+        await releaseCheckpoint(checkpoint, "store_unavailable");
+        throw fatalError;
+      }
+      if (stateCorrupt) {
+        await releaseCheckpoint(checkpoint, "protocol_error");
+        return { kind: "failed", reason: "state_corrupt", usage };
+      }
+      if (stopSignal.aborted) return incomplete(stoppedReason());
+      const stopReason = stopReasons.sort(
+        (left, right) => left.slotIndex - right.slotIndex,
+      )[0]?.reason;
       if (stopReason) return incomplete(stopReason);
     }
 
+    if (stopSignal.aborted) return incomplete(stoppedReason());
     const localArtifacts = orderedArtifacts(input.count, slots);
     if (!localArtifacts) {
+      await releaseCheckpoint(checkpoint, "protocol_error");
       return { kind: "failed", reason: "state_corrupt", usage };
     }
-    const completed = await dependencies.repository
-      .complete({
-        batchId: checkpoint.batchId,
-        leaseToken: checkpoint.leaseToken,
-      })
-      .catch(() => ({ kind: "incomplete" as const }));
+    let completed: Awaited<
+      ReturnType<ModeledDraftBatchRepository["complete"]>
+    >;
+    try {
+      completed = await abortable(
+        dependencies.repository.complete({
+          batchId: checkpoint.batchId,
+          leaseToken: checkpoint.leaseToken,
+          signal: stopSignal,
+        }),
+        stopSignal,
+      );
+    } catch {
+      return incomplete(
+        stopSignal.aborted ? stoppedReason() : "store_unavailable",
+      );
+    }
+    if (stopSignal.aborted) return incomplete(stoppedReason());
     if (completed.kind !== "complete") {
       return incomplete("store_unavailable");
     }
@@ -735,6 +1010,7 @@ export async function executeModeledDraftBatch(
     ) {
       return { kind: "failed", reason: "state_corrupt", usage };
     }
+    if (stopSignal.aborted) return incomplete(stoppedReason());
     return artifacts
       ? {
           kind: "complete",
@@ -743,17 +1019,8 @@ export async function executeModeledDraftBatch(
           usage,
         }
       : { kind: "failed", reason: "state_corrupt", usage };
-  } catch (error) {
-    fatalController.abort();
-    await dependencies.repository
-      .release({
-        batchId: checkpoint.batchId,
-        leaseToken: checkpoint.leaseToken,
-        reason: "store_unavailable",
-      })
-      .catch(() => {});
-    throw error;
   } finally {
+    fatalController.abort();
     if (deadlineTimer) clearTimeout(deadlineTimer);
   }
 }

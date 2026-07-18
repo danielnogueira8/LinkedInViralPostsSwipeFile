@@ -271,6 +271,74 @@ describe("direct original-post eligibility", () => {
   });
 });
 
+describe("structured draft-count eligibility", () => {
+  test("routes a plural brief as one original when the UI explicitly selects one", () => {
+    expect(
+      isDirectOriginalPostEligible({
+        ...BASE,
+        userInstruction:
+          "Write original LinkedIn posts about why dependable systems beat heroic effort.",
+        requestedCount: 1,
+      }),
+    ).toBe(true);
+  });
+
+  test("routes a self-contained original request with an explicit UI count", () => {
+    expect(
+      isDirectMultiPostEligible({
+        ...BASE,
+        userInstruction:
+          "Write original LinkedIn posts about why dependable systems beat heroic effort.",
+        sourceRequested: false,
+        sourceResolved: false,
+        requestedCount: 4,
+      }),
+    ).toBe(true);
+  });
+
+  test("does not make a non-writing request eligible merely because count was selected", () => {
+    expect(
+      isDirectMultiPostEligible({
+        ...BASE,
+        userInstruction: "Explain why dependable systems beat heroic effort.",
+        sourceRequested: false,
+        sourceResolved: false,
+        requestedCount: 4,
+      }),
+    ).toBe(false);
+  });
+
+  test.each([
+    ["creator style", { hasCreatorStyle: true }],
+    ["lead magnet", { hasLeadMagnet: true }],
+  ])("keeps exact multi-post execution with an applied %s", (_label, context) => {
+    expect(
+      isDirectMultiPostEligible({
+        ...BASE,
+        ...context,
+        userInstruction:
+          "Write original LinkedIn posts about why dependable systems beat heroic effort.",
+        sourceRequested: false,
+        sourceResolved: false,
+        requestedCount: 3,
+      }),
+    ).toBe(true);
+  });
+
+  test("uses one attached source for the explicitly selected number of variations", () => {
+    expect(
+      isDirectMultiPostEligible({
+        ...BASE,
+        userInstruction:
+          "Model the attached source into original LinkedIn posts.",
+        sourceRequested: true,
+        sourceResolved: true,
+        requestedCount: 3,
+      }),
+    ).toBe(true);
+  });
+});
+
 describe("direct refine eligibility", () => {
   const REFINE = {
     enabled: true,

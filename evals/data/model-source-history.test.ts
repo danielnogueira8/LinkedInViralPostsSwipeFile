@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   applyCiteSourceToDraftArtifacts,
   chatHistoryWithModelSources,
+  customSkillSelectionMarkerFromToolCalls,
   customSkillsToolCall,
   extractLeadMagnetSelection,
   extractModelSourceId,
@@ -47,21 +48,50 @@ describe("model-source history", () => {
       modelSourceIdForTurn({
         explicitId: "22222222-2222-2222-2222-222222222222",
         isRefine: true,
+        currentTurnSourceOwnership: "historical_continuation",
         rows,
       }),
     ).toBe("22222222-2222-2222-2222-222222222222");
     expect(
       modelSourceIdForTurn({
         isRefine: false,
+        currentTurnSourceOwnership: "historical_continuation",
         rows,
       }),
     ).toBe(historicalId);
     expect(
       modelSourceIdForTurn({
         isRefine: true,
+        currentTurnSourceOwnership: "historical_continuation",
         rows,
       }),
     ).toBeNull();
+  });
+
+  test("a fresh server-selected modeled turn cannot inherit a historical attached source", () => {
+    const historicalId = "11111111-1111-1111-1111-111111111111";
+    const rows = [
+      {
+        role: "user",
+        tool_calls: [modelSourceToolCall(historicalId)],
+      },
+    ];
+
+    expect(
+      modelSourceIdForTurn({
+        isRefine: false,
+        currentTurnSourceOwnership: "server_selected",
+        rows,
+      }),
+    ).toBeNull();
+    expect(
+      modelSourceIdForTurn({
+        explicitId: "22222222-2222-2222-2222-222222222222",
+        isRefine: false,
+        currentTurnSourceOwnership: "server_selected",
+        rows,
+      }),
+    ).toBe("22222222-2222-2222-2222-222222222222");
   });
 
   test("template sources are restored into future model history", () => {
@@ -124,6 +154,34 @@ describe("model-source history", () => {
     ]);
   });
 
+  test("custom-skill markers round-trip the bounded generation context required by Retry", () => {
+    const marker = customSkillsToolCall(["cta"], {
+      version: 1,
+      skills: [
+        {
+          id: "33333333-3333-4333-8333-333333333333",
+          name: "cta",
+          body: "CUSTOM_SKILL_RETRY_SENTINEL: end with one practical next step.",
+        },
+      ],
+    });
+
+    expect(customSkillSelectionMarkerFromToolCalls([marker])).toEqual({
+      kind: "valid",
+      context: {
+        version: 1,
+        skills: [
+          {
+            id: "33333333-3333-4333-8333-333333333333",
+            name: "cta",
+            body:
+              "CUSTOM_SKILL_RETRY_SENTINEL: end with one practical next step.",
+          },
+        ],
+      },
+    });
+  });
+
   test("model source envelopes keep provenance-specific markers", () => {
     expect(
       modelSourceEnvelope({ source: "template", post_text: "Template body" }),
@@ -169,6 +227,52 @@ describe("model-source history", () => {
       source_post_id: "post-1",
       source_url: "https://www.linkedin.com/feed/update/urn:li:activity:1/",
       lead_magnet: { id: "lm", title: "LM" },
+    });
+  });
+
+  test("turn-level source decoration cannot overwrite a draft's canonical modeled source", () => {
+    const tagged = tagArtifactWithModelSourceReference(
+      {
+        id: "artifact-1",
+        kind: "post",
+        title: "Draft",
+        body: "Body",
+        meta: {
+          source: "model_source",
+          source_post_id: "slot-source-2",
+          source_url:
+            "https://www.linkedin.com/feed/update/urn:li:activity:2/",
+          research_provenance: {
+            route: "workspace_research",
+            sources: [
+              {
+                id: "slot-source-2",
+                kind: "workspace_post",
+                url: "https://www.linkedin.com/feed/update/urn:li:activity:2/",
+              },
+            ],
+          },
+        },
+      },
+      {
+        source_post_id: "stale-chat-source",
+        source_url:
+          "https://www.linkedin.com/feed/update/urn:li:activity:999/",
+      },
+    );
+
+    expect(tagged.meta).toMatchObject({
+      source_post_id: "slot-source-2",
+      source_url:
+        "https://www.linkedin.com/feed/update/urn:li:activity:2/",
+      research_provenance: {
+        sources: [
+          {
+            id: "slot-source-2",
+            url: "https://www.linkedin.com/feed/update/urn:li:activity:2/",
+          },
+        ],
+      },
     });
   });
 
@@ -674,6 +778,27 @@ describe("model-source history", () => {
     ).toBe(true);
   });
 
+  test("a hyphenated modeled output type overrides the source post type", () => {
+    expect(
+      shouldApplyLeadMagnetContext({
+        userText:
+          "Find 3 regular posts and create 3 lead-magnet posts modeled after them.",
+        hasModelSource: false,
+        noModelFormatId: null,
+        hasSelectedLeadMagnet: true,
+      }),
+    ).toBe(true);
+    expect(
+      shouldApplyLeadMagnetContext({
+        userText:
+          "Find 3 lead-magnet posts and create 3 regular posts modeled after them.",
+        hasModelSource: false,
+        noModelFormatId: null,
+        hasSelectedLeadMagnet: true,
+      }),
+    ).toBe(false);
+  });
+
   test("an explicitly selected lead magnet applies to a broad modeled post request", () => {
     expect(
       shouldApplyLeadMagnetContext({
@@ -774,6 +899,27 @@ describe("model-source history", () => {
         hasSelectedLeadMagnet: true,
       }),
     ).toBe(false);
+  });
+
+  test("source and output post types are separated for plural modeled batches", () => {
+    expect(
+      shouldApplyLeadMagnetContext({
+        userText:
+          "Find 3 lead magnet posts in my swipe file and create 3 regular posts modeled after them.",
+        hasModelSource: false,
+        noModelFormatId: null,
+        hasSelectedLeadMagnet: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldApplyLeadMagnetContext({
+        userText:
+          "Find 3 regular posts in my swipe file and create 3 lead magnet posts modeled after them.",
+        hasModelSource: false,
+        noModelFormatId: null,
+        hasSelectedLeadMagnet: false,
+      }),
+    ).toBe(true);
   });
 
   test("refining a regular post does not infer lead-magnet intent from its embedded body", () => {

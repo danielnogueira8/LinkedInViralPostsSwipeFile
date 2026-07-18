@@ -104,6 +104,97 @@ describe("selectModelingSources", () => {
     expect(selected.map((candidate) => candidate.id)).toEqual(["content"]);
   });
 
+  test("never lets freshness make an unrelated source eligible for a topic-bearing request", () => {
+    const selected = selectModelingSources({
+      candidates: [
+        post("used-content", "content writing strategy"),
+        post("fresh-crypto", "cryptocurrency trading"),
+      ],
+      limit: 1,
+      usedIds: new Set(["used-content"]),
+      surfacedIds: new Set(),
+      rotationCursor: 0,
+      clientContext: {
+        userInstruction: "Write about content writing strategy.",
+      },
+    });
+
+    expect(selected.map((candidate) => candidate.id)).toEqual([
+      "used-content",
+    ]);
+  });
+
+  test("returns a smaller primary and reserve pool instead of backfilling unrelated topics", () => {
+    const pool = selectModelingSourcePool({
+      candidates: [
+        post("content", "content writing strategy"),
+        post("crypto", "cryptocurrency trading"),
+        post("wedding", "wedding planning"),
+        post("fitness", "strength training"),
+      ],
+      limit: 2,
+      reserveLimit: 2,
+      usedIds: new Set(),
+      surfacedIds: new Set(),
+      rotationCursor: 0,
+      clientContext: {
+        userInstruction: "Write about content writing strategy.",
+      },
+    });
+
+    expect(pool.primaries.map((candidate) => candidate.id)).toEqual([
+      "content",
+    ]);
+    expect(pool.reserves).toEqual([]);
+  });
+
+  test("does not turn command glue words into topic eligibility", () => {
+    const unrelated = {
+      ...post("crypto", "cryptocurrency trading"),
+      text: `Cryptocurrency markets move quickly and demand a written risk plan.
+
+1. Define the maximum loss before entering.
+2. Separate a thesis from short-term price movement.
+3. Review the decision after the trade closes.
+
+The discipline matters more than any single result.`,
+    };
+    const selected = selectModelingSources({
+      candidates: [unrelated],
+      limit: 1,
+      usedIds: new Set(),
+      surfacedIds: new Set(),
+      rotationCursor: 0,
+      clientContext: {
+        userInstruction:
+          "Write about content writing and rewrite each post in my voice.",
+      },
+    });
+
+    expect(selected).toEqual([]);
+  });
+
+  test("preserves freshness ordering when the request provides no usable topic signal", () => {
+    const selected = selectModelingSources({
+      candidates: [
+        post("used-content", "content writing"),
+        post("fresh-crypto", "cryptocurrency trading"),
+      ],
+      limit: 1,
+      usedIds: new Set(["used-content"]),
+      surfacedIds: new Set(),
+      rotationCursor: 0,
+      clientContext: {
+        userInstruction:
+          "Please find 2 top-performing regular posts in my swipe file and rewrite each in my voice.",
+      },
+    });
+
+    expect(selected.map((candidate) => candidate.id)).toEqual([
+      "fresh-crypto",
+    ]);
+  });
+
   test("treats creator niche as weak context, never as a substitute for post-body relevance", () => {
     const selected = selectModelingSources({
       candidates: [
@@ -159,6 +250,25 @@ describe("selectModelingSources", () => {
           topics: ["content marketing", "thought leadership"],
           audience: ["B2B founders"],
         },
+      },
+    });
+
+    expect(selected.map((candidate) => candidate.id)).toEqual(["content"]);
+  });
+
+  test("does not backfill outside trusted voice topics when topic choice is delegated", () => {
+    const selected = selectModelingSources({
+      candidates: [
+        post("sales", "enterprise sales"),
+        post("content", "content marketing"),
+      ],
+      limit: 2,
+      usedIds: new Set(),
+      surfacedIds: new Set(),
+      rotationCursor: 0,
+      clientContext: {
+        userInstruction: "Choose a topic that fits me.",
+        voiceAnchors: { topics: ["content marketing"] },
       },
     });
 

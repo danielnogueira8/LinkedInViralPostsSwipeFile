@@ -34,7 +34,6 @@ create table if not exists public.modeled_draft_batches (
     pause_reason is null or pause_reason in (
       'cancelled',
       'deadline',
-      'budget_exhausted',
       'reviewer_unavailable',
       'writer_unavailable',
       'slot_exhausted',
@@ -86,17 +85,15 @@ create table if not exists public.modeled_draft_slots (
   workspace_id text not null,
   slot_index integer not null check (slot_index between 0 and 4),
   state text not null default 'assigned' check (
-    state in ('assigned', 'candidate', 'accepted')
+    state in ('assigned', 'accepted')
   ),
   source_id text not null check (
     char_length(source_id) between 1 and 200 and source_id = btrim(source_id)
   ),
-  source_url text check (
-    source_url is null or (
-      char_length(source_url) between 1 and 2048
-      and source_url = btrim(source_url)
-      and source_url ~ '^https?://'
-    )
+  source_url text not null check (
+    char_length(source_url) between 1 and 2048
+    and source_url = btrim(source_url)
+    and source_url ~ '^https?://[^[:space:]/?#@]+([/?#][^[:space:]]*)?$'
   ),
   source_text text not null check (
     char_length(source_text) between 1 and 20000
@@ -111,10 +108,6 @@ create table if not exists public.modeled_draft_slots (
   replacement_count integer not null default 0 check (
     replacement_count between 0 and 1
     and jsonb_array_length(source_history) = replacement_count + 1
-  ),
-  candidate_body text,
-  candidate_body_hash text check (
-    candidate_body_hash is null or candidate_body_hash ~ '^[0-9a-f]{64}$'
   ),
   accepted_body text,
   accepted_body_hash text check (
@@ -141,18 +134,6 @@ create table if not exists public.modeled_draft_slots (
   constraint modeled_draft_slots_state_shape check (
     (
       state = 'assigned'
-      and candidate_body is null
-      and candidate_body_hash is null
-      and accepted_body is null
-      and accepted_body_hash is null
-      and accepted_provenance is null
-      and accepted_at is null
-    )
-    or
-    (
-      state = 'candidate'
-      and candidate_body is not null
-      and candidate_body_hash is not null
       and accepted_body is null
       and accepted_body_hash is null
       and accepted_provenance is null
@@ -161,8 +142,6 @@ create table if not exists public.modeled_draft_slots (
     or
     (
       state = 'accepted'
-      and candidate_body is not null
-      and candidate_body_hash is not null
       and accepted_body is not null
       and accepted_body_hash is not null
       and jsonb_typeof(accepted_provenance) = 'object'
@@ -172,6 +151,19 @@ create table if not exists public.modeled_draft_slots (
   )
 );
 
+-- Reapplying this migration must also harden a table created by an earlier
+-- draft of migration 107, where source URLs were nullable.
+alter table public.modeled_draft_slots
+  alter column source_url set not null;
+alter table public.modeled_draft_slots
+  drop constraint if exists modeled_draft_slots_source_url_check;
+alter table public.modeled_draft_slots
+  add constraint modeled_draft_slots_source_url_check check (
+    char_length(source_url) between 1 and 2048
+    and source_url = btrim(source_url)
+    and source_url ~ '^https?://[^[:space:]/?#@]+([/?#][^[:space:]]*)?$'
+  );
+
 create unique index if not exists modeled_draft_slots_accepted_body_unique
   on public.modeled_draft_slots (batch_id, accepted_body_hash)
   where state = 'accepted';
@@ -179,6 +171,10 @@ create unique index if not exists modeled_draft_slots_accepted_body_unique
 create index if not exists modeled_draft_batches_active_lease_idx
   on public.modeled_draft_batches (lease_expires_at)
   where status = 'active';
+
+create index if not exists modeled_draft_batches_retention_idx
+  on public.modeled_draft_batches (updated_at, id)
+  where status in ('paused', 'completed');
 
 create or replace function public.protect_modeled_draft_batch_invariants()
 returns trigger
@@ -268,18 +264,13 @@ as $$
         'source', jsonb_build_object(
           'id', slot.source_id,
           'url', slot.source_url,
+          'title', canonical_source.value ->> 'title',
+          'published_at', canonical_source.value ->> 'published_at',
           'text', slot.source_text,
           'hash', slot.source_hash
         ),
         'source_history', slot.source_history,
         'replacement_count', slot.replacement_count,
-        'candidate', case
-          when slot.candidate_body is null then null
-          else jsonb_build_object(
-            'body', slot.candidate_body,
-            'hash', slot.candidate_body_hash
-          )
-        end,
         'accepted', case
           when slot.accepted_body is null then null
           else jsonb_build_object(
@@ -295,6 +286,14 @@ as $$
     '[]'::jsonb
   )
   from public.modeled_draft_slots as slot
+  join public.modeled_draft_batches as batch
+    on batch.id = slot.batch_id
+  left join lateral (
+    select item.value
+    from jsonb_array_elements(batch.sources) as item(value)
+    where item.value ->> 'id' = slot.source_id
+    limit 1
+  ) as canonical_source on true
   where slot.batch_id = p_batch_id;
 $$;
 
@@ -317,6 +316,8 @@ declare
   v_canonical_sources jsonb := '[]'::jsonb;
   v_source_id text;
   v_source_url text;
+  v_source_title text;
+  v_source_published_at text;
   v_source_text text;
   v_source_hash text;
   v_computed_hash text;
@@ -422,9 +423,19 @@ begin
     end if;
     v_source_id := v_source ->> 'id';
     v_source_url := v_source ->> 'url';
+    v_source_title := v_source ->> 'title';
+    v_source_published_at := v_source ->> 'published_at';
     v_source_text := v_source ->> 'text';
     v_source_hash := v_source ->> 'hash';
-    if v_source_id is null
+    if jsonb_typeof(v_source -> 'id') is distinct from 'string'
+      or jsonb_typeof(v_source -> 'text') is distinct from 'string'
+      or jsonb_typeof(v_source -> 'hash') is distinct from 'string'
+      or jsonb_typeof(v_source -> 'url') is distinct from 'string'
+      or coalesce(jsonb_typeof(v_source -> 'title'), 'null')
+        not in ('string', 'null')
+      or coalesce(jsonb_typeof(v_source -> 'published_at'), 'null')
+        not in ('string', 'null')
+      or v_source_id is null
       or v_source_id <> btrim(v_source_id)
       or char_length(v_source_id) not between 1 and 200
       or v_source_text is null
@@ -432,13 +443,23 @@ begin
       or v_source_hash is null
       or v_source_hash !~ '^[0-9a-f]{64}$'
       or (
-        v_source_url is not null
+        v_source_title is not null
         and (
-          v_source_url <> btrim(v_source_url)
-          or char_length(v_source_url) not between 1 and 2048
-          or v_source_url !~ '^https?://'
+          v_source_title <> btrim(v_source_title)
+          or char_length(v_source_title) not between 1 and 1000
         )
       )
+      or (
+        v_source_published_at is not null
+        and (
+          v_source_published_at <> btrim(v_source_published_at)
+          or char_length(v_source_published_at) not between 1 and 100
+        )
+      )
+      or v_source_url is null
+      or v_source_url <> btrim(v_source_url)
+      or char_length(v_source_url) not between 1 and 2048
+      or v_source_url !~ '^https?://[^[:space:]/?#@]+([/?#][^[:space:]]*)?$'
       or v_source_id = any(v_seen_source_ids)
     then
       raise exception 'invalid modeled draft source'
@@ -454,6 +475,8 @@ begin
       jsonb_build_object(
         'id', v_source_id,
         'url', v_source_url,
+        'title', v_source_title,
+        'published_at', v_source_published_at,
         'text', v_source_text,
         'hash', v_source_hash
       )
@@ -554,8 +577,8 @@ begin
     or p_lease_token is null
     or p_slot_index is null
     or p_slot_index not between 0 and 4
-    or p_expected_state not in ('assigned', 'candidate', 'accepted')
-    or p_next_state not in ('assigned', 'candidate', 'accepted')
+    or p_expected_state not in ('assigned', 'accepted')
+    or p_next_state not in ('assigned', 'accepted')
     or p_source_id is null
     or p_source_id <> btrim(p_source_id)
     or char_length(p_source_id) not between 1 and 200
@@ -649,22 +672,18 @@ begin
       using errcode = '22023';
   end if;
 
-  if p_next_state in ('candidate', 'accepted') then
+  if p_next_state = 'accepted' then
     if p_body is null
       or char_length(p_body) not between 1 and 3500
     then
-      raise exception 'candidate body is invalid'
+      raise exception 'accepted body is invalid'
         using errcode = '22023';
     end if;
     v_body_hash := encode(public.digest(p_body, 'sha256'), 'hex');
   end if;
 
-  if p_next_state = 'candidate' and p_provenance is not null then
-    raise exception 'candidate checkpoint cannot contain accepted provenance'
-      using errcode = '22023';
-  end if;
   if p_next_state = 'accepted' then
-    if p_expected_state not in ('assigned', 'candidate')
+    if p_expected_state <> 'assigned'
       or p_provenance is null
       or jsonb_typeof(p_provenance) is distinct from 'object'
       or (p_provenance ->> 'kind') is distinct from 'modeled'
@@ -687,10 +706,6 @@ begin
         is distinct from p_source_id
       or (p_provenance #>> '{artifact,meta,source_url}')
         is distinct from v_source_url
-      or (
-        p_expected_state = 'candidate'
-        and v_body_hash is distinct from v_slot.candidate_body_hash
-      )
       or p_rejection_code is not null
     then
       raise exception 'accepted provenance does not match the assigned source'
@@ -707,23 +722,6 @@ begin
         source_hash = v_source ->> 'hash',
         source_history = slot.source_history || jsonb_build_array(p_source_id),
         replacement_count = slot.replacement_count + 1,
-        candidate_body = null,
-        candidate_body_hash = null,
-        accepted_body = null,
-        accepted_body_hash = null,
-        accepted_provenance = null,
-        accepted_at = null,
-        attempt_count = slot.attempt_count + p_attempt_increment,
-        rejection_code = p_rejection_code,
-        updated_at = clock_timestamp()
-    where slot.batch_id = p_batch_id
-      and slot.slot_index = p_slot_index
-      and slot.state = p_expected_state;
-  elsif p_next_state = 'candidate' then
-    update public.modeled_draft_slots as slot
-    set state = 'candidate',
-        candidate_body = p_body,
-        candidate_body_hash = v_body_hash,
         accepted_body = null,
         accepted_body_hash = null,
         accepted_provenance = null,
@@ -737,8 +735,6 @@ begin
   else
     update public.modeled_draft_slots as slot
     set state = 'accepted',
-        candidate_body = coalesce(slot.candidate_body, p_body),
-        candidate_body_hash = coalesce(slot.candidate_body_hash, v_body_hash),
         accepted_body = p_body,
         accepted_body_hash = v_body_hash,
         accepted_provenance = p_provenance,
@@ -916,7 +912,6 @@ begin
     or p_reason not in (
       'cancelled',
       'deadline',
-      'budget_exhausted',
       'reviewer_unavailable',
       'writer_unavailable',
       'slot_exhausted',
@@ -980,6 +975,56 @@ begin
 end;
 $$;
 
+create or replace function public.purge_expired_modeled_draft_batches(
+  p_retention_seconds integer default 604800,
+  p_limit integer default 500
+)
+returns integer
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  v_deleted integer;
+  v_now timestamptz;
+begin
+  if p_retention_seconds is null
+    or p_retention_seconds not between 86400 and 2592000
+    or p_limit is null
+    or p_limit not between 1 and 1000
+  then
+    raise exception 'invalid modeled draft batch retention bounds'
+      using errcode = '22023';
+  end if;
+
+  v_now := clock_timestamp();
+
+  with candidates as (
+    select batch.id
+    from public.modeled_draft_batches as batch
+    where (
+        batch.status in ('paused', 'completed')
+        or (
+          batch.status = 'active'
+          and batch.lease_expires_at <= v_now
+        )
+      )
+      and batch.updated_at < v_now - make_interval(secs => p_retention_seconds)
+    order by batch.updated_at, batch.id
+    limit p_limit
+    for update skip locked
+  ), deleted as (
+    delete from public.modeled_draft_batches as batch
+    using candidates
+    where batch.id = candidates.id
+    returning batch.id
+  )
+  select count(*)::integer into v_deleted from deleted;
+
+  return v_deleted;
+end;
+$$;
+
 alter table public.modeled_draft_batches enable row level security;
 alter table public.modeled_draft_slots enable row level security;
 
@@ -1006,6 +1051,8 @@ revoke all on function public.complete_modeled_draft_batch(text, uuid, uuid)
   from public, anon, authenticated, service_role;
 revoke all on function public.release_modeled_draft_batch(text, uuid, uuid, text)
   from public, anon, authenticated, service_role;
+revoke all on function public.purge_expired_modeled_draft_batches(integer, integer)
+  from public, anon, authenticated, service_role;
 
 grant execute on function public.claim_modeled_draft_batch(
   text, text, text, integer, jsonb, integer
@@ -1016,6 +1063,8 @@ grant execute on function public.checkpoint_modeled_draft_slot(
 grant execute on function public.complete_modeled_draft_batch(text, uuid, uuid)
   to service_role;
 grant execute on function public.release_modeled_draft_batch(text, uuid, uuid, text)
+  to service_role;
+grant execute on function public.purge_expired_modeled_draft_batches(integer, integer)
   to service_role;
 
 -- Preserve every readiness check from migration 106 and extend it without
@@ -1045,7 +1094,8 @@ as $$
       ('claim_modeled_draft_batch(text,text,text,integer,jsonb,integer)'),
       ('checkpoint_modeled_draft_slot(text,uuid,uuid,integer,text,text,text,text,jsonb,text,integer,integer)'),
       ('complete_modeled_draft_batch(text,uuid,uuid)'),
-      ('release_modeled_draft_batch(text,uuid,uuid,text)')
+      ('release_modeled_draft_batch(text,uuid,uuid,text)'),
+      ('purge_expired_modeled_draft_batches(integer,integer)')
   ), missing_functions(name) as (
     select signature
     from required_functions
@@ -1053,7 +1103,8 @@ as $$
   ), required_relations(name) as (
     values
       ('public.modeled_draft_batches'),
-      ('public.modeled_draft_slots')
+      ('public.modeled_draft_slots'),
+      ('public.modeled_draft_batches_retention_idx')
   ), missing_relations(name) as (
     select name
     from required_relations
@@ -1068,10 +1119,82 @@ as $$
     left join pg_class as relation
       on relation.oid = to_regclass(required.name)
     where relation.oid is null or not relation.relrowsecurity
+  ), required_service_functions(signature) as (
+    values
+      ('claim_modeled_draft_batch(text,text,text,integer,jsonb,integer)'),
+      ('checkpoint_modeled_draft_slot(text,uuid,uuid,integer,text,text,text,text,jsonb,text,integer,integer)'),
+      ('complete_modeled_draft_batch(text,uuid,uuid)'),
+      ('release_modeled_draft_batch(text,uuid,uuid,text)'),
+      ('purge_expired_modeled_draft_batches(integer,integer)')
+  ), missing_service_execute(name) as (
+    select signature || '(service_role execute)'
+    from required_service_functions
+    where not coalesce(
+      has_function_privilege(
+        'service_role',
+        to_regprocedure('public.' || signature),
+        'execute'
+      ),
+      false
+    )
+  ), unsafe_function_execute(name) as (
+    select signature || '(public/anon/authenticated execute denied)'
+    from required_service_functions
+    where coalesce(
+      has_function_privilege(
+        'public',
+        to_regprocedure('public.' || signature),
+        'execute'
+      ),
+      false
+    )
+      or coalesce(
+        has_function_privilege(
+          'anon',
+          to_regprocedure('public.' || signature),
+          'execute'
+        ),
+        false
+      )
+      or coalesce(
+        has_function_privilege(
+          'authenticated',
+          to_regprocedure('public.' || signature),
+          'execute'
+        ),
+        false
+      )
+  ), required_triggers(name, relation_name, function_signature) as (
+    values
+      (
+        'modeled_draft_batches_protect_invariants',
+        'public.modeled_draft_batches',
+        'public.protect_modeled_draft_batch_invariants()'
+      ),
+      (
+        'modeled_draft_slots_protect_invariants',
+        'public.modeled_draft_slots',
+        'public.protect_modeled_draft_slot_invariants()'
+      )
+  ), missing_triggers(name) as (
+    select required.name || '(trigger enabled)'
+    from required_triggers as required
+    where not exists (
+      select 1
+      from pg_trigger as trigger
+      where trigger.tgrelid = to_regclass(required.relation_name)
+        and trigger.tgname = required.name
+        and not trigger.tgisinternal
+        and trigger.tgenabled in ('O', 'A')
+        and trigger.tgfoid = to_regprocedure(required.function_signature)
+    )
   ), new_missing(name) as (
     select name from missing_functions
     union all select name from missing_relations
     union all select name from missing_rls
+    union all select name from missing_service_execute
+    union all select name from unsafe_function_execute
+    union all select name from missing_triggers
   ), all_missing(name) as (
     select existing.value::text
     from base,

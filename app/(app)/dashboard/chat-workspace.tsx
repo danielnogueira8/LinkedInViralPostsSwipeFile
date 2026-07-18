@@ -57,6 +57,7 @@ import {
   ThumbsUp,
   ImageIcon,
   Newspaper,
+  SlidersHorizontal,
   type LucideIcon,
 } from "lucide-react";
 import { AiIcon } from "@/components/ai-icon";
@@ -138,6 +139,11 @@ import {
   type ChatSendLease,
 } from "@/lib/chat-session";
 import { chatSetupDeadlines } from "@/lib/chat-stream-policy";
+import {
+  DRAFT_COUNT_OPTIONS,
+  generationConfigForSelection,
+  type DraftCountSelection,
+} from "@/lib/generation-config";
 import { requestServerTurnStop } from "@/lib/chat-stop";
 import { safeJsonSchema } from "@/lib/api-fetch";
 import {
@@ -548,6 +554,11 @@ export function ChatWorkspace({
   const [leadMagnetPickerOpen, setLeadMagnetPickerOpen] = useState(false);
   const leadMagnetPickerRef = useRef<HTMLDivElement>(null);
   const leadMagnetPickerButtonRef = useRef<HTMLButtonElement>(null);
+  const [generationSettingsOpen, setGenerationSettingsOpen] = useState(false);
+  const generationSettingsRef = useRef<HTMLDivElement>(null);
+  const generationSettingsButtonRef = useRef<HTMLButtonElement>(null);
+  const [draftCountSelection, setDraftCountSelection] =
+    useState<DraftCountSelection>("auto");
   // Close every composer picker when the active chat changes (switch OR the
   // active chat being deleted, which sets activeId to null). The pickers are
   // anchored to the always-mounted composer, so without this a picker opened in
@@ -560,6 +571,7 @@ export function ChatWorkspace({
       setPostFormatPickerOpen(false);
       setCreatorStylePickerOpen(false);
       setLeadMagnetPickerOpen(false);
+      setGenerationSettingsOpen(false);
       // Batch approve/reject badges are session-only UI keyed by artifact id, with
       // no per-chat scoping. On a chat switch they must clear: a stale "Approved"
       // badge from chat A could otherwise ride into chat B (and mask the real
@@ -938,6 +950,25 @@ export function ChatWorkspace({
       document.removeEventListener("keydown", onKey);
     };
   }, [leadMagnetPickerOpen]);
+
+  useEffect(() => {
+    if (!generationSettingsOpen) return;
+    const onDocPointerDown = (e: globalThis.MouseEvent) => {
+      const target = e.target as Node;
+      if (generationSettingsRef.current?.contains(target)) return;
+      if (generationSettingsButtonRef.current?.contains(target)) return;
+      setGenerationSettingsOpen(false);
+    };
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === "Escape") setGenerationSettingsOpen(false);
+    };
+    document.addEventListener("mousedown", onDocPointerDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocPointerDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [generationSettingsOpen]);
 
   // Reconcile the workspace's custom skills with the DB on mount (for the /
   // autocomplete + ⚡ picker). The list is SEEDED from the server prop above, so
@@ -2424,6 +2455,15 @@ export function ChatWorkspace({
       // rule as Post Format — the badge + stream field are gated on it.
       const turnCreatorStyle = pendingCreatorStyle;
       const turnCreatorStyleApplies = !attached;
+      let turnGenerationConfig =
+        overrideText !== undefined ||
+        sendOpts?.retryOfUserMessageId ||
+        sendOpts?.skipDecision ||
+        sendOpts?.forceRefine ||
+        sendOpts?.refineTargetId ||
+        sendOpts?.actionSelectionIds?.length
+          ? undefined
+          : generationConfigForSelection(draftCountSelection);
       // The skill ids sent to the server: explicit (a refine inheriting the
       // source draft's skills) OR the composer chips. The bubble badge still
       // comes from turnSkills (composer chips only) — an inherited refine skill
@@ -2439,6 +2479,7 @@ export function ChatWorkspace({
       setPostFormatPickerOpen(false);
       setCreatorStylePickerOpen(false);
       setLeadMagnetPickerOpen(false);
+      setGenerationSettingsOpen(false);
 
       // Capture + consume file attachments for this turn.
       const files = attachments;
@@ -2560,6 +2601,7 @@ export function ChatWorkspace({
           }
         }
       }
+      if (refineThisTurn) turnGenerationConfig = undefined;
 
       // Only clear the composer when sending what the user actually typed —
       // a programmatic send (recovery button, etc.) shouldn't wipe their
@@ -2718,6 +2760,9 @@ export function ChatWorkspace({
               : {}),
             ...(turnCreatorStyle && turnCreatorStyleApplies
               ? { creatorStyleId: turnCreatorStyle.id }
+              : {}),
+            ...(turnGenerationConfig
+              ? { generationConfig: turnGenerationConfig }
               : {}),
           }),
         }, ctrl.signal, {
@@ -3217,6 +3262,7 @@ export function ChatWorkspace({
     pendingPostFormat,
     pendingLeadMagnet,
     pendingCreatorStyle,
+    draftCountSelection,
     customSkills,
     initialVoiceReady,
     router,
@@ -4157,6 +4203,66 @@ export function ChatWorkspace({
               </div>
             )}
 
+            {generationSettingsOpen && (
+              <div
+                ref={generationSettingsRef}
+                role="dialog"
+                aria-label="Generation settings"
+                className="absolute bottom-full left-0 right-0 z-20 mb-3 overflow-hidden rounded-2xl border border-border bg-card/95 shadow-[0_24px_80px_rgba(28,28,26,0.16)] backdrop-blur"
+              >
+                <div className="flex items-center justify-between border-b border-border px-3.5 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                  <span>Generation settings</span>
+                  <button
+                    type="button"
+                    onClick={() => setGenerationSettingsOpen(false)}
+                    className="text-muted-foreground hover:text-foreground"
+                    aria-label="Close generation settings"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                <div className="p-3.5">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">Drafts</p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        Choose an exact count, or let your message decide.
+                      </p>
+                    </div>
+                    <div
+                      role="group"
+                      aria-label="Number of drafts"
+                      className="flex shrink-0 items-center gap-1 rounded-xl border border-border bg-muted/50 p-1"
+                    >
+                      {(["auto", ...DRAFT_COUNT_OPTIONS] as const).map((option) => {
+                        const selected = draftCountSelection === option;
+                        const label = option === "auto" ? "Auto" : String(option);
+                        return (
+                          <button
+                            key={label}
+                            type="button"
+                            aria-pressed={selected}
+                            onClick={() => {
+                              setDraftCountSelection(option);
+                              setGenerationSettingsOpen(false);
+                            }}
+                            className={cn(
+                              "min-w-8 rounded-lg px-2 py-1.5 text-xs font-medium transition-colors",
+                              selected
+                                ? "bg-card text-primary shadow-sm"
+                                : "text-muted-foreground hover:bg-card/70 hover:text-foreground",
+                            )}
+                          >
+                            {label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* ⚡ Skill picker panel — browse + toggle the workspace's skills. */}
             {skillPickerOpen && customSkills.length > 0 && (
               <div
@@ -4761,6 +4867,37 @@ export function ChatWorkspace({
               >
                 <Paperclip className="h-4 w-4" />
               </Button>
+              <Button
+                ref={generationSettingsButtonRef}
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setSkillPickerOpen(false);
+                  setPostFormatPickerOpen(false);
+                  setCreatorStylePickerOpen(false);
+                  setLeadMagnetPickerOpen(false);
+                  setGenerationSettingsOpen((open) => !open);
+                }}
+                className={cn(
+                  "h-9 shrink-0 gap-1.5 rounded-xl border-border bg-card px-2.5 hover:bg-muted",
+                  (generationSettingsOpen || draftCountSelection !== "auto") &&
+                    "border-primary/60 text-primary",
+                )}
+                aria-label={`Draft count: ${
+                  draftCountSelection === "auto"
+                    ? "Auto"
+                    : draftCountSelection
+                }`}
+                aria-expanded={generationSettingsOpen}
+                title="Choose how many drafts to create"
+              >
+                <SlidersHorizontal className="h-4 w-4" aria-hidden />
+                <span className="text-xs font-medium tabular-nums">
+                  {draftCountSelection === "auto"
+                    ? "Auto"
+                    : `${draftCountSelection} drafts`}
+                </span>
+              </Button>
               {/* ⚡ Custom-skills picker — only when the workspace has skills.
                   Opens a panel above the composer to browse + toggle skills. */}
               {customSkills.length > 0 && (
@@ -4770,6 +4907,7 @@ export function ChatWorkspace({
                   size="icon"
                   variant="outline"
                   onClick={() => {
+                    setGenerationSettingsOpen(false);
                     setPostFormatPickerOpen(false);
                     setCreatorStylePickerOpen(false);
                     setLeadMagnetPickerOpen(false);
@@ -4793,6 +4931,7 @@ export function ChatWorkspace({
                 size="icon"
                 variant="outline"
                 onClick={() => {
+                  setGenerationSettingsOpen(false);
                   setSkillPickerOpen(false);
                   setCreatorStylePickerOpen(false);
                   setLeadMagnetPickerOpen(false);
@@ -4820,6 +4959,7 @@ export function ChatWorkspace({
                 size="icon"
                 variant="outline"
                 onClick={() => {
+                  setGenerationSettingsOpen(false);
                   setSkillPickerOpen(false);
                   setPostFormatPickerOpen(false);
                   setCreatorStylePickerOpen(false);
@@ -4850,6 +4990,7 @@ export function ChatWorkspace({
                 size="icon"
                 variant="outline"
                 onClick={() => {
+                  setGenerationSettingsOpen(false);
                   setSkillPickerOpen(false);
                   setPostFormatPickerOpen(false);
                   setLeadMagnetPickerOpen(false);

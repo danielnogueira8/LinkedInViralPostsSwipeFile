@@ -5,10 +5,18 @@ import {
   type DraftEngineGroundedSource,
   type DraftEngineInput,
 } from "@/lib/agent/draft-engine";
-import type { ExecuteModeledDraftBatchInput } from "@/lib/agent/modeled-draft-batch";
+import {
+  isCanonicalModeledSourceUrl,
+  type ExecuteModeledDraftBatchInput,
+} from "@/lib/agent/modeled-draft-batch";
 import { executeProductionModeledDraftBatch } from "@/lib/agent/modeled-draft-batch-supabase";
+import {
+  continuationForModeledDraftRoute,
+  type ModeledDraftBatchContinuation,
+} from "@/lib/agent/modeled-draft-continuation";
 import type { ReadOnlyOrchestratorRoute } from "@/lib/agent/read-only-orchestrator-routing";
 import { runTool, toolSummary } from "@/lib/agent/tools";
+import { canonicalScrapedPostText } from "@/lib/agent/scraped-post-text";
 import { safeFilename } from "@/lib/agent/untrusted";
 import { modelingSelectionContext } from "@/lib/agent/modeling-selection-context";
 import {
@@ -1477,6 +1485,7 @@ export type ReadOnlyOrchestratorInput = {
   userInstruction: string;
   history: ChatMessage[];
   route: ReadOnlyOrchestratorRoute;
+  modeledBatchContinuation?: ModeledDraftBatchContinuation;
   attachmentNames: string[];
   attachmentBlocks: ContentBlock[];
   draftEngineInput: DraftEngineInput;
@@ -1694,7 +1703,7 @@ function workspaceSources(
     if (!row || typeof row !== "object") return [];
     const item = row as Record<string, unknown>;
     const id = typeof item.id === "string" ? item.id.trim() : "";
-    const text = typeof item.text === "string" ? item.text.trim() : "";
+    const text = canonicalScrapedPostText(item.text);
     const urlValue = item.post_url ?? item.url;
     const url =
       typeof urlValue === "string"
@@ -1827,7 +1836,7 @@ function createReadOnlyCancellationWatcher(
   const serverCancellation = new AbortController();
   const deadline = new AbortController();
   const deadlineMs = Math.max(1, dependencies.turnDeadlineMs);
-  const deadlineAtMs = Date.now() + deadlineMs;
+  const deadlineAtMs = dependencies.now().getTime() + deadlineMs;
   const deadlineTimer = setTimeout(
     () => deadline.abort(),
     deadlineMs,
@@ -1891,6 +1900,37 @@ function createReadOnlyCancellationWatcher(
   };
 }
 
+function modeledMappingClarification(
+  reason: ReadOnlyOrchestratorRoute["modeledAmbiguityReason"],
+): { question: string; options: string[] } {
+  switch (reason) {
+    case "source_count":
+      return {
+        question: "How many source posts should I use?",
+        options: ["2 sources", "3 sources", "4 sources", "5 sources"],
+      };
+    case "selection_count":
+      return {
+        question: "How many of the source posts should I model?",
+        options: ["1 source", "2 sources", "3 sources", "4 sources"],
+      };
+    case "output_count":
+      return {
+        question: "How many new drafts should I create?",
+        options: ["2 drafts", "3 drafts", "4 drafts", "5 drafts"],
+      };
+    default:
+      return {
+        question: "How should the source posts map to the new drafts?",
+        options: [
+          "One new draft per source",
+          "One draft using all sources",
+          "I’ll specify the counts",
+        ],
+      };
+  }
+}
+
 /**
  * Execute one validated read-only plan. Provider fallback happens only while
  * planning, before any search or inspection is dispatched. Once an action has
@@ -1928,6 +1968,10 @@ async function* runReadOnlyOrchestratorCore(
                       "AI industry trends",
                     ],
                   }
+                : input.route.clarificationReason === "modeled_mapping"
+                  ? modeledMappingClarification(
+                      input.route.modeledAmbiguityReason,
+                    )
                 : {
                     question: "What should I create from this research?",
                     options: [
@@ -2058,6 +2102,39 @@ async function* runReadOnlyOrchestratorCore(
     return;
   }
 
+  const canonicalModeledContinuation = continuationForModeledDraftRoute(
+    input.route,
+  );
+  const resumingModeledBatch = Boolean(input.modeledBatchContinuation);
+  const continuationContractMatches =
+    !input.modeledBatchContinuation ||
+    (canonicalModeledContinuation !== null &&
+      JSON.stringify(canonicalModeledContinuation) ===
+        JSON.stringify(input.modeledBatchContinuation));
+  const continuationPlanMatches =
+    !input.modeledBatchContinuation ||
+    (plan.actions.length === 2 &&
+      plan.actions[0]?.type === "search_viral_posts" &&
+      plan.actions[1]?.type === "draft_post");
+  if (!continuationContractMatches || !continuationPlanMatches) {
+    const message =
+      "The saved modeled-set contract could not be verified, so it was not resumed. Send the request again as a new message.";
+    yield {
+      type: "error",
+      code: "modeled_batch_continuation_invalid",
+      message,
+    };
+    yield completedDone({
+      content: message,
+      terminalReason: "error",
+      toolCalls: calls,
+      toolMessages: messages,
+      inputTokens,
+      outputTokens,
+    });
+    return;
+  }
+
   for (let actionIndex = 0; actionIndex < plan.actions.length - 1; actionIndex += 1) {
     if (await input.cancellationBoundary()) {
       yield completedDone({
@@ -2125,7 +2202,16 @@ async function* runReadOnlyOrchestratorCore(
     let result: Record<string, unknown>;
     let sources: DraftEngineGroundedSource[] = [];
     try {
-      if (action.type === "inspect_attachments") {
+      if (resumingModeledBatch && action.type === "search_viral_posts") {
+        // The source pool is immutable inside the durable batch. A Retry must
+        // claim that pool directly; re-running discovery can only make a valid
+        // checkpoint impossible to reach when a source is later hidden or the
+        // search service is temporarily unavailable.
+        result = {
+          ok: true,
+          resumed_frozen_batch: true,
+        };
+      } else if (action.type === "inspect_attachments") {
         const persistedUsage = new Set<string>();
         const persistUsage = async (
           model: string,
@@ -2282,6 +2368,8 @@ async function* runReadOnlyOrchestratorCore(
                         5,
                       )
                     : 0,
+                requireResolvableModelingSourceUrl:
+                  input.route.workspaceDraftSourceMode === "one_to_one",
               },
             ),
         });
@@ -2339,7 +2427,9 @@ async function* runReadOnlyOrchestratorCore(
       });
       return;
     }
-    const ok = result.ok === true && sources.length > 0;
+    const ok =
+      (resumingModeledBatch && action.type === "search_viral_posts") ||
+      (result.ok === true && sources.length > 0);
     if (await input.cancellationBoundary()) {
       yield {
         type: "tool_end",
@@ -2438,7 +2528,7 @@ async function* runReadOnlyOrchestratorCore(
       (id) => modeledSourcePoolByAction.get(id) ?? [],
     ),
   );
-  if (groundedSources.length === 0) {
+  if (!resumingModeledBatch && groundedSources.length === 0) {
     throw new Error("Validated plan produced no grounded evidence.");
   }
   const minimumWorkspaceSources = input.route.minimumSources
@@ -2448,7 +2538,7 @@ async function* runReadOnlyOrchestratorCore(
     ? groundedSources.filter((source) => source.kind === "workspace_post").length
     : groundedSources.length;
   const minimumSources = minimumWorkspaceSources ?? 1;
-  if (verifiedSourceCount < minimumSources) {
+  if (!resumingModeledBatch && verifiedSourceCount < minimumSources) {
     const message = `I found only ${verifiedSourceCount} of the ${minimumSources} distinct verified sources you requested, so I did not draft from incomplete research.`;
     yield {
       type: "error",
@@ -2504,21 +2594,61 @@ async function* runReadOnlyOrchestratorCore(
     input.route.workspaceDraftSourceMode === "one_to_one" &&
     expectedDrafts >= 2;
   if (modeledBatch) {
-    const canonicalPool = modeledSourcePool.flatMap((source) =>
-      source.kind === "workspace_post"
-        ? [
-            {
-              id: source.id,
-              text: source.text,
-              ...(source.url ? { url: source.url } : {}),
-              ...(source.title ? { title: source.title } : {}),
-              ...(source.publishedAt
-                ? { publishedAt: source.publishedAt }
-                : {}),
-            },
-          ]
-        : [],
-    );
+    // The selection search may inspect up to ten candidates, but the durable
+    // coordinator accepts only the requested slots plus five frozen reserves.
+    // Preserve ranking order while bounding the persisted pool; retries reuse
+    // this exact slice and never re-run selection against a different set.
+    const canonicalPool = modeledSourcePool
+      .flatMap((source) =>
+        source.kind === "workspace_post" &&
+        isCanonicalModeledSourceUrl(source.url)
+          ? [
+              {
+                id: source.id,
+                text: source.text,
+                url: source.url,
+                ...(source.title ? { title: source.title } : {}),
+                ...(source.publishedAt
+                  ? { publishedAt: source.publishedAt }
+                  : {}),
+              },
+            ]
+          : [],
+      )
+      .slice(0, expectedDrafts + 5);
+    if (!resumingModeledBatch && canonicalPool.length < expectedDrafts) {
+      input.telemetry?.setProvenanceStatus("missing");
+      const message = `I found only ${canonicalPool.length} of the ${expectedDrafts} distinct verified sources with resolvable source links, so I did not draft from incomplete research.`;
+      yield {
+        type: "tool_end",
+        id: draftCallId,
+        name: draftCall.function.name,
+        ok: false,
+      };
+      messages.push(
+        toolMessage(draftCallId, {
+          ok: false,
+          delivered: false,
+          verified_sources: canonicalPool.length,
+          expected_sources: expectedDrafts,
+          error: "insufficient_resolvable_sources",
+        }),
+      );
+      yield {
+        type: "error",
+        code: "orchestrator_evidence_insufficient",
+        message,
+        recovery: "continue",
+      };
+      yield completedDone({
+        content: message,
+        toolCalls: calls,
+        toolMessages: messages,
+        inputTokens,
+        outputTokens,
+      });
+      return;
+    }
     let batchResult: Awaited<
       ReturnType<ReadOnlyOrchestratorDependencies["executeModeledDraftBatch"]>
     >;
@@ -2541,6 +2671,9 @@ async function* runReadOnlyOrchestratorCore(
     } catch (error) {
       rethrowUsagePersistence(error);
       const interrupted = await input.cancellationBoundary();
+      const terminalReason = interrupted
+        ? interruptionReason(input)
+        : "error";
       const message = interrupted
         ? interruptionContent(input, "Stopped before the modeled set completed.")
         : "The modeled-draft coordinator stopped unexpectedly. Your completed slots remain recoverable; Retry will continue the same batch.";
@@ -2557,17 +2690,20 @@ async function* runReadOnlyOrchestratorCore(
           error: interrupted ? interruptionReason(input) : "batch_failed",
         }),
       );
-      if (!interrupted) {
+      if (!interrupted || terminalReason === "deadline") {
         yield {
           type: "error",
-          code: "modeled_batch_failed",
+          code:
+            terminalReason === "deadline"
+              ? "modeled_batch_deadline"
+              : "modeled_batch_failed",
           message,
           recovery: "continue",
         };
       }
       yield completedDone({
         content: message,
-        terminalReason: interrupted ? interruptionReason(input) : "error",
+        terminalReason,
         toolCalls: calls,
         toolMessages: messages,
         inputTokens,
@@ -2579,6 +2715,45 @@ async function* runReadOnlyOrchestratorCore(
     inputTokens += batchResult.usage.inputTokens;
     outputTokens += batchResult.usage.outputTokens;
     if (batchResult.kind === "complete") {
+      if (await input.cancellationBoundary()) {
+        const terminalReason = interruptionReason(input);
+        const message = interruptionContent(
+          input,
+          "Stopped before the completed modeled set was published.",
+        );
+        yield {
+          type: "tool_end",
+          id: draftCallId,
+          name: draftCall.function.name,
+          ok: false,
+        };
+        messages.push(
+          toolMessage(draftCallId, {
+            ok: false,
+            delivered: false,
+            batch_id: batchResult.batchId,
+            preserved_drafts: batchResult.artifacts.length,
+            error: terminalReason,
+          }),
+        );
+        if (terminalReason === "deadline") {
+          yield {
+            type: "error",
+            code: "modeled_batch_resumable_deadline",
+            message,
+            recovery: "continue",
+          };
+        }
+        yield completedDone({
+          content: message,
+          terminalReason,
+          toolCalls: calls,
+          toolMessages: messages,
+          inputTokens,
+          outputTokens,
+        });
+        return;
+      }
       for (const artifact of batchResult.artifacts) {
         yield { type: "artifact", artifact };
       }
@@ -2614,8 +2789,24 @@ async function* runReadOnlyOrchestratorCore(
     const preserved =
       batchResult.kind === "incomplete" ? batchResult.preservedSlots : 0;
     const reason = batchResult.reason;
+    const durableBatchExists =
+      batchResult.kind === "incomplete" && Boolean(batchResult.batchId);
+    const terminalFailure =
+      batchResult.kind === "failed" &&
+      (batchResult.reason !== "insufficient_sources" ||
+        resumingModeledBatch);
     const message = cancelled
       ? "Stopped before the complete modeled set was produced."
+      : batchResult.kind === "failed" && batchResult.reason === "state_conflict"
+        ? "Your writing context changed after this modeled set began, so I won’t combine drafts produced from different voice or preference settings. Send the request again as a new message to start a consistent set."
+        : batchResult.kind === "failed" && batchResult.reason === "state_corrupt"
+          ? "The saved modeled set failed its integrity checks and cannot be resumed safely. Send the request again as a new message to start a clean set."
+          : batchResult.kind === "failed" &&
+              batchResult.reason === "insufficient_sources" &&
+              resumingModeledBatch
+            ? "The saved modeled set is no longer available. Send the request again as a new message to start a fresh set."
+          : batchResult.kind === "failed" && batchResult.reason === "invalid_request"
+            ? "This modeled request did not pass the server’s batch contract, so it was not run. Send it again as a new message."
       : preserved > 0
         ? `I preserved ${preserved} of ${expectedDrafts} verified drafts, but the remaining slot could not be completed safely. Retry will continue only the unfinished work.`
         : "I couldn’t complete the verified modeled set safely. Retry will resume the same bounded batch.";
@@ -2634,10 +2825,12 @@ async function* runReadOnlyOrchestratorCore(
         error: reason,
       }),
     );
-    if (!cancelled) {
+    if (!cancelled && !terminalFailure) {
       yield {
         type: "error",
-        code: `modeled_batch_${reason}`,
+        code: durableBatchExists
+          ? `modeled_batch_resumable_${reason}`
+          : `modeled_batch_${reason}`,
         message,
         recovery: "continue",
       };
@@ -2659,9 +2852,9 @@ async function* runReadOnlyOrchestratorCore(
   }
   const modeledWorkspaceSource =
     input.route.workspaceDraftSourceMode === "one_to_one" &&
-    groundedSources.length === 1 &&
-    groundedSources[0].kind === "workspace_post"
-      ? { id: groundedSources[0].id, text: groundedSources[0].text }
+    expectedDrafts === 1 &&
+    modeledSourcePool[0]?.kind === "workspace_post"
+      ? { id: modeledSourcePool[0].id, text: modeledSourcePool[0].text }
       : undefined;
   try {
     for await (const event of deps.runDraftEngine(

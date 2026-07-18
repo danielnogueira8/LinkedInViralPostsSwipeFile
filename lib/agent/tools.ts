@@ -200,6 +200,25 @@ export interface ToolExecutionContext {
   // primaries. Only the modeled-batch coordinator consumes them; analytical
   // searches and single-source modeling leave this at zero.
   modelingReserveCount?: number;
+  // Exact one-to-one modeled drafts must render a source chip. Generic
+  // research and idea retrieval deliberately leave this false so nullable
+  // legacy post URLs do not change their established result sets.
+  requireResolvableModelingSourceUrl?: boolean;
+}
+
+function withCanonicalModelingSourceUrl<T extends { post_url?: unknown }>(
+  candidate: T,
+): T | null {
+  if (typeof candidate.post_url !== "string") return null;
+  try {
+    const parsed = new URL(candidate.post_url.trim());
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+      return null;
+    }
+    return { ...candidate, post_url: parsed.toString() };
+  } catch {
+    return null;
+  }
 }
 
 function err(message: string): ToolResult {
@@ -304,7 +323,15 @@ const searchViralPosts: ToolFn = async (args, workspaceId, signal, context) => {
 
     const { data, error } = await q;
     if (error) return err(error.message);
-    const candidates = (data ?? []).map(normalizeEmbed);
+    const normalizedCandidates = (data ?? []).map(normalizeEmbed);
+    const candidates =
+      autoSelectModelingSources &&
+      context?.requireResolvableModelingSourceUrl === true
+        ? normalizedCandidates.flatMap((candidate) => {
+            const canonical = withCanonicalModelingSourceUrl(candidate);
+            return canonical ? [canonical] : [];
+          })
+        : normalizedCandidates;
 
     // Analytical query → return the strict ranking as-is (unchanged behavior).
     if (!autoSelectModelingSources && !rotateDefaultIdeas) {
@@ -638,7 +665,15 @@ const getTopFromBatch: ToolFn = async (args, workspaceId, _signal, context) => {
     if (args.post_type) q = q.eq("post_type", args.post_type as string);
     const { data, error } = await q;
     if (error) return err(error.message);
-    const candidates = (data ?? []).map(normalizeEmbed);
+    const normalizedCandidates = (data ?? []).map(normalizeEmbed);
+    const candidates =
+      context?.modelingSelection &&
+      context.requireResolvableModelingSourceUrl === true
+        ? normalizedCandidates.flatMap((candidate) => {
+            const canonical = withCanonicalModelingSourceUrl(candidate);
+            return canonical ? [canonical] : [];
+          })
+        : normalizedCandidates;
     const count = candidates.length;
     // Idea ranking over the WIDER candidate pool: not-yet-drafted first, then
     // not-recently-surfaced, then RECENCY (posted_at desc) as the primary

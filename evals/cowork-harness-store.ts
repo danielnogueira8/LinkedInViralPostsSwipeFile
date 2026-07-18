@@ -60,6 +60,7 @@ type TableName =
   | "content_feedback"
   | "content_preferences"
   | "creator_style_profiles"
+  | "custom_skills"
   | "saved_posts"
   | "usage_events"
   | "voice_profiles";
@@ -100,6 +101,9 @@ export class CoworkHarnessStore {
   onActionCheckpointExecuted: (() => void) | null = null;
   failActionRetryContextSave = false;
   failActionTurnCancelAttempts = 0;
+  failCreatorStyleMarkerUpdate = false;
+  missCreatorStyleMarkerUpdateTarget = false;
+  private readonly readCounts = new Map<TableName, number>();
   private readonly tables: Record<TableName, Row[]> = {
     chats: [],
     chat_action_checkpoints: [],
@@ -111,6 +115,7 @@ export class CoworkHarnessStore {
     content_feedback: [],
     content_preferences: [],
     creator_style_profiles: [],
+    custom_skills: [],
     saved_posts: [],
     usage_events: [],
     voice_profiles: [],
@@ -150,6 +155,11 @@ export class CoworkHarnessStore {
     return `${prefix}_${String(this.sequence).padStart(4, "0")}`;
   }
 
+  private nextUuid(): string {
+    this.sequence += 1;
+    return `00000000-0000-4000-8000-${String(this.sequence).padStart(12, "0")}`;
+  }
+
   private insert(table: TableName, value: Row): Row {
     const row = {
       id: value.id ?? this.nextId(table),
@@ -166,6 +176,7 @@ export class CoworkHarnessStore {
     chat.turn_started_at = this.iso();
     chat.turn_cost_operation_key = operationKey;
     this.insert("chat_messages", {
+      id: this.nextUuid(),
       chat_id: this.chatId,
       workspace_id: this.workspaceId,
       role: "user",
@@ -258,6 +269,50 @@ export class CoworkHarnessStore {
     });
   }
 
+  seedHistoricalBookmarkModelSource(source: {
+    id: string;
+    sourcePostId: string;
+    postText: string;
+    postUrl: string;
+  }): void {
+    this.seedBookmarkModelSource(source);
+    this.insert("chat_messages", {
+      chat_id: this.chatId,
+      workspace_id: this.workspaceId,
+      role: "user",
+      content: "Model a post from this attached source.",
+      tool_calls: [
+        {
+          id: "_model_source_attached",
+          type: "function",
+          function: {
+            name: "_model_source_attached",
+            arguments: JSON.stringify({ id: source.id }),
+          },
+        },
+      ],
+      tool_call_id: null,
+      artifacts: null,
+      input_tokens: null,
+      output_tokens: null,
+    });
+    this.insert("chat_messages", {
+      chat_id: this.chatId,
+      workspace_id: this.workspaceId,
+      role: "assistant",
+      content: "The attached source was used for the prior turn.",
+      tool_calls: null,
+      tool_call_id: null,
+      artifacts: null,
+      input_tokens: null,
+      output_tokens: null,
+    });
+  }
+
+  readCount(table: TableName): number {
+    return this.readCounts.get(table) ?? 0;
+  }
+
   seedDraft(draft: {
     id: string;
     title: string;
@@ -287,6 +342,13 @@ export class CoworkHarnessStore {
   }
 
   seedVoiceProfile(): void {
+    if (
+      this.tables.voice_profiles.some(
+        (profile) => profile.workspace_id === this.workspaceId,
+      )
+    ) {
+      return;
+    }
     this.insert("voice_profiles", {
       workspace_id: this.workspaceId,
       linkedin_handle: "harness-writer",
@@ -302,6 +364,57 @@ export class CoworkHarnessStore {
       status: "ready",
       model: "fixture",
       generated_at: this.iso(),
+    });
+  }
+
+  seedCreatorStyleProfile(style: {
+    id: string;
+    name: string;
+    creatorName: string;
+    promptBlock: string;
+    status?: "ready" | "pending" | "failed";
+  }): void {
+    const existing = this.tables.creator_style_profiles.find(
+      (profile) =>
+        profile.id === style.id &&
+        profile.workspace_id === this.workspaceId,
+    );
+    if (existing) {
+      Object.assign(existing, {
+        name: style.name,
+        creator_name: style.creatorName,
+        prompt_block: style.promptBlock,
+        status: style.status ?? "ready",
+      });
+      return;
+    }
+    this.insert("creator_style_profiles", {
+      id: style.id,
+      workspace_id: this.workspaceId,
+      name: style.name,
+      creator_name: style.creatorName,
+      prompt_block: style.promptBlock,
+      status: style.status ?? "ready",
+    });
+  }
+
+  seedCustomSkill(skill: { id: string; name: string; body: string }): void {
+    const existing = this.tables.custom_skills.find(
+      (row) =>
+        row.id === skill.id && row.workspace_id === this.workspaceId,
+    );
+    if (existing) {
+      Object.assign(existing, {
+        name: skill.name,
+        body: skill.body,
+      });
+      return;
+    }
+    this.insert("custom_skills", {
+      id: skill.id,
+      workspace_id: this.workspaceId,
+      name: skill.name,
+      body: skill.body,
     });
   }
 
@@ -344,6 +457,66 @@ export class CoworkHarnessStore {
       terminal_reason: "error",
     });
     return String(user.id);
+  }
+
+  seedRetryableModeledTurn(
+    content: string,
+    continuation: Record<string, unknown>,
+    malformed?: "root" | "continuation" | "root_only",
+  ): string {
+    const rootUserMessageId = "00000000-0000-4000-8000-000000000711";
+    this.insert("chat_messages", {
+      id: rootUserMessageId,
+      chat_id: this.chatId,
+      workspace_id: this.workspaceId,
+      role: "user",
+      content,
+      tool_calls: null,
+      tool_call_id: null,
+      artifacts: null,
+      input_tokens: null,
+      output_tokens: null,
+    });
+    this.insert("chat_messages", {
+      chat_id: this.chatId,
+      workspace_id: this.workspaceId,
+      role: "assistant",
+      content: "The modeled set is safely checkpointed. Retry it.",
+      tool_calls: [
+        {
+          id: "_recoverable",
+          type: "function",
+          function: {
+            name: "_recoverable",
+            arguments: JSON.stringify({
+              code:
+                malformed === "root_only"
+                  ? "orchestrator_evidence_unavailable"
+                  : "modeled_batch_resumable_reviewer_unavailable",
+              message: "Retry will continue the same modeled set.",
+              retryRootUserMessageId:
+                malformed === "root" || malformed === "root_only"
+                  ? "not-a-uuid"
+                  : rootUserMessageId,
+              ...(malformed === "root_only"
+                ? {}
+                : {
+                    continuation:
+                      malformed === "continuation"
+                        ? { ...continuation, version: 999 }
+                        : continuation,
+                  }),
+            }),
+          },
+        },
+      ],
+      tool_call_id: null,
+      artifacts: null,
+      input_tokens: null,
+      output_tokens: null,
+      terminal_reason: "error",
+    });
+    return rootUserMessageId;
   }
 
   seedActionRetryContext(input: {
@@ -462,7 +635,11 @@ export class CoworkHarnessStore {
     let mutation: Mutation = null;
     let order: { column: string; ascending: boolean } | null = null;
     let limit: number | null = null;
-    let executed: Promise<{ data: unknown; error: null }> | null = null;
+    type QueryResult = {
+      data: unknown;
+      error: { message: string } | null;
+    };
+    let executed: Promise<QueryResult> | null = null;
 
     const filteredRows = () => {
       let rows = this.tables[table].filter((row) =>
@@ -497,9 +674,9 @@ export class CoworkHarnessStore {
       return rows;
     };
 
-    const execute = async () => {
+    const execute = (): Promise<QueryResult> => {
       if (!executed) {
-        executed = Promise.resolve().then(() => {
+        executed = Promise.resolve().then<QueryResult>(() => {
           if (mutation?.kind === "insert") {
             const values = Array.isArray(mutation.value)
               ? mutation.value
@@ -510,10 +687,36 @@ export class CoworkHarnessStore {
             };
           }
           if (mutation?.kind === "update") {
+            const updatesCreatorStyleMarker =
+              table === "chat_messages" &&
+              Array.isArray(mutation.value.tool_calls) &&
+              mutation.value.tool_calls.some(
+                (call) =>
+                  typeof call === "object" &&
+                  call !== null &&
+                  (call as { function?: { name?: unknown } }).function?.name ===
+                    "_creator_style_selected",
+              );
+            if (
+              updatesCreatorStyleMarker &&
+              this.failCreatorStyleMarkerUpdate
+            ) {
+              return {
+                data: [],
+                error: { message: "creator style marker write unavailable" },
+              };
+            }
+            if (
+              updatesCreatorStyleMarker &&
+              this.missCreatorStyleMarkerUpdateTarget
+            ) {
+              return { data: [], error: null };
+            }
             const rows = filteredRows();
             for (const row of rows) Object.assign(row, mutation.value);
             return { data: rows, error: null };
           }
+          this.readCounts.set(table, this.readCount(table) + 1);
           return { data: filteredRows(), error: null };
         });
       }
@@ -561,12 +764,12 @@ export class CoworkHarnessStore {
     builder.maybeSingle = async () => {
       const result = await execute();
       const rows = result.data as Row[];
-      return { data: rows[0] ?? null, error: null };
+      return { data: rows[0] ?? null, error: result.error };
     };
     builder.single = builder.maybeSingle;
     builder.abortSignal = () => builder;
     builder.then = (
-      onFulfilled: (value: { data: unknown; error: null }) => unknown,
+      onFulfilled: (value: QueryResult) => unknown,
       onRejected?: (reason: unknown) => unknown,
     ) => execute().then(onFulfilled, onRejected);
     return builder;

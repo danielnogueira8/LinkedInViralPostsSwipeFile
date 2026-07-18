@@ -1,5 +1,6 @@
 import { describe, test, expect } from "vitest";
 import { wrapScrapedPostText } from "@/lib/agent/tools";
+import { canonicalScrapedPostText } from "@/lib/agent/scraped-post-text";
 
 // ---------------------------------------------------------------------------
 // Scraped LinkedIn post bodies are the largest un-wrapped injection surface —
@@ -42,6 +43,20 @@ describe("wrapScrapedPostText — wraps post.text in <post>...</post>", () => {
     const closes = (out.text as string).match(/<\/post>/g) ?? [];
     expect(closes).toHaveLength(1);
     expect(out.text).toContain("<\\/post>");
+  });
+
+  test("the canonical decoder removes one transport layer and restores escaped body tags", () => {
+    const raw = "Literal <post>example</post> inside the creator's post.";
+    const wrapped = wrapScrapedPostText({ text: raw });
+    expect(canonicalScrapedPostText(wrapped.text)).toBe(raw);
+  });
+
+  test("the shared decoder preserves the attribute-tolerant legacy envelope", () => {
+    expect(
+      canonicalScrapedPostText(
+        '<post source="search_viral_posts">\r\nBody.\r\n</post>',
+      ),
+    ).toBe("Body.");
   });
 
   test("missing / empty text is left alone (defensive — no wrap on nothing)", () => {

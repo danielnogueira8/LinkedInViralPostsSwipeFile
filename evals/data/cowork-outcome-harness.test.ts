@@ -57,6 +57,16 @@ const THIRD_POST = [
   "That visible record gives future clients, teammates, and employers evidence they can inspect without waiting for an interview.",
   "A personal brand is simply useful proof made easy to find. Start documenting the work this week.",
 ].join("\n\n");
+const FOURTH_POST = [
+  "Consistency becomes useful when every post carries one clear decision.",
+  "Readers do not need another broad lesson. They need a concrete tension, the choice it creates, and evidence that the choice matters.",
+  "Build each post around that sequence and your ideas become easier to remember and apply.",
+].join("\n\n");
+const FIFTH_POST = [
+  "A durable writing system should reduce decisions, not create more of them.",
+  "Choose the audience, the problem, and the proof before drafting. Then let the structure carry the idea from hook to practical conclusion.",
+  "The result is not formulaic writing. It is more attention available for the part only you can contribute.",
+].join("\n\n");
 const FILE_GROUNDED_POST = [
   "Customer interviews are most useful when they change the workflow, not just the copy.",
   "The attached interview showed that onboarding delays were creating uncertainty before users reached the product's value.",
@@ -160,6 +170,47 @@ const MODELED_SOURCE_ROWS = [
   },
 ] as const;
 
+const MODELED_FOUR_SOURCE_ROWS = [
+  ...MODELED_SOURCE_ROWS,
+  {
+    id: "source-four",
+    text: [
+      "A credible point of view starts with a constraint the reader recognizes.",
+      "The argument earns attention by connecting that constraint to a specific choice.",
+      "Evidence in the middle keeps the lesson grounded instead of turning it into a slogan.",
+      "Close with the smallest useful action the reader can take next.",
+    ].join("\n\n"),
+    post_url: "https://linkedin.com/posts/source-four",
+  },
+] as const;
+
+const MODELED_FIVE_SOURCE_ROWS = [
+  ...MODELED_FOUR_SOURCE_ROWS,
+  {
+    id: "source-five",
+    text: [
+      "A useful writing system protects the core claim from competing ideas.",
+      "The middle earns trust by connecting the claim to an observable problem.",
+      "A practical close turns the argument into a decision the reader can make.",
+    ].join("\n\n"),
+    post_url: "https://linkedin.com/posts/source-five",
+  },
+] as const;
+
+const CREATOR_STYLE = {
+  id: "00000000-0000-4000-8000-000000000402",
+  name: "Evidence-led cadence",
+  creatorName: "Fixture Creator",
+  promptBlock:
+    "CREATOR_STYLE_RETRY_SENTINEL: open with a concrete observation, then use short evidence-led paragraphs.",
+} as const;
+
+const CUSTOM_SKILL = {
+  id: "00000000-0000-4000-8000-000000000403",
+  name: "durable-cta",
+  body: "CUSTOM_SKILL_RETRY_SENTINEL: end with one practical next step.",
+} as const;
+
 function modeledThreeScenario(id: string): CoworkOutcomeScenario {
   return {
     id,
@@ -203,8 +254,60 @@ function modeledThreeScenario(id: string): CoworkOutcomeScenario {
       artifactBodies: [COMPLETE_POST, SECOND_POST, THIRD_POST],
       actionNames: ["search_viral_posts", "write_grounded_post"],
       sourcePostIds: MODELED_SOURCE_ROWS.map((source) => source.id),
+      sourceReferences: MODELED_SOURCE_ROWS.map((source) => ({
+        id: source.id,
+        url: source.post_url,
+      })),
     },
   };
+}
+
+function modeledStructuredCountScenario(
+  id: string,
+  draftCount: 2 | 3 | 4 | 5,
+): CoworkOutcomeScenario {
+  const scenario = modeledThreeScenario(id);
+  const sources = MODELED_FIVE_SOURCE_ROWS.slice(0, draftCount);
+  const bodies = [
+    COMPLETE_POST,
+    SECOND_POST,
+    THIRD_POST,
+    FOURTH_POST,
+    FIFTH_POST,
+  ].slice(0, draftCount);
+  scenario.request = {
+    message:
+      "Find top-performing regular posts in my swipe file and rewrite them in my voice on topics that fit me. Keep their structure and hook style, but make the content original.",
+    generationConfig: { version: 1, draftCount },
+  };
+  scenario.model.sourceFidelity = sources.map(() => ({
+    outcome: "verified" as const,
+  }));
+  scenario.model.readOnlyOrchestrator!.toolResults = {
+    search_viral_posts: [
+      { ok: true, count: sources.length, posts: sources },
+    ],
+  };
+  scenario.model.directWriter = bodies.map((text, index) => ({
+    text,
+    finishReason: "stop" as const,
+    usage: usage(
+      210 + index * 10,
+      95 + index * 5,
+      0.00019 + index * 0.00001,
+    ),
+  }));
+  scenario.expected = {
+    terminal: "done",
+    artifactBodies: bodies,
+    actionNames: ["search_viral_posts", "write_grounded_post"],
+    sourcePostIds: sources.map((source) => source.id),
+    sourceReferences: sources.map((source) => ({
+      id: source.id,
+      url: source.post_url,
+    })),
+  };
+  return scenario;
 }
 
 describe("production-shaped Cowork outcome harness", () => {
@@ -1263,42 +1366,115 @@ describe("production-shaped Cowork outcome harness", () => {
     });
   });
 
-  test.each([
-    ["model source", { modelSourceId: "00000000-0000-4000-8000-000000000401" }],
-    [
-      "creator style",
-      { creatorStyleId: "00000000-0000-4000-8000-000000000402" },
-    ],
-  ])(
-    "keeps an explicitly requested but unresolved %s on the baseline path",
-    async (_label, requestContext) => {
+  test("keeps an explicitly requested but unresolved model source on the baseline path", async () => {
+    const report = await runCoworkOutcomeScenario({
+      id: "unresolved-model-source",
+      request: {
+        message:
+          "Write an original post in my voice about why a personal brand is career leverage.",
+        modelSourceId: "00000000-0000-4000-8000-000000000401",
+      },
+      model: {
+        provider: renderProvider([COMPLETE_POST]),
+        directWriter: [
+          {
+            text: SECOND_POST,
+            finishReason: "stop",
+            usage: usage(210, 95, 0.0001888),
+          },
+        ],
+      },
+      expected: {
+        terminal: "ask",
+        artifactBodies: [COMPLETE_POST],
+        actionNames: ["render_post", "ask_user"],
+      },
+    });
+
+    expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+    expect(report.observed.agentProviderRounds).toBeGreaterThan(0);
+    expect(report.observed.directWriterRequests).toHaveLength(0);
+  });
+
+  test.each(["missing", "not ready"] as const)(
+    "fails an explicitly selected creator style closed when it is %s",
+    async (state) => {
       const report = await runCoworkOutcomeScenario({
-        id: `unresolved-${_label.replace(" ", "-")}`,
+        id: `creator-style-${state.replace(" ", "-")}`,
         request: {
           message:
             "Write an original post in my voice about why a personal brand is career leverage.",
-          ...requestContext,
+          creatorStyleId: CREATOR_STYLE.id,
         },
+        ...(state === "not ready"
+          ? {
+              seed: {
+                creatorStyle: { ...CREATOR_STYLE, status: "pending" as const },
+              },
+            }
+          : {}),
         model: {
-          provider: renderProvider([COMPLETE_POST]),
+          provider: { rounds: [] },
           directWriter: [
             {
-              text: SECOND_POST,
+              text: COMPLETE_POST,
               finishReason: "stop",
               usage: usage(210, 95, 0.0001888),
             },
           ],
         },
         expected: {
-          terminal: "ask",
-          artifactBodies: [COMPLETE_POST],
-          actionNames: ["render_post", "ask_user"],
+          terminal: "failure",
+          httpStatus: 409,
+          artifactBodies: [],
+          actionNames: [],
+          assistantContents: [
+            "The selected creator style is unavailable or not ready. Choose another style and try again.",
+          ],
         },
       });
 
       expect(report.pass, report.failureCodes.join(", ")).toBe(true);
-      expect(report.observed.agentProviderRounds).toBeGreaterThan(0);
+      expect(report.observed.agentProviderRounds).toBe(0);
       expect(report.observed.directWriterRequests).toHaveLength(0);
+    },
+  );
+
+  test.each(["write error", "missing claimed row"] as const)(
+    "fails closed before generation when frozen creator-style persistence has a %s",
+    async (failureMode) => {
+      const scenario = modeledThreeScenario(
+        `creator-style-marker-${failureMode.replaceAll(" ", "-")}`,
+      );
+      scenario.request.creatorStyleId = CREATOR_STYLE.id;
+      scenario.seed = { creatorStyle: CREATOR_STYLE };
+      if (failureMode === "write error") {
+        scenario.model.creatorStyleMarkerPersistenceFails = true;
+      } else {
+        scenario.model.creatorStyleMarkerTargetMissing = true;
+      }
+      scenario.expected = {
+        terminal: "failure",
+        httpStatus: 503,
+        artifactBodies: [],
+        actionNames: [],
+        assistantContents: [
+          "I couldn’t save the selected creator style safely, so no draft was created. Send the request again to retry.",
+        ],
+      };
+
+      const report = await runCoworkOutcomeScenario(scenario);
+
+      expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+      expect(report.observed.readOnlyTools).toEqual([]);
+      expect(report.observed.directWriterRequests).toEqual([]);
+      expect(
+        report.persisted.messages
+          .find((message) => message.role === "user")
+          ?.tool_calls?.some(
+            (call) => call.function.name === "_creator_style_selected",
+          ) ?? false,
+      ).toBe(false);
     },
   );
 
@@ -1689,6 +1865,203 @@ describe("production-shaped Cowork outcome harness", () => {
     expect(report.observed.readOnlyTools).toHaveLength(1);
   });
 
+  test("keeps an ambiguous modeled mapping on the authenticated safe lane when rollout is disabled", async () => {
+    const report = await runCoworkOutcomeScenario({
+      id: "modeled-ambiguous-rollout-off",
+      request: {
+        message:
+          "Find 4 or 5 top-performing regular posts in my swipe file and rewrite them.",
+      },
+      model: {
+        provider: renderProvider([COMPLETE_POST]),
+        directWriter: [],
+        readOnlyOrchestrator: {
+          plans: [],
+          rolloutDisabled: true,
+          allowNoModel: true,
+        },
+      },
+      expected: {
+        terminal: "ask",
+        artifactBodies: [],
+        actionNames: ["ask_user"],
+        assistantContents: ["How many source posts should I use?"],
+      },
+    });
+
+    expect(
+      report.pass,
+      JSON.stringify({ failures: report.failureCodes, safe: report.safe }),
+    ).toBe(true);
+    expect(report.observed.agentProviderRounds).toBe(0);
+    expect(report.observed.readOnlyPlannerRequests).toEqual([]);
+    expect(report.observed.readOnlyTools).toEqual([]);
+    expect(report.observed.directWriterRequests).toEqual([]);
+  });
+
+  test("keeps a shared-pool modeled request out of legacy when rollout is disabled", async () => {
+    const report = await runCoworkOutcomeScenario({
+      id: "modeled-shared-pool-rollout-off",
+      request: {
+        message:
+          "Find 4 top posts in my swipe file and rewrite them into 2 original posts.",
+      },
+      model: {
+        provider: renderProvider([THIRD_POST]),
+        sourceFidelity: [{ outcome: "verified" }, { outcome: "verified" }],
+        readOnlyOrchestrator: {
+          plans: [],
+          rolloutDisabled: true,
+          toolResults: {
+            search_viral_posts: [
+              {
+                ok: true,
+                count: MODELED_FOUR_SOURCE_ROWS.length,
+                posts: [...MODELED_FOUR_SOURCE_ROWS],
+              },
+            ],
+          },
+        },
+        directWriter: [
+          {
+            text: COMPLETE_POST,
+            finishReason: "stop",
+            usage: usage(210, 95, 0.00019),
+          },
+          {
+            text: SECOND_POST,
+            finishReason: "stop",
+            usage: usage(220, 100, 0.0002),
+          },
+        ],
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [COMPLETE_POST, SECOND_POST],
+        actionNames: ["search_viral_posts", "write_grounded_post"],
+      },
+    });
+
+    expect(
+      report.pass,
+      JSON.stringify({ failures: report.failureCodes, safe: report.safe }),
+    ).toBe(true);
+    expect(report.observed.agentProviderRounds).toBe(0);
+    expect(report.observed.readOnlyPlannerRequests).toEqual([]);
+    expect(report.observed.readOnlyTools).toEqual([
+      expect.objectContaining({
+        name: "search_viral_posts",
+        args: expect.objectContaining({ limit: 4 }),
+      }),
+    ]);
+    expect(report.observed.directWriterRequests).toHaveLength(2);
+    expect(report.observed.modeledBatchOperationKeys).toEqual([]);
+  });
+
+  test("selects one source from a four-source modeled pool without entering legacy when rollout is disabled", async () => {
+    const report = await runCoworkOutcomeScenario({
+      id: "modeled-four-to-one-rollout-off",
+      request: {
+        message:
+          "Find 4 top-performing regular posts in my swipe file, choose the best, and rewrite it in my voice.",
+      },
+      model: {
+        provider: renderProvider([SECOND_POST]),
+        sourceFidelity: [{ outcome: "verified" }],
+        readOnlyOrchestrator: {
+          plans: [],
+          rolloutDisabled: true,
+          toolResults: {
+            search_viral_posts: [
+              {
+                ok: true,
+                count: MODELED_FOUR_SOURCE_ROWS.length,
+                posts: [...MODELED_FOUR_SOURCE_ROWS],
+              },
+            ],
+          },
+        },
+        directWriter: [
+          {
+            text: COMPLETE_POST,
+            finishReason: "stop",
+            usage: usage(210, 95, 0.00019),
+          },
+        ],
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [COMPLETE_POST],
+        actionNames: ["search_viral_posts", "write_grounded_post"],
+        sourcePostIds: [MODELED_FOUR_SOURCE_ROWS[0].id],
+      },
+    });
+
+    expect(
+      report.pass,
+      JSON.stringify({ failures: report.failureCodes, safe: report.safe }),
+    ).toBe(true);
+    expect(report.observed.agentProviderRounds).toBe(0);
+    expect(report.observed.readOnlyPlannerRequests).toEqual([]);
+    expect(report.observed.readOnlyTools).toEqual([
+      expect.objectContaining({
+        name: "search_viral_posts",
+        args: expect.objectContaining({ limit: 4 }),
+      }),
+    ]);
+    expect(report.observed.directWriterRequests).toHaveLength(1);
+    expect(report.observed.modeledBatchOperationKeys).toEqual([]);
+  });
+
+  test("fails a non-batch shared-pool modeled request before legacy when voice is unavailable", async () => {
+    const report = await runCoworkOutcomeScenario({
+      id: "modeled-shared-pool-no-voice-rollout-off",
+      request: {
+        message:
+          "Find 4 top posts in my swipe file and rewrite them into 2 original posts.",
+      },
+      model: {
+        provider: renderProvider([THIRD_POST]),
+        readOnlyOrchestrator: {
+          plans: [],
+          rolloutDisabled: true,
+          voiceUnavailable: true,
+        },
+        directWriter: [
+          {
+            text: COMPLETE_POST,
+            finishReason: "stop",
+            usage: usage(210, 95, 0.00019),
+          },
+          {
+            text: SECOND_POST,
+            finishReason: "stop",
+            usage: usage(220, 100, 0.0002),
+          },
+        ],
+      },
+      expected: {
+        terminal: "failure",
+        httpStatus: 503,
+        artifactBodies: [],
+        actionNames: [],
+        assistantContents: [
+          "⚠️ I couldn’t load the writing context required to start this modeled set safely. Retry will try the request again without creating a partial set.",
+        ],
+      },
+    });
+
+    expect(
+      report.pass,
+      JSON.stringify({ failures: report.failureCodes, safe: report.safe }),
+    ).toBe(true);
+    expect(report.observed.agentProviderRounds).toBe(0);
+    expect(report.observed.readOnlyPlannerRequests).toEqual([]);
+    expect(report.observed.readOnlyTools).toEqual([]);
+    expect(report.observed.directWriterRequests).toEqual([]);
+    expect(report.observed.modeledBatchOperationKeys).toEqual([]);
+  });
+
   test("returns the exact three-post modeled contract through the authenticated route", async () => {
     const report = await runCoworkOutcomeScenario(
       modeledThreeScenario("modeled-three"),
@@ -1711,6 +2084,561 @@ describe("production-shaped Cowork outcome harness", () => {
       report.observed.directWriterRequests.map((request) => request.stage),
     ).toEqual(["primary", "primary", "primary"]);
   });
+
+  test.each([2, 3, 4, 5] as const)(
+    "uses the structured draft control as the authenticated modeled-batch count: %i",
+    async (draftCount) => {
+      const scenario = modeledStructuredCountScenario(
+        `modeled-${draftCount}-structured-count`,
+        draftCount,
+      );
+      const report = await runCoworkOutcomeScenario(scenario);
+
+      expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+      expect(report.persisted.artifacts).toHaveLength(draftCount);
+      expect(
+        report.persisted.artifacts.map(
+          (artifact) => artifact.meta?.source_post_id,
+        ),
+      ).toEqual(
+        MODELED_FIVE_SOURCE_ROWS.slice(0, draftCount).map(
+          (source) => source.id,
+        ),
+      );
+      const userMarker = report.persisted.messages
+        .find((message) => message.role === "user")
+        ?.tool_calls?.find(
+          (call) => call.function.name === "_generation_config_selected",
+        );
+      expect(JSON.parse(userMarker?.function.arguments ?? "{}")).toEqual({
+        version: 1,
+        draftCount,
+        draftCountSource: "ui",
+      });
+    },
+  );
+
+  test("a fresh server-selected modeled batch cannot activate a historical attached source", async () => {
+    const scenario = modeledThreeScenario(
+      "modeled-three-does-not-inherit-historical-source",
+    );
+    scenario.seed = {
+      historicalBookmarkModelSource: {
+        id: "00000000-0000-4000-8000-000000000404",
+        sourcePostId: "historical-source-post",
+        postText:
+          "HISTORICAL_SOURCE_SENTINEL. This source belongs only to an earlier turn.",
+        postUrl: "https://linkedin.com/posts/historical-source-post",
+      },
+    };
+
+    const report = await runCoworkOutcomeScenario(scenario);
+
+    expect(
+      report.pass,
+      JSON.stringify({ failures: report.failureCodes, safe: report.safe }),
+    ).toBe(true);
+    expect(
+      report.persisted.artifacts.map(
+        (artifact) => artifact.meta?.source_post_id,
+      ),
+    ).toEqual(MODELED_SOURCE_ROWS.map((source) => source.id));
+    expect(
+      report.persisted.artifacts.some(
+        (artifact) =>
+          artifact.meta?.source_post_id === "historical-source-post",
+      ),
+    ).toBe(false);
+    expect(report.observed.savedPostReads).toBe(0);
+  });
+
+  test("a URL-less modeled source fails closed before durable acquisition or writing", async () => {
+    const scenario = modeledThreeScenario("modeled-three-url-less-source");
+    scenario.model.readOnlyOrchestrator!.allowNoModel = true;
+    scenario.model.readOnlyOrchestrator!.toolResults = {
+      search_viral_posts: [
+        {
+          ok: true,
+          count: 3,
+          posts: [
+            MODELED_SOURCE_ROWS[0],
+            {
+              id: MODELED_SOURCE_ROWS[1].id,
+              text: MODELED_SOURCE_ROWS[1].text,
+            },
+            MODELED_SOURCE_ROWS[2],
+          ],
+        },
+      ],
+    };
+    scenario.expected = {
+      terminal: "done",
+      artifactBodies: [],
+      actionNames: ["search_viral_posts", "write_grounded_post"],
+    };
+
+    const report = await runCoworkOutcomeScenario(scenario);
+
+    expect(
+      report.pass,
+      JSON.stringify({ failures: report.failureCodes, safe: report.safe }),
+    ).toBe(true);
+    expect(report.persisted.artifacts).toEqual([]);
+    expect(report.observed.directWriterRequests).toEqual([]);
+    expect(report.observed.modeledBatchOperationKeys).toEqual([]);
+    expect(report.frames).toContainEqual({
+      event: "error",
+      data: expect.objectContaining({
+        code: "orchestrator_evidence_insufficient",
+        recovery: "continue",
+      }),
+    });
+    const recoverable = report.persisted.messages
+      .find((message) => message.role === "assistant")
+      ?.tool_calls?.find((call) => call.function.name === "_recoverable");
+    expect(recoverable).toBeDefined();
+    expect(JSON.parse(recoverable?.function.arguments ?? "{}")).toMatchObject({
+      code: "orchestrator_evidence_insufficient",
+      retryRootUserMessageId: "00000000-0000-4000-8000-000000000002",
+    });
+  });
+
+  test("routes an output-count-only modeled request through the same exact batch", async () => {
+    const scenario = modeledThreeScenario("modeled-three-output-count-only");
+    scenario.request.message =
+      "Find top-performing regular posts in my swipe file and write 3 original posts modeled after them.";
+
+    const report = await runCoworkOutcomeScenario(scenario);
+
+    expect(
+      report.pass,
+      JSON.stringify({ failures: report.failureCodes, safe: report.safe }),
+    ).toBe(true);
+    expect(report.persisted.artifacts).toHaveLength(3);
+    expect(
+      report.persisted.artifacts.map(
+        (artifact) => artifact.meta?.source_post_id,
+      ),
+    ).toEqual(MODELED_SOURCE_ROWS.map((source) => source.id));
+  });
+
+  test("pins a modeled Retry to its durable lane when rollout is later disabled", async () => {
+    const scenario = modeledThreeScenario("modeled-three-retry-rollout-off");
+    Object.assign(scenario.model.readOnlyOrchestrator!, {
+      retryModeledBatch: true,
+      rolloutDisabled: true,
+      frozenModeledSources: MODELED_SOURCE_ROWS.map((source) => ({
+        id: source.id,
+        text: source.text,
+        url: source.post_url,
+      })),
+    });
+
+    const report = await runCoworkOutcomeScenario(scenario);
+
+    expect(
+      report.pass,
+      JSON.stringify({ failures: report.failureCodes, safe: report.safe }),
+    ).toBe(true);
+    expect(report.observed.readOnlyTools).toEqual([]);
+    expect(report.persisted.artifacts).toHaveLength(3);
+    expect(
+      report.persisted.artifacts.map(
+        (artifact) => artifact.meta?.source_post_id,
+      ),
+    ).toEqual(MODELED_SOURCE_ROWS.map((source) => source.id));
+  });
+
+  test("fails a modeled Retry closed when its writing context is unavailable", async () => {
+    const scenario = modeledThreeScenario("modeled-three-retry-no-voice");
+    Object.assign(scenario.model.readOnlyOrchestrator!, {
+      retryModeledBatch: true,
+      rolloutDisabled: true,
+      voiceUnavailable: true,
+      frozenModeledSources: MODELED_SOURCE_ROWS.map((source) => ({
+        id: source.id,
+        text: source.text,
+        url: source.post_url,
+      })),
+    });
+    scenario.expected = {
+      terminal: "failure",
+      httpStatus: 503,
+      artifactBodies: [],
+      actionNames: [],
+      assistantContents: [
+        "⚠️ I couldn’t load the writing context required to resume this modeled set safely. Retry will continue the same saved batch.",
+      ],
+    };
+
+    const report = await runCoworkOutcomeScenario(scenario);
+
+    expect(
+      report.pass,
+      JSON.stringify({ failures: report.failureCodes, safe: report.safe }),
+    ).toBe(true);
+    expect(report.observed.directWriterRequests).toEqual([]);
+    expect(report.observed.readOnlyTools).toEqual([]);
+    const marker = report.persisted.messages
+      .find((message) => message.role === "assistant")
+      ?.tool_calls?.find((call) => call.function.name === "_recoverable");
+    expect(JSON.parse(marker?.function.arguments ?? "{}")).toMatchObject({
+      retryRootUserMessageId: "00000000-0000-4000-8000-000000000711",
+      continuation: {
+        kind: "modeled_draft_batch",
+        version: 1,
+        route: { expectedDrafts: 3 },
+      },
+    });
+  });
+
+  test("a pre-batch evidence failure retries discovery instead of claiming a nonexistent frozen pool", async () => {
+    const failed = modeledThreeScenario("modeled-three-evidence-failed");
+    failed.model.readOnlyOrchestrator!.allowNoModel = true;
+    failed.model.readOnlyOrchestrator!.toolResults = {
+      search_viral_posts: [{ ok: true, count: 0, posts: [] }],
+    };
+    failed.expected = {
+      terminal: "done",
+      artifactBodies: [],
+      actionNames: ["search_viral_posts"],
+    };
+    const recovered = modeledThreeScenario("modeled-three-evidence-retry");
+    recovered.retryLatestUser = true;
+
+    const sequence = await runCoworkOutcomeSequence([failed, recovered]);
+
+    expect(
+      sequence.pass,
+      JSON.stringify(
+        sequence.attempts.map((attempt) => ({
+          failures: attempt.failureCodes,
+          safe: attempt.safe,
+        })),
+      ),
+    ).toBe(true);
+    const firstMarker = sequence.attempts[0]?.persisted.messages
+      .find((message) => message.role === "assistant")
+      ?.tool_calls?.find((call) => call.function.name === "_recoverable");
+    expect(firstMarker).toBeDefined();
+    expect(JSON.parse(firstMarker?.function.arguments ?? "{}")).toMatchObject({
+      code: "orchestrator_evidence_unavailable",
+      retryRootUserMessageId: "00000000-0000-4000-8000-000000000002",
+    });
+    expect(
+      JSON.parse(firstMarker?.function.arguments ?? "{}"),
+    ).not.toHaveProperty("continuation");
+    expect(sequence.attempts[1]?.observed.readOnlyTools).toHaveLength(1);
+    expect(sequence.attempts[1]?.persisted.artifacts).toHaveLength(3);
+  });
+
+  test("Retry restores the frozen structured draft count after the UI returns to Auto", async () => {
+    const failed = modeledStructuredCountScenario(
+      "modeled-four-structured-evidence-failed",
+      4,
+    );
+    failed.model.readOnlyOrchestrator!.allowNoModel = true;
+    failed.model.readOnlyOrchestrator!.toolResults = {
+      search_viral_posts: [{ ok: true, count: 0, posts: [] }],
+    };
+    failed.expected = {
+      terminal: "done",
+      artifactBodies: [],
+      actionNames: ["search_viral_posts"],
+    };
+
+    const recovered = modeledStructuredCountScenario(
+      "modeled-four-structured-evidence-retry",
+      4,
+    );
+    recovered.retryLatestUser = true;
+    delete recovered.request.generationConfig;
+
+    const sequence = await runCoworkOutcomeSequence([failed, recovered]);
+
+    expect(sequence.pass).toBe(true);
+    expect(sequence.attempts[1]?.persisted.artifacts).toHaveLength(4);
+    const retryMarker = sequence.attempts[1]?.persisted.messages
+      .filter((message) => message.role === "user")
+      .at(-1)
+      ?.tool_calls?.find(
+        (call) => call.function.name === "_generation_config_selected",
+      );
+    expect(JSON.parse(retryMarker?.function.arguments ?? "{}")).toEqual({
+      version: 1,
+      draftCount: 4,
+      draftCountSource: "ui",
+    });
+  });
+
+  test("a pre-batch Retry restores the server-validated creator style after the UI clears it", async () => {
+    const failed = modeledThreeScenario("modeled-three-style-evidence-failed");
+    failed.request.creatorStyleId = CREATOR_STYLE.id;
+    failed.seed = { creatorStyle: CREATOR_STYLE };
+    failed.model.readOnlyOrchestrator!.allowNoModel = true;
+    failed.model.readOnlyOrchestrator!.toolResults = {
+      search_viral_posts: [{ ok: true, count: 0, posts: [] }],
+    };
+    failed.expected = {
+      terminal: "done",
+      artifactBodies: [],
+      actionNames: ["search_viral_posts"],
+    };
+
+    const recovered = modeledThreeScenario("modeled-three-style-evidence-retry");
+    recovered.retryLatestUser = true;
+
+    const sequence = await runCoworkOutcomeSequence([failed, recovered]);
+
+    expect(
+      sequence.pass,
+      JSON.stringify(
+        sequence.attempts.map((attempt) => ({
+          failures: attempt.failureCodes,
+          safe: attempt.safe,
+        })),
+      ),
+    ).toBe(true);
+    expect(recovered.request.creatorStyleId).toBeUndefined();
+    const firstStyleMarker = sequence.attempts[0]?.persisted.messages
+      .find((message) => message.role === "user")
+      ?.tool_calls?.find(
+        (call) => call.function.name === "_creator_style_selected",
+      );
+    expect(JSON.parse(firstStyleMarker?.function.arguments ?? "{}")).toMatchObject({
+      id: CREATOR_STYLE.id,
+    });
+    const retriedStyleMarker = sequence.attempts[1]?.persisted.messages
+      .find((message) => message.role === "user")
+      ?.tool_calls?.find(
+        (call) => call.function.name === "_creator_style_selected",
+      );
+    expect(JSON.parse(retriedStyleMarker?.function.arguments ?? "{}")).toMatchObject({
+      id: CREATOR_STYLE.id,
+    });
+    expect(sequence.attempts[1]?.observed.directWriterRequests).toHaveLength(3);
+    for (const request of
+      sequence.attempts[1]?.observed.directWriterRequests ?? []) {
+      expect(JSON.stringify(request.messages)).toContain(
+        "CREATOR_STYLE_RETRY_SENTINEL",
+      );
+    }
+  });
+
+  test("repeated busy retries keep one batch identity and eventually resume its frozen sources", async () => {
+    const first = modeledThreeScenario("modeled-three-busy-first");
+    first.model.readOnlyOrchestrator!.modeledBatchOutcome = "busy";
+    first.expected = {
+      terminal: "failure",
+      artifactBodies: [],
+      actionNames: ["search_viral_posts", "write_grounded_post"],
+    };
+
+    const second = modeledThreeScenario("modeled-three-busy-second");
+    Object.assign(second.model.readOnlyOrchestrator!, {
+      modeledBatchOutcome: "busy",
+      rolloutDisabled: true,
+    });
+    second.retryLatestUser = true;
+    second.expected = {
+      terminal: "failure",
+      artifactBodies: [],
+      actionNames: ["search_viral_posts", "write_grounded_post"],
+    };
+
+    const completed = modeledThreeScenario("modeled-three-busy-completed");
+    Object.assign(completed.model.readOnlyOrchestrator!, {
+      rolloutDisabled: true,
+      frozenModeledSources: MODELED_SOURCE_ROWS.map((source) => ({
+        id: source.id,
+        text: source.text,
+        url: source.post_url,
+      })),
+    });
+    completed.retryLatestUser = true;
+
+    const sequence = await runCoworkOutcomeSequence([
+      first,
+      second,
+      completed,
+    ]);
+
+    expect(
+      sequence.pass,
+      JSON.stringify(
+        sequence.attempts.map((attempt) => ({
+          failures: attempt.failureCodes,
+          safe: attempt.safe,
+        })),
+      ),
+    ).toBe(true);
+    const operationKeys = sequence.attempts.flatMap(
+      (attempt) => attempt.observed.modeledBatchOperationKeys,
+    );
+    expect(operationKeys).toHaveLength(3);
+    expect(new Set(operationKeys).size).toBe(1);
+    expect(sequence.attempts[1]?.observed.readOnlyTools).toEqual([]);
+    expect(sequence.attempts[2]?.observed.readOnlyTools).toEqual([]);
+    expect(sequence.attempts[2]?.persisted.artifacts).toHaveLength(3);
+  });
+
+  test("a post-checkpoint Retry preserves creator style and resumes the frozen modeled batch", async () => {
+    const checkpointed = modeledThreeScenario("modeled-three-style-busy");
+    checkpointed.request.creatorStyleId = CREATOR_STYLE.id;
+    checkpointed.seed = { creatorStyle: CREATOR_STYLE };
+    checkpointed.model.readOnlyOrchestrator!.modeledBatchOutcome = "busy";
+    checkpointed.expected = {
+      terminal: "failure",
+      artifactBodies: [],
+      actionNames: ["search_viral_posts", "write_grounded_post"],
+    };
+
+    const resumed = modeledThreeScenario("modeled-three-style-resumed");
+    Object.assign(resumed.model.readOnlyOrchestrator!, {
+      rolloutDisabled: true,
+      frozenModeledSources: MODELED_SOURCE_ROWS.map((source) => ({
+        id: source.id,
+        text: source.text,
+        url: source.post_url,
+      })),
+    });
+    resumed.seed = {
+      creatorStyle: {
+        ...CREATOR_STYLE,
+        promptBlock:
+          "MUTATED_CREATOR_STYLE_SENTINEL: this regenerated profile must not alter a checkpointed Retry.",
+      },
+    };
+    resumed.retryLatestUser = true;
+
+    const sequence = await runCoworkOutcomeSequence([checkpointed, resumed]);
+
+    expect(
+      sequence.pass,
+      JSON.stringify(
+        sequence.attempts.map((attempt) => ({
+          failures: attempt.failureCodes,
+          safe: attempt.safe,
+        })),
+      ),
+    ).toBe(true);
+    expect(resumed.request.creatorStyleId).toBeUndefined();
+    expect(sequence.attempts[1]?.observed.readOnlyTools).toEqual([]);
+    expect(sequence.attempts[1]?.observed.directWriterRequests).toHaveLength(3);
+    for (const request of
+      sequence.attempts[1]?.observed.directWriterRequests ?? []) {
+      const messages = JSON.stringify(request.messages);
+      expect(messages).toContain(
+        "CREATOR_STYLE_RETRY_SENTINEL",
+      );
+      expect(messages).not.toContain("MUTATED_CREATOR_STYLE_SENTINEL");
+    }
+  });
+
+  test("a modeled Retry restores frozen custom-skill bodies after the UI and database change", async () => {
+    const checkpointed = modeledThreeScenario("modeled-three-skill-busy");
+    checkpointed.request.skillIds = [CUSTOM_SKILL.id];
+    checkpointed.seed = { customSkill: CUSTOM_SKILL };
+    checkpointed.model.readOnlyOrchestrator!.modeledBatchOutcome = "busy";
+    checkpointed.expected = {
+      terminal: "failure",
+      artifactBodies: [],
+      actionNames: ["search_viral_posts", "write_grounded_post"],
+    };
+
+    const resumed = modeledThreeScenario("modeled-three-skill-resumed");
+    Object.assign(resumed.model.readOnlyOrchestrator!, {
+      rolloutDisabled: true,
+      frozenModeledSources: MODELED_SOURCE_ROWS.map((source) => ({
+        id: source.id,
+        text: source.text,
+        url: source.post_url,
+      })),
+    });
+    resumed.seed = {
+      customSkill: {
+        ...CUSTOM_SKILL,
+        body: "MUTATED_CUSTOM_SKILL_SENTINEL: this must not enter a resumed batch.",
+      },
+    };
+    resumed.retryLatestUser = true;
+
+    const sequence = await runCoworkOutcomeSequence([checkpointed, resumed]);
+
+    expect(
+      sequence.pass,
+      JSON.stringify(
+        sequence.attempts.map((attempt) => ({
+          failures: attempt.failureCodes,
+          safe: attempt.safe,
+        })),
+      ),
+    ).toBe(true);
+    expect(resumed.request.skillIds).toBeUndefined();
+    expect(sequence.attempts[1]?.observed.readOnlyTools).toEqual([]);
+    expect(sequence.attempts[1]?.observed.directWriterRequests).toHaveLength(3);
+    for (const request of
+      sequence.attempts[1]?.observed.directWriterRequests ?? []) {
+      const messages = JSON.stringify(request.messages);
+      expect(messages).toContain("CUSTOM_SKILL_RETRY_SENTINEL");
+      expect(messages).not.toContain("MUTATED_CUSTOM_SKILL_SENTINEL");
+    }
+  });
+
+  test("an initial modeled request never falls into the legacy writer when voice is unavailable", async () => {
+    const scenario = modeledThreeScenario("modeled-three-initial-no-voice");
+    Object.assign(scenario.model.readOnlyOrchestrator!, {
+      rolloutDisabled: true,
+      voiceUnavailable: true,
+    });
+    scenario.expected = {
+      terminal: "failure",
+      httpStatus: 503,
+      artifactBodies: [],
+      actionNames: [],
+      assistantContents: [
+        "⚠️ I couldn’t load the writing context required to start this modeled set safely. Retry will try the request again without creating a partial set.",
+      ],
+    };
+
+    const report = await runCoworkOutcomeScenario(scenario);
+
+    expect(
+      report.pass,
+      JSON.stringify({ failures: report.failureCodes, safe: report.safe }),
+    ).toBe(true);
+    expect(report.observed.agentProviderRounds).toBe(0);
+    expect(report.observed.directWriterRequests).toEqual([]);
+    expect(report.observed.readOnlyTools).toEqual([]);
+  });
+
+  test.each(["root", "continuation", "root_only"] as const)(
+    "fails a Retry closed when its modeled %s marker is malformed",
+    async (malformedModeledRetry) => {
+      const scenario = modeledThreeScenario(
+        `modeled-three-malformed-${malformedModeledRetry}`,
+      );
+      Object.assign(scenario.model.readOnlyOrchestrator!, {
+        malformedModeledRetry,
+      });
+      scenario.expected = {
+        terminal: "failure",
+        httpStatus: 409,
+        artifactBodies: [],
+        actionNames: [],
+      };
+
+      const report = await runCoworkOutcomeScenario(scenario);
+
+      expect(
+        report.pass,
+        JSON.stringify({ failures: report.failureCodes, safe: report.safe }),
+      ).toBe(true);
+      expect(report.observed.agentProviderRounds).toBe(0);
+      expect(report.observed.directWriterRequests).toEqual([]);
+      expect(report.observed.readOnlyTools).toEqual([]);
+    },
+  );
 
   test("inspects attached evidence before invoking the grounded writer", async () => {
     const report = await runCoworkOutcomeScenario({
@@ -2272,6 +3200,60 @@ describe("production-shaped Cowork outcome harness", () => {
     expect(
       report.observed.directWriterRequests.map((request) => request.stage),
     ).toEqual(["primary", "primary", "repair"]);
+  });
+
+  test.each([1, 2] as const)(
+    "uses the structured draft control for an original %i-post request",
+    async (draftCount) => {
+    const bodies = [COMPLETE_POST, SECOND_POST].slice(0, draftCount);
+    const report = await runCoworkOutcomeScenario({
+      id: `direct-posts-structured-count-${draftCount}`,
+      request: {
+        message:
+          "Write original LinkedIn posts about why a personal brand is career leverage. Do not search.",
+        generationConfig: { version: 1, draftCount },
+      },
+      model: {
+        provider: { rounds: [] },
+        directWriter: bodies.map((text, index) => ({
+          text,
+          finishReason: "stop" as const,
+          usage: usage(200 + index * 30, 90 + index * 10, 0.00018 + index * 0.00004),
+        })),
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: bodies,
+        actionNames: [],
+      },
+    });
+
+    expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+    expect(report.observed.agentProviderRounds).toBe(0);
+    expect(report.observed.directWriterRequests).toHaveLength(draftCount);
+    },
+  );
+
+  test("rejects a selector/message count conflict before model usage", async () => {
+    const report = await runCoworkOutcomeScenario({
+      id: "draft-count-conflict",
+      request: {
+        message: "Write 2 original LinkedIn posts about content systems.",
+        generationConfig: { version: 1, draftCount: 4 },
+      },
+      model: { provider: { rounds: [] } },
+      expected: {
+        terminal: "failure",
+        httpStatus: 400,
+        artifactBodies: [],
+        actionNames: [],
+      },
+    });
+
+    expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+    expect(report.persisted.usage).toEqual([]);
+    expect(report.observed.directWriterRequests).toEqual([]);
+    expect(report.observed.agentProviderRounds).toBe(0);
   });
 
   test("the production variations action persists exactly three distinct source-tagged drafts", async () => {

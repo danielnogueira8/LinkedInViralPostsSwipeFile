@@ -47,21 +47,28 @@ import {
   type MutationAction,
 } from "@/lib/agent/action-orchestrator";
 import { compileActionOrchestratorRoute } from "@/lib/agent/action-orchestrator-routing";
+import { compileReadOnlyOrchestratorRoute } from "@/lib/agent/read-only-orchestrator-routing";
+import { continuationForModeledDraftRoute } from "@/lib/agent/modeled-draft-continuation";
 import { runTool as runAgentTool } from "@/lib/agent/tools";
 import { AdapterHealthRegistry } from "@/lib/agent/adapter-health";
 import {
   executeModeledDraftBatch,
   type AcquiredModeledDraftBatch,
   type ModeledDraftBatchRepository,
+  type ModeledDraftBatchSource,
   type ModeledDraftSlotCheckpoint,
+  type ModeledPostArtifact,
 } from "@/lib/agent/modeled-draft-batch";
 import { runModeledDraftSlot } from "@/lib/agent/modeled-draft-slot-runner";
 
 export type CoworkOutcomeScenario = {
   id: string;
   request: ChatTurnRequest;
+  retryLatestUser?: boolean;
   model: {
     provider: ScriptedProviderScenario;
+    creatorStyleMarkerPersistenceFails?: boolean;
+    creatorStyleMarkerTargetMissing?: boolean;
     sourceFidelity?: SourceFidelityVerdict[];
     directWriter?: Array<
       | DraftWriterResponse
@@ -80,6 +87,13 @@ export type CoworkOutcomeScenario = {
         >
       >;
       attachmentSources?: DraftEngineGroundedSource[];
+      retryModeledBatch?: boolean;
+      malformedModeledRetry?: "root" | "continuation" | "root_only";
+      rolloutDisabled?: boolean;
+      voiceUnavailable?: boolean;
+      frozenModeledSources?: ModeledDraftBatchSource[];
+      allowNoModel?: boolean;
+      modeledBatchOutcome?: "busy";
     };
     actionOrchestrator?: {
       plans: Array<{
@@ -98,8 +112,26 @@ export type CoworkOutcomeScenario = {
     };
   };
   seed?: {
+    customSkill?: {
+      id: string;
+      name: string;
+      body: string;
+    };
+    creatorStyle?: {
+      id: string;
+      name: string;
+      creatorName: string;
+      promptBlock: string;
+      status?: "ready" | "pending" | "failed";
+    };
     messageArtifact?: Artifact;
     bookmarkModelSource?: {
+      id: string;
+      sourcePostId: string;
+      postText: string;
+      postUrl: string;
+    };
+    historicalBookmarkModelSource?: {
       id: string;
       sourcePostId: string;
       postText: string;
@@ -132,6 +164,7 @@ export type CoworkOutcomeScenario = {
     httpStatus?: number;
     assistantContents?: string[];
     sourcePostIds?: string[];
+    sourceReferences?: Array<{ id: string; url: string }>;
   };
 };
 
@@ -188,8 +221,10 @@ export type CoworkOutcomeReport = {
     actions: CoworkObservedAction[];
     agentProviderRounds: number;
     directWriterRequests: DraftWriterRequest[];
+    savedPostReads: number;
     readOnlyPlannerRequests: ReadOnlyPlannerRequest[];
     readOnlyTools: Array<{ name: string; args: Record<string, unknown> }>;
+    modeledBatchOperationKeys: string[];
     actionPlannerRequests: ActionPlannerRequest[];
     actionTools: Array<{ name: string; args: Record<string, unknown> }>;
   };
@@ -357,6 +392,25 @@ class HarnessModeledDraftBatchRepository
   implements ModeledDraftBatchRepository
 {
   private checkpoint: AcquiredModeledDraftBatch | null = null;
+  private leased = false;
+  private completedArtifacts: readonly ModeledPostArtifact[] | null = null;
+  private busyOnNextAcquire = false;
+
+  constructor(
+    private frozenSources: readonly ModeledDraftBatchSource[] = [],
+  ) {}
+
+  setFrozenSources(sources: readonly ModeledDraftBatchSource[] = []): void {
+    if (!this.checkpoint && sources.length > 0) this.frozenSources = sources;
+  }
+
+  prepareBusyAcquire(): void {
+    this.busyOnNextAcquire = true;
+  }
+
+  expireLease(): void {
+    this.leased = false;
+  }
 
   async acquire(
     input: Parameters<ModeledDraftBatchRepository["acquire"]>[0],
@@ -368,7 +422,25 @@ class HarnessModeledDraftBatchRepository
       ) {
         return { kind: "conflict" };
       }
+      if (this.completedArtifacts) {
+        return {
+          kind: "complete",
+          batchId: this.checkpoint.batchId,
+          artifacts: this.completedArtifacts,
+        };
+      }
+      if (this.leased || this.busyOnNextAcquire) {
+        this.busyOnNextAcquire = false;
+        this.leased = true;
+        return { kind: "busy", batchId: this.checkpoint.batchId };
+      }
+      this.leased = true;
       return { kind: "acquired", checkpoint: this.checkpoint };
+    }
+    const sourcePool =
+      input.sources.length > 0 ? input.sources : this.frozenSources;
+    if (sourcePool.length < input.requestedCount) {
+      return { kind: "insufficient_sources" };
     }
     const batchId = "00000000-0000-4000-8000-000000000701";
     this.checkpoint = {
@@ -376,7 +448,7 @@ class HarnessModeledDraftBatchRepository
       leaseToken: "00000000-0000-4000-8000-000000000702",
       requestHash: input.requestHash,
       requestedCount: input.requestedCount,
-      sources: [...input.sources],
+      sources: [...sourcePool],
       slots: Array.from({ length: input.requestedCount }, (_, index) => ({
         index,
         state: "assigned" as const,
@@ -385,6 +457,11 @@ class HarnessModeledDraftBatchRepository
         replacements: 0,
       })),
     };
+    this.leased = true;
+    if (this.busyOnNextAcquire) {
+      this.busyOnNextAcquire = false;
+      return { kind: "busy", batchId };
+    }
     return { kind: "acquired", checkpoint: this.checkpoint };
   }
 
@@ -400,7 +477,7 @@ class HarnessModeledDraftBatchRepository
       checkpoint.batchId !== input.batchId ||
       checkpoint.leaseToken !== input.leaseToken ||
       !slot ||
-      slot.state !== input.expectedState ||
+      slot.state !== "assigned" ||
       slot.sourceIndex !== input.sourceIndex
     ) {
       return false;
@@ -459,12 +536,24 @@ class HarnessModeledDraftBatchRepository
       .flatMap((slot) =>
         slot.state === "accepted" && slot.artifact ? [slot.artifact] : [],
       );
-    return artifacts.length === checkpoint.requestedCount
-      ? { kind: "complete", artifacts }
-      : { kind: "incomplete" };
+    if (artifacts.length !== checkpoint.requestedCount) {
+      return { kind: "incomplete" };
+    }
+    this.completedArtifacts = artifacts;
+    this.leased = false;
+    return { kind: "complete", artifacts };
   }
 
-  async release(): Promise<void> {}
+  async release(
+    input: Parameters<ModeledDraftBatchRepository["release"]>[0],
+  ): Promise<void> {
+    if (
+      this.checkpoint?.batchId === input.batchId &&
+      this.checkpoint.leaseToken === input.leaseToken
+    ) {
+      this.leased = false;
+    }
+  }
 
   private updateSlot(
     slotIndex: number,
@@ -483,11 +572,27 @@ class HarnessModeledDraftBatchRepository
 async function runCoworkOutcomeScenarioWithStore(
   store: CoworkHarnessStore,
   scenario: CoworkOutcomeScenario,
+  sharedModeledBatchRepository?: HarnessModeledDraftBatchRepository,
 ): Promise<CoworkOutcomeReport> {
   let terminalPromise: Promise<{ terminal: ChatTurnTerminal }> | null = null;
   const requestController = new AbortController();
+  store.failCreatorStyleMarkerUpdate =
+    scenario.model.creatorStyleMarkerPersistenceFails === true;
+  store.missCreatorStyleMarkerUpdateTarget =
+    scenario.model.creatorStyleMarkerTargetMissing === true;
   if (scenario.seed?.bookmarkModelSource) {
     store.seedBookmarkModelSource(scenario.seed.bookmarkModelSource);
+  }
+  if (scenario.seed?.historicalBookmarkModelSource) {
+    store.seedHistoricalBookmarkModelSource(
+      scenario.seed.historicalBookmarkModelSource,
+    );
+  }
+  if (scenario.seed?.customSkill) {
+    store.seedCustomSkill(scenario.seed.customSkill);
+  }
+  if (scenario.seed?.creatorStyle) {
+    store.seedCreatorStyleProfile(scenario.seed.creatorStyle);
   }
   if (scenario.seed?.draft) {
     store.seedDraft(scenario.seed.draft);
@@ -499,6 +604,18 @@ async function runCoworkOutcomeScenarioWithStore(
     store.seedMessageArtifact(scenario.seed.messageArtifact);
   }
   let requestBody = { ...scenario.request };
+  if (scenario.retryLatestUser) {
+    const latestUser = [...store.messages()]
+      .reverse()
+      .find((message) => message.role === "user");
+    if (!latestUser) {
+      throw new Error("Retry fixture requires a prior user message.");
+    }
+    requestBody = {
+      ...requestBody,
+      retryOfUserMessageId: latestUser.id,
+    };
+  }
   let retryRootId: string | null = null;
   const firstPlan = scenario.model.actionOrchestrator?.plans.find(
     (plan) => plan.toolArgs,
@@ -574,12 +691,40 @@ async function runCoworkOutcomeScenarioWithStore(
       };
     }
   }
+  if (
+    scenario.model.readOnlyOrchestrator?.retryModeledBatch ||
+    scenario.model.readOnlyOrchestrator?.malformedModeledRetry
+  ) {
+    const route = compileReadOnlyOrchestratorRoute({
+      userInstruction: scenario.request.message,
+      isRefine: false,
+      hasModelSource: false,
+      hasAttachments: false,
+      hasLeadMagnet: false,
+      hasCreatorStyle: false,
+    });
+    const continuation = continuationForModeledDraftRoute(route);
+    if (!continuation) {
+      throw new Error("Modeled Retry fixture requires a one-to-one batch route.");
+    }
+    retryRootId = store.seedRetryableModeledTurn(
+      scenario.request.message,
+      continuation,
+      scenario.model.readOnlyOrchestrator.malformedModeledRetry,
+    );
+    requestBody = { ...requestBody, retryOfUserMessageId: retryRootId };
+  }
   const messageOffset = store.messages().length;
   const usageOffset = store.usages().length;
   const directWriter = scenario.model.directWriter
     ? new HarnessDraftWriter([...scenario.model.directWriter], store)
     : null;
-  if (directWriter) store.seedVoiceProfile();
+  if (
+    directWriter &&
+    !scenario.model.readOnlyOrchestrator?.voiceUnavailable
+  ) {
+    store.seedVoiceProfile();
+  }
   const readOnlyPlannerAdapters = (
     scenario.model.readOnlyOrchestrator?.plans ?? []
   ).map(
@@ -593,6 +738,7 @@ async function runCoworkOutcomeScenarioWithStore(
     name: string;
     args: Record<string, unknown>;
   }> = [];
+  const modeledBatchOperationKeys: string[] = [];
   const readOnlyToolResults = Object.fromEntries(
     Object.entries(
       scenario.model.readOnlyOrchestrator?.toolResults ?? {},
@@ -630,7 +776,14 @@ async function runCoworkOutcomeScenarioWithStore(
   );
   const sourceFidelity = [...(scenario.model.sourceFidelity ?? [])];
   const draftAdapterHealth = new AdapterHealthRegistry();
-  const modeledBatchRepository = new HarnessModeledDraftBatchRepository();
+  const modeledBatchRepository =
+    sharedModeledBatchRepository ??
+    new HarnessModeledDraftBatchRepository(
+      scenario.model.readOnlyOrchestrator?.frozenModeledSources,
+    );
+  modeledBatchRepository.setFrozenSources(
+    scenario.model.readOnlyOrchestrator?.frozenModeledSources,
+  );
   const harnessRunDraftEngine: ChatTurnDependencies["runDraftEngine"] =
     directWriter
       ? (input) =>
@@ -691,7 +844,8 @@ async function runCoworkOutcomeScenarioWithStore(
         }),
     ...(scenario.model.readOnlyOrchestrator
       ? {
-          readOnlyOrchestratorEnabledForWorkspace: () => true,
+          readOnlyOrchestratorEnabledForWorkspace: () =>
+            !scenario.model.readOnlyOrchestrator?.rolloutDisabled,
           runReadOnlyOrchestrator: (input, runtimeDependencies) =>
             runReadOnlyOrchestrator(input, {
               adapters: readOnlyPlannerAdapters,
@@ -706,16 +860,26 @@ async function runCoworkOutcomeScenarioWithStore(
                 );
               },
               runDraftEngine: harnessRunDraftEngine,
-              executeModeledDraftBatch: (input) =>
-                executeModeledDraftBatch(input, {
+              executeModeledDraftBatch: async (input) => {
+                modeledBatchOperationKeys.push(input.operationKey);
+                if (
+                  scenario.model.readOnlyOrchestrator?.modeledBatchOutcome ===
+                  "busy"
+                ) {
+                  modeledBatchRepository.prepareBusyAcquire();
+                } else {
+                  modeledBatchRepository.expireLease();
+                }
+                return executeModeledDraftBatch(input, {
                   repository: modeledBatchRepository,
                   runSlot: (slotInput) =>
                     runModeledDraftSlot(slotInput, {
                       runDraftEngine: (engineInput) =>
                         harnessRunDraftEngine(engineInput),
                     }),
-                  now: Date.now,
-                }),
+                  now: () => new Date("2026-07-14T12:00:00.000Z").getTime(),
+                });
+              },
               inspectAttachments: async () => ({
                 sources:
                   scenario.model.readOnlyOrchestrator?.attachmentSources ?? [],
@@ -925,13 +1089,45 @@ async function runCoworkOutcomeScenarioWithStore(
       failureCodes.push("provenance");
     }
   }
+  if (scenario.expected.sourceReferences) {
+    const referencesAreCanonical = artifacts.every((artifact, index) => {
+      const expected = scenario.expected.sourceReferences?.[index];
+      if (!expected) return false;
+      const meta = artifact.meta as
+        | {
+            source_post_id?: unknown;
+            source_url?: unknown;
+            research_provenance?: unknown;
+          }
+        | undefined;
+      const provenance = meta?.research_provenance as
+        | { sources?: unknown }
+        | undefined;
+      const sources = provenance?.sources;
+      if (!Array.isArray(sources) || sources.length !== 1) return false;
+      const source = sources[0] as { id?: unknown; url?: unknown };
+      return (
+        meta?.source_post_id === expected.id &&
+        meta?.source_url === expected.url &&
+        source.id === expected.id &&
+        source.url === expected.url
+      );
+    });
+    if (
+      artifacts.length !== scenario.expected.sourceReferences.length ||
+      !referencesAreCanonical
+    ) {
+      failureCodes.push("provenance");
+    }
+  }
   failureCodes.push(
     ...duplicateOutcomeFailureCodes({ artifacts, actions }),
   );
   if (
     (terminal === "done" &&
       modelStages.length === 0 &&
-      !scenario.model.actionOrchestrator?.allowNoModel) ||
+      !scenario.model.actionOrchestrator?.allowNoModel &&
+      !scenario.model.readOnlyOrchestrator?.allowNoModel) ||
     usage.some(
       (row) =>
         row.provider !== "openrouter" ||
@@ -989,10 +1185,12 @@ async function runCoworkOutcomeScenarioWithStore(
       actions,
       agentProviderRounds: providerSession.roundCount(),
       directWriterRequests: directWriter?.requests ?? [],
+      savedPostReads: store.readCount("saved_posts"),
       readOnlyPlannerRequests: readOnlyPlannerAdapters.flatMap(
         (adapter) => adapter.requests,
       ),
       readOnlyTools,
+      modeledBatchOperationKeys,
       actionPlannerRequests: actionPlannerAdapters.flatMap(
         (adapter) => adapter.requests,
       ),
@@ -1019,9 +1217,16 @@ export async function runCoworkOutcomeSequence(
   attempts: CoworkOutcomeReport[];
 }> {
   const store = new CoworkHarnessStore();
+  const modeledBatchRepository = new HarnessModeledDraftBatchRepository();
   const attempts: CoworkOutcomeReport[] = [];
   for (const scenario of scenarios) {
-    attempts.push(await runCoworkOutcomeScenarioWithStore(store, scenario));
+    attempts.push(
+      await runCoworkOutcomeScenarioWithStore(
+        store,
+        scenario,
+        modeledBatchRepository,
+      ),
+    );
   }
   return {
     pass: attempts.every((attempt) => attempt.pass),

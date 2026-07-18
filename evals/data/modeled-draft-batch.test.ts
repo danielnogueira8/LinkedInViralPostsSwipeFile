@@ -37,7 +37,7 @@ const sources: ModeledDraftBatchSource[] = [
 
 function taggedArtifact(
   slotIndex: number,
-  source: ModeledDraftBatchSource,
+  source: ModeledDraftSlotInput["source"],
   body: string,
 ): Artifact & { kind: "post" } {
   return {
@@ -75,6 +75,10 @@ class MemoryRepository implements ModeledDraftBatchRepository {
   private slots: ModeledDraftSlotCheckpoint[] = [];
   private leased = false;
   acceptFailure: { slotIndex: number; mode: "false" | "throw" } | null = null;
+  replaceFailure: {
+    slotIndex: number;
+    mode: "false" | "throw" | "hang";
+  } | null = null;
   completeFailure: "incomplete" | "lease_lost" | "throw" | null = null;
 
   async acquire(input: Parameters<ModeledDraftBatchRepository["acquire"]>[0]) {
@@ -110,7 +114,9 @@ class MemoryRepository implements ModeledDraftBatchRepository {
         ),
       };
     }
-    if (this.leased) return { kind: "busy" as const };
+    if (this.leased) {
+      return { kind: "busy" as const, batchId: this.batchId };
+    }
     this.leased = true;
     this.status = "running";
     return { kind: "acquired" as const, checkpoint };
@@ -138,6 +144,15 @@ class MemoryRepository implements ModeledDraftBatchRepository {
   async replaceSlotSource(
     input: Parameters<ModeledDraftBatchRepository["replaceSlotSource"]>[0],
   ) {
+    if (this.replaceFailure?.slotIndex === input.slotIndex) {
+      if (this.replaceFailure.mode === "throw") {
+        throw new Error("replace failed");
+      }
+      if (this.replaceFailure.mode === "hang") {
+        return new Promise<boolean>(() => {});
+      }
+      return false;
+    }
     const slot = this.slots[input.slotIndex];
     if (!slot || slot.state === "accepted") return false;
     this.slots[input.slotIndex] = {
@@ -297,6 +312,23 @@ describe("executeModeledDraftBatch", () => {
       "an empty source body",
       { count: 2, sources: [{ ...sources[0], text: "" }, sources[1]] },
     ],
+    [
+      "a source without a resolvable chip URL",
+      {
+        count: 2,
+        sources: [
+          { ...sources[0], url: undefined },
+          sources[1],
+        ] as unknown as ModeledDraftBatchSource[],
+      },
+    ],
+    [
+      "a malformed source URL that only resembles an absolute URL",
+      {
+        count: 2,
+        sources: [{ ...sources[0], url: "https://" }, sources[1]],
+      },
+    ],
   ] as const)(
     "rejects %s before repository acquisition or writing",
     async (_name, overrides) => {
@@ -318,9 +350,8 @@ describe("executeModeledDraftBatch", () => {
     },
   );
 
-  test("reports insufficient primaries before repository acquisition or writing", async () => {
-    const repository = new MemoryRepository();
-    const acquire = vi.spyOn(repository, "acquire");
+  test("lets storage distinguish a new sparse request from a resumable frozen batch", async () => {
+    const repository = acquireOnlyRepository({ kind: "insufficient_sources" });
     const runSlot = successfulSlotRunner();
 
     const result = await executeModeledDraftBatch(
@@ -332,8 +363,47 @@ describe("executeModeledDraftBatch", () => {
       kind: "failed",
       reason: "insufficient_sources",
     });
-    expect(acquire).not.toHaveBeenCalled();
+    expect(repository.acquire).toHaveBeenCalledOnce();
     expect(runSlot).not.toHaveBeenCalled();
+  });
+
+  test("resumes the frozen pool without depending on current discovery", async () => {
+    const repository = new MemoryRepository();
+    const firstRunner = vi.fn(async (input: ModeledDraftSlotInput) =>
+      input.slot.index === 0
+        ? accepted(input, distinctBodies[0])
+        : {
+            kind: "reviewer_unavailable" as const,
+            slot: input.slot,
+            inputTokens: 10,
+            outputTokens: 5,
+          },
+    );
+    const original = batchInput({ count: 2, sources: sources.slice(0, 3) });
+
+    await expect(
+      executeModeledDraftBatch(original, {
+        repository,
+        runSlot: firstRunner,
+        now: () => 1_000,
+      }),
+    ).resolves.toMatchObject({
+      kind: "incomplete",
+      preservedSlots: 1,
+    });
+
+    const retryRunner = successfulSlotRunner();
+    const retry = await executeModeledDraftBatch(
+      { ...original, sources: [] },
+      { repository, runSlot: retryRunner, now: () => 2_000 },
+    );
+
+    expect(retry).toMatchObject({ kind: "complete", batchId: "batch-1" });
+    expect(retryRunner).toHaveBeenCalledOnce();
+    expect(retryRunner.mock.calls[0][0]).toMatchObject({
+      slot: { index: 1 },
+      source: { id: "source-2" },
+    });
   });
 
   test("replays an exact completed batch without another writer call", async () => {
@@ -388,6 +458,48 @@ describe("executeModeledDraftBatch", () => {
     expect(runSlot).not.toHaveBeenCalled();
   });
 
+  test("rejects a retry whose semantic generation context changed", async () => {
+    const repository = new MemoryRepository();
+    const firstRunner = vi.fn(async (input: ModeledDraftSlotInput) =>
+      input.slot.index === 0
+        ? accepted(input, distinctBodies[0])
+        : {
+            kind: "reviewer_unavailable" as const,
+            slot: input.slot,
+            inputTokens: 20,
+            outputTokens: 10,
+          },
+    );
+    const original = batchInput({ count: 2, sources: sources.slice(0, 2) });
+
+    expect(
+      await executeModeledDraftBatch(original, {
+        repository,
+        runSlot: firstRunner,
+        now: () => 1_000,
+      }),
+    ).toMatchObject({
+      kind: "incomplete",
+      reason: "reviewer_unavailable",
+      preservedSlots: 1,
+    });
+
+    const retryRunner = successfulSlotRunner();
+    const retry = await executeModeledDraftBatch(
+      {
+        ...original,
+        engineInput: {
+          ...original.engineInput,
+          preferences: [{ rule: "Use a newly selected first-person style." }],
+        },
+      },
+      { repository, runSlot: retryRunner, now: () => 2_000 },
+    );
+
+    expect(retry).toMatchObject({ kind: "failed", reason: "state_conflict" });
+    expect(retryRunner).not.toHaveBeenCalled();
+  });
+
   test("returns busy to a concurrent claimant without duplicating its writer work", async () => {
     const repository = new MemoryRepository();
     let markStarted!: () => void;
@@ -419,6 +531,7 @@ describe("executeModeledDraftBatch", () => {
 
     expect(concurrent).toMatchObject({
       kind: "incomplete",
+      batchId: "batch-1",
       reason: "busy",
       preservedSlots: 0,
     });
@@ -429,13 +542,230 @@ describe("executeModeledDraftBatch", () => {
     expect(runSlot).toHaveBeenCalledTimes(2);
   });
 
-  test("completes the five-slot boundary with at most two writers in flight", async () => {
+  test("does not checkpoint or publish a writer result after cancellation", async () => {
     const repository = new MemoryRepository();
+    const acceptSlot = vi.spyOn(repository, "acceptSlot");
+    const complete = vi.spyOn(repository, "complete");
+    const controller = new AbortController();
+    let started!: () => void;
+    let finish!: () => void;
+    const writerStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const writerGate = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const runSlot = vi.fn(async (input: ModeledDraftSlotInput) => {
+      started();
+      await writerGate;
+      return accepted(input, distinctBodies[input.slot.index]);
+    });
+
+    const work = executeModeledDraftBatch(
+      batchInput({
+        count: 2,
+        sources: sources.slice(0, 2),
+        signal: controller.signal,
+      }),
+      { repository, runSlot, now: () => 1_000 },
+    );
+    await writerStarted;
+    controller.abort();
+    finish();
+
+    await expect(work).resolves.toMatchObject({
+      kind: "incomplete",
+      reason: "cancelled",
+      preservedSlots: 0,
+    });
+    expect(acceptSlot).not.toHaveBeenCalled();
+    expect(complete).not.toHaveBeenCalled();
+  });
+
+  test("does not replay an already-completed batch after cancellation", async () => {
+    const controller = new AbortController();
+    const artifacts = [
+      taggedArtifact(0, sources[0], distinctBodies[0]),
+      taggedArtifact(1, sources[1], distinctBodies[1]),
+    ];
+    const repository = acquireOnlyRepository({
+      kind: "complete",
+      batchId: "batch-1",
+      artifacts,
+    });
+    vi.mocked(repository.acquire).mockImplementation(async () => {
+      controller.abort();
+      return { kind: "complete", batchId: "batch-1", artifacts };
+    });
+
+    const result = await executeModeledDraftBatch(
+      batchInput({
+        count: 2,
+        sources: sources.slice(0, 2),
+        signal: controller.signal,
+      }),
+      { repository, runSlot: successfulSlotRunner(), now: () => 1_000 },
+    );
+
+    expect(result).toMatchObject({
+      kind: "incomplete",
+      reason: "cancelled",
+      preservedSlots: 0,
+    });
+    expect(result).not.toHaveProperty("artifacts");
+  });
+
+  test("does not publish when cancellation races with atomic completion", async () => {
+    const controller = new AbortController();
+    const repository = new MemoryRepository();
+    const complete = repository.complete.bind(repository);
+    vi.spyOn(repository, "complete").mockImplementation(async () => {
+      const result = await complete();
+      controller.abort();
+      return result;
+    });
+
+    const result = await executeModeledDraftBatch(
+      batchInput({
+        count: 2,
+        sources: sources.slice(0, 2),
+        signal: controller.signal,
+      }),
+      { repository, runSlot: successfulSlotRunner(), now: () => 1_000 },
+    );
+
+    expect(result).toMatchObject({
+      kind: "incomplete",
+      reason: "cancelled",
+      preservedSlots: 2,
+    });
+    expect(result).not.toHaveProperty("artifacts");
+  });
+
+  test("bounds a non-cooperative store claim by the batch deadline", async () => {
+    const repository: ModeledDraftBatchRepository = {
+      acquire: vi.fn(() => new Promise<ModeledDraftBatchAcquireResult>(() => {})),
+      acceptSlot: vi.fn(async () => false),
+      replaceSlotSource: vi.fn(async () => false),
+      complete: vi.fn(async () => ({ kind: "incomplete" as const })),
+      release: vi.fn(async () => {}),
+    };
+
+    const result = await executeModeledDraftBatch(
+      batchInput({
+        count: 2,
+        sources: sources.slice(0, 2),
+        deadlineAtMs: 10,
+      }),
+      { repository, runSlot: successfulSlotRunner(), now: () => 0 },
+    );
+
+    expect(result).toMatchObject({
+      kind: "incomplete",
+      reason: "deadline",
+      preservedSlots: 0,
+    });
+  });
+
+  test("classifies the outer watcher abort at its absolute deadline as deadline", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    let clockReads = 0;
+    const now = () => (clockReads++ === 0 ? 0 : 100);
+    const repository = new MemoryRepository();
+    const acquire = vi.spyOn(repository, "acquire");
+
+    const result = await executeModeledDraftBatch(
+      batchInput({
+        count: 2,
+        sources: sources.slice(0, 2),
+        signal: controller.signal,
+        deadlineAtMs: 100,
+      }),
+      { repository, runSlot: successfulSlotRunner(), now },
+    );
+
+    expect(result).toMatchObject({ kind: "incomplete", reason: "deadline" });
+    expect(acquire).not.toHaveBeenCalled();
+  });
+
+  test("checkpoints a completed sibling before a non-cooperative writer times out", async () => {
+    const repository = new MemoryRepository();
+    const runSlot = vi.fn(async (input: ModeledDraftSlotInput) => {
+      if (input.slot.index === 1) {
+        return new Promise<ModeledDraftSlotOutcome>(() => {});
+      }
+      return accepted(input, distinctBodies[0]);
+    });
+
+    const result = await executeModeledDraftBatch(
+      batchInput({
+        count: 2,
+        sources: sources.slice(0, 2),
+        deadlineAtMs: 20,
+      }),
+      { repository, runSlot, now: () => 0 },
+    );
+
+    expect(result).toMatchObject({
+      kind: "incomplete",
+      reason: "deadline",
+      preservedSlots: 1,
+    });
+  });
+
+  test.each([
+    [
+      "slot checkpoint",
+      (repository: MemoryRepository) => {
+        vi.spyOn(repository, "acceptSlot").mockImplementation(
+          () => new Promise<boolean>(() => {}),
+        );
+      },
+      0,
+    ],
+    [
+      "exact completion",
+      (repository: MemoryRepository) => {
+        vi.spyOn(repository, "complete").mockImplementation(
+          () => new Promise<never>(() => {}),
+        );
+      },
+      2,
+    ],
+  ] as const)(
+    "bounds a non-cooperative %s call and preserves only durable slots",
+    async (_stage, configure, expectedPreserved) => {
+      const repository = new MemoryRepository();
+      configure(repository);
+
+      const result = await executeModeledDraftBatch(
+        batchInput({
+          count: 2,
+          sources: sources.slice(0, 2),
+          deadlineAtMs: 20,
+        }),
+        { repository, runSlot: successfulSlotRunner(), now: () => 0 },
+      );
+
+      expect(result).toMatchObject({
+        kind: "incomplete",
+        reason: "deadline",
+        preservedSlots: expectedPreserved,
+      });
+    },
+  );
+
+  test("completes out of order at the five-slot boundary while publishing deterministic order", async () => {
+    const repository = new MemoryRepository();
+    const acceptSlot = vi.spyOn(repository, "acceptSlot");
+    const complete = vi.spyOn(repository, "complete");
     const releases: Array<() => void> = [];
     const gates = Array.from({ length: 5 }, () =>
       new Promise<void>((resolve) => releases.push(resolve)),
     );
     const started: number[] = [];
+    const finished: number[] = [];
     let active = 0;
     let peak = 0;
     const runSlot = vi.fn(async (input: ModeledDraftSlotInput) => {
@@ -444,6 +774,7 @@ describe("executeModeledDraftBatch", () => {
       peak = Math.max(peak, active);
       await gates[input.slot.index];
       active -= 1;
+      finished.push(input.slot.index);
       return accepted(input, distinctBodies[input.slot.index]);
     });
 
@@ -452,18 +783,35 @@ describe("executeModeledDraftBatch", () => {
       { repository, runSlot, now: () => 1_000 },
     );
     await vi.waitFor(() => expect(started).toEqual([0, 1]));
-    releases[0]();
     releases[1]();
+    await vi.waitFor(() => expect(finished).toEqual([1]));
+    releases[0]();
     await vi.waitFor(() => expect(started).toEqual([0, 1, 2, 3]));
-    releases[2]();
     releases[3]();
+    await vi.waitFor(() => expect(finished).toEqual([1, 0, 3]));
+    releases[2]();
     await vi.waitFor(() => expect(started).toEqual([0, 1, 2, 3, 4]));
     releases[4]();
 
     const result = await work;
     expect(result.kind).toBe("complete");
-    expect(result.kind === "complete" ? result.artifacts : []).toHaveLength(5);
+    expect(finished).toEqual([1, 0, 3, 2, 4]);
+    expect(
+      result.kind === "complete"
+        ? result.artifacts.map((artifact) => ({
+            slot: artifact.meta?.modeled_draft_slot_index,
+            source: artifact.meta?.source_post_id,
+          }))
+        : [],
+    ).toEqual(
+      Array.from({ length: 5 }, (_, index) => ({
+        slot: index,
+        source: `source-${index + 1}`,
+      })),
+    );
     expect(peak).toBe(2);
+    expect(acceptSlot).toHaveBeenCalledTimes(5);
+    expect(complete).toHaveBeenCalledTimes(1);
   });
 
   test("replaces a later duplicate body without rerunning an accepted slot", async () => {
@@ -494,6 +842,71 @@ describe("executeModeledDraftBatch", () => {
       { slot: 1, source: "source-2" },
       { slot: 1, source: "source-3" },
     ]);
+  });
+
+  test.each(["false", "throw"] as const)(
+    "fails closed and preserves accepted siblings when source replacement returns %s",
+    async (mode) => {
+      const repository = new MemoryRepository();
+      repository.replaceFailure = { slotIndex: 1, mode };
+      const runSlot = vi.fn(async (input: ModeledDraftSlotInput) =>
+        input.slot.index === 0
+          ? accepted(input, distinctBodies[0])
+          : {
+              kind: "rejected" as const,
+              slot: input.slot,
+              code: "source_fidelity" as const,
+              inputTokens: 80,
+              outputTokens: 20,
+            },
+      );
+
+      const result = await executeModeledDraftBatch(
+        batchInput({ count: 2, sources: sources.slice(0, 3) }),
+        { repository, runSlot, now: () => 1_000 },
+      );
+
+      expect(result).toMatchObject({
+        kind: "incomplete",
+        reason: "store_unavailable",
+        preservedSlots: 1,
+        requestedCount: 2,
+      });
+      expect(result).not.toHaveProperty("artifacts");
+    },
+  );
+
+  test("bounds a non-cooperative source replacement by the batch deadline", async () => {
+    const repository = new MemoryRepository();
+    repository.replaceFailure = { slotIndex: 1, mode: "hang" };
+    const runSlot = vi.fn(async (input: ModeledDraftSlotInput) =>
+      input.slot.index === 0
+        ? accepted(input, distinctBodies[0])
+        : {
+            kind: "rejected" as const,
+            slot: input.slot,
+            code: "source_fidelity" as const,
+            inputTokens: 80,
+            outputTokens: 20,
+          },
+    );
+
+    const result = await executeModeledDraftBatch(
+      batchInput({
+        count: 2,
+        sources: sources.slice(0, 3),
+        deadlineAtMs: 20,
+      }),
+      { repository, runSlot, now: () => 0 },
+    );
+
+    expect(result).toMatchObject({
+      kind: "incomplete",
+      reason: "deadline",
+      preservedSlots: 1,
+      requestedCount: 2,
+    });
+    expect(result).not.toHaveProperty("artifacts");
   });
 
   test("returns typed source-pool exhaustion while preserving accepted slots privately", async () => {
@@ -671,6 +1084,36 @@ describe("executeModeledDraftBatch", () => {
     );
   });
 
+  test("retains a settled sibling when another slot loses usage persistence", async () => {
+    const repository = new MemoryRepository();
+    const firstRunner = vi.fn(async (input: ModeledDraftSlotInput) => {
+      if (input.slot.index === 0) {
+        return accepted(input, distinctBodies[0]);
+      }
+      await Promise.resolve();
+      throw new UsagePersistenceError("usage insert unavailable");
+    });
+    const input = batchInput({ count: 2, sources: sources.slice(0, 2) });
+
+    await expect(
+      executeModeledDraftBatch(input, {
+        repository,
+        runSlot: firstRunner,
+        now: () => 1_000,
+      }),
+    ).rejects.toBeInstanceOf(UsagePersistenceError);
+
+    const retryRunner = successfulSlotRunner();
+    const retry = await executeModeledDraftBatch(input, {
+      repository,
+      runSlot: retryRunner,
+      now: () => 2_000,
+    });
+    expect(retry.kind).toBe("complete");
+    expect(retryRunner).toHaveBeenCalledTimes(1);
+    expect(retryRunner.mock.calls[0][0].slot.index).toBe(1);
+  });
+
   test.each(["slot", "source"] as const)(
     "rejects freshly generated artifacts with mismatched %s provenance",
     async (field) => {
@@ -695,6 +1138,28 @@ describe("executeModeledDraftBatch", () => {
       expect(result).not.toHaveProperty("artifacts");
     },
   );
+
+  test("fails closed when completed storage replays near-duplicate drafts", async () => {
+    const firstBody = distinctBodies[0];
+    const nearDuplicateBody = firstBody.replace("useful", "valuable");
+    const repository = acquireOnlyRepository({
+      kind: "complete",
+      batchId: "batch-1",
+      artifacts: [
+        taggedArtifact(0, sources[0], firstBody),
+        taggedArtifact(1, sources[1], nearDuplicateBody),
+      ],
+    });
+    const runSlot = successfulSlotRunner();
+
+    const result = await executeModeledDraftBatch(
+      batchInput({ count: 2, sources: sources.slice(0, 2) }),
+      { repository, runSlot, now: () => 1_000 },
+    );
+
+    expect(result).toMatchObject({ kind: "failed", reason: "state_corrupt" });
+    expect(runSlot).not.toHaveBeenCalled();
+  });
 
   test.each(["slot", "source"] as const)(
     "fails closed when completed storage replays mismatched %s provenance",
@@ -723,6 +1188,30 @@ describe("executeModeledDraftBatch", () => {
       expect(runSlot).not.toHaveBeenCalled();
     },
   );
+
+  test("fails closed when completed storage drops the source URL from artifact metadata", async () => {
+    const second = taggedArtifact(1, sources[1], distinctBodies[1]);
+    const metaWithoutSourceUrl = { ...(second.meta ?? {}) };
+    delete metaWithoutSourceUrl.source_url;
+    const repository = acquireOnlyRepository({
+      kind: "complete",
+      batchId: "batch-1",
+      artifacts: [
+        taggedArtifact(0, sources[0], distinctBodies[0]),
+        { ...second, meta: metaWithoutSourceUrl },
+      ],
+    });
+    const runSlot = successfulSlotRunner();
+
+    const result = await executeModeledDraftBatch(
+      batchInput({ count: 2, sources: sources.slice(0, 2) }),
+      { repository, runSlot, now: () => 1_000 },
+    );
+
+    expect(result).toMatchObject({ kind: "failed", reason: "state_corrupt" });
+    expect(result).not.toHaveProperty("artifacts");
+    expect(runSlot).not.toHaveBeenCalled();
+  });
 
   test.each([
     [

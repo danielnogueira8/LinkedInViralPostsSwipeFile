@@ -23,8 +23,12 @@ import {
 } from "@/lib/agent/read-only-orchestrator";
 import { AdapterHealthRegistry } from "@/lib/agent/adapter-health";
 import { createCoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
-import type { ToolExecutionContext } from "@/lib/agent/tools";
+import {
+  wrapScrapedPostText,
+  type ToolExecutionContext,
+} from "@/lib/agent/tools";
 import { compileReadOnlyOrchestratorRoute } from "@/lib/agent/read-only-orchestrator-routing";
+import { continuationForModeledDraftRoute } from "@/lib/agent/modeled-draft-continuation";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -2174,7 +2178,75 @@ describe("read-only orchestrator execution", () => {
     });
   });
 
-  test("turns four requested regular swipe-file sources into four distinct drafts", async () => {
+  test("models one draft from the top selected source after a larger discovery pool", async () => {
+    const userInstruction =
+      "Find 4 top-performing regular posts in my swipe file, choose the best, and rewrite it in my voice.";
+    const route = compileReadOnlyOrchestratorRoute({
+      userInstruction,
+      isRefine: false,
+      hasModelSource: false,
+      hasAttachments: false,
+      hasLeadMagnet: false,
+      hasCreatorStyle: false,
+    });
+    expect(route).toMatchObject({
+      expectedDrafts: 1,
+      minimumSources: 4,
+      workspaceDraftSourceMode: "one_to_one",
+    });
+    if (!route) return;
+
+    let modeledSourceId: string | null = null;
+    await collect(
+      input({ route, userInstruction }),
+      [],
+      async () => ({
+        ok: true,
+        count: 4,
+        posts: [
+          { id: "best", text: "Best source.", url: "https://linkedin.com/best" },
+          { id: "second", text: "Second source.", url: "https://linkedin.com/second" },
+          { id: "third", text: "Third source.", url: "https://linkedin.com/third" },
+          { id: "fourth", text: "Fourth source.", url: "https://linkedin.com/fourth" },
+        ],
+      }),
+      {
+        runDraftEngine: (draftInput) => {
+          modeledSourceId =
+            draftInput.task?.kind === "source"
+              ? draftInput.task.source.id
+              : null;
+          return (async function* () {
+            yield {
+              type: "artifact" as const,
+              artifact: {
+                id: "draft-selected",
+                kind: "post" as const,
+                title: "Draft",
+                body: COMPLETE_POST,
+              },
+            };
+            yield {
+              type: "done" as const,
+              terminalReason: "done" as const,
+              message: {
+                content: "Here’s your draft.",
+                tool_calls: null,
+                artifacts: [],
+                toolMessages: [],
+                inputTokens: 210,
+                outputTokens: 95,
+              },
+            };
+          })();
+        },
+      },
+    );
+
+    expect(modeledSourceId).toBe("best");
+  });
+
+  test("turns four sources into four drafts and bounds an oversized reserve pool", async () => {
     const userInstruction =
       "Find 4 top-performing regular posts in my swipe file and rewrite it in my voice on a topic that fits me. Keep its structure and hook style, but make the content original";
     const route = compileReadOnlyOrchestratorRoute({
@@ -2209,31 +2281,39 @@ describe("read-only orchestrator execution", () => {
               posts: [
                 {
                   id: "source-1",
-                  text: "Source one.",
+                  text: wrapScrapedPostText({ text: "Source one." }).text,
                   url: "https://linkedin.com/posts/source-1",
                 },
                 {
                   id: "source-2",
-                  text: "Source two.",
+                  text: wrapScrapedPostText({ text: "Source two." }).text,
                   url: "https://linkedin.com/posts/source-2",
                 },
                 {
                   id: "source-3",
-                  text: "Source three.",
+                  text: wrapScrapedPostText({ text: "Source three." }).text,
                   url: "https://linkedin.com/posts/source-3",
                 },
                 {
                   id: "source-4",
-                  text: "Source four.",
+                  text: wrapScrapedPostText({ text: "Source four." }).text,
                   url: "https://linkedin.com/posts/source-4",
                 },
               ],
               reserve_posts: [
                 {
                   id: "source-5",
-                  text: "Reserve source five.",
+                  text: wrapScrapedPostText({ text: "Reserve source five." })
+                    .text,
                   url: "https://linkedin.com/posts/source-5",
                 },
+                ...Array.from({ length: 7 }, (_, offset) => ({
+                  id: `source-${offset + 6}`,
+                  text: wrapScrapedPostText({
+                    text: `Excess reserve source ${offset + 6}.`,
+                  }).text,
+                  url: `https://linkedin.com/posts/source-${offset + 6}`,
+                })),
               ],
             }
           : { ok: true, count: 0, posts: [] };
@@ -2288,8 +2368,23 @@ describe("read-only orchestrator execution", () => {
         { id: "source-3" },
         { id: "source-4" },
         { id: "source-5" },
+        { id: "source-6" },
+        { id: "source-7" },
+        { id: "source-8" },
+        { id: "source-9" },
       ],
     });
+    expect(batchInputs[0].sources.map((source) => source.text)).toEqual([
+      "Source one.",
+      "Source two.",
+      "Source three.",
+      "Source four.",
+      "Reserve source five.",
+      "Excess reserve source 6.",
+      "Excess reserve source 7.",
+      "Excess reserve source 8.",
+      "Excess reserve source 9.",
+    ]);
     expect(selectionContexts).toEqual([
       expect.objectContaining({
         modelingSelection: {
@@ -2297,6 +2392,7 @@ describe("read-only orchestrator execution", () => {
           voiceAnchors: { identity: ["Direct and useful."] },
         },
         modelingReserveCount: 4,
+        requireResolvableModelingSourceUrl: true,
       }),
     ]);
     const artifacts = result.events.filter(
@@ -2335,6 +2431,328 @@ describe("read-only orchestrator execution", () => {
         },
       })),
     );
+  });
+
+  test("rejects an exact modeled pool with a URL-less source before coordinator acquisition", async () => {
+    const userInstruction =
+      "Find 3 top-performing regular posts in my swipe file and rewrite it in my voice on a topic that fits me. Keep its structure and hook style, but make the content original";
+    const route = {
+      kind: "workspace_research" as const,
+      expectsDraft: true,
+      expectedDrafts: 3,
+      minimumSources: 3,
+      workspacePostType: "regular" as const,
+      workspaceDraftSourceMode: "one_to_one" as const,
+      authoritativeInstruction: userInstruction,
+    };
+    const executeModeledDraftBatch = vi.fn(async () => {
+      throw new Error("URL-less sources must not reach durable acquisition");
+    });
+
+    const result = await collect(
+      input({
+        route,
+        userInstruction,
+        draftEngineInput: { ...input().draftEngineInput, userInstruction },
+      }),
+      [],
+      async () => ({
+        ok: true,
+        count: 3,
+        posts: [
+          {
+            id: "source-1",
+            text: "Source one has a complete modelable argument.",
+            url: "https://linkedin.com/posts/source-1",
+          },
+          {
+            id: "source-2",
+            text: "Source two has a complete modelable argument.",
+          },
+          {
+            id: "source-3",
+            text: "Source three has a complete modelable argument.",
+            url: "https://linkedin.com/posts/source-3",
+          },
+        ],
+      }),
+      { executeModeledDraftBatch },
+    );
+
+    expect(executeModeledDraftBatch).not.toHaveBeenCalled();
+    expect(result.draftInputs).toEqual([]);
+    expect(result.events.filter((event) => event.type === "artifact")).toEqual(
+      [],
+    );
+    expect(result.events).toContainEqual(
+      expect.objectContaining({
+        type: "error",
+        code: "orchestrator_evidence_insufficient",
+      }),
+    );
+  });
+
+  test("resumes a frozen modeled batch without re-running source discovery", async () => {
+    const userInstruction =
+      "Find 2 top-performing regular posts in my swipe file and rewrite each in my voice.";
+    const route = compileReadOnlyOrchestratorRoute({
+      userInstruction,
+      isRefine: false,
+      hasModelSource: false,
+      hasAttachments: false,
+      hasLeadMagnet: false,
+      hasCreatorStyle: false,
+    });
+    const continuation = continuationForModeledDraftRoute(route);
+    expect(route).not.toBeNull();
+    expect(continuation).not.toBeNull();
+    if (!route || !continuation) return;
+    const batchInputs: ExecuteModeledDraftBatchInput[] = [];
+    const runTool = vi.fn(async () => {
+      throw new Error("Retry must not rediscover a frozen source pool");
+    });
+
+    const result = await collect(
+      input({
+        route,
+        modeledBatchContinuation: continuation,
+        userInstruction,
+        draftEngineInput: { ...input().draftEngineInput, userInstruction },
+      }),
+      [],
+      runTool,
+      {
+        executeModeledDraftBatch: async (batchInput) => {
+          batchInputs.push(batchInput);
+          return {
+            kind: "complete" as const,
+            batchId: "batch-frozen",
+            artifacts: [1, 2].map((index) => ({
+              id: `draft-${index}`,
+              kind: "post" as const,
+              title: `Draft ${index}`,
+              body: `${COMPLETE_POST}\n\nVariant ${index}.`,
+              meta: {
+                modeled_draft_slot_id: `batch-frozen:slot-${index - 1}`,
+                modeled_draft_slot_index: index - 1,
+                source: "model_source",
+                source_post_id: `frozen-source-${index}`,
+                source_url: `https://linkedin.com/posts/frozen-source-${index}`,
+              },
+            })),
+            usage: { inputTokens: 20, outputTokens: 40 },
+          };
+        },
+      },
+    );
+
+    expect(runTool).not.toHaveBeenCalled();
+    expect(batchInputs).toHaveLength(1);
+    expect(batchInputs[0].sources).toEqual([]);
+    expect(result.events.filter((event) => event.type === "artifact")).toHaveLength(2);
+  });
+
+  test.each([
+    [
+      "a durable checkpoint",
+      {
+        kind: "incomplete" as const,
+        batchId: "batch-saved",
+        reason: "reviewer_unavailable" as const,
+        preservedSlots: 1,
+        requestedCount: 2,
+        usage: { inputTokens: 10, outputTokens: 5 },
+      },
+      "modeled_batch_resumable_reviewer_unavailable",
+    ],
+    [
+      "a pre-claim storage failure",
+      {
+        kind: "incomplete" as const,
+        reason: "store_unavailable" as const,
+        preservedSlots: 0,
+        requestedCount: 2,
+        usage: { inputTokens: 0, outputTokens: 0 },
+      },
+      "modeled_batch_store_unavailable",
+    ],
+    [
+      "a busy durable batch",
+      {
+        kind: "incomplete" as const,
+        batchId: "batch-busy",
+        reason: "busy" as const,
+        preservedSlots: 0,
+        requestedCount: 2,
+        usage: { inputTokens: 0, outputTokens: 0 },
+      },
+      "modeled_batch_resumable_busy",
+    ],
+  ])("classifies modeled coordinator failure: %s", async (_name, batchResult, code) => {
+    const userInstruction =
+      "Find 2 top-performing regular posts in my swipe file and rewrite each in my voice.";
+    const route = compileReadOnlyOrchestratorRoute({
+      userInstruction,
+      isRefine: false,
+      hasModelSource: false,
+      hasAttachments: false,
+      hasLeadMagnet: false,
+      hasCreatorStyle: false,
+    });
+    expect(route).not.toBeNull();
+    if (!route) return;
+
+    const result = await collect(
+      input({
+        route,
+        userInstruction,
+        draftEngineInput: { ...input().draftEngineInput, userInstruction },
+      }),
+      [],
+      async () => ({
+        ok: true,
+        count: 2,
+        posts: [1, 2].map((index) => ({
+          id: `source-${index}`,
+          text: `Source ${index} contains a complete modelable argument.`,
+          url: `https://linkedin.com/posts/source-${index}`,
+        })),
+      }),
+      { executeModeledDraftBatch: async () => batchResult },
+    );
+
+    expect(result.events).toContainEqual(
+      expect.objectContaining({ type: "error", code, recovery: "continue" }),
+    );
+  });
+
+  test("does not publish a completed modeled set after the turn is cancelled", async () => {
+    const userInstruction =
+      "Find 2 top-performing regular posts in my swipe file and rewrite each in my voice.";
+    const route = compileReadOnlyOrchestratorRoute({
+      userInstruction,
+      isRefine: false,
+      hasModelSource: false,
+      hasAttachments: false,
+      hasLeadMagnet: false,
+      hasCreatorStyle: false,
+    });
+    expect(route).not.toBeNull();
+    if (!route) return;
+    const controller = new AbortController();
+    const sourceRows = [1, 2].map((index) => ({
+      id: `source-${index}`,
+      text: `Source ${index} has a clear hook and complete argument.`,
+      url: `https://linkedin.com/posts/source-${index}`,
+    }));
+
+    const result = await collect(
+      input({
+        route,
+        userInstruction,
+        signal: controller.signal,
+        draftEngineInput: { ...input().draftEngineInput, userInstruction },
+      }),
+      [],
+      async () => ({ ok: true, count: 2, posts: sourceRows }),
+      {
+        executeModeledDraftBatch: async () => {
+          controller.abort();
+          return {
+            kind: "complete" as const,
+            batchId: "batch-cancelled",
+            artifacts: sourceRows.map((source, index) => ({
+              id: `draft-${index}`,
+              kind: "post" as const,
+              title: `Draft ${index + 1}`,
+              body: `${COMPLETE_POST}\n\nVariant ${index + 1}.`,
+              meta: {
+                modeled_draft_slot_id: `batch-cancelled:slot-${index}`,
+                modeled_draft_slot_index: index,
+                source: "model_source",
+                source_post_id: source.id,
+                source_url: source.url,
+              },
+            })),
+            usage: { inputTokens: 100, outputTokens: 50 },
+          };
+        },
+      },
+    );
+
+    expect(result.events.filter((event) => event.type === "artifact")).toEqual(
+      [],
+    );
+    expect(result.events.at(-1)).toMatchObject({
+      type: "done",
+      terminalReason: "cancelled",
+    });
+  });
+
+  test("marks a post-completion modeled deadline as recoverable before done", async () => {
+    const userInstruction =
+      "Find 2 top-performing regular posts in my swipe file and rewrite each in my voice.";
+    const route = compileReadOnlyOrchestratorRoute({
+      userInstruction,
+      isRefine: false,
+      hasModelSource: false,
+      hasAttachments: false,
+      hasLeadMagnet: false,
+      hasCreatorStyle: false,
+    });
+    expect(route).not.toBeNull();
+    if (!route) return;
+    const sourceRows = [1, 2].map((index) => ({
+      id: `source-${index}`,
+      text: `Source ${index} has a clear hook and complete argument.`,
+      url: `https://linkedin.com/posts/source-${index}`,
+    }));
+
+    const result = await collect(
+      input({
+        route,
+        userInstruction,
+        draftEngineInput: { ...input().draftEngineInput, userInstruction },
+      }),
+      [],
+      async () => ({ ok: true, count: 2, posts: sourceRows }),
+      {
+        turnDeadlineMs: 1,
+        executeModeledDraftBatch: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          return {
+            kind: "complete" as const,
+            batchId: "batch-deadline",
+            artifacts: sourceRows.map((source, index) => ({
+              id: `draft-${index}`,
+              kind: "post" as const,
+              title: `Draft ${index + 1}`,
+              body: `${COMPLETE_POST}\n\nVariant ${index + 1}.`,
+              meta: {
+                modeled_draft_slot_id: `batch-deadline:slot-${index}`,
+                modeled_draft_slot_index: index,
+                source: "model_source",
+                source_post_id: source.id,
+                source_url: source.url,
+              },
+            })),
+            usage: { inputTokens: 100, outputTokens: 50 },
+          };
+        },
+      },
+    );
+
+    expect(result.events.filter((event) => event.type === "artifact")).toEqual(
+      [],
+    );
+    expect(result.events.slice(-2)).toEqual([
+      expect.objectContaining({
+        type: "error",
+        code: "modeled_batch_resumable_deadline",
+        recovery: "continue",
+      }),
+      expect.objectContaining({ type: "done", terminalReason: "deadline" }),
+    ]);
   });
 
   test.each([
@@ -2516,5 +2934,39 @@ describe("read-only orchestrator execution", () => {
     });
     const done = events.find((event) => event.type === "done");
     expect(done?.type === "done" && done.terminalReason).toBe("ask");
+  });
+
+  test("asks for the unresolved modeled source count instead of repeating a mapping question", async () => {
+    const events: AgentEvent[] = [];
+    for await (const event of runReadOnlyOrchestrator(
+      input({
+        route: {
+          kind: "ambiguous_read_only",
+          expectsDraft: false,
+          clarificationReason: "modeled_mapping",
+          modeledAmbiguityReason: "source_count",
+        },
+        userInstruction:
+          "Find 4 or 5 top posts in my swipe file and rewrite them.",
+      }),
+      {
+        adapters: [],
+        runTool: vi.fn(async () => ({ ok: true })),
+        runDraftEngine: vi.fn(successfulDraft),
+        recordUsage: vi.fn(async () => {}),
+        idFactory: () => "modeled-count-clarify",
+      },
+    )) {
+      events.push(event);
+    }
+
+    expect(events).toContainEqual({
+      type: "ask",
+      ask: {
+        question: "How many source posts should I use?",
+        options: ["2 sources", "3 sources", "4 sources", "5 sources"],
+        allowOther: true,
+      },
+    });
   });
 });

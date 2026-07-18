@@ -1,16 +1,17 @@
 import { NextResponse } from "next/server";
 import { sweepDeletedMedia } from "@/lib/media-sweep";
+import { purgeExpiredModeledDraftBatches } from "@/lib/modeled-draft-batch-retention";
 import { postCronAlert } from "@/lib/cron-alert";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
 // -----------------------------------------------------------------------------
-// GET /api/cron/sweep-media — the media-asset garbage collector. Runs daily
-// (vercel.json); hard-deletes storage + row for soft-deleted media_assets that
-// (a) have passed the grace period AND (b) no chat_artifacts.media_attachments
-// still references. An asset that's still referenced is left soft-deleted
-// (never re-purged automatically) rather than guessed at.
+// GET /api/cron/sweep-media — bounded daily retention maintenance. The media
+// sweep hard-deletes only unreferenced assets past their grace period. In the
+// same scheduled tick, the database RPC removes at most 1,000 modeled-draft
+// batches past their seven-day retention window. The RPC itself preserves
+// active, unexpired leases.
 //
 // Same CRON_SECRET Bearer auth as the other cron routes.
 // -----------------------------------------------------------------------------
@@ -21,9 +22,27 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
   try {
-    const summary = await sweepDeletedMedia();
-    console.log(JSON.stringify({ sweep_media_cron: summary }));
-    return NextResponse.json({ ok: true, ...summary });
+    const [mediaSweep, modeledBatchSweep] = await Promise.allSettled([
+      sweepDeletedMedia(),
+      purgeExpiredModeledDraftBatches(),
+    ]);
+    if (mediaSweep.status === "rejected") throw mediaSweep.reason;
+    if (modeledBatchSweep.status === "rejected") {
+      throw modeledBatchSweep.reason;
+    }
+    const summary = mediaSweep.value;
+    const modeledBatchRetention = modeledBatchSweep.value;
+    console.log(
+      JSON.stringify({
+        sweep_media_cron: summary,
+        modeled_draft_batch_retention: modeledBatchRetention,
+      }),
+    );
+    return NextResponse.json({
+      ok: true,
+      ...summary,
+      modeledDraftBatchesDeleted: modeledBatchRetention.deleted,
+    });
   } catch (e) {
     console.error("sweep-media cron failed", (e as Error).message);
     await postCronAlert({ cron: "sweep-media" }, e);

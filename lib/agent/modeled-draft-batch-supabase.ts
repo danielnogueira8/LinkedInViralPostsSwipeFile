@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
 import { supabaseAdmin } from "@/lib/supabase";
 import {
+  artifactMatchesModeledDraftSlotContract,
   executeModeledDraftBatch,
+  isCanonicalModeledSourceUrl,
   productionModeledDraftBatchDependencies,
   type AcquiredModeledDraftBatch,
   type ExecuteModeledDraftBatchInput,
@@ -27,7 +29,7 @@ function canonicalSourceJson(source: ModeledDraftBatchSource) {
   return {
     id: source.id,
     text: source.text,
-    url: source.url ?? null,
+    url: source.url,
     title: source.title ?? null,
     published_at: source.publishedAt ?? null,
     hash: textHash(source.text),
@@ -39,6 +41,7 @@ function parseSource(value: unknown): ModeledDraftBatchSource | null {
   if (
     typeof source?.id !== "string" ||
     typeof source.text !== "string" ||
+    !isCanonicalModeledSourceUrl(source.url) ||
     typeof source.hash !== "string" ||
     textHash(source.text) !== source.hash
   ) {
@@ -47,7 +50,7 @@ function parseSource(value: unknown): ModeledDraftBatchSource | null {
   return {
     id: source.id,
     text: source.text,
-    ...(typeof source.url === "string" ? { url: source.url } : {}),
+    url: source.url,
     ...(typeof source.title === "string" ? { title: source.title } : {}),
     ...(typeof source.published_at === "string"
       ? { publishedAt: source.published_at }
@@ -59,6 +62,7 @@ function parseArtifact(
   acceptedValue: unknown,
   source: ModeledDraftBatchSource,
   slotIndex: number,
+  batchId: string,
 ): ModeledPostArtifact | null {
   const accepted = recordOf(acceptedValue);
   const provenance = recordOf(accepted?.provenance);
@@ -71,6 +75,7 @@ function parseArtifact(
     textHash(body) !== accepted.hash ||
     provenance?.kind !== "modeled" ||
     provenance.source_id !== source.id ||
+    provenance.source_url !== source.url ||
     provenance.source_hash !== textHash(source.text) ||
     typeof artifactData?.id !== "string" ||
     typeof artifactData.title !== "string" ||
@@ -79,13 +84,21 @@ function parseArtifact(
   ) {
     return null;
   }
-  return {
+  const artifact: ModeledPostArtifact = {
     id: artifactData.id,
     kind: "post",
     title: artifactData.title,
     body,
     meta,
   };
+  return artifactMatchesModeledDraftSlotContract({
+    artifact,
+    batchId,
+    slotIndex,
+    source,
+  })
+    ? artifact
+    : null;
 }
 
 function parseCheckpoint(value: unknown): AcquiredModeledDraftBatch | null {
@@ -125,7 +138,7 @@ function parseCheckpoint(value: unknown): AcquiredModeledDraftBatch | null {
     );
     if (
       !Number.isInteger(slotIndex) ||
-      (state !== "assigned" && state !== "candidate" && state !== "accepted") ||
+      (state !== "assigned" && state !== "accepted") ||
       sourceIndex === undefined ||
       sourceHistory.some((index) => index === undefined)
     ) {
@@ -133,27 +146,31 @@ function parseCheckpoint(value: unknown): AcquiredModeledDraftBatch | null {
     }
     const artifact =
       state === "accepted"
-        ? parseArtifact(slot.accepted, canonicalSources[sourceIndex], slotIndex as number)
+        ? parseArtifact(
+            slot.accepted,
+            canonicalSources[sourceIndex],
+            slotIndex as number,
+            root.batch_id,
+          )
         : undefined;
     if (state === "accepted" && !artifact) return null;
-    const candidate = recordOf(slot.candidate);
-    slots.push({
+    const slotBase = {
       index: slotIndex as number,
-      state,
       sourceIndex,
       sourceHistory: sourceHistory as number[],
       replacements:
         typeof slot.replacement_count === "number"
           ? slot.replacement_count
           : Math.max(0, sourceHistory.length - 1),
-      ...(candidate && typeof candidate.body === "string"
-        ? { candidateBody: candidate.body }
-        : {}),
-      ...(artifact ? { artifact } : {}),
       ...(typeof slot.rejection_code === "string"
         ? { lastFailureCode: slot.rejection_code }
         : {}),
-    });
+    };
+    slots.push(
+      state === "accepted" && artifact
+        ? { ...slotBase, state, artifact }
+        : { ...slotBase, state: "assigned" },
+    );
   }
   return {
     batchId: root.batch_id,
@@ -190,27 +207,37 @@ class SupabaseModeledDraftBatchRepository
   private readonly workspaces = new Map<string, string>();
 
   async acquire(input: Parameters<ModeledDraftBatchRepository["acquire"]>[0]) {
-    const { data, error } = await supabaseAdmin().rpc(
-      "claim_modeled_draft_batch",
-      {
+    const { data, error } = await supabaseAdmin()
+      .rpc("claim_modeled_draft_batch", {
         p_workspace_id: input.workspaceId,
         p_operation_key: input.operationKey,
         p_request_hash: input.requestHash,
         p_expected_count: input.requestedCount,
         p_sources: input.sources.map(canonicalSourceJson),
         p_lease_seconds: LEASE_SECONDS,
-      },
-    );
+      })
+      .abortSignal(input.signal);
     if (error) {
-      return error.code === "22023" && /conflict/i.test(error.message)
-        ? ({ kind: "conflict" } as const)
-        : ({ kind: "unavailable" } as const);
+      if (error.code === "22023" && /conflict/i.test(error.message)) {
+        return { kind: "conflict" } as const;
+      }
+      if (
+        error.code === "22023" &&
+        /invalid modeled draft source pool/i.test(error.message)
+      ) {
+        return { kind: "insufficient_sources" } as const;
+      }
+      return { kind: "unavailable" } as const;
     }
     const root = recordOf(data);
     if (!root || typeof root.status !== "string") {
       return { kind: "unavailable" } as const;
     }
-    if (root.status === "busy") return { kind: "busy" } as const;
+    if (root.status === "busy") {
+      return typeof root.batch_id === "string"
+        ? ({ kind: "busy", batchId: root.batch_id } as const)
+        : ({ kind: "unavailable" } as const);
+    }
     if (root.status === "completed") {
       const artifacts = artifactsFromCompleted(root);
       return artifacts && typeof root.batch_id === "string"
@@ -237,21 +264,20 @@ class SupabaseModeledDraftBatchRepository
     const source = this.sourcePools.get(input.batchId)?.[input.sourceIndex];
     const workspaceId = this.workspaces.get(input.batchId);
     if (!source || !workspaceId) return false;
-    const { data, error } = await supabaseAdmin().rpc(
-      "checkpoint_modeled_draft_slot",
-      {
+    const { data, error } = await supabaseAdmin()
+      .rpc("checkpoint_modeled_draft_slot", {
         p_workspace_id: workspaceId,
         p_batch_id: input.batchId,
         p_lease_token: input.leaseToken,
         p_slot_index: input.slotIndex,
-        p_expected_state: input.expectedState,
+        p_expected_state: "assigned",
         p_next_state: "accepted",
         p_source_id: source.id,
         p_body: input.artifact.body,
         p_provenance: {
           kind: "modeled",
           source_id: source.id,
-          source_url: source.url ?? null,
+          source_url: source.url,
           source_hash: textHash(source.text),
           artifact: {
             id: input.artifact.id,
@@ -262,8 +288,8 @@ class SupabaseModeledDraftBatchRepository
         p_rejection_code: null,
         p_attempt_increment: 1,
         p_lease_seconds: LEASE_SECONDS,
-      },
-    );
+      })
+      .abortSignal(input.signal);
     return !error && recordOf(data)?.state === "accepted";
   }
 
@@ -273,9 +299,8 @@ class SupabaseModeledDraftBatchRepository
     const source = this.sourcePools.get(input.batchId)?.[input.sourceIndex];
     const workspaceId = this.workspaces.get(input.batchId);
     if (!source || !workspaceId) return false;
-    const { data, error } = await supabaseAdmin().rpc(
-      "checkpoint_modeled_draft_slot",
-      {
+    const { data, error } = await supabaseAdmin()
+      .rpc("checkpoint_modeled_draft_slot", {
         p_workspace_id: workspaceId,
         p_batch_id: input.batchId,
         p_lease_token: input.leaseToken,
@@ -288,8 +313,8 @@ class SupabaseModeledDraftBatchRepository
         p_rejection_code: input.failureCode,
         p_attempt_increment: 1,
         p_lease_seconds: LEASE_SECONDS,
-      },
-    );
+      })
+      .abortSignal(input.signal);
     return !error && recordOf(data)?.state === "assigned";
   }
 
@@ -298,14 +323,13 @@ class SupabaseModeledDraftBatchRepository
   ) {
     const workspaceId = this.workspaces.get(input.batchId);
     if (!workspaceId) return { kind: "lease_lost" as const };
-    const { data, error } = await supabaseAdmin().rpc(
-      "complete_modeled_draft_batch",
-      {
+    const { data, error } = await supabaseAdmin()
+      .rpc("complete_modeled_draft_batch", {
         p_workspace_id: workspaceId,
         p_batch_id: input.batchId,
         p_lease_token: input.leaseToken,
-      },
-    );
+      })
+      .abortSignal(input.signal);
     if (error) return { kind: "lease_lost" as const };
     const artifacts = artifactsFromCompleted(data);
     return artifacts
@@ -318,12 +342,14 @@ class SupabaseModeledDraftBatchRepository
   ): Promise<void> {
     const workspaceId = this.workspaces.get(input.batchId);
     if (!workspaceId) return;
-    await supabaseAdmin().rpc("release_modeled_draft_batch", {
-      p_workspace_id: workspaceId,
-      p_batch_id: input.batchId,
-      p_lease_token: input.leaseToken,
-      p_reason: input.reason,
-    });
+    await supabaseAdmin()
+      .rpc("release_modeled_draft_batch", {
+        p_workspace_id: workspaceId,
+        p_batch_id: input.batchId,
+        p_lease_token: input.leaseToken,
+        p_reason: input.reason,
+      })
+      .abortSignal(input.signal);
   }
 }
 
