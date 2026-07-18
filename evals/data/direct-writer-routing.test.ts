@@ -604,7 +604,7 @@ describe("direct source, partial, and multi eligibility", () => {
       "Write exactly 2 posts and 3 hooks about pricing. Do not search.",
       "Write exactly 2 posts about pricing plus a content calendar. Do not search.",
       "Write exactly 2 posts about pricing and schedule them tomorrow.",
-      "Write exactly 7 posts about pricing. Do not search.",
+      "Write exactly 15 posts about pricing. Do not search.",
       "Write exactly 2 posts about pricing, then summarize the strategy. Do not search.",
       "Write exactly 2 posts based on the attached source about the point we discussed earlier.",
       "Please do not go ahead and write 3 posts about pricing. Do not search.",

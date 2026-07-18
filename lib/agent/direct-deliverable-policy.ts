@@ -279,7 +279,7 @@ export function requestsPartialTargetVariation(instruction: string): boolean {
 }
 
 const DIRECT_POST_COUNT_RE = new RegExp(
-  String.raw`\b(?:write|draft|create|generate|make|produce|prepare|give\s+me)\s+(?:me\s+)?(?:exactly\s+)?(${COUNT_TOKEN})\s+(?:(?:complete|finished|full|different|distinct|original|linkedin)\s+){0,4}(?:posts?|post\s+variations?|variations?|versions?|rewrites?)\b`,
+  String.raw`\b(?:write|draft|create|generate|make|produce|prepare|give\s+me|model|mimic|adapt|rewrite|rework|remix)\s+(?:me\s+)?(?:exactly\s+)?(${COUNT_TOKEN})\s+(?:(?:complete|finished|full|different|distinct|original|linkedin|regular|new|separate)\s+){0,4}(?:posts?|post\s+variations?|variations?|versions?|rewrites?)\b`,
   "i",
 );
 
@@ -287,5 +287,5 @@ const DIRECT_POST_COUNT_RE = new RegExp(
 export function requestedDirectPostCount(instruction: string): number | null {
   if (requestsPartialTargetVariation(instruction)) return null;
   const match = instruction.match(DIRECT_POST_COUNT_RE);
-  return countValue(match?.[1], 6);
+  return countValue(match?.[1], 10);
 }

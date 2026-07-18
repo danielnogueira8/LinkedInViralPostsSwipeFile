@@ -244,8 +244,11 @@ const MAX_TOTAL_TOOL_CALLS = 40;
 // Cites are NOT counted here — they're cheap reference links, not drafts, and
 // lumping them in caused the bug where "give me 5 hooks" + a few cited source
 // posts hit the shared cap, so only 2 hooks rendered and 3 spilled into text.
-// "give me 5 hooks" must always fit, so the draft cap is 6 (5 + headroom).
-const MAX_RENDER_TOOLS_PER_TURN = 6;
+// deriveDeliverableContract/requestedDirectPostCount already override this
+// with the user's exact requested count when one is stated (up to 10) — this
+// is only the fallback ceiling for an unstated-count turn ("model these
+// posts", "give me a few posts"), so it stays generous rather than tight.
+const MAX_RENDER_TOOLS_PER_TURN = 10;
 
 // Separate, generous cap on render_cite (source-post reference links). Cites
 // don't consume the draft budget; this just stops a runaway turn from emitting

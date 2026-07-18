@@ -39,13 +39,17 @@ const SUPPORTED_COUNTS: Record<string, number> = {
   four: 4,
   five: 5,
   six: 6,
+  seven: 7,
+  eight: 8,
+  nine: 9,
+  ten: 10,
 };
 
 // Intentionally narrow: a contract is created only when the user explicitly
 // pairs an action, a supported count, and a renderable deliverable noun. Bare
 // references such as "draft 5" remain in the ambiguity path.
 const EXPLICIT_DELIVERABLE_RE =
-  /^\s*(?:please\s+)?(?:write|draft|create|generate|make|produce|prepare|give\s+me|build)\s+(?:me\s+)?(?:exactly\s+)?(\d{1,2}|one|two|three|four|five|six)\s+(?:(?:finished|full|different|distinct)\s+)?(posts?|post\s+variations?|hooks?)\b/i;
+  /^\s*(?:please\s+)?(?:write|draft|create|generate|make|produce|prepare|give\s+me|build|model|mimic|adapt|rewrite|rework|remix)\s+(?:me\s+)?(?:exactly\s+)?(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:(?:finished|full|different|distinct|regular|new|original|complete|separate)\s+)?(posts?|post\s+variations?|hooks?)\b/i;
 
 export function deriveDeliverableContract(text: string): DeliverableContract | null {
   const match = text.match(EXPLICIT_DELIVERABLE_RE);
@@ -60,11 +64,11 @@ export function deriveDeliverableContract(text: string): DeliverableContract | n
   const remainder = text.slice((match.index ?? 0) + match[0].length);
   const namesOtherDeliverable = /\bhooks?\b/i.test(remainder);
   const namesAnotherDeliverable =
-    /\b(?:\d{1,2}|one|two|three|four|five|six)\s+(?:posts?|post\s+variations?|hooks?)\b/i.test(
+    /\b(?:\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:posts?|post\s+variations?|hooks?)\b/i.test(
       remainder,
     );
   const correctsTheCommand =
-    /(?:\b(?:actually|instead|rather)\b|\bno\s*,|\bor\s+(?:actually\s+)?(?:make\s+that|change|switch)\b|\b(?:make\s+that|change\s+that\s+to|switch\s+to)\s+(?:\d{1,2}|one|two|three|four|five|six)\b)/i.test(
+    /(?:\b(?:actually|instead|rather)\b|\bno\s*,|\bor\s+(?:actually\s+)?(?:make\s+that|change|switch)\b|\b(?:make\s+that|change\s+that\s+to|switch\s+to)\s+(?:\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)\b)/i.test(
       remainder,
     );
   if (namesOtherDeliverable || namesAnotherDeliverable || correctsTheCommand) {
@@ -73,7 +77,7 @@ export function deriveDeliverableContract(text: string): DeliverableContract | n
   const count = /^\d+$/.test(match[1])
     ? Number(match[1])
     : SUPPORTED_COUNTS[match[1].toLowerCase()];
-  if (!count || count > 6) return null;
+  if (!count || count > 10) return null;
   return {
     kind: "post",
     expectedCount: count,
