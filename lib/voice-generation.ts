@@ -57,6 +57,25 @@ export async function runVoiceGeneration(
       return;
     }
 
+    // Deterministic mechanics fingerprint — measured in code, not synthesized
+    // by the model (see lib/voice-mechanics.ts for why). Computed BEFORE
+    // synthesis so the measured numbers can anchor the model's qualitative
+    // read (synthesizeVoice includes them as ground truth), from the same
+    // REGULAR-post subset synthesizeVoice uses for its core exemplars
+    // (excludes lead-magnet posts, whose CTA mechanics aren't how the person
+    // writes normally). Never blocks generation: a failure here just means
+    // synthesis runs unanchored and the profile ships without a fingerprint.
+    let fingerprint;
+    try {
+      const regularBodies = samples
+        .filter((p) => classifyPost(p.text).post_type !== "lead_magnet")
+        .map((p) => p.text!.trim());
+      const fingerprintSource = regularBodies.length > 0 ? regularBodies : samples.map((p) => p.text!.trim());
+      fingerprint = computeMechanicsFingerprint(fingerprintSource);
+    } catch (e) {
+      console.warn("voice: mechanics fingerprint computation failed, continuing without it", e);
+    }
+
     let profile;
     try {
       profile = await synthesizeVoice(
@@ -66,6 +85,7 @@ export async function runVoiceGeneration(
           comments: p.comments,
         })),
         sb.workspaceId,
+        { mechanicsFingerprint: fingerprint },
       );
     } catch (e) {
       await markVoiceGenerationFailed(
@@ -75,22 +95,7 @@ export async function runVoiceGeneration(
       );
       return;
     }
-
-    // Deterministic mechanics fingerprint — measured in code, not synthesized
-    // by the model (see lib/voice-mechanics.ts for why). Computed from the
-    // same REGULAR-post subset synthesizeVoice uses for its core exemplars
-    // (excludes lead-magnet posts, whose CTA mechanics aren't how the person
-    // writes normally). Never blocks generation: a failure here just means
-    // the profile ships without the fingerprint.
-    try {
-      const regularBodies = samples
-        .filter((p) => classifyPost(p.text).post_type !== "lead_magnet")
-        .map((p) => p.text!.trim());
-      const fingerprintSource = regularBodies.length > 0 ? regularBodies : samples.map((p) => p.text!.trim());
-      profile.mechanics_fingerprint = computeMechanicsFingerprint(fingerprintSource);
-    } catch (e) {
-      console.warn("voice: mechanics fingerprint computation failed, continuing without it", e);
-    }
+    if (fingerprint) profile.mechanics_fingerprint = fingerprint;
 
     const meta = pickProfileMeta(posts);
     // A context interview can complete while this generation run is still in
