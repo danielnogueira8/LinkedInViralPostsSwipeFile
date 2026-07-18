@@ -23,6 +23,12 @@ export type ActionRetryRepository = {
     chatId: string;
     signal?: AbortSignal;
   }): Promise<RetryUser | null>;
+  userById(input: {
+    workspaceId: string;
+    chatId: string;
+    userMessageId: string;
+    signal?: AbortSignal;
+  }): Promise<RetryUser | null>;
   contextForUser(input: {
     workspaceId: string;
     chatId: string;
@@ -90,6 +96,7 @@ export async function resolveActionRetryRoot(
     submittedContent: string;
     pairedAssistantTerminalReason?: RetryTerminalReason | null;
     pairedAssistantRecoverable?: boolean;
+    pairedAssistantRetryRootUserMessageId?: string;
     pairedUserStopped?: boolean;
     signal?: AbortSignal;
   },
@@ -123,9 +130,33 @@ export async function resolveActionRetryRoot(
   if (context?.cancelled) {
     return { ok: false, reason: "cancelled" };
   }
+  const markedRootId = input.pairedAssistantRetryRootUserMessageId;
+  const markedRoot =
+    !context && markedRootId
+      ? await repository.userById({
+          ...input,
+          userMessageId: markedRootId,
+        })
+      : null;
+  const canonicalMarkedRootId =
+    markedRoot &&
+    markedRoot.id === markedRootId &&
+    markedRoot.content === input.submittedContent
+      ? markedRoot.id
+      : null;
+  // A persisted server marker is authoritative for a chained Retry. Falling
+  // back to the immediately preceding retry row when that root no longer
+  // resolves would silently fork a second durable batch instead of resuming
+  // the original operation.
+  if (!context && markedRootId && !canonicalMarkedRootId) {
+    return { ok: false, reason: "stale_or_altered" };
+  }
   return {
     ok: true,
-    turnMessageId: context?.rootTurnMessageId ?? input.retryOfUserMessageId,
+    turnMessageId:
+      context?.rootTurnMessageId ??
+      canonicalMarkedRootId ??
+      input.retryOfUserMessageId,
     effectiveInstruction:
       context?.effectiveInstruction ?? input.submittedContent,
     route: context?.route ?? null,
@@ -146,6 +177,22 @@ export function createSupabaseActionRetryRepository(
         .eq("role", "user")
         .order("created_at", { ascending: false })
         .limit(1);
+      if (input.signal) query = query.abortSignal(input.signal);
+      const { data, error } = await query.maybeSingle();
+      if (error) throw error;
+      const row = data as { id?: unknown; content?: unknown } | null;
+      return typeof row?.id === "string" && typeof row.content === "string"
+        ? { id: row.id, content: row.content }
+        : null;
+    },
+    async userById(input) {
+      let query = client
+        .from("chat_messages")
+        .select("id, content")
+        .eq("workspace_id", input.workspaceId)
+        .eq("chat_id", input.chatId)
+        .eq("role", "user")
+        .eq("id", input.userMessageId);
       if (input.signal) query = query.abortSignal(input.signal);
       const { data, error } = await query.maybeSingle();
       if (error) throw error;

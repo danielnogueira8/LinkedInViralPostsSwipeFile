@@ -24,7 +24,7 @@ import {
 } from "@/lib/voice-mechanics";
 import { retryRead } from "@/lib/retry-read";
 import {
-  selectModelingSources,
+  selectModelingSourcePool,
   type ModelingClientContext,
 } from "@/lib/modeling-source-selection";
 import { rankIdeaPosts, rotateFreshBand } from "@/lib/idea-ranking";
@@ -196,6 +196,29 @@ export interface ToolExecutionContext {
   // Present only when the server has confirmed that these auto-selected posts
   // will be modeled. Analytical searches and explicit source ids never use it.
   modelingSelection?: ModelingClientContext;
+  // Replacement sources are returned separately from the user-requested
+  // primaries. Only the modeled-batch coordinator consumes them; analytical
+  // searches and single-source modeling leave this at zero.
+  modelingReserveCount?: number;
+  // Exact one-to-one modeled drafts must render a source chip. Generic
+  // research and idea retrieval deliberately leave this false so nullable
+  // legacy post URLs do not change their established result sets.
+  requireResolvableModelingSourceUrl?: boolean;
+}
+
+function withCanonicalModelingSourceUrl<T extends { post_url?: unknown }>(
+  candidate: T,
+): T | null {
+  if (typeof candidate.post_url !== "string") return null;
+  try {
+    const parsed = new URL(candidate.post_url.trim());
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+      return null;
+    }
+    return { ...candidate, post_url: parsed.toString() };
+  } catch {
+    return null;
+  }
 }
 
 function err(message: string): ToolResult {
@@ -300,7 +323,15 @@ const searchViralPosts: ToolFn = async (args, workspaceId, signal, context) => {
 
     const { data, error } = await q;
     if (error) return err(error.message);
-    const candidates = (data ?? []).map(normalizeEmbed);
+    const normalizedCandidates = (data ?? []).map(normalizeEmbed);
+    const candidates =
+      autoSelectModelingSources &&
+      context?.requireResolvableModelingSourceUrl === true
+        ? normalizedCandidates.flatMap((candidate) => {
+            const canonical = withCanonicalModelingSourceUrl(candidate);
+            return canonical ? [canonical] : [];
+          })
+        : normalizedCandidates;
 
     // Analytical query → return the strict ranking as-is (unchanged behavior).
     if (!autoSelectModelingSources && !rotateDefaultIdeas) {
@@ -314,23 +345,34 @@ const searchViralPosts: ToolFn = async (args, workspaceId, signal, context) => {
     signal?.throwIfAborted();
     // Server-confirmed auto-modeling uses the single secure selection policy.
     // Ordinary idea discovery retains its pre-existing stable rank + rotation.
-    const selected = autoSelectModelingSources
-      ? selectModelingSources({
+    const modeledPool = autoSelectModelingSources
+      ? selectModelingSourcePool({
           candidates,
           limit: finalLimit,
+          reserveLimit: context?.modelingReserveCount ?? 0,
           usedIds,
           surfacedIds,
           rotationCursor: cursor,
           clientContext: context.modelingSelection,
         })
-      : rotateFreshBand(
+      : null;
+    const selected = modeledPool?.primaries ?? rotateFreshBand(
           rankIdeaPosts(candidates, usedIds, surfacedIds),
           cursor,
           finalLimit,
         ).slice(0, finalLimit);
     recordSurfaced(workspaceId, selected.map((post) => post.id));
     const posts = selected.map(wrapScrapedPostText);
-    return { ok: true, count: posts.length, posts };
+    return {
+      ok: true,
+      count: posts.length,
+      posts,
+      ...(modeledPool?.reserves.length
+        ? {
+            reserve_posts: modeledPool.reserves.map(wrapScrapedPostText),
+          }
+        : {}),
+    };
   } catch (e) {
     return err((e as Error).message);
   }
@@ -623,7 +665,15 @@ const getTopFromBatch: ToolFn = async (args, workspaceId, _signal, context) => {
     if (args.post_type) q = q.eq("post_type", args.post_type as string);
     const { data, error } = await q;
     if (error) return err(error.message);
-    const candidates = (data ?? []).map(normalizeEmbed);
+    const normalizedCandidates = (data ?? []).map(normalizeEmbed);
+    const candidates =
+      context?.modelingSelection &&
+      context.requireResolvableModelingSourceUrl === true
+        ? normalizedCandidates.flatMap((candidate) => {
+            const canonical = withCanonicalModelingSourceUrl(candidate);
+            return canonical ? [canonical] : [];
+          })
+        : normalizedCandidates;
     const count = candidates.length;
     // Idea ranking over the WIDER candidate pool: not-yet-drafted first, then
     // not-recently-surfaced, then RECENCY (posted_at desc) as the primary
@@ -639,16 +689,18 @@ const getTopFromBatch: ToolFn = async (args, workspaceId, _signal, context) => {
         new Date(a.posted_at as string).getTime(),
     );
     const cursor = await nextRotationCursor(workspaceId);
-    const picked = context?.modelingSelection
-      ? selectModelingSources({
+    const modeledPool = context?.modelingSelection
+      ? selectModelingSourcePool({
           candidates: byRecency,
           limit: finalLimit,
+          reserveLimit: context.modelingReserveCount ?? 0,
           usedIds,
           surfacedIds,
           rotationCursor: cursor,
           clientContext: context.modelingSelection,
         })
-      : pickLegacyIdeas(
+      : null;
+    const picked = modeledPool?.primaries ?? pickLegacyIdeas(
           rotateFreshBand(
             rankIdeaPosts(byRecency, usedIds, surfacedIds),
             cursor,
@@ -681,6 +733,11 @@ const getTopFromBatch: ToolFn = async (args, workspaceId, _signal, context) => {
         : {}),
       count,
       posts: rankedPosts,
+      ...(modeledPool?.reserves.length
+        ? {
+            reserve_posts: modeledPool.reserves.map(wrapScrapedPostText),
+          }
+        : {}),
     };
   } catch (e) {
     return err((e as Error).message);

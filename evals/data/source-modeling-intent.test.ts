@@ -49,6 +49,24 @@ describe("requestsSourceModeling", () => {
         "Find 4 top-performing regular posts in my swipe file and rewrite them in my voice.",
       ),
     ).toBe(false);
+    for (const request of [
+      "Find several top regular posts, choose the best, and rewrite it.",
+      "Find multiple top regular posts, choose the best, and rewrite it.",
+      "Find a few top regular posts, choose the best, and rewrite it.",
+      "Find a handful of top regular posts, choose the best, and rewrite it.",
+    ]) {
+      expect(requestsDirectSourceModeling(request)).toBe(false);
+    }
+  });
+
+  test.each([
+    "Find a top post in my swipe file and replicate its format.",
+    "Find a top post in my swipe file and model its structure.",
+    "Find a top post in my swipe file and rewrite this in my voice.",
+    "Find a top post in my swipe file and adapt the structure.",
+    "Find a top post in my swipe file and mimic its hook style.",
+  ])("keeps a structurally explicit singular request on the direct lane: %s", (request) => {
+    expect(requestsDirectSourceModeling(request)).toBe(true);
   });
 
   test("does not classify analysis, original writing, or source opt-outs as modeling", () => {
@@ -56,7 +74,17 @@ describe("requestsSourceModeling", () => {
     expect(requestsSourceModeling("Write 4 original posts about content writing.")).toBe(false);
     expect(
       requestsSourceModeling(
+        "Write an original post without modeling a source.",
+      ),
+    ).toBe(false);
+    expect(
+      requestsSourceModeling(
         "Find an example, but do not use sources or model a source post.",
+      ),
+    ).toBe(false);
+    expect(
+      requestsSourceModeling(
+        "Write a post about pricing discipline. Do not search or use sources.",
       ),
     ).toBe(false);
     expect(

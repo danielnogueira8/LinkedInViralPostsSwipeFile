@@ -2,11 +2,15 @@ import {
   explicitlyForbidsSourceDiscovery,
   explicitlyRequestsSourceDiscovery,
   requestsDurableOrAction,
-  requestsSourceModeling,
 } from "@/lib/agent/source-policy";
 import { requestedDirectPostCount } from "@/lib/agent/direct-deliverable-policy";
+import {
+  compileModeledPostIntent,
+  type ModeledPostIntent,
+} from "@/lib/agent/modeled-post-intent";
 import { coworkRolloutDecision } from "@/lib/agent/cowork-rollout";
 import type { coworkRolloutRuntimeHealth } from "@/lib/agent/cowork-rollout-health";
+import { wrapUntrustedXml } from "@/lib/agent/untrusted";
 import type { PostType } from "@/lib/post-type";
 
 export const READ_ONLY_ORCHESTRATOR_ROUTE_KINDS = [
@@ -31,12 +35,17 @@ export type ReadOnlyOrchestratorRoute = {
   workspaceSince?: "1d" | "7d" | "30d";
   workspacePostType?: PostType;
   workspaceDraftSourceMode?: "one_to_one";
-  clarificationReason?: "outcome" | "research_topic";
+  clarificationReason?: "outcome" | "research_topic" | "modeled_mapping";
+  modeledAmbiguityReason?: Extract<
+    ModeledPostIntent,
+    { kind: "ambiguous" }
+  >["reason"];
   authoritativeInstruction?: string;
 };
 
 export type ReadOnlyOrchestratorRoutingInput = {
   userInstruction: string;
+  draftCountOverride?: number;
   isRefine: boolean;
   hasModelSource: boolean;
   hasAttachments: boolean;
@@ -79,6 +88,8 @@ const COMPLEX_READ_RE =
   /\b(?:research|investigate|fact[ -]?check|verify|compare|synthesi[sz]e|inspect|analy[sz]e|review|read|search|find)\b/i;
 const EXPLICIT_NON_POST_OUTCOME_RE =
   /\b(?:summari[sz]e|compare|analy[sz]e|explain|tell\s+me|show\s+me|list|report|recommend|answer|give\s+me\s+(?:the\s+)?(?:findings|takeaways|results|lessons))\b/i;
+const NEGATED_POST_OUTCOME_RE =
+  /\b(?:do\s+not|don(?:'|’)?t|dont|never)\s+(?:write|draft|create|generate|make|produce|prepare|model|mimic|adapt|rewrite|rework|remix|replicate|turn)\b/i;
 const HISTORY_DEPENDENT_RESEARCH_RE =
   /\b(?:this|that|it|these|those|their|his|her|its|above|previous|earlier)\b/i;
 const STRICT_TOP_SOURCE_RE =
@@ -108,13 +119,17 @@ function requestedExplicitSourceCount(instruction: string): number | null {
   return explicitCounts.length > 0 ? Math.max(...explicitCounts) : null;
 }
 
-function requestedSourceMinimum(instruction: string): number {
+function requestedSourceMinimum(
+  instruction: string,
+  exactSourceCount?: number | null,
+): number {
   // Requests can put the output first ("write one post after finding three
   // posts"). Taking the first match would undercount the research requirement.
   // The maximum is deliberately conservative: asking for one extra source is
   // preferable to drafting from fewer sources than the user explicitly asked
   // us to compare.
-  const explicitCount = requestedExplicitSourceCount(instruction);
+  const explicitCount =
+    exactSourceCount ?? requestedExplicitSourceCount(instruction);
   // A one-to-one rewrite needs exactly one source. Requiring a second source
   // would turn a clear modeling request into an unnecessary synthesis task.
   if (explicitCount === 1) return 1;
@@ -123,14 +138,6 @@ function requestedSourceMinimum(instruction: string): number {
     /\bseveral\b/i.test(instruction) ? 3 : 2,
     explicitCount ?? 0,
   );
-}
-
-function requestedTransformationDraftCount(
-  instruction: string,
-  researchClause: string,
-): number | null {
-  if (!requestsSourceModeling(instruction)) return null;
-  return requestedExplicitSourceCount(researchClause);
 }
 
 function requestedWorkspacePostType(
@@ -245,11 +252,15 @@ function clarificationFollowup(
   instruction: string,
 ): { original: string; answer: string } | null {
   const match = instruction.match(
-    /^([\s\S]*?)\s+Clarification answer:\s*([^\n]+)\s*$/i,
+    /^([\s\S]*?)\r?\n\r?\nClarification answer:[ \t]*([^\r\n]+)[ \t]*$/i,
   );
   const original = match?.[1]?.trim() ?? "";
   const answer = match?.[2]?.trim() ?? "";
-  return original && answer ? { original, answer } : null;
+  return original &&
+    answer &&
+    !/\bClarification answer:/i.test(original)
+    ? { original, answer }
+    : null;
 }
 
 function instructionWithResolvedResearchTopic(
@@ -300,6 +311,219 @@ function clarifiedLinkedInPostCount(answer: string): number | null {
   return Number(value) || CLARIFIED_COUNT_WORDS[value] || 1;
 }
 
+const MODELED_CLARIFICATION_COUNT_WORDS: Record<string, number> = {
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+  six: 6,
+  seven: 7,
+  eight: 8,
+  nine: 9,
+  ten: 10,
+};
+
+type ExactModeledClarification =
+  | { kind: "count"; count: number }
+  | { kind: "one_per_source"; count: number | null }
+  | { kind: "one_from_all" }
+  | { kind: "source_then_draft"; sourceCount: number; draftCount: number };
+
+const MODELED_COUNT_TOKEN =
+  "(10|[1-9]|one|two|three|four|five|six|seven|eight|nine|ten)";
+
+function modeledClarificationCount(value: string): number {
+  return Number(value) || MODELED_CLARIFICATION_COUNT_WORDS[value];
+}
+
+/**
+ * Parse only complete, positive answers to the cardinality question. This is
+ * deliberately an allowlist: extracting a number from prose turns negations,
+ * ranges, ordinals, and estimates into false exact answers.
+ */
+function parseExactModeledClarification(
+  answer: string,
+): ExactModeledClarification | null {
+  const normalized = answer
+    .trim()
+    .toLocaleLowerCase("en-US")
+    .replace(/\s+/g, " ")
+    .replace(/[.!?]+$/, "")
+    .replace(/(?:,\s*)?\bplease$/, "")
+    .replace(/^please\s+/, "")
+    .trim();
+  if (!normalized) return null;
+
+  const sourceThenDraft = normalized.match(
+    new RegExp(
+      `^(?:find|select|choose|use)?\\s*(?:exactly\\s+)?${MODELED_COUNT_TOKEN}\\s+sources?\\s*(?:,|and|then)\\s*(?:exactly\\s+)?${MODELED_COUNT_TOKEN}\\s+(?:new\\s+)?drafts?$`,
+      "i",
+    ),
+  );
+  if (sourceThenDraft) {
+    return {
+      kind: "source_then_draft",
+      sourceCount: modeledClarificationCount(sourceThenDraft[1]),
+      draftCount: modeledClarificationCount(sourceThenDraft[2]),
+    };
+  }
+
+  const countedPerSourceMapping = normalized.match(
+    new RegExp(
+      `^(?:find|select|choose|use)?\\s*(?:exactly\\s+)?${MODELED_COUNT_TOKEN}\\s+sources?\\s*(?:,|and|then)\\s*(?:one|1)\\s+(?:new\\s+)?draft\\s+(?:per|for\\s+each)\\s+source$`,
+      "i",
+    ),
+  );
+  if (countedPerSourceMapping) {
+    return {
+      kind: "one_per_source",
+      count: modeledClarificationCount(countedPerSourceMapping[1]),
+    };
+  }
+
+  const countedOnePerSource = normalized.match(
+    new RegExp(
+      `^(?:find|select|choose|use)\\s+(?:exactly\\s+)?${MODELED_COUNT_TOKEN}(?:\\s+(?:sources?|posts?))?\\s+(?:and|then)\\s+(?:rewrite|adapt|model|create|write|make)\\s+(?:each(?:\\s+(?:one|source|post))?|one\\s+(?:new\\s+)?draft\\s+(?:per|for\\s+each)\\s+source)$`,
+      "i",
+    ),
+  );
+  if (countedOnePerSource) {
+    return {
+      kind: "one_per_source",
+      count: modeledClarificationCount(countedOnePerSource[1]),
+    };
+  }
+
+  if (
+    /^(?:(?:one|1)\s+(?:new\s+)?draft\s+(?:per|for\s+each)\s+source|one\s+for\s+each\s+source|(?:rewrite|adapt|model)\s+each(?:\s+(?:one|source|post))?|each(?:\s+(?:one|source|post))?)$/i.test(
+      normalized,
+    )
+  ) {
+    return { kind: "one_per_source", count: null };
+  }
+
+  if (
+    /^(?:(?:one|1)\s+draft\s+(?:using|from)\s+(?:all|the)\s+sources|one\s+draft\s+using\s+all\s+sources)$/i.test(
+      normalized,
+    )
+  ) {
+    return { kind: "one_from_all" };
+  }
+
+  const exactCount = normalized.match(
+    new RegExp(
+      `^(?:(?:find|select|choose|use|write|create|make)\\s+)?(?:exactly\\s+)?${MODELED_COUNT_TOKEN}(?:\\s+(?:selected\\s+)?(?:sources?|posts?|drafts?))?$`,
+      "i",
+    ),
+  );
+  return exactCount
+    ? { kind: "count", count: modeledClarificationCount(exactCount[1]) }
+    : null;
+}
+
+function canonicalResearchTopicAnswer(answer: string): string | null {
+  const topic = answer.trim().replace(/\s+/g, " ");
+  const terms = topic.match(/[\p{L}\p{N}][\p{L}\p{N}-]*/gu) ?? [];
+  if (
+    !topic ||
+    topic.length > 120 ||
+    terms.length < 1 ||
+    terms.length > 12 ||
+    !/^[\p{L}\p{N}][\p{L}\p{N}\s&+.'’()\/-]*$/u.test(topic) ||
+    /\b(?:clarification\s+answer|ignore|forget|instead|write|draft|create|generate|make|produce|prepare|give\s+me)\b/i.test(
+      topic,
+    )
+  ) {
+    return null;
+  }
+  return topic;
+}
+
+function exactIntentCount(
+  cardinality: Extract<
+    ModeledPostIntent,
+    { kind: "ambiguous" }
+  >["discoveryCount"],
+): number | null {
+  return cardinality.kind === "exact" ? cardinality.value : null;
+}
+
+/**
+ * Resolve only answers that fully determine a supported source/draft mapping.
+ * The result is a fresh canonical instruction, so contradictory quantities in
+ * the original request cannot leak back into routing after clarification.
+ */
+function resolvedModeledClarification(
+  original: string,
+  answer: string,
+  intent: Extract<ModeledPostIntent, { kind: "ambiguous" }>,
+): { routeInstruction: string; authoritativeInstruction: string } | null {
+  const clarification = parseExactModeledClarification(answer);
+  if (!clarification) return null;
+  const onePerSource = clarification.kind === "one_per_source";
+  const oneFromAll = clarification.kind === "one_from_all";
+  const clarifiedCount =
+    clarification.kind === "count" || clarification.kind === "one_per_source"
+      ? clarification.count
+      : null;
+  let sourceCount = exactIntentCount(intent.discoveryCount);
+  let selectionCount = exactIntentCount(intent.selectionCount);
+  let draftCount = exactIntentCount(intent.outputCount);
+
+  if (clarification.kind === "source_then_draft") {
+    sourceCount = clarification.sourceCount;
+    draftCount = clarification.draftCount;
+    selectionCount = null;
+  } else if (oneFromAll) {
+    draftCount = 1;
+    selectionCount = null;
+  } else if (onePerSource) {
+    if (intent.reason === "source_count" && clarifiedCount === null) return null;
+    sourceCount ??= clarifiedCount;
+    draftCount = selectionCount ?? sourceCount;
+  } else if (intent.reason === "source_count" ||
+    (intent.reason === "invalid_quantity" && sourceCount === null)) {
+    if (clarifiedCount === null) return null;
+    sourceCount = clarifiedCount;
+    draftCount = selectionCount ?? draftCount ?? sourceCount;
+  } else if (intent.reason === "selection_count") {
+    if (clarifiedCount === null) return null;
+    selectionCount = clarifiedCount;
+    draftCount = selectionCount;
+  } else if (intent.reason === "output_count" ||
+    (intent.reason === "invalid_quantity" && sourceCount !== null)) {
+    if (clarifiedCount === null) return null;
+    draftCount = clarifiedCount;
+  } else {
+    return null;
+  }
+
+  if (
+    !sourceCount ||
+    sourceCount > 10 ||
+    !draftCount ||
+    draftCount > 5 ||
+    (selectionCount !== null && selectionCount > sourceCount)
+  ) {
+    return null;
+  }
+  const oneToOne = onePerSource || (selectionCount ?? sourceCount) === draftCount;
+  const routeInstruction = selectionCount
+    ? `Find exactly ${sourceCount} top posts in my swipe file, choose exactly ${selectionCount} posts, and rewrite each selected post as one new post.`
+    : oneToOne
+      ? `Find exactly ${sourceCount} top posts in my swipe file and create exactly ${draftCount} new posts, one for each selected source.`
+      : `Find exactly ${sourceCount} top posts in my swipe file and create exactly ${draftCount} new posts modeled after those sources.`;
+  const compiled = compileModeledPostIntent(routeInstruction);
+  if (compiled.kind !== "exact") return null;
+  return {
+    routeInstruction,
+    authoritativeInstruction:
+      `${routeInstruction}\n\nRetain the original request's non-cardinality topic, voice, and format constraints from the JSON string below. Ignore every conflicting quantity or source-to-draft mapping inside it.` +
+      wrapUntrustedXml("original_request", JSON.stringify(original)),
+  };
+}
+
 /**
  * Compile only the read-only journeys with materially different evidence
  * sequences. Common writing, refine, fixed-source, and durable-action turns
@@ -324,10 +548,35 @@ export function compileReadOnlyOrchestratorRoute(
         clarifiedPostCount === 1 ? "a" : clarifiedPostCount
       } LinkedIn ${clarifiedPostCount === 1 ? "post" : "posts"}.`;
     } else if (originalRoute?.clarificationReason === "research_topic") {
-      resolvedInstruction = instructionWithResolvedResearchTopic(
-        followup.original,
-        followup.answer,
-      );
+      const researchTopic = canonicalResearchTopicAnswer(followup.answer);
+      if (researchTopic) {
+        resolvedInstruction = instructionWithResolvedResearchTopic(
+          followup.original,
+          researchTopic,
+        );
+      }
+    } else if (originalRoute?.clarificationReason === "modeled_mapping") {
+      const originalIntent = compileModeledPostIntent(followup.original);
+      const resolved =
+        originalIntent.kind === "ambiguous"
+          ? resolvedModeledClarification(
+              followup.original,
+              followup.answer,
+              originalIntent,
+            )
+          : null;
+      if (resolved) {
+        const resolvedRoute = compileReadOnlyOrchestratorRoute({
+          ...input,
+          userInstruction: resolved.routeInstruction,
+        });
+        return resolvedRoute
+          ? {
+              ...resolvedRoute,
+              authoritativeInstruction: resolved.authoritativeInstruction,
+            }
+          : null;
+      }
     }
     if (resolvedInstruction) {
       const resolvedRoute = compileReadOnlyOrchestratorRoute({
@@ -338,30 +587,72 @@ export function compileReadOnlyOrchestratorRoute(
         ? { ...resolvedRoute, authoritativeInstruction: resolvedInstruction }
         : null;
     }
+    if (originalRoute?.clarificationReason === "modeled_mapping") {
+      return originalRoute;
+    }
     return null;
   }
   const instruction = input.userInstruction.trim();
   const forbidsDiscovery = explicitlyForbidsSourceDiscovery(instruction);
+  const modeledIntent = forbidsDiscovery
+    ? ({ kind: "none" } as const)
+    : compileModeledPostIntent(instruction, {
+        draftCountOverride: input.draftCountOverride,
+      });
+  if (
+    /\bClarification\s+answer\s*:/i.test(instruction) &&
+    modeledIntent.kind !== "none"
+  ) {
+    return {
+      kind: "ambiguous_read_only",
+      expectsDraft: false,
+      clarificationReason: "modeled_mapping",
+      modeledAmbiguityReason:
+        modeledIntent.kind === "ambiguous"
+          ? modeledIntent.reason
+          : "mapping",
+    };
+  }
   if (
     !instruction ||
     input.isRefine ||
     input.hasModelSource ||
-    input.hasLeadMagnet ||
-    input.hasCreatorStyle ||
+    ((input.hasLeadMagnet || input.hasCreatorStyle) &&
+      modeledIntent.kind === "none") ||
     requestsDurableOrAction(instruction) ||
     (forbidsDiscovery && !input.hasAttachments)
   ) {
     return null;
   }
+  if (
+    NEGATED_POST_OUTCOME_RE.test(instruction) &&
+    EXPLICIT_NON_POST_OUTCOME_RE.test(instruction)
+  ) {
+    return null;
+  }
 
-  const explicitDraftCount = requestedDirectPostCount(instruction);
-  const sourceModelingRequest = requestsSourceModeling(instruction);
+  if (modeledIntent.kind === "ambiguous") {
+    return {
+      kind: "ambiguous_read_only",
+      expectsDraft: false,
+      clarificationReason: "modeled_mapping",
+      modeledAmbiguityReason: modeledIntent.reason,
+    };
+  }
+  const sourceModelingRequest = modeledIntent.kind === "exact";
   const researchClause = sourceResearchClause(instruction);
-  const transformationDraftCount = requestedTransformationDraftCount(
-    instruction,
-    researchClause,
-  );
-  const workspacePostType = requestedWorkspacePostType(researchClause);
+  const explicitDraftCount =
+    input.draftCountOverride ??
+    (sourceModelingRequest
+      ? modeledIntent.expectedDrafts
+      : requestedDirectPostCount(instruction));
+  const explicitSourceCount = sourceModelingRequest
+    ? modeledIntent.discoveryCount
+    : null;
+  const workspacePostType = sourceModelingRequest
+    ? (modeledIntent.sourcePostType ??
+      requestedWorkspacePostType(researchClause))
+    : requestedWorkspacePostType(researchClause);
   const writingOutputClause = instruction.match(
     /\b(?:write|draft|create|generate|make|produce|prepare|give\s+me)\b[\s\S]{0,180}?\b(?:linkedin\s+)?posts?\b/i,
   )?.[0] ?? "";
@@ -369,19 +660,25 @@ export function compileReadOnlyOrchestratorRoute(
     writingOutputClause,
   );
   const unresolvedPluralDraftTarget =
-    (FULL_POST_REQUEST_RE.test(instruction) || sourceModelingRequest) &&
+    !sourceModelingRequest &&
+    FULL_POST_REQUEST_RE.test(instruction) &&
     hasPluralPostTarget &&
     explicitDraftCount === null;
   const expectsDraft =
-    (FULL_POST_REQUEST_RE.test(instruction) || sourceModelingRequest) &&
-    (!hasPluralPostTarget || explicitDraftCount !== null);
-  const expectedDrafts =
-    explicitDraftCount ?? transformationDraftCount ?? 1;
+    sourceModelingRequest ||
+    (FULL_POST_REQUEST_RE.test(instruction) &&
+      (!hasPluralPostTarget || explicitDraftCount !== null));
+  const expectedDrafts = explicitDraftCount ?? 1;
   const workspaceDraftSourceMode =
-    transformationDraftCount !== null &&
-    expectedDrafts === transformationDraftCount
+    sourceModelingRequest &&
+    modeledIntent.relation === "one_to_one" &&
+    expectedDrafts <= 5
       ? ("one_to_one" as const)
       : undefined;
+  const workspaceMinimumSources =
+    sourceModelingRequest
+      ? modeledIntent.minimumSources
+      : requestedSourceMinimum(researchClause, explicitSourceCount);
   const needsFileInspection =
     input.hasAttachments && FILE_INSPECTION_RE.test(instruction);
   const needsNews =
@@ -389,10 +686,11 @@ export function compileReadOnlyOrchestratorRoute(
     (EXPLICIT_NEWS_TOPIC_RE.test(instruction) ||
       (NEWS_RE.test(instruction) && RESEARCH_RE.test(instruction)));
   const needsWorkspaceResearch =
-    (explicitlyRequestsSourceDiscovery(instruction) ||
+    sourceModelingRequest ||
+    ((explicitlyRequestsSourceDiscovery(instruction) ||
       OUTPUT_FIRST_SOURCE_DISCOVERY_RE.test(instruction)) &&
     (MULTI_SOURCE_RE.test(researchClause) ||
-      workspaceDraftSourceMode === "one_to_one");
+      workspaceDraftSourceMode === "one_to_one"));
   const complexRead =
     needsFileInspection ||
     needsNews ||
@@ -446,7 +744,7 @@ export function compileReadOnlyOrchestratorRoute(
       allowedSearchKinds,
       ...(needsWorkspaceResearch
         ? {
-            minimumSources: requestedSourceMinimum(researchClause),
+            minimumSources: workspaceMinimumSources,
             workspaceSearchMode: STRICT_TOP_SOURCE_RE.test(researchClause)
               ? ("strict_top" as const)
               : ("diverse" as const),
@@ -473,7 +771,7 @@ export function compileReadOnlyOrchestratorRoute(
       kind: "workspace_research",
       expectsDraft: true,
       expectedDrafts,
-      minimumSources: requestedSourceMinimum(researchClause),
+      minimumSources: workspaceMinimumSources,
       workspaceSearchMode: STRICT_TOP_SOURCE_RE.test(researchClause)
         ? "strict_top"
         : "diverse",

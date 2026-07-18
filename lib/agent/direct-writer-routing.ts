@@ -40,6 +40,7 @@ export function directWriterEnabledForWorkspace(
 
 export type DirectOriginalPostEligibility = {
   userInstruction: string;
+  requestedCount?: number;
   enabled: boolean;
   hasModelSource: boolean;
   isRefine: boolean;
@@ -73,6 +74,8 @@ const AMBIGUOUS_POST_RE =
   /^\s*(?:please\s+)?(?:write|draft|create|make)(?:\s+me)?\s+(?:a|one)?\s*(?:linkedin\s+)?post[.!?]?\s*$/i;
 const FULL_POST_REQUEST_RE =
   /\b(?:(?:write|draft|create|make|generate)\s+(?:me\s+)?|give\s+me\s+)(?:(?:a|an|one)\s+)?(?:(?:short|concise|brief|punchy|detailed|in-depth|long-form|long|original|complete|full)\s+){0,4}(?:linkedin\s+)?post\b/i;
+const CONTROLLED_PLURAL_POST_REQUEST_RE =
+  /\b(?:(?:write|draft|create|make|generate)\s+(?:me\s+)?|give\s+me\s+)(?:(?:short|concise|brief|punchy|detailed|in-depth|long-form|long|original|complete|full|different|distinct)\s+){0,4}(?:linkedin\s+)?posts\b/i;
 const NEGATED_WRITING_RE =
   /\b(?:do\s+not|don(?:'|’)?t|dont|never|no\s+need\s+to)\s+(?:(?:please|just|actually|go\s+ahead\s+and)\s+|(?:want|need|ask)\s+(?:me|you|us|them)\s+to\s+){0,3}(?:write|draft|create|generate|give|make|produce|prepare|model|mimic|adapt|rewrite|rework|remix|turn|change|edit|refine|tighten|shorten|strengthen)\b|\bwithout\s+(?:writing|drafting|creating|generating|giving|modeling|modelling|adapting|rewriting|changing|editing|refining|tightening|shortening|strengthening)\b/i;
 const META_WRITING_DISCUSSION_RE =
@@ -161,7 +164,18 @@ export function isDirectOriginalPostEligible(
     return false;
   }
   const forbidsDiscovery = explicitlyForbidsSourceDiscovery(instruction);
-  if (!FULL_POST_REQUEST_RE.test(instruction)) return false;
+  if (
+    !FULL_POST_REQUEST_RE.test(instruction) &&
+    !(
+      input.requestedCount === 1 &&
+      CONTROLLED_PLURAL_POST_REQUEST_RE.test(instruction)
+    )
+  ) {
+    return false;
+  }
+  if (input.requestedCount !== undefined && input.requestedCount !== 1) {
+    return false;
+  }
   if (
     !isNoModelPostRequest(instruction, false) &&
     !(forbidsDiscovery && FULL_POST_REQUEST_RE.test(instruction))
@@ -207,7 +221,9 @@ export function isDirectOriginalPostEligible(
   }
 
   const contract = deriveDeliverableContract(instruction);
-  if (contract && contract.expectedCount !== 1) return false;
+  if (contract && contract.expectedCount !== (input.requestedCount ?? 1)) {
+    return false;
+  }
 
   // An explicit opt-out is a positive direct-lane signal, but ordinary
   // self-contained original-post briefs are eligible too. Do not reject the
@@ -311,6 +327,10 @@ function directWritingContextReady(input: DirectWritingContext): boolean {
     !input.hasCreatorStyle &&
     input.voiceResolved
   );
+}
+
+function directMultiWritingContextReady(input: DirectWritingContext): boolean {
+  return input.enabled && !input.hasAttachments && input.voiceResolved;
 }
 
 // The unsafe-intent checks that are INDEPENDENT of source discovery: mixed/
@@ -491,6 +511,7 @@ export type DirectMultiPostEligibility = DirectWritingContext & {
   sourceRequested: boolean;
   sourceResolved: boolean;
   isRefine: boolean;
+  requestedCount?: number;
 };
 
 /** A bounded exact post count can be compiled without model-owned routing. */
@@ -498,10 +519,10 @@ export function isDirectMultiPostEligible(
   input: DirectMultiPostEligibility,
 ): boolean {
   const instruction = input.userInstruction.trim();
-  const count = requestedDirectPostCount(instruction);
+  const count = input.requestedCount ?? requestedDirectPostCount(instruction);
   const sourceRequired = input.sourceRequested || requiresFixedSource(instruction);
   if (
-    !directWritingContextReady(input) ||
+    !directMultiWritingContextReady(input) ||
     input.isRefine ||
     !instruction ||
     count === null ||

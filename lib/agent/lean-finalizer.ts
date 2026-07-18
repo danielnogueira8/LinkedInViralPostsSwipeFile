@@ -2,6 +2,7 @@ import { editDraftBodySync } from "@/lib/agent/specialists/editor";
 import { repairAiTells } from "@/lib/agent/specialists/ai-tell-repair";
 import { checkSameness } from "@/lib/agent/specialists/sameness";
 import { reviewModeledDraft } from "@/lib/agent/specialists/source-fidelity";
+import { aiTellMetrics } from "@/lib/agent/specialists/nets";
 import type { DraftFinalizerSpecialists } from "@/lib/agent/draft-finalizer";
 
 // Finalizer specialists for the THIN drafting path.
@@ -22,5 +23,25 @@ export const leanFinalizerSpecialists: DraftFinalizerSpecialists = {
   edit: editDraftBodySync,
   repairAiTells,
   checkSameness,
+  reviewSourceFidelity: reviewModeledDraft,
+};
+
+// Modeled batches already arbitrate cross-slot duplicates and use a strong
+// writer with explicit mechanics. Keep deterministic editing and the required
+// fidelity reviewer on the blocking path, but do not add two unrelated model
+// rewrites that can increase cost, latency, and post-review structural drift.
+export const modeledBatchFinalizerSpecialists: DraftFinalizerSpecialists = {
+  edit: editDraftBodySync,
+  repairAiTells: async ({ body }) => ({
+    body,
+    repaired: false,
+    detected: aiTellMetrics(body),
+  }),
+  checkSameness: async ({ body }) => ({
+    body,
+    rewrote: false,
+    overlapMarkers: [],
+    reason: "Modeled batch distinctness is enforced by the batch coordinator.",
+  }),
   reviewSourceFidelity: reviewModeledDraft,
 };

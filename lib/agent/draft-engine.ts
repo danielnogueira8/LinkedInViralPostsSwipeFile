@@ -63,7 +63,10 @@ import {
   type DraftWriterResponse,
   type DraftWriterStage,
 } from "@/lib/agent/draft-writer";
-import { leanFinalizerSpecialists } from "@/lib/agent/lean-finalizer";
+import {
+  leanFinalizerSpecialists,
+  modeledBatchFinalizerSpecialists,
+} from "@/lib/agent/lean-finalizer";
 import {
   requestedShortenReduction,
   transformDirectRefineCandidate,
@@ -153,7 +156,6 @@ export type DraftEngineTask =
       expectedCount: number;
       source?: DraftEngineSource;
       groundedSources?: DraftEngineGroundedSource[];
-      groundedSourceMode?: "shared" | "one_to_one";
     }
   | {
       kind: "grounded";
@@ -218,6 +220,10 @@ export type DraftEngineInput = {
   // false/omitted (the default) means the gate never runs, so a refine task
   // or a caller that hasn't opted in stays unaffected.
   enableStructureGate?: boolean;
+  // A modeled batch owns cross-slot distinctness and retry state. This typed
+  // profile keeps only deterministic editing plus source-fidelity review on
+  // its blocking path, avoiding unrelated paid rewrite specialists.
+  finalizationProfile?: "modeled_batch";
 };
 
 export type DraftEngineDependencies = {
@@ -649,6 +655,7 @@ function compileMessages(input: DraftEngineInput): ChatMessage[] {
           INJECTION_GUARD,
           writingSkill,
           skills,
+          creatorStyle,
           preferences,
           feedback,
         ]
@@ -1004,22 +1011,6 @@ async function* runMultiDraftEngine(
     yield engineDone(failureMessage, inputTokens, outputTokens);
     return;
   }
-  if (
-    task.groundedSourceMode === "one_to_one" &&
-    (task.groundedSources?.length ?? 0) < task.expectedCount
-  ) {
-    const failureMessage =
-      "I couldn’t match every requested draft to its own verified source, so no partial set was created.";
-    yield {
-      type: "error",
-      code: "draft_engine_source_assignment",
-      message: failureMessage,
-      recovery: "continue",
-    };
-    yield engineDone(failureMessage, inputTokens, outputTokens);
-    return;
-  }
-
   const deadlineController = new AbortController();
   const deadline = setTimeout(
     () => deadlineController.abort(),
@@ -1080,36 +1071,10 @@ async function* runMultiDraftEngine(
         }
         return externallyTransformed;
       };
-      const childGroundedSources = task.groundedSources
-        ? task.groundedSourceMode === "one_to_one"
-          ? task.groundedSources.slice(index - 1, index)
-          : task.groundedSources
-        : undefined;
-      // A one-to-one workspace source is not generic research evidence: the
-      // user asked to model that post's mechanics. Keep it on the modeled
-      // source path so it receives the source-format reference, source
-      // provenance, and final structure validation. Shared research remains a
-      // grounded task because it synthesizes across evidence rather than
-      // adapting one source's shape.
-      const modeledWorkspaceSource =
-        task.groundedSourceMode === "one_to_one" &&
-        childGroundedSources?.length === 1 &&
-        childGroundedSources[0].kind === "workspace_post"
-          ? {
-              id: childGroundedSources[0].id,
-              text: childGroundedSources[0].text,
-            }
-          : undefined;
-      const childTask: DraftEngineTask = modeledWorkspaceSource
-        ? {
-            kind: "source",
-            source: modeledWorkspaceSource,
-            variation: { index, count: task.expectedCount, previousBodies },
-          }
-        : childGroundedSources
+      const childTask: DraftEngineTask = task.groundedSources
         ? {
             kind: "grounded",
-            sources: childGroundedSources,
+            sources: task.groundedSources,
             variation: { index, count: task.expectedCount, previousBodies },
           }
         : task.source
@@ -1126,7 +1091,6 @@ async function* runMultiDraftEngine(
       for await (const event of runDraftEngine(
         {
           ...multiInput,
-          ...(modeledWorkspaceSource ? { enableStructureGate: true } : {}),
           task: childTask,
           priorPostDrafts: [
             ...multiInput.priorPostDrafts,
@@ -1353,9 +1317,20 @@ export async function* runDraftEngine(
     structureSkeleton: modeledStructureSkeleton,
     // Thin path: no-op the taste specialists (fidelity/sameness/ai-tell), keep
     // the deterministic editor. Otherwise use whatever the caller passed.
-    specialists: input.lean
-      ? leanFinalizerSpecialists
-      : input.finalizerSpecialists,
+    specialists:
+      input.finalizationProfile === "modeled_batch"
+        ? {
+            ...modeledBatchFinalizerSpecialists,
+            ...(input.finalizerSpecialists?.reviewSourceFidelity
+              ? {
+                  reviewSourceFidelity:
+                    input.finalizerSpecialists.reviewSourceFidelity,
+                }
+              : {}),
+          }
+        : input.lean
+          ? leanFinalizerSpecialists
+          : input.finalizerSpecialists,
     transformCandidate: input.transformCandidate,
     finalTransformCandidate,
     skipSameness: task.kind === "refine",

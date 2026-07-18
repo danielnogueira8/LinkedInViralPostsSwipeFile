@@ -1,7 +1,7 @@
 {
   "generatedBy": "npm run migrations:metadata",
-  "highest": 106,
-  "count": 106,
+  "highest": 107,
+  "count": 107,
   "files": [
     "migration-001-progress.sql",
     "migration-002-usage.sql",
@@ -108,6 +108,7 @@
     "migration-103-gtm-outreach-category.sql",
     "migration-104-preference-detail.sql",
     "migration-105-save-standalone-draft.sql",
-    "migration-106-modeling-source-rotation-cursor.sql"
+    "migration-106-modeling-source-rotation-cursor.sql",
+    "migration-107-modeled-draft-batches.sql"
   ]
 }
