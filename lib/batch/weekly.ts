@@ -52,6 +52,7 @@ import type { Artifact } from "@/lib/agent/contracts";
 import { DraftLifecycle } from "@/lib/draft-lifecycle";
 import { createSupabaseDraftLifecycleRepository } from "@/lib/draft-lifecycle-supabase";
 import { sanitizeVoiceProfile, type VoiceProfile } from "@/lib/claude";
+import { voiceKeepsEmDashes } from "@/lib/voice-mechanics";
 import {
   LEAD_MAGNET_COLS,
   coerceLeadMagnet,
@@ -727,6 +728,10 @@ async function generateDraftBody(opts: {
   // (evals / direct callers) to skip the sameness pass entirely.
   workspaceId?: string;
   priorDrafts?: RecentDraft[];
+  // Voice-aware em-dash suppression (see EditDraftOptions.keepEmDashes):
+  // true when the user's measured mechanics fingerprint shows they genuinely
+  // write with em dashes, so the anti-slop strip must not erase their voice.
+  keepEmDashes?: boolean;
 }): Promise<{
   body: string | null;
   usage: Usage | undefined;
@@ -793,7 +798,9 @@ async function generateDraftBody(opts: {
     // Deterministic anti-slop + shape nets via the SAME shared editor the agent
     // loop's render path uses — a headless call must clean drafts itself, and
     // now it does it through one function instead of open-coding the nets.
-    let cleaned = editDraftBodySync(res.text.trim(), "post").body;
+    let cleaned = editDraftBodySync(res.text.trim(), "post", {
+      keepEmDashes: opts.keepEmDashes,
+    }).body;
     const truncated = res.finishReason === "length";
     const corruption = looksCorruptedDraft(cleaned);
     if (
@@ -807,6 +814,7 @@ async function generateDraftBody(opts: {
         workspaceId: opts.workspaceId,
         signal: opts.signal,
         maxChars: MAX_DRAFT_BODY,
+        keepEmDashes: opts.keepEmDashes,
       });
       cleaned = repair.body;
       if (repair.repaired) {
@@ -1532,6 +1540,7 @@ export async function runWeeklyBatch(opts: {
         signal: opts.signal,
         workspaceId,
         priorDrafts: priorPostDrafts,
+        keepEmDashes: voiceKeepsEmDashes(voice?.mechanics_fingerprint),
       });
       // Log spend (whether or not the draft is usable — the call cost money).
       // Attribute to the provider-served model, not the requested alias.

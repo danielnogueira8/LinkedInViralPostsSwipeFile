@@ -159,6 +159,11 @@ export async function repairAiTells(opts: {
   maxChars?: number;
   adapterHealth?: AdapterHealthRegistry;
   telemetry?: CoworkTurnTelemetry;
+  // Voice-aware em-dash suppression (see EditDraftOptions.keepEmDashes) —
+  // without threading this through, the repair pass's own deterministic
+  // clean would re-strip the em dashes the first editor pass deliberately
+  // kept for an em-dash-using writer.
+  keepEmDashes?: boolean;
 }): Promise<{ body: string; repaired: boolean; detected: string[] }> {
   const detected = aiTellMetrics(opts.body);
   if (!aiTellRepairEnabled() || detected.length === 0) {
@@ -167,6 +172,7 @@ export async function repairAiTells(opts: {
 
   const result = await editDraftBody(opts.body, {
     useModel: true,
+    keepEmDashes: opts.keepEmDashes,
     modelRewrite: buildRewrite(
       opts.workspaceId,
       opts.signal,

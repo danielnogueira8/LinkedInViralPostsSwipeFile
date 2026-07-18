@@ -30,7 +30,10 @@ import {
   normalizeDraftKey,
 } from "@/lib/agent/specialists/nets";
 import { editDraftBodySync } from "@/lib/agent/specialists/editor";
-import { RENDER_POST_MAX_CHARS } from "@/lib/agent/tools";
+import {
+  RENDER_POST_MAX_CHARS,
+  voiceResultKeepsEmDashes,
+} from "@/lib/agent/tools";
 import { reviewModeledDraft } from "@/lib/agent/specialists/source-fidelity";
 import { INJECTION_GUARD, wrapUntrustedDelimited } from "@/lib/agent/untrusted";
 import type { NoModelFormat } from "@/lib/agent/no-model-formats";
@@ -1254,11 +1257,18 @@ export async function* runDraftEngine(
         }
       : undefined;
   let finalizerStartedAt: number | null = null;
+  // Voice-aware editor options: the engine always receives the get_voice
+  // result up front (input.voiceResult), so this is a plain snapshot — no
+  // mid-turn mutation needed here, unlike the chat loop.
+  const engineEditOptions = {
+    keepEmDashes: voiceResultKeepsEmDashes(input.voiceResult),
+  };
   const finalizer = createDraftFinalizer({
     workspaceId: input.workspaceId,
     contract: { kind: "post", expectedCount: 1 },
     priorDrafts: input.priorPostDrafts,
     signal: turnSignal,
+    editOptions: engineEditOptions,
     // Thin path: no-op the taste specialists (fidelity/sameness/ai-tell), keep
     // the deterministic editor. Otherwise use whatever the caller passed.
     specialists: input.lean
@@ -1351,7 +1361,7 @@ export async function* runDraftEngine(
   const salvageGroundedDraft = (): (Artifact & { kind: "post" }) | null => {
     const raw = lastDraftedBody.trim();
     if (!raw) return null;
-    const { body } = editDraftBodySync(raw, "post");
+    const { body } = editDraftBodySync(raw, "post", engineEditOptions);
     const cleaned = body.trim();
     if (!cleaned) return null;
     // Never salvage a broken or over-cap body — those are real corruption, not a
