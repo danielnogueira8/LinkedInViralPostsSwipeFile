@@ -88,11 +88,30 @@ function hasLikelyBoardMoveCommand(instruction: string): boolean {
 }
 
 function requestsNewPost(instruction: string): boolean {
+  // A content-generation request — the model writes NEW post(s), whether from
+  // scratch ("write"), from a source ("rewrite / model / adapt / mimic"), or by
+  // discovering sources first ("find … posts … and rewrite"). None of these is
+  // a board mutation; they belong to the drafting / read-only-orchestrator
+  // lanes. Matched here so the action lane never claims them (the "find 4 top
+  // posts and rewrite them → How many saved drafts should I update?" bug).
+  const contentVerb =
+    "write|draft|create|generate|make|produce|prepare|give\\s+me|rewrite|rework|remix|model|mimic|adapt";
+  if (
+    hasCommand(instruction, contentVerb) &&
+    /\b(?:linkedin\s+)?posts?\b/i.test(instruction)
+  ) {
+    return true;
+  }
+  // "Find/search/pull N … posts … and rewrite/model/… them" — swipe-file
+  // discovery feeding a content rewrite. `hasCommand` anchors to a clause
+  // start, so a mid-sentence "and rewrite" is caught by this pattern instead.
   return (
-    hasCommand(
+    /\b(?:find|search|pull|look\s+for|get)\b[\s\S]{0,120}\b(?:linkedin\s+)?posts?\b/i.test(
       instruction,
-      "write|draft|create|generate|make|produce|prepare|give\\s+me",
-    ) && /\b(?:linkedin\s+)?posts?\b/i.test(instruction)
+    ) &&
+    /\b(?:rewrite|rework|remix|model|mimic|adapt|write|draft|create|turn\s+(?:it|them|these|those)\s+into)\b/i.test(
+      instruction,
+    )
   );
 }
 
@@ -662,7 +681,24 @@ export function compileActionOrchestratorRoute(
     remaining.push("action");
   }
   if (schedulesPost && date === undefined) remaining.push("date");
-  if (targetCount.kind === "clarify") remaining.push("target_count");
+  // The board-action lane is for MOVING/SCHEDULING saved drafts. A bare count
+  // ambiguity is only OUR concern when the turn actually wants a board action —
+  // otherwise a pure content request like "find 4 top posts and rewrite them"
+  // (a swipe-file draft-generation turn the read-only orchestrator owns) got
+  // hijacked into "How many saved drafts should I update?", which is nonsense
+  // and never produced the posts. Require real board-action intent — a built
+  // requirement, a board command, a mutation signal, or an already-raised
+  // action/date clarification — before a target_count clarification can claim
+  // the turn. With no board intent, fall through to null so content lanes run.
+  const hasBoardActionIntent =
+    requirements.length > 0 ||
+    remaining.length > 0 ||
+    moveCommandRequested ||
+    likelyBoardMutation ||
+    schedulesPost;
+  if (targetCount.kind === "clarify" && hasBoardActionIntent) {
+    remaining.push("target_count");
+  }
   if (remaining.length > 0) {
     return clarificationRoute(
       remaining,

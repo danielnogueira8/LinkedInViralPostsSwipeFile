@@ -250,8 +250,41 @@ describe("action orchestrator routing", () => {
   test("does not treat a title-shaped not as action negation", () => {
     expect(route("Move my Why not build a personal brand draft to ready.")).toEqual({
       kind: "action_management",
-      targetCount: 1,
       requirements: [{ type: "move_on_board", status: "ready" }],
+      targetCount: 1,
+    });
+  });
+
+  // Regression: a swipe-file content request ("find N top posts and rewrite
+  // them") is NOT a board mutation. It used to be hijacked by the action lane
+  // into "How many saved drafts should I update?" — a nonsense clarification
+  // that never produced the posts — because a count > 3 tripped a target_count
+  // clarification with no board-action intent behind it. The action lane must
+  // return null so the content lanes (read-only orchestrator / draft engine)
+  // run instead.
+  test.each([
+    "Find 4 top-performing regular posts in my swipe file and rewrite it in my voice on a topic that fits me. Keep its structure and hook style, but make the content original",
+    "Find 4 posts and rewrite them",
+    "rewrite 4 of my posts",
+    "Find 5 viral posts and turn them into original posts",
+    "model 4 of my top posts",
+    "adapt 4 posts into my voice",
+  ])("does not claim a content/rewrite request as a board action: %s", (instruction) => {
+    expect(route(instruction)).toBeNull();
+  });
+
+  // A bare count ambiguity WITHOUT any board command must not raise a
+  // target_count clarification — only a real board move/schedule intent can.
+  test("a count-only ambiguity with no board command yields null, not a target_count clarify", () => {
+    expect(route("Give me 4 posts")).toBeNull();
+  });
+
+  // But a genuine board move over the 3-item cap STILL clarifies the count —
+  // this is the legitimate case the guard must preserve.
+  test("a board move command over the count cap still asks target_count", () => {
+    expect(route("Move 4 drafts to ready.")).toMatchObject({
+      kind: "clarify_action",
+      clarificationReason: "target_count",
     });
   });
 
