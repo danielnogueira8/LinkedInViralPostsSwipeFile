@@ -59,17 +59,17 @@ describe("read-only complex orchestrator routing", () => {
   });
 
   test("does not mistake an output count for the requested research source count", () => {
-    expect(
-      compileReadOnlyOrchestratorRoute({
-        ...base,
-        userInstruction:
-          "Find three viral SaaS posts, compare them, and write two LinkedIn posts.",
-      }),
-    ).toMatchObject({
+    const route = compileReadOnlyOrchestratorRoute({
+      ...base,
+      userInstruction:
+        "Find three viral SaaS posts, compare them, and write two LinkedIn posts.",
+    });
+    expect(route).toMatchObject({
       kind: "workspace_research",
       expectedDrafts: 2,
       minimumSources: 3,
     });
+    expect(route).not.toHaveProperty("workspaceDraftSourceMode");
   });
 
   test("does not mistake plural research sources for a plural output", () => {
@@ -109,6 +109,7 @@ describe("read-only complex orchestrator routing", () => {
         expectedDrafts,
         minimumSources: expectedDrafts,
         workspacePostType,
+        workspaceDraftSourceMode: "one_to_one",
       });
     },
   );

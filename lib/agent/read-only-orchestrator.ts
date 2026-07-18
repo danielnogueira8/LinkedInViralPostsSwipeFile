@@ -1728,15 +1728,28 @@ function taggedWithResearchProvenance(
   artifact: Artifact,
   route: ReadOnlyOrchestratorRoute,
   sources: DraftEngineGroundedSource[],
+  artifactIndex: number,
 ): Artifact {
   if (artifact.kind === "cite") return artifact;
+  const assignedSource =
+    route.workspaceDraftSourceMode === "one_to_one"
+      ? sources[artifactIndex]
+      : undefined;
+  const artifactSources = assignedSource ? [assignedSource] : sources;
   return {
     ...artifact,
     meta: {
       ...(artifact.meta ?? {}),
+      ...(assignedSource?.kind === "workspace_post"
+        ? {
+            source: "model_source",
+            source_post_id: assignedSource.id,
+            ...(assignedSource.url ? { source_url: assignedSource.url } : {}),
+          }
+        : {}),
       research_provenance: {
         route: route.kind,
-        sources: sources.map((source) => ({
+        sources: artifactSources.map((source) => ({
           id: source.id,
           kind: source.kind,
           ...(source.title ? { title: source.title } : {}),
@@ -2456,6 +2469,8 @@ async function* runReadOnlyOrchestratorCore(
                 kind: "multi",
                 expectedCount: expectedDrafts,
                 groundedSources,
+                groundedSourceMode:
+                  input.route.workspaceDraftSourceMode ?? "shared",
               }
             : {
                 kind: "grounded",
@@ -2478,6 +2493,7 @@ async function* runReadOnlyOrchestratorCore(
             event.artifact,
             input.route,
             groundedSources,
+            bufferedArtifacts.length,
           ),
         });
         continue;
