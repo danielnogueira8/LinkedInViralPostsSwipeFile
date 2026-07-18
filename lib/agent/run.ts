@@ -27,6 +27,7 @@ import {
   runTool,
   toolSummary,
   normalizeToolCallArguments,
+  voiceResultKeepsEmDashes,
   type ToolResult,
 } from "./tools";
 import {
@@ -2044,12 +2045,22 @@ export async function* runAgent(opts: {
         .join("\n\n"),
     };
   };
+  // Voice-aware editor options, mutated in place (the finalizer holds the
+  // object by reference): initialized from the preloaded voice result and
+  // flipped again if a mid-turn get_voice reveals the writer genuinely uses
+  // em dashes (voice.keep_em_dashes, set by loadVoiceProfile from the
+  // measured mechanics fingerprint) — so the anti-slop em-dash net doesn't
+  // erase THEIR voice while staying on for everyone else.
+  const draftEditOptions = {
+    keepEmDashes: voiceResultKeepsEmDashes(opts.preloadedVoiceResult),
+  };
   const draftFinalizer = createDraftFinalizer({
     workspaceId,
     policy: draftOutputPolicy,
     contract: deliverableContract,
     priorDrafts: priorPostDrafts,
     signal: turnAbort.signal,
+    editOptions: draftEditOptions,
     specialists: opts.draftFinalizerSpecialists,
     transformCandidate: opts.draftCandidateTransform,
     finalTransformCandidate: opts.draftFinalCandidateTransform,
@@ -3504,6 +3515,11 @@ export async function* runAgent(opts: {
           ]
             .filter(Boolean)
             .join("\n\n");
+          // Same for the voice-aware editor: the finalizer holds
+          // draftEditOptions by reference, so later finalize calls see this.
+          if (voiceResultKeepsEmDashes(result)) {
+            draftEditOptions.keepEmDashes = true;
+          }
         }
         const toolMsg: ChatMessage = {
           role: "tool",
@@ -4054,7 +4070,7 @@ export async function* runAgent(opts: {
           // truncated to its lead-in. Match on the cleaned dedupe key so a
           // whitespace/em-dash-only difference still counts as a repeat.
           const leakedKey = normalizeDraftKey(
-            editDraftBodySync(leaked.body, leaked.kind).body,
+            editDraftBodySync(leaked.body, leaked.kind, draftEditOptions).body,
           );
           const isRepeatOfRendered = allArtifacts.some(
             (a) =>

@@ -67,6 +67,26 @@ export type MechanicsFingerprint = {
 // confident guidance.
 export const MIN_CONFIDENT_SAMPLES = 8;
 
+// Em-dash rate (per 100 words) at or above which the user GENUINELY writes
+// with em dashes — the anti-slop stripEmDashes net should back off rather
+// than erase their voice. Shared by the rule renderer and the voice-aware
+// editor wiring so the two never disagree.
+export const EM_DASH_KEEP_THRESHOLD = 0.3;
+
+// Should the em-dash anti-slop net be suppressed for this writer? True only
+// on a confident fingerprint whose measured rate clears the threshold — no
+// fingerprint / thin sample / low rate all mean "strip as usual" (the em
+// dash stays the AI tell it is for everyone who doesn't genuinely use it).
+export function voiceKeepsEmDashes(
+  fp: MechanicsFingerprint | null | undefined,
+): boolean {
+  return Boolean(
+    fp &&
+      fp.sample_size >= MIN_CONFIDENT_SAMPLES &&
+      fp.em_dash_per_100_words >= EM_DASH_KEEP_THRESHOLD,
+  );
+}
+
 const EMOJI_RE = /\p{Extended_Pictographic}/gu;
 
 // Stateless emoji check — builds a FRESH regex per call instead of reusing a
@@ -333,7 +353,7 @@ export function mechanicsFingerprintToRules(
   if (fp.all_caps_word_rate >= 0.01) {
     rules.push("Occasionally use ALL CAPS on a single word for emphasis, the way this writer does — sparingly, never a whole sentence.");
   }
-  if (fp.em_dash_per_100_words >= 0.3) {
+  if (voiceKeepsEmDashes(fp)) {
     rules.push("This writer genuinely uses em dashes (—) — keep them; do not strip or replace them with commas.");
   } else if (fp.em_dash_per_100_words === 0) {
     rules.push("Never use an em dash (—) — this writer doesn't use them.");
@@ -364,4 +384,136 @@ export function mechanicsFingerprintToRules(
     rules.push("Keep paragraphs to one sentence each (occasionally two) — this writer favors short, single-line paragraphs.");
   }
   return rules;
+}
+
+// ---------------------------------------------------------------------------
+// Mechanics-match scoring — a measurable "does this draft write like this
+// person" signal, for evals and regression tests. Runs the SAME measurement
+// code over a single generated draft and compares it against the user's
+// fingerprint, but ONLY on signals where the user has a strong, confident
+// habit (same thresholds as mechanicsFingerprintToRules — a mixed signal is
+// never scored, so the score can't punish a draft for a habit the user
+// doesn't actually have).
+// ---------------------------------------------------------------------------
+
+export type MechanicsCheck = {
+  signal: string;
+  pass: boolean;
+  expected: string;
+  actual: string;
+};
+
+export type MechanicsMatchResult = {
+  // Fraction of applicable checks the draft passed, or null when the user
+  // fingerprint asserts no strong habits (nothing to score against).
+  score: number | null;
+  checks: MechanicsCheck[];
+};
+
+export function mechanicsMatchScore(
+  draftBody: string,
+  userFp: MechanicsFingerprint,
+): MechanicsMatchResult {
+  const checks: MechanicsCheck[] = [];
+  if (userFp.sample_size < MIN_CONFIDENT_SAMPLES) {
+    return { score: null, checks };
+  }
+  const draft = computeMechanicsFingerprint([draftBody]);
+
+  // Sentence-start casing: only scored when the user is firmly on one side.
+  if (userFp.lowercase_sentence_starts >= 0.6) {
+    checks.push({
+      signal: "lowercase_sentence_starts",
+      pass: draft.lowercase_sentence_starts >= 0.5,
+      expected: "mostly lowercase sentence starts",
+      actual: `${Math.round(draft.lowercase_sentence_starts * 100)}% lowercase`,
+    });
+  } else if (userFp.lowercase_sentence_starts <= 0.05) {
+    checks.push({
+      signal: "capitalized_sentence_starts",
+      pass: draft.lowercase_sentence_starts <= 0.2,
+      expected: "capitalized sentence starts",
+      actual: `${Math.round(draft.lowercase_sentence_starts * 100)}% lowercase`,
+    });
+  }
+
+  // Pronoun "i" casing.
+  if (userFp.lowercase_pronoun_i >= 0.5) {
+    checks.push({
+      signal: "lowercase_pronoun_i",
+      pass: draft.lowercase_pronoun_i >= 0.5,
+      expected: 'lowercase "i"',
+      actual: `${Math.round(draft.lowercase_pronoun_i * 100)}% lowercase i`,
+    });
+  }
+
+  // Em dashes: user genuinely uses them → draft may too (no check needed,
+  // nothing to fail); user NEVER uses them → the draft must not either.
+  if (userFp.em_dash_per_100_words === 0) {
+    checks.push({
+      signal: "no_em_dashes",
+      pass: draft.em_dash_per_100_words === 0,
+      expected: "no em dashes",
+      actual: `${draft.em_dash_per_100_words.toFixed(2)} per 100 words`,
+    });
+  }
+
+  // Exclamation marks: only the "never" habit is a scoreable constraint.
+  if (userFp.exclamation_per_100_words === 0) {
+    checks.push({
+      signal: "no_exclamations",
+      pass: draft.exclamation_per_100_words === 0,
+      expected: "no exclamation marks",
+      actual: `${draft.exclamation_per_100_words.toFixed(2)} per 100 words`,
+    });
+  }
+
+  // Emoji: user never uses them → draft must not; user uses them regularly →
+  // a draft with zero is a (soft) mismatch.
+  if (userFp.emoji_per_post < 0.1) {
+    checks.push({
+      signal: "no_emoji",
+      pass: draft.emoji_per_post === 0,
+      expected: "no emoji",
+      actual: `${draft.emoji_per_post} emoji`,
+    });
+  } else if (userFp.emoji_per_post >= 0.5) {
+    checks.push({
+      signal: "uses_emoji",
+      pass: draft.emoji_per_post > 0,
+      expected: "at least one emoji",
+      actual: `${draft.emoji_per_post} emoji`,
+    });
+  }
+
+  // Single-line-paragraph writers: the draft should stay airy too. Allow up
+  // to 2 sentences per paragraph median — a rigid ==1 would punish a
+  // legitimate two-beat paragraph.
+  if (userFp.median_sentences_per_paragraph <= 1.2) {
+    checks.push({
+      signal: "short_paragraphs",
+      pass: draft.median_sentences_per_paragraph <= 2,
+      expected: "one-sentence paragraphs",
+      actual: `${draft.median_sentences_per_paragraph} sentences/paragraph median`,
+    });
+  }
+
+  // Dominant list marker: only checked when the draft actually contains a
+  // list — a draft without a list can't mismatch the marker.
+  if (
+    userFp.uses_lists_rate >= 0.3 &&
+    userFp.dominant_list_marker &&
+    draft.uses_lists_rate > 0
+  ) {
+    checks.push({
+      signal: "list_marker",
+      pass: draft.dominant_list_marker === userFp.dominant_list_marker,
+      expected: `"${userFp.dominant_list_marker}" list marker`,
+      actual: `"${draft.dominant_list_marker ?? "none"}"`,
+    });
+  }
+
+  if (checks.length === 0) return { score: null, checks };
+  const passed = checks.filter((c) => c.pass).length;
+  return { score: passed / checks.length, checks };
 }
