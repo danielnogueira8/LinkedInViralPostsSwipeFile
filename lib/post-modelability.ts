@@ -3,7 +3,7 @@
 //
 // The gap this closes: auto-selection (search_viral_posts mimic path,
 // get_top_from_batch) ranks purely by engagement (lib/agent/tools.ts
-// rankIdeaPosts/rotateFreshBand). A post can top that ranking because of a
+// idea rank/rotation). A post can top that ranking because of a
 // video, a milestone announcement, or a big-follower author, while its TEXT
 // has no repeatable structure to model. This never happens on an explicit
 // analytical query ("show me my top 10 by reactions") — only on the default
@@ -48,8 +48,9 @@ export type ModelabilityResult = {
   bonuses: ModelabilityBonus[];
 };
 
-// Below this, a body reads as a caption/announcement stub, not a post with
-// modelable structure — there's no hook-then-body-then-close to extract.
+// Below this, an unstructured body reads as a caption/announcement stub, not a
+// post with modelable structure. Compact posts with a real list/beat sequence
+// are allowed through; raw character count is never the sole rejection signal.
 // Calibrated against real data: "reminder" (8 chars), "Agree?" (6 chars),
 // "We're hiring an AE to free me from this hell" (75 chars) all sit well
 // under this, while the shortest legitimately modelable posts in a manual
@@ -65,12 +66,9 @@ const SWEET_SPOT_MAX_CHARS = 2500;
 
 // Phrases that signal the post's real content lives OFF the page (a video,
 // carousel, PDF, or external link) — the text itself is a caption, and
-// modeling its "structure" would just reproduce a caption, not a post. Only
-// a fatal reject when it appears in the LEADING portion of the body (see
-// isMediaDependentCaption below) — a post can be a complete, modelable
-// text piece that happens to mention a video in passing near the end (e.g.
-// "PS: watch the video for the live walkthrough"). What matters is whether
-// the media IS the payload, not whether media is mentioned anywhere at all.
+// modeling its "structure" would just reproduce a caption, not a post. The
+// decision combines pointer position, actual media metadata, and detected text
+// structure; a complete post may mention its video without being rejected.
 const MEDIA_DEPENDENT_RE =
   /\b(?:watch\s+(?:the\s+)?video|full\s+(?:breakdown|video|episode)\s+(?:below|above|in\s+the\s+video)|swipe\s+(?:the\s+)?carousel|swipe\s+(?:left|right)|link\s+in\s+(?:the\s+)?(?:bio|comments?)|see\s+(?:the\s+)?attached|listen\s+to\s+the\s+(?:podcast|episode))\b/i;
 
@@ -81,16 +79,41 @@ const MEDIA_DEPENDENT_RE =
 // fatally rejected over one aside near the sign-off.
 const MEDIA_DEPENDENT_LEADING_FRACTION = 0.3;
 
-function isMediaDependentCaption(text: string): boolean {
+function isMediaDependentCaption(
+  text: string,
+  mediaType: string | null | undefined,
+  hasRepeatableStructure: boolean,
+  hasListStructure: boolean,
+): boolean {
   const match = text.match(MEDIA_DEPENDENT_RE);
   if (!match || match.index === undefined) return false;
-  return match.index < text.length * MEDIA_DEPENDENT_LEADING_FRACTION;
+
+  const normalizedMediaType = typeof mediaType === "string"
+    ? mediaType.trim().toLowerCase()
+    : "";
+  const hasAttachedPayload =
+    normalizedMediaType !== "" && normalizedMediaType !== "none";
+  const hasLeadingPointer =
+    match.index < text.length * MEDIA_DEPENDENT_LEADING_FRACTION;
+
+  // A leading pointer is only self-contained when the text supplies an
+  // independently reusable list/framework. Paragraph count alone is not
+  // enough: media captions commonly describe the payload across paragraphs.
+  if (hasLeadingPointer) return !hasListStructure;
+
+  return hasAttachedPayload && !hasRepeatableStructure;
 }
 
 // A repost/quote-post stub: the body is just a one-line intro pointing at
 // someone else's content, not a self-contained post to model.
 const REPOST_STUB_RE =
-  /^(?:reposted?\s+from|via|h\/t|credit:?)\b/i;
+  /^(?:reposted?\s+from\b|h\/t\b)/i;
+const ATTRIBUTION_STUB_RE =
+  /^(?:[Vv][Ii][Aa]|[Cc][Rr][Ee][Dd][Ii][Tt]:?)\s+(?:@[\p{L}\p{N}_.-]+|[\p{Lu}][\p{L}.'’\-]+(?:\s+[\p{Lu}][\p{L}.'’\-]+){0,3}(?=\s*[:—-]|\s*$))/u;
+
+function isRepostStub(text: string): boolean {
+  return REPOST_STUB_RE.test(text) || ATTRIBUTION_STUB_RE.test(text);
+}
 
 // Poll stub: LinkedIn polls carry almost no body text of their own.
 const POLL_STUB_RE = /\b(?:vote\s+(?:below|above)|cast\s+your\s+vote|poll:?)\b/i;
@@ -145,25 +168,48 @@ export type ModelabilityInput = {
 
 // Score a single candidate source post's modelability. Never throws.
 export function scorePostModelability(input: ModelabilityInput): ModelabilityResult {
-  const text = (input.text ?? "").trim();
-  const postType: PostType = input.postType === "lead_magnet" ? "lead_magnet" : "regular";
+  const text = typeof input?.text === "string" ? input.text.trim() : "";
+  const postType: PostType = input?.postType === "lead_magnet" ? "lead_magnet" : "regular";
+
+  // Compute structure before applying fatal gates. Length and keyword matches
+  // alone cannot distinguish a compact, reusable format from a caption or a
+  // post that merely discusses a poll/video/repost.
+  const skeleton = computeStructureSkeleton(text);
+  const hasListStructure =
+    skeleton.hasList && skeleton.listItemCount >= 2 && skeleton.totalWords >= 12;
+  const hasRepeatableStructure =
+    hasListStructure ||
+    (skeleton.paragraphCount >= 3 && skeleton.totalWords >= 30);
 
   // --- Fatal rejects -------------------------------------------------------
-  if (text.length < CAPTION_TIER_MAX_CHARS) {
+  if (
+    text.length === 0 ||
+    (text.length < CAPTION_TIER_MAX_CHARS && !hasRepeatableStructure)
+  ) {
     return { score: 0, reject: "empty_or_caption", penalties: [], bonuses: [] };
   }
-  if (REPOST_STUB_RE.test(text)) {
+  if (isRepostStub(text)) {
     return { score: 0, reject: "repost_stub", penalties: [], bonuses: [] };
   }
-  if (POLL_STUB_RE.test(text)) {
+  if (
+    POLL_STUB_RE.test(text) &&
+    !hasRepeatableStructure &&
+    skeleton.totalWords < 55
+  ) {
     return { score: 0, reject: "poll_stub", penalties: [], bonuses: [] };
   }
-  if (isMediaDependentCaption(text)) {
+  if (
+    isMediaDependentCaption(
+      text,
+      input?.mediaType,
+      hasRepeatableStructure,
+      hasListStructure,
+    )
+  ) {
     return { score: 0, reject: "media_dependent", penalties: [], bonuses: [] };
   }
 
   // --- Structure measurement (reuse the modeling-fidelity skeleton) --------
-  const skeleton = computeStructureSkeleton(text);
   const penalties: ModelabilityPenalty[] = [];
   const bonuses: ModelabilityBonus[] = [];
   let score = 0.5;
@@ -186,6 +232,11 @@ export function scorePostModelability(input: ModelabilityInput): ModelabilityRes
     score -= 0.2;
   }
 
+  if (hasRepeatableStructure) {
+    bonuses.push("strong_structure");
+    score += 0.2;
+  }
+
   if (postType === "lead_magnet") {
     // Lead magnets are judged on offer clarity, not penalized for the
     // comment-CTA mechanic that regular posts would lose points for.
@@ -193,9 +244,6 @@ export function scorePostModelability(input: ModelabilityInput): ModelabilityRes
       bonuses.push("clear_lead_magnet_offer");
       score += 0.15;
     }
-  } else if (skeleton.hasList || skeleton.paragraphCount >= 3) {
-    bonuses.push("strong_structure");
-    score += 0.2;
   }
 
   if (text.length >= SWEET_SPOT_MIN_CHARS && text.length <= SWEET_SPOT_MAX_CHARS) {

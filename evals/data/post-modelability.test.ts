@@ -31,6 +31,22 @@ describe("scorePostModelability — fatal rejects", () => {
     expect(r.reject).toBe("empty_or_caption");
   });
 
+  test("a concise post with a complete list structure is not mistaken for a caption", () => {
+    const r = scorePostModelability({
+      text: `Content gets easier when you stop guessing.
+
+1. Name one reader
+2. Solve one problem
+3. Make one promise
+
+Then publish.`,
+      postType: "regular",
+    });
+
+    expect(r.reject).toBeNull();
+    expect(r.bonuses).toContain("strong_structure");
+  });
+
   test("video-dependent post rejects as media_dependent", () => {
     const r = scorePostModelability({
       text: "I broke down my entire growth strategy in this one. Full breakdown in the video below. Watch it end to end, I promise it's worth your time and covers everything I know about this topic in detail.",
@@ -95,6 +111,35 @@ There's a framework at the 4 minute mark that alone is worth the watch, plus a t
     expect(r.reject).toBe("media_dependent");
   });
 
+  test("a self-contained structured post is not rejected for an incidental opening media reference", () => {
+    const r = scorePostModelability({
+      text: `Watch the video if you want the live version. The full framework is here too.
+
+Most content fails because it starts with a format instead of a reader problem.
+
+1. Name the exact reader.
+2. Name the expensive problem.
+3. Explain the smallest useful change.
+
+That sequence works for text, video, and every format in between.`,
+      postType: "regular",
+      mediaType: "video",
+    });
+
+    expect(r.reject).toBeNull();
+    expect(r.bonuses).toContain("strong_structure");
+  });
+
+  test("a thin media caption is rejected even when its pointer is near the end", () => {
+    const r = scorePostModelability({
+      text: `This changed how I think about content systems and it is easier to show than explain. I included every step and example from the workshop so you can follow along without guessing. Watch the video.`,
+      postType: "regular",
+      mediaType: "video",
+    });
+
+    expect(r.reject).toBe("media_dependent");
+  });
+
   test("repost stub rejects", () => {
     const r = scorePostModelability({
       text: "Reposted from Jane Doe — this is exactly the kind of thing more founders need to hear, could not have said it better myself honestly, go check out her original post for the full context.",
@@ -103,12 +148,70 @@ There's a framework at the 4 minute mark that alone is worth the watch, plus a t
     expect(r.reject).toBe("repost_stub");
   });
 
+  test("an explicit creator attribution stub rejects", () => {
+    const r = scorePostModelability({
+      text: "Via @janedoe — this is the clearest explanation of the problem I have seen this year, and more founders should read the original thread before making another decision about their content strategy.",
+      postType: "regular",
+    });
+    expect(r.reject).toBe("repost_stub");
+  });
+
+  test("a post beginning with 'via' as part of its argument is not a repost stub", () => {
+    const r = scorePostModelability({
+      text: `Via negativa is the most useful editing principle I know.
+
+Instead of asking what else a post needs, remove every sentence that does not strengthen the promise.
+
+The result is shorter, clearer, and much harder to misunderstand.`,
+      postType: "regular",
+    });
+
+    expect(r.reject).toBeNull();
+  });
+
+  test("a post about financial credit is not mistaken for attribution", () => {
+    const r = scorePostModelability({
+      text: `Credit: the least understood tool in a founder's finance stack.
+
+Used carelessly, it compounds risk. Used deliberately, it buys time between an investment and the return that investment creates.
+
+The useful question is not whether debt is good or bad. It is whether the repayment clock matches the value-creation clock.`,
+      postType: "regular",
+    });
+
+    expect(r.reject).toBeNull();
+  });
+
   test("poll stub rejects", () => {
     const r = scorePostModelability({
       text: "Poll: what's the biggest blocker to shipping faster on your team right now? Vote below and I'll share the results with the full breakdown next week once everyone's had a chance to weigh in.",
       postType: "regular",
     });
     expect(r.reject).toBe("poll_stub");
+  });
+
+  test("a substantive post that analyzes poll results is not a poll stub", () => {
+    const r = scorePostModelability({
+      text: `Our customer poll: 62% of content teams said approvals were their biggest bottleneck.
+
+The surprising part was not the number. It was that every high-performing team had already removed one approval layer.
+
+If publishing is slow, map the decision path before buying another writing tool.`,
+      postType: "regular",
+    });
+
+    expect(r.reject).toBeNull();
+  });
+
+  test("a long two-paragraph poll analysis is not rejected only because it says poll", () => {
+    const r = scorePostModelability({
+      text: `Poll: most teams said speed was their biggest content problem, but that answer hid the useful distinction between drafting time and decision time.
+
+When we reviewed the workflows, writing was rarely the bottleneck. The slow teams waited for five people to approve an idea that one accountable editor could decide. The fast teams set the audience, claim, and evidence standard before drafting began, then let one owner publish. The lesson is operational: shorten the decision path before asking writers to type faster.`,
+      postType: "regular",
+    });
+
+    expect(r.reject).toBeNull();
   });
 });
 
@@ -237,6 +340,7 @@ Comment "FRAMEWORK" and I'll send you the whole breakdown, no opt-in required, j
     });
     expect(r.reject).toBeNull();
     expect(r.bonuses).toContain("clear_lead_magnet_offer");
+    expect(r.bonuses).toContain("strong_structure");
     expect(r.penalties).not.toContain("no_discernible_hook");
   });
 
@@ -267,5 +371,14 @@ describe("scorePostModelability — never throws on malformed input", () => {
     expect(() =>
       scorePostModelability({ text: undefined as unknown as string, postType: null }),
     ).not.toThrow();
+  });
+
+  test("non-string runtime text is rejected safely instead of throwing", () => {
+    expect(
+      scorePostModelability({
+        text: { unexpected: "shape" } as unknown as string,
+        postType: "regular",
+      }),
+    ).toMatchObject({ score: 0, reject: "empty_or_caption" });
   });
 });

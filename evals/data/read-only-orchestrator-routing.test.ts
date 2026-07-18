@@ -103,6 +103,26 @@ describe("read-only complex orchestrator routing", () => {
       5,
       "lead_magnet",
     ],
+    [
+      "Find 3 top-performing regular posts in my swipe file and create 3 posts modeled after them.",
+      3,
+      "regular",
+    ],
+    [
+      "Find 3 top-performing regular posts in my swipe file and write three posts modelling their formats.",
+      3,
+      "regular",
+    ],
+    [
+      "Find 3 top-performing regular posts in my swipe file and replicate their formats in three posts.",
+      3,
+      "regular",
+    ],
+    [
+      "Find 4 top-performing regular posts in my swipe file and turn them into original posts.",
+      4,
+      "regular",
+    ],
   ] as const)(
     "preserves a one-to-one source transformation contract: %s",
     (userInstruction, expectedDrafts, workspacePostType) => {
@@ -127,6 +147,19 @@ describe("read-only complex orchestrator routing", () => {
           "Find viral posts from my swipe file, compare them, and write LinkedIn posts about pricing.",
       }),
     ).toMatchObject({ kind: "ambiguous_read_only", expectsDraft: false });
+  });
+
+  test.each([
+    "Find 3 top posts and turn them into a comparison table.",
+    "Find 3 top posts and turn them into a research summary.",
+    "Find 3 top posts and turn each one into a slide.",
+  ])("never routes a non-post transformation as one-to-one drafts: %s", (userInstruction) => {
+    expect(
+      compileReadOnlyOrchestratorRoute({ ...base, userInstruction }),
+    ).not.toMatchObject({
+      expectsDraft: true,
+      workspaceDraftSourceMode: "one_to_one",
+    });
   });
 
   test.each([

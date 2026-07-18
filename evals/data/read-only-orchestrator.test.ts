@@ -2187,6 +2187,7 @@ describe("read-only orchestrator execution", () => {
     if (!route) return;
 
     const writerInputs: DraftEngineInput[] = [];
+    const selectionContexts: Array<ToolExecutionContext | undefined> = [];
     const result = await collect(
       input({
         route,
@@ -2197,8 +2198,9 @@ describe("read-only orchestrator execution", () => {
         },
       }),
       [],
-      async (_name, args) =>
-        args.post_type === "regular" && args.niche === undefined
+      async (_name, args, _workspaceId, _signal, context) => {
+        selectionContexts.push(context);
+        return args.post_type === "regular" && args.niche === undefined
           ? {
               ok: true,
               count: 4,
@@ -2225,7 +2227,8 @@ describe("read-only orchestrator execution", () => {
                 },
               ],
             }
-          : { ok: true, count: 0, posts: [] },
+          : { ok: true, count: 0, posts: [] };
+      },
       {
         runDraftEngine: async function* (draftInput) {
           writerInputs.push(draftInput);
@@ -2265,6 +2268,14 @@ describe("read-only orchestrator execution", () => {
       expectedCount: 4,
       groundedSourceMode: "one_to_one",
     });
+    expect(selectionContexts).toEqual([
+      expect.objectContaining({
+        modelingSelection: {
+          userInstruction,
+          voiceAnchors: { identity: ["Direct and useful."] },
+        },
+      }),
+    ]);
     const artifacts = result.events.filter(
       (event) => event.type === "artifact",
     );
