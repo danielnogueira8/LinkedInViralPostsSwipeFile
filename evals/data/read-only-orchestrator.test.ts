@@ -23,6 +23,7 @@ import {
 import { AdapterHealthRegistry } from "@/lib/agent/adapter-health";
 import { createCoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
 import type { ToolExecutionContext } from "@/lib/agent/tools";
+import { compileReadOnlyOrchestratorRoute } from "@/lib/agent/read-only-orchestrator-routing";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -2169,6 +2170,160 @@ describe("read-only orchestrator execution", () => {
         ],
       },
     });
+  });
+
+  test("turns four requested regular swipe-file sources into four distinct drafts", async () => {
+    const userInstruction =
+      "Find 4 top-performing regular posts in my swipe file and rewrite it in my voice on a topic that fits me. Keep its structure and hook style, but make the content original";
+    const route = compileReadOnlyOrchestratorRoute({
+      userInstruction,
+      isRefine: false,
+      hasModelSource: false,
+      hasAttachments: false,
+      hasLeadMagnet: false,
+      hasCreatorStyle: false,
+    });
+    expect(route).not.toBeNull();
+    if (!route) return;
+
+    const writerInputs: DraftEngineInput[] = [];
+    const result = await collect(
+      input({
+        route,
+        userInstruction,
+        draftEngineInput: {
+          ...input().draftEngineInput,
+          userInstruction,
+        },
+      }),
+      [],
+      async (_name, args) =>
+        args.post_type === "regular" && args.niche === undefined
+          ? {
+              ok: true,
+              count: 4,
+              posts: [
+                { id: "source-1", text: "Source one." },
+                { id: "source-2", text: "Source two." },
+                { id: "source-3", text: "Source three." },
+                { id: "source-4", text: "Source four." },
+              ],
+            }
+          : { ok: true, count: 0, posts: [] },
+      {
+        runDraftEngine: async function* (draftInput) {
+          writerInputs.push(draftInput);
+          const count =
+            draftInput.task?.kind === "multi"
+              ? draftInput.task.expectedCount
+              : 1;
+          for (let index = 1; index <= count; index += 1) {
+            yield {
+              type: "artifact",
+              artifact: {
+                id: `draft-${index}`,
+                kind: "post",
+                title: `Draft ${index}`,
+                body: `${COMPLETE_POST}\n\nVariant ${index}.`,
+              },
+            } satisfies AgentEvent;
+          }
+          yield {
+            type: "done",
+            terminalReason: "done",
+            message: {
+              content: "Here are four drafts.",
+              tool_calls: null,
+              artifacts: [],
+              toolMessages: [],
+              inputTokens: 210,
+              outputTokens: 380,
+            },
+          } satisfies AgentEvent;
+        },
+      },
+    );
+
+    expect(writerInputs[0]?.task).toMatchObject({
+      kind: "multi",
+      expectedCount: 4,
+    });
+    const artifacts = result.events.filter(
+      (event) => event.type === "artifact",
+    );
+    expect(artifacts).toHaveLength(4);
+    expect(
+      new Set(
+        artifacts.map((event) =>
+          event.type === "artifact" ? event.artifact.id : "",
+        ),
+      ).size,
+    ).toBe(4);
+  });
+
+  test.each([
+    ["too few artifacts", ["only-draft"]],
+    ["duplicate artifact identities", ["same", "same", "same", "same"]],
+  ] as const)("fails closed on %s", async (_case, artifactIds) => {
+    const result = await collect(
+      input({
+        route: {
+          kind: "workspace_research",
+          expectsDraft: true,
+          expectedDrafts: 4,
+          minimumSources: 4,
+          workspacePostType: "regular",
+        },
+        userInstruction:
+          "Find four regular posts in my swipe file and rewrite them into four original posts.",
+      }),
+      [],
+      async () => ({
+        ok: true,
+        count: 4,
+        posts: [
+          { id: "source-1", text: "Source one." },
+          { id: "source-2", text: "Source two." },
+          { id: "source-3", text: "Source three." },
+          { id: "source-4", text: "Source four." },
+        ],
+      }),
+      {
+        runDraftEngine: async function* () {
+          for (const [index, id] of artifactIds.entries()) {
+            yield {
+              type: "artifact",
+              artifact: {
+                id,
+                kind: "post",
+                title: `Draft ${index + 1}`,
+                body: `${COMPLETE_POST}\n\nVariant ${index + 1}.`,
+              },
+            };
+          }
+          yield {
+            type: "done",
+            terminalReason: "done",
+            message: {
+              content: "Here is your draft.",
+              tool_calls: null,
+              artifacts: [],
+              toolMessages: [],
+              inputTokens: 210,
+              outputTokens: 95,
+            },
+          };
+        },
+      },
+    );
+
+    expect(result.events.some((event) => event.type === "artifact")).toBe(false);
+    expect(result.events).toContainEqual(
+      expect.objectContaining({
+        type: "error",
+        code: "orchestrator_draft_count_mismatch",
+      }),
+    );
   });
 
   test("uses only cited web evidence for a general research turn", async () => {

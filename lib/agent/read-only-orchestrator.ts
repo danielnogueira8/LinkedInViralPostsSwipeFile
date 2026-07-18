@@ -72,6 +72,7 @@ const SearchViralPostsActionSchema = z
     niche: z.string().trim().min(1).max(100).optional(),
     limit: z.number().int().min(2).max(10),
     since: z.enum(["1d", "7d", "30d"]).optional(),
+    post_type: z.enum(["regular", "lead_magnet"]).optional(),
   })
   .strict();
 const InspectAttachmentsActionSchema = z
@@ -280,6 +281,15 @@ export function parseReadOnlyPlan(
     ) {
       throw new Error("The swipe-file plan changed the requested time window.");
     }
+    if (
+      searches.some(
+        (action) =>
+          action.post_type !== undefined &&
+          action.post_type !== route.workspacePostType,
+      )
+    ) {
+      throw new Error("The swipe-file plan changed the requested post type.");
+    }
   }
   if (route.kind === "file_inspection") {
     const searchTypeByKind = {
@@ -353,6 +363,18 @@ export function parseReadOnlyPlan(
       ) {
         throw new Error(
           "The file research plan changed the requested workspace time window.",
+        );
+      }
+      if (
+        plan.actions.some(
+          (action) =>
+            action.type === "search_viral_posts" &&
+            action.post_type !== undefined &&
+            action.post_type !== route.workspacePostType,
+        )
+      ) {
+        throw new Error(
+          "The file research plan changed the requested workspace post type.",
         );
       }
     }
@@ -474,6 +496,7 @@ const WORKSPACE_NICHE_GENERIC_TERMS = new Set([
   "posts",
   "performing",
   "recent",
+  "regular",
   "research",
   "researching",
   "review",
@@ -495,6 +518,8 @@ const WORKSPACE_NICHE_GENERIC_TERMS = new Set([
   "two",
   "using",
   "viral",
+  "lead",
+  "magnet",
 ]);
 const WORKSPACE_NICHE_CONNECTOR_TERMS = new Set(["and", "or"]);
 
@@ -558,7 +583,15 @@ function authoritativeWorkspaceNicheCandidate(
   }
   if (startIndex === postIndex) return null;
   const first = tokens[startIndex];
-  const last = tokens[postIndex - 1];
+  const last = tokens
+    .slice(startIndex, postIndex)
+    .findLast(
+      (token) =>
+        !WORKSPACE_NICHE_GENERIC_TERMS.has(
+          token[0].toLocaleLowerCase("en-US"),
+        ),
+    );
+  if (!last) return null;
   const raw = clause.slice(
     first.index,
     (last.index ?? 0) + last[0].length,
@@ -715,6 +748,7 @@ function compiledWorkspaceSearchAction(
   minimumSourcesRaw: number | undefined,
   authoritativeInstruction: string,
   id: string,
+  postType?: "regular" | "lead_magnet",
 ): z.infer<typeof SearchViralPostsActionSchema> {
   const minimumSources = Math.max(2, minimumSourcesRaw ?? 2);
   const niche = compiledWorkspaceNiche(authoritativeInstruction);
@@ -723,6 +757,7 @@ function compiledWorkspaceSearchAction(
     type: "search_viral_posts",
     limit: Math.min(Math.max(minimumSources, 2), 10),
     ...(niche ? { niche } : {}),
+    ...(postType ? { post_type: postType } : {}),
   };
 }
 
@@ -766,6 +801,7 @@ export function compileServerReadOnlyPlan(
       route.minimumSources,
       authoritativeInstruction,
       "swipe",
+      route.workspacePostType,
     );
     return {
       actions: [
@@ -803,6 +839,7 @@ export function compileServerReadOnlyPlan(
           route.minimumSources,
           authoritativeInstruction,
           "swipe",
+          route.workspacePostType,
         ),
       );
     }
@@ -885,6 +922,10 @@ const READ_ONLY_PLAN_TOOL: ToolDef = {
                   niche: { type: "string" },
                   limit: { type: "integer", minimum: 2, maximum: 10 },
                   since: { type: "string", enum: ["1d", "7d", "30d"] },
+                  post_type: {
+                    type: "string",
+                    enum: ["regular", "lead_magnet"],
+                  },
                 },
                 required: ["id", "type", "limit"],
               },
@@ -1550,6 +1591,7 @@ function toolCall(action: ExecutableReadOnlyAction, id: string): ToolCall {
         ? {
             ...(action.niche ? { niche: action.niche } : {}),
             ...(action.since ? { since: action.since } : {}),
+            ...(action.post_type ? { post_type: action.post_type } : {}),
             ...(action.sort ? { sort: action.sort } : {}),
             ...(action.dir ? { dir: action.dir } : {}),
             ...(action.strict_ranking
@@ -2036,6 +2078,7 @@ async function* runReadOnlyOrchestratorCore(
               ...action,
               niche: dispatchedWorkspaceNiche ?? undefined,
               since: input.route.workspaceSince,
+              post_type: input.route.workspacePostType,
               ...(input.route.workspaceSearchMode === "strict_top"
                 ? {
                     sort: "viral" as const,
@@ -2191,6 +2234,9 @@ async function* runReadOnlyOrchestratorCore(
                   : {}),
                 ...(input.route.workspaceSince
                   ? { since: input.route.workspaceSince }
+                  : {}),
+                ...(input.route.workspacePostType
+                  ? { post_type: input.route.workspacePostType }
                   : {}),
                 ...(input.route.workspaceSearchMode === "strict_top"
                   ? { sort: "viral", dir: "desc", strict_ranking: true }
@@ -2395,9 +2441,10 @@ async function* runReadOnlyOrchestratorCore(
   };
 
   let childDone: Extract<AgentEvent, { type: "done" }> | null = null;
+  let childReportedError = false;
   const bufferedArtifacts: Array<Extract<AgentEvent, { type: "artifact" }>> = [];
+  const expectedDrafts = input.route.expectedDrafts ?? 1;
   try {
-    const expectedDrafts = input.route.expectedDrafts ?? 1;
     for await (const event of deps.runDraftEngine(
       {
         ...input.draftEngineInput,
@@ -2435,6 +2482,7 @@ async function* runReadOnlyOrchestratorCore(
         });
         continue;
       }
+      if (event.type === "error") childReportedError = true;
       yield event;
     }
   } catch (error) {
@@ -2537,11 +2585,52 @@ async function* runReadOnlyOrchestratorCore(
     return;
   }
   const delivered = bufferedArtifacts.length > 0;
-  const draftOk =
-    delivered &&
+  const deliveredArtifactIds = new Set(
+    bufferedArtifacts.map((event) => event.artifact.id),
+  );
+  const deliveredExpectedSet =
+    bufferedArtifacts.length === expectedDrafts &&
+    deliveredArtifactIds.size === expectedDrafts;
+  const writerCompletedNormally =
+    !childReportedError &&
     childDone.terminalReason !== "cancelled" &&
     childDone.terminalReason !== "deadline" &&
     childDone.terminalReason !== "error";
+  if (writerCompletedNormally && !deliveredExpectedSet) {
+    const message = `I couldn’t produce all ${expectedDrafts} distinct drafts reliably, so I did not present a partial set.`;
+    yield {
+      type: "tool_end",
+      id: draftCallId,
+      name: draftCall.function.name,
+      ok: false,
+    };
+    messages.push(
+      toolMessage(draftCallId, {
+        ok: false,
+        delivered: false,
+        expected_drafts: expectedDrafts,
+        produced_artifacts: bufferedArtifacts.length,
+        distinct_artifact_ids: deliveredArtifactIds.size,
+        error: "draft_count_mismatch",
+      }),
+    );
+    yield {
+      type: "error",
+      code: "orchestrator_draft_count_mismatch",
+      message,
+      recovery: "continue",
+    };
+    yield completedDone({
+      content: message,
+      toolCalls: calls,
+      toolMessages: messages,
+      inputTokens,
+      outputTokens,
+    });
+    return;
+  }
+  const draftOk =
+    delivered && deliveredExpectedSet && writerCompletedNormally;
   if (draftOk) {
     for (const artifact of bufferedArtifacts) yield artifact;
   }

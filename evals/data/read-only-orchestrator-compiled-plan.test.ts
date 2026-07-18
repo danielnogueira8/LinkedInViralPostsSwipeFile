@@ -144,6 +144,60 @@ describe("compileServerReadOnlyPlan — per-route shapes", () => {
     expect(() => parseReadOnlyPlan(route, plan!)).not.toThrow();
   });
 
+  test("compiles regular posts as a post type rather than an account niche", () => {
+    const userInstruction =
+      "Find 4 top-performing regular posts in my swipe file and rewrite it in my voice on a topic that fits me. Keep its structure and hook style, but make the content original";
+    const route = compileReadOnlyOrchestratorRoute({
+      ...routingBase,
+      userInstruction,
+    });
+    expect(route).toMatchObject({
+      kind: "workspace_research",
+      expectedDrafts: 4,
+      minimumSources: 4,
+      workspacePostType: "regular",
+    });
+    if (!route) return;
+
+    const plan = compileServerReadOnlyPlan(route, userInstruction);
+    const search = plan?.actions.find(
+      (action) => action.type === "search_viral_posts",
+    );
+    expect(search).toMatchObject({
+      type: "search_viral_posts",
+      limit: 4,
+      post_type: "regular",
+    });
+    expect(search).not.toHaveProperty("niche");
+    expect(() => parseReadOnlyPlan(route, plan!)).not.toThrow();
+  });
+
+  test("keeps an account niche orthogonal to a requested post type", () => {
+    const userInstruction =
+      "Find 4 top SaaS lead magnet posts in my swipe file and adapt them into original posts.";
+    const route = compileReadOnlyOrchestratorRoute({
+      ...routingBase,
+      userInstruction,
+    });
+    expect(route).toMatchObject({
+      kind: "workspace_research",
+      expectedDrafts: 4,
+      minimumSources: 4,
+      workspacePostType: "lead_magnet",
+    });
+    if (!route) return;
+
+    const plan = compileServerReadOnlyPlan(route, userInstruction);
+    expect(
+      plan?.actions.find((action) => action.type === "search_viral_posts"),
+    ).toMatchObject({
+      type: "search_viral_posts",
+      niche: "SaaS",
+      post_type: "lead_magnet",
+      limit: 4,
+    });
+  });
+
   test("file_inspection with an allowed workspace search compiles both actions", () => {
     const route: ReadOnlyOrchestratorRoute = {
       kind: "file_inspection",

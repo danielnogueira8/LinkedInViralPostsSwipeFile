@@ -87,6 +87,32 @@ describe("read-only complex orchestrator routing", () => {
     });
   });
 
+  test.each([
+    [
+      "Find 4 top-performing regular posts in my swipe file and rewrite it in my voice on a topic that fits me. Keep its structure and hook style, but make the content original",
+      4,
+      "regular",
+    ],
+    [
+      "Find 5 top-performing lead magnet posts in my swipe file and adapt them into original posts in my voice.",
+      5,
+      "lead_magnet",
+    ],
+  ] as const)(
+    "preserves a one-to-one source transformation contract: %s",
+    (userInstruction, expectedDrafts, workspacePostType) => {
+      expect(
+        compileReadOnlyOrchestratorRoute({ ...base, userInstruction }),
+      ).toMatchObject({
+        kind: "workspace_research",
+        expectsDraft: true,
+        expectedDrafts,
+        minimumSources: expectedDrafts,
+        workspacePostType,
+      });
+    },
+  );
+
   test("clarifies an uncounted plural workspace output despite compare language", () => {
     expect(
       compileReadOnlyOrchestratorRoute({
