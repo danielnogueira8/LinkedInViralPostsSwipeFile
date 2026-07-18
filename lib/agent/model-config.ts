@@ -61,11 +61,14 @@ export const THIN_DRAFT_WRITER_FALLBACK_MODEL = distinctFallbackModel(
 export function activeCoworkModelRouting() {
   return {
     planner: {
+      // Both planners are server-compiled now — no LLM chooses the action
+      // plan. read_only used to run an OpenRouter planner (a flaky primary +
+      // a fallback that mangled the tool schema), which dead-ended real
+      // requests in "I couldn't compile a safe research plan." The plan is now
+      // built deterministically from the route (read-only-orchestrator.ts
+      // compileServerReadOnlyPlan), so there is no model to report or fail.
       news: { strategy: "server_compiled" as const, model: null },
-      read_only: {
-        primary: PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL,
-        fallback: FALLBACK_READ_ONLY_ORCHESTRATOR_MODEL,
-      },
+      read_only: { strategy: "server_compiled" as const, model: null },
     },
     search: {
       primary: PRIMARY_NEWS_MODEL,
