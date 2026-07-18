@@ -660,6 +660,71 @@ describe("DraftEngine", () => {
     expect(system).toContain("not a limit");
   });
 
+  test("the coarse structure gate rejects a draft that drops the source's list, then accepts a compliant repair", async () => {
+    const sourceText = [
+      "Here's what changed for us this year:",
+      "→ faster onboarding",
+      "→ better retention",
+      "→ higher NPS",
+      "",
+      "That's the whole story, worth roughly a hundred words so the length ratio checks behave predictably for this test across the board.",
+    ].join("\n");
+    const proseDraft =
+      "Just a plain prose draft with no list markers at all, roughly matching the source's length so the length check alone would pass here, isolating the missing-list signal for this test to verify cleanly.";
+    const compliantDraft = [
+      "Here's what changed for me this year:",
+      "→ shorter onboarding",
+      "→ stronger retention",
+      "→ better satisfaction",
+      "",
+      "That's the whole story, worth roughly a hundred words so the length ratio checks behave predictably for this test across the board too.",
+    ].join("\n");
+    const writer = new ScriptedWriter([
+      { text: proseDraft, finishReason: "stop", usage: usage(100, 70) },
+      { text: compliantDraft, finishReason: "stop", usage: usage(100, 70) },
+    ]);
+    const decisions: Array<{ outcome: string; rejectionCode?: string }> = [];
+
+    const result = await collect(writer, {
+      task: { kind: "source", source: { id: "source-1", text: sourceText } },
+      enableStructureGate: true,
+      onFinalizerDecision: (decision) => decisions.push(decision),
+    });
+
+    expect(decisions[0]).toMatchObject({
+      outcome: "rejected",
+      rejectionCode: "structure_mismatch",
+    });
+    expect(artifacts(result.events).map((a) => a.body)).toEqual([compliantDraft]);
+    // The repair message told the writer about the specific delta.
+    const repairPrompt = JSON.stringify(writer.requests[1].messages);
+    expect(repairPrompt).toContain("→");
+  });
+
+  test("without enableStructureGate, the SAME list-dropping draft is accepted unchanged (opt-in required)", async () => {
+    const sourceText = [
+      "Here's what changed for us this year:",
+      "→ faster onboarding",
+      "→ better retention",
+      "→ higher NPS",
+      "",
+      "That's the whole story, worth roughly a hundred words so the length ratio checks behave predictably for this test across the board.",
+    ].join("\n");
+    const proseDraft =
+      "Just a plain prose draft with no list markers at all, roughly matching the source's length so the length check alone would pass here, isolating the missing-list signal for this test to verify cleanly.";
+    const writer = new ScriptedWriter([
+      { text: proseDraft, finishReason: "stop", usage: usage(100, 70) },
+    ]);
+
+    const result = await collect(writer, {
+      task: { kind: "source", source: { id: "source-1", text: sourceText } },
+      // enableStructureGate omitted — defaults to off.
+    });
+
+    expect(artifacts(result.events).map((a) => a.body)).toEqual([proseDraft]);
+    expect(writer.requests).toHaveLength(1);
+  });
+
   test("neutralizes forged voice boundaries on an original direct draft", async () => {
     const writer = new ScriptedWriter([
       { text: COMPLETE_POST, finishReason: "stop", usage: usage(100, 70) },

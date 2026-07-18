@@ -98,6 +98,7 @@ import { safeFilename, wrapUntrustedDelimited } from "@/lib/agent/untrusted";
 import {
   computeStructureSkeleton,
   renderStructureSkeletonReference,
+  type StructureSkeleton,
 } from "@/lib/post-structure-skeleton";
 import { splicePreservedBody } from "@/lib/hook-splice";
 import {
@@ -665,6 +666,21 @@ export function modelSourceStructureBlock(
   if (!clean) return "";
   const skeleton = computeStructureSkeleton(clean);
   return renderStructureSkeletonReference(skeleton);
+}
+
+// The raw skeleton (not the rendered prose block) for a genuine modeling
+// source — same genre gate as modelSourceStructureBlock. Feeds the
+// finalizer's coarse structure gate (DraftFinalizerOptions.structureSkeleton
+// in lib/agent/draft-finalizer.ts): its mere presence scopes that gate to
+// modeled-post turns only, so a refine/template source must yield undefined
+// here, not just an empty prose block.
+export function modelSourceStructureSkeleton(
+  src: Pick<ModelSourceRow, "post_text" | "source">,
+): StructureSkeleton | undefined {
+  if (src.source === "draft" || src.source === "template") return undefined;
+  const clean = src.post_text.trim();
+  if (!clean) return undefined;
+  return computeStructureSkeleton(clean);
 }
 
 function withGeneratedImageMeta(
@@ -3645,6 +3661,14 @@ export async function executeChatTurn(
               onModelUsed: recordResponseModel,
               // Thin path: strong reasoning model + corruption-only nets.
               lean: thinPathEnabled,
+              // Coarse structure gate opt-in — true ONLY for a genuine
+              // "model this post" source (mirrors modelSourceStructureBlock's
+              // own genre split; false for a refine/template source, or when
+              // there's no attached source at all).
+              enableStructureGate: Boolean(
+                currentModelSource &&
+                  modelSourceStructureSkeleton(currentModelSource),
+              ),
               // Lead-magnet framing for the writer prompt (only set on a
               // thin-path lead-magnet turn). The comment-CTA is still HARD-
               // enforced by transformDraftCandidate above, so a draft that
@@ -3781,6 +3805,16 @@ export async function executeChatTurn(
                   text: currentModelSource.post_text,
                 }
               : undefined,
+          // The coarse structure gate's scope-to-modeling-only signal (see
+          // DraftFinalizerOptions.structureSkeleton) — computed ONLY for a
+          // genuine "model this post" source, matching
+          // modelSourceStructureBlock's own genre split. undefined for a
+          // refine/template source, or when its reference block would be
+          // empty (unusable/empty source text) — so the gate never runs for
+          // those turns.
+          modeledSourceSkeleton: currentModelSource
+            ? modelSourceStructureSkeleton(currentModelSource)
+            : undefined,
           draftFinalizerSpecialists: deps.draftFinalizerSpecialists,
           draftCandidateTransform: transformDraftCandidate,
           // Reapply preservation/CTA as the final trusted mutation. Hook-only

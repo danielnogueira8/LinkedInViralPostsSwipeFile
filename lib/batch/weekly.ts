@@ -79,8 +79,10 @@ import type { PostMediaAttachment } from "@/lib/post-media";
 import { trackedAccountIds } from "@/lib/supabase-scoped";
 import { buildWeeklyDraftSystemBlocks } from "@/lib/batch/weekly-draft-prompt";
 import {
+  checkStructureMatch,
   computeStructureSkeleton,
   renderStructureSkeletonReference,
+  structureMismatchRepairInstruction,
 } from "@/lib/post-structure-skeleton";
 import { stampDraftFormat } from "@/lib/markdown/mode";
 
@@ -812,9 +814,27 @@ async function generateDraftBody(opts: {
     }).body;
     const truncated = res.finishReason === "length";
     const corruption = looksCorruptedDraft(cleaned);
+    // Coarse deterministic structure gate — MODELED (non-lead-magnet) posts
+    // only, matching buildDraftUser's own genre split. Deliberately narrow:
+    // see lib/post-structure-skeleton.ts checkStructureMatch for exactly
+    // what it does and doesn't catch. Computed only when the earlier checks
+    // already passed, so a truncated/corrupted/wrong-length draft doesn't
+    // waste a structure comparison.
+    const structureMismatch =
+      !truncated &&
+      !corruption &&
+      cleaned.length >= MIN_DRAFT_BODY &&
+      cleaned.length <= MAX_DRAFT_BODY &&
+      !opts.isLeadMagnet
+        ? checkStructureMatch(
+            computeStructureSkeleton(opts.source.text),
+            computeStructureSkeleton(cleaned),
+          )
+        : null;
     if (
       !truncated &&
       !corruption &&
+      !structureMismatch &&
       cleaned.length >= MIN_DRAFT_BODY &&
       cleaned.length <= MAX_DRAFT_BODY
     ) {
@@ -902,6 +922,8 @@ async function generateDraftBody(opts: {
             ? "That got cut off. Write the COMPLETE post, tighter, so it fits — one publish-ready LinkedIn post, body only."
             : corruption
               ? `That draft contained corrupted transport markup (${corruption}). Write ONE clean, complete, publish-ready LinkedIn post in the user's voice — body only, with no JSON, code fences, tool markup, permalink fragments, or preamble.`
+              : structureMismatch
+                ? `${structureMismatch.message} ${structureMismatchRepairInstruction(structureMismatch)}`
             : `That wasn't a usable post (${cleaned.length} chars). Write ONE complete, publish-ready LinkedIn post in the user's voice — body only, no preamble.`,
         },
       );
