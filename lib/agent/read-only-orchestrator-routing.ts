@@ -2,6 +2,7 @@ import {
   explicitlyForbidsSourceDiscovery,
   explicitlyRequestsSourceDiscovery,
   requestsDurableOrAction,
+  requestsSourceModeling,
 } from "@/lib/agent/source-policy";
 import { requestedDirectPostCount } from "@/lib/agent/direct-deliverable-policy";
 import { coworkRolloutDecision } from "@/lib/agent/cowork-rollout";
@@ -97,9 +98,6 @@ const SOURCE_COUNT_WORDS: Record<string, number> = {
   ten: 10,
 };
 
-const SOURCE_TRANSFORMATION_RE =
-  /\b(?:sources?|examples?|posts?)\b[^.!?]{0,160}(?:,\s*|\s+(?:and(?:\s+then)?|then|to)\s+)(?:please\s+)?(?:rewrite|rework|remix|model|mimic|adapt|turn\s+(?:it|them|these|those)\s+into)\b/i;
-
 function requestedExplicitSourceCount(instruction: string): number | null {
   const explicitCounts = [...instruction.matchAll(SOURCE_COUNT_RE)].map(
     (match) => {
@@ -131,7 +129,7 @@ function requestedTransformationDraftCount(
   instruction: string,
   researchClause: string,
 ): number | null {
-  if (!SOURCE_TRANSFORMATION_RE.test(instruction)) return null;
+  if (!requestsSourceModeling(instruction)) return null;
   return requestedExplicitSourceCount(researchClause);
 }
 
@@ -357,6 +355,7 @@ export function compileReadOnlyOrchestratorRoute(
   }
 
   const explicitDraftCount = requestedDirectPostCount(instruction);
+  const sourceModelingRequest = requestsSourceModeling(instruction);
   const researchClause = sourceResearchClause(instruction);
   const transformationDraftCount = requestedTransformationDraftCount(
     instruction,
@@ -370,11 +369,11 @@ export function compileReadOnlyOrchestratorRoute(
     writingOutputClause,
   );
   const unresolvedPluralDraftTarget =
-    FULL_POST_REQUEST_RE.test(instruction) &&
+    (FULL_POST_REQUEST_RE.test(instruction) || sourceModelingRequest) &&
     hasPluralPostTarget &&
     explicitDraftCount === null;
   const expectsDraft =
-    FULL_POST_REQUEST_RE.test(instruction) &&
+    (FULL_POST_REQUEST_RE.test(instruction) || sourceModelingRequest) &&
     (!hasPluralPostTarget || explicitDraftCount !== null);
   const expectedDrafts =
     explicitDraftCount ?? transformationDraftCount ?? 1;

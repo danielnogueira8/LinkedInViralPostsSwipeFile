@@ -8,6 +8,7 @@ import {
 import type { ReadOnlyOrchestratorRoute } from "@/lib/agent/read-only-orchestrator-routing";
 import { runTool, toolSummary } from "@/lib/agent/tools";
 import { safeFilename } from "@/lib/agent/untrusted";
+import { modelingSelectionContext } from "@/lib/agent/modeling-selection-context";
 import {
   CHAT_MODEL,
   completeChat,
@@ -2258,6 +2259,12 @@ async function* runReadOnlyOrchestratorCore(
               },
               input.workspaceId,
               input.signal,
+              {
+                modelingSelection: modelingSelectionContext(
+                  input.userInstruction,
+                  input.draftEngineInput.voiceResult,
+                ),
+              },
             ),
         });
         sources = workspaceSources(result);

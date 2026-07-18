@@ -370,12 +370,16 @@ describe("get_top_from_batch — result shape", () => {
     expect(r0.posts[0].id).toBe("p1");
 
     // Cursor 1 (stored) → the fresh band left-rotates by 1, so p2 leads.
-    dbRef.current = makeFakeSupabase({ ...bigPool, settings: { single: { value: { n: 1 } } } });
+    dbRef.current = makeFakeSupabase(bigPool, {
+      claim_modeling_source_rotation_cursor: { data: 1 },
+    });
     const r1 = (await runTool("get_top_from_batch", {}, "ws-cur1")) as { posts: { id: string }[] };
     expect(r1.posts[0].id).toBe("p2");
 
     // Cursor 2 → p3 leads. Different top post → different source to model.
-    dbRef.current = makeFakeSupabase({ ...bigPool, settings: { single: { value: { n: 2 } } } });
+    dbRef.current = makeFakeSupabase(bigPool, {
+      claim_modeling_source_rotation_cursor: { data: 2 },
+    });
     const r2 = (await runTool("get_top_from_batch", {}, "ws-cur2")) as { posts: { id: string }[] };
     expect(r2.posts[0].id).toBe("p3");
   });
@@ -402,6 +406,58 @@ describe("get_top_from_batch — result shape", () => {
     expect(res.posts).toEqual([]);
     expect(queryFor(dbRef.current, "runs")).toBeUndefined();
     expect(queryFor(dbRef.current, "posts")).toBeUndefined();
+  });
+
+  test("get_top_from_batch applies modelability only with server-confirmed modeling context", async () => {
+    const pool = {
+      runs: { single: RUN },
+      posts: {
+        rows: [
+          {
+            id: "recent-caption",
+            text: "Agree?",
+            posted_at: "2026-06-24T06:00:00.000Z",
+            reactions: 1_000,
+            accounts: [{ name: "A", niche: "content strategy" }],
+          },
+          {
+            id: "modelable",
+            text: `Content strategy works better with a clear system.
+
+1. Start with the real constraint.
+2. Explain one useful change.
+3. Close with the next action.
+
+That makes the lesson practical and repeatable for the reader.`,
+            posted_at: "2026-06-24T05:00:00.000Z",
+            reactions: 900,
+            accounts: [{ name: "B", niche: "content strategy" }],
+          },
+        ],
+      },
+    };
+
+    dbRef.current = makeFakeSupabase(pool);
+    const ordinary = (await runTool(
+      "get_top_from_batch",
+      { limit: 1 },
+      "ws-top-ordinary",
+    )) as { posts: { id: string }[] };
+    expect(ordinary.posts[0].id).toBe("recent-caption");
+
+    dbRef.current = makeFakeSupabase(pool);
+    const modeled = (await runTool(
+      "get_top_from_batch",
+      { limit: 1 },
+      "ws-top-modeled",
+      undefined,
+      {
+        modelingSelection: {
+          userInstruction: "Model a content strategy post.",
+        },
+      },
+    )) as { posts: { id: string }[] };
+    expect(modeled.posts[0].id).toBe("modelable");
   });
 });
 
@@ -558,11 +614,15 @@ describe("search_viral_posts — query shape", () => {
     const r0 = (await runTool("search_viral_posts", { limit: 5 }, "ws-v0")) as { posts: { id: string }[] };
     expect(r0.posts[0].id).toBe("v1");
 
-    dbRef.current = makeFakeSupabase({ ...VIRAL_POOL, settings: { single: { value: { n: 1 } } } });
+    dbRef.current = makeFakeSupabase(VIRAL_POOL, {
+      claim_modeling_source_rotation_cursor: { data: 1 },
+    });
     const r1 = (await runTool("search_viral_posts", { limit: 5 }, "ws-v1")) as { posts: { id: string }[] };
     expect(r1.posts[0].id).toBe("v2"); // rotated → different source to model
 
-    dbRef.current = makeFakeSupabase({ ...VIRAL_POOL, settings: { single: { value: { n: 2 } } } });
+    dbRef.current = makeFakeSupabase(VIRAL_POOL, {
+      claim_modeling_source_rotation_cursor: { data: 2 },
+    });
     const r2 = (await runTool("search_viral_posts", { limit: 5 }, "ws-v2")) as { posts: { id: string }[] };
     expect(r2.posts[0].id).toBe("v3");
   });
@@ -580,30 +640,24 @@ describe("search_viral_posts — query shape", () => {
     const r0 = (await runTool("search_viral_posts", args, "ws-l1-0")) as { posts: { id: string }[] };
     expect(r0.posts[0].id).toBe("v1");
 
-    dbRef.current = makeFakeSupabase({ ...VIRAL_POOL, settings: { single: { value: { n: 1 } } } });
+    dbRef.current = makeFakeSupabase(VIRAL_POOL, {
+      claim_modeling_source_rotation_cursor: { data: 1 },
+    });
     const r1 = (await runTool("search_viral_posts", args, "ws-l1-1")) as { posts: { id: string }[] };
     expect(r1.posts[0].id).toBe("v2");
 
-    dbRef.current = makeFakeSupabase({ ...VIRAL_POOL, settings: { single: { value: { n: 5 } } } });
+    dbRef.current = makeFakeSupabase(VIRAL_POOL, {
+      claim_modeling_source_rotation_cursor: { data: 5 },
+    });
     const r5 = (await runTool("search_viral_posts", args, "ws-l1-5")) as { posts: { id: string }[] };
     expect(r5.posts[0].id).toBe("v6");
   });
 
-  // Regression: nextRotationCursor's advancing upsert used a bare `await`
-  // that never checked Supabase's `{ error }` result — a write that fails
-  // (RLS drift, a bad column, a transient DB error surfaced as `{error}`
-  // rather than a thrown exception) looked identical to success, so the
-  // cursor never actually advanced and every call kept reading back the
-  // same stored value: the deterministic "always the same post" failure
-  // mode. The read must still succeed and the tool must not throw even
-  // when the write silently fails.
-  test("a failed cursor-advance write doesn't crash the tool or corrupt the read", async () => {
+  test("a failed atomic cursor claim is observable and fails open without crashing", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    dbRef.current = makeFakeSupabase({
-      ...VIRAL_POOL,
-      settings: {
-        single: { value: { n: 3 } },
-        errors: [null, { message: "permission denied for table settings" }],
+    dbRef.current = makeFakeSupabase(VIRAL_POOL, {
+      claim_modeling_source_rotation_cursor: {
+        error: { message: "permission denied for cursor claim" },
       },
     });
     const res = (await runTool(
@@ -612,21 +666,139 @@ describe("search_viral_posts — query shape", () => {
       "ws-write-fail",
     )) as { ok: boolean; posts: { id: string }[] };
     expect(res.ok).toBe(true);
-    expect(res.posts[0].id).toBe("v4"); // still rotates using the READ value (cursor 3)
+    expect(res.posts[0].id).toBe("v1");
     expect(warnSpy).toHaveBeenCalled();
     warnSpy.mockRestore();
+  });
+
+  test("claims the rotation cursor atomically in one RPC with no settings read/write window", async () => {
+    dbRef.current = makeFakeSupabase(VIRAL_POOL, {
+      claim_modeling_source_rotation_cursor: { data: 3 },
+    });
+
+    const result = (await runTool(
+      "search_viral_posts",
+      { post_type: "regular", sort: "viral", dir: "desc", limit: 1 },
+      "ws-atomic-cursor",
+    )) as { posts: { id: string }[] };
+
+    expect(result.posts[0].id).toBe("v4");
+    expect(dbRef.current.rpcs).toEqual([
+      {
+        name: "claim_modeling_source_rotation_cursor",
+        args: { p_workspace_id: "ws-atomic-cursor" },
+      },
+    ]);
+    expect(queryFor(dbRef.current, "settings")).toBeUndefined();
   });
 
   test("ANALYTICAL query (explicit sort/filter) keeps its strict order — no rotation", async () => {
     // An intentional "top by reactions" is a deliberate ranking; even with a
     // non-zero stored cursor it must return the strict viral-desc order.
-    dbRef.current = makeFakeSupabase({ ...VIRAL_POOL, settings: { single: { value: { n: 3 } } } });
+    dbRef.current = makeFakeSupabase(VIRAL_POOL, {
+      claim_modeling_source_rotation_cursor: { data: 3 },
+    });
     const res = (await runTool(
       "search_viral_posts",
       { limit: 5, min_reactions: 100 },
       "ws-v3",
     )) as { posts: { id: string }[] };
     expect(res.posts[0].id).toBe("v1"); // unrotated top
+  });
+
+  test("server-confirmed modeling selects a relevant modelable source from the strict-top pool, while analysis stays exact", async () => {
+    const structured = (topic: string) => `${topic} works better with a clear system.
+
+1. Start with the real constraint.
+2. Explain one useful change.
+3. Close with the next action.
+
+That makes the lesson practical and repeatable for the reader.`;
+    const pool = {
+      posts: {
+        rows: [
+          {
+            id: "highest-crypto",
+            text: structured("Cryptocurrency trading"),
+            viral_score: 100,
+            accounts: [{ name: "Crypto", niche: "cryptocurrency" }],
+          },
+          {
+            id: "relevant-content",
+            text: structured("Content strategy"),
+            viral_score: 90,
+            accounts: [{ name: "Writer", niche: "content strategy" }],
+          },
+        ],
+      },
+    };
+
+    dbRef.current = makeFakeSupabase(pool);
+    const modeled = (await runTool(
+      "search_viral_posts",
+      { sort: "viral", dir: "desc", strict_ranking: true, limit: 1 },
+      "ws-modeled",
+      undefined,
+      {
+        modelingSelection: {
+          userInstruction: "Model a post about content strategy in my voice.",
+        },
+      },
+    )) as { posts: { id: string }[] };
+    expect(modeled.posts.map((post) => post.id)).toEqual(["relevant-content"]);
+    expect(
+      queryFor(dbRef.current, "posts")!.filters.find(
+        (filter) => filter.method === "limit",
+      )?.args[0],
+    ).toBe(6);
+
+    dbRef.current = makeFakeSupabase(pool);
+    const analytical = (await runTool(
+      "search_viral_posts",
+      { sort: "viral", dir: "desc", strict_ranking: true, limit: 1 },
+      "ws-analytical",
+    )) as { posts: { id: string }[] };
+    expect(analytical.posts[0].id).toBe("highest-crypto");
+    expect(
+      queryFor(dbRef.current, "posts")!.filters.find(
+        (filter) => filter.method === "limit",
+      )?.args[0],
+    ).toBe(1);
+  });
+
+  test("ordinary mimic discovery preserves legacy ordering instead of applying modeling policy", async () => {
+    dbRef.current = makeFakeSupabase({
+      posts: {
+        rows: [
+          {
+            id: "viral-caption",
+            text: "Agree?",
+            viral_score: 100,
+            accounts: [{ name: "A", niche: "content strategy" }],
+          },
+          {
+            id: "modelable",
+            text: `Content strategy works better with a clear system.
+
+1. Start with the real constraint.
+2. Explain one useful change.
+3. Close with the next action.
+
+That makes the lesson practical and repeatable for the reader.`,
+            viral_score: 90,
+            accounts: [{ name: "B", niche: "content strategy" }],
+          },
+        ],
+      },
+    });
+
+    const result = (await runTool(
+      "search_viral_posts",
+      { limit: 1 },
+      "ws-ordinary-mimic",
+    )) as { posts: { id: string }[] };
+
+    expect(result.posts[0].id).toBe("viral-caption");
   });
 
   test("MIMIC query sinks an already-used source — excluded when enough fresh ones exist", async () => {

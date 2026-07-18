@@ -31,15 +31,32 @@ export type TableResponse = {
   errors?: Array<{ message: string } | null>;
 };
 
+export type RpcResponse = {
+  data?: unknown;
+  error?: { message: string } | null;
+  errors?: Array<{ message: string } | null>;
+};
+
 export type FakeDb = {
-  client: { from: (table: string) => unknown };
+  client: {
+    from: (table: string) => unknown;
+    rpc: (name: string, args?: Record<string, unknown>) => Promise<{
+      data: unknown;
+      error: { message: string } | null;
+    }>;
+  };
   queries: RecordedQuery[];
+  rpcs: Array<{ name: string; args?: Record<string, unknown> }>;
 };
 
 // Build a fake Supabase client. `responses` maps table name → what to return.
 // A table with no entry resolves to empty rows / null single, no error.
-export function makeFakeSupabase(responses: Record<string, TableResponse>): FakeDb {
+export function makeFakeSupabase(
+  responses: Record<string, TableResponse>,
+  rpcResponses: Record<string, RpcResponse> = {},
+): FakeDb {
   const queries: RecordedQuery[] = [];
+  const rpcs: Array<{ name: string; args?: Record<string, unknown> }> = [];
 
   function from(table: string) {
     const rec: RecordedQuery = { table, filters: [], terminal: "await" };
@@ -110,7 +127,19 @@ export function makeFakeSupabase(responses: Record<string, TableResponse>): Fake
     return builder;
   }
 
-  return { client: { from }, queries };
+  async function rpc(name: string, args?: Record<string, unknown>) {
+    rpcs.push({ name, args });
+    const response = rpcResponses[name] ?? {};
+    const error = response.errors?.length
+      ? response.errors.shift() ?? null
+      : response.error ?? null;
+    return {
+      data: response.data ?? null,
+      error,
+    };
+  }
+
+  return { client: { from, rpc }, queries, rpcs };
 }
 
 // Convenience: find the recorded query against a table (the first one).

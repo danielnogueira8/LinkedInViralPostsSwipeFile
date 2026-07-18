@@ -137,6 +137,8 @@ import {
   leadMagnetSelectionPromptBeforeDraft,
 } from "@/lib/lead-magnet-campaign";
 import { SKILLS_PER_TURN_MAX } from "@/lib/custom-skills";
+import type { ModelingClientContext } from "@/lib/modeling-source-selection";
+import { modelingSelectionContext } from "@/lib/agent/modeling-selection-context";
 import {
   CONTENT_FEEDBACK_INJECTED_MAX,
   type ContentFeedback,
@@ -1498,6 +1500,7 @@ export type ResolvedFindAndModelSource = {
 export async function resolveFindAndModelSource(
   workspaceId: string,
   signal?: AbortSignal,
+  modelingSelection?: ModelingClientContext,
 ): Promise<ResolvedFindAndModelSource | undefined> {
   try {
     const result = await runTool(
@@ -1505,6 +1508,7 @@ export async function resolveFindAndModelSource(
       { post_type: "regular", sort: "viral", dir: "desc", limit: 1 },
       workspaceId,
       signal,
+      { modelingSelection },
     );
     if (result.ok === false) return undefined;
     const posts = Array.isArray(result.posts)
@@ -2940,7 +2944,14 @@ export async function executeChatTurn(
     !modelSourceId &&
     requestsDirectSourceModeling(effectiveUserInstruction);
   const resolvedFindSource = wantsFindAndModel
-    ? await resolveFindAndModelSource(workspaceId, signal)
+    ? await resolveFindAndModelSource(
+        workspaceId,
+        signal,
+        modelingSelectionContext(
+          effectiveUserInstruction,
+          preloadedVoiceResult,
+        ),
+      )
     : undefined;
   const directSource: DraftEngineSource | undefined =
     currentModelSource?.post_text.trim()
