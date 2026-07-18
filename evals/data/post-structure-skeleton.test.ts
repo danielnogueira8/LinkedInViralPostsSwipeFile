@@ -125,6 +125,32 @@ describe("checkStructureMatch", () => {
     expect(mismatch?.code).toBe("wrong_list_marker");
   });
 
+  test("flags a list that moves to a different structural position", () => {
+    const source = computeStructureSkeleton(
+      "A sharp opening makes people stop.\n\n→ name the tension\n→ show the cost\n\nThen land the practical takeaway with a direct close.",
+    );
+    const draft = computeStructureSkeleton(
+      "A sharp opening makes people stop.\n\nThen land the practical takeaway with a direct close.\n\n→ name the tension\n→ show the cost",
+    );
+
+    expect(checkStructureMatch(source, draft)?.code).toBe("layout_order");
+  });
+
+  test("flags a draft that collapses a multi-paragraph source into a different visual density", () => {
+    const source = computeStructureSkeleton(
+      Array.from({ length: 6 }, (_, index) =>
+        `Paragraph ${index + 1} ${"word ".repeat(22)}`,
+      ).join("\n\n"),
+    );
+    const draft = computeStructureSkeleton(
+      Array.from({ length: 2 }, (_, index) =>
+        `Paragraph ${index + 1} ${"word ".repeat(66)}`,
+      ).join("\n\n"),
+    );
+
+    expect(checkStructureMatch(source, draft)?.code).toBe("paragraph_density");
+  });
+
   test("does NOT flag a source with no list when the draft also has none", () => {
     const source = computeStructureSkeleton(
       "Just prose in the source, no list here at all, roughly a hundred words long to keep the length ratio inside the acceptable band for this particular test case.",
@@ -185,7 +211,14 @@ describe("checkStructureMatch", () => {
 
 describe("structureMismatchRepairInstruction", () => {
   test("produces a distinct, actionable instruction per mismatch code", () => {
-    const codes = ["missing_list", "wrong_list_marker", "too_short", "too_long"] as const;
+    const codes = [
+      "missing_list",
+      "wrong_list_marker",
+      "layout_order",
+      "paragraph_density",
+      "too_short",
+      "too_long",
+    ] as const;
     const instructions = codes.map((code) =>
       structureMismatchRepairInstruction({ code, message: "irrelevant for this check" }),
     );

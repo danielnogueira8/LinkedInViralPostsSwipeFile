@@ -10,7 +10,23 @@ import { makeFakeSupabase, queryFor, type FakeDb } from "./fake-supabase";
 // ---------------------------------------------------------------------------
 
 const dbRef: { current: FakeDb } = { current: makeFakeSupabase({}) };
+const fidelityRef: {
+  current: () => Promise<{
+    pass: boolean;
+    reasons: string[];
+    retryInstruction: string;
+  }>;
+} = {
+  current: async () => ({
+    pass: true,
+    reasons: [],
+    retryInstruction: "",
+  }),
+};
 vi.mock("@/lib/supabase", () => ({ supabaseAdmin: () => dbRef.current.client }));
+vi.mock("@/lib/agent/specialists/source-fidelity", () => ({
+  reviewModeledDraft: () => fidelityRef.current(),
+}));
 
 // completeChat + usage stubbed (this file is about run-state, not generation).
 const chatQueue: Array<{ text?: string; finishReason?: string; model?: string }> = [];
@@ -137,6 +153,11 @@ beforeEach(() => {
   trackedAccountIdsRef.current = ["acct-1"];
   createdLeadMagnetCalls.length = 0;
   queuedImageCalls.length = 0;
+  fidelityRef.current = async () => ({
+    pass: true,
+    reasons: [],
+    retryInstruction: "",
+  });
   providerConcurrency.delayMs = 0;
   providerConcurrency.active = 0;
   providerConcurrency.peak = 0;
@@ -216,6 +237,53 @@ describe("WeeklyBatch.run — progress publishing", () => {
     expect(draftCall?.metadata).toMatchObject({
       requested_model: expect.any(String),
     });
+  });
+
+  test("retries a structurally valid weekly draft that fails source-fidelity review", async () => {
+    dbRef.current = makeFakeSupabase({
+      chat_artifacts: { single: { id: "d1", title: "t", body: "b" } },
+    });
+    toolRef.current = (_name, args) => {
+      if ((args as { post_type?: string }).post_type === "lead_magnet") {
+        return { ok: true, posts: [] };
+      }
+      return {
+        ok: true,
+        posts: [
+          {
+            id: "r1",
+            text: "A source post with a single prose beat that is long enough to model.",
+            post_url: null,
+            post_type: "regular",
+          },
+        ],
+      };
+    };
+    let fidelityCalls = 0;
+    fidelityRef.current = async () => {
+      fidelityCalls += 1;
+      return fidelityCalls === 1
+        ? {
+            pass: false,
+            reasons: ["The draft retained a source-specific client claim."],
+            retryInstruction: "Generalize that claim for the user's audience.",
+          }
+        : { pass: true, reasons: [], retryInstruction: "" };
+    };
+    chatQueue.push(
+      { text: "A".repeat(300) },
+      { text: "B".repeat(300) },
+    );
+
+    const result = await weeklyBatch.run({
+      workspaceId: "ws",
+      batchId: "fidelity-retry",
+      nowIso: "2026-07-02T00:00:00.000Z",
+      runId: "run-fidelity-retry",
+    });
+
+    expect(result.drafts).toHaveLength(1);
+    expect(fidelityCalls).toBe(2);
   });
 
   test("caps real provider fanout at four while filing every source", async () => {

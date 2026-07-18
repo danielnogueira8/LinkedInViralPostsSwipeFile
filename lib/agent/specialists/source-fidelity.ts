@@ -97,10 +97,10 @@ export function buildSourceFidelityUserContent(opts: {
 
 const POST_FIDELITY_INSTRUCTIONS =
   "You are an independent QA gate for modeled LinkedIn drafts. The user asked to model a source's WRITING MECHANICS and write ORIGINAL content — so judge whether the draft borrows the source's approach, not whether it mirrors it line-for-line. " +
-  "PASS when the draft clearly takes cues from the source's hook style and overall shape (a recognizable family resemblance in how it opens, builds, and lands) while changing the subject matter. A loose, original adaptation is a PASS — that is the goal, not a defect. " +
-  "FAIL ONLY when the draft is essentially UNRELATED to the source's approach — a totally different hook style and structure that could have been written without ever seeing the source — OR when it copies substantial wording, sentences, or examples from the source instead of adapting them originally. When in doubt, PASS a genuinely original adaptation: shipping a good original draft that adapts loosely is far better than blocking it. " +
-  "Do NOT fail for: changed topic, different examples/facts/numbers, a shorter or longer treatment, or not copying wording — those are all expected and correct. " +
-  "Ignore first-person factual claims here; another gate handles those. Return only the forced tool call.";
+  "PASS only when the draft clearly preserves the source's hook approach, ordered progression, and ending shape while changing the subject matter in original language. " +
+  "Audit source-specific variables: people, companies, products, offers, audiences, clients, results, numbers, dates, locations, personal anecdotes, relationships, and calls to action. Each must be replaced with a verified user-relevant equivalent, generalized into an honest non-factual statement, or omitted while preserving its structural role. " +
+  "FAIL when the draft is structurally unrelated to the source, copies substantial wording, sentences, or examples, OR retains a source-specific variable that the authoritative request and verified context do not support for this user. A shared broad topic is allowed only when the request explicitly calls for it. " +
+  "Do not fail merely because the topic, examples, facts, or length changed; those changes are required when they preserve the same structural role and make the post user-relevant. Ignore first-person factual claims here; another gate handles those. Return only the forced tool call.";
 
 function partialFidelityInstructions(
   deliverableKind: Exclude<SourceFidelityDeliverableKind, "post">,

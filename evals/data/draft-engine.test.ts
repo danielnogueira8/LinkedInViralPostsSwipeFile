@@ -1079,6 +1079,12 @@ describe("DraftEngine", () => {
     expect(JSON.stringify(writer.requests[1].messages)).not.toContain(
       "The first source has a unique one-source structure",
     );
+    expect(JSON.stringify(writer.requests[0].messages)).toContain(
+      "direct fixed-source LinkedIn post writer",
+    );
+    expect(JSON.stringify(writer.requests[0].messages)).toContain(
+      "SOURCE STRUCTURE REFERENCE",
+    );
   });
 
   test("rejects an incomplete one-to-one source assignment before writing", async () => {

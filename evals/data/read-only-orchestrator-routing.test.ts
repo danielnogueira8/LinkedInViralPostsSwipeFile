@@ -89,6 +89,11 @@ describe("read-only complex orchestrator routing", () => {
 
   test.each([
     [
+      "Find one top-performing regular post in my swipe file and rewrite it in my voice on a topic that fits me.",
+      1,
+      "regular",
+    ],
+    [
       "Find 4 top-performing regular posts in my swipe file and rewrite it in my voice on a topic that fits me. Keep its structure and hook style, but make the content original",
       4,
       "regular",

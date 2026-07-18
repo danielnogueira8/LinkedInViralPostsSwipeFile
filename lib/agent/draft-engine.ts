@@ -39,6 +39,7 @@ import { INJECTION_GUARD, wrapUntrustedDelimited } from "@/lib/agent/untrusted";
 import {
   computeStructureSkeleton,
   renderStructureSkeletonReference,
+  SOURCE_STRUCTURE_REFERENCE_POLICY,
 } from "@/lib/post-structure-skeleton";
 import type { NoModelFormat } from "@/lib/agent/no-model-formats";
 import {
@@ -637,7 +638,7 @@ function compileMessages(input: DraftEngineInput): ChatMessage[] {
           "Return exactly one complete post as plain text. No preamble, labels, analysis, markdown fences, citations, or tool calls.",
           "The authoritative current request controls the topic. If it asks for a topic that fits the user, choose that topic from the voice/profile context and treat the source subject matter as irrelevant.",
           "Preserve the source's structural mechanics and progression in original language. Reuse its idea or subject only when the authoritative request explicitly asks for the same idea or topic.",
-          "A SOURCE STRUCTURE REFERENCE follows the source data below, naming its beats (hook, body, list if present, close) and approximate sizes. Reproduce the beats in the same order; treat the sizes as a rough reference point, not a limit — write more or fewer words when the content genuinely needs it. Never drop, add, or reorder a beat to compensate.",
+          SOURCE_STRUCTURE_REFERENCE_POLICY,
           "Never transplant or invent the source author's anecdotes, clients, results, dates, timelines, numbers, relationships, or first-person experiences.",
           variation
             ? `This is version ${variation.index} of ${variation.count}. Make it materially distinct from every earlier accepted version while satisfying the same request and source.`
@@ -1078,7 +1079,28 @@ async function* runMultiDraftEngine(
           ? task.groundedSources.slice(index - 1, index)
           : task.groundedSources
         : undefined;
-      const childTask: DraftEngineTask = childGroundedSources
+      // A one-to-one workspace source is not generic research evidence: the
+      // user asked to model that post's mechanics. Keep it on the modeled
+      // source path so it receives the source-format reference, source
+      // provenance, and final structure validation. Shared research remains a
+      // grounded task because it synthesizes across evidence rather than
+      // adapting one source's shape.
+      const modeledWorkspaceSource =
+        task.groundedSourceMode === "one_to_one" &&
+        childGroundedSources?.length === 1 &&
+        childGroundedSources[0].kind === "workspace_post"
+          ? {
+              id: childGroundedSources[0].id,
+              text: childGroundedSources[0].text,
+            }
+          : undefined;
+      const childTask: DraftEngineTask = modeledWorkspaceSource
+        ? {
+            kind: "source",
+            source: modeledWorkspaceSource,
+            variation: { index, count: task.expectedCount, previousBodies },
+          }
+        : childGroundedSources
         ? {
             kind: "grounded",
             sources: childGroundedSources,
@@ -1098,6 +1120,7 @@ async function* runMultiDraftEngine(
       for await (const event of runDraftEngine(
         {
           ...multiInput,
+          ...(modeledWorkspaceSource ? { enableStructureGate: true } : {}),
           task: childTask,
           priorPostDrafts: [
             ...multiInput.priorPostDrafts,
