@@ -25,7 +25,6 @@ import {
 import { retryRead } from "@/lib/retry-read";
 import {
   selectModelingSourcePool,
-  type ModelingClientContext,
 } from "@/lib/modeling-source-selection";
 import { rankIdeaPosts, rotateFreshBand } from "@/lib/idea-ranking";
 
@@ -195,29 +194,25 @@ export interface ToolExecutionContext {
   deadlineAtMs?: number;
   // Present only when the server has confirmed that these auto-selected posts
   // will be modeled. Analytical searches and explicit source ids never use it.
-  modelingSelection?: ModelingClientContext;
+  autoSelectModelingSources?: boolean;
   // Replacement sources are returned separately from the user-requested
   // primaries. Only the modeled-batch coordinator consumes them; analytical
   // searches and single-source modeling leave this at zero.
   modelingReserveCount?: number;
-  // Exact one-to-one modeled drafts must render a source chip. Generic
-  // research and idea retrieval deliberately leave this false so nullable
-  // legacy post URLs do not change their established result sets.
-  requireResolvableModelingSourceUrl?: boolean;
 }
 
 function withCanonicalModelingSourceUrl<T extends { post_url?: unknown }>(
   candidate: T,
-): T | null {
-  if (typeof candidate.post_url !== "string") return null;
+): T {
+  if (typeof candidate.post_url !== "string") return candidate;
   try {
     const parsed = new URL(candidate.post_url.trim());
     if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
-      return null;
+      return candidate;
     }
     return { ...candidate, post_url: parsed.toString() };
   } catch {
-    return null;
+    return candidate;
   }
 }
 
@@ -285,10 +280,10 @@ const searchViralPosts: ToolFn = async (args, workspaceId, signal, context) => {
     const ascending = args.dir === "asc";
     const limit = typeof args.limit === "number" ? args.limit : 10;
     const finalLimit = Math.min(Math.max(limit, 1), 50);
-    // Auto-selected modeling and default idea discovery both need a wider pool,
-    // but only the server-confirmed modeling branch may apply client relevance
-    // and modelability. Explicit analytical retrieval keeps its exact contract.
-    const autoSelectModelingSources = context?.modelingSelection !== undefined;
+    // Auto-selected modeling and default idea discovery both need a wider pool.
+    // Only the server-confirmed modeling branch applies stable freshness
+    // selection; explicit analytical retrieval keeps its exact order.
+    const autoSelectModelingSources = context?.autoSelectModelingSources === true;
     const rotateDefaultIdeas = isMimicSearch(args);
     const fetchLimit = autoSelectModelingSources || rotateDefaultIdeas
       ? Math.min(finalLimit * 6, 120)
@@ -324,14 +319,9 @@ const searchViralPosts: ToolFn = async (args, workspaceId, signal, context) => {
     const { data, error } = await q;
     if (error) return err(error.message);
     const normalizedCandidates = (data ?? []).map(normalizeEmbed);
-    const candidates =
-      autoSelectModelingSources &&
-      context?.requireResolvableModelingSourceUrl === true
-        ? normalizedCandidates.flatMap((candidate) => {
-            const canonical = withCanonicalModelingSourceUrl(candidate);
-            return canonical ? [canonical] : [];
-          })
-        : normalizedCandidates;
+    const candidates = autoSelectModelingSources
+      ? normalizedCandidates.map(withCanonicalModelingSourceUrl)
+      : normalizedCandidates;
 
     // Analytical query → return the strict ranking as-is (unchanged behavior).
     if (!autoSelectModelingSources && !rotateDefaultIdeas) {
@@ -341,7 +331,9 @@ const searchViralPosts: ToolFn = async (args, workspaceId, signal, context) => {
 
     const usedIds = await recentlyUsedSourceIds(workspaceId, signal);
     const surfacedIds = getSurfacedIds(workspaceId);
-    const cursor = await nextRotationCursor(workspaceId, signal);
+    const cursor = autoSelectModelingSources
+      ? 0
+      : await nextRotationCursor(workspaceId, signal);
     signal?.throwIfAborted();
     // Server-confirmed auto-modeling uses the single secure selection policy.
     // Ordinary idea discovery retains its pre-existing stable rank + rotation.
@@ -352,8 +344,6 @@ const searchViralPosts: ToolFn = async (args, workspaceId, signal, context) => {
           reserveLimit: context?.modelingReserveCount ?? 0,
           usedIds,
           surfacedIds,
-          rotationCursor: cursor,
-          clientContext: context.modelingSelection,
         })
       : null;
     const selected = modeledPool?.primaries ?? rotateFreshBand(
@@ -666,14 +656,10 @@ const getTopFromBatch: ToolFn = async (args, workspaceId, _signal, context) => {
     const { data, error } = await q;
     if (error) return err(error.message);
     const normalizedCandidates = (data ?? []).map(normalizeEmbed);
-    const candidates =
-      context?.modelingSelection &&
-      context.requireResolvableModelingSourceUrl === true
-        ? normalizedCandidates.flatMap((candidate) => {
-            const canonical = withCanonicalModelingSourceUrl(candidate);
-            return canonical ? [canonical] : [];
-          })
-        : normalizedCandidates;
+    const autoSelectModelingSources = context?.autoSelectModelingSources === true;
+    const candidates = autoSelectModelingSources
+      ? normalizedCandidates.map(withCanonicalModelingSourceUrl)
+      : normalizedCandidates;
     const count = candidates.length;
     // Idea ranking over the WIDER candidate pool: not-yet-drafted first, then
     // not-recently-surfaced, then RECENCY (posted_at desc) as the primary
@@ -688,16 +674,16 @@ const getTopFromBatch: ToolFn = async (args, workspaceId, _signal, context) => {
         new Date(b.posted_at as string).getTime() -
         new Date(a.posted_at as string).getTime(),
     );
-    const cursor = await nextRotationCursor(workspaceId);
-    const modeledPool = context?.modelingSelection
+    const cursor = autoSelectModelingSources
+      ? 0
+      : await nextRotationCursor(workspaceId);
+    const modeledPool = autoSelectModelingSources
       ? selectModelingSourcePool({
           candidates: byRecency,
           limit: finalLimit,
           reserveLimit: context.modelingReserveCount ?? 0,
           usedIds,
           surfacedIds,
-          rotationCursor: cursor,
-          clientContext: context.modelingSelection,
         })
       : null;
     const picked = modeledPool?.primaries ?? pickLegacyIdeas(

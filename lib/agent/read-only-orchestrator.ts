@@ -16,9 +16,11 @@ import {
 } from "@/lib/agent/modeled-draft-continuation";
 import type { ReadOnlyOrchestratorRoute } from "@/lib/agent/read-only-orchestrator-routing";
 import { runTool, toolSummary } from "@/lib/agent/tools";
-import { canonicalScrapedPostText } from "@/lib/agent/scraped-post-text";
+import {
+  admitDistinctModelingSource,
+  normalizeModelingSourceCandidate,
+} from "@/lib/modeling-source-candidate";
 import { safeFilename } from "@/lib/agent/untrusted";
-import { modelingSelectionContext } from "@/lib/agent/modeling-selection-context";
 import {
   CHAT_MODEL,
   completeChat,
@@ -1702,29 +1704,19 @@ function workspaceSources(
   return rows.flatMap((row) => {
     if (!row || typeof row !== "object") return [];
     const item = row as Record<string, unknown>;
-    const id = typeof item.id === "string" ? item.id.trim() : "";
-    const text = canonicalScrapedPostText(item.text);
-    const urlValue = item.post_url ?? item.url;
-    const url =
-      typeof urlValue === "string"
-        ? (safeHttpUrl(urlValue.trim()) ?? undefined)
-        : undefined;
+    const normalized = normalizeModelingSourceCandidate(item);
+    if (!normalized) return [];
     const postedAt =
       typeof item.posted_at === "string" ? item.posted_at.trim() : undefined;
-    if (!id || !text) return [];
-    const fingerprints = [
-      `id:${id.toLocaleLowerCase("en-US")}`,
-      ...(url ? [`url:${url.toLocaleLowerCase("en-US")}`] : []),
-      `text:${text.replace(/\s+/g, " ").toLocaleLowerCase("en-US")}`,
-    ];
-    if (fingerprints.some((fingerprint) => seen.has(fingerprint))) return [];
-    fingerprints.forEach((fingerprint) => seen.add(fingerprint));
+    if (!admitDistinctModelingSource(normalized, seen)) {
+      return [];
+    }
     return [
       {
-        id,
+        id: normalized.id,
         kind: "workspace_post" as const,
-        text,
-        ...(url ? { url } : {}),
+        text: normalized.text,
+        ...(normalized.url ? { url: normalized.url } : {}),
         ...(postedAt ? { publishedAt: postedAt } : {}),
       },
     ];
@@ -1736,6 +1728,12 @@ function distinctGroundedSources(
 ): DraftEngineGroundedSource[] {
   const seen = new Set<string>();
   return sources.filter((source) => {
+    if (source.kind === "workspace_post") {
+      const normalized = normalizeModelingSourceCandidate(source);
+      return normalized
+        ? admitDistinctModelingSource(normalized, seen)
+        : false;
+    }
     const key = source.url
       ? `url:${source.url.toLocaleLowerCase("en-US")}`
       : `id:${source.kind}:${source.id.toLocaleLowerCase("en-US")}`;
@@ -2357,10 +2355,7 @@ async function* runReadOnlyOrchestratorCore(
               input.workspaceId,
               input.signal,
               {
-                modelingSelection: modelingSelectionContext(
-                  input.userInstruction,
-                  input.draftEngineInput.voiceResult,
-                ),
+                autoSelectModelingSources: true,
                 modelingReserveCount:
                   input.route.workspaceDraftSourceMode === "one_to_one"
                     ? Math.min(
@@ -2368,8 +2363,6 @@ async function* runReadOnlyOrchestratorCore(
                         5,
                       )
                     : 0,
-                requireResolvableModelingSourceUrl:
-                  input.route.workspaceDraftSourceMode === "one_to_one",
               },
             ),
         });

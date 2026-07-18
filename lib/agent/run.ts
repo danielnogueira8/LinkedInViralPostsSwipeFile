@@ -51,7 +51,6 @@ import {
   type ContentFeedback,
 } from "@/lib/content-feedback";
 import { INJECTION_GUARD } from "@/lib/agent/untrusted";
-import { modelingSelectionContext } from "@/lib/agent/modeling-selection-context";
 // Pure draft-body anti-slop nets still used directly in the loop (corruption
 // gate, dedup key, tell logging). Body normalization belongs to the
 // deterministic editor pass below rather than the runtime's public surface.
@@ -2222,10 +2221,7 @@ export async function* runAgent(opts: {
         workspaceId,
         turnSignal,
         {
-          modelingSelection: modelingSelectionContext(
-            latestUserMsg,
-            opts.preloadedVoiceResult,
-          ),
+          autoSelectModelingSources: true,
         },
       );
       const ok = result.ok !== false;
@@ -3553,10 +3549,7 @@ export async function* runAgent(opts: {
               adapterHealth: coworkAdapterHealth,
               ...(modelsAutoSelectedSources
                 ? {
-                    modelingSelection: modelingSelectionContext(
-                      latestUserMsg,
-                      opts.preloadedVoiceResult,
-                    ),
+                    autoSelectModelingSources: true,
                   }
                 : {}),
             },

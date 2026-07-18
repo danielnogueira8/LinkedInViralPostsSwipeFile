@@ -3282,6 +3282,27 @@ describe("production-shaped Cowork outcome harness", () => {
     expect(report.observed.agentProviderRounds).toBe(0);
   });
 
+  test("ignores the selected draft count for an ordinary question", async () => {
+    const answer = "A content system is a repeatable way to capture, shape, and publish ideas.";
+    const report = await runCoworkOutcomeScenario({
+      id: "selected-draft-count-does-not-convert-question",
+      request: {
+        message: "What is a content system?",
+        generationConfig: { version: 1, draftCount: 5 },
+      },
+      model: { provider: textProvider(answer) },
+      expected: {
+        terminal: "done",
+        artifactBodies: [],
+        actionNames: [],
+        assistantContents: [answer],
+      },
+    });
+
+    expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+    expect(report.persisted.artifacts).toEqual([]);
+  });
+
   test("the selected draft count remains authoritative on the legacy fallback", async () => {
     const bodies = [COMPLETE_POST, SECOND_POST, THIRD_POST, FOURTH_POST];
     const report = await runCoworkOutcomeScenario({
@@ -3959,8 +3980,36 @@ describe("production-shaped Cowork outcome harness", () => {
         },
       },
       {
-        ...originalScenario("clarification-completion"),
-        request: { message: "Career leverage." },
+        id: "clarification-completion",
+        request: {
+          message: "Career leverage.",
+          generationConfig: { version: 1, draftCount: 5 },
+        },
+        model: {
+          provider: { rounds: [] },
+          directWriter: [
+            COMPLETE_POST,
+            SECOND_POST,
+            THIRD_POST,
+            FOURTH_POST,
+            FIFTH_POST,
+          ].map((text, index) => ({
+            text,
+            finishReason: "stop" as const,
+            usage: usage(200 + index * 10, 90 + index * 5, 0.0002),
+          })),
+        },
+        expected: {
+          terminal: "done",
+          artifactBodies: [
+            COMPLETE_POST,
+            SECOND_POST,
+            THIRD_POST,
+            FOURTH_POST,
+            FIFTH_POST,
+          ],
+          actionNames: [],
+        },
       },
     ]);
 
@@ -3973,7 +4022,10 @@ describe("production-shaped Cowork outcome harness", () => {
         })),
       ),
     ).toBe(true);
-    expect(sequence.attempts.at(-1)?.safe.artifactCount).toBe(1);
+    expect(sequence.attempts.at(-1)?.safe.artifactCount).toBe(5);
+    expect(
+      sequence.attempts.at(-1)?.observed.directWriterRequests,
+    ).toHaveLength(5);
   });
 
   test("resumes a pending clarification directly without repeating the question or running research", async () => {

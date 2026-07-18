@@ -161,8 +161,6 @@ import {
   SKILL_NAME_MAX,
   SKILLS_PER_TURN_MAX,
 } from "@/lib/custom-skills";
-import type { ModelingClientContext } from "@/lib/modeling-source-selection";
-import { modelingSelectionContext } from "@/lib/agent/modeling-selection-context";
 import {
   CONTENT_FEEDBACK_INJECTED_MAX,
   type ContentFeedback,
@@ -1898,7 +1896,6 @@ export type ResolvedFindAndModelSource = {
 export async function resolveFindAndModelSource(
   workspaceId: string,
   signal?: AbortSignal,
-  modelingSelection?: ModelingClientContext,
 ): Promise<ResolvedFindAndModelSource | undefined> {
   try {
     const result = await runTool(
@@ -1906,7 +1903,7 @@ export async function resolveFindAndModelSource(
       { post_type: "regular", sort: "viral", dir: "desc", limit: 1 },
       workspaceId,
       signal,
-      { modelingSelection },
+      { autoSelectModelingSources: true },
     );
     if (result.ok === false) return undefined;
     const posts = Array.isArray(result.posts)
@@ -1935,6 +1932,22 @@ export async function resolveFindAndModelSource(
   } catch {
     return undefined;
   }
+}
+
+function requestedBasePostCount(
+  instruction: string,
+  hasModelSource: boolean,
+): number | null {
+  return (
+    deriveDeliverableContract(instruction)?.expectedCount ??
+    requestedDirectPostCount(instruction) ??
+    (requestsFullPostDeliverable(instruction) ||
+    isNoModelPostRequest(instruction, hasModelSource) ||
+    requestsDirectSourceModeling(instruction) ||
+    compileModeledPostIntent(instruction).kind !== "none"
+      ? 1
+      : null)
+  );
 }
 
 // -----------------------------------------------------------------------------
@@ -2411,9 +2424,17 @@ export async function executeChatTurn(
           explicitMessageDraftCount(preclaimInstruction),
       });
     }
+    const preclaimPartialSpec = compileDirectPartialTextSpec(
+      preclaimInstruction,
+    );
+    const preclaimBasePostCount = requestedBasePostCount(
+      preclaimInstruction,
+      Boolean(modelSourceId),
+    );
     activeDraftCountOverride =
-      resolvedGenerationConfig.draftCountSource === "ui" ||
-      generationConfigRestoredFromRetry
+      (resolvedGenerationConfig.draftCountSource === "ui" ||
+        generationConfigRestoredFromRetry) &&
+      preclaimBasePostCount !== null
         ? resolvedGenerationConfig.draftCount
         : undefined;
     const preclaimRoutingInput = {
@@ -2451,13 +2472,6 @@ export async function executeChatTurn(
     modeledBatchContractRequested = Boolean(
       continuationForModeledDraftRoute(preclaimReadOnlyRoute),
     );
-    const preclaimPartialSpec = compileDirectPartialTextSpec(
-      preclaimInstruction,
-    );
-    const preclaimPostCount = requestedDirectPostCount(preclaimInstruction);
-    const preclaimExplicitPostContract = deriveDeliverableContract(
-      preclaimInstruction,
-    );
     setupRequestedContract = preclaimActionRoute
       ? {
           kind: "saved_draft_action",
@@ -2476,35 +2490,13 @@ export async function executeChatTurn(
           : { kind: "research", expectedCount: 1 }
         : preclaimPartialSpec
           ? { kind: "partial", expectedCount: 1 }
-          : preclaimExplicitPostContract
-            ? {
-                kind: "post",
-                expectedCount: preclaimExplicitPostContract.expectedCount,
-              }
-            : preclaimPostCount ||
-                skipDecision ||
-                (activeDraftCountOverride !== undefined &&
-                  requestsFullPostDeliverable(preclaimInstruction)) ||
-                isNoModelPostRequest(
-                  preclaimInstruction,
-                  Boolean(modelSourceId),
-                ) ||
-                requestsDirectSourceModeling(preclaimInstruction)
+          : preclaimBasePostCount !== null || skipDecision
               ? {
                   kind: "post",
                   expectedCount:
-                    activeDraftCountOverride ?? preclaimPostCount ?? 1,
+                    activeDraftCountOverride ?? preclaimBasePostCount ?? 1,
                 }
               : { kind: "answer", expectedCount: 1 };
-    if (
-      requestedGenerationConfig &&
-      (setupRequestedContract.kind !== "post" || skipDecision)
-    ) {
-      return turnError(
-        "Draft count applies only to a new full-post request. Set Drafts to Auto for this task.",
-        400,
-      );
-    }
     if (
       setupRequestedContract.kind === "post" &&
       !generationConfigRestoredFromRetry &&
@@ -2940,6 +2932,27 @@ export async function executeChatTurn(
     history = preparedTurn.history;
     effectiveUserInstruction =
       resolvedActionInstruction ?? preparedTurn.effectiveUserInstruction;
+    const effectiveBasePostCount = requestedBasePostCount(
+      effectiveUserInstruction,
+      Boolean(modelSourceId),
+    );
+    if (
+      (resolvedGenerationConfig.draftCountSource === "ui" ||
+        generationConfigRestoredFromRetry) &&
+      effectiveBasePostCount !== null
+    ) {
+      activeDraftCountOverride = resolvedGenerationConfig.draftCount;
+    }
+    if (
+      setupRequestedContract.kind === "answer" &&
+      effectiveBasePostCount !== null
+    ) {
+      setupRequestedContract = {
+        kind: "post",
+        expectedCount:
+          activeDraftCountOverride ?? effectiveBasePostCount,
+      };
+    }
 
     // Weave the "Model this post" source + this turn's files into the final user
     // message the agent sees. The persisted user row stays clean (just the typed
@@ -3633,14 +3646,7 @@ export async function executeChatTurn(
     !modelSourceId &&
     requestsDirectSourceModeling(effectiveUserInstruction);
   const resolvedFindSource = wantsFindAndModel
-    ? await resolveFindAndModelSource(
-        workspaceId,
-        signal,
-        modelingSelectionContext(
-          effectiveUserInstruction,
-          preloadedVoiceResult,
-        ),
-      )
+    ? await resolveFindAndModelSource(workspaceId, signal)
     : undefined;
   const directSource: DraftEngineSource | undefined =
     currentModelSource?.post_text.trim()
@@ -4032,31 +4038,18 @@ export async function executeChatTurn(
         }
       : { kind: "research", expectedCount: 1 }
     : null;
-  const explicitLegacyPostContract = deriveDeliverableContract(
-    effectiveUserInstruction,
-  );
   const selectedDeliverableContract: DeliverableContract | null =
-    activeDraftCountOverride !== undefined
+    activeDraftCountOverride !== undefined &&
+    setupRequestedContract.kind === "post"
       ? { kind: "post", expectedCount: activeDraftCountOverride }
       : null;
   const legacyContract: CoworkContract = selectedDeliverableContract
     ? selectedDeliverableContract
     : directPartialSpec
       ? { kind: "partial", expectedCount: 1 }
-      : explicitLegacyPostContract
-        ? {
-            kind: "post",
-            expectedCount: explicitLegacyPostContract.expectedCount,
-          }
-        : directPostCount ||
-            skipDecision ||
-            isNoModelPostRequest(
-              effectiveUserInstruction,
-              Boolean(modelSourceId),
-            ) ||
-            requestsDirectSourceModeling(effectiveUserInstruction)
-          ? { kind: "post", expectedCount: directPostCount ?? 1 }
-          : { kind: "answer", expectedCount: 1 };
+      : setupRequestedContract.kind === "post"
+        ? setupRequestedContract
+        : { kind: "answer", expectedCount: 1 };
   const coworkContract: CoworkContract = useDirectWriter
     ? directWriterTask.kind === "partial"
       ? { kind: "partial", expectedCount: 1 }
