@@ -10,6 +10,7 @@ import { HOOK_PATTERNS, type HookPattern } from "./hooks";
 import { classifyPost } from "./post-type";
 import { INJECTION_GUARD, wrapUntrustedXml } from "./agent/untrusted";
 import { providerModelAttribution } from "./agent/cowork-adapter-attempt";
+import type { MechanicsFingerprint } from "./voice-mechanics";
 
 // All background tasks run on GLM-5.2 via OpenRouter — one platform, one
 // balance, one model. (templatize + hook extraction use BACKGROUND_MODEL, voice
@@ -170,6 +171,15 @@ export type VoiceProfile = {
   // biographical_facts). Both absent until the user does the interview.
   interview_answers?: InterviewAnswer[];
   interview_context?: string[];
+  // OPTIONAL deterministic mechanics fingerprint — measured in code from the
+  // creator's raw scraped posts (lib/voice-mechanics.ts), not synthesized by
+  // the model. Captures surface-level habits (capitalization, punctuation,
+  // emoji, whitespace) a free-text model description tends to miss or
+  // hedge on. Computed once alongside synthesis and stored here so the
+  // writer prompt can quote hard numbers instead of a fuzzy description.
+  // Absent for profiles synthesized before this field existed (regenerate
+  // to backfill) or when the source had too few posts to bother computing.
+  mechanics_fingerprint?: MechanicsFingerprint;
 };
 
 export type InterviewAnswer = {
@@ -296,7 +306,46 @@ export function sanitizeVoiceProfile(input: unknown): VoiceProfile {
   if (answers.length) profile.interview_answers = answers;
   const context = strArray(parsed.interview_context, 12);
   if (context.length) profile.interview_context = context;
+  // mechanics_fingerprint is optional + computed (never model-authored) but
+  // preserved across edits/re-sanitization like the other optional blocks, so
+  // a PATCH to summary/tone doesn't silently drop it.
+  const fingerprint = sanitizeMechanicsFingerprint(parsed.mechanics_fingerprint);
+  if (fingerprint) profile.mechanics_fingerprint = fingerprint;
   return profile;
+}
+
+// Coerce an unknown into a MechanicsFingerprint, or null when the shape is
+// missing/invalid — this field is only ever written by
+// computeMechanicsFingerprint (lib/voice-mechanics.ts), never by the model, so
+// this is a defensive shape-check for storage round-trips (DB read, PATCH
+// editor passthrough), not a parser for untrusted model output.
+function sanitizeMechanicsFingerprint(input: unknown): MechanicsFingerprint | null {
+  if (!input || typeof input !== "object") return null;
+  const o = input as Record<string, unknown>;
+  const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+  const sampleSize = num(o.sample_size);
+  if (sampleSize <= 0) return null;
+  const placement = o.emoji_placement;
+  const validPlacement =
+    placement === "start" || placement === "end" || placement === "inline" || placement === "none"
+      ? placement
+      : "none";
+  return {
+    lowercase_sentence_starts: num(o.lowercase_sentence_starts),
+    lowercase_pronoun_i: num(o.lowercase_pronoun_i),
+    all_caps_word_rate: num(o.all_caps_word_rate),
+    em_dash_per_100_words: num(o.em_dash_per_100_words),
+    ellipsis_per_100_words: num(o.ellipsis_per_100_words),
+    exclamation_per_100_words: num(o.exclamation_per_100_words),
+    comma_splice_rate: num(o.comma_splice_rate),
+    emoji_per_post: num(o.emoji_per_post),
+    emoji_placement: validPlacement,
+    median_sentences_per_paragraph: num(o.median_sentences_per_paragraph),
+    uses_lists_rate: num(o.uses_lists_rate),
+    dominant_list_marker: typeof o.dominant_list_marker === "string" ? o.dominant_list_marker : null,
+    median_words_per_post: num(o.median_words_per_post),
+    sample_size: sampleSize,
+  };
 }
 
 function hasCompleteWritingPatterns(profile: VoiceProfile): boolean {

@@ -1,6 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { runProfileHistory, pickProfileMeta } from "@/lib/apify";
 import { sanitizeVoiceProfile, synthesizeVoice, VOICE_MODEL } from "@/lib/claude";
+import { computeMechanicsFingerprint } from "@/lib/voice-mechanics";
+import { classifyPost } from "@/lib/post-type";
 
 type VoiceGenerationDb = {
   workspaceId: string;
@@ -72,6 +74,22 @@ export async function runVoiceGeneration(
         runToken,
       );
       return;
+    }
+
+    // Deterministic mechanics fingerprint — measured in code, not synthesized
+    // by the model (see lib/voice-mechanics.ts for why). Computed from the
+    // same REGULAR-post subset synthesizeVoice uses for its core exemplars
+    // (excludes lead-magnet posts, whose CTA mechanics aren't how the person
+    // writes normally). Never blocks generation: a failure here just means
+    // the profile ships without the fingerprint.
+    try {
+      const regularBodies = samples
+        .filter((p) => classifyPost(p.text).post_type !== "lead_magnet")
+        .map((p) => p.text!.trim());
+      const fingerprintSource = regularBodies.length > 0 ? regularBodies : samples.map((p) => p.text!.trim());
+      profile.mechanics_fingerprint = computeMechanicsFingerprint(fingerprintSource);
+    } catch (e) {
+      console.warn("voice: mechanics fingerprint computation failed, continuing without it", e);
     }
 
     const meta = pickProfileMeta(posts);

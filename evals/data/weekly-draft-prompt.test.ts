@@ -5,6 +5,7 @@ import {
 } from "@/lib/batch/weekly-draft-prompt";
 import { GLOBAL_WRITING_SKILL, POST_STRUCTURE_SKILL } from "@/lib/agent/skills";
 import type { VoiceProfile } from "@/lib/claude";
+import { MIN_CONFIDENT_SAMPLES, type MechanicsFingerprint } from "@/lib/voice-mechanics";
 
 const voice: VoiceProfile = {
   summary: "Founder writing about B2B SaaS growth.",
@@ -119,5 +120,77 @@ describe("always-on writing brain — house-style rules", () => {
 
   it("POST_STRUCTURE_SKILL enforces one big idea per post", () => {
     expect(POST_STRUCTURE_SKILL).toContain("ONE post = ONE big idea");
+  });
+});
+
+describe("mechanics fingerprint injection", () => {
+  const strongFingerprint: MechanicsFingerprint = {
+    lowercase_sentence_starts: 0.9,
+    lowercase_pronoun_i: 0.8,
+    all_caps_word_rate: 0.02,
+    em_dash_per_100_words: 0,
+    ellipsis_per_100_words: 0,
+    exclamation_per_100_words: 0,
+    comma_splice_rate: 0.1,
+    emoji_per_post: 0,
+    emoji_placement: "none",
+    median_sentences_per_paragraph: 1,
+    uses_lists_rate: 0,
+    dominant_list_marker: null,
+    median_words_per_post: 150,
+    sample_size: MIN_CONFIDENT_SAMPLES,
+  };
+
+  it("renders measured mechanics rules as an explicit, imperative block", () => {
+    const prompt = buildWeeklyDraftSystem({
+      voice: { ...voice, mechanics_fingerprint: strongFingerprint },
+      preferences: [],
+      isLeadMagnet: false,
+    });
+    expect(prompt).toContain("MEASURED WRITING MECHANICS");
+    expect(prompt).toMatch(/lowercase the first letter/i);
+    expect(prompt).toMatch(/never use an em dash/i);
+    expect(prompt).toMatch(/never use emoji/i);
+  });
+
+  it("never leaks the raw fingerprint object into the JSON dump", () => {
+    const prompt = buildWeeklyDraftSystem({
+      voice: { ...voice, mechanics_fingerprint: strongFingerprint },
+      preferences: [],
+      isLeadMagnet: false,
+    });
+    expect(prompt).not.toContain("mechanics_fingerprint");
+    expect(prompt).not.toContain("lowercase_sentence_starts");
+  });
+
+  it("omits the mechanics block entirely when there's no fingerprint", () => {
+    const prompt = buildWeeklyDraftSystem({
+      voice,
+      preferences: [],
+      isLeadMagnet: false,
+    });
+    expect(prompt).not.toContain("MEASURED WRITING MECHANICS");
+  });
+
+  it("omits the mechanics block when the fingerprint has too few samples to be confident", () => {
+    const thin: MechanicsFingerprint = {
+      ...strongFingerprint,
+      sample_size: MIN_CONFIDENT_SAMPLES - 1,
+    };
+    const prompt = buildWeeklyDraftSystem({
+      voice: { ...voice, mechanics_fingerprint: thin },
+      preferences: [],
+      isLeadMagnet: false,
+    });
+    expect(prompt).not.toContain("MEASURED WRITING MECHANICS");
+  });
+
+  it("omits the block when no voice profile exists at all", () => {
+    const prompt = buildWeeklyDraftSystem({
+      voice: null,
+      preferences: [],
+      isLeadMagnet: false,
+    });
+    expect(prompt).not.toContain("MEASURED WRITING MECHANICS");
   });
 });

@@ -10,6 +10,7 @@ import type { VoiceProfile } from "@/lib/claude";
 import type { LeadMagnetCampaign } from "@/lib/lead-magnet-campaign";
 import type { ContentBlock } from "@/lib/openrouter";
 import { renderPreferencesBlock } from "@/lib/preferences";
+import { mechanicsFingerprintToRules } from "@/lib/voice-mechanics";
 
 export type WeeklyDraftPromptOptions = {
   voice: VoiceProfile | null;
@@ -33,11 +34,25 @@ function buildDraftSystemVariable(opts: WeeklyDraftPromptOptions): string {
   const backstoryBlock = opts.voice
     ? renderBackstoryBlock(opts.voice.biographical_facts)
     : "";
+  // Rendered mechanics rules (measured, deterministic — see lib/voice-
+  // mechanics.ts) instead of the raw fingerprint numbers, mirroring the chat
+  // agent's get_voice tool (lib/agent/tools.ts).
+  const mechanicsRules = opts.voice?.mechanics_fingerprint
+    ? mechanicsFingerprintToRules(opts.voice.mechanics_fingerprint)
+    : [];
   const voiceForDump = opts.voice
-    ? { ...opts.voice, biographical_facts: undefined, interview_answers: undefined }
+    ? {
+        ...opts.voice,
+        biographical_facts: undefined,
+        interview_answers: undefined,
+        mechanics_fingerprint: undefined,
+      }
     : opts.voice;
+  const mechanicsRulesText = mechanicsRules.length
+    ? `\n\nMEASURED WRITING MECHANICS — hard, non-negotiable facts about how this person writes (not a style suggestion; follow them exactly, even against normal grammar conventions):\n${mechanicsRules.map((r) => `- ${r}`).join("\n")}`
+    : "";
   const voiceBlock = voiceForDump
-    ? `The user's VOICE PROFILE (write EXACTLY in this voice — study the exemplars):\nWRITING MECHANICS are first-class instructions: reproduce the profile's sentence rhythm, paragraphing, vocabulary, punctuation, and rhetorical devices. These evidence-based mechanics override generic style defaults; safety, factuality, saved preferences, and the user's current request still win.\n${JSON.stringify(
+    ? `The user's VOICE PROFILE (write EXACTLY in this voice — study the exemplars):\nWRITING MECHANICS are first-class instructions: reproduce the profile's sentence rhythm, paragraphing, vocabulary, punctuation, and rhetorical devices. These evidence-based mechanics override generic style defaults; safety, factuality, saved preferences, and the user's current request still win.${mechanicsRulesText}\n${JSON.stringify(
         opts.isLeadMagnet
           ? voiceForDump
           : { ...voiceForDump, lead_magnet_style: undefined },
