@@ -95,6 +95,10 @@ import {
 import { preflightUserPrompt } from "@/lib/agent/prompt-preflight";
 import { isCancelRequested } from "@/lib/agent/cancel";
 import { safeFilename, wrapUntrustedDelimited } from "@/lib/agent/untrusted";
+import {
+  computeStructureSkeleton,
+  renderStructureSkeletonReference,
+} from "@/lib/post-structure-skeleton";
 import { splicePreservedBody } from "@/lib/hook-splice";
 import {
   isNoModelPostRequest,
@@ -644,6 +648,23 @@ export function modelSourceEnvelope(
     endLabel: "END POST",
     text: clean,
   });
+}
+
+// Soft structure reference block for a genuine MODELING turn only — mirrors
+// modelSourceEnvelope's genre split: NOT for src.source === "draft" (a
+// refine — editing the SAME draft, not adapting another post's format) or
+// "template" (filling placeholders, not structural adaptation). Every other
+// source value (e.g. "swipe") is a real post the user asked to model after.
+// Returns "" for those excluded genres or an unusable/empty source, so
+// callers can push it unconditionally without an extra genre check.
+export function modelSourceStructureBlock(
+  src: Pick<ModelSourceRow, "post_text" | "source">,
+): string {
+  if (src.source === "draft" || src.source === "template") return "";
+  const clean = src.post_text.trim();
+  if (!clean) return "";
+  const skeleton = computeStructureSkeleton(clean);
+  return renderStructureSkeletonReference(skeleton);
 }
 
 function withGeneratedImageMeta(
@@ -1421,11 +1442,13 @@ export function chatHistoryWithModelSources(
         const source = sourceId ? sourcesById.get(sourceId) : null;
         const envelope = source ? modelSourceEnvelope(source) : "";
         if (!envelope) return base;
+        const structureBlock = source ? modelSourceStructureBlock(source) : "";
         return {
           ...base,
           content: [
             { type: "text", text: m.content },
             { type: "text", text: envelope },
+            ...(structureBlock ? [{ type: "text" as const, text: structureBlock }] : []),
           ],
         };
       })
@@ -2380,6 +2403,15 @@ export async function executeChatTurn(
       : null;
     if (modelSourceId && currentModelEnvelope) {
       blocks.push({ type: "text", text: currentModelEnvelope });
+      // Soft structure reference — genuine "model this post" turns only
+      // (currentModelSource.source === "post"); a no-op for refine/template
+      // sources. See lib/post-structure-skeleton.ts.
+      const structureBlock = currentModelSource
+        ? modelSourceStructureBlock(currentModelSource)
+        : "";
+      if (structureBlock) {
+        blocks.push({ type: "text", text: structureBlock });
+      }
     }
     modelSourceImage = modelSourceImageDecision.image;
     modelSourceImageSkipReason = modelSourceImageDecision.skipReason;

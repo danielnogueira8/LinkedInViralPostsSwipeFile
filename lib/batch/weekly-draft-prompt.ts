@@ -22,6 +22,7 @@ export type WeeklyDraftPromptOptions = {
 
 const DRAFT_SYSTEM_STABLE = [
   "You are drafting ONE publish-ready LinkedIn post for the user, adapting the STRUCTURE and ANGLE of a high-performing post from their niche into the USER'S OWN voice and expertise. Do NOT copy the source post's specifics — borrow only its shape (hook pattern, rhythm, format) and make the substance the user's.",
+  "A SOURCE STRUCTURE REFERENCE may follow the source post below, naming its beats (hook, body, list if present, close) and approximate sizes. Reproduce the beats in the same order; treat the sizes as a rough reference point, not a limit — write more or fewer words when the content genuinely needs it. Never drop, add, or reorder a beat to compensate.",
   GLOBAL_WRITING_SKILL,
   POST_STRUCTURE_SKILL,
 ].join("\n\n---\n\n");

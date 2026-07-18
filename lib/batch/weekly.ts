@@ -77,6 +77,10 @@ import { enqueueLeadMagnetImageJob } from "@/lib/lead-magnet-image-jobs";
 import type { PostMediaAttachment } from "@/lib/post-media";
 import { trackedAccountIds } from "@/lib/supabase-scoped";
 import { buildWeeklyDraftSystemBlocks } from "@/lib/batch/weekly-draft-prompt";
+import {
+  computeStructureSkeleton,
+  renderStructureSkeletonReference,
+} from "@/lib/post-structure-skeleton";
 import { stampDraftFormat } from "@/lib/markdown/mode";
 
 // How many drafts a batch produces, and how many of those are sourced from a
@@ -384,17 +388,22 @@ async function adaptedSourceIds(
 }
 
 // The user-turn instruction: the source post to adapt.
+//
+// The structure reference (lib/post-structure-skeleton.ts) is injected only
+// for regular posts — lead-magnet posts are an intentionally different,
+// CTA-driven genre this soft-reference feature doesn't target.
 function buildDraftUser(source: SourcePost, isLeadMagnet: boolean): string {
   const kind = isLeadMagnet ? "lead-magnet (giveaway/CTA) post" : "post";
-  return [
+  const structureBlock = isLeadMagnet
+    ? ""
+    : renderStructureSkeletonReference(computeStructureSkeleton(source.text));
+  const parts = [
     `Here is a high-performing ${kind} from the user's niche. Adapt its structure and angle into a fresh ${kind} in the user's voice, about the user's own expertise:`,
-    "",
-    '"""',
-    source.text.slice(0, 4000),
-    '"""',
-    "",
-    "Write the user's version now.",
-  ].join("\n");
+    ['"""', source.text.slice(0, 4000), '"""'].join("\n"),
+  ];
+  if (structureBlock) parts.push(structureBlock);
+  parts.push("Write the user's version now.");
+  return parts.join("\n\n");
 }
 
 function leadMagnetSelectionPromptFromBatchSource(opts: {
