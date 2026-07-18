@@ -246,6 +246,46 @@ describe("read-only complex orchestrator routing", () => {
     ).toBeNull();
   });
 
+  // Regression: a user answering "How many LinkedIn posts?" naturally drops
+  // the word "LinkedIn" ("3 posts") or answers with just the bare count
+  // ("3", "three") — the strict "linkedin posts" match silently failed the
+  // whole clarification resolution for these, falling the turn out of the
+  // orchestrator (and, upstream, into a "couldn't compile a safe research
+  // plan" failure once the turn no longer carried the user's stated count).
+  test.each([
+    ["3 posts", 3],
+    ["three posts", 3],
+    ["3", 3],
+    ["Three", 3],
+    ["3 LinkedIn Posts", 3],
+  ])(
+    "resolves a natural bare-count outcome answer without the word 'LinkedIn': %s",
+    (answer, expectedDrafts) => {
+      expect(
+        compileReadOnlyOrchestratorRoute({
+          ...base,
+          userInstruction: `Research the latest OpenAI news.\n\nClarification answer: ${answer}`,
+        }),
+      ).toMatchObject({
+        kind: "news_research",
+        expectedDrafts,
+        authoritativeInstruction: `Research the latest OpenAI news.\n\nWrite ${expectedDrafts} LinkedIn posts.`,
+      });
+    },
+  );
+
+  test.each(["seven posts", "seven", "0", "0 posts"])(
+    "still rejects an out-of-range or invalid bare-count answer: %s",
+    (answer) => {
+      expect(
+        compileReadOnlyOrchestratorRoute({
+          ...base,
+          userInstruction: `Research the latest OpenAI news.\n\nClarification answer: ${answer}`,
+        }),
+      ).toBeNull();
+    },
+  );
+
   test("recompiles a research-topic answer without repeating the clarification", () => {
     expect(
       compileReadOnlyOrchestratorRoute({
