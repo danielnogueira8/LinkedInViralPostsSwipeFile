@@ -54,6 +54,19 @@
       "follow_up_issue": 999
     },
     {
+      "id": "cowork-draft-count-precedence",
+      "capability": "Cowork",
+      "invariant": "Draft count defaults to Auto; Auto follows an explicit message count and otherwise defaults to one, while an explicit 1–5 generation setting overrides contradictory message text across direct, modeled, legacy-fallback, and Retry paths.",
+      "preferred_seam": "api-contract",
+      "existing_coverage": [
+        "evals/data/generation-config.test.ts",
+        "evals/data/cowork-outcome-harness.test.ts",
+        "e2e/generation-settings.spec.ts"
+      ],
+      "status": "protected",
+      "follow_up_issue": 999
+    },
+    {
       "id": "swipe-discovery-actions",
       "capability": "Swipe File",
       "invariant": "Filtering, sorting, media actions, bookmarking, and modeling preserve the selected post and its metadata.",

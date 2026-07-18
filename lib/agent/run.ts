@@ -76,6 +76,7 @@ import {
   DELIVERABLE_TOOL_BY_KIND,
   deliverableProgress,
   deriveDeliverableContract,
+  type DeliverableContract,
 } from "@/lib/agent/deliverable-contract";
 import {
   fetchRecentPostDrafts,
@@ -1578,6 +1579,9 @@ export async function* runAgent(opts: {
   // separately so control policy never needs to infer authority from the
   // richer model-visible content blocks.
   userInstruction?: string;
+  // A server-resolved count contract from the structured generation control.
+  // When present it is authoritative over any contradictory count in text.
+  deliverableContractOverride?: DeliverableContract;
   // The checkpointed action orchestrator owns board mutations in enabled
   // workspaces. The legacy model may still read list_drafts, but it must never
   // receive or execute the unfenced move/schedule tools.
@@ -1646,7 +1650,8 @@ export async function* runAgent(opts: {
   const partialTextDeliverable = requestsPartialTextDeliverable(latestUserMsg);
   const deliverableContract = opts.isRefine || partialTextDeliverable
     ? null
-    : deriveDeliverableContract(latestUserMsg);
+    : opts.deliverableContractOverride ??
+      deriveDeliverableContract(latestUserMsg);
   const forbidsSourceDiscovery =
     explicitlyForbidsSourceDiscovery(latestUserMsg);
   const directPartialTextTurn =

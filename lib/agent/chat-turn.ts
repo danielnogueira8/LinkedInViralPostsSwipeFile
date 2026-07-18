@@ -88,7 +88,10 @@ import {
   coworkRolloutDecision,
   type CoworkRolloutLane,
 } from "@/lib/agent/cowork-rollout";
-import { deriveDeliverableContract } from "@/lib/agent/deliverable-contract";
+import {
+  deriveDeliverableContract,
+  type DeliverableContract,
+} from "@/lib/agent/deliverable-contract";
 import { encodeChatSseFrame } from "@/lib/transport/contracts";
 import type { CoworkTurnUsageWire } from "@/lib/cowork-turn-usage";
 import {
@@ -2402,18 +2405,11 @@ export async function executeChatTurn(
             : context.route;
     }
     if (!resolvedGenerationConfig) {
-      const generationResolution = resolveGenerationConfig({
+      resolvedGenerationConfig = resolveGenerationConfig({
         selected: requestedGenerationConfig,
         explicitMessageDraftCount:
           explicitMessageDraftCount(preclaimInstruction),
       });
-      if (!generationResolution.ok) {
-        return turnError(
-          `The draft-count control is set to ${generationResolution.selectedDraftCount}, but the message explicitly asks for ${generationResolution.messageDraftCount}. Make them match before sending.`,
-          400,
-        );
-      }
-      resolvedGenerationConfig = generationResolution.config;
     }
     activeDraftCountOverride =
       resolvedGenerationConfig.draftCountSource === "ui" ||
@@ -4039,22 +4035,28 @@ export async function executeChatTurn(
   const explicitLegacyPostContract = deriveDeliverableContract(
     effectiveUserInstruction,
   );
-  const legacyContract: CoworkContract = directPartialSpec
-    ? { kind: "partial", expectedCount: 1 }
-    : explicitLegacyPostContract
-      ? {
-          kind: "post",
-          expectedCount: explicitLegacyPostContract.expectedCount,
-        }
-      : directPostCount ||
-          skipDecision ||
-          isNoModelPostRequest(
-            effectiveUserInstruction,
-            Boolean(modelSourceId),
-          ) ||
-          requestsDirectSourceModeling(effectiveUserInstruction)
-        ? { kind: "post", expectedCount: directPostCount ?? 1 }
-        : { kind: "answer", expectedCount: 1 };
+  const selectedDeliverableContract: DeliverableContract | null =
+    activeDraftCountOverride !== undefined
+      ? { kind: "post", expectedCount: activeDraftCountOverride }
+      : null;
+  const legacyContract: CoworkContract = selectedDeliverableContract
+    ? selectedDeliverableContract
+    : directPartialSpec
+      ? { kind: "partial", expectedCount: 1 }
+      : explicitLegacyPostContract
+        ? {
+            kind: "post",
+            expectedCount: explicitLegacyPostContract.expectedCount,
+          }
+        : directPostCount ||
+            skipDecision ||
+            isNoModelPostRequest(
+              effectiveUserInstruction,
+              Boolean(modelSourceId),
+            ) ||
+            requestsDirectSourceModeling(effectiveUserInstruction)
+          ? { kind: "post", expectedCount: directPostCount ?? 1 }
+          : { kind: "answer", expectedCount: 1 };
   const coworkContract: CoworkContract = useDirectWriter
     ? directWriterTask.kind === "partial"
       ? { kind: "partial", expectedCount: 1 }
@@ -4603,6 +4605,9 @@ export async function executeChatTurn(
           // Keep the current control instruction separate from model-visible
           // source/file blocks so data can never authorize skills or tools.
           userInstruction: effectiveUserInstruction,
+          ...(selectedDeliverableContract
+            ? { deliverableContractOverride: selectedDeliverableContract }
+            : {}),
           telemetry: coworkTelemetry,
           disableBoardMutations:
             useActionOrchestrator ||

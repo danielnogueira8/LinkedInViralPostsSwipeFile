@@ -2118,6 +2118,26 @@ describe("production-shaped Cowork outcome harness", () => {
     },
   );
 
+  test("the selected modeled-batch count supersedes a singular output in the message", async () => {
+    const scenario = modeledStructuredCountScenario(
+      "modeled-five-selected-over-singular-message",
+      5,
+    );
+    scenario.request.message =
+      "Find 5 top-performing regular posts in my swipe file and rewrite them in my voice into 1 original post.";
+
+    const report = await runCoworkOutcomeScenario(scenario);
+
+    expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+    expect(report.persisted.artifacts).toHaveLength(5);
+    expect(report.observed.directWriterRequests).toHaveLength(5);
+    expect(
+      report.persisted.artifacts.map(
+        (artifact) => artifact.meta?.source_post_id,
+      ),
+    ).toEqual(MODELED_FIVE_SOURCE_ROWS.map((source) => source.id));
+  });
+
   test("a fresh server-selected modeled batch cannot activate a historical attached source", async () => {
     const scenario = modeledThreeScenario(
       "modeled-three-does-not-inherit-historical-source",
@@ -3234,26 +3254,59 @@ describe("production-shaped Cowork outcome harness", () => {
     },
   );
 
-  test("rejects a selector/message count conflict before model usage", async () => {
+  test("uses the selected draft count when the message asks for a different count", async () => {
+    const bodies = [COMPLETE_POST, SECOND_POST, THIRD_POST, FOURTH_POST];
     const report = await runCoworkOutcomeScenario({
-      id: "draft-count-conflict",
+      id: "selected-draft-count-overrides-message",
       request: {
         message: "Write 2 original LinkedIn posts about content systems.",
         generationConfig: { version: 1, draftCount: 4 },
       },
-      model: { provider: { rounds: [] } },
+      model: {
+        provider: { rounds: [] },
+        directWriter: bodies.map((text, index) => ({
+          text,
+          finishReason: "stop" as const,
+          usage: usage(200 + index * 20, 90 + index * 10, 0.00018 + index * 0.00002),
+        })),
+      },
       expected: {
-        terminal: "failure",
-        httpStatus: 400,
-        artifactBodies: [],
+        terminal: "done",
+        artifactBodies: bodies,
         actionNames: [],
       },
     });
 
     expect(report.pass, report.failureCodes.join(", ")).toBe(true);
-    expect(report.persisted.usage).toEqual([]);
-    expect(report.observed.directWriterRequests).toEqual([]);
+    expect(report.observed.directWriterRequests).toHaveLength(4);
     expect(report.observed.agentProviderRounds).toBe(0);
+  });
+
+  test("the selected draft count remains authoritative on the legacy fallback", async () => {
+    const bodies = [COMPLETE_POST, SECOND_POST, THIRD_POST, FOURTH_POST];
+    const report = await runCoworkOutcomeScenario({
+      id: "selected-draft-count-legacy-fallback",
+      request: {
+        message: "Write 2 posts about content systems.",
+        generationConfig: { version: 1, draftCount: 4 },
+      },
+      model: {
+        provider: renderProvider(bodies),
+        readOnlyOrchestrator: {
+          plans: [],
+          voiceUnavailable: true,
+        },
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: bodies,
+        actionNames: ["render_post", "render_post", "render_post", "render_post"],
+      },
+    });
+
+    expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+    expect(report.observed.agentProviderRounds).toBeGreaterThan(0);
+    expect(report.persisted.artifacts).toHaveLength(4);
   });
 
   test("the production variations action persists exactly three distinct source-tagged drafts", async () => {

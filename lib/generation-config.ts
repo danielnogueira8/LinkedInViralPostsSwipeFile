@@ -32,15 +32,6 @@ export type ResolvedGenerationConfig = z.infer<
   typeof resolvedGenerationConfigSchema
 >;
 
-export type GenerationConfigResolution =
-  | { ok: true; config: ResolvedGenerationConfig }
-  | {
-      ok: false;
-      reason: "draft_count_conflict";
-      selectedDraftCount: DraftCount;
-      messageDraftCount: number;
-    };
-
 export function generationConfigForSelection(
   selection: DraftCountSelection,
 ): GenerationConfigV1 | undefined {
@@ -57,44 +48,23 @@ export function generationConfigForSelection(
 export function resolveGenerationConfig(input: {
   selected?: GenerationConfigV1 | null;
   explicitMessageDraftCount?: number | null;
-}): GenerationConfigResolution {
+}): ResolvedGenerationConfig {
   const selectedCount = input.selected?.draftCount;
   const messageCount = input.explicitMessageDraftCount ?? null;
-  if (
-    selectedCount !== undefined &&
-    messageCount !== null &&
-    messageCount !== selectedCount
-  ) {
-    return {
-      ok: false,
-      reason: "draft_count_conflict",
-      selectedDraftCount: selectedCount,
-      messageDraftCount: messageCount,
-    };
-  }
   if (selectedCount !== undefined) {
     return {
-      ok: true,
-      config: {
-        version: 1,
-        draftCount: selectedCount,
-        draftCountSource: "ui",
-      },
+      version: 1,
+      draftCount: selectedCount,
+      draftCountSource: "ui",
     };
   }
   const parsedMessageCount = draftCountSchema.safeParse(messageCount);
   if (parsedMessageCount.success) {
     return {
-      ok: true,
-      config: {
-        version: 1,
-        draftCount: parsedMessageCount.data,
-        draftCountSource: "message",
-      },
+      version: 1,
+      draftCount: parsedMessageCount.data,
+      draftCountSource: "message",
     };
   }
-  return {
-    ok: true,
-    config: { version: 1, draftCount: 1, draftCountSource: "default" },
-  };
+  return { version: 1, draftCount: 1, draftCountSource: "default" };
 }
