@@ -163,6 +163,24 @@ describe("checkStructureMatch", () => {
     const mismatch = checkStructureMatch(source, draft);
     expect(mismatch?.code).toBe("missing_list");
   });
+
+  test("skips the length-ratio check entirely for a short source (a ratio isn't meaningful below ~120 chars)", () => {
+    // A one-line hook as the source: a normal-length draft is a 6x+ ratio,
+    // which would trip "too_long" if the ratio check applied — but a source
+    // this short has no meaningful "length" to hold the draft to.
+    const shortSource = computeStructureSkeleton("Most founders get this wrong.");
+    const normalDraft = computeStructureSkeleton(
+      "Most founders think growth is about more leads. It isn't. Fix the leaks in what you already have before you pour in more water at the top.",
+    );
+    expect(checkStructureMatch(shortSource, normalDraft)).toBeNull();
+  });
+
+  test("still applies the length-ratio check once the source crosses the short-source floor", () => {
+    const borderlineSource = computeStructureSkeleton("word ".repeat(25).trim()); // ~125 chars
+    const tinyDraft = computeStructureSkeleton("word ".repeat(2).trim()); // far below 0.6x
+    const mismatch = checkStructureMatch(borderlineSource, tinyDraft);
+    expect(mismatch?.code).toBe("too_short");
+  });
 });
 
 describe("structureMismatchRepairInstruction", () => {

@@ -152,6 +152,13 @@ export type StructureMismatch = {
 const LENGTH_BAND_MIN = 0.6;
 const LENGTH_BAND_MAX = 1.6;
 
+// Below this, the source is too short (a one-line hook, a fragment) for a
+// length RATIO to mean anything — a 40-char source vs. a normal 250-char
+// post is already a 6x ratio despite being a perfectly reasonable
+// adaptation. The list-marker checks above still apply regardless of
+// source length; only the ratio check needs this floor.
+const MIN_SOURCE_CHARS_FOR_LENGTH_CHECK = 120;
+
 // Compare a draft's skeleton against its source's. Returns the FIRST
 // mismatch found (deliberately singular — a single named delta drives one
 // clean retry instruction, not a multi-issue report), or null when the
@@ -172,7 +179,7 @@ export function checkStructureMatch(
       message: `The source post's list uses "${source.listMarker}" as its marker — the draft used "${draft.listMarker}" instead.`,
     };
   }
-  if (source.totalChars > 0) {
+  if (source.totalChars >= MIN_SOURCE_CHARS_FOR_LENGTH_CHECK) {
     const ratio = draft.totalChars / source.totalChars;
     if (ratio < LENGTH_BAND_MIN) {
       return {

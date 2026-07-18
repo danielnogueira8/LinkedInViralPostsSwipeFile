@@ -206,6 +206,13 @@ export type DraftEngineInput = {
   // broken output, not style. Callers still get the identical artifact + event
   // shape, so persistence and the fallback path are unchanged.
   lean?: boolean;
+  // Opt-in for the finalizer's coarse structure gate (lib/post-structure-
+  // skeleton.ts checkStructureMatch) on a task.kind === "source" turn. The
+  // caller (chat-turn.ts) sets this true ONLY for a genuine "model this
+  // post" source, matching modelSourceStructureBlock's own genre split —
+  // false/omitted (the default) means the gate never runs, so a refine task
+  // or a caller that hasn't opted in stays unaffected.
+  enableStructureGate?: boolean;
 };
 
 export type DraftEngineDependencies = {
@@ -1276,12 +1283,24 @@ export async function* runDraftEngine(
   const engineEditOptions = {
     keepEmDashes: voiceResultKeepsEmDashes(input.voiceResult),
   };
+  // The coarse structure gate's scope-to-modeling-only signal (see
+  // DraftFinalizerOptions.structureSkeleton) — an explicit caller opt-in
+  // (input.enableStructureGate), not an implicit default for every
+  // task.kind === "source" call. The caller (chat-turn.ts) sets it only for
+  // a genuine "model this post" turn — matching modelSourceStructureBlock's
+  // own genre split — so a refine task, or any caller that hasn't opted in,
+  // never triggers it.
+  const modeledStructureSkeleton =
+    task.kind === "source" && input.enableStructureGate
+      ? computeStructureSkeleton(task.source.text)
+      : undefined;
   const finalizer = createDraftFinalizer({
     workspaceId: input.workspaceId,
     contract: { kind: "post", expectedCount: 1 },
     priorDrafts: input.priorPostDrafts,
     signal: turnSignal,
     editOptions: engineEditOptions,
+    structureSkeleton: modeledStructureSkeleton,
     // Thin path: no-op the taste specialists (fidelity/sameness/ai-tell), keep
     // the deterministic editor. Otherwise use whatever the caller passed.
     specialists: input.lean

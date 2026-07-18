@@ -26,6 +26,12 @@ import { RENDER_POST_MAX_CHARS } from "@/lib/agent/tools";
 import type { RecentDraft } from "@/lib/recent-drafts";
 import type { AdapterHealthRegistry } from "@/lib/agent/adapter-health";
 import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
+import {
+  checkStructureMatch,
+  computeStructureSkeleton,
+  structureMismatchRepairInstruction,
+  type StructureSkeleton,
+} from "@/lib/post-structure-skeleton";
 
 export const DRAFT_FINALIZER_REJECTION_CODES = [
   "cancelled",
@@ -42,6 +48,7 @@ export const DRAFT_FINALIZER_REJECTION_CODES = [
   "provenance_unverified",
   "source_unavailable",
   "source_fidelity",
+  "structure_mismatch",
   "duplicate",
   "count_complete",
   "domain_constraint",
@@ -189,6 +196,13 @@ export type DraftFinalizerOptions = {
   // reveals the writer genuinely uses em dashes) and later finalize calls see
   // the current value.
   editOptions?: { keepEmDashes?: boolean };
+  // The source post's deterministic structure skeleton (lib/post-structure-
+  // skeleton.ts). Presence alone scopes the coarse structure gate to
+  // GENUINE MODELED-POST turns: the caller (run.ts) only computes and
+  // passes this for a "model this post" source, never for a refine or
+  // template-fill — so an absent value means the gate never runs, no
+  // separate genre flag needed here.
+  structureSkeleton?: StructureSkeleton;
 };
 
 export type DraftCandidateTransform = (
@@ -616,6 +630,34 @@ export function createDraftFinalizer(
     // exists: a different unfaithful retry or a rewrite that drifts from the
     // verified source is rejected just like the first candidate.
     if (resolvedSource.source && candidate.provenance) {
+      // Coarse deterministic structure gate — MODELED POSTS ONLY (options.
+      // structureSkeleton is only ever set by the caller for a genuine
+      // "model this post" turn; absent for refine/template turns, so this
+      // never fires for them). Deliberately narrow: it only catches gross
+      // mismatches (a dropped list, a wildly different length) — every
+      // fine-grained size difference the writer prompt already invites the
+      // model to make freely is NOT checked here. Runs before the
+      // near-duplicate check since both are free/synchronous.
+      if (options.structureSkeleton) {
+        const draftSkeleton = computeStructureSkeleton(body);
+        const mismatch = checkStructureMatch(
+          options.structureSkeleton,
+          draftSkeleton,
+        );
+        if (mismatch) {
+          return emit(
+            candidate,
+            reject(
+              candidate.origin,
+              "structure_mismatch",
+              mismatch.message,
+              structureMismatchRepairInstruction(mismatch),
+            ),
+            sourceVerified,
+            edits,
+          );
+        }
+      }
       if (areDraftsNearDuplicate(resolvedSource.source.text, body)) {
         return emit(
           candidate,

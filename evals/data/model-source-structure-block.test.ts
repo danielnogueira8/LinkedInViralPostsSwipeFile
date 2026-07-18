@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   chatHistoryWithModelSources,
   modelSourceStructureBlock,
+  modelSourceStructureSkeleton,
 } from "@/lib/agent/chat-turn";
 
 // modelSourceStructureBlock injects the soft structure reference (lib/post-
@@ -100,5 +101,39 @@ describe("chatHistoryWithModelSources — includes the structure block for a mod
     const contentStr = JSON.stringify(history[0].content);
     expect(contentStr).toContain("--- POST TO REFINE ---");
     expect(contentStr).not.toContain("SOURCE STRUCTURE REFERENCE");
+  });
+});
+
+describe("modelSourceStructureSkeleton — feeds the finalizer's coarse structure gate", () => {
+  test("returns a real skeleton for a genuine modeling source", () => {
+    const skeleton = modelSourceStructureSkeleton({
+      source: "swipe",
+      post_text: SOURCE_POST,
+    });
+    expect(skeleton).toBeDefined();
+    expect(skeleton?.hasList).toBe(true);
+    expect(skeleton?.listMarker).toBe("→");
+  });
+
+  test("returns undefined (not an empty skeleton) for a refine source — the gate must never fire", () => {
+    const skeleton = modelSourceStructureSkeleton({
+      source: "draft",
+      post_text: SOURCE_POST,
+    });
+    expect(skeleton).toBeUndefined();
+  });
+
+  test("returns undefined for a template-fill source", () => {
+    const skeleton = modelSourceStructureSkeleton({
+      source: "template",
+      post_text: SOURCE_POST,
+    });
+    expect(skeleton).toBeUndefined();
+  });
+
+  test("returns undefined for an empty source (nothing to gate against)", () => {
+    expect(
+      modelSourceStructureSkeleton({ source: "swipe", post_text: "" }),
+    ).toBeUndefined();
   });
 });

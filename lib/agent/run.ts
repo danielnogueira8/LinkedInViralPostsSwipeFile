@@ -151,6 +151,7 @@ import {
   type DraftProvenance,
   type DraftSource,
 } from "@/lib/agent/draft-finalizer";
+import type { StructureSkeleton } from "@/lib/post-structure-skeleton";
 
 // ---------------------------------------------------------------------------
 // The chat agent loop.
@@ -1554,6 +1555,13 @@ export async function* runAgent(opts: {
   // storage. The finalizer consumes this domain value directly rather than
   // re-parsing the untrusted model-visible source envelope.
   attachedModelSource?: DraftSource;
+  // The source post's deterministic structure skeleton (lib/post-structure-
+  // skeleton.ts), computed by ChatTurn ONLY for a genuine "model this post"
+  // turn — never for a refine or template-fill source, matching
+  // modelSourceStructureBlock's own genre split. Its presence is what scopes
+  // the finalizer's coarse structure gate to modeled posts only: absent →
+  // the gate never runs.
+  modeledSourceSkeleton?: StructureSkeleton;
   // Narrow specialist seam used by deterministic production-shaped tests and
   // future adapter selection. Production omits it and uses the defaults.
   draftFinalizerSpecialists?: Partial<DraftFinalizerSpecialists>;
@@ -2062,6 +2070,7 @@ export async function* runAgent(opts: {
     priorDrafts: priorPostDrafts,
     signal: turnAbort.signal,
     editOptions: draftEditOptions,
+    structureSkeleton: opts.modeledSourceSkeleton,
     specialists: opts.draftFinalizerSpecialists,
     transformCandidate: opts.draftCandidateTransform,
     finalTransformCandidate: opts.draftFinalCandidateTransform,
