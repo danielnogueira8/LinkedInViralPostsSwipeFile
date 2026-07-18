@@ -18,6 +18,7 @@ import {
   ensureBiographicalFacts,
   renderBackstoryBlock,
 } from "@/lib/agent/specialists/backstory";
+import { mechanicsFingerprintToRules } from "@/lib/voice-mechanics";
 import { retryRead } from "@/lib/retry-read";
 
 // ---------------------------------------------------------------------------
@@ -764,14 +765,25 @@ export async function loadVoiceProfile(
       adapterHealth: options.adapterHealth,
     });
     const backstoryGuidance = renderBackstoryBlock(profile.biographical_facts);
-    // Strip facts (returned separately as retrieval guidance) and the RAW
-    // interview_answers (source-of-truth for editing, not prompt input) from the
-    // dump. interview_context stays IN the profile — it's always-on drafting
-    // context the writer should use.
+    // Deterministic mechanics rules (capitalization, punctuation, emoji,
+    // paragraphing) rendered from the measured fingerprint (lib/voice-
+    // mechanics.ts) into imperative instructions the model can follow
+    // directly — sharper and non-hallucinating vs. the raw fingerprint
+    // numbers, which the model would otherwise have to interpret itself.
+    // Empty when there's no fingerprint yet or the sample was too thin.
+    const mechanicsRules = profile.mechanics_fingerprint
+      ? mechanicsFingerprintToRules(profile.mechanics_fingerprint)
+      : [];
+    // Strip facts (returned separately as retrieval guidance), the RAW
+    // interview_answers (source-of-truth for editing, not prompt input), and
+    // the raw fingerprint (returned separately, already rendered into rules)
+    // from the dump. interview_context stays IN the profile — it's always-on
+    // drafting context the writer should use.
     const profileForModel = {
       ...profile,
       biographical_facts: undefined,
       interview_answers: undefined,
+      mechanics_fingerprint: undefined,
     };
     return {
       ok: true,
@@ -784,6 +796,12 @@ export async function loadVoiceProfile(
         // Present ONLY when the profile has real biographical facts. The chat
         // agent should treat this as retrieval guidance, not a checklist.
         ...(backstoryGuidance ? { backstory_guidance: backstoryGuidance } : {}),
+        // Present ONLY when the fingerprint yielded confident, measured
+        // rules. Treat these as HARD, non-negotiable mechanics — they're
+        // measured facts about how this person writes, not a style guess.
+        ...(mechanicsRules.length
+          ? { mechanics_rules: mechanicsRules }
+          : {}),
         source_post_count: data.source_post_count,
         model: data.model,
         generated_at: data.generated_at,
