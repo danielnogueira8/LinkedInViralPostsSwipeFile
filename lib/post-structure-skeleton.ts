@@ -21,28 +21,72 @@
 
 import { extractHookHeuristic } from "./hooks";
 
-const LIST_MARKER_RE = /^\s*([-•→*]|\d+\.)\s+/;
+// Formal line grammar, kept private behind computeStructureSkeleton():
+// - ordered markers and ASCII bullets require separating whitespace;
+// - established typographic bullets may touch their content;
+// - a Unicode pictographic grapheme can be a marker in a compact adjacent
+//   block, or in a stricter three-item spaced block described below.
+// The rules recognize future and mixed emoji bullets without turning isolated
+// decorative emoji paragraphs into a list.
+const STANDARD_LIST_MARKER_RE =
+  /^\s*(?:(\d+)[.)]\s+|([-*+])\s+|([•→▪◦‣⁃∙])\s*)/;
+const EMOJI_GRAPHEME_RE =
+  /(?:\p{Extended_Pictographic}|\p{Regional_Indicator})/u;
+const KEYCAP_EMOJI_GRAPHEME_RE = /^[#*0-9]\uFE0F?\u20E3$/u;
+const GRAPHEME_SEGMENTER = new Intl.Segmenter(undefined, {
+  granularity: "grapheme",
+});
+
+export type StructureListMarker =
+  | { kind: "ordered" }
+  | { kind: "bullet"; glyph: string }
+  | { kind: "emoji" };
+
+type StructuralLine = {
+  marker: StructureListMarker | null;
+};
+
+function standardListMarkerOf(line: string): StructureListMarker | null {
+  const match = line.match(STANDARD_LIST_MARKER_RE);
+  if (!match) return null;
+  if (match[1]) return { kind: "ordered" };
+  const glyph = match[2] ?? match[3];
+  return glyph ? { kind: "bullet", glyph } : null;
+}
+
+function leadingEmojiGraphemeOf(line: string): string | null {
+  const first = GRAPHEME_SEGMENTER.segment(line.trimStart())[Symbol.iterator]().next();
+  return !first.done &&
+    (EMOJI_GRAPHEME_RE.test(first.value.segment) ||
+      KEYCAP_EMOJI_GRAPHEME_RE.test(first.value.segment))
+    ? first.value.segment
+    : null;
+}
 
 export type StructureLayoutBeat = {
   kind: "prose" | "list";
-  marker: string | null;
+  marker: StructureListMarker | null;
 };
 
 // One shared writer contract for every modeled-post path. The reference block
 // supplies the concrete layout; this policy explains how to use it without
 // assuming every source has the same hook/body/list/close arrangement.
 export const SOURCE_STRUCTURE_REFERENCE_POLICY =
-  "A SOURCE STRUCTURE REFERENCE may follow the source data. It names the source's detected beats, their order, and approximate sizes. Reproduce that detected sequence; treat sizes as a reference point, not a limit, and deviate freely when the user's content genuinely needs it. Keep a list in the same position and use the same marker when present. Never drop, add, or reorder a beat to compensate for a size change.";
+  "A SOURCE STRUCTURE REFERENCE may follow the source data. It names the source's detected beats, their order, and approximate sizes. Reproduce that detected sequence; treat sizes as a reference point, not a limit, and deviate freely when the user's content genuinely needs it. Keep a list in the same position and use the same marker style when present. Never drop, add, or reorder a beat to compensate for a size change.";
 
 export type StructureSkeleton = {
   // Number of paragraphs (blank-line-separated blocks), matching the
   // codebase's paragraph convention (lib/voice-mechanics.ts paragraphsOf).
   paragraphCount: number;
+  // Non-empty rendered text lines. This captures visible beats that share one
+  // blank-line paragraph (for example, emoji-led list-like lines) and is the
+  // reliable signal for the coarse density gate.
+  visualLineCount: number;
   // Whether the source contains a list block anywhere.
   hasList: boolean;
-  // The list marker character, normalized ("1." for any numbered marker),
-  // or null when hasList is false.
-  listMarker: string | null;
+  // The dominant list marker category. Numbered and emoji-led lists are
+  // normalized by kind; explicit bullet glyphs retain their glyph.
+  listMarker: StructureListMarker | null;
   // Number of list items, or 0 when hasList is false.
   listItemCount: number;
   // Character length of the extracted hook (first ~1-2 sentences/lines).
@@ -64,45 +108,156 @@ function paragraphsOf(text: string): string[] {
     .filter(Boolean);
 }
 
+function parseStructuralLines(text: string): StructuralLine[] {
+  const paragraphs = paragraphsOf(text).map((paragraph) =>
+    paragraph
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean),
+  );
+  const lines = paragraphs.flatMap((paragraph, paragraphIndex) =>
+    paragraph
+      .map((line) => ({
+        paragraphIndex,
+        paragraphLineCount: paragraph.length,
+        standardMarker: standardListMarkerOf(line),
+        emojiGrapheme: leadingEmojiGraphemeOf(line),
+      })),
+  );
+  const repeatedEmojiLines = new Set<number>();
+
+  for (let index = 0; index < lines.length; ) {
+    const candidate = lines[index];
+    if (candidate.standardMarker || !candidate.emojiGrapheme) {
+      index += 1;
+      continue;
+    }
+    let end = index + 1;
+    while (
+      end < lines.length &&
+      lines[end].paragraphIndex === candidate.paragraphIndex &&
+      !lines[end].standardMarker &&
+      lines[end].emojiGrapheme
+    ) {
+      end += 1;
+    }
+    if (end - index >= 2) {
+      for (let repeated = index; repeated < end; repeated += 1) {
+        repeatedEmojiLines.add(repeated);
+      }
+    }
+    index = end;
+  }
+
+  // LinkedIn writers often put a blank line between visual list items. Treat
+  // three or more consecutive one-line emoji paragraphs as a spaced list, but
+  // keep one or two repeated decorative callouts as prose. This rule is
+  // intentionally stricter than the within-paragraph rule because paragraph
+  // breaks otherwise erase the only deterministic distinction between a list
+  // and ordinary emoji-led prose.
+  for (let index = 0; index < lines.length; ) {
+    const candidate = lines[index];
+    if (
+      candidate.standardMarker ||
+      !candidate.emojiGrapheme ||
+      candidate.paragraphLineCount !== 1
+    ) {
+      index += 1;
+      continue;
+    }
+    let end = index + 1;
+    while (
+      end < lines.length &&
+      lines[end].paragraphIndex === lines[end - 1].paragraphIndex + 1 &&
+      lines[end].paragraphLineCount === 1 &&
+      !lines[end].standardMarker &&
+      lines[end].emojiGrapheme === candidate.emojiGrapheme
+    ) {
+      end += 1;
+    }
+    if (end - index >= 3) {
+      for (let repeated = index; repeated < end; repeated += 1) {
+        repeatedEmojiLines.add(repeated);
+      }
+    }
+    index = end;
+  }
+
+  return lines.map((line, index) => ({
+    marker:
+      line.standardMarker ??
+      (repeatedEmojiLines.has(index) ? { kind: "emoji" } : null),
+  }));
+}
+
+function markerKey(marker: StructureListMarker): string {
+  return marker.kind === "bullet" ? `bullet:${marker.glyph}` : marker.kind;
+}
+
+function sameMarkerStyle(
+  left: StructureListMarker | null,
+  right: StructureListMarker | null,
+): boolean {
+  return Boolean(left && right && markerKey(left) === markerKey(right));
+}
+
+function listStyle(marker: StructureListMarker | null): string {
+  if (!marker) return '"unknown"';
+  if (marker.kind === "emoji") return "emoji-led";
+  if (marker.kind === "ordered") return "numbered";
+  return `"${marker.glyph}"`;
+}
+
+function listStyleWithArticle(marker: StructureListMarker | null): string {
+  return `${marker?.kind === "emoji" ? "an" : "a"} ${listStyle(marker)}`;
+}
+
 function wordCount(text: string): number {
   const matches = text.match(/[\p{L}\p{N}]+/gu);
   return matches ? matches.length : 0;
 }
 
-function listStatsOf(text: string): { hasList: boolean; marker: string | null; itemCount: number } {
-  const lines = text.split("\n");
+function listStatsOf(lines: StructuralLine[]): {
+  hasList: boolean;
+  marker: StructureListMarker | null;
+  itemCount: number;
+} {
   let itemCount = 0;
-  const markerCounts = new Map<string, number>();
+  const markerCounts = new Map<
+    string,
+    { marker: StructureListMarker; count: number }
+  >();
   for (const line of lines) {
-    const m = line.match(LIST_MARKER_RE);
-    if (!m) continue;
+    if (!line.marker) continue;
     itemCount++;
-    const marker = /^\d+\./.test(m[1]) ? "1." : m[1];
-    markerCounts.set(marker, (markerCounts.get(marker) ?? 0) + 1);
+    const key = markerKey(line.marker);
+    const current = markerCounts.get(key);
+    markerCounts.set(key, {
+      marker: line.marker,
+      count: (current?.count ?? 0) + 1,
+    });
   }
-  let marker: string | null = null;
+  let marker: StructureListMarker | null = null;
   let best = 0;
-  for (const [m, count] of markerCounts) {
+  for (const { marker: candidate, count } of markerCounts.values()) {
     if (count > best) {
       best = count;
-      marker = m;
+      marker = candidate;
     }
   }
   return { hasList: itemCount > 0, marker, itemCount };
 }
 
-function layoutOf(text: string): StructureLayoutBeat[] {
+function layoutOf(lines: StructuralLine[]): StructureLayoutBeat[] {
   const layout: StructureLayoutBeat[] = [];
-  for (const line of text.split("\n")) {
-    if (!line.trim()) continue;
-    const match = line.match(LIST_MARKER_RE);
-    const marker = match ? (/^\d+\./.test(match[1]) ? "1." : match[1]) : null;
-    const kind: StructureLayoutBeat["kind"] = match ? "list" : "prose";
+  for (const line of lines) {
+    const marker = line.marker;
+    const kind: StructureLayoutBeat["kind"] = marker ? "list" : "prose";
     const previous = layout[layout.length - 1];
     if (
       !previous ||
       previous.kind !== kind ||
-      (kind === "list" && previous.marker !== marker)
+      (kind === "list" && !sameMarkerStyle(previous.marker, marker))
     ) {
       layout.push({ kind, marker });
     }
@@ -115,17 +270,19 @@ function layoutOf(text: string): StructureLayoutBeat[] {
 // skeleton (callers should check totalChars > 0 before using it).
 export function computeStructureSkeleton(sourceText: string): StructureSkeleton {
   const text = sourceText.trim();
-  const { hasList, marker, itemCount } = listStatsOf(text);
+  const structuralLines = parseStructuralLines(text);
+  const { hasList, marker, itemCount } = listStatsOf(structuralLines);
   const hook = extractHookHeuristic(text);
   return {
     paragraphCount: paragraphsOf(text).length,
+    visualLineCount: structuralLines.length,
     hasList,
     listMarker: marker,
     listItemCount: itemCount,
     hookChars: hook?.length ?? 0,
     totalChars: text.length,
     totalWords: wordCount(text),
-    layout: layoutOf(text),
+    layout: layoutOf(structuralLines),
   };
 }
 
@@ -149,12 +306,12 @@ export function renderStructureSkeletonReference(skeleton: StructureSkeleton): s
   );
   if (skeleton.hasList && skeleton.listMarker) {
     beats.push(
-      `List: the source uses a "${skeleton.listMarker}" list with ${skeleton.listItemCount} item${skeleton.listItemCount === 1 ? "" : "s"} — keep the list (same marker), but the item count and each item's length can flex to fit your content.`,
+      `List: the source uses ${listStyleWithArticle(skeleton.listMarker)} list with ${skeleton.listItemCount} item${skeleton.listItemCount === 1 ? "" : "s"} — keep the list (same marker style), but the item count and each item's length can flex to fit your content.`,
     );
   }
   const layout = skeleton.layout
     .map((beat) =>
-      beat.kind === "list" ? `"${beat.marker}" list` : "prose",
+      beat.kind === "list" ? `${listStyle(beat.marker)} list` : "prose",
     )
     .join(" → ");
   if (layout) {
@@ -190,7 +347,7 @@ export type StructureMismatch = {
     | "missing_list"
     | "wrong_list_marker"
     | "layout_order"
-    | "paragraph_density"
+    | "visual_line_density"
     | "too_short"
     | "too_long";
   message: string;
@@ -221,13 +378,7 @@ export function checkStructureMatch(
   if (source.hasList && !draft.hasList) {
     return {
       code: "missing_list",
-      message: `The source post uses a "${source.listMarker}" list (${source.listItemCount} items) — the draft dropped the list entirely and wrote prose instead.`,
-    };
-  }
-  if (source.hasList && draft.hasList && source.listMarker && draft.listMarker !== source.listMarker) {
-    return {
-      code: "wrong_list_marker",
-      message: `The source post's list uses "${source.listMarker}" as its marker — the draft used "${draft.listMarker}" instead.`,
+      message: `The source post uses ${listStyleWithArticle(source.listMarker)} list (${source.listItemCount} items) — the draft dropped the list entirely and wrote prose instead.`,
     };
   }
   const sourceLayout = source.layout.map((beat) => beat.kind).join(",");
@@ -238,20 +389,39 @@ export function checkStructureMatch(
       message: `The source's visual sequence is ${sourceLayout || "empty"}, but the draft's is ${draftLayout || "empty"}. Keep prose and list beats in the same order.`,
     };
   }
-  // Paragraph density is a strong visual-format cue for longer posts, but a
-  // short source does not have enough paragraphs for a ratio to be meaningful.
+  const markerMismatchIndex = source.layout.findIndex(
+    (sourceBeat, index) =>
+      sourceBeat.kind === "list" &&
+      !sameMarkerStyle(sourceBeat.marker, draft.layout[index]?.marker ?? null),
+  );
+  if (markerMismatchIndex >= 0) {
+    const sourceMarker = source.layout[markerMismatchIndex].marker;
+    const draftMarker = draft.layout[markerMismatchIndex]?.marker ?? null;
+    const listBeatNumber = source.layout
+      .slice(0, markerMismatchIndex + 1)
+      .filter((beat) => beat.kind === "list").length;
+    return {
+      code: "wrong_list_marker",
+      message: `List beat ${listBeatNumber} in the source uses the ${listStyle(sourceMarker)} marker style — the corresponding draft beat used ${listStyle(draftMarker)} instead.`,
+    };
+  }
+  // Visible-line density is a strong visual-format cue for longer posts, but a
+  // short source does not have enough lines for a ratio to be meaningful.
   // Keep this deliberately broad so an adaptation can expand or tighten an
   // argument without flattening a six-beat post into two dense blocks.
-  if (source.paragraphCount >= 3) {
-    const minimumParagraphs = Math.max(2, Math.floor(source.paragraphCount * 0.6));
-    const maximumParagraphs = Math.ceil(source.paragraphCount * 1.6);
+  if (source.visualLineCount >= 3) {
+    const minimumVisualLines = Math.max(
+      2,
+      Math.floor(source.visualLineCount * 0.6),
+    );
+    const maximumVisualLines = Math.ceil(source.visualLineCount * 1.6);
     if (
-      draft.paragraphCount < minimumParagraphs ||
-      draft.paragraphCount > maximumParagraphs
+      draft.visualLineCount < minimumVisualLines ||
+      draft.visualLineCount > maximumVisualLines
     ) {
       return {
-        code: "paragraph_density",
-        message: `The source uses ${source.paragraphCount} visual paragraphs, but the draft uses ${draft.paragraphCount}. Keep a comparable paragraph density while preserving the user's content.`,
+        code: "visual_line_density",
+        message: `The source uses ${source.visualLineCount} visible text lines, but the draft uses ${draft.visualLineCount}. Keep comparable visual pacing while preserving the user's content.`,
       };
     }
   }
@@ -285,8 +455,8 @@ export function structureMismatchRepairInstruction(mismatch: StructureMismatch):
       return `Rewrite the draft's list to use the source's marker instead of your own.`;
     case "layout_order":
       return "Rewrite the draft so its prose and list beats occur in the same order as the source. Keep the content original and user-relevant.";
-    case "paragraph_density":
-      return "Rewrite the draft with a paragraph density closer to the source. Preserve the source's visual pacing while keeping the content original and user-relevant.";
+    case "visual_line_density":
+      return "Rewrite the draft with a visible-line density closer to the source. Preserve the source's visual pacing while keeping the content original and user-relevant.";
     case "too_short":
       return `Rewrite the draft with more substance so its length is closer to the source's — expand the body, not the hook or CTA alone.`;
     case "too_long":

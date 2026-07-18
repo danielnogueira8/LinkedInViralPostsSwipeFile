@@ -1033,28 +1033,70 @@ describe("DraftEngine", () => {
     );
   });
 
-  test("assigns each one-to-one grounded draft exactly one verified source", async () => {
+  test("delivers four modeled drafts atomically and routes exactly one verified source to each writer", async () => {
+    const productionShapedSource = [
+      "We recently reached an anniversary we never imagined at the start.",
+      "",
+      "I still remember the early milestones:\n🔹A reader shared what the work changed for them.\n🔹A teammate noticed the community growing.\n🔹A quiet launch reached the right people.\n🔹The work started travelling without us pushing it.",
+      "",
+      "Those moments made the long days worthwhile.",
+      "",
+      "The real achievement was the people who found something useful here.",
+    ].join("\n");
+    const faithfulProductionShapedDraft = [
+      "I used to measure content by the obvious numbers.",
+      "",
+      "Now I notice the quieter signals.",
+      "",
+      "🔹A founder says a post helped clarify their offer.",
+      "",
+      "🔹A writer finally publishes the idea they kept delaying.",
+      "",
+      "🔹A useful conversation starts with the right buyer.",
+      "",
+      "🔹A useful idea reaches someone who needed it that day.",
+      "",
+      "Those moments matter more than another spike in reach.",
+      "",
+      "They show that the work travelled beyond the feed.",
+      "",
+      "That is the kind of content worth making consistently.",
+    ].join("\n");
+    const fourthDraft = [
+      "Content gets easier when each post has a clear job.",
+      "",
+      "Teach a useful distinction, make a relevant argument, or start an honest conversation with the people you want to reach.",
+      "",
+      "Trying to combine every goal usually makes the writing vague. Pick the job first. The format becomes much easier to choose.",
+    ].join("\n");
     const writer = new ScriptedWriter([
-      { text: COMPLETE_POST, finishReason: "stop", usage: usage(100, 70) },
+      {
+        text: faithfulProductionShapedDraft,
+        finishReason: "stop",
+        usage: usage(100, 70),
+      },
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(110, 75) },
       {
         text: DISTINCT_COMPLETE_POST,
         finishReason: "stop",
         usage: usage(120, 80),
       },
+      { text: fourthDraft, finishReason: "stop", usage: usage(130, 85) },
     ]);
     const result = await collect(writer, {
+      lean: true,
       userInstruction:
-        "Find two regular posts and rewrite them into two original posts.",
+        "Find four regular posts and rewrite them into four original posts.",
       task: {
         kind: "multi",
-        expectedCount: 2,
+        expectedCount: 4,
         groundedSourceMode: "one_to_one",
         groundedSources: [
           {
             id: "source-one",
             kind: "workspace_post",
             url: "https://linkedin.com/posts/source-one",
-            text: "The first source has a unique one-source structure.",
+            text: productionShapedSource,
           },
           {
             id: "source-two",
@@ -1062,29 +1104,46 @@ describe("DraftEngine", () => {
             url: "https://linkedin.com/posts/source-two",
             text: "The second source has a different one-source structure.",
           },
+          {
+            id: "source-three",
+            kind: "workspace_post",
+            url: "https://linkedin.com/posts/source-three",
+            text: "The third source has its own one-source structure.",
+          },
+          {
+            id: "source-four",
+            kind: "workspace_post",
+            url: "https://linkedin.com/posts/source-four",
+            text: "The fourth source has another one-source structure.",
+          },
         ],
       },
     });
 
-    expect(artifacts(result.events)).toHaveLength(2);
-    expect(JSON.stringify(writer.requests[0].messages)).toContain(
-      "The first source has a unique one-source structure",
+    expect(artifacts(result.events)).toHaveLength(4);
+    expect(done(result.events)?.message.content).toBe("Here are your 4 drafts.");
+    const requestBodies = writer.requests.map((request) =>
+      JSON.stringify(request.messages),
     );
-    expect(JSON.stringify(writer.requests[0].messages)).not.toContain(
+    const uniqueSourceText = [
+      "We recently reached an anniversary",
       "The second source has a different one-source structure",
-    );
-    expect(JSON.stringify(writer.requests[1].messages)).toContain(
-      "The second source has a different one-source structure",
-    );
-    expect(JSON.stringify(writer.requests[1].messages)).not.toContain(
-      "The first source has a unique one-source structure",
-    );
-    expect(JSON.stringify(writer.requests[0].messages)).toContain(
+      "The third source has its own one-source structure",
+      "The fourth source has another one-source structure",
+    ];
+    expect(requestBodies).toHaveLength(uniqueSourceText.length);
+    for (const [requestIndex, requestBody] of requestBodies.entries()) {
+      expect(requestBody).toContain(uniqueSourceText[requestIndex]);
+      for (const [sourceIndex, sourceText] of uniqueSourceText.entries()) {
+        if (sourceIndex !== requestIndex) {
+          expect(requestBody).not.toContain(sourceText);
+        }
+      }
+    }
+    expect(requestBodies[0]).toContain(
       "direct fixed-source LinkedIn post writer",
     );
-    expect(JSON.stringify(writer.requests[0].messages)).toContain(
-      "SOURCE STRUCTURE REFERENCE",
-    );
+    expect(requestBodies[0]).toContain("SOURCE STRUCTURE REFERENCE");
   });
 
   test("rejects an incomplete one-to-one source assignment before writing", async () => {
