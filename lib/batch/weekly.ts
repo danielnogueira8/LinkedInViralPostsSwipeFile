@@ -933,10 +933,13 @@ async function generateDraftBody(opts: {
               signal: opts.signal,
             })
           : null;
-      if (!structureMismatch && (!fidelity || fidelity.pass)) {
+      if (
+        !structureMismatch &&
+        (!fidelity || fidelity.outcome === "verified")
+      ) {
         return { body: cleaned, usage, model };
       }
-      if (fidelity && !fidelity.pass) {
+      if (fidelity?.outcome === "rejected") {
         fidelityRepairInstruction = [
           fidelity.reasons.join(" "),
           fidelity.retryInstruction,

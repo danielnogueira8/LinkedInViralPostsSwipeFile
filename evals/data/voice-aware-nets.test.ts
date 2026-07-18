@@ -159,9 +159,7 @@ function realEditSpecialists(): Partial<DraftFinalizerSpecialists> {
       reason: "",
     })),
     reviewSourceFidelity: vi.fn(async () => ({
-      pass: true,
-      reasons: [],
-      retryInstruction: "",
+      outcome: "verified" as const,
     })),
   };
 }

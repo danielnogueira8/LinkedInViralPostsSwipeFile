@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import {
   buildSourceFidelitySystemPrompt,
   buildSourceFidelityUserContent,
+  SOURCE_FIDELITY_FALLBACK_MODEL,
+  SOURCE_FIDELITY_MODEL,
   SOURCE_FIDELITY_SYSTEM_PROMPT,
 } from "@/lib/agent/specialists/source-fidelity";
 import { INJECTION_GUARD } from "@/lib/agent/untrusted";
@@ -14,8 +16,8 @@ const openRouterMocks = vi.hoisted(() => ({
   logOpenRouterUsage: vi.fn(),
 }));
 
-// A verifier failure must never turn an unverified source-based draft into a
-// trusted one. The direct engine repairs/falls back; this specialist fails closed.
+// Provider availability and draft quality are separate states. Callers must be
+// able to distinguish a reviewer outage from an actual fidelity rejection.
 vi.mock("@/lib/openrouter", async (orig) => {
   const actual = await orig<typeof import("@/lib/openrouter")>();
   return {
@@ -26,14 +28,14 @@ vi.mock("@/lib/openrouter", async (orig) => {
 });
 const { reviewModeledDraft } = await import("@/lib/agent/specialists/source-fidelity");
 
-describe("reviewModeledDraft — fail closed", () => {
+describe("reviewModeledDraft outcomes", () => {
   beforeEach(() => {
     openRouterMocks.completeChat.mockReset();
     openRouterMocks.logOpenRouterUsage.mockReset();
     openRouterMocks.logOpenRouterUsage.mockResolvedValue(undefined);
   });
 
-  test("a QA-call error rejects the unverified draft", async () => {
+  test("a QA-call error reports reviewer unavailability, not a content rejection", async () => {
     openRouterMocks.completeChat.mockRejectedValue(
       new Error("simulated QA timeout"),
     );
@@ -44,15 +46,97 @@ describe("reviewModeledDraft — fail closed", () => {
       verifiedContext: "",
       workspaceId: "ws",
       deliverableKind: "hook",
+      adapterHealth: new AdapterHealthRegistry(),
     });
-    expect(verdict).toEqual({
-      pass: false,
-      reasons: ["Source fidelity for the hook list could not be verified."],
-      retryInstruction: expect.stringMatching(/hook list.*not a full post.*Do not ship/i),
-    });
+    expect(verdict).toEqual({ outcome: "unavailable" });
+    expect(openRouterMocks.completeChat).toHaveBeenCalledTimes(2);
     expect(
       openRouterMocks.completeChat.mock.calls[0][0].messages[0].content,
     ).toContain("partial deliverable, not a full post");
+  });
+
+  test("a malformed QA tool response reports reviewer unavailability", async () => {
+    openRouterMocks.completeChat.mockResolvedValue({
+      text: "",
+      toolArgs: {
+        pass: "yes",
+        reasons: "not-an-array",
+        retry_instruction: null,
+      },
+      finishReason: "tool_calls",
+      usage: undefined,
+      citations: [],
+    });
+
+    const verdict = await reviewModeledDraft({
+      sourceText: "A source with a clear opening and progression.",
+      draftBody: "An original draft with a comparable progression.",
+      userRequest: "Model this source.",
+      verifiedContext: "",
+      workspaceId: "ws",
+      adapterHealth: new AdapterHealthRegistry(),
+    });
+
+    expect(verdict).toEqual({ outcome: "unavailable" });
+    expect(openRouterMocks.completeChat).toHaveBeenCalledTimes(2);
+  });
+
+  test("a distinct fallback reviewer verifies the draft after a primary outage", async () => {
+    openRouterMocks.completeChat
+      .mockRejectedValueOnce(new Error("primary reviewer unavailable"))
+      .mockResolvedValueOnce({
+        text: "",
+        toolArgs: { pass: true, reasons: [], retry_instruction: "" },
+        finishReason: "tool_calls",
+        usage: undefined,
+        citations: [],
+      });
+    const sink = vi.fn();
+    const telemetry = createCoworkTurnTelemetry(
+      {
+        traceId: "fidelity-fallback",
+        workspaceId: "ws",
+        route: "direct_writer",
+        requestedContract: { kind: "post", expectedCount: 1 },
+      },
+      sink,
+    );
+
+    const verdict = await reviewModeledDraft({
+      sourceText: "A source with a clear opening and progression.",
+      draftBody: "An original draft with a comparable progression.",
+      userRequest: "Model this source.",
+      verifiedContext: "",
+      workspaceId: "ws",
+      adapterHealth: new AdapterHealthRegistry(),
+      telemetry,
+    });
+    telemetry.finish({
+      deliveredContract: { kind: "post", deliveredCount: 1 },
+      provenanceStatus: "verified",
+      terminalOutcome: "delivered",
+    });
+
+    expect(verdict).toEqual({ outcome: "verified" });
+    expect(
+      openRouterMocks.completeChat.mock.calls.map(([request]) => request.model),
+    ).toEqual([SOURCE_FIDELITY_MODEL, SOURCE_FIDELITY_FALLBACK_MODEL]);
+    expect(SOURCE_FIDELITY_FALLBACK_MODEL).not.toBe(SOURCE_FIDELITY_MODEL);
+    expect(sink.mock.calls[0][0].stage_attempts).toEqual([
+      expect.objectContaining({
+        stage: "finalizer_source_fidelity",
+        attempt: 1,
+        model: SOURCE_FIDELITY_MODEL,
+        outcome: "failed",
+      }),
+      expect.objectContaining({
+        stage: "finalizer_source_fidelity",
+        attempt: 2,
+        model: SOURCE_FIDELITY_FALLBACK_MODEL,
+        outcome: "accepted",
+        fallback_reason: "reviewer_unavailable",
+      }),
+    ]);
   });
 
   test("a valid source-based partial can pass under its own prompt contract", async () => {
@@ -71,9 +155,10 @@ describe("reviewModeledDraft — fail closed", () => {
       verifiedContext: "",
       workspaceId: "ws",
       deliverableKind: "hook",
+      adapterHealth: new AdapterHealthRegistry(),
     });
 
-    expect(verdict.pass).toBe(true);
+    expect(verdict).toEqual({ outcome: "verified" });
     expect(
       openRouterMocks.completeChat.mock.calls[0][0].messages[0].content,
     ).toContain("hook or opening mechanics");
@@ -147,13 +232,15 @@ describe("reviewModeledDraft — fail closed", () => {
       verifiedContext: "",
       workspaceId: "ws",
       deliverableKind: "hook",
+      adapterHealth: new AdapterHealthRegistry(),
     });
 
     expect(verdict).toMatchObject({
-      pass: false,
+      outcome: "rejected",
       reasons: ["The hooks are unrelated to the source cues."],
       retryInstruction: "Use the source contrast mechanic.",
     });
+    expect(openRouterMocks.completeChat).toHaveBeenCalledTimes(1);
   });
 
   test("empty partial-verdict fields receive partial-specific repair guidance", async () => {
@@ -172,10 +259,11 @@ describe("reviewModeledDraft — fail closed", () => {
       verifiedContext: "",
       workspaceId: "ws",
       deliverableKind: "hook",
+      adapterHealth: new AdapterHealthRegistry(),
     });
 
     expect(verdict).toMatchObject({
-      pass: false,
+      outcome: "rejected",
       reasons: [expect.stringContaining("hook list")],
       retryInstruction: expect.stringMatching(/hook list.*not a full post/i),
     });
@@ -204,6 +292,7 @@ describe("reviewModeledDraft — fail closed", () => {
         userRequest: "Model it.",
         verifiedContext: "Verified user context.",
         workspaceId: "ws",
+        adapterHealth: new AdapterHealthRegistry(),
       }),
     ).rejects.toBeInstanceOf(UsagePersistenceError);
   });

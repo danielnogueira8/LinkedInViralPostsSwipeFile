@@ -538,11 +538,7 @@ async function runCoworkOutcomeScenarioWithStore(
     }) as ChatTurnDependencies["generateLeadMagnetResource"],
     draftFinalizerSpecialists: {
       reviewSourceFidelity: async () =>
-        sourceFidelity.shift() ?? {
-          pass: true,
-          reasons: [],
-          retryInstruction: "",
-        },
+        sourceFidelity.shift() ?? { outcome: "verified" },
     },
     ...(directWriter
       ? {

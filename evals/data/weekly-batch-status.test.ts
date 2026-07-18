@@ -1,5 +1,6 @@
 import { describe, test, expect, vi, beforeEach } from "vitest";
 import { makeFakeSupabase, queryFor, type FakeDb } from "./fake-supabase";
+import type { SourceFidelityVerdict } from "@/lib/agent/specialists/source-fidelity";
 
 // ---------------------------------------------------------------------------
 // The weekly-batch LIVE STATUS layer (batch_runs): create/update/read run rows,
@@ -11,22 +12,21 @@ import { makeFakeSupabase, queryFor, type FakeDb } from "./fake-supabase";
 
 const dbRef: { current: FakeDb } = { current: makeFakeSupabase({}) };
 const fidelityRef: {
-  current: () => Promise<{
-    pass: boolean;
-    reasons: string[];
-    retryInstruction: string;
-  }>;
+  current: () => Promise<SourceFidelityVerdict>;
 } = {
-  current: async () => ({
-    pass: true,
-    reasons: [],
-    retryInstruction: "",
-  }),
+  current: async () => ({ outcome: "verified" }),
 };
 vi.mock("@/lib/supabase", () => ({ supabaseAdmin: () => dbRef.current.client }));
-vi.mock("@/lib/agent/specialists/source-fidelity", () => ({
-  reviewModeledDraft: () => fidelityRef.current(),
-}));
+vi.mock("@/lib/agent/specialists/source-fidelity", async (importOriginal) => {
+  const original =
+    await importOriginal<
+      typeof import("@/lib/agent/specialists/source-fidelity")
+    >();
+  return {
+    ...original,
+    reviewModeledDraft: () => fidelityRef.current(),
+  };
+});
 
 // completeChat + usage stubbed (this file is about run-state, not generation).
 const chatQueue: Array<{ text?: string; finishReason?: string; model?: string }> = [];
@@ -153,11 +153,7 @@ beforeEach(() => {
   trackedAccountIdsRef.current = ["acct-1"];
   createdLeadMagnetCalls.length = 0;
   queuedImageCalls.length = 0;
-  fidelityRef.current = async () => ({
-    pass: true,
-    reasons: [],
-    retryInstruction: "",
-  });
+  fidelityRef.current = async () => ({ outcome: "verified" });
   providerConcurrency.delayMs = 0;
   providerConcurrency.active = 0;
   providerConcurrency.peak = 0;
@@ -239,7 +235,17 @@ describe("WeeklyBatch.run — progress publishing", () => {
     });
   });
 
-  test("retries a structurally valid weekly draft that fails source-fidelity review", async () => {
+  test.each([
+    [
+      "is rejected",
+      {
+        outcome: "rejected" as const,
+        reasons: ["The draft retained a source-specific client claim."],
+        retryInstruction: "Generalize that claim for the user's audience.",
+      },
+    ],
+    ["cannot be reviewed", { outcome: "unavailable" as const }],
+  ])("retries a structurally valid weekly draft that %s", async (_case, firstVerdict) => {
     dbRef.current = makeFakeSupabase({
       chat_artifacts: { single: { id: "d1", title: "t", body: "b" } },
     });
@@ -263,12 +269,8 @@ describe("WeeklyBatch.run — progress publishing", () => {
     fidelityRef.current = async () => {
       fidelityCalls += 1;
       return fidelityCalls === 1
-        ? {
-            pass: false,
-            reasons: ["The draft retained a source-specific client claim."],
-            retryInstruction: "Generalize that claim for the user's audience.",
-          }
-        : { pass: true, reasons: [], retryInstruction: "" };
+        ? firstVerdict
+        : { outcome: "verified" };
     };
     chatQueue.push(
       { text: "A".repeat(300) },

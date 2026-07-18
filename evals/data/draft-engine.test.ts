@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { AgentEvent } from "@/lib/agent/contracts";
+import type { SourceFidelityVerdict } from "@/lib/agent/specialists/source-fidelity";
 
 // Lean mode now uses the SAME real specialists as the heavy path (see
 // lib/agent/lean-finalizer.ts) — repairAiTells/checkSameness/reviewSourceFidelity
@@ -10,7 +11,7 @@ import type { AgentEvent } from "@/lib/agent/contracts";
 // real judgment. A test that needs to assert on their behavior can override
 // the stub's return queue.
 const leanFidelityStub = vi.hoisted(() => ({
-  verdicts: [] as Array<{ pass: boolean; reasons: string[]; retryInstruction: string }>,
+  verdicts: [] as SourceFidelityVerdict[],
 }));
 const leanSamenessStub = vi.hoisted(() => ({
   results: [] as Array<{ body: string; rewrote: boolean; overlapMarkers: string[]; reason: string }>,
@@ -23,7 +24,7 @@ vi.mock("@/lib/agent/specialists/source-fidelity", async (importOriginal) => {
   return {
     ...orig,
     reviewModeledDraft: async () =>
-      leanFidelityStub.verdicts.shift() ?? { pass: true, reasons: [], retryInstruction: "" },
+      leanFidelityStub.verdicts.shift() ?? { outcome: "verified" },
   };
 });
 vi.mock("@/lib/agent/specialists/sameness", async (importOriginal) => {
@@ -161,9 +162,7 @@ function input(overrides: Partial<DraftEngineInput> = {}): DraftEngineInput {
         reason: "",
       }),
       reviewSourceFidelity: async () => ({
-        pass: true,
-        reasons: [],
-        retryInstruction: "",
+        outcome: "verified",
       }),
     },
     ...overrides,
@@ -556,12 +555,12 @@ describe("DraftEngine", () => {
     const reviewSourceFidelity = vi
       .fn()
       .mockResolvedValueOnce({
-        pass: false,
+        outcome: "rejected",
         reasons: ["The draft abandoned the source's core progression."],
         retryInstruction:
           "Preserve the source's problem, mechanism, and conclusion in original language.",
       })
-      .mockResolvedValue({ pass: true, reasons: [], retryInstruction: "" });
+      .mockResolvedValue({ outcome: "verified" });
     const decisions: Array<{ outcome: string; sourceVerified: boolean }> = [];
     const writer = new ScriptedWriter([
       { text: COMPLETE_POST, finishReason: "stop", usage: usage(100, 70) },
@@ -844,11 +843,11 @@ describe("DraftEngine", () => {
     const reviewSourceFidelity = vi
       .fn()
       .mockResolvedValueOnce({
-        pass: false,
+        outcome: "rejected",
         reasons: ["The hooks ignored the source opening mechanics."],
         retryInstruction: "Reuse the source's contrast mechanic.",
       })
-      .mockResolvedValue({ pass: true, reasons: [], retryInstruction: "" });
+      .mockResolvedValue({ outcome: "verified" });
     const writer = new ScriptedWriter([
       { text: first, finishReason: "stop", usage: usage(80, 35) },
       { text: repaired, finishReason: "stop", usage: usage(100, 45) },
@@ -898,9 +897,7 @@ describe("DraftEngine", () => {
     const repaired =
       "1.\nHook: Your title is rented.\n\n2.\nHook: Your reputation is portable.\n\n3.\nHook: Build proof before you need it.";
     const reviewSourceFidelity = vi.fn().mockResolvedValue({
-      pass: true,
-      reasons: [],
-      retryInstruction: "",
+      outcome: "verified",
     });
     const writer = new ScriptedWriter([
       { text: invented, finishReason: "stop", usage: usage(80, 35) },
@@ -1176,6 +1173,78 @@ describe("DraftEngine", () => {
       }),
     );
     expect(artifacts(result.events)).toHaveLength(0);
+  });
+
+  test("does not waste writer retries when both fidelity reviewers are unavailable", async () => {
+    const thirdDraft = [
+      "A clear idea makes content easier to trust.",
+      "Readers can follow the reasoning when each paragraph advances one useful point instead of collecting disconnected advice.",
+      "Choose the argument first. Then write the post around it.",
+    ].join("\n\n");
+    const sourceTexts = [
+      [
+        "Useful work becomes visible when the opening makes one direct promise.",
+        "The explanation builds trust by showing how the principle works in practice for the reader.",
+        "Finish with a decision they can make today.",
+      ].join("\n\n"),
+      [
+        "A portable reputation begins with evidence people can understand.",
+        "The center of the story connects that evidence to a problem the audience already recognizes.",
+        "End by naming the habit that keeps the asset growing.",
+      ].join("\n\n"),
+      [
+        "Strong communication starts by narrowing the idea to one useful claim.",
+        "Each following paragraph should move the reasoning forward without adding a second competing lesson.",
+        "Close by turning the claim into a practical next step.",
+      ].join("\n\n"),
+    ];
+    const reviewSourceFidelity = vi.fn(
+      async (request: { sourceText: string }) => {
+        void request;
+        return { outcome: "unavailable" as const };
+      },
+    );
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(100, 70) },
+      {
+        text: DISTINCT_COMPLETE_POST,
+        finishReason: "stop",
+        usage: usage(110, 75),
+      },
+      { text: thirdDraft, finishReason: "stop", usage: usage(120, 80) },
+    ]);
+    const result = await collect(writer, {
+      userInstruction:
+        "Find three regular posts and rewrite them into three original posts.",
+      task: {
+        kind: "multi",
+        expectedCount: 3,
+        groundedSourceMode: "one_to_one",
+        groundedSources: sourceTexts.map((text, index) => ({
+          id: `source-${index + 1}`,
+          kind: "workspace_post" as const,
+          url: `https://linkedin.com/posts/source-${index + 1}`,
+          text,
+        })),
+      },
+      finalizerSpecialists: {
+        ...input().finalizerSpecialists,
+        reviewSourceFidelity,
+      },
+    });
+
+    expect(writer.requests.map((request) => request.stage)).toEqual(["primary"]);
+    expect(artifacts(result.events)).toHaveLength(0);
+    expect(result.events).toContainEqual(
+      expect.objectContaining({
+        type: "error",
+        code: "draft_engine_source_fidelity_unavailable",
+      }),
+    );
+    expect(reviewSourceFidelity).toHaveBeenCalledTimes(1);
+    expect(
+      reviewSourceFidelity.mock.calls.map(([request]) => request.sourceText),
+    ).toEqual([sourceTexts[0]]);
   });
 
   test("repairs a near-duplicate multi version instead of accepting a synonym-only change", async () => {
@@ -1919,7 +1988,7 @@ describe("DraftEngine — thin path (lean mode)", () => {
       { text: COMPLETE_POST, finishReason: "stop", usage: usage(180, 90) },
     ]);
     const alwaysReject = vi.fn(async () => ({
-      pass: false,
+      outcome: "rejected" as const,
       reasons: ["fabricated rejection"],
       retryInstruction: "rewrite",
     }));
@@ -1946,7 +2015,7 @@ describe("DraftEngine — thin path (lean mode)", () => {
     // module path draft-engine.ts imports) — it must be able to reject, not
     // just always pass. Proves the pipeline actually calls into it.
     leanFidelityStub.verdicts = [
-      { pass: false, reasons: ["unrelated structure"], retryInstruction: "match the source's shape" },
+      { outcome: "rejected", reasons: ["unrelated structure"], retryInstruction: "match the source's shape" },
     ];
     const writer = new ScriptedWriter([
       { text: COMPLETE_POST, finishReason: "stop", usage: usage(180, 90) },

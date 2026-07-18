@@ -14,6 +14,7 @@ import {
   providerModelAttribution,
 } from "@/lib/agent/cowork-adapter-attempt";
 import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
+import { distinctFallbackModel } from "@/lib/agent/model-routing";
 import {
   INJECTION_GUARD,
   wrapUntrustedDelimited,
@@ -24,6 +25,12 @@ import {
 // OPENROUTER_SOURCE_FIDELITY_MODEL.
 export const SOURCE_FIDELITY_MODEL =
   process.env.OPENROUTER_SOURCE_FIDELITY_MODEL || CHAT_MODEL;
+export const SOURCE_FIDELITY_FALLBACK_MODEL = distinctFallbackModel(
+  SOURCE_FIDELITY_MODEL,
+  process.env.OPENROUTER_SOURCE_FIDELITY_FALLBACK_MODEL ||
+    "anthropic/claude-sonnet-5",
+  ["google/gemini-3.5-flash"],
+);
 
 const TIMEOUT_MS = Number(process.env.AGENT_SOURCE_FIDELITY_TIMEOUT_MS || 12_000);
 
@@ -49,10 +56,22 @@ const VERDICT_TOOL: ToolDef = {
   },
 };
 
-export type SourceFidelityVerdict = {
-  pass: boolean;
-  reasons: string[];
-  retryInstruction: string;
+// Content quality and reviewer availability are deliberately disjoint. A
+// provider timeout or malformed tool response is not evidence that a draft is
+// unfaithful, and must never be fed back to the writer as a content defect.
+export type SourceFidelityVerdict =
+  | { outcome: "verified" }
+  | {
+      outcome: "rejected";
+      reasons: string[];
+      retryInstruction: string;
+    }
+  | { outcome: "unavailable" };
+
+export type SourceFidelityRejection = {
+  code: "source_fidelity" | "source_fidelity_unavailable";
+  reason: string;
+  retryInstruction?: string;
 };
 
 export type SourceFidelityDeliverableKind =
@@ -149,7 +168,32 @@ function fidelityFallback(
   };
 }
 
-export async function reviewModeledDraft(opts: {
+/**
+ * Translate the reviewer contract once for every finalization path. This keeps
+ * full posts and partial deliverables aligned on the security-sensitive rule
+ * that unavailable verification is never equivalent to verified fidelity.
+ */
+export function sourceFidelityRejection(
+  verdict: SourceFidelityVerdict,
+  deliverableKind: SourceFidelityDeliverableKind = "post",
+): SourceFidelityRejection | null {
+  if (verdict.outcome === "verified") return null;
+  if (verdict.outcome === "unavailable") {
+    return {
+      code: "source_fidelity_unavailable",
+      reason:
+        "Source fidelity could not be verified because both reviewers were unavailable.",
+    };
+  }
+  const fallback = fidelityFallback(deliverableKind);
+  return {
+    code: "source_fidelity",
+    reason: verdict.reasons.join(" ") || fallback.reason,
+    retryInstruction: verdict.retryInstruction || fallback.retryInstruction,
+  };
+}
+
+type SourceFidelityReviewOptions = {
   sourceText: string;
   draftBody: string;
   userRequest: string;
@@ -159,7 +203,13 @@ export async function reviewModeledDraft(opts: {
   signal?: AbortSignal;
   adapterHealth?: AdapterHealthRegistry;
   telemetry?: CoworkTurnTelemetry;
-}): Promise<SourceFidelityVerdict> {
+};
+
+async function runSourceFidelityAttempt(
+  opts: SourceFidelityReviewOptions,
+  model: string,
+  attempt: number,
+): Promise<SourceFidelityVerdict> {
   const ctrl = new AbortController();
   const onAbort = () => ctrl.abort();
   if (opts.signal) {
@@ -177,11 +227,11 @@ export async function reviewModeledDraft(opts: {
   try {
     const result = await runCoworkAdapterAttempt({
       registry: opts.adapterHealth ?? coworkAdapterHealth,
-      adapterKey: `cowork_finalizer_source_fidelity:${SOURCE_FIDELITY_MODEL}`,
+      adapterKey: `cowork_finalizer_source_fidelity:${model}`,
       signal: opts.signal,
       call: () =>
         completeChat({
-          model: SOURCE_FIDELITY_MODEL,
+          model,
           maxTokens: 500,
           tools: [VERDICT_TOOL],
           forceTool: "report_source_fidelity",
@@ -208,7 +258,7 @@ export async function reviewModeledDraft(opts: {
           throw new Error("Invalid source-fidelity verdict schema.");
         }
         if (args.pass) {
-          return { pass: true, reasons: [], retryInstruction: "" };
+          return { outcome: "verified" as const };
         }
         const reasons = args.reasons
           .filter((value): value is string => typeof value === "string")
@@ -216,14 +266,14 @@ export async function reviewModeledDraft(opts: {
         const retryInstruction = args.retry_instruction.trim();
         const fallback = fidelityFallback(opts.deliverableKind);
         return {
-          pass: false,
+          outcome: "rejected" as const,
           reasons: reasons.length ? reasons : [fallback.reason],
           retryInstruction:
             retryInstruction || fallback.retryInstruction,
         };
       },
       persistUsage: (res) => {
-        const attribution = providerModelAttribution(SOURCE_FIDELITY_MODEL, res.model);
+        const attribution = providerModelAttribution(model, res.model);
         return logOpenRouterUsage(
           "source_fidelity",
           attribution.model,
@@ -236,31 +286,34 @@ export async function reviewModeledDraft(opts: {
       responseModel: (res) => res.model,
       telemetry: opts.telemetry,
       stage: "finalizer_source_fidelity",
-      attempt: 1,
-      model: SOURCE_FIDELITY_MODEL,
+      attempt,
+      model,
+      ...(attempt > 1 ? { fallbackReason: "reviewer_unavailable" } : {}),
       rejectedReasonCode: "invalid_source_fidelity_verdict",
     });
     return result.value;
-  } catch (error) {
-    if (
-      error instanceof UsagePersistenceError ||
-      (error instanceof Error && error.name === "UsagePersistenceError")
-    ) {
-      throw error;
-    }
-    const fallback = fidelityFallback(opts.deliverableKind);
-    return {
-      pass: false,
-      reasons: [
-        opts.deliverableKind && opts.deliverableKind !== "post"
-          ? `Source fidelity for the ${opts.deliverableKind} list could not be verified.`
-          : "Source fidelity could not be verified.",
-      ],
-      retryInstruction:
-        `${fallback.retryInstruction} Do not ship it until source fidelity is verified.`,
-    };
   } finally {
     clearTimeout(timer);
     if (opts.signal) opts.signal.removeEventListener("abort", onAbort);
   }
+}
+
+export async function reviewModeledDraft(
+  opts: SourceFidelityReviewOptions,
+): Promise<SourceFidelityVerdict> {
+  const models = [SOURCE_FIDELITY_MODEL, SOURCE_FIDELITY_FALLBACK_MODEL];
+  for (const [index, model] of models.entries()) {
+    try {
+      return await runSourceFidelityAttempt(opts, model, index + 1);
+    } catch (error) {
+      if (
+        error instanceof UsagePersistenceError ||
+        (error instanceof Error && error.name === "UsagePersistenceError")
+      ) {
+        throw error;
+      }
+      if (opts.signal?.aborted) return { outcome: "unavailable" };
+    }
+  }
+  return { outcome: "unavailable" };
 }
