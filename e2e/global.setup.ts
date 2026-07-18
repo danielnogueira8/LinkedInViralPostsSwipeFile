@@ -36,6 +36,14 @@ setup("authenticate and save state", async ({ page }) => {
   });
   // Land on a protected page to prove the session works before saving it.
   await page.goto("/dashboard/posts");
+  if (new URL(page.url()).pathname === "/welcome") {
+    const response = await page.request.post("/api/onboarding/complete", {
+      data: { category_ids: [] },
+    });
+    expect(response.ok()).toBe(true);
+    await expect(response.json()).resolves.toMatchObject({ ok: true });
+    await page.goto("/dashboard/posts");
+  }
   await expect(page.getByRole("heading", { name: /posts/i })).toBeVisible();
   await page.context().storageState({ path: AUTH_FILE });
 });

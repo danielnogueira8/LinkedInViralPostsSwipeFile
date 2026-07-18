@@ -698,6 +698,19 @@ describe("error propagation", () => {
   });
 });
 
+describe("list_accounts — provider argument hardening", () => {
+  test("clamps a negative provider-emitted limit before querying", async () => {
+    dbRef.current = makeFakeSupabase({ workspace_accounts: { rows: [] } });
+
+    await runTool("list_accounts", { limit: -10 }, "ws-1");
+
+    const limit = queryFor(dbRef.current, "workspace_accounts")!.filters.find(
+      (filter) => filter.method === "limit",
+    );
+    expect(limit?.args[0]).toBe(1);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Board tools — the agent's FIRST writes (operate the user's own drafts board).
 // The critical property is WORKSPACE SCOPING: TOOL_FNS run on supabaseAdmin()

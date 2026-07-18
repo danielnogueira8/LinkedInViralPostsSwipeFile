@@ -31,7 +31,7 @@ test.describe("dashboard smoke — key pages render their content", () => {
     // always present regardless of history.
     await expect(page.getByRole("button", { name: /new session/i }).first()).toBeVisible();
     await expect(page.getByPlaceholder(/search sessions/i)).toBeVisible();
-    await expect(page.getByPlaceholder(/ask for a post or hook/i)).toBeVisible();
+    await expect(page.getByPlaceholder("What do you want to write?")).toBeVisible();
     await page.keyboard.press(process.platform === "darwin" ? "Meta+K" : "Control+K");
     await expect(page.getByRole("dialog", { name: /command palette/i })).toBeVisible();
   });
@@ -51,7 +51,10 @@ test.describe("dashboard smoke — key pages render their content", () => {
   test("posts board renders", async ({ page }) => {
     await page.goto("/dashboard/posts");
     await expect(page.getByRole("heading", { name: /posts/i }).first()).toBeVisible();
-    await expect(page.getByText(/ideas|draft|ready|scheduled|posted/i).first()).toBeVisible();
+    await expect(page.getByRole("button", { name: "Board", exact: true })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
   });
 
   test("lead magnets renders resource library or empty state", async ({ page }) => {

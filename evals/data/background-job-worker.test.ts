@@ -629,5 +629,20 @@ describe("background weekly batch worker", () => {
     });
     expect(mocks.markJobFailed).not.toHaveBeenCalled();
     expect(mocks.claimNextBackgroundJob).toHaveBeenCalledTimes(2);
+    expect(mocks.releaseWorkspaceCost).not.toHaveBeenCalled();
+  });
+
+  test("a fractional drain limit never claims more than its integer budget", async () => {
+    mocks.claimNextBackgroundJob.mockResolvedValue(weeklyJob());
+    mocks.acquireProviderLock.mockResolvedValue(true);
+    mocks.runWeeklyBatch.mockResolvedValue({ attempted: 1, drafts: [] });
+
+    const result = await drainBackgroundJobs({
+      limit: 1.5,
+      workerId: "worker-1",
+    });
+
+    expect(result.claimed).toBe(1);
+    expect(mocks.claimNextBackgroundJob).toHaveBeenCalledTimes(1);
   });
 });

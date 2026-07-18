@@ -67,7 +67,7 @@ test.describe("chat client reconciliation races", () => {
         response.request().method() === "POST" &&
         new URL(response.url()).pathname === "/api/chats",
     );
-    const composer = page.getByPlaceholder(/ask for a post or hook/i);
+    const composer = page.getByPlaceholder("What do you want to write?");
     await composer.fill("stale request from the previous session");
     await page.getByRole("button", { name: "Send message" }).click();
 
@@ -112,7 +112,7 @@ test.describe("chat client reconciliation races", () => {
       await route.fulfill({
         status: 200,
         contentType: "text/event-stream",
-        body: sse("artifact", artifact),
+        body: sse("artifact", artifact) + sse("done", { artifacts: [artifact] }),
       });
     });
 
@@ -221,7 +221,7 @@ test.describe("chat client reconciliation races", () => {
         response.request().method() === "POST" &&
         new URL(response.url()).pathname === "/api/chats",
     );
-    const composer = page.getByPlaceholder(/ask for a post or hook/i);
+    const composer = page.getByPlaceholder("What do you want to write?");
     await composer.fill("Generate a draft for scheduling.");
     await page.getByRole("button", { name: "Send message" }).click();
     const created = (await (await createResponse).json()) as {
@@ -261,7 +261,7 @@ test.describe("chat client reconciliation races", () => {
       await route.fulfill({
         status: 200,
         contentType: "text/event-stream",
-        body: sse("artifact", artifact),
+        body: sse("artifact", artifact) + sse("done", { artifacts: [artifact] }),
       });
     });
 
@@ -339,7 +339,7 @@ test.describe("chat client reconciliation races", () => {
         response.request().method() === "POST" &&
         new URL(response.url()).pathname === "/api/chats",
     );
-    const composer = page.getByPlaceholder(/ask for a post or hook/i);
+    const composer = page.getByPlaceholder("What do you want to write?");
     await composer.fill("Generate a draft.");
     await page.getByRole("button", { name: "Send message" }).click();
     const created = (await (await createResponse).json()) as {
