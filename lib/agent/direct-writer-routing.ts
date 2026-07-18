@@ -21,6 +21,7 @@ import {
   requestsDirectSourceModeling,
   withoutSourceDiscoveryOptOut,
 } from "@/lib/agent/source-policy";
+import type { ComposerTaskContext } from "@/lib/composer-task-context";
 
 type DirectWriterEnvironment = Record<string, string | undefined>;
 
@@ -48,6 +49,7 @@ export type DirectOriginalPostEligibility = {
   hasLeadMagnet: boolean;
   hasCreatorStyle: boolean;
   voiceResolved: boolean;
+  composerTaskContext?: ComposerTaskContext;
 };
 
 const LIVE_OR_SPECIALIZED_RE =
@@ -151,6 +153,7 @@ export function isDirectOriginalPostEligible(
   input: DirectOriginalPostEligibility,
 ): boolean {
   const instruction = input.userInstruction.trim();
+  const knownOriginalPost = input.composerTaskContext?.sourceMode === "original";
   if (
     !input.enabled ||
     input.hasModelSource ||
@@ -165,6 +168,7 @@ export function isDirectOriginalPostEligible(
   }
   const forbidsDiscovery = explicitlyForbidsSourceDiscovery(instruction);
   if (
+    !knownOriginalPost &&
     !FULL_POST_REQUEST_RE.test(instruction) &&
     !(
       input.requestedCount === 1 &&
@@ -177,6 +181,7 @@ export function isDirectOriginalPostEligible(
     return false;
   }
   if (
+    !knownOriginalPost &&
     !isNoModelPostRequest(instruction, false) &&
     !(forbidsDiscovery && FULL_POST_REQUEST_RE.test(instruction))
   ) {
@@ -185,7 +190,7 @@ export function isDirectOriginalPostEligible(
   if (AMBIGUOUS_POST_RE.test(instruction)) return false;
   if (hasNegatedWritingIntent(instruction)) return false;
   if (discussesWritingInsteadOfRequesting(instruction)) return false;
-  if (!hasSubstantiveTopic(instruction)) return false;
+  if (!knownOriginalPost && !hasSubstantiveTopic(instruction)) return false;
   if (UNRESOLVED_REFERENCE_RE.test(instruction)) return false;
   if (
     requestsPartialTextDeliverable(instruction) ||
@@ -229,6 +234,7 @@ export function isDirectOriginalPostEligible(
   // self-contained original-post briefs are eligible too. Do not reject the
   // word "model" by itself: "do not model after one source" is an opt-out.
   return (
+    knownOriginalPost ||
     forbidsDiscovery ||
     !/---\s*(?:POST TO MODEL AFTER|TEMPLATE TO FILL|POST TO REFINE)\s*---/i.test(
       instruction,
@@ -512,6 +518,7 @@ export type DirectMultiPostEligibility = DirectWritingContext & {
   sourceResolved: boolean;
   isRefine: boolean;
   requestedCount?: number;
+  composerTaskContext?: ComposerTaskContext;
 };
 
 /** A bounded exact post count can be compiled without model-owned routing. */
@@ -527,7 +534,7 @@ export function isDirectMultiPostEligible(
     !instruction ||
     count === null ||
     count < 2 ||
-    NEGATED_WRITING_RE.test(instruction) ||
+    hasNegatedWritingIntent(instruction) ||
     (sourceRequired && !input.sourceResolved) ||
     UNRESOLVED_REFERENCE_RE.test(instruction) ||
     hasUnsafeDirectWritingIntent(instruction) ||
@@ -538,6 +545,7 @@ export function isDirectMultiPostEligible(
     return false;
   }
   if (input.sourceResolved) return true;
+  if (input.composerTaskContext?.sourceMode === "original") return true;
   return (
     isNoModelPostRequest(instruction, false) &&
     hasSubstantiveTopic(instruction)

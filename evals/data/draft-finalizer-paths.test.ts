@@ -150,7 +150,7 @@ describe("all chat draft delivery paths use DraftFinalizer", () => {
     expect(turn.artifacts.filter((artifact) => artifact.kind === "post")).toHaveLength(0);
     expect(turn.streamedText).not.toContain(rejectedBody);
     expect(turn.finalContent).not.toContain(rejectedBody);
-    expect(turn.finalContent).toContain("discarded the candidate");
+    expect(turn.finalContent).toContain("after retrying");
     expect(turn.errors).toEqual([
       expect.objectContaining({ code: "draft_finalizer_incomplete" }),
     ]);
@@ -184,7 +184,7 @@ describe("all chat draft delivery paths use DraftFinalizer", () => {
     expect(turn.streamedText).not.toContain(partialBody);
     expect(turn.finalContent).not.toContain(partialBody);
     expect(turn.finalContent).not.toContain("```post");
-    expect(turn.finalContent).toContain("discarded the candidate");
+    expect(turn.finalContent).toContain("after retrying");
     expect(turn.errors).toEqual([
       expect.objectContaining({ code: "draft_finalizer_truncated" }),
     ]);
@@ -309,7 +309,7 @@ describe("all chat draft delivery paths use DraftFinalizer", () => {
     expect(turn.artifacts.filter((artifact) => artifact.kind === "post")).toHaveLength(0);
     expect(turn.streamedText).not.toContain(rejectedBody);
     expect(turn.finalContent).not.toContain(rejectedBody);
-    expect(turn.finalContent).toContain("discarded the candidate");
+    expect(turn.finalContent).toContain("after retrying");
     expect(turn.errors).toEqual([
       expect.objectContaining({ code: "draft_finalizer_incomplete" }),
     ]);
@@ -335,7 +335,7 @@ describe("all chat draft delivery paths use DraftFinalizer", () => {
     expect(turn.artifacts.filter((artifact) => artifact.kind === "post")).toHaveLength(0);
     expect(turn.streamedText).not.toContain(rejectedBody);
     expect(turn.finalContent).not.toContain(rejectedBody);
-    expect(turn.finalContent).toContain("discarded the candidate");
+    expect(turn.finalContent).toContain("after retrying");
     expect(turn.errors).toEqual([
       expect.objectContaining({ code: "draft_finalizer_incomplete" }),
     ]);
@@ -362,7 +362,7 @@ describe("all chat draft delivery paths use DraftFinalizer", () => {
     expect(turn.streamedText).not.toContain(partialBody);
     expect(turn.finalContent).not.toContain(partialBody);
     expect(turn.finalContent).not.toContain("```post");
-    expect(turn.finalContent).toContain("discarded the candidate");
+    expect(turn.finalContent).toContain("after retrying");
     expect(turn.errors).toEqual([
       expect.objectContaining({ code: "draft_finalizer_truncated" }),
     ]);

@@ -1,0 +1,153 @@
+import { describe, expect, test } from "vitest";
+import {
+  composerStarterMarkerFromToolCalls,
+  composerStarterToolCall,
+  resolveComposerTaskContext,
+} from "@/lib/composer-task-context";
+
+describe("resolveComposerTaskContext", () => {
+  test("makes the original-post starter and selected count authoritative", () => {
+    expect(
+      resolveComposerTaskContext({
+        starterId: "write-original",
+        selectedDraftCount: 2,
+        fallbackPostCount: 1,
+      }),
+    ).toEqual({
+      kind: "post",
+      expectedDraftCount: 2,
+      sourceMode: "original",
+      starterId: "write-original",
+    });
+  });
+
+  test("automatically treats an attached bookmark as the selected source", () => {
+    expect(
+      resolveComposerTaskContext({
+        starterId: "write-original",
+        selectedDraftCount: 3,
+        selectedSourceId: "source-123",
+        fallbackPostCount: null,
+      }),
+    ).toEqual({
+      kind: "post",
+      expectedDraftCount: 3,
+      sourceMode: "selected",
+      selectedSourceId: "source-123",
+      starterId: "write-original",
+    });
+  });
+
+  test("an attached source alone establishes a post task", () => {
+    expect(
+      resolveComposerTaskContext({
+        selectedDraftCount: 2,
+        selectedSourceId: "source-123",
+        fallbackPostCount: null,
+      }),
+    ).toEqual({
+      kind: "post",
+      expectedDraftCount: 2,
+      sourceMode: "selected",
+      selectedSourceId: "source-123",
+    });
+  });
+
+  test("does not turn a non-post starter into drafts merely because a count is selected", () => {
+    expect(
+      resolveComposerTaskContext({
+        starterId: "working-this-week",
+        selectedDraftCount: 5,
+        fallbackPostCount: null,
+      }),
+    ).toEqual({
+      kind: "answer",
+      expectedDraftCount: null,
+      sourceMode: "workspace_auto",
+      starterId: "working-this-week",
+      researchRequirement: {
+        lane: "workspace",
+        minimumSources: 1,
+        searchMode: "strict_top",
+        since: "7d",
+        oneSourcePerDraft: false,
+      },
+    });
+  });
+
+  test("materializes source policy in the context instead of making routing know starter ids", () => {
+    expect(
+      resolveComposerTaskContext({
+        starterId: "model-top-viral",
+        selectedDraftCount: 3,
+        fallbackPostCount: null,
+      }),
+    ).toMatchObject({
+      kind: "post",
+      expectedDraftCount: 3,
+      sourceMode: "workspace_auto",
+      researchRequirement: {
+        lane: "workspace",
+        minimumSources: 3,
+        searchMode: "strict_top",
+        postType: "regular",
+        oneSourcePerDraft: true,
+      },
+    });
+  });
+
+  test("keeps the existing free-form classification only as a fallback", () => {
+    expect(
+      resolveComposerTaskContext({
+        selectedDraftCount: 4,
+        fallbackPostCount: 1,
+      }),
+    ).toEqual({
+      kind: "post",
+      expectedDraftCount: 4,
+      sourceMode: "unspecified",
+    });
+    expect(
+      resolveComposerTaskContext({
+        selectedDraftCount: 4,
+        fallbackPostCount: null,
+      }),
+    ).toEqual({
+      kind: "answer",
+      expectedDraftCount: null,
+      sourceMode: "unspecified",
+    });
+  });
+});
+
+describe("composer starter persistence", () => {
+  test("round-trips one strict server-owned marker", () => {
+    expect(
+      composerStarterMarkerFromToolCalls([
+        composerStarterToolCall("write-original"),
+      ]),
+    ).toEqual({ kind: "valid", starterId: "write-original" });
+  });
+
+  test("rejects duplicate or forged markers instead of guessing", () => {
+    const valid = composerStarterToolCall("write-original");
+    expect(composerStarterMarkerFromToolCalls([valid, valid])).toEqual({
+      kind: "invalid",
+    });
+    expect(
+      composerStarterMarkerFromToolCalls([
+        {
+          ...valid,
+          function: {
+            ...valid.function,
+            arguments: JSON.stringify({
+              version: 1,
+              starterId: "write-original",
+              injected: true,
+            }),
+          },
+        },
+      ]),
+    ).toEqual({ kind: "invalid" });
+  });
+});

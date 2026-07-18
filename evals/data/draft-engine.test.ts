@@ -1123,7 +1123,7 @@ describe("DraftEngine", () => {
     expect(artifacts(result.events)).toHaveLength(2);
   });
 
-  test("a failed multi-post child leaks no partial draft set", async () => {
+  test("a failed multi-post child keeps every completed draft", async () => {
     const writer = new ScriptedWriter([
       { text: COMPLETE_POST, finishReason: "stop", usage: usage(100, 70) },
       new Error("primary unavailable"),
@@ -1135,7 +1135,9 @@ describe("DraftEngine", () => {
       task: { kind: "multi", expectedCount: 2 },
     });
 
-    expect(artifacts(result.events)).toHaveLength(0);
+    expect(artifacts(result.events).map((artifact) => artifact.body)).toEqual([
+      COMPLETE_POST,
+    ]);
     expect(result.events).toContainEqual(
       expect.objectContaining({
         type: "error",
@@ -1144,7 +1146,7 @@ describe("DraftEngine", () => {
       }),
     );
     expect(done(result.events)?.message.content).toContain(
-      "full reliable draft set",
+      "kept the 1 completed draft",
     );
   });
 
@@ -1242,7 +1244,9 @@ describe("DraftEngine", () => {
       { multiDeadlineMs: 20 },
     );
 
-    expect(artifacts(result.events)).toHaveLength(0);
+    expect(artifacts(result.events).map((artifact) => artifact.body)).toEqual([
+      COMPLETE_POST,
+    ]);
     expect(result.events).toContainEqual(
       expect.objectContaining({
         type: "error",

@@ -3202,6 +3202,85 @@ describe("production-shaped Cowork outcome harness", () => {
             usage: usage(210, 90, 0.00019),
           },
           {
+            text: COMPLETE_POST,
+            finishReason: "stop",
+            usage: usage(220, 95, 0.0002),
+          },
+          {
+            text: SECOND_POST,
+            finishReason: "stop",
+            usage: usage(230, 100, 0.00022),
+          },
+        ],
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [COMPLETE_POST, SECOND_POST],
+        actionNames: [],
+      },
+    });
+
+    expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+    expect(report.observed.agentProviderRounds).toBe(0);
+    expect(
+      report.observed.directWriterRequests.map((request) => request.stage),
+    ).toEqual(["primary", "primary", "repair", "fallback"]);
+  });
+
+  test("the original-post starter with two selected drafts retries only the duplicate slot", async () => {
+    const report = await runCoworkOutcomeScenario({
+      id: "original-starter-two-drafts-production-regression",
+      request: {
+        message:
+          "Write an original post in my voice about ai slop. Choose a proven framework that fits the topic, but do not model it after one specific source post.",
+        generationConfig: { version: 1, draftCount: 2 },
+      },
+      model: {
+        // Replays the production failure if this request leaks to the legacy
+        // agent: it renders slot one, asks for feedback too early, then repeats
+        // slot one in the forced completion instead of filling slot two.
+        provider: {
+          rounds: [
+            {
+              kind: "response",
+              toolCalls: [
+                {
+                  id: "call_first_draft",
+                  name: "render_post",
+                  args: { body: COMPLETE_POST },
+                },
+                {
+                  id: "call_premature_followup",
+                  name: "ask_user",
+                  args: {
+                    question: "What would you like to do next?",
+                    options: ["Draft a variation", "It's good — done"],
+                    allowOther: true,
+                  },
+                },
+              ],
+              usage: usage(300, 120, 0.004),
+            },
+            {
+              kind: "response",
+              text: `\`\`\`post\n${COMPLETE_POST}\n\`\`\``,
+              finishReason: "stop",
+              usage: usage(300, 120, 0.004),
+            },
+          ],
+        },
+        directWriter: [
+          {
+            text: COMPLETE_POST,
+            finishReason: "stop",
+            usage: usage(200, 90, 0.00018),
+          },
+          {
+            text: COMPLETE_POST,
+            finishReason: "stop",
+            usage: usage(210, 90, 0.00019),
+          },
+          {
             text: SECOND_POST,
             finishReason: "stop",
             usage: usage(230, 100, 0.00022),
@@ -3220,6 +3299,282 @@ describe("production-shaped Cowork outcome harness", () => {
     expect(
       report.observed.directWriterRequests.map((request) => request.stage),
     ).toEqual(["primary", "primary", "repair"]);
+    expect(report.persisted.artifacts).toHaveLength(2);
+  });
+
+  test("starter metadata keeps edited prompt copy out of routing policy", async () => {
+    const report = await runCoworkOutcomeScenario({
+      id: "typed-original-starter-context",
+      request: {
+        message: "AI slop for content writers.",
+        starterId: "write-original",
+        generationConfig: { version: 1, draftCount: 2 },
+      },
+      model: {
+        provider: { rounds: [] },
+        directWriter: [COMPLETE_POST, SECOND_POST].map((text, index) => ({
+          text,
+          finishReason: "stop" as const,
+          usage: usage(200 + index * 20, 90 + index * 10, 0.0002),
+        })),
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [COMPLETE_POST, SECOND_POST],
+        actionNames: [],
+      },
+    });
+
+    expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+    expect(report.observed.agentProviderRounds).toBe(0);
+    expect(report.observed.directWriterRequests).toHaveLength(2);
+  });
+
+  test("a terse modeled-post starter still selects one workspace source per draft", async () => {
+    const scenario = modeledStructuredCountScenario(
+      "typed-modeled-starter-terse-copy",
+      2,
+    );
+    scenario.request = {
+      message: "AI slop for content writers.",
+      starterId: "model-top-viral",
+      generationConfig: { version: 1, draftCount: 2 },
+    };
+
+    const report = await runCoworkOutcomeScenario(scenario);
+
+    expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+    expect(report.observed.readOnlyTools.map((tool) => tool.name)).toEqual([
+      "search_viral_posts",
+    ]);
+    expect(report.persisted.artifacts).toHaveLength(2);
+  });
+
+  test("the default modeled-post starter preserves its source chip", async () => {
+    const scenario = modeledThreeScenario(
+      "typed-modeled-starter-default-count",
+    );
+    const [source] = MODELED_SOURCE_ROWS;
+    scenario.request = {
+      message: "AI slop for content writers.",
+      starterId: "model-top-viral",
+    };
+    scenario.model.sourceFidelity = [{ outcome: "verified" }];
+    scenario.model.readOnlyOrchestrator!.toolResults = {
+      search_viral_posts: [
+        { ok: true, count: 2, posts: MODELED_SOURCE_ROWS.slice(0, 2) },
+      ],
+    };
+    scenario.model.directWriter = [
+      {
+        text: COMPLETE_POST,
+        finishReason: "stop",
+        usage: usage(210, 95, 0.00019),
+      },
+    ];
+    scenario.expected = {
+      terminal: "done",
+      artifactBodies: [COMPLETE_POST],
+      actionNames: ["search_viral_posts", "write_grounded_post"],
+      sourcePostIds: [source.id],
+      sourceReferences: [{ id: source.id, url: source.post_url }],
+    };
+
+    const report = await runCoworkOutcomeScenario(scenario);
+
+    expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+    expect(report.persisted.artifacts[0]?.meta).toMatchObject({
+      source_post_id: source.id,
+      source_url: source.post_url,
+    });
+  });
+
+  test("a terse newsjack starter cannot bypass verified news research", async () => {
+    const report = await runCoworkOutcomeScenario({
+      id: "typed-newsjack-starter-terse-copy",
+      request: {
+        message: "OpenAI agents for small teams.",
+        starterId: "newsjack",
+        generationConfig: { version: 1, draftCount: 1 },
+      },
+      model: {
+        provider: { rounds: [] },
+        readOnlyOrchestrator: {
+          plans: [
+            {
+              model: PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL,
+              toolArgs: {
+                actions: [
+                  {
+                    id: "news",
+                    type: "search_news",
+                    query: "OpenAI agents for small teams",
+                  },
+                  {
+                    id: "draft",
+                    type: "draft_post",
+                    evidenceActionIds: ["news"],
+                  },
+                ],
+              },
+              usage: usage(100, 20, 0.0012),
+            },
+          ],
+          toolResults: {
+            search_news: [
+              {
+                ok: true,
+                max_age_days: 14,
+                results: [
+                  {
+                    title: "OpenAI launches a verified agent product",
+                    url: "https://openai.com/news/agents",
+                    source: "OpenAI",
+                    published_at: "2026-07-14",
+                    summary:
+                      "OpenAI announced agent tooling for small teams.",
+                  },
+                ],
+              },
+            ],
+          },
+        },
+        directWriter: [
+          {
+            text: COMPLETE_POST,
+            finishReason: "stop",
+            usage: usage(210, 95, 0.0001888),
+          },
+        ],
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [COMPLETE_POST],
+        actionNames: ["search_news", "write_grounded_post"],
+      },
+    });
+
+    expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+    expect(report.observed.readOnlyTools.map((tool) => tool.name)).toEqual([
+      "search_news",
+    ]);
+    expect(report.observed.agentProviderRounds).toBe(0);
+  });
+
+  test("Retry restores the original starter and draft count after one slot exhausts", async () => {
+    const failed: CoworkOutcomeScenario = {
+      id: "typed-original-starter-partial-failure",
+      request: {
+        message: "AI slop for content writers.",
+        starterId: "write-original",
+        generationConfig: { version: 1, draftCount: 2 },
+      },
+      model: {
+        provider: { rounds: [] },
+        directWriter: [
+          COMPLETE_POST,
+          COMPLETE_POST,
+          COMPLETE_POST,
+          COMPLETE_POST,
+        ].map((text, index) => ({
+          text,
+          finishReason: "stop" as const,
+          usage: usage(200 + index * 20, 90 + index * 10, 0.0002),
+        })),
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [COMPLETE_POST],
+        actionNames: [],
+      },
+    };
+    const recovered: CoworkOutcomeScenario = {
+      id: "typed-original-starter-partial-retry",
+      request: { message: "AI slop for content writers." },
+      retryLatestUser: true,
+      model: {
+        provider: { rounds: [] },
+        directWriter: [SECOND_POST, THIRD_POST].map((text, index) => ({
+          text,
+          finishReason: "stop" as const,
+          usage: usage(210 + index * 20, 95 + index * 10, 0.0002),
+        })),
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [SECOND_POST, THIRD_POST],
+        actionNames: [],
+      },
+    };
+
+    const sequence = await runCoworkOutcomeSequence([failed, recovered]);
+
+    expect(
+      sequence.pass,
+      JSON.stringify(
+        sequence.attempts.map((attempt) => ({
+          failures: attempt.failureCodes,
+          safe: attempt.safe,
+        })),
+      ),
+    ).toBe(true);
+    expect(sequence.attempts[0]?.persisted.artifacts).toHaveLength(1);
+    expect(sequence.attempts[1]?.observed.directWriterRequests).toHaveLength(2);
+    const retriedUser = sequence.attempts[1]?.persisted.messages
+      .filter((message) => message.role === "user")
+      .at(-1);
+    expect(
+      retriedUser?.tool_calls?.map((call) => call.function.name),
+    ).toEqual(
+      expect.arrayContaining([
+        "_composer_starter_selected",
+        "_generation_config_selected",
+      ]),
+    );
+  });
+
+  test("Retry rejects a starter that differs from the original task", async () => {
+    const first: CoworkOutcomeScenario = {
+      id: "typed-starter-retry-original",
+      request: {
+        message: "AI slop for content writers.",
+        starterId: "write-original",
+        generationConfig: { version: 1, draftCount: 2 },
+      },
+      model: {
+        provider: { rounds: [] },
+        directWriter: [COMPLETE_POST, SECOND_POST].map((text, index) => ({
+          text,
+          finishReason: "stop" as const,
+          usage: usage(200 + index * 20, 90 + index * 10, 0.0002),
+        })),
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [COMPLETE_POST, SECOND_POST],
+        actionNames: [],
+      },
+    };
+    const tampered: CoworkOutcomeScenario = {
+      id: "typed-starter-retry-tampered",
+      request: {
+        message: "AI slop for content writers.",
+        starterId: "newsjack",
+      },
+      retryLatestUser: true,
+      model: { provider: { rounds: [] }, directWriter: [] },
+      expected: {
+        terminal: "failure",
+        httpStatus: 409,
+        artifactBodies: [],
+        actionNames: [],
+      },
+    };
+
+    const sequence = await runCoworkOutcomeSequence([first, tampered]);
+
+    expect(sequence.pass).toBe(true);
+    expect(sequence.attempts[1]?.observed.directWriterRequests).toEqual([]);
   });
 
   test.each([1, 2] as const)(
