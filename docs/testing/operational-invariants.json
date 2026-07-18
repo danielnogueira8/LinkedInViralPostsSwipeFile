@@ -83,6 +83,15 @@
       ]
     },
     {
+      "id": "modeled-source-rotation-claim",
+      "boundary": "per-workspace source rotation",
+      "invariant": "Concurrent modeled-source requests atomically claim distinct durable rotation cursors before choosing sources.",
+      "evidence": [
+        { "path": "evals/data/migration-106-postgres.test.ts", "test": "serializes concurrent cursor claims" },
+        { "path": "evals/data/tools-query.test.ts", "test": "claims the rotation cursor atomically" }
+      ]
+    },
+    {
       "id": "cron-partial-failure-alert",
       "boundary": "cron recovery and alerting",
       "invariant": "Recovery failures fail closed, emit an alert, and never report stranded work as successful.",
