@@ -83,6 +83,8 @@ describe("purgeWorkspaceData — coverage + scoping", () => {
       "chat_action_checkpoints",
       "chat_action_retry_contexts",
       "chat_action_turn_controls",
+      "modeled_draft_slots",
+      "modeled_draft_batches",
       "chat_artifacts",
       "chat_modeling_sources",
       "saved_posts",
@@ -131,6 +133,10 @@ describe("purgeWorkspaceData — coverage + scoping", () => {
       missingOrUnscoped,
       "every current workspace table, including queued jobs, must be deleted with workspace scoping",
     ).toEqual([]);
+    expect(calls.findIndex((call) => call.table === "modeled_draft_slots"))
+      .toBeLessThan(
+        calls.findIndex((call) => call.table === "modeled_draft_batches"),
+      );
   });
 
   test("NEVER deletes from the shared global catalog", async () => {

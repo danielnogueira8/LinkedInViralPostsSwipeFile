@@ -1,5 +1,8 @@
 import { describe, expect, test } from "vitest";
-import { selectModelingSources } from "@/lib/modeling-source-selection";
+import {
+  selectModelingSourcePool,
+  selectModelingSources,
+} from "@/lib/modeling-source-selection";
 
 type Candidate = {
   id: string;
@@ -26,6 +29,65 @@ That structure makes the idea practical without flattening the nuance behind it.
 }
 
 describe("selectModelingSources", () => {
+  test("returns stable diverse primaries and bounded eligible reserves", () => {
+    const duplicate = post("c1", "content writing", "Third");
+    const input = {
+      candidates: [
+        post("a1", "content writing", "Prolific"),
+        post("a2", "content writing", "Prolific"),
+        post("b1", "content writing", "Other"),
+        duplicate,
+        { ...duplicate },
+        { id: "fatal", text: "Agree?", accounts: { name: "Fourth" } },
+      ],
+      limit: 2,
+      reserveLimit: 99,
+      usedIds: new Set<string>(),
+      surfacedIds: new Set<string>(),
+      rotationCursor: 0,
+      clientContext: { userInstruction: "Write about content writing." },
+    };
+
+    const first = selectModelingSourcePool(input);
+    const second = selectModelingSourcePool(input);
+
+    expect(first.primaries.map((candidate) => candidate.id)).toEqual([
+      "a1",
+      "b1",
+    ]);
+    expect(first.reserves.map((candidate) => candidate.id)).toEqual([
+      "c1",
+      "a2",
+    ]);
+    expect(first).toEqual(second);
+  });
+
+  test("caps replacement reserves at five", () => {
+    const pool = selectModelingSourcePool({
+      candidates: Array.from({ length: 12 }, (_, index) =>
+        post(`p${index + 1}`, "content writing", `Author ${index + 1}`),
+      ),
+      limit: 2,
+      reserveLimit: Number.POSITIVE_INFINITY,
+      usedIds: new Set(),
+      surfacedIds: new Set(),
+      rotationCursor: 0,
+      clientContext: { userInstruction: "Write about content writing." },
+    });
+
+    expect(pool.primaries.map((candidate) => candidate.id)).toEqual([
+      "p1",
+      "p2",
+    ]);
+    expect(pool.reserves.map((candidate) => candidate.id)).toEqual([
+      "p3",
+      "p4",
+      "p5",
+      "p6",
+      "p7",
+    ]);
+  });
+
   test("prefers the candidate relevant to the user's requested topic over base engagement order", () => {
     const selected = selectModelingSources({
       candidates: [
@@ -123,7 +185,7 @@ describe("selectModelingSources", () => {
     expect(selected.map((candidate) => candidate.id)).toEqual(["text"]);
   });
 
-  test("preserves exact count by deterministically backfilling rejected candidates", () => {
+  test("returns fewer sources instead of backfilling fatally non-modelable candidates", () => {
     const candidates: Candidate[] = [
       { id: "empty", text: "", accounts: { name: "A" } },
       { id: "poll", text: "Poll: vote below", accounts: { name: "B" } },
@@ -138,11 +200,7 @@ describe("selectModelingSources", () => {
       clientContext: {},
     });
 
-    expect(selected.map((candidate) => candidate.id)).toEqual([
-      "empty",
-      "poll",
-      "caption",
-    ]);
+    expect(selected).toEqual([]);
   });
 
   test("recently used candidates still sink below fresh candidates", () => {
@@ -196,6 +254,29 @@ describe("selectModelingSources", () => {
     expect(selected.filter((candidate) => candidate.accounts?.name === "Prolific"))
       .toHaveLength(2);
     expect(selected.some((candidate) => candidate.id === "b1")).toBe(true);
+  });
+
+  test("chooses one primary per author while enough eligible authors exist", () => {
+    const selected = selectModelingSources({
+      candidates: [
+        post("a1", "content writing", "Prolific"),
+        post("a2", "content writing", "Prolific"),
+        post("a3", "content writing", "Prolific"),
+        post("b1", "content writing", "Other"),
+        post("c1", "content writing", "Third"),
+      ],
+      limit: 3,
+      usedIds: new Set(),
+      surfacedIds: new Set(),
+      rotationCursor: 0,
+      clientContext: { userInstruction: "Write about content writing." },
+    });
+
+    expect(selected.map((candidate) => candidate.id)).toEqual([
+      "a1",
+      "b1",
+      "c1",
+    ]);
   });
 
   test("author diversity never displaces a usable source with a fatal candidate", () => {

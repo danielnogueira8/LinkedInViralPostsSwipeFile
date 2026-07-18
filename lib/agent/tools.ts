@@ -24,7 +24,7 @@ import {
 } from "@/lib/voice-mechanics";
 import { retryRead } from "@/lib/retry-read";
 import {
-  selectModelingSources,
+  selectModelingSourcePool,
   type ModelingClientContext,
 } from "@/lib/modeling-source-selection";
 import { rankIdeaPosts, rotateFreshBand } from "@/lib/idea-ranking";
@@ -196,6 +196,10 @@ export interface ToolExecutionContext {
   // Present only when the server has confirmed that these auto-selected posts
   // will be modeled. Analytical searches and explicit source ids never use it.
   modelingSelection?: ModelingClientContext;
+  // Replacement sources are returned separately from the user-requested
+  // primaries. Only the modeled-batch coordinator consumes them; analytical
+  // searches and single-source modeling leave this at zero.
+  modelingReserveCount?: number;
 }
 
 function err(message: string): ToolResult {
@@ -314,23 +318,34 @@ const searchViralPosts: ToolFn = async (args, workspaceId, signal, context) => {
     signal?.throwIfAborted();
     // Server-confirmed auto-modeling uses the single secure selection policy.
     // Ordinary idea discovery retains its pre-existing stable rank + rotation.
-    const selected = autoSelectModelingSources
-      ? selectModelingSources({
+    const modeledPool = autoSelectModelingSources
+      ? selectModelingSourcePool({
           candidates,
           limit: finalLimit,
+          reserveLimit: context?.modelingReserveCount ?? 0,
           usedIds,
           surfacedIds,
           rotationCursor: cursor,
           clientContext: context.modelingSelection,
         })
-      : rotateFreshBand(
+      : null;
+    const selected = modeledPool?.primaries ?? rotateFreshBand(
           rankIdeaPosts(candidates, usedIds, surfacedIds),
           cursor,
           finalLimit,
         ).slice(0, finalLimit);
     recordSurfaced(workspaceId, selected.map((post) => post.id));
     const posts = selected.map(wrapScrapedPostText);
-    return { ok: true, count: posts.length, posts };
+    return {
+      ok: true,
+      count: posts.length,
+      posts,
+      ...(modeledPool?.reserves.length
+        ? {
+            reserve_posts: modeledPool.reserves.map(wrapScrapedPostText),
+          }
+        : {}),
+    };
   } catch (e) {
     return err((e as Error).message);
   }
@@ -639,16 +654,18 @@ const getTopFromBatch: ToolFn = async (args, workspaceId, _signal, context) => {
         new Date(a.posted_at as string).getTime(),
     );
     const cursor = await nextRotationCursor(workspaceId);
-    const picked = context?.modelingSelection
-      ? selectModelingSources({
+    const modeledPool = context?.modelingSelection
+      ? selectModelingSourcePool({
           candidates: byRecency,
           limit: finalLimit,
+          reserveLimit: context.modelingReserveCount ?? 0,
           usedIds,
           surfacedIds,
           rotationCursor: cursor,
           clientContext: context.modelingSelection,
         })
-      : pickLegacyIdeas(
+      : null;
+    const picked = modeledPool?.primaries ?? pickLegacyIdeas(
           rotateFreshBand(
             rankIdeaPosts(byRecency, usedIds, surfacedIds),
             cursor,
@@ -681,6 +698,11 @@ const getTopFromBatch: ToolFn = async (args, workspaceId, _signal, context) => {
         : {}),
       count,
       posts: rankedPosts,
+      ...(modeledPool?.reserves.length
+        ? {
+            reserve_posts: modeledPool.reserves.map(wrapScrapedPostText),
+          }
+        : {}),
     };
   } catch (e) {
     return err((e as Error).message);

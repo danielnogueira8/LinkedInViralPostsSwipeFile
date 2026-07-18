@@ -49,6 +49,13 @@ import {
 import { compileActionOrchestratorRoute } from "@/lib/agent/action-orchestrator-routing";
 import { runTool as runAgentTool } from "@/lib/agent/tools";
 import { AdapterHealthRegistry } from "@/lib/agent/adapter-health";
+import {
+  executeModeledDraftBatch,
+  type AcquiredModeledDraftBatch,
+  type ModeledDraftBatchRepository,
+  type ModeledDraftSlotCheckpoint,
+} from "@/lib/agent/modeled-draft-batch";
+import { runModeledDraftSlot } from "@/lib/agent/modeled-draft-slot-runner";
 
 export type CoworkOutcomeScenario = {
   id: string;
@@ -340,6 +347,139 @@ class HarnessActionPlanner implements ActionOrchestratorAdapter {
   }
 }
 
+/**
+ * Route-harness repository for the modeled-batch contract. PostgreSQL owns the
+ * production implementation; this small in-memory adapter lets the authenticated
+ * HTTP test exercise the same coordinator without making unit tests depend on a
+ * database process.
+ */
+class HarnessModeledDraftBatchRepository
+  implements ModeledDraftBatchRepository
+{
+  private checkpoint: AcquiredModeledDraftBatch | null = null;
+
+  async acquire(
+    input: Parameters<ModeledDraftBatchRepository["acquire"]>[0],
+  ): ReturnType<ModeledDraftBatchRepository["acquire"]> {
+    if (this.checkpoint) {
+      if (
+        this.checkpoint.requestHash !== input.requestHash ||
+        this.checkpoint.requestedCount !== input.requestedCount
+      ) {
+        return { kind: "conflict" };
+      }
+      return { kind: "acquired", checkpoint: this.checkpoint };
+    }
+    const batchId = "00000000-0000-4000-8000-000000000701";
+    this.checkpoint = {
+      batchId,
+      leaseToken: "00000000-0000-4000-8000-000000000702",
+      requestHash: input.requestHash,
+      requestedCount: input.requestedCount,
+      sources: [...input.sources],
+      slots: Array.from({ length: input.requestedCount }, (_, index) => ({
+        index,
+        state: "assigned" as const,
+        sourceIndex: index,
+        sourceHistory: [index],
+        replacements: 0,
+      })),
+    };
+    return { kind: "acquired", checkpoint: this.checkpoint };
+  }
+
+  async acceptSlot(
+    input: Parameters<ModeledDraftBatchRepository["acceptSlot"]>[0],
+  ): Promise<boolean> {
+    const checkpoint = this.checkpoint;
+    const slot = checkpoint?.slots.find(
+      (candidate) => candidate.index === input.slotIndex,
+    );
+    if (
+      !checkpoint ||
+      checkpoint.batchId !== input.batchId ||
+      checkpoint.leaseToken !== input.leaseToken ||
+      !slot ||
+      slot.state !== input.expectedState ||
+      slot.sourceIndex !== input.sourceIndex
+    ) {
+      return false;
+    }
+    this.updateSlot(input.slotIndex, {
+      ...slot,
+      state: "accepted",
+      artifact: input.artifact,
+    });
+    return true;
+  }
+
+  async replaceSlotSource(
+    input: Parameters<ModeledDraftBatchRepository["replaceSlotSource"]>[0],
+  ): Promise<boolean> {
+    const checkpoint = this.checkpoint;
+    const slot = checkpoint?.slots.find(
+      (candidate) => candidate.index === input.slotIndex,
+    );
+    if (
+      !checkpoint ||
+      checkpoint.batchId !== input.batchId ||
+      checkpoint.leaseToken !== input.leaseToken ||
+      !slot ||
+      slot.state !== "assigned" ||
+      slot.replacements >= 1 ||
+      checkpoint.slots.some((candidate) =>
+        candidate.sourceHistory.includes(input.sourceIndex),
+      )
+    ) {
+      return false;
+    }
+    this.updateSlot(input.slotIndex, {
+      ...slot,
+      sourceIndex: input.sourceIndex,
+      sourceHistory: [...slot.sourceHistory, input.sourceIndex],
+      replacements: slot.replacements + 1,
+      lastFailureCode: input.failureCode,
+    });
+    return true;
+  }
+
+  async complete(
+    input: Parameters<ModeledDraftBatchRepository["complete"]>[0],
+  ): ReturnType<ModeledDraftBatchRepository["complete"]> {
+    const checkpoint = this.checkpoint;
+    if (
+      !checkpoint ||
+      checkpoint.batchId !== input.batchId ||
+      checkpoint.leaseToken !== input.leaseToken
+    ) {
+      return { kind: "lease_lost" };
+    }
+    const artifacts = [...checkpoint.slots]
+      .sort((left, right) => left.index - right.index)
+      .flatMap((slot) =>
+        slot.state === "accepted" && slot.artifact ? [slot.artifact] : [],
+      );
+    return artifacts.length === checkpoint.requestedCount
+      ? { kind: "complete", artifacts }
+      : { kind: "incomplete" };
+  }
+
+  async release(): Promise<void> {}
+
+  private updateSlot(
+    slotIndex: number,
+    next: ModeledDraftSlotCheckpoint,
+  ): void {
+    if (!this.checkpoint) return;
+    this.checkpoint = {
+      ...this.checkpoint,
+      slots: this.checkpoint.slots.map((slot) =>
+        slot.index === slotIndex ? next : slot,
+      ),
+    };
+  }
+}
+
 async function runCoworkOutcomeScenarioWithStore(
   store: CoworkHarnessStore,
   scenario: CoworkOutcomeScenario,
@@ -490,6 +630,7 @@ async function runCoworkOutcomeScenarioWithStore(
   );
   const sourceFidelity = [...(scenario.model.sourceFidelity ?? [])];
   const draftAdapterHealth = new AdapterHealthRegistry();
+  const modeledBatchRepository = new HarnessModeledDraftBatchRepository();
   const harnessRunDraftEngine: ChatTurnDependencies["runDraftEngine"] =
     directWriter
       ? (input) =>
@@ -565,6 +706,16 @@ async function runCoworkOutcomeScenarioWithStore(
                 );
               },
               runDraftEngine: harnessRunDraftEngine,
+              executeModeledDraftBatch: (input) =>
+                executeModeledDraftBatch(input, {
+                  repository: modeledBatchRepository,
+                  runSlot: (slotInput) =>
+                    runModeledDraftSlot(slotInput, {
+                      runDraftEngine: (engineInput) =>
+                        harnessRunDraftEngine(engineInput),
+                    }),
+                  now: Date.now,
+                }),
               inspectAttachments: async () => ({
                 sources:
                   scenario.model.readOnlyOrchestrator?.attachmentSources ?? [],

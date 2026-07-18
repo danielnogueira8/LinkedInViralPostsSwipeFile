@@ -1,6 +1,7 @@
 import { scorePostModelability } from "./post-modelability";
 
 const MAX_SELECTION = 50;
+const MAX_RESERVES = 5;
 const MAX_CANDIDATES = 120;
 const MAX_CANDIDATE_TEXT_CHARS = 12_000;
 const MAX_CONTEXT_FIELD_CHARS = 2_000;
@@ -49,12 +50,25 @@ export type ModelingSourceSelectionInput<T extends ModelingSourceCandidate> = {
   clientContext?: ModelingClientContext;
 };
 
-type SelectedCandidate<T> = T & {
+export type ModelingSourcePoolInput<T extends ModelingSourceCandidate> =
+  ModelingSourceSelectionInput<T> & {
+    // One replacement source per modeled-draft slot is sufficient for the
+    // bounded 2-5 post batch. Clamp callers so selection can never turn an
+    // accidental value into an unbounded response.
+    reserveLimit?: number;
+  };
+
+export type SelectedModelingSource<T> = T & {
   already_used: boolean;
   recently_surfaced: boolean;
 };
 
-type RankedCandidate<T> = SelectedCandidate<T> & {
+export type ModelingSourcePool<T> = {
+  primaries: Array<SelectedModelingSource<T>>;
+  reserves: Array<SelectedModelingSource<T>>;
+};
+
+type RankedCandidate<T> = SelectedModelingSource<T> & {
   selectionIndex: number;
   selectionRejected: boolean;
   selectionQuality: number;
@@ -174,12 +188,12 @@ function relevanceScore(
 
 function withoutSelectionMetadata<T extends ModelingSourceCandidate>(
   candidate: RankedCandidate<T>,
-): SelectedCandidate<T> {
+): SelectedModelingSource<T> {
   const selected = { ...candidate } as Record<string, unknown>;
   delete selected.selectionIndex;
   delete selected.selectionQuality;
   delete selected.selectionRejected;
-  return selected as SelectedCandidate<T>;
+  return selected as SelectedModelingSource<T>;
 }
 
 function rotateQualityPool<T>(
@@ -189,7 +203,6 @@ function rotateQualityPool<T>(
 ): RankedCandidate<T>[] {
   let eligible = 0;
   const bestQuality = ranked[0]?.selectionQuality ?? 0;
-  const bestRejected = ranked[0]?.selectionRejected ?? false;
   // Match the tools' bounded 6x over-fetch: equal-quality sources can all
   // rotate, while the tolerance prevents materially weaker sources from
   // entering the rotation merely because the pool is large.
@@ -199,7 +212,6 @@ function rotateQualityPool<T>(
     eligible < maxPool &&
     !ranked[eligible].already_used &&
     !ranked[eligible].recently_surfaced &&
-    ranked[eligible].selectionRejected === bestRejected &&
     bestQuality - ranked[eligible].selectionQuality <= QUALITY_ROTATION_TOLERANCE
   ) {
     eligible += 1;
@@ -216,21 +228,73 @@ function rotateQualityPool<T>(
   ];
 }
 
+function authorKey(candidate: ModelingSourceCandidate): string {
+  const authorName = accountFields(candidate.accounts).name;
+  return authorName || `unknown:${candidate.id}`;
+}
+
+function takeDiverse<T extends ModelingSourceCandidate>(
+  candidates: RankedCandidate<T>[],
+  limit: number,
+  priorAuthors: ReadonlySet<string> = new Set(),
+): {
+  selected: RankedCandidate<T>[];
+  remaining: RankedCandidate<T>[];
+  selectedAuthors: Set<string>;
+} {
+  const selected: RankedCandidate<T>[] = [];
+  const selectedIds = new Set<string>();
+  const selectedAuthors = new Set(priorAuthors);
+
+  for (const candidate of candidates) {
+    if (selected.length >= limit) break;
+    const key = authorKey(candidate);
+    if (selectedAuthors.has(key)) continue;
+    selected.push(candidate);
+    selectedIds.add(candidate.id);
+    selectedAuthors.add(key);
+  }
+
+  if (selected.length < limit) {
+    for (const candidate of candidates) {
+      if (selected.length >= limit) break;
+      if (selectedIds.has(candidate.id)) continue;
+      selected.push(candidate);
+      selectedIds.add(candidate.id);
+      selectedAuthors.add(authorKey(candidate));
+    }
+  }
+
+  return {
+    selected,
+    remaining: candidates.filter((candidate) => !selectedIds.has(candidate.id)),
+    selectedAuthors,
+  };
+}
+
 /**
  * Deterministically chooses sources the system will model on the user's
  * behalf. Explicit analytical rankings and user-selected source ids must not
  * call this function; those are retrieval contracts, not selection problems.
  */
-export function selectModelingSources<T extends ModelingSourceCandidate>(
-  input: ModelingSourceSelectionInput<T>,
-): Array<SelectedCandidate<T>> {
+export function selectModelingSourcePool<T extends ModelingSourceCandidate>(
+  input: ModelingSourcePoolInput<T>,
+): ModelingSourcePool<T> {
   const requestedLimit = input.limit === Number.NEGATIVE_INFINITY
     ? 0
     : Number.isFinite(input.limit)
       ? Math.max(0, Math.floor(input.limit))
       : input.candidates.length;
   const limit = Math.min(MAX_SELECTION, requestedLimit);
-  if (limit === 0 || input.candidates.length === 0) return [];
+  const requestedReserveLimit = Number.isFinite(input.reserveLimit)
+    ? Math.max(0, Math.floor(input.reserveLimit ?? 0))
+    : input.reserveLimit === Number.POSITIVE_INFINITY
+      ? MAX_RESERVES
+      : 0;
+  const reserveLimit = Math.min(MAX_RESERVES, requestedReserveLimit);
+  if (limit === 0 || input.candidates.length === 0) {
+    return { primaries: [], reserves: [] };
+  }
 
   const uniqueCandidates: T[] = [];
   const candidateIds = new Set<string>();
@@ -268,10 +332,8 @@ export function selectModelingSources<T extends ModelingSourceCandidate>(
         selectionQuality: modelability.score * 0.65 + relevance * 0.35,
       };
     })
+    .filter((candidate) => !candidate.selectionRejected)
     .sort((left, right) => {
-      const rejectedDiff =
-        Number(left.selectionRejected) - Number(right.selectionRejected);
-      if (rejectedDiff !== 0) return rejectedDiff;
       const usedDiff = Number(left.already_used) - Number(right.already_used);
       if (usedDiff !== 0) return usedDiff;
       const surfacedDiff =
@@ -287,33 +349,22 @@ export function selectModelingSources<T extends ModelingSourceCandidate>(
     input.rotationCursor ?? 0,
     limit,
   );
-  const perAuthorCap = Math.max(1, Math.ceil(limit / 2));
-  const authorCounts = new Map<string, number>();
-  const picked: RankedCandidate<T>[] = [];
-  const skipped: RankedCandidate<T>[] = [];
-  for (const candidate of rotated) {
-    if (picked.length >= limit) break;
-    if (
-      candidate.selectionRejected &&
-      skipped.some((skippedCandidate) => !skippedCandidate.selectionRejected)
-    ) {
-      skipped.push(candidate);
-      continue;
-    }
-    const authorName = accountFields(candidate.accounts).name;
-    const authorKey = authorName || `unknown:${candidate.id}`;
-    const count = authorCounts.get(authorKey) ?? 0;
-    if (count < perAuthorCap) {
-      picked.push(candidate);
-      authorCounts.set(authorKey, count + 1);
-    } else {
-      skipped.push(candidate);
-    }
-  }
-  for (const candidate of skipped) {
-    if (picked.length >= limit) break;
-    picked.push(candidate);
-  }
+  const primaryPool = takeDiverse(rotated, limit);
+  const reservePool = takeDiverse(
+    primaryPool.remaining,
+    reserveLimit,
+    primaryPool.selectedAuthors,
+  );
 
-  return picked.map(withoutSelectionMetadata);
+  return {
+    primaries: primaryPool.selected.map(withoutSelectionMetadata),
+    reserves: reservePool.selected.map(withoutSelectionMetadata),
+  };
+}
+
+/** Compatibility wrapper for callers that only consume primary selections. */
+export function selectModelingSources<T extends ModelingSourceCandidate>(
+  input: ModelingSourceSelectionInput<T>,
+): Array<SelectedModelingSource<T>> {
+  return selectModelingSourcePool({ ...input, reserveLimit: 0 }).primaries;
 }

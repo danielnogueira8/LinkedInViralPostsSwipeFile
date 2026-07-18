@@ -94,7 +94,9 @@ export class CoworkHarnessStore {
   readonly userId = "user_harness";
   readonly chatId = "00000000-0000-4000-8000-000000000101";
   private sequence = 0;
-  private readonly clockMs = Date.parse("2026-07-14T12:00:00.000Z");
+  // Keep persisted turn timestamps aligned with the harness's injected ChatTurn
+  // clock. Deadline tests must measure elapsed time, not a fixture-clock skew.
+  private readonly clockMs = Date.parse("2026-07-14T23:30:00.000Z");
   onActionCheckpointExecuted: (() => void) | null = null;
   failActionRetryContextSave = false;
   failActionTurnCancelAttempts = 0;

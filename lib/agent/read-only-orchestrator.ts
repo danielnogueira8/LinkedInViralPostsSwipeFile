@@ -5,6 +5,8 @@ import {
   type DraftEngineGroundedSource,
   type DraftEngineInput,
 } from "@/lib/agent/draft-engine";
+import type { ExecuteModeledDraftBatchInput } from "@/lib/agent/modeled-draft-batch";
+import { executeProductionModeledDraftBatch } from "@/lib/agent/modeled-draft-batch-supabase";
 import type { ReadOnlyOrchestratorRoute } from "@/lib/agent/read-only-orchestrator-routing";
 import { runTool, toolSummary } from "@/lib/agent/tools";
 import { safeFilename } from "@/lib/agent/untrusted";
@@ -40,9 +42,12 @@ export {
 // Primary defaults to the one app-wide chat model (OPENROUTER_CHAT_MODEL) so
 // every text-LLM call uses the SAME model unless pinned via
 // OPENROUTER_READ_ONLY_ORCHESTRATOR_MODEL. The fallback stays independent.
-// Leave five seconds inside the 90-second complex-turn SLO for the caller to
-// persist and flush the terminal event after this generator completes.
+// Ordinary research remains inside the 90-second complex-turn SLO.
 export const READ_ONLY_ORCHESTRATOR_DEADLINE_MS = 85_000;
+// Multi-source modeled batches run two bounded slot workers concurrently and
+// may need one source replacement. Leave one minute inside the route's 300s
+// ceiling for terminal delivery and canonical persistence.
+export const MODELED_BATCH_ORCHESTRATOR_DEADLINE_MS = 240_000;
 export const ORCHESTRATED_MULTI_DRAFT_DEADLINE_MS = 80_000;
 
 const ActionIdSchema = z
@@ -1468,6 +1473,7 @@ export const inspectAttachmentEvidence: InspectAttachments = async (input) => {
 
 export type ReadOnlyOrchestratorInput = {
   workspaceId: string;
+  operationKey: string;
   userInstruction: string;
   history: ChatMessage[];
   route: ReadOnlyOrchestratorRoute;
@@ -1484,6 +1490,9 @@ export type ReadOnlyOrchestratorDependencies = {
   adapters: ReadOnlyOrchestratorAdapter[];
   runTool: typeof runTool;
   runDraftEngine: typeof runDraftEngine;
+  executeModeledDraftBatch: (
+    input: ExecuteModeledDraftBatchInput,
+  ) => ReturnType<typeof executeProductionModeledDraftBatch>;
   runWebResearch: RunWebResearch;
   inspectAttachments: InspectAttachments;
   recordUsage: typeof logOpenRouterUsage;
@@ -1499,6 +1508,7 @@ const productionDependencies: ReadOnlyOrchestratorDependencies = {
   adapters: defaultAdapters,
   runTool,
   runDraftEngine,
+  executeModeledDraftBatch: executeProductionModeledDraftBatch,
   runWebResearch: runGroundedWebResearch,
   inspectAttachments: inspectAttachmentEvidence,
   recordUsage: logOpenRouterUsage,
@@ -1676,8 +1686,9 @@ function newsSources(
 
 function workspaceSources(
   result: Record<string, unknown>,
+  field: "posts" | "reserve_posts" = "posts",
 ): DraftEngineGroundedSource[] {
-  const rows = Array.isArray(result.posts) ? result.posts : [];
+  const rows = Array.isArray(result[field]) ? result[field] : [];
   const seen = new Set<string>();
   return rows.flatMap((row) => {
     if (!row || typeof row !== "object") return [];
@@ -1729,23 +1740,19 @@ function taggedWithResearchProvenance(
   artifact: Artifact,
   route: ReadOnlyOrchestratorRoute,
   sources: DraftEngineGroundedSource[],
-  artifactIndex: number,
+  modeledSource?: DraftEngineGroundedSource,
 ): Artifact {
   if (artifact.kind === "cite") return artifact;
-  const assignedSource =
-    route.workspaceDraftSourceMode === "one_to_one"
-      ? sources[artifactIndex]
-      : undefined;
-  const artifactSources = assignedSource ? [assignedSource] : sources;
+  const artifactSources = modeledSource ? [modeledSource] : sources;
   return {
     ...artifact,
     meta: {
       ...(artifact.meta ?? {}),
-      ...(assignedSource?.kind === "workspace_post"
+      ...(modeledSource?.kind === "workspace_post"
         ? {
             source: "model_source",
-            source_post_id: assignedSource.id,
-            ...(assignedSource.url ? { source_url: assignedSource.url } : {}),
+            source_post_id: modeledSource.id,
+            ...(modeledSource.url ? { source_url: modeledSource.url } : {}),
           }
         : {}),
       research_provenance: {
@@ -2010,6 +2017,10 @@ async function* runReadOnlyOrchestratorCore(
   const calls: ToolCall[] = [];
   const messages: ChatMessage[] = [];
   const evidenceByAction = new Map<string, DraftEngineGroundedSource[]>();
+  const modeledSourcePoolByAction = new Map<
+    string,
+    DraftEngineGroundedSource[]
+  >();
 
   const clarify = plan.actions[0];
   if (clarify.type === "clarify") {
@@ -2264,10 +2275,26 @@ async function* runReadOnlyOrchestratorCore(
                   input.userInstruction,
                   input.draftEngineInput.voiceResult,
                 ),
+                modelingReserveCount:
+                  input.route.workspaceDraftSourceMode === "one_to_one"
+                    ? Math.min(
+                        input.route.expectedDrafts ?? 1,
+                        5,
+                      )
+                    : 0,
               },
             ),
         });
         sources = workspaceSources(result);
+        if (input.route.workspaceDraftSourceMode === "one_to_one") {
+          modeledSourcePoolByAction.set(
+            action.id,
+            distinctGroundedSources([
+              ...sources,
+              ...workspaceSources(result, "reserve_posts"),
+            ]),
+          );
+        }
       } else {
         throw new Error(`Unexpected evidence action: ${action.type}`);
       }
@@ -2323,7 +2350,9 @@ async function* runReadOnlyOrchestratorCore(
           ? { summary: toolSummary(call.function.name, result) ?? undefined }
           : {}),
       };
-      messages.push(toolMessage(id, result));
+      const transcriptResult = { ...result };
+      delete transcriptResult.reserve_posts;
+      messages.push(toolMessage(id, transcriptResult));
       yield completedDone({
         content: interruptionContent(
           input,
@@ -2346,7 +2375,9 @@ async function* runReadOnlyOrchestratorCore(
         ? { summary: toolSummary(call.function.name, result) ?? undefined }
         : {}),
     };
-    messages.push(toolMessage(id, result));
+    const transcriptResult = { ...result };
+    delete transcriptResult.reserve_posts;
+    messages.push(toolMessage(id, transcriptResult));
     if (!ok) {
       input.telemetry?.setProvenanceStatus("missing");
       const message =
@@ -2400,6 +2431,11 @@ async function* runReadOnlyOrchestratorCore(
   const groundedSources = distinctGroundedSources(
     draftAction.evidenceActionIds.flatMap(
       (id) => evidenceByAction.get(id) ?? [],
+    ),
+  );
+  const modeledSourcePool = distinctGroundedSources(
+    draftAction.evidenceActionIds.flatMap(
+      (id) => modeledSourcePoolByAction.get(id) ?? [],
     ),
   );
   if (groundedSources.length === 0) {
@@ -2464,6 +2500,163 @@ async function* runReadOnlyOrchestratorCore(
   let childReportedError = false;
   const bufferedArtifacts: Array<Extract<AgentEvent, { type: "artifact" }>> = [];
   const expectedDrafts = input.route.expectedDrafts ?? 1;
+  const modeledBatch =
+    input.route.workspaceDraftSourceMode === "one_to_one" &&
+    expectedDrafts >= 2;
+  if (modeledBatch) {
+    const canonicalPool = modeledSourcePool.flatMap((source) =>
+      source.kind === "workspace_post"
+        ? [
+            {
+              id: source.id,
+              text: source.text,
+              ...(source.url ? { url: source.url } : {}),
+              ...(source.title ? { title: source.title } : {}),
+              ...(source.publishedAt
+                ? { publishedAt: source.publishedAt }
+                : {}),
+            },
+          ]
+        : [],
+    );
+    let batchResult: Awaited<
+      ReturnType<ReadOnlyOrchestratorDependencies["executeModeledDraftBatch"]>
+    >;
+    try {
+      batchResult = await deps.executeModeledDraftBatch({
+        operationKey: input.operationKey,
+        workspaceId: input.workspaceId,
+        instruction: authoritativeInstruction,
+        count: expectedDrafts,
+        sources: canonicalPool,
+        engineInput: {
+          ...input.draftEngineInput,
+          telemetry: input.telemetry ?? input.draftEngineInput.telemetry,
+          userInstruction: authoritativeInstruction,
+          signal: input.signal,
+        },
+        deadlineAtMs: input.deadlineAtMs,
+        signal: input.signal,
+      });
+    } catch (error) {
+      rethrowUsagePersistence(error);
+      const interrupted = await input.cancellationBoundary();
+      const message = interrupted
+        ? interruptionContent(input, "Stopped before the modeled set completed.")
+        : "The modeled-draft coordinator stopped unexpectedly. Your completed slots remain recoverable; Retry will continue the same batch.";
+      yield {
+        type: "tool_end",
+        id: draftCallId,
+        name: draftCall.function.name,
+        ok: false,
+      };
+      messages.push(
+        toolMessage(draftCallId, {
+          ok: false,
+          delivered: false,
+          error: interrupted ? interruptionReason(input) : "batch_failed",
+        }),
+      );
+      if (!interrupted) {
+        yield {
+          type: "error",
+          code: "modeled_batch_failed",
+          message,
+          recovery: "continue",
+        };
+      }
+      yield completedDone({
+        content: message,
+        terminalReason: interrupted ? interruptionReason(input) : "error",
+        toolCalls: calls,
+        toolMessages: messages,
+        inputTokens,
+        outputTokens,
+      });
+      return;
+    }
+
+    inputTokens += batchResult.usage.inputTokens;
+    outputTokens += batchResult.usage.outputTokens;
+    if (batchResult.kind === "complete") {
+      for (const artifact of batchResult.artifacts) {
+        yield { type: "artifact", artifact };
+      }
+      yield {
+        type: "tool_end",
+        id: draftCallId,
+        name: draftCall.function.name,
+        ok: true,
+      };
+      messages.push(
+        toolMessage(draftCallId, {
+          ok: true,
+          delivered: true,
+          batch_id: batchResult.batchId,
+          delivered_drafts: batchResult.artifacts.length,
+        }),
+      );
+      steps = steps.map((step) => ({ ...step, status: "done" as const }));
+      yield { type: "plan_update", steps };
+      yield completedDone({
+        content: `Here are your ${batchResult.artifacts.length} drafts.`,
+        toolCalls: calls,
+        toolMessages: messages,
+        inputTokens,
+        outputTokens,
+      });
+      return;
+    }
+
+    const cancelled =
+      batchResult.kind === "incomplete" &&
+      batchResult.reason === "cancelled";
+    const preserved =
+      batchResult.kind === "incomplete" ? batchResult.preservedSlots : 0;
+    const reason = batchResult.reason;
+    const message = cancelled
+      ? "Stopped before the complete modeled set was produced."
+      : preserved > 0
+        ? `I preserved ${preserved} of ${expectedDrafts} verified drafts, but the remaining slot could not be completed safely. Retry will continue only the unfinished work.`
+        : "I couldn’t complete the verified modeled set safely. Retry will resume the same bounded batch.";
+    yield {
+      type: "tool_end",
+      id: draftCallId,
+      name: draftCall.function.name,
+      ok: false,
+    };
+    messages.push(
+      toolMessage(draftCallId, {
+        ok: false,
+        delivered: false,
+        preserved_drafts: preserved,
+        expected_drafts: expectedDrafts,
+        error: reason,
+      }),
+    );
+    if (!cancelled) {
+      yield {
+        type: "error",
+        code: `modeled_batch_${reason}`,
+        message,
+        recovery: "continue",
+      };
+    }
+    yield completedDone({
+      content: message,
+      terminalReason:
+        cancelled
+          ? "cancelled"
+          : batchResult.kind === "incomplete" && batchResult.reason === "deadline"
+            ? "deadline"
+            : "error",
+      toolCalls: calls,
+      toolMessages: messages,
+      inputTokens,
+      outputTokens,
+    });
+    return;
+  }
   const modeledWorkspaceSource =
     input.route.workspaceDraftSourceMode === "one_to_one" &&
     groundedSources.length === 1 &&
@@ -2483,8 +2676,6 @@ async function* runReadOnlyOrchestratorCore(
                 kind: "multi",
                 expectedCount: expectedDrafts,
                 groundedSources,
-                groundedSourceMode:
-                  input.route.workspaceDraftSourceMode ?? "shared",
               }
             : modeledWorkspaceSource
               ? {
@@ -2512,7 +2703,7 @@ async function* runReadOnlyOrchestratorCore(
             event.artifact,
             input.route,
             groundedSources,
-            bufferedArtifacts.length,
+            modeledWorkspaceSource ? groundedSources[0] : undefined,
           ),
         });
         continue;

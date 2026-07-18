@@ -10,6 +10,7 @@ import {
   type DraftEngineTask,
 } from "@/lib/agent/draft-engine";
 import {
+  MODELED_BATCH_ORCHESTRATOR_DEADLINE_MS,
   READ_ONLY_ORCHESTRATOR_DEADLINE_MS,
   runReadOnlyOrchestrator,
 } from "@/lib/agent/read-only-orchestrator";
@@ -3696,7 +3697,7 @@ export async function executeChatTurn(
           const remainingReliableMs = Math.max(
             1,
             ACTION_ORCHESTRATOR_DEADLINE_MS -
-              Math.max(0, Date.now() - turnStartedAtMs),
+              Math.max(0, deps.now().getTime() - turnStartedAtMs),
           );
           return observeTurn(deps.runActionOrchestrator(
             {
@@ -3718,14 +3719,21 @@ export async function executeChatTurn(
         }
         if (useReadOnlyOrchestrator && readOnlyOrchestratorRoute) {
           const turnStartedAtMs = Date.parse(claimedTurnStartedAt!);
+          const reliableDeadlineMs =
+            readOnlyOrchestratorRoute.workspaceDraftSourceMode === "one_to_one" &&
+            (readOnlyOrchestratorRoute.expectedDrafts ?? 1) >= 2
+              ? MODELED_BATCH_ORCHESTRATOR_DEADLINE_MS
+              : READ_ONLY_ORCHESTRATOR_DEADLINE_MS;
           const remainingReliableMs = Math.max(
             1,
-            READ_ONLY_ORCHESTRATOR_DEADLINE_MS -
-              Math.max(0, Date.now() - turnStartedAtMs),
+            reliableDeadlineMs -
+              Math.max(0, deps.now().getTime() - turnStartedAtMs),
           );
           return observeTurn(deps.runReadOnlyOrchestrator(
             {
               workspaceId,
+              operationKey:
+                body.retryOfUserMessageId ?? claimedUserMessageId!,
               userInstruction: effectiveUserInstruction,
               history,
               route: readOnlyOrchestratorRoute,

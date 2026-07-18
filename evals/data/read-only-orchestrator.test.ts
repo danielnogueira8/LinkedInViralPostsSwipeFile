@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { AgentEvent } from "@/lib/agent/contracts";
 import type { DraftEngineInput } from "@/lib/agent/draft-engine";
+import type { ExecuteModeledDraftBatchInput } from "@/lib/agent/modeled-draft-batch";
 import { CHAT_MODEL, UsagePersistenceError, type Usage } from "@/lib/openrouter";
 import {
   FALLBACK_READ_ONLY_ORCHESTRATOR_MODEL,
@@ -69,6 +70,7 @@ function input(
 ): ReadOnlyOrchestratorInput {
   return {
     workspaceId: "ws-1",
+    operationKey: "root-user-message-1",
     userInstruction:
       "Research the latest OpenAI announcement and write a LinkedIn post about what it means for founders.",
     history: [
@@ -2186,7 +2188,7 @@ describe("read-only orchestrator execution", () => {
     expect(route).not.toBeNull();
     if (!route) return;
 
-    const writerInputs: DraftEngineInput[] = [];
+    const batchInputs: ExecuteModeledDraftBatchInput[] = [];
     const selectionContexts: Array<ToolExecutionContext | undefined> = [];
     const result = await collect(
       input({
@@ -2226,47 +2228,67 @@ describe("read-only orchestrator execution", () => {
                   url: "https://linkedin.com/posts/source-4",
                 },
               ],
+              reserve_posts: [
+                {
+                  id: "source-5",
+                  text: "Reserve source five.",
+                  url: "https://linkedin.com/posts/source-5",
+                },
+              ],
             }
           : { ok: true, count: 0, posts: [] };
       },
       {
-        runDraftEngine: async function* (draftInput) {
-          writerInputs.push(draftInput);
-          const count =
-            draftInput.task?.kind === "multi"
-              ? draftInput.task.expectedCount
-              : 1;
-          for (let index = 1; index <= count; index += 1) {
-            yield {
-              type: "artifact",
-              artifact: {
-                id: `draft-${index}`,
-                kind: "post",
-                title: `Draft ${index}`,
-                body: `${COMPLETE_POST}\n\nVariant ${index}.`,
-              },
-            } satisfies AgentEvent;
-          }
-          yield {
-            type: "done",
-            terminalReason: "done",
-            message: {
-              content: "Here are four drafts.",
-              tool_calls: null,
-              artifacts: [],
-              toolMessages: [],
-              inputTokens: 210,
-              outputTokens: 380,
-            },
-          } satisfies AgentEvent;
+        executeModeledDraftBatch: async (batchInput) => {
+          batchInputs.push(batchInput);
+          return {
+            kind: "complete" as const,
+            batchId: "batch-1",
+            artifacts: Array.from({ length: batchInput.count }, (_, sourceIndex) => {
+              const source =
+                sourceIndex === 2
+                  ? batchInput.sources[batchInput.count]
+                  : batchInput.sources[sourceIndex];
+              return {
+                id: `draft-${sourceIndex + 1}`,
+                kind: "post" as const,
+                title: `Draft ${sourceIndex + 1}`,
+                body: `${COMPLETE_POST}\n\nVariant ${sourceIndex + 1}.`,
+                meta: {
+                  modeled_draft_slot_id: `batch-1:slot-${sourceIndex}`,
+                  modeled_draft_slot_index: sourceIndex,
+                  source: "model_source",
+                  source_post_id: source.id,
+                  source_url: source.url,
+                  research_provenance: {
+                    route: "workspace_research",
+                    sources: [
+                      {
+                        id: source.id,
+                        kind: "workspace_post",
+                        url: source.url,
+                      },
+                    ],
+                  },
+                },
+              };
+            }),
+            usage: { inputTokens: 210, outputTokens: 380 },
+          };
         },
       },
     );
 
-    expect(writerInputs[0]?.task).toMatchObject({
-      kind: "multi",
-      expectedCount: 4,
-      groundedSourceMode: "one_to_one",
+    expect(batchInputs[0]).toMatchObject({
+      operationKey: "root-user-message-1",
+      count: 4,
+      sources: [
+        { id: "source-1" },
+        { id: "source-2" },
+        { id: "source-3" },
+        { id: "source-4" },
+        { id: "source-5" },
+      ],
     });
     expect(selectionContexts).toEqual([
       expect.objectContaining({
@@ -2274,6 +2296,7 @@ describe("read-only orchestrator execution", () => {
           userInstruction,
           voiceAnchors: { identity: ["Direct and useful."] },
         },
+        modelingReserveCount: 4,
       }),
     ]);
     const artifacts = result.events.filter(
@@ -2298,7 +2321,7 @@ describe("read-only orchestrator execution", () => {
           : null,
       ),
     ).toEqual(
-      [1, 2, 3, 4].map((index) => ({
+      [1, 2, 5, 4].map((index) => ({
         sourcePostId: `source-${index}`,
         sourceUrl: `https://linkedin.com/posts/source-${index}`,
         provenance: {

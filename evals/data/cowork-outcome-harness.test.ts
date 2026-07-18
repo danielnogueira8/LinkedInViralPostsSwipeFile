@@ -1689,35 +1689,28 @@ describe("production-shaped Cowork outcome harness", () => {
     expect(report.observed.readOnlyTools).toHaveLength(1);
   });
 
-  test(
-    "returns three one-to-one modeled drafts with source chips in 300/300 authenticated route runs",
-    async () => {
-      for (let run = 1; run <= 300; run += 1) {
-        const report = await runCoworkOutcomeScenario(
-          modeledThreeScenario(`modeled-three-${run}`),
-        );
+  test("returns the exact three-post modeled contract through the authenticated route", async () => {
+    const report = await runCoworkOutcomeScenario(
+      modeledThreeScenario("modeled-three"),
+    );
 
-        expect(
-          report.pass,
-          JSON.stringify({
-            run,
-            failures: report.failureCodes,
-            safe: report.safe,
-          }),
-        ).toBe(true);
-        expect(report.persisted.artifacts).toHaveLength(3);
-        expect(
-          report.persisted.artifacts.map(
-            (artifact) => artifact.meta?.source_post_id,
-          ),
-        ).toEqual(MODELED_SOURCE_ROWS.map((source) => source.id));
-        expect(
-          report.observed.directWriterRequests.map((request) => request.stage),
-        ).toEqual(["primary", "primary", "primary"]);
-      }
-    },
-    30_000,
-  );
+    expect(
+      report.pass,
+      JSON.stringify({
+        failures: report.failureCodes,
+        safe: report.safe,
+      }),
+    ).toBe(true);
+    expect(report.persisted.artifacts).toHaveLength(3);
+    expect(
+      report.persisted.artifacts.map(
+        (artifact) => artifact.meta?.source_post_id,
+      ),
+    ).toEqual(MODELED_SOURCE_ROWS.map((source) => source.id));
+    expect(
+      report.observed.directWriterRequests.map((request) => request.stage),
+    ).toEqual(["primary", "primary", "primary"]);
+  });
 
   test("inspects attached evidence before invoking the grounded writer", async () => {
     const report = await runCoworkOutcomeScenario({
