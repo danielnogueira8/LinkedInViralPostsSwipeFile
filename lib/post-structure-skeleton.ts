@@ -23,6 +23,17 @@ import { extractHookHeuristic } from "./hooks";
 
 const LIST_MARKER_RE = /^\s*([-•→*]|\d+\.)\s+/;
 
+export type StructureLayoutBeat = {
+  kind: "prose" | "list";
+  marker: string | null;
+};
+
+// One shared writer contract for every modeled-post path. The reference block
+// supplies the concrete layout; this policy explains how to use it without
+// assuming every source has the same hook/body/list/close arrangement.
+export const SOURCE_STRUCTURE_REFERENCE_POLICY =
+  "A SOURCE STRUCTURE REFERENCE may follow the source data. It names the source's detected beats, their order, and approximate sizes. Reproduce that detected sequence; treat sizes as a reference point, not a limit, and deviate freely when the user's content genuinely needs it. Keep a list in the same position and use the same marker when present. Never drop, add, or reorder a beat to compensate for a size change.";
+
 export type StructureSkeleton = {
   // Number of paragraphs (blank-line-separated blocks), matching the
   // codebase's paragraph convention (lib/voice-mechanics.ts paragraphsOf).
@@ -40,6 +51,10 @@ export type StructureSkeleton = {
   totalChars: number;
   // Total word count of the source body.
   totalWords: number;
+  // Ordered visual runs in the source. Unlike aggregate paragraph/list
+  // counts, this preserves where a list appears (opening, middle, closing)
+  // and whether prose resumes after it.
+  layout: StructureLayoutBeat[];
 };
 
 function paragraphsOf(text: string): string[] {
@@ -76,6 +91,25 @@ function listStatsOf(text: string): { hasList: boolean; marker: string | null; i
   return { hasList: itemCount > 0, marker, itemCount };
 }
 
+function layoutOf(text: string): StructureLayoutBeat[] {
+  const layout: StructureLayoutBeat[] = [];
+  for (const line of text.split("\n")) {
+    if (!line.trim()) continue;
+    const match = line.match(LIST_MARKER_RE);
+    const marker = match ? (/^\d+\./.test(match[1]) ? "1." : match[1]) : null;
+    const kind: StructureLayoutBeat["kind"] = match ? "list" : "prose";
+    const previous = layout[layout.length - 1];
+    if (
+      !previous ||
+      previous.kind !== kind ||
+      (kind === "list" && previous.marker !== marker)
+    ) {
+      layout.push({ kind, marker });
+    }
+  }
+  return layout;
+}
+
 // Measure a single source post's structure. Pure, synchronous, no model
 // call. Never throws — an empty/whitespace-only input yields a zeroed
 // skeleton (callers should check totalChars > 0 before using it).
@@ -91,6 +125,7 @@ export function computeStructureSkeleton(sourceText: string): StructureSkeleton 
     hookChars: hook?.length ?? 0,
     totalChars: text.length,
     totalWords: wordCount(text),
+    layout: layoutOf(text),
   };
 }
 
@@ -117,13 +152,23 @@ export function renderStructureSkeletonReference(skeleton: StructureSkeleton): s
       `List: the source uses a "${skeleton.listMarker}" list with ${skeleton.listItemCount} item${skeleton.listItemCount === 1 ? "" : "s"} — keep the list (same marker), but the item count and each item's length can flex to fit your content.`,
     );
   }
+  const layout = skeleton.layout
+    .map((beat) =>
+      beat.kind === "list" ? `"${beat.marker}" list` : "prose",
+    )
+    .join(" → ");
+  if (layout) {
+    beats.push(
+      `Layout: ${layout}. Keep this sequence: a list belongs in the same part of the post, and prose before or after it remains before or after it.`,
+    );
+  }
   beats.push(
     `Overall length: the source is about ${approxWords(skeleton.totalChars)} — a rough target, not a cap. Write shorter or longer if your content genuinely needs it.`,
   );
   return [
     "SOURCE STRUCTURE REFERENCE (soft — approximate sizes, not exact targets):",
     ...beats.map((b) => `- ${b}`),
-    "Reproduce the BEATS and their ORDER (hook, then body, then list if present, then close) — that's what must match. The exact word/line counts above are reference points: stay close when it's natural, deviate freely when your content needs more or less room. Never drop, add, or reorder a beat to compensate for a size change.",
+    SOURCE_STRUCTURE_REFERENCE_POLICY,
   ].join("\n");
 }
 
@@ -141,7 +186,13 @@ function approxWords(chars: number): string {
 
 export type StructureMismatch = {
   // Short machine-readable reason, used to build the retry instruction.
-  code: "missing_list" | "wrong_list_marker" | "too_short" | "too_long";
+  code:
+    | "missing_list"
+    | "wrong_list_marker"
+    | "layout_order"
+    | "paragraph_density"
+    | "too_short"
+    | "too_long";
   message: string;
 };
 
@@ -179,6 +230,31 @@ export function checkStructureMatch(
       message: `The source post's list uses "${source.listMarker}" as its marker — the draft used "${draft.listMarker}" instead.`,
     };
   }
+  const sourceLayout = source.layout.map((beat) => beat.kind).join(",");
+  const draftLayout = draft.layout.map((beat) => beat.kind).join(",");
+  if (sourceLayout !== draftLayout) {
+    return {
+      code: "layout_order",
+      message: `The source's visual sequence is ${sourceLayout || "empty"}, but the draft's is ${draftLayout || "empty"}. Keep prose and list beats in the same order.`,
+    };
+  }
+  // Paragraph density is a strong visual-format cue for longer posts, but a
+  // short source does not have enough paragraphs for a ratio to be meaningful.
+  // Keep this deliberately broad so an adaptation can expand or tighten an
+  // argument without flattening a six-beat post into two dense blocks.
+  if (source.paragraphCount >= 3) {
+    const minimumParagraphs = Math.max(2, Math.floor(source.paragraphCount * 0.6));
+    const maximumParagraphs = Math.ceil(source.paragraphCount * 1.6);
+    if (
+      draft.paragraphCount < minimumParagraphs ||
+      draft.paragraphCount > maximumParagraphs
+    ) {
+      return {
+        code: "paragraph_density",
+        message: `The source uses ${source.paragraphCount} visual paragraphs, but the draft uses ${draft.paragraphCount}. Keep a comparable paragraph density while preserving the user's content.`,
+      };
+    }
+  }
   if (source.totalChars >= MIN_SOURCE_CHARS_FOR_LENGTH_CHECK) {
     const ratio = draft.totalChars / source.totalChars;
     if (ratio < LENGTH_BAND_MIN) {
@@ -207,6 +283,10 @@ export function structureMismatchRepairInstruction(mismatch: StructureMismatch):
       return `Rewrite the draft to include a list (matching the source's marker), while keeping the rest of your original content and voice.`;
     case "wrong_list_marker":
       return `Rewrite the draft's list to use the source's marker instead of your own.`;
+    case "layout_order":
+      return "Rewrite the draft so its prose and list beats occur in the same order as the source. Keep the content original and user-relevant.";
+    case "paragraph_density":
+      return "Rewrite the draft with a paragraph density closer to the source. Preserve the source's visual pacing while keeping the content original and user-relevant.";
     case "too_short":
       return `Rewrite the draft with more substance so its length is closer to the source's — expand the body, not the hook or CTA alone.`;
     case "too_long":

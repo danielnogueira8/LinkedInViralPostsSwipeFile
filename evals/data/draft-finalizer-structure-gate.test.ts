@@ -135,6 +135,49 @@ describe("DraftFinalizer — coarse structure gate", () => {
     expect(result.ok).toBe(true);
   });
 
+  test("revalidates the final body after a specialist rewrites its layout", async () => {
+    const specialists = passThroughSpecialists();
+    specialists.checkSameness = vi.fn(async () => ({
+      body: [
+        "Here's what changed for me this year:",
+        "",
+        "That's the whole story, worth roughly a hundred words so the length ratio checks behave predictably across every test in this file for consistency and balance across cases too.",
+        "",
+        "→ shorter onboarding",
+        "→ stronger retention",
+        "→ better satisfaction scores",
+      ].join("\n"),
+      rewrote: true,
+      overlapMarkers: [],
+      reason: "Changed the angle.",
+    }));
+    const finalizer = createDraftFinalizer({
+      workspaceId: "ws-1",
+      priorDrafts: [],
+      specialists,
+      structureSkeleton: computeStructureSkeleton(SOURCE_WITH_LIST),
+    });
+    const structurallyValidCandidate = [
+      "Here's what changed for me this year:",
+      "→ shorter onboarding",
+      "→ stronger retention",
+      "→ better satisfaction scores",
+      "",
+      "That's the whole story, worth roughly a hundred words so the length ratio checks behave predictably across every test in this file for consistency and balance across cases too.",
+    ].join("\n");
+
+    const result = await finalizer.finalize({
+      origin: "render_tool",
+      body: structurallyValidCandidate,
+      provenance: PROVENANCE,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      rejection: { code: "structure_mismatch" },
+    });
+  });
+
   test("a wildly shorter draft is rejected with structure_mismatch (too_short)", async () => {
     const source = "word ".repeat(100).trim();
     const specialists = passThroughSpecialists();

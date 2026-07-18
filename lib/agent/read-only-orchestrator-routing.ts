@@ -117,6 +117,9 @@ function requestedSourceMinimum(instruction: string): number {
   // preferable to drafting from fewer sources than the user explicitly asked
   // us to compare.
   const explicitCount = requestedExplicitSourceCount(instruction);
+  // A one-to-one rewrite needs exactly one source. Requiring a second source
+  // would turn a clear modeling request into an unnecessary synthesis task.
+  if (explicitCount === 1) return 1;
   return Math.max(
     2,
     /\bseveral\b/i.test(instruction) ? 3 : 2,
@@ -389,7 +392,8 @@ export function compileReadOnlyOrchestratorRoute(
   const needsWorkspaceResearch =
     (explicitlyRequestsSourceDiscovery(instruction) ||
       OUTPUT_FIRST_SOURCE_DISCOVERY_RE.test(instruction)) &&
-    MULTI_SOURCE_RE.test(researchClause);
+    (MULTI_SOURCE_RE.test(researchClause) ||
+      workspaceDraftSourceMode === "one_to_one");
   const complexRead =
     needsFileInspection ||
     needsNews ||

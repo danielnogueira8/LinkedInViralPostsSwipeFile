@@ -38,6 +38,7 @@ import { looksCorruptedDraft } from "@/lib/agent/specialists/nets";
 // Sameness detector — mirrors the run.ts render path so batch drafts get the
 // same "you keep leaning on the same identity anchors" rewrite protection.
 import { checkSameness } from "@/lib/agent/specialists/sameness";
+import { reviewModeledDraft } from "@/lib/agent/specialists/source-fidelity";
 // Freshness tracker — the UPSTREAM anti-repetition constraint injected into
 // the generation prompt so drafts avoid overused anchors from the start.
 import { computeFreshnessConstraint } from "@/lib/agent/specialists/freshness";
@@ -392,14 +393,11 @@ async function adaptedSourceIds(
 
 // The user-turn instruction: the source post to adapt.
 //
-// The structure reference (lib/post-structure-skeleton.ts) is injected only
-// for regular posts — lead-magnet posts are an intentionally different,
-// CTA-driven genre this soft-reference feature doesn't target.
 function buildDraftUser(source: SourcePost, isLeadMagnet: boolean): string {
   const kind = isLeadMagnet ? "lead-magnet (giveaway/CTA) post" : "post";
-  const structureBlock = isLeadMagnet
-    ? ""
-    : renderStructureSkeletonReference(computeStructureSkeleton(source.text));
+  const structureBlock = renderStructureSkeletonReference(
+    computeStructureSkeleton(source.text),
+  );
   const parts = [
     `Here is a high-performing ${kind} from the user's niche. Adapt its structure and angle into a fresh ${kind} in the user's voice, about the user's own expertise:`,
     ['"""', source.text.slice(0, 4000), '"""'].join("\n"),
@@ -814,23 +812,24 @@ async function generateDraftBody(opts: {
     }).body;
     const truncated = res.finishReason === "length";
     const corruption = looksCorruptedDraft(cleaned);
-    // Coarse deterministic structure gate — MODELED (non-lead-magnet) posts
-    // only, matching buildDraftUser's own genre split. Deliberately narrow:
+    // Coarse deterministic structure gate for every modeled source, including
+    // lead magnets. Their CTA can differ in content, but the source format is
+    // still the contract being adapted. Deliberately narrow:
     // see lib/post-structure-skeleton.ts checkStructureMatch for exactly
     // what it does and doesn't catch. Computed only when the earlier checks
     // already passed, so a truncated/corrupted/wrong-length draft doesn't
     // waste a structure comparison.
-    const structureMismatch =
+    let structureMismatch =
       !truncated &&
       !corruption &&
       cleaned.length >= MIN_DRAFT_BODY &&
-      cleaned.length <= MAX_DRAFT_BODY &&
-      !opts.isLeadMagnet
-        ? checkStructureMatch(
-            computeStructureSkeleton(opts.source.text),
-            computeStructureSkeleton(cleaned),
-          )
-        : null;
+      cleaned.length <= MAX_DRAFT_BODY
+      ? checkStructureMatch(
+          computeStructureSkeleton(opts.source.text),
+          computeStructureSkeleton(cleaned),
+        )
+      : null;
+    let fidelityRepairInstruction: string | null = null;
     if (
       !truncated &&
       !corruption &&
@@ -910,7 +909,41 @@ async function generateDraftBody(opts: {
           );
         }
       }
-      return { body: cleaned, usage, model };
+      // The editor and sameness specialist are allowed to rewrite the whole
+      // body. Validate the final bytes, not the pre-rewrite candidate, so a
+      // post cannot pass the source-layout gate and then drift before it ships.
+      structureMismatch = checkStructureMatch(
+        computeStructureSkeleton(opts.source.text),
+        computeStructureSkeleton(cleaned),
+      );
+      const fidelity =
+        !structureMismatch && opts.workspaceId
+          ? await reviewModeledDraft({
+              sourceText: opts.source.text,
+              draftBody: cleaned,
+              userRequest:
+                "Adapt this source post into an original, user-relevant weekly LinkedIn draft.",
+              verifiedContext:
+                typeof opts.system === "string"
+                  ? opts.system
+                  : opts.system
+                      .map((block) => (block.type === "text" ? block.text : ""))
+                      .join("\n\n"),
+              workspaceId: opts.workspaceId,
+              signal: opts.signal,
+            })
+          : null;
+      if (!structureMismatch && (!fidelity || fidelity.pass)) {
+        return { body: cleaned, usage, model };
+      }
+      if (fidelity && !fidelity.pass) {
+        fidelityRepairInstruction = [
+          fidelity.reasons.join(" "),
+          fidelity.retryInstruction,
+        ]
+          .filter(Boolean)
+          .join(" ");
+      }
     }
     // Retry once with a corrective nudge; a second failure → skip this source.
     if (attempt === 0) {
@@ -924,7 +957,8 @@ async function generateDraftBody(opts: {
               ? `That draft contained corrupted transport markup (${corruption}). Write ONE clean, complete, publish-ready LinkedIn post in the user's voice — body only, with no JSON, code fences, tool markup, permalink fragments, or preamble.`
               : structureMismatch
                 ? `${structureMismatch.message} ${structureMismatchRepairInstruction(structureMismatch)}`
-            : `That wasn't a usable post (${cleaned.length} chars). Write ONE complete, publish-ready LinkedIn post in the user's voice — body only, no preamble.`,
+                : fidelityRepairInstruction ||
+                  `That wasn't a usable post (${cleaned.length} chars). Write ONE complete, publish-ready LinkedIn post in the user's voice — body only, no preamble.`,
         },
       );
     }

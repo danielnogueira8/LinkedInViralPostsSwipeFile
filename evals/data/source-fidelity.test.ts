@@ -253,15 +253,10 @@ describe("source-fidelity reviewer prompt", () => {
     );
   });
 
-  test("is lenient by design — a loose original adaptation must PASS, only unrelated FAILS", () => {
-    // The gate must not fail a good original draft for merely adapting loosely
-    // (the intent is "borrow the mechanics, original content"). Lock the
-    // when-in-doubt-PASS posture + the fail-only-when-unrelated rule so a future
-    // edit can't quietly tighten it back into the "no draft" failure mode.
-    expect(SOURCE_FIDELITY_SYSTEM_PROMPT).toMatch(/when in doubt,?\s*pass/i);
-    expect(SOURCE_FIDELITY_SYSTEM_PROMPT).toMatch(/loose[^.]*adaptation is a pass/i);
-    expect(SOURCE_FIDELITY_SYSTEM_PROMPT).toMatch(/fail only/i);
-    // Must NOT punish the things the user explicitly asked for.
-    expect(SOURCE_FIDELITY_SYSTEM_PROMPT).toMatch(/do not fail for/i);
+  test("requires source-specific variables to be replaced or generalized for the user", () => {
+    expect(SOURCE_FIDELITY_SYSTEM_PROMPT).toMatch(/source-specific variables/i);
+    expect(SOURCE_FIDELITY_SYSTEM_PROMPT).toMatch(/user-relevant/i);
+    expect(SOURCE_FIDELITY_SYSTEM_PROMPT).toMatch(/generalize/i);
+    expect(SOURCE_FIDELITY_SYSTEM_PROMPT).not.toMatch(/loose[^.]*adaptation is a pass/i);
   });
 });

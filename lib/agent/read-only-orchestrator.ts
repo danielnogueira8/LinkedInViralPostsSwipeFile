@@ -2457,12 +2457,19 @@ async function* runReadOnlyOrchestratorCore(
   let childReportedError = false;
   const bufferedArtifacts: Array<Extract<AgentEvent, { type: "artifact" }>> = [];
   const expectedDrafts = input.route.expectedDrafts ?? 1;
+  const modeledWorkspaceSource =
+    input.route.workspaceDraftSourceMode === "one_to_one" &&
+    groundedSources.length === 1 &&
+    groundedSources[0].kind === "workspace_post"
+      ? { id: groundedSources[0].id, text: groundedSources[0].text }
+      : undefined;
   try {
     for await (const event of deps.runDraftEngine(
       {
         ...input.draftEngineInput,
         telemetry: input.telemetry ?? input.draftEngineInput.telemetry,
         userInstruction: authoritativeInstruction,
+        ...(modeledWorkspaceSource ? { enableStructureGate: true } : {}),
         task:
           expectedDrafts > 1
             ? {
@@ -2472,7 +2479,12 @@ async function* runReadOnlyOrchestratorCore(
                 groundedSourceMode:
                   input.route.workspaceDraftSourceMode ?? "shared",
               }
-            : {
+            : modeledWorkspaceSource
+              ? {
+                  kind: "source",
+                  source: modeledWorkspaceSource,
+                }
+              : {
                 kind: "grounded",
                 sources: groundedSources,
               },
