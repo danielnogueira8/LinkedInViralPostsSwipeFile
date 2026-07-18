@@ -2203,10 +2203,26 @@ describe("read-only orchestrator execution", () => {
               ok: true,
               count: 4,
               posts: [
-                { id: "source-1", text: "Source one." },
-                { id: "source-2", text: "Source two." },
-                { id: "source-3", text: "Source three." },
-                { id: "source-4", text: "Source four." },
+                {
+                  id: "source-1",
+                  text: "Source one.",
+                  url: "https://linkedin.com/posts/source-1",
+                },
+                {
+                  id: "source-2",
+                  text: "Source two.",
+                  url: "https://linkedin.com/posts/source-2",
+                },
+                {
+                  id: "source-3",
+                  text: "Source three.",
+                  url: "https://linkedin.com/posts/source-3",
+                },
+                {
+                  id: "source-4",
+                  text: "Source four.",
+                  url: "https://linkedin.com/posts/source-4",
+                },
               ],
             }
           : { ok: true, count: 0, posts: [] },
@@ -2247,6 +2263,7 @@ describe("read-only orchestrator execution", () => {
     expect(writerInputs[0]?.task).toMatchObject({
       kind: "multi",
       expectedCount: 4,
+      groundedSourceMode: "one_to_one",
     });
     const artifacts = result.events.filter(
       (event) => event.type === "artifact",
@@ -2259,6 +2276,31 @@ describe("read-only orchestrator execution", () => {
         ),
       ).size,
     ).toBe(4);
+    expect(
+      artifacts.map((event) =>
+        event.type === "artifact"
+          ? {
+              sourcePostId: event.artifact.meta?.source_post_id,
+              sourceUrl: event.artifact.meta?.source_url,
+              provenance: event.artifact.meta?.research_provenance,
+            }
+          : null,
+      ),
+    ).toEqual(
+      [1, 2, 3, 4].map((index) => ({
+        sourcePostId: `source-${index}`,
+        sourceUrl: `https://linkedin.com/posts/source-${index}`,
+        provenance: {
+          route: "workspace_research",
+          sources: [
+            expect.objectContaining({
+              id: `source-${index}`,
+              url: `https://linkedin.com/posts/source-${index}`,
+            }),
+          ],
+        },
+      })),
+    );
   });
 
   test.each([

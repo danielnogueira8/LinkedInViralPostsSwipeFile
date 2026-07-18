@@ -29,6 +29,7 @@ export type ReadOnlyOrchestratorRoute = {
   workspaceSearchMode?: "diverse" | "strict_top";
   workspaceSince?: "1d" | "7d" | "30d";
   workspacePostType?: PostType;
+  workspaceDraftSourceMode?: "one_to_one";
   clarificationReason?: "outcome" | "research_topic";
   authoritativeInstruction?: string;
 };
@@ -374,6 +375,11 @@ export function compileReadOnlyOrchestratorRoute(
     (!hasPluralPostTarget || explicitDraftCount !== null);
   const expectedDrafts =
     explicitDraftCount ?? transformationDraftCount ?? 1;
+  const workspaceDraftSourceMode =
+    transformationDraftCount !== null &&
+    expectedDrafts === transformationDraftCount
+      ? ("one_to_one" as const)
+      : undefined;
   const needsFileInspection =
     input.hasAttachments && FILE_INSPECTION_RE.test(instruction);
   const needsNews =
@@ -472,6 +478,7 @@ export function compileReadOnlyOrchestratorRoute(
         ? { workspaceSince: requestedWorkspaceWindow(researchClause) }
         : {}),
       ...(workspacePostType ? { workspacePostType } : {}),
+      ...(workspaceDraftSourceMode ? { workspaceDraftSourceMode } : {}),
     };
   }
   if (RESEARCH_RE.test(instruction)) {

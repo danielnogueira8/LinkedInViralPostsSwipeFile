@@ -1000,6 +1000,13 @@ describe("DraftEngine", () => {
             publishedAt: "2026-07-14",
             text: "OpenAI announced a verified product update.",
           },
+          {
+            id: "pricing-research",
+            kind: "web",
+            title: "Pricing research",
+            url: "https://example.com/pricing-research",
+            text: "Verified pricing research found a second useful pattern.",
+          },
         ],
       },
     });
@@ -1012,9 +1019,98 @@ describe("DraftEngine", () => {
     expect(JSON.stringify(writer.requests[0].messages)).toContain(
       "OpenAI announced a verified product update",
     );
+    expect(JSON.stringify(writer.requests[0].messages)).toContain(
+      "Verified pricing research found a second useful pattern",
+    );
+    expect(JSON.stringify(writer.requests[1].messages)).toContain(
+      "OpenAI announced a verified product update",
+    );
+    expect(JSON.stringify(writer.requests[1].messages)).toContain(
+      "Verified pricing research found a second useful pattern",
+    );
     expect(JSON.stringify(writer.requests[1].messages)).toContain(
       "ALREADY ACCEPTED VERSION DATA",
     );
+  });
+
+  test("assigns each one-to-one grounded draft exactly one verified source", async () => {
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(100, 70) },
+      {
+        text: DISTINCT_COMPLETE_POST,
+        finishReason: "stop",
+        usage: usage(120, 80),
+      },
+    ]);
+    const result = await collect(writer, {
+      userInstruction:
+        "Find two regular posts and rewrite them into two original posts.",
+      task: {
+        kind: "multi",
+        expectedCount: 2,
+        groundedSourceMode: "one_to_one",
+        groundedSources: [
+          {
+            id: "source-one",
+            kind: "workspace_post",
+            url: "https://linkedin.com/posts/source-one",
+            text: "The first source has a unique one-source structure.",
+          },
+          {
+            id: "source-two",
+            kind: "workspace_post",
+            url: "https://linkedin.com/posts/source-two",
+            text: "The second source has a different one-source structure.",
+          },
+        ],
+      },
+    });
+
+    expect(artifacts(result.events)).toHaveLength(2);
+    expect(JSON.stringify(writer.requests[0].messages)).toContain(
+      "The first source has a unique one-source structure",
+    );
+    expect(JSON.stringify(writer.requests[0].messages)).not.toContain(
+      "The second source has a different one-source structure",
+    );
+    expect(JSON.stringify(writer.requests[1].messages)).toContain(
+      "The second source has a different one-source structure",
+    );
+    expect(JSON.stringify(writer.requests[1].messages)).not.toContain(
+      "The first source has a unique one-source structure",
+    );
+  });
+
+  test("rejects an incomplete one-to-one source assignment before writing", async () => {
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(100, 70) },
+    ]);
+    const result = await collect(writer, {
+      userInstruction:
+        "Find two regular posts and rewrite them into two original posts.",
+      task: {
+        kind: "multi",
+        expectedCount: 2,
+        groundedSourceMode: "one_to_one",
+        groundedSources: [
+          {
+            id: "only-source",
+            kind: "workspace_post",
+            url: "https://linkedin.com/posts/only-source",
+            text: "Only one verified source was returned.",
+          },
+        ],
+      },
+    });
+
+    expect(writer.requests).toHaveLength(0);
+    expect(result.events).toContainEqual(
+      expect.objectContaining({
+        type: "error",
+        code: "draft_engine_source_assignment",
+      }),
+    );
+    expect(artifacts(result.events)).toHaveLength(0);
   });
 
   test("repairs a near-duplicate multi version instead of accepting a synonym-only change", async () => {

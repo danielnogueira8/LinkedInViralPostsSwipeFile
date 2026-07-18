@@ -149,6 +149,7 @@ export type DraftEngineTask =
       expectedCount: number;
       source?: DraftEngineSource;
       groundedSources?: DraftEngineGroundedSource[];
+      groundedSourceMode?: "shared" | "one_to_one";
     }
   | {
       kind: "grounded";
@@ -996,6 +997,21 @@ async function* runMultiDraftEngine(
     yield engineDone(failureMessage, inputTokens, outputTokens);
     return;
   }
+  if (
+    task.groundedSourceMode === "one_to_one" &&
+    (task.groundedSources?.length ?? 0) < task.expectedCount
+  ) {
+    const failureMessage =
+      "I couldn’t match every requested draft to its own verified source, so no partial set was created.";
+    yield {
+      type: "error",
+      code: "draft_engine_source_assignment",
+      message: failureMessage,
+      recovery: "continue",
+    };
+    yield engineDone(failureMessage, inputTokens, outputTokens);
+    return;
+  }
 
   const deadlineController = new AbortController();
   const deadline = setTimeout(
@@ -1057,10 +1073,15 @@ async function* runMultiDraftEngine(
         }
         return externallyTransformed;
       };
-      const childTask: DraftEngineTask = task.groundedSources
+      const childGroundedSources = task.groundedSources
+        ? task.groundedSourceMode === "one_to_one"
+          ? task.groundedSources.slice(index - 1, index)
+          : task.groundedSources
+        : undefined;
+      const childTask: DraftEngineTask = childGroundedSources
         ? {
             kind: "grounded",
-            sources: task.groundedSources,
+            sources: childGroundedSources,
             variation: { index, count: task.expectedCount, previousBodies },
           }
         : task.source
