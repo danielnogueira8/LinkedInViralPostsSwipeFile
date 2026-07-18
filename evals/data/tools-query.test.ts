@@ -567,6 +567,56 @@ describe("search_viral_posts — query shape", () => {
     expect(r2.posts[0].id).toBe("v3");
   });
 
+  // Regression: this is the EXACT call shape chat-turn.ts's
+  // resolveFindAndModelSource / run.ts's directSourceModelingTurn prefetch
+  // issue for "model a top post" ({ post_type, sort: "viral", dir: "desc",
+  // limit: 1 }) — the user-reported "always the same post" bug. Only
+  // limit:5 was covered above; limit:1 (the real production shape) had no
+  // coverage at all.
+  test("MIMIC query with limit:1 (the real 'model a top post' shape) still rotates", async () => {
+    const args = { post_type: "regular", sort: "viral", dir: "desc", limit: 1 };
+
+    dbRef.current = makeFakeSupabase(VIRAL_POOL);
+    const r0 = (await runTool("search_viral_posts", args, "ws-l1-0")) as { posts: { id: string }[] };
+    expect(r0.posts[0].id).toBe("v1");
+
+    dbRef.current = makeFakeSupabase({ ...VIRAL_POOL, settings: { single: { value: { n: 1 } } } });
+    const r1 = (await runTool("search_viral_posts", args, "ws-l1-1")) as { posts: { id: string }[] };
+    expect(r1.posts[0].id).toBe("v2");
+
+    dbRef.current = makeFakeSupabase({ ...VIRAL_POOL, settings: { single: { value: { n: 5 } } } });
+    const r5 = (await runTool("search_viral_posts", args, "ws-l1-5")) as { posts: { id: string }[] };
+    expect(r5.posts[0].id).toBe("v6");
+  });
+
+  // Regression: nextRotationCursor's advancing upsert used a bare `await`
+  // that never checked Supabase's `{ error }` result — a write that fails
+  // (RLS drift, a bad column, a transient DB error surfaced as `{error}`
+  // rather than a thrown exception) looked identical to success, so the
+  // cursor never actually advanced and every call kept reading back the
+  // same stored value: the deterministic "always the same post" failure
+  // mode. The read must still succeed and the tool must not throw even
+  // when the write silently fails.
+  test("a failed cursor-advance write doesn't crash the tool or corrupt the read", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    dbRef.current = makeFakeSupabase({
+      ...VIRAL_POOL,
+      settings: {
+        single: { value: { n: 3 } },
+        errors: [null, { message: "permission denied for table settings" }],
+      },
+    });
+    const res = (await runTool(
+      "search_viral_posts",
+      { post_type: "regular", sort: "viral", dir: "desc", limit: 1 },
+      "ws-write-fail",
+    )) as { ok: boolean; posts: { id: string }[] };
+    expect(res.ok).toBe(true);
+    expect(res.posts[0].id).toBe("v4"); // still rotates using the READ value (cursor 3)
+    expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
   test("ANALYTICAL query (explicit sort/filter) keeps its strict order — no rotation", async () => {
     // An intentional "top by reactions" is a deliberate ranking; even with a
     // non-zero stored cursor it must return the strict viral-desc order.
