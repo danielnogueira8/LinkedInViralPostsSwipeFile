@@ -18,7 +18,10 @@ import {
   ensureBiographicalFacts,
   renderBackstoryBlock,
 } from "@/lib/agent/specialists/backstory";
-import { mechanicsFingerprintToRules } from "@/lib/voice-mechanics";
+import {
+  mechanicsFingerprintToRules,
+  voiceKeepsEmDashes,
+} from "@/lib/voice-mechanics";
 import { retryRead } from "@/lib/retry-read";
 
 // ---------------------------------------------------------------------------
@@ -802,6 +805,12 @@ export async function loadVoiceProfile(
         ...(mechanicsRules.length
           ? { mechanics_rules: mechanicsRules }
           : {}),
+        // Machine-readable flag for the agent loop's voice-aware editor: this
+        // writer genuinely uses em dashes, so the stripEmDashes anti-slop net
+        // must back off for their drafts. Only present when true.
+        ...(voiceKeepsEmDashes(profile.mechanics_fingerprint)
+          ? { keep_em_dashes: true }
+          : {}),
         source_post_count: data.source_post_count,
         model: data.model,
         generated_at: data.generated_at,
@@ -816,6 +825,20 @@ export async function loadVoiceProfile(
     }
     return err((e as Error).message);
   }
+}
+
+// Does a get_voice ToolResult say this writer genuinely uses em dashes?
+// (voice.keep_em_dashes is written by loadVoiceProfile above, from the
+// measured mechanics fingerprint — see lib/voice-mechanics.ts
+// voiceKeepsEmDashes.) Shared by the chat loop and the draft engine so both
+// read the flag identically.
+export function voiceResultKeepsEmDashes(
+  result: ToolResult | null | undefined,
+): boolean {
+  if (!result || result.ok !== true) return false;
+  const voice = result.voice;
+  if (!voice || typeof voice !== "object" || Array.isArray(voice)) return false;
+  return (voice as Record<string, unknown>).keep_em_dashes === true;
 }
 
 const getVoice: ToolFn = async (_args, workspaceId, signal, context) =>

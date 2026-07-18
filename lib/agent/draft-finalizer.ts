@@ -86,7 +86,11 @@ type SamenessResult = Awaited<ReturnType<typeof checkSameness>>;
 type SourceFidelityResult = Awaited<ReturnType<typeof reviewModeledDraft>>;
 
 export type DraftFinalizerSpecialists = {
-  edit: (body: string, kind: "post") => EditorResult;
+  edit: (
+    body: string,
+    kind: "post",
+    editOpts?: { keepEmDashes?: boolean },
+  ) => EditorResult;
   repairAiTells: (opts: {
     body: string;
     workspaceId?: string;
@@ -94,6 +98,7 @@ export type DraftFinalizerSpecialists = {
     maxChars?: number;
     adapterHealth?: AdapterHealthRegistry;
     telemetry?: CoworkTurnTelemetry;
+    keepEmDashes?: boolean;
   }) => Promise<RepairResult>;
   checkSameness: (opts: {
     body: string;
@@ -178,6 +183,12 @@ export type DraftFinalizerOptions = {
   onDecision?: (decision: DraftFinalizerDecision) => void;
   adapterHealth?: AdapterHealthRegistry;
   telemetry?: CoworkTurnTelemetry;
+  // Voice-aware editor options, passed BY REFERENCE to every specialists.edit
+  // / repairAiTells call. Callers may mutate the object after the finalizer is
+  // created (e.g. the chat loop flips keepEmDashes when a mid-turn get_voice
+  // reveals the writer genuinely uses em dashes) and later finalize calls see
+  // the current value.
+  editOptions?: { keepEmDashes?: boolean };
 };
 
 export type DraftCandidateTransform = (
@@ -466,7 +477,7 @@ export function createDraftFinalizer(
       );
     }
 
-    const edited = specialists.edit(rawBody, "post");
+    const edited = specialists.edit(rawBody, "post", options.editOptions);
     let body = edited.body;
     const repair = await specialists.repairAiTells({
       body,
@@ -475,6 +486,7 @@ export function createDraftFinalizer(
       maxChars: options.policy?.characterRange?.max ?? maxPostChars,
       adapterHealth: options.adapterHealth,
       telemetry: options.telemetry,
+      keepEmDashes: options.editOptions?.keepEmDashes,
     });
     body = repair.body;
     if (aborted()) {

@@ -50,6 +50,12 @@ export type EditDraftOptions = {
   // Force-enable/disable the model pass regardless of env (mainly for tests).
   // When undefined, falls back to the AGENT_AI_TELL_EDITOR_MODEL env flag.
   useModel?: boolean;
+  // Voice-aware em-dash suppression: when the user's measured mechanics
+  // fingerprint shows they GENUINELY write with em dashes
+  // (voiceKeepsEmDashes, lib/voice-mechanics.ts), stripping them makes
+  // drafts LESS like the user — so the net backs off. Default false: the em
+  // dash stays the AI tell it is for everyone else.
+  keepEmDashes?: boolean;
 };
 
 // Is the optional model rewrite enabled? Off unless explicitly turned on, so the
@@ -96,13 +102,14 @@ export type EditableKind = "post" | "hook";
 function deterministicClean(
   body: string,
   kind: EditableKind = "post",
+  keepEmDashes = false,
 ): {
   body: string;
   fixed: AiTellCategory[];
 } {
   const fixed: AiTellCategory[] = [];
 
-  const deAshed = stripEmDashes(body);
+  const deAshed = keepEmDashes ? body : stripEmDashes(body);
   if (deAshed !== body) fixed.push("em_dash");
 
   // Hooks are a single opener line — never inject paragraph breaks; just trim
@@ -133,8 +140,9 @@ function deterministicClean(
 export function editDraftBodySync(
   input: string,
   kind: EditableKind = "post",
+  editOpts: Pick<EditDraftOptions, "keepEmDashes"> = {},
 ): EditorResult {
-  const { body, fixed } = deterministicClean(input, kind);
+  const { body, fixed } = deterministicClean(input, kind, editOpts.keepEmDashes);
   return {
     body,
     changed: body !== input,
@@ -150,7 +158,7 @@ export async function editDraftBody(
   input: string,
   opts: EditDraftOptions = {},
 ): Promise<EditorResult> {
-  const { body: cleaned, fixed } = deterministicClean(input);
+  const { body: cleaned, fixed } = deterministicClean(input, "post", opts.keepEmDashes);
 
   // Detect the UNSAFE tells that remain after the deterministic pass. These are
   // reported (and, only if the model pass is on, targeted for rewrite).
