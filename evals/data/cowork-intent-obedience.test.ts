@@ -58,9 +58,16 @@ vi.mock("@/lib/batch/pattern-brief", () => ({
   renderPatternBriefBlock: () => "",
 }));
 
-vi.mock("@/lib/agent/specialists/source-fidelity", () => ({
-  reviewModeledDraft: async () => ({ pass: true, retryInstruction: "" }),
-}));
+vi.mock("@/lib/agent/specialists/source-fidelity", async (importOriginal) => {
+  const original =
+    await importOriginal<
+      typeof import("@/lib/agent/specialists/source-fidelity")
+    >();
+  return {
+    ...original,
+    reviewModeledDraft: async () => ({ outcome: "verified" }),
+  };
+});
 
 vi.mock("@/lib/agent/tools", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/agent/tools")>();

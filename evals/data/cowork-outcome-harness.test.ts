@@ -128,6 +128,85 @@ function originalScenario(
   };
 }
 
+const MODELED_SOURCE_ROWS = [
+  {
+    id: "source-one",
+    text: [
+      "Useful work becomes visible when the opening makes one direct promise.",
+      "The explanation builds trust by showing how the principle works in practice for the reader.",
+      "A concrete middle connects the idea to a decision the audience already faces.",
+      "Finish with a decision they can make today.",
+    ].join("\n\n"),
+    post_url: "https://linkedin.com/posts/source-one",
+  },
+  {
+    id: "source-two",
+    text: [
+      "A portable reputation begins with evidence people can understand.",
+      "The center of the story connects that evidence to a problem the audience already recognizes.",
+      "End by naming the habit that keeps the asset growing.",
+    ].join("\n\n"),
+    post_url: "https://linkedin.com/posts/source-two",
+  },
+  {
+    id: "source-three",
+    text: [
+      "Strong communication starts by narrowing the idea to one useful claim.",
+      "Each following paragraph should move the reasoning forward without adding a second competing lesson.",
+      "A final explanation shows why the idea matters in the reader's own work.",
+      "Close by turning the claim into a practical next step.",
+    ].join("\n\n"),
+    post_url: "https://linkedin.com/posts/source-three",
+  },
+] as const;
+
+function modeledThreeScenario(id: string): CoworkOutcomeScenario {
+  return {
+    id,
+    request: {
+      message:
+        "Find 3 top-performing regular posts in my swipe file and rewrite it in my voice on a topic that fits me. Keep its structure and hook style, but make the content original",
+    },
+    model: {
+      provider: { rounds: [] },
+      sourceFidelity: [
+        { outcome: "verified" },
+        { outcome: "verified" },
+        { outcome: "verified" },
+      ],
+      readOnlyOrchestrator: {
+        plans: [
+          {
+            model: PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL,
+            toolArgs: null,
+            usage: usage(90, 18, 0.001),
+          },
+        ],
+        toolResults: {
+          search_viral_posts: [
+            {
+              ok: true,
+              count: MODELED_SOURCE_ROWS.length,
+              posts: [...MODELED_SOURCE_ROWS],
+            },
+          ],
+        },
+      },
+      directWriter: [
+        { text: COMPLETE_POST, finishReason: "stop", usage: usage(210, 95, 0.00019) },
+        { text: SECOND_POST, finishReason: "stop", usage: usage(220, 100, 0.0002) },
+        { text: THIRD_POST, finishReason: "stop", usage: usage(240, 105, 0.00023) },
+      ],
+    },
+    expected: {
+      terminal: "done",
+      artifactBodies: [COMPLETE_POST, SECOND_POST, THIRD_POST],
+      actionNames: ["search_viral_posts", "write_grounded_post"],
+      sourcePostIds: MODELED_SOURCE_ROWS.map((source) => source.id),
+    },
+  };
+}
+
 describe("production-shaped Cowork outcome harness", () => {
   test("runs the real agent through the authenticated route and canonical persistence", async () => {
     const report = await runCoworkOutcomeScenario(
@@ -1610,6 +1689,36 @@ describe("production-shaped Cowork outcome harness", () => {
     expect(report.observed.readOnlyTools).toHaveLength(1);
   });
 
+  test(
+    "returns three one-to-one modeled drafts with source chips in 300/300 authenticated route runs",
+    async () => {
+      for (let run = 1; run <= 300; run += 1) {
+        const report = await runCoworkOutcomeScenario(
+          modeledThreeScenario(`modeled-three-${run}`),
+        );
+
+        expect(
+          report.pass,
+          JSON.stringify({
+            run,
+            failures: report.failureCodes,
+            safe: report.safe,
+          }),
+        ).toBe(true);
+        expect(report.persisted.artifacts).toHaveLength(3);
+        expect(
+          report.persisted.artifacts.map(
+            (artifact) => artifact.meta?.source_post_id,
+          ),
+        ).toEqual(MODELED_SOURCE_ROWS.map((source) => source.id));
+        expect(
+          report.observed.directWriterRequests.map((request) => request.stage),
+        ).toEqual(["primary", "primary", "primary"]);
+      }
+    },
+    30_000,
+  );
+
   test("inspects attached evidence before invoking the grounded writer", async () => {
     const report = await runCoworkOutcomeScenario({
       id: "read-only-orchestrator-file",
@@ -2049,11 +2158,11 @@ describe("production-shaped Cowork outcome harness", () => {
       model: {
         sourceFidelity: [
           {
-            pass: false,
+            outcome: "rejected",
             reasons: ["The first candidate did not preserve the source shape."],
             retryInstruction: "Use the source's hook-to-payoff sequence.",
           },
-          { pass: true, reasons: [], retryInstruction: "" },
+          { outcome: "verified" },
         ],
         provider: { rounds: [] },
         directWriter: [

@@ -128,7 +128,7 @@ function scenario(
       },
       model: {
         provider: { rounds: [] },
-        sourceFidelity: [{ pass: true, reasons: [], retryInstruction: "" }],
+        sourceFidelity: [{ outcome: "verified" }],
         directWriter: [
           { text: COMPLETE_POST, finishReason: "stop", usage: usage(250, 120, 0.00025) },
         ],

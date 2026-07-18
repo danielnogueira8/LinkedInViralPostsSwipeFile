@@ -21,7 +21,10 @@ import {
   normalizeDraftKey,
 } from "@/lib/agent/specialists/nets";
 import { checkSameness } from "@/lib/agent/specialists/sameness";
-import { reviewModeledDraft } from "@/lib/agent/specialists/source-fidelity";
+import {
+  reviewModeledDraft,
+  sourceFidelityRejection,
+} from "@/lib/agent/specialists/source-fidelity";
 import { RENDER_POST_MAX_CHARS } from "@/lib/agent/tools";
 import type { RecentDraft } from "@/lib/recent-drafts";
 import type { AdapterHealthRegistry } from "@/lib/agent/adapter-health";
@@ -48,6 +51,7 @@ export const DRAFT_FINALIZER_REJECTION_CODES = [
   "provenance_unverified",
   "source_unavailable",
   "source_fidelity",
+  "source_fidelity_unavailable",
   "structure_mismatch",
   "duplicate",
   "count_complete",
@@ -689,15 +693,15 @@ export function createDraftFinalizer(
           edits,
         );
       }
-      if (!fidelity.pass) {
+      const fidelityRejection = sourceFidelityRejection(fidelity);
+      if (fidelityRejection) {
         return emit(
           candidate,
           reject(
             candidate.origin,
-            "source_fidelity",
-            fidelity.reasons.join(" ") ||
-              "The draft did not preserve the selected source's writing mechanics.",
-            fidelity.retryInstruction,
+            fidelityRejection.code,
+            fidelityRejection.reason,
+            fidelityRejection.retryInstruction,
           ),
           sourceVerified,
           edits,

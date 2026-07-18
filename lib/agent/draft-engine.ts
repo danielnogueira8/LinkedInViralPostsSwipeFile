@@ -34,7 +34,10 @@ import {
   RENDER_POST_MAX_CHARS,
   voiceResultKeepsEmDashes,
 } from "@/lib/agent/tools";
-import { reviewModeledDraft } from "@/lib/agent/specialists/source-fidelity";
+import {
+  reviewModeledDraft,
+  sourceFidelityRejection,
+} from "@/lib/agent/specialists/source-fidelity";
 import { INJECTION_GUARD, wrapUntrustedDelimited } from "@/lib/agent/untrusted";
 import {
   computeStructureSkeleton,
@@ -907,12 +910,15 @@ async function finalizePartialResponse(
         "Partial-deliverable finalization was cancelled.",
       );
     }
-    if (!fidelity.pass) {
+    const fidelityRejection = sourceFidelityRejection(
+      fidelity,
+      task.spec.kind,
+    );
+    if (fidelityRejection) {
       return rejectedPartial(
-        "source_fidelity",
-        fidelity.reasons.join(" ") ||
-          "The output did not preserve the selected source's writing mechanics.",
-        fidelity.retryInstruction,
+        fidelityRejection.code,
+        fidelityRejection.reason,
+        fidelityRejection.retryInstruction,
       );
     }
   }
@@ -1544,6 +1550,28 @@ export async function* runDraftEngine(
   ): AgentEvent =>
     engineDone(content, inputTokens, outputTokens, terminalReason);
 
+  const unavailableFidelityEvents = (
+    result: FinalizedDraftEngineResult,
+  ): AgentEvent[] | null => {
+    if (
+      result.ok ||
+      result.rejection.code !== "source_fidelity_unavailable"
+    ) {
+      return null;
+    }
+    const message =
+      "I couldn’t verify source fidelity because both reviewers were unavailable. Please continue to retry the draft.";
+    return [
+      {
+        type: "error",
+        code: "draft_engine_source_fidelity_unavailable",
+        message,
+        recovery: "continue",
+      },
+      finish(message),
+    ];
+  };
+
   const finalize = async (
     response: DraftWriterResponse,
   ): Promise<FinalizedDraftEngineResult> => {
@@ -1715,6 +1743,11 @@ export async function* runDraftEngine(
           yield interrupted();
           return;
         }
+        const unavailableEvents = unavailableFidelityEvents(result);
+        if (unavailableEvents) {
+          for (const event of unavailableEvents) yield event;
+          return;
+        }
         fallbackMessages = repairMessages(
           baseMessages,
           primary.text,
@@ -1756,6 +1789,12 @@ export async function* runDraftEngine(
               (await cancellationRequestedNow())
             ) {
               yield interrupted();
+              return;
+            }
+            const unavailableEvents =
+              unavailableFidelityEvents(repairedResult);
+            if (unavailableEvents) {
+              for (const event of unavailableEvents) yield event;
               return;
             }
             fallbackMessages = repairMessages(
@@ -1808,6 +1847,12 @@ export async function* runDraftEngine(
             (await cancellationRequestedNow())
           ) {
             yield interrupted();
+            return;
+          }
+          const unavailableEvents =
+            unavailableFidelityEvents(fallbackResult);
+          if (unavailableEvents) {
+            for (const event of unavailableEvents) yield event;
             return;
           }
         }

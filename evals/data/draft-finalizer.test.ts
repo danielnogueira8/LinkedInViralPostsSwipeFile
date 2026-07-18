@@ -37,9 +37,7 @@ function passThroughSpecialists(): DraftFinalizerSpecialists {
       reason: "",
     })),
     reviewSourceFidelity: vi.fn(async () => ({
-      pass: true,
-      reasons: [],
-      retryInstruction: "",
+      outcome: "verified" as const,
     })),
   };
 }
@@ -230,7 +228,7 @@ describe("DraftFinalizer", () => {
   test("owns verified provenance and source-fidelity review", async () => {
     const specialists = passThroughSpecialists();
     specialists.reviewSourceFidelity = vi.fn(async () => ({
-      pass: false,
+      outcome: "rejected" as const,
       reasons: ["unrelated structure"],
       retryInstruction: "Mirror the source's problem-solution shape.",
     }));
@@ -328,11 +326,11 @@ describe("DraftFinalizer", () => {
     specialists.reviewSourceFidelity = vi
       .fn()
       .mockResolvedValueOnce({
-        pass: false,
+        outcome: "rejected",
         reasons: ["unrelated structure"],
         retryInstruction: "Use the source shape.",
       })
-      .mockResolvedValue({ pass: true, reasons: [], retryInstruction: "" });
+      .mockResolvedValue({ outcome: "verified" });
     const finalizer = createDraftFinalizer({
       workspaceId: "ws-1",
       policy: policy(),
@@ -378,7 +376,7 @@ describe("DraftFinalizer", () => {
       reason: "rewrote the ending",
     }));
     specialists.reviewSourceFidelity = vi.fn(async ({ draftBody }) => ({
-      pass: false,
+      outcome: "rejected" as const,
       reasons: [`Reviewed final bytes: ${draftBody === rewrittenBody}`],
       retryInstruction: "Restore the verified source progression.",
     }));
@@ -487,10 +485,46 @@ describe("DraftFinalizer", () => {
     expect(specialists.reviewSourceFidelity).toHaveBeenCalledOnce();
   });
 
+  test("does not present reviewer unavailability as verified source fidelity", async () => {
+    const specialists = passThroughSpecialists();
+    specialists.reviewSourceFidelity = vi.fn(async () => ({
+      outcome: "unavailable" as const,
+    }));
+    const finalizer = createDraftFinalizer({
+      workspaceId: "ws-1",
+      policy: policy(),
+      priorDrafts: [],
+      specialists,
+    });
+
+    const result = await finalizer.finalize({
+      origin: "direct_writer",
+      body: COMPLETE_POST,
+      provenance: {
+        required: true,
+        requestedSourceId: "11111111-1111-4111-8111-111111111111",
+        discoveredSources: [
+          {
+            id: "11111111-1111-4111-8111-111111111111",
+            text: "A distinct source post with verified provenance.",
+          },
+        ],
+        userRequest: "Model this source as an original post.",
+        verifiedContext: "USER: Model this source as an original post.",
+      },
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      rejection: { code: "source_fidelity_unavailable" },
+    });
+    expect(finalizer.acceptedCount()).toBe(0);
+  });
+
   test("never bypasses source review for a different retry or missing source text", async () => {
     const specialists = passThroughSpecialists();
     specialists.reviewSourceFidelity = vi.fn(async () => ({
-      pass: false,
+      outcome: "rejected" as const,
       reasons: ["Still unfaithful."],
       retryInstruction: "Try again.",
     }));

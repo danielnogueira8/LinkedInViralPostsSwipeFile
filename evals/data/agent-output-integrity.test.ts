@@ -12,14 +12,11 @@ import {
   __internal,
 } from "../run-agent-test";
 import { INCOMPLETE_ORIGINAL_POST_BODY } from "../fixtures/cowork-incidents";
+import type { SourceFidelityVerdict } from "@/lib/agent/specialists/source-fidelity";
 
 const fidelityStub = vi.hoisted(() => ({
   calls: 0,
-  verdicts: [] as Array<{
-    pass: boolean;
-    reasons: string[];
-    retryInstruction: string;
-  }>,
+  verdicts: [] as SourceFidelityVerdict[],
 }));
 
 // Record every body handed to the model AI-tell repair + let a test mark the
@@ -65,16 +62,19 @@ vi.mock("@/lib/agent/cancel", async (importOriginal) => {
   const orig = await importOriginal<typeof import("@/lib/agent/cancel")>();
   return { ...orig, isCancelRequested: __internal.stubIsCancelRequested };
 });
-vi.mock("@/lib/agent/specialists/source-fidelity", () => ({
-  reviewModeledDraft: async () => {
-    fidelityStub.calls++;
-    return fidelityStub.verdicts.shift() ?? {
-      pass: true,
-      reasons: [],
-      retryInstruction: "",
-    };
-  },
-}));
+vi.mock("@/lib/agent/specialists/source-fidelity", async (importOriginal) => {
+  const original =
+    await importOriginal<
+      typeof import("@/lib/agent/specialists/source-fidelity")
+    >();
+  return {
+    ...original,
+    reviewModeledDraft: async () => {
+      fidelityStub.calls++;
+      return fidelityStub.verdicts.shift() ?? { outcome: "verified" };
+    },
+  };
+});
 vi.mock("@/lib/agent/specialists/ai-tell-repair", () => ({
   repairAiTells: async ({ body }: { body: string }) => {
     aiTellStub.bodies.push(body);
@@ -168,7 +168,7 @@ describe("production lead-magnet replay — bounded, ordered, complete, sourced"
     setCiteResult(sourceId);
     fidelityStub.verdicts = [
       {
-        pass: false,
+        outcome: "rejected",
         reasons: ["The first draft ignored the source shape."],
         retryInstruction: "Use the source's hook and progression.",
       },
@@ -292,7 +292,7 @@ describe("production lead-magnet replay — bounded, ordered, complete, sourced"
     });
     setCiteResult(sourceId);
     fidelityStub.verdicts = [
-      { pass: true, reasons: [], retryInstruction: "" },
+      { outcome: "verified" },
     ];
     setStubScript({
       rounds: [
@@ -631,11 +631,11 @@ test("a draft unrelated to the selected Alex Vacca structure is hidden and retri
   setCiteResult(postId);
   fidelityStub.verdicts = [
     {
-      pass: false,
+      outcome: "rejected",
       reasons: ["The draft replaces the source's before/after argument with a checklist."],
       retryInstruction: "Preserve the easy/hard contrast, before/after inversion, proof, and directive.",
     },
-    { pass: true, reasons: [], retryInstruction: "" },
+    { outcome: "verified" },
   ];
   setStubScript({
     rounds: [
@@ -869,11 +869,11 @@ test("after a fidelity rejection, a verified forced-final candidate is reviewed 
   });
   fidelityStub.verdicts = [
     {
-      pass: false,
+      outcome: "rejected",
       reasons: ["Unrelated structure."],
       retryInstruction: "Lean closer to the source's shape.",
     },
-    { pass: true, reasons: [], retryInstruction: "" },
+    { outcome: "verified" },
   ];
   setStubScript({
     rounds: [
