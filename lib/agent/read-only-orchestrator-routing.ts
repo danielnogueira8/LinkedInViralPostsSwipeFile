@@ -242,23 +242,32 @@ function instructionWithResolvedResearchTopic(
   );
 }
 
+const CLARIFIED_COUNT_WORDS: Record<string, number> = {
+  a: 1,
+  an: 1,
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+  six: 6,
+};
+
+// The clarifying question is model-generated ("How many LinkedIn posts?"),
+// and a user answering naturally drops the word "LinkedIn" entirely ("3
+// posts", "three posts") — even a bare count ("3", "three") is a normal
+// answer to a "how many" question. Requiring the literal word "LinkedIn"
+// silently failed the whole clarification resolution for these answers,
+// falling the turn out of the orchestrator instead of completing it.
 function clarifiedLinkedInPostCount(answer: string): number | null {
-  const match = answer.trim().match(
-    /^(?:(a|an|one|two|three|four|five|six|[1-6])\s+)?linkedin\s+posts?[.!]?$/i,
-  );
+  const trimmed = answer.trim();
+  const match =
+    trimmed.match(
+      /^(?:(a|an|one|two|three|four|five|six|[1-6])\s+)?(?:linkedin\s+)?posts?[.!]?$/i,
+    ) ?? trimmed.match(/^(a|an|one|two|three|four|five|six|[1-6])[.!]?$/i);
   if (!match) return null;
   const value = match[1]?.toLocaleLowerCase("en-US") ?? "one";
-  const words: Record<string, number> = {
-    a: 1,
-    an: 1,
-    one: 1,
-    two: 2,
-    three: 3,
-    four: 4,
-    five: 5,
-    six: 6,
-  };
-  return Number(value) || words[value] || 1;
+  return Number(value) || CLARIFIED_COUNT_WORDS[value] || 1;
 }
 
 /**
