@@ -408,7 +408,7 @@ describe("get_top_from_batch — result shape", () => {
     expect(queryFor(dbRef.current, "posts")).toBeUndefined();
   });
 
-  test("get_top_from_batch applies modelability only with server-confirmed modeling context", async () => {
+  test("get_top_from_batch preserves newest-first retrieval for modeled sources", async () => {
     const pool = {
       runs: { single: RUN },
       posts: {
@@ -451,13 +451,9 @@ That makes the lesson practical and repeatable for the reader.`,
       { limit: 1 },
       "ws-top-modeled",
       undefined,
-      {
-        modelingSelection: {
-          userInstruction: "Model a content strategy post.",
-        },
-      },
+      { autoSelectModelingSources: true },
     )) as { posts: { id: string }[] };
-    expect(modeled.posts[0].id).toBe("modelable");
+    expect(modeled.posts[0].id).toBe("recent-caption");
   });
 });
 
@@ -706,7 +702,7 @@ describe("search_viral_posts — query shape", () => {
     expect(res.posts[0].id).toBe("v1"); // unrotated top
   });
 
-  test("server-confirmed modeling selects a relevant modelable source from the strict-top pool, while analysis stays exact", async () => {
+  test("server-confirmed modeling preserves strict-top retrieval order while overfetching reserves", async () => {
     const structured = (topic: string) => `${topic} works better with a clear system.
 
 1. Start with the real constraint.
@@ -739,13 +735,9 @@ That makes the lesson practical and repeatable for the reader.`;
       { sort: "viral", dir: "desc", strict_ranking: true, limit: 1 },
       "ws-modeled",
       undefined,
-      {
-        modelingSelection: {
-          userInstruction: "Model a post about content strategy in my voice.",
-        },
-      },
+      { autoSelectModelingSources: true },
     )) as { posts: { id: string }[] };
-    expect(modeled.posts.map((post) => post.id)).toEqual(["relevant-content"]);
+    expect(modeled.posts.map((post) => post.id)).toEqual(["highest-crypto"]);
     expect(
       queryFor(dbRef.current, "posts")!.filters.find(
         (filter) => filter.method === "limit",
@@ -766,7 +758,59 @@ That makes the lesson practical and repeatable for the reader.`;
     ).toBe(1);
   });
 
-  test("one-to-one auto-modeling requires a source URL without changing generic retrieval", async () => {
+  test("exact-count modeling returns a complete pool without semantic topic filtering", async () => {
+    const structured = (topic: string) => `${topic} becomes useful when the system is concrete.
+
+1. Start with the reader's real constraint.
+2. Explain one change they can make.
+3. Close with a practical next action.
+
+That gives the reader enough detail to apply the lesson without losing its nuance.`;
+    dbRef.current = makeFakeSupabase({
+      posts: {
+        rows: [
+          {
+            id: "content-source",
+            text: structured("Content writing"),
+            post_url: "https://linkedin.com/posts/content-source",
+            viral_score: 100,
+            accounts: [{ name: "Writer", niche: "content" }],
+          },
+          {
+            id: "sales-source",
+            text: structured("Enterprise sales"),
+            post_url: "https://linkedin.com/posts/sales-source",
+            viral_score: 90,
+            accounts: [{ name: "Seller", niche: "sales" }],
+          },
+          {
+            id: "leadership-source",
+            text: structured("Founder leadership"),
+            post_url: "https://linkedin.com/posts/leadership-source",
+            viral_score: 80,
+            accounts: [{ name: "Founder", niche: "leadership" }],
+          },
+        ],
+      },
+    });
+
+    const result = (await runTool(
+      "search_viral_posts",
+      { sort: "viral", dir: "desc", strict_ranking: true, limit: 3 },
+      "ws-exact-modeled-pool",
+      undefined,
+      { autoSelectModelingSources: true },
+    )) as { ok: boolean; posts: { id: string }[] };
+
+    expect(result.ok).toBe(true);
+    expect(result.posts.map((post) => post.id)).toEqual([
+      "content-source",
+      "sales-source",
+      "leadership-source",
+    ]);
+  });
+
+  test("one-to-one auto-modeling keeps ranked sources when attribution URLs are missing", async () => {
     const structured = (topic: string) => `${topic} works better with a clear system.
 
 1. Start with the real constraint.
@@ -801,17 +845,12 @@ That makes the lesson practical and repeatable for the reader.`;
       { sort: "viral", dir: "desc", strict_ranking: true, limit: 1 },
       "ws-modeled-url",
       undefined,
-      {
-        modelingSelection: {
-          userInstruction: "Model a content strategy post in my voice.",
-        },
-        requireResolvableModelingSourceUrl: true,
-      },
+      { autoSelectModelingSources: true },
     )) as { posts: { id: string; post_url?: string }[] };
     expect(modeled.posts).toEqual([
       expect.objectContaining({
-        id: "modelable-with-chip",
-        post_url: "https://www.linkedin.com/posts/modelable-with-chip",
+        id: "top-without-chip",
+        post_url: null,
       }),
     ]);
 

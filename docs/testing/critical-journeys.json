@@ -37,18 +37,29 @@
     {
       "id": "cowork-modeled-source-selection",
       "capability": "Cowork",
-      "invariant": "Server-selected modeled sources are relevant, structurally modelable, race-safe, exact in count, and preserve a one-to-one source chip on every resulting draft.",
+      "invariant": "Server-selected modeled sources preserve retrieval order within stable freshness groups, are objectively usable, race-safe, exact in count, and preserve one-to-one source attribution on every resulting draft.",
       "preferred_seam": "agent-loop",
       "existing_coverage": [
-        "evals/data/modeling-selection-context.test.ts",
         "evals/data/modeling-source-selection.test.ts",
-        "evals/data/post-modelability.test.ts",
         "evals/data/source-modeling-intent.test.ts",
         "evals/data/read-only-orchestrator-routing.test.ts",
         "evals/data/tools-query.test.ts",
         "evals/data/read-only-orchestrator.test.ts",
         "evals/data/cowork-outcome-harness.test.ts",
         "evals/data/migration-106-postgres.test.ts"
+      ],
+      "status": "protected",
+      "follow_up_issue": 999
+    },
+    {
+      "id": "cowork-draft-count-precedence",
+      "capability": "Cowork",
+      "invariant": "Draft count defaults to Auto; Auto follows an explicit message count and otherwise defaults to one, while an explicit 1–5 generation setting overrides contradictory message text across direct, modeled, legacy-fallback, and Retry paths.",
+      "preferred_seam": "api-contract",
+      "existing_coverage": [
+        "evals/data/generation-config.test.ts",
+        "evals/data/cowork-outcome-harness.test.ts",
+        "e2e/generation-settings.spec.ts"
       ],
       "status": "protected",
       "follow_up_issue": 999

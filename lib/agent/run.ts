@@ -51,7 +51,6 @@ import {
   type ContentFeedback,
 } from "@/lib/content-feedback";
 import { INJECTION_GUARD } from "@/lib/agent/untrusted";
-import { modelingSelectionContext } from "@/lib/agent/modeling-selection-context";
 // Pure draft-body anti-slop nets still used directly in the loop (corruption
 // gate, dedup key, tell logging). Body normalization belongs to the
 // deterministic editor pass below rather than the runtime's public surface.
@@ -76,6 +75,7 @@ import {
   DELIVERABLE_TOOL_BY_KIND,
   deliverableProgress,
   deriveDeliverableContract,
+  type DeliverableContract,
 } from "@/lib/agent/deliverable-contract";
 import {
   fetchRecentPostDrafts,
@@ -1578,6 +1578,9 @@ export async function* runAgent(opts: {
   // separately so control policy never needs to infer authority from the
   // richer model-visible content blocks.
   userInstruction?: string;
+  // A server-resolved count contract from the structured generation control.
+  // When present it is authoritative over any contradictory count in text.
+  deliverableContractOverride?: DeliverableContract;
   // The checkpointed action orchestrator owns board mutations in enabled
   // workspaces. The legacy model may still read list_drafts, but it must never
   // receive or execute the unfenced move/schedule tools.
@@ -1646,7 +1649,8 @@ export async function* runAgent(opts: {
   const partialTextDeliverable = requestsPartialTextDeliverable(latestUserMsg);
   const deliverableContract = opts.isRefine || partialTextDeliverable
     ? null
-    : deriveDeliverableContract(latestUserMsg);
+    : opts.deliverableContractOverride ??
+      deriveDeliverableContract(latestUserMsg);
   const forbidsSourceDiscovery =
     explicitlyForbidsSourceDiscovery(latestUserMsg);
   const directPartialTextTurn =
@@ -2217,10 +2221,7 @@ export async function* runAgent(opts: {
         workspaceId,
         turnSignal,
         {
-          modelingSelection: modelingSelectionContext(
-            latestUserMsg,
-            opts.preloadedVoiceResult,
-          ),
+          autoSelectModelingSources: true,
         },
       );
       const ok = result.ok !== false;
@@ -3548,10 +3549,7 @@ export async function* runAgent(opts: {
               adapterHealth: coworkAdapterHealth,
               ...(modelsAutoSelectedSources
                 ? {
-                    modelingSelection: modelingSelectionContext(
-                      latestUserMsg,
-                      opts.preloadedVoiceResult,
-                    ),
+                    autoSelectModelingSources: true,
                   }
                 : {}),
             },

@@ -43,24 +43,16 @@ describe("generation configuration", () => {
         selected: { version: 1, draftCount: 4 },
         explicitMessageDraftCount: null,
       }),
-    ).toEqual({
-      ok: true,
-      config: { version: 1, draftCount: 4, draftCountSource: "ui" },
-    });
+    ).toEqual({ version: 1, draftCount: 4, draftCountSource: "ui" });
   });
 
-  test("rejects a silent conflict between the selector and an explicit message output", () => {
+  test("makes an explicit UI selection authoritative over the message output count", () => {
     expect(
       resolveGenerationConfig({
-        selected: { version: 1, draftCount: 4 },
-        explicitMessageDraftCount: 2,
+        selected: { version: 1, draftCount: 5 },
+        explicitMessageDraftCount: 1,
       }),
-    ).toEqual({
-      ok: false,
-      reason: "draft_count_conflict",
-      selectedDraftCount: 4,
-      messageDraftCount: 2,
-    });
+    ).toEqual({ version: 1, draftCount: 5, draftCountSource: "ui" });
   });
 
   test("records message and default provenance when the selector is Auto", () => {
@@ -68,13 +60,11 @@ describe("generation configuration", () => {
       resolveGenerationConfig({
         explicitMessageDraftCount: 3,
       }),
-    ).toEqual({
-      ok: true,
-      config: { version: 1, draftCount: 3, draftCountSource: "message" },
-    });
+    ).toEqual({ version: 1, draftCount: 3, draftCountSource: "message" });
     expect(resolveGenerationConfig({})).toEqual({
-      ok: true,
-      config: { version: 1, draftCount: 1, draftCountSource: "default" },
+      version: 1,
+      draftCount: 1,
+      draftCountSource: "default",
     });
   });
 

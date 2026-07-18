@@ -206,6 +206,7 @@ import {
   parseCoworkTurnUsage,
   researchSourcesFromArtifact,
 } from "@/lib/cowork-turn-usage";
+import { modeledSourceAttribution } from "@/lib/model-source-attribution";
 import {
   ResearchSources,
   TaskUsageSummary,
@@ -6711,10 +6712,7 @@ function ArtifactCard({
     const v = (artifact.meta as { skills?: unknown } | undefined)?.skills;
     return Array.isArray(v) ? v.filter((s): s is string => typeof s === "string") : [];
   })();
-  const draftSourceUrl = (() => {
-    const v = (artifact.meta as { source_url?: unknown } | undefined)?.source_url;
-    return typeof v === "string" && /^https?:\/\//i.test(v) ? v : null;
-  })();
+  const draftSource = modeledSourceAttribution(artifact.meta);
   const researchSources = researchSourcesFromArtifact(artifact.meta);
   const draftLeadMagnet = artifactLeadMagnet(artifact);
   const draftLeadMagnetHref = leadMagnetHref?.(draftLeadMagnet) ?? null;
@@ -7038,7 +7036,7 @@ function ArtifactCard({
           stamping meta.skills onto the artifact when one was active for the
           turn that produced it (see route's artifact case). Renders even when
           there's no draft label, so a single-draft turn still shows /name. */}
-      {(label || draftSkills.length > 0 || draftSourceUrl) && (
+      {(label || draftSkills.length > 0 || draftSource) && (
         <div className="flex flex-wrap items-center gap-1.5 px-3 pt-2.5 pb-0.5 shrink-0">
           {label && (
             <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
@@ -7049,9 +7047,9 @@ function ArtifactCard({
               the inspiration is always adjacent to the draft label, instead of
               trailing after the skill/lead-magnet chips (where flex-wrap could
               push it to a new line, away from Draft). */}
-          {draftSourceUrl && (
+          {draftSource?.url ? (
             <a
-              href={draftSourceUrl}
+              href={draftSource.url}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1 rounded-full border border-border bg-white px-2.5 py-0.5 text-[10px] font-semibold text-muted-foreground transition-colors hover:border-primary/30 hover:text-primary"
@@ -7061,7 +7059,15 @@ function ArtifactCard({
               Source post
               <ExternalLink className="h-2.5 w-2.5" aria-hidden />
             </a>
-          )}
+          ) : draftSource ? (
+            <span
+              className="inline-flex items-center gap-1 rounded-full border border-border bg-white px-2.5 py-0.5 text-[10px] font-semibold text-muted-foreground"
+              title="This draft is attributed to a swipe-file source whose original link is unavailable."
+            >
+              <FileText className="h-2.5 w-2.5" aria-hidden />
+              Source post
+            </span>
+          ) : null}
           {draftSkills.map((name) => (
             <span
               key={name}

@@ -2387,12 +2387,8 @@ describe("read-only orchestrator execution", () => {
     ]);
     expect(selectionContexts).toEqual([
       expect.objectContaining({
-        modelingSelection: {
-          userInstruction,
-          voiceAnchors: { identity: ["Direct and useful."] },
-        },
+        autoSelectModelingSources: true,
         modelingReserveCount: 4,
-        requireResolvableModelingSourceUrl: true,
       }),
     ]);
     const artifacts = result.events.filter(
