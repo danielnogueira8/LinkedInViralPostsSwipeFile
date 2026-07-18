@@ -78,6 +78,25 @@ beforeEach(() => {
 });
 
 describe("runAgent — feedback memory reaches the model", () => {
+  test("records legacy model cost before yielding the terminal done event", async () => {
+    const telemetry = createCoworkTurnTelemetry({
+      traceId: "legacy-cost-before-done",
+      workspaceId: "ws",
+      route: "legacy_agent",
+      requestedContract: { kind: "partial", expectedCount: 1 },
+    });
+
+    for await (const event of runAgent({
+      history: [{ role: "user", content: "hello there friend" }],
+      workspaceId: "ws",
+      telemetry,
+    })) {
+      if (event.type === "done") {
+        expect(telemetry.snapshotUsage().total_cost_usd).toBe(0.123);
+      }
+    }
+  });
+
   test("legacy Cowork records its model, tokens, cache, cost, and stage outcome", async () => {
     const sink = vi.fn();
     const telemetry = createCoworkTurnTelemetry(

@@ -2116,6 +2116,31 @@ export async function* runAgent(opts: {
   // at end of turn (see the finally block) so they're queryable in Vercel logs:
   // search e.g. `agent_turn AND empty_turn:true` to find every silent failure.
   const turnStartedAt = Date.now();
+  let legacyTelemetryRecorded = false;
+  const recordLegacyTelemetry = () => {
+    if (legacyTelemetryRecorded) return;
+    legacyTelemetryRecorded = true;
+    opts.telemetry?.recordAttempt({
+      stage: "legacy_agent",
+      attempt: 1,
+      model: CHAT_MODEL,
+      provider: "openrouter",
+      outcome:
+        exitReason === "done" ||
+        exitReason === "ask" ||
+        exitReason === "forced_final"
+          ? "accepted"
+          : "failed",
+      ...(exitReason !== "done" ? { reasonCode: exitReason } : {}),
+      latencyMs: Date.now() - turnStartedAt,
+      usage: {
+        prompt_tokens: totalInput,
+        completion_tokens: totalOutput,
+        prompt_tokens_details: { cached_tokens: totalCached },
+        cost: totalChargedCost,
+      },
+    });
+  };
   let roundsCompleted = 0; // actual loop iterations entered (incl. nudge replays)
   let toolCallsFailed = 0; // tool_end events with ok:false (incl. malformed args)
   let hitRoundLimit = false; // exited via the round-bound forced-final path
@@ -4249,6 +4274,11 @@ export async function* runAgent(opts: {
       artifacts: allArtifacts,
       workspaceId,
     });
+    // ChatTurn snapshots task usage as soon as it receives `done`. Recording in
+    // this generator's finally block is too late because yielding pauses here
+    // before finally runs, which made the persisted task cost omit the main
+    // chat generation even though the usage ledger recorded it afterward.
+    recordLegacyTelemetry();
     yield {
       type: "done",
       ...(exitReason === "deadline" ? { terminalReason: "deadline" as const } : {}),
@@ -4302,6 +4332,7 @@ export async function* runAgent(opts: {
         artifacts: allArtifacts,
         workspaceId,
       });
+      recordLegacyTelemetry();
       yield {
         type: "done",
         terminalReason: cancelReason === "deadline" ? "deadline" : "cancelled",
@@ -4334,6 +4365,7 @@ export async function* runAgent(opts: {
         artifacts: allArtifacts,
         workspaceId,
       });
+      recordLegacyTelemetry();
       yield {
         type: "done",
         message: {
@@ -4352,26 +4384,9 @@ export async function* runAgent(opts: {
       yield { type: "error", message: err.message, code: err.code };
     }
   } finally {
-    opts.telemetry?.recordAttempt({
-      stage: "legacy_agent",
-      attempt: 1,
-      model: CHAT_MODEL,
-      provider: "openrouter",
-      outcome:
-        exitReason === "done" ||
-        exitReason === "ask" ||
-        exitReason === "forced_final"
-          ? "accepted"
-          : "failed",
-      ...(exitReason !== "done" ? { reasonCode: exitReason } : {}),
-      latencyMs: Date.now() - turnStartedAt,
-      usage: {
-        prompt_tokens: totalInput,
-        completion_tokens: totalOutput,
-        prompt_tokens_details: { cached_tokens: totalCached },
-        cost: totalChargedCost,
-      },
-    });
+    // Error paths without a terminal `done` still need one attempt, while the
+    // idempotent guard prevents duplicating the pre-done record above.
+    recordLegacyTelemetry();
     // Log usage so chat spend is attributable per workspace. AWAITED (not fire-
     // and-forget) so the cost_usd row is COMMITTED before this generator returns
     // — the stream route releases the turn's in-flight cost reservation
