@@ -135,6 +135,12 @@ export type VoiceProfile = {
     vocabulary: string[];
     punctuation: string;
     rhetorical_devices: string[];
+    // OPTIONAL explicit formatting/mechanics rules — line breaks, whitespace,
+    // lists, emoji, capitalization tics — mirroring creator-styles'
+    // formatting_rules field (lib/agent/creator-style-profile.ts), which
+    // proved a named checklist beats one vague free-text string. Optional so
+    // profiles synthesized before this field existed stay valid.
+    formatting_rules?: string[];
   };
   signature_moves: string[];
   do: string[];
@@ -210,12 +216,18 @@ const VOICE_SYSTEM_BASE =
   '  "topics": ["recurring themes they post about"],\n' +
   '  "positioning": "their distinct angle / what sets them apart",\n' +
   '  "tone": ["concise tone descriptors, e.g. blunt, warm, contrarian, technical"],\n' +
-  '  "format_patterns": { "hook_styles": ["how they open posts"], "structure": "how they build a post", "length": "typical length tendency", "sentence_rhythm": "sentence lengths, cadence, fragments, and transitions", "paragraphing": "paragraph length, line breaks, and whitespace habits", "vocabulary": ["recurring word-choice and register patterns"], "punctuation": "punctuation and capitalization habits", "rhetorical_devices": ["recurring devices such as questions, contrasts, repetition, lists, or asides"] },\n' +
+  '  "format_patterns": { "hook_styles": ["how they open posts"], "structure": "how they build a post", "length": "typical length tendency", "sentence_rhythm": "sentence lengths, cadence, fragments, and transitions", "paragraphing": "paragraph length, line breaks, and whitespace habits", "vocabulary": ["recurring word-choice and register patterns"], "punctuation": "punctuation and capitalization habits", "rhetorical_devices": ["recurring devices such as questions, contrasts, repetition, lists, or asides"], "formatting_rules": ["explicit surface-mechanics rules another writer must follow to pass as this person"] },\n' +
   '  "signature_moves": ["specific recurring tics that make the voice recognizable"],\n' +
   '  "do": ["what to keep when writing in their voice"],\n' +
   '  "dont": ["what to avoid — words/styles they never use"],\n' +
   '  "exemplars": ["2-3 of their strongest posts, copied VERBATIM from the input, as style anchors"]\n' +
   "}\n\n" +
+  "For formatting_rules, extract the SURFACE MECHANICS a copyeditor would notice — each rule one imperative line:\n" +
+  "- capitalization tics (do they lowercase sentence starts? write 'i' instead of 'I'? use ALL CAPS on single words for emphasis — and on WHICH kinds of words?)\n" +
+  "- punctuation habits (em dashes vs commas, ellipses, exclamation marks, comma splices / run-ons as a deliberate pace choice, colons for setup)\n" +
+  "- emoji usage (none at all / sparing / frequent; where they place them — opening a line, closing a line, inline)\n" +
+  "- line breaks, whitespace, and lists (one-sentence paragraphs? blank line between every line? arrow → vs dash - vs bullet • lists?)\n" +
+  "Only state a rule the posts actually demonstrate repeatedly — never a generic style default.\n\n" +
   "Rules: Infer from evidence in the posts only — do not invent biographical facts. Infer these writing mechanics from repeated evidence across several posts, not a one-off quirk. Describe observable prose behavior precisely enough that another writer can reproduce it; do not use vague labels like engaging or authentic. Keep arrays to 3-6 items each. For exemplars, copy real posts from the input verbatim (do not paraphrase). " +
   "Posts are ordered best-first by engagement and each carries a [reactions=N comments=M] tag — prefer the highest-engagement posts as exemplars, since they best represent the voice that resonates with this audience. ";
 
@@ -284,6 +296,12 @@ export function sanitizeVoiceProfile(input: unknown): VoiceProfile {
     dont: strArray(parsed.dont),
     exemplars: strArray(parsed.exemplars, 3),
   };
+  // formatting_rules is optional (added after launch) — only attach when
+  // non-empty so older profiles round-trip without gaining an empty array.
+  const formattingRules = strArray(fmt.formatting_rules);
+  if (formattingRules.length) {
+    profile.format_patterns.formatting_rules = formattingRules;
+  }
   // lead_magnet_style is optional. Only attach it when the input actually
   // carries some lead-magnet content — an empty block (all three arrays blank)
   // is dropped so users without lead magnets keep a clean profile and the UI
@@ -454,6 +472,15 @@ export async function synthesizeVoice(
   // 8000-token GLM-5.2) cost lands in usage_events under the real workspace and
   // counts toward the monthly cost cap — passing "" silently exempts it.
   workspaceId: string,
+  opts: {
+    // Code-measured mechanics numbers over these same posts (lib/voice-
+    // mechanics.ts). When provided, they're handed to the model as ground
+    // truth so its qualitative fields INTERPRET measured facts (e.g. WHICH
+    // words get ALL-CAPS, WHERE emoji sit) instead of re-estimating rates
+    // it's bad at counting. Optional — synthesis without it behaves exactly
+    // as before.
+    mechanicsFingerprint?: MechanicsFingerprint;
+  } = {},
 ): Promise<VoiceProfile> {
   const samples: VoiceSample[] = posts
     .map((p) => (typeof p === "string" ? { text: p } : p))
@@ -485,6 +512,21 @@ export async function synthesizeVoice(
       `=== LEAD MAGNET POSTS ===\n${renderSamples(leadMagnets)}`;
   } else {
     userContent = renderSamples(coreSamples);
+  }
+  // Anchor the model on the code-measured mechanics numbers. These are facts
+  // computed over the same posts (never model-estimated), so the model's job
+  // shifts from "notice the rates" (which LLMs are bad at counting) to
+  // "interpret them" — which words get ALL-CAPS, where the emoji sit, what
+  // the run-ons are doing. Placed BEFORE the posts so the numbers frame the
+  // read-through. Trusted first-party data — NOT wrapped as untrusted (it
+  // never contains creator-authored text).
+  const fp = opts.mechanicsFingerprint;
+  if (fp && fp.sample_size > 0) {
+    userContent =
+      "=== MEASURED MECHANICS (computed in code over these same posts — treat as ground truth; do not re-estimate these rates, INTERPRET them in your qualitative fields and formatting_rules) ===\n" +
+      JSON.stringify(fp) +
+      "\n\n" +
+      userContent;
   }
 
   const system = hasLeadMagnets
@@ -616,7 +658,14 @@ const VOICE_TOOL_PROPS = {
         ...strItems,
         description: "Recurring questions, contrasts, repetition, lists, asides, or other devices",
       },
+      formatting_rules: {
+        ...strItems,
+        description:
+          "Explicit surface-mechanics rules (imperative, one per line): capitalization tics (lowercase sentence starts, lowercase 'i', ALL-CAPS emphasis words), punctuation habits (em dashes, ellipses, exclamations, deliberate run-ons), emoji usage and placement, line breaks / one-sentence paragraphs / list markers. Only rules the posts demonstrate repeatedly.",
+      },
     },
+    // formatting_rules stays OPTIONAL: hasCompleteWritingPatterns doesn't gate
+    // on it, so a model that omits it doesn't trip the retry loop.
     required: [
       "hook_styles",
       "structure",
