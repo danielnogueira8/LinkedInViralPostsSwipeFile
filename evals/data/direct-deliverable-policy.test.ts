@@ -182,7 +182,8 @@ describe("direct deliverable compiler", () => {
     ["Write exactly two complete post variations.", 2],
     ["Give me 3 variations of the attached post.", 3],
     ["Draft four distinct LinkedIn posts about pricing.", 4],
-    ["Write seven posts about pricing.", null],
+    ["Write seven posts about pricing.", 7],
+    ["Write eleven posts about pricing.", null],
     ["Write several posts about pricing.", null],
   ])("compiles full-post count for %s", (instruction, expected) => {
     expect(requestedDirectPostCount(instruction)).toBe(expected);
@@ -201,5 +202,18 @@ describe("direct deliverable compiler", () => {
     "Give me 3 variations of the first sentence.",
   ])("does not compile a post-component count as full posts: %s", (instruction) => {
     expect(requestedDirectPostCount(instruction)).toBeNull();
+  });
+
+  // Regression: "model 3 regular posts" said it fetched/rewrote all 3 but
+  // only rendered 1 — the modeling-verb family (model/mimic/adapt/rewrite/
+  // rework/remix) and the "regular" adjective were both missing from this
+  // count-extraction regex, so no count was ever detected for the phrasing.
+  test.each([
+    ["Model 3 regular posts.", 3],
+    ["Mimic 2 posts.", 2],
+    ["Adapt 4 posts for me.", 4],
+    ["Rework three distinct posts.", 3],
+  ])("compiles full-post count for the modeling-verb family: %s", (instruction, expected) => {
+    expect(requestedDirectPostCount(instruction)).toBe(expected);
   });
 });

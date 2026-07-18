@@ -57,7 +57,7 @@ export function readOnlyOrchestratorEnabledForWorkspace(
 }
 
 const FULL_POST_REQUEST_RE =
-  /\b(?:write|draft|create|generate|make|produce|prepare|give\s+me)\b[\s\S]{0,180}\b(?:linkedin\s+)?posts?\b|\b(?:linkedin\s+)?posts?\b[\s\S]{0,120}\b(?:write|draft|create|generate|make|produce|prepare)\b/i;
+  /\b(?:write|draft|create|generate|make|produce|prepare|give\s+me|model|mimic|adapt|rewrite|rework|remix)\b[\s\S]{0,180}\b(?:linkedin\s+)?posts?\b|\b(?:linkedin\s+)?posts?\b[\s\S]{0,120}\b(?:write|draft|create|generate|make|produce|prepare|model|mimic|adapt|rewrite|rework|remix)\b/i;
 const NEWS_RE =
   /\b(?:news(?:jack(?:ing)?)?|breaking|trending|latest|today(?:'s)?|current|recent)\b[\s\S]{0,100}\b(?:announcement|launch|release|development|update|story|coverage|news|trend)|\b(?:announcement|launch|release|development|update|story|coverage|news|trend)\b[\s\S]{0,100}\b(?:latest|today(?:'s)?|current|recent|breaking|trending)\b/i;
 const EXPLICIT_NEWS_TOPIC_RE = /\b(?:news|newsjack(?:ing)?)\b/i;

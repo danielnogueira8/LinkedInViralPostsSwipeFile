@@ -25,8 +25,24 @@ describe("deriveDeliverableContract", () => {
   });
 
   test("does not contract unsupported or excessive counts", () => {
-    expect(deriveDeliverableContract("Write 10 posts about onboarding")).toBeNull();
-    expect(deriveDeliverableContract("Give me seven posts")).toBeNull();
+    expect(deriveDeliverableContract("Write 15 posts about onboarding")).toBeNull();
+    expect(deriveDeliverableContract("Give me twenty posts")).toBeNull();
+  });
+
+  // The cap was raised 6 -> 10 after a real incident: "model 3 regular
+  // posts" only rendered 1 because no contract existed at all for that
+  // phrasing (see the modeling-verb test below); while fixing that, the
+  // count ceiling itself was widened so a request up to 10 posts is tracked
+  // and enforced instead of silently falling back to no contract.
+  test("contracts counts up through the raised ceiling of 10", () => {
+    expect(deriveDeliverableContract("Write 10 posts about onboarding")).toEqual({
+      kind: "post",
+      expectedCount: 10,
+    });
+    expect(deriveDeliverableContract("Give me seven posts")).toEqual({
+      kind: "post",
+      expectedCount: 7,
+    });
   });
 
   test("does not turn negated or explanatory mentions into generation contracts", () => {
@@ -59,6 +75,31 @@ describe("deriveDeliverableContract", () => {
     expect(
       deriveDeliverableContract("Draft 2 hooks, then write the full post"),
     ).toBeNull();
+  });
+
+  // Regression: "model 3 regular posts" narrated fetching/rewriting all 3 but
+  // only ever rendered 1 — because the "model" verb family (model/mimic/
+  // adapt/rewrite/rework/remix, the same set source-policy.ts and run.ts's
+  // SIMPLE_DRAFT_ACTION_RE already treat as drafting actions) was absent from
+  // this count-extraction regex, so no contract existed to enforce the count
+  // or trigger the in-loop "you still owe N more" nudge.
+  test("derives a contract for the modeling-verb family, not just write/draft/create", () => {
+    expect(deriveDeliverableContract("Model 3 regular posts")).toEqual({
+      kind: "post",
+      expectedCount: 3,
+    });
+    expect(deriveDeliverableContract("Mimic 2 posts")).toEqual({
+      kind: "post",
+      expectedCount: 2,
+    });
+    expect(deriveDeliverableContract("Adapt 3 posts for me")).toEqual({
+      kind: "post",
+      expectedCount: 3,
+    });
+    expect(deriveDeliverableContract("Rework 4 distinct posts")).toEqual({
+      kind: "post",
+      expectedCount: 4,
+    });
   });
 });
 

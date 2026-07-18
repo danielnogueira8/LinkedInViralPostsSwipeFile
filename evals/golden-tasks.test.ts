@@ -981,19 +981,23 @@ describe("regression tests (bug patterns from recent shipped bugs)", () => {
     }
   });
 
-  test("27. per-turn render cap: a turn emitting 8 render_post calls yields at most 6 drafts", async () => {
+  test("27. per-turn render cap: a turn emitting 12 render_post calls yields at most 10 drafts", async () => {
     // Cost-incident regression (chat c3135a1b, 2026-06-25): one turn emitted
     // render_post repeatedly, piling up drafts and burning credits. The hard
-    // MAX_RENDER_TOOLS_PER_TURN cap (=6) must drop the overflow regardless of
-    // the model. Eight render_post calls across rounds → only 6 artifacts.
+    // MAX_RENDER_TOOLS_PER_TURN cap must drop the overflow regardless of the
+    // model. UPDATE ("model 3 posts" only-1-rendered incident, 2026-07-18):
+    // the cap was raised 6 -> 10 as a more generous unstated-count fallback
+    // (an explicit count like "model 3 posts" now overrides it entirely via
+    // deriveDeliverableContract, so this cap only matters when no exact count
+    // was stated). Twelve render_post calls across rounds -> only 10 artifacts.
     // UPDATE (refine-explosion fix): once a DRAFT render is cap-rejected, the
     // loop now BREAKS to the forced-final path instead of letting the model
     // keep trying render_post round after round. So the overflow renders don't
     // all execute — the FIRST over-cap render is rejected, then the turn wraps
-    // up. The cap (6 drafts) still holds; the model just no longer flails.
+    // up. The cap (10 drafts) still holds; the model just no longer flails.
     setStubScript({
       rounds: [
-        ...Array.from({ length: 8 }, (_, i) => ({
+        ...Array.from({ length: 12 }, (_, i) => ({
           toolCalls: [{ name: "render_post", args: { body: `Draft ${i + 1} body.` } }],
         })),
         { text: "Done.", finishReason: "stop" },
@@ -1001,9 +1005,9 @@ describe("regression tests (bug patterns from recent shipped bugs)", () => {
     });
     const t = await runStubbedAgent();
     const posts = t.artifacts.filter((a) => a.kind === "post");
-    if (posts.length !== 6) {
+    if (posts.length !== 10) {
       throw new Error(
-        `render cap should hold drafts at 6; got ${posts.length} post artifacts`,
+        `render cap should hold drafts at 10; got ${posts.length} post artifacts`,
       );
     }
     // The over-cap render must come back as a failed tool result (ok:false) so
