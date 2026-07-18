@@ -1330,9 +1330,16 @@ describe("read-only orchestrator execution", () => {
   });
 
   test("aborts the entire complex lane at one route-wide deadline", async () => {
-    const planner: ReadOnlyOrchestratorAdapter = {
-      model: PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL,
-      createPlan: ({ signal }) =>
+    const planner = new ScriptedPlanner(PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL, [
+      new Error("the server-compiled route must not invoke a planner"),
+    ]);
+    const result = await collect(
+      input({ route: { kind: "web_research", expectsDraft: true } }),
+      [planner],
+      vi.fn(async () => ({ ok: false })),
+      {
+        turnDeadlineMs: 5,
+        runWebResearch: ({ signal }) =>
         new Promise((_resolve, reject) => {
           signal?.addEventListener(
             "abort",
@@ -1340,14 +1347,10 @@ describe("read-only orchestrator execution", () => {
             { once: true },
           );
         }),
-    };
-    const result = await collect(
-      input({ route: { kind: "web_research", expectsDraft: true } }),
-      [planner],
-      vi.fn(async () => ({ ok: false })),
-      { turnDeadlineMs: 5 },
+      },
     );
 
+    expect(planner.requests).toHaveLength(0);
     const done = result.events.find((event) => event.type === "done");
     expect(done?.type === "done" && done.terminalReason).toBe("deadline");
     expect(done?.type === "done" && done.message.content).toMatch(
@@ -1480,72 +1483,6 @@ describe("read-only orchestrator execution", () => {
     );
   });
 
-  test("switches providers when a valid primary plan drifts from the request", async () => {
-    const primary = new ScriptedPlanner(PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL, [
-      {
-        toolArgs: {
-          actions: [
-            {
-              id: "research",
-              type: "search_web",
-              query: "cryptocurrency prices",
-            },
-            {
-              id: "write",
-              type: "draft_post",
-              evidenceActionIds: ["research"],
-            },
-          ],
-        },
-        usage: usage(80, 20),
-      },
-    ]);
-    const fallback = new ScriptedPlanner(FALLBACK_READ_ONLY_ORCHESTRATOR_MODEL, [
-      {
-        toolArgs: {
-          actions: [
-            { id: "research", type: "search_web", query: "OpenAI announcement" },
-            {
-              id: "write",
-              type: "draft_post",
-              evidenceActionIds: ["research"],
-            },
-          ],
-        },
-        usage: usage(90, 25),
-      },
-    ]);
-    const dispatchedQueries: unknown[] = [];
-
-    const result = await collect(
-      input({ route: { kind: "web_research", expectsDraft: true } }),
-      [primary, fallback],
-      vi.fn(async () => ({ ok: false })),
-      {
-        runWebResearch: async ({ query }) => {
-          dispatchedQueries.push(query);
-          return {
-            attempts: [],
-            sources: [
-              {
-                id: "https://openai.com/news/announcement",
-                kind: "web",
-                title: "OpenAI announcement",
-                url: "https://openai.com/news/announcement",
-                text: "OpenAI announced a product update.",
-              },
-            ],
-          };
-        },
-      },
-    );
-
-    expect(dispatchedQueries).toEqual(["the latest OpenAI announcement"]);
-    expect(primary.requests).toHaveLength(1);
-    expect(fallback.requests).toHaveLength(1);
-    expect(result.draftInputs).toHaveLength(1);
-  });
-
   test("records successful and failed direct research-tool stages safely", async () => {
     const validPlan = () =>
       new ScriptedPlanner(PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL, [
@@ -1657,164 +1594,6 @@ describe("read-only orchestrator execution", () => {
     );
   });
 
-  test("switches from malformed Sonnet output to Gemini before dispatching any action", async () => {
-    const primary = new ScriptedPlanner(PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL, [
-      {
-        toolArgs: {
-          actions: [
-            { id: "write", type: "draft_post", body: COMPLETE_POST },
-          ],
-        },
-        usage: usage(80, 20),
-      },
-    ]);
-    const fallback = new ScriptedPlanner(FALLBACK_READ_ONLY_ORCHESTRATOR_MODEL, [
-      {
-        toolArgs: {
-          actions: [
-            { id: "research", type: "search_web", query: "OpenAI announcement" },
-            {
-              id: "write",
-              type: "draft_post",
-              evidenceActionIds: ["research"],
-            },
-          ],
-        },
-        usage: usage(90, 25),
-      },
-    ]);
-    const dispatched: string[] = [];
-
-    const result = await collect(
-      input({ route: { kind: "web_research", expectsDraft: true } }),
-      [primary, fallback],
-      vi.fn(async () => ({ ok: false })),
-      {
-        runWebResearch: async () => {
-          dispatched.push("search_web");
-          return {
-            attempts: [],
-            sources: [
-              {
-                id: "https://openai.com/news/product",
-                kind: "web",
-                title: "OpenAI launches a verified product",
-                url: "https://openai.com/news/product",
-                text: "The company announced a new product.",
-              },
-            ],
-          };
-        },
-      },
-    );
-
-    expect(primary.requests).toHaveLength(1);
-    expect(fallback.requests).toHaveLength(1);
-    expect(dispatched).toEqual(["search_web"]);
-    expect(result.draftInputs).toHaveLength(1);
-    expect(result.recorded.map((args) => args[1])).toEqual([
-      PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL,
-      FALLBACK_READ_ONLY_ORCHESTRATOR_MODEL,
-    ]);
-    const done = result.events.find((event) => event.type === "done");
-    expect(done?.type === "done" && done.message).toMatchObject({
-      inputTokens: 380,
-      outputTokens: 140,
-    });
-  });
-
-  test("an open primary planner circuit skips Sonnet and keeps the grounded fallback lane", async () => {
-    const health = new AdapterHealthRegistry({
-      minimumSamples: 1,
-      failureRateToOpen: 1,
-      slowRateToOpen: 1,
-      openCooldownMs: 60_000,
-    });
-    health.recordFailure(
-      `cowork_read_only_orchestrator:${PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL}`,
-      "provider_5xx",
-      1,
-    );
-    const primary = new ScriptedPlanner(PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL, [
-      new Error("must not be called"),
-    ]);
-    const fallback = new ScriptedPlanner(FALLBACK_READ_ONLY_ORCHESTRATOR_MODEL, [
-      {
-        toolArgs: {
-          actions: [
-            { id: "research", type: "search_web", query: "OpenAI announcement" },
-            {
-              id: "write",
-              type: "draft_post",
-              evidenceActionIds: ["research"],
-            },
-          ],
-        },
-        usage: usage(90, 25),
-      },
-    ]);
-    const result = await collect(
-      input({ route: { kind: "web_research", expectsDraft: true } }),
-      [primary, fallback],
-      vi.fn(async () => ({ ok: false })),
-      {
-        adapterHealth: health,
-        runWebResearch: async () => ({
-          attempts: [],
-          sources: [
-            {
-              id: "https://openai.com/news/announcement",
-              kind: "web",
-              title: "OpenAI announcement",
-              url: "https://openai.com/news/announcement",
-              text: "OpenAI announced a product update.",
-            },
-          ],
-        }),
-      },
-    );
-
-    expect(primary.requests).toHaveLength(0);
-    expect(fallback.requests).toHaveLength(1);
-    expect(result.draftInputs).toHaveLength(1);
-  });
-
-  test("does not spend on a fallback plan after authoritative usage accounting fails", async () => {
-    const primary = new ScriptedPlanner(PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL, [
-      {
-        toolArgs: {
-          actions: [
-            { id: "research", type: "search_web", query: "OpenAI announcement" },
-            {
-              id: "write",
-              type: "draft_post",
-              evidenceActionIds: ["research"],
-            },
-          ],
-        },
-        usage: usage(80, 20),
-      },
-    ]);
-    const fallback = new ScriptedPlanner(FALLBACK_READ_ONLY_ORCHESTRATOR_MODEL, [
-      { toolArgs: null, usage: usage(90, 25) },
-    ]);
-
-    await expect(
-      collect(
-        input({ route: { kind: "web_research", expectsDraft: true } }),
-        [primary, fallback],
-        vi.fn(async () => ({ ok: true })),
-        {
-          recordUsage: vi.fn(async () => {
-            throw new UsagePersistenceError("usage insert failed");
-          }),
-        },
-      ),
-    ).rejects.toThrow("usage insert failed");
-    expect(primary.requests).toHaveLength(1);
-    expect(fallback.requests).toHaveLength(0);
-  });
-
   test("does not convert evidence usage persistence failure into a recoverable terminal", async () => {
     const planner = new ScriptedPlanner(PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL, [
       {
@@ -1831,8 +1610,6 @@ describe("read-only orchestrator execution", () => {
         usage: usage(80, 20),
       },
     ]);
-    let usageWrites = 0;
-
     await expect(
       collect(
         input({
@@ -1861,10 +1638,7 @@ describe("read-only orchestrator execution", () => {
             ],
           }),
           recordUsage: vi.fn(async () => {
-            usageWrites += 1;
-            if (usageWrites === 2) {
-              throw new UsagePersistenceError("evidence usage insert failed");
-            }
+            throw new UsagePersistenceError("evidence usage insert failed");
           }),
         },
       ),
@@ -2021,50 +1795,38 @@ describe("read-only orchestrator execution", () => {
 
   test("persists completed evidence calls when a later read-only action throws", async () => {
     const planner = new ScriptedPlanner(PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL, [
-      {
-        toolArgs: {
-          actions: [
-            {
-              id: "saas",
-              type: "search_viral_posts",
-              niche: "SaaS",
-              limit: 2,
-            },
-            {
-              id: "pricing",
-              type: "search_viral_posts",
-              niche: "pricing",
-              limit: 2,
-            },
-            {
-              id: "write",
-              type: "draft_post",
-              evidenceActionIds: ["saas", "pricing"],
-            },
-          ],
-        },
-        usage: usage(70, 15),
-      },
+      new Error("the server-compiled route must not invoke a planner"),
     ]);
-    let calls = 0;
     const result = await collect(
       input({
         route: {
-          kind: "workspace_research",
+          kind: "file_inspection",
           expectsDraft: true,
-          minimumSources: 2,
+          allowExternalSearch: true,
+          allowedSearchKinds: ["web"],
         },
         userInstruction:
-          "Find SaaS and pricing posts, compare them, and write one post.",
+          "Inspect the attached pricing brief, verify it on the web, and write one post.",
+        attachmentNames: ["pricing-brief.pdf"],
       }),
       [planner],
-      async () => {
-        calls += 1;
-        if (calls === 2) throw new Error("search unavailable");
-        return {
-          ok: true,
-          posts: [{ id: "source-a", text: "A SaaS pricing lesson." }],
-        };
+      vi.fn(async () => ({ ok: false })),
+      {
+        inspectAttachments: async () => ({
+          attempts: [],
+          complete: true,
+          sources: [
+            {
+              id: "pricing-brief.pdf",
+              kind: "attachment",
+              title: "Pricing brief",
+              text: "A verified pricing lesson from the attached brief.",
+            },
+          ],
+        }),
+        runWebResearch: async () => {
+          throw new Error("search unavailable");
+        },
       },
     );
 
@@ -2468,7 +2230,6 @@ describe("read-only orchestrator execution", () => {
       ],
     });
     expect(result.recorded.map((args) => args[0])).toEqual([
-      "cowork_orchestrator",
       "cowork_web_research",
     ]);
   });

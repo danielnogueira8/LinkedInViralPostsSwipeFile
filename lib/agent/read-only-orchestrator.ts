@@ -23,10 +23,7 @@ import {
   coworkAdapterHealth,
   type AdapterHealthRegistry,
 } from "@/lib/agent/adapter-health";
-import {
-  providerModelAttribution,
-  runCoworkAdapterAttempt,
-} from "@/lib/agent/cowork-adapter-attempt";
+import { runCoworkAdapterAttempt } from "@/lib/agent/cowork-adapter-attempt";
 import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
 import { distinctFallbackModel } from "@/lib/agent/model-routing";
 import {
@@ -668,6 +665,160 @@ export function authoritativeResearchQuery(userInstruction: string): string {
     )
     .trim();
   return (researchClause || normalized).slice(0, 300);
+}
+
+// ---------------------------------------------------------------------------
+// Server-compiled plans. The orchestrator's evidence routes (news, web,
+// workspace, file-inspection) have a fully deterministic action shape: the
+// deterministic router already computed the route kind, minimum sources, time
+// window, allowed search kinds, and expected draft count. An LLM planner
+// contributes nothing the server doesn't already know — its ONLY job was to
+// echo the shape back, and it did so unreliably (a flaky primary + a fallback
+// that mangled the oneOf schema 100% of the time), dead-ending real requests
+// in "I couldn't compile a safe research plan." So we build the plan directly
+// from the route + authoritative instruction, using the SAME derivations the
+// executor and validators already use (authoritativeResearchQuery,
+// authoritativeWorkspaceNicheCandidate). news_research and ambiguous already
+// worked this way; this extends it to web / workspace / file-inspection.
+// A hermetic test (read-only-orchestrator-compiled-plan.test.ts) asserts every
+// compiled plan passes parseReadOnlyPlan + planSearchQueriesMatchInstruction,
+// so routing and planning can never drift apart again.
+// ---------------------------------------------------------------------------
+
+// The authoritative source niche the instruction names (if any), matched to
+// what planSearchQueriesMatchInstruction / the executor will accept. Returns
+// undefined for a cross-niche request (omit niche entirely) — never an
+// invented one.
+function compiledWorkspaceNiche(
+  authoritativeInstruction: string,
+): string | undefined {
+  const candidate = authoritativeWorkspaceNicheCandidate(
+    authoritativeInstruction,
+  );
+  if (!candidate) return undefined;
+  // Validate the niche we're about to emit is one the validator accepts —
+  // authorizedWorkspaceNiche returns the canonical raw form (or undefined if
+  // it wouldn't authorize it). Omitting is always safe (cross-niche).
+  const authorized = authorizedWorkspaceNiche(
+    authoritativeInstruction,
+    candidate.raw,
+  );
+  return typeof authorized === "string" ? authorized : undefined;
+}
+
+// Build the workspace search action(s). One action carrying the full minimum
+// source limit (clamped to the schema's 2..10) satisfies the "limits cover at
+// least minimumSources" validator. The executor overrides niche/since/ranking
+// from the route anyway, so we only need type + limit (+ an authorized niche
+// when the request explicitly names one, so the query-match validator passes).
+function compiledWorkspaceSearchAction(
+  minimumSourcesRaw: number | undefined,
+  authoritativeInstruction: string,
+  id: string,
+): z.infer<typeof SearchViralPostsActionSchema> {
+  const minimumSources = Math.max(2, minimumSourcesRaw ?? 2);
+  const niche = compiledWorkspaceNiche(authoritativeInstruction);
+  return {
+    id,
+    type: "search_viral_posts",
+    limit: Math.min(Math.max(minimumSources, 2), 10),
+    ...(niche ? { niche } : {}),
+  };
+}
+
+/**
+ * Build a validated read-only plan directly from the deterministic route,
+ * with no LLM call. Returns null only for routes we deliberately keep on the
+ * LLM planner (currently: none — ambiguous_read_only is server-compiled by the
+ * caller, and every evidence route is handled here). Every returned plan
+ * passes parseReadOnlyPlan + planSearchQueriesMatchInstruction by construction.
+ */
+export function compileServerReadOnlyPlan(
+  route: ReadOnlyOrchestratorRoute,
+  authoritativeInstruction: string,
+): ReadOnlyPlan | null {
+  if (route.kind === "news_research") {
+    return {
+      actions: [
+        {
+          id: "news",
+          type: "search_news",
+          query: authoritativeResearchQuery(authoritativeInstruction),
+        },
+        { id: "draft", type: "draft_post", evidenceActionIds: ["news"] },
+      ],
+    };
+  }
+  if (route.kind === "web_research") {
+    return {
+      actions: [
+        {
+          id: "web",
+          type: "search_web",
+          query: authoritativeResearchQuery(authoritativeInstruction),
+        },
+        { id: "draft", type: "draft_post", evidenceActionIds: ["web"] },
+      ],
+    };
+  }
+  if (route.kind === "workspace_research") {
+    const search = compiledWorkspaceSearchAction(
+      route.minimumSources,
+      authoritativeInstruction,
+      "swipe",
+    );
+    return {
+      actions: [
+        search,
+        { id: "draft", type: "draft_post", evidenceActionIds: ["swipe"] },
+      ],
+    };
+  }
+  if (route.kind === "file_inspection") {
+    const allowedSearchKinds =
+      route.allowedSearchKinds ??
+      (route.allowExternalSearch
+        ? (["news", "web", "workspace"] as const)
+        : []);
+    const evidence: ReadOnlyAction[] = [
+      { id: "inspect", type: "inspect_attachments" },
+    ];
+    if (allowedSearchKinds.includes("news")) {
+      evidence.push({
+        id: "news",
+        type: "search_news",
+        query: authoritativeResearchQuery(authoritativeInstruction),
+      });
+    }
+    if (allowedSearchKinds.includes("web")) {
+      evidence.push({
+        id: "web",
+        type: "search_web",
+        query: authoritativeResearchQuery(authoritativeInstruction),
+      });
+    }
+    if (allowedSearchKinds.includes("workspace")) {
+      evidence.push(
+        compiledWorkspaceSearchAction(
+          route.minimumSources,
+          authoritativeInstruction,
+          "swipe",
+        ),
+      );
+    }
+    return {
+      actions: [
+        ...evidence,
+        {
+          id: "draft",
+          type: "draft_post",
+          evidenceActionIds: evidence.map((action) => action.id),
+        },
+      ],
+    };
+  }
+  // ambiguous_read_only is compiled inline by the caller (canned clarify).
+  return null;
 }
 
 export type ReadOnlyPlannerRequest = {
@@ -1689,26 +1840,17 @@ async function* runReadOnlyOrchestratorCore(
 ): AsyncGenerator<AgentEvent> {
   const authoritativeInstruction =
     input.route.authoritativeInstruction ?? input.userInstruction;
-  // News research and ambiguity are already deterministic route results. Keep
-  // them server-owned so a planner cannot add search steps, redirect the query,
-  // or turn prose into a deliverable.
+  // Every route is now server-compiled — no LLM planner. Evidence routes
+  // (news/web/workspace/file-inspection) are built directly from the route by
+  // compileServerReadOnlyPlan; ambiguity emits a canned clarify. This keeps the
+  // plan shape server-owned (a model can't add steps, redirect a query, or turn
+  // prose into a deliverable) AND removes the model as a point of failure — the
+  // planner flake was dead-ending real requests in "I couldn't compile a safe
+  // research plan." The plan below always passes parseReadOnlyPlan +
+  // planSearchQueriesMatchInstruction by construction (asserted by
+  // read-only-orchestrator-compiled-plan.test.ts).
   let plan: ReadOnlyPlan | null =
-    input.route.kind === "news_research"
-      ? {
-          actions: [
-            {
-              id: "news",
-              type: "search_news",
-              query: authoritativeResearchQuery(authoritativeInstruction),
-            },
-            {
-              id: "draft",
-              type: "draft_post",
-              evidenceActionIds: ["news"],
-            },
-          ],
-        }
-      : input.route.kind === "ambiguous_read_only"
+    input.route.kind === "ambiguous_read_only"
       ? {
           actions: [
             {
@@ -1734,8 +1876,22 @@ async function* runReadOnlyOrchestratorCore(
             },
           ],
         }
-      : null;
-  if (input.route.kind === "news_research") {
+      : compileServerReadOnlyPlan(input.route, authoritativeInstruction);
+  // Belt-and-suspenders: run the compiled plan through the SAME validators the
+  // executor trusts. On the (only-if-a-future-route-is-added) chance the
+  // compiler produced something invalid, drop back to null so the fail-open
+  // path below handles it — never dispatch an unvalidated plan.
+  if (plan && input.route.kind !== "ambiguous_read_only") {
+    try {
+      const validated = parseReadOnlyPlan(input.route, plan);
+      if (!planSearchQueriesMatchInstruction(validated, authoritativeInstruction)) {
+        plan = null;
+      }
+    } catch {
+      plan = null;
+    }
+  }
+  if (plan) {
     input.telemetry?.recordAttempt({
       stage: "orchestrator_server_plan",
       attempt: 1,
@@ -1747,135 +1903,36 @@ async function* runReadOnlyOrchestratorCore(
   let inputTokens = 0;
   let outputTokens = 0;
 
-  for (const [index, adapter] of deps.adapters.entries()) {
-    if (plan) break;
-    if (await input.cancellationBoundary()) {
-      yield completedDone({
-        content: interruptionContent(
-          input,
-          "Stopped before any research was performed.",
-        ),
-        terminalReason: interruptionReason(input),
-        toolCalls: [],
-        toolMessages: [],
-        inputTokens,
-        outputTokens,
-      });
-      return;
-    }
-    try {
-      const result = await runCoworkAdapterAttempt({
-        registry: deps.adapterHealth,
-        adapterKey: `cowork_read_only_orchestrator:${adapter.model}`,
-        signal: input.signal,
-        call: () =>
-          adapter.createPlan({
-            route: input.route,
-            userInstruction: authoritativeInstruction,
-            history: input.history,
-            attachmentNames: input.attachmentNames,
-            signal: input.signal,
-          }),
-        validate: (response) => {
-          const candidate = parseReadOnlyPlan(input.route, response.toolArgs);
-          if (
-            !planSearchQueriesMatchInstruction(
-              candidate,
-              authoritativeInstruction,
-            )
-          ) {
-            throw new Error(
-              "Planned search query diverged from the user request.",
-            );
-          }
-          return candidate;
-        },
-        persistUsage: async (response) => {
-          const used = tokenCounts(response.usage);
-          inputTokens += used.input;
-          outputTokens += used.output;
-          const attribution = providerModelAttribution(
-            adapter.model,
-            response.model,
-          );
-          await deps.recordUsage(
-            "cowork_orchestrator",
-            attribution.model,
-            response.usage,
-            input.workspaceId,
-            {
-              stage: index === 0 ? "primary" : "fallback",
-              ...attribution.metadata,
-            },
-          );
-        },
-        usage: (response) => response.usage,
-        responseModel: (response) => response.model,
-        telemetry: input.telemetry,
-        stage: index === 0 ? "orchestrator_primary" : "orchestrator_fallback",
-        attempt: index + 1,
-        model: adapter.model,
-        ...(index > 0 ? { fallbackReason: "primary_rejected" } : {}),
-        rejectedReasonCode: "invalid_read_only_plan",
-        cancellationReason: () =>
-          input.deadlineExceeded() ? "deadline" : "cancelled",
-      });
-      input.onModelUsed?.(
-        providerModelAttribution(adapter.model, result.response.model).model,
-      );
-      if (await input.cancellationBoundary()) {
-        yield completedDone({
-          content: interruptionContent(
-            input,
-            "Stopped before any research was performed.",
-          ),
-          terminalReason: interruptionReason(input),
-          toolCalls: [],
-          toolMessages: [],
-          inputTokens,
-          outputTokens,
-        });
-        return;
-      }
-      plan = result.value;
-      break;
-    } catch (error) {
-      rethrowUsagePersistence(error);
-      if (await input.cancellationBoundary()) {
-        yield completedDone({
-          content: interruptionContent(
-            input,
-            "Stopped before any research was performed.",
-          ),
-          terminalReason: interruptionReason(input),
-          toolCalls: [],
-          toolMessages: [],
-          inputTokens,
-          outputTokens,
-        });
-        return;
-      }
-      void error;
-    }
-  }
-
+  // FAIL-OPEN SAFETY NET. Plans are now server-compiled and validated above, so
+  // `plan` is non-null for every real route — this branch is unreachable in
+  // practice. It exists so that if a future route is added without a compiler
+  // branch (compileServerReadOnlyPlan returns null) or the validators reject the
+  // compiled plan, the turn asks the user how to proceed instead of dead-ending
+  // in the old "I couldn't compile a safe research plan… retry" loop (which was
+  // itself the bug: a flaky LLM planner failing closed). We ask, never error.
   if (!plan) {
-    const message =
-      "I couldn’t compile a safe research plan this time. Please continue to retry the request.";
-    yield {
-      type: "error",
-      code: "orchestrator_plan_exhausted",
-      message,
-      recovery: "continue",
-    };
-    yield completedDone({
-      content: message,
-      toolCalls: [],
-      toolMessages: [],
-      inputTokens,
-      outputTokens,
+    input.telemetry?.recordAttempt({
+      stage: "orchestrator_server_plan",
+      attempt: 1,
+      provider: "server",
+      outcome: "failed",
+      reasonCode: "compile_fell_through",
+      latencyMs: 0,
     });
-    return;
+    plan = {
+      actions: [
+        {
+          id: "clarify_output",
+          type: "clarify",
+          question: "What would you like me to create from this?",
+          options: [
+            "A LinkedIn post",
+            "A short list of takeaways",
+            "A detailed summary",
+          ],
+        },
+      ],
+    };
   }
   if (await input.cancellationBoundary()) {
     yield completedDone({
