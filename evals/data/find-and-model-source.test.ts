@@ -32,7 +32,15 @@ describe("resolveFindAndModelSource", () => {
       ],
     });
 
-    const resolved = await resolveFindAndModelSource("ws-1");
+    const modelingSelection = {
+      userInstruction: "Find a post about content writing and model it.",
+      voiceAnchors: { identity: ["Content strategist"] },
+    };
+    const resolved = await resolveFindAndModelSource(
+      "ws-1",
+      undefined,
+      modelingSelection,
+    );
 
     expect(resolved).toEqual({
       source: {
@@ -48,6 +56,7 @@ describe("resolveFindAndModelSource", () => {
       { post_type: "regular", sort: "viral", dir: "desc", limit: 1 },
       "ws-1",
       undefined,
+      { modelingSelection },
     );
   });
 

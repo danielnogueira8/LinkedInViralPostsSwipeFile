@@ -35,6 +35,25 @@
       "follow_up_issue": 999
     },
     {
+      "id": "cowork-modeled-source-selection",
+      "capability": "Cowork",
+      "invariant": "Server-selected modeled sources are relevant, structurally modelable, race-safe, exact in count, and preserve a one-to-one source chip on every resulting draft.",
+      "preferred_seam": "agent-loop",
+      "existing_coverage": [
+        "evals/data/modeling-selection-context.test.ts",
+        "evals/data/modeling-source-selection.test.ts",
+        "evals/data/post-modelability.test.ts",
+        "evals/data/source-modeling-intent.test.ts",
+        "evals/data/read-only-orchestrator-routing.test.ts",
+        "evals/data/tools-query.test.ts",
+        "evals/data/read-only-orchestrator.test.ts",
+        "evals/data/cowork-outcome-harness.test.ts",
+        "evals/data/migration-106-postgres.test.ts"
+      ],
+      "status": "protected",
+      "follow_up_issue": 999
+    },
+    {
       "id": "swipe-discovery-actions",
       "capability": "Swipe File",
       "invariant": "Filtering, sorting, media actions, bookmarking, and modeling preserve the selected post and its metadata.",

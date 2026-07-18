@@ -23,6 +23,11 @@ import {
   voiceKeepsEmDashes,
 } from "@/lib/voice-mechanics";
 import { retryRead } from "@/lib/retry-read";
+import {
+  selectModelingSources,
+  type ModelingClientContext,
+} from "@/lib/modeling-source-selection";
+import { rankIdeaPosts, rotateFreshBand } from "@/lib/idea-ranking";
 
 // ---------------------------------------------------------------------------
 // Agent tools — read-only swipe-file / voice / brand access for the chat agent.
@@ -149,7 +154,8 @@ const NO_ROWS_SENTINEL = "00000000-0000-0000-0000-000000000000";
 function normalizeEmbed<
   T extends { accounts: unknown; workspace_post_classification?: unknown },
 >(p: T) {
-  const { workspace_post_classification: _wpc, ...rest } = p;
+  const { workspace_post_classification, ...rest } = p;
+  void workspace_post_classification;
   return {
     ...rest,
     accounts: Array.isArray(p.accounts) ? (p.accounts[0] ?? null) : p.accounts,
@@ -187,6 +193,9 @@ export interface ToolExecutionContext {
   telemetry?: CoworkTurnTelemetry;
   adapterHealth?: AdapterHealthRegistry;
   deadlineAtMs?: number;
+  // Present only when the server has confirmed that these auto-selected posts
+  // will be modeled. Analytical searches and explicit source ids never use it.
+  modelingSelection?: ModelingClientContext;
 }
 
 function err(message: string): ToolResult {
@@ -243,7 +252,7 @@ export function isMimicSearch(args: Record<string, unknown>): boolean {
   );
 }
 
-const searchViralPosts: ToolFn = async (args, workspaceId, signal) => {
+const searchViralPosts: ToolFn = async (args, workspaceId, signal, context) => {
   try {
     const accountIds = await trackedAccountIdsForTool(workspaceId, signal);
     signal?.throwIfAborted();
@@ -253,12 +262,14 @@ const searchViralPosts: ToolFn = async (args, workspaceId, signal) => {
     const ascending = args.dir === "asc";
     const limit = typeof args.limit === "number" ? args.limit : 10;
     const finalLimit = Math.min(Math.max(limit, 1), 50);
-    // For the default mimic case, over-fetch a wider candidate pool (like
-    // get_top_from_batch) so used-dedup + rotation have room to move the leader
-    // without just returning fewer posts. An explicit query fetches exactly what
-    // was asked, unrotated.
-    const mimic = isMimicSearch(args);
-    const fetchLimit = mimic ? Math.min(finalLimit * 6, 120) : finalLimit;
+    // Auto-selected modeling and default idea discovery both need a wider pool,
+    // but only the server-confirmed modeling branch may apply client relevance
+    // and modelability. Explicit analytical retrieval keeps its exact contract.
+    const autoSelectModelingSources = context?.modelingSelection !== undefined;
+    const rotateDefaultIdeas = isMimicSearch(args);
+    const fetchLimit = autoSelectModelingSources || rotateDefaultIdeas
+      ? Math.min(finalLimit * 6, 120)
+      : finalLimit;
 
     let q = sb
       .from("posts")
@@ -292,27 +303,33 @@ const searchViralPosts: ToolFn = async (args, workspaceId, signal) => {
     const candidates = (data ?? []).map(normalizeEmbed);
 
     // Analytical query → return the strict ranking as-is (unchanged behavior).
-    if (!mimic) {
+    if (!autoSelectModelingSources && !rotateDefaultIdeas) {
       const posts = candidates.map(wrapScrapedPostText);
       return { ok: true, count: posts.length, posts };
     }
 
-    // Mimic query → same anti-repetition stack as get_top_from_batch: sink
-    // already-drafted + recently-surfaced sources, then rotate the fresh band by
-    // the DURABLE per-workspace cursor so "find a top post to rewrite" doesn't
-    // keep handing back the identical #1 (the reason the same source kept coming
-    // back — search_viral_posts orders strictly by viral score with no rotation,
-    // and it's the tool the model reaches for on a swipe-file mimic request).
-    // Within-band order stays viral-desc from the query; rotation only moves the
-    // head, and it's a no-op on a pool at/below the limit.
     const usedIds = await recentlyUsedSourceIds(workspaceId, signal);
     const surfacedIds = getSurfacedIds(workspaceId);
-    const ranked = rankIdeaPosts(candidates, usedIds, surfacedIds);
     const cursor = await nextRotationCursor(workspaceId, signal);
     signal?.throwIfAborted();
-    const rotated = rotateFreshBand(ranked, cursor, finalLimit).slice(0, finalLimit);
-    recordSurfaced(workspaceId, rotated.map((p) => p.id));
-    const posts = rotated.map(wrapScrapedPostText);
+    // Server-confirmed auto-modeling uses the single secure selection policy.
+    // Ordinary idea discovery retains its pre-existing stable rank + rotation.
+    const selected = autoSelectModelingSources
+      ? selectModelingSources({
+          candidates,
+          limit: finalLimit,
+          usedIds,
+          surfacedIds,
+          rotationCursor: cursor,
+          clientContext: context.modelingSelection,
+        })
+      : rotateFreshBand(
+          rankIdeaPosts(candidates, usedIds, surfacedIds),
+          cursor,
+          finalLimit,
+        ).slice(0, finalLimit);
+    recordSurfaced(workspaceId, selected.map((post) => post.id));
+    const posts = selected.map(wrapScrapedPostText);
     return { ok: true, count: posts.length, posts };
   } catch (e) {
     return err((e as Error).message);
@@ -431,18 +448,9 @@ function getSurfacedIds(workspaceId: string): Set<string> {
   return new Set(entries.map((r) => r.id));
 }
 
-// settings key holding the durable per-workspace rotation cursor for
-// get_top_from_batch (see rotateFreshBand). Stored in the existing settings KV
-// (workspace_id, key, value jsonb) so it survives serverless cold starts —
-// unlike the in-memory recently_surfaced tracker — with no new migration.
-const TOP_BATCH_CURSOR_KEY = "top_batch_rotation_cursor";
-
-// Read the current rotation cursor, then advance it by 1 for next time. The
-// read and the advancing upsert are both best-effort: on any error we return 0
-// (today's exact behavior — no rotation), so this can never break the tool.
-// Not atomic, and it doesn't need to be — two concurrent reads landing the same
-// cursor just means two calls rotate the same way that instant, which is
-// harmless (the point is that SUCCESSIVE asks differ, and they will).
+// Atomically claim the current durable per-workspace cursor and advance it for
+// the next caller. The database RPC serializes concurrent claims; there is no
+// read/upsert window in which two requests can receive the same cursor.
 async function nextRotationCursor(
   workspaceId: string,
   signal?: AbortSignal,
@@ -450,50 +458,31 @@ async function nextRotationCursor(
   try {
     signal?.throwIfAborted();
     const sb = supabaseAdmin();
-    let readQuery = sb
-      .from("settings")
-      .select("value")
-      .eq("workspace_id", workspaceId)
-      .eq("key", TOP_BATCH_CURSOR_KEY);
-    if (signal) readQuery = readQuery.abortSignal(signal);
-    const { data } = await readQuery.maybeSingle();
-    const raw = (data as { value?: { n?: unknown } } | null)?.value?.n;
-    const current = typeof raw === "number" && Number.isFinite(raw) ? Math.trunc(raw) : 0;
-    // Advance for next time. Wrap well before Number.MAX_SAFE_INTEGER so the
-    // counter can run forever; the modulo in rotateFreshBand handles the value.
-    const nextVal = (current + 1) % 1_000_000;
-    let writeQuery = sb.from("settings").upsert(
-      {
-        workspace_id: workspaceId,
-        key: TOP_BATCH_CURSOR_KEY,
-        value: { n: nextVal },
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "workspace_id,key" },
-    );
-    if (signal) writeQuery = writeQuery.abortSignal(signal);
-    // Supabase resolves with { error } on a failed write rather than throwing
-    // — an unchecked `await` here silently treats a permanently-failing
-    // upsert as success, so the cursor never advances (always reads back 0)
-    // and rotation quietly stops. Log it: this is the exact failure mode that
-    // would deterministically reproduce "always picks the same post."
-    const { error: writeError } = await writeQuery;
-    if (writeError) {
+    let claim = sb.rpc("claim_modeling_source_rotation_cursor", {
+      p_workspace_id: workspaceId,
+    });
+    if (signal) claim = claim.abortSignal(signal);
+    const { data, error } = await claim;
+    if (error) {
       console.warn(
         JSON.stringify({
-          top_batch_rotation_cursor_write_failed: {
+          modeling_source_rotation_cursor_claim_failed: {
             workspace_id: workspaceId,
-            message: writeError.message,
+            message: error.message,
           },
         }),
       );
+      return 0;
     }
-    return current;
+    const numeric = typeof data === "string" ? Number(data) : data;
+    return typeof numeric === "number" && Number.isFinite(numeric)
+      ? Math.trunc(numeric)
+      : 0;
   } catch (error) {
     if (signal?.aborted) throw error;
     console.warn(
       JSON.stringify({
-        top_batch_rotation_cursor_error: {
+        modeling_source_rotation_cursor_error: {
           workspace_id: workspaceId,
           message: (error as Error).message,
         },
@@ -547,75 +536,39 @@ async function recentlyUsedSourceIds(
   return ids;
 }
 
-// Rank posts for IDEA generation: PARTITION so posts the workspace hasn't
-// drafted from yet come first (least-mentioned → avoid repeating ideas), then
-// within that group, posts NOT already surfaced as an idea earlier this
-// session come first (rotates the candidate set across repeated "give me
-// ideas" calls even when the underlying pool hasn't changed), and annotate
-// each with `already_used` + `recently_surfaced` so the model can see which
-// are repeats. Stable within each group, so recency/reactions order from the
-// query is preserved. Pure + exported for tests.
-export function rankIdeaPosts<T extends { id: string }>(
-  posts: T[],
-  usedIds: Set<string>,
-  surfacedIds: Set<string> = new Set(),
-): Array<T & { already_used: boolean; recently_surfaced: boolean }> {
-  const annotated = posts.map((p) => ({
-    ...p,
-    already_used: usedIds.has(p.id),
-    recently_surfaced: surfacedIds.has(p.id),
-  }));
-  // Composite key: already_used dominates (drafted posts always rank behind
-  // fresh ones), then recently_surfaced as a tiebreaker within that group.
-  // Array.sort is stable in modern Node, so remaining order (recency/reactions
-  // from the query) holds within each of the 4 groups.
-  return annotated.sort((a, b) => {
-    const usedDiff = Number(a.already_used) - Number(b.already_used);
-    if (usedDiff !== 0) return usedDiff;
-    return Number(a.recently_surfaced) - Number(b.recently_surfaced);
-  });
-}
-
-// Rotate the TOP fresh band of the ranked list so repeated identical asks don't
-// always lead with the same post. Without this, "find a top post and rewrite it"
-// is fully deterministic: the pool ranks identically every call, so slot #1 is
-// always the same most-recent post — and the model, rationally, models it every
-// single time. (The in-memory recently_surfaced tracker can't fix this: it
-// resets on every serverless cold start, so cross-request rotation never
-// happened in prod.) Confirmed root cause 2026-07-11; NOT a model regression.
-//
-// The rotation is a deterministic left-rotate by `cursor` applied ONLY to the
-// leading run of posts that are neither already_used NOR recently_surfaced (the
-// "fresh" band). That keeps every existing guarantee intact:
-//   • already_used / recently_surfaced posts still sink (we never rotate them
-//     into the lead — the band is exactly the ones that are safe to reorder),
-//   • order WITHIN the band is otherwise preserved (a rotation, not a shuffle),
-//   • it's a strict no-op when the fresh band has <= `keep` posts, so a small
-//     pool (and every exact-order test) is untouched.
-// `cursor` comes from a durable per-workspace counter (rotationCursor below) so
-// it advances across calls AND across cold instances. Pure + exported for tests.
-export function rotateFreshBand<T extends { already_used: boolean; recently_surfaced: boolean }>(
-  ranked: T[],
-  cursor: number,
-  keep: number,
+function pickLegacyIdeas<T extends { accounts?: unknown }>(
+  ranked: readonly T[],
+  limit: number,
 ): T[] {
-  // The fresh band = the leading contiguous run of not-used, not-surfaced posts.
-  let band = 0;
-  while (band < ranked.length && !ranked[band].already_used && !ranked[band].recently_surfaced) {
-    band++;
+  const perAuthorCap = Math.max(1, Math.ceil(limit / 2));
+  const authorCounts = new Map<string, number>();
+  const picked: T[] = [];
+  const skipped: T[] = [];
+  for (const post of ranked) {
+    if (picked.length >= limit) break;
+    const rawAccount = Array.isArray(post.accounts)
+      ? post.accounts[0]
+      : post.accounts;
+    const account = rawAccount && typeof rawAccount === "object"
+      ? rawAccount as { name?: unknown }
+      : null;
+    const author = typeof account?.name === "string" ? account.name : "";
+    const count = authorCounts.get(author) ?? 0;
+    if (count < perAuthorCap) {
+      picked.push(post);
+      authorCounts.set(author, count + 1);
+    } else {
+      skipped.push(post);
+    }
   }
-  // Nothing to gain if the band can't even fill the final selection — rotating
-  // wouldn't change which posts get picked, only their internal order. Keeping
-  // it a no-op here is what leaves small-pool tests green.
-  if (band <= keep || keep <= 0) return ranked;
-  const offset = ((cursor % band) + band) % band; // normalize negatives
-  if (offset === 0) return ranked;
-  const head = ranked.slice(0, band);
-  const rotated = [...head.slice(offset), ...head.slice(0, offset)];
-  return [...rotated, ...ranked.slice(band)];
+  for (const post of skipped) {
+    if (picked.length >= limit) break;
+    picked.push(post);
+  }
+  return picked;
 }
 
-const getTopFromBatch: ToolFn = async (args, workspaceId) => {
+const getTopFromBatch: ToolFn = async (args, workspaceId, _signal, context) => {
   try {
     const accountIds = await trackedAccountIds(workspaceId);
     if (accountIds.length === 0)
@@ -685,39 +638,24 @@ const getTopFromBatch: ToolFn = async (args, workspaceId) => {
         new Date(b.posted_at as string).getTime() -
         new Date(a.posted_at as string).getTime(),
     );
-    const rankedRaw = rankIdeaPosts(byRecency, usedIds, surfacedIds);
-    // ROTATE the fresh band by a durable per-workspace cursor so repeated
-    // identical asks ("find a top post and rewrite it") don't always lead with
-    // the same post — the deterministic root cause of "always models the same
-    // creator". No-op when the fresh band can't overfill the final selection, so
-    // small pools (and the exact-order tests) are unaffected. Cursor advances
-    // across calls AND cold instances via the settings KV; best-effort → 0.
     const cursor = await nextRotationCursor(workspaceId);
-    const ranked = rotateFreshBand(rankedRaw, cursor, finalLimit);
-    // Creator diversity: cap how many consecutive slots one author can take
-    // in the FINAL selection, so 5 big-creator posts can't crowd out every
-    // other voice even after the recency re-rank. Greedy pick preserving the
-    // ranked order, skipping an author once they've hit the cap, then
-    // backfilling from skipped posts if the pool is too thin to fill `limit`.
-    const PER_AUTHOR_CAP = Math.max(1, Math.ceil(finalLimit / 2));
-    const authorCounts = new Map<string, number>();
-    const picked: typeof ranked = [];
-    const skipped: typeof ranked = [];
-    for (const p of ranked) {
-      if (picked.length >= finalLimit) break;
-      const author = (p.accounts as { name?: string } | null)?.name ?? "";
-      const n = authorCounts.get(author) ?? 0;
-      if (n < PER_AUTHOR_CAP) {
-        picked.push(p);
-        authorCounts.set(author, n + 1);
-      } else {
-        skipped.push(p);
-      }
-    }
-    for (const p of skipped) {
-      if (picked.length >= finalLimit) break;
-      picked.push(p);
-    }
+    const picked = context?.modelingSelection
+      ? selectModelingSources({
+          candidates: byRecency,
+          limit: finalLimit,
+          usedIds,
+          surfacedIds,
+          rotationCursor: cursor,
+          clientContext: context.modelingSelection,
+        })
+      : pickLegacyIdeas(
+          rotateFreshBand(
+            rankIdeaPosts(byRecency, usedIds, surfacedIds),
+            cursor,
+            finalLimit,
+          ),
+          finalLimit,
+        );
     recordSurfaced(workspaceId, picked.map((p) => p.id));
     const rankedPosts = picked.map(wrapScrapedPostText);
     // Sparse only matters at the DEFAULT (narrow) window — if the model already

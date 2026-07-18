@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { rankIdeaPosts, rotateFreshBand } from "@/lib/agent/tools";
+import { rankIdeaPosts, rotateFreshBand } from "@/lib/idea-ranking";
 
 // rankIdeaPosts keeps the query's (recency-windowed, reactions-desc) order but
 // partitions un-used posts ahead of already-drafted ones, and tags each with

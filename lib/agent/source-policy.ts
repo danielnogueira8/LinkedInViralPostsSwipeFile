@@ -11,18 +11,49 @@ export function explicitlyRequestsSourceDiscovery(text: string): boolean {
   );
 }
 
-const SOURCE_MODELING_ACTION_RE =
-  /\b(?:model|mimic|adapt|rewrite|rework|remix)\b/i;
+const TRANSFORM_VERB_PATTERN =
+  String.raw`(?:model(?:ed|ing|led|ling)?|mimic(?:ked|king)?|adapt(?:ed|ing)?|rewrit(?:e|ten|ing)|rework(?:ed|ing)?|remix(?:ed|ing)?|replicat(?:e|ed|ing)|emulat(?:e|ed|ing))`;
+const SOURCE_TARGET_PATTERN =
+  String.raw`(?:it|them|these|those|this|that|all(?:\s+of\s+them)?|each(?:\s+one)?|after|from|on|their|its|the\s+(?:sources?|posts?|formats?|structures?|hooks?)|(?:a|an|one)\s+(?:source\s+)?(?:post|draft)\s+(?:after|from|on))`;
+const TURN_TARGET_PATTERN =
+  String.raw`(?:it|them|these|those|all(?:\s+of\s+them)?|each(?:\s+one)?|the\s+(?:sources?|posts?))`;
+const OPTIONAL_OUTPUT_COUNT_PATTERN =
+  String.raw`(?:(?:a|an|one|two|three|four|five|six|seven|eight|nine|ten|[1-9]|10)\s+)?`;
+const POST_OUTPUT_PATTERN =
+  String.raw`(?:(?:original|new|full|linkedin)\s+){0,3}(?:posts?|drafts?|rewrites?)`;
+const SOURCE_TO_TRANSFORM_RE = new RegExp(
+  String.raw`\b(?:sources?|examples?|posts?)\b[^.!?]{0,160}?\bto\s+${TRANSFORM_VERB_PATTERN}\b`,
+  "i",
+);
+const TARGETED_TRANSFORM_RE = new RegExp(
+  String.raw`\b${TRANSFORM_VERB_PATTERN}\b\s+${SOURCE_TARGET_PATTERN}\b`,
+  "i",
+);
+const TURN_INTO_POST_RE = new RegExp(
+  String.raw`\bturn\s+${TURN_TARGET_PATTERN}\s+into\s+${OPTIONAL_OUTPUT_COUNT_PATTERN}${POST_OUTPUT_PATTERN}\b`,
+  "i",
+);
 const MULTI_POST_SCOPE_RE =
   /\b(?:[2-9]|\d{2,}|two|three|four|five|six|seven|eight|nine|ten|several|multiple|all)\s+(?:(?!(?:posts?)\b)[a-z][\w'-]*\s+){0,4}posts?\b/i;
+
+/** Any server-selected source-modeling request, including exact-count multi. */
+export function requestsSourceModeling(text: string): boolean {
+  return (
+    explicitlyRequestsSourceDiscovery(text) &&
+    !explicitlyForbidsSourceDiscovery(text) &&
+    (
+      SOURCE_TO_TRANSFORM_RE.test(text) ||
+      TARGETED_TRANSFORM_RE.test(text) ||
+      TURN_INTO_POST_RE.test(text)
+    ) &&
+    /\bposts?\b/i.test(text)
+  );
+}
 
 /** A clear one-source modeling request can use the fast, focused agent lane. */
 export function requestsDirectSourceModeling(text: string): boolean {
   return (
-    explicitlyRequestsSourceDiscovery(text) &&
-    !explicitlyForbidsSourceDiscovery(text) &&
-    SOURCE_MODELING_ACTION_RE.test(text) &&
-    /\bposts?\b/i.test(text) &&
+    requestsSourceModeling(text) &&
     !MULTI_POST_SCOPE_RE.test(text)
   );
 }

@@ -19,6 +19,7 @@ const required = [
   "provider-capacity-lock",
   "weekly-batch-bounded-fanout",
   "analytics-refresh-lease",
+  "modeled-source-rotation-claim",
   "cron-partial-failure-alert",
   "cowork-action-checkpoint",
 ];

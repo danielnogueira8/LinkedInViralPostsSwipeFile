@@ -51,6 +51,7 @@ import {
   type ContentFeedback,
 } from "@/lib/content-feedback";
 import { INJECTION_GUARD } from "@/lib/agent/untrusted";
+import { modelingSelectionContext } from "@/lib/agent/modeling-selection-context";
 // Pure draft-body anti-slop nets still used directly in the loop (corruption
 // gate, dedup key, tell logging). Body normalization belongs to the
 // deterministic editor pass below rather than the runtime's public surface.
@@ -117,6 +118,7 @@ import {
   freeTextLayersOpenChoice,
   isSelfContainedPartialTextRequest,
   requestsDirectSourceModeling,
+  requestsSourceModeling,
   requestsPartialTextDeliverable,
 } from "@/lib/agent/source-policy";
 import {
@@ -1649,8 +1651,10 @@ export async function* runAgent(opts: {
     explicitlyForbidsSourceDiscovery(latestUserMsg);
   const directPartialTextTurn =
     !opts.hasModelSource && isSelfContainedPartialTextRequest(latestUserMsg);
+  const sourceModelingTurn =
+    !opts.hasModelSource && requestsSourceModeling(latestUserMsg);
   const directSourceModelingTurn =
-    !opts.hasModelSource && requestsDirectSourceModeling(latestUserMsg);
+    sourceModelingTurn && requestsDirectSourceModeling(latestUserMsg);
   const hasAttachedModelSource =
     Boolean(opts.hasModelSource) && !explicitlyRequestsSourceDiscovery(latestUserMsg);
   const ordinaryDraftTurn = isOrdinaryDraftTurn(latestUserMsg, opts.isRefine);
@@ -2212,6 +2216,12 @@ export async function* runAgent(opts: {
         prefetchArgs,
         workspaceId,
         turnSignal,
+        {
+          modelingSelection: modelingSelectionContext(
+            latestUserMsg,
+            opts.preloadedVoiceResult,
+          ),
+        },
       );
       const ok = result.ok !== false;
       if (ok) recordDiscoveredSourcePosts(result);
@@ -3525,6 +3535,9 @@ export async function* runAgent(opts: {
             }
           }
         } else {
+          const modelsAutoSelectedSources =
+            sourceModelingTurn &&
+            SOURCE_DISCOVERY_TOOL_NAMES.has(tc.function.name);
           result = await runTool(
             tc.function.name,
             parsedArgs,
@@ -3533,6 +3546,14 @@ export async function* runAgent(opts: {
             {
               telemetry: opts.telemetry,
               adapterHealth: coworkAdapterHealth,
+              ...(modelsAutoSelectedSources
+                ? {
+                    modelingSelection: modelingSelectionContext(
+                      latestUserMsg,
+                      opts.preloadedVoiceResult,
+                    ),
+                  }
+                : {}),
             },
           );
         }
