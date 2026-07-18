@@ -632,6 +632,34 @@ describe("DraftEngine", () => {
     expect(system).not.toContain("Preserve the source's useful idea");
   });
 
+  test("injects a soft SOURCE STRUCTURE REFERENCE alongside the fixed source data", async () => {
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(100, 70) },
+    ]);
+    await collect(writer, {
+      userInstruction: POST_INTENTS.model.prompt,
+      task: {
+        kind: "source",
+        source: {
+          id: "source-1",
+          text: "Most founders get this wrong.\n\nHere's what actually moves the needle:\n→ retention over acquisition\n→ referrals over ads\n\nFix the leaks before you pour in more water.",
+        },
+      },
+    });
+
+    const userMessage = writer.requests[0].messages.find(
+      (message) => message.role === "user",
+    )?.content;
+    expect(userMessage).toContain("SOURCE STRUCTURE REFERENCE");
+    expect(userMessage).toContain('"→"');
+    // The system prompt tells the model how to treat it.
+    const system = writer.requests[0].messages.find(
+      (message) => message.role === "system",
+    )?.content;
+    expect(system).toContain("SOURCE STRUCTURE REFERENCE");
+    expect(system).toContain("not a limit");
+  });
+
   test("neutralizes forged voice boundaries on an original direct draft", async () => {
     const writer = new ScriptedWriter([
       { text: COMPLETE_POST, finishReason: "stop", usage: usage(100, 70) },
