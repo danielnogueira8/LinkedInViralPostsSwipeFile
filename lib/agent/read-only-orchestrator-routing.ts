@@ -34,7 +34,24 @@ export type ReadOnlyOrchestratorRoute = {
   minimumSources?: number;
   workspaceSearchMode?: "diverse" | "strict_top";
   workspaceSince?: "1d" | "7d" | "30d";
+  // The post type used to FILTER which sources get searched. Set from an
+  // explicit choice (a starter's contract, or a free-text explicitPostType
+  // selection) OR derived from the instruction/modeled-intent classifier —
+  // both are legitimate for narrowing the search, but only the former is
+  // safe to treat as the user's authoritative intent for anything beyond
+  // search filtering. See explicitPostType below for that distinction.
   workspacePostType?: PostType;
+  // The post type the USER explicitly chose for this turn — a starter's own
+  // contract (model-top-viral/model-recent-lead-magnet) or a free-text
+  // Generation Settings pick. Distinct from workspacePostType: this is NEVER
+  // set from the instruction regex or modeledIntent.sourcePostType, because
+  // those are guesses about the CONTENT of the request, not a genuine user
+  // choice — persisting a guess here would reproduce the exact "the writer
+  // discussed lead magnets so we classified it as a lead magnet regardless
+  // of what was selected" bug this field exists to prevent. Downstream
+  // consumers (the saved-draft's meta.explicit_post_type) must treat this as
+  // authoritative and never let body-text classification override it.
+  explicitPostType?: PostType;
   workspaceDraftSourceMode?: "one_to_one";
   clarificationReason?: "outcome" | "research_topic" | "modeled_mapping";
   modeledAmbiguityReason?: Extract<
@@ -81,7 +98,13 @@ function composerResearchRoute(
       workspaceSearchMode: requirement.searchMode,
       ...(requirement.since ? { workspaceSince: requirement.since } : {}),
       ...(requirement.postType
-        ? { workspacePostType: requirement.postType }
+        ? {
+            workspacePostType: requirement.postType,
+            // A starter's own contract (model-top-viral / model-recent-lead-magnet)
+            // is a genuine user choice — they clicked that starter — so it's always
+            // explicit, never a guess from the instruction text.
+            explicitPostType: requirement.postType,
+          }
         : {}),
       ...(requirement.oneSourcePerDraft
         ? { workspaceDraftSourceMode: "one_to_one" as const }
@@ -707,6 +730,11 @@ export function compileReadOnlyOrchestratorRoute(
       ? (modeledIntent.sourcePostType ??
         requestedWorkspacePostType(researchClause))
       : requestedWorkspacePostType(researchClause));
+  // Only true when the FIRST branch of the precedence above is what actually
+  // won — never when workspacePostType came from modeledIntent.sourcePostType
+  // or the instruction regex, since those are guesses about the request's
+  // content, not a genuine user choice. See explicitPostType's doc comment.
+  const explicitPostType = input.explicitPostType;
   const writingOutputClause = instruction.match(
     /\b(?:write|draft|create|generate|make|produce|prepare|give\s+me)\b[\s\S]{0,180}?\b(?:linkedin\s+)?posts?\b/i,
   )?.[0] ?? "";
@@ -806,6 +834,7 @@ export function compileReadOnlyOrchestratorRoute(
               ? { workspaceSince: requestedWorkspaceWindow(researchClause) }
               : {}),
             ...(workspacePostType ? { workspacePostType } : {}),
+            ...(explicitPostType ? { explicitPostType } : {}),
           }
         : {}),
     };
@@ -833,6 +862,7 @@ export function compileReadOnlyOrchestratorRoute(
         ? { workspaceSince: requestedWorkspaceWindow(researchClause) }
         : {}),
       ...(workspacePostType ? { workspacePostType } : {}),
+      ...(explicitPostType ? { explicitPostType } : {}),
       ...(workspaceDraftSourceMode ? { workspaceDraftSourceMode } : {}),
     };
   }

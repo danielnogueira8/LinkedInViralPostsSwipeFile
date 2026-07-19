@@ -1762,6 +1762,13 @@ function taggedWithResearchProvenance(
             ...(modeledSource.url ? { source_url: modeledSource.url } : {}),
           }
         : {}),
+      // The user's own explicit post-type pick for this turn (a starter's
+      // contract or a free-text Generation Settings selection) — never a
+      // guess derived from instruction text. The client must treat this as
+      // authoritative on save and skip body-text auto-classification.
+      ...(route.explicitPostType
+        ? { explicit_post_type: route.explicitPostType }
+        : {}),
       research_provenance: {
         route: route.kind,
         sources: artifactSources.map((source) => ({
