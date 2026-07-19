@@ -1254,7 +1254,7 @@ describe("DraftEngine", () => {
         recovery: "continue",
       }),
     );
-    expect(done(result.events)?.terminalReason).toBe("done");
+    expect(done(result.events)?.terminalReason).toBe("deadline");
   });
 
   test("repairs a truncated primary candidate without presenting it", async () => {

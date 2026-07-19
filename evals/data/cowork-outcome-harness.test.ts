@@ -2850,7 +2850,7 @@ describe("production-shaped Cowork outcome harness", () => {
           ],
         },
         expected: {
-          terminal: "done",
+          terminal: "failure",
           artifactBodies: [],
           actionNames: [],
         },
@@ -3484,7 +3484,7 @@ describe("production-shaped Cowork outcome harness", () => {
         })),
       },
       expected: {
-        terminal: "done",
+        terminal: "failure",
         artifactBodies: [COMPLETE_POST],
         actionNames: [],
       },

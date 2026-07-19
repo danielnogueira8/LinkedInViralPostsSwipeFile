@@ -1028,7 +1028,7 @@ async function* runMultiDraftEngine(
       message: failureMessage,
       recovery: "continue",
     };
-    yield engineDone(failureMessage, inputTokens, outputTokens);
+    yield engineDone(failureMessage, inputTokens, outputTokens, "error");
     return;
   }
   const deadlineController = new AbortController();
@@ -1059,7 +1059,7 @@ async function* runMultiDraftEngine(
           message,
           recovery: "continue",
         },
-        engineDone(message, inputTokens, outputTokens),
+        engineDone(message, inputTokens, outputTokens, "deadline"),
       ];
     }
     return [
@@ -1166,7 +1166,7 @@ async function* runMultiDraftEngine(
           message: failureMessage,
           recovery: "continue",
         };
-        yield engineDone(failureMessage, inputTokens, outputTokens);
+        yield engineDone(failureMessage, inputTokens, outputTokens, "error");
         return;
       }
       const artifact = childArtifacts[0];
@@ -1188,7 +1188,7 @@ async function* runMultiDraftEngine(
           message: failureMessage,
           recovery: "continue",
         };
-        yield engineDone(failureMessage, inputTokens, outputTokens);
+        yield engineDone(failureMessage, inputTokens, outputTokens, "error");
         return;
       }
       acceptedKeys.add(key);
@@ -1206,7 +1206,7 @@ async function* runMultiDraftEngine(
         message: failureMessage,
         recovery: "continue",
       };
-      yield engineDone(failureMessage, inputTokens, outputTokens);
+      yield engineDone(failureMessage, inputTokens, outputTokens, "error");
       return;
     }
     if (await cancellationRequestedAtBoundary(multiInput, deps)) {
@@ -1591,7 +1591,7 @@ export async function* runDraftEngine(
         message,
         recovery: "continue",
       },
-      finish(message),
+      finish(message, "error"),
     ];
   };
 
@@ -1932,7 +1932,7 @@ export async function* runDraftEngine(
       message: failureMessage,
       recovery: "continue",
     };
-    yield finish(failureMessage);
+    yield finish(failureMessage, "error");
   } finally {
     clearTimeout(deadlineTimer);
     if (cancelPoll) clearInterval(cancelPoll);
