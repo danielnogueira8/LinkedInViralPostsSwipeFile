@@ -23,11 +23,14 @@ const MODELED_DRAFT_BATCH_MAX_DURATION_MS = 240_000;
 const MODELED_DRAFT_STORE_CLEANUP_MS = 5_000;
 const MAX_GENERATION_CONTEXT_CHARS = 250_000;
 
-export type ModeledDraftBatchSource = Omit<
-  CanonicalWorkspaceModelingSource,
-  "url"
-> &
-  Readonly<{ url: string }>;
+// A url is NOT required to model a source — it only stamps the "Open on
+// LinkedIn" chip on the finished draft. Requiring one here made the durable
+// batch strictly MORE demanding than the single-draft path (which never
+// requires a url), so a scraped post with a null url (a real, common
+// condition — the column is nullable) was silently dropped from the batch's
+// candidate pool even though it was fully modelable. Keep the shape
+// (`CanonicalWorkspaceModelingSource`) but leave url optional.
+export type ModeledDraftBatchSource = CanonicalWorkspaceModelingSource;
 export type ModeledPostArtifact = Artifact & { kind: "post" };
 
 type ModeledDraftSlotBase = Readonly<{
@@ -243,6 +246,9 @@ function validSourcePool(
     }
     const id = source.id.trim();
     const text = source.text.trim();
+    // A url is optional, but when ONE IS PRESENT it must be genuinely
+    // canonical — a malformed/untrusted url is still rejected. Absence is not
+    // rejected: a source with only id + text is fully modelable.
     if (
       !id ||
       id !== source.id ||
@@ -250,7 +256,7 @@ function validSourcePool(
       ids.has(id) ||
       !text ||
       source.text.length > MAX_SOURCE_TEXT_CHARS ||
-      !isCanonicalModeledSourceUrl(source.url)
+      (source.url !== undefined && !isCanonicalModeledSourceUrl(source.url))
     ) {
       return false;
     }
@@ -316,6 +322,16 @@ function replayArtifactIsCanonical(
   const provenanceSource = recordOf(provenanceSources[0]);
   const sourceUrl = meta?.source_url;
   const provenanceUrl = provenanceSource?.url;
+  // A url is optional on the source (see ModeledDraftBatchSource). When one
+  // was stamped it must be genuinely canonical AND match between the two meta
+  // locations; when the source had none, both fields are absent (taggedArtifact
+  // only ever spreads `source_url`/provenance url in when `source.url` is
+  // truthy — see modeled-draft-slot-runner.ts), and that absence-match is
+  // itself the valid, expected state — not a forged/tampered artifact.
+  const urlIsCanonical =
+    sourceUrl === undefined
+      ? provenanceUrl === undefined
+      : isCanonicalModeledSourceUrl(sourceUrl) && provenanceUrl === sourceUrl;
   return (
     meta?.modeled_draft_slot_id === `${batchId}:slot-${slotIndex}` &&
     meta.modeled_draft_slot_index === slotIndex &&
@@ -325,8 +341,7 @@ function replayArtifactIsCanonical(
     provenanceSources.length === 1 &&
     provenanceSource?.id === sourceId &&
     provenanceSource.kind === "workspace_post" &&
-    isCanonicalModeledSourceUrl(sourceUrl) &&
-    provenanceUrl === sourceUrl
+    urlIsCanonical
   );
 }
 
@@ -370,6 +385,11 @@ export function artifactMatchesModeledDraftSlotContract(input: {
   source: ModeledDraftBatchSource;
 }): boolean {
   const meta = input.artifact.meta as Record<string, unknown> | undefined;
+  // source.url is optional; taggedArtifact only stamps meta.source_url /
+  // provenance.url when the source actually has one, so a url-less source's
+  // artifact correctly has BOTH absent (undefined !== undefined is false —
+  // strict equality already treats that as a match, same as every other
+  // field here).
   if (
     meta?.modeled_draft_slot_id !== `${input.batchId}:slot-${input.slotIndex}` ||
     meta?.modeled_draft_slot_index !== input.slotIndex ||

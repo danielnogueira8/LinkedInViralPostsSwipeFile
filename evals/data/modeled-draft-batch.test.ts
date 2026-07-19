@@ -313,16 +313,6 @@ describe("executeModeledDraftBatch", () => {
       { count: 2, sources: [{ ...sources[0], text: "" }, sources[1]] },
     ],
     [
-      "a source without a resolvable chip URL",
-      {
-        count: 2,
-        sources: [
-          { ...sources[0], url: undefined },
-          sources[1],
-        ] as unknown as ModeledDraftBatchSource[],
-      },
-    ],
-    [
       "a malformed source URL that only resembles an absolute URL",
       {
         count: 2,
@@ -409,6 +399,42 @@ describe("executeModeledDraftBatch", () => {
       slot: { index: 1 },
       source: { id: "source-3" },
     });
+  });
+
+  test("accepts a url-less source: a source with only id + text is fully modelable and completes the batch", async () => {
+    // A url is NOT required to model a source — it only stamps the "Open on
+    // LinkedIn" chip on the finished draft. Requiring one made the durable
+    // batch strictly MORE demanding than the single-draft path (which never
+    // requires a url), so a scraped post whose url column is null (a real,
+    // common condition) was silently dropped from the candidate pool even
+    // though it's fully modelable. This is the reported dead-end's concrete
+    // data-condition — the batch itself must accept a url-less source.
+    const repository = new MemoryRepository();
+    const urlLessSource = { id: sources[0].id, text: sources[0].text };
+    const runner = vi.fn(async (input: ModeledDraftSlotInput) =>
+      accepted(input, distinctBodies[input.slot.index]),
+    );
+
+    const result = await executeModeledDraftBatch(
+      batchInput({
+        count: 2,
+        sources: [urlLessSource, sources[1]],
+      }),
+      { repository, runSlot: runner, now: () => 1_000 },
+    );
+
+    expect(result).toMatchObject({ kind: "complete", batchId: "batch-1" });
+    expect(result.kind === "complete" ? result.artifacts : []).toHaveLength(2);
+    // The url-less source's own artifact carries NO source_url — the
+    // deliberate absence, not a forged/empty value.
+    const urlLessArtifact =
+      result.kind === "complete"
+        ? result.artifacts.find(
+            (artifact) => artifact.meta?.source_post_id === urlLessSource.id,
+          )
+        : undefined;
+    expect(urlLessArtifact).toBeDefined();
+    expect(urlLessArtifact?.meta?.source_url).toBeUndefined();
   });
 
   test("a transient reviewer outage on one slot retries with a reserve source and completes the whole set", async () => {

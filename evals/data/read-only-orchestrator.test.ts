@@ -2543,13 +2543,16 @@ describe("read-only orchestrator execution", () => {
   test("honors the requested draft count when fewer distinct canonical sources exist: falls through to the shared-pool multi path, never dead-ends", async () => {
     // The reported bug: the draft-count chip is authoritative — a request for N
     // drafts must produce N drafts even when the workspace can't supply N
-    // DISTINCT canonical sources (e.g. a top source has a null url and is
-    // dropped by the canonical filter). Rather than dead-ending with
+    // DISTINCT canonical sources (e.g. the workspace's search only turned up 2
+    // usable posts for a 3-draft request). Rather than dead-ending with
     // "I couldn't complete the verified modeled set safely", the turn now falls
     // through to the shared-pool multi path, which writes the requested number
     // of drafts by reusing the sources that ARE available. The durable
     // one-source-per-draft batch is reserved for when there genuinely are N
-    // distinct canonical sources.
+    // distinct canonical sources. (A url-less source no longer causes this
+    // shortfall on its own — see the sibling test below — so this fixture
+    // returns fewer sources than requested outright to keep exercising the
+    // fallback path.)
     const userInstruction =
       "Find 3 top-performing regular posts in my swipe file and rewrite it in my voice on a topic that fits me. Keep its structure and hook style, but make the content original";
     const route = {
@@ -2577,23 +2580,19 @@ describe("read-only orchestrator execution", () => {
       [],
       async () => ({
         ok: true,
-        count: 3,
+        count: 2,
+        // Only 2 sources for a 3-draft request — genuinely short on distinct
+        // canonical sources regardless of url-optionality (both have a url).
         posts: [
           {
             id: "source-1",
             text: "Source one has a complete modelable argument.",
             url: "https://linkedin.com/posts/source-1",
           },
-          // No url → dropped by the canonical filter, so only 2 of 3 requested
-          // drafts have a distinct canonical source. Must NOT dead-end.
           {
             id: "source-2",
             text: "Source two has a complete modelable argument.",
-          },
-          {
-            id: "source-3",
-            text: "Source three has a complete modelable argument.",
-            url: "https://linkedin.com/posts/source-3",
+            url: "https://linkedin.com/posts/source-2",
           },
         ],
       }),
@@ -2635,6 +2634,99 @@ describe("read-only orchestrator execution", () => {
     // …instead the shared-pool multi path ran for the requested count…
     expect(capturedTask).toMatchObject({ kind: "multi", expectedCount: 3 });
     // …and delivered the requested number of drafts, not a dead-end.
+    expect(
+      result.events.filter((event) => event.type === "artifact"),
+    ).toHaveLength(3);
+    expect(result.events).not.toContainEqual(
+      expect.objectContaining({
+        type: "error",
+        code: "orchestrator_evidence_insufficient",
+      }),
+    );
+  });
+
+  test("a URL-less source is a fully valid batch candidate: reaches durable acquisition alongside url-bearing sources", async () => {
+    // A url is not required to model a source — only to stamp the "Open on
+    // LinkedIn" chip on the finished draft. A scraped post whose url column is
+    // null (a real, common condition) must still count toward the verified
+    // source pool, not be silently dropped from it — with 3 sources (one
+    // url-less) satisfying a 3-draft request, the strict batch runs directly
+    // and never needs the chip-authoritative fallback above.
+    const userInstruction =
+      "Find 3 top-performing regular posts in my swipe file and rewrite it in my voice on a topic that fits me. Keep its structure and hook style, but make the content original";
+    const route = {
+      kind: "workspace_research" as const,
+      expectsDraft: true,
+      expectedDrafts: 3,
+      minimumSources: 3,
+      workspacePostType: "regular" as const,
+      workspaceDraftSourceMode: "one_to_one" as const,
+      authoritativeInstruction: userInstruction,
+    };
+    const executeModeledDraftBatch = vi.fn(async (batchInput) => ({
+      kind: "complete" as const,
+      batchId: "batch-1",
+      artifacts: batchInput.sources
+        .slice(0, 3)
+        .map((source: { id: string }, index: number) => ({
+          id: `draft-${index + 1}`,
+          kind: "post" as const,
+          title: `Draft ${index + 1}`,
+          body: `${COMPLETE_POST}\n\nVariant ${index + 1}.`,
+          meta: { source_post_id: source.id },
+        })),
+      usage: { inputTokens: 210, outputTokens: 380 },
+    }));
+
+    const result = await collect(
+      input({
+        route,
+        userInstruction,
+        draftEngineInput: { ...input().draftEngineInput, userInstruction },
+      }),
+      [],
+      async () => ({
+        ok: true,
+        count: 3,
+        posts: [
+          {
+            id: "source-1",
+            text: "Source one has a complete modelable argument.",
+            url: "https://linkedin.com/posts/source-1",
+          },
+          // No url — must still count toward the canonical pool.
+          {
+            id: "source-2",
+            text: "Source two has a complete modelable argument.",
+          },
+          {
+            id: "source-3",
+            text: "Source three has a complete modelable argument.",
+            url: "https://linkedin.com/posts/source-3",
+          },
+        ],
+      }),
+      {
+        executeModeledDraftBatch,
+        runDraftEngine: () => {
+          throw new Error(
+            "the shared-pool multi path must NOT run when 3 distinct canonical sources satisfy a 3-draft request",
+          );
+        },
+      },
+    );
+
+    expect(executeModeledDraftBatch).toHaveBeenCalledTimes(1);
+    const batchCall = executeModeledDraftBatch.mock.calls[0][0];
+    expect(batchCall.sources).toHaveLength(3);
+    expect(batchCall.sources.map((source: { id: string }) => source.id)).toEqual(
+      ["source-1", "source-2", "source-3"],
+    );
+    // The url-less source carries no `url` field at all — not an empty string.
+    const urlLessSource = batchCall.sources.find(
+      (source: { id: string }) => source.id === "source-2",
+    );
+    expect(urlLessSource).not.toHaveProperty("url");
     expect(
       result.events.filter((event) => event.type === "artifact"),
     ).toHaveLength(3);

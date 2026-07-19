@@ -2173,31 +2173,25 @@ describe("production-shaped Cowork outcome harness", () => {
     expect(report.observed.savedPostReads).toBe(0);
   });
 
-  test("a URL-less modeled source no longer dead-ends: the requested draft count is honored via the shared-pool path", async () => {
+  test("honors the requested draft count via the shared-pool path when fewer distinct sources than requested exist", async () => {
     // The reported bug. A request for 3 drafts must produce 3 drafts even when
-    // a top source has a null url (dropped by the canonical filter, leaving
-    // only 2 of 3 distinct canonical sources). Rather than the old fail-closed
-    // dead-end ("I couldn't complete the verified modeled set safely"), the turn
-    // now falls through to the shared-pool multi path — which reuses the
-    // available sources to write the number of drafts the chip asked for. The
-    // durable one-source-per-draft batch is skipped (it needs N distinct
-    // canonical sources), so no batch operation key is recorded.
-    const scenario = modeledThreeScenario("modeled-three-url-less-source");
+    // the workspace can only supply 2 distinct canonical sources. Rather than
+    // the old fail-closed dead-end ("I couldn't complete the verified modeled
+    // set safely"), the turn now falls through to the shared-pool multi path —
+    // which reuses the available sources to write the number of drafts the
+    // chip asked for. The durable one-source-per-draft batch is skipped (it
+    // needs N distinct canonical sources), so no batch operation key is
+    // recorded. (A url-less source no longer causes this shortfall on its
+    // own — see the sibling test below — so this fixture returns fewer
+    // sources than requested outright to keep exercising the fallback path.)
+    const scenario = modeledThreeScenario("modeled-three-fewer-sources-than-requested");
     scenario.model.readOnlyOrchestrator!.allowNoModel = true;
     scenario.model.readOnlyOrchestrator!.toolResults = {
       search_viral_posts: [
         {
           ok: true,
-          count: 3,
-          posts: [
-            MODELED_SOURCE_ROWS[0],
-            // No url → dropped by the canonical filter.
-            {
-              id: MODELED_SOURCE_ROWS[1].id,
-              text: MODELED_SOURCE_ROWS[1].text,
-            },
-            MODELED_SOURCE_ROWS[2],
-          ],
+          count: 2,
+          posts: [MODELED_SOURCE_ROWS[0], MODELED_SOURCE_ROWS[1]],
         },
       ],
     };
@@ -2227,6 +2221,69 @@ describe("production-shaped Cowork outcome harness", () => {
             "orchestrator_evidence_insufficient",
       ),
     ).toBe(false);
+  });
+
+  test("a URL-less modeled source is fully valid: the durable batch completes with 3 drafts, no dead-end", async () => {
+    // A url is not required to model a source — it only stamps the "Open on
+    // LinkedIn" chip on the finished draft, and the batch's own contract
+    // (modeled-draft-batch.ts) accepts a url-less source. A scraped post whose
+    // url column is null (a real, common condition) must count toward the
+    // verified pool like any other source, not silently starve the batch —
+    // with 3 sources (one url-less) satisfying a 3-draft request, the strict
+    // batch runs directly and never needs the shared-pool fallback above.
+    const scenario = modeledThreeScenario("modeled-three-url-less-source");
+    scenario.model.readOnlyOrchestrator!.toolResults = {
+      search_viral_posts: [
+        {
+          ok: true,
+          count: 3,
+          posts: [
+            MODELED_SOURCE_ROWS[0],
+            // No url → must still count toward the canonical pool.
+            {
+              id: MODELED_SOURCE_ROWS[1].id,
+              text: MODELED_SOURCE_ROWS[1].text,
+            },
+            MODELED_SOURCE_ROWS[2],
+          ],
+        },
+      ],
+    };
+    // The default scenario asserts a url on every delivered artifact
+    // (sourceReferences); source 2 deliberately has none here, so drop that
+    // check and assert provenance by id only — url-absence is asserted below.
+    scenario.expected = {
+      terminal: "done",
+      artifactBodies: [COMPLETE_POST, SECOND_POST, THIRD_POST],
+      actionNames: ["search_viral_posts", "write_grounded_post"],
+      sourcePostIds: MODELED_SOURCE_ROWS.map((source) => source.id),
+    };
+
+    const report = await runCoworkOutcomeScenario(scenario);
+
+    expect(
+      report.pass,
+      JSON.stringify({ failures: report.failureCodes, safe: report.safe }),
+    ).toBe(true);
+    // All 3 requested drafts were delivered through the durable batch.
+    expect(report.persisted.artifacts).toHaveLength(3);
+    expect(report.observed.modeledBatchOperationKeys).not.toEqual([]);
+    // No "insufficient sources" dead-end.
+    expect(
+      report.frames.some(
+        (frame) =>
+          frame.event === "error" &&
+          (frame.data as { code?: string })?.code ===
+            "orchestrator_evidence_insufficient",
+      ),
+    ).toBe(false);
+    // The url-less source's own artifact carries no source_url — the
+    // deliberate absence, not a forged/empty value.
+    const urlLessArtifact = report.persisted.artifacts.find(
+      (artifact) => artifact.meta?.source_post_id === MODELED_SOURCE_ROWS[1].id,
+    );
+    expect(urlLessArtifact).toBeDefined();
+    expect(urlLessArtifact?.meta?.source_url).toBeUndefined();
   });
 
   test("routes an output-count-only modeled request through the same exact batch", async () => {
