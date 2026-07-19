@@ -40,7 +40,7 @@ describe("looksCorruptedDraft — catches real corruption", () => {
     expect(looksCorruptedDraft('...end of post","body": "next')).toBe(
       "JSON key fragment in body",
     );
-    expect(looksCorruptedDraft('"title" : "Draft post"')).toBe(
+    expect(looksCorruptedDraft('"postId": "abc123"')).toBe(
       "JSON key fragment in body",
     );
   });
@@ -92,6 +92,17 @@ describe("looksCorruptedDraft — does NOT false-positive on real posts", () => 
     "Add a permalink to every post so people can find it later.",
     // Single braces in prose.
     "Use the {first_name} merge tag and personalize at scale.",
+    // The word "title" quoted in ordinary prose, not a JSON key:value shape —
+    // "title" was dropped from the JSON-key alternation because, unlike
+    // permalink/body/postId (internal-only field names), it's an ordinary
+    // English word a post can legitimately quote.
+    'Change your job "title": from Manager to Owner and see what happens.',
+    'She listed her "title" as founder, not CEO.',
+    // A balanced {{word}} template variable immediately followed by a letter
+    // — legitimate templating syntax some creators write in their own posts,
+    // not corrupted JSON welded into prose.
+    "Use {{company}}'s data to personalize every message you send.",
+    "The {{name}}s on this list already opted in, so send with confidence.",
     // A hook with an em dash and quotes — clean.
     'She said "this will never work" — so I shipped it that night.',
     // Backticks for inline code emphasis, but not an artifact fence.
