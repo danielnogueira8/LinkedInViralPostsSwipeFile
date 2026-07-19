@@ -54,6 +54,30 @@ describe("draft output policy", () => {
     expect(validateDraftOutput("x".repeat(801), policy).ok).toBe(false);
   });
 
+  test("compares the character range against trimmed length, ignoring surrounding whitespace", () => {
+    // The model sometimes wraps a candidate in leading/trailing whitespace
+    // (a stray newline, a trailing space). Comparing against the raw,
+    // untrimmed length made an honest exact-800-char draft fail as
+    // "801 characters" purely because of whitespace the user never asked
+    // to be counted — the sibling too_short check already trims for the
+    // same reason (draft-output-policy.ts).
+    const policy = {
+      characterRange: { min: 800, max: 800 },
+      groundingContext: "",
+    };
+    expect(validateDraftOutput(`  ${"x".repeat(800)}  `, policy)).toMatchObject({
+      ok: true,
+    });
+    expect(validateDraftOutput(`\n${"x".repeat(800)}\n`, policy)).toMatchObject({
+      ok: true,
+    });
+    // Padding a genuinely too-short draft with whitespace still correctly
+    // fails — the fix compares trimmed length, it does not stop counting.
+    const tooShort = validateDraftOutput(`  ${"x".repeat(799)}  `, policy);
+    expect(tooShort.ok).toBe(false);
+    expect(tooShort.ok === false ? tooShort.error : "").toContain("799 characters");
+  });
+
   test("enforces both ends of a requested character range", () => {
     const policy = {
       characterRange: { min: 700, max: 1_000 },
