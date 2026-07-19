@@ -2504,6 +2504,38 @@ describe("production-shaped Cowork outcome harness", () => {
     expect(sequence.attempts[2]?.persisted.artifacts).toHaveLength(3);
   });
 
+  test("suppresses the credit-usage marker on a recoverable, zero-artifact failed turn", async () => {
+    // A failed turn that delivered nothing shouldn't show a credit line at
+    // all — "~1 credit" next to a dead-end error reads as "you were charged
+    // for nothing." A busy durable-batch coordinator is a genuine,
+    // still-recoverable (Retry offered) failure that delivers zero
+    // artifacts — exactly the case _turn_usage must be withheld on.
+    const scenario = modeledThreeScenario("modeled-three-busy-usage-suppressed");
+    scenario.model.readOnlyOrchestrator!.modeledBatchOutcome = "busy";
+    scenario.expected = {
+      terminal: "failure",
+      artifactBodies: [],
+      actionNames: ["search_viral_posts", "write_grounded_post"],
+    };
+
+    const report = await runCoworkOutcomeScenario(scenario);
+
+    expect(
+      report.pass,
+      JSON.stringify({ failures: report.failureCodes, safe: report.safe }),
+    ).toBe(true);
+    expect(report.persisted.artifacts).toHaveLength(0);
+    const failureRow = report.persisted.messages.findLast(
+      (m) => m.role === "assistant",
+    );
+    expect(
+      failureRow?.tool_calls?.some((call) => call.function.name === "_recoverable"),
+    ).toBe(true);
+    expect(
+      failureRow?.tool_calls?.some((call) => call.function.name === "_turn_usage"),
+    ).toBe(false);
+  });
+
   test("a post-checkpoint Retry preserves creator style and resumes the frozen modeled batch", async () => {
     const checkpointed = modeledThreeScenario("modeled-three-style-busy");
     checkpointed.request.creatorStyleId = CREATOR_STYLE.id;
