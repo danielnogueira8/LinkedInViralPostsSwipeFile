@@ -27,8 +27,6 @@ export function resolveAiTellModel(value = process.env.OPENROUTER_AI_TELL_MODEL)
   return value?.trim() || DEFAULT_AI_TELL_MODEL;
 }
 
-export const AI_TELL_MODEL = resolveAiTellModel();
-
 export function aiTellRepairEnabled(): boolean {
   return process.env.AGENT_AI_TELL_REPAIR !== "0";
 }
