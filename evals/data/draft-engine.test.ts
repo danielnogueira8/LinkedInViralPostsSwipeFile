@@ -1903,11 +1903,13 @@ describe("DraftEngine — thin path (lean mode)", () => {
     );
   });
 
-  test("salvage is GROUNDED-ONLY: a non-grounded exhaust still fails hard, no salvaged draft", async () => {
-    // The grounded salvage must NOT leak to other task kinds. A from-scratch
-    // draft that keeps getting rejected is a real quality failure — it should
-    // still dead-end (no artifact) rather than ship a bad post. Every attempt
-    // returns a body the finalizer rejects (too short → below the minimum).
+  test("salvage does NOT leak to a non-grounded quality exhaust: an original-turn exhaust still fails hard", async () => {
+    // The grounded/reviewer-unavailable salvage must NOT leak to a genuine
+    // quality failure. A from-scratch draft that keeps getting rejected on
+    // CONTENT (here: too short → below the minimum) is a real failure — it
+    // should still dead-end (no artifact) rather than ship a bad post. (The
+    // source + reviewer-unavailable salvage below is a different case: there
+    // the draft passed every content gate and only the REVIEWER was down.)
     const tooShort = "Cold outbound works. Send more DMs. That's the whole post.";
     const writer = new ScriptedWriter([
       { text: tooShort, finishReason: "stop", usage: usage(200, 120) },
@@ -1919,11 +1921,108 @@ describe("DraftEngine — thin path (lean mode)", () => {
       task: { kind: "original" },
     });
     // No artifact, and the hard "reliable post" dead-end message — salvage did
-    // not fire for a non-grounded turn.
+    // not fire for a non-grounded content failure.
     expect(artifacts(result.events)).toHaveLength(0);
     expect(done(result.events)?.message.content).toContain(
       "couldn’t complete a reliable post",
     );
+  });
+
+  test("SOURCE turn: an UNAVAILABLE fidelity reviewer salvages the modeled draft with a verify note (not a dead-end)", async () => {
+    // The reported live bug: "model the attached post" fails with "source
+    // fidelity could not be verified because both reviewers were unavailable."
+    // A source task models the user's OWN attached/workspace post — a trusted
+    // source — so a reviewer OUTAGE (infra, not a quality verdict) must not
+    // discard a content-valid draft. Deliver it flagged for verification.
+    const sourceText =
+      "Your resume lists the tasks you were handed. Nobody remembers a task list. What they remember is the person who kept showing their work in public.";
+    const writer = new ScriptedWriter([
+      // The writer produces a clean, complete, ORIGINAL modeled draft — it just
+      // never gets a fidelity verdict because both reviewers are down.
+      { text: DISTINCT_COMPLETE_POST, finishReason: "stop", usage: usage(200, 120) },
+      { text: DISTINCT_COMPLETE_POST, finishReason: "stop", usage: usage(200, 120) },
+    ]);
+    const result = await collect(writer, {
+      task: { kind: "source", source: { id: "source-1", text: sourceText } },
+      finalizerSpecialists: {
+        ...input().finalizerSpecialists,
+        reviewSourceFidelity: async () => ({ outcome: "unavailable" }),
+      },
+    });
+
+    // A single salvaged artifact, stamped unverified so the status survives to
+    // the board — NOT a dead-end retry error.
+    const shipped = artifacts(result.events);
+    expect(shipped).toHaveLength(1);
+    expect(shipped[0].id).toMatch(/^art_salvage_/);
+    expect(shipped[0].meta).toEqual({ needs_verification: true });
+    expect(shipped[0].body).toBe(DISTINCT_COMPLETE_POST);
+    // The done message tells the user to eyeball it, and is NOT the old
+    // "both reviewers were unavailable / please retry" dead-end.
+    const doneEvent = done(result.events);
+    expect(doneEvent?.message.content).toMatch(/^Your draft is ready\./);
+    expect(doneEvent?.message.content).toContain("once-over against the original");
+    expect(doneEvent?.message.content).not.toContain("reviewers were unavailable");
+    // No error event was emitted.
+    expect(
+      result.events.some((event) => event.type === "error"),
+    ).toBe(false);
+  });
+
+  test("SOURCE turn: a draft that copied the source is caught deterministically and never salvaged, even with the reviewer 'unavailable'", async () => {
+    // Graceful degradation must never become a plagiarism hole. A near-duplicate
+    // of the source is rejected by the finalizer's DETERMINISTIC copy check
+    // (areDraftsNearDuplicate) BEFORE the fidelity reviewer is ever called — so
+    // the rejection code is `source_fidelity` (a real quality failure), not
+    // `source_fidelity_unavailable`, and the salvage path never fires. The turn
+    // dead-ends rather than shipping copied wording. (Even if the reviewer is
+    // configured "unavailable", it's moot: the deterministic gate wins first.)
+    const sourceText = DISTINCT_COMPLETE_POST;
+    const writer = new ScriptedWriter([
+      // Every attempt returns (essentially) the source verbatim.
+      { text: sourceText, finishReason: "stop", usage: usage(200, 120) },
+      { text: sourceText, finishReason: "stop", usage: usage(200, 120) },
+    ]);
+    const result = await collect(writer, {
+      task: { kind: "source", source: { id: "source-1", text: sourceText } },
+      finalizerSpecialists: {
+        ...input().finalizerSpecialists,
+        reviewSourceFidelity: async () => ({ outcome: "unavailable" }),
+      },
+    });
+    // No salvaged artifact — copied wording is never shipped.
+    expect(
+      artifacts(result.events).some((a) => a.id.startsWith("art_salvage_")),
+    ).toBe(false);
+    expect(artifacts(result.events)).toHaveLength(0);
+  });
+
+  test("SOURCE turn: a genuine fidelity REJECTION is a quality failure and is NOT salvaged", async () => {
+    // The salvage is strictly for reviewer UNAVAILABILITY. A reviewer that IS
+    // reachable and returns a real "this doesn't adapt the source" verdict is a
+    // content failure — it must still drive a retry / dead-end, never ship.
+    const sourceText =
+      "Your resume lists the tasks you were handed. What they remember is public work.";
+    const reviewSourceFidelity = vi.fn().mockResolvedValue({
+      outcome: "rejected",
+      reasons: ["The draft ignores the source's structure entirely."],
+      retryInstruction: "Reuse the source's hook-to-ending sequence.",
+    });
+    const writer = new ScriptedWriter([
+      { text: DISTINCT_COMPLETE_POST, finishReason: "stop", usage: usage(200, 120) },
+      { text: DISTINCT_COMPLETE_POST, finishReason: "stop", usage: usage(200, 120) },
+    ]);
+    const result = await collect(writer, {
+      task: { kind: "source", source: { id: "source-1", text: sourceText } },
+      finalizerSpecialists: {
+        ...input().finalizerSpecialists,
+        reviewSourceFidelity,
+      },
+    });
+    // No salvaged artifact for a genuine quality rejection.
+    expect(
+      artifacts(result.events).some((a) => a.id.startsWith("art_salvage_")),
+    ).toBe(false);
   });
 
   test("a lead-magnet turn injects the leadMagnetBlock into the writer prompt", async () => {
