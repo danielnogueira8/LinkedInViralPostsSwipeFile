@@ -259,6 +259,53 @@ describe("DraftEngine", () => {
     )).toBe(true);
   });
 
+  test("threads a bounded digest of the prior conversation into the writer prompt", async () => {
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(180, 90) },
+    ]);
+    const longAssistantTurn = `Earlier draft body. ${"x".repeat(5_000)}`;
+    const result = await collect(writer, {
+      userInstruction: "Write a post about pricing instead.",
+      history: [
+        {
+          role: "user",
+          content:
+            "Write an original post about why personal branding compounds.",
+        },
+        { role: "assistant", content: longAssistantTurn },
+        // The current turn's trailing user message: already the authoritative
+        // CURRENT REQUEST, so the digest must drop it rather than repeat it.
+        { role: "user", content: "Write a post about pricing instead." },
+      ],
+    });
+
+    expect(writer.requests).toHaveLength(1);
+    const userPrompt = writer.requests[0].messages
+      .filter((message) => message.role === "user")
+      .map((message) => message.content)
+      .join("\n");
+    expect(userPrompt).toContain("CONVERSATION HISTORY DATA");
+    expect(userPrompt).toContain("personal branding compounds");
+    expect(userPrompt).toContain("Earlier draft body.");
+    // The trailing user message is not duplicated inside the digest.
+    expect(
+      userPrompt.split("Write a post about pricing instead.").length - 1,
+    ).toBe(1);
+    // Bounded: a 5k prior message is capped per message.
+    expect(userPrompt).not.toContain("x".repeat(2_001));
+    expect(artifacts(result.events)[0]?.body).toBe(COMPLETE_POST);
+  });
+
+  test("omits the history digest on a chat's first turn", async () => {
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(180, 90) },
+    ]);
+    await collect(writer);
+
+    const prompt = JSON.stringify(writer.requests[0].messages);
+    expect(prompt).not.toContain("CONVERSATION HISTORY DATA");
+  });
+
   test("writes a grounded research post with evidence in the tool-free writer prompt", async () => {
     const writer = new ScriptedWriter([
       { text: COMPLETE_POST, finishReason: "stop", usage: usage(180, 90) },

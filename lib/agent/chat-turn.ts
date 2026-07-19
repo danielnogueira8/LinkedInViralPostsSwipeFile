@@ -3187,6 +3187,10 @@ export async function executeChatTurn(
               workspaceId,
               sessionId: chatId,
               userInstruction: effectiveUserInstruction,
+              // The ONE turn-context window — the writer renders a bounded
+              // digest of the prior turns so a follow-up is never written
+              // blind.
+              history,
               task: directWriterTask,
               voiceResult: preloadedVoiceResult!,
               preferences,

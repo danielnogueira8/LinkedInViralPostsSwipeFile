@@ -448,6 +448,51 @@ describe("production-shaped Cowork outcome harness", () => {
     ]);
   });
 
+  test("a follow-up direct-writer turn sees the prior conversation", async () => {
+    const report = await runCoworkOutcomeScenario({
+      id: "direct-writer-follow-up-history",
+      request: {
+        message: "Write an original post in my voice about pricing instead.",
+      },
+      seed: {
+        priorTurn: {
+          user: "Write an original post in my voice about why personal branding compounds.",
+          assistant: "Your draft about personal branding compounding is ready.",
+        },
+      },
+      model: {
+        provider: { rounds: [] },
+        directWriter: [
+          {
+            text: COMPLETE_POST,
+            finishReason: "stop",
+            usage: usage(210, 95, 0.0001888),
+          },
+        ],
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [COMPLETE_POST],
+        actionNames: [],
+      },
+    });
+
+    expect(
+      report.pass,
+      JSON.stringify({ failures: report.failureCodes, report }, null, 2),
+    ).toBe(true);
+    expect(report.observed.agentProviderRounds).toBe(0);
+    expect(report.observed.directWriterRequests).toHaveLength(1);
+    const writerPrompt = JSON.stringify(
+      report.observed.directWriterRequests[0].messages,
+    );
+    expect(writerPrompt).toContain("CONVERSATION HISTORY DATA");
+    expect(writerPrompt).toContain("personal branding compounds");
+    expect(writerPrompt).toContain(
+      "Your draft about personal branding compounding is ready.",
+    );
+  });
+
   test("checkpoints a combined saved-draft move and planned date through the action lane", async () => {
     const draftId = "00000000-0000-4000-8000-000000000710";
     const report = await runCoworkOutcomeScenario({

@@ -125,6 +125,12 @@ export type CoworkOutcomeScenario = {
       status?: "ready" | "pending" | "failed";
     };
     messageArtifact?: Artifact;
+    // A completed earlier user→assistant exchange, seeded before the scenario
+    // request so the turn's history window has a prior conversation.
+    priorTurn?: {
+      user: string;
+      assistant: string;
+    };
     bookmarkModelSource?: {
       id: string;
       sourcePostId: string;
@@ -602,6 +608,12 @@ async function runCoworkOutcomeScenarioWithStore(
   }
   if (scenario.seed?.messageArtifact) {
     store.seedMessageArtifact(scenario.seed.messageArtifact);
+  }
+  if (scenario.seed?.priorTurn) {
+    store.seedConversationTurn(
+      scenario.seed.priorTurn.user,
+      scenario.seed.priorTurn.assistant,
+    );
   }
   let requestBody = { ...scenario.request };
   if (scenario.retryLatestUser) {

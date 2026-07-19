@@ -432,6 +432,31 @@ export class CoworkHarnessStore {
     });
   }
 
+  seedConversationTurn(user: string, assistant: string): void {
+    this.insert("chat_messages", {
+      chat_id: this.chatId,
+      workspace_id: this.workspaceId,
+      role: "user",
+      content: user,
+      tool_calls: null,
+      tool_call_id: null,
+      artifacts: null,
+      input_tokens: null,
+      output_tokens: null,
+    });
+    this.insert("chat_messages", {
+      chat_id: this.chatId,
+      workspace_id: this.workspaceId,
+      role: "assistant",
+      content: assistant,
+      tool_calls: null,
+      tool_call_id: null,
+      artifacts: null,
+      input_tokens: null,
+      output_tokens: null,
+    });
+  }
+
   seedRetryableActionTurn(content: string): string {
     const user = this.insert("chat_messages", {
       chat_id: this.chatId,
