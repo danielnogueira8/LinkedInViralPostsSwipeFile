@@ -5,8 +5,8 @@
 // moved here (verbatim) out of lib/agent/run.ts so BOTH generation paths — the
 // interactive chat loop (run.ts) and the headless weekly-batch path
 // (lib/batch/weekly.ts) — import ONE copy instead of the batch worker reaching
-// into the 3000-line run.ts module for them. run.ts re-exports these so every
-// existing importer keeps working unchanged; this move is behavior-identical.
+// into the 3000-line run.ts module for them. Every consumer, run.ts included,
+// now imports directly from this module; this move is behavior-identical.
 //
 // The upcoming AI-Tell Editor (a later PR) is the natural next resident of this
 // module.

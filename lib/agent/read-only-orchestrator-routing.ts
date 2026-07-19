@@ -213,7 +213,8 @@ function requestedWorkspacePostType(
   return undefined;
 }
 
-function sourceResearchClause(instruction: string): string {
+/** Keep later writing instructions from authorizing a different search niche. */
+export function sourceResearchClause(instruction: string): string {
   const normalized = instruction.replace(/\s+/g, " ").trim();
   const outputFirst = normalized.match(
     /\b(?:after|using)\s+((?:finding|researching|searching|comparing|reviewing|inspecting)\b[\s\S]*)$/i,

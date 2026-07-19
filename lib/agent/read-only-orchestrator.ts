@@ -14,7 +14,10 @@ import {
   continuationForModeledDraftRoute,
   type ModeledDraftBatchContinuation,
 } from "@/lib/agent/modeled-draft-continuation";
-import type { ReadOnlyOrchestratorRoute } from "@/lib/agent/read-only-orchestrator-routing";
+import {
+  sourceResearchClause,
+  type ReadOnlyOrchestratorRoute,
+} from "@/lib/agent/read-only-orchestrator-routing";
 import { runTool, toolSummary } from "@/lib/agent/tools";
 import {
   admitDistinctModelingSource,
@@ -564,7 +567,7 @@ type WorkspaceNicheCandidate = {
 function authoritativeWorkspaceNicheCandidate(
   userInstruction: string,
 ): WorkspaceNicheCandidate | null {
-  const clause = authoritativeResearchClause(userInstruction);
+  const clause = sourceResearchClause(userInstruction);
   const trailingTopic = clause.match(
     /\bposts?\s+(?:about|on|for)\s+([\s\S]+)$/i,
   )?.[1];
@@ -654,7 +657,7 @@ export function planSearchQueriesMatchInstruction(
   );
   if (queryActions.length === 0) return true;
   const instructionTerms = significantTerms(
-    authoritativeResearchClause(userInstruction),
+    sourceResearchClause(userInstruction),
   );
   return queryActions.every((action) => {
     if (action.type === "search_viral_posts") {
@@ -672,34 +675,6 @@ export function planSearchQueriesMatchInstruction(
   });
 }
 
-/** Keep later writing instructions from authorizing a different search niche. */
-export function authoritativeResearchClause(userInstruction: string): string {
-  const normalized = userInstruction.replace(/\s+/g, " ").trim();
-  const researchAfterOutput = normalized.match(
-    /\b(?:after|using)\s+((?:finding|researching|searching|comparing|reviewing|inspecting)\b[\s\S]*)$/i,
-  )?.[1];
-  if (researchAfterOutput) {
-    return researchAfterOutput
-      .split(/[.!?](?:\s|$)/, 1)[0]
-      .split(
-        /\s*,?\s*\b(?:and|then)\s+(?:write|draft|create|generate|make|produce|prepare|give\s+me)\b/i,
-        1,
-      )[0]
-      .trim();
-  }
-  const directWritingTopic = normalized.match(
-    /^(?:please\s+)?(?:write|draft|create|generate|make|produce|prepare|give\s+me)\b[\s\S]{0,120}?\babout\s+([\s\S]+)$/i,
-  )?.[1];
-  if (directWritingTopic) {
-    return directWritingTopic.split(/[.!?](?:\s|$)/, 1)[0].trim();
-  }
-  return normalized
-    .split(
-      /(?:\b(?:and|then)\s+|[.!?]\s*)(?:please\s+)?(?:write|draft|create|generate|make|produce|prepare|give\s+me)\b/i,
-    )[0]
-    .trim();
-}
-
 /**
  * Search text is compiled from the authoritative request, not trusted planner
  * prose. The planner chooses a typed action; it cannot redirect that action to
@@ -707,7 +682,7 @@ export function authoritativeResearchClause(userInstruction: string): string {
  */
 export function authoritativeResearchQuery(userInstruction: string): string {
   const normalized = userInstruction.replace(/\s+/g, " ").trim();
-  const researchClause = authoritativeResearchClause(normalized)
+  const researchClause = sourceResearchClause(normalized)
     .replace(
       /^(?:please\s+)?(?:research|investigate|fact[ -]?check|verify|look\s+into|browse|search)\s+/i,
       "",
