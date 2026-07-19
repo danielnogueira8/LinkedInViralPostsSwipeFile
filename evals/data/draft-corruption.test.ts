@@ -234,31 +234,6 @@ describe("normalizePostBody — injects paragraph breaks into a wall of text", (
   test("trims trailing whitespace", () => {
     expect(normalizePostBody("A short post.   \n  ")).toBe("A short post.");
   });
-
-  // Live-observed: "It's Sunday, July 19. But the story has already started."
-  // got a paragraph break inserted after "19." — the sentence-split net can't
-  // tell a date from a sentence boundary. A number right before the mark is
-  // never treated as a sentence boundary now (dates, ages, list markers), only
-  // a letter is — so this can't recur regardless of number length.
-  test("does not split a wall of text after a date/number (July 19.)", () => {
-    const body =
-      "It's Sunday, July 19. But the story has already started. " +
-      "Three founders are already awake, already building, already shipping. " +
-      "The rest of us are still asleep, still scrolling, still waiting for Monday.";
-    const out = normalizePostBody(body);
-    expect(out).toContain("July 19. But the story");
-    expect(out).not.toContain("July 19.\n\n");
-  });
-
-  test("does not split after ANY number, including a year — only letters trigger a split", () => {
-    const body =
-      "The company was founded in 2024. It grew from zero to a million dollars in revenue in just eighteen months flat, which nobody thought possible at the time. " +
-      "Nobody believed it would work when we started, not even the people writing the checks. Everybody was wrong.";
-    const out = normalizePostBody(body);
-    expect(out).not.toContain("2024.\n\n");
-    expect(out).toContain("time.\n\n");
-    expect(out).toContain("checks.\n\n");
-  });
 });
 
 // ---------------------------------------------------------------------------

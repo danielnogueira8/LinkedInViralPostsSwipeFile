@@ -949,10 +949,11 @@ const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // NOTE: the pure draft-body anti-slop nets (looksCorruptedDraft,
-// normalizeDraftKey, stripEmDashes, aiTellMetrics) were moved to
-// lib/agent/specialists/nets.ts and are imported + re-exported near the top of
-// this file, so both this loop and the headless weekly-batch path share ONE
-// copy while every existing "@/lib/agent" importer keeps working.
+// normalizeDraftKey, stripEmDashes, aiTellMetrics) live in
+// lib/agent/specialists/nets.ts. This file imports only normalizeDraftKey and
+// rationaleTooGeneric directly (see the import block near the top) for use in
+// the loop below; every other consumer, including the headless weekly-batch
+// path, imports straight from nets.ts rather than through this file.
 
 // Dispatch a render-artifact tool call: validate the args, build the artifact
 // (resolving cite postId server-side, workspace-scoped), and return BOTH the
@@ -3949,6 +3950,28 @@ export async function* runAgent(opts: {
         code: DraftFinalizerRejectionCode;
         message: string;
       } | null = null;
+      // Shared bookkeeping for a rejected forced-final candidate: flips the
+      // outer source-fidelity/truncation flags and returns the rejection to
+      // stash as forcedRejection. Used by both the per-candidate loop below
+      // and the single-shot leaked-draft fallback further down.
+      function recordForcedRejection(rejection: {
+        code: DraftFinalizerRejectionCode;
+        message: string;
+      }): { code: DraftFinalizerRejectionCode; message: string } {
+        if (
+          rejection.code === "source_fidelity" ||
+          rejection.code === "source_unavailable"
+        ) {
+          sourceFidelityRejected = true;
+        }
+        if (rejection.code === "source_fidelity_unavailable") {
+          sourceFidelityReviewerUnavailable = true;
+        }
+        if (rejection.code === "truncated") {
+          lastRenderTruncated = true;
+        }
+        return { code: rejection.code, message: rejection.message };
+      }
       for (const forcedCandidate of forcedCandidates) {
         const finalized = await draftFinalizer.finalize({
           origin: "forced_final_fence",
@@ -3958,22 +3981,7 @@ export async function* runAgent(opts: {
           provenance: candidateProvenance(),
         });
         if (!finalized.ok) {
-          if (
-            finalized.rejection.code === "source_fidelity" ||
-            finalized.rejection.code === "source_unavailable"
-          ) {
-            sourceFidelityRejected = true;
-          }
-          if (finalized.rejection.code === "source_fidelity_unavailable") {
-            sourceFidelityReviewerUnavailable = true;
-          }
-          if (finalized.rejection.code === "truncated") {
-            lastRenderTruncated = true;
-          }
-          forcedRejection ??= {
-            code: finalized.rejection.code,
-            message: finalized.rejection.message,
-          };
+          forcedRejection ??= recordForcedRejection(finalized.rejection);
           continue;
         }
         if (finalized.sourcePostId) {
@@ -4019,22 +4027,7 @@ export async function* runAgent(opts: {
             forcedAcceptedDrafts++;
             forced = leaked.note; // reply keeps only the framing, not the post body
           } else {
-            if (
-              finalized.rejection.code === "source_fidelity" ||
-              finalized.rejection.code === "source_unavailable"
-            ) {
-              sourceFidelityRejected = true;
-            }
-            if (finalized.rejection.code === "source_fidelity_unavailable") {
-              sourceFidelityReviewerUnavailable = true;
-            }
-            if (finalized.rejection.code === "truncated") {
-              lastRenderTruncated = true;
-            }
-            forcedRejection ??= {
-              code: finalized.rejection.code,
-              message: finalized.rejection.message,
-            };
+            forcedRejection ??= recordForcedRejection(finalized.rejection);
             // The body is a rejected candidate. Keep only non-candidate framing;
             // it can never fall back to visible or persisted chat prose.
             forced = leaked.note;

@@ -2889,24 +2889,30 @@ export async function executeChatTurn(
         composerTaskContext: composerTaskContext ?? undefined,
       }),
     );
+    // Shared by the up-front preload (below) and the late fallback preload
+    // further down this function — both load the same voice profile for this
+    // turn the same fail-open way, just at different points in the turn.
+    function loadVoiceProfileForTurn(): Promise<ToolResult | null> {
+      return waitForChatSetup(
+        loadVoiceProfile(workspaceId, {
+          client: sbRaw,
+          signal: setupSignal,
+          telemetry: coworkTelemetry,
+          adapterHealth: coworkAdapterHealth,
+        }),
+        setupSignal,
+      ).catch((error) => {
+        if (
+          error instanceof UsagePersistenceError ||
+          (error instanceof Error && error.name === "UsagePersistenceError")
+        ) {
+          throw error;
+        }
+        return null;
+      });
+    }
     const voicePromise = shouldPreloadVoice
-      ? waitForChatSetup(
-          loadVoiceProfile(workspaceId, {
-            client: sbRaw,
-            signal: setupSignal,
-            telemetry: coworkTelemetry,
-            adapterHealth: coworkAdapterHealth,
-          }),
-          setupSignal,
-        ).catch((error) => {
-          if (
-            error instanceof UsagePersistenceError ||
-            (error instanceof Error && error.name === "UsagePersistenceError")
-          ) {
-            throw error;
-          }
-          return null;
-        })
+      ? loadVoiceProfileForTurn()
       : Promise.resolve(null);
     const [
       historyResult,
@@ -3112,23 +3118,7 @@ export async function executeChatTurn(
       isNoModelPostRequest(effectiveUserInstruction, hasModelSource),
     );
     if (effectivePostTurn && !preloadedVoiceResult) {
-      preloadedVoiceResult = await waitForChatSetup(
-        loadVoiceProfile(workspaceId, {
-          client: sbRaw,
-          signal: setupSignal,
-          telemetry: coworkTelemetry,
-          adapterHealth: coworkAdapterHealth,
-        }),
-        setupSignal,
-      ).catch((error) => {
-        if (
-          error instanceof UsagePersistenceError ||
-          (error instanceof Error && error.name === "UsagePersistenceError")
-        ) {
-          throw error;
-        }
-        return null;
-      });
+      preloadedVoiceResult = await loadVoiceProfileForTurn();
     }
     const previousLeadMagnet = latestLeadMagnetSelection(dbRows);
     const manualLeadMagnetId = reusableManualLeadMagnetIdForTurn(

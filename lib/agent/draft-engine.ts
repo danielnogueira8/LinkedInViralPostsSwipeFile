@@ -63,10 +63,7 @@ import {
   type DraftWriterResponse,
   type DraftWriterStage,
 } from "@/lib/agent/draft-writer";
-import {
-  leanFinalizerSpecialists,
-  modeledBatchFinalizerSpecialists,
-} from "@/lib/agent/lean-finalizer";
+import { modeledBatchFinalizerSpecialists } from "@/lib/agent/lean-finalizer";
 import {
   requestedShortenReduction,
   transformDirectRefineCandidate,
@@ -1209,6 +1206,22 @@ async function* runMultiDraftEngine(
   }
 }
 
+// A candidate can never legally be longer than the material it's drawn from
+// without inventing padding, so scale the too_short floor to that source's
+// own length (min 60, max 180, bounded by the requested range). Shared by
+// the refine floor and the source floor (fix #1265) — both scale off their
+// own source text identically.
+function lengthScaledCompletePostFloor(
+  sourceText: string,
+  requestedMax: number | undefined,
+): number {
+  return Math.min(
+    180,
+    Math.max(60, Math.floor(sourceText.trim().length * 0.5)),
+    requestedMax ?? 180,
+  );
+}
+
 export async function* runDraftEngine(
   input: DraftEngineInput,
   dependencies: Partial<DraftEngineDependencies> = {},
@@ -1259,10 +1272,9 @@ export async function* runDraftEngine(
   const refineMinimumCompletePostChars = (() => {
     if (task.kind !== "refine") return null;
     if (task.focus === "hook" || task.focus === "cta") return 1;
-    const ordinaryFloor = Math.min(
-      180,
-      Math.max(60, Math.floor(task.target.body.trim().length * 0.5)),
-      range?.max ?? 180,
+    const ordinaryFloor = lengthScaledCompletePostFloor(
+      task.target.body,
+      range?.max,
     );
     if (task.focus !== "shorten") return ordinaryFloor;
     const requestedMaximum = Math.max(
@@ -1285,11 +1297,7 @@ export async function* runDraftEngine(
   // source's own length, mirroring the refine floor above exactly.
   const sourceMinimumCompletePostChars =
     task.kind === "source"
-      ? Math.min(
-          180,
-          Math.max(60, Math.floor(task.source.text.trim().length * 0.5)),
-          range?.max ?? 180,
-        )
+      ? lengthScaledCompletePostFloor(task.source.text, range?.max)
       : null;
   const taskFinalTransform: DraftCandidateTransform | undefined =
     task.kind === "refine"
@@ -1345,8 +1353,10 @@ export async function* runDraftEngine(
     signal: turnSignal,
     editOptions: engineEditOptions,
     structureSkeleton: modeledStructureSkeleton,
-    // Thin path: no-op the taste specialists (fidelity/sameness/ai-tell), keep
-    // the deterministic editor. Otherwise use whatever the caller passed.
+    // Thin path: reuse createDraftFinalizer's own DEFAULT_SPECIALISTS (the
+    // full edit/repairAiTells/checkSameness/reviewSourceFidelity pipeline —
+    // see lib/agent/lean-finalizer.ts) by passing undefined. Otherwise use
+    // whatever the caller passed.
     specialists:
       input.finalizationProfile === "modeled_batch"
         ? {
@@ -1359,7 +1369,7 @@ export async function* runDraftEngine(
               : {}),
           }
         : input.lean
-          ? leanFinalizerSpecialists
+          ? undefined
           : input.finalizerSpecialists,
     transformCandidate: input.transformCandidate,
     finalTransformCandidate,
