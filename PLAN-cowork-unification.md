@@ -70,23 +70,23 @@ see the world → `context.ts`; whether output is acceptable → `finalizer.ts`.
 
 Small, independently testable fixes on current code:
 
-- [ ] **0.1 Voice-fail 503→422.** Distinguish "no voice profile" (permanent → 422,
+- [x] **0.1 Voice-fail 503→422.** Distinguish "no voice profile" (permanent → 422,
       non-recoverable, Voice-tab guidance, no `_recoverable` marker) from transient
       voice-load errors (stay recoverable 503). Implements the spec already written
       in the uncommitted `evals/data/cowork-outcome-harness.test.ts` diff; the
       `noReadyVoiceProfile` branch it references does not exist yet
       (`chat-turn.ts:4026-4058` currently collapses all failures into recoverable 503).
-- [ ] **0.2 Log swallowed writer exceptions.** `draft-engine.ts:1696-1702`,
+- [x] **0.2 Log swallowed writer exceptions.** `draft-engine.ts:1696-1702`,
       `1796-1802`, `1848-1854` — typed reason + console.error with stage, task kind,
       error class. No silent degradation.
-- [ ] **0.3 Stop orchestrator dropping produced drafts.**
+- [x] **0.3 Stop orchestrator dropping produced drafts.**
       `read-only-orchestrator.ts:2885-2895`, `3011-3048` — present accepted partial
       sets with honest message instead of nuking them; align with direct-multi
       behavior (`draft-engine.ts:1138-1173`).
-- [ ] **0.4 Batch "preserved drafts" must actually present.**
+- [x] **0.4 Batch "preserved drafts" must actually present.**
       `read-only-orchestrator.ts:2779-2844` — message claims preserved drafts,
       shows none.
-- [ ] **0.5 Honest terminal reasons.** Exhaust path must not yield
+- [x] **0.5 Honest terminal reasons.** Exhaust path must not yield
       `terminalReason:"done"` (`draft-engine.ts:1536-1540`, `1891`); typed
       `failure` reason; fix slot-runner special-case accordingly
       (`modeled-draft-slot-runner.ts:309-336`).
