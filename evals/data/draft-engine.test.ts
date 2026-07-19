@@ -1024,6 +1024,69 @@ describe("DraftEngine", () => {
     );
   });
 
+  test("retries a whole slot when the child engine exhausts all its own attempts on duplicates", async () => {
+    // Slot 2's child gets its own full primary/repair/fallback/fallback-repair
+    // cycle (4 writer calls), and every one of them collides with slot 1's
+    // accepted draft — reproducing "chip=2, only 1 delivered" when the model
+    // keeps regenerating the same structure for a same-source request. The
+    // fix gives the OUTER slot loop one more full child-engine attempt before
+    // giving up on the set; this one finally returns a distinct draft.
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(100, 70) },
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(100, 70) },
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(100, 70) },
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(100, 70) },
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(100, 70) },
+      { text: DISTINCT_COMPLETE_POST, finishReason: "stop", usage: usage(120, 80) },
+    ]);
+    const result = await collect(writer, {
+      userInstruction:
+        "Write exactly 2 different posts about career leverage. Do not search.",
+      task: { kind: "multi", expectedCount: 2 },
+    });
+
+    expect(artifacts(result.events).map((artifact) => artifact.body)).toEqual([
+      COMPLETE_POST,
+      DISTINCT_COMPLETE_POST,
+    ]);
+    expect(done(result.events)?.message.content).toBe("Here are your 2 drafts.");
+    expect(result.events).not.toContainEqual(
+      expect.objectContaining({ type: "error" }),
+    );
+  });
+
+  test("gives up on the set after the slot retry also exhausts on duplicates, keeping accepted drafts", async () => {
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(100, 70) },
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(100, 70) },
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(100, 70) },
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(100, 70) },
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(100, 70) },
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(100, 70) },
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(100, 70) },
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(100, 70) },
+    ]);
+    const result = await collect(writer, {
+      userInstruction:
+        "Write exactly 2 different posts about career leverage. Do not search.",
+      task: { kind: "multi", expectedCount: 2 },
+    });
+
+    expect(artifacts(result.events).map((artifact) => artifact.body)).toEqual([
+      COMPLETE_POST,
+    ]);
+    expect(result.events).toContainEqual(
+      expect.objectContaining({
+        type: "error",
+        code: "draft_engine_exhausted",
+        recovery: "continue",
+      }),
+    );
+    expect(done(result.events)?.message.content).toContain(
+      "kept the 1 completed draft",
+    );
+  });
+
   test("writes an exact multi-post set from the same verified research evidence", async () => {
     const writer = new ScriptedWriter([
       { text: COMPLETE_POST, finishReason: "stop", usage: usage(100, 70) },

@@ -134,6 +134,33 @@ export function areDraftsNearDuplicate(left: string, right: string): boolean {
   return vocabularySimilarity >= 0.88 || progressionSimilarity >= 0.74;
 }
 
+/**
+ * Which axis tripped areDraftsNearDuplicate, for a human/model-facing repair
+ * message — NOT a gating decision. "vocabulary" means the two drafts reuse
+ * mostly the same words (a topic/angle problem); "progression" means the
+ * word-to-word sequence overwhelmingly matches even if some words differ (a
+ * structure/phrasing problem). Callers should already know the pair is a
+ * near-duplicate (e.g. via areDraftsNearDuplicate) before asking why.
+ */
+export function duplicateReasonFor(
+  left: string,
+  right: string,
+): "vocabulary" | "progression" {
+  const leftWords = draftWords(left);
+  const rightWords = draftWords(right);
+  const vocabularySimilarity = setJaccard(
+    new Set(leftWords),
+    new Set(rightWords),
+  );
+  const progressionSimilarity = setJaccard(
+    bigrams(leftWords),
+    bigrams(rightWords),
+  );
+  return vocabularySimilarity >= progressionSimilarity
+    ? "vocabulary"
+    : "progression";
+}
+
 // Strip the em-dash AI tell from a draft body. The em dash (—) is THE signature
 // "this was written by AI" mark on LinkedIn, and the prompt's "≤1 per 500 words"
 // rule is non-deterministic — GLM still emits them. This is the deterministic
