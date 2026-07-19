@@ -622,6 +622,62 @@ describe("DraftFinalizer", () => {
     expect(finalizer.acceptedCount()).toBe(0);
   });
 
+  test("a reviewer-unavailable rejection does NOT poison the dedupe cache: the same body finalizes once the reviewer recovers", async () => {
+    // Regression for the compounding dead-end: an availability failure used to
+    // add the candidate to the rejected-key cache, so a retry that re-rendered
+    // the IDENTICAL good draft (after the reviewer came back) was rejected as
+    // `duplicate` — a draft whose only problem was a briefly-unreachable
+    // reviewer could never be delivered. An outage must never poison the
+    // content cache (mirrors the source_unavailable recovery contract).
+    const specialists = passThroughSpecialists();
+    const reviewSourceFidelity = vi
+      .fn()
+      // First pass: both reviewers down.
+      .mockResolvedValueOnce({ outcome: "unavailable" as const })
+      // Retry (reviewer recovered): clean verdict.
+      .mockResolvedValue({ outcome: "verified" as const });
+    specialists.reviewSourceFidelity = reviewSourceFidelity;
+    const finalizer = createDraftFinalizer({
+      workspaceId: "ws-1",
+      policy: policy(),
+      priorDrafts: [],
+      specialists,
+    });
+    const provenance = {
+      required: true,
+      requestedSourceId: "11111111-1111-4111-8111-111111111111",
+      discoveredSources: [
+        {
+          id: "11111111-1111-4111-8111-111111111111",
+          text: "A verified source post with a clear problem-solution progression.",
+        },
+      ],
+      userRequest: "Model this source as an original post.",
+      verifiedContext: "USER: Model this source as an original post.",
+    };
+
+    const unavailable = await finalizer.finalize({
+      origin: "render_tool",
+      body: COMPLETE_POST,
+      provenance,
+    });
+    const recovered = await finalizer.finalize({
+      origin: "render_tool",
+      // The EXACT same body the model produced the first time.
+      body: COMPLETE_POST,
+      provenance,
+    });
+
+    expect(unavailable).toMatchObject({
+      ok: false,
+      rejection: { code: "source_fidelity_unavailable" },
+    });
+    // The identical body is accepted on the recovery pass — NOT rejected as a
+    // duplicate. (If the cache had been poisoned, this would be `duplicate`.)
+    expect(recovered).toMatchObject({ ok: true, artifact: { body: COMPLETE_POST } });
+    expect(reviewSourceFidelity).toHaveBeenCalledTimes(2);
+  });
+
   test("never bypasses source review for a different retry or missing source text", async () => {
     const specialists = passThroughSpecialists();
     specialists.reviewSourceFidelity = vi.fn(async () => ({

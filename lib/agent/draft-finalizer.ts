@@ -361,7 +361,14 @@ export function createDraftFinalizer(
       result.rejection.code !== "empty" &&
       result.rejection.code !== "provenance_missing" &&
       result.rejection.code !== "provenance_unverified" &&
-      result.rejection.code !== "source_unavailable"
+      result.rejection.code !== "source_unavailable" &&
+      // A reviewer OUTAGE is not a verdict on the body. If we poisoned the
+      // dedupe cache with it, a retry that re-renders the IDENTICAL (good)
+      // draft would then be rejected as `duplicate` — an unwinnable dead-end
+      // for a draft whose only problem was that the fidelity reviewer was
+      // briefly unreachable. Availability failures must never poison the
+      // content-dedupe cache (same rule as source_unavailable above).
+      result.rejection.code !== "source_fidelity_unavailable"
     ) {
       const identity = candidateIdentity(candidate);
       if (identity) rejectedCandidateKeys.add(identity);
