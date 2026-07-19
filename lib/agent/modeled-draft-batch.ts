@@ -14,7 +14,7 @@ import {
   normalizeDraftKey,
 } from "@/lib/agent/specialists/nets";
 
-const MAX_MODELED_DRAFTS = 5;
+const MAX_MODELED_DRAFTS = 6;
 const MAX_RESERVE_SOURCES = 5;
 const MAX_SOURCE_TEXT_CHARS = 20_000;
 const MAX_SOURCE_REPLACEMENTS_PER_SLOT = 1;

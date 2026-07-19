@@ -295,7 +295,7 @@ function accepted(
 describe("executeModeledDraftBatch", () => {
   test.each([
     ["a count below the batch minimum", { count: 1, sources: sources.slice(0, 1) }],
-    ["a count above the batch maximum", { count: 6, sources: sources.slice(0, 6) }],
+    ["a count above the batch maximum", { count: 7, sources: sources.slice(0, 7) }],
     ["a non-integer count", { count: 2.5, sources: sources.slice(0, 3) }],
     [
       "duplicate source ids",

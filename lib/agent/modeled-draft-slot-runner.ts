@@ -108,7 +108,7 @@ const productionDependencies: ModeledDraftSlotDependencies = {
 };
 
 const MIN_MODELED_BATCH_COUNT = 2;
-const MAX_MODELED_BATCH_COUNT = 5;
+const MAX_MODELED_BATCH_COUNT = 6;
 const rejectionCodes = new Set<string>(MODELED_DRAFT_SLOT_REJECTION_CODES);
 
 type SourceTask = Extract<

@@ -713,7 +713,7 @@ export function compileReadOnlyOrchestratorRoute(
   const workspaceDraftSourceMode =
     sourceModelingRequest &&
     modeledIntent.relation === "one_to_one" &&
-    expectedDrafts <= 5
+    expectedDrafts <= 6
       ? ("one_to_one" as const)
       : undefined;
   const workspaceMinimumSources =

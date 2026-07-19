@@ -103,6 +103,7 @@ import {
   type ChatTurnOutcome,
 } from "@/lib/agent/chat-turn-lifecycle";
 import { resolveTurnOutcome } from "@/lib/agent/turn/outcome";
+import { resolveTurnCount } from "@/lib/agent/turn/compile";
 import {
   checkChatRateLimit,
   claimChatTurn,
@@ -2563,12 +2564,14 @@ export async function executeChatTurn(
       setupRequestedContract.kind === "post" &&
       !generationConfigRestoredFromRetry &&
       resolvedGenerationConfig.draftCountSource !== "ui" &&
-      setupRequestedContract.expectedCount >= 1 &&
-      setupRequestedContract.expectedCount <= 5
+      setupRequestedContract.expectedCount >= 1
     ) {
+      const contractCount = resolveTurnCount({
+        messageCount: setupRequestedContract.expectedCount,
+      });
       resolvedGenerationConfig = {
         version: 1,
-        draftCount: setupRequestedContract.expectedCount as 1 | 2 | 3 | 4 | 5,
+        draftCount: contractCount.count,
         draftCountSource:
           explicitMessageDraftCount(preclaimInstruction) !== null ||
           setupRequestedContract.expectedCount !== 1
