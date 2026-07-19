@@ -2781,10 +2781,13 @@ async function* runReadOnlyOrchestratorCore(
     const reason = batchResult.reason;
     const durableBatchExists =
       batchResult.kind === "incomplete" && Boolean(batchResult.batchId);
-    const terminalFailure =
-      batchResult.kind === "failed" &&
-      (batchResult.reason !== "insufficient_sources" ||
-        resumingModeledBatch);
+    // insufficient_sources is never recoverable by retrying the same turn,
+    // fresh or resuming: the workspace does not have enough distinct
+    // verified sources, full stop, and retrying re-runs the identical
+    // acquisition against the identical pool. Every kind:"failed" reason is
+    // terminal (cancelled/deadline are kind:"incomplete", never reach here) —
+    // see the matching fresh-vs-resuming message split just below.
+    const terminalFailure = batchResult.kind === "failed";
     const message = cancelled
       ? "Stopped before the complete modeled set was produced."
       : batchResult.kind === "failed" && batchResult.reason === "state_conflict"
@@ -2795,6 +2798,9 @@ async function* runReadOnlyOrchestratorCore(
               batchResult.reason === "insufficient_sources" &&
               resumingModeledBatch
             ? "The saved modeled set is no longer available. Send the request again as a new message to start a fresh set."
+            : batchResult.kind === "failed" &&
+                batchResult.reason === "insufficient_sources"
+              ? "I don’t have enough distinct verified sources in your swipe file to complete this modeled set. Add more posts to your swipe file, or ask for fewer drafts, then send the request again as a new message."
           : batchResult.kind === "failed" && batchResult.reason === "invalid_request"
             ? "This modeled request did not pass the server’s batch contract, so it was not run. Send it again as a new message."
       : preserved > 0
