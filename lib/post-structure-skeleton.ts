@@ -367,6 +367,60 @@ const LENGTH_BAND_MAX = 1.6;
 // source length; only the ratio check needs this floor.
 const MIN_SOURCE_CHARS_FOR_LENGTH_CHECK = 120;
 
+// Collapse consecutive same-kind beats to a run-length sequence, e.g.
+// [prose, prose, list, prose] → [prose, list, prose]. Merging adjacent beats of
+// the same kind is a size choice the reference block invites, not a structural
+// change.
+function collapseRuns(kinds: Array<"prose" | "list">): Array<"prose" | "list"> {
+  const out: Array<"prose" | "list"> = [];
+  for (const kind of kinds) {
+    if (out[out.length - 1] !== kind) out.push(kind);
+  }
+  return out;
+}
+
+// True when `inner` is a subsequence of `outer` (same items, same relative
+// order, gaps allowed). Used to accept a draft that consolidated some of the
+// source's beats — e.g. two separate list blocks merged into one — while still
+// rejecting a genuine reorder (leading with the list when the source led with
+// prose) or an added beat kind the source never had.
+function isSubsequence(
+  inner: Array<"prose" | "list">,
+  outer: Array<"prose" | "list">,
+): boolean {
+  let i = 0;
+  for (const kind of outer) {
+    if (i < inner.length && inner[i] === kind) i += 1;
+  }
+  return i === inner.length;
+}
+
+// The coarse beat-order check. Accept the draft's layout as a legitimate
+// adaptation of the source's when, after collapsing same-kind runs:
+//   (a) the draft's beat sequence is a SUBSEQUENCE of the source's — permits
+//       consolidation (fewer beats, same relative order), and
+//   (b) the draft's FIRST and LAST beat kinds match the source's — the hook
+//       shape and the landing shape are the load-bearing structural signals,
+//       so a draft that opens with a list when the source opened with prose,
+//       or lands on a list when the source landed on prose, is a real reorder,
+//       not a consolidation.
+// Together these accept e.g. source prose,list,prose,list,prose → draft
+// prose,list,prose (two lists merged) while still rejecting source
+// prose,list,prose → draft prose,prose,list (the list moved to the end).
+// Empty source layouts always match.
+function layoutIsAcceptableAdaptation(
+  sourceKinds: Array<"prose" | "list">,
+  draftKinds: Array<"prose" | "list">,
+): boolean {
+  const source = collapseRuns(sourceKinds);
+  const draft = collapseRuns(draftKinds);
+  if (source.length === 0) return true;
+  if (draft.length === 0) return false;
+  if (source[0] !== draft[0]) return false;
+  if (source[source.length - 1] !== draft[draft.length - 1]) return false;
+  return isSubsequence(draft, source);
+}
+
 // Compare a draft's skeleton against its source's. Returns the FIRST
 // mismatch found (deliberately singular — a single named delta drives one
 // clean retry instruction, not a multi-issue report), or null when the
@@ -381,19 +435,43 @@ export function checkStructureMatch(
       message: `The source post uses ${listStyleWithArticle(source.listMarker)} list (${source.listItemCount} items) — the draft dropped the list entirely and wrote prose instead.`,
     };
   }
-  const sourceLayout = source.layout.map((beat) => beat.kind).join(",");
-  const draftLayout = draft.layout.map((beat) => beat.kind).join(",");
-  if (sourceLayout !== draftLayout) {
+  const sourceKinds = source.layout.map((beat) => beat.kind);
+  const draftKinds = draft.layout.map((beat) => beat.kind);
+  // Beat-order check, deliberately loose. The reference block invites the writer
+  // to merge or split beats freely (list item counts "can flex"), so requiring
+  // the draft's beat sequence to be BYTE-IDENTICAL to the source's is a false-
+  // positive machine: a source with two separate list blocks
+  // (prose,list,prose,list,prose) that the model naturally consolidates into one
+  // (prose,list,prose) is a perfectly good adaptation, not a structural failure.
+  // Instead, after collapsing consecutive same-kind beats, accept when the
+  // draft's beat sequence is a SUBSEQUENCE of the source's — same beats, same
+  // relative order, consolidation allowed. This still catches genuine scrambles
+  // (a source prose→list→prose whose draft leads with the list) and reordering.
+  // A wholly-dropped list is already caught by the missing_list guard above.
+  if (!layoutIsAcceptableAdaptation(sourceKinds, draftKinds)) {
+    const sourceLayout = sourceKinds.join(",");
+    const draftLayout = draftKinds.join(",");
     return {
       code: "layout_order",
       message: `The source's visual sequence is ${sourceLayout || "empty"}, but the draft's is ${draftLayout || "empty"}. Keep prose and list beats in the same order.`,
     };
   }
-  const markerMismatchIndex = source.layout.findIndex(
-    (sourceBeat, index) =>
-      sourceBeat.kind === "list" &&
-      !sameMarkerStyle(sourceBeat.marker, draft.layout[index]?.marker ?? null),
-  );
+  // Marker-style check is POSITIONAL, so it's only meaningful when the draft
+  // kept the source's exact beat count. Once the draft is allowed to consolidate
+  // beats (layouts differ in length but still an acceptable adaptation),
+  // comparing beat-by-index would compare unrelated beats — skip it rather than
+  // false-positive. The subsequence check above already accepted the shape.
+  const markerMismatchIndex =
+    source.layout.length === draft.layout.length
+      ? source.layout.findIndex(
+          (sourceBeat, index) =>
+            sourceBeat.kind === "list" &&
+            !sameMarkerStyle(
+              sourceBeat.marker,
+              draft.layout[index]?.marker ?? null,
+            ),
+        )
+      : -1;
   if (markerMismatchIndex >= 0) {
     const sourceMarker = source.layout[markerMismatchIndex].marker;
     const draftMarker = draft.layout[markerMismatchIndex]?.marker ?? null;
