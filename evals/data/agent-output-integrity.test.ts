@@ -360,6 +360,13 @@ describe("production lead-magnet replay — bounded, ordered, complete, sourced"
       ],
     });
     setCiteResult(sourceId);
+    // The verified round's body must clear minimumCompletePostChars (180),
+    // which only activates for a directSourceModelingTurn — the turn shape
+    // this test now exercises.
+    const verifiedBody =
+      "A verified modeled draft. " +
+      "It has enough substance to clear the direct-source-modeling turn's minimum length policy, " +
+      "so this test's rejection is about missing provenance, not draft length.";
     setStubScript({
       rounds: [
         { toolCalls: [{ name: "search_viral_posts", args: {} }] },
@@ -368,7 +375,7 @@ describe("production lead-magnet replay — bounded, ordered, complete, sourced"
           toolCalls: [
             {
               name: "render_post",
-              args: { body: "A verified modeled draft.", sourcePostId: sourceId },
+              args: { body: verifiedBody, sourcePostId: sourceId },
             },
           ],
         },
@@ -376,12 +383,61 @@ describe("production lead-magnet replay — bounded, ordered, complete, sourced"
       ],
     });
 
-    const t = await runStubbedAgent();
+    // This scenario's rejection only applies to a STRICT one-post modeling
+    // request (directSourceModelingTurn) — the default "test prompt" history
+    // used by runStubbedAgent() with no args isn't one, so it doesn't
+    // exercise this net at all. Override with a real single-source modeling
+    // instruction so the retry/rejection path this test is named for
+    // actually runs.
+    const t = await runStubbedAgent([
+      {
+        role: "user",
+        content: "Find a top viral post about pricing and rewrite it in my voice.",
+      },
+    ]);
     const posts = t.artifacts.filter((artifact) => artifact.kind === "post");
 
     expect(posts).toHaveLength(1);
-    expect(posts[0].body).toBe("A verified modeled draft.");
+    expect(posts[0].body).toBe(verifiedBody);
     expect(t.artifacts.some((artifact) => artifact.kind === "cite")).toBe(true);
+  });
+
+  test("a non-strict-modeling turn (e.g. brandjack/namejack/newsjack) accepts a fenced draft even after discovering multiple sources", async () => {
+    // Companion to the test above: when the turn does NOT require modeling
+    // one exact source (directSourceModelingTurn is false — brandjack/
+    // namejack/newsjack research several REFERENCE posts but are not
+    // "model this one post" requests), a fenced draft must NOT be trapped
+    // waiting for a sourcePostId that was never meant to exist. This is the
+    // exact regression this fix addresses: before it, ANY discovered source
+    // count > 0 forced the requirement regardless of turn type.
+    const sourceId = "33333333-3333-4333-8333-333333333333";
+    setToolResult("search_viral_posts", {
+      ok: true,
+      count: 2,
+      posts: [
+        { id: sourceId, text: "A reference post." },
+        { id: "44444444-4444-4444-8444-444444444444", text: "A different reference post." },
+      ],
+    });
+    setStubScript({
+      rounds: [
+        { toolCalls: [{ name: "search_viral_posts", args: {} }] },
+        { text: "```post\nAn original post referencing what was researched.\n```", finishReason: "stop" },
+      ],
+    });
+
+    const t = await runStubbedAgent([
+      {
+        role: "user",
+        content:
+          "Brandjack apple — write 3 LinkedIn posts in my voice that borrows their recognition. Do a teardown, a steal-this, or a versus, then deliver something the reader can apply.",
+      },
+    ]);
+    const posts = t.artifacts.filter((artifact) => artifact.kind === "post");
+
+    expect(posts).toHaveLength(1);
+    expect(posts[0].body).toBe("An original post referencing what was researched.");
+    expect(t.errors).toHaveLength(0);
   });
 });
 

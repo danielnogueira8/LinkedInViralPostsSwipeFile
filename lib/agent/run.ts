@@ -2820,8 +2820,19 @@ export async function* runAgent(opts: {
         const truncatedLegacyDraft =
           hasLegacyDraft &&
           (finishReason === "length" || unclosedLegacyFence !== null);
+        // Only retry over a missing sourcePostId when this turn actually
+        // NEEDS one — a strict "model this one exact post" turn. A turn
+        // that discovers multiple REFERENCE sources without being asked to
+        // model any single one of them (e.g. brandjack/namejack/newsjack,
+        // which research several posts for a teardown/steal-this/versus)
+        // is not "unsourced" — there is no one source to attribute, so
+        // asking the model to supply a sourcePostId it was never meant to
+        // pick just repeats the same fenced draft and fails identically on
+        // retry. Matches resolveSource's own origin-scoped requirement in
+        // draft-finalizer.ts (only render_tool candidates can carry one).
         const unsourcedModeledLegacyDraft =
           hasLegacyDraft &&
+          directSourceModelingTurn &&
           discoveredSourcePostIds.size > 0 &&
           !selectedSourcePostId;
         const legacyRetryReason = truncatedLegacyDraft
