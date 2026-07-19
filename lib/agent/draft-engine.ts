@@ -73,6 +73,7 @@ import {
   type DirectRefineFocus,
 } from "@/lib/agent/direct-refine-policy";
 import {
+  classifyAdapterFailure,
   coworkAdapterHealth,
   type AdapterHealthRegistry,
 } from "@/lib/agent/adapter-health";
@@ -258,6 +259,25 @@ function rethrowUsagePersistence(error: unknown): void {
   ) {
     throw error;
   }
+}
+
+/**
+ * Typed, log-safe description of a swallowed writer-stage failure. The engine
+ * deliberately degrades primary → repair → fallback instead of throwing, but
+ * each degradation must leave a trace: telemetry already records the attempt,
+ * this feeds the runtime logs so an exhausted chain is diagnosable.
+ */
+function describeWriterStageFailure(error: unknown): {
+  kind: string;
+  name: string;
+  message: string;
+} {
+  const e = error as Partial<Error> | undefined;
+  return {
+    kind: classifyAdapterFailure(error),
+    name: typeof e?.name === "string" ? e.name : "UnknownError",
+    message: String(e?.message ?? error).slice(0, 300),
+  };
 }
 
 function voiceBlock(result: ToolResult): string {
@@ -1423,6 +1443,20 @@ export async function* runDraftEngine(
   // best-effort draft (flagged for verification) beats a dead-end "retry" with
   // no post at all.
   let lastDraftedBody = "";
+  // Trace of every swallowed writer-stage failure this turn, in order. Logged
+  // eagerly at each catch site and summarized on the exhaust path so a turn
+  // that ends in draft_engine_exhausted is never a black box.
+  const stageFailures: Array<
+    { stage: string } & ReturnType<typeof describeWriterStageFailure>
+  > = [];
+  const noteWriterStageFailure = (stage: string, error: unknown): void => {
+    const failure = describeWriterStageFailure(error);
+    stageFailures.push({ stage, ...failure });
+    console.error(
+      `[cowork][draft-engine] writer stage "${stage}" failed (task=${task.kind}): ` +
+        `${failure.kind} ${failure.name}: ${failure.message}`,
+    );
+  };
 
   // Grounded salvage. A research/news turn whose drafts all fail the (kept-on)
   // grounding gate would otherwise dead-end. Instead, run the last drafted body
@@ -1699,6 +1733,7 @@ export async function* runDraftEngine(
           yield interrupted();
           return;
         }
+        noteWriterStageFailure("primary", error);
       }
 
       if (await cancellationRequestedNow()) {
@@ -1799,6 +1834,7 @@ export async function* runDraftEngine(
             yield interrupted();
             return;
           }
+          noteWriterStageFailure("repair", error);
         }
       }
 
@@ -1851,6 +1887,7 @@ export async function* runDraftEngine(
           yield interrupted();
           return;
         }
+        noteWriterStageFailure("fallback", error);
       }
     } catch (error) {
       rethrowUsagePersistence(error);
@@ -1858,6 +1895,7 @@ export async function* runDraftEngine(
         yield interrupted();
         return;
       }
+      noteWriterStageFailure("chain", error);
     }
 
     // Grounded (research/news) turns keep the grounding gate ON, so a natural
@@ -1882,6 +1920,12 @@ export async function* runDraftEngine(
 
     const failureMessage =
       "I couldn’t complete a reliable post this time. Please continue to retry the draft.";
+    if (stageFailures.length > 0) {
+      console.error(
+        `[cowork][draft-engine] exhausted without a deliverable (task=${task.kind}); ` +
+          `stage failures: ${stageFailures.map((f) => `${f.stage}=${f.kind}`).join(", ")}`,
+      );
+    }
     yield {
       type: "error",
       code: "draft_engine_exhausted",
