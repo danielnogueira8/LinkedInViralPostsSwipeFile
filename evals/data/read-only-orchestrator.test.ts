@@ -1331,6 +1331,69 @@ describe("read-only orchestrator execution", () => {
     );
   });
 
+  test("logs how many raw search_viral_posts rows were dropped as unusable candidates", async () => {
+    // Live incident: a workspace has posts classified viral with a NULL body
+    // (a real scraping/ingestion gap) — normalizeModelingSourceCandidate
+    // correctly drops them via workspaceSources()'s flatMap, but until this
+    // fix there was no visibility into that drop, so "search succeeded but
+    // produced zero usable sources" was undiagnosable from logs alone.
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const planner = new ScriptedPlanner(PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL, [
+      {
+        toolArgs: {
+          actions: [
+            {
+              id: "sources",
+              type: "search_viral_posts",
+              niche: "AI SaaS",
+              limit: 2,
+            },
+            {
+              id: "write",
+              type: "draft_post",
+              evidenceActionIds: ["sources"],
+            },
+          ],
+        },
+        usage: usage(70, 15),
+      },
+    ]);
+    await collect(
+      input({
+        route: {
+          kind: "workspace_research",
+          expectsDraft: true,
+          minimumSources: 1,
+          workspaceSearchMode: "strict_top",
+        },
+        userInstruction: "Find the top AI & SaaS post and write one LinkedIn post.",
+      }),
+      [planner],
+      async () => ({
+        ok: true,
+        posts: [
+          { id: "usable-1", text: "A real post with real content." },
+          { id: "null-body", text: null },
+          { id: "", text: "Has text but a blank id" },
+        ],
+      }),
+    );
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("search_viral_posts_candidates_dropped"),
+    );
+    const logged = warnSpy.mock.calls
+      .map((call) => call[0] as string)
+      .find((line) => line.includes("search_viral_posts_candidates_dropped"));
+    const parsed = JSON.parse(logged!);
+    expect(parsed.search_viral_posts_candidates_dropped).toMatchObject({
+      raw_count: 3,
+      usable_count: 1,
+      dropped_count: 2,
+    });
+    warnSpy.mockRestore();
+  });
+
   test("records successful and failed direct research-tool stages safely", async () => {
     const validPlan = () =>
       new ScriptedPlanner(PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL, [

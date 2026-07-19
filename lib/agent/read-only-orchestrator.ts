@@ -2125,6 +2125,28 @@ async function* runReadOnlyOrchestratorCore(
             ),
         });
         sources = workspaceSources(result);
+        // Diagnose the "search succeeded but produced zero usable sources"
+        // dead-end without needing a live repro: workspaceSources() silently
+        // drops any row that fails normalizeModelingSourceCandidate (empty
+        // id/text after canonicalScrapedPostText) via flatMap, so a non-empty
+        // raw result can still yield sources.length === 0 with no visibility
+        // into why. Only logs when the drop is non-trivial, so this stays
+        // silent on the normal path.
+        if (result.ok) {
+          const rawCount = Array.isArray(result.posts) ? result.posts.length : 0;
+          if (rawCount > 0 && sources.length < rawCount) {
+            console.warn(
+              JSON.stringify({
+                search_viral_posts_candidates_dropped: {
+                  workspace_id: input.workspaceId,
+                  raw_count: rawCount,
+                  usable_count: sources.length,
+                  dropped_count: rawCount - sources.length,
+                },
+              }),
+            );
+          }
+        }
         if (input.route.workspaceDraftSourceMode === "one_to_one") {
           modeledSourcePoolByAction.set(
             action.id,
