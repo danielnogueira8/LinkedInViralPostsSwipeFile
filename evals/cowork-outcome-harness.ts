@@ -131,6 +131,11 @@ export type CoworkOutcomeScenario = {
       user: string;
       assistant: string;
     };
+    attachmentTurn?: {
+      user: string;
+      contentBlocks: PersistedHarnessMessage["content_blocks"];
+      assistant: string;
+    };
     bookmarkModelSource?: {
       id: string;
       sourcePostId: string;
@@ -613,6 +618,13 @@ async function runCoworkOutcomeScenarioWithStore(
     store.seedConversationTurn(
       scenario.seed.priorTurn.user,
       scenario.seed.priorTurn.assistant,
+    );
+  }
+  if (scenario.seed?.attachmentTurn) {
+    store.seedAttachmentTurn(
+      scenario.seed.attachmentTurn.user,
+      scenario.seed.attachmentTurn.contentBlocks,
+      scenario.seed.attachmentTurn.assistant,
     );
   }
   let requestBody = { ...scenario.request };

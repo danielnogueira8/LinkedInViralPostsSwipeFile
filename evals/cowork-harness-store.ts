@@ -16,6 +16,12 @@ export type PersistedHarnessMessage = {
   }> | null;
   tool_call_id: string | null;
   artifacts: Artifact[] | null;
+  content_blocks: Array<{
+    type: "text" | "file" | "image_url";
+    text?: string;
+    file?: { filename: string; file_data: string };
+    image_url?: { url: string };
+  }> | null;
   input_tokens: number | null;
   output_tokens: number | null;
   terminal_reason?: string | null;
@@ -441,6 +447,7 @@ export class CoworkHarnessStore {
       tool_calls: null,
       tool_call_id: null,
       artifacts: null,
+      content_blocks: null,
       input_tokens: null,
       output_tokens: null,
     });
@@ -452,6 +459,38 @@ export class CoworkHarnessStore {
       tool_calls: null,
       tool_call_id: null,
       artifacts: null,
+      content_blocks: null,
+      input_tokens: null,
+      output_tokens: null,
+    });
+  }
+
+  seedAttachmentTurn(
+    user: string,
+    contentBlocks: PersistedHarnessMessage["content_blocks"],
+    assistant: string,
+  ): void {
+    this.insert("chat_messages", {
+      chat_id: this.chatId,
+      workspace_id: this.workspaceId,
+      role: "user",
+      content: user,
+      tool_calls: null,
+      tool_call_id: null,
+      artifacts: null,
+      content_blocks: contentBlocks,
+      input_tokens: null,
+      output_tokens: null,
+    });
+    this.insert("chat_messages", {
+      chat_id: this.chatId,
+      workspace_id: this.workspaceId,
+      role: "assistant",
+      content: assistant,
+      tool_calls: null,
+      tool_call_id: null,
+      artifacts: null,
+      content_blocks: null,
       input_tokens: null,
       output_tokens: null,
     });

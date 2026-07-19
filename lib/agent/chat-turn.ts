@@ -2276,6 +2276,35 @@ export async function executeChatTurn(
       throw new Error(GENERATION_CONFIG_CONTEXT_PERSISTENCE_ERROR);
     }
 
+    // Persist the assembled attachment blocks so follow-up turns can re-inject
+    // them from history. This is best-effort: the current turn already holds the
+    // blocks in memory, so a failed write must not abort the turn.
+    if (turnContext.attachmentBlocks.length > 0 && claimedUserMessageId) {
+      try {
+        await waitForChatSetup(
+          sbRaw
+            .from("chat_messages")
+            .update({ content_blocks: turnContext.attachmentBlocks })
+            .eq("id", claimedUserMessageId)
+            .eq("workspace_id", workspaceId)
+            .select("id")
+            .maybeSingle(),
+          setupSignal,
+        );
+      } catch (error) {
+        console.error(
+          JSON.stringify({
+            attachment_blocks_persistence_failed: {
+              workspaceId,
+              chatId,
+              userMessageId: claimedUserMessageId,
+              error: (error as Error)?.message ?? String(error),
+            },
+          }),
+        );
+      }
+    }
+
   } catch (e) {
     const setupExpired = setupDeadline?.didExpire() ?? false;
     const requestAborted = signal.aborted;

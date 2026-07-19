@@ -136,6 +136,8 @@ export type DbMessage = {
   tool_calls: ToolCall[] | null;
   tool_call_id: string | null;
   artifacts?: Artifact[] | null;
+  /** Persisted structured attachment blocks (text/file/image-analysis) for user messages. */
+  content_blocks?: ContentBlock[] | null;
 };
 
 export type ModelSourceRow = {
@@ -824,6 +826,19 @@ export function isBatchArtifactFilingRow(m: DbMessage): boolean {
   return text.length === 0;
 }
 
+function persistedAttachmentBlocksInline(blocks: ContentBlock[]): string {
+  return blocks
+    .map((block) => {
+      if (block.type === "text" && block.text) return block.text;
+      if (block.type === "file" && block.file) {
+        return `[Attached file: ${safeFilename(block.file.filename)}]`;
+      }
+      return "";
+    })
+    .filter(Boolean)
+    .join("\n\n");
+}
+
 export function chatHistoryWithModelSources(
   rows: DbMessage[],
   sourcesById: Map<string, ModelSourceRow>,
@@ -844,16 +859,26 @@ export function chatHistoryWithModelSources(
         const sourceId = extractModelSourceId(m.tool_calls);
         const source = sourceId ? sourcesById.get(sourceId) : null;
         const envelope = source ? modelSourceEnvelope(source) : "";
-        if (!envelope) return base;
-        const structureBlock = source ? modelSourceStructureBlock(source) : "";
-        return {
-          ...base,
-          content: [
-            { type: "text", text: m.content },
-            { type: "text", text: envelope },
-            ...(structureBlock ? [{ type: "text" as const, text: structureBlock }] : []),
-          ],
-        };
+        const persistedBlocks = Array.isArray(m.content_blocks)
+          ? (m.content_blocks as ContentBlock[])
+          : [];
+        const attachmentInline = persistedBlocks.length
+          ? persistedAttachmentBlocksInline(persistedBlocks)
+          : "";
+        if (!envelope && !attachmentInline) return base;
+        const textParts = [m.content];
+        if (attachmentInline) textParts.push(attachmentInline);
+        const content: ContentBlock[] = [
+          { type: "text", text: textParts.join("\n\n") },
+        ];
+        if (envelope) {
+          content.push({ type: "text", text: envelope });
+          const structureBlock = source ? modelSourceStructureBlock(source) : "";
+          if (structureBlock) {
+            content.push({ type: "text", text: structureBlock });
+          }
+        }
+        return { ...base, content };
       })
   );
 }
@@ -1068,7 +1093,7 @@ export async function buildTurnContext(
   const historyPromise = waitForChatSetup(
     sbRaw
       .from("chat_messages")
-      .select("role, content, tool_calls, tool_call_id, artifacts")
+      .select("role, content, tool_calls, tool_call_id, artifacts, content_blocks")
       .eq("chat_id", chatId)
       .eq("workspace_id", workspaceId)
       .order("created_at", { ascending: false })

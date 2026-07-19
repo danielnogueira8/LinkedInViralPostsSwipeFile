@@ -2771,6 +2771,102 @@ describe("production-shaped Cowork outcome harness", () => {
     ).toContain("customer said onboarding delays");
   });
 
+  test("follow-up turn re-injects persisted attachment text without a re-attach", async () => {
+    const sequence = await runCoworkOutcomeSequence([
+      {
+        id: "attachment-persist-first",
+        request: {
+          message:
+            "Inspect the attached customer interview and write a LinkedIn post from the verified lessons in it.",
+          attachments: [
+            {
+              kind: "text",
+              filename: "interview.txt",
+              text: "The customer said onboarding delays made the next step unclear.",
+            },
+          ],
+        },
+        model: {
+          provider: { rounds: [] },
+          readOnlyOrchestrator: {
+            plans: [
+              {
+                model: PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL,
+                toolArgs: {
+                  actions: [
+                    { id: "file", type: "inspect_attachments" },
+                    {
+                      id: "draft",
+                      type: "draft_post",
+                      evidenceActionIds: ["file"],
+                    },
+                  ],
+                },
+                usage: usage(80, 16, 0.0009),
+              },
+            ],
+            attachmentSources: [
+              {
+                id: "interview-1",
+                kind: "attachment",
+                title: "interview.txt",
+                text: "The customer said onboarding delays made the next step unclear.",
+              },
+            ],
+          },
+          directWriter: [
+            {
+              text: FILE_GROUNDED_POST,
+              finishReason: "stop",
+              usage: usage(230, 110, 0.00022),
+            },
+          ],
+        },
+        expected: {
+          terminal: "done",
+          artifactBodies: [FILE_GROUNDED_POST],
+          actionNames: ["inspect_attachments", "write_grounded_post"],
+        },
+      },
+      {
+        id: "attachment-persist-follow-up",
+        request: {
+          message:
+            "Write an original post in my voice about the onboarding problem from the interview.",
+        },
+        model: {
+          provider: { rounds: [] },
+          directWriter: [
+            {
+              text: COMPLETE_POST,
+              finishReason: "stop",
+              usage: usage(210, 95, 0.0001888),
+            },
+          ],
+        },
+        expected: {
+          terminal: "done",
+          artifactBodies: [COMPLETE_POST],
+          actionNames: [],
+        },
+      },
+    ]);
+
+    expect(sequence.pass, JSON.stringify(sequence.attempts)).toBe(true);
+    const firstUser = sequence.attempts[0]?.persisted.messages.find(
+      (message) => message.role === "user",
+    );
+    expect(firstUser?.content_blocks).toBeDefined();
+    expect(firstUser?.content_blocks?.length).toBeGreaterThan(0);
+    expect(JSON.stringify(firstUser?.content_blocks)).toContain(
+      "customer said onboarding delays",
+    );
+    const followUpPrompt = JSON.stringify(
+      sequence.attempts[1]?.observed.directWriterRequests[0]?.messages,
+    );
+    expect(followUpPrompt).toContain("customer said onboarding delays");
+  });
+
   test("asks one typed question for an ambiguous complex read-only request", async () => {
     const report = await runCoworkOutcomeScenario({
       id: "read-only-orchestrator-ambiguity",

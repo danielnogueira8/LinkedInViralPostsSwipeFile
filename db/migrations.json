@@ -1,7 +1,7 @@
 {
   "generatedBy": "npm run migrations:metadata",
-  "highest": 108,
-  "count": 108,
+  "highest": 109,
+  "count": 109,
   "files": [
     "migration-001-progress.sql",
     "migration-002-usage.sql",
@@ -110,6 +110,7 @@
     "migration-105-save-standalone-draft.sql",
     "migration-106-modeling-source-rotation-cursor.sql",
     "migration-107-modeled-draft-batches.sql",
-    "migration-108-modeled-draft-count-six.sql"
+    "migration-108-modeled-draft-count-six.sql",
+    "migration-109-attachment-content-blocks.sql"
   ]
 }
