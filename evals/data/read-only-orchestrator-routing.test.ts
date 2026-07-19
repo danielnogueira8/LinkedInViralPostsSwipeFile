@@ -95,6 +95,14 @@ describe("read-only complex orchestrator routing", () => {
       ).toMatchObject({
         kind: "workspace_research",
         workspacePostType: "regular",
+        // The genuinely-explicit signal must ALSO reach the route, distinct
+        // from workspacePostType (which merely filters the source search) —
+        // this is what taggedWithResearchProvenance stamps into the saved
+        // artifact's meta.explicit_post_type so the client can skip
+        // classifyPost()'s body-text reclassification at Save. Without this,
+        // a regular post whose body legitimately discusses lead magnets
+        // (the exact reported bug) gets silently reclassified on save.
+        explicitPostType: "regular",
       });
     });
 
@@ -109,6 +117,7 @@ describe("read-only complex orchestrator routing", () => {
       ).toMatchObject({
         kind: "workspace_research",
         workspacePostType: "lead_magnet",
+        explicitPostType: "lead_magnet",
       });
     });
 
@@ -125,6 +134,33 @@ describe("read-only complex orchestrator routing", () => {
       expect(route).toMatchObject({ kind: "workspace_research" });
       expect(
         (route as { workspacePostType?: unknown } | null)?.workspacePostType,
+      ).toBeUndefined();
+      // Critical: workspacePostType being unset here is expected (nothing to
+      // derive), but explicitPostType must ALSO stay unset even in a case
+      // where the instruction regex DOES manage to derive a workspacePostType
+      // (covered by the next test) — it must never leak a guess in as if it
+      // were the user's own choice.
+      expect(
+        (route as { explicitPostType?: unknown } | null)?.explicitPostType,
+      ).toBeUndefined();
+    });
+
+    test("an instruction-derived post type does not get promoted to explicitPostType", () => {
+      // requestedWorkspacePostType's own regex can legitimately resolve a
+      // workspacePostType from instruction text (e.g. an explicit "lead
+      // magnet" request with no picker used) — that is a guess about the
+      // request's CONTENT, not a genuine user choice, and must never be
+      // persisted as if the user had picked it in Generation Settings.
+      const route = compileReadOnlyOrchestratorRoute({
+        ...base,
+        userInstruction:
+          "Find 3 top lead magnet posts and write 3 original lead magnets in my voice.",
+      });
+      expect(
+        (route as { workspacePostType?: unknown } | null)?.workspacePostType,
+      ).toBe("lead_magnet");
+      expect(
+        (route as { explicitPostType?: unknown } | null)?.explicitPostType,
       ).toBeUndefined();
     });
 
@@ -147,6 +183,27 @@ describe("read-only complex orchestrator routing", () => {
       ).toMatchObject({
         kind: "workspace_research",
         workspacePostType: "lead_magnet",
+        explicitPostType: "lead_magnet",
+      });
+    });
+
+    test("a starter's own post type is itself explicit even with no competing input.explicitPostType", () => {
+      // A starter click IS a genuine user choice — this must be stamped even
+      // when the free-text explicitPostType input field is entirely absent.
+      const composerTaskContext = resolveComposerTaskContext({
+        starterId: "model-top-viral",
+        fallbackPostCount: null,
+      });
+      expect(
+        compileReadOnlyOrchestratorRoute({
+          ...base,
+          userInstruction: "AI slop for content writers.",
+          composerTaskContext,
+        }),
+      ).toMatchObject({
+        kind: "workspace_research",
+        workspacePostType: "regular",
+        explicitPostType: "regular",
       });
     });
   });

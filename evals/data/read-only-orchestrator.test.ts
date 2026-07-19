@@ -2178,6 +2178,117 @@ describe("read-only orchestrator execution", () => {
     });
   });
 
+  test("stamps meta.explicit_post_type on the artifact when the route carries a genuine user choice", async () => {
+    // The reported bug: selecting REGULAR explicitly, then writing original
+    // posts whose body legitimately discusses lead magnets as a topic, must
+    // not let classifyPost()'s body-text regex reclassify the saved draft.
+    // taggedWithResearchProvenance is the choke point that has to carry the
+    // route's explicitPostType through to the artifact the client saves.
+    const planner = new ScriptedPlanner(PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL, [
+      {
+        toolArgs: {
+          actions: [
+            {
+              id: "sources",
+              type: "search_viral_posts",
+              niche: "SaaS",
+              limit: 2,
+            },
+            {
+              id: "write",
+              type: "draft_post",
+              evidenceActionIds: ["sources"],
+            },
+          ],
+        },
+        usage: usage(70, 15),
+      },
+    ]);
+    const result = await collect(
+      input({
+        route: {
+          kind: "workspace_research",
+          expectsDraft: true,
+          minimumSources: 2,
+          explicitPostType: "regular",
+        },
+        userInstruction:
+          "Find 2 top posts and write an original post about why lead magnets work, in my voice.",
+      }),
+      [planner],
+      async () => ({
+        ok: true,
+        count: 2,
+        posts: [
+          { id: "post-a", text: "A pricing lesson.", url: "https://linkedin.com/a" },
+          { id: "post-b", text: "A positioning lesson.", url: "https://linkedin.com/b" },
+        ],
+      }),
+    );
+
+    const artifact = result.events.find((event) => event.type === "artifact");
+    expect(artifact?.type === "artifact" && artifact.artifact.meta).toMatchObject({
+      explicit_post_type: "regular",
+    });
+  });
+
+  test("does not stamp meta.explicit_post_type when the route has no genuine user choice", async () => {
+    // The default (no starter, no Generation Settings pick) case must be
+    // byte-identical to before this field existed — no explicit_post_type
+    // in meta, so the client continues to auto-classify from the body.
+    const planner = new ScriptedPlanner(PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL, [
+      {
+        toolArgs: {
+          actions: [
+            {
+              id: "sources",
+              type: "search_viral_posts",
+              niche: "SaaS",
+              limit: 2,
+            },
+            {
+              id: "write",
+              type: "draft_post",
+              evidenceActionIds: ["sources"],
+            },
+          ],
+        },
+        usage: usage(70, 15),
+      },
+    ]);
+    const result = await collect(
+      input({
+        route: {
+          kind: "workspace_research",
+          expectsDraft: true,
+          minimumSources: 2,
+        },
+        userInstruction:
+          "Find 2 top posts and write an original post about pricing, in my voice.",
+      }),
+      [planner],
+      async () => ({
+        ok: true,
+        count: 2,
+        posts: [
+          { id: "post-a", text: "A pricing lesson.", url: "https://linkedin.com/a" },
+          { id: "post-b", text: "A positioning lesson.", url: "https://linkedin.com/b" },
+        ],
+      }),
+    );
+
+    const artifact = result.events.find((event) => event.type === "artifact");
+    expect(
+      (artifact?.type === "artifact"
+        ? artifact.artifact.meta
+        : undefined) as { explicit_post_type?: unknown } | undefined,
+    ).toEqual(
+      expect.not.objectContaining({
+        explicit_post_type: expect.anything(),
+      }),
+    );
+  });
+
   test("models one draft from the top selected source after a larger discovery pool", async () => {
     const userInstruction =
       "Find 4 top-performing regular posts in my swipe file, choose the best, and rewrite it in my voice.";

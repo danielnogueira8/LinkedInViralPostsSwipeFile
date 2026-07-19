@@ -153,6 +153,7 @@ import {
   type DraftCountSelection,
   type PostTypeSelection,
 } from "@/lib/generation-config";
+import type { DraftKind } from "@/lib/post-type";
 import type { ComposerStarterId } from "@/lib/composer-task-context";
 import { requestServerTurnStop } from "@/lib/chat-stop";
 import { safeJsonSchema } from "@/lib/api-fetch";
@@ -6811,6 +6812,22 @@ function ArtifactCard({
     }
   };
 
+  // The kind to send on save. A hook always stays a hook. Otherwise: if the
+  // user made an EXPLICIT post-type choice for this turn (a starter contract
+  // or a Generation Settings pick — stamped by the server into
+  // meta.explicit_post_type, never derived from body text), that choice is
+  // authoritative and must survive the save unmodified. Only when there was
+  // no explicit choice do we omit kind, letting the server auto-classify
+  // regular vs lead-magnet from the body — the original, still-desired
+  // behavior for a lead magnet written in Cowork with no picker used.
+  const kindForSave = (): DraftKind | undefined => {
+    if (artifact.kind === "hook") return "hook";
+    const explicit = artifact.meta?.explicit_post_type;
+    if (explicit === "lead_magnet") return "lead_magnet";
+    if (explicit === "regular") return "post";
+    return undefined;
+  };
+
   // Save as a NEW chat_artifacts row (the original behavior).
   const saveAsNew = async () => {
     if (!chatId || saving) return;
@@ -6823,10 +6840,7 @@ function ArtifactCard({
           title: artifact.title,
           // edited local body (from the inline editor), not artifact.body
           body,
-          // Send kind ONLY for a hook (an explicit non-post type). For a rendered
-          // 'post', omit it so the server auto-classifies regular vs lead-magnet
-          // from the body — a lead magnet written in Cowork gets tagged for free.
-          ...(artifact.kind === "hook" ? { kind: "hook" as const } : {}),
+          ...(kindForSave() ? { kind: kindForSave() } : {}),
           ...(artifact.meta ? { meta: artifact.meta } : {}),
           ...(mediaAttachments.length ? { media_attachments: mediaAttachments } : {}),
         }),
@@ -6934,7 +6948,7 @@ function ArtifactCard({
       body: JSON.stringify({
         title: artifact.title,
         body,
-        ...(artifact.kind === "hook" ? { kind: "hook" as const } : {}),
+        ...(kindForSave() ? { kind: kindForSave() } : {}),
         ...(artifact.meta ? { meta: artifact.meta } : {}),
         media_attachments: scheduleMediaAttachments,
       }),
