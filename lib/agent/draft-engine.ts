@@ -1424,21 +1424,42 @@ export async function* runDraftEngine(
   // no post at all.
   let lastDraftedBody = "";
 
-  // Grounded salvage. A research/news turn whose drafts all fail the (kept-on)
-  // grounding gate would otherwise dead-end. Instead, run the last drafted body
-  // through the CORRUPTION-only nets (em-dash strip + normalize) and, unless it's
-  // genuinely broken or too long, deliver it as an artifact with a verify note.
-  // Returns null when there's nothing safe to salvage (empty / corrupt / oversize).
-  const salvageGroundedDraft = (): (Artifact & { kind: "post" }) | null => {
+  // Best-effort salvage. Two turn shapes would otherwise dead-end even though
+  // the writer produced a usable draft:
+  //   • grounded/news — every attempt fails the (kept-on) grounding gate;
+  //   • a TRUSTED source-modeling turn whose only failure was the source-
+  //     fidelity REVIEWER being unavailable (both reviewer LLMs timed out /
+  //     errored — an infrastructure blip, NOT evidence the draft is unfaithful).
+  // In both cases we run the last drafted body through the CORRUPTION-only nets
+  // (em-dash strip + normalize) and, unless it's genuinely broken or too long,
+  // deliver it flagged for verification — a usable draft the user can check
+  // beats an opaque "retry" with no post at all.
+  //
+  // `copyGuardSource`, when given, is the modeled source text: the salvaged
+  // body is rejected if it's a near-duplicate of it. This is the DETERMINISTIC
+  // half of the fidelity gate — it runs with no model at all, so an unavailable
+  // reviewer can never let a plagiarized draft through the salvage path. (For
+  // the grounded case there is no single source to copy from, so it's omitted.)
+  // Returns null when there's nothing safe to salvage (empty / corrupt /
+  // oversize / too close to the source).
+  const salvageUnverifiedDraft = (
+    copyGuardSource?: string,
+  ): (Artifact & { kind: "post" }) | null => {
     const raw = lastDraftedBody.trim();
     if (!raw) return null;
     const { body } = editDraftBodySync(raw, "post", engineEditOptions);
     const cleaned = body.trim();
     if (!cleaned) return null;
     // Never salvage a broken or over-cap body — those are real corruption, not a
-    // grounding-strictness casualty.
+    // gate-strictness or reviewer-availability casualty.
     if (looksCorruptedDraft(cleaned)) return null;
     if (cleaned.length > RENDER_POST_MAX_CHARS) return null;
+    // Deterministic anti-plagiarism: a modeled draft that copies the source's
+    // wording is a real quality failure, not a reviewer outage — never salvage
+    // it even when the LLM reviewer is down.
+    if (copyGuardSource && areDraftsNearDuplicate(copyGuardSource, cleaned)) {
+      return null;
+    }
     const title = cleaned.split("\n", 1)[0].slice(0, 60).trim() || "Draft post";
     return {
       id: `art_salvage_${writerAttempt}`,
@@ -1547,6 +1568,26 @@ export async function* runDraftEngine(
       result.rejection.code !== "source_fidelity_unavailable"
     ) {
       return null;
+    }
+    // A `source` task models the user's OWN attached/workspace post — a trusted
+    // source. When the ONLY reason the draft was rejected is that the fidelity
+    // REVIEWER was unavailable (both reviewer LLMs timed out or errored — infra,
+    // not a quality verdict), killing a content-valid draft is user-hostile and
+    // security-unnecessary: the deterministic anti-plagiarism check still runs
+    // inside the salvage (copyGuardSource), so a copied draft is never shipped.
+    // Deliver the best-effort draft flagged for verification instead of dead-
+    // ending. (Grounded turns already salvage above; every other task kind keeps
+    // the strict retry.)
+    if (task.kind === "source") {
+      const salvaged = salvageUnverifiedDraft(task.source.text);
+      if (salvaged) {
+        return [
+          { type: "artifact", artifact: deliveredArtifact(salvaged) },
+          finish(
+            `${successText} I couldn’t reach the source-fidelity reviewer this time, so give it a quick once-over against the original before you post.`,
+          ),
+        ];
+      }
     }
     const message =
       "I couldn’t verify source fidelity because both reviewers were unavailable. Please continue to retry the draft.";
@@ -1868,7 +1909,7 @@ export async function* runDraftEngine(
     // task kind keeps the strict exhaust (a rejected from-scratch/source draft is
     // a real quality failure, not a grounding-strictness casualty).
     if (task.kind === "grounded") {
-      const salvaged = salvageGroundedDraft();
+      const salvaged = salvageUnverifiedDraft();
       if (salvaged) {
         if (!(await cancellationRequestedNow())) {
           yield { type: "artifact", artifact: deliveredArtifact(salvaged) };
