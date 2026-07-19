@@ -2002,7 +2002,10 @@ describe("read-only orchestrator execution", () => {
     expect(done?.type === "done" && done.terminalReason).toBe("cancelled");
   });
 
-  test("a writer exception persists completed research without exposing a partial artifact", async () => {
+  test("a writer exception presents drafts completed before the failure with an honest message", async () => {
+    // The buffered artifact came through the engine's artifact channel, which
+    // only carries finalizer-accepted drafts — dropping it would lose accepted
+    // work and leave the chat text claiming nothing exists. Present it instead.
     const planner = new ScriptedPlanner(PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL, [
       {
         toolArgs: {
@@ -2040,7 +2043,7 @@ describe("read-only orchestrator execution", () => {
             id: "partial",
             kind: "post",
             title: "Partial",
-            body: "This must never escape.",
+            body: "This accepted draft survives the crash.",
           },
         };
         throw new Error("writer disconnected");
@@ -2054,7 +2057,12 @@ describe("read-only orchestrator execution", () => {
       events.push(event);
     }
 
-    expect(events.some((event) => event.type === "artifact")).toBe(false);
+    const artifacts = events.filter((event) => event.type === "artifact");
+    expect(artifacts).toHaveLength(1);
+    expect(artifacts[0]).toMatchObject({
+      type: "artifact",
+      artifact: { id: "partial" },
+    });
     expect(events).toContainEqual(
       expect.objectContaining({
         type: "error",
@@ -2062,6 +2070,9 @@ describe("read-only orchestrator execution", () => {
       }),
     );
     const done = events.find((event) => event.type === "done");
+    expect(done?.type === "done" && done.message.content).toContain(
+      "had already completed safely",
+    );
     expect(done?.type === "done" && done.message.tool_calls).toHaveLength(2);
     expect(done?.type === "done" && done.message.toolMessages).toHaveLength(2);
   });
@@ -2752,9 +2763,11 @@ describe("read-only orchestrator execution", () => {
   });
 
   test.each([
-    ["too few artifacts", ["only-draft"]],
-    ["duplicate artifact identities", ["same", "same", "same", "same"]],
-  ] as const)("fails closed on %s", async (_case, artifactIds) => {
+    ["too few artifacts", ["only-draft"], 1],
+    ["duplicate artifact identities", ["same", "same", "same", "same"], 1],
+  ] as const)(
+    "presents the accepted partial set on %s",
+    async (_case, artifactIds, expectedPresented) => {
     const result = await collect(
       input({
         route: {
@@ -2807,12 +2820,18 @@ describe("read-only orchestrator execution", () => {
       },
     );
 
-    expect(result.events.some((event) => event.type === "artifact")).toBe(false);
+    expect(result.events.filter((event) => event.type === "artifact")).toHaveLength(
+      expectedPresented,
+    );
     expect(result.events).toContainEqual(
       expect.objectContaining({
         type: "error",
         code: "orchestrator_draft_count_mismatch",
       }),
+    );
+    const done = result.events.find((event) => event.type === "done");
+    expect(done?.type === "done" && done.message.content).toContain(
+      `completed ${expectedPresented} of the 4 requested drafts`,
     );
   });
 
