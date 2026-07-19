@@ -2417,7 +2417,6 @@ export async function executeChatTurn(
     process.env.COWORK_THIN_PATH === "1" ||
     process.env.COWORK_THIN_PATH?.toLowerCase() === "true";
   const directWriterEnabled =
-    activeDraftCountOverride !== undefined ||
     thinPathEnabled ||
     deps.directWriterEnabledForWorkspace(
       workspaceId,
@@ -2812,7 +2811,6 @@ export async function executeChatTurn(
       preloadedVoiceResult?.ok === true &&
       (Boolean(modeledBatchRouteContract) ||
         deterministicModeledRoute ||
-        activeDraftCountOverride !== undefined ||
         deps.readOnlyOrchestratorEnabledForWorkspace(
           workspaceId,
           process.env,
