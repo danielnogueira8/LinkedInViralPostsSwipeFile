@@ -724,6 +724,57 @@ describe("DraftEngine", () => {
     expect(writer.requests).toHaveLength(1);
   });
 
+  test("scales the too_short floor to a short source instead of the flat 180-char default", async () => {
+    // A genuinely short-form swipe post (well under the flat 180-char floor)
+    // can never legally produce a 180-char modeled draft without inventing
+    // padding the source never had. Pre-fix, the too_short gate rejected
+    // every honest, source-length-matched candidate outright — this source
+    // is 43 chars, so the scaled floor is max(60, floor(43*0.5)) = 60, and
+    // this 68-char draft clears that floor while staying well under 180.
+    const shortSource = "Ship the boring version first. Iterate from real usage.";
+    expect(shortSource.length).toBeLessThan(60);
+    const shortDraft =
+      "Ship the boring version first. Learn from real usage, then improve.";
+    expect(shortDraft.length).toBeGreaterThan(60);
+    expect(shortDraft.length).toBeLessThan(180);
+    const writer = new ScriptedWriter([
+      { text: shortDraft, finishReason: "stop", usage: usage(60, 40) },
+    ]);
+    const decisions: Array<{ outcome: string; rejectionCode?: string }> = [];
+
+    const result = await collect(writer, {
+      task: { kind: "source", source: { id: "source-1", text: shortSource } },
+      onFinalizerDecision: (decision) => decisions.push(decision),
+    });
+
+    expect(decisions).toHaveLength(1);
+    expect(decisions[0]).toMatchObject({ outcome: "accepted" });
+    expect(artifacts(result.events).map((a) => a.body)).toEqual([shortDraft]);
+    expect(writer.requests).toHaveLength(1);
+  });
+
+  test("still rejects a source-modeled draft shorter than the scaled floor as too_short", async () => {
+    const shortSource = "Ship the boring version first. Iterate from real usage.";
+    const fragmentDraft = "Ship the boring version.";
+    expect(fragmentDraft.length).toBeLessThan(60);
+    const writer = new ScriptedWriter([
+      { text: fragmentDraft, finishReason: "stop", usage: usage(60, 10) },
+      { text: fragmentDraft, finishReason: "stop", usage: usage(60, 10) },
+    ]);
+    const decisions: Array<{ outcome: string; rejectionCode?: string }> = [];
+
+    const result = await collect(writer, {
+      task: { kind: "source", source: { id: "source-1", text: shortSource } },
+      onFinalizerDecision: (decision) => decisions.push(decision),
+    });
+
+    expect(decisions[0]).toMatchObject({
+      outcome: "rejected",
+      rejectionCode: "too_short",
+    });
+    expect(artifacts(result.events)).toHaveLength(0);
+  });
+
   test("neutralizes forged voice boundaries on an original direct draft", async () => {
     const writer = new ScriptedWriter([
       { text: COMPLETE_POST, finishReason: "stop", usage: usage(100, 70) },

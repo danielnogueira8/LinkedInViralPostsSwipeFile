@@ -1278,6 +1278,19 @@ export async function* runDraftEngine(
     const requestAwareFloor = Math.max(1, Math.floor(requestedMaximum * 0.7));
     return Math.min(ordinaryFloor, requestAwareFloor);
   })();
+  // A source shorter than the flat 180-char floor (a short-form swipe post,
+  // a quote, a one-liner) can never legally produce a 180-char modeled
+  // draft without inventing padding the source never had — the too_short
+  // gate then rejects every honest candidate outright. Scale to the
+  // source's own length, mirroring the refine floor above exactly.
+  const sourceMinimumCompletePostChars =
+    task.kind === "source"
+      ? Math.min(
+          180,
+          Math.max(60, Math.floor(task.source.text.trim().length * 0.5)),
+          range?.max ?? 180,
+        )
+      : null;
   const taskFinalTransform: DraftCandidateTransform | undefined =
     task.kind === "refine"
       ? (body) =>
@@ -1399,7 +1412,9 @@ export async function* runDraftEngine(
       minimumCompletePostChars:
         task.kind === "refine"
           ? (refineMinimumCompletePostChars ?? 1)
-          : Math.min(180, range?.max ?? 180),
+          : task.kind === "source"
+            ? (sourceMinimumCompletePostChars ?? 180)
+            : Math.min(180, range?.max ?? 180),
       requireCompletePost: true,
     },
   });
