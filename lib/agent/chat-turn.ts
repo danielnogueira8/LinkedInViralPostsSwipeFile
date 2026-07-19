@@ -221,10 +221,6 @@ import {
   isExclusiveHookRefine,
 } from "@/lib/agent/direct-refine-policy";
 
-export const runtime = "nodejs";
-// The agent loop can run several tool rounds + a long final generation. Give it
-// the same generous ceiling as the voice route (Vercel Pro fluid compute).
-export const maxDuration = 300;
 const CHAT_SSE_HEARTBEAT_MS = configuredSseHeartbeatInterval(
   Number(process.env.CHAT_SSE_HEARTBEAT_MS || 15_000),
 );
@@ -1634,7 +1630,6 @@ function sourceImageDecision(
 }
 
 const LEAD_MAGNET_IMAGE_PLAN_STEP_ID = "server_lead_magnet_image";
-const LEAD_MAGNET_RESOURCE_PLAN_STEP_ID = "server_lead_magnet_resource";
 
 export function withLeadMagnetImagePlanStep(
   steps: PlanStep[],
@@ -1664,36 +1659,6 @@ export function withLeadMagnetImagePlanStep(
     );
   }
   return [...steps, imageStep];
-}
-
-export function withLeadMagnetResourcePlanStep(
-  steps: PlanStep[],
-  status: PlanStep["status"],
-): PlanStep[] {
-  const resourceStep: PlanStep = {
-    id: LEAD_MAGNET_RESOURCE_PLAN_STEP_ID,
-    label: "Generate or match the lead magnet resource",
-    status,
-  };
-  if (steps.length === 0) {
-    return [
-      {
-        id: "server_draft_lead_magnet_post",
-        label: "Draft the lead-magnet post",
-        status: "done",
-      },
-      resourceStep,
-    ];
-  }
-  const existing = steps.findIndex(
-    (step) => step.id === LEAD_MAGNET_RESOURCE_PLAN_STEP_ID,
-  );
-  if (existing >= 0) {
-    return steps.map((step, index) =>
-      index === existing ? { ...step, status } : step,
-    );
-  }
-  return [...steps, resourceStep];
 }
 
 async function loadSourcePostImage(opts: {

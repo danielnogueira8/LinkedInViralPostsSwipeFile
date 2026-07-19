@@ -102,13 +102,6 @@ export function applyPersistedUserMessageId(
   run.userMsg = { ...run.userMsg, id: persistedUserMessageId };
 }
 
-export function retryTaskText(
-  messages: Message[],
-  failedAssistantId: string,
-): string {
-  return retryTask(messages, failedAssistantId)?.text ?? "";
-}
-
 export function retryTask(
   messages: Message[],
   failedAssistantId: string,

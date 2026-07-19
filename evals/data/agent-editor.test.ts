@@ -55,11 +55,11 @@ describe("AI-Tell Editor — deterministic (model off)", () => {
     expect(r.fixedCategories).toContain("dense_paragraph");
   });
 
-  test("a well-formed numbered list is left untouched (no broken_list category)", () => {
+  test("a well-formed numbered list is left untouched", () => {
     // The list-heading/number repair nets were removed (the live writer model
     // formats lists correctly on its own — see lib/post-body-normalize.ts).
     // A numbered list with any newline is untouched by normalizePostBody's
-    // remaining dense-block-only fallback, so broken_list never fires now.
+    // remaining dense-block-only fallback.
     const body = "1. First\n2. Second\n3. Third";
     expect(normalizePostBody(body)).toBe(body);
   });
