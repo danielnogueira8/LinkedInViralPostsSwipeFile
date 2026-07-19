@@ -2501,6 +2501,9 @@ export async function executeChatTurn(
       ...(activeDraftCountOverride
         ? { draftCountOverride: activeDraftCountOverride }
         : {}),
+      ...(resolvedGenerationConfig.postType
+        ? { explicitPostType: resolvedGenerationConfig.postType }
+        : {}),
       isRefine: skipDecision,
       hasModelSource: Boolean(modelSourceId),
       hasAttachments: attachments.length > 0,
@@ -2565,7 +2568,9 @@ export async function executeChatTurn(
       setupRequestedContract.expectedCount >= 1 &&
       setupRequestedContract.expectedCount <= 5
     ) {
+      const priorResolvedGenerationConfig = resolvedGenerationConfig;
       resolvedGenerationConfig = {
+        ...priorResolvedGenerationConfig,
         version: 1,
         draftCount: setupRequestedContract.expectedCount as 1 | 2 | 3 | 4 | 5,
         draftCountSource:
@@ -2907,6 +2912,9 @@ export async function executeChatTurn(
         userInstruction: userText,
         ...(activeDraftCountOverride
           ? { draftCountOverride: activeDraftCountOverride }
+          : {}),
+        ...(resolvedGenerationConfig?.postType
+          ? { explicitPostType: resolvedGenerationConfig.postType }
           : {}),
         isRefine: skipDecision,
         hasModelSource: Boolean(modelSourceId),
@@ -4000,6 +4008,9 @@ export async function executeChatTurn(
           userInstruction: effectiveUserInstruction,
           ...(activeDraftCountOverride
             ? { draftCountOverride: activeDraftCountOverride }
+            : {}),
+          ...(resolvedGenerationConfig?.postType
+            ? { explicitPostType: resolvedGenerationConfig.postType }
             : {}),
           isRefine: skipDecision,
           hasModelSource: Boolean(modelSourceId),

@@ -148,8 +148,10 @@ import {
 import { chatSetupDeadlines } from "@/lib/chat-stream-policy";
 import {
   DRAFT_COUNT_OPTIONS,
+  POST_TYPE_OPTIONS,
   generationConfigForSelection,
   type DraftCountSelection,
+  type PostTypeSelection,
 } from "@/lib/generation-config";
 import type { ComposerStarterId } from "@/lib/composer-task-context";
 import { requestServerTurnStop } from "@/lib/chat-stop";
@@ -568,6 +570,13 @@ export function ChatWorkspace({
   const generationSettingsButtonRef = useRef<HTMLButtonElement>(null);
   const [draftCountSelection, setDraftCountSelection] =
     useState<DraftCountSelection>("auto");
+  // Explicit post-type pick for a plain composer send with no starter (a
+  // starter like "model a lead magnet" already carries its own post type via
+  // composerTaskContext — this only matters for free-text requests, which
+  // otherwise fall to the read-only orchestrator's instruction-derived
+  // fallback). Same Auto/explicit shape and lifecycle as draftCountSelection.
+  const [postTypeSelection, setPostTypeSelection] =
+    useState<PostTypeSelection>("auto");
   // Close every composer picker when the active chat changes (switch OR the
   // active chat being deleted, which sets activeId to null). The pickers are
   // anchored to the always-mounted composer, so without this a picker opened in
@@ -2477,7 +2486,7 @@ export function ChatWorkspace({
         ? readComposerDraft(turnStarterOwnerId).starterId ?? undefined
         : undefined;
       let turnGenerationConfig = appliesComposerControls
-        ? generationConfigForSelection(draftCountSelection)
+        ? generationConfigForSelection(draftCountSelection, postTypeSelection)
         : undefined;
       // The skill ids sent to the server: explicit (a refine inheriting the
       // source draft's skills) OR the composer chips. The bubble badge still
@@ -3283,6 +3292,7 @@ export function ChatWorkspace({
     pendingLeadMagnet,
     pendingCreatorStyle,
     draftCountSelection,
+    postTypeSelection,
     customSkills,
     initialVoiceReady,
     router,
@@ -4241,8 +4251,8 @@ export function ChatWorkspace({
                     <X className="h-3.5 w-3.5" />
                   </button>
                 </div>
-                <div className="p-3.5">
-                  <div className="flex items-center justify-between gap-3">
+                <div className="flex flex-col divide-y divide-border p-3.5">
+                  <div className="flex items-center justify-between gap-3 pb-3.5">
                     <div>
                       <p className="text-sm font-medium text-foreground">Drafts</p>
                       <p className="mt-0.5 text-xs text-muted-foreground">
@@ -4268,6 +4278,48 @@ export function ChatWorkspace({
                             }}
                             className={cn(
                               "min-w-8 rounded-lg px-2 py-1.5 text-xs font-medium transition-colors",
+                              selected
+                                ? "bg-card text-primary shadow-sm"
+                                : "text-muted-foreground hover:bg-card/70 hover:text-foreground",
+                            )}
+                          >
+                            {label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 pt-3.5">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">Post type</p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        Only applies when sourcing from your swipe file.
+                      </p>
+                    </div>
+                    <div
+                      role="group"
+                      aria-label="Post type"
+                      className="flex shrink-0 items-center gap-1 rounded-xl border border-border bg-muted/50 p-1"
+                    >
+                      {(["auto", ...POST_TYPE_OPTIONS] as const).map((option) => {
+                        const selected = postTypeSelection === option;
+                        const label =
+                          option === "auto"
+                            ? "Any"
+                            : option === "regular"
+                              ? "Regular"
+                              : "Lead magnet";
+                        return (
+                          <button
+                            key={option}
+                            type="button"
+                            aria-pressed={selected}
+                            onClick={() => {
+                              setPostTypeSelection(option);
+                              setGenerationSettingsOpen(false);
+                            }}
+                            className={cn(
+                              "rounded-lg px-2 py-1.5 text-xs font-medium transition-colors",
                               selected
                                 ? "bg-card text-primary shadow-sm"
                                 : "text-muted-foreground hover:bg-card/70 hover:text-foreground",
@@ -4900,22 +4952,32 @@ export function ChatWorkspace({
                 }}
                 className={cn(
                   "h-9 shrink-0 gap-1.5 rounded-xl border-border bg-card px-2.5 hover:bg-muted",
-                  (generationSettingsOpen || draftCountSelection !== "auto") &&
+                  (generationSettingsOpen ||
+                    draftCountSelection !== "auto" ||
+                    postTypeSelection !== "auto") &&
                     "border-primary/60 text-primary",
                 )}
-                aria-label={`Draft count: ${
+                aria-label={`Generation settings — draft count: ${
                   draftCountSelection === "auto"
                     ? "Auto"
                     : draftCountSelection
+                }, post type: ${
+                  postTypeSelection === "auto"
+                    ? "Any"
+                    : postTypeSelection === "regular"
+                      ? "Regular"
+                      : "Lead magnet"
                 }`}
                 aria-expanded={generationSettingsOpen}
-                title="Choose how many drafts to create"
+                title="Choose how many drafts to create and which post type to source"
               >
                 <SlidersHorizontal className="h-4 w-4" aria-hidden />
                 <span className="text-xs font-medium tabular-nums">
                   {draftCountSelection === "auto"
                     ? "Auto"
                     : `${draftCountSelection} drafts`}
+                  {postTypeSelection !== "auto" &&
+                    ` · ${postTypeSelection === "regular" ? "Regular" : "Lead magnet"}`}
                 </span>
               </Button>
               {/* ⚡ Custom-skills picker — only when the workspace has skills.

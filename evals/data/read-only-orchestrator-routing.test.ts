@@ -79,6 +79,78 @@ describe("read-only complex orchestrator routing", () => {
     });
   });
 
+  describe("explicit post-type selection (Generation Settings picker, no starter)", () => {
+    test("an explicit UI post-type wins over an otherwise-ambiguous free-text request", () => {
+      // The exact reported bug shape: a plain workspace-research request that
+      // mentions "lead magnets" as its TOPIC, with no starter — before this
+      // field existed, nothing could disambiguate this from an actual
+      // lead_magnet type request except a leaky instruction regex.
+      expect(
+        compileReadOnlyOrchestratorRoute({
+          ...base,
+          userInstruction:
+            "Find 3 top posts about lead magnets and write 3 original posts in my voice.",
+          explicitPostType: "regular",
+        }),
+      ).toMatchObject({
+        kind: "workspace_research",
+        workspacePostType: "regular",
+      });
+    });
+
+    test("an explicit UI post-type wins even against an unrelated instruction topic", () => {
+      expect(
+        compileReadOnlyOrchestratorRoute({
+          ...base,
+          userInstruction:
+            "Find 3 top posts about pricing and write 3 original posts in my voice.",
+          explicitPostType: "lead_magnet",
+        }),
+      ).toMatchObject({
+        kind: "workspace_research",
+        workspacePostType: "lead_magnet",
+      });
+    });
+
+    test("absent explicit selection still falls back to instruction-derived detection unchanged", () => {
+      // No explicitPostType at all — behavior must be identical to before
+      // this field existed. A plain topic mention does not resolve a type.
+      // (toMatchObject with an `undefined` expected value only skips that
+      // key rather than asserting absence — check the key directly instead.)
+      const route = compileReadOnlyOrchestratorRoute({
+        ...base,
+        userInstruction:
+          "Find 3 top posts about lead magnets and write 3 original posts in my voice.",
+      });
+      expect(route).toMatchObject({ kind: "workspace_research" });
+      expect(
+        (route as { workspacePostType?: unknown } | null)?.workspacePostType,
+      ).toBeUndefined();
+    });
+
+    test("a starter's own post type still wins over explicitPostType when both are somehow present", () => {
+      // composerResearchRoute short-circuits before workspacePostType's
+      // ternary is ever reached — the starter's contract is authoritative,
+      // matching how the composer already resolves precedence (a starter
+      // click IS the explicit choice for that turn).
+      const composerTaskContext = resolveComposerTaskContext({
+        starterId: "model-recent-lead-magnet",
+        fallbackPostCount: null,
+      });
+      expect(
+        compileReadOnlyOrchestratorRoute({
+          ...base,
+          userInstruction: "An onboarding checklist.",
+          composerTaskContext,
+          explicitPostType: "regular",
+        }),
+      ).toMatchObject({
+        kind: "workspace_research",
+        workspacePostType: "lead_magnet",
+      });
+    });
+  });
+
   test.each(["brainstorm", "working-this-week"] as const)(
     "does not send the non-draft %s starter into a draft-only orchestrator",
     (starterId) => {
