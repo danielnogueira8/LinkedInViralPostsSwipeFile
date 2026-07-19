@@ -42,11 +42,10 @@ The server—not a model—will own routing, retry limits, model fallback, final
 26. As a workspace owner, I want direct-writing turns to cost substantially less than current large-context agent turns, so that Cowork remains economically sustainable.
 27. As an operator, I want every turn to record its route, stages, attempts, rejection reasons, latency, tokens, cost, and outcome, so that failures are diagnosable.
 28. As an operator, I want adapter health and circuit breakers, so that traffic leaves a degraded provider before users repeatedly fail.
-29. As an operator, I want rollout flags and a kill switch, so that the new architecture can be sampled and rolled back safely.
-30. As an operator, I want production-shaped repeated evaluations for every critical journey, so that launch claims reflect real variance rather than one successful demo.
-31. As an operator, I want injected provider, JSON, timeout, truncation, and cancellation failures to end safely, so that expected infrastructure faults never become orphaned turns.
-32. As a product owner, I want blind quality comparisons for voice, usefulness, factuality, and completeness, so that cheaper writing does not lower the product standard.
-33. As a product owner, I want rollout gates tied to user-visible hard failures, so that valid tool syntax cannot hide a failed outcome.
+29. As an operator, I want production-shaped repeated evaluations for every critical journey, so that launch claims reflect real variance rather than one successful demo.
+30. As an operator, I want injected provider, JSON, timeout, truncation, and cancellation failures to end safely, so that expected infrastructure faults never become orphaned turns.
+31. As a product owner, I want blind quality comparisons for voice, usefulness, factuality, and completeness, so that cheaper writing does not lower the product standard.
+32. As a product owner, I want outcome gates tied to user-visible hard failures, so that valid tool syntax cannot hide a failed outcome.
 
 ## Implementation Decisions
 
@@ -67,9 +66,8 @@ The server—not a model—will own routing, retry limits, model fallback, final
 - Every claimed turn will end in exactly one terminal domain outcome: delivered, clarified, cancelled, recoverable error, or hard failure.
 - Empty or invalid output will never be represented as a successful terminal outcome.
 - OpenRouter provider fallback and parameter compatibility enforcement will remain enabled where applicable.
-- The new paths will launch behind workspace and percentage rollout flags with an immediate kill switch to the hardened current path.
 - Direct writing has a p95 latency target of 30 seconds. Complex journeys target p95 at 60 seconds and p99 at 90 seconds.
-- User-visible hard failures must remain below 0.5% during rollout, with alerting at 0.5% and rollback or circuit breaking at 1% over a meaningful rolling sample.
+- User-visible hard failures must remain below 0.5%, with alerting at 0.5% and rollback or circuit breaking at 1% over a meaningful rolling sample.
 - The initial model-layer planning estimate is approximately $16.75 per 1,000 mixed Cowork turns with Sonnet orchestration, or $14.03 with Gemini orchestration, before specialist and search costs.
 - Model selection will be decided by production-shaped reliability, latency, blind quality, and charged cost—not headline benchmarks alone.
 - The emergency incomplete-draft guard remains valuable defense in depth but does not substitute for the finalizer or writer split.
@@ -83,9 +81,9 @@ The server—not a model—will own routing, retry limits, model fallback, final
 - The authenticated chat-stream route is the production-shaped seam. Its harness will assert persisted messages, artifacts, tools/actions, terminal outcome, model stages, tokens, latency, and cost.
 - Existing deterministic agent integrity, draft output policy, transport, turn lifecycle, cancellation, source fidelity, news fail-closed, and artifact persistence tests are prior art and must remain green.
 - Failure injection will cover timeout before first token, mid-stream disconnect, invalid JSON, schema mismatch, wrong or repeated action, provider 429/5xx, empty or truncated writer output, finalizer rejection, cancellation at each stage, and fallback before and after a checkpoint.
-- Each critical journey must complete at least 300 production-shaped runs with zero user-visible hard failures before global rollout.
+- Each critical journey must complete at least 300 production-shaped runs with zero user-visible hard failures before global release.
 - Each writing class will receive at least twenty blind comparisons, with usefulness, voice, factuality, completeness, and preference scored separately.
-- Rollout gates will compare the new path against the hardened baseline for failure rate, contract correctness, p50/p95/p99 latency, fallback rate, tokens, actual cost, and blind quality.
+- Release gates will compare the new path against the hardened baseline for failure rate, contract correctness, p50/p95/p99 latency, fallback rate, tokens, actual cost, and blind quality.
 - If the hardened single-model path matches the split architecture on reliability and quality, the simpler path will be retained.
 
 ## Out of Scope

@@ -659,37 +659,7 @@ describe("action orchestrator routing", () => {
 });
 
 describe("action orchestrator rollout", () => {
-  test("requires the master flag and explicit workspace allowlist", () => {
-    expect(
-      actionOrchestratorEnabledForWorkspace("ws-1", {
-        COWORK_ACTION_ORCHESTRATOR_ENABLED: "true",
-        COWORK_ACTION_ORCHESTRATOR_WORKSPACES: "ws-1,ws-2",
-      }),
-    ).toBe(true);
-    expect(
-      actionOrchestratorEnabledForWorkspace("ws-3", {
-        COWORK_ACTION_ORCHESTRATOR_ENABLED: "true",
-        COWORK_ACTION_ORCHESTRATOR_WORKSPACES: "ws-1,ws-2",
-      }),
-    ).toBe(false);
-  });
-
-  test("the kill switch wins over a wildcard allowlist", () => {
-    expect(
-      actionOrchestratorEnabledForWorkspace("ws-1", {
-        COWORK_ACTION_ORCHESTRATOR_ENABLED: "true",
-        COWORK_ACTION_ORCHESTRATOR_WORKSPACES: "*",
-        COWORK_ACTION_ORCHESTRATOR_KILL_SWITCH: "1",
-      }),
-    ).toBe(false);
-  });
-
-  test("can be globally enabled through the shared rollout policy", () => {
-    expect(
-      actionOrchestratorEnabledForWorkspace("ws-global", {
-        COWORK_V2_ENABLED: "1",
-        COWORK_V2_ROLLOUT_MODE: "global",
-      }),
-    ).toBe(true);
+  test("is unconditionally enabled in the unified architecture", () => {
+    expect(actionOrchestratorEnabledForWorkspace()).toBe(true);
   });
 });

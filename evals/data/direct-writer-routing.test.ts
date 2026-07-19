@@ -24,59 +24,8 @@ const BASE = {
 };
 
 describe("direct writer rollout", () => {
-  test("requires the global flag and an explicit workspace allowlist entry", () => {
-    expect(
-      directWriterEnabledForWorkspace("ws-1", {
-        COWORK_DIRECT_WRITER_ENABLED: "1",
-        COWORK_DIRECT_WRITER_WORKSPACES: "ws-1, ws-2",
-      }),
-    ).toBe(true);
-    expect(
-      directWriterEnabledForWorkspace("ws-3", {
-        COWORK_DIRECT_WRITER_ENABLED: "1",
-        COWORK_DIRECT_WRITER_WORKSPACES: "ws-1, ws-2",
-      }),
-    ).toBe(false);
-    expect(
-      directWriterEnabledForWorkspace("ws-1", {
-        COWORK_DIRECT_WRITER_ENABLED: "0",
-        COWORK_DIRECT_WRITER_WORKSPACES: "*",
-      }),
-    ).toBe(false);
-  });
-
-  test("supports an immediate global and per-workspace kill switch", () => {
-    expect(
-      directWriterEnabledForWorkspace("ws-1", {
-        COWORK_DIRECT_WRITER_ENABLED: "1",
-        COWORK_DIRECT_WRITER_WORKSPACES: "*",
-        COWORK_DIRECT_WRITER_KILL_SWITCH: "1",
-      }),
-    ).toBe(false);
-    expect(
-      directWriterEnabledForWorkspace("ws-1", {
-        COWORK_DIRECT_WRITER_ENABLED: "1",
-        COWORK_DIRECT_WRITER_WORKSPACES: "*",
-        COWORK_DIRECT_WRITER_DISABLED_WORKSPACES: "ws-1",
-      }),
-    ).toBe(false);
-  });
-
-  test("uses the shared percentage and global rollout policy", () => {
-    expect(
-      directWriterEnabledForWorkspace("ws-sampled", {
-        COWORK_V2_ENABLED: "1",
-        COWORK_V2_ROLLOUT_MODE: "sample",
-        COWORK_V2_ROLLOUT_PERCENT: "100",
-      }),
-    ).toBe(true);
-    expect(
-      directWriterEnabledForWorkspace("ws-global-killed", {
-        COWORK_V2_ENABLED: "1",
-        COWORK_V2_ROLLOUT_MODE: "global",
-        COWORK_V2_KILL_SWITCH: "1",
-      }),
-    ).toBe(false);
+  test("is unconditionally enabled in the unified architecture", () => {
+    expect(directWriterEnabledForWorkspace()).toBe(true);
   });
 });
 

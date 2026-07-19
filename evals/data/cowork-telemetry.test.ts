@@ -18,10 +18,7 @@ describe("Cowork v2 structured telemetry", () => {
       sink,
       () => now,
     );
-    telemetry.configure({
-      rolloutMode: "dark",
-      shadowCandidateRoute: "direct_writer",
-    });
+    telemetry.configure({});
     now = 1_120;
     telemetry.recordAttempt({
       stage: "writer_primary",
@@ -87,8 +84,6 @@ describe("Cowork v2 structured telemetry", () => {
       charged_cost_usd: 0.02,
       provenance_status: "verified",
       terminal_outcome: "delivered",
-      rollout_mode: "dark",
-      shadow_candidate_route: "direct_writer",
     });
     expect(sink.mock.calls[0][0].stage_attempts).toHaveLength(3);
   });

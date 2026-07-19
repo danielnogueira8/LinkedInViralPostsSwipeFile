@@ -89,7 +89,7 @@ export type CoworkOutcomeScenario = {
       attachmentSources?: DraftEngineGroundedSource[];
       retryModeledBatch?: boolean;
       malformedModeledRetry?: "root" | "continuation" | "root_only";
-      rolloutDisabled?: boolean;
+      disabled?: boolean;
       voiceUnavailable?: boolean;
       frozenModeledSources?: ModeledDraftBatchSource[];
       allowNoModel?: boolean;
@@ -108,7 +108,7 @@ export type CoworkOutcomeScenario = {
       cancelAfterMutationCount?: number;
       allowNoModel?: boolean;
       failRetryContextSave?: boolean;
-      rolloutDisabled?: boolean;
+      disabled?: boolean;
     };
   };
   seed?: {
@@ -821,19 +821,6 @@ async function runCoworkOutcomeScenarioWithStore(
 
   const dependencies: Partial<ChatTurnDependencies> = {
     now: () => new Date("2026-07-14T23:30:00.000Z"),
-    loadCoworkRolloutHealth: async () => ({
-      isOpen: () => false,
-      source: "shared",
-      snapshot: {
-        state: "healthy",
-        sampleSize: 200,
-        hardFailures: 0,
-        hardFailureRate: 0,
-        alertRate: 0.005,
-        rollbackRate: 0.01,
-        minimumSample: 200,
-      },
-    }),
     scopedSupabase: (async () => ({
       workspaceId: store.workspaceId,
       raw: store.client,
@@ -869,7 +856,7 @@ async function runCoworkOutcomeScenarioWithStore(
     ...(scenario.model.readOnlyOrchestrator
       ? {
           readOnlyOrchestratorEnabledForWorkspace: () =>
-            !scenario.model.readOnlyOrchestrator?.rolloutDisabled,
+            !scenario.model.readOnlyOrchestrator?.disabled,
           runReadOnlyOrchestrator: (input, runtimeDependencies) =>
             runReadOnlyOrchestrator(input, {
               adapters: readOnlyPlannerAdapters,
@@ -921,7 +908,7 @@ async function runCoworkOutcomeScenarioWithStore(
     ...(scenario.model.actionOrchestrator
       ? {
           actionOrchestratorEnabledForWorkspace: () =>
-            !scenario.model.actionOrchestrator?.rolloutDisabled,
+            !scenario.model.actionOrchestrator?.disabled,
           runActionOrchestrator: (input, runtimeDependencies) => {
             return runActionOrchestrator(input, {
               adapters: actionPlannerAdapters,

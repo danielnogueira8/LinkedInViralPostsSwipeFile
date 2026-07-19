@@ -73,15 +73,6 @@ import {
   type CoworkTurnTelemetry,
 } from "@/lib/agent/cowork-telemetry";
 import {
-  coworkRolloutRuntimeHealth,
-  coworkV2RolloutConfigured,
-  loadCoworkRolloutHealth,
-} from "@/lib/agent/cowork-rollout-health";
-import {
-  coworkRolloutDecision,
-  type CoworkRolloutLane,
-} from "@/lib/agent/cowork-rollout";
-import {
   type DeliverableContract,
 } from "@/lib/agent/deliverable-contract";
 import { encodeChatSseFrame } from "@/lib/transport/contracts";
@@ -508,7 +499,6 @@ export type ChatTurnDependencies = {
   directWriterEnabledForWorkspace: typeof directWriterEnabledForWorkspace;
   actionOrchestratorEnabledForWorkspace: typeof actionOrchestratorEnabledForWorkspace;
   readOnlyOrchestratorEnabledForWorkspace: typeof readOnlyOrchestratorEnabledForWorkspace;
-  loadCoworkRolloutHealth: typeof loadCoworkRolloutHealth;
   completeChat: typeof completeChat;
   fetchRecentPostDrafts: typeof fetchRecentPostDrafts;
   generateLeadMagnetResource: typeof generateLeadMagnetResource;
@@ -529,7 +519,6 @@ const productionChatTurnDependencies: ChatTurnDependencies = {
   directWriterEnabledForWorkspace,
   actionOrchestratorEnabledForWorkspace,
   readOnlyOrchestratorEnabledForWorkspace,
-  loadCoworkRolloutHealth,
   completeChat,
   fetchRecentPostDrafts,
   generateLeadMagnetResource,
@@ -1331,9 +1320,6 @@ export async function executeChatTurn(
       ? "post"
       : preclaimContractPlaceholder.kind;
   let coworkTelemetry!: CoworkTurnTelemetry;
-  let rolloutHealth: Pick<typeof coworkRolloutRuntimeHealth, "isOpen"> =
-    coworkRolloutRuntimeHealth;
-  const darkLaunchLanes = new Set<CoworkRolloutLane>();
   const disarmSetupGuards = () => {
     setupDeadline?.stop();
   };
@@ -1355,21 +1341,6 @@ export async function executeChatTurn(
     const sb = await deps.scopedSupabase();
     workspaceId = sb.workspaceId;
     sbRaw = sb.raw;
-    if (coworkV2RolloutConfigured()) {
-      rolloutHealth = await deps.loadCoworkRolloutHealth(sbRaw);
-      for (const lane of [
-        "direct_writer",
-        "read_only_orchestrator",
-        "action_orchestrator",
-      ] as const) {
-        if (
-          coworkRolloutDecision(lane, workspaceId, process.env, rolloutHealth)
-            .shadowV2
-        ) {
-          darkLaunchLanes.add(lane);
-        }
-      }
-    }
     userText = body.message;
     attachments = body.attachments ?? [];
     modelSourceId = body.modelSourceId;
@@ -1473,11 +1444,7 @@ export async function executeChatTurn(
     // locked transaction, so concurrent requests can't all slip past the caps.
     // We store the typed text + a compact note of attached filenames (not the
     // file bytes — those are consumed this turn only).
-    const actionLaneEnabled = deps.actionOrchestratorEnabledForWorkspace(
-      workspaceId,
-      process.env,
-      rolloutHealth,
-    );
+    const actionLaneEnabled = deps.actionOrchestratorEnabledForWorkspace();
     actionRetryRepository = deps.createActionRetryRepository(sbRaw);
     const recentMessageWindow = (recentMessages ?? []) as Array<{
       id: string;
@@ -1866,11 +1833,7 @@ export async function executeChatTurn(
               Boolean(
                 continuationForModeledDraftRoute(preclaimReadOnlyRoute),
               ) ||
-              deps.readOnlyOrchestratorEnabledForWorkspace(
-                workspaceId,
-                process.env,
-                rolloutHealth,
-              ))),
+              deps.readOnlyOrchestratorEnabledForWorkspace())),
       ),
     });
     if (!claim.ok) {
@@ -2406,23 +2369,9 @@ export async function executeChatTurn(
     return turnError(message, setupExpired ? 504 : 499);
   }
 
-  // THIN PATH master switch. When on, plain drafting turns take the direct
-  // engine in LEAN mode (strong reasoning model + corruption-only nets — see
-  // draft-engine `lean`). It reuses the SAME conservative direct-writer
-  // eligibility gates, so anything ambiguous / tool-driven / board-related still
-  // falls through to the heavy runAgent loop (the fallback). Independent of the
-  // legacy per-workspace direct-writer rollout: either one enabling the direct
-  // route is enough, and `thinPathEnabled` decides whether that route runs lean.
-  const thinPathEnabled =
-    process.env.COWORK_THIN_PATH === "1" ||
-    process.env.COWORK_THIN_PATH?.toLowerCase() === "true";
-  const directWriterEnabled =
-    thinPathEnabled ||
-    deps.directWriterEnabledForWorkspace(
-      workspaceId,
-      process.env,
-      rolloutHealth,
-    );
+  // Direct writer is the unified drafting path; the COWORK_THIN_PATH rollout
+  // flag has been removed and lean mode is no longer forced (default false).
+  const directWriterEnabled = deps.directWriterEnabledForWorkspace();
   const directPartialSpec = compileDirectPartialTextSpec(
     effectiveUserInstruction,
   );
@@ -2432,17 +2381,14 @@ export async function executeChatTurn(
       ? composerTaskContext.expectedDraftCount
       : null) ??
     requestedDirectPostCount(effectiveUserInstruction);
-  // THIN PATH — find-and-model. A "find a top post in my swipe file and rewrite
-  // it" turn has NO pre-attached source, so directSource is empty and the
-  // fixed-source direct route is rejected — the turn falls to the heavy runAgent
-  // loop (GLM + render_post), which is exactly where the "render post ✗" storm
-  // lives. When the thin path is on, resolve the source HERE with the same
-  // rotation-aware search the heavy loop's prefetch uses, so the turn qualifies
-  // for the lean direct route and Gemini writes it tool-free. Runs at most once
-  // (advances the rotation cursor once); any failure falls through to the heavy
-  // loop unchanged (fail-open).
+  // Find-and-model: a "find a top post in my swipe file and rewrite it" turn
+  // has NO pre-attached source, so directSource is empty and the fixed-source
+  // direct route is rejected. Resolve the source HERE with the same rotation-
+  // aware search the heavy loop's prefetch uses, so the discovery-phrased turn
+  // qualifies for the direct route and the strong model writes it tool-free.
+  // Runs at most once (advances the rotation cursor once); any failure falls
+  // through to the heavy loop unchanged (fail-open).
   const wantsFindAndModel =
-    thinPathEnabled &&
     !currentModelSource?.post_text.trim() &&
     !modelSourceId &&
     requestsDirectSourceModeling(effectiveUserInstruction);
@@ -2513,9 +2459,9 @@ export async function executeChatTurn(
       sourceResolved: Boolean(directSource),
       isRefine: skipDecision,
     }) ||
-    // Thin-path find-and-model: source was resolved up front by
-    // resolveFindAndModelSource, so the discovery-phrasing turn now qualifies
-    // for the lean direct route instead of the heavy GLM render loop.
+    // Find-and-model: source was resolved up front by resolveFindAndModelSource,
+    // so the discovery-phrasing turn now qualifies for the direct route instead
+    // of the heavy GLM render loop.
     (Boolean(resolvedFindSource) &&
       isDirectFindAndModelEligible({
         ...directWritingContext,
@@ -2534,13 +2480,12 @@ export async function executeChatTurn(
     isRefine: skipDecision,
     composerTaskContext: composerTaskContext ?? undefined,
   });
-  // THIN-PATH lead-magnet. A lead-magnet post is a from-scratch original post
-  // with the giveaway framing. The direct engine now injects that framing
+  // Lead-magnet direct route. A lead-magnet post is a from-scratch original post
+  // with the giveaway framing. The direct engine injects that framing
   // (leadMagnetBlock) and the CTA is HARD-enforced downstream by
   // transformDraftCandidate (rejects a draft that doesn't mention the resource),
   // so a lead-magnet post can be written by the strong model without ever
-  // shipping without its comment-CTA. Thin-path only; when the flag is off,
-  // lead-magnet stays on the heavy path exactly as before.
+  // shipping without its comment-CTA.
   //
   // Uses isDirectLeadMagnetEligible (not the original-post gate): a find-and-
   // adapt lead-magnet — "find the most recent lead-magnet post in my swipe file
@@ -2555,7 +2500,6 @@ export async function executeChatTurn(
     activeLeadMagnetCampaign && leadMagnetBlock.trim(),
   );
   const useDirectLeadMagnet =
-    thinPathEnabled &&
     activeLeadMagnetForDirect &&
     isDirectLeadMagnetEligible({
       userInstruction: effectiveUserInstruction,
@@ -2563,20 +2507,18 @@ export async function executeChatTurn(
       hasModelSource: Boolean(modelSourceId),
       isRefine: skipDecision,
     });
-  // THIN-PATH creator style. A creator-style post is a from-scratch original
+  // Creator-style direct route. A creator-style post is a from-scratch original
   // post that borrows another creator's WRITING MECHANICS (hooks, cadence,
-  // formatting) for the user's own topic. The direct engine now injects that
+  // formatting) for the user's own topic. The direct engine injects that
   // mechanics-only block (creatorStyleBlock), so the strong model can write it.
-  // Thin-path only: reuses the original-post eligibility with hasCreatorStyle
-  // forced false (the engine owns it now); flag off ⇒ creator-style stays on the
-  // heavy path exactly as before. No hard CTA-style guard is needed — creator
-  // style shapes rhythm, it has no mandatory element to enforce; the block's own
+  // Reuses the original-post eligibility with hasCreatorStyle forced false (the
+  // engine owns it now). No hard CTA-style guard is needed — creator style
+  // shapes rhythm, it has no mandatory element to enforce; the block's own
   // wrapper already forbids copying the creator's topics/claims.
   const activeCreatorStyleForDirect = Boolean(
     creatorStyleId && !hasModelSource && creatorStyleBlock.trim(),
   );
   const useDirectCreatorStyle =
-    thinPathEnabled &&
     activeCreatorStyleForDirect &&
     isDirectOriginalPostEligible({
       userInstruction: effectiveUserInstruction,
@@ -2596,64 +2538,12 @@ export async function executeChatTurn(
       useDirectOriginal ||
       useDirectLeadMagnet ||
       useDirectCreatorStyle);
-  const shadowDirectWritingContext = {
-    ...directWritingContext,
-    enabled: darkLaunchLanes.has("direct_writer"),
-  };
-  const shadowUseDirectWriter =
-    isDirectRefineEligible({
-      ...shadowDirectWritingContext,
-      isRefine: skipDecision,
-      refineInstruction: refineInstruction ?? "",
-      targetResolved: trustedRefineTarget !== null,
-      targetKind:
-        trustedRefineTarget?.kind === "post" ||
-        trustedRefineTarget?.kind === "hook"
-          ? trustedRefineTarget.kind
-          : null,
-      targetHasLeadMagnet: Boolean(trustedRefineTarget?.meta?.lead_magnet),
-      hasModelSource: Boolean(modelSourceId),
-    }) ||
-    isDirectPartialTextEligible({
-      ...shadowDirectWritingContext,
-      userInstruction: effectiveUserInstruction,
-      sourceRequested: Boolean(modelSourceId),
-      sourceResolved: Boolean(directSource),
-      isRefine: skipDecision,
-    }) ||
-    isDirectMultiPostEligible({
-      ...shadowDirectWritingContext,
-      userInstruction: effectiveUserInstruction,
-      sourceRequested: Boolean(modelSourceId),
-      sourceResolved: Boolean(directSource),
-      isRefine: skipDecision,
-      requestedCount: directPostCount ?? undefined,
-      composerTaskContext: composerTaskContext ?? undefined,
-    }) ||
-    isDirectFixedSourcePostEligible({
-      ...shadowDirectWritingContext,
-      userInstruction: effectiveUserInstruction,
-      sourceResolved: Boolean(directSource),
-      isRefine: skipDecision,
-    }) ||
-    isDirectOriginalPostEligible({
-      userInstruction: effectiveUserInstruction,
-      requestedCount: directPostCount ?? undefined,
-      ...shadowDirectWritingContext,
-      hasModelSource: Boolean(modelSourceId),
-      isRefine: skipDecision,
-      composerTaskContext: composerTaskContext ?? undefined,
-    });
   const actionOrchestratorRoute = useDirectWriter
     ? null
     : normalizedActionRoute;
   const useActionOrchestrator = Boolean(
     actionOrchestratorRoute &&
-      (deps.actionOrchestratorEnabledForWorkspace(
-        workspaceId,
-        process.env,
-        rolloutHealth,
-      ) ||
+      (deps.actionOrchestratorEnabledForWorkspace() ||
         persistedActionContinuation),
   );
   if (useActionOrchestrator) {
@@ -2811,11 +2701,7 @@ export async function executeChatTurn(
       preloadedVoiceResult?.ok === true &&
       (Boolean(modeledBatchRouteContract) ||
         deterministicModeledRoute ||
-        deps.readOnlyOrchestratorEnabledForWorkspace(
-          workspaceId,
-          process.env,
-          rolloutHealth,
-        )),
+        deps.readOnlyOrchestratorEnabledForWorkspace()),
   );
   const directWriterTask: DraftEngineTask = useDirectRefine
     ? {
@@ -2846,15 +2732,6 @@ export async function executeChatTurn(
       : useReadOnlyOrchestrator
         ? "read_only_orchestrator"
         : "legacy_agent";
-  const shadowCandidateRoute = shadowUseDirectWriter
-    ? "direct_writer"
-    : darkLaunchLanes.has("action_orchestrator") && actionOrchestratorRoute
-      ? "action_orchestrator"
-      : darkLaunchLanes.has("read_only_orchestrator") &&
-          readOnlyOrchestratorRoute &&
-          preloadedVoiceResult?.ok === true
-        ? "read_only_orchestrator"
-        : undefined;
   // THE single authoritative deliverable contract for this turn
   // (PLAN-cowork-unification Phase 1, step 3): computed ONCE, here —
   // post-clarification and post-routing — from the same
@@ -2882,12 +2759,6 @@ export async function executeChatTurn(
     traceId: claimedUserMessageId ?? chatId,
     route: coworkRoute,
     requestedContract: turnContract,
-    rolloutMode: shadowCandidateRoute
-      ? "dark"
-      : coworkRoute === "legacy_agent"
-        ? "baseline"
-        : "served_v2",
-    ...(shadowCandidateRoute ? { shadowCandidateRoute } : {}),
   });
   const activeModeledBatchContinuation = useReadOnlyOrchestrator
     ? modeledBatchRouteContract
@@ -3238,8 +3109,6 @@ export async function executeChatTurn(
               finalTransformCandidate: transformDraftCandidate,
               telemetry: coworkTelemetry,
               onModelUsed: recordResponseModel,
-              // Thin path: strong reasoning model + corruption-only nets.
-              lean: thinPathEnabled,
               // Coarse structure gate opt-in — true ONLY for a genuine
               // "model this post" source (mirrors modelSourceStructureBlock's
               // own genre split; false for a refine/template source, or when
@@ -3248,13 +3117,11 @@ export async function executeChatTurn(
                 currentModelSource &&
                   modelSourceStructureSkeleton(currentModelSource),
               ),
-              // Lead-magnet framing for the writer prompt (only set on a
-              // thin-path lead-magnet turn). The comment-CTA is still HARD-
-              // enforced by transformDraftCandidate above, so a draft that
-              // ignores this block is rejected rather than shipped CTA-less.
+              // Lead-magnet framing for the writer prompt. The comment-CTA is
+              // still HARD-enforced by transformDraftCandidate above, so a draft
+              // that ignores this block is rejected rather than shipped CTA-less.
               ...(useDirectLeadMagnet ? { leadMagnetBlock } : {}),
-              // Creator-style mechanics for the writer prompt (only on a
-              // thin-path creator-style turn).
+              // Creator-style mechanics for the writer prompt.
               ...(useDirectCreatorStyle ? { creatorStyleBlock } : {}),
             }),
           );
@@ -3338,12 +3205,6 @@ export async function executeChatTurn(
                 finalTransformCandidate: transformDraftCandidate,
                 telemetry: coworkTelemetry,
                 onModelUsed: recordResponseModel,
-                // Thin path: research/news/grounded posts write with the strong
-                // model (Gemini) too. The grounded task keeps its grounding +
-                // factual-specificity gates ON even in lean mode (see
-                // draft-engine), so a research post still can't ship an
-                // unsourced claim — only the taste specialists are shed.
-                lean: thinPathEnabled,
                 ...(shouldAttachLeadMagnet && leadMagnetBlock.trim()
                   ? { leadMagnetBlock }
                   : {}),
@@ -3423,11 +3284,7 @@ export async function executeChatTurn(
           telemetry: coworkTelemetry,
           disableBoardMutations:
             useActionOrchestrator ||
-            deps.actionOrchestratorEnabledForWorkspace(
-              workspaceId,
-              process.env,
-              rolloutHealth,
-            ),
+            deps.actionOrchestratorEnabledForWorkspace(),
         }));
       };
       const outcome = await executeAcceptedChatTurn({

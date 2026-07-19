@@ -8,8 +8,6 @@ import {
   compileModeledPostIntent,
   type ModeledPostIntent,
 } from "@/lib/agent/modeled-post-intent";
-import { coworkRolloutDecision } from "@/lib/agent/cowork-rollout";
-import type { coworkRolloutRuntimeHealth } from "@/lib/agent/cowork-rollout-health";
 import { wrapUntrustedXml } from "@/lib/agent/untrusted";
 import type { PostType } from "@/lib/post-type";
 import type { ComposerTaskContext } from "@/lib/composer-task-context";
@@ -55,7 +53,10 @@ export type ReadOnlyOrchestratorRoutingInput = {
   hasCreatorStyle: boolean;
 };
 
-type ReadOnlyOrchestratorEnvironment = Record<string, string | undefined>;
+/** Read-only orchestrator is part of the unified path; no rollout gating remains. */
+export function readOnlyOrchestratorEnabledForWorkspace(): boolean {
+  return true;
+}
 
 /** Compile source requirements chosen in the composer without reclassifying text. */
 function composerResearchRoute(
@@ -86,20 +87,6 @@ function composerResearchRoute(
     expectsDraft: true,
     expectedDrafts: context.expectedDraftCount,
   };
-}
-
-/** Fail-closed shared rollout policy for the read-only orchestrator lane. */
-export function readOnlyOrchestratorEnabledForWorkspace(
-  workspaceId: string,
-  env: ReadOnlyOrchestratorEnvironment = process.env,
-  runtimeHealth?: Pick<typeof coworkRolloutRuntimeHealth, "isOpen">,
-): boolean {
-  return coworkRolloutDecision(
-    "read_only_orchestrator",
-    workspaceId,
-    env,
-    runtimeHealth,
-  ).serveV2;
 }
 
 const FULL_POST_REQUEST_RE =

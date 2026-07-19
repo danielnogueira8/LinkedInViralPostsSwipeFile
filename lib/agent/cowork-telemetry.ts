@@ -1,6 +1,5 @@
 import { openRouterUsageCost, type Usage } from "@/lib/openrouter";
 import type { AgentEvent } from "@/lib/agent/contracts";
-import { recordCoworkRolloutHealth } from "@/lib/agent/cowork-rollout-health";
 import { costEquivalentCredits } from "@/lib/agent/rate-limit";
 import type {
   CoworkTurnUsageWire,
@@ -85,8 +84,6 @@ export type CoworkTurnTelemetryRecord = {
   charged_cost_usd: number;
   provenance_status: CoworkProvenanceStatus;
   terminal_outcome: CoworkTerminalOutcome;
-  rollout_mode?: "baseline" | "served_v2" | "dark";
-  shadow_candidate_route?: Exclude<CoworkRoute, "setup" | "legacy_agent">;
 };
 
 export type CoworkTelemetrySink = (
@@ -150,10 +147,8 @@ function usageStageKind(stage: string): CoworkUsageStageKind {
 
 export function defaultCoworkTelemetrySink(
   record: CoworkTurnTelemetryRecord,
-): void | Promise<void> {
+): void {
   console.log(JSON.stringify({ cowork_turn_v2: record }));
-  if (process.env.NODE_ENV === "test") return;
-  return recordCoworkRolloutHealth(record).then(() => undefined);
 }
 
 export type CoworkTurnTelemetry = ReturnType<typeof createCoworkTurnTelemetry>;
@@ -182,8 +177,6 @@ export function createCoworkTurnTelemetry(
   >();
   let finished = false;
   let latestProvenanceStatus: CoworkProvenanceStatus = "not_required";
-  let rolloutMode: CoworkTurnTelemetryRecord["rollout_mode"];
-  let shadowCandidateRoute: CoworkTurnTelemetryRecord["shadow_candidate_route"];
   let stagedFinish: {
     deliveredContract: CoworkDeliveredContract;
     provenanceStatus: CoworkProvenanceStatus;
@@ -195,14 +188,8 @@ export function createCoworkTurnTelemetry(
       traceId?: string;
       route?: CoworkRoute;
       requestedContract?: CoworkContract;
-      rolloutMode?: CoworkTurnTelemetryRecord["rollout_mode"];
-      shadowCandidateRoute?: CoworkTurnTelemetryRecord["shadow_candidate_route"];
     }): void {
       if (finished) return;
-      if (input.rolloutMode) rolloutMode = input.rolloutMode;
-      if (input.shadowCandidateRoute) {
-        shadowCandidateRoute = input.shadowCandidateRoute;
-      }
       base = {
         ...base,
         ...input,
@@ -384,10 +371,6 @@ export function createCoworkTurnTelemetry(
         charged_cost_usd: Number(chargedCostUsd.toFixed(8)),
         provenance_status: input.provenanceStatus,
         terminal_outcome: input.terminalOutcome,
-        ...(rolloutMode ? { rollout_mode: rolloutMode } : {}),
-        ...(shadowCandidateRoute
-          ? { shadow_candidate_route: shadowCandidateRoute }
-          : {}),
       };
       try {
         await sink(record);

@@ -10,8 +10,6 @@ import {
   hasUnsupportedDirectShortenPercentage,
 } from "@/lib/agent/direct-refine-policy";
 import { isNoModelPostRequest } from "@/lib/agent/no-model-formats";
-import { coworkRolloutDecision } from "@/lib/agent/cowork-rollout";
-import type { coworkRolloutRuntimeHealth } from "@/lib/agent/cowork-rollout-health";
 import {
   explicitlyForbidsSourceDiscovery,
   explicitlyRequestsSourceDiscovery,
@@ -23,20 +21,9 @@ import {
 } from "@/lib/agent/source-policy";
 import type { ComposerTaskContext } from "@/lib/composer-task-context";
 
-type DirectWriterEnvironment = Record<string, string | undefined>;
-
-/** Fail-closed shared rollout policy for the direct writer lane. */
-export function directWriterEnabledForWorkspace(
-  workspaceId: string,
-  env: DirectWriterEnvironment = process.env,
-  runtimeHealth?: Pick<typeof coworkRolloutRuntimeHealth, "isOpen">,
-): boolean {
-  return coworkRolloutDecision(
-    "direct_writer",
-    workspaceId,
-    env,
-    runtimeHealth,
-  ).serveV2;
+/** Direct writer is the unified drafting path; no rollout gating remains. */
+export function directWriterEnabledForWorkspace(): boolean {
+  return true;
 }
 
 export type DirectOriginalPostEligibility = {

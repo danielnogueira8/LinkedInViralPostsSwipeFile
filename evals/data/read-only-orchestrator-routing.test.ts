@@ -1035,28 +1035,7 @@ describe("read-only complex orchestrator routing", () => {
     });
   });
 
-  test("uses an allowlist plus an immediate kill switch", () => {
-    const env = {
-      COWORK_READ_ONLY_ORCHESTRATOR_ENABLED: "1",
-      COWORK_READ_ONLY_ORCHESTRATOR_WORKSPACES: "ws-a,ws-b",
-    };
-    expect(readOnlyOrchestratorEnabledForWorkspace("ws-a", env)).toBe(true);
-    expect(readOnlyOrchestratorEnabledForWorkspace("ws-c", env)).toBe(false);
-    expect(
-      readOnlyOrchestratorEnabledForWorkspace("ws-a", {
-        ...env,
-        COWORK_READ_ONLY_ORCHESTRATOR_KILL_SWITCH: "1",
-      }),
-    ).toBe(false);
-  });
-
-  test("can be selected by the shared stable percentage rollout", () => {
-    expect(
-      readOnlyOrchestratorEnabledForWorkspace("ws-sampled", {
-        COWORK_V2_ENABLED: "1",
-        COWORK_V2_ROLLOUT_MODE: "sample",
-        COWORK_V2_ROLLOUT_PERCENT: "100",
-      }),
-    ).toBe(true);
+  test("is unconditionally enabled in the unified architecture", () => {
+    expect(readOnlyOrchestratorEnabledForWorkspace()).toBe(true);
   });
 });

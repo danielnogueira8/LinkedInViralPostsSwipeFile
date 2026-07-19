@@ -645,7 +645,7 @@ describe("production-shaped Cowork outcome harness", () => {
       model: {
         provider: { rounds: [] },
         actionOrchestrator: {
-          rolloutDisabled: true,
+          disabled: true,
           retryEffectiveInstruction:
             "Schedule the hiring draft.\n\nClarification answer: 2026-07-20",
           plans: [
@@ -780,7 +780,7 @@ describe("production-shaped Cowork outcome harness", () => {
         model: {
           provider: { rounds: [] },
           actionOrchestrator: {
-            rolloutDisabled: true,
+            disabled: true,
             plans: [
               {
                 model: PRIMARY_ACTION_ORCHESTRATOR_MODEL,
@@ -813,7 +813,7 @@ describe("production-shaped Cowork outcome harness", () => {
         model: {
           provider: { rounds: [] },
           actionOrchestrator: {
-            rolloutDisabled: true,
+            disabled: true,
             plans: [
               {
                 model: PRIMARY_ACTION_ORCHESTRATOR_MODEL,
@@ -1922,7 +1922,7 @@ describe("production-shaped Cowork outcome harness", () => {
         directWriter: [],
         readOnlyOrchestrator: {
           plans: [],
-          rolloutDisabled: true,
+          disabled: true,
           allowNoModel: true,
         },
       },
@@ -1956,7 +1956,7 @@ describe("production-shaped Cowork outcome harness", () => {
         sourceFidelity: [{ outcome: "verified" }, { outcome: "verified" }],
         readOnlyOrchestrator: {
           plans: [],
-          rolloutDisabled: true,
+          disabled: true,
           toolResults: {
             search_viral_posts: [
               {
@@ -2015,7 +2015,7 @@ describe("production-shaped Cowork outcome harness", () => {
         sourceFidelity: [{ outcome: "verified" }],
         readOnlyOrchestrator: {
           plans: [],
-          rolloutDisabled: true,
+          disabled: true,
           toolResults: {
             search_viral_posts: [
               {
@@ -2069,7 +2069,7 @@ describe("production-shaped Cowork outcome harness", () => {
         provider: renderProvider([THIRD_POST]),
         readOnlyOrchestrator: {
           plans: [],
-          rolloutDisabled: true,
+          disabled: true,
           voiceUnavailable: true,
         },
         directWriter: [
@@ -2291,7 +2291,7 @@ describe("production-shaped Cowork outcome harness", () => {
     const scenario = modeledThreeScenario("modeled-three-retry-rollout-off");
     Object.assign(scenario.model.readOnlyOrchestrator!, {
       retryModeledBatch: true,
-      rolloutDisabled: true,
+      disabled: true,
       frozenModeledSources: MODELED_SOURCE_ROWS.map((source) => ({
         id: source.id,
         text: source.text,
@@ -2323,7 +2323,7 @@ describe("production-shaped Cowork outcome harness", () => {
     const scenario = modeledThreeScenario("modeled-three-retry-no-voice");
     Object.assign(scenario.model.readOnlyOrchestrator!, {
       retryModeledBatch: true,
-      rolloutDisabled: true,
+      disabled: true,
       voiceUnavailable: true,
       frozenModeledSources: MODELED_SOURCE_ROWS.map((source) => ({
         id: source.id,
@@ -2503,7 +2503,7 @@ describe("production-shaped Cowork outcome harness", () => {
     const second = modeledThreeScenario("modeled-three-busy-second");
     Object.assign(second.model.readOnlyOrchestrator!, {
       modeledBatchOutcome: "busy",
-      rolloutDisabled: true,
+      disabled: true,
     });
     second.retryLatestUser = true;
     second.expected = {
@@ -2514,7 +2514,7 @@ describe("production-shaped Cowork outcome harness", () => {
 
     const completed = modeledThreeScenario("modeled-three-busy-completed");
     Object.assign(completed.model.readOnlyOrchestrator!, {
-      rolloutDisabled: true,
+      disabled: true,
       frozenModeledSources: MODELED_SOURCE_ROWS.map((source) => ({
         id: source.id,
         text: source.text,
@@ -2561,7 +2561,7 @@ describe("production-shaped Cowork outcome harness", () => {
 
     const resumed = modeledThreeScenario("modeled-three-style-resumed");
     Object.assign(resumed.model.readOnlyOrchestrator!, {
-      rolloutDisabled: true,
+      disabled: true,
       frozenModeledSources: MODELED_SOURCE_ROWS.map((source) => ({
         id: source.id,
         text: source.text,
@@ -2614,7 +2614,7 @@ describe("production-shaped Cowork outcome harness", () => {
 
     const resumed = modeledThreeScenario("modeled-three-skill-resumed");
     Object.assign(resumed.model.readOnlyOrchestrator!, {
-      rolloutDisabled: true,
+      disabled: true,
       frozenModeledSources: MODELED_SOURCE_ROWS.map((source) => ({
         id: source.id,
         text: source.text,
@@ -2654,7 +2654,7 @@ describe("production-shaped Cowork outcome harness", () => {
   test("an initial modeled request never falls into the legacy writer when voice is unavailable", async () => {
     const scenario = modeledThreeScenario("modeled-three-initial-no-voice");
     Object.assign(scenario.model.readOnlyOrchestrator!, {
-      rolloutDisabled: true,
+      disabled: true,
       voiceUnavailable: true,
     });
     scenario.expected = {

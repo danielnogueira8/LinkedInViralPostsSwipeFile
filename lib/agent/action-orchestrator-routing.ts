@@ -1,7 +1,9 @@
-import { coworkRolloutDecision } from "@/lib/agent/cowork-rollout";
-import type { coworkRolloutRuntimeHealth } from "@/lib/agent/cowork-rollout-health";
-
 export type BoardMoveStatus = "idea" | "drafting" | "ready";
+
+/** Action orchestrator is part of the unified path; no rollout gating remains. */
+export function actionOrchestratorEnabledForWorkspace(): boolean {
+  return true;
+}
 
 export type ActionRequirement =
   | { type: "move_on_board"; status: BoardMoveStatus }
@@ -39,21 +41,6 @@ export type ActionOrchestratorRoutingInput = {
   hasUnsavedDraftReferent?: boolean;
   clientTimezone?: string;
 };
-
-type ActionOrchestratorEnvironment = Record<string, string | undefined>;
-
-export function actionOrchestratorEnabledForWorkspace(
-  workspaceId: string,
-  env: ActionOrchestratorEnvironment = process.env,
-  runtimeHealth?: Pick<typeof coworkRolloutRuntimeHealth, "isOpen">,
-): boolean {
-  return coworkRolloutDecision(
-    "action_orchestrator",
-    workspaceId,
-    env,
-    runtimeHealth,
-  ).serveV2;
-}
 
 const DRAFT_REFERENCE_RE =
   /\b(?:drafts?|posts?|queue|board|it|this|that|one|these|those)\b/i;

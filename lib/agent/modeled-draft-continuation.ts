@@ -34,8 +34,8 @@ function modeledDraftCount(value: unknown): ModeledDraftCount | null {
 
 /**
  * Freeze the server-compiled lane contract beside the recoverable marker.
- * A Retry reuses this value instead of asking current rollout flags or a future
- * routing implementation to decide whether the durable batch still exists.
+ * A Retry reuses this value instead of asking a future routing implementation
+ * whether the durable batch still exists.
  */
 export function continuationForModeledDraftRoute(
   route: ReadOnlyOrchestratorRoute | null | undefined,
