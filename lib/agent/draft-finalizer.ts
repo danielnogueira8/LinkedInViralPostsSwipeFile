@@ -260,6 +260,7 @@ function validateFinalArtifact(
 
 function resolveSource(
   provenance: DraftProvenance | undefined,
+  origin: DraftCandidateOrigin,
 ):
   | { ok: true; source: DraftSource | null }
   | { ok: false; code: DraftFinalizerRejectionCode; message: string } {
@@ -270,7 +271,22 @@ function resolveSource(
   const effectiveId =
     provenance.requestedSourceId ??
     (sourceById.size === 1 ? [...sourceById.keys()][0] : null);
-  const sourceRequired = provenance.required || sourceById.size > 0;
+  // "Sources were discovered this turn" only auto-REQUIRES a match for the
+  // render_tool origin — the only one built from a real render_post tool
+  // call, where sourcePostId is an actual argument the model could have
+  // filled. Every other origin (legacy_fence, forced_final_fence,
+  // forced_final_leak, refine_leak) is extracted from plain generated text
+  // that structurally has no field to carry a sourcePostId in; treating a
+  // multi-source turn as "required" for those origins is an unwinnable trap
+  // — retrying produces the same shape and fails identically (confirmed:
+  // brandjack/namejack/newsjack turns, which research multiple reference
+  // posts but are correctly NOT single-source-modeling turns, hit this).
+  // provenance.required — the explicit "this IS a strict one-post modeling
+  // turn" signal computed upstream from the user's actual request — still
+  // applies to every origin unconditionally; only the size>0 SAFETY-NET
+  // fallback is origin-scoped.
+  const sourceRequired =
+    provenance.required || (origin === "render_tool" && sourceById.size > 0);
   if (!effectiveId) {
     return sourceRequired
       ? {
@@ -474,7 +490,7 @@ export function createDraftFinalizer(
       }
     }
 
-    const resolvedSource = resolveSource(candidate.provenance);
+    const resolvedSource = resolveSource(candidate.provenance, candidate.origin);
     if (!resolvedSource.ok) {
       return emit(
         candidate,

@@ -293,6 +293,107 @@ describe("DraftFinalizer", () => {
     expect(finalizer.acceptedCount()).toBe(0);
   });
 
+  test("a legacy_fence draft with multiple discovered-but-unrequired sources is NOT trapped by provenance_missing (brandjack/namejack/newsjack regression)", async () => {
+    // Regression for a real prod bug: a brandjack/namejack/newsjack turn
+    // researches multiple REFERENCE posts (required: false — this is not a
+    // strict "model this one exact post" turn) but the model wrote its
+    // final draft as a fenced legacy_fence block, which structurally has no
+    // sourcePostId field to fill. Before this fix, resolveSource treated
+    // "any sources were discovered" as an auto-requirement regardless of
+    // origin, so this shape was rejected every single time — retrying
+    // produced the identical unwinnable shape.
+    const specialists = passThroughSpecialists();
+    const finalizer = createDraftFinalizer({
+      workspaceId: "ws-1",
+      policy: policy(),
+      priorDrafts: [],
+      specialists,
+    });
+
+    const result = await finalizer.finalize({
+      origin: "legacy_fence",
+      body: COMPLETE_POST,
+      envelopeComplete: true,
+      provenance: {
+        required: false,
+        requestedSourceId: null,
+        discoveredSources: [
+          { id: "11111111-1111-4111-8111-111111111111", text: "Reference post one" },
+          { id: "22222222-2222-4222-8222-222222222222", text: "Reference post two" },
+        ],
+        userRequest: "Brandjack apple — write 3 LinkedIn posts in my voice...",
+        verifiedContext: "USER: Brandjack apple...",
+      },
+    });
+
+    expect(result).toMatchObject({ ok: true, sourcePostId: null });
+  });
+
+  test.each([
+    ["forced_final_fence"],
+    ["forced_final_leak"],
+    ["refine_leak"],
+  ] as const)(
+    "a %s draft with multiple discovered-but-unrequired sources is also not trapped",
+    async (origin) => {
+      const specialists = passThroughSpecialists();
+      const finalizer = createDraftFinalizer({
+        workspaceId: "ws-1",
+        policy: policy(),
+        priorDrafts: [],
+        specialists,
+      });
+
+      const result = await finalizer.finalize({
+        origin,
+        body: COMPLETE_POST,
+        provenance: {
+          required: false,
+          requestedSourceId: null,
+          discoveredSources: [
+            { id: "11111111-1111-4111-8111-111111111111", text: "Reference post one" },
+            { id: "22222222-2222-4222-8222-222222222222", text: "Reference post two" },
+          ],
+          userRequest: "Namejack Elon Musk — write 3 LinkedIn posts...",
+          verifiedContext: "USER: Namejack Elon Musk...",
+        },
+      });
+
+      expect(result).toMatchObject({ ok: true, sourcePostId: null });
+    },
+  );
+
+  test("a render_tool draft with multiple discovered-but-unrequired sources still auto-requires a match (the safety net is preserved for the ONE origin that can supply one)", async () => {
+    // Sanity check for the opposite direction: this fix must NOT weaken the
+    // safety net for render_tool candidates — a model that discovered
+    // multiple sources and called render_post without a sourcePostId is
+    // still caught, because render_post genuinely HAS that field to fill.
+    const specialists = passThroughSpecialists();
+    const finalizer = createDraftFinalizer({
+      workspaceId: "ws-1",
+      policy: policy(),
+      priorDrafts: [],
+      specialists,
+    });
+
+    const result = await finalizer.finalize({
+      origin: "render_tool",
+      body: COMPLETE_POST,
+      provenance: {
+        required: false,
+        requestedSourceId: null,
+        discoveredSources: [
+          { id: "11111111-1111-4111-8111-111111111111", text: "Reference post one" },
+          { id: "22222222-2222-4222-8222-222222222222", text: "Reference post two" },
+        ],
+        userRequest: "Find posts and model one",
+        verifiedContext: "USER: Find posts and model one",
+      },
+    });
+
+    expect(result).toMatchObject({ ok: false, rejection: { code: "provenance_missing" } });
+  });
+
   test("infers the only verified source and returns canonical provenance", async () => {
     const specialists = passThroughSpecialists();
     const finalizer = createDraftFinalizer({
