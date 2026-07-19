@@ -26,6 +26,7 @@ import { validatePartialTextOutput } from "@/lib/agent/partial-output-policy";
 import type { DirectPartialTextSpec } from "@/lib/agent/direct-deliverable-policy";
 import {
   areDraftsNearDuplicate,
+  duplicateReasonFor,
   looksCorruptedDraft,
   normalizeDraftKey,
 } from "@/lib/agent/specialists/nets";
@@ -1020,6 +1021,29 @@ async function cancellationRequestedAtBoundary(
   }
 }
 
+// Repair instruction fed back to the writer after duplicateGuard rejects a
+// candidate. Naming the collision axis (same words vs. same sentence-order)
+// gives the model something concrete to change instead of a generic "be
+// different" — which for a same-source, keep-the-structure request tends to
+// reproduce the same skeleton every attempt otherwise. Escalates to an
+// explicit topic-swap instruction on the slot's final attempt.
+function duplicateRepairMessage(
+  reason: "vocabulary" | "progression" | "exact",
+  slotAttempt: number,
+): string {
+  const diagnosis =
+    reason === "exact"
+      ? "It is word-for-word the same as an earlier accepted post."
+      : reason === "vocabulary"
+        ? "It reuses almost all the same words and phrases as an earlier accepted post — same topic, same specifics."
+        : "It follows the exact same sentence-by-sentence progression as an earlier accepted post, even where individual words differ.";
+  const instruction =
+    slotAttempt >= 2
+      ? "Pick a genuinely different topic, example, or angle from the earlier accepted post(s) — keep only the requested structure and hook STYLE, not the same content dressed differently."
+      : "Write a materially distinct complete replacement: different topic, example, or angle, not just reworded sentences.";
+  return `This version duplicates an earlier accepted post. ${diagnosis} ${instruction}`;
+}
+
 async function* runMultiDraftEngine(
   input: DraftEngineInput,
   task: Extract<DraftEngineTask, { kind: "multi" }>,
@@ -1088,127 +1112,167 @@ async function* runMultiDraftEngine(
     ];
   };
 
+  // Slots retried against the duplicate guard, and how the last attempt for
+  // the CURRENT slot failed. A duplicate-guard exhaustion is a qualitatively
+  // different failure than a transport/writer error: the model has a real
+  // shot at a topic swap, it just wasn't told WHICH axis collided or told to
+  // change topic outright. Give each slot one extra full child-engine attempt
+  // (bounded — never an unbounded loop) with a sharper, escalating repair
+  // instruction before giving up on the whole set. A non-duplicate failure
+  // (childError, wrong artifact count) still aborts immediately — that's a
+  // real error, not a "try a different angle" situation.
+  const MAX_SLOT_ATTEMPTS = 2;
+
   try {
     for (let index = 1; index <= task.expectedCount; index += 1) {
       const previousBodies = accepted.map((artifact) => artifact.body);
-      const duplicateGuard: DraftCandidateTransform = (body) => {
-        const externallyTransformed = multiInput.finalTransformCandidate?.(
-          body,
-        ) ?? {
-          ok: true as const,
-          body,
-        };
-        if (!externallyTransformed.ok) return externallyTransformed;
-        const key = normalizeDraftKey(externallyTransformed.body);
-        if (
-          key &&
-          (acceptedKeys.has(key) ||
-            accepted.some((artifact) =>
-              areDraftsNearDuplicate(artifact.body, externallyTransformed.body),
-            ))
-        ) {
-          return {
-            ok: false,
-            message:
-              "This version duplicates an earlier accepted post. Write a materially distinct complete replacement.",
+      let slotArtifact: (Artifact & { kind: "post" }) | null = null;
+      let lastDuplicateReason: "vocabulary" | "progression" | "exact" | null =
+        null;
+
+      for (
+        let slotAttempt = 1;
+        slotAttempt <= MAX_SLOT_ATTEMPTS && !slotArtifact;
+        slotAttempt += 1
+      ) {
+        const duplicateGuard: DraftCandidateTransform = (body) => {
+          const externallyTransformed = multiInput.finalTransformCandidate?.(
+            body,
+          ) ?? {
+            ok: true as const,
+            body,
           };
-        }
-        return externallyTransformed;
-      };
-      const childTask: DraftEngineTask = task.groundedSources
-        ? {
-            kind: "grounded",
-            sources: task.groundedSources,
-            variation: { index, count: task.expectedCount, previousBodies },
-          }
-        : task.source
-          ? {
-            kind: "source",
-            source: task.source,
-            variation: { index, count: task.expectedCount, previousBodies },
-          }
-          : {
-              kind: "original",
-              variation: { index, count: task.expectedCount, previousBodies },
+          if (!externallyTransformed.ok) return externallyTransformed;
+          const key = normalizeDraftKey(externallyTransformed.body);
+          const exactKeyMatch = Boolean(key && acceptedKeys.has(key));
+          const matchedPrior = accepted.find((artifact) =>
+            areDraftsNearDuplicate(artifact.body, externallyTransformed.body),
+          );
+          if (key && (exactKeyMatch || matchedPrior)) {
+            const reason = exactKeyMatch
+              ? "exact"
+              : duplicateReasonFor(
+                  matchedPrior!.body,
+                  externallyTransformed.body,
+                );
+            lastDuplicateReason = reason;
+            return {
+              ok: false,
+              message: duplicateRepairMessage(reason, slotAttempt),
             };
-      const childEvents: AgentEvent[] = [];
-      for await (const event of runDraftEngine(
-        {
-          ...multiInput,
-          task: childTask,
-          priorPostDrafts: [
-            ...multiInput.priorPostDrafts,
-            ...accepted.map((artifact, acceptedIndex) => ({
-              id: artifact.id,
-              body: artifact.body,
-              createdAt: new Date(acceptedIndex).toISOString(),
-            })),
-          ],
-          finalTransformCandidate: duplicateGuard,
-        },
-        deps,
-      )) {
-        childEvents.push(event);
+          }
+          return externallyTransformed;
+        };
+        const childTask: DraftEngineTask = task.groundedSources
+          ? {
+              kind: "grounded",
+              sources: task.groundedSources,
+              variation: { index, count: task.expectedCount, previousBodies },
+            }
+          : task.source
+            ? {
+                kind: "source",
+                source: task.source,
+                variation: { index, count: task.expectedCount, previousBodies },
+              }
+            : {
+                kind: "original",
+                variation: { index, count: task.expectedCount, previousBodies },
+              };
+        const childEvents: AgentEvent[] = [];
+        for await (const event of runDraftEngine(
+          {
+            ...multiInput,
+            task: childTask,
+            priorPostDrafts: [
+              ...multiInput.priorPostDrafts,
+              ...accepted.map((artifact, acceptedIndex) => ({
+                id: artifact.id,
+                body: artifact.body,
+                createdAt: new Date(acceptedIndex).toISOString(),
+              })),
+            ],
+            finalTransformCandidate: duplicateGuard,
+          },
+          deps,
+        )) {
+          childEvents.push(event);
+        }
+
+        const childDone = childEvents.find(
+          (event): event is Extract<AgentEvent, { type: "done" }> =>
+            event.type === "done",
+        );
+        inputTokens += childDone?.message.inputTokens ?? 0;
+        outputTokens += childDone?.message.outputTokens ?? 0;
+        if (childDone?.terminalReason === "cancelled" || multiSignal.aborted) {
+          for (const event of interruptionEvents()) yield event;
+          return;
+        }
+        const childArtifacts = childEvents
+          .filter(
+            (event): event is Extract<AgentEvent, { type: "artifact" }> =>
+              event.type === "artifact" && event.artifact.kind === "post",
+          )
+          .map((event) => event.artifact as Artifact & { kind: "post" });
+        const childError = childEvents.find(
+          (event): event is Extract<AgentEvent, { type: "error" }> =>
+            event.type === "error",
+        );
+        // Only a duplicate-only exhaustion (no other error, exactly the
+        // draft_engine_exhausted shape the child gives when every one of its
+        // own attempts hit our finalTransformCandidate rejection) qualifies
+        // for the extra slot attempt. Any other error code means something
+        // besides duplication broke, so it aborts immediately below.
+        const duplicateOnlyExhaustion =
+          childError?.code === "draft_engine_exhausted" &&
+          lastDuplicateReason !== null &&
+          childArtifacts.length === 0;
+        if (childError || childArtifacts.length !== 1) {
+          if (duplicateOnlyExhaustion && slotAttempt < MAX_SLOT_ATTEMPTS) {
+            continue;
+          }
+          const failureMessage = incompleteSetMessage(
+            "I couldn’t complete the full draft set this time.",
+          );
+          for (const event of acceptedArtifactEvents()) yield event;
+          yield {
+            type: "error",
+            code: childError?.code ?? "draft_engine_exhausted",
+            message: failureMessage,
+            recovery: "continue",
+          };
+          yield engineDone(failureMessage, inputTokens, outputTokens);
+          return;
+        }
+        const artifact = childArtifacts[0];
+        const key = normalizeDraftKey(artifact.body);
+        const stillDuplicate =
+          !key ||
+          acceptedKeys.has(key) ||
+          accepted.some((prior) => areDraftsNearDuplicate(prior.body, artifact.body));
+        if (stillDuplicate) {
+          if (slotAttempt < MAX_SLOT_ATTEMPTS) {
+            continue;
+          }
+          const failureMessage = incompleteSetMessage(
+            "I couldn’t produce the requested number of distinct drafts.",
+          );
+          for (const event of acceptedArtifactEvents()) yield event;
+          yield {
+            type: "error",
+            code: "draft_engine_duplicate_set",
+            message: failureMessage,
+            recovery: "continue",
+          };
+          yield engineDone(failureMessage, inputTokens, outputTokens);
+          return;
+        }
+        acceptedKeys.add(key);
+        slotArtifact = artifact;
       }
 
-      const childDone = childEvents.find(
-        (event): event is Extract<AgentEvent, { type: "done" }> =>
-          event.type === "done",
-      );
-      inputTokens += childDone?.message.inputTokens ?? 0;
-      outputTokens += childDone?.message.outputTokens ?? 0;
-      if (childDone?.terminalReason === "cancelled" || multiSignal.aborted) {
-        for (const event of interruptionEvents()) yield event;
-        return;
-      }
-      const childArtifacts = childEvents
-        .filter(
-          (event): event is Extract<AgentEvent, { type: "artifact" }> =>
-            event.type === "artifact" && event.artifact.kind === "post",
-        )
-        .map((event) => event.artifact as Artifact & { kind: "post" });
-      const childError = childEvents.find(
-        (event): event is Extract<AgentEvent, { type: "error" }> =>
-          event.type === "error",
-      );
-      if (childError || childArtifacts.length !== 1) {
-        const failureMessage = incompleteSetMessage(
-          "I couldn’t complete the full draft set this time.",
-        );
-        for (const event of acceptedArtifactEvents()) yield event;
-        yield {
-          type: "error",
-          code: childError?.code ?? "draft_engine_exhausted",
-          message: failureMessage,
-          recovery: "continue",
-        };
-        yield engineDone(failureMessage, inputTokens, outputTokens);
-        return;
-      }
-      const artifact = childArtifacts[0];
-      const key = normalizeDraftKey(artifact.body);
-      if (
-        !key ||
-        acceptedKeys.has(key) ||
-        accepted.some((prior) =>
-          areDraftsNearDuplicate(prior.body, artifact.body),
-        )
-      ) {
-        const failureMessage = incompleteSetMessage(
-          "I couldn’t produce the requested number of distinct drafts.",
-        );
-        for (const event of acceptedArtifactEvents()) yield event;
-        yield {
-          type: "error",
-          code: "draft_engine_duplicate_set",
-          message: failureMessage,
-          recovery: "continue",
-        };
-        yield engineDone(failureMessage, inputTokens, outputTokens);
-        return;
-      }
-      acceptedKeys.add(key);
-      accepted.push(artifact);
+      accepted.push(slotArtifact as Artifact & { kind: "post" });
     }
 
     if (accepted.length !== task.expectedCount) {
