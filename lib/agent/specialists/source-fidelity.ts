@@ -297,6 +297,18 @@ async function runSourceFidelityAttempt(
       model,
       ...(attempt > 1 ? { fallbackReason: "reviewer_unavailable" } : {}),
       rejectedReasonCode: "invalid_source_fidelity_verdict",
+      // A schema-invalid verdict here means the model failed to call the
+      // tool correctly on THIS attempt (forceTool glitch, truncation,
+      // model-specific tool-calling weakness) — it is not evidence the
+      // provider is unreliable. Keeping it off this adapterKey's health
+      // circuit stops a burst of tool-calling glitches from tripping the
+      // breaker and silently degrading fidelity checks for unrelated
+      // drafts/turns for the next openCooldownMs. A genuine "draft doesn't
+      // match the source" verdict never reaches here as a throw (see the
+      // pass:false branch above), and real transport failures (timeouts,
+      // 5xx, rate limits) are unaffected — this only scopes out the
+      // validate() throw path.
+      validationFailureIsHealthNeutral: true,
     });
     return result.value;
   } finally {
