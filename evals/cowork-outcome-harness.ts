@@ -9,6 +9,10 @@ import {
 import type { Artifact } from "@/lib/agent/contracts";
 import type { ChatTurnTerminal } from "@/lib/agent/chat-turn-lifecycle";
 import {
+  type CoworkRoute,
+  type CoworkTurnTelemetryRecord,
+} from "@/lib/agent/cowork-telemetry";
+import {
   parseChatSseFrame,
   type ChatSseFrame,
 } from "@/lib/transport/contracts";
@@ -176,12 +180,14 @@ export type CoworkOutcomeScenario = {
     assistantContents?: string[];
     sourcePostIds?: string[];
     sourceReferences?: Array<{ id: string; url: string }>;
+    route?: CoworkRoute;
   };
 };
 
 export type CoworkOutcomeFailureCode =
   | "http_status"
   | "terminal"
+  | "route"
   | "deliverable_count"
   | "draft_body"
   | "action_count"
@@ -219,6 +225,7 @@ export type CoworkOutcomeReport = {
     fallbackUsed: boolean;
     latencyMs: number;
     costUsd: number;
+    route: CoworkRoute;
     modelStages: Array<{ kind: string; model: string }>;
   };
   persisted: {
@@ -799,6 +806,7 @@ async function runCoworkOutcomeScenarioWithStore(
     () => requestController.abort(),
   );
   const sourceFidelity = [...(scenario.model.sourceFidelity ?? [])];
+  const telemetryRecords: CoworkTurnTelemetryRecord[] = [];
   const draftAdapterHealth = new AdapterHealthRegistry();
   const modeledBatchRepository =
     sharedModeledBatchRepository ??
@@ -841,6 +849,9 @@ async function runCoworkOutcomeScenarioWithStore(
     generateLeadMagnetResource: (async () => {
       throw new Error("Lead-magnet generation is not scripted for this scenario.");
     }) as ChatTurnDependencies["generateLeadMagnetResource"],
+    coworkTelemetrySink: (record) => {
+      telemetryRecords.push(record);
+    },
     draftFinalizerSpecialists: {
       reviewSourceFidelity: async () =>
         sourceFidelity.shift() ?? { outcome: "verified" },
@@ -1056,6 +1067,8 @@ async function runCoworkOutcomeScenarioWithStore(
     usage.reduce((total, row) => total + row.cost_usd, 0).toFixed(6),
   );
   const modelStages = usage.map(({ kind, model }) => ({ kind, model }));
+  const route: CoworkRoute =
+    telemetryRecords.at(-1)?.route ?? ("unknown" as CoworkRoute);
   const failureCodes: CoworkOutcomeFailureCode[] = [];
   if (response.status !== (scenario.expected.httpStatus ?? 200)) {
     failureCodes.push("http_status");
@@ -1131,6 +1144,9 @@ async function runCoworkOutcomeScenarioWithStore(
       failureCodes.push("provenance");
     }
   }
+  if (scenario.expected.route !== undefined && route !== scenario.expected.route) {
+    failureCodes.push("route");
+  }
   failureCodes.push(
     ...duplicateOutcomeFailureCodes({ artifacts, actions }),
   );
@@ -1183,6 +1199,7 @@ async function runCoworkOutcomeScenarioWithStore(
       fallbackUsed,
       latencyMs: Number(latencyMs.toFixed(3)),
       costUsd,
+      route,
       modelStages,
     },
     persisted: {

@@ -93,8 +93,10 @@ function readOnlyTurnContract(route: ReadOnlyOrchestratorRoute): TurnContract {
  * Resolve the turn's single deliverable contract. The priority mirrors the
  * executor that will actually serve the turn:
  *   direct writer > served action route > served read-only route >
- *   unrouted action route > unrouted read-only route > legacy fallback
- * (post count > partial spec > answer).
+ *   unrouted action route > unrouted read-only route > answer lane.
+ * When none of the v2 executors claim the turn and the instruction is not a
+ * post/partial/refine/source/action/research request, it resolves to the
+ * deterministic "answer" contract (kind: "answer", expectedCount: 1).
  * `fallbackPostCount` is the post-clarification post count (UI override >
  * composer task count > refine default), null when the turn is not
  * post-shaped.

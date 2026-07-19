@@ -63,8 +63,8 @@ function composerResearchRoute(
   context: ComposerTaskContext | undefined,
 ): ReadOnlyOrchestratorRoute | null {
   const requirement = context?.researchRequirement;
-  // This orchestrator currently owns researched drafts only. Answer/ideas
-  // starters stay on the history-aware agent until it has a typed answer lane.
+  // This orchestrator owns researched drafts only. Plain answer/ideas turns are
+  // routed to the deterministic answer lane, so they never reach here.
   if (!context || context.kind !== "post" || !requirement) return null;
   if (requirement.lane === "workspace") {
     return {

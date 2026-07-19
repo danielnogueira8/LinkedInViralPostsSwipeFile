@@ -13,6 +13,7 @@ export type CoworkRoute =
   | "direct_writer"
   | "read_only_orchestrator"
   | "action_orchestrator"
+  | "answer"
   | "legacy_agent";
 // Canonical home is lib/agent/turn/outcome.ts; kept as an alias so existing
 // telemetry call sites keep compiling without churn.

@@ -70,13 +70,12 @@ import {
   createCoworkTurnTelemetry,
   observeCoworkTurn,
   type CoworkRoute,
+  type CoworkTelemetrySink,
   type CoworkTurnTelemetry,
 } from "@/lib/agent/cowork-telemetry";
-import {
-  type DeliverableContract,
-} from "@/lib/agent/deliverable-contract";
-import { encodeChatSseFrame } from "@/lib/transport/contracts";
+
 import type { CoworkTurnUsageWire } from "@/lib/cowork-turn-usage";
+import { encodeChatSseFrame } from "@/lib/transport/contracts";
 import {
   configuredSseHeartbeatInterval,
   startSseHeartbeat,
@@ -197,10 +196,13 @@ import {
 import { fetchRecentPostDrafts, type RecentDraft } from "@/lib/recent-drafts";
 import {
   completeChat,
+  logOpenRouterUsage,
+  streamChat,
   CHAT_MODEL,
   type ChatMessage,
   type ContentBlock,
   type ToolCall,
+  type Usage,
 } from "@/lib/openrouter";
 import {
   contentFormatForModel,
@@ -504,6 +506,8 @@ export type ChatTurnDependencies = {
   generateLeadMagnetResource: typeof generateLeadMagnetResource;
   now: () => Date;
   draftFinalizerSpecialists?: Partial<DraftFinalizerSpecialists>;
+  /** Optional telemetry sink for tests/observers. Defaults to console logging. */
+  coworkTelemetrySink?: CoworkTelemetrySink;
 };
 
 const productionChatTurnDependencies: ChatTurnDependencies = {
@@ -1856,14 +1860,17 @@ export async function executeChatTurn(
     // The exclusive turn claim is now held; ensure it's released on every exit.
     turnClaimed = true;
     turnCostOperationKey = claim.operationKey;
-    coworkTelemetry = createCoworkTurnTelemetry({
-      traceId: chatId,
-      workspaceId,
-      route: "setup",
-      // Claim-time placeholder only; the single post-clarification
-      // resolveTurnContract result replaces it once routing lands.
-      requestedContract: preclaimContractPlaceholder,
-    });
+    coworkTelemetry = createCoworkTurnTelemetry(
+      {
+        traceId: chatId,
+        workspaceId,
+        route: "setup",
+        // Claim-time placeholder only; the single post-clarification
+        // resolveTurnContract result replaces it once routing lands.
+        requestedContract: preclaimContractPlaceholder,
+      },
+      deps.coworkTelemetrySink,
+    );
 
     // From the moment the atomic claim lands until the SSE response exists,
     // the browser has no turn timestamp it can send to the Stop endpoint. Own
@@ -2043,9 +2050,7 @@ export async function executeChatTurn(
   const orchestratorAttachmentBlocks: ContentBlock[] = [];
   // Built below only for a from-scratch post request (no model/template/refine
   // source): the selected archetype's rules + full DB exemplars. Empty on every
-  // other turn, so runAgent's prompt is unchanged for those. Declared out here so
-  // it's in scope at the runAgent call inside the stream.
-  let noModelFormatBlock = "";
+  // other turn so the executor prompt stays byte-identical.
   let appliedNoModelFormat: {
     id: NoModelFormatId;
     label: string;
@@ -2068,7 +2073,7 @@ export async function executeChatTurn(
   let imageGenerationAuthor: { name: string | null } | null = null;
   // Built below only when the user picked a creator style AND no model source is
   // attached (a source controls structure, so the style is ignored then). Empty
-  // otherwise, so runAgent's prompt is byte-identical for every other turn.
+  // otherwise so the executor prompt stays byte-identical.
   let creatorStyleBlock = "";
   let appliedCreatorStyle: {
     id: string;
@@ -2130,7 +2135,6 @@ export async function executeChatTurn(
     activeDraftCountOverride = turnContext.activeDraftCountOverride;
     postClarificationPostCount = turnContext.postClarificationPostCount;
     preloadedVoiceResult = turnContext.voiceResult;
-    noModelFormatBlock = turnContext.noModelFormatBlock;
     selectedNoModelFormat = turnContext.selectedNoModelFormat;
     appliedNoModelFormat = turnContext.appliedNoModelFormat;
     shouldAttachLeadMagnet = turnContext.shouldAttachLeadMagnet;
@@ -2731,7 +2735,7 @@ export async function executeChatTurn(
       ? "action_orchestrator"
       : useReadOnlyOrchestrator
         ? "read_only_orchestrator"
-        : "legacy_agent";
+        : "answer";
   // THE single authoritative deliverable contract for this turn
   // (PLAN-cowork-unification Phase 1, step 3): computed ONCE, here —
   // post-clarification and post-routing — from the same
@@ -2750,11 +2754,6 @@ export async function executeChatTurn(
       postClarificationPostCount ??
       (skipDecision ? 1 : null),
   });
-  const selectedDeliverableContract: DeliverableContract | null =
-    activeDraftCountOverride !== undefined &&
-    (postClarificationPostCount !== null || skipDecision)
-      ? { kind: "post", expectedCount: activeDraftCountOverride }
-      : null;
   coworkTelemetry.configure({
     traceId: claimedUserMessageId ?? chatId,
     route: coworkRoute,
@@ -3070,6 +3069,86 @@ export async function executeChatTurn(
         }
         return { ok: true as const, body: transformedBody };
       };
+      async function* executeAnswerTurn(): AsyncGenerator<AgentEvent> {
+        const startedAt = Date.now();
+        const systemMessage: ChatMessage = {
+          role: "system",
+          content:
+            "You are Cowork, a LinkedIn content assistant. Answer the user's question or brainstorming request helpfully and concisely. Do not write a LinkedIn post draft unless the user explicitly asks for one.",
+        };
+        const messages: ChatMessage[] = [systemMessage, ...history];
+        const stream = streamChat({
+          model: CHAT_MODEL,
+          messages,
+          signal,
+          sessionId: chatId,
+        });
+        let text = "";
+        let model = CHAT_MODEL;
+        let usage: Usage | undefined;
+        try {
+          for await (const delta of stream) {
+            if (delta.model) model = delta.model;
+            if (delta.text) {
+              text += delta.text;
+              yield { type: "text", delta: delta.text };
+            }
+            if (delta.usage) usage = delta.usage;
+          }
+        } catch (error) {
+          coworkTelemetry.recordAttempt({
+            stage: "answer",
+            attempt: 1,
+            model,
+            provider: "openrouter",
+            outcome: "failed",
+            reasonCode:
+              error instanceof Error
+                ? error.name === "AbortError"
+                  ? "cancelled"
+                  : error.message
+                : String(error),
+            latencyMs: Date.now() - startedAt,
+            usage,
+          });
+          throw error;
+        }
+        const latencyMs = Date.now() - startedAt;
+        recordResponseModel(model);
+        coworkTelemetry.recordAttempt({
+          stage: "answer",
+          attempt: 1,
+          model,
+          provider: "openrouter",
+          outcome: "accepted",
+          latencyMs,
+          usage,
+        });
+        await logOpenRouterUsage(
+          "cowork_answer",
+          model,
+          usage,
+          workspaceId,
+          {
+            chat_id: chatId,
+            reasoning_tokens:
+              usage?.completion_tokens_details?.reasoning_tokens ?? 0,
+            cached_input_tokens:
+              usage?.prompt_tokens_details?.cached_tokens ?? 0,
+          },
+        );
+        yield {
+          type: "done",
+          message: {
+            content: text,
+            tool_calls: null,
+            artifacts: [],
+            toolMessages: [],
+            inputTokens: usage?.prompt_tokens ?? 0,
+            outputTokens: usage?.completion_tokens ?? 0,
+          },
+        };
+      }
       const observeTurn = (turn: AsyncGenerator<AgentEvent>) =>
         observeCoworkTurn({
           stream: turn,
@@ -3217,75 +3296,9 @@ export async function executeChatTurn(
             { turnDeadlineMs: remainingReliableMs },
           ));
         }
-        return observeTurn(deps.runAgent({
-          history,
-          workspaceId,
-          // chatId is what lets the loop poll chats.cancel_requested_at so the
-          // Stop button (POST /api/chats/[id]/stop) actually halts the turn.
-          chatId,
-          signal,
-          // A refine turn already targets one draft — skip the clarify pre-pass.
-          skipDecision,
-          // skipDecision is set ONLY by an AI refine (the Refine button or a
-          // composer-detected refine), so it doubles as the refine signal:
-          // caps drafts at 1 for this turn so a "make it shorter" can't explode
-          // into 6 fragment cards.
-          isRefine: skipDecision,
-          // Custom skills the user invoked this turn (resolved + capped above).
-          customSkillBodies,
-          customSkillNames,
-          preferences,
-          feedbackMemory,
-          priorPostDrafts,
-          preloadedVoiceResult,
-          // From-scratch post archetype guidance + exemplars for this turn.
-          // Empty for modeled/template/refine/non-post turns (see the gate
-          // above), so those turns' prompts are unchanged.
-          noModelFormatBlock,
-          leadMagnetBlock,
-          // Reusable creator writing-style profile the user picked this turn.
-          // Empty unless a style was resolved AND no model source is attached, so
-          // every other turn's prompt stays byte-identical.
-          creatorStyleBlock,
-          // A concrete swipe/bookmark/template source is already attached to
-          // this turn. The agent uses this to avoid pulling latest top posts
-          // when it should simply model the known source.
-          hasModelSource,
-          attachedModelSource:
-            currentModelSource?.source_post_id && currentModelSource.post_text
-              ? {
-                  id: currentModelSource.source_post_id,
-                  text: currentModelSource.post_text,
-                }
-              : undefined,
-          // The coarse structure gate's scope-to-modeling-only signal (see
-          // DraftFinalizerOptions.structureSkeleton) — computed ONLY for a
-          // genuine "model this post" source, matching
-          // modelSourceStructureBlock's own genre split. undefined for a
-          // refine/template source, or when its reference block would be
-          // empty (unusable/empty source text) — so the gate never runs for
-          // those turns.
-          modeledSourceSkeleton: currentModelSource
-            ? modelSourceStructureSkeleton(currentModelSource)
-            : undefined,
-          draftFinalizerSpecialists: deps.draftFinalizerSpecialists,
-          draftCandidateTransform: transformDraftCandidate,
-          // Reapply preservation/CTA as the final trusted mutation. Hook-only
-          // refinements thereby restore every original body byte after the
-          // editor/repair/sameness stages while the finalizer still revalidates
-          // the complete resulting post before acceptance.
-          draftFinalCandidateTransform: transformDraftCandidate,
-          // Keep the current control instruction separate from model-visible
-          // source/file blocks so data can never authorize skills or tools.
-          userInstruction: effectiveUserInstruction,
-          ...(selectedDeliverableContract
-            ? { deliverableContractOverride: selectedDeliverableContract }
-            : {}),
-          telemetry: coworkTelemetry,
-          disableBoardMutations:
-            useActionOrchestrator ||
-            deps.actionOrchestratorEnabledForWorkspace(),
-        }));
+        // Step 9: every unrouted turn resolves to the deterministic answer lane.
+        // The legacy agent path is removed; the runAgent import stays for Step 10.
+        return observeTurn(executeAnswerTurn());
       };
       const outcome = await executeAcceptedChatTurn({
         signal,
