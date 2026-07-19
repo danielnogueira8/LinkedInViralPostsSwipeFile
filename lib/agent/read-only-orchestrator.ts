@@ -2537,7 +2537,16 @@ async function* runReadOnlyOrchestratorCore(
   const verifiedSourceCount = minimumWorkspaceSources
     ? groundedSources.filter((source) => source.kind === "workspace_post").length
     : groundedSources.length;
-  const minimumSources = minimumWorkspaceSources ?? 1;
+  // For a one-to-one modeling request the requested draft COUNT is authoritative
+  // (the user's chip) — it is NOT a demand for that many distinct sources. When
+  // fewer distinct sources exist than drafts requested, we still write the
+  // requested number of drafts (reusing the sources we have via the shared-pool
+  // multi path below), rather than dead-ending. So a one-to-one modeling turn
+  // needs only ≥1 verified source to proceed; every other turn keeps its
+  // requested-source-count floor.
+  const oneToOneModeling =
+    input.route.workspaceDraftSourceMode === "one_to_one";
+  const minimumSources = oneToOneModeling ? 1 : (minimumWorkspaceSources ?? 1);
   if (!resumingModeledBatch && verifiedSourceCount < minimumSources) {
     const message = `I found only ${verifiedSourceCount} of the ${minimumSources} distinct verified sources you requested, so I did not draft from incomplete research.`;
     yield {
@@ -2590,65 +2599,40 @@ async function* runReadOnlyOrchestratorCore(
   let childReportedError = false;
   const bufferedArtifacts: Array<Extract<AgentEvent, { type: "artifact" }>> = [];
   const expectedDrafts = input.route.expectedDrafts ?? 1;
+  // The selection search may inspect up to ten candidates, but the durable
+  // coordinator accepts only the requested slots plus five frozen reserves.
+  // Preserve ranking order while bounding the persisted pool; retries reuse
+  // this exact slice and never re-run selection against a different set.
+  const canonicalPool = modeledSourcePool
+    .flatMap((source) =>
+      source.kind === "workspace_post" &&
+      isCanonicalModeledSourceUrl(source.url)
+        ? [
+            {
+              id: source.id,
+              text: source.text,
+              url: source.url,
+              ...(source.title ? { title: source.title } : {}),
+              ...(source.publishedAt
+                ? { publishedAt: source.publishedAt }
+                : {}),
+            },
+          ]
+        : [],
+    )
+    .slice(0, expectedDrafts + 5);
+  // The durable one-source-per-draft BATCH runs only when the workspace can
+  // actually supply a distinct verified source for every requested draft. When
+  // the chip asks for more drafts than there are distinct canonical sources, we
+  // do NOT dead-end — we honor the requested draft count and fall through to the
+  // shared-pool multi path below (which reuses the available sources), so the
+  // user always gets the number of drafts they asked for. On a resume the frozen
+  // batch is authoritative and skips this check.
   const modeledBatch =
     input.route.workspaceDraftSourceMode === "one_to_one" &&
-    expectedDrafts >= 2;
+    expectedDrafts >= 2 &&
+    (resumingModeledBatch || canonicalPool.length >= expectedDrafts);
   if (modeledBatch) {
-    // The selection search may inspect up to ten candidates, but the durable
-    // coordinator accepts only the requested slots plus five frozen reserves.
-    // Preserve ranking order while bounding the persisted pool; retries reuse
-    // this exact slice and never re-run selection against a different set.
-    const canonicalPool = modeledSourcePool
-      .flatMap((source) =>
-        source.kind === "workspace_post" &&
-        isCanonicalModeledSourceUrl(source.url)
-          ? [
-              {
-                id: source.id,
-                text: source.text,
-                url: source.url,
-                ...(source.title ? { title: source.title } : {}),
-                ...(source.publishedAt
-                  ? { publishedAt: source.publishedAt }
-                  : {}),
-              },
-            ]
-          : [],
-      )
-      .slice(0, expectedDrafts + 5);
-    if (!resumingModeledBatch && canonicalPool.length < expectedDrafts) {
-      input.telemetry?.setProvenanceStatus("missing");
-      const message = `I found only ${canonicalPool.length} of the ${expectedDrafts} distinct verified sources with resolvable source links, so I did not draft from incomplete research.`;
-      yield {
-        type: "tool_end",
-        id: draftCallId,
-        name: draftCall.function.name,
-        ok: false,
-      };
-      messages.push(
-        toolMessage(draftCallId, {
-          ok: false,
-          delivered: false,
-          verified_sources: canonicalPool.length,
-          expected_sources: expectedDrafts,
-          error: "insufficient_resolvable_sources",
-        }),
-      );
-      yield {
-        type: "error",
-        code: "orchestrator_evidence_insufficient",
-        message,
-        recovery: "continue",
-      };
-      yield completedDone({
-        content: message,
-        toolCalls: calls,
-        toolMessages: messages,
-        inputTokens,
-        outputTokens,
-      });
-      return;
-    }
     let batchResult: Awaited<
       ReturnType<ReadOnlyOrchestratorDependencies["executeModeledDraftBatch"]>
     >;

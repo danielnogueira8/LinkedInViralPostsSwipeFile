@@ -2173,7 +2173,15 @@ describe("production-shaped Cowork outcome harness", () => {
     expect(report.observed.savedPostReads).toBe(0);
   });
 
-  test("a URL-less modeled source fails closed before durable acquisition or writing", async () => {
+  test("a URL-less modeled source no longer dead-ends: the requested draft count is honored via the shared-pool path", async () => {
+    // The reported bug. A request for 3 drafts must produce 3 drafts even when
+    // a top source has a null url (dropped by the canonical filter, leaving
+    // only 2 of 3 distinct canonical sources). Rather than the old fail-closed
+    // dead-end ("I couldn't complete the verified modeled set safely"), the turn
+    // now falls through to the shared-pool multi path — which reuses the
+    // available sources to write the number of drafts the chip asked for. The
+    // durable one-source-per-draft batch is skipped (it needs N distinct
+    // canonical sources), so no batch operation key is recorded.
     const scenario = modeledThreeScenario("modeled-three-url-less-source");
     scenario.model.readOnlyOrchestrator!.allowNoModel = true;
     scenario.model.readOnlyOrchestrator!.toolResults = {
@@ -2183,6 +2191,7 @@ describe("production-shaped Cowork outcome harness", () => {
           count: 3,
           posts: [
             MODELED_SOURCE_ROWS[0],
+            // No url → dropped by the canonical filter.
             {
               id: MODELED_SOURCE_ROWS[1].id,
               text: MODELED_SOURCE_ROWS[1].text,
@@ -2194,7 +2203,7 @@ describe("production-shaped Cowork outcome harness", () => {
     };
     scenario.expected = {
       terminal: "done",
-      artifactBodies: [],
+      artifactBodies: [COMPLETE_POST, SECOND_POST, THIRD_POST],
       actionNames: ["search_viral_posts", "write_grounded_post"],
     };
 
@@ -2204,24 +2213,20 @@ describe("production-shaped Cowork outcome harness", () => {
       report.pass,
       JSON.stringify({ failures: report.failureCodes, safe: report.safe }),
     ).toBe(true);
-    expect(report.persisted.artifacts).toEqual([]);
-    expect(report.observed.directWriterRequests).toEqual([]);
+    // The requested 3 drafts were delivered — not a dead-end.
+    expect(report.persisted.artifacts).toHaveLength(3);
+    // The strict durable batch did NOT run (fewer distinct canonical sources
+    // than requested drafts); the shared-pool path handled it instead.
     expect(report.observed.modeledBatchOperationKeys).toEqual([]);
-    expect(report.frames).toContainEqual({
-      event: "error",
-      data: expect.objectContaining({
-        code: "orchestrator_evidence_insufficient",
-        recovery: "continue",
-      }),
-    });
-    const recoverable = report.persisted.messages
-      .find((message) => message.role === "assistant")
-      ?.tool_calls?.find((call) => call.function.name === "_recoverable");
-    expect(recoverable).toBeDefined();
-    expect(JSON.parse(recoverable?.function.arguments ?? "{}")).toMatchObject({
-      code: "orchestrator_evidence_insufficient",
-      retryRootUserMessageId: "00000000-0000-4000-8000-000000000002",
-    });
+    // And no "insufficient sources" dead-end error was surfaced.
+    expect(
+      report.frames.some(
+        (frame) =>
+          frame.event === "error" &&
+          (frame.data as { code?: string })?.code ===
+            "orchestrator_evidence_insufficient",
+      ),
+    ).toBe(false);
   });
 
   test("routes an output-count-only modeled request through the same exact batch", async () => {
