@@ -4024,6 +4024,34 @@ export async function executeChatTurn(
         }).kind !== "none"),
   );
   if (deterministicModeledRoute && preloadedVoiceResult?.ok !== true) {
+    // A missing voice profile is never transient — retrying re-runs the exact
+    // same lookup and fails the exact same way every time, so offering "Retry"
+    // is a loop with no exit. loadVoiceProfile marks that case with a `status`
+    // key on the tool result (lib/agent/tools.ts); a transient load failure
+    // (err() shape, no `status`) keeps the recoverable 503 path below.
+    const noReadyVoiceProfile =
+      preloadedVoiceResult !== null && "status" in preloadedVoiceResult;
+    if (noReadyVoiceProfile) {
+      const message =
+        "This needs a voice profile to write in your voice, and your workspace doesn't have one yet. Head to the Voice tab to generate one, then send this again.";
+      await persistChatSetupFailure({
+        sb: sbRaw,
+        chatId,
+        workspaceId,
+        content: `⚠️ ${message}`,
+      });
+      await coworkTelemetry.finish({
+        deliveredContract: {
+          kind: "post",
+          deliveredCount: 0,
+        },
+        provenanceStatus: "missing",
+        terminalOutcome: "hard_failure",
+      });
+      await deps.releaseChatTurn(workspaceId, chatId, turnCostOperationKey);
+      turnClaimed = false;
+      return turnError(message, 422);
+    }
     const message = modeledBatchContinuation
       ? "I couldn’t load the writing context required to resume this modeled set safely. Retry will continue the same saved batch."
       : "I couldn’t load the writing context required to start this modeled set safely. Retry will try the request again without creating a partial set.";
