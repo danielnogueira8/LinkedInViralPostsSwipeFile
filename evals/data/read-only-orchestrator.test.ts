@@ -2567,6 +2567,21 @@ describe("read-only orchestrator execution", () => {
         batchId: "batch-saved",
         reason: "reviewer_unavailable" as const,
         preservedSlots: 1,
+        preservedArtifacts: [
+          {
+            id: "draft-preserved",
+            kind: "post" as const,
+            title: "Preserved draft",
+            body: COMPLETE_POST,
+            meta: {
+              modeled_draft_slot_id: "batch-saved:slot-0",
+              modeled_draft_slot_index: 0,
+              source: "model_source",
+              source_post_id: "source-1",
+              source_url: "https://linkedin.com/posts/source-1",
+            },
+          },
+        ],
         requestedCount: 2,
         usage: { inputTokens: 10, outputTokens: 5 },
       },
@@ -2578,6 +2593,7 @@ describe("read-only orchestrator execution", () => {
         kind: "incomplete" as const,
         reason: "store_unavailable" as const,
         preservedSlots: 0,
+        preservedArtifacts: [],
         requestedCount: 2,
         usage: { inputTokens: 0, outputTokens: 0 },
       },
@@ -2590,6 +2606,7 @@ describe("read-only orchestrator execution", () => {
         batchId: "batch-busy",
         reason: "busy" as const,
         preservedSlots: 0,
+        preservedArtifacts: [],
         requestedCount: 2,
         usage: { inputTokens: 0, outputTokens: 0 },
       },
@@ -2631,6 +2648,30 @@ describe("read-only orchestrator execution", () => {
     expect(result.events).toContainEqual(
       expect.objectContaining({ type: "error", code, recovery: "continue" }),
     );
+    const artifactEvents = result.events.filter(
+      (event) => event.type === "artifact",
+    );
+    expect(artifactEvents).toHaveLength(batchResult.preservedArtifacts.length);
+    if (batchResult.preservedArtifacts.length > 0) {
+      expect(artifactEvents[0]).toMatchObject({
+        artifact: { id: "draft-preserved" },
+      });
+      expect(result.events.at(-1)).toMatchObject({
+        type: "done",
+        message: {
+          content: expect.stringContaining(
+            "I completed 1 of 2 verified drafts",
+          ),
+        },
+      });
+    } else {
+      expect(result.events.at(-1)).toMatchObject({
+        type: "done",
+        message: {
+          content: expect.not.stringContaining("verified drafts"),
+        },
+      });
+    }
   });
 
   test("does not publish a completed modeled set after the turn is cancelled", async () => {

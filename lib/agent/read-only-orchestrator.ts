@@ -2794,6 +2794,13 @@ async function* runReadOnlyOrchestratorCore(
       batchResult.reason === "cancelled";
     const preserved =
       batchResult.kind === "incomplete" ? batchResult.preservedSlots : 0;
+    // A user-initiated stop presents nothing — mirroring the engine path,
+    // which drops the buffer on purpose. Otherwise the finished drafts are
+    // shown so the message never claims drafts it does not present.
+    const presentableArtifacts =
+      batchResult.kind === "incomplete" && !cancelled
+        ? batchResult.preservedArtifacts
+        : [];
     const reason = batchResult.reason;
     const durableBatchExists =
       batchResult.kind === "incomplete" && Boolean(batchResult.batchId);
@@ -2813,9 +2820,12 @@ async function* runReadOnlyOrchestratorCore(
             ? "The saved modeled set is no longer available. Send the request again as a new message to start a fresh set."
           : batchResult.kind === "failed" && batchResult.reason === "invalid_request"
             ? "This modeled request did not pass the server’s batch contract, so it was not run. Send it again as a new message."
-      : preserved > 0
-        ? `I preserved ${preserved} of ${expectedDrafts} verified drafts, but the remaining slot could not be completed safely. Retry will continue only the unfinished work.`
+      : presentableArtifacts.length > 0
+        ? `I completed ${presentableArtifacts.length} of ${expectedDrafts} verified drafts — the finished drafts are shown above. The remaining slot could not be completed safely, and Retry will continue only the unfinished work.`
         : "I couldn’t complete the verified modeled set safely. Retry will resume the same bounded batch.";
+    for (const artifact of presentableArtifacts) {
+      yield { type: "artifact", artifact };
+    }
     yield {
       type: "tool_end",
       id: draftCallId,

@@ -390,6 +390,7 @@ describe("executeModeledDraftBatch", () => {
     ).resolves.toMatchObject({
       kind: "incomplete",
       preservedSlots: 1,
+      preservedArtifacts: [{ id: "artifact-0-source-1" }],
     });
 
     const retryRunner = successfulSlotRunner();
@@ -909,7 +910,7 @@ describe("executeModeledDraftBatch", () => {
     expect(result).not.toHaveProperty("artifacts");
   });
 
-  test("returns typed source-pool exhaustion while preserving accepted slots privately", async () => {
+  test("returns typed source-pool exhaustion while carrying the accepted slots", async () => {
     const repository = new MemoryRepository();
     const runSlot = vi.fn(async (input: ModeledDraftSlotInput) =>
       input.slot.index < 2
@@ -932,6 +933,10 @@ describe("executeModeledDraftBatch", () => {
       kind: "incomplete",
       reason: "source_pool_exhausted",
       preservedSlots: 2,
+      preservedArtifacts: [
+        { id: "artifact-0-source-1" },
+        { id: "artifact-1-source-2" },
+      ],
       requestedCount: 3,
     });
     expect(result).not.toHaveProperty("artifacts");

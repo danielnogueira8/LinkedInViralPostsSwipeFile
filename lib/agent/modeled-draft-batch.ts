@@ -135,6 +135,7 @@ export type ModeledDraftBatchResult =
       batchId?: string;
       reason: ModeledDraftBatchIncompleteReason;
       preservedSlots: number;
+      preservedArtifacts: ModeledPostArtifact[];
       requestedCount: number;
       usage: { inputTokens: number; outputTokens: number };
     }
@@ -478,8 +479,12 @@ function acquiredCheckpointIsCanonical(
   return true;
 }
 
-function preservedCount(slots: readonly ModeledDraftSlotCheckpoint[]): number {
-  return slots.filter((slot) => slot.state === "accepted").length;
+function preservedArtifacts(
+  slots: readonly ModeledDraftSlotCheckpoint[],
+): ModeledPostArtifact[] {
+  return [...slots]
+    .sort((left, right) => left.index - right.index)
+    .flatMap((slot) => (slot.state === "accepted" ? [slot.artifact] : []));
 }
 
 function nextReserveSourceIndex(
@@ -589,12 +594,13 @@ export async function executeModeledDraftBatch(
   const unacquiredIncomplete = (
     reason: ModeledDraftBatchIncompleteReason,
     batchId?: string,
-    preservedSlots = 0,
+    preserved: ModeledPostArtifact[] = [],
   ): ModeledDraftBatchResult => ({
     kind: "incomplete",
     ...(batchId ? { batchId } : {}),
     reason,
-    preservedSlots,
+    preservedSlots: preserved.length,
+    preservedArtifacts: preserved,
     requestedCount: input.count,
     usage,
   });
@@ -643,18 +649,21 @@ export async function executeModeledDraftBatch(
         return unacquiredIncomplete(
           stoppedReason(),
           acquired.checkpoint.batchId,
-          preservedCount(acquired.checkpoint.slots),
+          preservedArtifacts(acquired.checkpoint.slots),
         );
       }
       const knownBatchId =
         acquired.kind === "complete" || acquired.kind === "busy"
           ? acquired.batchId
           : undefined;
-      return unacquiredIncomplete(
-        stoppedReason(),
-        knownBatchId,
-        acquired.kind === "complete" ? acquired.artifacts.length : 0,
-      );
+      const replayArtifacts =
+        acquired.kind === "complete" &&
+        acquired.artifacts.every((artifact, index) =>
+          replayArtifactIsCanonical(artifact, acquired.batchId, index),
+        )
+          ? [...acquired.artifacts]
+          : [];
+      return unacquiredIncomplete(stoppedReason(), knownBatchId, replayArtifacts);
     }
     if (acquired.kind === "conflict") {
       return { kind: "failed", reason: "state_conflict", usage };
@@ -690,7 +699,7 @@ export async function executeModeledDraftBatch(
         return unacquiredIncomplete(
           stoppedReason(),
           acquired.batchId,
-          artifacts?.length ?? 0,
+          artifacts ?? [],
         );
       }
       return artifacts
@@ -718,7 +727,7 @@ export async function executeModeledDraftBatch(
       return unacquiredIncomplete(
         reason,
         checkpoint.batchId,
-        preservedCount(slots),
+        preservedArtifacts(slots),
       );
     };
 
