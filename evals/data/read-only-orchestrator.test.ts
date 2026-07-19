@@ -2733,6 +2733,66 @@ describe("read-only orchestrator execution", () => {
     );
   });
 
+  test("terminates a FRESH insufficient_sources batch failure with no Retry offer", async () => {
+    // insufficient_sources on a fresh (non-resuming) turn means the
+    // workspace genuinely does not have enough distinct verified sources —
+    // no durable batch was ever created, so there is nothing a Retry could
+    // resume. Retrying re-runs the identical acquisition against the
+    // identical pool and fails identically every time. This must NOT emit a
+    // recoverable "error" event (the resuming case already gets its own
+    // terminal message; this asserts the FRESH case gets the same
+    // treatment, not the generic "Retry will resume..." fallback).
+    const userInstruction =
+      "Find 2 top-performing regular posts in my swipe file and rewrite each in my voice.";
+    const route = compileReadOnlyOrchestratorRoute({
+      userInstruction,
+      isRefine: false,
+      hasModelSource: false,
+      hasAttachments: false,
+      hasLeadMagnet: false,
+      hasCreatorStyle: false,
+    });
+    expect(route).not.toBeNull();
+    if (!route) return;
+
+    const result = await collect(
+      input({
+        route,
+        userInstruction,
+        draftEngineInput: { ...input().draftEngineInput, userInstruction },
+      }),
+      [],
+      async () => ({
+        ok: true,
+        count: 2,
+        posts: [1, 2].map((index) => ({
+          id: `source-${index}`,
+          text: `Source ${index} contains a complete modelable argument.`,
+          url: `https://linkedin.com/posts/source-${index}`,
+        })),
+      }),
+      {
+        executeModeledDraftBatch: async () => ({
+          kind: "failed" as const,
+          reason: "insufficient_sources" as const,
+          usage: { inputTokens: 0, outputTokens: 0 },
+        }),
+      },
+    );
+
+    expect(
+      result.events.some((event) => event.type === "error"),
+    ).toBe(false);
+    const finished = result.events.find(
+      (event): event is Extract<AgentEvent, { type: "done" }> =>
+        event.type === "done",
+    );
+    expect(finished?.message.content).toContain(
+      "I don’t have enough distinct verified sources",
+    );
+    expect(finished?.message.content).not.toContain("Retry");
+  });
+
   test("does not publish a completed modeled set after the turn is cancelled", async () => {
     const userInstruction =
       "Find 2 top-performing regular posts in my swipe file and rewrite each in my voice.";
