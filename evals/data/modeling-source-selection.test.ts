@@ -65,6 +65,80 @@ describe("selectModelingSources", () => {
     ]);
   });
 
+  test("rotationCursor rotates only the leading fresh band, never promoting used/surfaced", () => {
+    const candidates = [
+      post("used-first", "A"),
+      post("fresh-a", "B"),
+      post("fresh-b", "C"),
+      post("fresh-c", "D"),
+      post("fresh-d", "E"),
+    ];
+    const usedIds = new Set(["used-first"]);
+    const surfacedIds = new Set<string>();
+
+    const cursor0 = selectModelingSources({
+      candidates,
+      limit: 1,
+      usedIds,
+      surfacedIds,
+    });
+    expect(cursor0.map((c) => c.id)).toEqual(["fresh-a"]);
+
+    const cursor1 = selectModelingSources({
+      candidates,
+      limit: 1,
+      usedIds,
+      surfacedIds,
+      rotationCursor: 1,
+    });
+    expect(cursor1.map((c) => c.id)).toEqual(["fresh-b"]);
+
+    const cursor3 = selectModelingSources({
+      candidates,
+      limit: 1,
+      usedIds,
+      surfacedIds,
+      rotationCursor: 3,
+    });
+    expect(cursor3.map((c) => c.id)).toEqual(["fresh-d"]);
+
+    // Wraps around the fresh band (4 fresh candidates: a,b,c,d).
+    const cursor4 = selectModelingSources({
+      candidates,
+      limit: 1,
+      usedIds,
+      surfacedIds,
+      rotationCursor: 4,
+    });
+    expect(cursor4.map((c) => c.id)).toEqual(["fresh-a"]);
+
+    // Even with a cursor, the already-used candidate never leads.
+    const cursorLarge = selectModelingSources({
+      candidates,
+      limit: 5,
+      usedIds,
+      surfacedIds,
+      rotationCursor: 2,
+    });
+    expect(cursorLarge[cursorLarge.length - 1].id).toBe("used-first");
+  });
+
+  test("omitting rotationCursor (or passing 0) preserves the exact prior deterministic order", () => {
+    const candidates = [post("a", "A"), post("b", "B"), post("c", "C")];
+
+    const omitted = selectModelingSources({ candidates, limit: 3, usedIds: new Set(), surfacedIds: new Set() });
+    const zero = selectModelingSources({
+      candidates,
+      limit: 3,
+      usedIds: new Set(),
+      surfacedIds: new Set(),
+      rotationCursor: 0,
+    });
+
+    expect(omitted.map((c) => c.id)).toEqual(["a", "b", "c"]);
+    expect(zero.map((c) => c.id)).toEqual(["a", "b", "c"]);
+  });
+
   test("rejects only objectively unusable bodies and keeps compact posts", () => {
     const selected = selectModelingSources({
       candidates: [
