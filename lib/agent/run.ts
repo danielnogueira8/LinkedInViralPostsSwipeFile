@@ -2111,6 +2111,14 @@ export async function* runAgent(opts: {
       const remaining = deliverableContract.expectedCount - accepted;
       return `I finished ${accepted} of ${deliverableContract.expectedCount} drafts. The remaining ${remaining === 1 ? "draft" : `${remaining} drafts`} kept coming back incomplete or too similar even after retrying, so I kept the completed ${accepted === 1 ? "draft" : "drafts"} instead of showing a broken duplicate. Retry will run the original task again.`;
     }
+    // Honest attribution when the blocker was a reviewer OUTAGE, not a bad
+    // draft: don't tell the user their draft was "incomplete or unusable" when
+    // the real cause was that the source-fidelity reviewer was briefly
+    // unreachable. (Only reached when NO draft was delivered — a draft that
+    // passed everything else was already shipped.)
+    if (sourceFidelityReviewerUnavailable && accepted === 0) {
+      return "I couldn’t reach the source-fidelity reviewer to double-check the draft against your source, so I held it back rather than post something unverified. Please retry — this is usually a brief hiccup.";
+    }
     return "The draft kept coming back incomplete or unusable even after retrying, so I stopped instead of showing a broken version. Please retry the request.";
   };
   const recordDiscoveredSourcePosts = (result: ToolResult) => {
@@ -2132,6 +2140,12 @@ export async function* runAgent(opts: {
     }
   };
   let sourceFidelityRejected = false;
+  // Distinct from sourceFidelityRejected (a real "doesn't adapt the source"
+  // verdict): the fidelity REVIEWER was unreachable (both reviewer LLMs timed
+  // out / errored). An outage is not evidence the draft is bad, so it drives a
+  // gentler, honest terminal message — never the misleading "kept coming back
+  // incomplete or unusable" retry text.
+  let sourceFidelityReviewerUnavailable = false;
   // Per-turn observability counters. Logged as a single structured JSON line
   // at end of turn (see the finally block) so they're queryable in Vercel logs:
   // search e.g. `agent_turn AND empty_turn:true` to find every silent failure.
@@ -2912,6 +2926,11 @@ export async function* runAgent(opts: {
             ) {
               sourceFidelityRejected = true;
             }
+            if (
+              finalized.rejection.code === "source_fidelity_unavailable"
+            ) {
+              sourceFidelityReviewerUnavailable = true;
+            }
             if (finalized.rejection.code === "truncated") {
               lastRenderTruncated = true;
             }
@@ -3507,6 +3526,14 @@ export async function* runAgent(opts: {
             ) {
               sourceFidelityRejected = true;
             }
+            // A reviewer OUTAGE is not a content verdict — re-drafting can't fix
+            // an unreachable reviewer, so it must NOT set sourceFidelityRejected
+            // (which would trigger a re-draft that re-runs the dead reviewer).
+            const fidelityReviewerUnavailable =
+              rendered.rejectionCode === "source_fidelity_unavailable";
+            if (fidelityReviewerUnavailable) {
+              sourceFidelityReviewerUnavailable = true;
+            }
             if (rendered.rejectionCode === "truncated") {
               lastRenderTruncated = true;
             }
@@ -3516,9 +3543,13 @@ export async function* runAgent(opts: {
             // forced-final path instead of re-rendering (and re-rejecting) every
             // round until MAX_TOOL_ROUNDS. Cites and shorten-nudge one-shots go
             // through other branches, so this only counts genuine draft rejects.
+            // A reviewer-unavailable rejection is excluded: it's an infra blip,
+            // not a bad draft, so it must not burn the budget and force the
+            // misleading "kept coming back incomplete" exhaustion message.
             if (
               tc.function.name === "render_post" &&
               rendered.rejectionCode &&
+              !fidelityReviewerUnavailable &&
               rendered.artifacts.length === 0
             ) {
               renderRejections++;
@@ -3933,6 +3964,9 @@ export async function* runAgent(opts: {
           ) {
             sourceFidelityRejected = true;
           }
+          if (finalized.rejection.code === "source_fidelity_unavailable") {
+            sourceFidelityReviewerUnavailable = true;
+          }
           if (finalized.rejection.code === "truncated") {
             lastRenderTruncated = true;
           }
@@ -3990,6 +4024,9 @@ export async function* runAgent(opts: {
               finalized.rejection.code === "source_unavailable"
             ) {
               sourceFidelityRejected = true;
+            }
+            if (finalized.rejection.code === "source_fidelity_unavailable") {
+              sourceFidelityReviewerUnavailable = true;
             }
             if (finalized.rejection.code === "truncated") {
               lastRenderTruncated = true;
