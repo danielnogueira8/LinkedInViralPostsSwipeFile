@@ -32,13 +32,34 @@ import type {
 } from "@/lib/agent/draft-writer";
 import {
   logOpenRouterUsage,
+  type ChatMessage,
   type Usage,
 } from "@/lib/openrouter";
-import {
-  runReadOnlyOrchestrator,
-  type ReadOnlyOrchestratorAdapter,
-  type ReadOnlyPlannerRequest,
-} from "@/lib/agent/read-only-orchestrator";
+import { runReadOnlyOrchestrator } from "@/lib/agent/read-only-orchestrator";
+
+/**
+ * Test-only stand-ins for the LLM read-only planner adapter interface removed
+ * from lib/agent/read-only-orchestrator.ts (production plans are always
+ * server-compiled — see compileServerReadOnlyPlan). HarnessReadOnlyPlanner
+ * below is inert: runReadOnlyOrchestrator never reads a dependency-injected
+ * planner, so these types exist only to keep its shape self-documenting.
+ */
+type ReadOnlyPlannerRequest = {
+  route: unknown;
+  userInstruction: string;
+  history: ChatMessage[];
+  attachmentNames: string[];
+  signal?: AbortSignal;
+};
+
+type ReadOnlyOrchestratorAdapter = {
+  readonly model: string;
+  createPlan(request: ReadOnlyPlannerRequest): Promise<{
+    toolArgs: Record<string, unknown> | null;
+    usage?: Usage;
+    model?: string;
+  }>;
+};
 import {
   actionOperationKey,
   runActionOrchestrator,
@@ -848,7 +869,6 @@ async function runCoworkOutcomeScenarioWithStore(
             !scenario.model.readOnlyOrchestrator?.rolloutDisabled,
           runReadOnlyOrchestrator: (input, runtimeDependencies) =>
             runReadOnlyOrchestrator(input, {
-              adapters: readOnlyPlannerAdapters,
               runTool: async (name, args) => {
                 readOnlyTools.push({ name, args });
                 const result = readOnlyToolResults[name]?.shift();

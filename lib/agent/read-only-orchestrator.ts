@@ -874,227 +874,6 @@ export function compileServerReadOnlyPlan(
   return null;
 }
 
-export type ReadOnlyPlannerRequest = {
-  route: ReadOnlyOrchestratorRoute;
-  userInstruction: string;
-  history: ChatMessage[];
-  attachmentNames: string[];
-  signal?: AbortSignal;
-};
-
-export type ReadOnlyPlannerResponse = {
-  toolArgs: Record<string, unknown> | null;
-  usage?: Usage;
-  model?: string;
-};
-
-export type ReadOnlyOrchestratorAdapter = {
-  readonly model: string;
-  createPlan(request: ReadOnlyPlannerRequest): Promise<ReadOnlyPlannerResponse>;
-};
-
-const READ_ONLY_PLAN_TOOL: ToolDef = {
-  type: "function",
-  function: {
-    name: "return_read_only_plan",
-    description:
-      "Return the typed read-only action sequence. Never return the post body.",
-    parameters: {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        actions: {
-          type: "array",
-          minItems: 1,
-          maxItems: 5,
-          items: {
-            oneOf: [
-              {
-                type: "object",
-                additionalProperties: false,
-                properties: {
-                  id: { type: "string" },
-                  type: { const: "search_news" },
-                  query: { type: "string" },
-                },
-                required: ["id", "type", "query"],
-              },
-              {
-                type: "object",
-                additionalProperties: false,
-                properties: {
-                  id: { type: "string" },
-                  type: { const: "search_web" },
-                  query: { type: "string" },
-                },
-                required: ["id", "type", "query"],
-              },
-              {
-                type: "object",
-                additionalProperties: false,
-                properties: {
-                  id: { type: "string" },
-                  type: { const: "search_viral_posts" },
-                  niche: { type: "string" },
-                  limit: { type: "integer", minimum: 2, maximum: 10 },
-                  since: { type: "string", enum: ["1d", "7d", "30d"] },
-                  post_type: {
-                    type: "string",
-                    enum: ["regular", "lead_magnet"],
-                  },
-                },
-                required: ["id", "type", "limit"],
-              },
-              {
-                type: "object",
-                additionalProperties: false,
-                properties: {
-                  id: { type: "string" },
-                  type: { const: "inspect_attachments" },
-                },
-                required: ["id", "type"],
-              },
-              {
-                type: "object",
-                additionalProperties: false,
-                properties: {
-                  id: { type: "string" },
-                  type: { const: "draft_post" },
-                  evidenceActionIds: {
-                    type: "array",
-                    minItems: 1,
-                    maxItems: 4,
-                    items: { type: "string" },
-                  },
-                },
-                required: ["id", "type", "evidenceActionIds"],
-              },
-              {
-                type: "object",
-                additionalProperties: false,
-                properties: {
-                  id: { type: "string" },
-                  type: { const: "clarify" },
-                  question: { type: "string" },
-                  options: {
-                    type: "array",
-                    minItems: 2,
-                    maxItems: 5,
-                    items: { type: "string" },
-                  },
-                },
-                required: ["id", "type", "question", "options"],
-              },
-            ],
-          },
-        },
-      },
-      required: ["actions"],
-    },
-  },
-};
-
-function plannerSystem(route: ReadOnlyOrchestratorRoute): string {
-  return [
-    "You are SwipeIn's read-only action planner.",
-    "Return only a schema-valid action plan through return_read_only_plan.",
-    "You choose read-only evidence actions and a terminal handoff. You never write, outline, summarize, or include any part of the finished LinkedIn post.",
-    "Never add facts, sources, search results, or attachment findings yourself. The server executes actions after validating the whole plan.",
-    "Every evidence action must precede draft_post, and draft_post.evidenceActionIds must list every evidence action id.",
-    route.kind === "news_research"
-      ? "Use exactly one search_news action with a focused query, then draft_post."
-      : route.kind === "web_research"
-        ? "Use exactly one search_web action with a focused research query, then draft_post."
-      : route.kind === "workspace_research"
-        ? `Use one or more search_viral_posts actions whose limits cover at least ${Math.max(2, route.minimumSources ?? 2)} distinct sources, then draft_post. Omit niche for a cross-niche search; if the request explicitly names a source niche, copy only that niche from the research clause before the writing instruction.${route.workspaceSearchMode === "strict_top" ? " The server will enforce the requested strict top ranking." : ""}`
-        : route.kind === "file_inspection"
-          ? route.allowedSearchKinds?.length
-            ? `Use inspect_attachments and exactly the requested search capabilities (${route.allowedSearchKinds.join(", ")}), then draft_post. Do not add any other search type.${route.allowedSearchKinds.includes("workspace") ? ` The search_viral_posts action limits must cover at least ${Math.max(2, route.minimumSources ?? 2)} distinct sources. Copy only explicitly requested source niches. Omit since because the server enforces ${route.workspaceSince ?? "the unrestricted"} window.${route.workspaceSearchMode === "strict_top" ? " The server also enforces strict top ranking." : ""}` : ""}`
-            : "Use inspect_attachments, then draft_post. No external or workspace search was requested."
-          : "The requested outcome is unresolved. Return exactly one clarify action with one necessary question and 2-5 concrete options.",
-  ].join("\n\n");
-}
-
-export function boundedReadOnlyPlannerHistory(
-  history: ChatMessage[],
-): ChatMessage[] {
-  return history
-    .filter((message) => message.role === "user" || message.role === "assistant")
-    .slice(-6)
-    .map((message) => {
-      if (Array.isArray(message.content)) {
-        // Planning needs conversational intent, not attachment bodies. Supplying
-        // raw files here would pay to parse them twice and would let untrusted
-        // document instructions influence action selection. The dedicated
-        // inspect_attachments executor reads them only after the plan validates.
-        const firstText = message.content.find(
-          (block): block is Extract<ContentBlock, { type: "text" }> =>
-            block.type === "text",
-        );
-        return {
-          role: message.role,
-          content: firstText?.text.slice(0, 4_000) ?? "[Attachment-only turn]",
-        } satisfies ChatMessage;
-      }
-      return {
-        role: message.role,
-        content:
-          typeof message.content === "string"
-            ? message.content.slice(0, 4_000)
-            : message.content,
-      } satisfies ChatMessage;
-    });
-}
-
-export class OpenRouterReadOnlyOrchestratorAdapter
-  implements ReadOnlyOrchestratorAdapter
-{
-  constructor(readonly model: string) {}
-
-  async createPlan(
-    request: ReadOnlyPlannerRequest,
-  ): Promise<ReadOnlyPlannerResponse> {
-    const response = await completeChat({
-      model: this.model,
-      maxTokens: 650,
-      timeoutMs: 12_000,
-      reasoningEffort: "low",
-      tools: [READ_ONLY_PLAN_TOOL],
-      forceTool: "return_read_only_plan",
-      signal: request.signal,
-      messages: [
-        { role: "system", content: plannerSystem(request.route) },
-        ...boundedReadOnlyPlannerHistory(request.history),
-        {
-          role: "user",
-          content: [
-            `AUTHORITATIVE CURRENT REQUEST: ${request.userInstruction}`,
-            `DETERMINISTIC ROUTE: ${request.route.kind}`,
-            request.attachmentNames.length
-              ? `ATTACHMENTS PRESENT: ${request.attachmentNames.join(", ")}`
-              : "ATTACHMENTS PRESENT: none",
-            "Return the minimal valid plan now. Do not write any deliverable text.",
-          ].join("\n"),
-        },
-      ],
-    });
-    return {
-      toolArgs: response.toolArgs,
-      usage: response.usage,
-      model: response.model,
-    };
-  }
-}
-
-const defaultAdapters: ReadOnlyOrchestratorAdapter[] = [
-  new OpenRouterReadOnlyOrchestratorAdapter(
-    PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL,
-  ),
-  new OpenRouterReadOnlyOrchestratorAdapter(
-    FALLBACK_READ_ONLY_ORCHESTRATOR_MODEL,
-  ),
-];
-
 type ModelAttempt = {
   model: string;
   usage?: Usage;
@@ -1493,12 +1272,10 @@ export type ReadOnlyOrchestratorInput = {
   draftEngineInput: DraftEngineInput;
   signal?: AbortSignal;
   cancellationProbe?: (signal: AbortSignal) => Promise<boolean>;
-  onModelUsed?: (model: string) => void;
   telemetry?: CoworkTurnTelemetry;
 };
 
 export type ReadOnlyOrchestratorDependencies = {
-  adapters: ReadOnlyOrchestratorAdapter[];
   runTool: typeof runTool;
   runDraftEngine: typeof runDraftEngine;
   executeModeledDraftBatch: (
@@ -1516,7 +1293,6 @@ export type ReadOnlyOrchestratorDependencies = {
 };
 
 const productionDependencies: ReadOnlyOrchestratorDependencies = {
-  adapters: defaultAdapters,
   runTool,
   runDraftEngine,
   executeModeledDraftBatch: executeProductionModeledDraftBatch,
