@@ -4661,7 +4661,6 @@ export async function executeChatTurn(
               },
               signal,
               telemetry: coworkTelemetry,
-              onModelUsed: recordResponseModel,
             },
             { turnDeadlineMs: remainingReliableMs },
           ));
