@@ -761,6 +761,42 @@ function repairMessages(
   ];
 }
 
+// Short, human-facing clauses for the terminal "couldn't complete a reliable
+// post" message — one per DraftFinalizerRejectionCode. The finalizer's own
+// rejection.message is written as a corrective instruction TO THE MODEL (see
+// repairMessages above) and would read as gibberish appended to a chat reply;
+// this is a SEPARATE, deliberately short mapping for the human reading the
+// dead-ended turn. Codes not listed fall back to a generic clause rather than
+// throwing, since new codes can be added to DRAFT_FINALIZER_REJECTION_CODES
+// without this list being updated in lockstep.
+const REJECTION_REASON_CLAUSES: Record<string, string> = {
+  too_short: "the draft kept coming back shorter than the post you asked for",
+  character_range: "the draft kept missing the length you asked for",
+  unsupported_specificity:
+    "the draft kept including a specific number or date that wasn't backed by your instruction or source",
+  unsupported_claim:
+    "the draft kept making a claim that wasn't backed by your instruction or source",
+  structure_mismatch:
+    "the draft's structure kept drifting too far from what you asked to keep",
+  duplicate: "the draft kept staying too close to the original wording",
+  source_fidelity:
+    "the draft kept drifting from the source post's structure and hook style",
+  provenance_missing: "the draft kept losing track of the source it should model",
+  provenance_unverified: "the draft kept losing track of the source it should model",
+  domain_constraint: "the draft kept missing a requirement from your instruction",
+  count_complete: "the draft kept returning the wrong number of items",
+  truncated: "the draft kept cutting off before it was complete",
+  incomplete: "the draft kept ending before it was complete",
+  corrupted: "the draft kept coming back malformed",
+  assistant_framing: "the draft kept including framing text instead of just the post",
+};
+
+function rejectionSummary(code: string | null): string {
+  if (!code) return "";
+  const clause = REJECTION_REASON_CLAUSES[code] ?? "the draft kept getting rejected by a quality check";
+  return ` Specifically, ${clause}.`;
+}
+
 function attemptRequest(opts: {
   input: DraftEngineInput;
   signal: AbortSignal;
@@ -1451,6 +1487,16 @@ export async function* runDraftEngine(
   // best-effort draft (flagged for verification) beats a dead-end "retry" with
   // no post at all.
   let lastDraftedBody = "";
+  // The most recent finalizer rejection CODE across all attempts this turn.
+  // Surfaced (via rejectionSummary below) in the terminal exhaust message so a
+  // dead-ended turn tells the user WHICH gate rejected the last draft, rather
+  // than only the generic "couldn't complete a reliable post" — the specific
+  // reason was already being logged server-side (draft_finalizer / stage_attempts)
+  // but never reached the user. The raw rejection.message is written as an
+  // instruction TO THE MODEL ("call render_post again with...") and is not
+  // fit for a human reader, so this maps the code to a short user-facing
+  // clause instead of surfacing that text directly.
+  let lastRejectionCode: string | null = null;
 
   // Best-effort salvage. Two turn shapes would otherwise dead-end even though
   // the writer produced a usable draft:
@@ -1753,173 +1799,122 @@ export async function* runDraftEngine(
       );
     }
 
-    try {
-      let primary: DraftWriterResponse | null = null;
-      let fallbackMessages = baseMessages;
+    // Runs one writer attempt through finalize(): on acceptance, yields the
+    // delivered event and reports {done: true}. On a rejection that isn't
+    // terminal (not cancelled, not a reviewer-unavailable salvage), reports
+    // the repair messages so the caller can retry once against the SAME
+    // model with the rejection reason attached (repairMessages already turns
+    // draft-output-policy's rejection.message into a corrective instruction —
+    // e.g. unsupported_specificity tells the model exactly which claim to
+    // drop or ground). Returns {done: true} whenever the generator should
+    // stop (accepted, cancelled, or a salvage/error event was already
+    // yielded); the caller only continues past a {done: false} result.
+    const attemptStage = async function* (
+      stage: "primary" | "repair" | "fallback",
+      model: string,
+      messages: ChatMessage[],
+    ): AsyncGenerator<
+      AgentEvent,
+      { done: true } | { done: false; repairMessages: ChatMessage[] | null }
+    > {
+      let response: DraftWriterResponse;
       try {
-        primary = await call(
-          "primary",
-          primaryModel,
-          baseMessages,
-        );
+        response = await call(stage, model, messages);
       } catch (error) {
         rethrowUsagePersistence(error);
         if (isAbort(error, turnSignal)) {
           yield interrupted();
-          return;
+          return { done: true };
         }
+        return { done: false, repairMessages: null };
       }
-
       if (await cancellationRequestedNow()) {
         yield interrupted();
-        return;
+        return { done: true };
       }
-
-      if (primary?.text.trim()) {
-        const result = await finalize(primary);
-        if (result.ok) {
-          if (await cancellationRequestedNow()) {
-            yield interrupted();
-            return;
-          }
-          if (result.kind === "text") {
-            yield { type: "text", delta: result.text };
-            yield finish(result.text);
-          } else {
-            yield {
-              type: "artifact",
-              artifact: deliveredArtifact(result.artifact),
-            };
-            yield finish(successText);
-          }
-          return;
-        }
-        if (
-          result.rejection.code === "cancelled" ||
-          (await cancellationRequestedNow())
-        ) {
-          yield interrupted();
-          return;
-        }
-        const unavailableEvents = unavailableFidelityEvents(result);
-        if (unavailableEvents) {
-          for (const event of unavailableEvents) yield event;
-          return;
-        }
-        fallbackMessages = repairMessages(
-          baseMessages,
-          primary.text,
-          result,
-          task,
-        );
-
-        try {
-          const repaired = await call(
-            "repair",
-            primaryModel,
-            repairMessages(baseMessages, primary.text, result, task),
-          );
-          if (await cancellationRequestedNow()) {
-            yield interrupted();
-            return;
-          }
-          if (repaired.text.trim()) {
-            const repairedResult = await finalize(repaired);
-            if (repairedResult.ok) {
-              if (await cancellationRequestedNow()) {
-                yield interrupted();
-                return;
-              }
-              if (repairedResult.kind === "text") {
-                yield { type: "text", delta: repairedResult.text };
-                yield finish(repairedResult.text);
-              } else {
-                yield {
-                  type: "artifact",
-                  artifact: deliveredArtifact(repairedResult.artifact),
-                };
-                yield finish(successText);
-              }
-              return;
-            }
-            if (
-              repairedResult.rejection.code === "cancelled" ||
-              (await cancellationRequestedNow())
-            ) {
-              yield interrupted();
-              return;
-            }
-            const unavailableEvents =
-              unavailableFidelityEvents(repairedResult);
-            if (unavailableEvents) {
-              for (const event of unavailableEvents) yield event;
-              return;
-            }
-            fallbackMessages = repairMessages(
-              baseMessages,
-              repaired.text,
-              repairedResult,
-              task,
-            );
-          }
-        } catch (error) {
-          rethrowUsagePersistence(error);
-          if (isAbort(error, turnSignal)) {
-            yield interrupted();
-            return;
-          }
-        }
+      if (!response.text.trim()) {
+        return { done: false, repairMessages: null };
       }
-
-      try {
-        const fallback = await call(
-          "fallback",
-          fallbackModel,
-          fallbackMessages,
-        );
+      const result = await finalize(response);
+      if (result.ok) {
         if (await cancellationRequestedNow()) {
           yield interrupted();
-          return;
+          return { done: true };
         }
-        if (fallback.text.trim()) {
-          const fallbackResult = await finalize(fallback);
-          if (fallbackResult.ok) {
-            if (await cancellationRequestedNow()) {
-              yield interrupted();
-              return;
-            }
-            if (fallbackResult.kind === "text") {
-              yield { type: "text", delta: fallbackResult.text };
-              yield finish(fallbackResult.text);
-            } else {
-              yield {
-                type: "artifact",
-                artifact: deliveredArtifact(fallbackResult.artifact),
-              };
-              yield finish(successText);
-            }
-            return;
-          }
-          if (
-            fallbackResult.rejection.code === "cancelled" ||
-            (await cancellationRequestedNow())
-          ) {
-            yield interrupted();
-            return;
-          }
-          const unavailableEvents =
-            unavailableFidelityEvents(fallbackResult);
-          if (unavailableEvents) {
-            for (const event of unavailableEvents) yield event;
-            return;
-          }
+        if (result.kind === "text") {
+          yield { type: "text", delta: result.text };
+          yield finish(result.text);
+        } else {
+          yield {
+            type: "artifact",
+            artifact: deliveredArtifact(result.artifact),
+          };
+          yield finish(successText);
         }
-      } catch (error) {
-        rethrowUsagePersistence(error);
-        if (isAbort(error, turnSignal)) {
-          yield interrupted();
-          return;
+        return { done: true };
+      }
+      if (
+        result.rejection.code === "cancelled" ||
+        (await cancellationRequestedNow())
+      ) {
+        yield interrupted();
+        return { done: true };
+      }
+      const unavailableEvents = unavailableFidelityEvents(result);
+      if (unavailableEvents) {
+        for (const event of unavailableEvents) yield event;
+        return { done: true };
+      }
+      lastRejectionCode = result.rejection.code;
+      return {
+        done: false,
+        repairMessages: repairMessages(baseMessages, response.text, result, task),
+      };
+    };
+
+    try {
+      const primaryOutcome = yield* attemptStage(
+        "primary",
+        primaryModel,
+        baseMessages,
+      );
+      if (primaryOutcome.done) return;
+
+      let fallbackMessages = primaryOutcome.repairMessages ?? baseMessages;
+      if (primaryOutcome.repairMessages) {
+        const repairOutcome = yield* attemptStage(
+          "repair",
+          primaryModel,
+          primaryOutcome.repairMessages,
+        );
+        if (repairOutcome.done) return;
+        if (repairOutcome.repairMessages) {
+          fallbackMessages = repairOutcome.repairMessages;
         }
+      }
+
+      const fallbackOutcome = yield* attemptStage(
+        "fallback",
+        fallbackModel,
+        fallbackMessages,
+      );
+      if (fallbackOutcome.done) return;
+
+      // Fallback runs a SEPARATE model from primary/repair; a rejection here
+      // is not yet proof the request is unwinnable, so give it the same one
+      // self-correction pass primary already gets rather than dead-ending on
+      // its first attempt. This also restores a real second chance for the
+      // case where primary failed at the TRANSPORT level (bad model slug,
+      // 404, timeout) rather than being rejected — that path skips repair
+      // above (there is no rejected primary draft to repair), so fallback
+      // was previously the turn's only attempt.
+      if (fallbackOutcome.repairMessages) {
+        const fallbackRepairOutcome = yield* attemptStage(
+          "repair",
+          fallbackModel,
+          fallbackOutcome.repairMessages,
+        );
+        if (fallbackRepairOutcome.done) return;
       }
     } catch (error) {
       rethrowUsagePersistence(error);
@@ -1950,7 +1945,9 @@ export async function* runDraftEngine(
     }
 
     const failureMessage =
-      "I couldn’t complete a reliable post this time. Please continue to retry the draft.";
+      "I couldn’t complete a reliable post this time." +
+      rejectionSummary(lastRejectionCode) +
+      " Please continue to retry the draft.";
     yield {
       type: "error",
       code: "draft_engine_exhausted",

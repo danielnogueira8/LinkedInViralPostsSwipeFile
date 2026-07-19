@@ -1394,6 +1394,61 @@ describe("DraftEngine", () => {
     expect(artifacts(result.events)).toHaveLength(1);
   });
 
+  test("repairs a rejected fallback draft instead of dead-ending after one fallback attempt", async () => {
+    // Regression: when primary fails at the TRANSPORT level (e.g. a bad model
+    // slug returning 404), there is no rejected primary draft to repair, so
+    // the turn used to reach fallback with zero attempts left — a single
+    // fallback rejection dead-ended the whole turn. Fallback now gets the
+    // same one self-correction pass primary already had. Uses an isolated
+    // health registry (like the circuit-breaker tests above) so this test's
+    // extra rejection samples don't perturb the shared production registry's
+    // rolling window for unrelated tests later in the file.
+    const health = new AdapterHealthRegistry();
+    const writer = new ScriptedWriter([
+      new Error("primary transport failure (e.g. invalid model slug)"),
+      { text: INCOMPLETE_POST, finishReason: "stop", usage: usage(100, 60) },
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(140, 80) },
+    ]);
+    const result = await collect(writer, {}, { adapterHealth: health });
+
+    expect(writer.requests.map(({ stage, model }) => ({ stage, model }))).toEqual([
+      { stage: "primary", model: PRIMARY_DRAFT_WRITER_MODEL },
+      { stage: "fallback", model: FALLBACK_DRAFT_WRITER_MODEL },
+      { stage: "repair", model: FALLBACK_DRAFT_WRITER_MODEL },
+    ]);
+    expect(JSON.stringify(writer.requests[2].messages)).toContain(
+      "The draft was rejected by the server",
+    );
+    expect(artifacts(result.events).map((artifact) => artifact.body)).toEqual([
+      COMPLETE_POST,
+    ]);
+  });
+
+  test("both-writer-and-repair failure still ends in a persisted recoverable outcome", async () => {
+    const health = new AdapterHealthRegistry();
+    const writer = new ScriptedWriter([
+      new Error("primary unavailable"),
+      { text: INCOMPLETE_POST, finishReason: "stop", usage: usage(100, 60) },
+      { text: INCOMPLETE_POST, finishReason: "stop", usage: usage(110, 60) },
+    ]);
+    const result = await collect(writer, {}, { adapterHealth: health });
+
+    expect(writer.requests.map((request) => request.stage)).toEqual([
+      "primary",
+      "fallback",
+      "repair",
+    ]);
+    expect(artifacts(result.events)).toHaveLength(0);
+    expect(result.events).toContainEqual(
+      expect.objectContaining({
+        type: "error",
+        code: "draft_engine_exhausted",
+        recovery: "continue",
+      }),
+    );
+    expect(done(result.events)?.message.content.trim()).not.toBe("");
+  });
+
   test("both-writer failure ends in a persisted recoverable outcome, never a blank turn", async () => {
     const writer = new ScriptedWriter([
       new Error("primary unavailable"),
@@ -1961,11 +2016,25 @@ describe("DraftEngine — thin path (lean mode)", () => {
     // should still dead-end (no artifact) rather than ship a bad post. (The
     // source + reviewer-unavailable salvage below is a different case: there
     // the draft passed every content gate and only the REVIEWER was down.)
-    const tooShort = "Cold outbound works. Send more DMs. That's the whole post.";
+    // Each attempt's text differs slightly (not byte-identical) so the
+    // finalizer's own already-rejected-candidate replay guard never fires —
+    // every attempt should independently be rejected as too_short.
     const writer = new ScriptedWriter([
-      { text: tooShort, finishReason: "stop", usage: usage(200, 120) },
-      { text: tooShort, finishReason: "stop", usage: usage(200, 120) },
-      { text: tooShort, finishReason: "stop", usage: usage(200, 120) },
+      {
+        text: "Cold outbound works. Send more DMs. That's the whole post.",
+        finishReason: "stop",
+        usage: usage(200, 120),
+      },
+      {
+        text: "Cold outbound works well. Send more DMs. That's the whole post.",
+        finishReason: "stop",
+        usage: usage(200, 120),
+      },
+      {
+        text: "Cold outbound really works. Send more DMs. That's the whole post.",
+        finishReason: "stop",
+        usage: usage(200, 120),
+      },
     ]);
     const result = await collect(writer, {
       lean: true,
@@ -1976,6 +2045,52 @@ describe("DraftEngine — thin path (lean mode)", () => {
     expect(artifacts(result.events)).toHaveLength(0);
     expect(done(result.events)?.message.content).toContain(
       "couldn’t complete a reliable post",
+    );
+    // The dead-end message names WHICH gate rejected it, instead of only the
+    // opaque generic line — so the user (and any future debugging) doesn't
+    // have to go spelunking through server logs to learn why.
+    expect(done(result.events)?.message.content).toContain(
+      "shorter than the post you asked for",
+    );
+  });
+
+  test("SOURCE turn: unsupported_specificity exhaust names the specific reason in the dead-end message", async () => {
+    // Live incident: a swipe-file "find a top post and rewrite it on a new
+    // topic" request kept dead-ending with the generic exhaust message. The
+    // actual server log showed reason_code: "unsupported_specificity" — the
+    // writer kept including a specific number/date the grounding context
+    // didn't back. This proves the exhaust message now names that reason.
+    // Each attempt's text differs slightly (not byte-identical) so the
+    // finalizer's own already-rejected-candidate replay guard never fires —
+    // every attempt should independently hit unsupported_specificity.
+    const writer = new ScriptedWriter([
+      {
+        text: "Cold outbound works because 73% of buyers respond within 12 hours. Send more DMs today.",
+        finishReason: "stop",
+        usage: usage(200, 120),
+      },
+      {
+        text: "Cold outbound works because 73% of buyers respond within 12 hours of a first touch. Send more DMs today.",
+        finishReason: "stop",
+        usage: usage(200, 120),
+      },
+      {
+        text: "Cold outbound works because 73% of buyers respond within 12 hours of that first touch. Send more DMs today.",
+        finishReason: "stop",
+        usage: usage(200, 120),
+      },
+    ]);
+    const result = await collect(writer, {
+      lean: true,
+      task: {
+        kind: "source",
+        source: { id: "post_1", text: "A totally unrelated source post about hiring." },
+      },
+    });
+
+    expect(artifacts(result.events)).toHaveLength(0);
+    expect(done(result.events)?.message.content).toContain(
+      "specific number or date",
     );
   });
 
