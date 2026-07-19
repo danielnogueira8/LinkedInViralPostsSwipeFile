@@ -6,6 +6,7 @@ import type {
   CoworkTurnUsageWire,
   CoworkUsageStageKind,
 } from "@/lib/cowork-turn-usage";
+import type { TurnOutcome } from "@/lib/agent/turn/outcome";
 
 export type CoworkRoute =
   | "setup"
@@ -13,12 +14,9 @@ export type CoworkRoute =
   | "read_only_orchestrator"
   | "action_orchestrator"
   | "legacy_agent";
-export type CoworkTerminalOutcome =
-  | "delivered"
-  | "clarified"
-  | "cancelled"
-  | "recoverable_error"
-  | "hard_failure";
+// Canonical home is lib/agent/turn/outcome.ts; kept as an alias so existing
+// telemetry call sites keep compiling without churn.
+export type CoworkTerminalOutcome = TurnOutcome;
 export type CoworkProvenanceStatus =
   | "not_required"
   | "verified"

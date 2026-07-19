@@ -102,6 +102,7 @@ import {
   executeAcceptedChatTurn,
   type ChatTurnOutcome,
 } from "@/lib/agent/chat-turn-lifecycle";
+import { resolveTurnOutcome } from "@/lib/agent/turn/outcome";
 import {
   checkChatRateLimit,
   claimChatTurn,
@@ -5130,17 +5131,13 @@ export async function executeChatTurn(
       });
       const persistenceFailed =
         outcome.error?.name === "AssistantPersistenceError";
-      const stagedTerminal = coworkTelemetry.stagedTerminalOutcome();
       await coworkTelemetry.finishStaged(
-        outcome.terminal === "failure"
-          ? persistenceFailed || stagedTerminal !== "recoverable_error"
-            ? "hard_failure"
-            : undefined
-          : outcome.terminal === "cancelled"
-            ? "cancelled"
-            : outcome.terminal === "deadline"
-              ? "recoverable_error"
-              : undefined,
+        resolveTurnOutcome({
+          terminal: outcome.terminal,
+          staged: coworkTelemetry.stagedTerminalOutcome(),
+          persistenceFailed,
+          cancelled: signal.aborted,
+        }),
         persistenceFailed,
       );
       stopHeartbeat();
