@@ -2540,7 +2540,16 @@ describe("read-only orchestrator execution", () => {
     );
   });
 
-  test("rejects an exact modeled pool with a URL-less source before coordinator acquisition", async () => {
+  test("honors the requested draft count when fewer distinct canonical sources exist: falls through to the shared-pool multi path, never dead-ends", async () => {
+    // The reported bug: the draft-count chip is authoritative — a request for N
+    // drafts must produce N drafts even when the workspace can't supply N
+    // DISTINCT canonical sources (e.g. a top source has a null url and is
+    // dropped by the canonical filter). Rather than dead-ending with
+    // "I couldn't complete the verified modeled set safely", the turn now falls
+    // through to the shared-pool multi path, which writes the requested number
+    // of drafts by reusing the sources that ARE available. The durable
+    // one-source-per-draft batch is reserved for when there genuinely are N
+    // distinct canonical sources.
     const userInstruction =
       "Find 3 top-performing regular posts in my swipe file and rewrite it in my voice on a topic that fits me. Keep its structure and hook style, but make the content original";
     const route = {
@@ -2553,8 +2562,11 @@ describe("read-only orchestrator execution", () => {
       authoritativeInstruction: userInstruction,
     };
     const executeModeledDraftBatch = vi.fn(async () => {
-      throw new Error("URL-less sources must not reach durable acquisition");
+      throw new Error(
+        "the strict one-source-per-draft batch must NOT run when distinct canonical sources < requested drafts",
+      );
     });
+    let capturedTask: DraftEngineInput["task"] | undefined;
 
     const result = await collect(
       input({
@@ -2572,6 +2584,8 @@ describe("read-only orchestrator execution", () => {
             text: "Source one has a complete modelable argument.",
             url: "https://linkedin.com/posts/source-1",
           },
+          // No url → dropped by the canonical filter, so only 2 of 3 requested
+          // drafts have a distinct canonical source. Must NOT dead-end.
           {
             id: "source-2",
             text: "Source two has a complete modelable argument.",
@@ -2583,20 +2597,104 @@ describe("read-only orchestrator execution", () => {
           },
         ],
       }),
-      { executeModeledDraftBatch },
+      {
+        executeModeledDraftBatch,
+        runDraftEngine: (draftInput) => {
+          capturedTask = draftInput.task;
+          return (async function* () {
+            for (let i = 0; i < 3; i += 1) {
+              yield {
+                type: "artifact" as const,
+                artifact: {
+                  id: `draft-${i}`,
+                  kind: "post" as const,
+                  title: `Draft ${i}`,
+                  body: COMPLETE_POST,
+                },
+              };
+            }
+            yield {
+              type: "done" as const,
+              terminalReason: "done" as const,
+              message: {
+                content: "Here are your 3 drafts.",
+                tool_calls: null,
+                artifacts: [],
+                toolMessages: [],
+                inputTokens: 300,
+                outputTokens: 150,
+              },
+            };
+          })();
+        },
+      },
     );
 
+    // The strict batch did NOT run (not enough distinct canonical sources)…
     expect(executeModeledDraftBatch).not.toHaveBeenCalled();
-    expect(result.draftInputs).toEqual([]);
-    expect(result.events.filter((event) => event.type === "artifact")).toEqual(
-      [],
-    );
-    expect(result.events).toContainEqual(
+    // …instead the shared-pool multi path ran for the requested count…
+    expect(capturedTask).toMatchObject({ kind: "multi", expectedCount: 3 });
+    // …and delivered the requested number of drafts, not a dead-end.
+    expect(
+      result.events.filter((event) => event.type === "artifact"),
+    ).toHaveLength(3);
+    expect(result.events).not.toContainEqual(
       expect.objectContaining({
         type: "error",
         code: "orchestrator_evidence_insufficient",
       }),
     );
+  });
+
+  test("still uses the strict one-source-per-draft batch when every requested draft has a distinct canonical source", async () => {
+    // Guard the happy path: when the workspace DOES supply a distinct canonical
+    // source per requested draft, the durable batch (with its resumable slots)
+    // still runs — the fall-through only fires on a genuine source shortfall.
+    const userInstruction =
+      "Find 3 top-performing regular posts in my swipe file and rewrite it in my voice on a topic that fits me. Keep its structure and hook style, but make the content original";
+    const route = {
+      kind: "workspace_research" as const,
+      expectsDraft: true,
+      expectedDrafts: 3,
+      minimumSources: 3,
+      workspacePostType: "regular" as const,
+      workspaceDraftSourceMode: "one_to_one" as const,
+      authoritativeInstruction: userInstruction,
+    };
+    const executeModeledDraftBatch = vi.fn(async () => ({
+      kind: "complete" as const,
+      batchId: "batch-1",
+      artifacts: [
+        { id: "d1", kind: "post" as const, title: "D1", body: COMPLETE_POST },
+        { id: "d2", kind: "post" as const, title: "D2", body: COMPLETE_POST },
+        { id: "d3", kind: "post" as const, title: "D3", body: COMPLETE_POST },
+      ],
+      usage: { inputTokens: 300, outputTokens: 150 },
+    }));
+
+    const result = await collect(
+      input({
+        route,
+        userInstruction,
+        draftEngineInput: { ...input().draftEngineInput, userInstruction },
+      }),
+      [],
+      async () => ({
+        ok: true,
+        count: 3,
+        posts: [
+          { id: "source-1", text: "Source one modelable argument.", url: "https://linkedin.com/posts/source-1" },
+          { id: "source-2", text: "Source two modelable argument.", url: "https://linkedin.com/posts/source-2" },
+          { id: "source-3", text: "Source three modelable argument.", url: "https://linkedin.com/posts/source-3" },
+        ],
+      }),
+      { executeModeledDraftBatch },
+    );
+
+    expect(executeModeledDraftBatch).toHaveBeenCalledTimes(1);
+    expect(
+      result.events.filter((event) => event.type === "artifact"),
+    ).toHaveLength(3);
   });
 
   test("resumes a frozen modeled batch without re-running source discovery", async () => {
