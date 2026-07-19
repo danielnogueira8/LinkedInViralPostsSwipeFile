@@ -1038,7 +1038,7 @@ export async function buildTurnContext(
   const orchestratorAttachmentBlocks: ContentBlock[] = [];
   // Built below only for a from-scratch post request (no model/template/refine
   // source): the selected archetype's rules + full DB exemplars. Empty on every
-  // other turn, so runAgent's prompt is unchanged for those.
+  // other turn, so this turn's writer prompt is unchanged for those.
   let noModelFormatBlock = "";
   let appliedNoModelFormat: {
     id: NoModelFormatId;
@@ -1060,7 +1060,7 @@ export async function buildTurnContext(
   let imageGenerationAuthor: { name: string | null } | null = null;
   // Built below only when the user picked a creator style AND no model source is
   // attached (a source controls structure, so the style is ignored then). Empty
-  // otherwise, so runAgent's prompt is byte-identical for every other turn.
+  // otherwise, so this turn's writer prompt is byte-identical for every other turn.
   let creatorStyleBlock = "";
   let appliedCreatorStyle: {
     id: string;
@@ -1139,7 +1139,7 @@ export async function buildTurnContext(
   // Voice is a required read for every post/refine/modeling turn. Start it
   // beside the other setup reads so an ordinary draft reaches the first model
   // round with voice already present instead of spending that entire round on
-  // get_voice. A transient failure is fail-open: runAgent leaves get_voice
+  // get_voice. A transient failure is fail-open: the turn leaves get_voice
   // available for the model to retry.
   const shouldPreloadVoice = Boolean(
     composerTaskContext?.kind === "post" ||
@@ -1682,7 +1682,7 @@ export async function buildTurnContext(
   // workspace_id filter both enforce it). Count is capped, but body length is
   // intentionally not truncated so imported Claude-style skills retain their
   // examples/context. Order-preserved to match what the user picked. These are
-  // passed to runAgent separately (NOT woven into the user message) — they're
+  // passed to the writer separately (NOT woven into the user message) — they're
   // agent guidance, not content the user "said".
   if (customSkillRetryContext) {
     resolvedCustomSkills = customSkillRetryContext.skills.map((skill) => ({

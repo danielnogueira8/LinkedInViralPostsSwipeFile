@@ -4,9 +4,9 @@ import type { PlanStep } from "@/lib/agent/contracts";
 
 // ---------------------------------------------------------------------------
 // Unit tests for the agent's task-plan state machine — the live checklist that
-// write_plan / update_plan drive (lib/agent/run.ts). Pure logic, no I/O: we
-// exercise PlanState directly and dispatchPlanTool (the loop's adapter that
-// turns tool args into plan events + synthetic tool results).
+// write_plan / update_plan drive. Pure logic, no I/O: we exercise PlanState
+// directly and dispatchPlanTool (the adapter that turns tool args into plan
+// events + synthetic tool results).
 // ---------------------------------------------------------------------------
 
 const labelsOf = (steps: PlanStep[]) => steps.map((s) => s.label);

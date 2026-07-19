@@ -300,7 +300,7 @@ describe("Cowork v2 structured telemetry", () => {
       {
         traceId: "legacy-answer",
         workspaceId: "ws-2",
-        route: "legacy_agent",
+        route: "answer",
         requestedContract: { kind: "answer", expectedCount: 1 },
       },
       sink,
@@ -342,7 +342,7 @@ describe("Cowork v2 structured telemetry", () => {
       {
         traceId: "legacy-ask",
         workspaceId: "ws-2",
-        route: "legacy_agent",
+        route: "answer",
         requestedContract: { kind: "answer", expectedCount: 1 },
       },
       sink,
@@ -390,7 +390,7 @@ describe("Cowork v2 structured telemetry", () => {
       {
         traceId: "legacy-recoverable",
         workspaceId: "ws-2",
-        route: "legacy_agent",
+        route: "answer",
         requestedContract: { kind: "answer", expectedCount: 1 },
       },
       sink,

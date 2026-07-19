@@ -9,7 +9,6 @@ import {
 } from "@/lib/generation-config";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { NoWorkspaceError } from "@/lib/workspace";
-import { runAgent } from "@/lib/agent";
 import type { DraftFinalizerSpecialists } from "@/lib/agent/draft-finalizer";
 import {
   runDraftEngine,
@@ -407,10 +406,8 @@ export const chatTurnRequestSchema = z.object({
   // fetches + weaves the post text, so a long post never hits the message cap.
   modelSourceId: z.string().uuid().optional(),
   // True for an AI-refine turn (the user clicked "Refine" on a specific draft).
-  // A refine already targets ONE unambiguous card client-side, so the decision
-  // pre-pass must NOT intercept it with a "which draft?" clarifying question —
-  // that swallows the refine before its replacement artifact can be produced.
-  // The flag tells runAgent to skip the decision layer for this turn.
+  // A refine already targets ONE unambiguous card client-side, so the routing
+  // layer treats it as a trusted refine task rather than a from-scratch post.
   skipDecision: z.boolean().optional(),
   // Trusted refine identity. New clients send the selected artifact id and the
   // concise user instruction separately from the legacy body-embedded message.
@@ -493,7 +490,6 @@ export type ChatTurnDependencies = {
   checkChatRateLimit: typeof checkChatRateLimit;
   claimChatTurn: typeof claimChatTurn;
   releaseChatTurn: typeof releaseChatTurn;
-  runAgent: typeof runAgent;
   runDraftEngine: typeof runDraftEngine;
   runActionOrchestrator: typeof runActionOrchestrator;
   runReadOnlyOrchestrator: typeof runReadOnlyOrchestrator;
@@ -515,7 +511,6 @@ const productionChatTurnDependencies: ChatTurnDependencies = {
   checkChatRateLimit,
   claimChatTurn,
   releaseChatTurn,
-  runAgent,
   runDraftEngine,
   runActionOrchestrator,
   runReadOnlyOrchestrator,
@@ -3297,7 +3292,6 @@ export async function executeChatTurn(
           ));
         }
         // Step 9: every unrouted turn resolves to the deterministic answer lane.
-        // The legacy agent path is removed; the runAgent import stays for Step 10.
         return observeTurn(executeAnswerTurn());
       };
       const outcome = await executeAcceptedChatTurn({

@@ -2,9 +2,9 @@
 //
 // This is the typed boundary layer for the Cowork "orchestration" refactor.
 // It defines the narrow input/output shapes each specialist stage produces so
-// that the chat loop (lib/agent/run.ts) and the headless batch path
-// (lib/batch/weekly.ts) can share ONE set of generation modules instead of the
-// two divergent copies they carry today.
+// that the chat turn execution layer (lib/agent/chat-turn.ts) and the headless
+// batch path (lib/batch/weekly.ts) can share ONE set of generation modules
+// instead of the two divergent copies they carry today.
 //
 // Design rules (see the reviewed plan):
 //   - Every pipeline envelope has a runtime schema factory, so callers validate

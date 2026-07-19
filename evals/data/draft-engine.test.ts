@@ -59,6 +59,7 @@ import {
   type DraftWriterRequest,
   type DraftWriterResponse,
 } from "@/lib/agent/draft-writer";
+import type { NoModelFormat } from "@/lib/agent/no-model-formats";
 import { POST_INTENTS } from "@/lib/post-intents";
 import { AdapterHealthRegistry } from "@/lib/agent/adapter-health";
 import {
@@ -2044,5 +2045,97 @@ describe("DraftEngine — thin path (lean mode)", () => {
     expect(prompt).toContain("never borrow Lara's stories");
     // Still the strong thin model.
     expect(writer.requests[0].model).toBe(THIN_DRAFT_WRITER_MODEL);
+  });
+});
+
+
+describe("prompt-threading assertions ported from legacy runAgent evals (D6)", () => {
+  test("custom skill bodies reach the writer prompt", async () => {
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(200, 120) },
+    ]);
+    await collect(writer, {
+      lean: true,
+      customSkillBodies: ["Always end with my newsletter CTA: comment GUIDE."],
+      customSkillNames: ["cta"],
+    });
+
+    const prompt = JSON.stringify(writer.requests[0].messages);
+    expect(prompt).toContain("Always end with my newsletter CTA: comment GUIDE.");
+    expect(prompt).toContain("<user_skill");
+  });
+
+  test("no custom skill leaves the custom-skill framing out of the writer prompt", async () => {
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(200, 120) },
+    ]);
+    await collect(writer, { lean: true });
+
+    const prompt = JSON.stringify(writer.requests[0].messages);
+    expect(prompt).not.toContain("The user invoked their own saved skill");
+  });
+
+  test("no-model format block reaches the writer prompt", async () => {
+    const format: NoModelFormat = {
+      id: "tactical_listicle",
+      label: "Tactical Listicle",
+      whenToUse: ["list"],
+      requiredContext: ["topic"],
+      structure: ["Promise the list", "Deliver the list", "CTA"],
+      avoid: ["multiple CTAs"],
+      exemplarPostIds: [],
+    };
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(200, 120) },
+    ]);
+    await collect(writer, { lean: true, format });
+
+    const prompt = JSON.stringify(writer.requests[0].messages);
+    expect(prompt).toContain("Use the Tactical Listicle architecture silently.");
+    expect(prompt).toContain("Promise the list");
+  });
+
+  test("omitted no-model format keeps the default structure guidance", async () => {
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(200, 120) },
+    ]);
+    await collect(writer, { lean: true });
+
+    const prompt = JSON.stringify(writer.requests[0].messages);
+    expect(prompt).toContain(
+      "Choose one complete LinkedIn-native structure that fits the idea. Do not use a source post.",
+    );
+  });
+
+  test("feedback memory reaches the writer prompt", async () => {
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(200, 120) },
+    ]);
+    await collect(writer, {
+      lean: true,
+      feedbackMemory: [
+        {
+          rating: "down",
+          reasons: ["Too generic"],
+          note: "avoid vague language",
+          body_snapshot: "Unlock your potential today.",
+        },
+      ],
+    });
+
+    const prompt = JSON.stringify(writer.requests[0].messages);
+    expect(prompt).toContain("recent taste feedback");
+    expect(prompt).toContain("Too generic");
+    expect(prompt).toContain("avoid vague language");
+  });
+
+  test("empty feedback memory does not add a feedback block to the writer prompt", async () => {
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(200, 120) },
+    ]);
+    await collect(writer, { lean: true, feedbackMemory: [] });
+
+    const prompt = JSON.stringify(writer.requests[0].messages);
+    expect(prompt).not.toContain("recent taste feedback");
   });
 });
