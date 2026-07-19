@@ -2042,11 +2042,11 @@ describe("production-shaped Cowork outcome harness", () => {
       },
       expected: {
         terminal: "failure",
-        httpStatus: 503,
+        httpStatus: 422,
         artifactBodies: [],
         actionNames: [],
         assistantContents: [
-          "⚠️ I couldn’t load the writing context required to start this modeled set safely. Retry will try the request again without creating a partial set.",
+          "⚠️ This needs a voice profile to write in your voice, and your workspace doesn't have one yet. Head to the Voice tab to generate one, then send this again.",
         ],
       },
     });
@@ -2270,7 +2270,12 @@ describe("production-shaped Cowork outcome harness", () => {
     ).toEqual(MODELED_SOURCE_ROWS.map((source) => source.id));
   });
 
-  test("fails a modeled Retry closed when its writing context is unavailable", async () => {
+  test("terminates a modeled Retry with a non-recoverable message when there is no voice profile", async () => {
+    // A missing voice profile is never transient — retrying re-runs the exact
+    // same lookup and fails the exact same way every time. Offering "Retry"
+    // here is a loop with no exit, so this must NOT carry a recoverable
+    // marker (no Retry button) and must instead point at the fix: the Voice
+    // tab. See lib/agent/chat-turn.ts's noReadyVoiceProfile branch.
     const scenario = modeledThreeScenario("modeled-three-retry-no-voice");
     Object.assign(scenario.model.readOnlyOrchestrator!, {
       retryModeledBatch: true,
@@ -2284,11 +2289,11 @@ describe("production-shaped Cowork outcome harness", () => {
     });
     scenario.expected = {
       terminal: "failure",
-      httpStatus: 503,
+      httpStatus: 422,
       artifactBodies: [],
       actionNames: [],
       assistantContents: [
-        "⚠️ I couldn’t load the writing context required to resume this modeled set safely. Retry will continue the same saved batch.",
+        "⚠️ This needs a voice profile to write in your voice, and your workspace doesn't have one yet. Head to the Voice tab to generate one, then send this again.",
       ],
     };
 
@@ -2300,17 +2305,13 @@ describe("production-shaped Cowork outcome harness", () => {
     ).toBe(true);
     expect(report.observed.directWriterRequests).toEqual([]);
     expect(report.observed.readOnlyTools).toEqual([]);
-    const marker = report.persisted.messages
-      .find((message) => message.role === "assistant")
-      ?.tool_calls?.find((call) => call.function.name === "_recoverable");
-    expect(JSON.parse(marker?.function.arguments ?? "{}")).toMatchObject({
-      retryRootUserMessageId: "00000000-0000-4000-8000-000000000711",
-      continuation: {
-        kind: "modeled_draft_batch",
-        version: 1,
-        route: { expectedDrafts: 3 },
-      },
-    });
+    const failureRow = report.persisted.messages.findLast(
+      (m) => m.role === "assistant",
+    );
+    expect(
+      failureRow?.tool_calls?.some((call) => call.id === "_recoverable") ??
+        false,
+    ).toBe(false);
   });
 
   test("a pre-batch evidence failure retries discovery instead of claiming a nonexistent frozen pool", async () => {
@@ -2615,11 +2616,11 @@ describe("production-shaped Cowork outcome harness", () => {
     });
     scenario.expected = {
       terminal: "failure",
-      httpStatus: 503,
+      httpStatus: 422,
       artifactBodies: [],
       actionNames: [],
       assistantContents: [
-        "⚠️ I couldn’t load the writing context required to start this modeled set safely. Retry will try the request again without creating a partial set.",
+        "⚠️ This needs a voice profile to write in your voice, and your workspace doesn't have one yet. Head to the Voice tab to generate one, then send this again.",
       ],
     };
 
