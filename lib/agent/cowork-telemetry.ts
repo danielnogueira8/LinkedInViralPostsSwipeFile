@@ -7,6 +7,7 @@ import type {
   CoworkUsageStageKind,
 } from "@/lib/cowork-turn-usage";
 import type { TurnOutcome } from "@/lib/agent/turn/outcome";
+import type { TurnContract } from "@/lib/agent/turn/compile";
 
 export type CoworkRoute =
   | "setup"
@@ -28,10 +29,9 @@ export type CoworkAttemptOutcome =
   | "failed"
   | "skipped";
 
-export type CoworkContract = {
-  kind: "post" | "partial" | "research" | "saved_draft_action" | "answer";
-  expectedCount: number;
-};
+// Canonical home is lib/agent/turn/compile.ts; kept as an alias so existing
+// telemetry call sites keep compiling without churn.
+export type CoworkContract = TurnContract;
 export type CoworkDeliveredContract = {
   kind: CoworkContract["kind"];
   deliveredCount: number;

@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabase";
 import { requestedDirectPostCount } from "@/lib/agent/direct-deliverable-policy";
+import { resolveTurnCount } from "@/lib/agent/turn/compile";
 import { selectAllRows } from "@/lib/db-paginate";
 
 // ---------------------------------------------------------------------------
@@ -129,10 +130,12 @@ export function turnCostEstimate(
   decisionLayerOn: boolean,
   requestedDraftCount: number = 1,
 ): number {
-  const boundedDraftCount =
-    Number.isInteger(requestedDraftCount) && requestedDraftCount >= 2
-      ? Math.min(6, requestedDraftCount)
-      : 1;
+  // The multi-draft multiplier goes through the ONE turn count rule (1-6
+  // clamp) so the reserved headroom scales with the same count the turn's
+  // single contract will enforce.
+  const boundedDraftCount = resolveTurnCount({
+    messageCount: requestedDraftCount,
+  }).count;
   return (
     baseUsd * boundedDraftCount +
     (decisionLayerOn ? DECISION_LAYER_COST_USD : 0)

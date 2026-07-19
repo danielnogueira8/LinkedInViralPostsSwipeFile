@@ -70,7 +70,6 @@ import {
 import {
   createCoworkTurnTelemetry,
   observeCoworkTurn,
-  type CoworkContract,
   type CoworkRoute,
   type CoworkTurnTelemetry,
 } from "@/lib/agent/cowork-telemetry";
@@ -103,7 +102,11 @@ import {
   type ChatTurnOutcome,
 } from "@/lib/agent/chat-turn-lifecycle";
 import { resolveTurnOutcome } from "@/lib/agent/turn/outcome";
-import { resolveTurnCount } from "@/lib/agent/turn/compile";
+import {
+  resolveTurnContract,
+  resolveTurnCount,
+  type TurnContract,
+} from "@/lib/agent/turn/compile";
 import {
   checkChatRateLimit,
   claimChatTurn,
@@ -2043,10 +2046,30 @@ export async function executeChatTurn(
     | "server_selected" = "historical_continuation";
   let setupDeadline: ChatSetupDeadline | null = null;
   let setupSignal: AbortSignal = signal;
-  let setupRequestedContract: CoworkContract = {
+  // Claim-time contract PLACEHOLDER (telemetry-only): built pre-claim through
+  // the SAME resolveTurnContract builder that resolves the single
+  // authoritative contract post-routing, so setup-cancellation telemetry keeps
+  // the request's kind. Never consumed by routing, executors, or persistence
+  // gates, and always overwritten by the post-clarification contract before
+  // the turn runs.
+  let preclaimContractPlaceholder: TurnContract = {
     kind: "answer",
     expectedCount: 1,
   };
+  // Count-only projection of that placeholder: keeps the generation-config
+  // resolution honest on multi-draft turns (the claim's cost reservation
+  // derives its own count from the message content through the same
+  // resolveTurnCount rule — see rate-limit.ts turnCostEstimate).
+  let preclaimPostDraftEstimate: number | null = null;
+  // Post-clarification composer post count, hoisted out of the setup block so
+  // the persistence gates and the single contract resolution can use it.
+  let postClarificationPostCount: number | null = null;
+  // Kind projection of the best available estimate, used only for
+  // zero-delivery telemetry finishes before the single contract exists.
+  const estimatedContractKind = (): TurnContract["kind"] =>
+    postClarificationPostCount !== null
+      ? "post"
+      : preclaimContractPlaceholder.kind;
   let coworkTelemetry!: CoworkTurnTelemetry;
   let rolloutHealth: Pick<typeof coworkRolloutRuntimeHealth, "isOpen"> =
     coworkRolloutRuntimeHealth;
@@ -2535,46 +2558,39 @@ export async function executeChatTurn(
       ? "server_selected"
       : "historical_continuation";
     modeledBatchContractRequested = Boolean(preclaimModeledContinuation);
-    setupRequestedContract = preclaimActionRoute
-      ? {
-          kind: "saved_draft_action",
-          expectedCount:
-            preclaimActionRoute.kind === "action_management"
-              ? preclaimActionRoute.targetCount *
-                preclaimActionRoute.requirements.length
-              : 0,
-        }
-      : preclaimReadOnlyRoute
-        ? preclaimReadOnlyRoute.expectsDraft
-          ? {
-              kind: "post",
-              expectedCount: preclaimReadOnlyRoute.expectedDrafts ?? 1,
-            }
-          : { kind: "research", expectedCount: 1 }
-        : preclaimPartialSpec
-          ? { kind: "partial", expectedCount: 1 }
-          : preclaimBasePostCount !== null || skipDecision
-              ? {
-                  kind: "post",
-                  expectedCount:
-                    activeDraftCountOverride ?? preclaimBasePostCount ?? 1,
-                }
-              : { kind: "answer", expectedCount: 1 };
+    // Claim-time placeholder via the ONE contract builder (telemetry-only —
+    // overwritten post-routing). The gen-config resolution below consumes
+    // only its count projection, never a second divergent contract.
+    preclaimContractPlaceholder = resolveTurnContract({
+      actionRoute: preclaimActionRoute,
+      useActionOrchestrator: true,
+      readOnlyRoute: preclaimReadOnlyRoute,
+      useReadOnlyOrchestrator: true,
+      hasPartialSpec: preclaimPartialSpec !== null,
+      fallbackPostCount:
+        preclaimBasePostCount !== null || skipDecision
+          ? (activeDraftCountOverride ?? preclaimBasePostCount ?? 1)
+          : null,
+    });
+    preclaimPostDraftEstimate =
+      preclaimContractPlaceholder.kind === "post"
+        ? preclaimContractPlaceholder.expectedCount
+        : null;
     if (
-      setupRequestedContract.kind === "post" &&
+      preclaimPostDraftEstimate !== null &&
+      preclaimPostDraftEstimate >= 1 &&
       !generationConfigRestoredFromRetry &&
-      resolvedGenerationConfig.draftCountSource !== "ui" &&
-      setupRequestedContract.expectedCount >= 1
+      resolvedGenerationConfig.draftCountSource !== "ui"
     ) {
       const contractCount = resolveTurnCount({
-        messageCount: setupRequestedContract.expectedCount,
+        messageCount: preclaimPostDraftEstimate,
       });
       resolvedGenerationConfig = {
         version: 1,
         draftCount: contractCount.count,
         draftCountSource:
           explicitMessageDraftCount(preclaimInstruction) !== null ||
-          setupRequestedContract.expectedCount !== 1
+          preclaimPostDraftEstimate !== 1
             ? "message"
             : "default",
       };
@@ -2621,7 +2637,9 @@ export async function executeChatTurn(
       traceId: chatId,
       workspaceId,
       route: "setup",
-      requestedContract: setupRequestedContract,
+      // Claim-time placeholder only; the single post-clarification
+      // resolveTurnContract result replaces it once routing lands.
+      requestedContract: preclaimContractPlaceholder,
     });
 
     // From the moment the atomic claim lands until the SSE response exists,
@@ -2641,7 +2659,7 @@ export async function executeChatTurn(
       });
       await coworkTelemetry.finish({
         deliveredContract: {
-          kind: setupRequestedContract.kind,
+          kind: estimatedContractKind(),
           deliveredCount: 0,
         },
         provenanceStatus: "not_required",
@@ -2764,7 +2782,7 @@ export async function executeChatTurn(
       });
       await coworkTelemetry.finish({
         deliveredContract: {
-          kind: setupRequestedContract.kind,
+          kind: estimatedContractKind(),
           deliveredCount: 0,
         },
         provenanceStatus: "not_required",
@@ -3016,16 +3034,10 @@ export async function executeChatTurn(
     ) {
       activeDraftCountOverride = resolvedGenerationConfig.draftCount;
     }
-    if (
-      setupRequestedContract.kind === "answer" &&
-      effectiveComposerPostCount !== null
-    ) {
-      setupRequestedContract = {
-        kind: "post",
-        expectedCount:
-          activeDraftCountOverride ?? effectiveComposerPostCount,
-      };
-    }
+    // The single turn contract is resolved from this post-clarification count
+    // (via resolveTurnContract, after routing) — no second contract is built
+    // here anymore.
+    postClarificationPostCount = effectiveComposerPostCount;
 
     // Weave the "Model this post" source + this turn's files into the final user
     // message the agent sees. The persisted user row stays clean (just the typed
@@ -3526,10 +3538,17 @@ export async function executeChatTurn(
     if (composerStarterId) {
       userToolCalls.push(composerStarterToolCall(composerStarterId));
     }
-    if (
-      setupRequestedContract.kind === "post" &&
-      resolvedGenerationConfig
-    ) {
+    // Post-shaped turns stamp the resolved generation config onto the user row
+    // so a later Retry can integrity-check the draft count. Post-clarification
+    // truth (same rule the single contract's legacy fallback uses): the
+    // composer resolved a post count, a UI override is active, or this is a
+    // refine continuation.
+    const stampsGenerationConfig =
+      resolvedGenerationConfig !== null &&
+      (postClarificationPostCount !== null ||
+        activeDraftCountOverride !== undefined ||
+        skipDecision);
+    if (stampsGenerationConfig && resolvedGenerationConfig) {
       userToolCalls.push(generationConfigToolCall(resolvedGenerationConfig));
     }
     let userToolCallWriteFailed = false;
@@ -3567,8 +3586,7 @@ export async function executeChatTurn(
       throw new Error(CUSTOM_SKILL_CONTEXT_PERSISTENCE_ERROR);
     }
     if (
-      setupRequestedContract.kind === "post" &&
-      resolvedGenerationConfig &&
+      stampsGenerationConfig &&
       (!claimedUserMessageId || userToolCallWriteFailed)
     ) {
       throw new Error(GENERATION_CONFIG_CONTEXT_PERSISTENCE_ERROR);
@@ -3619,7 +3637,7 @@ export async function executeChatTurn(
     });
     await coworkTelemetry.finish({
       deliveredContract: {
-        kind: setupRequestedContract.kind,
+        kind: estimatedContractKind(),
         deliveredCount: 0,
       },
       provenanceStatus: "not_required",
@@ -3672,7 +3690,7 @@ export async function executeChatTurn(
     });
     await coworkTelemetry.finish({
       deliveredContract: {
-        kind: setupRequestedContract.kind,
+        kind: estimatedContractKind(),
         deliveredCount: 0,
       },
       provenanceStatus: "not_required",
@@ -3939,14 +3957,12 @@ export async function executeChatTurn(
   if (useActionOrchestrator) {
     coworkTelemetry.configure({
       route: "action_orchestrator",
-      requestedContract: {
-        kind: "saved_draft_action",
-        expectedCount:
-          actionOrchestratorRoute?.kind === "action_management"
-            ? actionOrchestratorRoute.targetCount *
-              actionOrchestratorRoute.requirements.length
-            : 0,
-      },
+      // Intermediate value only — the single resolveTurnContract call below
+      // re-configures telemetry with the same result once routing lands.
+      requestedContract: resolveTurnContract({
+        actionRoute: actionOrchestratorRoute,
+        useActionOrchestrator: true,
+      }),
     });
     if (!claimedUserMessageId || !actionRetryRepository) {
       throw new Error("Action retry context could not be scoped to this turn.");
@@ -4138,52 +4154,33 @@ export async function executeChatTurn(
           preloadedVoiceResult?.ok === true
         ? "read_only_orchestrator"
         : undefined;
-  const actionContractFor = (
-    route: ActionOrchestratorRoute,
-  ): CoworkContract => ({
-    kind: "saved_draft_action",
-    expectedCount:
-      route.kind === "action_management"
-        ? route.targetCount * route.requirements.length
-        : 0,
+  // THE single authoritative deliverable contract for this turn
+  // (PLAN-cowork-unification Phase 1, step 3): computed ONCE, here —
+  // post-clarification and post-routing — from the same
+  // effectiveUserInstruction the executors consume. The only other contract
+  // value in the turn is the telemetry placeholder above, produced by this
+  // same builder and overwritten here.
+  const turnContract: TurnContract = resolveTurnContract({
+    directWriterTask: useDirectWriter ? directWriterTask : null,
+    actionRoute: actionOrchestratorRoute,
+    useActionOrchestrator,
+    readOnlyRoute: readOnlyOrchestratorRoute,
+    useReadOnlyOrchestrator,
+    hasPartialSpec: directPartialSpec !== null,
+    fallbackPostCount:
+      activeDraftCountOverride ??
+      postClarificationPostCount ??
+      (skipDecision ? 1 : null),
   });
-  const readOnlyContract: CoworkContract | null = readOnlyOrchestratorRoute
-    ? readOnlyOrchestratorRoute.expectsDraft
-      ? {
-          kind: "post",
-          expectedCount: readOnlyOrchestratorRoute.expectedDrafts ?? 1,
-        }
-      : { kind: "research", expectedCount: 1 }
-    : null;
   const selectedDeliverableContract: DeliverableContract | null =
     activeDraftCountOverride !== undefined &&
-    setupRequestedContract.kind === "post"
+    (postClarificationPostCount !== null || skipDecision)
       ? { kind: "post", expectedCount: activeDraftCountOverride }
       : null;
-  const legacyContract: CoworkContract = selectedDeliverableContract
-    ? selectedDeliverableContract
-    : directPartialSpec
-      ? { kind: "partial", expectedCount: 1 }
-      : setupRequestedContract.kind === "post"
-        ? setupRequestedContract
-        : { kind: "answer", expectedCount: 1 };
-  const coworkContract: CoworkContract = useDirectWriter
-    ? directWriterTask.kind === "partial"
-      ? { kind: "partial", expectedCount: 1 }
-      : directWriterTask.kind === "multi"
-        ? { kind: "post", expectedCount: directWriterTask.expectedCount }
-        : { kind: "post", expectedCount: 1 }
-    : useActionOrchestrator && actionOrchestratorRoute
-      ? actionContractFor(actionOrchestratorRoute)
-      : useReadOnlyOrchestrator && readOnlyContract
-        ? readOnlyContract
-        : actionOrchestratorRoute
-          ? actionContractFor(actionOrchestratorRoute)
-          : readOnlyContract ?? legacyContract;
   coworkTelemetry.configure({
     traceId: claimedUserMessageId ?? chatId,
     route: coworkRoute,
-    requestedContract: coworkContract,
+    requestedContract: turnContract,
     rolloutMode: shadowCandidateRoute
       ? "dark"
       : coworkRoute === "legacy_agent"
@@ -4505,7 +4502,7 @@ export async function executeChatTurn(
         observeCoworkTurn({
           stream: turn,
           telemetry: coworkTelemetry,
-          contract: coworkContract,
+          contract: turnContract,
           signal,
           deferFinish: true,
         });
@@ -4875,7 +4872,7 @@ export async function executeChatTurn(
                 ),
                 appliedCreatorStyle,
               );
-              if (isDraftArtifact(tagged) && coworkContract.kind === "post") {
+              if (isDraftArtifact(tagged) && turnContract.kind === "post") {
                 tagged = {
                   ...tagged,
                   meta: stampDraftFormat(tagged.meta, responseModel),
