@@ -15,8 +15,11 @@ import type { Message } from "@/lib/chat-hydration";
 // [company name], [your niche]). It does NOT match natural bracketed prose with
 // sentence punctuation ("[see the docs].") so we don't false-positive on a user
 // who legitimately typed brackets.
+// Exported so components/chat-rich-text.tsx can highlight the same unfilled
+// spans inside a rendered draft body — one detection rule for both the
+// composer nudge and the draft-card render, so they can't drift apart.
 // ---------------------------------------------------------------------------
-const PLACEHOLDER_RE = /\[[A-Za-z][A-Za-z /-]*\]/g;
+export const PLACEHOLDER_RE = /\[[A-Za-z][A-Za-z /-]*\]/g;
 
 export function firstPlaceholderRange(text: string): [number, number] | null {
   PLACEHOLDER_RE.lastIndex = 0;

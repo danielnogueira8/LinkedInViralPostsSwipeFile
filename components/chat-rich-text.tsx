@@ -1,8 +1,39 @@
 import type { ReactNode } from "react";
 import { contentBodyForFormat } from "@/lib/markdown/mode";
+import { PLACEHOLDER_RE } from "@/lib/chat-composer-policy";
 
 const INLINE_RE =
   /(\*\*|__)(?=\S)(.+?)(?<=\S)\1|(?<![A-Za-z0-9])_(?=\S)(.+?)(?<=\S)_(?![A-Za-z0-9])|\*(?=\S)([^*\n]+?)(?<=\S)\*/g;
+
+// Split a plain-text segment (already past the bold/italic pass) on any
+// unfilled [bracket] placeholder, highlighting each one the same way the
+// composer nudges the user to fill "[topic]" before sending — a draft can
+// legitimately ship one (e.g. "The turning point was [insert the specific
+// moment...]") when the model didn't have enough grounding to fill it in,
+// and it should read as obviously unfinished rather than blend into the
+// post's prose. `nextKey` is a shared counter (not a fresh 0 per call) so
+// keys stay unique across every segment renderInline hands it, including
+// bold/italic bodies rendered on later loop iterations.
+function renderPlaceholderSpans(text: string, nextKey: () => number): ReactNode {
+  if (!text) return text;
+  PLACEHOLDER_RE.lastIndex = 0;
+  if (!PLACEHOLDER_RE.test(text)) return text;
+  PLACEHOLDER_RE.lastIndex = 0;
+  const parts: ReactNode[] = [];
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = PLACEHOLDER_RE.exec(text)) !== null) {
+    if (m.index > last) parts.push(text.slice(last, m.index));
+    parts.push(
+      <mark key={nextKey()} className="rounded bg-amber-100 px-0.5 text-amber-900">
+        {m[0]}
+      </mark>,
+    );
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) parts.push(text.slice(last));
+  return parts;
+}
 
 export function renderInline(text: string): ReactNode {
   if (!text) return text;
@@ -10,19 +41,25 @@ export function renderInline(text: string): ReactNode {
   let last = 0;
   let m: RegExpExecArray | null;
   let key = 0;
+  const nextKey = () => key++;
   INLINE_RE.lastIndex = 0;
   while ((m = INLINE_RE.exec(text)) !== null) {
-    if (m.index > last) parts.push(text.slice(last, m.index));
+    if (m.index > last) {
+      parts.push(renderPlaceholderSpans(text.slice(last, m.index), nextKey));
+    }
     if (m[2] !== undefined) {
       // **bold** / __bold__
-      parts.push(<strong key={key++}>{m[2]}</strong>);
+      parts.push(<strong key={nextKey()}>{renderPlaceholderSpans(m[2], nextKey)}</strong>);
     } else {
       // _italic_ (m[3]) or *italic* (m[4])
-      parts.push(<em key={key++}>{m[3] ?? m[4]}</em>);
+      const body = m[3] ?? m[4];
+      parts.push(<em key={nextKey()}>{renderPlaceholderSpans(body, nextKey)}</em>);
     }
     last = m.index + m[0].length;
   }
-  if (last < text.length) parts.push(text.slice(last));
+  if (last < text.length) {
+    parts.push(renderPlaceholderSpans(text.slice(last), nextKey));
+  }
   return parts.length ? parts : text;
 }
 
