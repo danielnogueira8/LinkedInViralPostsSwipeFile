@@ -2114,6 +2114,7 @@ describe("production-shaped Cowork outcome harness", () => {
         version: 1,
         draftCount,
         draftCountSource: "ui",
+        postTypeSource: "default",
       });
     },
   );
@@ -2388,6 +2389,7 @@ describe("production-shaped Cowork outcome harness", () => {
       version: 1,
       draftCount: 4,
       draftCountSource: "ui",
+      postTypeSource: "default",
     });
   });
 

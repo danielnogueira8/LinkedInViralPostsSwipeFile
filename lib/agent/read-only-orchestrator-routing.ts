@@ -48,6 +48,13 @@ export type ReadOnlyOrchestratorRoutingInput = {
   userInstruction: string;
   draftCountOverride?: number;
   composerTaskContext?: ComposerTaskContext;
+  // An explicit UI post-type selection (Generation Settings), independent of
+  // any starter — composerTaskContext already carries postType for a starter
+  // pick (model-top-viral / model-recent-lead-magnet) via composerResearchRoute
+  // below, and that path is checked first and wins when both are present.
+  // This field only matters for a free-text send with no starter, which is
+  // exactly the shape that used to fall straight to the instruction regex.
+  explicitPostType?: PostType;
   isRefine: boolean;
   hasModelSource: boolean;
   hasAttachments: boolean;
@@ -690,10 +697,16 @@ export function compileReadOnlyOrchestratorRoute(
   const explicitSourceCount = sourceModelingRequest
     ? modeledIntent.discoveryCount
     : null;
-  const workspacePostType = sourceModelingRequest
-    ? (modeledIntent.sourcePostType ??
-      requestedWorkspacePostType(researchClause))
-    : requestedWorkspacePostType(researchClause);
+  // Precedence: an explicit UI selection always wins (the whole point of
+  // this field — it's the user's own click, not a guess); otherwise fall
+  // back to whatever the modeled-intent classifier or the instruction regex
+  // derives, exactly as before this field existed.
+  const workspacePostType =
+    input.explicitPostType ??
+    (sourceModelingRequest
+      ? (modeledIntent.sourcePostType ??
+        requestedWorkspacePostType(researchClause))
+      : requestedWorkspacePostType(researchClause));
   const writingOutputClause = instruction.match(
     /\b(?:write|draft|create|generate|make|produce|prepare|give\s+me)\b[\s\S]{0,180}?\b(?:linkedin\s+)?posts?\b/i,
   )?.[0] ?? "";
