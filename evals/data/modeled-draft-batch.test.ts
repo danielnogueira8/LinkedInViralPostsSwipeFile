@@ -400,10 +400,57 @@ describe("executeModeledDraftBatch", () => {
 
     expect(retry).toMatchObject({ kind: "complete", batchId: "batch-1" });
     expect(retryRunner).toHaveBeenCalledOnce();
+    // A reviewer outage on slot 1 no longer aborts the run — it retries the
+    // slot with the next reserve source (source-2) IN the first run. That
+    // in-run retry also came back unavailable and exhausted the slot's one
+    // replacement, so the slot's next reserve (source-3) is what the resume
+    // run picks up from — the batch tried harder before checkpointing.
     expect(retryRunner.mock.calls[0][0]).toMatchObject({
       slot: { index: 1 },
-      source: { id: "source-2" },
+      source: { id: "source-3" },
     });
+  });
+
+  test("a transient reviewer outage on one slot retries with a reserve source and completes the whole set", async () => {
+    // The core fix: one slot's reviewer being briefly unavailable must NOT
+    // discard the whole N-draft set. The slot retries with the next reserve
+    // source (a fresh reviewer call), succeeds, and the batch completes — the
+    // already-accepted slots' work is never thrown away.
+    const repository = new MemoryRepository();
+    let slot1Attempts = 0;
+    const runner = vi.fn(async (input: ModeledDraftSlotInput) => {
+      if (input.slot.index === 0) {
+        return accepted(input, distinctBodies[0]);
+      }
+      // Slot 1: reviewer down on the first source, fine on the reserve.
+      slot1Attempts += 1;
+      if (slot1Attempts === 1) {
+        return {
+          kind: "reviewer_unavailable" as const,
+          slot: input.slot,
+          inputTokens: 10,
+          outputTokens: 5,
+        };
+      }
+      return accepted(input, distinctBodies[1]);
+    });
+
+    const result = await executeModeledDraftBatch(
+      batchInput({ count: 2, sources: sources.slice(0, 3) }),
+      { repository, runSlot: runner, now: () => 1_000 },
+    );
+
+    // The whole set is delivered in ONE run — no dead-end, no lost slot-0 work.
+    expect(result).toMatchObject({ kind: "complete", batchId: "batch-1" });
+    expect(result.kind === "complete" ? result.artifacts : []).toHaveLength(2);
+    // Slot 1 was retried exactly once (its one allowed replacement), on a
+    // DIFFERENT reserve source than its original — not aborted. (The exact
+    // reserve index is an allocation detail; the point is it retried on a new
+    // source and succeeded.)
+    expect(slot1Attempts).toBe(2);
+    const lastSlot1Call = runner.mock.calls.at(-1)?.[0];
+    expect(lastSlot1Call).toMatchObject({ slot: { index: 1 } });
+    expect(lastSlot1Call?.source.id).not.toBe("source-1");
   });
 
   test("replays an exact completed batch without another writer call", async () => {

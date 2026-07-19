@@ -825,7 +825,15 @@ export async function executeModeledDraftBatch(
             });
             return;
           }
-        } else if (outcome.kind !== "rejected") {
+        } else if (
+          outcome.kind !== "rejected" &&
+          // A reviewer OUTAGE on one slot is transient — retry the slot with a
+          // fresh source (and a fresh reviewer call) instead of aborting the
+          // WHOLE set and discarding every already-accepted slot's work. Only
+          // if the slot then exhausts its replacements does it stop the batch.
+          // (writer_error / protocol failures still stop, as before.)
+          outcome.kind !== "reviewer_unavailable"
+        ) {
           stopReasons.push({
             slotIndex: slot.index,
             reason: outcomeReason(outcome),
@@ -836,7 +844,12 @@ export async function executeModeledDraftBatch(
         if (slot.replacements >= MAX_SOURCE_REPLACEMENTS_PER_SLOT) {
           stopReasons.push({
             slotIndex: slot.index,
-            reason: "slot_exhausted",
+            // A slot that never got a reviewer verdict across every replacement
+            // is a sustained outage, not a content problem — report it as such.
+            reason:
+              outcome.kind === "reviewer_unavailable"
+                ? "reviewer_unavailable"
+                : "slot_exhausted",
           });
           return;
         }
@@ -844,12 +857,23 @@ export async function executeModeledDraftBatch(
         if (reserveIndex === null) {
           stopReasons.push({
             slotIndex: slot.index,
-            reason: "source_pool_exhausted",
+            // A reviewer outage with no reserve source left is still a reviewer
+            // problem, not a pool problem — attribute it honestly so the user
+            // sees "reviewer unavailable, retry" rather than a misleading
+            // "ran out of sources".
+            reason:
+              outcome.kind === "reviewer_unavailable"
+                ? "reviewer_unavailable"
+                : "source_pool_exhausted",
           });
           return;
         }
         const failureCode =
-          outcome.kind === "rejected" ? outcome.code : "duplicate";
+          outcome.kind === "rejected"
+            ? outcome.code
+            : outcome.kind === "reviewer_unavailable"
+              ? "source_fidelity_unavailable"
+              : "duplicate";
         if (stopSignal.aborted) return;
         let replaced = false;
         try {

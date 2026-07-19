@@ -32,7 +32,14 @@ export const SOURCE_FIDELITY_FALLBACK_MODEL = distinctFallbackModel(
   ["google/gemini-3.5-flash"],
 );
 
-const TIMEOUT_MS = Number(process.env.AGENT_SOURCE_FIDELITY_TIMEOUT_MS || 12_000);
+// Per-reviewer deadline. This covers a NON-streaming forced-tool call whose
+// whole JSON body must arrive before the timer fires, on a payload that can run
+// to ~28k chars (source ≤12k + draft ≤8k + verified context 8k) against a
+// reasoning-capable primary and a slower Sonnet-5 fallback. 12s was too tight —
+// a normal-but-slow verdict tripped the deadline and discarded a good draft as
+// "reviewer unavailable". 22s gives real headroom while staying far under the
+// ~270s turn deadline (two reviewers = ~44s worst case). Env-overridable.
+const TIMEOUT_MS = Number(process.env.AGENT_SOURCE_FIDELITY_TIMEOUT_MS || 22_000);
 
 const VERDICT_TOOL: ToolDef = {
   type: "function",
