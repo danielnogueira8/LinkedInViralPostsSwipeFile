@@ -1020,11 +1020,19 @@ async function* runMultiDraftEngine(
     ? AbortSignal.any([input.signal, deadlineController.signal])
     : deadlineController.signal;
   const multiInput: DraftEngineInput = { ...input, signal: multiSignal };
+  const acceptedArtifactEvents = (): AgentEvent[] =>
+    accepted.map((artifact) => ({ type: "artifact", artifact }));
+  const incompleteSetMessage = (reason: string) =>
+    accepted.length > 0
+      ? `${reason} I kept the ${accepted.length} completed ${accepted.length === 1 ? "draft" : "drafts"}. Retry will run the original task again.`
+      : `${reason} Retry will run the original task again.`;
   const interruptionEvents = (): AgentEvent[] => {
     if (deadlineController.signal.aborted && !input.signal?.aborted) {
-      const message =
-        "I couldn’t complete the full reliable draft set within this turn. Please continue to retry it.";
+      const message = incompleteSetMessage(
+        "I couldn’t complete the full draft set within this turn.",
+      );
       return [
+        ...acceptedArtifactEvents(),
         {
           type: "error",
           code: "draft_engine_deadline",
@@ -1128,8 +1136,10 @@ async function* runMultiDraftEngine(
           event.type === "error",
       );
       if (childError || childArtifacts.length !== 1) {
-        const failureMessage =
-          "I couldn’t complete the full reliable draft set this time. Please continue to retry it.";
+        const failureMessage = incompleteSetMessage(
+          "I couldn’t complete the full draft set this time.",
+        );
+        for (const event of acceptedArtifactEvents()) yield event;
         yield {
           type: "error",
           code: childError?.code ?? "draft_engine_exhausted",
@@ -1148,8 +1158,10 @@ async function* runMultiDraftEngine(
           areDraftsNearDuplicate(prior.body, artifact.body),
         )
       ) {
-        const failureMessage =
-          "I couldn’t produce the requested number of distinct reliable drafts. Please continue to retry the set.";
+        const failureMessage = incompleteSetMessage(
+          "I couldn’t produce the requested number of distinct drafts.",
+        );
+        for (const event of acceptedArtifactEvents()) yield event;
         yield {
           type: "error",
           code: "draft_engine_duplicate_set",
@@ -1164,8 +1176,10 @@ async function* runMultiDraftEngine(
     }
 
     if (accepted.length !== task.expectedCount) {
-      const failureMessage =
-        "I couldn’t complete the exact requested draft count. Please continue to retry the set.";
+      const failureMessage = incompleteSetMessage(
+        "I couldn’t complete the exact requested draft count.",
+      );
+      for (const event of acceptedArtifactEvents()) yield event;
       yield {
         type: "error",
         code: "draft_engine_count_mismatch",

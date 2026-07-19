@@ -922,7 +922,7 @@ test("missing source text never fails open into a visible or persisted draft", a
   expect(t.streamedText).not.toContain("First draft");
   expect(t.streamedText).not.toContain("Second draft after the nudge");
   expect(t.finalContent).not.toContain("Second draft after the nudge");
-  expect(t.finalContent).toContain("verified draft");
+  expect(t.finalContent).toContain("verify the required source");
   expect(t.events.some((e) => e.type === "tool_end" && e.ok === false)).toBe(true);
   expect(t.errors.some((error) => error.code === "source_modeling_incomplete")).toBe(true);
 });
@@ -1458,6 +1458,80 @@ describe("deterministic completion for ordinary draft turns", () => {
       { role: "user", content: "Write 2 posts about onboarding." },
     ]);
     expect(t.artifacts.filter((a) => a.kind === "post")).toHaveLength(2);
+  });
+
+  test("a follow-up ask cannot end a turn before the two-post contract is complete", async () => {
+    setStubScript({
+      rounds: [
+        {
+          toolCalls: [
+            {
+              name: "render_post",
+              args: {
+                body: "AI slop starts when judgment stops.\n\nA complete first post about keeping a real point of view.",
+              },
+            },
+            {
+              name: "ask_user",
+              args: {
+                question: "What would you like to do next?",
+                options: ["Draft a variation", "It's good — done"],
+                doneOption: "It's good — done",
+              },
+            },
+          ],
+        },
+        {
+          toolCalls: [
+            {
+              name: "render_post",
+              args: {
+                body: "The fastest way to make AI writing generic is to skip the hard choice.\n\nA distinct second post with a different argument and payoff.",
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    const t = await runStubbedAgent([
+      { role: "user", content: "Write 2 original posts about AI slop." },
+    ]);
+
+    expect(t.artifacts.filter((artifact) => artifact.kind === "post")).toHaveLength(2);
+    expect(t.finalContent).not.toContain("What would you like to do next?");
+  });
+
+  test("an explicitly requested clarification is allowed before the first draft", async () => {
+    setStubScript({
+      rounds: [
+        {
+          toolCalls: [
+            {
+              name: "ask_user",
+              args: {
+                question: "Which career angle should the two posts focus on?",
+                options: ["Leadership", "Career change", "Use your judgment"],
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    const t = await runStubbedAgent([
+      {
+        role: "user",
+        content:
+          "Write 2 original posts about my career, but ask which angle to use first.",
+      },
+    ]);
+
+    expect(t.events.some((event) => event.type === "ask")).toBe(true);
+    expect(t.artifacts.filter((artifact) => artifact.kind === "post")).toHaveLength(0);
+    expect(t.finalContent).toContain(
+      "Which career angle should the two posts focus on?",
+    );
   });
 
   test("compound requests joined by and do not stop after the first deliverable", async () => {

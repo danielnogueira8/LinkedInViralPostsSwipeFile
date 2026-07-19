@@ -9,7 +9,15 @@ import {
   shouldSyncSelectedChat,
   updateChatScopedList,
 } from "@/lib/chat-navigation";
-import { draftKey, readDraft, writeDraft } from "@/lib/chat-draft-storage";
+import {
+  clearComposerStarter,
+  draftKey,
+  moveComposerDraft,
+  readComposerDraft,
+  readDraft,
+  writeComposerDraft,
+  writeDraft,
+} from "@/lib/chat-draft-storage";
 
 // ---------------------------------------------------------------------------
 // Unit tests for the per-chat unsent-draft persistence helpers. These back the
@@ -45,6 +53,56 @@ describe("draftKey", () => {
 describe("readDraft / writeDraft round-trip", () => {
   beforeEach(() => {
     (globalThis as { localStorage?: unknown }).localStorage = makeFakeLocalStorage();
+  });
+
+  test("migrates legacy plain-text drafts without inventing starter context", () => {
+    localStorage.setItem(draftKey("legacy"), "old unsent text");
+    expect(readComposerDraft("legacy")).toEqual({
+      text: "old unsent text",
+      starterId: null,
+    });
+  });
+
+  test("stores prompt text and starter identity as one composer draft", () => {
+    writeComposerDraft("a", {
+      text: "Write an original post about AI slop.",
+      starterId: "write-original",
+    });
+
+    expect(readComposerDraft("a")).toEqual({
+      text: "Write an original post about AI slop.",
+      starterId: "write-original",
+    });
+    expect(readDraft("a")).toBe("Write an original post about AI slop.");
+  });
+
+  test("moves a compose-ahead starter and text into the created chat atomically", () => {
+    writeComposerDraft(null, {
+      text: "Write an original post about reliability.",
+      starterId: "write-original",
+    });
+
+    moveComposerDraft(null, "created-chat");
+
+    expect(readComposerDraft(null)).toEqual({ text: "", starterId: null });
+    expect(readComposerDraft("created-chat")).toEqual({
+      text: "Write an original post about reliability.",
+      starterId: "write-original",
+    });
+  });
+
+  test("can consume starter metadata without deleting restored prompt text", () => {
+    writeComposerDraft("a", {
+      text: "Write an original post about trust.",
+      starterId: "write-original",
+    });
+
+    clearComposerStarter("a");
+
+    expect(readComposerDraft("a")).toEqual({
+      text: "Write an original post about trust.",
+      starterId: null,
+    });
   });
 
   test("writes then reads back the same text, scoped per chat", () => {

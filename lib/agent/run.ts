@@ -2101,6 +2101,18 @@ export async function* runAgent(opts: {
     },
   });
   const acceptedDeliverableCount = () => draftFinalizer.acceptedCount();
+  const incompleteDraftFailureMessage = () => {
+    const accepted = acceptedDeliverableCount();
+    if (
+      deliverableContract?.kind === "post" &&
+      deliverableContract.expectedCount > accepted &&
+      accepted > 0
+    ) {
+      const remaining = deliverableContract.expectedCount - accepted;
+      return `I finished ${accepted} of ${deliverableContract.expectedCount} drafts. The remaining ${remaining === 1 ? "draft" : `${remaining} drafts`} kept coming back incomplete or too similar even after retrying, so I kept the completed ${accepted === 1 ? "draft" : "drafts"} instead of showing a broken duplicate. Retry will run the original task again.`;
+    }
+    return "The draft kept coming back incomplete or unusable even after retrying, so I stopped instead of showing a broken version. Please retry the request.";
+  };
   const recordDiscoveredSourcePosts = (result: ToolResult) => {
     const returnedPosts = Array.isArray(result.posts)
       ? (result.posts as Array<{ id?: unknown; text?: unknown }>)
@@ -2930,8 +2942,7 @@ export async function* runAgent(opts: {
           legacyDraftRejectionCode &&
           !allArtifacts.some((artifact) => artifact.kind === "post")
         ) {
-          const safeFailure =
-            "I couldn't produce a complete verified draft, so I discarded the candidate. Please retry this request.";
+          const safeFailure = incompleteDraftFailureMessage();
           finalText = priorText
             ? `${priorText}\n\n${safeFailure}`.trim()
             : safeFailure;
@@ -3215,6 +3226,38 @@ export async function* runAgent(opts: {
         if (tc.function.name === ASK_TOOL_NAME) {
           totalToolCalls++;
           const built = buildAskQuestion(parsedArgs);
+          const progressBeforeAsk = deliverableContract
+            ? deliverableProgress(
+                deliverableContract,
+                acceptedDeliverableCount(),
+              )
+            : null;
+          // The deliverable contract, not the model, owns completion. A model
+          // may offer next steps after rendering only the first of several
+          // drafts; ending the turn there strands a partially fulfilled task.
+          // Reject that ask and keep the bounded agent loop moving until every
+          // requested slot is accepted. Missing facts can be represented with
+          // honest placeholders, so a question never has to replace a draft.
+          if (
+            "ask" in built &&
+            deliverableContract &&
+            progressBeforeAsk &&
+            acceptedDeliverableCount() > 0 &&
+            !progressBeforeAsk.complete
+          ) {
+            const proceedMsg: ChatMessage = {
+              role: "tool",
+              tool_call_id: tc.id,
+              content: JSON.stringify({
+                ok: false,
+                error: `Do not end the turn yet. The user is still owed ${progressBeforeAsk.remaining} ${deliverableContract.kind}${progressBeforeAsk.remaining === 1 ? "" : "s"}. Produce the remaining deliverable${progressBeforeAsk.remaining === 1 ? "" : "s"} now; use clear bracketed placeholders for genuinely unknowable facts instead of asking another question.`,
+              }),
+            };
+            working = [...working, proceedMsg];
+            allToolMessages.push(proceedMsg);
+            toolCallsFailed++;
+            continue;
+          }
           // NET: the user already named a specific item ("draft post 5", "the
           // 5th one") — there is nothing to clarify. GLM asks anyway (observed:
           // it miscounted its own 5-idea list as 4 and asked "which one?"), which
@@ -3754,7 +3797,8 @@ export async function* runAgent(opts: {
       ? deliverableProgress(deliverableContract, acceptedDeliverableCount())
       : null;
     const needsForcedContractCompletion = Boolean(
-      !newsBlockedBeforeForcedFinal &&
+      !askedThisTurn &&
+        !newsBlockedBeforeForcedFinal &&
         !sourceModelingBlockedBeforeForcedFinal &&
         contractBeforeForcedFinal &&
         !contractBeforeForcedFinal.complete,
@@ -3963,8 +4007,7 @@ export async function* runAgent(opts: {
           ).complete
         : forcedAcceptedDrafts === 0;
       if (forcedRejection && forcedContractIncomplete) {
-        const safeFailure =
-          "I couldn't produce a complete verified draft, so I discarded the candidate. Please retry this request.";
+        const safeFailure = incompleteDraftFailureMessage();
         forced = safeFailure;
         errorEmitted = true;
         if (forcedRejection.code === "truncated") {
@@ -4000,7 +4043,7 @@ export async function* runAgent(opts: {
         !allArtifacts.some((artifact) => artifact.kind === "post")
       ) {
         const safeFailure =
-          "I couldn't produce a complete verified draft, so I stopped instead of showing an unverified one. Please retry this request.";
+          "I couldn't verify the required source after retrying, so I stopped instead of showing an unsupported draft. Please retry the request.";
         finalText = safeFailure;
         errorEmitted = true;
         yield { type: "text", delta: safeFailure };

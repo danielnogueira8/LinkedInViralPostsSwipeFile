@@ -4,6 +4,7 @@ import {
   compileReadOnlyOrchestratorReserveRoute,
   readOnlyOrchestratorEnabledForWorkspace,
 } from "@/lib/agent/read-only-orchestrator-routing";
+import { resolveComposerTaskContext } from "@/lib/composer-task-context";
 
 const base = {
   isRefine: false,
@@ -14,6 +15,110 @@ const base = {
 };
 
 describe("read-only complex orchestrator routing", () => {
+  test("a terse modeled-post starter still requires top workspace sources", () => {
+    const composerTaskContext = resolveComposerTaskContext({
+      starterId: "model-top-viral",
+      selectedDraftCount: 2,
+      fallbackPostCount: null,
+    });
+
+    expect(
+      compileReadOnlyOrchestratorRoute({
+        ...base,
+        userInstruction: "AI slop for content writers.",
+        composerTaskContext,
+      }),
+    ).toMatchObject({
+      kind: "workspace_research",
+      expectsDraft: true,
+      expectedDrafts: 2,
+      minimumSources: 2,
+      workspaceSearchMode: "strict_top",
+      workspacePostType: "regular",
+      workspaceDraftSourceMode: "one_to_one",
+    });
+  });
+
+  test("a default single modeled draft retains one-to-one source attribution", () => {
+    const composerTaskContext = resolveComposerTaskContext({
+      starterId: "model-top-viral",
+      fallbackPostCount: null,
+    });
+
+    expect(
+      compileReadOnlyOrchestratorRoute({
+        ...base,
+        userInstruction: "AI slop for content writers.",
+        composerTaskContext,
+      }),
+    ).toMatchObject({
+      kind: "workspace_research",
+      expectedDrafts: 1,
+      minimumSources: 1,
+      workspaceDraftSourceMode: "one_to_one",
+    });
+  });
+
+  test("the recent lead-magnet starter carries its source window and post type", () => {
+    const composerTaskContext = resolveComposerTaskContext({
+      starterId: "model-recent-lead-magnet",
+      fallbackPostCount: null,
+    });
+
+    expect(
+      compileReadOnlyOrchestratorRoute({
+        ...base,
+        userInstruction: "An onboarding checklist.",
+        composerTaskContext,
+      }),
+    ).toMatchObject({
+      kind: "workspace_research",
+      workspaceSince: "30d",
+      workspacePostType: "lead_magnet",
+      workspaceSearchMode: "strict_top",
+    });
+  });
+
+  test.each(["brainstorm", "working-this-week"] as const)(
+    "does not send the non-draft %s starter into a draft-only orchestrator",
+    (starterId) => {
+      const composerTaskContext = resolveComposerTaskContext({
+        starterId,
+        fallbackPostCount: null,
+      });
+      expect(
+        compileReadOnlyOrchestratorRoute({
+          ...base,
+          userInstruction: "A terse subject.",
+          composerTaskContext,
+        }),
+      ).toBeNull();
+    },
+  );
+
+  test.each([
+    ["namejack", "web_research"],
+    ["brandjack", "web_research"],
+    ["newsjack", "news_research"],
+  ] as const)(
+    "a terse %s starter keeps its required %s lane",
+    (starterId, kind) => {
+      const composerTaskContext = resolveComposerTaskContext({
+        starterId,
+        selectedDraftCount: 2,
+        fallbackPostCount: null,
+      });
+
+      expect(
+        compileReadOnlyOrchestratorRoute({
+          ...base,
+          userInstruction: "A deliberately terse subject.",
+          composerTaskContext,
+        }),
+      ).toMatchObject({ kind, expectsDraft: true, expectedDrafts: 2 });
+    },
+  );
+
   test.each([
     [
       "news_research",

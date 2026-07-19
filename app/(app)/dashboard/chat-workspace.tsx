@@ -122,7 +122,14 @@ import {
   runOverlay,
   shouldApplyAskTurnReload,
 } from "@/lib/chat-session-view";
-import { readDraft, writeDraft } from "@/lib/chat-draft-storage";
+import {
+  clearComposerStarter,
+  moveComposerDraft,
+  readComposerDraft,
+  readDraft,
+  writeComposerDraft,
+  writeDraft,
+} from "@/lib/chat-draft-storage";
 import {
   chatIdAfterPendingNewSession,
   modelHandoffDestination,
@@ -144,6 +151,7 @@ import {
   generationConfigForSelection,
   type DraftCountSelection,
 } from "@/lib/generation-config";
+import type { ComposerStarterId } from "@/lib/composer-task-context";
 import { requestServerTurnStop } from "@/lib/chat-stop";
 import { safeJsonSchema } from "@/lib/api-fetch";
 import {
@@ -1768,7 +1776,9 @@ export function ChatWorkspace({
   // Prefill the composer from a starter chip. If the prompt has a [placeholder]
   // (e.g. a topic the user must fill), focus the input and select that span so
   // they can type straight over it; otherwise drop the cursor at the end.
-  const prefillPrompt = useCallback((prompt: string) => {
+  const prefillPrompt = useCallback((starter: Starter) => {
+    const { id, prompt } = starter;
+    writeComposerDraft(activeIdRef.current, { text: prompt, starterId: id });
     setInput(prompt);
     requestAnimationFrame(() => {
       const el = inputRef.current;
@@ -2202,8 +2212,7 @@ export function ChatWorkspace({
         // request was in flight. Seed before activating so the draft-swap reads
         // the new text instead of clearing it.
         const typedDuringCreate = inputRef.current?.value ?? readDraft(null);
-        writeDraft(chat.id, typedDuringCreate);
-        writeDraft(null, "");
+        moveComposerDraft(null, chat.id, typedDuringCreate);
         setForcedDraftByChat((prev) => {
           if (!(chat.id in prev)) return prev;
           const next = { ...prev };
@@ -2456,15 +2465,20 @@ export function ChatWorkspace({
       // rule as Post Format — the badge + stream field are gated on it.
       const turnCreatorStyle = pendingCreatorStyle;
       const turnCreatorStyleApplies = !attached;
-      let turnGenerationConfig =
-        overrideText !== undefined ||
-        sendOpts?.retryOfUserMessageId ||
-        sendOpts?.skipDecision ||
-        sendOpts?.forceRefine ||
-        sendOpts?.refineTargetId ||
-        sendOpts?.actionSelectionIds?.length
-          ? undefined
-          : generationConfigForSelection(draftCountSelection);
+      const appliesComposerControls =
+        overrideText === undefined &&
+        !sendOpts?.retryOfUserMessageId &&
+        !sendOpts?.skipDecision &&
+        !sendOpts?.forceRefine &&
+        !sendOpts?.refineTargetId &&
+        !sendOpts?.actionSelectionIds?.length;
+      const turnStarterOwnerId = targetChatId;
+      const turnStarterId = appliesComposerControls
+        ? readComposerDraft(turnStarterOwnerId).starterId ?? undefined
+        : undefined;
+      let turnGenerationConfig = appliesComposerControls
+        ? generationConfigForSelection(draftCountSelection)
+        : undefined;
       // The skill ids sent to the server: explicit (a refine inheriting the
       // source draft's skills) OR the composer chips. The bubble badge still
       // comes from turnSkills (composer chips only) — an inherited refine skill
@@ -2682,6 +2696,7 @@ export function ChatWorkspace({
       if (turnPostFormat) setPendingPostFormat(null);
       if (turnLeadMagnet) setPendingLeadMagnet(null);
       if (turnCreatorStyle) setPendingCreatorStyle(null);
+      if (turnStarterId) clearComposerStarter(turnStarterOwnerId);
       bump();
 
       // Optimistically title an untitled chat from this first message, matching
@@ -2765,6 +2780,7 @@ export function ChatWorkspace({
             ...(turnGenerationConfig
               ? { generationConfig: turnGenerationConfig }
               : {}),
+            ...(turnStarterId ? { starterId: turnStarterId } : {}),
           }),
         }, ctrl.signal, {
           timeoutMs: chatSetupDeadlines({
@@ -3026,6 +3042,9 @@ export function ChatWorkspace({
             if (turnPostFormat) setPendingPostFormat(turnPostFormat);
             if (turnLeadMagnet) setPendingLeadMagnet(turnLeadMagnet);
             if (turnCreatorStyle) setPendingCreatorStyle(turnCreatorStyle);
+            if (turnStarterId) {
+              writeComposerDraft(chatId, { text, starterId: turnStarterId });
+            }
           }
           bump();
           return;
@@ -3643,7 +3662,7 @@ export function ChatWorkspace({
   // render (not an effect) so it never points past the list.
   const slashActive = Math.min(slashActiveRaw, Math.max(0, slashMatches.length - 1));
   const pickSlash = (s: Starter) => {
-    prefillPrompt(s.prompt);
+    prefillPrompt(s);
     setSlashActive(0);
   };
 
@@ -8014,7 +8033,7 @@ function scheduleMetaFromArtifact(artifact: Artifact): ArtifactScheduleMeta {
 // prefillPrompt selects that span on click.
 type StarterGroup = "explore" | "create" | "borrow-attention";
 type Starter = {
-  id: string;
+  id: ComposerStarterId;
   group: StarterGroup;
   icon: LucideIcon;
   label: string;
@@ -8607,7 +8626,7 @@ function EmptyState({
   author,
   nextAction,
 }: {
-  onPick: (prompt: string) => void;
+  onPick: (starter: Starter) => void;
   author: Author;
   nextAction: CoworkNextAction;
 }) {
@@ -8722,7 +8741,7 @@ function StarterCommand({
   variant = "library",
 }: {
   starter: Starter;
-  onPick: (prompt: string) => void;
+  onPick: (starter: Starter) => void;
   description?: string;
   variant?: "default" | "library";
 }) {
@@ -8730,7 +8749,7 @@ function StarterCommand({
   return (
     <button
       type="button"
-      onClick={() => onPick(starter.prompt)}
+      onClick={() => onPick(starter)}
       title={starter.prompt}
       className={cn(
         "group flex w-full items-center gap-2.5 rounded-[10px] border px-2.5 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30 active:translate-y-px",

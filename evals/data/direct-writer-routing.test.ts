@@ -667,6 +667,19 @@ describe("direct source, partial, and multi eligibility", () => {
     ).toBe(true);
   });
 
+  test("keeps the original-post starter on the direct retrying lane when the UI requests two drafts", () => {
+    expect(
+      isDirectMultiPostEligible({
+        ...CONTEXT,
+        userInstruction:
+          "Write an original post in my voice about ai slop. Choose a proven framework that fits the topic, but do not model it after one specific source post.",
+        sourceRequested: false,
+        sourceResolved: false,
+        requestedCount: 2,
+      }),
+    ).toBe(true);
+  });
+
   test("keeps compound and unsafe multi-post requests on the baseline", () => {
     for (const userInstruction of [
       "Write exactly 2 posts and 3 hooks about pricing. Do not search.",

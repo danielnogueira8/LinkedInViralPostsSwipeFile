@@ -129,6 +129,15 @@ import {
 } from "@/lib/agent/source-policy";
 import { compileModeledPostIntent } from "@/lib/agent/modeled-post-intent";
 import {
+  composerStarterIdSchema,
+  composerStarterMarkerFromToolCalls,
+  composerStarterToolCall,
+  resolveComposerTaskContext,
+  type ComposerStarterId,
+  type ComposerTaskContext,
+  type ComposerTaskSelection,
+} from "@/lib/composer-task-context";
+import {
   hasPendingAskOnly,
   hasPendingActionAsk,
   hasUnsavedAssistantDraftReferent,
@@ -452,6 +461,9 @@ export const chatTurnRequestSchema = z.object({
   // from free text so source quantities and output quantities cannot be
   // conflated by downstream prompts or planners.
   generationConfig: generationConfigV1Schema.optional(),
+  // Server-owned semantics for a prompt chosen from the existing starter UI.
+  // Copy can be edited freely; the stable id carries the selected workflow.
+  starterId: composerStarterIdSchema.optional(),
   attachments: z
     .array(attachmentSchema)
     .max(MAX_ATTACHMENTS)
@@ -1994,6 +2006,10 @@ export async function executeChatTurn(
   let resolvedGenerationConfig: ResolvedGenerationConfig | null = null;
   let generationConfigRestoredFromRetry = false;
   let activeDraftCountOverride: number | undefined;
+  let composerStarterId: ComposerStarterId | undefined;
+  let composerTaskContext: ComposerTaskContext | null = null;
+  let composerTaskSelection: ComposerTaskSelection = {};
+  let hasAuthoritativeDraftCount = false;
   // Hook-only refine: when both are set, the artifact handler splices the
   // model's new opener onto hookOnlyOriginalBody byte-for-byte before pushing
   // + persisting. See lib/hook-splice.ts:splicePreservedBody.
@@ -2081,6 +2097,7 @@ export async function executeChatTurn(
     leadMagnetId = body.leadMagnetId;
     createLeadMagnet = body.createLeadMagnet;
     requestedGenerationConfig = body.generationConfig ?? null;
+    composerStarterId = body.starterId;
     // Both fields must be present together — hookOnly alone with no source
     // body is meaningless (nothing to splice against) and quietly ignoring
     // it prevents a malformed client from tripping the splice with an empty
@@ -2316,6 +2333,32 @@ export async function executeChatTurn(
           409,
         );
       }
+      const pairedStarterMarker = composerStarterMarkerFromToolCalls(
+        retryUser?.tool_calls,
+      );
+      if (pairedStarterMarker.kind === "invalid") {
+        return turnError(
+          "The saved starter context failed its integrity check. Send the request again as a new message.",
+          409,
+        );
+      }
+      if (pairedStarterMarker.kind === "valid") {
+        if (
+          composerStarterId &&
+          composerStarterId !== pairedStarterMarker.starterId
+        ) {
+          return turnError(
+            "That Retry no longer matches the starter used by the original task. Send it as a new request instead.",
+            409,
+          );
+        }
+        composerStarterId = pairedStarterMarker.starterId;
+      } else if (composerStarterId) {
+        return turnError(
+          "That Retry adds a starter context that was not part of the original task. Send it as a new request instead.",
+          409,
+        );
+      }
       const pairedAssistant =
         retryUserIndex >= 0
           ? recentMessageWindow
@@ -2427,14 +2470,30 @@ export async function executeChatTurn(
     const preclaimPartialSpec = compileDirectPartialTextSpec(
       preclaimInstruction,
     );
-    const preclaimBasePostCount = requestedBasePostCount(
+    const fallbackPreclaimPostCount = requestedBasePostCount(
       preclaimInstruction,
       Boolean(modelSourceId),
     );
+    hasAuthoritativeDraftCount =
+      resolvedGenerationConfig.draftCountSource === "ui" ||
+      generationConfigRestoredFromRetry;
+    composerTaskSelection = {
+      ...(composerStarterId ? { starterId: composerStarterId } : {}),
+      ...(hasAuthoritativeDraftCount
+        ? { selectedDraftCount: resolvedGenerationConfig.draftCount }
+        : {}),
+      ...(modelSourceId ? { selectedSourceId: modelSourceId } : {}),
+    };
+    composerTaskContext = resolveComposerTaskContext({
+      ...composerTaskSelection,
+      fallbackPostCount: fallbackPreclaimPostCount,
+    });
+    const preclaimBasePostCount =
+      composerTaskContext.kind === "post"
+        ? composerTaskContext.expectedDraftCount
+        : null;
     activeDraftCountOverride =
-      (resolvedGenerationConfig.draftCountSource === "ui" ||
-        generationConfigRestoredFromRetry) &&
-      preclaimBasePostCount !== null
+      hasAuthoritativeDraftCount && preclaimBasePostCount !== null
         ? resolvedGenerationConfig.draftCount
         : undefined;
     const preclaimRoutingInput = {
@@ -2447,6 +2506,7 @@ export async function executeChatTurn(
       hasAttachments: attachments.length > 0,
       hasLeadMagnet: Boolean(leadMagnetId || createLeadMagnet),
       hasCreatorStyle: Boolean(creatorStyleId),
+      composerTaskContext,
       hasUnsavedDraftReferent:
         hasUnsavedAssistantDraftReferent(recentMessageWindow),
       clientTimezone: body.clientTimezone,
@@ -2459,8 +2519,11 @@ export async function executeChatTurn(
     const preclaimReadOnlyRoute =
       modeledBatchContinuation?.route ??
       compileReadOnlyOrchestratorReserveRoute(preclaimRoutingInput);
+    const preclaimModeledContinuation =
+      continuationForModeledDraftRoute(preclaimReadOnlyRoute);
     const preclaimModeledRoute = Boolean(
       modeledBatchContinuation ||
+        preclaimModeledContinuation ||
         (preclaimReadOnlyRoute &&
           compileModeledPostIntent(preclaimInstruction, {
             draftCountOverride: activeDraftCountOverride,
@@ -2469,9 +2532,7 @@ export async function executeChatTurn(
     currentTurnModelSourceOwnership = preclaimModeledRoute
       ? "server_selected"
       : "historical_continuation";
-    modeledBatchContractRequested = Boolean(
-      continuationForModeledDraftRoute(preclaimReadOnlyRoute),
-    );
+    modeledBatchContractRequested = Boolean(preclaimModeledContinuation);
     setupRequestedContract = preclaimActionRoute
       ? {
           kind: "saved_draft_action",
@@ -2835,6 +2896,7 @@ export async function executeChatTurn(
     // get_voice. A transient failure is fail-open: runAgent leaves get_voice
     // available for the model to retry.
     const shouldPreloadVoice = Boolean(
+      composerTaskContext?.kind === "post" ||
       skipDecision ||
       modelSourceId ||
       requestsDirectSourceModeling(userText) ||
@@ -2851,6 +2913,7 @@ export async function executeChatTurn(
         hasAttachments: attachments.length > 0,
         hasLeadMagnet: Boolean(leadMagnetId || createLeadMagnet),
         hasCreatorStyle: Boolean(creatorStyleId),
+        composerTaskContext: composerTaskContext ?? undefined,
       }),
     );
     const voicePromise = shouldPreloadVoice
@@ -2936,21 +2999,27 @@ export async function executeChatTurn(
       effectiveUserInstruction,
       Boolean(modelSourceId),
     );
+    composerTaskContext = resolveComposerTaskContext({
+      ...composerTaskSelection,
+      fallbackPostCount: effectiveBasePostCount,
+    });
+    const effectiveComposerPostCount =
+      composerTaskContext.kind === "post"
+        ? composerTaskContext.expectedDraftCount
+        : null;
     if (
-      (resolvedGenerationConfig.draftCountSource === "ui" ||
-        generationConfigRestoredFromRetry) &&
-      effectiveBasePostCount !== null
+      hasAuthoritativeDraftCount && effectiveComposerPostCount !== null
     ) {
       activeDraftCountOverride = resolvedGenerationConfig.draftCount;
     }
     if (
       setupRequestedContract.kind === "answer" &&
-      effectiveBasePostCount !== null
+      effectiveComposerPostCount !== null
     ) {
       setupRequestedContract = {
         kind: "post",
         expectedCount:
-          activeDraftCountOverride ?? effectiveBasePostCount,
+          activeDraftCountOverride ?? effectiveComposerPostCount,
       };
     }
 
@@ -3063,6 +3132,7 @@ export async function executeChatTurn(
     // throws, so a DB blip just yields format-rules-only or an empty block.
     hasModelSource = !!(modelSourceId && currentModelEnvelope);
     const effectivePostTurn = Boolean(
+      composerTaskContext?.kind === "post" ||
       skipDecision ||
       modelSourceId ||
       requestsDirectSourceModeling(effectiveUserInstruction) ||
@@ -3095,7 +3165,8 @@ export async function executeChatTurn(
 
     if (
       !skipDecision &&
-      isNoModelPostRequest(effectiveUserInstruction, hasModelSource)
+      (composerTaskContext?.sourceMode === "original" ||
+        isNoModelPostRequest(effectiveUserInstruction, hasModelSource))
     ) {
       const forced = !!forcedNoModelFormatId;
       const format: NoModelFormat = selectNoModelFormatForTurn(
@@ -3448,6 +3519,9 @@ export async function executeChatTurn(
     if (appliedLeadMagnet) {
       userToolCalls.push(leadMagnetToolCall(appliedLeadMagnet));
     }
+    if (composerStarterId) {
+      userToolCalls.push(composerStarterToolCall(composerStarterId));
+    }
     if (
       setupRequestedContract.kind === "post" &&
       resolvedGenerationConfig
@@ -3630,6 +3704,9 @@ export async function executeChatTurn(
   );
   const directPostCount =
     activeDraftCountOverride ??
+    (composerTaskContext?.kind === "post"
+      ? composerTaskContext.expectedDraftCount
+      : null) ??
     requestedDirectPostCount(effectiveUserInstruction);
   // THIN PATH — find-and-model. A "find a top post in my swipe file and rewrite
   // it" turn has NO pre-attached source, so directSource is empty and the
@@ -3703,6 +3780,7 @@ export async function executeChatTurn(
     sourceResolved: Boolean(directSource),
     isRefine: skipDecision,
     requestedCount: directPostCount ?? undefined,
+    composerTaskContext: composerTaskContext ?? undefined,
   });
   const useDirectSource =
     isDirectFixedSourcePostEligible({
@@ -3730,6 +3808,7 @@ export async function executeChatTurn(
     // the user requested context the direct engine does not own.
     hasModelSource: Boolean(modelSourceId),
     isRefine: skipDecision,
+    composerTaskContext: composerTaskContext ?? undefined,
   });
   // THIN-PATH lead-magnet. A lead-magnet post is a from-scratch original post
   // with the giveaway framing. The direct engine now injects that framing
@@ -3782,6 +3861,7 @@ export async function executeChatTurn(
       hasCreatorStyle: false,
       hasModelSource: Boolean(modelSourceId),
       isRefine: skipDecision,
+      composerTaskContext: composerTaskContext ?? undefined,
     });
   const useDirectWriter =
     !modeledBatchContractRequested &&
@@ -3824,6 +3904,7 @@ export async function executeChatTurn(
       sourceResolved: Boolean(directSource),
       isRefine: skipDecision,
       requestedCount: directPostCount ?? undefined,
+      composerTaskContext: composerTaskContext ?? undefined,
     }) ||
     isDirectFixedSourcePostEligible({
       ...shadowDirectWritingContext,
@@ -3833,9 +3914,11 @@ export async function executeChatTurn(
     }) ||
     isDirectOriginalPostEligible({
       userInstruction: effectiveUserInstruction,
+      requestedCount: directPostCount ?? undefined,
       ...shadowDirectWritingContext,
       hasModelSource: Boolean(modelSourceId),
       isRefine: skipDecision,
+      composerTaskContext: composerTaskContext ?? undefined,
     });
   const actionOrchestratorRoute = useDirectWriter
     ? null
@@ -3927,12 +4010,14 @@ export async function executeChatTurn(
               activeLeadMagnetCampaign,
           ),
           hasCreatorStyle: Boolean(creatorStyleId),
+          composerTaskContext: composerTaskContext ?? undefined,
         });
   const modeledBatchRouteContract = continuationForModeledDraftRoute(
     readOnlyOrchestratorRoute,
   );
   const deterministicModeledRoute = Boolean(
     modeledBatchContinuation ||
+      modeledBatchRouteContract ||
       (readOnlyOrchestratorRoute &&
         compileModeledPostIntent(effectiveUserInstruction, {
           draftCountOverride: activeDraftCountOverride,

@@ -12,6 +12,7 @@ import { coworkRolloutDecision } from "@/lib/agent/cowork-rollout";
 import type { coworkRolloutRuntimeHealth } from "@/lib/agent/cowork-rollout-health";
 import { wrapUntrustedXml } from "@/lib/agent/untrusted";
 import type { PostType } from "@/lib/post-type";
+import type { ComposerTaskContext } from "@/lib/composer-task-context";
 
 export const READ_ONLY_ORCHESTRATOR_ROUTE_KINDS = [
   "news_research",
@@ -46,6 +47,7 @@ export type ReadOnlyOrchestratorRoute = {
 export type ReadOnlyOrchestratorRoutingInput = {
   userInstruction: string;
   draftCountOverride?: number;
+  composerTaskContext?: ComposerTaskContext;
   isRefine: boolean;
   hasModelSource: boolean;
   hasAttachments: boolean;
@@ -54,6 +56,37 @@ export type ReadOnlyOrchestratorRoutingInput = {
 };
 
 type ReadOnlyOrchestratorEnvironment = Record<string, string | undefined>;
+
+/** Compile source requirements chosen in the composer without reclassifying text. */
+function composerResearchRoute(
+  context: ComposerTaskContext | undefined,
+): ReadOnlyOrchestratorRoute | null {
+  const requirement = context?.researchRequirement;
+  // This orchestrator currently owns researched drafts only. Answer/ideas
+  // starters stay on the history-aware agent until it has a typed answer lane.
+  if (!context || context.kind !== "post" || !requirement) return null;
+  if (requirement.lane === "workspace") {
+    return {
+      kind: "workspace_research",
+      expectsDraft: true,
+      expectedDrafts: context.expectedDraftCount,
+      minimumSources: requirement.minimumSources,
+      workspaceSearchMode: requirement.searchMode,
+      ...(requirement.since ? { workspaceSince: requirement.since } : {}),
+      ...(requirement.postType
+        ? { workspacePostType: requirement.postType }
+        : {}),
+      ...(requirement.oneSourcePerDraft
+        ? { workspaceDraftSourceMode: "one_to_one" as const }
+        : {}),
+    };
+  }
+  return {
+    kind: requirement.lane === "news" ? "news_research" : "web_research",
+    expectsDraft: true,
+    expectedDrafts: context.expectedDraftCount,
+  };
+}
 
 /** Fail-closed shared rollout policy for the read-only orchestrator lane. */
 export function readOnlyOrchestratorEnabledForWorkspace(
@@ -617,9 +650,17 @@ export function compileReadOnlyOrchestratorRoute(
     !instruction ||
     input.isRefine ||
     input.hasModelSource ||
+    requestsDurableOrAction(instruction)
+  ) {
+    return null;
+  }
+  const selectedComposerRoute = composerResearchRoute(
+    input.composerTaskContext,
+  );
+  if (selectedComposerRoute) return selectedComposerRoute;
+  if (
     ((input.hasLeadMagnet || input.hasCreatorStyle) &&
       modeledIntent.kind === "none") ||
-    requestsDurableOrAction(instruction) ||
     (forbidsDiscovery && !input.hasAttachments)
   ) {
     return null;
