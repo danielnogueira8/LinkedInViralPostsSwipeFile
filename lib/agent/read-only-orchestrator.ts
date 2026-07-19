@@ -2603,15 +2603,21 @@ async function* runReadOnlyOrchestratorCore(
   // coordinator accepts only the requested slots plus five frozen reserves.
   // Preserve ranking order while bounding the persisted pool; retries reuse
   // this exact slice and never re-run selection against a different set.
+  // A url is NOT required — it only stamps the "Open on LinkedIn" chip on
+  // the finished draft, and the batch (modeled-draft-batch.ts) accepts a
+  // url-less source. Requiring one here dropped fully-modelable scraped
+  // posts whose url column is null (a real, common condition) from the
+  // candidate pool for no modeling-quality reason. When a url IS present it
+  // must still be genuinely canonical (not malformed/untrusted).
   const canonicalPool = modeledSourcePool
     .flatMap((source) =>
       source.kind === "workspace_post" &&
-      isCanonicalModeledSourceUrl(source.url)
+      (source.url === undefined || isCanonicalModeledSourceUrl(source.url))
         ? [
             {
               id: source.id,
               text: source.text,
-              url: source.url,
+              ...(source.url ? { url: source.url } : {}),
               ...(source.title ? { title: source.title } : {}),
               ...(source.publishedAt
                 ? { publishedAt: source.publishedAt }
