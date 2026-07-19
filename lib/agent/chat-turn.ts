@@ -5023,12 +5023,22 @@ export async function executeChatTurn(
                         modeledBatchRetryRootUserMessageId,
                     }
                   : null);
+              // A failed turn that delivered nothing shouldn't show a credit
+              // line at all — "~1 credit" next to a dead-end error reads as
+              // "you were charged for nothing," even though the number is
+              // usually tiny. Only suppress when BOTH conditions hold: the
+              // turn is recoverable/failed (persistedRecoverableMarker) AND
+              // it produced zero artifacts. A legitimate zero-artifact
+              // success (a plain-text answer, a clarifying question) still
+              // shows its real cost.
+              const suppressUsageLine =
+                Boolean(persistedRecoverableMarker) && artifacts.length === 0;
               const doneToolCalls = [
                 ...(ev.message.tool_calls ?? []),
                 ...(persistedRecoverableMarker
                   ? [recoverableToolCall(persistedRecoverableMarker)]
                   : []),
-                turnUsageToolCall(turnUsage),
+                ...(suppressUsageLine ? [] : [turnUsageToolCall(turnUsage)]),
               ];
               const saved = await persistAssistant(
                 ev.message.content,

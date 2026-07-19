@@ -2942,7 +2942,17 @@ export function ChatWorkspace({
             if (chatId === activeIdRef.current) setPanelOpen(true);
             bump();
           } else if (event === "done") {
-            run.usage = parseCoworkTurnUsage(data.usage) ?? undefined;
+            // A failed turn that delivered nothing shouldn't show a credit
+            // line — "~1 credit" next to a dead-end error reads as "you were
+            // charged for nothing." The `error` frame for a recoverable
+            // failure always precedes `done` in the same turn, so
+            // run.recoverable is already set by the time this runs. Mirrors
+            // the same suppression chat-turn.ts applies to the PERSISTED
+            // usage marker, so live and post-reload rendering agree.
+            run.usage =
+              run.recoverable && run.artifacts.length === 0
+                ? undefined
+                : (parseCoworkTurnUsage(data.usage) ?? undefined);
             bump();
           } else if (event === "error") {
             const code = String(data.code ?? "");
