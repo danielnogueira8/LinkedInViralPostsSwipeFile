@@ -204,14 +204,17 @@ export type DraftEngineInput = {
   onModelUsed?: (model: string) => void;
   telemetry?: CoworkTurnTelemetry;
   // THIN PATH. When true, the engine drafts with a STRONG reasoning model
-  // (Gemini 3.1 Pro → Sonnet 5) and drops the "taste" machinery: the source-
-  // fidelity gate, the sameness rewrite, and the ai-tell repair pass are all
-  // no-op'd, and the grounding/factual-specificity policy checks are turned off.
-  // The strong model's own judgment replaces those. The CORRUPTION nets that
-  // remain (security redaction, hard char cap, corrupt-fence rejection, em-dash
-  // strip, list/whitespace normalization) run exactly as before — those catch
-  // broken output, not style. Callers still get the identical artifact + event
-  // shape, so persistence and the fallback path are unchanged.
+  // (Gemini 3.1 Pro → Sonnet 5). NOTE: the finalizer "taste" specialists are
+  // NOT dropped on this path — the lean specialist bundle (lib/agent/lean-
+  // finalizer.ts) wires the REAL editor, ai-tell repair, sameness rewrite, AND
+  // source-fidelity reviewer, same as the heavy path (they check different
+  // things than raw writing quality; re-enabling them was a deliberate,
+  // live-tested decision — see lean-finalizer.ts). What lean actually changes
+  // vs. the heavy path is the WRITER model and the grounding/factual-specificity
+  // policy checks (those are the pieces the strong model's own judgment
+  // replaces). The CORRUPTION nets (security redaction, hard char cap, corrupt-
+  // fence rejection, em-dash strip, list/whitespace normalization) run exactly
+  // as before. Callers still get the identical artifact + event shape.
   lean?: boolean;
   // Opt-in for the finalizer's coarse structure gate (lib/post-structure-
   // skeleton.ts checkStructureMatch) on a task.kind === "source" turn. The
