@@ -138,6 +138,8 @@ export type DbMessage = {
   artifacts?: Artifact[] | null;
   /** Persisted structured attachment blocks (text/file/image-analysis) for user messages. */
   content_blocks?: ContentBlock[] | null;
+  model_source_id?: string | null;
+  lead_magnet_id?: string | null;
 };
 
 export type ModelSourceRow = {
@@ -485,11 +487,21 @@ export function imageAttachmentAnalysisBlock(
 }
 
 export function extractModelSourceId(
-  toolCalls: ToolCall[] | null | undefined,
+  input:
+    | ToolCall[] | null | undefined
+    | { model_source_id?: string | null; tool_calls?: ToolCall[] | null | undefined },
 ): string | null {
-  const tc = toolCalls?.find(
-    (c) => c.function?.name === MODEL_SOURCE_TOOL_NAME,
-  );
+  if (
+    !Array.isArray(input) &&
+    input !== null &&
+    input !== undefined &&
+    typeof input.model_source_id === "string" &&
+    input.model_source_id.trim()
+  ) {
+    return input.model_source_id.trim();
+  }
+  const calls = Array.isArray(input) ? input : input?.tool_calls;
+  const tc = calls?.find((c) => c.function?.name === MODEL_SOURCE_TOOL_NAME);
   if (!tc) return null;
   try {
     const args = JSON.parse(tc.function.arguments) as Record<string, unknown>;
@@ -510,11 +522,21 @@ export function extractModelSourceId(
 // the moment the user starts a turn that attaches a different (or no) source,
 // that newer marker wins, and a turn with no modeling lineage recovers null.
 export function latestAttachedModelSourceId(
-  rowsAsc: readonly { role: string; tool_calls: ToolCall[] | null }[],
+  rowsAsc: readonly {
+    role: string;
+    tool_calls: ToolCall[] | null;
+    model_source_id?: string | null;
+  }[],
 ): string | null {
   for (let i = rowsAsc.length - 1; i >= 0; i--) {
     const row = rowsAsc[i];
     if (row.role !== "user") continue;
+    if (
+      typeof row.model_source_id === "string" &&
+      row.model_source_id.trim()
+    ) {
+      return row.model_source_id.trim();
+    }
     const id = extractModelSourceId(row.tool_calls);
     if (id) return id;
   }
@@ -535,7 +557,11 @@ export function modelSourceIdForTurn(input: {
   currentTurnSourceOwnership:
     | "historical_continuation"
     | "server_selected";
-  rows: readonly { role: string; tool_calls: ToolCall[] | null }[];
+  rows: readonly {
+    role: string;
+    tool_calls: ToolCall[] | null;
+    model_source_id?: string | null;
+  }[];
 }): string | null {
   if (input.explicitId) return input.explicitId;
   if (
@@ -548,13 +574,30 @@ export function modelSourceIdForTurn(input: {
 }
 
 export function extractLeadMagnetSelection(
-  toolCalls: ToolCall[] | null | undefined,
+  input:
+    | ToolCall[] | null | undefined
+    | { lead_magnet_id?: string | null; tool_calls?: ToolCall[] | null | undefined },
 ): { id: string; title: string; selection: "manual" | "auto" } | null {
-  const tc = toolCalls?.find((c) => c.function?.name === LEAD_MAGNET_TOOL_NAME);
-  if (!tc) return null;
+  const columnId =
+    !Array.isArray(input) && input !== null && input !== undefined
+      ? input.lead_magnet_id
+      : undefined;
+  const calls = Array.isArray(input) ? input : input?.tool_calls;
+  const tc = calls?.find((c) => c.function?.name === LEAD_MAGNET_TOOL_NAME);
+  if (!tc) {
+    if (typeof columnId === "string" && columnId.trim()) {
+      // The column tells us a lead magnet was selected, but without the marker
+      // we cannot recover its display metadata. Fall back to null and let the
+      // caller load the resource by id when needed.
+      return null;
+    }
+    return null;
+  }
   try {
     const args = JSON.parse(tc.function.arguments) as Record<string, unknown>;
-    const id = typeof args.id === "string" ? args.id.trim() : "";
+    const id =
+      (typeof columnId === "string" ? columnId.trim() : "") ||
+      (typeof args.id === "string" ? args.id.trim() : "");
     const title = typeof args.title === "string" ? args.title.trim() : "";
     if (!id || !title) return null;
     return {
@@ -574,7 +617,7 @@ export function latestLeadMagnetSelection(rows: DbMessage[]): {
 } | null {
   for (let i = rows.length - 1; i >= 0; i--) {
     if (rows[i].role !== "user") continue;
-    const selection = extractLeadMagnetSelection(rows[i].tool_calls);
+    const selection = extractLeadMagnetSelection(rows[i]);
     if (selection) return selection;
   }
   return null;

@@ -576,34 +576,63 @@ export type RetryRootMarker =
   | { kind: "invalid" }
   | { kind: "valid"; rootUserMessageId: string };
 
-export function retryRootMarkerFromToolCalls(
-  calls: readonly ToolCall[] | null | undefined,
-): RetryRootMarker {
-  if (!calls) return { kind: "none" };
-  for (let index = calls.length - 1; index >= 0; index -= 1) {
-    const call = calls[index];
+type RecoverableSource = {
+  recoverable_error?: unknown;
+  tool_calls?: readonly ToolCall[] | null | undefined;
+};
+
+function normalizeRecoverableSource(
+  input: readonly ToolCall[] | null | undefined | RecoverableSource,
+): RecoverableSource {
+  if (input === null || input === undefined || Array.isArray(input)) {
+    return { tool_calls: input as readonly ToolCall[] | null | undefined };
+  }
+  return input as RecoverableSource;
+}
+
+function recoverableArgsFromSource(
+  source: RecoverableSource,
+): Record<string, unknown> | undefined {
+  if (
+    source.recoverable_error !== undefined &&
+    source.recoverable_error !== null
+  ) {
+    if (
+      typeof source.recoverable_error === "object" &&
+      !Array.isArray(source.recoverable_error)
+    ) {
+      return source.recoverable_error as Record<string, unknown>;
+    }
+    return undefined;
+  }
+  if (!source.tool_calls) return undefined;
+  for (let index = source.tool_calls.length - 1; index >= 0; index -= 1) {
+    const call = source.tool_calls[index];
     if (!isServerRecoverableToolCall(call)) continue;
     try {
-      const parsed = JSON.parse(call.function.arguments) as {
-        retryRootUserMessageId?: unknown;
-      };
-      if (
-        !Object.prototype.hasOwnProperty.call(
-          parsed,
-          "retryRootUserMessageId",
-        )
-      ) {
-        return { kind: "none" };
-      }
-      const root = z.string().uuid().safeParse(parsed.retryRootUserMessageId);
-      return root.success
-        ? { kind: "valid", rootUserMessageId: root.data }
-        : { kind: "invalid" };
+      return JSON.parse(call.function.arguments) as Record<string, unknown>;
     } catch {
-      return { kind: "invalid" };
+      return undefined;
     }
   }
-  return { kind: "none" };
+  return undefined;
+}
+
+export function retryRootMarkerFromToolCalls(
+  input: readonly ToolCall[] | null | undefined | RecoverableSource,
+): RetryRootMarker {
+  const source = normalizeRecoverableSource(input);
+  const parsed = recoverableArgsFromSource(source);
+  if (!parsed) return { kind: "none" };
+  if (
+    !Object.prototype.hasOwnProperty.call(parsed, "retryRootUserMessageId")
+  ) {
+    return { kind: "none" };
+  }
+  const root = z.string().uuid().safeParse(parsed.retryRootUserMessageId);
+  return root.success
+    ? { kind: "valid", rootUserMessageId: root.data }
+    : { kind: "invalid" };
 }
 
 export type ModeledDraftBatchContinuationMarker =
@@ -612,36 +641,22 @@ export type ModeledDraftBatchContinuationMarker =
   | { kind: "valid"; continuation: ModeledDraftBatchContinuation };
 
 export function modeledDraftBatchContinuationMarkerFromToolCalls(
-  calls: readonly ToolCall[] | null | undefined,
+  input: readonly ToolCall[] | null | undefined | RecoverableSource,
 ): ModeledDraftBatchContinuationMarker {
-  if (!calls) return { kind: "none" };
-  for (let index = calls.length - 1; index >= 0; index -= 1) {
-    const call = calls[index];
-    if (!isServerRecoverableToolCall(call)) continue;
-    try {
-      const parsed = JSON.parse(call.function.arguments) as {
-        code?: unknown;
-        retryRootUserMessageId?: unknown;
-        continuation?: unknown;
-      };
-      const claimsModeledContinuation =
-        Object.prototype.hasOwnProperty.call(parsed, "continuation") ||
-        (typeof parsed.code === "string" &&
-          parsed.code.startsWith("modeled_batch_resumable_"));
-      if (!claimsModeledContinuation) return { kind: "none" };
-      const root = z.string().uuid().safeParse(parsed.retryRootUserMessageId);
-      const continuation = parseModeledDraftBatchContinuation(
-        parsed.continuation,
-      );
-      if (!root.success || !continuation) {
-        return { kind: "invalid" };
-      }
-      return { kind: "valid", continuation };
-    } catch {
-      return { kind: "invalid" };
-    }
+  const source = normalizeRecoverableSource(input);
+  const parsed = recoverableArgsFromSource(source);
+  if (!parsed) return { kind: "none" };
+  const claimsModeledContinuation =
+    Object.prototype.hasOwnProperty.call(parsed, "continuation") ||
+    (typeof parsed.code === "string" &&
+      parsed.code.startsWith("modeled_batch_resumable_"));
+  if (!claimsModeledContinuation) return { kind: "none" };
+  const root = z.string().uuid().safeParse(parsed.retryRootUserMessageId);
+  const continuation = parseModeledDraftBatchContinuation(parsed.continuation);
+  if (!root.success || !continuation) {
+    return { kind: "invalid" };
   }
-  return { kind: "none" };
+  return { kind: "valid", continuation };
 }
 
 // Build the synthetic marker persisted on the assistant row for a recoverable
@@ -695,9 +710,44 @@ export type GenerationConfigSelectionMarker =
   | { kind: "invalid" }
   | { kind: "valid"; config: ResolvedGenerationConfig };
 
+function parseGenerationConfigSelectionValue(
+  value: unknown,
+): GenerationConfigSelectionMarker | null {
+  const parsed = resolvedGenerationConfigSchema.safeParse(value);
+  return parsed.success ? { kind: "valid", config: parsed.data } : null;
+}
+
+type GenerationConfigSelectionSource = {
+  generation_config?: unknown;
+  tool_calls?: readonly ToolCall[] | null | undefined;
+};
+
+function normalizeGenerationConfigSelectionSource(
+  input:
+    | readonly ToolCall[] | null | undefined
+    | GenerationConfigSelectionSource,
+): GenerationConfigSelectionSource {
+  if (input === null || input === undefined || Array.isArray(input)) {
+    return { tool_calls: input as readonly ToolCall[] | null | undefined };
+  }
+  return input as GenerationConfigSelectionSource;
+}
+
 export function generationConfigSelectionMarkerFromToolCalls(
-  calls: readonly ToolCall[] | null | undefined,
+  input:
+    | readonly ToolCall[] | null | undefined
+    | GenerationConfigSelectionSource,
 ): GenerationConfigSelectionMarker {
+  const source = normalizeGenerationConfigSelectionSource(input);
+  if (
+    source.generation_config !== undefined &&
+    source.generation_config !== null
+  ) {
+    return parseGenerationConfigSelectionValue(source.generation_config) ?? {
+      kind: "invalid",
+    };
+  }
+  const calls = source.tool_calls;
   const markers = (calls ?? []).filter(
     (call) =>
       call.id === GENERATION_CONFIG_TOOL_NAME &&
@@ -706,12 +756,11 @@ export function generationConfigSelectionMarkerFromToolCalls(
   if (markers.length === 0) return { kind: "none" };
   if (markers.length !== 1) return { kind: "invalid" };
   try {
-    const parsed = resolvedGenerationConfigSchema.safeParse(
-      JSON.parse(markers[0].function.arguments),
+    return (
+      parseGenerationConfigSelectionValue(
+        JSON.parse(markers[0].function.arguments),
+      ) ?? { kind: "invalid" }
     );
-    return parsed.success
-      ? { kind: "valid", config: parsed.data }
-      : { kind: "invalid" };
   } catch {
     return { kind: "invalid" };
   }
@@ -958,9 +1007,51 @@ const legacyCustomSkillSelectionSchema = z
   .strict();
 
 /** Recover only the exact bounded skill bodies persisted by the server. */
+function parseCustomSkillSelectionValue(
+  value: unknown,
+): CustomSkillSelectionMarker | null {
+  const parsed = customSkillSelectionSchema.safeParse(value);
+  if (parsed.success) {
+    return {
+      kind: "valid",
+      context: {
+        version: parsed.data.retryContext.version,
+        skills: parsed.data.retryContext.skills,
+      },
+    };
+  }
+  return legacyCustomSkillSelectionSchema.safeParse(value).success
+    ? { kind: "unfrozen" }
+    : null;
+}
+
+type CustomSkillSelectionSource = {
+  applied_skills?: unknown;
+  tool_calls?: readonly ToolCall[] | null | undefined;
+};
+
+function normalizeCustomSkillSelectionSource(
+  input: readonly ToolCall[] | null | undefined | CustomSkillSelectionSource,
+): CustomSkillSelectionSource {
+  if (input === null || input === undefined || Array.isArray(input)) {
+    return { tool_calls: input as readonly ToolCall[] | null | undefined };
+  }
+  return input as CustomSkillSelectionSource;
+}
+
 export function customSkillSelectionMarkerFromToolCalls(
-  calls: readonly ToolCall[] | null | undefined,
+  input: readonly ToolCall[] | null | undefined | CustomSkillSelectionSource,
 ): CustomSkillSelectionMarker {
+  const source = normalizeCustomSkillSelectionSource(input);
+  if (
+    source.applied_skills !== undefined &&
+    source.applied_skills !== null
+  ) {
+    return parseCustomSkillSelectionValue(source.applied_skills) ?? {
+      kind: "invalid",
+    };
+  }
+  const calls = source.tool_calls;
   const markers = (calls ?? []).filter(
     (call) => call.function.name === CUSTOM_SKILLS_TOOL_NAME,
   );
@@ -968,19 +1059,7 @@ export function customSkillSelectionMarkerFromToolCalls(
   if (markers.length !== 1) return { kind: "invalid" };
   try {
     const value: unknown = JSON.parse(markers[0].function.arguments);
-    const parsed = customSkillSelectionSchema.safeParse(value);
-    if (parsed.success) {
-      return {
-        kind: "valid",
-        context: {
-          version: parsed.data.retryContext.version,
-          skills: parsed.data.retryContext.skills,
-        },
-      };
-    }
-    return legacyCustomSkillSelectionSchema.safeParse(value).success
-      ? { kind: "unfrozen" }
-      : { kind: "invalid" };
+    return parseCustomSkillSelectionValue(value) ?? { kind: "invalid" };
   } catch {
     return { kind: "invalid" };
   }
@@ -1055,14 +1134,58 @@ const creatorStyleSelectionSchema = creatorStyleSelectionBaseSchema
 const legacyCreatorStyleSelectionSchema =
   creatorStyleSelectionBaseSchema.strict();
 
+function parseCreatorStyleSelectionValue(
+  value: unknown,
+): CreatorStyleSelectionMarker | null {
+  const parsed = creatorStyleSelectionSchema.safeParse(value);
+  if (parsed.success) {
+    return {
+      kind: "valid",
+      context: {
+        version: parsed.data.retryContext.version,
+        id: parsed.data.id,
+        name: parsed.data.name,
+        creatorName: parsed.data.creatorName,
+        resolvedBlock: parsed.data.retryContext.resolvedBlock,
+      },
+    };
+  }
+  const legacy = legacyCreatorStyleSelectionSchema.safeParse(value);
+  return legacy.success ? { kind: "unfrozen", id: legacy.data.id } : null;
+}
+
+type CreatorStyleSelectionSource = {
+  creator_style_context?: unknown;
+  tool_calls?: readonly ToolCall[] | null | undefined;
+};
+
+function normalizeCreatorStyleSelectionSource(
+  input: readonly ToolCall[] | null | undefined | CreatorStyleSelectionSource,
+): CreatorStyleSelectionSource {
+  if (input === null || input === undefined || Array.isArray(input)) {
+    return { tool_calls: input as readonly ToolCall[] | null | undefined };
+  }
+  return input as CreatorStyleSelectionSource;
+}
+
 /**
  * Recover only a server-persisted creator-style selection. Retry requests do
  * not trust a fresh client id because changing optional writing context would
  * rebind a durable modeled batch to different generation semantics.
  */
 export function creatorStyleSelectionMarkerFromToolCalls(
-  calls: readonly ToolCall[] | null | undefined,
+  input: readonly ToolCall[] | null | undefined | CreatorStyleSelectionSource,
 ): CreatorStyleSelectionMarker {
+  const source = normalizeCreatorStyleSelectionSource(input);
+  if (
+    source.creator_style_context !== undefined &&
+    source.creator_style_context !== null
+  ) {
+    return parseCreatorStyleSelectionValue(source.creator_style_context) ?? {
+      kind: "invalid",
+    };
+  }
+  const calls = source.tool_calls;
   const markers = (calls ?? []).filter(
     (call) =>
       call.id === CREATOR_STYLE_TOOL_NAME &&
@@ -1072,23 +1195,7 @@ export function creatorStyleSelectionMarkerFromToolCalls(
   if (markers.length !== 1) return { kind: "invalid" };
   try {
     const value: unknown = JSON.parse(markers[0].function.arguments);
-    const parsed = creatorStyleSelectionSchema.safeParse(value);
-    if (parsed.success) {
-      return {
-        kind: "valid",
-        context: {
-          version: parsed.data.retryContext.version,
-          id: parsed.data.id,
-          name: parsed.data.name,
-          creatorName: parsed.data.creatorName,
-          resolvedBlock: parsed.data.retryContext.resolvedBlock,
-        },
-      };
-    }
-    const legacy = legacyCreatorStyleSelectionSchema.safeParse(value);
-    return legacy.success
-      ? { kind: "unfrozen", id: legacy.data.id }
-      : { kind: "invalid" };
+    return parseCreatorStyleSelectionValue(value) ?? { kind: "invalid" };
   } catch {
     return { kind: "invalid" };
   }
@@ -1435,7 +1542,7 @@ export async function executeChatTurn(
     // Neither inserts a row nor runs the agent → no spend.
     const { data: recentMessages } = await sbRaw
       .from("chat_messages")
-      .select("id, role, content, created_at, tool_calls, artifacts, terminal_reason, user_stop_requested_at")
+      .select("id, role, content, created_at, tool_calls, artifacts, terminal_reason, user_stop_requested_at, applied_skills, no_model_format_id, creator_style_context, lead_magnet_id, composer_starter_id, generation_config, recoverable_error")
       .eq("chat_id", chatId)
       .eq("workspace_id", workspaceId)
       .order("created_at", { ascending: false })
@@ -1476,6 +1583,13 @@ export async function executeChatTurn(
         | "error"
         | null;
       user_stop_requested_at: string | null;
+      applied_skills?: unknown;
+      no_model_format_id?: string | null;
+      creator_style_context?: unknown;
+      lead_magnet_id?: string | null;
+      composer_starter_id?: string | null;
+      generation_config?: unknown;
+      recoverable_error?: unknown;
     }>;
     pendingAskOnly = hasPendingAskOnly(recentMessageWindow);
     pendingActionAsk = hasPendingActionAsk(recentMessageWindow);
@@ -1507,7 +1621,7 @@ export async function executeChatTurn(
       const retryUser =
         retryUserIndex >= 0 ? recentMessageWindow[retryUserIndex] : undefined;
       const pairedCustomSkillMarker =
-        customSkillSelectionMarkerFromToolCalls(retryUser?.tool_calls);
+        customSkillSelectionMarkerFromToolCalls(retryUser);
       if (pairedCustomSkillMarker.kind === "invalid") {
         return turnError(
           "The saved custom-skill selection failed its integrity check. Send the request again as a new message.",
@@ -1543,7 +1657,7 @@ export async function executeChatTurn(
         );
       }
       const pairedCreatorStyleMarker =
-        creatorStyleSelectionMarkerFromToolCalls(retryUser?.tool_calls);
+        creatorStyleSelectionMarkerFromToolCalls(retryUser);
       if (pairedCreatorStyleMarker.kind === "invalid") {
         return turnError(
           "The saved creator-style selection failed its integrity check. Send the request again as a new message.",
@@ -1576,7 +1690,7 @@ export async function executeChatTurn(
         );
       }
       const pairedGenerationConfigMarker =
-        generationConfigSelectionMarkerFromToolCalls(retryUser?.tool_calls);
+        generationConfigSelectionMarkerFromToolCalls(retryUser);
       if (pairedGenerationConfigMarker.kind === "invalid") {
         return turnError(
           "The saved draft-count setting failed its integrity check. Send the request again as a new message.",
@@ -1603,7 +1717,7 @@ export async function executeChatTurn(
         );
       }
       const pairedStarterMarker = composerStarterMarkerFromToolCalls(
-        retryUser?.tool_calls,
+        retryUser,
       );
       if (pairedStarterMarker.kind === "invalid") {
         return turnError(
@@ -1635,11 +1749,9 @@ export async function executeChatTurn(
               .find((message) => message.role === "assistant")
           : undefined;
       const pairedModeledBatchMarker =
-        modeledDraftBatchContinuationMarkerFromToolCalls(
-          pairedAssistant?.tool_calls,
-        );
+        modeledDraftBatchContinuationMarkerFromToolCalls(pairedAssistant);
       const pairedRetryRootMarker = retryRootMarkerFromToolCalls(
-        pairedAssistant?.tool_calls,
+        pairedAssistant,
       );
       if (
         pairedModeledBatchMarker.kind === "invalid" ||
@@ -1660,9 +1772,11 @@ export async function executeChatTurn(
             ? pairedAssistant.terminal_reason ?? "done"
             : null,
           pairedAssistantRecoverable: Boolean(
-            pairedAssistant?.tool_calls?.some(
-              isServerRecoverableToolCall,
-            ),
+            pairedAssistant &&
+              (pairedAssistant.recoverable_error !== undefined &&
+              pairedAssistant.recoverable_error !== null
+                ? true
+                : pairedAssistant.tool_calls?.some(isServerRecoverableToolCall)),
           ),
           pairedAssistantRetryRootUserMessageId:
             pairedRetryRootMarker.kind === "valid"
