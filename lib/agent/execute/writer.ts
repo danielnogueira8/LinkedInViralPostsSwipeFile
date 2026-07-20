@@ -3420,6 +3420,33 @@ async function* runLocalSlotBatch(
         if (childDone?.terminalReason === "cancelled" || multiSignal.aborted) {
           break;
         }
+        // The aggregate deadline can surface as a generic child error instead
+        // of an abort: the child's own per-call timeout is derived from the
+        // SAME wall-clock deadline and can fire a hair before the deadline
+        // controller's abort propagates, so the child reports exhaustion
+        // while the honest cause is the deadline. Classify by the wall clock
+        // (plus the controller), not by which timer happened to win the race
+        // — anything else makes the outcome timing-dependent.
+        if (
+          (deadlineController.signal.aborted || now() >= deadlineAtMs) &&
+          !input.signal?.aborted
+        ) {
+          const message =
+            accepted.length > 0
+              ? `I couldn’t complete the full draft set within this turn. I kept the ${accepted.length} completed ${accepted.length === 1 ? "draft" : "drafts"}. Retry will run the original task again.`
+              : "I couldn’t complete the full draft set within this turn. Retry will run the original task again.";
+          for (const artifact of accepted) {
+            yield { type: "artifact", artifact };
+          }
+          yield {
+            type: "error",
+            code: "draft_engine_deadline",
+            message,
+            recovery: "continue",
+          };
+          yield engineDone(message, inputTokens, outputTokens, "deadline");
+          return;
+        }
         const childArtifacts = childEvents
           .filter(
             (event): event is Extract<AgentEvent, { type: "artifact" }> =>

@@ -339,3 +339,73 @@ describe("selectModelingSources", () => {
     ).toEqual([]);
   });
 });
+
+describe("modeling source cooldown (excludeIds)", () => {
+  test("pushes just-modeled posts behind every other candidate", () => {
+    const selected = selectModelingSources({
+      candidates: [
+        post("cooldown", "A"),
+        post("used", "B"),
+        post("fresh", "C"),
+      ],
+      limit: 3,
+      usedIds: new Set(["used", "cooldown"]),
+      excludeIds: new Set(["cooldown"]),
+    });
+
+    expect(selected.map((candidate) => candidate.id)).toEqual([
+      "fresh",
+      "used",
+      "cooldown",
+    ]);
+  });
+
+  test("cooldown posts only fill in when the eligible pool runs short", () => {
+    const short = selectModelingSources({
+      candidates: [post("cooldown-a", "A"), post("fresh-b", "B")],
+      limit: 2,
+      usedIds: new Set(["cooldown-a"]),
+      excludeIds: new Set(["cooldown-a"]),
+    });
+    // Small pool: the cooldown post tops up instead of dead-ending the turn.
+    expect(short.map((candidate) => candidate.id)).toEqual([
+      "fresh-b",
+      "cooldown-a",
+    ]);
+    expect(short[1].already_used).toBe(true);
+
+    const enough = selectModelingSources({
+      candidates: [
+        post("cooldown-a", "A"),
+        post("fresh-b", "B"),
+        post("fresh-c", "C"),
+      ],
+      limit: 2,
+      usedIds: new Set(["cooldown-a"]),
+      excludeIds: new Set(["cooldown-a"]),
+    });
+    // Enough fresh candidates: the cooldown post is withheld entirely.
+    expect(enough.map((candidate) => candidate.id)).toEqual([
+      "fresh-b",
+      "fresh-c",
+    ]);
+  });
+
+  test("rotation never promotes a cooldown post to the front", () => {
+    const selected = selectModelingSources({
+      candidates: [
+        post("cooldown", "A"),
+        post("fresh-a", "B"),
+        post("fresh-b", "C"),
+      ],
+      limit: 1,
+      usedIds: new Set(["cooldown"]),
+      excludeIds: new Set(["cooldown"]),
+      rotationCursor: 2,
+    });
+
+    // Cursor 2 wraps the 2-fresh band to offset 0 — and either way the
+    // cooldown post can never lead.
+    expect(selected.map((candidate) => candidate.id)).toEqual(["fresh-a"]);
+  });
+});

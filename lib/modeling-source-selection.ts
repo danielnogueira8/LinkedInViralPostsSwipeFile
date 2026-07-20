@@ -31,6 +31,12 @@ export type ModelingSourceSelectionInput<T extends ModelingSourceCandidate> = {
   // through the fresh band instead of always returning its first entries.
   // Omitted or 0 preserves the exact prior (deterministic top-of-rank) behavior.
   rotationCursor?: number;
+  // Hard cooldown: these ids are pushed behind EVERY other candidate — they
+  // can never lead, and only re-enter as a last-resort top-up when the
+  // eligible pool can't fill the limit. This is what stops the same just-
+  // modeled post from being re-picked on every chat; the top-up guarantee
+  // means a small swipe file never dead-ends a generation over the cooldown.
+  excludeIds?: ReadonlySet<string>;
 };
 
 export type ModelingSourcePoolInput<T extends ModelingSourceCandidate> =
@@ -105,9 +111,23 @@ export function selectModelingSourcePool<T extends ModelingSourceCandidate>(
   // uses for ordinary idea discovery. used/surfaced candidates never lead
   // (rotateFreshBand only touches the fresh prefix), so freshness priority is
   // unaffected; this only changes WHICH already-fresh candidate leads.
-  const ranked = input.rotationCursor
+  const rotated = input.rotationCursor
     ? rotateFreshBand(stableRanked, input.rotationCursor, limit)
     : stableRanked;
+
+  // Cooldown tail: excluded ids sit behind everything, so they are picked
+  // only when the rest of the pool can't fill the request. They keep the
+  // caller's order among themselves and are flagged already_used (they're on
+  // cooldown precisely because they were just modeled).
+  const excludeIds = input.excludeIds ?? new Set<string>();
+  const ranked = excludeIds.size
+    ? [
+        ...rotated.filter((candidate) => !excludeIds.has(candidate.id)),
+        ...rotated
+          .filter((candidate) => excludeIds.has(candidate.id))
+          .map((candidate) => ({ ...candidate, already_used: true })),
+      ]
+    : rotated;
 
   const primaries = ranked.slice(0, limit);
   const reserves = ranked.slice(limit, limit + reserveLimit);

@@ -296,7 +296,14 @@ const searchViralPosts: ToolFn = async (args, workspaceId, signal, context) => {
       .eq("workspace_post_classification.workspace_id", workspaceId)
       .eq("workspace_post_classification.is_viral", true)
       .is("accounts.archived_at", null)
-      .order(sortCol, { ascending, nullsFirst: false })
+      // Modeling selection ranks RECENCY-first: virality is already the
+      // eligibility gate (the is_viral join above), and a pure viral-score
+      // ranking made every chat pick the same mega-viral posts. Analytical
+      // queries keep their explicit sort untouched.
+      .order(autoSelectModelingSources ? "posted_at" : sortCol, {
+        ascending: autoSelectModelingSources ? false : ascending,
+        nullsFirst: false,
+      })
       .limit(fetchLimit);
 
     // Niche names are categorical and user-entered prompts commonly vary only
@@ -330,6 +337,16 @@ const searchViralPosts: ToolFn = async (args, workspaceId, signal, context) => {
     }
 
     const usedIds = await recentlyUsedSourceIds(workspaceId, signal);
+    // Cross-chat cooldown for modeling: posts turned into a draft within the
+    // last MODELING_SOURCE_COOLDOWN_DAYS are withheld while anything fresher
+    // exists (selection keeps them as a last-resort top-up only).
+    const cooldownIds = autoSelectModelingSources
+      ? await usedSourceIdsWithin(
+          workspaceId,
+          MODELING_SOURCE_COOLDOWN_DAYS,
+          signal,
+        )
+      : new Set<string>();
     const surfacedIds = getSurfacedIds(workspaceId);
     // Both branches below rotate the same durable per-workspace cursor: the
     // in-memory surfacedIds map is best-effort only (resets on every cold
@@ -348,6 +365,7 @@ const searchViralPosts: ToolFn = async (args, workspaceId, signal, context) => {
           usedIds,
           surfacedIds,
           rotationCursor: cursor,
+          excludeIds: cooldownIds,
         })
       : null;
     const selected = modeledPool?.primaries ?? rotateFreshBand(
@@ -450,6 +468,16 @@ const TOP_BATCH_SPARSE_BELOW = 3;
 // is fair to revisit for a fresh audience.
 const IDEA_USED_HORIZON_DAYS = 56;
 
+// Hard cooldown for AUTO-MODELING: once a source post has been turned into a
+// draft, it cannot be re-picked for this many days — on ANY chat — unless the
+// eligible pool literally can't fill the request (small swipe files never
+// dead-end). Distinct from the softer 56-day deprioritize above: that one
+// sinks a used post to the back of the ranking, this one withholds it
+// entirely. 30 days keeps a month's worth of drafts visibly distinct.
+const MODELING_SOURCE_COOLDOWN_DAYS = Number(
+  process.env.MODELING_SOURCE_COOLDOWN_DAYS ?? 30,
+);
+
 // How long a post counts as "already surfaced as an idea candidate" this
 // session, distinct from `already_used` (already DRAFTED from). Without this,
 // two independent "give me ideas" calls in the same window pull the identical
@@ -534,12 +562,13 @@ async function nextRotationCursor(
 // turned into a draft is "most-mentioned" and should fall behind fresh ones, so
 // the agent doesn't keep pitching the same idea. Best-effort: on any read error
 // we return an empty set (no dedup) rather than fail the tool.
-async function recentlyUsedSourceIds(
+async function usedSourceIdsWithin(
   workspaceId: string,
+  horizonDays: number,
   signal?: AbortSignal,
 ): Promise<Set<string>> {
   const sinceIso = new Date(
-    Date.now() - IDEA_USED_HORIZON_DAYS * 24 * 60 * 60 * 1000,
+    Date.now() - horizonDays * 24 * 60 * 60 * 1000,
   ).toISOString();
   const ids = new Set<string>();
   try {
@@ -570,6 +599,13 @@ async function recentlyUsedSourceIds(
     /* best-effort: no dedup signal on error */
   }
   return ids;
+}
+
+async function recentlyUsedSourceIds(
+  workspaceId: string,
+  signal?: AbortSignal,
+): Promise<Set<string>> {
+  return usedSourceIdsWithin(workspaceId, IDEA_USED_HORIZON_DAYS, signal);
 }
 
 function pickLegacyIdeas<T extends { accounts?: unknown }>(
