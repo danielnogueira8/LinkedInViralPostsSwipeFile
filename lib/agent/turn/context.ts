@@ -73,6 +73,7 @@ import {
   PREFS_PER_WORKSPACE_MAX,
   type ContentPreference,
 } from "@/lib/preferences";
+import { loadPostPerformanceBlock } from "@/lib/post-performance-learning";
 import { fetchRecentPostDrafts, type RecentDraft } from "@/lib/recent-drafts";
 import {
   completeChat,
@@ -959,6 +960,8 @@ export type TurnContext = {
   voiceResult: ToolResult | null;
   preferences: ContentPreference[];
   feedbackMemory: ContentFeedback[];
+  /** Rendered deterministic learnings from the workspace's own published-post analytics; "" when the sample is too thin or the read failed. */
+  postPerformanceBlock: string;
   priorPostDrafts: RecentDraft[];
   currentModelSource: ModelSourceRow | null;
   /** Envelope text for THIS turn's explicit model source ("" when none); also gates the user-row source stamp. */
@@ -1114,6 +1117,7 @@ export async function buildTurnContext(
     creatorName: string;
   } | null = null;
   let feedbackMemory: ContentFeedback[] = [];
+  let postPerformanceBlock = "";
   let preferences: ContentPreference[] = [];
   let priorPostDrafts: RecentDraft[] = [];
   let voiceResult: ToolResult | null = null;
@@ -1161,6 +1165,19 @@ export async function buildTurnContext(
       );
     } catch {
       return { data: [] };
+    }
+  })();
+  // Analytics learnings are advisory-only: any failure (or a thin sample)
+  // yields "" so the writer prompt is byte-identical for workspaces without
+  // usable post_analytics data.
+  const postPerformancePromise = (async () => {
+    try {
+      return await waitForChatSetup(
+        loadPostPerformanceBlock(sbRaw, workspaceId),
+        setupSignal,
+      );
+    } catch {
+      return "";
     }
   })();
   const preferencesPromise = (async () => {
@@ -1232,18 +1249,21 @@ export async function buildTurnContext(
   const [
     historyResult,
     feedbackResult,
+    postPerformance,
     preferencesResult,
     recentDrafts,
     preloadedVoiceResult,
   ] = await Promise.all([
     historyPromise,
     feedbackPromise,
+    postPerformancePromise,
     preferencesPromise,
     recentDraftsPromise,
     voicePromise,
   ]);
   const rowsDesc = historyResult.data;
   feedbackMemory = (feedbackResult.data ?? []) as ContentFeedback[];
+  postPerformanceBlock = postPerformance;
   preferences = (preferencesResult.data ?? []) as ContentPreference[];
   priorPostDrafts = recentDrafts;
   voiceResult = preloadedVoiceResult;
@@ -1788,6 +1808,7 @@ export async function buildTurnContext(
     voiceResult,
     preferences,
     feedbackMemory,
+    postPerformanceBlock,
     priorPostDrafts,
     currentModelSource,
     currentModelEnvelope,
