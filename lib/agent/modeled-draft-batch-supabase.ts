@@ -29,7 +29,7 @@ function canonicalSourceJson(source: ModeledDraftBatchSource) {
   return {
     id: source.id,
     text: source.text,
-    url: source.url,
+    url: source.url ?? null,
     title: source.title ?? null,
     published_at: source.publishedAt ?? null,
     hash: textHash(source.text),
@@ -38,10 +38,11 @@ function canonicalSourceJson(source: ModeledDraftBatchSource) {
 
 function parseSource(value: unknown): ModeledDraftBatchSource | null {
   const source = recordOf(value);
+  const url = source?.url ?? undefined;
   if (
     typeof source?.id !== "string" ||
     typeof source.text !== "string" ||
-    !isCanonicalModeledSourceUrl(source.url) ||
+    (url !== undefined && !isCanonicalModeledSourceUrl(url)) ||
     typeof source.hash !== "string" ||
     textHash(source.text) !== source.hash
   ) {
@@ -50,7 +51,7 @@ function parseSource(value: unknown): ModeledDraftBatchSource | null {
   return {
     id: source.id,
     text: source.text,
-    url: source.url,
+    ...(url !== undefined ? { url } : {}),
     ...(typeof source.title === "string" ? { title: source.title } : {}),
     ...(typeof source.published_at === "string"
       ? { publishedAt: source.published_at }
@@ -69,13 +70,14 @@ function parseArtifact(
   const artifactData = recordOf(provenance?.artifact);
   const meta = recordOf(artifactData?.meta);
   const body = typeof accepted?.body === "string" ? accepted.body : "";
+  const provenanceUrl = provenance?.source_url ?? undefined;
   if (
     !body ||
     typeof accepted?.hash !== "string" ||
     textHash(body) !== accepted.hash ||
     provenance?.kind !== "modeled" ||
     provenance.source_id !== source.id ||
-    provenance.source_url !== source.url ||
+    provenanceUrl !== source.url ||
     provenance.source_hash !== textHash(source.text) ||
     typeof artifactData?.id !== "string" ||
     typeof artifactData.title !== "string" ||
@@ -277,7 +279,7 @@ class SupabaseModeledDraftBatchRepository
         p_provenance: {
           kind: "modeled",
           source_id: source.id,
-          source_url: source.url,
+          source_url: source.url ?? null,
           source_hash: textHash(source.text),
           artifact: {
             id: input.artifact.id,
