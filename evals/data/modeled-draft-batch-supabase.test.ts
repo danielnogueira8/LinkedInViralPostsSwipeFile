@@ -341,7 +341,7 @@ describe("SupabaseModeledDraftBatchRepository", () => {
     expect(result).toEqual({ kind: "unavailable" });
   });
 
-  test("fails closed when a claimed frozen source omits its required chip URL", async () => {
+  test("accepts a claimed frozen source that omits the optional chip URL", async () => {
     const claimedSources = sources.map(sourceJson);
     const claimedSlots = [slotJson(0), slotJson(1)];
     const sourceWithoutUrl: Partial<(typeof claimedSources)[number]> = {
@@ -375,7 +375,10 @@ describe("SupabaseModeledDraftBatchRepository", () => {
       signal: new AbortController().signal,
     });
 
-    expect(result).toEqual({ kind: "unavailable" });
+    expect(result).toMatchObject({ kind: "acquired" });
+    if (result.kind !== "acquired") throw new Error("unexpected result");
+    expect(result.checkpoint.sources[0]?.url).toBeUndefined();
+    expect(result.checkpoint.sources[1]?.url).toBe("https://linkedin.com/posts/source-2");
   });
 
   test("rejects completed replay when artifact metadata drops the frozen source URL", async () => {
