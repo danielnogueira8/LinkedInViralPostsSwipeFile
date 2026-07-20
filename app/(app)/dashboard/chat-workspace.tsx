@@ -4018,6 +4018,142 @@ export function ChatWorkspace({
               </div>
             )}
 
+            {/* Add context menu — anchored above the composer like the other
+                popovers. It must render OUTSIDE the composer card: the card is
+                overflow-hidden (rounded-corner clipping), so a popover inside
+                it gets cut off at the card's top edge. */}
+            {contextMenuOpen && (
+              <div
+                ref={contextMenuRef}
+                role="dialog"
+                aria-label="Add context"
+                className="absolute bottom-full left-0 z-20 mb-3 w-64 overflow-hidden rounded-2xl border border-border bg-card/90 shadow-[0_24px_80px_rgba(28,28,26,0.16)] backdrop-blur"
+              >
+                <div className="flex items-center justify-between border-b border-border px-3.5 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                  <span>Add context</span>
+                  <button
+                    type="button"
+                    onClick={() => setContextMenuOpen(false)}
+                    className="text-muted-foreground hover:text-foreground"
+                    aria-label="Close"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                <div className="flex flex-col py-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setContextMenuOpen(false);
+                      fileInputRef.current?.click();
+                    }}
+                    disabled={attachments.length >= MAX_ATTACHMENTS}
+                    className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <Paperclip className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                    <span className="flex-1 text-foreground">Attach a file</span>
+                    <span className="text-xs text-muted-foreground">
+                      {attachments.length}/{MAX_ATTACHMENTS}
+                    </span>
+                  </button>
+                  {customSkills.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setContextMenuOpen(false);
+                        setSkillPickerOpen(true);
+                      }}
+                      className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm transition-colors hover:bg-muted"
+                    >
+                      <Zap
+                        className={cn(
+                          "h-4 w-4 shrink-0",
+                          pendingSkills.length > 0
+                            ? "text-state-warning"
+                            : "text-muted-foreground",
+                        )}
+                        aria-hidden
+                      />
+                      <span className="flex-1 text-foreground">Apply a skill</span>
+                      {pendingSkills.length > 0 && (
+                        <span className="text-xs text-state-warning">
+                          {pendingSkills.length}
+                        </span>
+                      )}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setContextMenuOpen(false);
+                      setPostFormatPickerOpen(true);
+                    }}
+                    disabled={!!modelSource}
+                    className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <FileText
+                      className={cn(
+                        "h-4 w-4 shrink-0",
+                        pendingPostFormat
+                          ? "text-primary"
+                          : "text-muted-foreground",
+                      )}
+                      aria-hidden
+                    />
+                    <span className="flex-1 text-foreground">Choose post format</span>
+                    {pendingPostFormat && (
+                      <Check className="ml-auto h-3.5 w-3.5 text-primary" />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setContextMenuOpen(false);
+                      setCreatorStylePickerOpen(true);
+                    }}
+                    disabled={!!modelSource}
+                    className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <Fingerprint
+                      className={cn(
+                        "h-4 w-4 shrink-0",
+                        pendingCreatorStyle
+                          ? "text-primary"
+                          : "text-muted-foreground",
+                      )}
+                      aria-hidden
+                    />
+                    <span className="flex-1 text-foreground">Choose creator style</span>
+                    {pendingCreatorStyle && (
+                      <Check className="ml-auto h-3.5 w-3.5 text-primary" />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setContextMenuOpen(false);
+                      setLeadMagnetPickerOpen(true);
+                    }}
+                    className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm transition-colors hover:bg-muted"
+                  >
+                    <Gift
+                      className={cn(
+                        "h-4 w-4 shrink-0",
+                        pendingLeadMagnet
+                          ? "text-primary"
+                          : "text-muted-foreground",
+                      )}
+                      aria-hidden
+                    />
+                    <span className="flex-1 text-foreground">Choose lead magnet</span>
+                    {pendingLeadMagnet && (
+                      <Check className="ml-auto h-3.5 w-3.5 text-primary" />
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* ⚡ Skill picker panel — browse + toggle the workspace's skills. */}
             {skillPickerOpen && customSkills.length > 0 && (
               <div
@@ -4692,137 +4828,6 @@ export function ChatWorkspace({
                     </span>
                   )}
                 </Button>
-                {contextMenuOpen && (
-                  <div
-                    ref={contextMenuRef}
-                    role="dialog"
-                    aria-label="Add context"
-                    className="absolute bottom-full left-0 z-20 mb-3 w-64 overflow-hidden rounded-2xl border border-border bg-card/90 shadow-[0_24px_80px_rgba(28,28,26,0.16)] backdrop-blur"
-                  >
-                    <div className="flex items-center justify-between border-b border-border px-3.5 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                      <span>Add context</span>
-                      <button
-                        type="button"
-                        onClick={() => setContextMenuOpen(false)}
-                        className="text-muted-foreground hover:text-foreground"
-                        aria-label="Close"
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                    <div className="flex flex-col py-1">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setContextMenuOpen(false);
-                          fileInputRef.current?.click();
-                        }}
-                        disabled={attachments.length >= MAX_ATTACHMENTS}
-                        className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        <Paperclip className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-                        <span className="flex-1 text-foreground">Attach a file</span>
-                        <span className="text-xs text-muted-foreground">
-                          {attachments.length}/{MAX_ATTACHMENTS}
-                        </span>
-                      </button>
-                      {customSkills.length > 0 && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setContextMenuOpen(false);
-                            setSkillPickerOpen(true);
-                          }}
-                          className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm transition-colors hover:bg-muted"
-                        >
-                          <Zap
-                            className={cn(
-                              "h-4 w-4 shrink-0",
-                              pendingSkills.length > 0
-                                ? "text-state-warning"
-                                : "text-muted-foreground",
-                            )}
-                            aria-hidden
-                          />
-                          <span className="flex-1 text-foreground">Apply a skill</span>
-                          {pendingSkills.length > 0 && (
-                            <span className="text-xs text-state-warning">
-                              {pendingSkills.length}
-                            </span>
-                          )}
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setContextMenuOpen(false);
-                          setPostFormatPickerOpen(true);
-                        }}
-                        disabled={!!modelSource}
-                        className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        <FileText
-                          className={cn(
-                            "h-4 w-4 shrink-0",
-                            pendingPostFormat
-                              ? "text-primary"
-                              : "text-muted-foreground",
-                          )}
-                          aria-hidden
-                        />
-                        <span className="flex-1 text-foreground">Choose post format</span>
-                        {pendingPostFormat && (
-                          <Check className="ml-auto h-3.5 w-3.5 text-primary" />
-                        )}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setContextMenuOpen(false);
-                          setCreatorStylePickerOpen(true);
-                        }}
-                        disabled={!!modelSource}
-                        className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        <Fingerprint
-                          className={cn(
-                            "h-4 w-4 shrink-0",
-                            pendingCreatorStyle
-                              ? "text-primary"
-                              : "text-muted-foreground",
-                          )}
-                          aria-hidden
-                        />
-                        <span className="flex-1 text-foreground">Choose creator style</span>
-                        {pendingCreatorStyle && (
-                          <Check className="ml-auto h-3.5 w-3.5 text-primary" />
-                        )}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setContextMenuOpen(false);
-                          setLeadMagnetPickerOpen(true);
-                        }}
-                        className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm transition-colors hover:bg-muted"
-                      >
-                        <Gift
-                          className={cn(
-                            "h-4 w-4 shrink-0",
-                            pendingLeadMagnet
-                              ? "text-primary"
-                              : "text-muted-foreground",
-                          )}
-                          aria-hidden
-                        />
-                        <span className="flex-1 text-foreground">Choose lead magnet</span>
-                        {pendingLeadMagnet && (
-                          <Check className="ml-auto h-3.5 w-3.5 text-primary" />
-                        )}
-                      </button>
-                    </div>
-                  </div>
-                )}
               </div>
               <div className="min-w-0 flex-1" />
               {sending ? (
