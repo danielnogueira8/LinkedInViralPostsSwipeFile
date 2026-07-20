@@ -6,7 +6,6 @@ A multi-tenant SaaS that helps LinkedIn creators, founders, and agencies go from
 
 - **Swipe File** — daily-scraped viral posts (via Apify) from up to 100 creators per workspace, scored and filterable by niche, date, and virality.
 - **Cowork** — a chat agent that reads your voice profile and what's working in your niche, then drafts posts, hooks, and lead magnets as editable draft cards.
-- **Weekly batch** — one click generates a week of drafts from the top scraped posts, adapted in your voice.
 - **Posts board + calendar** — a pipeline (idea → drafting → ready → posted) and a planning calendar; connected workspaces can schedule approved drafts to auto-publish on LinkedIn (via Zernio).
 - **Voice, Creator Styles, Templates, Custom Skills** — reusable inputs that shape how drafts are written.
 - **Lead Magnets** — generate markdown resources (with images) for comment-to-DM posts.
@@ -64,7 +63,7 @@ Vercel's deployment label is exposed automatically so preview and production
 events remain separated in Sentry.
 
 - `cron/daily` — daily scrape enqueue + cost digest
-- `cron/jobs` — drains the background-job queue (weekly batches, lead-magnet generation)
+- `cron/jobs` — drains the background-job queue (scrape, lead-magnet generation, voice/creator-style jobs)
 - `cron/publish-scheduled` — publishes due LinkedIn posts (every 5 min)
 - `cron/sweep-media` — garbage-collects soft-deleted media assets
 

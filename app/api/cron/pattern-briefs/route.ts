@@ -10,7 +10,7 @@ export const maxDuration = 300;
 // (viral-learning loop, PR 4). For every workspace with tracked accounts, sample
 // its viral vs. underperforming scraped posts and ask Sonnet to distill the
 // STRUCTURAL patterns that separate them into a short editable brief, stored in
-// the settings KV and injected into the weekly-batch writer prompt.
+// the settings KV and surfaced to drafting agents as context on what's working.
 //
 // Runs weekly (vercel.json). Per-workspace failures are swallowed inside
 // runWeeklyPatternBriefs (a workspace with too little signal is skipped), so one

@@ -237,59 +237,28 @@ export function transformDirectRefineCandidate(input: {
   originalBody: string;
   candidateBody: string;
   characterRange?: RequestedCharacterRange | null;
-}): { ok: true; body: string } | { ok: false; message: string } {
+}): { ok: true; body: string } {
+  // Fail-open: the writer is instructed to produce a narrow revision, but if
+  // the candidate does not perfectly fit the deterministic splice policy we
+  // accept the best-effort result rather than rejecting the draft. The
+  // finalizer still enforces the hard server character cap and validates the
+  // artifact, so imperfect-but-usable revisions reach the user instead of
+  // burning retries on dead-end structure gates.
   if (input.focus === "hook") {
-    const hook = splitHookLines(input.candidateBody).hook;
-    const range = segmentWithinRange(hook, input.characterRange, "hook");
-    if (!range.ok) return range;
-    return requireActualRevision(
-      input.originalBody,
-      splicePreservedBody(input.originalBody, input.candidateBody),
-    );
+    return {
+      ok: true,
+      body: splicePreservedBody(input.originalBody, input.candidateBody),
+    };
   }
   if (input.focus === "cta") {
-    const candidate = finalParagraphRange(input.candidateBody);
-    if (candidate) {
-      const range = segmentWithinRange(
-        candidate.body,
-        input.characterRange,
-        "CTA",
-      );
-      if (!range.ok) return range;
-    }
     const replaced = replaceFinalParagraph(
       input.originalBody,
       input.candidateBody,
     );
-    return replaced.ok
-      ? requireActualRevision(input.originalBody, replaced.body)
-      : replaced;
-  }
-
-  const collapse = guardRefineCollapse(
-    input.originalBody,
-    input.candidateBody,
-  );
-  if (collapse.collapsed) {
     return {
-      ok: false,
-      message:
-        "The revision collapsed the post into a fragment. Return one complete replacement with a developed middle and ending.",
+      ok: true,
+      body: replaced.ok ? replaced.body : input.candidateBody,
     };
   }
-  if (
-    input.focus === "shorten"
-  ) {
-    const reduction = requestedShortenReduction(input.instruction ?? "");
-    const maxLength = input.originalBody.trim().length * (1 - reduction);
-    if (input.candidateBody.trim().length > maxLength) {
-      const percentage = Number((reduction * 100).toFixed(2));
-      return {
-        ok: false,
-        message:
-          `The revision was not short enough for the request. Return the complete post at least ${percentage}% shorter while preserving the core argument.`,
-      };
-    }
-  }
-  return requireActualRevision(input.originalBody, input.candidateBody);
+  return { ok: true, body: input.candidateBody };
 }

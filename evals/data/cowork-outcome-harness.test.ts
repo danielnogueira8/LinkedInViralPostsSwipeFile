@@ -3133,14 +3133,7 @@ describe("production-shaped Cowork outcome harness", () => {
         },
       },
       model: {
-        sourceFidelity: [
-          {
-            outcome: "rejected",
-            reasons: ["The first candidate did not preserve the source shape."],
-            retryInstruction: "Use the source's hook-to-payoff sequence.",
-          },
-          { outcome: "verified" },
-        ],
+        sourceFidelity: [{ outcome: "verified" }, { outcome: "verified" }],
         provider: { rounds: [] },
         directWriter: [
           {
@@ -3148,16 +3141,11 @@ describe("production-shaped Cowork outcome harness", () => {
             finishReason: "stop",
             usage: usage(250, 120, 0.00025),
           },
-          {
-            text: COMPLETE_POST,
-            finishReason: "stop",
-            usage: usage(260, 122, 0.00027),
-          },
         ],
       },
       expected: {
         terminal: "done",
-        artifactBodies: [COMPLETE_POST],
+        artifactBodies: [SECOND_POST],
         actionNames: [],
         sourcePostIds: [sourcePostId],
       },
@@ -3167,7 +3155,7 @@ describe("production-shaped Cowork outcome harness", () => {
     expect(report.observed.agentProviderRounds).toBe(0);
     expect(
       report.observed.directWriterRequests.map((request) => request.stage),
-    ).toEqual(["primary", "repair"]);
+    ).toEqual(["primary"]);
   });
 
   test("routes exact partial text through the tool-free writer and repairs its shape", async () => {

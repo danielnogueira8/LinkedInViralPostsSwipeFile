@@ -7,8 +7,6 @@ const mocks = vi.hoisted(() => ({
   markJobDone: vi.fn(),
   requeueJob: vi.fn(),
   jobWorkerId: vi.fn(() => "worker-1"),
-  runWeeklyBatch: vi.fn(),
-  updateBatchRun: vi.fn(),
   checkChatCostAllowance: vi.fn(),
   parseLeadMagnetImageJobPayload: vi.fn(),
   persistLeadMagnetImageArtifact: vi.fn(),
@@ -41,25 +39,6 @@ vi.mock("@/lib/background-jobs", async () => {
     jobWorkerId: mocks.jobWorkerId,
   };
 });
-
-vi.mock("@/lib/batch/weekly-batch", () => ({
-  weeklyBatch: {
-    run: mocks.runWeeklyBatch,
-    status: vi.fn(async (input: {
-      workspaceId: string;
-      transition?: { runId: string; patch: Record<string, unknown> };
-    }) => {
-      if (input.transition) {
-        await mocks.updateBatchRun(
-          input.transition.runId,
-          input.workspaceId,
-          input.transition.patch,
-        );
-      }
-      return { run: null, readiness: null, slots: null };
-    }),
-  },
-}));
 
 vi.mock("@/lib/agent/rate-limit", () => ({
   checkChatCostAllowance: mocks.checkChatCostAllowance,
@@ -123,11 +102,10 @@ vi.mock("@/lib/workspace-cost-claims", () => ({
 const { drainBackgroundJobs } = await import("@/lib/background-job-worker");
 const { BackgroundJobLeaseLostError } = await import("@/lib/background-jobs");
 
-function weeklyJob(overrides: Record<string, unknown> = {}) {
+function baseJob(overrides: Record<string, unknown> = {}) {
   return {
     id: "job-1",
     workspace_id: "ws-1",
-    type: "weekly_batch",
     status: "running",
     payload: {
       batchId: "batch-1",
@@ -171,7 +149,7 @@ const imagePayload = {
 };
 
 function imageJob(overrides: Record<string, unknown> = {}) {
-  return weeklyJob({
+  return baseJob({
     id: "image-job-1",
     type: "lead_magnet_image",
     payload: imagePayload,
@@ -180,7 +158,7 @@ function imageJob(overrides: Record<string, unknown> = {}) {
 }
 
 function voiceJob(overrides: Record<string, unknown> = {}) {
-  return weeklyJob({
+  return baseJob({
     id: "voice-job-1",
     type: "voice_generation",
     payload: {
@@ -193,7 +171,7 @@ function voiceJob(overrides: Record<string, unknown> = {}) {
 }
 
 function creatorStyleJob(overrides: Record<string, unknown> = {}) {
-  return weeklyJob({
+  return baseJob({
     id: "style-job-1",
     type: "creator_style_generation",
     payload: {
@@ -207,7 +185,7 @@ function creatorStyleJob(overrides: Record<string, unknown> = {}) {
 }
 
 function scrapeJob(overrides: Record<string, unknown> = {}) {
-  return weeklyJob({
+  return baseJob({
     id: "scrape-job-1",
     workspace_id: "ws-1",
     type: "scrape",
@@ -219,84 +197,13 @@ function scrapeJob(overrides: Record<string, unknown> = {}) {
   });
 }
 
-describe("background weekly batch worker", () => {
+describe("background job worker", () => {
   afterEach(() => {
     Object.values(mocks).forEach((mock) => mock.mockReset());
     mocks.jobWorkerId.mockReturnValue("worker-1");
     mocks.claimWorkspaceCost.mockResolvedValue("cost-claim-1");
     mocks.releaseWorkspaceCost.mockResolvedValue(undefined);
     tableUpdates.length = 0;
-  });
-
-  test("requeues weekly batch when OpenRouter text capacity is full", async () => {
-    const job = weeklyJob();
-    mocks.claimNextBackgroundJob
-      .mockResolvedValueOnce(job)
-      .mockResolvedValueOnce(null);
-    mocks.acquireProviderLock.mockResolvedValueOnce(false);
-
-    const result = await drainBackgroundJobs({ limit: 1, workerId: "worker-1" });
-
-    expect(result).toMatchObject({ claimed: 1, requeued: 1, completed: 0, failed: 0 });
-    expect(mocks.acquireProviderLock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        provider: "openrouter",
-        workType: "text",
-        jobId: "job-1",
-        workspaceId: "ws-1",
-        limit: 8,
-      }),
-    );
-    expect(mocks.updateBatchRun).toHaveBeenCalledWith("run-1", "ws-1", {
-      status: "pending",
-      stage: "Queued. We'll start as soon as capacity opens.",
-    });
-    expect(mocks.requeueJob).toHaveBeenCalledWith(
-      job,
-      "Queued behind other OpenRouter text jobs.",
-      expect.anything(),
-      { resetAttempt: true },
-    );
-    expect(mocks.runWeeklyBatch).not.toHaveBeenCalled();
-  });
-
-  test("runs weekly batch and marks the job done when capacity is available", async () => {
-    const job = weeklyJob();
-    mocks.claimNextBackgroundJob
-      .mockResolvedValueOnce(job)
-      .mockResolvedValueOnce(null);
-    mocks.acquireProviderLock.mockResolvedValueOnce(true);
-    mocks.runWeeklyBatch.mockResolvedValueOnce({
-      attempted: 7,
-      drafts: [
-        { id: "draft-1", title: "Draft 1", body: "Body 1" },
-        { id: "draft-2", title: "Draft 2", body: "Body 2" },
-      ],
-    });
-
-    const result = await drainBackgroundJobs({ limit: 1, workerId: "worker-1" });
-
-    expect(result).toMatchObject({ claimed: 1, completed: 1, requeued: 0, failed: 0 });
-    expect(mocks.runWeeklyBatch).toHaveBeenCalledWith({
-      workspaceId: "ws-1",
-      userId: "user-1",
-      batchId: "batch-1",
-      nowIso: "2026-07-08T12:00:00.000Z",
-      runId: "run-1",
-      chatId: "chat-1",
-    });
-    expect(mocks.revalidatePath).toHaveBeenCalledWith("/dashboard/posts");
-    expect(mocks.markJobDone).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "job-1", locked_by: "worker-1" }),
-      expect.objectContaining({
-        batchId: "batch-1",
-        runId: "run-1",
-        chatId: "chat-1",
-        attempted: 7,
-        created: 2,
-      }),
-      expect.anything(),
-    );
   });
 
   test("requeues lead magnet image when OpenRouter image capacity is full", async () => {
@@ -608,41 +515,4 @@ describe("background weekly batch worker", () => {
     );
   });
 
-  test("a stale worker failure cannot stop the drain after its lease was reclaimed", async () => {
-    const staleJob = weeklyJob();
-    mocks.claimNextBackgroundJob
-      .mockResolvedValueOnce(staleJob)
-      .mockResolvedValueOnce(null);
-    mocks.acquireProviderLock.mockResolvedValueOnce(true);
-    mocks.runWeeklyBatch.mockRejectedValueOnce(new Error("late worker failure"));
-    mocks.requeueJob.mockRejectedValueOnce(
-      new BackgroundJobLeaseLostError(staleJob.id),
-    );
-
-    const result = await drainBackgroundJobs({ limit: 2, workerId: "worker-1" });
-
-    expect(result).toMatchObject({
-      claimed: 1,
-      completed: 0,
-      failed: 0,
-      requeued: 0,
-    });
-    expect(mocks.markJobFailed).not.toHaveBeenCalled();
-    expect(mocks.claimNextBackgroundJob).toHaveBeenCalledTimes(2);
-    expect(mocks.releaseWorkspaceCost).not.toHaveBeenCalled();
-  });
-
-  test("a fractional drain limit never claims more than its integer budget", async () => {
-    mocks.claimNextBackgroundJob.mockResolvedValue(weeklyJob());
-    mocks.acquireProviderLock.mockResolvedValue(true);
-    mocks.runWeeklyBatch.mockResolvedValue({ attempted: 1, drafts: [] });
-
-    const result = await drainBackgroundJobs({
-      limit: 1.5,
-      workerId: "worker-1",
-    });
-
-    expect(result.claimed).toBe(1);
-    expect(mocks.claimNextBackgroundJob).toHaveBeenCalledTimes(1);
-  });
 });

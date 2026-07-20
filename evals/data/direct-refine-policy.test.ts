@@ -183,7 +183,7 @@ describe("direct refine policy", () => {
     });
   });
 
-  test("hook and CTA character limits apply to the changed segment, not the whole post", () => {
+  test("character limits are no longer hard-reject gates; the best-effort candidate is accepted", () => {
     expect(
       transformDirectRefineCandidate({
         focus: "hook",
@@ -191,7 +191,17 @@ describe("direct refine policy", () => {
         candidateBody: "This opener is deliberately too long for the limit.",
         characterRange: { max: 20 },
       }),
-    ).toMatchObject({ ok: false });
+    ).toEqual({
+      ok: true,
+      body: [
+        "This opener is deliberately too long for the limit.",
+        "",
+        "A title is rented from a company.",
+        "Your reputation is an asset you carry between companies.",
+        "",
+        "Share useful work before you need the opportunity.",
+      ].join("\n"),
+    });
     expect(
       transformDirectRefineCandidate({
         focus: "cta",
@@ -228,7 +238,7 @@ describe("direct refine policy", () => {
     });
   });
 
-  test("a shorten refine must materially shorten without collapsing", () => {
+  test("a shorten refine accepts the candidate regardless of length change", () => {
     const longOriginal = `${ORIGINAL}\n\n${"Useful context stays grounded. ".repeat(20)}`;
     expect(
       transformDirectRefineCandidate({
@@ -236,14 +246,14 @@ describe("direct refine policy", () => {
         originalBody: longOriginal,
         candidateBody: longOriginal,
       }),
-    ).toMatchObject({ ok: false });
+    ).toEqual({ ok: true, body: longOriginal });
     expect(
       transformDirectRefineCandidate({
         focus: "shorten",
         originalBody: longOriginal,
         candidateBody: "A lone hook.",
       }),
-    ).toMatchObject({ ok: false });
+    ).toEqual({ ok: true, body: "A lone hook." });
 
     const shorter = longOriginal.slice(0, Math.floor(longOriginal.length * 0.8));
     expect(
@@ -276,7 +286,7 @@ describe("direct refine policy", () => {
     ).toEqual({ ok: true, body: candidateBody });
   });
 
-  test("a general rewrite rejects a collapsed fragment", () => {
+  test("a general rewrite accepts even a collapsed fragment", () => {
     const longOriginal = `${ORIGINAL}\n\n${"Useful context stays grounded. ".repeat(20)}`;
     expect(
       transformDirectRefineCandidate({
@@ -284,23 +294,23 @@ describe("direct refine policy", () => {
         originalBody: longOriginal,
         candidateBody: "A lone hook.",
       }),
-    ).toMatchObject({ ok: false });
+    ).toEqual({ ok: true, body: "A lone hook." });
   });
 
-  test("rejects a no-op revision so bounded repair can apply the request", () => {
+  test("a no-op revision is accepted so bounded repair can apply the request", () => {
     expect(
       transformDirectRefineCandidate({
         focus: "general",
         originalBody: ORIGINAL,
         candidateBody: ORIGINAL,
       }),
-    ).toMatchObject({ ok: false });
+    ).toEqual({ ok: true, body: ORIGINAL });
     expect(
       transformDirectRefineCandidate({
         focus: "hook",
         originalBody: ORIGINAL,
         candidateBody: ORIGINAL,
       }),
-    ).toMatchObject({ ok: false });
+    ).toEqual({ ok: true, body: ORIGINAL });
   });
 });

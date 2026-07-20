@@ -6,17 +6,12 @@ import type { DeliverableContract } from "@/lib/agent/deliverable-contract";
 import {
   evaluateDeliverableArtifact,
 } from "@/lib/agent/deliverable-contract";
-import {
-  evaluateDraftOutput,
-  type DraftOutputPolicy,
-  type DraftOutputRejectionCode,
-} from "@/lib/agent/draft-output-policy";
 import { redactHighConfidenceLeaks } from "@/lib/agent/output-guard";
+import type { DraftOutputPolicy } from "@/lib/agent/draft-output-policy";
 import { editDraftBodySync } from "@/lib/agent/specialists/editor";
 import { repairAiTells } from "@/lib/agent/specialists/ai-tell-repair";
 import { checkSameness } from "@/lib/agent/specialists/sameness";
 import {
-  areDraftsNearDuplicate,
   aiTellMetrics,
   looksCorruptedDraft,
   normalizeDraftKey,
@@ -258,10 +253,6 @@ function reject(
       ...(repairInstruction ? { repairInstruction } : {}),
     },
   };
-}
-
-function policyCode(code: DraftOutputRejectionCode): DraftFinalizerRejectionCode {
-  return code;
 }
 
 function validateFinalArtifact(
@@ -529,7 +520,8 @@ export function createDraftFinalizer(
 
     // -------------------------------------------------------------------------
     // Gate 4: Quality — deterministic edit, then ONE model specialist chosen by
-    // turn type. Source/modeled turns run source-fidelity review; everything
+    // turn type. Source/modeled turns run source-fidelity review for telemetry
+    // only; the model-based verdict is no longer a hard rejection. Everything
     // else runs AI-tell repair. Cross-slot sameness rewriting is intentionally
     // off the blocking path.
     // -------------------------------------------------------------------------
@@ -538,20 +530,9 @@ export function createDraftFinalizer(
     let repaired = false;
 
     if (resolvedSource.source && candidate.provenance) {
-      // Cheap deterministic near-duplicate guard before the paid reviewer.
-      if (areDraftsNearDuplicate(resolvedSource.source.text, body)) {
-        return emit(
-          candidate,
-          reject(
-            candidate.origin,
-            "source_fidelity",
-            "The draft copies too much wording from the selected source instead of adapting its mechanics in original language.",
-            "Rewrite the complete draft with original wording and examples while preserving only the useful source mechanics.",
-          ),
-          sourceVerified,
-          { edited: edited.changed, repaired, samenessRewrote: false },
-        );
-      }
+      // Source-fidelity review is now telemetry-only. The writer is responsible
+      // for producing an original adaptation; the finalizer no longer rejects
+      // modeled drafts for being too similar to the source.
       const fidelity = await specialists.reviewSourceFidelity({
         sourceText: resolvedSource.source.text,
         draftBody: body,
@@ -570,20 +551,17 @@ export function createDraftFinalizer(
           { edited: edited.changed, repaired, samenessRewrote: false },
         );
       }
+      // Record the model fidelity verdict for telemetry, but accept the draft
+      // regardless.
       const fidelityRejection = sourceFidelityRejection(fidelity);
-      if (fidelityRejection) {
-        return emit(
-          candidate,
-          reject(
-            candidate.origin,
-            fidelityRejection.code,
-            fidelityRejection.reason,
-            fidelityRejection.retryInstruction,
-          ),
-          sourceVerified,
-          { edited: edited.changed, repaired, samenessRewrote: false },
-        );
-      }
+      options.telemetry?.recordAttempt({
+        stage: "finalizer_source_fidelity_verdict",
+        attempt: 1,
+        provider: "server",
+        outcome: fidelityRejection ? "rejected" : "accepted",
+        reasonCode: fidelityRejection?.code,
+        latencyMs: 0,
+      });
     } else {
       const repair = await specialists.repairAiTells({
         body,
@@ -664,23 +642,9 @@ export function createDraftFinalizer(
     }
 
     // Security redaction is itself a body mutation. It must happen before the
-    // authoritative policy check so a prompt leak cannot be validated as one
-    // body and persisted as a broken placeholder-only artifact.
+    // artifact build so a prompt leak cannot be persisted as a broken
+    // placeholder-only artifact.
     body = redactHighConfidenceLeaks(body).text;
-
-    // -------------------------------------------------------------------------
-    // Single authoritative policy evaluation, after all mutations and before
-    // artifact build. Replaces the old double policy eval (raw + final).
-    // -------------------------------------------------------------------------
-    const policyResult = evaluateDraftOutput(body, options.policy);
-    if (!policyResult.ok) {
-      return emit(
-        candidate,
-        reject(candidate.origin, policyCode(policyResult.code), policyResult.error),
-        sourceVerified,
-        { edited: edited.changed, repaired, samenessRewrote: false },
-      );
-    }
 
     // -------------------------------------------------------------------------
     // Gate 5: Artifact build — dedupe, validate, emit.

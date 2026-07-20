@@ -161,7 +161,6 @@
       "preferred_seam": "api-contract",
       "existing_coverage": [
         "evals/data/media-attachment-equality.test.ts",
-        "evals/data/batch-media-rehydrate.test.ts",
         "evals/data/resource-mutation-contracts.test.ts",
         "evals/data/post-media.test.ts",
         "e2e/media-lightbox-accessibility.spec.ts"
@@ -193,8 +192,6 @@
       "invariant": "Concurrent workers, stale leases, backfills, partial failures, and recovery cannot duplicate or strand batch work.",
       "preferred_seam": "api-contract",
       "existing_coverage": [
-        "evals/data/weekly-batch-status.test.ts",
-        "evals/data/weekly-batch-domain.test.ts",
         "evals/data/background-job-worker.test.ts",
         "evals/data/background-jobs.test.ts",
         "evals/data/scrape-jobs.test.ts",
