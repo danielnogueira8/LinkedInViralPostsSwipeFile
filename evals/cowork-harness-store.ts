@@ -25,6 +25,16 @@ export type PersistedHarnessMessage = {
   input_tokens: number | null;
   output_tokens: number | null;
   terminal_reason?: string | null;
+  content_format?: string | null;
+  model_source_id?: string | null;
+  applied_skills?: unknown;
+  no_model_format_id?: string | null;
+  creator_style_context?: unknown;
+  lead_magnet_id?: string | null;
+  composer_starter_id?: string | null;
+  generation_config?: unknown;
+  recoverable_error?: unknown;
+  turn_usage?: unknown;
   created_at: string;
 };
 
@@ -758,27 +768,20 @@ export class CoworkHarnessStore {
             };
           }
           if (mutation?.kind === "update") {
-            const updatesCreatorStyleMarker =
+            const updatesCreatorStyleContext =
               table === "chat_messages" &&
-              Array.isArray(mutation.value.tool_calls) &&
-              mutation.value.tool_calls.some(
-                (call) =>
-                  typeof call === "object" &&
-                  call !== null &&
-                  (call as { function?: { name?: unknown } }).function?.name ===
-                    "_creator_style_selected",
-              );
+              mutation.value.creator_style_context !== undefined;
             if (
-              updatesCreatorStyleMarker &&
+              updatesCreatorStyleContext &&
               this.failCreatorStyleMarkerUpdate
             ) {
               return {
                 data: [],
-                error: { message: "creator style marker write unavailable" },
+                error: { message: "creator style context write unavailable" },
               };
             }
             if (
-              updatesCreatorStyleMarker &&
+              updatesCreatorStyleContext &&
               this.missCreatorStyleMarkerUpdateTarget
             ) {
               return { data: [], error: null };
@@ -1236,6 +1239,9 @@ export class CoworkHarnessStore {
       input_tokens: params.p_input_tokens ?? null,
       output_tokens: params.p_output_tokens ?? null,
       terminal_reason: params.p_terminal_reason ?? null,
+      content_format: params.p_content_format ?? null,
+      recoverable_error: params.p_recoverable_error ?? null,
+      turn_usage: params.p_turn_usage ?? null,
     });
     const toolMessages = Array.isArray(params.p_tool_messages)
       ? params.p_tool_messages
