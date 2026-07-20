@@ -144,7 +144,7 @@ export function PublishingCard() {
   const expired = !!conn && !conn.connected && conn.status === "disconnected";
 
   return (
-    <Card className="max-w-3xl overflow-hidden border-border/70 bg-card/88 shadow-soft">
+    <Card className="max-w-3xl overflow-hidden border-border/70 bg-card/90 shadow-soft">
       <CardHeader>
         <div className="flex items-start justify-between gap-3">
           <div className="flex min-w-0 items-start gap-3">
@@ -171,8 +171,8 @@ export function PublishingCard() {
             <Loader2 className="h-4 w-4 animate-spin" /> Checking connection…
           </div>
         ) : connected ? (
-          <div className="flex flex-col gap-3 rounded-[0.95rem] border border-emerald-500/15 bg-emerald-500/10 p-3 sm:flex-row sm:items-center">
-            <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-600" />
+          <div className="flex flex-col gap-3 rounded-lg border border-state-success-border bg-state-success-bg p-3 sm:flex-row sm:items-center">
+            <CheckCircle2 className="h-5 w-5 shrink-0 text-state-success" />
             <div className="flex-1">
               <div className="text-sm font-medium">
                 Connected{conn?.displayName ? ` · ${conn.displayName}` : ""}
@@ -191,13 +191,13 @@ export function PublishingCard() {
             </Button>
           </div>
         ) : expired ? (
-          <div className="flex flex-col gap-3 rounded-[0.95rem] border border-amber-500/20 bg-amber-500/10 p-3 sm:flex-row sm:items-start">
-            <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600" />
+          <div className="flex flex-col gap-3 rounded-lg border border-state-warning-border bg-state-warning-bg p-3 sm:flex-row sm:items-start">
+            <AlertTriangle className="h-5 w-5 shrink-0 text-state-warning" />
             <div className="flex-1">
-              <div className="text-sm font-medium text-amber-900">
+              <div className="text-sm font-medium text-state-warning">
                 Reconnect your LinkedIn account
               </div>
-              <div className="text-xs text-amber-800">
+              <div className="text-xs text-state-warning">
                 {conn?.disconnectedReason ||
                   "The connection expired. Reconnect to keep scheduling posts."}
               </div>
@@ -207,7 +207,7 @@ export function PublishingCard() {
             </Button>
           </div>
         ) : (
-          <div className="flex flex-col gap-3 rounded-[0.95rem] border border-border/60 bg-background/45 p-3 sm:flex-row sm:items-center">
+          <div className="flex flex-col gap-3 rounded-lg border border-border/60 bg-background/45 p-3 sm:flex-row sm:items-center">
             <div className="flex-1 text-sm text-muted-foreground">
               Not connected yet.
             </div>

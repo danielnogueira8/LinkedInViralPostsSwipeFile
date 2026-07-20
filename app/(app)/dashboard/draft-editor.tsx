@@ -403,7 +403,7 @@ export function DraftEditor({
             </span>
           )}
         </span>
-        <span className={cn("tabular-nums", over && "text-red-600 font-medium")}>
+        <span className={cn("tabular-nums", over && "text-state-danger font-medium")}>
           {count.toLocaleString()} / {LINKEDIN_MAX_CHARS.toLocaleString()}
         </span>
       </div>

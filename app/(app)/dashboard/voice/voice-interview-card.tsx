@@ -86,7 +86,7 @@ export function VoiceInterviewCard({
   }
 
   return (
-    <Card className="overflow-hidden border-border/70 bg-card/88 shadow-soft">
+    <Card className="overflow-hidden border-border/70 bg-card/90 shadow-soft">
       <CardHeader>
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-start gap-3">
@@ -118,15 +118,15 @@ export function VoiceInterviewCard({
         {/* Synthesized context — what the AI now knows about you. Editable via
             the profile editor; shown here read-only as the interview result. */}
         {context.length > 0 && (
-          <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/[0.05] p-3.5">
-            <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-emerald-800">
+          <div className="rounded-xl border border-state-success-border bg-state-success/[0.05] p-3.5">
+            <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-state-success">
               <AiIcon className="h-3.5 w-3.5" />
               What the AI now writes from
             </div>
             <ul className="space-y-1.5">
               {context.map((c, i) => (
                 <li key={i} className="flex gap-2 text-sm leading-snug text-foreground">
-                  <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600" />
+                  <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-state-success" />
                   <span>{c}</span>
                 </li>
               ))}

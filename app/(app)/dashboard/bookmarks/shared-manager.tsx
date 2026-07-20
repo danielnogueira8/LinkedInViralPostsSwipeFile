@@ -352,7 +352,7 @@ export function SharedBookmarksManager({
                       <div
                         className={cn(
                           "text-[10px] uppercase tracking-wide font-medium",
-                          s.status === "accepted" ? "text-emerald-600" : "text-muted-foreground",
+                          s.status === "accepted" ? "text-state-success" : "text-muted-foreground",
                         )}
                       >
                         {s.status}

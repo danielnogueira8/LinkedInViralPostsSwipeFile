@@ -39,7 +39,7 @@ function PageHeader({
   return (
     <header
       className={cn(
-        "flex flex-col gap-4 rounded-[1.15rem] border border-border/60 bg-card/72 px-4 py-4 shadow-soft sm:px-5 lg:flex-row lg:items-end lg:justify-between",
+        "flex flex-col gap-4 rounded-xl border border-border/60 bg-card/70 px-4 py-4 shadow-soft sm:px-5 lg:flex-row lg:items-end lg:justify-between",
         className,
       )}
       {...props}
@@ -82,7 +82,7 @@ function Surface({
   return (
     <section
       className={cn(
-        "rounded-[1.15rem] border border-border/60 text-card-foreground",
+        "rounded-xl border border-border/60 text-card-foreground",
         tone === "default" && "bg-card shadow-soft",
         tone === "muted" && "bg-card/70 shadow-soft",
         tone === "flat" && "bg-background/50",
@@ -100,7 +100,7 @@ function Toolbar({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       className={cn(
-        "rounded-[1rem] border border-border/60 bg-card/80 shadow-soft",
+        "rounded-lg border border-border/60 bg-card/80 shadow-soft",
         className,
       )}
       {...props}

@@ -25,7 +25,7 @@ function renderPlaceholderSpans(text: string, nextKey: () => number): ReactNode 
   while ((m = PLACEHOLDER_RE.exec(text)) !== null) {
     if (m.index > last) parts.push(text.slice(last, m.index));
     parts.push(
-      <mark key={nextKey()} className="rounded bg-amber-100 px-0.5 text-amber-900">
+      <mark key={nextKey()} className="rounded bg-state-warning-bg px-0.5 text-state-warning">
         {m[0]}
       </mark>,
     );

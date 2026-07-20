@@ -3889,7 +3889,7 @@ export function ChatWorkspace({
               value={chatSearch}
               onChange={(e) => setChatSearch(e.target.value)}
               placeholder="Search sessions…"
-              className="w-full rounded-xl border border-border bg-card/75 pl-8 pr-7 py-2 text-xs outline-none shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] transition focus:border-primary/40 focus:ring-2 focus:ring-primary/15"
+              className="w-full rounded-xl border border-border bg-card/70 pl-8 pr-7 py-2 text-xs outline-none shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] transition focus:border-primary/40 focus:ring-2 focus:ring-primary/15"
               aria-label="Search chats"
             />
             {chatSearch && (
@@ -4186,13 +4186,13 @@ export function ChatWorkspace({
         {/* Composer */}
         <form
           onSubmit={onSubmit}
-          className="border-t border-border bg-card/92 px-3 py-3 shadow-[0_-18px_45px_rgba(28,28,26,0.04)] backdrop-blur sm:px-6 sm:py-4"
+          className="border-t border-border bg-card/90 px-3 py-3 shadow-[0_-18px_45px_rgba(28,28,26,0.04)] backdrop-blur sm:px-6 sm:py-4"
         >
           <div className="mx-auto flex max-w-4xl flex-col gap-2.5 relative">
             {/* Slash-command menu — anchored above the composer. Open while the
                 input is a bare "/<query>". Click or ↑/↓+Enter to prefill a starter. */}
             {slashOpen && (
-              <div className="absolute bottom-full left-0 right-0 z-20 mb-3 overflow-hidden rounded-2xl border border-border bg-card/95 shadow-[0_24px_80px_rgba(28,28,26,0.16)] backdrop-blur">
+              <div className="absolute bottom-full left-0 right-0 z-20 mb-3 overflow-hidden rounded-2xl border border-border bg-card/90 shadow-[0_24px_80px_rgba(28,28,26,0.16)] backdrop-blur">
                 <div className="px-3.5 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground border-b border-border">
                   Starters
                 </div>
@@ -4229,7 +4229,7 @@ export function ChatWorkspace({
                           onClick={() => pickSkillFromSlash(sk)}
                           className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm transition-colors hover:bg-muted"
                         >
-                          <Zap className="h-4 w-4 shrink-0 text-amber-500" aria-hidden />
+                          <Zap className="h-4 w-4 shrink-0 text-state-warning" aria-hidden />
                           <span className="text-foreground">/{sk.name}</span>
                           {sk.description && (
                             <span className="truncate text-xs text-muted-foreground">
@@ -4249,7 +4249,7 @@ export function ChatWorkspace({
                 ref={generationSettingsRef}
                 role="dialog"
                 aria-label="Generation settings"
-                className="absolute bottom-full left-0 right-0 z-20 mb-3 overflow-hidden rounded-2xl border border-border bg-card/95 shadow-[0_24px_80px_rgba(28,28,26,0.16)] backdrop-blur"
+                className="absolute bottom-full left-0 right-0 z-20 mb-3 overflow-hidden rounded-2xl border border-border bg-card/90 shadow-[0_24px_80px_rgba(28,28,26,0.16)] backdrop-blur"
               >
                 <div className="flex items-center justify-between border-b border-border px-3.5 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
                   <span>Generation settings</span>
@@ -4352,7 +4352,7 @@ export function ChatWorkspace({
                 ref={skillPickerRef}
                 role="dialog"
                 aria-label="Apply a custom skill"
-                className="absolute bottom-full left-0 right-0 z-20 mb-3 overflow-hidden rounded-2xl border border-border bg-card/95 shadow-[0_24px_80px_rgba(28,28,26,0.16)] backdrop-blur"
+                className="absolute bottom-full left-0 right-0 z-20 mb-3 overflow-hidden rounded-2xl border border-border bg-card/90 shadow-[0_24px_80px_rgba(28,28,26,0.16)] backdrop-blur"
               >
                 <div className="flex items-center justify-between px-3.5 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground border-b border-border">
                   <span>Apply a skill ({pendingSkills.length}/{SKILLS_PER_TURN_MAX})</span>
@@ -4375,13 +4375,13 @@ export function ChatWorkspace({
                         onClick={() => toggleSkill(sk)}
                         className={cn(
                           "flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm transition-colors hover:bg-muted",
-                          on && "bg-amber-50",
+                          on && "bg-state-warning-bg",
                         )}
                       >
                         <Zap
                           className={cn(
                             "h-4 w-4 shrink-0",
-                            on ? "text-amber-500" : "text-muted-foreground",
+                            on ? "text-state-warning" : "text-muted-foreground",
                           )}
                           aria-hidden
                         />
@@ -4391,7 +4391,7 @@ export function ChatWorkspace({
                             {sk.description}
                           </span>
                         )}
-                        {on && <Check className="ml-auto h-3.5 w-3.5 text-amber-600" />}
+                        {on && <Check className="ml-auto h-3.5 w-3.5 text-state-warning" />}
                       </button>
                     );
                   })}
@@ -4403,7 +4403,7 @@ export function ChatWorkspace({
                 ref={postFormatPickerRef}
                 role="dialog"
                 aria-label="Choose post format"
-                className="absolute bottom-full left-0 right-0 z-20 mb-3 overflow-hidden rounded-2xl border border-border bg-card/95 shadow-[0_24px_80px_rgba(28,28,26,0.16)] backdrop-blur"
+                className="absolute bottom-full left-0 right-0 z-20 mb-3 overflow-hidden rounded-2xl border border-border bg-card/90 shadow-[0_24px_80px_rgba(28,28,26,0.16)] backdrop-blur"
               >
                 <div className="flex items-center justify-between px-3.5 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground border-b border-border">
                   <span>Post format</span>
@@ -4449,7 +4449,7 @@ export function ChatWorkspace({
                         }}
                         className={cn(
                           "flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm transition-colors hover:bg-muted",
-                          on && "bg-rose-50",
+                          on && "bg-state-danger-bg",
                         )}
                       >
                         <FileText
@@ -4479,7 +4479,7 @@ export function ChatWorkspace({
                 ref={leadMagnetPickerRef}
                 role="dialog"
                 aria-label="Choose lead magnet"
-                className="absolute bottom-full left-0 right-0 z-20 mb-3 overflow-hidden rounded-2xl border border-border bg-card/95 shadow-[0_24px_80px_rgba(28,28,26,0.16)] backdrop-blur"
+                className="absolute bottom-full left-0 right-0 z-20 mb-3 overflow-hidden rounded-2xl border border-border bg-card/90 shadow-[0_24px_80px_rgba(28,28,26,0.16)] backdrop-blur"
               >
                 <div className="flex items-center justify-between border-b border-border px-3.5 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
                   <span>Lead magnet</span>
@@ -4492,7 +4492,7 @@ export function ChatWorkspace({
                     <X className="h-3.5 w-3.5" />
                   </button>
                 </div>
-                <div className="border-b border-border bg-amber-50/60 px-3.5 py-2 text-xs leading-5 text-muted-foreground">
+                <div className="border-b border-border bg-state-warning-bg px-3.5 py-2 text-xs leading-5 text-muted-foreground">
                   Only choose a lead magnet when you want to write a lead magnet post.
                 </div>
                 <div className="max-h-80 overflow-y-auto py-1">
@@ -4526,7 +4526,7 @@ export function ChatWorkspace({
                             "flex w-full items-center gap-2.5 rounded-xl border border-dashed px-3 py-2.5 text-left text-sm transition-colors",
                             aiLeadMagnetLimitReached
                               ? "cursor-not-allowed border-border bg-muted text-muted-foreground"
-                              : "border-primary/30 bg-rose-50/50 text-primary hover:bg-rose-50",
+                              : "border-primary/30 bg-state-danger-bg text-primary hover:bg-state-danger-bg",
                           )}
                         >
                           <Plus className="h-4 w-4 shrink-0" aria-hidden />
@@ -4620,7 +4620,7 @@ export function ChatWorkspace({
                           }}
                           className={cn(
                             "flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm transition-colors hover:bg-muted",
-                            on && "bg-rose-50",
+                            on && "bg-state-danger-bg",
                           )}
                         >
                           <Gift
@@ -4651,7 +4651,7 @@ export function ChatWorkspace({
                 ref={creatorStylePickerRef}
                 role="dialog"
                 aria-label="Choose creator style"
-                className="absolute bottom-full left-0 right-0 z-20 mb-3 overflow-hidden rounded-2xl border border-border bg-card/95 shadow-[0_24px_80px_rgba(28,28,26,0.16)] backdrop-blur"
+                className="absolute bottom-full left-0 right-0 z-20 mb-3 overflow-hidden rounded-2xl border border-border bg-card/90 shadow-[0_24px_80px_rgba(28,28,26,0.16)] backdrop-blur"
               >
                 <div className="flex items-center justify-between px-3.5 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground border-b border-border">
                   <span>Creator style</span>
@@ -4699,7 +4699,7 @@ export function ChatWorkspace({
                           }}
                           className={cn(
                             "flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm transition-colors hover:bg-muted",
-                            on && "bg-rose-50",
+                            on && "bg-state-danger-bg",
                           )}
                         >
                           <Fingerprint
@@ -4727,7 +4727,7 @@ export function ChatWorkspace({
             )}
             <div
               className={cn(
-                "relative overflow-hidden rounded-[1.35rem] border bg-card/92 shadow-[0_18px_60px_rgba(28,28,26,0.12)] ring-1 ring-white/70 backdrop-blur transition-colors",
+                "relative overflow-hidden rounded-[1.35rem] border bg-card/90 shadow-[0_18px_60px_rgba(28,28,26,0.12)] ring-1 ring-white/70 backdrop-blur transition-colors",
                 isDraggingFile
                   ? "border-primary/60 ring-primary/30"
                   : "border-border",
@@ -4741,7 +4741,7 @@ export function ChatWorkspace({
                 above the composer content and is pointer-events-none so it never
                 intercepts the drop itself (the drop lands on the card below). */}
             {isDraggingFile && (
-              <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-[1.35rem] border-2 border-dashed border-primary/50 bg-card/85 backdrop-blur-sm">
+              <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-[1.35rem] border-2 border-dashed border-primary/50 bg-card/90 backdrop-blur-sm">
                 <div className="flex flex-col items-center gap-1.5 text-primary">
                   <Paperclip className="h-6 w-6" aria-hidden />
                   <span className="text-sm font-medium">Drop to attach</span>
@@ -4752,13 +4752,13 @@ export function ChatWorkspace({
               </div>
             )}
             {limitNotice && (
-              <div className="mx-3 mt-3 flex items-start gap-2.5 rounded-xl border border-amber-300/70 bg-amber-50 text-amber-900 px-3 py-2.5 text-sm">
+              <div className="mx-3 mt-3 flex items-start gap-2.5 rounded-xl border border-state-warning-border bg-state-warning-bg text-state-warning px-3 py-2.5 text-sm">
                 <Info className="h-4 w-4 mt-0.5 shrink-0" />
                 <p className="flex-1 leading-snug">{limitNotice}</p>
                 <button
                   type="button"
                   onClick={() => setLimitNotice(null)}
-                  className="text-amber-700 hover:text-amber-900 shrink-0"
+                  className="text-state-warning hover:text-state-warning shrink-0"
                   aria-label="Dismiss"
                 >
                   <X className="h-4 w-4" />
@@ -4828,14 +4828,14 @@ export function ChatWorkspace({
                 {pendingSkills.map((sk) => (
                   <span
                     key={sk.id}
-                    className="inline-flex items-center gap-1.5 rounded-full border border-amber-300/60 bg-amber-50 pl-2.5 pr-1.5 py-1 text-xs text-amber-900"
+                    className="inline-flex items-center gap-1.5 rounded-full border border-state-warning-border bg-state-warning-bg pl-2.5 pr-1.5 py-1 text-xs text-state-warning"
                   >
                     <Zap className="h-3 w-3" aria-hidden />
                     <span className="max-w-[140px] truncate">/{sk.name}</span>
                     <button
                       type="button"
                       onClick={() => toggleSkill(sk)}
-                      className="text-amber-700 hover:text-amber-900"
+                      className="text-state-warning hover:text-state-warning"
                       aria-label={`Remove ${sk.name}`}
                     >
                       <X className="h-3 w-3" />
@@ -4846,7 +4846,7 @@ export function ChatWorkspace({
             )}
             {pendingPostFormat && (
               <div className="flex flex-wrap gap-1.5">
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-rose-300/60 bg-rose-50 pl-2.5 pr-1.5 py-1 text-xs text-primary">
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-state-danger-border bg-state-danger-bg pl-2.5 pr-1.5 py-1 text-xs text-primary">
                   <FileText className="h-3 w-3" aria-hidden />
                   <span className="max-w-[220px] truncate">
                     {noModelFormatLabel(pendingPostFormat)}
@@ -4864,7 +4864,7 @@ export function ChatWorkspace({
             )}
             {pendingLeadMagnet && (
               <div className="flex flex-wrap gap-1.5">
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-rose-300/60 bg-rose-50 pl-2.5 pr-1.5 py-1 text-xs text-primary">
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-state-danger-border bg-state-danger-bg pl-2.5 pr-1.5 py-1 text-xs text-primary">
                   <Gift className="h-3 w-3" aria-hidden />
                   <span className="max-w-[220px] truncate">
                     Giveaway: {pendingLeadMagnet.title}
@@ -4882,7 +4882,7 @@ export function ChatWorkspace({
             )}
             {pendingCreatorStyle && (
               <div className="flex flex-wrap gap-1.5">
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-rose-300/60 bg-rose-50 pl-2.5 pr-1.5 py-1 text-xs text-primary">
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-state-danger-border bg-state-danger-bg pl-2.5 pr-1.5 py-1 text-xs text-primary">
                   <Fingerprint className="h-3 w-3" aria-hidden />
                   <span className="max-w-[220px] truncate">
                     {pendingCreatorStyle.creatorName
@@ -5009,7 +5009,7 @@ export function ChatWorkspace({
                   className={cn(
                     "h-9 w-9 shrink-0 rounded-xl border-border bg-card hover:bg-muted",
                     (skillPickerOpen || pendingSkills.length > 0) &&
-                      "border-amber-400 text-amber-600",
+                      "border-state-warning-border text-state-warning",
                   )}
                   aria-label="Apply a custom skill"
                   aria-expanded={skillPickerOpen}
@@ -5204,7 +5204,7 @@ export function ChatWorkspace({
               aria-hidden
             />
           </div>
-          <div className="flex items-center justify-between px-4 h-14 border-b border-border bg-card/75">
+          <div className="flex items-center justify-between px-4 h-14 border-b border-border bg-card/70">
             <span className="text-sm font-semibold tracking-[-0.01em]">
               {panelTitle(artifacts)} ({artifacts.length})
             </span>
@@ -5232,7 +5232,7 @@ export function ChatWorkspace({
         <button
           type="button"
           onClick={() => setMobileDraftsOpen(true)}
-          className="lg:hidden absolute bottom-32 left-1/2 -translate-x-1/2 z-20 inline-flex items-center gap-1.5 rounded-full border border-border bg-card/95 px-3.5 py-2 text-xs font-medium shadow-md backdrop-blur hover:bg-card transition-colors"
+          className="lg:hidden absolute bottom-32 left-1/2 -translate-x-1/2 z-20 inline-flex items-center gap-1.5 rounded-full border border-border bg-card/90 px-3.5 py-2 text-xs font-medium shadow-md backdrop-blur hover:bg-card transition-colors"
           aria-label={`Show ${panelTitle(artifacts).toLowerCase()}`}
         >
           <FileText className="h-3.5 w-3.5" />
@@ -5312,13 +5312,13 @@ function SourcePostChip({
                 ? `Modeling after: ${source.authorName}`
                 : "Modeling after this post"}
           {source.partial && (
-            <span className="text-[10px] font-normal text-amber-700 bg-amber-100 rounded px-1.5 py-0.5">
+            <span className="text-[10px] font-normal text-state-warning bg-state-warning-bg rounded px-1.5 py-0.5">
               partial
             </span>
           )}
           {source.postType === "lead_magnet" && (
             <span
-              className="inline-flex items-center gap-1 rounded-full border border-rose-200 bg-rose-50 px-1.5 py-0.5 text-[10px] font-normal text-primary"
+              className="inline-flex items-center gap-1 rounded-full border border-state-danger-border bg-state-danger-bg px-1.5 py-0.5 text-[10px] font-normal text-primary"
               title="Lead Magnet: Auto. Cowork will keep this as a lead-magnet post and pick a saved resource if one fits."
             >
               <Gift className="h-2.5 w-2.5" aria-hidden />
@@ -5365,7 +5365,7 @@ function CollapsedDraftRow({
   // A row (not a <button>) so the delete control isn't a button-in-button. The
   // expand area is the button; delete sits beside it.
   return (
-    <div className="group flex w-full items-center gap-2 rounded-2xl border border-border bg-card/85 px-3 py-2.5 shadow-sm transition-colors hover:bg-card">
+    <div className="group flex w-full items-center gap-2 rounded-2xl border border-border bg-card/90 px-3 py-2.5 shadow-sm transition-colors hover:bg-card">
       <button
         type="button"
         onClick={onExpand}
@@ -5619,7 +5619,7 @@ function MessageBubble({
             {message.skills.map((name) => (
               <span
                 key={name}
-                className="inline-flex items-center gap-1.5 rounded-full border border-amber-300/60 bg-amber-50 px-2.5 py-0.5 text-[11px] text-amber-900"
+                className="inline-flex items-center gap-1.5 rounded-full border border-state-warning-border bg-state-warning-bg px-2.5 py-0.5 text-[11px] text-state-warning"
                 title={`Custom skill applied: /${name}`}
               >
                 <Zap className="h-3 w-3" aria-hidden />
@@ -5631,7 +5631,7 @@ function MessageBubble({
         {message.postFormat && (
           <div className="flex flex-wrap justify-end gap-1.5 max-w-[85%]">
             <span
-              className="inline-flex items-center gap-1.5 rounded-full border border-rose-300/60 bg-rose-50 px-2.5 py-0.5 text-[11px] text-primary"
+              className="inline-flex items-center gap-1.5 rounded-full border border-state-danger-border bg-state-danger-bg px-2.5 py-0.5 text-[11px] text-primary"
               title={`Post format selected: ${message.postFormat}`}
             >
               <FileText className="h-3 w-3" aria-hidden />
@@ -5642,7 +5642,7 @@ function MessageBubble({
         {message.creatorStyle && (
           <div className="flex flex-wrap justify-end gap-1.5 max-w-[85%]">
             <span
-              className="inline-flex items-center gap-1.5 rounded-full border border-rose-300/60 bg-rose-50 px-2.5 py-0.5 text-[11px] text-primary"
+              className="inline-flex items-center gap-1.5 rounded-full border border-state-danger-border bg-state-danger-bg px-2.5 py-0.5 text-[11px] text-primary"
               title={`Creator style: ${message.creatorStyle.creatorName ?? message.creatorStyle.name}`}
             >
               <Fingerprint className="h-3 w-3" aria-hidden />
@@ -5657,7 +5657,7 @@ function MessageBubble({
         {message.leadMagnet && (
           <div className="flex flex-wrap justify-end gap-1.5 max-w-[85%]">
             <span
-              className="inline-flex items-center gap-1.5 rounded-full border border-rose-300/60 bg-rose-50 px-2.5 py-0.5 text-[11px] text-primary"
+              className="inline-flex items-center gap-1.5 rounded-full border border-state-danger-border bg-state-danger-bg px-2.5 py-0.5 text-[11px] text-primary"
               title={`Lead magnet ${message.leadMagnet.selection === "auto" ? "auto-selected" : "selected"}: ${message.leadMagnet.title}`}
             >
               <Gift className="h-3 w-3" aria-hidden />
@@ -5768,17 +5768,17 @@ function MessageBubble({
       {/* Recovery affordance for cut-off / tool-budget-exhausted turns. Retry
           re-sends the original task so the model repeats any required work. */}
       {message.recoverable && !message.streaming && (
-        <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-300/70 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-state-warning-border bg-state-warning-bg px-3 py-2 text-sm text-state-warning">
           <div className="flex-1 leading-snug">
             <p>{message.recoverable.message}</p>
-            <p className="mt-0.5 text-xs text-amber-800/80">
+            <p className="mt-0.5 text-xs text-state-warning">
               Retry will run your original request again.
             </p>
           </div>
           <button
             type="button"
             onClick={onRetry}
-            className="shrink-0 inline-flex items-center gap-1.5 rounded-md bg-amber-900 text-amber-50 px-2.5 py-1 text-xs font-medium hover:bg-amber-800 transition-colors"
+            className="shrink-0 inline-flex items-center gap-1.5 rounded-md bg-state-warning text-state-warning-bg px-2.5 py-1 text-xs font-medium hover:bg-state-warning transition-colors"
           >
             Retry task
           </button>
@@ -5961,7 +5961,7 @@ function AgentProgressShell({
   children: ReactNode;
 }) {
   return (
-    <div className="agent-card-in w-full max-w-2xl rounded-2xl border border-primary/15 bg-card/85 px-3.5 py-3 shadow-sm shadow-primary/5">
+    <div className="agent-card-in w-full max-w-2xl rounded-2xl border border-primary/15 bg-card/90 px-3.5 py-3 shadow-sm shadow-primary/5">
       <div className="mb-2 flex items-center justify-between gap-3">
         <span className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-primary/85">
           <AiIcon className="h-3.5 w-3.5 shrink-0" />
@@ -6011,7 +6011,7 @@ function PlanChecklist({ steps, status }: { steps: PlanStep[]; status: string | 
             className="agent-step-in flex items-center gap-2 text-[13px]"
           >
             {s.status === "done" ? (
-              <CheckCircle2 className="check-pop h-4 w-4 shrink-0 text-emerald-600" />
+              <CheckCircle2 className="check-pop h-4 w-4 shrink-0 text-state-success" />
             ) : visuallyActive ? (
               <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" />
             ) : (
@@ -6089,7 +6089,7 @@ function ActivityStream({
                 // A self-corrected retry: a calm, non-alarming completed step.
                 <CheckCircle2 className="check-pop h-4 w-4 shrink-0 text-muted-foreground/60" />
               ) : t.ok ? (
-                <CheckCircle2 className="check-pop h-4 w-4 shrink-0 text-emerald-600" />
+                <CheckCircle2 className="check-pop h-4 w-4 shrink-0 text-state-success" />
               ) : (
                 <X className="check-pop h-4 w-4 shrink-0 text-destructive" />
               )}
@@ -6399,11 +6399,11 @@ function BatchPreviewCard({
           )}
           {outcome === "approved" ? (
             <span
-              className="inline-flex shrink-0 items-center gap-1 text-[11px] text-emerald-700"
+              className="inline-flex shrink-0 items-center gap-1 text-[11px] text-state-success"
               title="Approved — this draft is on the Ready column of your Posts board."
             >
               <span
-                className="h-1.5 w-1.5 rounded-full bg-emerald-500"
+                className="h-1.5 w-1.5 rounded-full bg-state-success"
                 aria-hidden
               />
               Approved
@@ -6421,11 +6421,11 @@ function BatchPreviewCard({
             </span>
           ) : (
             <span
-              className="inline-flex shrink-0 items-center gap-1 text-[11px] text-amber-700"
+              className="inline-flex shrink-0 items-center gap-1 text-[11px] text-state-warning"
               title="Pending review — approve or reject below to move this draft to Ready or rejected."
             >
               <span
-                className="h-1.5 w-1.5 rounded-full bg-amber-500"
+                className="h-1.5 w-1.5 rounded-full bg-state-warning"
                 aria-hidden
               />
               Pending review
@@ -6501,7 +6501,7 @@ function BatchPreviewCard({
         {leadMagnet && (
           <div className="mb-2 flex flex-wrap items-center gap-1.5">
             <span
-              className="inline-flex items-center gap-1 rounded-full border border-rose-300/60 bg-rose-50 px-2.5 py-0.5 text-[10px] font-semibold text-primary"
+              className="inline-flex items-center gap-1 rounded-full border border-state-danger-border bg-state-danger-bg px-2.5 py-0.5 text-[10px] font-semibold text-primary"
               title={`Lead magnet ${leadMagnet.selection === "auto" ? "auto-selected" : "selected"}: ${leadMagnet.title}`}
             >
               <Gift className="h-2.5 w-2.5" aria-hidden />
@@ -6527,7 +6527,7 @@ function BatchPreviewCard({
             <Button
               size="sm"
               variant="outline"
-              className="h-8 gap-1.5 border-emerald-300 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800"
+              className="h-8 gap-1.5 border-state-success-border text-state-success hover:bg-state-success-bg hover:text-state-success"
               onClick={onApprove}
               title="Approve this batch draft and send it to Ready on the Posts board"
             >
@@ -6547,7 +6547,7 @@ function BatchPreviewCard({
           </>
         )}
         {outcome === "approved" && (
-          <span className="inline-flex h-8 items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 text-xs font-medium text-emerald-700">
+          <span className="inline-flex h-8 items-center gap-1.5 rounded-full border border-state-success-border bg-state-success-bg px-3 text-xs font-medium text-state-success">
             <Check className="h-3.5 w-3.5" />
             Approved · on the Ready column
           </span>
@@ -7136,7 +7136,7 @@ function ArtifactCard({
     // sat at zero height below and the card looked mysteriously empty. Just
     // let the card size to its content — the outer drafts panel is already
     // `overflow-y-scroll` so a tall card scrolls with the panel, not itself.
-    <div className="rounded-[1.15rem] border border-border bg-white text-foreground shadow-[0_16px_45px_rgba(28,28,26,0.10)]">
+    <div className="rounded-xl border border-border bg-white text-foreground shadow-[0_16px_45px_rgba(28,28,26,0.10)]">
       {/* "Draft N" badge + applied-skill chip(s). Skills come from the server
           stamping meta.skills onto the artifact when one was active for the
           turn that produced it (see route's artifact case). Renders even when
@@ -7176,7 +7176,7 @@ function ArtifactCard({
           {draftSkills.map((name) => (
             <span
               key={name}
-              className="inline-flex items-center gap-1 rounded-full border border-amber-300/60 bg-amber-50 px-2.5 py-0.5 text-[10px] font-semibold text-amber-900"
+              className="inline-flex items-center gap-1 rounded-full border border-state-warning-border bg-state-warning-bg px-2.5 py-0.5 text-[10px] font-semibold text-state-warning"
               title={`Produced with custom skill /${name}`}
             >
               <Zap className="h-2.5 w-2.5" aria-hidden />
@@ -7229,7 +7229,7 @@ function ArtifactCard({
                   onDelete();
                 }
               }}
-              className="inline-flex items-center rounded-md px-1.5 py-1 text-[11px] font-medium text-muted-foreground hover:bg-red-50 hover:text-red-600 transition-colors"
+              className="inline-flex items-center rounded-md px-1.5 py-1 text-[11px] font-medium text-muted-foreground hover:bg-state-danger-bg hover:text-state-danger transition-colors"
               aria-label="Delete draft"
               title="Delete draft"
             >
@@ -7403,7 +7403,7 @@ function ArtifactCard({
             <Button
               size="sm"
               variant="outline"
-              className="gap-1.5 h-8 rounded-full border-emerald-300 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800"
+              className="gap-1.5 h-8 rounded-full border-state-success-border text-state-success hover:bg-state-success-bg hover:text-state-success"
               onClick={onApproveBatchReview}
               title="Approve this batch draft and send it to Ready on the Posts board"
             >
@@ -7423,7 +7423,7 @@ function ArtifactCard({
           </>
         )}
         {batchReviewOutcome === "approved" && (
-          <span className="inline-flex h-8 items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 text-xs font-medium text-emerald-700">
+          <span className="inline-flex h-8 items-center gap-1.5 rounded-full border border-state-success-border bg-state-success-bg px-3 text-xs font-medium text-state-success">
             <Check className="h-3.5 w-3.5" />
             Approved · on the Ready column
           </span>
@@ -7765,7 +7765,7 @@ function DraftMediaPreview({
     if (generatedImageStatus?.status === "failed") {
       const reason = userFacingImageFailureReason(generatedImageStatus.reason);
       return (
-        <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-snug text-amber-900">
+        <div className="mb-3 rounded-xl border border-state-warning-border bg-state-warning-bg px-3 py-2 text-[11px] leading-snug text-state-warning">
           Image could not be generated{reason ? `: ${reason}` : ""}. The draft text is still ready.
         </div>
       );
@@ -7773,7 +7773,7 @@ function DraftMediaPreview({
     if (generatedImageStatus?.status === "save_failed") {
       const reason = userFacingImageFailureReason(generatedImageStatus.reason);
       return (
-        <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-snug text-amber-900">
+        <div className="mb-3 rounded-xl border border-state-warning-border bg-state-warning-bg px-3 py-2 text-[11px] leading-snug text-state-warning">
           Image was generated but could not be saved{reason ? `: ${reason}` : ""}. The draft text is still ready.
         </div>
       );
@@ -7807,7 +7807,7 @@ function DraftMediaPreview({
         })}
       </div>
       {generatedImageStatus?.status === "ready" && (
-        <div className="inline-flex items-center gap-1.5 rounded-full border border-rose-200 bg-rose-50 px-2.5 py-1 text-[10px] font-medium text-primary">
+        <div className="inline-flex items-center gap-1.5 rounded-full border border-state-danger-border bg-state-danger-bg px-2.5 py-1 text-[10px] font-medium text-primary">
           <ImageIcon className="h-3 w-3" aria-hidden />
           Image adapted from source post
         </div>
@@ -7970,8 +7970,8 @@ function CoworkDraftFeedback({
             className={cn(
               "h-8 rounded-full gap-1.5 border transition-colors",
               rating === "up"
-                ? "border-emerald-500/55 bg-emerald-50 text-emerald-800 ring-2 ring-emerald-500/15 hover:bg-emerald-100"
-                : "border-emerald-200 bg-emerald-50/75 text-emerald-800 hover:border-emerald-300 hover:bg-emerald-100/80",
+                ? "border-state-success-border bg-state-success-bg text-state-success ring-2 ring-emerald-500/15 hover:bg-state-success-bg"
+                : "border-state-success-border bg-state-success-bg text-state-success hover:border-state-success-border hover:bg-state-success-bg",
             )}
             onClick={() => chooseRating("up")}
             aria-pressed={rating === "up"}
@@ -7988,8 +7988,8 @@ function CoworkDraftFeedback({
             className={cn(
               "h-8 rounded-full gap-1.5 border transition-colors",
               rating === "down"
-                ? "border-red-500/55 bg-red-50 text-red-800 ring-2 ring-red-500/15 hover:bg-red-100"
-                : "border-red-200 bg-red-50/75 text-red-800 hover:border-red-300 hover:bg-red-100/80",
+                ? "border-state-danger-border bg-state-danger-bg text-state-danger ring-2 ring-red-500/15 hover:bg-state-danger-bg"
+                : "border-state-danger-border bg-state-danger-bg text-state-danger hover:border-state-danger-border hover:bg-state-danger-bg",
             )}
             onClick={() => chooseRating("down")}
             aria-pressed={rating === "down"}
@@ -8325,7 +8325,7 @@ function WorkerLane({ slot }: { slot: BatchSlot }) {
         className={cn(
           "shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium",
           slot.is_lead_magnet
-            ? "bg-amber-500/15 text-amber-700"
+            ? "bg-state-warning-bg text-state-warning"
             : "bg-primary/10 text-primary",
         )}
         title={postTypeHelp(slot.is_lead_magnet)}

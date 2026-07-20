@@ -47,7 +47,7 @@ export default function AccountsLoading() {
       aria-live="polite"
       aria-busy="true"
     >
-      <div className="rounded-[1.15rem] border border-border/60 bg-card/72 px-4 py-4 shadow-soft sm:px-5">
+      <div className="rounded-xl border border-border/60 bg-card/70 px-4 py-4 shadow-soft sm:px-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div className="space-y-2">
             <div className="flex gap-2">

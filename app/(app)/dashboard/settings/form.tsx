@@ -73,7 +73,7 @@ export function SettingsForm({ initial }: { initial: { viral: Pair; template: Pa
         </StatusPill>
       </Toolbar>
 
-      <Card className="overflow-hidden border-border/70 bg-card/88 shadow-soft">
+      <Card className="overflow-hidden border-border/70 bg-card/90 shadow-soft">
         <CardHeader>
           <div className="flex items-start gap-3">
             <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-primary/10 bg-primary/[0.07] text-primary">

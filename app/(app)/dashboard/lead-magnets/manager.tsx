@@ -530,7 +530,7 @@ function LeadMagnetCard({
         <p className="line-clamp-2 text-sm leading-6 text-muted-foreground">{summary}</p>
 
         {leadMagnetQualityWarning(item.metadata) && (
-          <div className="flex items-start gap-1.5 rounded-md border border-amber-500/15 bg-amber-500/10 px-2.5 py-1.5 text-xs text-amber-700">
+          <div className="flex items-start gap-1.5 rounded-md border border-state-warning-border bg-state-warning-bg px-2.5 py-1.5 text-xs text-state-warning">
             <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
             <span>{leadMagnetQualityWarning(item.metadata)}</span>
           </div>
@@ -542,7 +542,7 @@ function LeadMagnetCard({
             <div className="space-y-1.5">
               {deliverables.slice(0, 2).map((deliverable) => (
                 <div key={deliverable} className="flex min-w-0 items-start gap-2 text-xs leading-5 text-foreground/85">
-                  <Check className="mt-1 h-3 w-3 shrink-0 text-emerald-600" />
+                  <Check className="mt-1 h-3 w-3 shrink-0 text-state-success" />
                   <span className="line-clamp-1">{deliverable}</span>
                 </div>
               ))}
@@ -1287,7 +1287,7 @@ function LeadMagnetPreview({
         </Button>
       </div>
       {leadMagnetQualityWarning(item.metadata) && (
-        <div className="mt-4 flex items-start gap-2 rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2.5 text-xs text-amber-700">
+        <div className="mt-4 flex items-start gap-2 rounded-lg border border-state-warning-border bg-state-warning-bg px-3 py-2.5 text-xs text-state-warning">
           <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           <span>
             {leadMagnetQualityWarning(item.metadata)} This resource is already publicly

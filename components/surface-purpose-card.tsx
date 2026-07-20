@@ -15,7 +15,7 @@ export function SurfacePurposeCard({
       tone="flat"
       padding="sm"
       className={cn(
-        "flex flex-col gap-1 border-dashed bg-card/55 sm:flex-row sm:items-center sm:gap-2",
+        "flex flex-col gap-1 border-dashed bg-card/70 sm:flex-row sm:items-center sm:gap-2",
         className,
       )}
     >

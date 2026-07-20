@@ -65,9 +65,9 @@ export function UsagePill({
   // when spent. Doubles as an at-a-glance "you're near the cap" cue.
   const tone =
     pct >= 1
-      ? "text-red-600 dark:text-red-400"
+      ? "text-state-danger dark:text-state-danger"
       : pct >= 0.8
-        ? "text-amber-600 dark:text-amber-500"
+        ? "text-state-warning dark:text-state-warning"
         : "text-muted-foreground";
 
   const tooltip =

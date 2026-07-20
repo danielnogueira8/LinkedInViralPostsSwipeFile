@@ -19,14 +19,14 @@ type FeaturedPost = {
 
 // Warm palette to match the cream/coral design system.
 const AVATAR_TINTS = [
-  "bg-amber-100 text-amber-800",
-  "bg-orange-100 text-orange-800",
-  "bg-rose-100 text-rose-800",
+  "bg-state-warning-bg text-state-warning",
+  "bg-state-warning-bg text-state-warning",
+  "bg-state-danger-bg text-state-danger",
   "bg-stone-200 text-stone-700",
-  "bg-yellow-100 text-yellow-800",
-  "bg-red-100 text-red-800",
-  "bg-lime-100 text-lime-800",
-  "bg-fuchsia-100 text-fuchsia-800",
+  "bg-state-warning-bg text-state-warning",
+  "bg-state-danger-bg text-state-danger",
+  "bg-state-success-bg text-state-success",
+  "bg-state-brand-bg text-state-brand",
 ];
 function tintFor(name: string): string {
   let h = 0;
@@ -47,7 +47,7 @@ export function FeaturedPostCard({ post, rank, priority }: { post: FeaturedPost;
   const avatarUrl = post.accounts?.profile_pic_url ?? null;
 
   return (
-    <Card className="w-72 shrink-0 overflow-hidden rounded-[1.15rem] border-border/70 bg-card/88 flex flex-col transition-[border-color,box-shadow] duration-200 ease-[cubic-bezier(0.25,1,0.5,1)] motion-reduce:transition-none hover:border-primary/18 hover:shadow-soft-lg">
+    <Card className="w-72 shrink-0 overflow-hidden rounded-xl border-border/70 bg-card/90 flex flex-col transition-[border-color,box-shadow] duration-200 ease-[cubic-bezier(0.25,1,0.5,1)] motion-reduce:transition-none hover:border-primary/18 hover:shadow-soft-lg">
       <div className="relative">
         {img ? (
           <div className="relative h-32 w-full">

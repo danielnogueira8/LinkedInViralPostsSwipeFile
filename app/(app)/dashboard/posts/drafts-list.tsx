@@ -66,7 +66,7 @@ const KIND_FILTER_LABEL: Record<"all" | DraftKind, string> = {
 // tagged so they stand out in a mixed column. Null = no badge.
 function kindBadge(kind: DraftKind): { label: string; cls: string } | null {
   if (kind === "hook")
-    return { label: "Hook", cls: "border-amber-500/20 bg-amber-500/10 text-amber-700" };
+    return { label: "Hook", cls: "border-state-warning-border bg-state-warning-bg text-state-warning" };
   if (kind === "lead_magnet")
     return { label: "Lead Magnet", cls: "border-primary/15 bg-primary/[0.07] text-primary" };
   return null;
@@ -196,9 +196,9 @@ export function buildCalendarMonth(
 // Card background tint per status — same color language as the board's dots.
 // Used for the calendar day chips.
 export const STATUS_CHIP: Record<DraftStatus, string> = {
-  idea: "bg-amber-500/10 text-amber-800 border-amber-500/20",
-  drafting: "bg-sky-500/10 text-sky-800 border-sky-500/20",
-  ready: "bg-emerald-500/10 text-emerald-800 border-emerald-500/20",
+  idea: "bg-state-warning-bg text-state-warning border-state-warning-border",
+  drafting: "bg-state-info-bg text-state-info border-state-info-border",
+  ready: "bg-state-success-bg text-state-success border-state-success-border",
   posted: "bg-muted text-muted-foreground border-border/70",
 };
 
@@ -218,24 +218,24 @@ const COLUMNS: {
     moveStatus: "idea",
     label: "Idea",
     description: "Capture raw angles before they become drafts.",
-    accent: "text-amber-700",
-    dot: "bg-amber-500",
+    accent: "text-state-warning",
+    dot: "bg-state-warning",
   },
   {
     id: "drafting",
     moveStatus: "drafting",
     label: "Draft",
     description: "Edit drafts before approving them.",
-    accent: "text-sky-700",
-    dot: "bg-sky-500",
+    accent: "text-state-info",
+    dot: "bg-state-info",
   },
   {
     id: "ready",
     moveStatus: "ready",
     label: "Ready",
     description: "Approved posts waiting for a publish plan.",
-    accent: "text-emerald-700",
-    dot: "bg-emerald-500",
+    accent: "text-state-success",
+    dot: "bg-state-success",
   },
   {
     id: "scheduled",
@@ -559,7 +559,7 @@ export function DraftsList({
             {(() => {
               const column = COLUMNS.find((c) => c.id === mobileCol) ?? COLUMNS[0];
               return (
-                <div className="rounded-[1rem] border border-border/60 bg-card/70 px-3 py-2.5 shadow-soft">
+                <div className="rounded-lg border border-border/60 bg-card/70 px-3 py-2.5 shadow-soft">
                   <div className="flex items-center justify-between gap-3">
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
@@ -607,7 +607,7 @@ export function DraftsList({
                   onDrop(e, c.moveStatus);
                 }}
                 className={cn(
-                  "rounded-[1.15rem] border bg-card/64 p-2.5 flex flex-col gap-2 min-h-[220px] shadow-soft",
+                  "rounded-xl border bg-card/70 p-2.5 flex flex-col gap-2 min-h-[220px] shadow-soft",
                   c.moveStatus && dragOver === c.moveStatus
                     ? "border-primary border-dashed bg-primary/5"
                     : "border-border/60",
@@ -843,7 +843,7 @@ function CalendarView({
           if (id) onSchedule(id, null); // drop on tray = clear the date
         }}
         className={cn(
-          "lg:w-72 shrink-0 rounded-[1.15rem] border bg-card/72 p-2.5 flex flex-col gap-2 shadow-soft",
+          "lg:w-72 shrink-0 rounded-xl border bg-card/70 p-2.5 flex flex-col gap-2 shadow-soft",
           overTray ? "border-primary border-dashed bg-primary/5" : "border-border/60",
         )}
       >
@@ -959,9 +959,9 @@ function EmptyColumn() {
 // (the column already groups by status, but the dot helps on the mobile single-
 // column view and reinforces the pipeline color language).
 const STATUS_DOT: Record<BoardColumnId, string> = {
-  idea: "bg-amber-500",
-  drafting: "bg-sky-500",
-  ready: "bg-emerald-500",
+  idea: "bg-state-warning",
+  drafting: "bg-state-info",
+  ready: "bg-state-success",
   scheduled: "bg-primary",
   posted: "bg-muted-foreground/40",
 };

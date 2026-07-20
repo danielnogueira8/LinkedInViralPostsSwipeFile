@@ -115,7 +115,7 @@ export function NextDrop({ className }: { className?: string }) {
       className={cn(
         "inline-flex items-center gap-2 rounded-full border px-3 py-1.5 shadow-soft transition-colors",
         dropping
-          ? "border-orange-500/30 bg-orange-500/10"
+          ? "border-state-warning-border bg-state-warning-bg"
           : "border-border/60 bg-card",
         className,
       )}
@@ -127,8 +127,8 @@ export function NextDrop({ className }: { className?: string }) {
     >
       {dropping ? (
         <span className="relative flex h-2 w-2" aria-hidden="true">
-          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-orange-500 opacity-75" />
-          <span className="relative inline-flex h-2 w-2 rounded-full bg-orange-500" />
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-state-warning opacity-75" />
+          <span className="relative inline-flex h-2 w-2 rounded-full bg-state-warning" />
         </span>
       ) : (
         <Clock className="h-3.5 w-3.5 text-muted-foreground" />
@@ -136,13 +136,13 @@ export function NextDrop({ className }: { className?: string }) {
       <span
         className={cn(
           "text-xs font-medium",
-          dropping ? "text-orange-600 dark:text-orange-400" : "text-muted-foreground",
+          dropping ? "text-state-warning dark:text-state-warning" : "text-muted-foreground",
         )}
       >
         {dropping ? "Dropping now" : "Next drop"}
       </span>
       {dropping ? (
-        <span className="text-xs font-semibold text-orange-600 dark:text-orange-400">
+        <span className="text-xs font-semibold text-state-warning dark:text-state-warning">
           …
         </span>
       ) : (

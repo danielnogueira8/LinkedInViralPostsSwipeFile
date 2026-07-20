@@ -72,14 +72,14 @@ export type SavedPostRow = {
 // Stable avatar tint per name — mirrors post-card.tsx so saved cards and
 // swipe cards share the same warm palette.
 const AVATAR_TINTS = [
-  "bg-amber-100 text-amber-800",
-  "bg-orange-100 text-orange-800",
-  "bg-rose-100 text-rose-800",
+  "bg-state-warning-bg text-state-warning",
+  "bg-state-warning-bg text-state-warning",
+  "bg-state-danger-bg text-state-danger",
   "bg-stone-200 text-stone-700",
-  "bg-yellow-100 text-yellow-800",
-  "bg-red-100 text-red-800",
-  "bg-lime-100 text-lime-800",
-  "bg-fuchsia-100 text-fuchsia-800",
+  "bg-state-warning-bg text-state-warning",
+  "bg-state-danger-bg text-state-danger",
+  "bg-state-success-bg text-state-success",
+  "bg-state-brand-bg text-state-brand",
 ];
 
 const CARD_MEDIA_SIZES =
@@ -218,7 +218,7 @@ export function SavedPostCard({
     <>
       <Card
         id={`saved-${row.id}`}
-        className="gap-0 overflow-hidden rounded-[1.15rem] border-border/70 bg-card/88 py-0 flex flex-col transition-[border-color,box-shadow] duration-200 ease-[cubic-bezier(0.25,1,0.5,1)] motion-reduce:transition-none hover:border-primary/18 hover:shadow-soft-lg scroll-mt-8"
+        className="gap-0 overflow-hidden rounded-xl border-border/70 bg-card/90 py-0 flex flex-col transition-[border-color,box-shadow] duration-200 ease-[cubic-bezier(0.25,1,0.5,1)] motion-reduce:transition-none hover:border-primary/18 hover:shadow-soft-lg scroll-mt-8"
       >
         {hasNative ? (
           <>
@@ -276,7 +276,7 @@ export function SavedPostCard({
                   type="button"
                   onClick={remove}
                   disabled={deleting}
-                  className="grid size-10 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-red-600 disabled:opacity-50"
+                  className="grid size-10 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-state-danger disabled:opacity-50"
                   title="Remove saved post"
                   aria-label="Remove saved post"
                 >
@@ -458,7 +458,7 @@ export function SavedPostCard({
                 type="button"
                 onClick={remove}
                 disabled={deleting}
-                className="grid size-10 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-red-600 disabled:opacity-50"
+                className="grid size-10 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-state-danger disabled:opacity-50"
                 title="Remove saved post"
                 aria-label="Remove saved post"
               >
@@ -493,8 +493,8 @@ export function SavedPostCard({
         )}
 
         {row.note && (
-          <div className="border-t border-amber-500/20 bg-amber-500/10 px-4 py-2.5 text-xs leading-relaxed text-amber-900 flex items-start gap-2">
-            <StickyNote className="h-3.5 w-3.5 mt-0.5 shrink-0 text-amber-700" />
+          <div className="border-t border-state-warning-border bg-state-warning-bg px-4 py-2.5 text-xs leading-relaxed text-state-warning flex items-start gap-2">
+            <StickyNote className="h-3.5 w-3.5 mt-0.5 shrink-0 text-state-warning" />
             <span className="whitespace-pre-wrap">{row.note}</span>
           </div>
         )}

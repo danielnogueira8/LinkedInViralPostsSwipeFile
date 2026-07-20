@@ -355,7 +355,7 @@ function StyleCard({
   return (
     <Card
       className={cn(
-        "flex flex-col overflow-hidden border-border/70 bg-card/88 shadow-soft transition-[border-color,box-shadow,opacity] duration-200 ease-[cubic-bezier(0.25,1,0.5,1)] motion-reduce:transition-none",
+        "flex flex-col overflow-hidden border-border/70 bg-card/90 shadow-soft transition-[border-color,box-shadow,opacity] duration-200 ease-[cubic-bezier(0.25,1,0.5,1)] motion-reduce:transition-none",
         clickable && "hover:border-primary/18 hover:shadow-soft-lg",
       )}
     >
@@ -428,7 +428,7 @@ function StyleCard({
 
         {/* Status / content region */}
         {generating ? (
-          <div className="flex items-center gap-2 rounded-[0.9rem] border border-amber-500/15 bg-amber-500/10 px-3 py-2.5 text-xs text-amber-700">
+          <div className="flex items-center gap-2 rounded-lg border border-state-warning-border bg-state-warning-bg px-3 py-2.5 text-xs text-state-warning">
             <Loader2 className="h-3.5 w-3.5 animate-spin" /> Distilling this
             creator&rsquo;s writing style…
           </div>
@@ -443,7 +443,7 @@ function StyleCard({
               <p className="line-clamp-3 text-sm leading-relaxed text-muted-foreground">{row.description}</p>
             )}
             {creatorStyleQualityWarning(row.sample_count) && (
-              <div className="flex items-start gap-1.5 rounded-md border border-amber-500/15 bg-amber-500/10 px-2.5 py-1.5 text-xs text-amber-700">
+              <div className="flex items-start gap-1.5 rounded-md border border-state-warning-border bg-state-warning-bg px-2.5 py-1.5 text-xs text-state-warning">
                 <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
                 <span>{creatorStyleQualityWarning(row.sample_count)}</span>
               </div>
