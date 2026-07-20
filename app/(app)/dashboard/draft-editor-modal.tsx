@@ -42,6 +42,13 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { DraftEditor } from "./draft-editor";
 import { cn } from "@/lib/utils";
 import { POST_INTENTS } from "@/lib/post-intents";
@@ -693,23 +700,31 @@ export function DraftEditorModal({
                   </div>
                   <div className="space-y-1">
                     <PropRow icon={<ListChecks className="h-4 w-4" />} label="Status">
-                      <select
+                      <Select
                         value={isNew ? newStatus : (draft?.status ?? "idea")}
-                        onChange={(e) => {
-                          const v = e.target.value as DraftStatus;
-                          if (isNew) setNewStatus(v);
-                          else patchMeta({ status: v }, { status: v });
+                        onValueChange={(v) => {
+                          const status = v as DraftStatus;
+                          if (isNew) setNewStatus(status);
+                          else patchMeta({ status }, { status });
                         }}
-                        className="-ml-1 h-8 rounded-md bg-transparent px-1 text-sm outline-none hover:bg-accent focus:bg-accent disabled:opacity-60"
-                        aria-label="Status"
-                        title={STATUS_HELP[isNew ? newStatus : (draft?.status ?? "idea")]}
                       >
-                        {STATUS_OPTIONS.map((s) => (
-                          <option key={s.value} value={s.value}>
-                            {s.label}
-                          </option>
-                        ))}
-                      </select>
+                        <SelectTrigger
+                          className="-ml-1 h-8 border-transparent px-1 hover:bg-accent focus-visible:bg-accent"
+                          aria-label="Status"
+                          title={STATUS_HELP[isNew ? newStatus : (draft?.status ?? "idea")]}
+                        >
+                          <SelectValue>
+                            {(v) => STATUS_OPTIONS.find((s) => s.value === v)?.label ?? v}
+                          </SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                          {STATUS_OPTIONS.map((s) => (
+                            <SelectItem key={s.value} value={s.value}>
+                              {s.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </PropRow>
 
                     <PropRow icon={<Calendar className="h-4 w-4" />} label="Planning date">
@@ -728,28 +743,39 @@ export function DraftEditorModal({
                     </PropRow>
 
                     <PropRow icon={<Type className="h-4 w-4" />} label="Kind">
-                      <select
-                        value={isNew ? newKind : (draft?.kind ?? "post")}
-                        onChange={(e) => {
-                          const v = e.target.value as DraftKind | "";
-                          if (isNew) setNewKind(v);
-                          else if (v) patchMeta({ kind: v }, { kind: v });
+                      <Select
+                        value={isNew ? newKind || "auto" : (draft?.kind ?? "post")}
+                        onValueChange={(v) => {
+                          if (isNew) setNewKind(v === "auto" ? "" : (v as DraftKind));
+                          else patchMeta({ kind: v as DraftKind }, { kind: v as DraftKind });
                         }}
-                        className="-ml-1 h-8 rounded-md bg-transparent px-1 text-sm outline-none hover:bg-accent focus:bg-accent"
-                        aria-label="Kind"
-                        title={
-                          isNew && !newKind
-                            ? "Auto: the app will classify the post type from the content."
-                            : KIND_HELP[(isNew ? newKind || "post" : draft?.kind ?? "post") as DraftKind]
-                        }
                       >
-                        {isNew && <option value="">Auto (from content)</option>}
-                        {KIND_OPTIONS.map((k) => (
-                          <option key={k.value} value={k.value}>
-                            {k.label}
-                          </option>
-                        ))}
-                      </select>
+                        <SelectTrigger
+                          className="-ml-1 h-8 border-transparent px-1 hover:bg-accent focus-visible:bg-accent"
+                          aria-label="Kind"
+                          title={
+                            isNew && !newKind
+                              ? "Auto: the app will classify the post type from the content."
+                              : KIND_HELP[(isNew ? newKind || "post" : draft?.kind ?? "post") as DraftKind]
+                          }
+                        >
+                          <SelectValue>
+                            {(v) =>
+                              v === "auto"
+                                ? "Auto (from content)"
+                                : (KIND_OPTIONS.find((k) => k.value === v)?.label ?? v)
+                            }
+                          </SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                          {isNew && <SelectItem value="auto">Auto (from content)</SelectItem>}
+                          {KIND_OPTIONS.map((k) => (
+                            <SelectItem key={k.value} value={k.value}>
+                              {k.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </PropRow>
 
                     {draft?.leadMagnet && (

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Search, CornerDownLeft } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { NAV_DESTINATIONS } from "@/app/(app)/dashboard/nav";
+import { NAV_DESTINATIONS } from "@/app/(app)/dashboard/nav-destinations";
 import { hrefWithPersistedFilters } from "@/components/persisted-filter-state";
 
 // Global command palette (Cmd-K / Ctrl-K): a centered modal with one fuzzy input
@@ -21,6 +21,9 @@ type Command = {
   run: () => void;
 };
 
+const LIST_ID = "command-palette-listbox";
+const optionId = (i: number) => `command-palette-option-${i}`;
+
 export function CommandPalette({ defaultOpen = false }: { defaultOpen?: boolean }) {
   const router = useRouter();
   const [open, setOpen] = useState(defaultOpen);
@@ -28,6 +31,7 @@ export function CommandPalette({ defaultOpen = false }: { defaultOpen?: boolean 
   const [activeRaw, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
 
   const close = useCallback(() => {
     setOpen(false);
@@ -76,6 +80,12 @@ export function CommandPalette({ defaultOpen = false }: { defaultOpen?: boolean 
     if (open) inputRef.current?.focus();
   }, [open]);
 
+  // Keep the keyboard-selected option visible while arrow-navigating a list
+  // taller than the scrollport.
+  useEffect(() => {
+    document.getElementById(optionId(active))?.scrollIntoView({ block: "nearest" });
+  }, [active]);
+
   const runActive = useCallback(() => {
     const cmd = results[active];
     if (cmd) {
@@ -88,6 +98,7 @@ export function CommandPalette({ defaultOpen = false }: { defaultOpen?: boolean 
 
   return (
     <div
+      ref={dialogRef}
       className="fixed inset-0 z-[100] flex items-start justify-center pt-[12vh] px-4"
       role="dialog"
       aria-modal="true"
@@ -111,6 +122,23 @@ export function CommandPalette({ defaultOpen = false }: { defaultOpen?: boolean 
           } else if (e.key === "Enter") {
             e.preventDefault();
             runActive();
+          } else if (e.key === "Tab") {
+            // Focus trap: cycle within the dialog (input + option buttons).
+            const root = dialogRef.current;
+            if (!root) return;
+            const focusables = Array.from(
+              root.querySelectorAll<HTMLElement>("input, button"),
+            );
+            const first = focusables[0];
+            const last = focusables[focusables.length - 1];
+            if (!first || !last) return;
+            if (e.shiftKey && document.activeElement === first) {
+              e.preventDefault();
+              last.focus();
+            } else if (!e.shiftKey && document.activeElement === last) {
+              e.preventDefault();
+              first.focus();
+            }
           }
         }}
       >
@@ -123,6 +151,11 @@ export function CommandPalette({ defaultOpen = false }: { defaultOpen?: boolean 
               setQuery(e.target.value);
               setActive(0);
             }}
+            role="combobox"
+            aria-expanded="true"
+            aria-controls={LIST_ID}
+            aria-activedescendant={optionId(active)}
+            aria-autocomplete="list"
             placeholder="Jump to a screen…"
             className="flex-1 bg-transparent py-3 text-sm outline-none placeholder:text-muted-foreground"
           />
@@ -131,7 +164,7 @@ export function CommandPalette({ defaultOpen = false }: { defaultOpen?: boolean 
           </kbd>
         </div>
 
-        <div ref={listRef} className="max-h-80 overflow-y-auto py-1">
+        <div ref={listRef} id={LIST_ID} role="listbox" aria-label="Screens" className="max-h-80 overflow-y-auto py-1">
           {results.length === 0 ? (
             <p className="px-3 py-6 text-center text-sm text-muted-foreground">
               No matches
@@ -142,9 +175,21 @@ export function CommandPalette({ defaultOpen = false }: { defaultOpen?: boolean 
               return (
                 <button
                   key={c.id}
+                  id={optionId(i)}
                   type="button"
-                  onMouseMove={() => setActive(i)}
-                  onClick={runActive}
+                  role="option"
+                  aria-selected={i === active}
+                  // Only adopt hover selection when the pointer actually moved —
+                  // arrow-key scrolling under a stationary cursor must not
+                  // steal the keyboard's selection.
+                  onMouseMove={(e) => {
+                    if (e.movementX !== 0 || e.movementY !== 0) setActive(i);
+                  }}
+                  onClick={() => {
+                    close();
+                    c.run();
+                  }}
+                  tabIndex={-1}
                   className={cn(
                     "flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm",
                     i === active ? "bg-accent text-foreground" : "text-muted-foreground",

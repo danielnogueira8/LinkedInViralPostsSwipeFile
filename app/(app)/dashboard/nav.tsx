@@ -2,75 +2,12 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useState, useTransition, useCallback, type ComponentType } from "react";
-import {
-  Handshake,
-  FileText,
-  Gift,
-  SatelliteDish,
-  Settings,
-  AudioLines,
-  Zap,
-  Fingerprint,
-  ChartNoAxesColumn,
-  Loader2,
-} from "lucide-react";
+import { useState, useTransition, useCallback } from "react";
+import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { ClaudeIcon } from "@/components/claude-icon";
-import { SwipeInIcon } from "@/components/swipein-icon";
 import { hrefWithPersistedFilters } from "@/components/persisted-filter-state";
+import { NAV_SECTIONS } from "./nav-destinations";
 import { useNavBadges } from "./nav-badges";
-
-export type NavItem = {
-  href: string;
-  label: string;
-  icon: ComponentType<{ className?: string }>;
-  tooltip?: string;
-};
-
-type NavSection = {
-  label: string;
-  items: NavItem[];
-};
-
-const nav: NavSection[] = [
-  {
-    label: "Create",
-    items: [
-      { href: "/dashboard", label: "Cowork", icon: Handshake, tooltip: "Chat with the writing agent and run weekly batches." },
-      { href: "/dashboard/posts", label: "Posts", icon: FileText, tooltip: "Review, edit, schedule, and track your draft posts." },
-      { href: "/dashboard/lead-magnets", label: "Lead Magnets", icon: Gift, tooltip: "Create and share markdown resources for lead-magnet posts." },
-    ],
-  },
-  {
-    label: "Research",
-    items: [
-      { href: "/dashboard/swipe", label: "Swipe File", icon: SwipeInIcon, tooltip: "Browse source posts and saved bookmarks to model in Cowork." },
-      { href: "/dashboard/accounts", label: "Creators", icon: SatelliteDish, tooltip: "Creators SwipeIn watches to fill your Swipe File with proven posts." },
-    ],
-  },
-  {
-    label: "Train",
-    items: [
-      { href: "/dashboard/voice", label: "Voice", icon: AudioLines, tooltip: "Your writing profile and voice preferences." },
-      { href: "/dashboard/creator-styles", label: "Creator Styles", icon: Fingerprint, tooltip: "Reusable writing-style profiles from creators you track." },
-      { href: "/dashboard/templates", label: "Templates", icon: FileText, tooltip: "Reusable content templates for posts and hooks." },
-      { href: "/dashboard/skills", label: "Custom Skills", icon: Zap, tooltip: "Instructions and examples that shape how drafts are written." },
-    ],
-  },
-  {
-    label: "Tools",
-    items: [
-      { href: "/dashboard/analytics", label: "Analytics", icon: ChartNoAxesColumn, tooltip: "LinkedIn performance of posts published through SwipeIn." },
-      { href: "/dashboard/claude", label: "Claude Workflows", icon: ClaudeIcon, tooltip: "Reusable AI workflows for content tasks." },
-      { href: "/dashboard/settings", label: "Settings", icon: Settings, tooltip: "Workspace settings and publishing connections." },
-    ],
-  },
-];
-
-// Flat list of all nav destinations — the command palette (Cmd-K) reuses this so
-// jump targets stay in sync with the sidebar.
-export const NAV_DESTINATIONS: NavItem[] = nav.flatMap((s) => s.items);
 
 export function SideNav({ badges: initialBadges }: { badges?: Record<string, number> }) {
   const pathname = usePathname();
@@ -117,7 +54,7 @@ export function SideNav({ badges: initialBadges }: { badges?: Record<string, num
 
   return (
     <nav className="flex flex-col gap-4">
-      {nav.map((section) => (
+      {NAV_SECTIONS.map((section) => (
         <div key={section.label}>
           <div className="px-3 pb-1 text-xs font-medium text-muted-foreground/70">
             {section.label}
