@@ -52,6 +52,9 @@ type StarterTaskDefinition = {
   kind: ComposerTaskKind;
   sourceMode: ComposerSourceMode;
   research?: StarterResearchDefinition;
+  // Draft count the starter implies when neither the UI picker nor an explicit
+  // message count settles it (e.g. a 3-part series is meaningless as 1 draft).
+  defaultDraftCount?: number;
 };
 
 function materializeResearchRequirement(
@@ -140,9 +143,11 @@ const STARTER_TASKS: Record<
     sourceMode: "web_research",
     research: { lane: "news" },
   },
-  // A series is built from the user's own idea, so it needs no research lane;
-  // the prompt's "3-part" phrasing lets the Auto draft-count path resolve to 3.
-  series: { kind: "post", sourceMode: "original" },
+  // A series is built from the user's own idea, so it needs no research lane.
+  // The count must come from the starter itself: the message-count parser
+  // doesn't read "3-part" as a number, so without this the turn collapsed to
+  // ONE draft with all parts crammed in.
+  series: { kind: "post", sourceMode: "original", defaultDraftCount: 3 },
 };
 
 type ComposerTaskContextBase = {
@@ -255,8 +260,14 @@ export function resolveComposerTaskContext(input: ComposerTaskSelection & {
     ...(input.starterId ? { starterId: input.starterId } : {}),
   };
   if (kind === "post") {
+    // Priority: explicit UI pick > explicit message count > starter-implied
+    // default > 1. The starter default only fires when the first two are
+    // silent, so a user edit like "make it a 5-part series" still wins.
     const expectedDraftCount =
-      input.selectedDraftCount ?? input.fallbackPostCount ?? 1;
+      input.selectedDraftCount ??
+      input.fallbackPostCount ??
+      starter?.defaultDraftCount ??
+      1;
     const researchRequirement = materializeResearchRequirement(
       !selectedSourceId ? starter?.research : undefined,
       expectedDraftCount,
