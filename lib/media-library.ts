@@ -158,12 +158,20 @@ export async function ensureZernioMediaAttachments(opts: {
       continue;
     }
     if (!attachment.assetId) throw new Error("One library media attachment is missing its asset id.");
+    // Deliberately NO `.is("deleted_at", null)` filter here: this is the
+    // publish-time resolution path (publishDueDrafts is the only caller).
+    // Deleting a library asset only soft-deletes it, and the media sweep
+    // (lib/media-sweep.ts) preserves the storage bytes of any asset still
+    // referenced by a draft's media_attachments — precisely so a scheduled
+    // post keeps publishing after its asset is removed from the library.
+    // Filtering soft-deleted rows out here would permanently fail that
+    // publish and defeat the sweep's reference check. User-facing library
+    // reads (app/api/media-assets/*) apply their own deleted_at filters.
     const { data: asset, error } = await opts.sb
       .from("media_assets")
       .select("id, filename, mime_type, size_bytes, media_type, storage_bucket, storage_path, created_at")
       .eq("id", attachment.assetId)
       .eq("workspace_id", opts.workspaceId)
-      .is("deleted_at", null)
       .maybeSingle();
     if (error) throw error;
     if (!asset) throw new Error("One library media attachment could not be found.");
