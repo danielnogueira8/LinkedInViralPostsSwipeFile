@@ -154,6 +154,27 @@ const DEFAULT_SPECIALISTS: DraftFinalizerSpecialists = {
   reviewSourceFidelity: reviewModeledDraft,
 };
 
+// Specialists for modeled batches. Modeled batches already arbitrate cross-slot
+// duplicates and use a strong writer with explicit mechanics, so keep
+// deterministic editing and the required fidelity reviewer on the blocking path
+// but do not add paid rewrites that increase cost, latency, and post-review
+// structural drift.
+export const modeledBatchFinalizerSpecialists: DraftFinalizerSpecialists = {
+  edit: editDraftBodySync,
+  repairAiTells: async ({ body }) => ({
+    body,
+    repaired: false,
+    detected: aiTellMetrics(body),
+  }),
+  checkSameness: async ({ body }) => ({
+    body,
+    rewrote: false,
+    overlapMarkers: [],
+    reason: "Modeled batch distinctness is enforced by the batch coordinator.",
+  }),
+  reviewSourceFidelity: reviewModeledDraft,
+};
+
 export type DraftFinalizerRejection = {
   code: DraftFinalizerRejectionCode;
   message: string;

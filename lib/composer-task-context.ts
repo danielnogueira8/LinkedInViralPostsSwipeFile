@@ -183,9 +183,31 @@ export type ComposerStarterMarker =
   | { kind: "valid"; starterId: ComposerStarterId };
 
 export function composerStarterMarkerFromToolCalls(
-  toolCalls: ToolCall[] | null | undefined,
+  input:
+    | ToolCall[] | null | undefined
+    | {
+        composer_starter_id?: string | null;
+        tool_calls?: ToolCall[] | null | undefined;
+      },
 ): ComposerStarterMarker {
-  const markers = (toolCalls ?? []).filter(
+  let calls: ToolCall[] | null | undefined;
+  if (Array.isArray(input) || input === null || input === undefined) {
+    calls = input;
+  } else {
+    if (
+      typeof input.composer_starter_id === "string" &&
+      input.composer_starter_id.trim()
+    ) {
+      const parsed = composerStarterIdSchema.safeParse(
+        input.composer_starter_id.trim(),
+      );
+      return parsed.success
+        ? { kind: "valid", starterId: parsed.data }
+        : { kind: "invalid" };
+    }
+    calls = input.tool_calls;
+  }
+  const markers = (calls ?? []).filter(
     (call) =>
       call.id === COMPOSER_STARTER_MARKER_ID &&
       call.function.name === COMPOSER_STARTER_MARKER_ID,

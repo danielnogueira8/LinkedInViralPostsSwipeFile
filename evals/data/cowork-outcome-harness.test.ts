@@ -17,11 +17,11 @@ import {
 import { POST_INTENTS } from "@/lib/post-intents";
 import { CHAT_MODEL } from "@/lib/openrouter";
 import { PRIMARY_DRAFT_WRITER_MODEL } from "@/lib/agent/draft-writer";
-import { PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL } from "@/lib/agent/read-only-orchestrator";
 import {
   FALLBACK_ACTION_ORCHESTRATOR_MODEL,
   PRIMARY_ACTION_ORCHESTRATOR_MODEL,
-} from "@/lib/agent/action-orchestrator";
+  PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL,
+} from "@/lib/agent/execute/agent";
 
 vi.mock("@/lib/openrouter", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/lib/openrouter")>();
@@ -2132,12 +2132,10 @@ describe("production-shaped Cowork outcome harness", () => {
           (source) => source.id,
         ),
       );
-      const userMarker = report.persisted.messages
-        .find((message) => message.role === "user")
-        ?.tool_calls?.find(
-          (call) => call.function.name === "_generation_config_selected",
-        );
-      expect(JSON.parse(userMarker?.function.arguments ?? "{}")).toEqual({
+      const userRow = report.persisted.messages.find(
+        (message) => message.role === "user",
+      );
+      expect(userRow?.generation_config).toEqual({
         version: 1,
         draftCount,
         draftCountSource: "ui",
@@ -2240,11 +2238,11 @@ describe("production-shaped Cowork outcome harness", () => {
         recovery: "continue",
       }),
     });
-    const recoverable = report.persisted.messages
-      .find((message) => message.role === "assistant")
-      ?.tool_calls?.find((call) => call.function.name === "_recoverable");
-    expect(recoverable).toBeDefined();
-    expect(JSON.parse(recoverable?.function.arguments ?? "{}")).toMatchObject({
+    const recoverableRow = report.persisted.messages.find(
+      (message) => message.role === "assistant",
+    );
+    expect(recoverableRow?.recoverable_error).toBeDefined();
+    expect(recoverableRow?.recoverable_error).toMatchObject({
       code: "orchestrator_evidence_insufficient",
       retryRootUserMessageId: "00000000-0000-4000-8000-000000000002",
     });
@@ -2365,17 +2363,17 @@ describe("production-shaped Cowork outcome harness", () => {
         })),
       ),
     ).toBe(true);
-    const firstMarker = sequence.attempts[0]?.persisted.messages
-      .find((message) => message.role === "assistant")
-      ?.tool_calls?.find((call) => call.function.name === "_recoverable");
-    expect(firstMarker).toBeDefined();
-    expect(JSON.parse(firstMarker?.function.arguments ?? "{}")).toMatchObject({
+    const firstRecoverableRow = sequence.attempts[0]?.persisted.messages.find(
+      (message) => message.role === "assistant",
+    );
+    expect(firstRecoverableRow?.recoverable_error).toBeDefined();
+    expect(firstRecoverableRow?.recoverable_error).toMatchObject({
       code: "orchestrator_evidence_unavailable",
       retryRootUserMessageId: "00000000-0000-4000-8000-000000000002",
     });
-    expect(
-      JSON.parse(firstMarker?.function.arguments ?? "{}"),
-    ).not.toHaveProperty("continuation");
+    expect(firstRecoverableRow?.recoverable_error).not.toHaveProperty(
+      "continuation",
+    );
     expect(sequence.attempts[1]?.observed.readOnlyTools).toHaveLength(1);
     expect(sequence.attempts[1]?.persisted.artifacts).toHaveLength(3);
   });
@@ -2406,13 +2404,10 @@ describe("production-shaped Cowork outcome harness", () => {
 
     expect(sequence.pass).toBe(true);
     expect(sequence.attempts[1]?.persisted.artifacts).toHaveLength(4);
-    const retryMarker = sequence.attempts[1]?.persisted.messages
+    const retryUser = sequence.attempts[1]?.persisted.messages
       .filter((message) => message.role === "user")
-      .at(-1)
-      ?.tool_calls?.find(
-        (call) => call.function.name === "_generation_config_selected",
-      );
-    expect(JSON.parse(retryMarker?.function.arguments ?? "{}")).toEqual({
+      .at(-1);
+    expect(retryUser?.generation_config).toEqual({
       version: 1,
       draftCount: 4,
       draftCountSource: "ui",
@@ -2448,20 +2443,16 @@ describe("production-shaped Cowork outcome harness", () => {
       ),
     ).toBe(true);
     expect(recovered.request.creatorStyleId).toBeUndefined();
-    const firstStyleMarker = sequence.attempts[0]?.persisted.messages
-      .find((message) => message.role === "user")
-      ?.tool_calls?.find(
-        (call) => call.function.name === "_creator_style_selected",
-      );
-    expect(JSON.parse(firstStyleMarker?.function.arguments ?? "{}")).toMatchObject({
+    const firstStyleRow = sequence.attempts[0]?.persisted.messages.find(
+      (message) => message.role === "user",
+    );
+    expect(firstStyleRow?.creator_style_context).toMatchObject({
       id: CREATOR_STYLE.id,
     });
-    const retriedStyleMarker = sequence.attempts[1]?.persisted.messages
-      .find((message) => message.role === "user")
-      ?.tool_calls?.find(
-        (call) => call.function.name === "_creator_style_selected",
-      );
-    expect(JSON.parse(retriedStyleMarker?.function.arguments ?? "{}")).toMatchObject({
+    const retriedStyleRow = sequence.attempts[1]?.persisted.messages.find(
+      (message) => message.role === "user",
+    );
+    expect(retriedStyleRow?.creator_style_context).toMatchObject({
       id: CREATOR_STYLE.id,
     });
     expect(sequence.attempts[1]?.observed.directWriterRequests).toHaveLength(3);
@@ -3532,14 +3523,12 @@ describe("production-shaped Cowork outcome harness", () => {
     const retriedUser = sequence.attempts[1]?.persisted.messages
       .filter((message) => message.role === "user")
       .at(-1);
-    expect(
-      retriedUser?.tool_calls?.map((call) => call.function.name),
-    ).toEqual(
-      expect.arrayContaining([
-        "_composer_starter_selected",
-        "_generation_config_selected",
-      ]),
-    );
+    expect(retriedUser?.composer_starter_id).toBe("write-original");
+    expect(retriedUser?.generation_config).toEqual({
+      version: 1,
+      draftCount: 2,
+      draftCountSource: "ui",
+    });
   });
 
   test("Retry rejects a starter that differs from the original task", async () => {

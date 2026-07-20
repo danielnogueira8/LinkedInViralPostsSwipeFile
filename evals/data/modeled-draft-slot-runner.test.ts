@@ -1,12 +1,11 @@
 import { describe, expect, test, vi } from "vitest";
 import type { AgentEvent, Artifact } from "@/lib/agent/contracts";
-import type { DraftEngineInput } from "@/lib/agent/draft-engine";
+import type { WriterInput } from "@/lib/agent/execute/writer";
 import { UsagePersistenceError } from "@/lib/openrouter";
 import {
   runModeledDraftSlot,
   type ModeledDraftSlotInput,
-  type ModeledDraftSlotRunner,
-} from "@/lib/agent/modeled-draft-slot-runner";
+} from "@/lib/agent/execute/writer";
 
 const POST: Artifact & { kind: "post" } = {
   id: "draft-1",
@@ -16,7 +15,7 @@ const POST: Artifact & { kind: "post" } = {
   meta: { existing: "kept" },
 };
 
-const engineInput: Omit<DraftEngineInput, "task"> = {
+const engineInput: Omit<WriterInput, "task"> = {
   workspaceId: "workspace-1",
   userInstruction: "Model one source post in my voice.",
   voiceResult: { ok: true },
@@ -59,8 +58,8 @@ function done(
 
 function scriptedRunner(
   events: AgentEvent[],
-  before?: (input: DraftEngineInput) => void,
-): ModeledDraftSlotRunner {
+  before?: (input: WriterInput) => void,
+): (input: WriterInput) => AsyncGenerator<AgentEvent> {
   return async function* (input) {
     before?.(input);
     for (const event of events) yield event;
@@ -69,7 +68,7 @@ function scriptedRunner(
 
 describe("runModeledDraftSlot", () => {
   test("returns one canonical source-tagged artifact with the terminal usage", async () => {
-    const inspectInput = vi.fn<(input: DraftEngineInput) => void>();
+    const inspectInput = vi.fn<(input: WriterInput) => void>();
     const result = await runModeledDraftSlot(
       {
         ...slotInput,
@@ -151,7 +150,7 @@ describe("runModeledDraftSlot", () => {
       { count: 4, previousBodies: ["x".repeat(3_501), "two"] },
     ],
   ] as const)("rejects bounded batch context with %s", async (_name, batch) => {
-    const runner = vi.fn<ModeledDraftSlotRunner>();
+    const runner = vi.fn<(input: WriterInput) => AsyncGenerator<AgentEvent>>();
 
     await expect(
       runModeledDraftSlot({ ...slotInput, batch }, { runDraftEngine: runner }),
@@ -162,7 +161,7 @@ describe("runModeledDraftSlot", () => {
   test.each([-1, 1.5, 6])(
     "rejects invalid standalone slot index %s before invoking the engine",
     async (index) => {
-      const runner = vi.fn<ModeledDraftSlotRunner>();
+      const runner = vi.fn<(input: WriterInput) => AsyncGenerator<AgentEvent>>();
 
       await expect(
         runModeledDraftSlot(
@@ -322,7 +321,7 @@ describe("runModeledDraftSlot", () => {
   });
 
   test("returns a writer error when the engine stream throws before its terminal", async () => {
-    const runner: ModeledDraftSlotRunner = async function* () {
+    const runner: (input: WriterInput) => AsyncGenerator<AgentEvent> = async function* () {
       throw new Error("writer transport failed");
     };
 
@@ -414,7 +413,7 @@ describe("runModeledDraftSlot", () => {
   );
 
   test("rethrows authoritative usage persistence failures", async () => {
-    const runner: ModeledDraftSlotRunner = async function* () {
+    const runner: (input: WriterInput) => AsyncGenerator<AgentEvent> = async function* () {
       throw new UsagePersistenceError("usage insert failed");
     };
 

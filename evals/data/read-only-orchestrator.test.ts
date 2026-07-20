@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { AgentEvent } from "@/lib/agent/contracts";
-import type { DraftEngineInput } from "@/lib/agent/draft-engine";
-import type { ExecuteModeledDraftBatchInput } from "@/lib/agent/modeled-draft-batch";
+import type { WriterInput } from "@/lib/agent/execute/writer";
+import type { ExecuteModeledDraftBatchInput } from "@/lib/agent/execute/writer";
 import { CHAT_MODEL, UsagePersistenceError, type Usage } from "@/lib/openrouter";
 import {
   FALLBACK_READ_ONLY_ORCHESTRATOR_MODEL,
@@ -20,7 +20,7 @@ import {
   type ReadOnlyOrchestratorDependencies,
   type ReadOnlyOrchestratorInput,
   type ReadOnlyPlannerRequest,
-} from "@/lib/agent/read-only-orchestrator";
+} from "@/lib/agent/execute/agent";
 import { AdapterHealthRegistry } from "@/lib/agent/adapter-health";
 import { createCoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
 import {
@@ -74,7 +74,7 @@ function input(
 ): ReadOnlyOrchestratorInput {
   return {
     workspaceId: "ws-1",
-    operationKey: "root-user-message-1",
+    turnMessageId: "root-user-message-1",
     userInstruction:
       "Research the latest OpenAI announcement and write a LinkedIn post about what it means for founders.",
     history: [
@@ -87,7 +87,7 @@ function input(
     route: { kind: "news_research", expectsDraft: true },
     attachmentNames: [],
     attachmentBlocks: [],
-    draftEngineInput: {
+    writerInput: {
       workspaceId: "ws-1",
       userInstruction:
         "Research the latest OpenAI announcement and write a LinkedIn post about what it means for founders.",
@@ -101,7 +101,7 @@ function input(
 }
 
 async function* successfulDraft(
-  draftInput: DraftEngineInput,
+  draftInput: WriterInput,
 ): AsyncGenerator<AgentEvent> {
   expect(draftInput.task).toMatchObject({ kind: "grounded" });
   yield {
@@ -141,11 +141,11 @@ async function collect(
 ) {
   const events: AgentEvent[] = [];
   const recorded: unknown[][] = [];
-  const draftInputs: DraftEngineInput[] = [];
+  const draftInputs: WriterInput[] = [];
   for await (const event of runReadOnlyOrchestrator(orchestratorInput, {
     adapters,
     runTool,
-    runDraftEngine: (draftInput) => {
+    runProse: (draftInput) => {
       draftInputs.push(draftInput);
       return successfulDraft(draftInput);
     },
@@ -1312,8 +1312,8 @@ describe("read-only orchestrator execution", () => {
       input({
         userInstruction: instruction,
         history: [{ role: "user", content: instruction }],
-        draftEngineInput: {
-          ...input().draftEngineInput,
+        writerInput: {
+          ...input().writerInput,
           userInstruction: instruction,
         },
       }),
@@ -1394,8 +1394,8 @@ describe("read-only orchestrator execution", () => {
           minimumSources: 2,
           workspaceSearchMode: "strict_top",
         },
-        draftEngineInput: {
-          ...input().draftEngineInput,
+        writerInput: {
+          ...input().writerInput,
           userInstruction: instruction,
         },
       }),
@@ -1686,7 +1686,7 @@ describe("read-only orchestrator execution", () => {
           ],
         }),
         {
-          runDraftEngine: async function* () {
+          runProse: async function* () {
             throw new UsagePersistenceError("writer usage insert failed");
           },
         },
@@ -1716,7 +1716,7 @@ describe("read-only orchestrator execution", () => {
     ]);
 
     const events: AgentEvent[] = [];
-    const runDraftEngine = vi.fn(successfulDraft);
+    const runProse = vi.fn(successfulDraft);
     for await (const event of runReadOnlyOrchestrator(input(), {
       adapters: [planner],
       runTool: async () => ({
@@ -1726,14 +1726,14 @@ describe("read-only orchestrator execution", () => {
         results: [],
         note: "No fresh news. Do not invent or use older news.",
       }),
-      runDraftEngine,
+      runProse,
       recordUsage: vi.fn(async () => {}),
       idFactory: () => "fixed",
     })) {
       events.push(event);
     }
 
-    expect(runDraftEngine).not.toHaveBeenCalled();
+    expect(runProse).not.toHaveBeenCalled();
     expect(events.some((event) => event.type === "artifact")).toBe(false);
     expect(events).toContainEqual(
       expect.objectContaining({
@@ -1928,7 +1928,7 @@ describe("read-only orchestrator execution", () => {
         ],
       }),
       {
-        runDraftEngine: async function* () {
+        runProse: async function* () {
           yield {
             type: "artifact",
             artifact: {
@@ -2036,7 +2036,7 @@ describe("read-only orchestrator execution", () => {
           },
         ],
       }),
-      runDraftEngine: async function* () {
+      runProse: async function* () {
         yield {
           type: "artifact",
           artifact: {
@@ -2222,7 +2222,7 @@ describe("read-only orchestrator execution", () => {
         ],
       }),
       {
-        runDraftEngine: (draftInput) => {
+        runProse: (draftInput) => {
           modeledSourceId =
             draftInput.task?.kind === "source"
               ? draftInput.task.source.id
@@ -2277,8 +2277,8 @@ describe("read-only orchestrator execution", () => {
       input({
         route,
         userInstruction,
-        draftEngineInput: {
-          ...input().draftEngineInput,
+        writerInput: {
+          ...input().writerInput,
           userInstruction,
         },
       }),
@@ -2460,7 +2460,7 @@ describe("read-only orchestrator execution", () => {
       input({
         route,
         userInstruction,
-        draftEngineInput: { ...input().draftEngineInput, userInstruction },
+        writerInput: { ...input().writerInput, userInstruction },
       }),
       [],
       async () => ({
@@ -2524,7 +2524,7 @@ describe("read-only orchestrator execution", () => {
         route,
         modeledBatchContinuation: continuation,
         userInstruction,
-        draftEngineInput: { ...input().draftEngineInput, userInstruction },
+        writerInput: { ...input().writerInput, userInstruction },
       }),
       [],
       runTool,
@@ -2630,7 +2630,7 @@ describe("read-only orchestrator execution", () => {
       input({
         route,
         userInstruction,
-        draftEngineInput: { ...input().draftEngineInput, userInstruction },
+        writerInput: { ...input().writerInput, userInstruction },
       }),
       [],
       async () => ({
@@ -2699,7 +2699,7 @@ describe("read-only orchestrator execution", () => {
         route,
         userInstruction,
         signal: controller.signal,
-        draftEngineInput: { ...input().draftEngineInput, userInstruction },
+        writerInput: { ...input().writerInput, userInstruction },
       }),
       [],
       async () => ({ ok: true, count: 2, posts: sourceRows }),
@@ -2760,7 +2760,7 @@ describe("read-only orchestrator execution", () => {
       input({
         route,
         userInstruction,
-        draftEngineInput: { ...input().draftEngineInput, userInstruction },
+        writerInput: { ...input().writerInput, userInstruction },
       }),
       [],
       async () => ({ ok: true, count: 2, posts: sourceRows }),
@@ -2833,7 +2833,7 @@ describe("read-only orchestrator execution", () => {
         ],
       }),
       {
-        runDraftEngine: async function* () {
+        runProse: async function* () {
           for (const [index, id] of artifactIds.entries()) {
             yield {
               type: "artifact",
@@ -2966,7 +2966,7 @@ describe("read-only orchestrator execution", () => {
       {
         adapters: [planner],
         runTool: vi.fn(async () => ({ ok: true })),
-        runDraftEngine: writer,
+        runProse: writer,
         recordUsage: vi.fn(async () => {}),
         idFactory: () => "clarify-call",
       },
@@ -3008,7 +3008,7 @@ describe("read-only orchestrator execution", () => {
       {
         adapters: [],
         runTool: vi.fn(async () => ({ ok: true })),
-        runDraftEngine: vi.fn(successfulDraft),
+        runProse: vi.fn(successfulDraft),
         recordUsage: vi.fn(async () => {}),
         idFactory: () => "modeled-count-clarify",
       },

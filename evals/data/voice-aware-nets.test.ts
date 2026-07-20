@@ -3,7 +3,7 @@ import { editDraftBodySync } from "@/lib/agent/specialists/editor";
 import {
   createDraftFinalizer,
   type DraftFinalizerSpecialists,
-} from "@/lib/agent/draft-finalizer";
+} from "@/lib/agent/finalize/finalizer";
 import { voiceResultKeepsEmDashes } from "@/lib/agent/tools";
 import {
   EM_DASH_KEEP_THRESHOLD,

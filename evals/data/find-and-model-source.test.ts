@@ -9,7 +9,7 @@ vi.mock("@/lib/agent/tools", () => ({
   loadVoiceProfile: vi.fn(),
 }));
 
-import { resolveFindAndModelSource } from "@/lib/agent/chat-turn";
+import { resolveFindAndModelSource } from "@/lib/agent/turn/compile";
 
 beforeEach(() => {
   runTool.mockReset();
