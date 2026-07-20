@@ -37,7 +37,7 @@ const STEPS = [
   { key: "voice" as const, label: "Set up voice", href: "/dashboard/voice", icon: AudioLines },
   { key: "linkedin" as const, label: "Connect LinkedIn", href: "/dashboard/settings", icon: Link2 },
   { key: "inspiration" as const, label: "Fill inspiration", href: "/dashboard/swipe", icon: Search },
-  { key: "batch" as const, label: "Generate a batch", href: "/dashboard", icon: AiIcon },
+  { key: "batch" as const, label: "Generate a post", href: "/dashboard", icon: AiIcon },
   { key: "scheduled" as const, label: "Schedule a post", href: "/dashboard/posts", icon: CalendarCheck },
 ];
 
