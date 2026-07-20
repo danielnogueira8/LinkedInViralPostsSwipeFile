@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -73,12 +73,12 @@ export type TemplateAuthor = { name: string | null; avatarUrl: string | null };
 // Deterministic tint for the initials-avatar fallback (matches the post cards'
 // palette so a template card sits visually alongside a real swipe-file post).
 const AVATAR_TINTS = [
-  "bg-amber-100 text-amber-800",
-  "bg-orange-100 text-orange-800",
-  "bg-rose-100 text-rose-800",
-  "bg-violet-100 text-violet-800",
-  "bg-sky-100 text-sky-800",
-  "bg-emerald-100 text-emerald-800",
+  "bg-state-warning-bg text-state-warning",
+  "bg-state-warning-bg text-state-warning",
+  "bg-state-danger-bg text-state-danger",
+  "bg-state-brand-bg text-state-brand",
+  "bg-state-info-bg text-state-info",
+  "bg-state-success-bg text-state-success",
 ];
 function tintFor(seed: string): string {
   let h = 0;
@@ -290,6 +290,18 @@ function TemplateCard({
   const [copied, markCopied] = useCopiedFlag();
   const [modeling, setModeling] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  // Only show "See more/less" when the clamped body actually overflows —
+  // a dead toggle on short templates reads as broken chrome.
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const [overflows, setOverflows] = useState(false);
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+    const check = () => setOverflows(el.scrollHeight > el.clientHeight + 2);
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, [row.body]);
   const placeholders = useMemo(() => extractPlaceholders(row.body), [row.body]);
 
   // Author identity for the LinkedIn-style header. Falls back to a neutral "You"
@@ -330,7 +342,7 @@ function TemplateCard({
   }
 
   return (
-    <Card className="overflow-hidden flex flex-col border-border/70 bg-card/88 shadow-soft transition-[border-color,box-shadow] duration-200 ease-[cubic-bezier(0.25,1,0.5,1)] motion-reduce:transition-none hover:border-primary/18 hover:shadow-soft-lg">
+    <Card className="overflow-hidden flex flex-col border-border/70 bg-card/90 shadow-soft transition-[border-color,box-shadow] duration-200 ease-[cubic-bezier(0.25,1,0.5,1)] motion-reduce:transition-none hover:border-primary/18 hover:shadow-soft-lg">
       {/* LinkedIn-style author header: the user's pic + name, then a "Template ·
           {category}" subline (where a real post shows niche · time). */}
       <CardContent className="p-4 flex flex-col gap-3 flex-1">
@@ -388,6 +400,7 @@ function TemplateCard({
         <div className="min-w-0">
           <p className="text-sm font-semibold text-foreground mb-1">{row.title}</p>
           <div
+            ref={bodyRef}
             className={cn(
               "text-sm whitespace-pre-wrap break-words text-foreground/90 leading-relaxed",
               !expanded && "line-clamp-[10]",
@@ -395,13 +408,15 @@ function TemplateCard({
           >
             <HighlightedBody body={row.body} />
           </div>
-          <button
-            type="button"
-            onClick={() => setExpanded((v) => !v)}
-            className="mt-1 text-xs font-medium text-muted-foreground hover:text-foreground"
-          >
-            {expanded ? "See less" : "See more"}
-          </button>
+          {(overflows || expanded) && (
+            <button
+              type="button"
+              onClick={() => setExpanded((v) => !v)}
+              className="mt-1 text-xs font-medium text-muted-foreground hover:text-foreground"
+            >
+              {expanded ? "See less" : "See more"}
+            </button>
+          )}
         </div>
 
         {/* Footer actions, pinned to the bottom so cards in a row align. */}
@@ -421,7 +436,7 @@ function TemplateCard({
             {modeling ? "Opening…" : "Model with Cowork"}
           </Button>
           <Button variant="outline" size="sm" className="gap-1.5" onClick={copy}>
-            {copied ? <Check className="h-3.5 w-3.5 text-lime-700" /> : <Copy className="h-3.5 w-3.5" />}
+            {copied ? <Check className="h-3.5 w-3.5 text-state-success" /> : <Copy className="h-3.5 w-3.5" />}
             {copied ? "Copied" : "Copy"}
           </Button>
           {!row.builtin && (
@@ -460,6 +475,7 @@ function FilterChip({
     <button
       type="button"
       onClick={onClick}
+      aria-pressed={active}
       className={cn(
         segmentedItemClass(active),
       )}

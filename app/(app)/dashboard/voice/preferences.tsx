@@ -131,7 +131,7 @@ export function PreferencesManager({
   };
 
   return (
-    <Card className="overflow-hidden border-border/70 bg-card/88 shadow-soft">
+    <Card className="overflow-hidden border-border/70 bg-card/90 shadow-soft">
       <CardHeader>
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 space-y-1">
@@ -195,14 +195,14 @@ export function PreferencesManager({
           )}
         </div>
         {atCap && (
-          <p className="text-xs text-amber-600">
+          <p className="text-xs text-state-warning">
             You&apos;ve reached the limit of {PREFS_PER_WORKSPACE_MAX} memory
             rules. Remove one to add another.
           </p>
         )}
 
         {prefs.length === 0 ? (
-          <div className="rounded-[0.95rem] border border-dashed border-border/60 bg-background/45 px-4 py-8 text-center">
+          <div className="rounded-lg border border-dashed border-border/60 bg-background/45 px-4 py-8 text-center">
             <div className="mx-auto mb-3 grid h-10 w-10 place-items-center rounded-xl border border-primary/10 bg-primary/[0.07] text-primary">
               <ListPlus className="h-5 w-5" />
             </div>
@@ -215,7 +215,7 @@ export function PreferencesManager({
             </p>
           </div>
         ) : (
-          <ul className="overflow-hidden rounded-[0.95rem] border border-border/60 bg-background/45">
+          <ul className="overflow-hidden rounded-lg border border-border/60 bg-background/45">
             {prefs.map((p) => (
               <PreferenceRow
                 key={p.id}

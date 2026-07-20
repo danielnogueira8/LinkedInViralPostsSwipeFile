@@ -259,7 +259,7 @@ export function VoiceManager({
       ) : (
         /* Source / generate control. Shown on first run and when re-pointing
            the voice at a different profile. */
-        <Card className="overflow-hidden border-border/70 bg-card/88 shadow-soft">
+        <Card className="overflow-hidden border-border/70 bg-card/90 shadow-soft">
           <CardHeader>
             <div className="flex items-start gap-3">
               <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-primary/10 bg-primary/[0.07] text-primary">
@@ -385,7 +385,7 @@ function ProfileCard({
   const showAvatar = Boolean(row.avatar_url) && !avatarBroken;
 
   return (
-    <Card className="overflow-hidden border-border/70 bg-card/88 shadow-soft">
+    <Card className="overflow-hidden border-border/70 bg-card/90 shadow-soft">
       <CardContent className="space-y-4">
         <div className="flex items-start justify-between gap-4">
           <div className="flex min-w-0 items-start gap-3">
@@ -519,7 +519,7 @@ function ProfileView({
 
   return (
     <div className="space-y-4">
-      <Card className="overflow-hidden border-border/70 bg-card/88 shadow-soft">
+      <Card className="overflow-hidden border-border/70 bg-card/90 shadow-soft">
         <CardHeader>
           <div className="flex items-start justify-between gap-3">
             <div className="space-y-1">
@@ -560,7 +560,7 @@ function ProfileView({
       </Card>
 
       {!editing && profile.exemplars.length > 0 ? (
-        <Card className="overflow-hidden border-border/70 bg-card/88 shadow-soft">
+        <Card className="overflow-hidden border-border/70 bg-card/90 shadow-soft">
           <CardHeader>
             <CardTitle className="text-base">Style exemplars</CardTitle>
             <CardDescription>
@@ -571,7 +571,7 @@ function ProfileView({
             {profile.exemplars.map((ex, i) => (
               <div
                 key={i}
-                className="rounded-[0.95rem] border border-border/60 bg-background/55 p-3 text-sm whitespace-pre-wrap leading-relaxed text-foreground"
+                className="rounded-lg border border-border/60 bg-background/55 p-3 text-sm whitespace-pre-wrap leading-relaxed text-foreground"
               >
                 {ex}
               </div>
@@ -583,7 +583,7 @@ function ProfileView({
       {!editing &&
       profile.lead_magnet_style &&
       profile.lead_magnet_style.exemplars.length > 0 ? (
-        <Card className="overflow-hidden border-border/70 bg-card/88 shadow-soft">
+        <Card className="overflow-hidden border-border/70 bg-card/90 shadow-soft">
           <CardHeader>
             <CardTitle className="text-base">Lead magnet exemplars</CardTitle>
             <CardDescription>
@@ -595,7 +595,7 @@ function ProfileView({
             {profile.lead_magnet_style.exemplars.map((ex, i) => (
               <div
                 key={i}
-                className="rounded-[0.95rem] border border-border/60 bg-background/55 p-3 text-sm whitespace-pre-wrap leading-relaxed text-foreground"
+                className="rounded-lg border border-border/60 bg-background/55 p-3 text-sm whitespace-pre-wrap leading-relaxed text-foreground"
               >
                 {ex}
               </div>

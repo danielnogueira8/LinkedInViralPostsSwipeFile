@@ -15,6 +15,7 @@ import {
   Paperclip,
   Link as LinkIcon,
   Gift,
+  MoreHorizontal,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -66,7 +67,7 @@ const KIND_FILTER_LABEL: Record<"all" | DraftKind, string> = {
 // tagged so they stand out in a mixed column. Null = no badge.
 function kindBadge(kind: DraftKind): { label: string; cls: string } | null {
   if (kind === "hook")
-    return { label: "Hook", cls: "border-amber-500/20 bg-amber-500/10 text-amber-700" };
+    return { label: "Hook", cls: "border-state-warning-border bg-state-warning-bg text-state-warning" };
   if (kind === "lead_magnet")
     return { label: "Lead Magnet", cls: "border-primary/15 bg-primary/[0.07] text-primary" };
   return null;
@@ -196,9 +197,9 @@ export function buildCalendarMonth(
 // Card background tint per status — same color language as the board's dots.
 // Used for the calendar day chips.
 export const STATUS_CHIP: Record<DraftStatus, string> = {
-  idea: "bg-amber-500/10 text-amber-800 border-amber-500/20",
-  drafting: "bg-sky-500/10 text-sky-800 border-sky-500/20",
-  ready: "bg-emerald-500/10 text-emerald-800 border-emerald-500/20",
+  idea: "bg-state-warning-bg text-state-warning border-state-warning-border",
+  drafting: "bg-state-info-bg text-state-info border-state-info-border",
+  ready: "bg-state-success-bg text-state-success border-state-success-border",
   posted: "bg-muted text-muted-foreground border-border/70",
 };
 
@@ -216,26 +217,26 @@ const COLUMNS: {
   {
     id: "idea",
     moveStatus: "idea",
-    label: "Idea",
+    label: "Ideas & hooks",
     description: "Capture raw angles before they become drafts.",
-    accent: "text-amber-700",
-    dot: "bg-amber-500",
+    accent: "text-state-warning",
+    dot: "bg-state-warning",
   },
   {
     id: "drafting",
     moveStatus: "drafting",
     label: "Draft",
     description: "Edit drafts before approving them.",
-    accent: "text-sky-700",
-    dot: "bg-sky-500",
+    accent: "text-state-info",
+    dot: "bg-state-info",
   },
   {
     id: "ready",
     moveStatus: "ready",
     label: "Ready",
     description: "Approved posts waiting for a publish plan.",
-    accent: "text-emerald-700",
-    dot: "bg-emerald-500",
+    accent: "text-state-success",
+    dot: "bg-state-success",
   },
   {
     id: "scheduled",
@@ -254,13 +255,13 @@ const COLUMNS: {
   },
 ];
 const STATUS_LABEL: Record<DraftStatus, string> = {
-  idea: "Idea",
+  idea: "Ideas & hooks",
   drafting: "Draft",
   ready: "Ready",
   posted: "Posted",
 };
 const STATUS_HELP: Record<BoardColumnId, string> = {
-  idea: "Idea: a raw angle or hook that still needs drafting.",
+  idea: "Ideas & hooks: a raw angle or hook that still needs drafting.",
   drafting: "Draft: a post still being written or edited.",
   ready: "Ready: reviewed and ready to schedule or publish.",
   scheduled: "Scheduled: queued to auto-publish on LinkedIn. Open the post to change the schedule.",
@@ -476,6 +477,7 @@ export function DraftsList({
       key={d.id}
       draft={d}
       onOpen={() => openEdit(d)}
+      onMove={(status) => void moveTo(d.id, status)}
       draggable={boardColumnForDraft(d) !== "scheduled"}
     />
   );
@@ -559,7 +561,7 @@ export function DraftsList({
             {(() => {
               const column = COLUMNS.find((c) => c.id === mobileCol) ?? COLUMNS[0];
               return (
-                <div className="rounded-[1rem] border border-border/60 bg-card/70 px-3 py-2.5 shadow-soft">
+                <div className="rounded-lg border border-border/60 bg-card/70 px-3 py-2.5 shadow-soft">
                   <div className="flex items-center justify-between gap-3">
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
@@ -607,7 +609,7 @@ export function DraftsList({
                   onDrop(e, c.moveStatus);
                 }}
                 className={cn(
-                  "rounded-[1.15rem] border bg-card/64 p-2.5 flex flex-col gap-2 min-h-[220px] shadow-soft",
+                  "rounded-xl border bg-card/70 p-2.5 flex flex-col gap-2 min-h-[220px] shadow-soft",
                   c.moveStatus && dragOver === c.moveStatus
                     ? "border-primary border-dashed bg-primary/5"
                     : "border-border/60",
@@ -843,7 +845,7 @@ function CalendarView({
           if (id) onSchedule(id, null); // drop on tray = clear the date
         }}
         className={cn(
-          "lg:w-72 shrink-0 rounded-[1.15rem] border bg-card/72 p-2.5 flex flex-col gap-2 shadow-soft",
+          "lg:w-72 shrink-0 rounded-xl border bg-card/70 p-2.5 flex flex-col gap-2 shadow-soft",
           overTray ? "border-primary border-dashed bg-primary/5" : "border-border/60",
         )}
       >
@@ -959,9 +961,9 @@ function EmptyColumn() {
 // (the column already groups by status, but the dot helps on the mobile single-
 // column view and reinforces the pipeline color language).
 const STATUS_DOT: Record<BoardColumnId, string> = {
-  idea: "bg-amber-500",
-  drafting: "bg-sky-500",
-  ready: "bg-emerald-500",
+  idea: "bg-state-warning",
+  drafting: "bg-state-info",
+  ready: "bg-state-success",
   scheduled: "bg-primary",
   posted: "bg-muted-foreground/40",
 };
@@ -981,14 +983,50 @@ function formatShortDate(value: string | null | undefined): string | null {
 function DraftCard({
   draft,
   onOpen,
+  onMove,
   draggable: canDrag,
 }: {
   draft: Draft;
   onOpen: () => void;
+  onMove: (status: DraftStatus) => void;
   draggable: boolean;
 }) {
   const cardRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
+  // Keyboard-accessible lane moves (drag-and-drop is mouse-only): a small
+  // "Move to" menu per card. Focus shows it, just like hover.
+  const [moveOpen, setMoveOpen] = useState(false);
+  const moveTriggerRef = useRef<HTMLButtonElement>(null);
+  const moveMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (moveOpen) {
+      moveMenuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+    }
+  }, [moveOpen]);
+  const onMoveMenuKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      setMoveOpen(false);
+      moveTriggerRef.current?.focus();
+      return;
+    }
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      const items = Array.from(
+        moveMenuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [],
+      );
+      if (items.length === 0) return;
+      const idx = items.indexOf(document.activeElement as HTMLElement);
+      const next =
+        e.key === "ArrowDown"
+          ? (idx + 1) % items.length
+          : (idx - 1 + items.length) % items.length;
+      items[next]?.focus();
+      return;
+    }
+    if (e.key === "Tab") setMoveOpen(false);
+  };
 
   // Fall back to a body-derived label if the title is somehow empty, so a card
   // is never blank.
@@ -1036,7 +1074,7 @@ function DraftCard({
       }}
       onDragEnd={() => setDragging(false)}
       className={cn(
-        "group rounded-xl border border-border/60 bg-card px-3 py-3 text-card-foreground shadow-soft",
+        "group relative rounded-xl border border-border/60 bg-card px-3 py-3 text-card-foreground shadow-soft",
         "cursor-pointer transition-colors hover:border-primary/20 hover:bg-accent/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/35",
         draft.status === "posted" && !dragging && "opacity-70",
         canDrag ? "cursor-grab active:cursor-grabbing" : "cursor-pointer",
@@ -1044,6 +1082,65 @@ function DraftCard({
       )}
       title={`Open post. ${STATUS_HELP[column]}`}
     >
+      {/* "Move to" menu — the keyboard/touch alternative to drag-and-drop.
+          Visible on hover, on card focus, and while its trigger is focused. */}
+      <div className="absolute right-2 top-2">
+        <button
+          ref={moveTriggerRef}
+          type="button"
+          aria-haspopup="menu"
+          aria-expanded={moveOpen}
+          aria-label={`Move ${name}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            setMoveOpen((v) => !v);
+          }}
+          onKeyDown={(e) => {
+            // Keep the card's Enter/Space → open behavior from firing.
+            if (e.key === "Enter" || e.key === " ") e.stopPropagation();
+          }}
+          className="grid size-7 place-items-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/35 group-hover:opacity-100 group-focus-within:opacity-100 data-[open]:opacity-100"
+          data-open={moveOpen || undefined}
+        >
+          <MoreHorizontal className="h-4 w-4" />
+        </button>
+        {moveOpen && (
+          <>
+            <div
+              className="fixed inset-0 z-40"
+              onClick={(e) => {
+                e.stopPropagation();
+                setMoveOpen(false);
+              }}
+              aria-hidden="true"
+            />
+            <div
+              ref={moveMenuRef}
+              role="menu"
+              aria-label={`Move ${name} to`}
+              onKeyDown={onMoveMenuKeyDown}
+              onClick={(e) => e.stopPropagation()}
+              className="absolute right-0 top-full z-50 mt-1 min-w-36 rounded-lg border border-border/60 bg-card py-1 shadow-soft-lg"
+            >
+              {COLUMNS.filter((c) => c.moveStatus && c.id !== column).map((c) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setMoveOpen(false);
+                    onMove(c.moveStatus!);
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm transition-colors hover:bg-muted"
+                >
+                  <span className={cn("h-2 w-2 rounded-full", c.dot)} aria-hidden />
+                  Move to {c.label}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
       <div className="flex items-start gap-2.5">
         <span
           className={cn("mt-1.5 h-2 w-2 shrink-0 rounded-full", STATUS_DOT[column])}
@@ -1051,7 +1148,7 @@ function DraftCard({
           aria-hidden
         />
         <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 items-start gap-2">
+          <div className="flex min-w-0 items-start gap-2 pr-7">
             <span className="min-w-0 flex-1 text-[13px] font-semibold leading-5 tracking-tight">
               {name}
             </span>

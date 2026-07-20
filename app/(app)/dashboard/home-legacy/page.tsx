@@ -50,14 +50,14 @@ function formatLabel(mediaType: string | null): string {
 }
 
 const AVATAR_TINTS = [
-  "bg-amber-100 text-amber-800",
-  "bg-orange-100 text-orange-800",
-  "bg-rose-100 text-rose-800",
+  "bg-state-warning-bg text-state-warning",
+  "bg-state-warning-bg text-state-warning",
+  "bg-state-danger-bg text-state-danger",
   "bg-stone-200 text-stone-700",
-  "bg-yellow-100 text-yellow-800",
-  "bg-red-100 text-red-800",
-  "bg-lime-100 text-lime-800",
-  "bg-fuchsia-100 text-fuchsia-800",
+  "bg-state-warning-bg text-state-warning",
+  "bg-state-danger-bg text-state-danger",
+  "bg-state-success-bg text-state-success",
+  "bg-state-brand-bg text-state-brand",
 ];
 function tintFor(name: string): string {
   let h = 0;
@@ -301,7 +301,7 @@ export default async function Dashboard() {
                         </div>
                         <div className="h-1.5 rounded-full bg-muted overflow-hidden">
                           <div
-                            className="h-full rounded-full bg-orange-500"
+                            className="h-full rounded-full bg-state-warning"
                             style={{ width: `${formatMax ? (f.avg / formatMax) * 100 : 0}%` }}
                           />
                         </div>
@@ -353,7 +353,7 @@ export default async function Dashboard() {
                       )}
                       <span className="text-xs font-medium truncate flex-1 min-w-0">{c.name}</span>
                       <span className="inline-flex items-center gap-1 text-[11px] tabular-nums text-muted-foreground shrink-0">
-                        <Flame className="h-3 w-3 text-orange-500" />
+                        <Flame className="h-3 w-3 text-state-warning" />
                         {c.count}
                       </span>
                     </li>
@@ -423,10 +423,10 @@ function EmptyHint({ children }: { children: React.ReactNode }) {
 
 function EmptyCard({ title, body }: { title: string; body: React.ReactNode }) {
   return (
-    <Card className="border-dashed bg-card/50">
+    <Card className="border-dashed bg-card/60">
       <CardContent className="py-16 px-6 text-center space-y-4 max-w-md mx-auto">
         <div className="h-14 w-14 rounded-2xl bg-gradient-to-br from-orange-500/15 to-primary/10 grid place-items-center mx-auto ring-1 ring-orange-500/10">
-          <Flame className="h-6 w-6 text-orange-500" />
+          <Flame className="h-6 w-6 text-state-warning" />
         </div>
         <div className="space-y-1">
           <div className="text-base font-semibold tracking-tight">{title}</div>

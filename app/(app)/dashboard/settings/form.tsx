@@ -12,12 +12,12 @@ import { fetchJson } from "@/lib/api-fetch";
 
 type Pair = { min_reactions: number; min_comments: number };
 
-// Coerce a number-input's raw value to a non-negative integer for state. A
+// Coerce a number-input's raw value to a non-negative integer. A
 // `<input type="number">` hands back a string that can be empty (cleared
 // field), partial ("1e", "-"), or negative — `Number("")` is 0 but
 // `Number("1e")` is NaN, and a NaN here serializes to `null` in the request
-// body and corrupts the saved threshold. Clamp every keystroke so state never
-// holds NaN or a negative threshold.
+// body and corrupts the saved threshold. Applied on SAVE (not per keystroke,
+// so the field stays clearable while editing) — state holds the raw string.
 function toNonNegInt(raw: string): number {
   const n = Math.floor(Number(raw));
   if (!Number.isFinite(n) || n < 0) return 0;
@@ -25,16 +25,17 @@ function toNonNegInt(raw: string): number {
 }
 
 export function SettingsForm({ initial }: { initial: { viral: Pair; template: Pair } }) {
-  const [vR, setVR] = useState(initial.viral.min_reactions);
-  const [vC, setVC] = useState(initial.viral.min_comments);
+  const [vR, setVR] = useState(String(initial.viral.min_reactions));
+  const [vC, setVC] = useState(String(initial.viral.min_comments));
   const [busy, setBusy] = useState(false);
   const template = initial.template;
 
   async function save() {
-    // Belt-and-suspenders: state is already sanitized per keystroke, but guard
-    // the payload too so a NaN can never reach the server (where it would
-    // serialize to null and break threshold comparisons).
-    const fields = [vR, vC, template.min_reactions, template.min_comments];
+    // Coerce on save so the raw (possibly empty) editing state can't send a
+    // NaN to the server (where it would serialize to null and break threshold
+    // comparisons).
+    const viral = { min_reactions: toNonNegInt(vR), min_comments: toNonNegInt(vC) };
+    const fields = [viral.min_reactions, viral.min_comments, template.min_reactions, template.min_comments];
     if (fields.some((n) => !Number.isFinite(n) || n < 0)) {
       toast.error("Thresholds must be whole numbers of 0 or more.");
       return;
@@ -47,7 +48,7 @@ export function SettingsForm({ initial }: { initial: { viral: Pair; template: Pa
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
-            viral: { min_reactions: vR, min_comments: vC },
+            viral,
             template,
           }),
         },
@@ -72,7 +73,7 @@ export function SettingsForm({ initial }: { initial: { viral: Pair; template: Pa
         </StatusPill>
       </Toolbar>
 
-      <Card className="overflow-hidden border-border/70 bg-card/88 shadow-soft">
+      <Card className="overflow-hidden border-border/70 bg-card/90 shadow-soft">
         <CardHeader>
           <div className="flex items-start gap-3">
             <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-primary/10 bg-primary/[0.07] text-primary">
@@ -94,11 +95,11 @@ export function SettingsForm({ initial }: { initial: { viral: Pair; template: Pa
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">
               <Label htmlFor="vR">Min reactions</Label>
-              <Input id="vR" type="number" min={0} step={1} value={vR} onChange={(e) => setVR(toNonNegInt(e.target.value))} />
+              <Input id="vR" type="number" min={0} step={1} value={vR} onChange={(e) => setVR(e.target.value)} />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="vC">Min comments</Label>
-              <Input id="vC" type="number" min={0} step={1} value={vC} onChange={(e) => setVC(toNonNegInt(e.target.value))} />
+              <Input id="vC" type="number" min={0} step={1} value={vC} onChange={(e) => setVC(e.target.value)} />
             </div>
           </div>
         </CardContent>

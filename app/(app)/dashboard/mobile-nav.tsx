@@ -2,61 +2,25 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useState, useTransition, useCallback, type ComponentType } from "react";
-import {
-  Handshake,
-  FileText,
-  Gift,
-  SatelliteDish,
-  Settings,
-  Bookmark,
-  AudioLines,
-  Zap,
-  Fingerprint,
-  ChartNoAxesColumn,
-  MoreHorizontal,
-  X,
-} from "lucide-react";
+import { useState, useTransition, useCallback } from "react";
+import { MoreHorizontal, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { ClaudeIcon } from "@/components/claude-icon";
-import { SwipeInIcon } from "@/components/swipein-icon";
 import { hrefWithPersistedFilters } from "@/components/persisted-filter-state";
 import {
   MOBILE_MORE_SECTIONS,
   MOBILE_PRIMARY_PATHS,
 } from "@/lib/mobile-navigation-policy";
+import { NAV_BY_HREF } from "./nav-destinations";
 import { useNavBadges } from "./nav-badges";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 
-type NavItem = {
-  href: string;
-  label: string;
-  icon: ComponentType<{ className?: string }>;
-  tooltip?: string;
-};
-
-const NAV_ITEMS: Record<string, NavItem> = {
-  "/dashboard": { href: "/dashboard", label: "Cowork", icon: Handshake, tooltip: "Chat with the writing agent and run weekly batches." },
-  "/dashboard/swipe": { href: "/dashboard/swipe", label: "Swipe", icon: SwipeInIcon, tooltip: "Browse source posts to model or save." },
-  "/dashboard/posts": { href: "/dashboard/posts", label: "Posts", icon: FileText, tooltip: "Review, edit, schedule, and track your draft posts." },
-  "/dashboard/bookmarks": { href: "/dashboard/bookmarks", label: "Bookmarks", icon: Bookmark, tooltip: "Saved swipe-file posts and shared libraries." },
-  "/dashboard/templates": { href: "/dashboard/templates", label: "Templates", icon: FileText, tooltip: "Reusable content templates for posts and hooks." },
-  "/dashboard/accounts": { href: "/dashboard/accounts", label: "Creators", icon: SatelliteDish, tooltip: "Creators SwipeIn watches to fill your Swipe File with proven posts." },
-  "/dashboard/lead-magnets": { href: "/dashboard/lead-magnets", label: "Lead Magnets", icon: Gift, tooltip: "Create and share markdown resources for lead-magnet posts." },
-  "/dashboard/voice": { href: "/dashboard/voice", label: "Voice", icon: AudioLines, tooltip: "Your writing profile and voice preferences." },
-  "/dashboard/creator-styles": { href: "/dashboard/creator-styles", label: "Creator Styles", icon: Fingerprint, tooltip: "Reusable writing-style profiles from creators you track." },
-  "/dashboard/skills": { href: "/dashboard/skills", label: "Custom Skills", icon: Zap, tooltip: "Instructions and examples that shape how drafts are written." },
-  "/dashboard/analytics": { href: "/dashboard/analytics", label: "Analytics", icon: ChartNoAxesColumn, tooltip: "LinkedIn performance of posts published through SwipeIn." },
-  "/dashboard/claude": { href: "/dashboard/claude", label: "Claude Workflows", icon: ClaudeIcon, tooltip: "Reusable AI workflows for content tasks." },
-  "/dashboard/settings": { href: "/dashboard/settings", label: "Settings", icon: Settings, tooltip: "Workspace settings and publishing connections." },
-};
-
 // The bottom bar follows the product lifecycle: create in Cowork, find proven
 // inspiration in Swipe, manage drafts in Posts, and return to saved references
-// in Bookmarks. System-building destinations stay grouped behind More.
-const PRIMARY = MOBILE_PRIMARY_PATHS.map((path) => NAV_ITEMS[path]);
+// in Bookmarks. System-building destinations stay grouped behind More. Items
+// resolve through the shared nav-destinations module (labels/icons/tooltips).
+const PRIMARY = MOBILE_PRIMARY_PATHS.map((path) => NAV_BY_HREF[path]);
 const MORE = MOBILE_MORE_SECTIONS.flatMap((section) =>
-  section.paths.map((path) => NAV_ITEMS[path]),
+  section.paths.map((path) => NAV_BY_HREF[path]),
 );
 
 export function MobileNav({ badges: initialBadges }: { badges?: Record<string, number> }) {
@@ -125,7 +89,7 @@ export function MobileNav({ badges: initialBadges }: { badges?: Record<string, n
               <button
                 type="button"
                 onClick={() => setMoreOpen(false)}
-                className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                className="grid size-10 place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
                 aria-label="Close menu"
               >
                 <X className="h-5 w-5" />
@@ -139,7 +103,7 @@ export function MobileNav({ badges: initialBadges }: { badges?: Record<string, n
                   </h3>
                   <ul className="grid grid-cols-1">
                     {section.paths.map((path) => {
-                      const m = NAV_ITEMS[path];
+                      const m = NAV_BY_HREF[path];
                       const active = isActive(m.href);
                       const Icon = m.icon;
                       return (
@@ -217,7 +181,7 @@ export function MobileNav({ badges: initialBadges }: { badges?: Record<string, n
                       </span>
                     ) : null}
                   </div>
-                  <span className="truncate max-w-full px-0.5">{n.label}</span>
+                  <span className="truncate max-w-full px-0.5">{n.shortLabel ?? n.label}</span>
                 </Link>
               </li>
             );

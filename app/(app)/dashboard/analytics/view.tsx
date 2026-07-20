@@ -182,11 +182,15 @@ export function AnalyticsView({
           <div className="mb-3 text-sm font-medium text-foreground">
             Impressions over time
           </div>
-          <div className="flex h-28 items-end gap-1">
+          <div
+            className="flex h-28 items-end gap-1"
+            role="img"
+            aria-label={`Bar chart of daily impressions from ${trend[0].date} to ${trend[trend.length - 1].date}, peaking at ${maxTrend.toLocaleString("en-US")} impressions.`}
+          >
             {trend.map((t) => (
               <div
                 key={t.date}
-                title={`${t.date}: ${t.impressions.toLocaleString("en-US")} impressions`}
+                aria-hidden="true"
                 className="flex-1 rounded-t bg-primary/80 transition-[height]"
                 style={{ height: `${Math.max(3, (t.impressions / maxTrend) * 100)}%` }}
               />
@@ -196,6 +200,32 @@ export function AnalyticsView({
             <span>{trend[0].date}</span>
             <span>{trend[trend.length - 1].date}</span>
           </div>
+          {/* Non-visual access to the same data (screen readers, keyboard). */}
+          <details className="mt-3">
+            <summary className="cursor-pointer text-xs font-medium text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden list-none">
+              View daily data
+            </summary>
+            <div className="mt-2 max-h-56 overflow-y-auto rounded-lg border border-border/60">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-border bg-muted/40 text-left text-muted-foreground">
+                    <th className="px-3 py-1.5 font-medium">Date</th>
+                    <th className="px-3 py-1.5 text-right font-medium">Impressions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {trend.map((t) => (
+                    <tr key={t.date} className="border-b border-border/50 last:border-0">
+                      <td className="px-3 py-1.5 tabular-nums">{t.date}</td>
+                      <td className="px-3 py-1.5 text-right tabular-nums">
+                        {t.impressions.toLocaleString("en-US")}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </details>
         </div>
       )}
 

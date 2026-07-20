@@ -121,7 +121,7 @@ export function FirstRunChecklist({ forceShow = false }: { forceShow?: boolean }
                 className={cn(
                   "grid h-4 w-4 shrink-0 place-items-center rounded-full",
                   done
-                    ? "bg-emerald-500 text-white"
+                    ? "bg-state-success text-white"
                     : "border border-border text-muted-foreground",
                 )}
               >

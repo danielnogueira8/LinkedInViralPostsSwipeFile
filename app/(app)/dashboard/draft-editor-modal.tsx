@@ -42,6 +42,13 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { DraftEditor } from "./draft-editor";
 import { cn } from "@/lib/utils";
 import { POST_INTENTS } from "@/lib/post-intents";
@@ -275,7 +282,9 @@ export function DraftEditorModal({
     setSaving(false);
     if (id) {
       toast.success(isNew ? "Post created" : "Post saved");
-      if (!isNew) onOpenChange(false);
+      // Close on every successful save — new or existing — so the action has
+      // one consistent outcome (the board reflects the change immediately).
+      onOpenChange(false);
     }
   };
 
@@ -566,8 +575,8 @@ export function DraftEditorModal({
                   saving
                     ? "border-primary/20 bg-primary/10 text-primary"
                     : dirty
-                      ? "border-amber-500/20 bg-amber-500/10 text-amber-800"
-                      : "border-emerald-500/20 bg-emerald-500/10 text-emerald-800",
+                      ? "border-state-warning-border bg-state-warning-bg text-state-warning"
+                      : "border-state-success-border bg-state-success-bg text-state-success",
                 )}
               >
                 {saveState}
@@ -660,7 +669,7 @@ export function DraftEditorModal({
                 </div>
 
                 {mode === "edit" ? (
-                  <div className="rounded-[1.15rem] border border-border bg-card/88 p-3 shadow-soft">
+                  <div className="rounded-xl border border-border bg-card/90 p-3 shadow-soft">
                     <DraftEditor
                       value={body}
                       onChange={setBody}
@@ -678,9 +687,9 @@ export function DraftEditorModal({
               </div>
             </main>
 
-            <aside className="border-t border-border bg-card/64 px-4 py-5 sm:px-6 lg:min-h-0 lg:overflow-y-auto lg:border-l lg:border-t-0 lg:px-4">
+            <aside className="border-t border-border bg-card/70 px-4 py-5 sm:px-6 lg:min-h-0 lg:overflow-y-auto lg:border-l lg:border-t-0 lg:px-4">
               <div className="mx-auto flex max-w-[760px] flex-col gap-4 lg:max-w-none">
-                <section className="rounded-[1rem] border border-border bg-background/72 p-3 shadow-soft">
+                <section className="rounded-lg border border-border bg-background/72 p-3 shadow-soft">
                   <div className="mb-2 flex items-center justify-between gap-2">
                     <div>
                       <h3 className="text-sm font-semibold tracking-tight">Post settings</h3>
@@ -691,23 +700,31 @@ export function DraftEditorModal({
                   </div>
                   <div className="space-y-1">
                     <PropRow icon={<ListChecks className="h-4 w-4" />} label="Status">
-                      <select
+                      <Select
                         value={isNew ? newStatus : (draft?.status ?? "idea")}
-                        onChange={(e) => {
-                          const v = e.target.value as DraftStatus;
-                          if (isNew) setNewStatus(v);
-                          else patchMeta({ status: v }, { status: v });
+                        onValueChange={(v) => {
+                          const status = v as DraftStatus;
+                          if (isNew) setNewStatus(status);
+                          else patchMeta({ status }, { status });
                         }}
-                        className="-ml-1 h-8 rounded-md bg-transparent px-1 text-sm outline-none hover:bg-accent focus:bg-accent disabled:opacity-60"
-                        aria-label="Status"
-                        title={STATUS_HELP[isNew ? newStatus : (draft?.status ?? "idea")]}
                       >
-                        {STATUS_OPTIONS.map((s) => (
-                          <option key={s.value} value={s.value}>
-                            {s.label}
-                          </option>
-                        ))}
-                      </select>
+                        <SelectTrigger
+                          className="-ml-1 h-8 border-transparent px-1 hover:bg-accent focus-visible:bg-accent"
+                          aria-label="Status"
+                          title={STATUS_HELP[isNew ? newStatus : (draft?.status ?? "idea")]}
+                        >
+                          <SelectValue>
+                            {(v) => STATUS_OPTIONS.find((s) => s.value === v)?.label ?? v}
+                          </SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                          {STATUS_OPTIONS.map((s) => (
+                            <SelectItem key={s.value} value={s.value}>
+                              {s.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </PropRow>
 
                     <PropRow icon={<Calendar className="h-4 w-4" />} label="Planning date">
@@ -726,28 +743,39 @@ export function DraftEditorModal({
                     </PropRow>
 
                     <PropRow icon={<Type className="h-4 w-4" />} label="Kind">
-                      <select
-                        value={isNew ? newKind : (draft?.kind ?? "post")}
-                        onChange={(e) => {
-                          const v = e.target.value as DraftKind | "";
-                          if (isNew) setNewKind(v);
-                          else if (v) patchMeta({ kind: v }, { kind: v });
+                      <Select
+                        value={isNew ? newKind || "auto" : (draft?.kind ?? "post")}
+                        onValueChange={(v) => {
+                          if (isNew) setNewKind(v === "auto" ? "" : (v as DraftKind));
+                          else patchMeta({ kind: v as DraftKind }, { kind: v as DraftKind });
                         }}
-                        className="-ml-1 h-8 rounded-md bg-transparent px-1 text-sm outline-none hover:bg-accent focus:bg-accent"
-                        aria-label="Kind"
-                        title={
-                          isNew && !newKind
-                            ? "Auto: the app will classify the post type from the content."
-                            : KIND_HELP[(isNew ? newKind || "post" : draft?.kind ?? "post") as DraftKind]
-                        }
                       >
-                        {isNew && <option value="">Auto (from content)</option>}
-                        {KIND_OPTIONS.map((k) => (
-                          <option key={k.value} value={k.value}>
-                            {k.label}
-                          </option>
-                        ))}
-                      </select>
+                        <SelectTrigger
+                          className="-ml-1 h-8 border-transparent px-1 hover:bg-accent focus-visible:bg-accent"
+                          aria-label="Kind"
+                          title={
+                            isNew && !newKind
+                              ? "Auto: the app will classify the post type from the content."
+                              : KIND_HELP[(isNew ? newKind || "post" : draft?.kind ?? "post") as DraftKind]
+                          }
+                        >
+                          <SelectValue>
+                            {(v) =>
+                              v === "auto"
+                                ? "Auto (from content)"
+                                : (KIND_OPTIONS.find((k) => k.value === v)?.label ?? v)
+                            }
+                          </SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                          {isNew && <SelectItem value="auto">Auto (from content)</SelectItem>}
+                          {KIND_OPTIONS.map((k) => (
+                            <SelectItem key={k.value} value={k.value}>
+                              {k.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </PropRow>
 
                     {draft?.leadMagnet && (
@@ -793,7 +821,7 @@ export function DraftEditorModal({
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border bg-card/92 px-4 py-3 backdrop-blur sm:px-5">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border bg-card/90 px-4 py-3 backdrop-blur sm:px-5">
           <Button
             variant="outline"
             size="sm"
@@ -810,9 +838,6 @@ export function DraftEditorModal({
             {handing ? "Opening…" : "Model with Cowork"}
           </Button>
           <div className="flex items-center gap-2">
-            <span className="hidden text-xs text-muted-foreground sm:inline">
-              {saveState}
-            </span>
             <Button
               size="sm"
               className="gap-1.5"
@@ -901,7 +926,7 @@ function LinkedInPostPreview({
     ? linkedInPreviewHeadlineTeaser(author.headline)
     : null;
   return (
-    <section className="mx-auto w-full max-w-[552px] rounded-[1.15rem] border border-border bg-white p-5 shadow-soft">
+    <section className="mx-auto w-full max-w-[552px] rounded-xl border border-border bg-white p-5 shadow-soft">
       <div className="mb-4 flex items-center gap-3">
         <AvatarImg
           src={author.avatarUrl}
@@ -954,7 +979,13 @@ function LinkedInPostPreview({
               })}
             </div>
           )}
-          {attachments.slice(0, 4).map((attachment) => (
+          {/* File rows cover only what the image grid above doesn't already
+              show — images with a preview render in the grid, everything else
+              (and preview-less items) gets a row here. */}
+          {(attachments[0]?.type === "image" && attachments.some((a) => a.previewUrl || a.url)
+            ? attachments.filter((a) => a.type !== "image" || (!a.previewUrl && !a.url))
+            : attachments
+          ).slice(0, 4).map((attachment) => (
             <div
               key={attachment.id}
               className="flex items-center gap-2 rounded-xl border border-border bg-muted/30 px-3 py-2 text-sm"
@@ -1101,7 +1132,7 @@ function PostFeedbackMemory({ draft, body }: { draft: Draft; body: string }) {
   };
 
   return (
-    <section className="rounded-[1rem] border border-border bg-background/72 p-3 shadow-soft">
+    <section className="rounded-lg border border-border bg-background/72 p-3 shadow-soft">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <p className="text-sm font-medium tracking-tight">Memory feedback</p>
@@ -1117,8 +1148,8 @@ function PostFeedbackMemory({ draft, body }: { draft: Draft; body: string }) {
             className={cn(
               "h-8 rounded-full gap-1.5 border transition-colors",
               openRating === "up"
-                ? "border-emerald-500/55 bg-emerald-50 text-emerald-800 ring-2 ring-emerald-500/15 hover:bg-emerald-100"
-                : "border-emerald-200 bg-emerald-50/75 text-emerald-800 hover:border-emerald-300 hover:bg-emerald-100/80",
+                ? "border-state-success-border bg-state-success-bg text-state-success ring-2 ring-emerald-500/15 hover:bg-state-success-bg"
+                : "border-state-success-border bg-state-success-bg text-state-success hover:border-state-success-border hover:bg-state-success-bg",
             )}
             onClick={() => chooseRating("up")}
             aria-pressed={openRating === "up"}
@@ -1135,8 +1166,8 @@ function PostFeedbackMemory({ draft, body }: { draft: Draft; body: string }) {
             className={cn(
               "h-8 rounded-full gap-1.5 border transition-colors",
               openRating === "down"
-                ? "border-red-500/55 bg-red-50 text-red-800 ring-2 ring-red-500/15 hover:bg-red-100"
-                : "border-red-200 bg-red-50/75 text-red-800 hover:border-red-300 hover:bg-red-100/80",
+                ? "border-state-danger-border bg-state-danger-bg text-state-danger ring-2 ring-red-500/15 hover:bg-state-danger-bg"
+                : "border-state-danger-border bg-state-danger-bg text-state-danger hover:border-state-danger-border hover:bg-state-danger-bg",
             )}
             onClick={() => chooseRating("down")}
             aria-pressed={openRating === "down"}
@@ -1234,7 +1265,7 @@ function PostMediaSection({
       ? "Attach images, one video, or one PDF. Zernio media must publish within 7 days of upload."
       : mediaSummary(attachments);
   return (
-    <div className="rounded-[1rem] border border-border bg-card/72 p-3 shadow-soft">
+    <div className="rounded-lg border border-border bg-card/70 p-3 shadow-soft">
       <div className="mb-3 flex items-start gap-2.5">
         <Paperclip className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
         <div className="min-w-0 flex-1">
@@ -1519,7 +1550,7 @@ function MediaLibraryDialog({
               Loading media...
             </div>
           ) : assets.length === 0 ? (
-            <div className="grid min-h-[420px] place-items-center rounded-2xl border border-dashed border-border/80 bg-card/50 text-center">
+            <div className="grid min-h-[420px] place-items-center rounded-2xl border border-dashed border-border/80 bg-card/60 text-center">
               <div>
                 <Images className="mx-auto mb-3 h-8 w-8 text-muted-foreground/60" />
                 <p className="text-sm font-medium">No media yet</p>
@@ -1870,9 +1901,9 @@ function ScheduleRow({
   if (published) {
     const when = draft.publishedAt ?? draft.scheduledAt;
     return (
-      <div className="flex items-center gap-2 rounded-lg border border-emerald-300/60 bg-emerald-50 px-3 py-2.5 text-sm">
-        <Check className="h-4 w-4 shrink-0 text-emerald-600" />
-        <span className="flex-1 text-emerald-900">
+      <div className="flex items-center gap-2 rounded-lg border border-state-success-border bg-state-success-bg px-3 py-2.5 text-sm">
+        <Check className="h-4 w-4 shrink-0 text-state-success" />
+        <span className="flex-1 text-state-success">
           Published{" "}
           <span className="font-medium">
             {when
@@ -1936,7 +1967,7 @@ function ScheduleRow({
 
   // Not scheduled (or failed → let them reschedule) → the picker + first comment.
   return (
-    <div className="rounded-[1rem] border border-border bg-card/72 p-3 shadow-soft">
+    <div className="rounded-lg border border-border bg-card/70 p-3 shadow-soft">
       <div className="mb-2 flex items-center gap-2 text-sm font-medium">
         <Send className="h-4 w-4 text-primary" />
         Schedule on LinkedIn

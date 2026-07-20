@@ -49,7 +49,7 @@ export function DangerZone() {
   }
 
   return (
-    <div className="max-w-3xl rounded-[1.15rem] border border-destructive/25 bg-destructive/[0.035] p-5 shadow-soft">
+    <div className="max-w-3xl rounded-xl border border-destructive/25 bg-destructive/[0.035] p-5 shadow-soft">
       <div className="flex items-start gap-3">
         <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-destructive/15 bg-destructive/10 text-destructive">
           <AlertTriangle className="h-4 w-4" />

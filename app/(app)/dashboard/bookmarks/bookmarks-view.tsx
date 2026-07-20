@@ -323,9 +323,6 @@ export async function BookmarksView({ searchParams }: { searchParams: SP }) {
                     </FilterChip>
                   ))}
               </HorizontalCategoryRail>
-              <div className="hidden md:flex items-center text-[11px] text-muted-foreground shrink-0 pl-2 border-l border-border/60">
-                <span className="font-medium text-foreground">{activeCategoryLabel}</span>
-              </div>
             </div>
           </div>
         </Toolbar>
@@ -428,7 +425,7 @@ async function BookmarksSection({
 
   return (
     <>
-      <div className="hidden lg:block text-xs text-muted-foreground">
+      <div className="text-xs text-muted-foreground">
         <span className="font-medium text-foreground tabular-nums">{totalCount}</span>
         {" "}bookmark{totalCount === 1 ? "" : "s"}
       </div>

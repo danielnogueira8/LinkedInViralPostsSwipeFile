@@ -128,7 +128,7 @@ export function StyleDetailDrawer({
         </div>
 
         {row && creatorStyleQualityWarning(row.sample_count) && (
-          <div className="mx-4 mt-3 flex items-start gap-1.5 rounded-md border border-amber-500/15 bg-amber-500/10 px-2.5 py-1.5 text-xs text-amber-700">
+          <div className="mx-4 mt-3 flex items-start gap-1.5 rounded-md border border-state-warning-border bg-state-warning-bg px-2.5 py-1.5 text-xs text-state-warning">
             <AlertCircle className="mt-0.5 h-3 w-3 shrink-0" />
             <span>{creatorStyleQualityWarning(row.sample_count)}</span>
           </div>
@@ -237,11 +237,11 @@ export function StyleDetailDrawer({
               </div>
 
               {profile.avoid_copying.length > 0 && (
-                <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-3">
-                  <div className="flex items-center gap-1.5 text-xs font-medium text-amber-700 dark:text-amber-500">
+                <div className="rounded-lg border border-state-warning-border bg-state-warning-bg px-3 py-3">
+                  <div className="flex items-center gap-1.5 text-xs font-medium text-state-warning dark:text-state-warning">
                     <ShieldCheck className="h-3.5 w-3.5" /> Never copied into your posts
                   </div>
-                  <div className="mt-1 text-[13px] leading-snug text-amber-700/90 dark:text-amber-500/90">
+                  <div className="mt-1 text-[13px] leading-snug text-state-warning dark:text-state-warning">
                     Only the mechanics above transfer — never {joinList(profile.avoid_copying)}.
                   </div>
                 </div>

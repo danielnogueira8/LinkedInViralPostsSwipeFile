@@ -118,6 +118,11 @@ export function SwipeGrid({
           )}
         </div>
       )}
+      {nextOffset === null && posts.length > 0 && (
+        <p className="py-8 text-center text-xs text-muted-foreground">
+          You&apos;ve seen all {posts.length} post{posts.length === 1 ? "" : "s"}
+        </p>
+      )}
     </>
   );
 }

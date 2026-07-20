@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Bookmark, Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -61,6 +61,41 @@ export function BookmarkButton({
   // make the icon claim it's also bookmarked in library B.
   const [savedKeys, setSavedKeys] = useState<Set<string>>(() => new Set());
   const [menuOpen, setMenuOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Focus the first item when the menu opens.
+  useEffect(() => {
+    if (menuOpen) {
+      menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+    }
+  }, [menuOpen]);
+
+  // Menu keyboard support: Escape closes + returns focus to the trigger,
+  // arrows move between items, Tab closes and lets focus move on naturally.
+  const onMenuKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      setMenuOpen(false);
+      triggerRef.current?.focus();
+      return;
+    }
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      const items = Array.from(
+        menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [],
+      );
+      if (items.length === 0) return;
+      const idx = items.indexOf(document.activeElement as HTMLElement);
+      const next =
+        e.key === "ArrowDown"
+          ? (idx + 1) % items.length
+          : (idx - 1 + items.length) % items.length;
+      items[next]?.focus();
+      return;
+    }
+    if (e.key === "Tab") setMenuOpen(false);
+  };
   const effectiveLibraries = availableLibraries ?? [OWN_LIBRARY];
   const multi = effectiveLibraries.length > 1;
   const libKey = (shareId: string | null) => shareId ?? "__own";
@@ -159,6 +194,7 @@ export function BookmarkButton({
   return (
     <div className="relative shrink-0">
       <button
+        ref={triggerRef}
         type="button"
         onClick={onClick}
         disabled={busy}
@@ -195,7 +231,10 @@ export function BookmarkButton({
             aria-hidden="true"
           />
           <div
+            ref={menuRef}
             role="menu"
+            aria-orientation="vertical"
+            onKeyDown={onMenuKeyDown}
             className="absolute right-0 top-full z-50 mt-1 min-w-44 rounded-lg border border-border/60 bg-card shadow-soft-lg py-1"
           >
             <div className="px-3 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">

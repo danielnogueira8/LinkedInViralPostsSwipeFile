@@ -71,14 +71,14 @@ export type PickerCategory = {
 };
 
 const AVATAR_TINTS = [
-  "bg-amber-100 text-amber-800",
-  "bg-orange-100 text-orange-800",
-  "bg-rose-100 text-rose-800",
+  "bg-state-warning-bg text-state-warning",
+  "bg-state-warning-bg text-state-warning",
+  "bg-state-danger-bg text-state-danger",
   "bg-stone-200 text-stone-700",
-  "bg-yellow-100 text-yellow-800",
-  "bg-red-100 text-red-800",
-  "bg-lime-100 text-lime-800",
-  "bg-fuchsia-100 text-fuchsia-800",
+  "bg-state-warning-bg text-state-warning",
+  "bg-state-danger-bg text-state-danger",
+  "bg-state-success-bg text-state-success",
+  "bg-state-brand-bg text-state-brand",
 ];
 
 function tintFor(name: string): string {
@@ -300,7 +300,7 @@ function CreatorCard({
           disabled={busy}
         >
           {busy ? <Loader2 className="animate-spin" /> : tracked ? <Check /> : <Layers3 />}
-          {tracked ? (mode === "sources" ? "Pause" : "Tracking") : "Track"}
+          {tracked ? "Untrack" : "Track"}
         </Button>
       </div>
     </article>
@@ -448,7 +448,7 @@ export function CreatorPicker({
       if (action === "track") {
         toast.success(`Tracking ${result.affected} creators`);
       } else {
-        toast.success(`Paused ${result.affected} creators`, {
+        toast.success(`Untracked ${result.affected} creators`, {
           action: {
             label: "Undo",
             onClick: () => void setMany(ids, "track", globalBaselineOnly),
@@ -633,7 +633,7 @@ export function CreatorPicker({
         </div>
         {mode === "sources" && visibleRows.length > 0 && (
           <Button variant="ghost" size="sm" disabled={busyBulk} onClick={() => setMany(visibleRows.map((creator) => creator.id), "untrack")}>
-            {busyBulk && <Loader2 className="animate-spin" />} Pause visible
+            {busyBulk && <Loader2 className="animate-spin" />} Untrack visible
           </Button>
         )}
       </div>

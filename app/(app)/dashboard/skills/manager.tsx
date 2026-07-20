@@ -87,7 +87,7 @@ export function SkillsManager({ initial }: { initial: CustomSkill[] }) {
                   ["founder", "Your founder-story angle, boundaries, and examples."],
                   ["launch", "Rules for launch posts: structure, proof, and CTA."],
                 ].map(([name, body]) => (
-                  <div key={name} className="rounded-[0.85rem] border border-border/60 bg-background/80 px-3 py-2.5">
+                  <div key={name} className="rounded-lg border border-border/60 bg-background/80 px-3 py-2.5">
                     <code className="text-xs text-foreground">/{name}</code>
                     <p className="mt-1 text-xs leading-snug">{body}</p>
                   </div>
@@ -102,10 +102,10 @@ export function SkillsManager({ initial }: { initial: CustomSkill[] }) {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {skills.map((s) => (
-            <Card key={s.id} className="flex flex-col overflow-hidden border-border/70 bg-card/88 shadow-soft transition-[border-color,box-shadow] duration-200 ease-[cubic-bezier(0.25,1,0.5,1)] motion-reduce:transition-none hover:border-primary/18 hover:shadow-soft-lg">
+            <Card key={s.id} className="flex flex-col overflow-hidden border-border/70 bg-card/90 shadow-soft transition-[border-color,box-shadow] duration-200 ease-[cubic-bezier(0.25,1,0.5,1)] motion-reduce:transition-none hover:border-primary/18 hover:shadow-soft-lg">
               <CardContent className="flex-1 flex flex-col gap-4 p-4">
                 <div className="flex items-start gap-3">
-                  <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-amber-500/15 bg-amber-500/10 text-amber-600">
+                  <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-state-warning-border bg-state-warning-bg text-state-warning">
                     <Zap className="h-4 w-4" aria-hidden />
                   </div>
                   <div className="min-w-0 flex-1 space-y-1.5">
@@ -124,7 +124,7 @@ export function SkillsManager({ initial }: { initial: CustomSkill[] }) {
                     )}
                   </div>
                 </div>
-                <div className="rounded-[0.9rem] border border-border/55 bg-background/55 px-3 py-2.5">
+                <div className="rounded-lg border border-border/55 bg-background/55 px-3 py-2.5">
                   <p className="text-sm text-muted-foreground line-clamp-5 whitespace-pre-wrap break-words">
                     {s.body}
                   </p>
@@ -356,7 +356,7 @@ function SkillForm({
                 limit — trim it to save.
               </p>
             ) : body.length > SKILL_BODY_SOFT_WARN ? (
-              <p className="text-xs text-amber-600 leading-snug">
+              <p className="text-xs text-state-warning leading-snug">
                 Long skills can dilute the agent&apos;s focus — a tighter skill
                 usually performs better.
               </p>
@@ -369,7 +369,7 @@ function SkillForm({
                 body.length > SKILL_BODY_MAX
                   ? "text-destructive"
                   : body.length > SKILL_BODY_SOFT_WARN
-                    ? "text-amber-600"
+                    ? "text-state-warning"
                     : "text-muted-foreground",
               )}
             >

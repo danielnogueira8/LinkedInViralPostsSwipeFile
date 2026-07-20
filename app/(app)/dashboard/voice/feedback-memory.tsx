@@ -42,7 +42,7 @@ export function FeedbackMemoryManager({
   };
 
   return (
-    <Card className="overflow-hidden border-border/70 bg-card/88 shadow-soft">
+    <Card className="overflow-hidden border-border/70 bg-card/90 shadow-soft">
       <CardHeader>
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 space-y-1">
@@ -57,7 +57,7 @@ export function FeedbackMemoryManager({
       </CardHeader>
       <CardContent>
         {items.length === 0 ? (
-          <div className="rounded-[0.95rem] border border-dashed border-border/60 bg-background/45 px-4 py-7 text-center">
+          <div className="rounded-lg border border-dashed border-border/60 bg-background/45 px-4 py-7 text-center">
             <div className="text-sm font-medium text-foreground">
               No draft feedback yet
             </div>
@@ -67,7 +67,7 @@ export function FeedbackMemoryManager({
             </p>
           </div>
         ) : (
-          <ul className="overflow-hidden rounded-[0.95rem] border border-border/60 bg-background/45">
+          <ul className="overflow-hidden rounded-lg border border-border/60 bg-background/45">
             {items.map((item) => (
               <FeedbackRow
                 key={item.id}
@@ -111,7 +111,7 @@ function FeedbackRow({
       <div
         className={
           positive
-            ? "mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-full border border-emerald-500/15 bg-emerald-500/10 text-emerald-700"
+            ? "mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-full border border-state-success-border bg-state-success-bg text-state-success"
             : "mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-full border border-destructive/15 bg-destructive/10 text-destructive"
         }
       >

@@ -511,20 +511,20 @@ async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: bool
   return (
     <>
       {showFeatured && (
-        <section className="hidden lg:block space-y-3">
+        <section className="space-y-3">
           <div className="flex items-center gap-2.5">
             <span className="flex h-7 w-7 items-center justify-center rounded-full border border-primary/15 bg-primary/[0.06] text-primary">
               <Trophy className="h-3.5 w-3.5" aria-hidden />
             </span>
             <div className="flex min-w-0 items-baseline gap-2">
               <h2 className="text-sm font-semibold tracking-tight">Top from last batch</h2>
-              <span className="text-xs text-muted-foreground">
+              <span className="hidden text-xs text-muted-foreground sm:inline">
                 highest engagement among your tracked accounts
                 {lastBatchLabel && <> · {lastBatchLabel}</>}
               </span>
             </div>
           </div>
-          <div className="flex gap-3 overflow-x-auto -mx-8 px-8 pb-2 no-scrollbar">
+          <div className="flex gap-3 overflow-x-auto -mx-4 px-4 lg:-mx-8 lg:px-8 pb-2 no-scrollbar">
             {(() => {
               const top5 = featuredPosts.slice(0, 5);
               const firstWithImg = top5.findIndex(
@@ -539,7 +539,7 @@ async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: bool
         </section>
       )}
 
-      <div className="hidden lg:block text-xs text-muted-foreground">
+      <div className="text-xs text-muted-foreground">
         <span className="font-medium text-foreground tabular-nums">{totalCount.toLocaleString()}</span>{" "}
         viral post{totalCount === 1 ? "" : "s"}
       </div>
