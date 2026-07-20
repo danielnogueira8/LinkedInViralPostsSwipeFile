@@ -9,7 +9,7 @@ import {
   type ChatMessage,
   type Usage,
 } from "@/lib/openrouter";
-import type { AgentEvent, Artifact } from "@/lib/agent/contracts";
+import type { AgentEvent, Artifact, PlanStep } from "@/lib/agent/contracts";
 import {
   createDraftFinalizer,
   type DraftCandidateTransform,
@@ -263,6 +263,14 @@ export type WriterInput = {
   deadlineAtMs?: number;
   /** Internal flag: slot-batch children use a shorter per-call timeout and skip repair. */
   slotMode?: boolean;
+  /**
+   * When true, the writer narrates its own progress as plan_update steps (the
+   * direct-writer lane has no orchestrator checklist of its own). Only the
+   * direct lane opts in: the read-only orchestrator already owns the on-screen
+   * plan, and plan_update REPLACES the whole list, so two narrators would
+   * clobber each other.
+   */
+  narratePlan?: boolean;
 };
 
 const productionDependencies: WriterDependencies = {
@@ -3318,6 +3326,21 @@ async function* runLocalSlotBatch(
   try {
     for (let index = 1; index <= task.expectedCount; index += 1) {
       if (multiSignal.aborted) break;
+      if (input.narratePlan) {
+        // Reveal steps as they start (same contract as the read-only lane):
+        // previous drafts done, the current one active.
+        const steps: PlanStep[] = [];
+        for (let j = 1; j <= index; j += 1) {
+          steps.push(
+            writerSlotStep(
+              j,
+              task.expectedCount,
+              j < index ? "done" : "active",
+            ),
+          );
+        }
+        yield { type: "plan_update", steps };
+      }
       const previousBodies = accepted.map((artifact) => artifact.body);
       const variation: DraftVariation = {
         index,
@@ -3548,6 +3571,14 @@ async function* runLocalSlotBatch(
       return;
     }
 
+    if (input.narratePlan) {
+      yield {
+        type: "plan_update",
+        steps: Array.from({ length: task.expectedCount }, (_, i) =>
+          writerSlotStep(i + 1, task.expectedCount, "done"),
+        ),
+      };
+    }
     for (const artifact of accepted) {
       yield { type: "artifact", artifact };
     }
@@ -3694,6 +3725,30 @@ async function* runSlotBatchTurn(
 }
 
 // ---------------------------------------------------------------------------
+// Live plan narration (direct-writer lane only — see WriterInput.narratePlan)
+// ---------------------------------------------------------------------------
+
+function writerSlotStep(
+  index: number,
+  count: number,
+  status: PlanStep["status"],
+): PlanStep {
+  return {
+    id: `write_draft_${index}`,
+    label: count > 1 ? `Write draft ${index} of ${count}` : "Write your post",
+    status,
+  };
+}
+
+function writerSingleStepLabel(
+  task: Exclude<WriterTask, { kind: "multi" }>,
+): string {
+  if (task.kind === "refine") return "Rewrite the post";
+  if (task.kind === "partial") return "Write the deliverable";
+  return "Write your post";
+}
+
+// ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------
 
@@ -3705,7 +3760,29 @@ export async function* runWriterTurn(
     yield* runSlotBatchTurn(input, task);
     return;
   }
-  yield* runSingleDraftTurn(input);
+  if (!input.narratePlan) {
+    yield* runSingleDraftTurn(input);
+    return;
+  }
+  // The direct-writer lane has no orchestrator checklist above this write, so
+  // narrate the write itself — otherwise the turn sits on "Planning next
+  // moves" until the draft pops out. Only this lane opts in (narratePlan):
+  // the read-only orchestrator owns the on-screen plan there, and plan_update
+  // REPLACES the whole list, so two narrators would clobber each other.
+  const step: PlanStep = {
+    id: "write_post",
+    label: writerSingleStepLabel(task),
+    status: "active",
+  };
+  yield { type: "plan_update", steps: [step] };
+  let failed = false;
+  for await (const event of runSingleDraftTurn(input)) {
+    if (event.type === "error") failed = true;
+    yield event;
+  }
+  if (!failed) {
+    yield { type: "plan_update", steps: [{ ...step, status: "done" }] };
+  }
 }
 
 export const productionWriterDependencies = productionDependencies;

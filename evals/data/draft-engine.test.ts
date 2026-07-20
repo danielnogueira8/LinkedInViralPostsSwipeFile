@@ -2253,3 +2253,111 @@ describe("prompt-threading assertions ported from legacy runAgent evals (D6)", (
     expect(prompt).not.toContain("recent taste feedback");
   });
 });
+
+describe("writer plan narration (narratePlan)", () => {
+  const ANOTHER_POST = [
+    "Hiring managers rarely say why they passed.",
+    "",
+    "Silence usually means the proof was missing, not the skill.",
+    "",
+    "Publish the work. Make the decision easy for them.",
+  ].join("\n");
+
+  const planUpdates = (events: AgentEvent[]) =>
+    events.filter(
+      (event): event is Extract<AgentEvent, { type: "plan_update" }> =>
+        event.type === "plan_update",
+    );
+
+  test("wraps a single-draft turn in an active → done step", async () => {
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(120, 80) },
+    ]);
+    const { events } = await collect(writer, { narratePlan: true });
+
+    expect(planUpdates(events)).toEqual([
+      {
+        type: "plan_update",
+        steps: [
+          { id: "write_post", label: "Write your post", status: "active" },
+        ],
+      },
+      {
+        type: "plan_update",
+        steps: [{ id: "write_post", label: "Write your post", status: "done" }],
+      },
+    ]);
+    expect(artifacts(events)).toHaveLength(1);
+  });
+
+  test("stays silent by default so an outer lane keeps owning the plan", async () => {
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(120, 80) },
+    ]);
+    const { events } = await collect(writer);
+
+    expect(planUpdates(events)).toHaveLength(0);
+  });
+
+  test("reveals one step per slot across a multi-draft turn", async () => {
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(120, 80) },
+      { text: ANOTHER_POST, finishReason: "stop", usage: usage(140, 80) },
+    ]);
+    const { events } = await collect(writer, {
+      narratePlan: true,
+      task: { kind: "multi", expectedCount: 2 },
+    });
+
+    expect(planUpdates(events)).toEqual([
+      {
+        type: "plan_update",
+        steps: [
+          {
+            id: "write_draft_1",
+            label: "Write draft 1 of 2",
+            status: "active",
+          },
+        ],
+      },
+      {
+        type: "plan_update",
+        steps: [
+          { id: "write_draft_1", label: "Write draft 1 of 2", status: "done" },
+          {
+            id: "write_draft_2",
+            label: "Write draft 2 of 2",
+            status: "active",
+          },
+        ],
+      },
+      {
+        type: "plan_update",
+        steps: [
+          { id: "write_draft_1", label: "Write draft 1 of 2", status: "done" },
+          { id: "write_draft_2", label: "Write draft 2 of 2", status: "done" },
+        ],
+      },
+    ]);
+    expect(artifacts(events)).toHaveLength(2);
+  });
+
+  test("leaves the step open when the write fails instead of marking it done", async () => {
+    const writer = new ScriptedWriter(
+      Array.from({ length: 6 }, () => () => {
+        throw new Error("writer down");
+      }),
+    );
+    const { events } = await collect(writer, { narratePlan: true });
+
+    expect(planUpdates(events)).toEqual([
+      {
+        type: "plan_update",
+        steps: [
+          { id: "write_post", label: "Write your post", status: "active" },
+        ],
+      },
+    ]);
+    expect(events.some((event) => event.type === "error")).toBe(true);
+  });
+});
