@@ -47,7 +47,7 @@ export type BuiltinTemplate = {
 export const TEMPLATE_TITLE_MAX = 80;
 export const TEMPLATE_BODY_MAX = 8_000; // a long post skeleton, generously bounded
 // Per-workspace ceiling so the library stays scannable and storage is bounded.
-export const TEMPLATES_PER_WORKSPACE_MAX = 100;
+export const TEMPLATES_PER_WORKSPACE_MAX = 300;
 
 // The category taxonomy. Coarse structure tags used to scan/filter the library.
 // Kept small and stable; validated on write. "other" is the catch-all.
