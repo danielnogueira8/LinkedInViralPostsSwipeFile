@@ -21,6 +21,21 @@ describe("resolveComposerTaskContext", () => {
     });
   });
 
+  test("treats the series starter as an original-post task with no research lane", () => {
+    expect(
+      resolveComposerTaskContext({
+        starterId: "series",
+        selectedDraftCount: 3,
+        fallbackPostCount: null,
+      }),
+    ).toEqual({
+      kind: "post",
+      expectedDraftCount: 3,
+      sourceMode: "original",
+      starterId: "series",
+    });
+  });
+
   test("automatically treats an attached bookmark as the selected source", () => {
     expect(
       resolveComposerTaskContext({

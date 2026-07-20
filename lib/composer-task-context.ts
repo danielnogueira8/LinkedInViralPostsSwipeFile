@@ -13,6 +13,7 @@ export const composerStarterIdSchema = z.enum([
   "namejack",
   "brandjack",
   "newsjack",
+  "series",
 ]);
 
 export type ComposerStarterId = z.infer<typeof composerStarterIdSchema>;
@@ -139,6 +140,9 @@ const STARTER_TASKS: Record<
     sourceMode: "web_research",
     research: { lane: "news" },
   },
+  // A series is built from the user's own idea, so it needs no research lane;
+  // the prompt's "3-part" phrasing lets the Auto draft-count path resolve to 3.
+  series: { kind: "post", sourceMode: "original" },
 };
 
 type ComposerTaskContextBase = {
