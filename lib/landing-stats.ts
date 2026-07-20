@@ -67,6 +67,57 @@ export async function getLandingStats(): Promise<LandingStats> {
   };
 }
 
+export type LandingTopCreator = {
+  id: string;
+  name: string;
+  niche: string | null;
+  imageUrl: string;
+  viralPostCount: number;
+};
+
+/**
+ * Real creators powering the swipe file, ranked by how many of their posts
+ * have been flagged as viral. Names, niches, and profile pictures come from
+ * the public LinkedIn profiles we already track; the fallback avatar is a
+ * deterministic Notion-style SVG from DiceBear (CC0) when a picture is missing.
+ */
+export async function getTopCreatorsForLanding(limit = 8): Promise<LandingTopCreator[]> {
+  const sb = supabaseAdmin();
+  const { data, error } = await sb
+    .from("posts")
+    .select("account_id, accounts!inner(id, name, niche, profile_pic_url)")
+    .eq("is_viral", true)
+    .not("account_id", "is", null);
+
+  if (error || !data) {
+    return [];
+  }
+
+  const map = new Map<string, LandingTopCreator>();
+  for (const row of data) {
+    const acc = (row as unknown as { accounts: { id: string; name: string; niche: string | null; profile_pic_url: string | null } }).accounts;
+    if (!acc?.name) continue;
+    const existing = map.get(acc.id);
+    if (existing) {
+      existing.viralPostCount++;
+    } else {
+      map.set(acc.id, {
+        id: acc.id,
+        name: acc.name,
+        niche: acc.niche,
+        imageUrl:
+          acc.profile_pic_url ??
+          `https://api.dicebear.com/9.x/notionists/svg?seed=${encodeURIComponent(acc.name)}`,
+        viralPostCount: 1,
+      });
+    }
+  }
+
+  return Array.from(map.values())
+    .sort((a, b) => b.viralPostCount - a.viralPostCount)
+    .slice(0, limit);
+}
+
 // Compact a count for display: 12345 → "12k", 4_200_000 → "4.2M".
 // Below 1k stays as exact integer with a thousands separator (e.g. "847"
 // reads as a real, growing number — rounding small counts to "1k" looks
