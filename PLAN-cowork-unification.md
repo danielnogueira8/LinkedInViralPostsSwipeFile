@@ -93,17 +93,23 @@ Small, independently testable fixes on current code:
 
 Each fix: targeted vitest runs + `tsc --noEmit` + lint, separate commit.
 
-### Phase 1 — Unified skeleton, delete legacy
+### Phase 1 — Unified skeleton, delete legacy — COMPLETE
 
-- Build `turn/context.ts` (one context builder; writer ALWAYS gets history;
-  attachment text persisted as first-class message content), `turn/compile.ts`
-  (one intent/count parser: UI override > message text > default 1; cap 1–6;
-  computed once, post-clarification), `turn/outcome.ts` (one terminal vocabulary).
-- Route 100% of turns through the skeleton around existing v2 executors.
-- Delete: legacy loop (`run.ts` 227KB), `decide.ts`, three `*-routing.ts` files,
-  rollout flags/shadow routing/evidence gates, synthetic `tool_calls` markers
-  (→ real columns), duplicate partial gauntlet.
-- Session-sticky routing per chat.
+- [x] Build `turn/outcome.ts` (one terminal vocabulary).
+- [x] Build `turn/compile.ts` (one count rule 1–6; single contract computation;
+  route compilation merged from the three `*-routing.ts` files).
+- [x] Build `turn/context.ts` (one context builder; history + voice + prefs +
+  sources + attachments; writer receives conversation history; attachment text
+  persisted in `chat_messages.content_blocks`).
+- [x] Route 100% of turns through the skeleton around existing v2 executors:
+  direct_writer, action_orchestrator, read_only_orchestrator, answer.
+- [x] Delete legacy loop (`run.ts`), `decide.ts`, three `*-routing.ts` files,
+  rollout flags/shadow routing/evidence gates, live/promptfoo eval tiers, and
+  runAgent/decide-dependent evals.
+- [x] Session-sticky routing per chat (`chats.pinned_cowork_route`,
+  migration-111).
+- [ ] Synthetic `tool_calls` markers → real columns deferred to Phase 3.
+- [ ] Duplicate partial gauntlet cleanup deferred to Phase 2 / finalizer work.
 
 ### Phase 2 — Merge executors, collapse finalizer
 

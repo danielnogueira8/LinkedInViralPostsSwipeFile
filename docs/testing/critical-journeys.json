@@ -41,7 +41,6 @@
       "existing_coverage": [
         "evals/data/modeling-source-selection.test.ts",
         "evals/data/source-modeling-intent.test.ts",
-        "evals/data/read-only-orchestrator-routing.test.ts",
         "evals/data/tools-query.test.ts",
         "evals/data/read-only-orchestrator.test.ts",
         "evals/data/cowork-outcome-harness.test.ts",
