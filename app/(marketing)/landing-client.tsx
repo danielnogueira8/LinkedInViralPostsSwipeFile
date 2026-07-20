@@ -19,7 +19,7 @@ import {
   ThumbsUp,
 } from "lucide-react";
 import { AiIcon } from "@/components/ai-icon";
-import type { LandingStats } from "@/lib/landing-stats";
+import type { LandingStats, LandingTopCreator } from "@/lib/landing-stats";
 import {
   AgentTrace,
   CountUp,
@@ -81,7 +81,13 @@ function PrimaryLink({ children }: { children: React.ReactNode }) {
   );
 }
 
-export default function LandingClient({ stats }: { stats: LandingStats }) {
+export default function LandingClient({
+  stats,
+  topCreators,
+}: {
+  stats: LandingStats;
+  topCreators: LandingTopCreator[];
+}) {
   return (
     <div className="overflow-x-hidden bg-background text-foreground">
       <section className="relative px-4 pb-14 pt-12 sm:px-6 sm:pt-16 lg:pb-24 lg:pt-20">
@@ -141,24 +147,29 @@ export default function LandingClient({ stats }: { stats: LandingStats }) {
           </p>
           <div className="scroll-fade-x mt-4 overflow-hidden">
             <div className="marquee-track flex w-max items-center gap-3">
-              {[...sampleCreators, ...sampleCreators].map(([name, niche, avatar], index) => (
-                <span
-                  key={`${name}-${index}`}
-                  aria-hidden={index >= sampleCreators.length}
-                  className="inline-flex shrink-0 items-center gap-2.5 rounded-full border border-border bg-background py-1.5 pl-1.5 pr-4"
-                >
-                  <span className="relative size-7 overflow-hidden rounded-full border border-border bg-muted">
-                    <Image
-                      src={`/creator-icons/${avatar}.svg`}
-                      alt=""
-                      fill
-                      className="object-cover"
-                    />
+              {(() => {
+                const marqueeCreators =
+                  topCreators.length > 0
+                    ? topCreators
+                    : sampleCreators.map(([name, niche, avatar]) => ({
+                        name,
+                        niche,
+                        imageUrl: `/creator-icons/${avatar}.svg`,
+                      }));
+                return [...marqueeCreators, ...marqueeCreators].map(({ name, niche, imageUrl }, index) => (
+                  <span
+                    key={`${name}-${index}`}
+                    aria-hidden={index >= marqueeCreators.length}
+                    className="inline-flex shrink-0 items-center gap-2.5 rounded-full border border-border bg-background py-1.5 pl-1.5 pr-4"
+                  >
+                    <span className="relative size-7 overflow-hidden rounded-full border border-border bg-muted">
+                      <Image src={imageUrl} alt="" fill loading="eager" className="object-cover" />
+                    </span>
+                    <span className="text-xs font-medium">{name}</span>
+                    <span className="text-[11px] text-muted-foreground">{niche}</span>
                   </span>
-                  <span className="text-xs font-medium">{name}</span>
-                  <span className="text-[11px] text-muted-foreground">{niche}</span>
-                </span>
-              ))}
+                ));
+              })()}
             </div>
           </div>
         </div>
