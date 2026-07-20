@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { resolveTurnCount } from "@/lib/agent/turn/compile";
+import { resolveTurnCount } from "@/lib/agent/turn/count";
 
 export const DRAFT_COUNT_OPTIONS = [1, 2, 3, 4, 5, 6] as const;
 
