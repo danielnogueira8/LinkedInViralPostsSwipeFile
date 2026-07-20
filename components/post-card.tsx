@@ -423,7 +423,10 @@ export function PostCard({
               width={1100}
               height={1100}
               sizes="(min-width: 1024px) 1100px, 95vw"
-              className="block w-auto h-auto max-w-full max-h-[90vh] rounded-lg shadow-2xl"
+              // min-w forces small-source media (reaction GIFs, thumbnails)
+              // up to a readable dialog size instead of shrink-wrapping the
+              // lightbox to the file's natural pixel dimensions.
+              className="block h-auto max-h-[90vh] w-auto min-w-[min(85vw,640px)] max-w-full rounded-lg object-contain shadow-2xl"
               onClick={() => setLightboxOpen(false)}
               referrerPolicy="no-referrer"
             />
