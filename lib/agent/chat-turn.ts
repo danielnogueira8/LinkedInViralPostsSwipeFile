@@ -14,8 +14,6 @@ import {
   runWriterTurn,
   WRITER_TURN_BUDGET_MS,
   type WriterInput,
-  type Source,
-  type WriterTask,
 } from "@/lib/agent/execute/writer";
 import {
   runAgentTurn,
@@ -23,32 +21,17 @@ import {
 } from "@/lib/agent/execute/agent";
 import {
   actionOrchestratorEnabledForWorkspace,
-  compileReadOnlyOrchestratorRoute,
+  compileTurnPlan,
   readOnlyOrchestratorEnabledForWorkspace,
-  type ActionOrchestratorRoute,
-  type ReadOnlyOrchestratorRoute,
 } from "@/lib/agent/turn/compile";
 import {
   createSupabaseActionRetryRepository,
 } from "@/lib/agent/action-retry";
 import {
-  continuationForModeledDraftRoute,
   parseModeledDraftBatchContinuation,
   type ModeledDraftBatchContinuation,
 } from "@/lib/agent/modeled-draft-continuation";
-import {
-  isDirectFindAndModelEligible,
-  isDirectFixedSourcePostEligible,
-  isDirectLeadMagnetEligible,
-  isDirectMultiPostEligible,
-  isDirectRefineEligible,
-  isDirectOriginalPostEligible,
-  isDirectPartialTextEligible,
-} from "@/lib/agent/direct-writer-policy";
-import {
-  compileDirectPartialTextSpec,
-  requestedDirectPostCount,
-} from "@/lib/agent/direct-deliverable-policy";
+import { requestedDirectPostCount } from "@/lib/agent/direct-deliverable-policy";
 import { stripArtifactFences } from "@/lib/artifact-fences";
 import {
   type AgentEvent,
@@ -73,10 +56,7 @@ import {
 } from "@/lib/agent/chat-turn-lifecycle";
 import { resolveTurnOutcome } from "@/lib/agent/turn/outcome";
 import { setupChatTurn } from "@/lib/agent/turn/setup";
-import {
-  resolveTurnContract,
-  type TurnContract,
-} from "@/lib/agent/turn/compile";
+
 import {
   loadCitedSwipePostImage,
   CREATOR_STYLE_RETRY_CONTEXT_VERSION,
@@ -128,9 +108,6 @@ import {
 } from "@/lib/post-structure-skeleton";
 import { splicePreservedBody } from "@/lib/hook-splice";
 
-import {
-  requestsDirectSourceModeling,
-} from "@/lib/agent/source-policy";
 import { compileModeledPostIntent } from "@/lib/agent/modeled-post-intent";
 import {
   composerStarterIdSchema,
@@ -178,12 +155,7 @@ import { enqueueLeadMagnetImageJob } from "@/lib/lead-magnet-image-jobs";
 import type { AppliedLeadMagnet } from "@/lib/chat-hydration";
 import { persistChatAssistantTurn } from "@/lib/chat-message-persistence";
 
-import { runTool } from "@/lib/agent/tools";
-import { canonicalScrapedPostText } from "@/lib/agent/scraped-post-text";
-import {
-  classifyDirectRefineFocus,
-  isExclusiveHookRefine,
-} from "@/lib/agent/direct-refine-policy";
+import { isExclusiveHookRefine } from "@/lib/agent/direct-refine-policy";
 
 export const runtime = "nodejs";
 // The agent loop can run several tool rounds + a long final generation. Give it
@@ -1208,61 +1180,6 @@ export function withLeadMagnetResourcePlanStep(
   return [...steps, resourceStep];
 }
 
-// A resolved find-and-model source: the lean engine input (id + raw body) plus
-// the post_url so chat-turn can stamp the draft's "Source post" chip.
-export type ResolvedFindAndModelSource = {
-  source: Source;
-  sourceUrl: string | null;
-};
-
-// THIN PATH find-and-model source resolver. Runs the SAME rotation-aware search
-// the heavy loop's directSourceModelingTurn prefetch uses (top viral REGULAR
-// post, limit 1), so "find a top post and rewrite it" resolves a source up
-// front and can take the lean direct route instead of the GLM render loop.
-// Returns the source body (for the engine) AND the post_url (for the source
-// chip). Fail-open: any error / empty result returns undefined and the caller
-// falls through to the heavy path unchanged.
-export async function resolveFindAndModelSource(
-  workspaceId: string,
-  signal?: AbortSignal,
-): Promise<ResolvedFindAndModelSource | undefined> {
-  try {
-    const result = await runTool(
-      "search_viral_posts",
-      { post_type: "regular", sort: "viral", dir: "desc", limit: 1 },
-      workspaceId,
-      signal,
-      { autoSelectModelingSources: true },
-    );
-    if (result.ok === false) return undefined;
-    const posts = Array.isArray(result.posts)
-      ? (result.posts as Array<{
-          id?: unknown;
-          text?: unknown;
-          post_url?: unknown;
-        }>)
-      : [];
-    const top = posts[0];
-    if (
-      !top ||
-      typeof top.id !== "string" ||
-      typeof top.text !== "string" ||
-      !top.text.trim()
-    ) {
-      return undefined;
-    }
-    const body = canonicalScrapedPostText(top.text);
-    if (!body) return undefined;
-    const sourceUrl =
-      typeof top.post_url === "string" && /^https?:\/\//i.test(top.post_url)
-        ? top.post_url
-        : null;
-    return { source: { id: top.id, text: body }, sourceUrl };
-  } catch {
-    return undefined;
-  }
-}
-
 // -----------------------------------------------------------------------------
 // POST /api/chats/[id]/stream
 //
@@ -1307,31 +1224,16 @@ export async function executeChatTurn(
     workspaceId,
     sbRaw,
     attachments,
-    modelSourceId,
-    skipDecision,
     refineInstruction,
-    trustedRefineTarget,
-    creatorStyleId,
     hookOnly,
     hookOnlyOriginalBody,
-    hasModelSource,
     customSkillBodies,
     customSkillNames,
     turnCostOperationKey,
     claimedTurnStartedAt,
     claimedUserMessageId,
     actionTurnMessageId,
-    normalizedActionRoute,
     confirmedActionTargetIds,
-    actionRetryRepository,
-    persistedActionContinuation,
-    pendingActionAsk,
-    pendingAskOnly,
-    modeledBatchContinuation,
-    modeledBatchContractRequested,
-    setupDeadline,
-    setupSignal,
-    postClarificationPostCount,
     pinnedCoworkRoute,
     coworkTelemetry,
     history,
@@ -1354,443 +1256,44 @@ export async function executeChatTurn(
     preferences,
     priorPostDrafts,
     preloadedVoiceResult,
-    turnError,
   } = setupResult;
 
-  let modelSourceReference = setupResult.modelSourceReference;
   let citedSourceImage = setupResult.citedSourceImage;
   let citedSourceImageSkipReason = setupResult.citedSourceImageSkipReason;
   let citedSourceImageSourcePostId = setupResult.citedSourceImageSourcePostId;
-  const activeDraftCountOverride = setupResult.activeDraftCountOverride;
-  const composerTaskContext = setupResult.composerTaskContext;
 
-  // Direct writer is the unified drafting path;  // Direct writer is the unified drafting path; the COWORK_THIN_PATH rollout
-  // flag has been removed and lean mode is no longer forced (default false).
-  const directWriterEnabled = true;
-  const directPartialSpec = compileDirectPartialTextSpec(
-    effectiveUserInstruction,
+  const plan = await compileTurnPlan(
+    setupResult,
+    chatId,
+    body.retryOfUserMessageId,
+    {
+      actionOrchestratorEnabledForWorkspace:
+        deps.actionOrchestratorEnabledForWorkspace,
+      readOnlyOrchestratorEnabledForWorkspace:
+        deps.readOnlyOrchestratorEnabledForWorkspace,
+      releaseChatTurn: deps.releaseChatTurn,
+      persistChatSetupFailure,
+    },
   );
-  const directPostCount =
-    activeDraftCountOverride ??
-    (composerTaskContext?.kind === "post"
-      ? composerTaskContext.expectedDraftCount
-      : null) ??
-    requestedDirectPostCount(effectiveUserInstruction);
-  // Find-and-model: a "find a top post in my swipe file and rewrite it" turn
-  // has NO pre-attached source, so directSource is empty and the fixed-source
-  // direct route is rejected. Resolve the source HERE with the same rotation-
-  // aware search the heavy loop's prefetch uses, so the discovery-phrased turn
-  // qualifies for the direct route and the strong model writes it tool-free.
-  // Runs at most once (advances the rotation cursor once); any failure falls
-  // through to the heavy loop unchanged (fail-open).
-  const wantsFindAndModel =
-    !currentModelSource?.post_text.trim() &&
-    !modelSourceId &&
-    requestsDirectSourceModeling(effectiveUserInstruction);
-  const resolvedFindSource = wantsFindAndModel
-    ? await resolveFindAndModelSource(workspaceId, signal)
-    : undefined;
-  const directSource: Source | undefined =
-    currentModelSource?.post_text.trim()
-      ? {
-          id: currentModelSource.source_post_id ?? currentModelSource.id,
-          text: currentModelSource.post_text,
-        }
-      : resolvedFindSource?.source;
-  // Stamp the "Source post" chip for a find-and-model draft. The chip is drawn
-  // from `modelSourceReference` (tagArtifactWithModelSourceReference below);
-  // that's normally set only for a pre-ATTACHED source, so a find-and-model
-  // draft would otherwise ship with no chip even though it DID model a real
-  // swipe-file post. Only set it when we actually resolved a find source and no
-  // attached source already owns the reference.
-  if (resolvedFindSource && !modelSourceReference) {
-    modelSourceReference = {
-      source_post_id: resolvedFindSource.source.id,
-      source_url: resolvedFindSource.sourceUrl,
-    };
-  }
-  const directWritingContext = {
-    enabled: directWriterEnabled,
-    hasAttachments: attachments.length > 0,
-    hasLeadMagnet: Boolean(
-      shouldAttachLeadMagnet || appliedLeadMagnet || activeLeadMagnetCampaign,
-    ),
-    hasCreatorStyle: Boolean(creatorStyleId),
-    voiceResolved: preloadedVoiceResult?.ok === true,
-  };
-  const useDirectRefine = isDirectRefineEligible({
-    ...directWritingContext,
-    isRefine: skipDecision,
-    refineInstruction: refineInstruction ?? "",
-    targetResolved: trustedRefineTarget !== null,
-    targetKind:
-      trustedRefineTarget?.kind === "post" ||
-      trustedRefineTarget?.kind === "hook"
-        ? trustedRefineTarget.kind
-        : null,
-    targetHasLeadMagnet: Boolean(trustedRefineTarget?.meta?.lead_magnet),
-    hasModelSource: Boolean(modelSourceId),
-  });
-  const useDirectPartial = isDirectPartialTextEligible({
-    ...directWritingContext,
-    userInstruction: effectiveUserInstruction,
-    sourceRequested: Boolean(modelSourceId),
-    sourceResolved: Boolean(directSource),
-    isRefine: skipDecision,
-  });
-  const useDirectMulti = isDirectMultiPostEligible({
-    ...directWritingContext,
-    userInstruction: effectiveUserInstruction,
-    sourceRequested: Boolean(modelSourceId),
-    sourceResolved: Boolean(directSource),
-    isRefine: skipDecision,
-    requestedCount: directPostCount ?? undefined,
-    composerTaskContext: composerTaskContext ?? undefined,
-  });
-  const useDirectSource =
-    isDirectFixedSourcePostEligible({
-      ...directWritingContext,
-      userInstruction: effectiveUserInstruction,
-      sourceResolved: Boolean(directSource),
-      isRefine: skipDecision,
-    }) ||
-    // Find-and-model: source was resolved up front by resolveFindAndModelSource,
-    // so the discovery-phrasing turn now qualifies for the direct route instead
-    // of the heavy GLM render loop.
-    (Boolean(resolvedFindSource) &&
-      isDirectFindAndModelEligible({
-        ...directWritingContext,
-        userInstruction: effectiveUserInstruction,
-        sourceResolved: Boolean(directSource),
-        isRefine: skipDecision,
-      }));
-  const useDirectOriginal = isDirectOriginalPostEligible({
-    userInstruction: effectiveUserInstruction,
-    requestedCount: directPostCount ?? undefined,
-    ...directWritingContext,
-    // Intent must fail closed here. A supplied source/style id can resolve to
-    // nothing (deleted, not ready, or outside the workspace); that still means
-    // the user requested context the direct engine does not own.
-    hasModelSource: Boolean(modelSourceId),
-    isRefine: skipDecision,
-    composerTaskContext: composerTaskContext ?? undefined,
-  });
-  // Lead-magnet direct route. A lead-magnet post is a from-scratch original post
-  // with the giveaway framing. The direct engine injects that framing
-  // (leadMagnetBlock) and the CTA is HARD-enforced downstream by
-  // transformDraftCandidate (rejects a draft that doesn't mention the resource),
-  // so a lead-magnet post can be written by the strong model without ever
-  // shipping without its comment-CTA.
-  //
-  // Uses isDirectLeadMagnetEligible (not the original-post gate): a find-and-
-  // adapt lead-magnet — "find the most recent lead-magnet post in my swipe file
-  // and adapt it into a lead-magnet post about X" — is discovery-phrased, which
-  // the original gate rejects. But for a lead-magnet the RESOURCE is the source
-  // (already resolved here), and the found post is never used as a structural
-  // source (the engine task is `original`), so that discovery rejection is a
-  // false blocker that would otherwise strand this journey on GLM. The
-  // lead-magnet gate tolerates discovery while still rejecting everything
-  // genuinely unsafe.
-  const activeLeadMagnetForDirect = Boolean(
-    activeLeadMagnetCampaign && leadMagnetBlock.trim(),
-  );
-  const useDirectLeadMagnet =
-    activeLeadMagnetForDirect &&
-    isDirectLeadMagnetEligible({
-      userInstruction: effectiveUserInstruction,
-      ...directWritingContext,
-      hasModelSource: Boolean(modelSourceId),
-      isRefine: skipDecision,
-    });
-  // Creator-style direct route. A creator-style post is a from-scratch original
-  // post that borrows another creator's WRITING MECHANICS (hooks, cadence,
-  // formatting) for the user's own topic. The direct engine injects that
-  // mechanics-only block (creatorStyleBlock), so the strong model can write it.
-  // Reuses the original-post eligibility with hasCreatorStyle forced false (the
-  // engine owns it now). No hard CTA-style guard is needed — creator style
-  // shapes rhythm, it has no mandatory element to enforce; the block's own
-  // wrapper already forbids copying the creator's topics/claims.
-  const activeCreatorStyleForDirect = Boolean(
-    creatorStyleId && !hasModelSource && creatorStyleBlock.trim(),
-  );
-  const useDirectCreatorStyle =
-    activeCreatorStyleForDirect &&
-    isDirectOriginalPostEligible({
-      userInstruction: effectiveUserInstruction,
-      requestedCount: directPostCount ?? undefined,
-      ...directWritingContext,
-      hasCreatorStyle: false,
-      hasModelSource: Boolean(modelSourceId),
-      isRefine: skipDecision,
-      composerTaskContext: composerTaskContext ?? undefined,
-    });
-  let useDirectWriter =
-    !modeledBatchContractRequested &&
-    (useDirectRefine ||
-      useDirectPartial ||
-      useDirectMulti ||
-      useDirectSource ||
-      useDirectOriginal ||
-      useDirectLeadMagnet ||
-      useDirectCreatorStyle);
-  let actionOrchestratorRoute: ActionOrchestratorRoute | null = useDirectWriter
-    ? null
-    : normalizedActionRoute;
+  if (plan instanceof Response) return plan;
 
-  // Session-sticky lane pinning: unless this turn is explicitly continuing a
-  // saved workflow (retry, action clarification, or any pending ask answer),
-  // reuse the chat's pinned lane. The compiler stays authoritative for the
-  // contract/count; the pin only selects the lane. "answer" is allowed in the
-  // schema but never pinned, so it is treated as no preference.
-  const hasExplicitWorkflowContinuation =
-    Boolean(body.retryOfUserMessageId) || pendingActionAsk || pendingAskOnly;
-  const honorPinnedRoute =
-    pinnedCoworkRoute &&
-    !hasExplicitWorkflowContinuation &&
-    pinnedCoworkRoute !== "answer";
-  if (honorPinnedRoute) {
-    if (pinnedCoworkRoute === "direct_writer") {
-      useDirectWriter = true;
-    } else if (
-      pinnedCoworkRoute === "action_orchestrator" &&
-      !actionOrchestratorRoute
-    ) {
-      actionOrchestratorRoute = {
-        kind: "clarify_action",
-        clarificationReason: "action",
-      };
-    }
-  }
-
-  const useActionOrchestrator = Boolean(
-    actionOrchestratorRoute &&
-      (deps.actionOrchestratorEnabledForWorkspace() ||
-        persistedActionContinuation),
-  );
-  if (useActionOrchestrator) {
-    coworkTelemetry.configure({
-      route: "action_orchestrator",
-      // Intermediate value only — the single resolveTurnContract call below
-      // re-configures telemetry with the same result once routing lands.
-      requestedContract: resolveTurnContract({
-        actionRoute: actionOrchestratorRoute,
-        useActionOrchestrator: true,
-      }),
-    });
-    if (!claimedUserMessageId || !actionRetryRepository) {
-      throw new Error("Action retry context could not be scoped to this turn.");
-    }
-    try {
-      await actionRetryRepository.saveContext({
-        workspaceId,
-        chatId,
-        userMessageId: claimedUserMessageId,
-        rootTurnMessageId: actionTurnMessageId ?? claimedUserMessageId,
-        effectiveInstruction: effectiveUserInstruction,
-        route: actionOrchestratorRoute!,
-        confirmedTargetIds: confirmedActionTargetIds,
-        signal: setupSignal,
-      });
-    } catch {
-      const actionSetupExpired = setupDeadline?.didExpire() ?? false;
-      const actionRequestAborted = signal.aborted;
-      const message = actionSetupExpired
-        ? "Cowork took too long to prepare this board action. Please retry."
-        : actionRequestAborted
-          ? "The board action was cancelled before it started."
-          : "I couldn’t persist the safety context for this board action, so nothing was changed. Send it again to retry safely.";
-      await persistChatSetupFailure({
-        sb: sbRaw,
-        chatId,
-        workspaceId,
-        content: `⚠️ ${message}`,
-      });
-      await coworkTelemetry.finish({
-        deliveredContract: {
-          kind: "saved_draft_action",
-          deliveredCount: 0,
-        },
-        provenanceStatus: "not_required",
-        terminalOutcome: actionSetupExpired
-          ? "recoverable_error"
-          : actionRequestAborted
-            ? "cancelled"
-            : "hard_failure",
-      });
-      await deps.releaseChatTurn(workspaceId, chatId, turnCostOperationKey);
-
-      return turnError(
-        message,
-        actionSetupExpired ? 504 : actionRequestAborted ? 499 : 503,
-      );
-    }
-  }
-  let readOnlyOrchestratorRoute: ReadOnlyOrchestratorRoute | null =
-    useDirectWriter || useActionOrchestrator
-      ? null
-      : modeledBatchContinuation?.route ??
-        compileReadOnlyOrchestratorRoute({
-          userInstruction: effectiveUserInstruction,
-          ...(activeDraftCountOverride
-            ? { draftCountOverride: activeDraftCountOverride }
-            : {}),
-          isRefine: skipDecision,
-          hasModelSource: Boolean(modelSourceId),
-          hasAttachments: attachments.length > 0,
-          hasLeadMagnet: Boolean(
-            shouldAttachLeadMagnet ||
-              appliedLeadMagnet ||
-              activeLeadMagnetCampaign,
-          ),
-          hasCreatorStyle: Boolean(creatorStyleId),
-          composerTaskContext: composerTaskContext ?? undefined,
-        });
-
-  if (
-    honorPinnedRoute &&
-    pinnedCoworkRoute === "read_only_orchestrator" &&
-    !readOnlyOrchestratorRoute
-  ) {
-    readOnlyOrchestratorRoute = {
-      kind: "workspace_research",
-      expectsDraft: true,
-      expectedDrafts: directPostCount ?? 1,
-      minimumSources: 2,
-      workspaceSearchMode: "diverse",
-    };
-  }
-
-  const modeledBatchRouteContract = continuationForModeledDraftRoute(
-    readOnlyOrchestratorRoute,
-  );
-  const deterministicModeledRoute = Boolean(
-    modeledBatchContinuation ||
-      modeledBatchRouteContract ||
-      (readOnlyOrchestratorRoute &&
-        compileModeledPostIntent(effectiveUserInstruction, {
-          draftCountOverride: activeDraftCountOverride,
-        }).kind !== "none"),
-  );
-  if (deterministicModeledRoute && preloadedVoiceResult?.ok !== true) {
-    // A missing voice profile is never transient — retrying re-runs the exact
-    // same lookup and fails the exact same way every time, so offering "Retry"
-    // is a loop with no exit. loadVoiceProfile marks that case with a `status`
-    // key on the tool result (lib/agent/tools.ts); a transient load failure
-    // (err() shape, no `status`) keeps the recoverable 503 path below.
-    const noReadyVoiceProfile =
-      preloadedVoiceResult !== null && "status" in preloadedVoiceResult;
-    if (noReadyVoiceProfile) {
-      const message =
-        "This needs a voice profile to write in your voice, and your workspace doesn't have one yet. Head to the Voice tab to generate one, then send this again.";
-      await persistChatSetupFailure({
-        sb: sbRaw,
-        chatId,
-        workspaceId,
-        content: `⚠️ ${message}`,
-      });
-      await coworkTelemetry.finish({
-        deliveredContract: {
-          kind: "post",
-          deliveredCount: 0,
-        },
-        provenanceStatus: "missing",
-        terminalOutcome: "hard_failure",
-      });
-      await deps.releaseChatTurn(workspaceId, chatId, turnCostOperationKey);
-
-      return turnError(message, 422);
-    }
-    const message = modeledBatchContinuation
-      ? "I couldn’t load the writing context required to resume this modeled set safely. Retry will continue the same saved batch."
-      : "I couldn’t load the writing context required to start this modeled set safely. Retry will try the request again without creating a partial set.";
-    await persistChatSetupFailure({
-      sb: sbRaw,
-      chatId,
-      workspaceId,
-      content: `⚠️ ${message}`,
-      recoverable: {
-        code: "modeled_batch_context_unavailable",
-        message,
-        retryRootUserMessageId:
-          actionTurnMessageId ?? claimedUserMessageId ?? undefined,
-        ...(modeledBatchContinuation
-          ? {
-              continuation: modeledBatchContinuation,
-            }
-          : {}),
-      },
-    });
-    await coworkTelemetry.finish({
-      deliveredContract: {
-        kind: "post",
-        deliveredCount: 0,
-      },
-      provenanceStatus: "missing",
-      terminalOutcome: "recoverable_error",
-    });
-    await deps.releaseChatTurn(workspaceId, chatId, turnCostOperationKey);
-
-    return turnError(message, 503);
-  }
-  const useReadOnlyOrchestrator = Boolean(
-    readOnlyOrchestratorRoute &&
-      preloadedVoiceResult?.ok === true &&
-      (Boolean(modeledBatchRouteContract) ||
-        deterministicModeledRoute ||
-        deps.readOnlyOrchestratorEnabledForWorkspace()),
-  );
-  const directWriterTask: WriterTask = useDirectRefine
-    ? {
-        kind: "refine",
-        instruction: refineInstruction!,
-        focus: classifyDirectRefineFocus(refineInstruction!),
-        target: trustedRefineTarget as Artifact & { kind: "post" },
-      }
-    : useDirectPartial
-      ? {
-          kind: "partial",
-          spec: directPartialSpec!,
-          ...(directSource ? { source: directSource } : {}),
-        }
-      : useDirectMulti
-        ? {
-            kind: "multi",
-            expectedCount: directPostCount!,
-            ...(directSource ? { source: directSource } : {}),
-          }
-        : useDirectSource
-          ? { kind: "source", source: directSource! }
-          : { kind: "original" };
-  const coworkRoute: CoworkRoute = useDirectWriter
-    ? "direct_writer"
-    : useActionOrchestrator
-      ? "action_orchestrator"
-      : useReadOnlyOrchestrator
-        ? "read_only_orchestrator"
-        : "answer";
-  // THE single authoritative deliverable contract for this turn
-  // (PLAN-cowork-unification Phase 1, step 3): computed ONCE, here —
-  // post-clarification and post-routing — from the same
-  // effectiveUserInstruction the executors consume. The only other contract
-  // value in the turn is the telemetry placeholder above, produced by this
-  // same builder and overwritten here.
-  const turnContract: TurnContract = resolveTurnContract({
-    directWriterTask: useDirectWriter ? directWriterTask : null,
-    actionRoute: actionOrchestratorRoute,
-    useActionOrchestrator,
-    readOnlyRoute: readOnlyOrchestratorRoute,
-    useReadOnlyOrchestrator,
-    hasPartialSpec: directPartialSpec !== null,
-    fallbackPostCount:
-      activeDraftCountOverride ??
-      postClarificationPostCount ??
-      (skipDecision ? 1 : null),
-  });
-  coworkTelemetry.configure({
-    traceId: claimedUserMessageId ?? chatId,
+  const {
     route: coworkRoute,
-    requestedContract: turnContract,
-  });
+    contract: turnContract,
+    useDirectWriter,
+    directWriterTask,
+    useDirectRefine,
+    useDirectLeadMagnet,
+    useDirectCreatorStyle,
+    useActionOrchestrator,
+    actionOrchestratorRoute,
+    useReadOnlyOrchestrator,
+    readOnlyOrchestratorRoute,
+    modeledBatchContinuation,
+    activeModeledBatchContinuation,
+    modeledBatchRetryRootUserMessageId,
+    modelSourceReference,
+  } = plan;
 
   // Persist the first non-answer lane selection so the next ambiguous turn
   // stays in the same drafting workflow. Answer turns are not part of a
@@ -1809,13 +1312,6 @@ export async function executeChatTurn(
       // Best-effort: a failed pin write does not abort the turn.
     }
   }
-
-  const activeModeledBatchContinuation = useReadOnlyOrchestrator
-    ? modeledBatchRouteContract
-    : null;
-  const modeledBatchRetryRootUserMessageId = activeModeledBatchContinuation
-    ? actionTurnMessageId ?? claimedUserMessageId ?? undefined
-    : undefined;
 
   const encoder = new TextEncoder();
   let resolveTerminal!: (outcome: ChatTurnOutcome) => void;
