@@ -7400,7 +7400,7 @@ const STARTERS: Starter[] = [
     icon: ListOrdered,
     label: "Turn one idea into a series",
     prompt:
-      "Turn [idea] into a 3-part LinkedIn post series in my voice. Each part must stand alone but build on the last — Part 1 sets up the problem, Part 2 delivers the core insight or method, Part 3 lands the takeaway. Keep the arc connected without repeating yourself.",
+      "Turn [idea] into a 3-part LinkedIn post series in my voice — 3 separate posts, one draft per part. Part 1 sets up the problem, Part 2 delivers the core insight or method, Part 3 lands the takeaway. Each part must stand alone but build on the last, keeping the arc connected without repeating yourself.",
   },
 ];
 

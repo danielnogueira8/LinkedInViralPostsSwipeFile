@@ -36,6 +36,39 @@ describe("resolveComposerTaskContext", () => {
     });
   });
 
+  test("defaults the series starter to 3 drafts when nothing else sets a count", () => {
+    // Regression: the message-count parser doesn't read "3-part" as a number,
+    // so without a starter default the turn collapsed to ONE draft with all
+    // three parts crammed in.
+    expect(
+      resolveComposerTaskContext({
+        starterId: "series",
+        fallbackPostCount: null,
+      }),
+    ).toEqual({
+      kind: "post",
+      expectedDraftCount: 3,
+      sourceMode: "original",
+      starterId: "series",
+    });
+  });
+
+  test("keeps UI and message counts ahead of the series starter default", () => {
+    expect(
+      resolveComposerTaskContext({
+        starterId: "series",
+        selectedDraftCount: 2,
+        fallbackPostCount: null,
+      }).expectedDraftCount,
+    ).toBe(2);
+    expect(
+      resolveComposerTaskContext({
+        starterId: "series",
+        fallbackPostCount: 5,
+      }).expectedDraftCount,
+    ).toBe(5);
+  });
+
   test("automatically treats an attached bookmark as the selected source", () => {
     expect(
       resolveComposerTaskContext({
