@@ -1,7 +1,7 @@
 {
   "generatedBy": "npm run migrations:metadata",
-  "highest": 111,
-  "count": 111,
+  "highest": 112,
+  "count": 112,
   "files": [
     "migration-001-progress.sql",
     "migration-002-usage.sql",
@@ -113,6 +113,7 @@
     "migration-108-modeled-draft-count-six.sql",
     "migration-109-attachment-content-blocks.sql",
     "migration-110-drop-cowork-rollout-health.sql",
-    "migration-111-add-pinned-cowork-route.sql"
+    "migration-111-add-pinned-cowork-route.sql",
+    "migration-112-turn-state-columns.sql"
   ]
 }
