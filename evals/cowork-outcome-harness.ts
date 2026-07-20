@@ -50,8 +50,10 @@ import {
   type ActionPlannerRequest,
   type MutationAction,
 } from "@/lib/agent/action-orchestrator";
-import { compileActionOrchestratorRoute } from "@/lib/agent/action-orchestrator-routing";
-import { compileReadOnlyOrchestratorRoute } from "@/lib/agent/read-only-orchestrator-routing";
+import {
+  compileActionOrchestratorRoute,
+  compileReadOnlyOrchestratorRoute,
+} from "@/lib/agent/turn/compile";
 import { continuationForModeledDraftRoute } from "@/lib/agent/modeled-draft-continuation";
 import { runTool as runAgentTool } from "@/lib/agent/tools";
 import { AdapterHealthRegistry } from "@/lib/agent/adapter-health";
@@ -858,12 +860,9 @@ async function runCoworkOutcomeScenarioWithStore(
     },
     ...(directWriter
       ? {
-          directWriterEnabledForWorkspace: () => true,
           runDraftEngine: harnessRunDraftEngine,
         }
-      : {
-          directWriterEnabledForWorkspace: () => false,
-        }),
+      : {}),
     ...(scenario.model.readOnlyOrchestrator
       ? {
           readOnlyOrchestratorEnabledForWorkspace: () =>

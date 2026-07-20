@@ -27,7 +27,7 @@ import {
   wrapScrapedPostText,
   type ToolExecutionContext,
 } from "@/lib/agent/tools";
-import { compileReadOnlyOrchestratorRoute } from "@/lib/agent/read-only-orchestrator-routing";
+import { compileReadOnlyOrchestratorRoute } from "@/lib/agent/turn/compile";
 import { continuationForModeledDraftRoute } from "@/lib/agent/modeled-draft-continuation";
 
 afterEach(() => {

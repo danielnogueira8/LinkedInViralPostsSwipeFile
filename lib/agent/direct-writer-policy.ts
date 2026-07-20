@@ -21,11 +21,6 @@ import {
 } from "@/lib/agent/source-policy";
 import type { ComposerTaskContext } from "@/lib/composer-task-context";
 
-/** Direct writer is the unified drafting path; no rollout gating remains. */
-export function directWriterEnabledForWorkspace(): boolean {
-  return true;
-}
-
 export type DirectOriginalPostEligibility = {
   userInstruction: string;
   requestedCount?: number;

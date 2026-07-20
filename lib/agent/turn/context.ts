@@ -4,7 +4,7 @@ import type { ResolvedGenerationConfig } from "@/lib/generation-config";
 import { trackedAccountIds } from "@/lib/supabase-scoped";
 import {
   compileReadOnlyOrchestratorReserveRoute,
-} from "@/lib/agent/read-only-orchestrator-routing";
+} from "@/lib/agent/turn/compile";
 import {
   compileDirectPartialTextSpec,
   requestedDirectPostCount,

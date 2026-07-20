@@ -1,4 +1,4 @@
-import type { ReadOnlyOrchestratorRoute } from "@/lib/agent/read-only-orchestrator-routing";
+import type { ReadOnlyOrchestratorRoute } from "@/lib/agent/turn/compile";
 
 const MODELED_DRAFT_BATCH_CONTINUATION_VERSION = 1;
 

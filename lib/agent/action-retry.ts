@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { ActionOrchestratorRoute } from "@/lib/agent/action-orchestrator-routing";
+import type { ActionOrchestratorRoute } from "@/lib/agent/turn/compile";
 
 type RetryUser = { id: string; content: string };
 type RetryTerminalReason =

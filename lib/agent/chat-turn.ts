@@ -28,25 +28,22 @@ import {
   advanceActionOrchestratorClarification,
   actionOrchestratorEnabledForWorkspace,
   compileActionOrchestratorRoute,
+  compileReadOnlyOrchestratorRoute,
+  compileReadOnlyOrchestratorReserveRoute,
+  readOnlyOrchestratorEnabledForWorkspace,
   type ActionOrchestratorRoute,
-} from "@/lib/agent/action-orchestrator-routing";
+} from "@/lib/agent/turn/compile";
 import {
   createSupabaseActionRetryRepository,
   resolveActionRetryRoot,
   type ActionRetryRepository,
 } from "@/lib/agent/action-retry";
 import {
-  compileReadOnlyOrchestratorRoute,
-  compileReadOnlyOrchestratorReserveRoute,
-  readOnlyOrchestratorEnabledForWorkspace,
-} from "@/lib/agent/read-only-orchestrator-routing";
-import {
   continuationForModeledDraftRoute,
   parseModeledDraftBatchContinuation,
   type ModeledDraftBatchContinuation,
 } from "@/lib/agent/modeled-draft-continuation";
 import {
-  directWriterEnabledForWorkspace,
   isDirectFindAndModelEligible,
   isDirectFixedSourcePostEligible,
   isDirectLeadMagnetEligible,
@@ -54,7 +51,7 @@ import {
   isDirectRefineEligible,
   isDirectOriginalPostEligible,
   isDirectPartialTextEligible,
-} from "@/lib/agent/direct-writer-routing";
+} from "@/lib/agent/direct-writer-policy";
 import {
   compileDirectPartialTextSpec,
   requestedDirectPostCount,
@@ -494,7 +491,6 @@ export type ChatTurnDependencies = {
   runActionOrchestrator: typeof runActionOrchestrator;
   runReadOnlyOrchestrator: typeof runReadOnlyOrchestrator;
   createActionRetryRepository: typeof createSupabaseActionRetryRepository;
-  directWriterEnabledForWorkspace: typeof directWriterEnabledForWorkspace;
   actionOrchestratorEnabledForWorkspace: typeof actionOrchestratorEnabledForWorkspace;
   readOnlyOrchestratorEnabledForWorkspace: typeof readOnlyOrchestratorEnabledForWorkspace;
   completeChat: typeof completeChat;
@@ -515,7 +511,6 @@ const productionChatTurnDependencies: ChatTurnDependencies = {
   runActionOrchestrator,
   runReadOnlyOrchestrator,
   createActionRetryRepository: createSupabaseActionRetryRepository,
-  directWriterEnabledForWorkspace,
   actionOrchestratorEnabledForWorkspace,
   readOnlyOrchestratorEnabledForWorkspace,
   completeChat,
@@ -2370,7 +2365,7 @@ export async function executeChatTurn(
 
   // Direct writer is the unified drafting path; the COWORK_THIN_PATH rollout
   // flag has been removed and lean mode is no longer forced (default false).
-  const directWriterEnabled = deps.directWriterEnabledForWorkspace();
+  const directWriterEnabled = true;
   const directPartialSpec = compileDirectPartialTextSpec(
     effectiveUserInstruction,
   );

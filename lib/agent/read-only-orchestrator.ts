@@ -14,7 +14,7 @@ import {
   continuationForModeledDraftRoute,
   type ModeledDraftBatchContinuation,
 } from "@/lib/agent/modeled-draft-continuation";
-import type { ReadOnlyOrchestratorRoute } from "@/lib/agent/read-only-orchestrator-routing";
+import type { ReadOnlyOrchestratorRoute } from "@/lib/agent/turn/compile";
 import { runTool, toolSummary } from "@/lib/agent/tools";
 import {
   admitDistinctModelingSource,

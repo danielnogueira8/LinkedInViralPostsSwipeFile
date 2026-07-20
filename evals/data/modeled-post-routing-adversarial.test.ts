@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { compileReadOnlyOrchestratorRoute } from "@/lib/agent/read-only-orchestrator-routing";
+import { compileReadOnlyOrchestratorRoute } from "@/lib/agent/turn/compile";
 
 const base = {
   isRefine: false,
