@@ -1291,7 +1291,7 @@ function LeadMagnetPreview({
           <Copy className="h-4 w-4" /> Copy public link
         </Button>
         <Button variant="outline" size="sm" onClick={() => window.open(publicUrl, "_blank", "noreferrer")}>
-          <ExternalLink className="h-4 w-4" /> Open public page
+          <ExternalLink className="h-4 w-4" /> Open public resource
         </Button>
       </div>
       {leadMagnetQualityWarning(item.metadata) && (
