@@ -2,13 +2,11 @@ import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   generationConfigV1Schema,
-  resolveGenerationConfig,
   resolvedGenerationConfigSchema,
-  type GenerationConfigV1,
   type ResolvedGenerationConfig,
 } from "@/lib/generation-config";
 import { scopedSupabase } from "@/lib/supabase-scoped";
-import { NoWorkspaceError } from "@/lib/workspace";
+
 import {
   type DraftFinalizerSpecialists,
 } from "@/lib/agent/finalize/finalizer";
@@ -24,19 +22,14 @@ import {
   ACTION_ORCHESTRATOR_DEADLINE_MS,
 } from "@/lib/agent/execute/agent";
 import {
-  advanceActionOrchestratorClarification,
   actionOrchestratorEnabledForWorkspace,
-  compileActionOrchestratorRoute,
   compileReadOnlyOrchestratorRoute,
-  compileReadOnlyOrchestratorReserveRoute,
   readOnlyOrchestratorEnabledForWorkspace,
   type ActionOrchestratorRoute,
   type ReadOnlyOrchestratorRoute,
 } from "@/lib/agent/turn/compile";
 import {
   createSupabaseActionRetryRepository,
-  resolveActionRetryRoot,
-  type ActionRetryRepository,
 } from "@/lib/agent/action-retry";
 import {
   continuationForModeledDraftRoute,
@@ -63,11 +56,9 @@ import {
   type PlanStep,
 } from "@/lib/agent/contracts";
 import {
-  createCoworkTurnTelemetry,
   observeCoworkTurn,
   type CoworkRoute,
   type CoworkTelemetrySink,
-  type CoworkTurnTelemetry,
 } from "@/lib/agent/cowork-telemetry";
 
 import type { CoworkTurnUsageWire } from "@/lib/cowork-turn-usage";
@@ -81,26 +72,20 @@ import {
   type ChatTurnOutcome,
 } from "@/lib/agent/chat-turn-lifecycle";
 import { resolveTurnOutcome } from "@/lib/agent/turn/outcome";
+import { setupChatTurn } from "@/lib/agent/turn/setup";
 import {
   resolveTurnContract,
-  resolveTurnCount,
   type TurnContract,
 } from "@/lib/agent/turn/compile";
 import {
-  buildTurnContext,
   loadCitedSwipePostImage,
-  requestedBasePostCount,
-  CREATOR_STYLE_CONTEXT_PERSISTENCE_ERROR,
   CREATOR_STYLE_RETRY_CONTEXT_VERSION,
-  CREATOR_STYLE_SELECTION_REQUIRED_ERROR,
   CUSTOM_SKILL_RETRY_CONTEXT_VERSION,
-  LEAD_MAGNET_SELECTION_REQUIRED_ERROR,
   LEAD_MAGNET_TOOL_NAME,
   MAX_CREATOR_STYLE_RETRY_BLOCK_CHARS,
   MODEL_SOURCE_TOOL_NAME,
   type CreatorStyleRetryContext,
   type CustomSkillRetryContext,
-  type FrozenCustomSkill,
   type ModelSourceReference,
   type ModelSourceRow,
 } from "@/lib/agent/turn/context";
@@ -134,7 +119,7 @@ import {
   claimChatTurn,
   releaseChatTurn,
 } from "@/lib/agent/rate-limit";
-import { preflightUserPrompt } from "@/lib/agent/prompt-preflight";
+
 import { isCancelRequested } from "@/lib/agent/cancel";
 import { safeFilename } from "@/lib/agent/untrusted";
 import {
@@ -142,27 +127,15 @@ import {
   type StructureSkeleton,
 } from "@/lib/post-structure-skeleton";
 import { splicePreservedBody } from "@/lib/hook-splice";
-import {
-  type NoModelFormat,
-} from "@/lib/agent/no-model-formats";
+
 import {
   requestsDirectSourceModeling,
 } from "@/lib/agent/source-policy";
 import { compileModeledPostIntent } from "@/lib/agent/modeled-post-intent";
 import {
   composerStarterIdSchema,
-  composerStarterMarkerFromToolCalls,
-  resolveComposerTaskContext,
-  type ComposerStarterId,
-  type ComposerTaskContext,
-  type ComposerTaskSelection,
 } from "@/lib/composer-task-context";
-import {
-  hasPendingAskOnly,
-  hasPendingActionAsk,
-  hasUnsavedAssistantDraftReferent,
-  validatePendingActionAnswer,
-} from "@/lib/agent/turn-policy";
+
 import {
   NO_MODEL_FORMAT_IDS,
   type NoModelFormatId,
@@ -172,7 +145,6 @@ import {
 } from "@/lib/lead-magnets";
 import { generateLeadMagnetResource } from "@/lib/lead-magnet-ai";
 import {
-  buildLeadMagnetCampaign,
   campaignImageContext,
   enforceLeadMagnetCampaignCta,
   hasLeadMagnetResourceOverlap,
@@ -182,20 +154,13 @@ import {
   SKILL_NAME_MAX,
   SKILLS_PER_TURN_MAX,
 } from "@/lib/custom-skills";
-import {
-  type ContentFeedback,
-} from "@/lib/content-feedback";
-import {
-  type ContentPreference,
-} from "@/lib/preferences";
-import { fetchRecentPostDrafts, type RecentDraft } from "@/lib/recent-drafts";
+import { fetchRecentPostDrafts } from "@/lib/recent-drafts";
 import {
   completeChat,
   logOpenRouterUsage,
   streamChat,
   CHAT_MODEL,
   type ChatMessage,
-  type ContentBlock,
   type ToolCall,
   type Usage,
 } from "@/lib/openrouter";
@@ -212,13 +177,8 @@ import {
 import { enqueueLeadMagnetImageJob } from "@/lib/lead-magnet-image-jobs";
 import type { AppliedLeadMagnet } from "@/lib/chat-hydration";
 import { persistChatAssistantTurn } from "@/lib/chat-message-persistence";
-import {
-  chatSetupDeadlines,
-  createChatSetupDeadline,
-  waitForChatSetup,
-  type ChatSetupDeadline,
-} from "@/lib/chat-stream-policy";
-import { runTool, type ToolResult } from "@/lib/agent/tools";
+
+import { runTool } from "@/lib/agent/tools";
 import { canonicalScrapedPostText } from "@/lib/agent/scraped-post-text";
 import {
   classifyDirectRefineFocus,
@@ -245,11 +205,6 @@ const MAX_TEXT_LEN = 200_000; // inlined text-file cap (chars)
 // raw), so a request body can't balloon into memory regardless of the per-file
 // caps. The client enforces a friendlier 20MB; this is the hard backstop.
 const MAX_TOTAL_ATTACHMENT_LEN = 28_000_000;
-const CUSTOM_SKILL_CONTEXT_PERSISTENCE_ERROR =
-  "I couldn’t save the selected custom-skill context safely, so no draft was created. Send the request again to retry.";
-const GENERATION_CONFIG_CONTEXT_PERSISTENCE_ERROR =
-  "I couldn’t save the draft-count setting safely, so no draft was created. Send the request again to retry.";
-
 const TEXT_ATTACHMENT_EXTENSIONS = new Set([
   "txt",
   "md",
@@ -516,8 +471,6 @@ const productionChatTurnDependencies: ChatTurnDependencies = {
   now: () => new Date(),
 };
 
-type Attachment = z.infer<typeof attachmentSchema>;
-
 export function isRecentUnansweredUserMessage(
   message: { role?: unknown; created_at?: unknown } | null | undefined,
   now: number = Date.now(),
@@ -536,7 +489,7 @@ const PINNED_COWORK_ROUTE_VALUES = new Set<CoworkRoute>([
   "answer",
 ]);
 
-function normalizePinnedCoworkRoute(value: unknown): CoworkRoute | null {
+export function normalizePinnedCoworkRoute(value: unknown): CoworkRoute | null {
   if (
     typeof value === "string" &&
     PINNED_COWORK_ROUTE_VALUES.has(value as CoworkRoute)
@@ -562,7 +515,7 @@ type RecoverableMarker = {
   continuation?: ModeledDraftBatchContinuation;
 };
 
-function isServerRecoverableToolCall(call: ToolCall): boolean {
+export function isServerRecoverableToolCall(call: ToolCall): boolean {
   return (
     call.id === RECOVERABLE_TOOL_NAME &&
     call.function.name === RECOVERABLE_TOOL_NAME
@@ -1330,1153 +1283,88 @@ export async function executeChatTurn(
   const { chatId, userId, body, signal } = input;
   const deps = { ...productionChatTurnDependencies, ...dependencies };
 
-  // Resolve workspace + validate the chat up front (outside the stream) so auth
-  // / not-found errors come back as normal JSON, not a half-open SSE stream.
-  let workspaceId: string;
-  let sbRaw: Awaited<ReturnType<typeof scopedSupabase>>["raw"];
-  let userText: string;
-  let attachments: Attachment[] = [];
-  let modelSourceId: string | undefined;
-  let currentModelSource: ModelSourceRow | null = null;
-  let skipDecision = false;
-  let refineTargetId: string | undefined;
-  let refineInstruction: string | undefined;
-  let trustedRefineTarget: Artifact | null = null;
-  let skillIds: string[] = [];
-  let customSkillRetryContext: CustomSkillRetryContext | null = null;
-  let resolvedCustomSkills: FrozenCustomSkill[] = [];
-  let forcedNoModelFormatId: NoModelFormatId | undefined;
-  let creatorStyleId: string | undefined;
-  let creatorStyleRetryContext: CreatorStyleRetryContext | null = null;
-  let leadMagnetId: string | undefined;
-  let createLeadMagnet: z.infer<typeof leadMagnetGenerateSchema> | undefined;
-  let requestedGenerationConfig: GenerationConfigV1 | null = null;
-  let resolvedGenerationConfig: ResolvedGenerationConfig | null = null;
-  let generationConfigRestoredFromRetry = false;
-  let activeDraftCountOverride: number | undefined;
-  let composerStarterId: ComposerStarterId | undefined;
-  let composerTaskContext: ComposerTaskContext | null = null;
-  let composerTaskSelection: ComposerTaskSelection = {};
-  let hasAuthoritativeDraftCount = false;
-  // Hook-only refine: when both are set, the artifact handler splices the
-  // model's new opener onto hookOnlyOriginalBody byte-for-byte before pushing
-  // + persisting. See lib/hook-splice.ts:splicePreservedBody.
-  let hookOnly = false;
-  let hookOnlyOriginalBody: string | undefined;
-  let hasModelSource = false;
-  // Resolved bodies of the user's invoked custom skills (filled in below).
-  let customSkillBodies: string[] = [];
-  // Parallel to customSkillBodies — the slugs, passed to the decide pre-pass so
-  // it never asks "which skill?" when one is already applied (see decide.ts).
-  let customSkillNames: string[] = [];
-  // Set once claimChatTurn succeeds, so any later failure in setup (or the
-  // stream's finally) releases the exclusive turn claim rather than leaving the
-  // chat wedged until the staleness window expires.
-  let turnClaimed = false;
-  let turnCostOperationKey: string | null = null;
-  let claimedTurnStartedAt: string | null = null;
-  let claimedUserMessageId: string | null = null;
-  let actionTurnMessageId: string | null = null;
-  let resolvedActionInstruction: string | null = null;
-  let normalizedActionRoute: ActionOrchestratorRoute | null = null;
-  let confirmedActionTargetIds: string[] = [];
-  let actionRetryRepository: ActionRetryRepository | null = null;
-  let persistedActionContinuation = false;
-  let pendingActionAsk = false;
-  let pendingAskOnly = false;
-  let modeledBatchContinuation: ModeledDraftBatchContinuation | null = null;
-  let modeledBatchContractRequested = false;
-  let currentTurnModelSourceOwnership:
-    | "historical_continuation"
-    | "server_selected" = "historical_continuation";
-  let setupDeadline: ChatSetupDeadline | null = null;
-  let setupSignal: AbortSignal = signal;
-  // Claim-time contract PLACEHOLDER (telemetry-only): built pre-claim through
-  // the SAME resolveTurnContract builder that resolves the single
-  // authoritative contract post-routing, so setup-cancellation telemetry keeps
-  // the request's kind. Never consumed by routing, executors, or persistence
-  // gates, and always overwritten by the post-clarification contract before
-  // the turn runs.
-  let preclaimContractPlaceholder: TurnContract = {
-    kind: "answer",
-    expectedCount: 1,
-  };
-  // Count-only projection of that placeholder: keeps the generation-config
-  // resolution honest on multi-draft turns (the claim's cost reservation
-  // derives its own count from the message content through the same
-  // resolveTurnCount rule — see rate-limit.ts turnCostEstimate).
-  let preclaimPostDraftEstimate: number | null = null;
-  // Post-clarification composer post count, hoisted out of the setup block so
-  // the persistence gates and the single contract resolution can use it.
-  let postClarificationPostCount: number | null = null;
-  // Session-sticky lane preference for this chat. Loaded from the chat row and
-  // honored unless this turn is explicitly continuing a saved workflow.
-  let pinnedCoworkRoute: CoworkRoute | null = null;
-  // Kind projection of the best available estimate, used only for
-  // zero-delivery telemetry finishes before the single contract exists.
-  const estimatedContractKind = (): TurnContract["kind"] =>
-    postClarificationPostCount !== null
-      ? "post"
-      : preclaimContractPlaceholder.kind;
-  let coworkTelemetry!: CoworkTurnTelemetry;
-  const disarmSetupGuards = () => {
-    setupDeadline?.stop();
-  };
-  const turnError = (
-    message: string,
-    status: number,
-    extraHeaders?: Record<string, string>,
-  ) =>
-    jsonError(message, status, {
-      ...(extraHeaders ?? {}),
-      ...(claimedUserMessageId
-        ? { "X-User-Message-Id": claimedUserMessageId }
-        : {}),
-      ...(claimedTurnStartedAt
-        ? { "X-Turn-Started-At": claimedTurnStartedAt }
-        : {}),
-    });
-  try {
-    const sb = await deps.scopedSupabase();
-    workspaceId = sb.workspaceId;
-    sbRaw = sb.raw;
-    userText = body.message;
-    attachments = body.attachments ?? [];
-    modelSourceId = body.modelSourceId;
-    skipDecision = body.skipDecision ?? false;
-    refineTargetId = body.refineTargetId;
-    refineInstruction = body.refineInstruction;
-    skillIds = body.skillIds ?? [];
-    forcedNoModelFormatId = body.forcedNoModelFormatId;
-    creatorStyleId = body.creatorStyleId;
-    leadMagnetId = body.leadMagnetId;
-    createLeadMagnet = body.createLeadMagnet;
-    requestedGenerationConfig = body.generationConfig ?? null;
-    composerStarterId = body.starterId;
-    // Both fields must be present together — hookOnly alone with no source
-    // body is meaningless (nothing to splice against) and quietly ignoring
-    // it prevents a malformed client from tripping the splice with an empty
-    // body (which would then destroy the artifact).
-    if (body.hookOnly && body.hookOnlyOriginalBody) {
-      hookOnly = true;
-      hookOnlyOriginalBody = body.hookOnlyOriginalBody;
-    }
+  const setupResult = await setupChatTurn(
+    { chatId, userId, body, signal },
+    {
+      ...deps,
+      jsonError,
+      logChatReject,
+      persistChatSetupFailure,
+      isRecentUnansweredUserMessage,
+      normalizePinnedCoworkRoute,
+      isServerRecoverableToolCall,
+      customSkillSelectionMarkerFromToolCalls,
+      creatorStyleSelectionMarkerFromToolCalls,
+      generationConfigSelectionMarkerFromToolCalls,
+      modeledDraftBatchContinuationMarkerFromToolCalls,
+      retryRootMarkerFromToolCalls,
+      explicitMessageDraftCount,
+    },
+  );
+  if (setupResult instanceof Response) return setupResult;
 
-    const { data: chat, error } = await sbRaw
-      .from("chats")
-      .select("id, title, pinned_cowork_route")
-      .eq("id", chatId)
-      .eq("workspace_id", workspaceId)
-      .is("archived_at", null)
-      .maybeSingle();
-    if (error) throw error;
-    if (!chat) {
-      return turnError("Chat not found", 404);
-    }
-    pinnedCoworkRoute = normalizePinnedCoworkRoute(
-      (chat as { pinned_cowork_route?: unknown }).pinned_cowork_route,
-    );
+  const {
+    workspaceId,
+    sbRaw,
+    attachments,
+    modelSourceId,
+    skipDecision,
+    refineInstruction,
+    trustedRefineTarget,
+    creatorStyleId,
+    hookOnly,
+    hookOnlyOriginalBody,
+    hasModelSource,
+    customSkillBodies,
+    customSkillNames,
+    turnCostOperationKey,
+    claimedTurnStartedAt,
+    claimedUserMessageId,
+    actionTurnMessageId,
+    normalizedActionRoute,
+    confirmedActionTargetIds,
+    actionRetryRepository,
+    persistedActionContinuation,
+    pendingActionAsk,
+    pendingAskOnly,
+    modeledBatchContinuation,
+    modeledBatchContractRequested,
+    setupDeadline,
+    setupSignal,
+    postClarificationPostCount,
+    pinnedCoworkRoute,
+    coworkTelemetry,
+    history,
+    effectiveUserInstruction,
+    orchestratorAttachmentBlocks,
+    currentModelSource,
+    modelSourceImage,
+    modelSourceImageSkipReason,
+    modelSourceImageSourcePostId,
+    appliedNoModelFormat,
+    selectedNoModelFormat,
+    leadMagnetBlock,
+    appliedLeadMagnet,
+    shouldAttachLeadMagnet,
+    activeLeadMagnetCampaign,
+    imageGenerationAuthor,
+    creatorStyleBlock,
+    appliedCreatorStyle,
+    feedbackMemory,
+    preferences,
+    priorPostDrafts,
+    preloadedVoiceResult,
+    turnError,
+  } = setupResult;
 
-    const promptCheck = preflightUserPrompt(userText);
-    if (!promptCheck.ok) {
-      logChatReject(
-        workspaceId,
-        chatId,
-        `prompt_${promptCheck.reason}`,
-        promptCheck.status,
-      );
-      return turnError(promptCheck.message, promptCheck.status);
-    }
+  let modelSourceReference = setupResult.modelSourceReference;
+  let citedSourceImage = setupResult.citedSourceImage;
+  let citedSourceImageSkipReason = setupResult.citedSourceImageSkipReason;
+  let citedSourceImageSourcePostId = setupResult.citedSourceImageSourcePostId;
+  const activeDraftCountOverride = setupResult.activeDraftCountOverride;
+  const composerTaskContext = setupResult.composerTaskContext;
 
-    // Monthly cost cap first (fail-closed money ceiling). The hourly/daily count
-    // caps + the user-message insert happen atomically in claimChatTurn below.
-    const cost = await deps.checkChatRateLimit(workspaceId);
-    if (!cost.ok) {
-      logChatReject(workspaceId, chatId, cost.reason ?? "cost_cap", 429);
-      return turnError(
-        cost.message,
-        429,
-        cost.retryAfterSec
-          ? { "Retry-After": String(cost.retryAfterSec) }
-          : undefined,
-      );
-    }
-
-    const fileNote = attachments.length
-      ? `\n\n📎 Attached: ${attachments.map((a) => safeFilename(a.filename)).join(", ")}`
-      : "";
-    const turnContent = userText + fileNote;
-
-    // Duplicate-turn burst guard. The client has an in-flight lock, but a rapid
-    // double-submit (observed: the same prompt POSTed 5-7x within ~140ms-3s,
-    // each one a full billed agent turn)
-    // can race past it before a run registers. The atomic claim below is the
-    // authoritative concurrency/spend protection; this read is only the cheap
-    // first 30-second brake.
-    //
-    // Reject when the most recent message is a user row newer than 30 seconds.
-    // The assistant row lands only when the agent finishes, so a fresh POST in
-    // that window is a resubmit, not a real follow-up.
-    // Neither inserts a row nor runs the agent → no spend.
-    const { data: recentMessages } = await sbRaw
-      .from("chat_messages")
-      .select("id, role, content, created_at, tool_calls, artifacts, terminal_reason, user_stop_requested_at, applied_skills, no_model_format_id, creator_style_context, lead_magnet_id, composer_starter_id, generation_config, recoverable_error")
-      .eq("chat_id", chatId)
-      .eq("workspace_id", workspaceId)
-      .order("created_at", { ascending: false })
-      .limit(64);
-    const lastMsg = recentMessages?.[0];
-    if (lastMsg?.role === "user") {
-      // 30s window covers a normal turn's latency with headroom (a slow
-      // tool-calling turn can take 20s+; the assistant row lands only when it
-      // finishes, so a user row still being the newest means the turn is
-      // in-flight). Never reject identical content forever: if terminal-row
-      // persistence failed during a database outage, the atomic claim must be
-      // allowed to decide the later retry instead of an orphan user row.
-      if (isRecentUnansweredUserMessage(lastMsg)) {
-        logChatReject(workspaceId, chatId, "duplicate_turn", 409);
-        return turnError(
-          "That message is already being processed — please wait for the reply before sending again.",
-          409,
-        );
-      }
-    }
-
-    // Atomically check the count caps AND persist the user message in one
-    // locked transaction, so concurrent requests can't all slip past the caps.
-    // We store the typed text + a compact note of attached filenames (not the
-    // file bytes — those are consumed this turn only).
-    const actionLaneEnabled = deps.actionOrchestratorEnabledForWorkspace();
-    actionRetryRepository = deps.createActionRetryRepository(sbRaw);
-    const recentMessageWindow = (recentMessages ?? []) as Array<{
-      id: string;
-      role: ChatMessage["role"];
-      tool_calls: ToolCall[] | null;
-      artifacts: Artifact[] | null;
-      terminal_reason:
-        | "done"
-        | "ask"
-        | "cancelled"
-        | "deadline"
-        | "error"
-        | null;
-      user_stop_requested_at: string | null;
-      applied_skills?: unknown;
-      no_model_format_id?: string | null;
-      creator_style_context?: unknown;
-      lead_magnet_id?: string | null;
-      composer_starter_id?: string | null;
-      generation_config?: unknown;
-      recoverable_error?: unknown;
-    }>;
-    pendingAskOnly = hasPendingAskOnly(recentMessageWindow);
-    pendingActionAsk = hasPendingActionAsk(recentMessageWindow);
-    const actionAnswer = validatePendingActionAnswer(
-      recentMessageWindow,
-      userText,
-      body.actionSelectionIds,
-    );
-    if (!actionAnswer.ok) {
-      return turnError(
-        `Choose exactly ${actionAnswer.expected} saved drafts before continuing.`,
-        400,
-      );
-    }
-    let preclaimInstruction = userText;
-    if (actionAnswer.cancelled && pendingActionAsk) {
-      persistedActionContinuation = true;
-      normalizedActionRoute = {
-        kind: "no_action",
-        noActionReason: "cancelled",
-      };
-      resolvedActionInstruction = userText;
-    } else if (body.retryOfUserMessageId) {
-      const retryUserIndex = recentMessageWindow.findIndex(
-        (message) =>
-          message.role === "user" &&
-          message.id === body.retryOfUserMessageId,
-      );
-      const retryUser =
-        retryUserIndex >= 0 ? recentMessageWindow[retryUserIndex] : undefined;
-      const pairedCustomSkillMarker =
-        customSkillSelectionMarkerFromToolCalls(retryUser);
-      if (pairedCustomSkillMarker.kind === "invalid") {
-        return turnError(
-          "The saved custom-skill selection failed its integrity check. Send the request again as a new message.",
-          409,
-        );
-      }
-      if (pairedCustomSkillMarker.kind === "unfrozen") {
-        return turnError(
-          "That Retry does not contain frozen custom-skill context. Send the request again as a new message.",
-          409,
-        );
-      }
-      if (pairedCustomSkillMarker.kind === "valid") {
-        const frozenSkillIds = pairedCustomSkillMarker.context.skills.map(
-          (skill) => skill.id,
-        );
-        if (
-          skillIds.length > 0 &&
-          (skillIds.length !== frozenSkillIds.length ||
-            skillIds.some((id, index) => id !== frozenSkillIds[index]))
-        ) {
-          return turnError(
-            "That Retry no longer matches the custom skills used by the original task. Send a new request instead.",
-            409,
-          );
-        }
-        skillIds = frozenSkillIds;
-        customSkillRetryContext = pairedCustomSkillMarker.context;
-      } else if (skillIds.length > 0) {
-        return turnError(
-          "That Retry adds custom skills that were not part of the original task. Send it as a new request instead.",
-          409,
-        );
-      }
-      const pairedCreatorStyleMarker =
-        creatorStyleSelectionMarkerFromToolCalls(retryUser);
-      if (pairedCreatorStyleMarker.kind === "invalid") {
-        return turnError(
-          "The saved creator-style selection failed its integrity check. Send the request again as a new message.",
-          409,
-        );
-      }
-      if (pairedCreatorStyleMarker.kind === "unfrozen") {
-        return turnError(
-          "That Retry does not contain a frozen creator-style context. Send the request again as a new message.",
-          409,
-        );
-      }
-      if (pairedCreatorStyleMarker.kind === "valid") {
-        const frozenStyle = pairedCreatorStyleMarker.context;
-        if (
-          creatorStyleId &&
-          creatorStyleId !== frozenStyle.id
-        ) {
-          return turnError(
-            "That Retry no longer matches the creator style used by the original task. Send a new request instead.",
-            409,
-          );
-        }
-        creatorStyleId = frozenStyle.id;
-        creatorStyleRetryContext = frozenStyle;
-      } else if (creatorStyleId) {
-        return turnError(
-          "That Retry adds a creator style that was not part of the original task. Send it as a new request instead.",
-          409,
-        );
-      }
-      const pairedGenerationConfigMarker =
-        generationConfigSelectionMarkerFromToolCalls(retryUser);
-      if (pairedGenerationConfigMarker.kind === "invalid") {
-        return turnError(
-          "The saved draft-count setting failed its integrity check. Send the request again as a new message.",
-          409,
-        );
-      }
-      if (pairedGenerationConfigMarker.kind === "valid") {
-        if (
-          requestedGenerationConfig &&
-          requestedGenerationConfig.draftCount !==
-            pairedGenerationConfigMarker.config.draftCount
-        ) {
-          return turnError(
-            "That Retry no longer matches the draft count used by the original task. Send it as a new request instead.",
-            409,
-          );
-        }
-        resolvedGenerationConfig = pairedGenerationConfigMarker.config;
-        generationConfigRestoredFromRetry = true;
-      } else if (requestedGenerationConfig) {
-        return turnError(
-          "That Retry adds a draft-count setting that was not part of the original task. Send it as a new request instead.",
-          409,
-        );
-      }
-      const pairedStarterMarker = composerStarterMarkerFromToolCalls(
-        retryUser,
-      );
-      if (pairedStarterMarker.kind === "invalid") {
-        return turnError(
-          "The saved starter context failed its integrity check. Send the request again as a new message.",
-          409,
-        );
-      }
-      if (pairedStarterMarker.kind === "valid") {
-        if (
-          composerStarterId &&
-          composerStarterId !== pairedStarterMarker.starterId
-        ) {
-          return turnError(
-            "That Retry no longer matches the starter used by the original task. Send it as a new request instead.",
-            409,
-          );
-        }
-        composerStarterId = pairedStarterMarker.starterId;
-      } else if (composerStarterId) {
-        return turnError(
-          "That Retry adds a starter context that was not part of the original task. Send it as a new request instead.",
-          409,
-        );
-      }
-      const pairedAssistant =
-        retryUserIndex >= 0
-          ? recentMessageWindow
-              .slice(0, retryUserIndex)
-              .find((message) => message.role === "assistant")
-          : undefined;
-      const pairedModeledBatchMarker =
-        modeledDraftBatchContinuationMarkerFromToolCalls(pairedAssistant);
-      const pairedRetryRootMarker = retryRootMarkerFromToolCalls(
-        pairedAssistant,
-      );
-      if (
-        pairedModeledBatchMarker.kind === "invalid" ||
-        pairedRetryRootMarker.kind === "invalid"
-      ) {
-        return turnError(
-          "The saved modeled-set continuation failed its integrity check. Send the request again as a new message.",
-          409,
-        );
-      }
-      const retry = await resolveActionRetryRoot(
-        {
-          workspaceId,
-          chatId,
-          retryOfUserMessageId: body.retryOfUserMessageId,
-          submittedContent: turnContent,
-          pairedAssistantTerminalReason: pairedAssistant
-            ? pairedAssistant.terminal_reason ?? "done"
-            : null,
-          pairedAssistantRecoverable: Boolean(
-            pairedAssistant &&
-              (pairedAssistant.recoverable_error !== undefined &&
-              pairedAssistant.recoverable_error !== null
-                ? true
-                : pairedAssistant.tool_calls?.some(isServerRecoverableToolCall)),
-          ),
-          pairedAssistantRetryRootUserMessageId:
-            pairedRetryRootMarker.kind === "valid"
-              ? pairedRetryRootMarker.rootUserMessageId
-              : undefined,
-          pairedUserStopped: Boolean(retryUser?.user_stop_requested_at),
-          signal: setupSignal,
-        },
-        actionRetryRepository,
-      );
-      if (!retry.ok) {
-        if (retry.reason === "cancelled") {
-          return turnError(
-            "That stopped board action is permanently cancelled and cannot be resumed. Send a new request if you still want the change.",
-            409,
-          );
-        }
-        if (retry.reason === "completed") {
-          return turnError(
-            "That turn already completed successfully. Refresh the chat to see its result.",
-            409,
-          );
-        }
-        return turnError(
-          "That Retry action is stale or no longer matches the original task. Send a new request instead.",
-          409,
-        );
-      }
-      actionTurnMessageId = retry.turnMessageId;
-      resolvedActionInstruction = retry.effectiveInstruction;
-      normalizedActionRoute = retry.route;
-      persistedActionContinuation = Boolean(retry.route);
-      modeledBatchContinuation =
-        pairedModeledBatchMarker.kind === "valid"
-          ? pairedModeledBatchMarker.continuation
-          : null;
-      confirmedActionTargetIds = retry.confirmedTargetIds;
-      preclaimInstruction = retry.effectiveInstruction;
-    } else if (pendingActionAsk) {
-      persistedActionContinuation = true;
-      const context = await actionRetryRepository.latestContext({
-        workspaceId,
-        chatId,
-        signal: setupSignal,
-      });
-      if (!context?.route || context.cancelled) {
-        return turnError(
-          "That action clarification expired. Send the board request again.",
-          409,
-        );
-      }
-      resolvedActionInstruction = `${context.effectiveInstruction}\n\nClarification answer: ${userText}`;
-      preclaimInstruction = resolvedActionInstruction;
-      confirmedActionTargetIds = actionAnswer.selectedTargetIds ?? [];
-      normalizedActionRoute =
-        confirmedActionTargetIds.length > 0
-          ? context.route
-          : context.route.kind === "clarify_action"
-            ? advanceActionOrchestratorClarification(
-                context.route,
-                userText,
-                deps.now(),
-                body.clientTimezone,
-              )
-            : context.route;
-    }
-    if (!resolvedGenerationConfig) {
-      resolvedGenerationConfig = resolveGenerationConfig({
-        selected: requestedGenerationConfig,
-        explicitMessageDraftCount:
-          explicitMessageDraftCount(preclaimInstruction),
-      });
-    }
-    const preclaimPartialSpec = compileDirectPartialTextSpec(
-      preclaimInstruction,
-    );
-    const fallbackPreclaimPostCount = requestedBasePostCount(
-      preclaimInstruction,
-      Boolean(modelSourceId),
-    );
-    hasAuthoritativeDraftCount =
-      resolvedGenerationConfig.draftCountSource === "ui" ||
-      generationConfigRestoredFromRetry;
-    composerTaskSelection = {
-      ...(composerStarterId ? { starterId: composerStarterId } : {}),
-      ...(hasAuthoritativeDraftCount
-        ? { selectedDraftCount: resolvedGenerationConfig.draftCount }
-        : {}),
-      ...(modelSourceId ? { selectedSourceId: modelSourceId } : {}),
-    };
-    composerTaskContext = resolveComposerTaskContext({
-      ...composerTaskSelection,
-      fallbackPostCount: fallbackPreclaimPostCount,
-    });
-    const preclaimBasePostCount =
-      composerTaskContext.kind === "post"
-        ? composerTaskContext.expectedDraftCount
-        : null;
-    activeDraftCountOverride =
-      hasAuthoritativeDraftCount && preclaimBasePostCount !== null
-        ? resolvedGenerationConfig.draftCount
-        : undefined;
-    const preclaimRoutingInput = {
-      userInstruction: preclaimInstruction,
-      ...(activeDraftCountOverride
-        ? { draftCountOverride: activeDraftCountOverride }
-        : {}),
-      isRefine: skipDecision,
-      hasModelSource: Boolean(modelSourceId),
-      hasAttachments: attachments.length > 0,
-      hasLeadMagnet: Boolean(leadMagnetId || createLeadMagnet),
-      hasCreatorStyle: Boolean(creatorStyleId),
-      composerTaskContext,
-      hasUnsavedDraftReferent:
-        hasUnsavedAssistantDraftReferent(recentMessageWindow),
-      clientTimezone: body.clientTimezone,
-    };
-    const preclaimActionRoute = modeledBatchContinuation
-      ? null
-      : normalizedActionRoute ??
-        compileActionOrchestratorRoute(preclaimRoutingInput, deps.now());
-    normalizedActionRoute = preclaimActionRoute;
-    const preclaimReadOnlyRoute =
-      modeledBatchContinuation?.route ??
-      compileReadOnlyOrchestratorReserveRoute(preclaimRoutingInput);
-    const preclaimModeledContinuation =
-      continuationForModeledDraftRoute(preclaimReadOnlyRoute);
-    const preclaimModeledRoute = Boolean(
-      modeledBatchContinuation ||
-        preclaimModeledContinuation ||
-        (preclaimReadOnlyRoute &&
-          compileModeledPostIntent(preclaimInstruction, {
-            draftCountOverride: activeDraftCountOverride,
-          }).kind !== "none"),
-    );
-    currentTurnModelSourceOwnership = preclaimModeledRoute
-      ? "server_selected"
-      : "historical_continuation";
-    modeledBatchContractRequested = Boolean(preclaimModeledContinuation);
-    // Claim-time placeholder via the ONE contract builder (telemetry-only —
-    // overwritten post-routing). The gen-config resolution below consumes
-    // only its count projection, never a second divergent contract.
-    preclaimContractPlaceholder = resolveTurnContract({
-      actionRoute: preclaimActionRoute,
-      useActionOrchestrator: true,
-      readOnlyRoute: preclaimReadOnlyRoute,
-      useReadOnlyOrchestrator: true,
-      hasPartialSpec: preclaimPartialSpec !== null,
-      fallbackPostCount:
-        preclaimBasePostCount !== null || skipDecision
-          ? (activeDraftCountOverride ?? preclaimBasePostCount ?? 1)
-          : null,
-    });
-    preclaimPostDraftEstimate =
-      preclaimContractPlaceholder.kind === "post"
-        ? preclaimContractPlaceholder.expectedCount
-        : null;
-    if (
-      preclaimPostDraftEstimate !== null &&
-      preclaimPostDraftEstimate >= 1 &&
-      !generationConfigRestoredFromRetry &&
-      resolvedGenerationConfig.draftCountSource !== "ui"
-    ) {
-      const contractCount = resolveTurnCount({
-        messageCount: preclaimPostDraftEstimate,
-      });
-      resolvedGenerationConfig = {
-        version: 1,
-        draftCount: contractCount.count,
-        draftCountSource:
-          explicitMessageDraftCount(preclaimInstruction) !== null ||
-          preclaimPostDraftEstimate !== 1
-            ? "message"
-            : "default",
-      };
-    }
-    const claim = await deps.claimChatTurn(workspaceId, chatId, turnContent, {
-      clientTurnId: body.clientTurnId,
-      readOnlyOrchestrator: Boolean(
-        (preclaimActionRoute?.kind === "action_management" &&
-          (actionLaneEnabled || persistedActionContinuation)) ||
-          (pendingActionAsk && persistedActionContinuation) ||
-          ((preclaimReadOnlyRoute || (pendingAskOnly && !pendingActionAsk)) &&
-            (preclaimModeledRoute ||
-              Boolean(
-                continuationForModeledDraftRoute(preclaimReadOnlyRoute),
-              ) ||
-              deps.readOnlyOrchestratorEnabledForWorkspace())),
-      ),
-    });
-    if (!claim.ok) {
-      // turn_active is a concurrency conflict (409), not a rate limit (429).
-      const status = claim.reason === "turn_active" ? 409 : 429;
-      logChatReject(
-        workspaceId,
-        chatId,
-        claim.reason ?? "claim_failed",
-        status,
-      );
-      return turnError(
-        claim.message,
-        status,
-        claim.retryAfterSec
-          ? { "Retry-After": String(claim.retryAfterSec) }
-          : undefined,
-      );
-    }
-    // The exclusive turn claim is now held; ensure it's released on every exit.
-    turnClaimed = true;
-    turnCostOperationKey = claim.operationKey;
-    coworkTelemetry = createCoworkTurnTelemetry(
-      {
-        traceId: chatId,
-        workspaceId,
-        route: "setup",
-        // Claim-time placeholder only; the single post-clarification
-        // resolveTurnContract result replaces it once routing lands.
-        requestedContract: preclaimContractPlaceholder,
-      },
-      deps.coworkTelemetrySink,
-    );
-
-    // From the moment the atomic claim lands until the SSE response exists,
-    // the browser has no turn timestamp it can send to the Stop endpoint. Own
-    // that invisible interval on the server: an ordinary setup gets a short
-    // bound, while explicit image/lead-magnet setup gets its known extra room.
-    // Every later setup await receives this signal. Supabase requests abort at
-    // the fetch layer and other reads race the signal, so this handler reaches
-    // its release gate before the browser's later client deadline offers Retry.
-    if (signal.aborted) {
-      const message = "The chat request was cancelled before it started.";
-      await persistChatSetupFailure({
-        sb: sbRaw,
-        chatId,
-        workspaceId,
-        content: `⚠️ ${message}`,
-      });
-      await coworkTelemetry.finish({
-        deliveredContract: {
-          kind: estimatedContractKind(),
-          deliveredCount: 0,
-        },
-        provenanceStatus: "not_required",
-        terminalOutcome: "cancelled",
-      });
-      await deps.releaseChatTurn(workspaceId, chatId, turnCostOperationKey);
-      turnClaimed = false;
-      return turnError(message, 499);
-    }
-    const deadlines = chatSetupDeadlines({
-      hasImageAttachment: attachments.some(
-        (attachment) => attachment.kind === "image",
-      ),
-      createsLeadMagnet: Boolean(createLeadMagnet),
-    });
-    setupDeadline = createChatSetupDeadline(deadlines.serverMs);
-    setupSignal = AbortSignal.any([signal, setupDeadline.signal]);
-
-    // Bind every later metadata write to the exact user row inserted by THIS
-    // claim. Never look up "latest user" after lengthy setup: if cancellation
-    // or a future retry changes ordering, an old handler must not annotate the
-    // replacement turn.
-    const { data: claimedUserMessage, error: claimedUserMessageError } =
-      await waitForChatSetup(
-        sbRaw
-          .from("chat_messages")
-          .select("id")
-          .eq("chat_id", chatId)
-          .eq("workspace_id", workspaceId)
-          .eq("role", "user")
-          .order("created_at", { ascending: false })
-          .limit(1)
-          .maybeSingle(),
-        setupSignal,
-      );
-    if (claimedUserMessageError) throw claimedUserMessageError;
-    if (typeof claimedUserMessage?.id !== "string") {
-      throw new Error("The claimed chat message could not be identified.");
-    }
-    claimedUserMessageId = claimedUserMessage.id;
-    coworkTelemetry.configure({ traceId: claimedUserMessageId });
-
-    // Auto-title from the first user message if still the default. The
-    // `.eq("title", "New chat")` makes this atomic: it only titles when the DB
-    // row is STILL the default, so a concurrent user rename is never clobbered
-    // (the stale in-memory chat.title is just a cheap pre-check).
-    if (chat.title === "New chat") {
-      const title = userText.replace(/\s+/g, " ").slice(0, 60).trim();
-      if (title) {
-        let titleUpdate = sbRaw
-          .from("chats")
-          .update({ title, updated_at: new Date().toISOString() })
-          .eq("id", chatId)
-          .eq("workspace_id", workspaceId)
-          .eq("title", "New chat");
-        if (turnCostOperationKey) {
-          titleUpdate = titleUpdate.eq(
-            "turn_cost_operation_key",
-            turnCostOperationKey,
-          );
-        }
-        await waitForChatSetup(titleUpdate, setupSignal);
-      }
-    }
-
-    // Clear any stale cancel flag from a prior turn so the loop's between-
-    // rounds polling can't accidentally cancel THIS turn based on a leftover
-    // timestamp. The agent loop polls cancel_requested_at > turnStartedAt.
-    let clearCancel = sbRaw
-      .from("chats")
-      .update({ cancel_requested_at: null })
-      .eq("id", chatId)
-      .eq("workspace_id", workspaceId);
-    if (turnCostOperationKey) {
-      clearCancel = clearCancel.eq(
-        "turn_cost_operation_key",
-        turnCostOperationKey,
-      );
-    }
-    const { data: claimedTurn, error: clearCancelError } =
-      await waitForChatSetup(
-        clearCancel.select("turn_started_at").maybeSingle(),
-        setupSignal,
-      );
-    if (clearCancelError) throw clearCancelError;
-    claimedTurnStartedAt =
-      typeof claimedTurn?.turn_started_at === "string"
-        ? claimedTurn.turn_started_at
-        : null;
-    if (!claimedTurnStartedAt) {
-      throw new Error("The active chat turn could not be identified.");
-    }
-  } catch (e) {
-    const setupExpired = setupDeadline?.didExpire() ?? false;
-    const requestAborted = signal.aborted;
-    disarmSetupGuards();
-    // Once a user row exists, always terminate it with an assistant row BEFORE
-    // releasing the claim. Otherwise the duplicate guard can permanently reject
-    // the same retry, or a fast replacement turn can be mispaired with this
-    // older failure row.
-    if (turnClaimed) {
-      const persistedMessage = setupExpired
-        ? "Cowork took too long to prepare this turn. Please retry."
-        : requestAborted
-          ? "The chat request was cancelled before it started."
-          : "Something went wrong starting this turn. Please try again.";
-      await persistChatSetupFailure({
-        sb: sbRaw!,
-        chatId,
-        workspaceId: workspaceId!,
-        content: `⚠️ ${persistedMessage}`,
-        ...(setupExpired
-          ? {
-              recoverable: {
-                code: "stream_stalled",
-                message: persistedMessage,
-              },
-            }
-          : {}),
-      });
-      await coworkTelemetry.finish({
-        deliveredContract: {
-          kind: estimatedContractKind(),
-          deliveredCount: 0,
-        },
-        provenanceStatus: "not_required",
-        terminalOutcome: setupExpired
-          ? "recoverable_error"
-          : requestAborted
-            ? "cancelled"
-            : "hard_failure",
-      });
-      await deps.releaseChatTurn(workspaceId!, chatId, turnCostOperationKey);
-      turnClaimed = false;
-    }
-    if (e instanceof NoWorkspaceError) return turnError(e.message, 400);
-    if (e instanceof z.ZodError) return turnError("Invalid request body", 400);
-    if (setupExpired || requestAborted) {
-      const message = setupExpired
-        ? "Cowork took too long to prepare this turn. Please retry."
-        : "The chat request was cancelled before it started.";
-      return turnError(message, setupExpired ? 504 : 499);
-    }
-    return turnError((e as Error)?.message ?? "Unexpected error", 500);
-  }
-
-  // Everything from here to the stream runs AFTER the turn claim has inserted
-  // the user message. The context assembly itself lives in
-  // lib/agent/turn/context.ts (buildTurnContext) — a throw in this span (a DB
-  // connection drop on the history read, the model-source fetch, or the skill
-  // resolution) used to escape UNCAUGHT — the claim stayed held (chat wedged
-  // ~330s) AND the user row sat with no assistant reply (dangling turn). Wrap
-  // it: on a throw we release the claim, persist a brief error reply so the
-  // user row isn't orphaned, and return a clean JSON error. (The
-  // ReadableStream has its OWN try/finally for throws DURING streaming.)
-  let history: ChatMessage[];
-  let effectiveUserInstruction = userText;
-  const orchestratorAttachmentBlocks: ContentBlock[] = [];
-  // Built below only for a from-scratch post request (no model/template/refine
-  // source): the selected archetype's rules + full DB exemplars. Empty on every
-  // other turn so the executor prompt stays byte-identical.
-  let appliedNoModelFormat: {
-    id: NoModelFormatId;
-    label: string;
-    forced: boolean;
-  } | null = null;
-  let selectedNoModelFormat: NoModelFormat | null = null;
-  let leadMagnetBlock = "";
-  let appliedLeadMagnet: (AppliedLeadMagnet & { id: string }) | null = null;
-  let shouldAttachLeadMagnet = false;
-  let activeLeadMagnetCampaign: ReturnType<
-    typeof buildLeadMagnetCampaign
-  > | null = null;
-  let modelSourceImage: SourcePostImage | null = null;
-  let modelSourceImageSkipReason: string | null = null;
-  let modelSourceImageSourcePostId: string | null = null;
-  let citedSourceImage: SourcePostImage | null = null;
-  let citedSourceImageSkipReason: string | null = null;
-  let citedSourceImageSourcePostId: string | null = null;
-  let modelSourceReference: ModelSourceReference | null = null;
-  let imageGenerationAuthor: { name: string | null } | null = null;
-  // Built below only when the user picked a creator style AND no model source is
-  // attached (a source controls structure, so the style is ignored then). Empty
-  // otherwise so the executor prompt stays byte-identical.
-  let creatorStyleBlock = "";
-  let appliedCreatorStyle: {
-    id: string;
-    name: string;
-    creatorName: string;
-  } | null = null;
-  let feedbackMemory: ContentFeedback[] = [];
-  let preferences: ContentPreference[] = [];
-  let priorPostDrafts: RecentDraft[] = [];
-  let preloadedVoiceResult: ToolResult | null = null;
-  try {
-    const turnContext = await buildTurnContext({
-      sbRaw,
-      workspaceId,
-      chatId,
-      userId,
-      userText,
-      attachments,
-      modelSourceId,
-      skipDecision,
-      refineTargetId,
-      refineInstruction,
-      leadMagnetId,
-      createLeadMagnet,
-      forcedNoModelFormatId,
-      creatorStyleId,
-      creatorStyleRetryContext,
-      customSkillRetryContext,
-      skillIds,
-      composerTaskContext,
-      composerTaskSelection,
-      activeDraftCountOverride,
-      resolvedGenerationConfig,
-      hasAuthoritativeDraftCount,
-      resolvedActionInstruction,
-      currentTurnModelSourceOwnership,
-      setupSignal,
-      cancellationReason: () =>
-        setupDeadline?.didExpire() ? "deadline" : "cancelled",
-      coworkTelemetry,
-      pinnedCoworkRoute:
-        pinnedCoworkRoute === "setup" ? undefined : pinnedCoworkRoute,
-      deps: {
-        fetchRecentPostDrafts: deps.fetchRecentPostDrafts,
-        generateLeadMagnetResource: deps.generateLeadMagnetResource,
-        completeChat: deps.completeChat,
-      },
-    });
-    history = turnContext.history;
-    effectiveUserInstruction = turnContext.effectiveUserInstruction;
-    orchestratorAttachmentBlocks.push(...turnContext.attachmentBlocks);
-    trustedRefineTarget = turnContext.trustedRefineTarget;
-    currentModelSource = turnContext.currentModelSource;
-    const currentModelEnvelope = turnContext.currentModelEnvelope;
-    modelSourceReference = turnContext.modelSourceReference;
-    modelSourceImage = turnContext.modelSourceImage;
-    modelSourceImageSkipReason = turnContext.modelSourceImageSkipReason;
-    modelSourceImageSourcePostId = turnContext.modelSourceImageSourcePostId;
-    hasModelSource = turnContext.hasModelSource;
-    composerTaskContext = turnContext.composerTaskContext;
-    activeDraftCountOverride = turnContext.activeDraftCountOverride;
-    postClarificationPostCount = turnContext.postClarificationPostCount;
-    preloadedVoiceResult = turnContext.voiceResult;
-    selectedNoModelFormat = turnContext.selectedNoModelFormat;
-    appliedNoModelFormat = turnContext.appliedNoModelFormat;
-    shouldAttachLeadMagnet = turnContext.shouldAttachLeadMagnet;
-    leadMagnetBlock = turnContext.leadMagnetBlock;
-    appliedLeadMagnet = turnContext.appliedLeadMagnet;
-    activeLeadMagnetCampaign = turnContext.activeLeadMagnetCampaign;
-    imageGenerationAuthor = turnContext.imageGenerationAuthor;
-    creatorStyleBlock = turnContext.creatorStyleBlock;
-    appliedCreatorStyle = turnContext.appliedCreatorStyle;
-    feedbackMemory = turnContext.feedbackMemory;
-    preferences = turnContext.preferences;
-    priorPostDrafts = turnContext.priorPostDrafts;
-    resolvedCustomSkills = turnContext.resolvedCustomSkills;
-    customSkillBodies = turnContext.customSkillBodies;
-    customSkillNames = turnContext.customSkillNames;
-
-    // Persist turn state on the just-inserted user row as real chat_messages
-    // columns. Phase 3 of the Cowork unification refactor moved this state out
-    // of synthetic transcript markers; the column writes are now authoritative.
-    const userColumnPatch: Record<string, unknown> = {};
-    if (modelSourceId && currentModelEnvelope) {
-      userColumnPatch.model_source_id = modelSourceId;
-    }
-    if (customSkillNames.length > 0) {
-      userColumnPatch.applied_skills = {
-        names: customSkillNames,
-        retryContext: {
-          version: CUSTOM_SKILL_RETRY_CONTEXT_VERSION,
-          skills: resolvedCustomSkills,
-        },
-      };
-    }
-    if (appliedNoModelFormat?.forced) {
-      userColumnPatch.no_model_format_id = appliedNoModelFormat.id;
-    }
-    if (appliedCreatorStyle) {
-      userColumnPatch.creator_style_context = {
-        ...appliedCreatorStyle,
-        retryContext: {
-          version: CREATOR_STYLE_RETRY_CONTEXT_VERSION,
-          resolvedBlock: creatorStyleBlock,
-        },
-      };
-    }
-    if (appliedLeadMagnet) {
-      userColumnPatch.lead_magnet_id = appliedLeadMagnet.id;
-    }
-    if (composerStarterId) {
-      userColumnPatch.composer_starter_id = composerStarterId;
-    }
-    // Post-shaped turns stamp the resolved generation config onto the user row
-    // so a later Retry can integrity-check the draft count. Post-clarification
-    // truth (same rule the single contract's legacy fallback uses): the
-    // composer resolved a post count, a UI override is active, or this is a
-    // refine continuation.
-    const stampsGenerationConfig =
-      resolvedGenerationConfig !== null &&
-      (postClarificationPostCount !== null ||
-        activeDraftCountOverride !== undefined ||
-        skipDecision);
-    if (stampsGenerationConfig && resolvedGenerationConfig) {
-      userColumnPatch.generation_config = resolvedGenerationConfig;
-    }
-    let userStateWriteFailed = false;
-    if (Object.keys(userColumnPatch).length > 0) {
-      if (claimedUserMessageId) {
-        const {
-          data: updatedUserMessage,
-          error: userStateWriteError,
-        } = await waitForChatSetup(
-          sbRaw
-            .from("chat_messages")
-            .update(userColumnPatch)
-            .eq("id", claimedUserMessageId)
-            .eq("workspace_id", workspaceId)
-            .select("id")
-            .maybeSingle(),
-          setupSignal,
-        );
-        userStateWriteFailed =
-          Boolean(userStateWriteError) ||
-          updatedUserMessage?.id !== claimedUserMessageId;
-      }
-    }
-    if (
-      appliedCreatorStyle &&
-      (!claimedUserMessageId || userStateWriteFailed)
-    ) {
-      throw new Error(CREATOR_STYLE_CONTEXT_PERSISTENCE_ERROR);
-    }
-    if (
-      modeledBatchContractRequested &&
-      resolvedCustomSkills.length > 0 &&
-      (!claimedUserMessageId || userStateWriteFailed)
-    ) {
-      throw new Error(CUSTOM_SKILL_CONTEXT_PERSISTENCE_ERROR);
-    }
-    if (
-      stampsGenerationConfig &&
-      (!claimedUserMessageId || userStateWriteFailed)
-    ) {
-      throw new Error(GENERATION_CONFIG_CONTEXT_PERSISTENCE_ERROR);
-    }
-
-    // Persist the assembled attachment blocks so follow-up turns can re-inject
-    // them from history. This is best-effort: the current turn already holds the
-    // blocks in memory, so a failed write must not abort the turn.
-    if (turnContext.attachmentBlocks.length > 0 && claimedUserMessageId) {
-      try {
-        await waitForChatSetup(
-          sbRaw
-            .from("chat_messages")
-            .update({ content_blocks: turnContext.attachmentBlocks })
-            .eq("id", claimedUserMessageId)
-            .eq("workspace_id", workspaceId)
-            .select("id")
-            .maybeSingle(),
-          setupSignal,
-        );
-      } catch (error) {
-        console.error(
-          JSON.stringify({
-            attachment_blocks_persistence_failed: {
-              workspaceId,
-              chatId,
-              userMessageId: claimedUserMessageId,
-              error: (error as Error)?.message ?? String(error),
-            },
-          }),
-        );
-      }
-    }
-
-  } catch (e) {
-    const setupExpired = setupDeadline?.didExpire() ?? false;
-    const requestAborted = signal.aborted;
-    disarmSetupGuards();
-    // A throw in the post-claim setup span: release the claim (else the chat
-    // wedges ~330s) + persist a short error reply so the just-inserted user
-    // message isn't left dangling with no answer, then return JSON (no stream
-    // was opened yet). Best-effort on both side effects.
-    const setupError = setupExpired
-      ? "Cowork took too long to prepare this turn. Please retry."
-      : ((e as Error)?.message ?? "Failed to start the turn");
-    const assistantError =
-      setupError === LEAD_MAGNET_SELECTION_REQUIRED_ERROR ||
-      setupError === CREATOR_STYLE_SELECTION_REQUIRED_ERROR ||
-      setupError === CREATOR_STYLE_CONTEXT_PERSISTENCE_ERROR ||
-      setupError === CUSTOM_SKILL_CONTEXT_PERSISTENCE_ERROR ||
-      setupError === GENERATION_CONFIG_CONTEXT_PERSISTENCE_ERROR
-        ? setupError
-        : "⚠️ Something went wrong starting this turn. Please try again.";
-    await persistChatSetupFailure({
-      sb: sbRaw,
-      chatId,
-      workspaceId,
-      content: assistantError,
-      ...(setupExpired
-        ? {
-            recoverable: {
-              code: "stream_stalled",
-              message: setupError,
-            },
-          }
-        : {}),
-    });
-    await coworkTelemetry.finish({
-      deliveredContract: {
-        kind: estimatedContractKind(),
-        deliveredCount: 0,
-      },
-      provenanceStatus: "not_required",
-      terminalOutcome: setupExpired
-        ? "recoverable_error"
-        : requestAborted
-          ? "cancelled"
-          : "hard_failure",
-    });
-    await deps
-      .releaseChatTurn(workspaceId, chatId, turnCostOperationKey)
-      .catch(() => {});
-    turnClaimed = false;
-    return turnError(
-      setupError,
-      setupExpired
-        ? 504
-        : requestAborted
-          ? 499
-          : setupError === LEAD_MAGNET_SELECTION_REQUIRED_ERROR ||
-              setupError === CREATOR_STYLE_SELECTION_REQUIRED_ERROR
-            ? 409
-            : setupError === CREATOR_STYLE_CONTEXT_PERSISTENCE_ERROR ||
-                setupError === CUSTOM_SKILL_CONTEXT_PERSISTENCE_ERROR ||
-                setupError === GENERATION_CONFIG_CONTEXT_PERSISTENCE_ERROR
-              ? 503
-              : 500,
-    );
-  }
-
-  const setupExpired = setupDeadline?.didExpire() ?? false;
-  disarmSetupGuards();
-  if (setupExpired || signal.aborted) {
-    const message = setupExpired
-      ? "Cowork took too long to prepare this turn. Please retry."
-      : "The chat request was cancelled before it started.";
-    await persistChatSetupFailure({
-      sb: sbRaw,
-      chatId,
-      workspaceId,
-      content: `⚠️ ${message}`,
-      ...(setupExpired
-        ? {
-            recoverable: {
-              code: "stream_stalled",
-              message,
-            },
-          }
-        : {}),
-    });
-    await coworkTelemetry.finish({
-      deliveredContract: {
-        kind: estimatedContractKind(),
-        deliveredCount: 0,
-      },
-      provenanceStatus: "not_required",
-      terminalOutcome: setupExpired ? "recoverable_error" : "cancelled",
-    });
-    await deps
-      .releaseChatTurn(workspaceId, chatId, turnCostOperationKey)
-      .catch(() => {});
-    turnClaimed = false;
-    return turnError(message, setupExpired ? 504 : 499);
-  }
-
-  // Direct writer is the unified drafting path; the COWORK_THIN_PATH rollout
+  // Direct writer is the unified drafting path;  // Direct writer is the unified drafting path; the COWORK_THIN_PATH rollout
   // flag has been removed and lean mode is no longer forced (default false).
   const directWriterEnabled = true;
   const directPartialSpec = compileDirectPartialTextSpec(
@@ -2730,7 +1618,7 @@ export async function executeChatTurn(
             : "hard_failure",
       });
       await deps.releaseChatTurn(workspaceId, chatId, turnCostOperationKey);
-      turnClaimed = false;
+
       return turnError(
         message,
         actionSetupExpired ? 504 : actionRequestAborted ? 499 : 503,
@@ -2809,7 +1697,7 @@ export async function executeChatTurn(
         terminalOutcome: "hard_failure",
       });
       await deps.releaseChatTurn(workspaceId, chatId, turnCostOperationKey);
-      turnClaimed = false;
+
       return turnError(message, 422);
     }
     const message = modeledBatchContinuation
@@ -2841,7 +1729,7 @@ export async function executeChatTurn(
       terminalOutcome: "recoverable_error",
     });
     await deps.releaseChatTurn(workspaceId, chatId, turnCostOperationKey);
-    turnClaimed = false;
+
     return turnError(message, 503);
   }
   const useReadOnlyOrchestrator = Boolean(
