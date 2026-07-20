@@ -5152,7 +5152,6 @@ async function* runReadOnlyOrchestratorCore(
     signal: input.signal,
     telemetry: input.telemetry ?? input.writerInput.telemetry,
     deadlineAtMs: input.deadlineAtMs,
-    ...(modeledWorkspaceSource ? { enableStructureGate: true } : {}),
     dependencies: {
       ...input.writerInput.dependencies,
     },

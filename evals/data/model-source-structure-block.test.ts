@@ -2,8 +2,8 @@ import { describe, expect, test } from "vitest";
 import {
   chatHistoryWithModelSources,
   modelSourceStructureBlock,
-  modelSourceStructureSkeleton,
 } from "@/lib/agent/chat-turn";
+import { modelSourceStructureSkeleton } from "@/lib/agent/turn/artifact-tags";
 
 // modelSourceStructureBlock injects the soft structure reference (lib/post-
 // structure-skeleton.ts) ONLY for genuine "model this post" turns — mirrors

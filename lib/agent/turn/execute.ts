@@ -43,7 +43,6 @@ import { stampDraftFormat } from "@/lib/markdown/mode";
 import {
   applyCiteSourceToDraftArtifacts,
   isDraftArtifact,
-  modelSourceStructureSkeleton,
   sourceReferenceFromCiteArtifact,
   sourceReferenceFromCiteArtifacts,
   tagArtifactWithCreatorStyle,
@@ -207,9 +206,6 @@ async function* runTurnPlan(
       history,
       task: directWriterTask,
       deadlineAtMs: turnStartedAtMs + WRITER_TURN_BUDGET_MS,
-      enableStructureGate: Boolean(
-        currentModelSource && modelSourceStructureSkeleton(currentModelSource),
-      ),
       ...(useDirectLeadMagnet ? { leadMagnetBlock } : {}),
       ...(useDirectCreatorStyle ? { creatorStyleBlock } : {}),
     });

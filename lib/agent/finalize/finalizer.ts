@@ -29,12 +29,6 @@ import { RENDER_POST_MAX_CHARS } from "@/lib/agent/tools";
 import type { RecentDraft } from "@/lib/recent-drafts";
 import type { AdapterHealthRegistry } from "@/lib/agent/adapter-health";
 import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
-import {
-  checkStructureMatch,
-  computeStructureSkeleton,
-  structureMismatchRepairInstruction,
-  type StructureSkeleton,
-} from "@/lib/post-structure-skeleton";
 
 export const DRAFT_FINALIZER_REJECTION_CODES = [
   "cancelled",
@@ -230,12 +224,6 @@ export type DraftFinalizerOptions = {
   // reveals the writer genuinely uses em dashes) and later finalize calls see
   // the current value.
   editOptions?: { keepEmDashes?: boolean };
-  // The source post's deterministic structure skeleton (lib/post-structure-
-  // skeleton.ts). Presence alone scopes the coarse structure gate to
-  // GENUINE MODELED-POST turns: the caller only computes and passes this for a
-  // "model this post" source, never for refine/template turns — so an absent
-  // value means the gate never runs.
-  structureSkeleton?: StructureSkeleton;
 };
 
 export type DraftCandidateTransform = (
@@ -550,31 +538,6 @@ export function createDraftFinalizer(
     let repaired = false;
 
     if (resolvedSource.source && candidate.provenance) {
-      // Coarse deterministic structure gate — MODELED POSTS ONLY (options.
-      // structureSkeleton is only ever set by the caller for a genuine
-      // "model this post" turn; absent for refine/template turns, so this
-      // never fires for them). Deliberately narrow: it only catches gross
-      // mismatches (a dropped list, a wildly different length).
-      if (options.structureSkeleton) {
-        const draftSkeleton = computeStructureSkeleton(body);
-        const mismatch = checkStructureMatch(
-          options.structureSkeleton,
-          draftSkeleton,
-        );
-        if (mismatch) {
-          return emit(
-            candidate,
-            reject(
-              candidate.origin,
-              "structure_mismatch",
-              mismatch.message,
-              structureMismatchRepairInstruction(mismatch),
-            ),
-            sourceVerified,
-            { edited: edited.changed, repaired, samenessRewrote: false },
-          );
-        }
-      }
       // Cheap deterministic near-duplicate guard before the paid reviewer.
       if (areDraftsNearDuplicate(resolvedSource.source.text, body)) {
         return emit(
