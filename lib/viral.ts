@@ -262,7 +262,7 @@ export function decideRelativeViral(args: {
 //
 // A post qualifies ⇔ the creator has at least MIN_HISTORY other stored posts
 // AND this post's score is in the creator's own top CUTOFF_PCT % (default:
-// top 5% over ≥ 20 prior posts). Deliberately separate from
+// top 1% over ≥ 20 prior posts). Deliberately separate from
 // decideRelativeViral: that function's cold-start flat-floor fallback exists
 // so a thin-history creator can still be viral, but a template generalizes a
 // pattern to OTHER creators' audiences — we only trust the percentile once
@@ -277,7 +277,9 @@ export type TemplateOutlierConfig = {
   /** How many of the creator's most recent posts feed the percentile. */
   window: number;
   /** Surface the TOP N % of the creator's posts, where N is this value.
-   *  Default 5 → only the creator's genuine outliers qualify. */
+   *  Default 1 → only the creator's genuine outliers qualify. (Was 5 — that
+   *  flooded the library: ~6% of all scraped posts qualified on the first
+   *  backfill. One-in-a-hundred keeps templates exceptional.) */
   cutoffPct: number;
 };
 
@@ -287,7 +289,7 @@ export type TemplateOutlierConfig = {
 const DEFAULT_TEMPLATE_OUTLIER: TemplateOutlierConfig = {
   minHistory: Number(process.env.TEMPLATE_OUTLIER_MIN_HISTORY ?? 20),
   window: Number(process.env.TEMPLATE_OUTLIER_WINDOW ?? 100),
-  cutoffPct: Number(process.env.TEMPLATE_OUTLIER_CUTOFF_PCT ?? 5),
+  cutoffPct: Number(process.env.TEMPLATE_OUTLIER_CUTOFF_PCT ?? 1),
 };
 
 export function getTemplateOutlierConfig(): TemplateOutlierConfig {

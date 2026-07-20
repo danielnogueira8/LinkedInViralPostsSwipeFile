@@ -110,7 +110,7 @@ vi.mock("@/lib/viral", () => ({
   getThresholds: async () => ({ min_reactions: 50, min_comments: 50 }),
   score: () => 10,
   getRelativeConfig: () => ({ minHistory: 5, window: 15, cutoffPct: 20 }),
-  getTemplateOutlierConfig: () => ({ minHistory: 20, window: 100, cutoffPct: 5 }),
+  getTemplateOutlierConfig: () => ({ minHistory: 20, window: 100, cutoffPct: 1 }),
   decideRelativeViral: () => ({ viral: true, basis: "flat_threshold", baseline: null }),
   decideTemplateOutlier: () => ({ qualifies: false, baseline: null, sampleSize: 0 }),
   classifyPostForAllWorkspaces,

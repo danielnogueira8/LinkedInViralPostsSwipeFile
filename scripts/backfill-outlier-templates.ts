@@ -7,7 +7,7 @@
 // Qualification is exactly the live gate: decideTemplateOutlier (lib/viral.ts)
 // — the creator needs ≥ TEMPLATE_OUTLIER_MIN_HISTORY (default 20) other stored
 // posts and the post must score in their own top TEMPLATE_OUTLIER_CUTOFF_PCT
-// (default 5) percent.
+// (default 1) percent.
 //
 // Run: npx tsx --env-file=.env.local scripts/backfill-outlier-templates.ts
 //   --limit 50   process at most 50 qualifying posts this run (default: all)
