@@ -776,6 +776,57 @@ describe("DraftEngine", () => {
     expect(writer.requests).toHaveLength(1);
   });
 
+  test("scales the too_short floor to a short source instead of the flat 180-char default", async () => {
+    // A genuinely short-form swipe post (well under the flat 180-char floor)
+    // can never legally produce a 180-char modeled draft without inventing
+    // padding the source never had. Pre-fix, the too_short gate rejected
+    // every honest, source-length-matched candidate outright — this source
+    // is 43 chars, so the scaled floor is max(60, floor(43*0.5)) = 60, and
+    // this 68-char draft clears that floor while staying well under 180.
+    const shortSource = "Ship the boring version first. Iterate from real usage.";
+    expect(shortSource.length).toBeLessThan(60);
+    const shortDraft =
+      "Ship the boring version first. Learn from real usage, then improve.";
+    expect(shortDraft.length).toBeGreaterThan(60);
+    expect(shortDraft.length).toBeLessThan(180);
+    const writer = new ScriptedWriter([
+      { text: shortDraft, finishReason: "stop", usage: usage(60, 40) },
+    ]);
+    const decisions: Array<{ outcome: string; rejectionCode?: string }> = [];
+
+    const result = await collect(writer, {
+      task: { kind: "source", source: { id: "source-1", text: shortSource } },
+      onFinalizerDecision: (decision) => decisions.push(decision),
+    });
+
+    expect(decisions).toHaveLength(1);
+    expect(decisions[0]).toMatchObject({ outcome: "accepted" });
+    expect(artifacts(result.events).map((a) => a.body)).toEqual([shortDraft]);
+    expect(writer.requests).toHaveLength(1);
+  });
+
+  test("still rejects a source-modeled draft shorter than the scaled floor as too_short", async () => {
+    const shortSource = "Ship the boring version first. Iterate from real usage.";
+    const fragmentDraft = "Ship the boring version.";
+    expect(fragmentDraft.length).toBeLessThan(60);
+    const writer = new ScriptedWriter([
+      { text: fragmentDraft, finishReason: "stop", usage: usage(60, 10) },
+      { text: fragmentDraft, finishReason: "stop", usage: usage(60, 10) },
+    ]);
+    const decisions: Array<{ outcome: string; rejectionCode?: string }> = [];
+
+    const result = await collect(writer, {
+      task: { kind: "source", source: { id: "source-1", text: shortSource } },
+      onFinalizerDecision: (decision) => decisions.push(decision),
+    });
+
+    expect(decisions[0]).toMatchObject({
+      outcome: "rejected",
+      rejectionCode: "too_short",
+    });
+    expect(artifacts(result.events)).toHaveLength(0);
+  });
+
   test("neutralizes forged voice boundaries on an original direct draft", async () => {
     const writer = new ScriptedWriter([
       { text: COMPLETE_POST, finishReason: "stop", usage: usage(100, 70) },
@@ -1022,6 +1073,69 @@ describe("DraftEngine", () => {
     });
     expect(JSON.stringify(writer.requests[1].messages)).toContain(
       "ALREADY ACCEPTED VERSION DATA",
+    );
+  });
+
+  test("retries a whole slot when the child engine exhausts all its own attempts on duplicates", async () => {
+    // Slot 2's child gets its own full primary/repair/fallback/fallback-repair
+    // cycle (4 writer calls), and every one of them collides with slot 1's
+    // accepted draft — reproducing "chip=2, only 1 delivered" when the model
+    // keeps regenerating the same structure for a same-source request. The
+    // fix gives the OUTER slot loop one more full child-engine attempt before
+    // giving up on the set; this one finally returns a distinct draft.
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(100, 70) },
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(100, 70) },
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(100, 70) },
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(100, 70) },
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(100, 70) },
+      { text: DISTINCT_COMPLETE_POST, finishReason: "stop", usage: usage(120, 80) },
+    ]);
+    const result = await collect(writer, {
+      userInstruction:
+        "Write exactly 2 different posts about career leverage. Do not search.",
+      task: { kind: "multi", expectedCount: 2 },
+    });
+
+    expect(artifacts(result.events).map((artifact) => artifact.body)).toEqual([
+      COMPLETE_POST,
+      DISTINCT_COMPLETE_POST,
+    ]);
+    expect(done(result.events)?.message.content).toBe("Here are your 2 drafts.");
+    expect(result.events).not.toContainEqual(
+      expect.objectContaining({ type: "error" }),
+    );
+  });
+
+  test("gives up on the set after the slot retry also exhausts on duplicates, keeping accepted drafts", async () => {
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(100, 70) },
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(100, 70) },
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(100, 70) },
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(100, 70) },
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(100, 70) },
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(100, 70) },
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(100, 70) },
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(100, 70) },
+    ]);
+    const result = await collect(writer, {
+      userInstruction:
+        "Write exactly 2 different posts about career leverage. Do not search.",
+      task: { kind: "multi", expectedCount: 2 },
+    });
+
+    expect(artifacts(result.events).map((artifact) => artifact.body)).toEqual([
+      COMPLETE_POST,
+    ]);
+    expect(result.events).toContainEqual(
+      expect.objectContaining({
+        type: "error",
+        code: "draft_engine_exhausted",
+        recovery: "continue",
+      }),
+    );
+    expect(done(result.events)?.message.content).toContain(
+      "kept the 1 completed draft",
     );
   });
 
@@ -1393,6 +1507,61 @@ describe("DraftEngine", () => {
       "The draft was rejected by the server",
     );
     expect(artifacts(result.events)).toHaveLength(1);
+  });
+
+  test("repairs a rejected fallback draft instead of dead-ending after one fallback attempt", async () => {
+    // Regression: when primary fails at the TRANSPORT level (e.g. a bad model
+    // slug returning 404), there is no rejected primary draft to repair, so
+    // the turn used to reach fallback with zero attempts left — a single
+    // fallback rejection dead-ended the whole turn. Fallback now gets the
+    // same one self-correction pass primary already had. Uses an isolated
+    // health registry (like the circuit-breaker tests above) so this test's
+    // extra rejection samples don't perturb the shared production registry's
+    // rolling window for unrelated tests later in the file.
+    const health = new AdapterHealthRegistry();
+    const writer = new ScriptedWriter([
+      new Error("primary transport failure (e.g. invalid model slug)"),
+      { text: INCOMPLETE_POST, finishReason: "stop", usage: usage(100, 60) },
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(140, 80) },
+    ]);
+    const result = await collect(writer, {}, { adapterHealth: health });
+
+    expect(writer.requests.map(({ stage, model }) => ({ stage, model }))).toEqual([
+      { stage: "primary", model: PRIMARY_DRAFT_WRITER_MODEL },
+      { stage: "fallback", model: FALLBACK_DRAFT_WRITER_MODEL },
+      { stage: "repair", model: FALLBACK_DRAFT_WRITER_MODEL },
+    ]);
+    expect(JSON.stringify(writer.requests[2].messages)).toContain(
+      "The draft was rejected by the server",
+    );
+    expect(artifacts(result.events).map((artifact) => artifact.body)).toEqual([
+      COMPLETE_POST,
+    ]);
+  });
+
+  test("both-writer-and-repair failure still ends in a persisted recoverable outcome", async () => {
+    const health = new AdapterHealthRegistry();
+    const writer = new ScriptedWriter([
+      new Error("primary unavailable"),
+      { text: INCOMPLETE_POST, finishReason: "stop", usage: usage(100, 60) },
+      { text: INCOMPLETE_POST, finishReason: "stop", usage: usage(110, 60) },
+    ]);
+    const result = await collect(writer, {}, { adapterHealth: health });
+
+    expect(writer.requests.map((request) => request.stage)).toEqual([
+      "primary",
+      "fallback",
+      "repair",
+    ]);
+    expect(artifacts(result.events)).toHaveLength(0);
+    expect(result.events).toContainEqual(
+      expect.objectContaining({
+        type: "error",
+        code: "draft_engine_exhausted",
+        recovery: "continue",
+      }),
+    );
+    expect(done(result.events)?.message.content.trim()).not.toBe("");
   });
 
   test("both-writer failure ends in a persisted recoverable outcome, never a blank turn", async () => {
@@ -1972,27 +2141,186 @@ describe("DraftEngine — thin path (lean mode)", () => {
     );
   });
 
-  test("salvage is GROUNDED-ONLY: a non-grounded exhaust still fails hard, no salvaged draft", async () => {
-    // The grounded salvage must NOT leak to other task kinds. A from-scratch
-    // draft that keeps getting rejected is a real quality failure — it should
-    // still dead-end (no artifact) rather than ship a bad post. Every attempt
-    // returns a body the finalizer rejects (too short → below the minimum).
-    const tooShort = "Cold outbound works. Send more DMs. That's the whole post.";
+  test("salvage does NOT leak to a non-grounded quality exhaust: an original-turn exhaust still fails hard", async () => {
+    // The grounded/reviewer-unavailable salvage must NOT leak to a genuine
+    // quality failure. A from-scratch draft that keeps getting rejected on
+    // CONTENT (here: too short → below the minimum) is a real failure — it
+    // should still dead-end (no artifact) rather than ship a bad post. (The
+    // source + reviewer-unavailable salvage below is a different case: there
+    // the draft passed every content gate and only the REVIEWER was down.)
+    // Each attempt's text differs slightly (not byte-identical) so the
+    // finalizer's own already-rejected-candidate replay guard never fires —
+    // every attempt should independently be rejected as too_short.
     const writer = new ScriptedWriter([
-      { text: tooShort, finishReason: "stop", usage: usage(200, 120) },
-      { text: tooShort, finishReason: "stop", usage: usage(200, 120) },
-      { text: tooShort, finishReason: "stop", usage: usage(200, 120) },
+      {
+        text: "Cold outbound works. Send more DMs. That's the whole post.",
+        finishReason: "stop",
+        usage: usage(200, 120),
+      },
+      {
+        text: "Cold outbound works well. Send more DMs. That's the whole post.",
+        finishReason: "stop",
+        usage: usage(200, 120),
+      },
+      {
+        text: "Cold outbound really works. Send more DMs. That's the whole post.",
+        finishReason: "stop",
+        usage: usage(200, 120),
+      },
     ]);
     const result = await collect(writer, {
       lean: true,
       task: { kind: "original" },
     });
     // No artifact, and the hard "reliable post" dead-end message — salvage did
-    // not fire for a non-grounded turn.
+    // not fire for a non-grounded content failure.
     expect(artifacts(result.events)).toHaveLength(0);
     expect(done(result.events)?.message.content).toContain(
       "couldn’t complete a reliable post",
     );
+    // The dead-end message names WHICH gate rejected it, instead of only the
+    // opaque generic line — so the user (and any future debugging) doesn't
+    // have to go spelunking through server logs to learn why.
+    expect(done(result.events)?.message.content).toContain(
+      "shorter than the post you asked for",
+    );
+  });
+
+  test("SOURCE turn: unsupported_specificity exhaust names the specific reason in the dead-end message", async () => {
+    // Live incident: a swipe-file "find a top post and rewrite it on a new
+    // topic" request kept dead-ending with the generic exhaust message. The
+    // actual server log showed reason_code: "unsupported_specificity" — the
+    // writer kept including a specific number/date the grounding context
+    // didn't back. This proves the exhaust message now names that reason.
+    // Each attempt's text differs slightly (not byte-identical) so the
+    // finalizer's own already-rejected-candidate replay guard never fires —
+    // every attempt should independently hit unsupported_specificity.
+    const writer = new ScriptedWriter([
+      {
+        text: "Cold outbound works because 73% of buyers respond within 12 hours. Send more DMs today.",
+        finishReason: "stop",
+        usage: usage(200, 120),
+      },
+      {
+        text: "Cold outbound works because 73% of buyers respond within 12 hours of a first touch. Send more DMs today.",
+        finishReason: "stop",
+        usage: usage(200, 120),
+      },
+      {
+        text: "Cold outbound works because 73% of buyers respond within 12 hours of that first touch. Send more DMs today.",
+        finishReason: "stop",
+        usage: usage(200, 120),
+      },
+    ]);
+    const result = await collect(writer, {
+      lean: true,
+      task: {
+        kind: "source",
+        source: { id: "post_1", text: "A totally unrelated source post about hiring." },
+      },
+    });
+
+    expect(artifacts(result.events)).toHaveLength(0);
+    expect(done(result.events)?.message.content).toContain(
+      "specific number or date",
+    );
+  });
+
+  test("SOURCE turn: an UNAVAILABLE fidelity reviewer salvages the modeled draft with a verify note (not a dead-end)", async () => {
+    // The reported live bug: "model the attached post" fails with "source
+    // fidelity could not be verified because both reviewers were unavailable."
+    // A source task models the user's OWN attached/workspace post — a trusted
+    // source — so a reviewer OUTAGE (infra, not a quality verdict) must not
+    // discard a content-valid draft. Deliver it flagged for verification.
+    const sourceText =
+      "Your resume lists the tasks you were handed. Nobody remembers a task list. What they remember is the person who kept showing their work in public.";
+    const writer = new ScriptedWriter([
+      // The writer produces a clean, complete, ORIGINAL modeled draft — it just
+      // never gets a fidelity verdict because both reviewers are down.
+      { text: DISTINCT_COMPLETE_POST, finishReason: "stop", usage: usage(200, 120) },
+      { text: DISTINCT_COMPLETE_POST, finishReason: "stop", usage: usage(200, 120) },
+    ]);
+    const result = await collect(writer, {
+      task: { kind: "source", source: { id: "source-1", text: sourceText } },
+      finalizerSpecialists: {
+        ...input().finalizerSpecialists,
+        reviewSourceFidelity: async () => ({ outcome: "unavailable" }),
+      },
+    });
+
+    // A single salvaged artifact, stamped unverified so the status survives to
+    // the board — NOT a dead-end retry error.
+    const shipped = artifacts(result.events);
+    expect(shipped).toHaveLength(1);
+    expect(shipped[0].id).toMatch(/^art_salvage_/);
+    expect(shipped[0].meta).toEqual({ needs_verification: true });
+    expect(shipped[0].body).toBe(DISTINCT_COMPLETE_POST);
+    // The done message tells the user to eyeball it, and is NOT the old
+    // "both reviewers were unavailable / please retry" dead-end.
+    const doneEvent = done(result.events);
+    expect(doneEvent?.message.content).toMatch(/^Your draft is ready\./);
+    expect(doneEvent?.message.content).toContain("once-over against the original");
+    expect(doneEvent?.message.content).not.toContain("reviewers were unavailable");
+    // No error event was emitted.
+    expect(
+      result.events.some((event) => event.type === "error"),
+    ).toBe(false);
+  });
+
+  test("SOURCE turn: a draft that copied the source is caught deterministically and never salvaged, even with the reviewer 'unavailable'", async () => {
+    // Graceful degradation must never become a plagiarism hole. A near-duplicate
+    // of the source is rejected by the finalizer's DETERMINISTIC copy check
+    // (areDraftsNearDuplicate) BEFORE the fidelity reviewer is ever called — so
+    // the rejection code is `source_fidelity` (a real quality failure), not
+    // `source_fidelity_unavailable`, and the salvage path never fires. The turn
+    // dead-ends rather than shipping copied wording. (Even if the reviewer is
+    // configured "unavailable", it's moot: the deterministic gate wins first.)
+    const sourceText = DISTINCT_COMPLETE_POST;
+    const writer = new ScriptedWriter([
+      // Every attempt returns (essentially) the source verbatim.
+      { text: sourceText, finishReason: "stop", usage: usage(200, 120) },
+      { text: sourceText, finishReason: "stop", usage: usage(200, 120) },
+    ]);
+    const result = await collect(writer, {
+      task: { kind: "source", source: { id: "source-1", text: sourceText } },
+      finalizerSpecialists: {
+        ...input().finalizerSpecialists,
+        reviewSourceFidelity: async () => ({ outcome: "unavailable" }),
+      },
+    });
+    // No salvaged artifact — copied wording is never shipped.
+    expect(
+      artifacts(result.events).some((a) => a.id.startsWith("art_salvage_")),
+    ).toBe(false);
+    expect(artifacts(result.events)).toHaveLength(0);
+  });
+
+  test("SOURCE turn: a genuine fidelity REJECTION is a quality failure and is NOT salvaged", async () => {
+    // The salvage is strictly for reviewer UNAVAILABILITY. A reviewer that IS
+    // reachable and returns a real "this doesn't adapt the source" verdict is a
+    // content failure — it must still drive a retry / dead-end, never ship.
+    const sourceText =
+      "Your resume lists the tasks you were handed. What they remember is public work.";
+    const reviewSourceFidelity = vi.fn().mockResolvedValue({
+      outcome: "rejected",
+      reasons: ["The draft ignores the source's structure entirely."],
+      retryInstruction: "Reuse the source's hook-to-ending sequence.",
+    });
+    const writer = new ScriptedWriter([
+      { text: DISTINCT_COMPLETE_POST, finishReason: "stop", usage: usage(200, 120) },
+      { text: DISTINCT_COMPLETE_POST, finishReason: "stop", usage: usage(200, 120) },
+    ]);
+    const result = await collect(writer, {
+      task: { kind: "source", source: { id: "source-1", text: sourceText } },
+      finalizerSpecialists: {
+        ...input().finalizerSpecialists,
+        reviewSourceFidelity,
+      },
+    });
+    // No salvaged artifact for a genuine quality rejection.
+    expect(
+      artifacts(result.events).some((a) => a.id.startsWith("art_salvage_")),
+    ).toBe(false);
   });
 
   test("a lead-magnet turn injects the leadMagnetBlock into the writer prompt", async () => {

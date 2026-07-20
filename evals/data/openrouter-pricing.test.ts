@@ -118,23 +118,6 @@ describe("openRouterCost — news search model pricing", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Sonnet 5 is the decision model and remains available for manual
-// OPENROUTER_CHAT_MODEL=anthropic/claude-sonnet-5 A/B. Pin the retained rate so
-// it doesn't silently rot.
-// ---------------------------------------------------------------------------
-describe("openRouterCost — Sonnet 5 pricing row retained (intro, not live)", () => {
-  test("prices Sonnet 5 at the intro $2 in / $10 out", () => {
-    expect(openRouterCost("anthropic/claude-sonnet-5", M, M)).toBeCloseTo(12, 6);
-    expect(openRouterCost("anthropic/claude-sonnet-5", M, 0)).toBeCloseTo(2, 6);
-    expect(openRouterCost("anthropic/claude-sonnet-5", 0, M)).toBeCloseTo(10, 6);
-  });
-
-  test("cache-read tokens bill at $0.20/M", () => {
-    expect(openRouterCost("anthropic/claude-sonnet-5", M, 0, M)).toBeCloseTo(0.2, 6);
-  });
-});
-
 describe("openRouterUsageCost — exact provider cost", () => {
   test("reports cache-write tokens and estimates their Luna write premium", () => {
     expect(

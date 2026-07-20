@@ -120,9 +120,8 @@ function deterministicClean(
 
   // normalizePostBody is now just the dense-block paragraph split (the list-
   // heading/number repair nets were removed: the live writer model formats
-  // lists correctly on its own, so those nets never fired — see the "broken
-  // list" category history in AI_TELL_CATEGORIES for context on why it can
-  // still appear in old telemetry but won't be reported going forward).
+  // lists correctly on its own, so those nets never fired — the now-removed
+  // "broken_list" AI_TELL_CATEGORIES entry existed only for that retired net).
   const trimmed = deAshed.replace(/\s+$/, "");
   const normalized = normalizePostBody(deAshed);
   if (normalized !== trimmed) fixed.push("dense_paragraph");

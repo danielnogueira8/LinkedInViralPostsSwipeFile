@@ -2,6 +2,7 @@ import {
   admitDistinctModelingSource,
   normalizeModelingSourceCandidate,
 } from "@/lib/modeling-source-candidate";
+import { rotateFreshBand } from "@/lib/idea-ranking";
 
 const MAX_SELECTION = 50;
 const MAX_RESERVES = 5;
@@ -22,6 +23,14 @@ export type ModelingSourceSelectionInput<T extends ModelingSourceCandidate> = {
   limit: number;
   usedIds: ReadonlySet<string>;
   surfacedIds?: ReadonlySet<string>;
+  // Optional durable per-workspace rotation cursor (see
+  // lib/agent/tools.ts's nextRotationCursor / claim_modeling_source_rotation_cursor
+  // RPC). Rotates ONLY the leading never-used/never-surfaced band — the same
+  // primitive lib/idea-ranking.ts's rotateFreshBand already uses for ordinary
+  // idea discovery — so a caller that advances this cursor on every call cycles
+  // through the fresh band instead of always returning its first entries.
+  // Omitted or 0 preserves the exact prior (deterministic top-of-rank) behavior.
+  rotationCursor?: number;
 };
 
 export type ModelingSourcePoolInput<T extends ModelingSourceCandidate> =
@@ -84,11 +93,21 @@ export function selectModelingSourcePool<T extends ModelingSourceCandidate>(
 
   // Stable partitions: never-used and never-surfaced candidates come first,
   // while the caller's ordering is retained inside each partition.
-  const ranked = [...candidates].sort((left, right) => {
+  const stableRanked = [...candidates].sort((left, right) => {
     const used = Number(left.already_used) - Number(right.already_used);
     if (used !== 0) return used;
     return Number(left.recently_surfaced) - Number(right.recently_surfaced);
   });
+
+  // Rotate the leading fresh band by the caller's durable cursor (if any) so
+  // repeated calls cycle through it instead of always starting at its first
+  // entry — the same primitive lib/idea-ranking.ts's rotateFreshBand already
+  // uses for ordinary idea discovery. used/surfaced candidates never lead
+  // (rotateFreshBand only touches the fresh prefix), so freshness priority is
+  // unaffected; this only changes WHICH already-fresh candidate leads.
+  const ranked = input.rotationCursor
+    ? rotateFreshBand(stableRanked, input.rotationCursor, limit)
+    : stableRanked;
 
   const primaries = ranked.slice(0, limit);
   const reserves = ranked.slice(limit, limit + reserveLimit);

@@ -3,7 +3,6 @@ import {
   applyPersistedUserMessageId,
   hydrate,
   persistedRetryTaskForUserMessage,
-  retryTaskText,
   retryTask,
   type Message,
   type RawDbMessage,
@@ -583,18 +582,7 @@ describe("hydrate — rebuilds the recoverable Retry banner", () => {
   });
 });
 
-describe("retryTaskText", () => {
-  test("returns the original user task before the failed assistant turn", () => {
-    const messages: Message[] = [
-      { id: "u1", role: "user", text: "Find a post and rewrite it in my voice." },
-      { id: "a1", role: "assistant", text: "I found a source…" },
-    ];
-
-    expect(retryTaskText(messages, "a1")).toBe(
-      "Find a post and rewrite it in my voice.",
-    );
-  });
-
+describe("retryTask", () => {
   test("returns the persisted user id needed to resume action checkpoints", () => {
     const messages: Message[] = [
       { id: "persisted-user-id", role: "user", text: "Move the pricing draft to ready." },
@@ -605,16 +593,6 @@ describe("retryTaskText", () => {
       userMessageId: "persisted-user-id",
       text: "Move the pricing draft to ready.",
     });
-  });
-
-  test("does not accidentally retry a newer user turn", () => {
-    const messages: Message[] = [
-      { id: "u1", role: "user", text: "Original task" },
-      { id: "a1", role: "assistant", text: "Partial" },
-      { id: "u2", role: "user", text: "Different task" },
-    ];
-
-    expect(retryTaskText(messages, "a1")).toBe("Original task");
   });
 });
 

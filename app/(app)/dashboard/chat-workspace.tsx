@@ -148,9 +148,12 @@ import {
 import { chatSetupDeadlines } from "@/lib/chat-stream-policy";
 import {
   DRAFT_COUNT_OPTIONS,
+  POST_TYPE_OPTIONS,
   generationConfigForSelection,
   type DraftCountSelection,
+  type PostTypeSelection,
 } from "@/lib/generation-config";
+import type { DraftKind } from "@/lib/post-type";
 import type { ComposerStarterId } from "@/lib/composer-task-context";
 import { requestServerTurnStop } from "@/lib/chat-stop";
 import { safeJsonSchema } from "@/lib/api-fetch";
@@ -568,6 +571,13 @@ export function ChatWorkspace({
   const generationSettingsButtonRef = useRef<HTMLButtonElement>(null);
   const [draftCountSelection, setDraftCountSelection] =
     useState<DraftCountSelection>("auto");
+  // Explicit post-type pick for a plain composer send with no starter (a
+  // starter like "model a lead magnet" already carries its own post type via
+  // composerTaskContext — this only matters for free-text requests, which
+  // otherwise fall to the read-only orchestrator's instruction-derived
+  // fallback). Same Auto/explicit shape and lifecycle as draftCountSelection.
+  const [postTypeSelection, setPostTypeSelection] =
+    useState<PostTypeSelection>("auto");
   // Close every composer picker when the active chat changes (switch OR the
   // active chat being deleted, which sets activeId to null). The pickers are
   // anchored to the always-mounted composer, so without this a picker opened in
@@ -2477,7 +2487,7 @@ export function ChatWorkspace({
         ? readComposerDraft(turnStarterOwnerId).starterId ?? undefined
         : undefined;
       let turnGenerationConfig = appliesComposerControls
-        ? generationConfigForSelection(draftCountSelection)
+        ? generationConfigForSelection(draftCountSelection, postTypeSelection)
         : undefined;
       // The skill ids sent to the server: explicit (a refine inheriting the
       // source draft's skills) OR the composer chips. The bubble badge still
@@ -2932,7 +2942,17 @@ export function ChatWorkspace({
             if (chatId === activeIdRef.current) setPanelOpen(true);
             bump();
           } else if (event === "done") {
-            run.usage = parseCoworkTurnUsage(data.usage) ?? undefined;
+            // A failed turn that delivered nothing shouldn't show a credit
+            // line — "~1 credit" next to a dead-end error reads as "you were
+            // charged for nothing." The `error` frame for a recoverable
+            // failure always precedes `done` in the same turn, so
+            // run.recoverable is already set by the time this runs. Mirrors
+            // the same suppression chat-turn.ts applies to the PERSISTED
+            // usage marker, so live and post-reload rendering agree.
+            run.usage =
+              run.recoverable && run.artifacts.length === 0
+                ? undefined
+                : (parseCoworkTurnUsage(data.usage) ?? undefined);
             bump();
           } else if (event === "error") {
             const code = String(data.code ?? "");
@@ -3283,6 +3303,7 @@ export function ChatWorkspace({
     pendingLeadMagnet,
     pendingCreatorStyle,
     draftCountSelection,
+    postTypeSelection,
     customSkills,
     initialVoiceReady,
     router,
@@ -4241,8 +4262,8 @@ export function ChatWorkspace({
                     <X className="h-3.5 w-3.5" />
                   </button>
                 </div>
-                <div className="p-3.5">
-                  <div className="flex items-center justify-between gap-3">
+                <div className="flex flex-col divide-y divide-border p-3.5">
+                  <div className="flex items-center justify-between gap-3 pb-3.5">
                     <div>
                       <p className="text-sm font-medium text-foreground">Drafts</p>
                       <p className="mt-0.5 text-xs text-muted-foreground">
@@ -4268,6 +4289,48 @@ export function ChatWorkspace({
                             }}
                             className={cn(
                               "min-w-8 rounded-lg px-2 py-1.5 text-xs font-medium transition-colors",
+                              selected
+                                ? "bg-card text-primary shadow-sm"
+                                : "text-muted-foreground hover:bg-card/70 hover:text-foreground",
+                            )}
+                          >
+                            {label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 pt-3.5">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">Post type</p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        Only applies when sourcing from your swipe file.
+                      </p>
+                    </div>
+                    <div
+                      role="group"
+                      aria-label="Post type"
+                      className="flex shrink-0 items-center gap-1 rounded-xl border border-border bg-muted/50 p-1"
+                    >
+                      {(["auto", ...POST_TYPE_OPTIONS] as const).map((option) => {
+                        const selected = postTypeSelection === option;
+                        const label =
+                          option === "auto"
+                            ? "Any"
+                            : option === "regular"
+                              ? "Regular"
+                              : "Lead magnet";
+                        return (
+                          <button
+                            key={option}
+                            type="button"
+                            aria-pressed={selected}
+                            onClick={() => {
+                              setPostTypeSelection(option);
+                              setGenerationSettingsOpen(false);
+                            }}
+                            className={cn(
+                              "rounded-lg px-2 py-1.5 text-xs font-medium transition-colors",
                               selected
                                 ? "bg-card text-primary shadow-sm"
                                 : "text-muted-foreground hover:bg-card/70 hover:text-foreground",
@@ -4900,22 +4963,32 @@ export function ChatWorkspace({
                 }}
                 className={cn(
                   "h-9 shrink-0 gap-1.5 rounded-xl border-border bg-card px-2.5 hover:bg-muted",
-                  (generationSettingsOpen || draftCountSelection !== "auto") &&
+                  (generationSettingsOpen ||
+                    draftCountSelection !== "auto" ||
+                    postTypeSelection !== "auto") &&
                     "border-primary/60 text-primary",
                 )}
-                aria-label={`Draft count: ${
+                aria-label={`Generation settings — draft count: ${
                   draftCountSelection === "auto"
                     ? "Auto"
                     : draftCountSelection
+                }, post type: ${
+                  postTypeSelection === "auto"
+                    ? "Any"
+                    : postTypeSelection === "regular"
+                      ? "Regular"
+                      : "Lead magnet"
                 }`}
                 aria-expanded={generationSettingsOpen}
-                title="Choose how many drafts to create"
+                title="Choose how many drafts to create and which post type to source"
               >
                 <SlidersHorizontal className="h-4 w-4" aria-hidden />
                 <span className="text-xs font-medium tabular-nums">
                   {draftCountSelection === "auto"
                     ? "Auto"
                     : `${draftCountSelection} drafts`}
+                  {postTypeSelection !== "auto" &&
+                    ` · ${postTypeSelection === "regular" ? "Regular" : "Lead magnet"}`}
                 </span>
               </Button>
               {/* ⚡ Custom-skills picker — only when the workspace has skills.
@@ -6749,6 +6822,22 @@ function ArtifactCard({
     }
   };
 
+  // The kind to send on save. A hook always stays a hook. Otherwise: if the
+  // user made an EXPLICIT post-type choice for this turn (a starter contract
+  // or a Generation Settings pick — stamped by the server into
+  // meta.explicit_post_type, never derived from body text), that choice is
+  // authoritative and must survive the save unmodified. Only when there was
+  // no explicit choice do we omit kind, letting the server auto-classify
+  // regular vs lead-magnet from the body — the original, still-desired
+  // behavior for a lead magnet written in Cowork with no picker used.
+  const kindForSave = (): DraftKind | undefined => {
+    if (artifact.kind === "hook") return "hook";
+    const explicit = artifact.meta?.explicit_post_type;
+    if (explicit === "lead_magnet") return "lead_magnet";
+    if (explicit === "regular") return "post";
+    return undefined;
+  };
+
   // Save as a NEW chat_artifacts row (the original behavior).
   const saveAsNew = async () => {
     if (!chatId || saving) return;
@@ -6761,10 +6850,7 @@ function ArtifactCard({
           title: artifact.title,
           // edited local body (from the inline editor), not artifact.body
           body,
-          // Send kind ONLY for a hook (an explicit non-post type). For a rendered
-          // 'post', omit it so the server auto-classifies regular vs lead-magnet
-          // from the body — a lead magnet written in Cowork gets tagged for free.
-          ...(artifact.kind === "hook" ? { kind: "hook" as const } : {}),
+          ...(kindForSave() ? { kind: kindForSave() } : {}),
           ...(artifact.meta ? { meta: artifact.meta } : {}),
           ...(mediaAttachments.length ? { media_attachments: mediaAttachments } : {}),
         }),
@@ -6872,7 +6958,7 @@ function ArtifactCard({
       body: JSON.stringify({
         title: artifact.title,
         body,
-        ...(artifact.kind === "hook" ? { kind: "hook" as const } : {}),
+        ...(kindForSave() ? { kind: kindForSave() } : {}),
         ...(artifact.meta ? { meta: artifact.meta } : {}),
         media_attachments: scheduleMediaAttachments,
       }),

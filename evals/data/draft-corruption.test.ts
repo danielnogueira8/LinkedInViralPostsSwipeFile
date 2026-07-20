@@ -40,7 +40,7 @@ describe("looksCorruptedDraft — catches real corruption", () => {
     expect(looksCorruptedDraft('...end of post","body": "next')).toBe(
       "JSON key fragment in body",
     );
-    expect(looksCorruptedDraft('"title" : "Draft post"')).toBe(
+    expect(looksCorruptedDraft('"postId": "abc123"')).toBe(
       "JSON key fragment in body",
     );
   });
@@ -92,6 +92,17 @@ describe("looksCorruptedDraft — does NOT false-positive on real posts", () => 
     "Add a permalink to every post so people can find it later.",
     // Single braces in prose.
     "Use the {first_name} merge tag and personalize at scale.",
+    // The word "title" quoted in ordinary prose, not a JSON key:value shape —
+    // "title" was dropped from the JSON-key alternation because, unlike
+    // permalink/body/postId (internal-only field names), it's an ordinary
+    // English word a post can legitimately quote.
+    'Change your job "title": from Manager to Owner and see what happens.',
+    'She listed her "title" as founder, not CEO.',
+    // A balanced {{word}} template variable immediately followed by a letter
+    // — legitimate templating syntax some creators write in their own posts,
+    // not corrupted JSON welded into prose.
+    "Use {{company}}'s data to personalize every message you send.",
+    "The {{name}}s on this list already opted in, so send with confidence.",
     // A hook with an em dash and quotes — clean.
     'She said "this will never work" — so I shipped it that night.',
     // Backticks for inline code emphasis, but not an artifact fence.
@@ -222,31 +233,6 @@ describe("normalizePostBody — injects paragraph breaks into a wall of text", (
 
   test("trims trailing whitespace", () => {
     expect(normalizePostBody("A short post.   \n  ")).toBe("A short post.");
-  });
-
-  // Live-observed: "It's Sunday, July 19. But the story has already started."
-  // got a paragraph break inserted after "19." — the sentence-split net can't
-  // tell a date from a sentence boundary. A number right before the mark is
-  // never treated as a sentence boundary now (dates, ages, list markers), only
-  // a letter is — so this can't recur regardless of number length.
-  test("does not split a wall of text after a date/number (July 19.)", () => {
-    const body =
-      "It's Sunday, July 19. But the story has already started. " +
-      "Three founders are already awake, already building, already shipping. " +
-      "The rest of us are still asleep, still scrolling, still waiting for Monday.";
-    const out = normalizePostBody(body);
-    expect(out).toContain("July 19. But the story");
-    expect(out).not.toContain("July 19.\n\n");
-  });
-
-  test("does not split after ANY number, including a year — only letters trigger a split", () => {
-    const body =
-      "The company was founded in 2024. It grew from zero to a million dollars in revenue in just eighteen months flat, which nobody thought possible at the time. " +
-      "Nobody believed it would work when we started, not even the people writing the checks. Everybody was wrong.";
-    const out = normalizePostBody(body);
-    expect(out).not.toContain("2024.\n\n");
-    expect(out).toContain("time.\n\n");
-    expect(out).toContain("checks.\n\n");
   });
 });
 

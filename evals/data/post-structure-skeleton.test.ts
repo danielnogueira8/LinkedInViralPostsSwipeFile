@@ -264,6 +264,44 @@ describe("checkStructureMatch", () => {
     expect(checkStructureMatch(source, draft)?.code).toBe("layout_order");
   });
 
+  test("does NOT flag a draft that consolidates two source list blocks into one (same order)", () => {
+    // The C4 false-positive: a source with two separate list blocks
+    // (prose,list,prose,list,prose) that the model naturally adapts into one
+    // list (prose,list,prose) is a legitimate consolidation — the reference
+    // block tells the writer list item counts can flex — not a structure
+    // failure. Before the subsequence relaxation this was a false
+    // structure_mismatch that burned a retry or dropped a good draft.
+    const source = computeStructureSkeleton(
+      [
+        "A sharp opening makes people stop and pay attention here.",
+        "",
+        "→ name the tension",
+        "→ show the cost",
+        "",
+        "A short bridge paragraph carries the reader onward to the next beat.",
+        "",
+        "→ offer the fix",
+        "→ prove it works",
+        "",
+        "Then land the practical takeaway with a direct, confident close.",
+      ].join("\n"),
+    );
+    const draft = computeStructureSkeleton(
+      [
+        "A sharp opening makes people stop and pay attention right here.",
+        "",
+        "→ name the tension",
+        "→ show the cost",
+        "→ offer the fix",
+        "→ prove it works",
+        "",
+        "Then land the practical takeaway with a direct, confident close.",
+      ].join("\n"),
+    );
+
+    expect(checkStructureMatch(source, draft)).toBeNull();
+  });
+
   test("flags a draft that collapses a multi-paragraph source into a different visual density", () => {
     const source = computeStructureSkeleton(
       Array.from({ length: 6 }, (_, index) =>

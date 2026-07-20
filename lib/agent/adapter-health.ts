@@ -263,6 +263,13 @@ export async function runHealthyAdapter<T>(input: {
   key: string;
   signal?: AbortSignal;
   call: () => Promise<T>;
+  // Lets a caller mark a specific caught error as health-neutral: the permit
+  // is released (so a half-open probe never gets stuck) but no failure sample
+  // is recorded, so this attempt does not push the circuit toward opening.
+  // Used to keep a validate() throw that only proves a malformed response
+  // (not a transport problem) from degrading the same circuit as real
+  // provider failures. Defaults to treating every caught error as a failure.
+  isHealthNeutral?: (error: unknown) => boolean;
 }): Promise<{ value: T; latencyMs: number }> {
   input.signal?.throwIfAborted();
   const permit = input.registry.acquire(input.key);
@@ -283,7 +290,7 @@ export async function runHealthyAdapter<T>(input: {
     return { value, latencyMs };
   } catch (error) {
     const latencyMs = Date.now() - startedAt;
-    if (input.signal?.aborted) {
+    if (input.signal?.aborted || input.isHealthNeutral?.(error)) {
       input.registry.release(input.key, permit);
     } else {
       input.registry.recordFailure(
