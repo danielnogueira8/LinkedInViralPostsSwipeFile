@@ -19,6 +19,12 @@ describe("migration 110 drops cowork rollout health tables", () => {
     );
   });
 
+  test("drops the health RPC before the table it returns", () => {
+    expect(migration).toContain(
+      "drop function if exists public.record_cowork_rollout_health(text, text)",
+    );
+  });
+
   test("advances deployment readiness to schema version 110", () => {
     expect(migration).toContain("values (true, 110, now())");
   });
