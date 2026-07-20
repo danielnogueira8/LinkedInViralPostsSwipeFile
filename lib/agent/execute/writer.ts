@@ -86,32 +86,39 @@ import {
 import { createHash } from "node:crypto";
 import { createSupabaseModeledDraftBatchRepository } from "@/lib/agent/modeled-draft-batch-supabase";
 
-const DIRECT_WRITER_TIMEOUT_MS = 45_000;
 const DIRECT_WRITER_MAX_TOKENS = 1_500;
-export const DIRECT_DRAFT_ENGINE_DEADLINE_MS = 60_000;
-
 const THIN_WRITER_MAX_TOKENS = 4_000;
-const THIN_WRITER_TIMEOUT_MS = 90_000;
-export const THIN_DRAFT_ENGINE_DEADLINE_MS = 120_000;
 const NARROW_REFINE_MAX_TOKENS = 512;
-const NARROW_REFINE_TIMEOUT_MS = 30_000;
-export const NARROW_REFINE_DEADLINE_MS = 45_000;
-export const MULTI_DRAFT_DEADLINE_MS = 240_000;
+
+export const ROUTE_CEILING_MS = 300_000;
+export const TERMINAL_BUFFER_MS = 60_000;
+export const WRITER_TURN_BUDGET_MS = ROUTE_CEILING_MS - TERMINAL_BUFFER_MS; // 240_000
+
+export const SINGLE_DRAFT_CHAIN_MAX_CALLS = 3; // primary + repair + fallback
+export const SINGLE_DRAFT_CALL_TIMEOUT_MS = Math.floor(
+  WRITER_TURN_BUDGET_MS / SINGLE_DRAFT_CHAIN_MAX_CALLS,
+); // 80_000
+
+const MIN_TURN_DRAFT_COUNT = 2;
+export const MAX_TURN_DRAFT_COUNT = 6;
+export const SLOT_BATCH_BUDGET_MS = WRITER_TURN_BUDGET_MS; // 240_000
+export const SLOT_CONCURRENCY = 2;
+export const SLOT_MAX_CHAIN_CALLS = 2; // original source + one reserve
+export const SLOT_CALL_TIMEOUT_MS = Math.floor(
+  SLOT_BATCH_BUDGET_MS /
+    (Math.ceil(MAX_TURN_DRAFT_COUNT / SLOT_CONCURRENCY) * SLOT_MAX_CHAIN_CALLS),
+); // ~40_000 for 6 drafts
+
 export const GROUNDED_EVIDENCE_TEXT_BUDGET_CHARS = 72_000;
 const DRAFT_READY_TEXT = "Your draft is ready.";
 const UPDATED_DRAFT_READY_TEXT = "Your updated draft is ready.";
 
-// Modeled batch constants.
-const MAX_MODELED_DRAFTS = 6;
+// Slot-batch implementation constants.
 const MAX_RESERVE_SOURCES = 5;
 const MAX_SOURCE_TEXT_CHARS = 20_000;
 const MAX_SOURCE_REPLACEMENTS_PER_SLOT = 1;
-const MODELED_DRAFT_CONCURRENCY = 2;
-const MODELED_DRAFT_BATCH_MAX_DURATION_MS = 240_000;
 const MODELED_DRAFT_STORE_CLEANUP_MS = 5_000;
 const MAX_GENERATION_CONTEXT_CHARS = 250_000;
-const MIN_MODELED_BATCH_COUNT = 2;
-const MAX_MODELED_BATCH_COUNT = 6;
 
 type PreferenceInput = Pick<ContentPreference, "rule">;
 type FeedbackInput = Pick<
@@ -200,6 +207,10 @@ export type WriterInput = {
   lean?: boolean;
   enableStructureGate?: boolean;
   dependencies?: Partial<WriterDependencies>;
+  /** Absolute deadline for this turn (claimed start + budget). */
+  deadlineAtMs?: number;
+  /** Internal flag: slot-batch children use a shorter per-call timeout and skip repair. */
+  slotMode?: boolean;
 };
 
 const productionDependencies: WriterDependencies = {
@@ -207,8 +218,8 @@ const productionDependencies: WriterDependencies = {
   recordUsage: logOpenRouterUsage,
   cancelPollMs: 800,
   cancelProbeTimeoutMs: 2_000,
-  multiDeadlineMs: MULTI_DRAFT_DEADLINE_MS,
-  turnDeadlineMs: DIRECT_DRAFT_ENGINE_DEADLINE_MS,
+  multiDeadlineMs: SLOT_BATCH_BUDGET_MS,
+  turnDeadlineMs: WRITER_TURN_BUDGET_MS,
   adapterHealth: coworkAdapterHealth,
   runSlot: undefined,
   repository: undefined,
@@ -814,11 +825,9 @@ function attemptRequest(opts: {
       : opts.input.lean
         ? THIN_WRITER_MAX_TOKENS
         : DIRECT_WRITER_MAX_TOKENS,
-    timeoutMs: narrowRefine
-      ? NARROW_REFINE_TIMEOUT_MS
-      : opts.input.lean
-        ? THIN_WRITER_TIMEOUT_MS
-        : DIRECT_WRITER_TIMEOUT_MS,
+    timeoutMs: opts.input.slotMode
+      ? SLOT_CALL_TIMEOUT_MS
+      : SINGLE_DRAFT_CALL_TIMEOUT_MS,
     signal: opts.signal,
     sessionId: opts.input.sessionId,
     reasoning: narrowRefine
@@ -1020,20 +1029,16 @@ export async function* runSingleDraftTurn(
     throw new Error("runSingleDraftTurn does not handle multi tasks");
   }
 
+  const now = deps.now ?? Date.now;
+  const deadlineAtMs =
+    input.deadlineAtMs ??
+    now() + (deps.turnDeadlineMs ?? WRITER_TURN_BUDGET_MS);
+
   const serverCancellation = new AbortController();
   const deadlineController = new AbortController();
   const deadlineTimer = setTimeout(
     () => deadlineController.abort(),
-    Math.max(
-      1,
-      deps.turnDeadlineMs ??
-        (task.kind === "refine" &&
-        (task.focus === "hook" || task.focus === "cta")
-          ? NARROW_REFINE_DEADLINE_MS
-          : input.lean
-            ? THIN_DRAFT_ENGINE_DEADLINE_MS
-            : DIRECT_DRAFT_ENGINE_DEADLINE_MS),
-    ),
+    Math.max(1, deadlineAtMs - now()),
   );
   const turnSignal = AbortSignal.any(
     [input.signal, serverCancellation.signal, deadlineController.signal].filter(
@@ -1488,61 +1493,63 @@ export async function* runSingleDraftTurn(
           task,
         );
 
-        try {
-          const repaired = await call(
-            "repair",
-            primaryModel,
-            repairMessages(baseMessages, primary.text, result, task),
-          );
-          if (await cancellationRequestedNow()) {
-            yield interrupted();
-            return;
-          }
-          if (repaired.text.trim()) {
-            const repairedResult = await finalize(repaired);
-            if (repairedResult.ok) {
-              if (await cancellationRequestedNow()) {
-                yield interrupted();
-                return;
-              }
-              if (repairedResult.kind === "text") {
-                yield { type: "text", delta: repairedResult.text };
-                yield finish(repairedResult.text);
-              } else {
-                yield {
-                  type: "artifact",
-                  artifact: deliveredArtifact(repairedResult.artifact),
-                };
-                yield finish(successText);
-              }
-              return;
-            }
-            if (
-              repairedResult.rejection.code === "cancelled" ||
-              (await cancellationRequestedNow())
-            ) {
+        if (!input.slotMode) {
+          try {
+            const repaired = await call(
+              "repair",
+              primaryModel,
+              repairMessages(baseMessages, primary.text, result, task),
+            );
+            if (await cancellationRequestedNow()) {
               yield interrupted();
               return;
             }
-            const unavailableEvents = unavailableFidelityEvents(repairedResult);
-            if (unavailableEvents) {
-              for (const event of unavailableEvents) yield event;
+            if (repaired.text.trim()) {
+              const repairedResult = await finalize(repaired);
+              if (repairedResult.ok) {
+                if (await cancellationRequestedNow()) {
+                  yield interrupted();
+                  return;
+                }
+                if (repairedResult.kind === "text") {
+                  yield { type: "text", delta: repairedResult.text };
+                  yield finish(repairedResult.text);
+                } else {
+                  yield {
+                    type: "artifact",
+                    artifact: deliveredArtifact(repairedResult.artifact),
+                  };
+                  yield finish(successText);
+                }
+                return;
+              }
+              if (
+                repairedResult.rejection.code === "cancelled" ||
+                (await cancellationRequestedNow())
+              ) {
+                yield interrupted();
+                return;
+              }
+              const unavailableEvents = unavailableFidelityEvents(repairedResult);
+              if (unavailableEvents) {
+                for (const event of unavailableEvents) yield event;
+                return;
+              }
+              fallbackMessages = repairMessages(
+                baseMessages,
+                repaired.text,
+                repairedResult,
+                task,
+              );
+            }
+          } catch (error) {
+            rethrowUsagePersistence(error);
+            if (isAbort(error, turnSignal)) {
+              yield interrupted();
               return;
             }
-            fallbackMessages = repairMessages(
-              baseMessages,
-              repaired.text,
-              repairedResult,
-              task,
-            );
+            noteWriterStageFailure("repair", error);
           }
-        } catch (error) {
-          rethrowUsagePersistence(error);
-          if (isAbort(error, turnSignal)) {
-            yield interrupted();
-            return;
-          }
-          noteWriterStageFailure("repair", error);
         }
       }
 
@@ -1895,11 +1902,11 @@ function validatedVariation(
   const validStandaloneSlot =
     Number.isInteger(input.slot.index) &&
     input.slot.index >= 0 &&
-    input.slot.index < MAX_MODELED_BATCH_COUNT;
+    input.slot.index < MAX_TURN_DRAFT_COUNT;
 
   if (!validStandaloneSlot) {
     throw new RangeError(
-      `Invalid modeled draft slot index: expected a zero-based integer below ${MAX_MODELED_BATCH_COUNT}.`,
+      `Invalid modeled draft slot index: expected a zero-based integer below ${MAX_TURN_DRAFT_COUNT}.`,
     );
   }
 
@@ -1908,15 +1915,15 @@ function validatedVariation(
   const { count, previousBodies } = input.batch;
   const validCount =
     Number.isInteger(count) &&
-    count >= MIN_MODELED_BATCH_COUNT &&
-    count <= MAX_MODELED_BATCH_COUNT;
+    count >= MIN_TURN_DRAFT_COUNT &&
+    count <= MAX_TURN_DRAFT_COUNT;
   const validSlot =
     Number.isInteger(input.slot.index) &&
     input.slot.index >= 0 &&
     input.slot.index < count;
   const validPreviousBodyCount =
     Array.isArray(previousBodies) &&
-    previousBodies.length <= MAX_MODELED_BATCH_COUNT - 1 &&
+    previousBodies.length <= MAX_TURN_DRAFT_COUNT - 1 &&
     previousBodies.length <= count - 1;
   const validPreviousBodies =
     validPreviousBodyCount &&
@@ -1938,7 +1945,7 @@ function validatedVariation(
     !uniquePreviousBodies
   ) {
     throw new RangeError(
-      `Invalid modeled draft batch context: count must be ${MIN_MODELED_BATCH_COUNT}-${MAX_MODELED_BATCH_COUNT}, the zero-based slot must be inside that count, and previousBodies must contain at most count - 1 unique bounded accepted posts.`,
+      `Invalid modeled draft batch context: count must be ${MIN_TURN_DRAFT_COUNT}-${MAX_TURN_DRAFT_COUNT}, the zero-based slot must be inside that count, and previousBodies must contain at most count - 1 unique bounded accepted posts.`,
     );
   }
 
@@ -2021,6 +2028,8 @@ export async function runModeledDraftSlot(
       ...input.engineInput,
       task,
       enableStructureGate: true,
+      slotMode: true,
+      deadlineAtMs: input.engineInput.deadlineAtMs,
       onFinalizerDecision: (decision) => {
         finalizerDecision = decision;
         callerFinalizerDecision?.(decision);
@@ -2256,7 +2265,7 @@ function validRequest(input: ExecuteModeledDraftBatchInput): boolean {
     input.instruction.length > 50_000 ||
     !Number.isInteger(input.count) ||
     input.count < 2 ||
-    input.count > MAX_MODELED_DRAFTS ||
+    input.count > MAX_TURN_DRAFT_COUNT ||
     (input.deadlineAtMs !== undefined &&
       !Number.isFinite(input.deadlineAtMs)) ||
     input.engineInput.workspaceId !== input.workspaceId
@@ -2525,12 +2534,9 @@ export async function executeModeledDraftBatch(
   const now = dependencies.now();
   const requestedRemaining =
     input.deadlineAtMs === undefined
-      ? MODELED_DRAFT_BATCH_MAX_DURATION_MS
+      ? SLOT_BATCH_BUDGET_MS
       : input.deadlineAtMs - now;
-  const remaining = Math.min(
-    MODELED_DRAFT_BATCH_MAX_DURATION_MS,
-    requestedRemaining,
-  );
+  const remaining = Math.min(SLOT_BATCH_BUDGET_MS, requestedRemaining);
   let deadlineTimer: ReturnType<typeof setTimeout> | null = null;
   if (remaining <= 0) deadlineController.abort();
   else deadlineTimer = setTimeout(() => deadlineController.abort(), remaining);
@@ -2704,7 +2710,7 @@ export async function executeModeledDraftBatch(
       const pending = slots
         .filter((slot) => slot.state !== "accepted")
         .sort((left, right) => left.index - right.index)
-        .slice(0, MODELED_DRAFT_CONCURRENCY);
+        .slice(0, SLOT_CONCURRENCY);
       const stopReasons: Array<{
         slotIndex: number;
         reason: ModeledDraftBatchReleaseReason;
@@ -3000,11 +3006,11 @@ async function* runLocalSlotBatch(
   const deps = resolveDependencies(input.dependencies);
   if (
     !Number.isInteger(task.expectedCount) ||
-    task.expectedCount < 2 ||
-    task.expectedCount > 6
+    task.expectedCount < MIN_TURN_DRAFT_COUNT ||
+    task.expectedCount > MAX_TURN_DRAFT_COUNT
   ) {
     const failureMessage =
-      "I couldn’t compile a safe exact draft count for this request. Please ask for between 2 and 6 drafts.";
+      `I couldn’t compile a safe exact draft count for this request. Please ask for between ${MIN_TURN_DRAFT_COUNT} and ${MAX_TURN_DRAFT_COUNT} drafts.`;
     yield {
       type: "error",
       code: "draft_engine_invalid_count",
@@ -3015,10 +3021,14 @@ async function* runLocalSlotBatch(
     return;
   }
 
+  const now = deps.now ?? Date.now;
+  const deadlineAtMs =
+    input.deadlineAtMs ??
+    now() + (deps.multiDeadlineMs ?? SLOT_BATCH_BUDGET_MS);
   const deadlineController = new AbortController();
   const deadline = setTimeout(
     () => deadlineController.abort(),
-    Math.max(1, deps.multiDeadlineMs),
+    Math.max(1, deadlineAtMs - now()),
   );
   const multiSignal = input.signal
     ? AbortSignal.any([input.signal, deadlineController.signal])
@@ -3091,6 +3101,7 @@ async function* runLocalSlotBatch(
           })),
         ],
         finalTransformCandidate: duplicateGuard,
+        deadlineAtMs,
       };
 
       const childEvents: AgentEvent[] = [];
@@ -3204,7 +3215,9 @@ async function* runLocalSlotBatch(
       return;
     }
 
-    if (await cancellationRequestedAtBoundary({ ...input, signal: multiSignal }, deps)) {
+    if (
+      await cancellationRequestedAtBoundary({ ...input, signal: multiSignal }, deps)
+    ) {
       yield engineDone(
         "Stopped before the complete draft set was produced.",
         inputTokens,
@@ -3239,6 +3252,9 @@ async function* runDurableSlotBatch(
   const deps = resolveDependencies(input.dependencies);
   const repository = deps.repository ?? createSupabaseModeledDraftBatchRepository();
   const runSlot = deps.runSlot ?? runModeledDraftSlot;
+  const now = deps.now ?? Date.now;
+  const deadlineAtMs =
+    input.deadlineAtMs ?? now() + (deps.multiDeadlineMs ?? SLOT_BATCH_BUDGET_MS);
 
   const result = await executeModeledDraftBatch(
     {
@@ -3247,7 +3263,8 @@ async function* runDurableSlotBatch(
       instruction: input.userInstruction,
       count: task.expectedCount,
       sources,
-      engineInput: input,
+      engineInput: { ...input, deadlineAtMs },
+      deadlineAtMs,
       signal: input.signal,
     },
     {

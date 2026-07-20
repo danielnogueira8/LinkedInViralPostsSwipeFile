@@ -1729,7 +1729,7 @@ describe("DraftEngine — thin path (lean mode)", () => {
     expect(writer.requests[0]).toMatchObject({
       reasoning: "minimal",
       maxTokens: 512,
-      timeoutMs: 30_000,
+      timeoutMs: 80_000,
     });
     expect(JSON.stringify(writer.requests[0].messages)).toContain(
       "Return only the replacement hook",

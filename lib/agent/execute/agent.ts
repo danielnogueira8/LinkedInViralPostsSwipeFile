@@ -36,6 +36,7 @@ import { distinctFallbackModel } from "@/lib/agent/model-routing";
 // Writer / prose delegation
 import {
   runWriterTurn,
+  WRITER_TURN_BUDGET_MS,
   type WriterInput,
   type WriterTask,
   type GroundedSource,
@@ -91,6 +92,8 @@ export type AgentInput = {
   onModelUsed?: (model: string) => void;
   telemetry?: CoworkTurnTelemetry;
   dependencies?: Partial<AgentDependencies>;
+  /** Absolute deadline for the whole agent turn (claimed start + route budget). */
+  deadlineAtMs?: number;
 };
 
 export type AgentDependencies = {
@@ -144,6 +147,9 @@ export async function* runAgentTurn(
       onModelUsed: input.onModelUsed,
       telemetry: input.telemetry,
     };
+    const actionDeadlineMs =
+      input.deadlineAtMs ?? Date.now() + ACTION_ORCHESTRATOR_DEADLINE_MS;
+    const actionTurnDeadlineMs = Math.max(1, actionDeadlineMs - Date.now());
     const actionDeps: ActionOrchestratorDependencies = {
       ...actionProductionDefaults,
       ...sharedDefaults,
@@ -153,7 +159,7 @@ export async function* runAgentTurn(
       adapters:
         input.dependencies?.actionAdapters ?? actionProductionDefaults.adapters,
       turnDeadlineMs:
-        input.dependencies?.turnDeadlineMs ?? ACTION_ORCHESTRATOR_DEADLINE_MS,
+        input.dependencies?.turnDeadlineMs ?? actionTurnDeadlineMs,
       ...withoutUndefined(input.dependencies),
     };
     const watcher = createActionCancellationWatcher(actionInput, actionDeps);
@@ -164,6 +170,12 @@ export async function* runAgentTurn(
     }
     return;
   }
+
+  const researchNow = input.dependencies?.now ? input.dependencies.now() : new Date();
+  const researchTurnDeadlineMs =
+    input.deadlineAtMs !== undefined
+      ? Math.max(1, input.deadlineAtMs - researchNow.getTime())
+      : WRITER_TURN_BUDGET_MS;
 
   const researchInput: ReadOnlyOrchestratorInput = {
     workspaceId: input.workspaceId,
@@ -192,7 +204,7 @@ export async function* runAgentTurn(
       input.dependencies?.inspectAttachments ?? inspectAttachmentEvidence,
     now: input.dependencies?.now ?? (() => new Date()),
     turnDeadlineMs:
-      input.dependencies?.turnDeadlineMs ?? READ_ONLY_ORCHESTRATOR_DEADLINE_MS,
+      input.dependencies?.turnDeadlineMs ?? researchTurnDeadlineMs,
     runProse: input.dependencies?.runProse ?? runWriterTurn,
     executeModeledDraftBatch: input.dependencies?.executeModeledDraftBatch,
     ...withoutUndefined(input.dependencies),
@@ -264,7 +276,7 @@ const FALLBACK_ACTION_ORCHESTRATOR_MODEL = distinctFallbackModel(
     "google/gemini-3.5-flash",
   ["anthropic/claude-sonnet-5"],
 );
-const ACTION_ORCHESTRATOR_DEADLINE_MS = 85_000;
+export const ACTION_ORCHESTRATOR_DEADLINE_MS = 85_000;
 
 const ActionIdSchema = z
   .string()
@@ -2201,9 +2213,8 @@ async function* executeActionOrchestrator(
 // Primary defaults to the one app-wide chat model (OPENROUTER_CHAT_MODEL) so
 // every text-LLM call uses the SAME model unless pinned via
 // OPENROUTER_READ_ONLY_ORCHESTRATOR_MODEL. The fallback stays independent.
-// Ordinary research remains inside the 90-second complex-turn SLO.
-const READ_ONLY_ORCHESTRATOR_DEADLINE_MS = 85_000;
-const ORCHESTRATED_MULTI_DRAFT_DEADLINE_MS = 80_000;
+// Research/tool work is capped so the remaining budget can be passed to prose.
+const RESEARCH_TOOL_BUDGET_MS = 120_000;
 
 const ReadOnlyActionIdSchema = z
   .string()
@@ -3650,7 +3661,7 @@ const readOnlyProductionDependencies: Omit<
   now: () => new Date(),
   cancelPollMs: 800,
   cancelProbeTimeoutMs: 2_000,
-  turnDeadlineMs: READ_ONLY_ORCHESTRATOR_DEADLINE_MS,
+  turnDeadlineMs: WRITER_TURN_BUDGET_MS,
   adapterHealth: coworkAdapterHealth,
 };
 
@@ -4058,6 +4069,11 @@ async function* runReadOnlyOrchestratorCore(
 ): AsyncGenerator<AgentEvent> {
   const authoritativeInstruction =
     input.route.authoritativeInstruction ?? input.userInstruction;
+  // Cap the research/tool stage so prose always has the remaining budget.
+  const toolDeadlineAtMs = Math.min(
+    input.deadlineAtMs,
+    deps.now().getTime() + RESEARCH_TOOL_BUDGET_MS,
+  );
   // Every route is now server-compiled — no LLM planner. Evidence routes
   // (news/web/workspace/file-inspection) are built directly from the route by
   // compileServerReadOnlyPlan; ambiguity emits a canned clarify. This keeps the
@@ -4393,7 +4409,7 @@ async function* runReadOnlyOrchestratorCore(
               {
                 telemetry: input.telemetry,
                 adapterHealth: deps.adapterHealth,
-                deadlineAtMs: input.deadlineAtMs,
+                deadlineAtMs: toolDeadlineAtMs,
               },
             ),
         });
@@ -5021,12 +5037,10 @@ async function* runReadOnlyOrchestratorCore(
     task: writerTask,
     signal: input.signal,
     telemetry: input.telemetry ?? input.writerInput.telemetry,
+    deadlineAtMs: input.deadlineAtMs,
     ...(modeledWorkspaceSource ? { enableStructureGate: true } : {}),
     dependencies: {
       ...input.writerInput.dependencies,
-      ...(expectedDrafts > 1 && !modeledBatch
-        ? { multiDeadlineMs: ORCHESTRATED_MULTI_DRAFT_DEADLINE_MS }
-        : {}),
     },
   };
   const prose = deps.runProse(proseInput);

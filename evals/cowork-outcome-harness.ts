@@ -27,7 +27,6 @@ import {
   type PersistedHarnessUsage,
 } from "@/evals/cowork-harness-store";
 import type { SourceFidelityVerdict } from "@/lib/agent/specialists/source-fidelity";
-import { runDraftEngine } from "@/lib/agent/draft-engine";
 import type { DraftEngineGroundedSource } from "@/lib/agent/draft-engine";
 import type {
   DraftWriterAdapter,
@@ -38,14 +37,14 @@ import {
   logOpenRouterUsage,
   type Usage,
 } from "@/lib/openrouter";
+import { runWriterTurn } from "@/lib/agent/execute/writer";
+import { runAgentTurn } from "@/lib/agent/execute/agent";
 import {
-  runReadOnlyOrchestrator,
   type ReadOnlyOrchestratorAdapter,
   type ReadOnlyPlannerRequest,
 } from "@/lib/agent/read-only-orchestrator";
 import {
   actionOperationKey,
-  runActionOrchestrator,
   type ActionOrchestratorAdapter,
   type ActionPlannerRequest,
   type MutationAction,
@@ -65,7 +64,10 @@ import {
   type ModeledDraftSlotCheckpoint,
   type ModeledPostArtifact,
 } from "@/lib/agent/modeled-draft-batch";
-import { runModeledDraftSlot } from "@/lib/agent/modeled-draft-slot-runner";
+import {
+  runModeledDraftSlot,
+  type ModeledDraftSlotRunner,
+} from "@/lib/agent/modeled-draft-slot-runner";
 
 export type CoworkOutcomeScenario = {
   id: string;
@@ -824,16 +826,95 @@ async function runCoworkOutcomeScenarioWithStore(
   modeledBatchRepository.setFrozenSources(
     scenario.model.readOnlyOrchestrator?.frozenModeledSources,
   );
-  const harnessRunDraftEngine: ChatTurnDependencies["runDraftEngine"] =
+  const harnessRunWriterTurn: ChatTurnDependencies["runWriterTurn"] =
     directWriter
       ? (input) =>
-          runDraftEngine(input, {
-            writer: directWriter,
-            recordUsage: logOpenRouterUsage,
-            cancelPollMs: 1,
-            adapterHealth: draftAdapterHealth,
+          runWriterTurn({
+            ...input,
+            dependencies: {
+              writer: directWriter,
+              recordUsage: logOpenRouterUsage,
+              cancelPollMs: 1,
+              adapterHealth: draftAdapterHealth,
+            },
           })
-      : runDraftEngine;
+      : runWriterTurn;
+
+  const harnessRunSlot = directWriter
+    ? (slotInput: Parameters<typeof runModeledDraftSlot>[0]) =>
+        runModeledDraftSlot(slotInput, {
+          runDraftEngine: harnessRunWriterTurn as unknown as ModeledDraftSlotRunner,
+        })
+    : runModeledDraftSlot;
+
+  const harnessRunAgentTurn: ChatTurnDependencies["runAgentTurn"] = (input) => {
+    if (input.task.kind === "action") {
+      return runAgentTurn({
+        ...input,
+        dependencies: {
+          actionAdapters: actionPlannerAdapters,
+          runTool: async (name, args, workspaceId, toolSignal) => {
+            actionTools.push({ name, args });
+            return runAgentTool(name, args, workspaceId, toolSignal);
+          },
+          recordUsage: logOpenRouterUsage,
+          cancelPollMs: 1,
+        },
+      });
+    }
+    return runAgentTurn({
+      ...input,
+      dependencies: {
+        researchAdapters: readOnlyPlannerAdapters,
+        runTool: async (name, args) => {
+          readOnlyTools.push({ name, args });
+          const result = readOnlyToolResults[name]?.shift();
+          return (
+            result ?? {
+              ok: false,
+              error: `No scripted ${name} result.`,
+            }
+          );
+        },
+        runProse: directWriter
+          ? (writerInput) =>
+              harnessRunWriterTurn({
+                ...writerInput,
+                dependencies: {
+                  writer: directWriter,
+                  recordUsage: logOpenRouterUsage,
+                  cancelPollMs: 1,
+                  adapterHealth: draftAdapterHealth,
+                },
+              })
+          : runWriterTurn,
+        executeModeledDraftBatch: async (batchInput) => {
+          modeledBatchOperationKeys.push(batchInput.operationKey);
+          if (
+            scenario.model.readOnlyOrchestrator?.modeledBatchOutcome ===
+            "busy"
+          ) {
+            modeledBatchRepository.prepareBusyAcquire();
+          } else {
+            modeledBatchRepository.expireLease();
+          }
+          return executeModeledDraftBatch(batchInput, {
+            repository: modeledBatchRepository,
+            runSlot: harnessRunSlot,
+            now: () => new Date("2026-07-14T12:00:00.000Z").getTime(),
+          });
+        },
+        inspectAttachments: async () => ({
+          sources:
+            scenario.model.readOnlyOrchestrator?.attachmentSources ?? [],
+          attempts: [],
+          complete: true,
+        }),
+        recordUsage: logOpenRouterUsage,
+        cancelPollMs: 1,
+      },
+    });
+  };
 
   const dependencies: Partial<ChatTurnDependencies> = {
     now: () => new Date("2026-07-14T23:30:00.000Z"),
@@ -864,88 +945,14 @@ async function runCoworkOutcomeScenarioWithStore(
       reviewSourceFidelity: async () =>
         sourceFidelity.shift() ?? { outcome: "verified" },
     },
-    ...(directWriter
-      ? {
-          runDraftEngine: harnessRunDraftEngine,
-        }
-      : {}),
-    ...(scenario.model.readOnlyOrchestrator
-      ? {
-          readOnlyOrchestratorEnabledForWorkspace: () =>
-            !scenario.model.readOnlyOrchestrator?.disabled,
-          runReadOnlyOrchestrator: (input, runtimeDependencies) =>
-            runReadOnlyOrchestrator(input, {
-              adapters: readOnlyPlannerAdapters,
-              runTool: async (name, args) => {
-                readOnlyTools.push({ name, args });
-                const result = readOnlyToolResults[name]?.shift();
-                return (
-                  result ?? {
-                    ok: false,
-                    error: `No scripted ${name} result.`,
-                  }
-                );
-              },
-              runDraftEngine: harnessRunDraftEngine,
-              executeModeledDraftBatch: async (input) => {
-                modeledBatchOperationKeys.push(input.operationKey);
-                if (
-                  scenario.model.readOnlyOrchestrator?.modeledBatchOutcome ===
-                  "busy"
-                ) {
-                  modeledBatchRepository.prepareBusyAcquire();
-                } else {
-                  modeledBatchRepository.expireLease();
-                }
-                return executeModeledDraftBatch(input, {
-                  repository: modeledBatchRepository,
-                  runSlot: (slotInput) =>
-                    runModeledDraftSlot(slotInput, {
-                      runDraftEngine: (engineInput) =>
-                        harnessRunDraftEngine(engineInput),
-                    }),
-                  now: () => new Date("2026-07-14T12:00:00.000Z").getTime(),
-                });
-              },
-              inspectAttachments: async () => ({
-                sources:
-                  scenario.model.readOnlyOrchestrator?.attachmentSources ?? [],
-                attempts: [],
-                complete: true,
-              }),
-              recordUsage: logOpenRouterUsage,
-              now: () => new Date("2026-07-14T12:00:00.000Z"),
-              ...runtimeDependencies,
-            }),
-        }
-      : {
-          readOnlyOrchestratorEnabledForWorkspace: () => false,
-        }),
-    ...(scenario.model.actionOrchestrator
-      ? {
-          actionOrchestratorEnabledForWorkspace: () =>
-            !scenario.model.actionOrchestrator?.disabled,
-          runActionOrchestrator: (input, runtimeDependencies) => {
-            return runActionOrchestrator(input, {
-              adapters: actionPlannerAdapters,
-              runTool: async (name, args, workspaceId, toolSignal) => {
-                actionTools.push({ name, args });
-                return runAgentTool(
-                  name,
-                  args,
-                  workspaceId,
-                  toolSignal,
-                );
-              },
-              recordUsage: logOpenRouterUsage,
-              cancelPollMs: 1,
-              ...runtimeDependencies,
-            });
-          },
-        }
-      : {
-          actionOrchestratorEnabledForWorkspace: () => false,
-        }),
+    runWriterTurn: harnessRunWriterTurn,
+    runAgentTurn: harnessRunAgentTurn,
+    readOnlyOrchestratorEnabledForWorkspace: scenario.model.readOnlyOrchestrator
+      ? () => !scenario.model.readOnlyOrchestrator?.disabled
+      : () => false,
+    actionOrchestratorEnabledForWorkspace: scenario.model.actionOrchestrator
+      ? () => !scenario.model.actionOrchestrator?.disabled
+      : () => false,
   };
 
   const handler = createChatStreamPost({

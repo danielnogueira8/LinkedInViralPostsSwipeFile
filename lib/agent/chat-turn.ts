@@ -11,19 +11,18 @@ import { scopedSupabase } from "@/lib/supabase-scoped";
 import { NoWorkspaceError } from "@/lib/workspace";
 import type { DraftFinalizerSpecialists } from "@/lib/agent/draft-finalizer";
 import {
-  runDraftEngine,
   type DraftEngineSource,
   type DraftEngineTask,
 } from "@/lib/agent/draft-engine";
 import {
-  MODELED_BATCH_ORCHESTRATOR_DEADLINE_MS,
-  READ_ONLY_ORCHESTRATOR_DEADLINE_MS,
-  runReadOnlyOrchestrator,
-} from "@/lib/agent/read-only-orchestrator";
+  runWriterTurn,
+  WRITER_TURN_BUDGET_MS,
+  type WriterInput,
+} from "@/lib/agent/execute/writer";
 import {
+  runAgentTurn,
   ACTION_ORCHESTRATOR_DEADLINE_MS,
-  runActionOrchestrator,
-} from "@/lib/agent/action-orchestrator";
+} from "@/lib/agent/execute/agent";
 import {
   advanceActionOrchestratorClarification,
   actionOrchestratorEnabledForWorkspace,
@@ -488,9 +487,8 @@ export type ChatTurnDependencies = {
   checkChatRateLimit: typeof checkChatRateLimit;
   claimChatTurn: typeof claimChatTurn;
   releaseChatTurn: typeof releaseChatTurn;
-  runDraftEngine: typeof runDraftEngine;
-  runActionOrchestrator: typeof runActionOrchestrator;
-  runReadOnlyOrchestrator: typeof runReadOnlyOrchestrator;
+  runWriterTurn: typeof runWriterTurn;
+  runAgentTurn: typeof runAgentTurn;
   createActionRetryRepository: typeof createSupabaseActionRetryRepository;
   actionOrchestratorEnabledForWorkspace: typeof actionOrchestratorEnabledForWorkspace;
   readOnlyOrchestratorEnabledForWorkspace: typeof readOnlyOrchestratorEnabledForWorkspace;
@@ -508,9 +506,8 @@ const productionChatTurnDependencies: ChatTurnDependencies = {
   checkChatRateLimit,
   claimChatTurn,
   releaseChatTurn,
-  runDraftEngine,
-  runActionOrchestrator,
-  runReadOnlyOrchestrator,
+  runWriterTurn,
+  runAgentTurn,
   createActionRetryRepository: createSupabaseActionRetryRepository,
   actionOrchestratorEnabledForWorkspace,
   readOnlyOrchestratorEnabledForWorkspace,
@@ -3236,36 +3233,41 @@ export async function executeChatTurn(
           deferFinish: true,
         });
       const runTurn = () => {
+        const turnStartedAtMs = Date.parse(claimedTurnStartedAt!);
+        const cancellationProbe = (probeSignal: AbortSignal) =>
+          isCancelRequested(chatId, turnStartedAtMs, probeSignal);
+
+        const writerInput: Omit<WriterInput, "task"> = {
+          workspaceId,
+          userInstruction: effectiveUserInstruction,
+          voiceResult: preloadedVoiceResult!,
+          preferences,
+          feedbackMemory,
+          priorPostDrafts,
+          format: selectedNoModelFormat,
+          customSkillBodies,
+          customSkillNames,
+          signal,
+          cancellationProbe,
+          finalizerSpecialists: deps.draftFinalizerSpecialists,
+          transformCandidate: transformDraftCandidate,
+          finalTransformCandidate: transformDraftCandidate,
+          telemetry: coworkTelemetry,
+          onModelUsed: recordResponseModel,
+          ...(shouldAttachLeadMagnet && leadMagnetBlock.trim()
+            ? { leadMagnetBlock }
+            : {}),
+          ...(creatorStyleBlock.trim() ? { creatorStyleBlock } : {}),
+        };
+
         if (useDirectWriter) {
           return observeTurn(
-            deps.runDraftEngine({
-              workspaceId,
+            deps.runWriterTurn({
+              ...writerInput,
               sessionId: chatId,
-              userInstruction: effectiveUserInstruction,
-              // The ONE turn-context window — the writer renders a bounded
-              // digest of the prior turns so a follow-up is never written
-              // blind.
               history,
               task: directWriterTask,
-              voiceResult: preloadedVoiceResult!,
-              preferences,
-              feedbackMemory,
-              priorPostDrafts,
-              format: selectedNoModelFormat,
-              customSkillBodies,
-              customSkillNames,
-              signal,
-              cancellationProbe: (probeSignal) =>
-                isCancelRequested(
-                  chatId,
-                  Date.parse(claimedTurnStartedAt!),
-                  probeSignal,
-                ),
-              finalizerSpecialists: deps.draftFinalizerSpecialists,
-              transformCandidate: transformDraftCandidate,
-              finalTransformCandidate: transformDraftCandidate,
-              telemetry: coworkTelemetry,
-              onModelUsed: recordResponseModel,
+              deadlineAtMs: turnStartedAtMs + WRITER_TURN_BUDGET_MS,
               // Coarse structure gate opt-in — true ONLY for a genuine
               // "model this post" source (mirrors modelSourceStructureBlock's
               // own genre split; false for a refine/template source, or when
@@ -3284,49 +3286,33 @@ export async function executeChatTurn(
           );
         }
         if (useActionOrchestrator && actionOrchestratorRoute) {
-          const turnStartedAtMs = Date.parse(claimedTurnStartedAt!);
-          const remainingReliableMs = Math.max(
-            1,
-            ACTION_ORCHESTRATOR_DEADLINE_MS -
-              Math.max(0, deps.now().getTime() - turnStartedAtMs),
-          );
-          return observeTurn(deps.runActionOrchestrator(
-            {
+          return observeTurn(
+            deps.runAgentTurn({
               workspaceId,
               chatId,
               turnMessageId: actionTurnMessageId ?? claimedUserMessageId!,
               userInstruction: effectiveUserInstruction,
               history,
-              route: actionOrchestratorRoute,
-              confirmedTargetIds: confirmedActionTargetIds,
+              task: { kind: "action", route: actionOrchestratorRoute },
+              confirmedActionTargetIds,
               signal,
-              cancellationProbe: (probeSignal) =>
-                isCancelRequested(chatId, turnStartedAtMs, probeSignal),
+              cancellationProbe,
               telemetry: coworkTelemetry,
               onModelUsed: recordResponseModel,
-            },
-            { turnDeadlineMs: remainingReliableMs },
-          ));
+              writerInput,
+              deadlineAtMs: turnStartedAtMs + ACTION_ORCHESTRATOR_DEADLINE_MS,
+            }),
+          );
         }
         if (useReadOnlyOrchestrator && readOnlyOrchestratorRoute) {
-          const turnStartedAtMs = Date.parse(claimedTurnStartedAt!);
-          const reliableDeadlineMs =
-            readOnlyOrchestratorRoute.workspaceDraftSourceMode === "one_to_one" &&
-            (readOnlyOrchestratorRoute.expectedDrafts ?? 1) >= 2
-              ? MODELED_BATCH_ORCHESTRATOR_DEADLINE_MS
-              : READ_ONLY_ORCHESTRATOR_DEADLINE_MS;
-          const remainingReliableMs = Math.max(
-            1,
-            reliableDeadlineMs -
-              Math.max(0, deps.now().getTime() - turnStartedAtMs),
-          );
-          return observeTurn(deps.runReadOnlyOrchestrator(
-            {
+          return observeTurn(
+            deps.runAgentTurn({
               workspaceId,
-              operationKey: actionTurnMessageId ?? claimedUserMessageId!,
+              chatId,
+              turnMessageId: actionTurnMessageId ?? claimedUserMessageId!,
               userInstruction: effectiveUserInstruction,
               history,
-              route: readOnlyOrchestratorRoute,
+              task: { kind: "research", route: readOnlyOrchestratorRoute },
               ...(modeledBatchContinuation
                 ? { modeledBatchContinuation }
                 : {}),
@@ -3334,45 +3320,14 @@ export async function executeChatTurn(
                 safeFilename(attachment.filename),
               ),
               attachmentBlocks: orchestratorAttachmentBlocks,
-              cancellationProbe: (probeSignal) =>
-                isCancelRequested(
-                  chatId,
-                  turnStartedAtMs,
-                  probeSignal,
-                ),
-              draftEngineInput: {
-                workspaceId,
-                userInstruction: effectiveUserInstruction,
-                voiceResult: preloadedVoiceResult!,
-                preferences,
-                feedbackMemory,
-                priorPostDrafts,
-                format: selectedNoModelFormat,
-                customSkillBodies,
-                customSkillNames,
-                signal,
-                cancellationProbe: (probeSignal) =>
-                  isCancelRequested(
-                    chatId,
-                    turnStartedAtMs,
-                    probeSignal,
-                  ),
-                finalizerSpecialists: deps.draftFinalizerSpecialists,
-                transformCandidate: transformDraftCandidate,
-                finalTransformCandidate: transformDraftCandidate,
-                telemetry: coworkTelemetry,
-                onModelUsed: recordResponseModel,
-                ...(shouldAttachLeadMagnet && leadMagnetBlock.trim()
-                  ? { leadMagnetBlock }
-                  : {}),
-                ...(creatorStyleBlock.trim() ? { creatorStyleBlock } : {}),
-              },
+              cancellationProbe,
+              writerInput,
               signal,
               telemetry: coworkTelemetry,
               onModelUsed: recordResponseModel,
-            },
-            { turnDeadlineMs: remainingReliableMs },
-          ));
+              deadlineAtMs: turnStartedAtMs + WRITER_TURN_BUDGET_MS,
+            }),
+          );
         }
         // Step 9: every unrouted turn resolves to the deterministic answer lane.
         return observeTurn(executeAnswerTurn());
