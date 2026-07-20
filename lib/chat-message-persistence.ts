@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ToolCall } from "@/lib/openrouter";
 import type { ContentFormat } from "@/lib/markdown/mode";
+import type { CoworkTurnUsageWire } from "@/lib/cowork-turn-usage";
 
 export async function persistChatAssistantTurn(opts: {
   sb: SupabaseClient;
@@ -14,6 +15,8 @@ export async function persistChatAssistantTurn(opts: {
   toolMessages: Array<{ content: string; tool_call_id: string | null }>;
   terminalReason: "done" | "ask" | "cancelled" | "deadline" | "error";
   contentFormat: ContentFormat;
+  recoverableError?: Record<string, unknown> | null;
+  turnUsage?: CoworkTurnUsageWire | null;
 }): Promise<{ error: { message: string } | null }> {
   const declaredCallIds = new Set((opts.toolCalls ?? []).map((call) => call.id));
   const matchingToolMessages = opts.toolMessages.filter(
@@ -32,6 +35,8 @@ export async function persistChatAssistantTurn(opts: {
     p_tool_messages: matchingToolMessages,
     p_terminal_reason: opts.terminalReason,
     p_content_format: opts.contentFormat,
+    p_recoverable_error: opts.recoverableError,
+    p_turn_usage: opts.turnUsage,
   });
   return { error: error ? { message: error.message } : null };
 }

@@ -3,7 +3,7 @@ import {
   compileServerReadOnlyPlan,
   parseReadOnlyPlan,
   planSearchQueriesMatchInstruction,
-} from "@/lib/agent/read-only-orchestrator";
+} from "@/lib/agent/execute/agent";
 import {
   compileReadOnlyOrchestratorRoute,
   type ReadOnlyOrchestratorRoute,

@@ -9,11 +9,9 @@ import {
   type ModeledDraftBatchSource,
   type ModeledPostArtifact,
   type ModeledDraftSlotCheckpoint,
-} from "@/lib/agent/modeled-draft-batch";
-import type {
-  ModeledDraftSlotInput,
-  ModeledDraftSlotOutcome,
-} from "@/lib/agent/modeled-draft-slot-runner";
+  type ModeledDraftSlotInput,
+  type ModeledDraftSlotOutcome,
+} from "@/lib/agent/execute/writer";
 import { UsagePersistenceError } from "@/lib/openrouter";
 
 const sources: ModeledDraftBatchSource[] = [

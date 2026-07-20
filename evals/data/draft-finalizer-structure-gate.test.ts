@@ -2,7 +2,7 @@ import { describe, expect, test, vi } from "vitest";
 import {
   createDraftFinalizer,
   type DraftFinalizerSpecialists,
-} from "@/lib/agent/draft-finalizer";
+} from "@/lib/agent/finalize/finalizer";
 import { computeStructureSkeleton } from "@/lib/post-structure-skeleton";
 
 // The coarse structure gate — MODELED POSTS ONLY: options.structureSkeleton
