@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -290,6 +290,18 @@ function TemplateCard({
   const [copied, markCopied] = useCopiedFlag();
   const [modeling, setModeling] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  // Only show "See more/less" when the clamped body actually overflows —
+  // a dead toggle on short templates reads as broken chrome.
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const [overflows, setOverflows] = useState(false);
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+    const check = () => setOverflows(el.scrollHeight > el.clientHeight + 2);
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, [row.body]);
   const placeholders = useMemo(() => extractPlaceholders(row.body), [row.body]);
 
   // Author identity for the LinkedIn-style header. Falls back to a neutral "You"
@@ -388,6 +400,7 @@ function TemplateCard({
         <div className="min-w-0">
           <p className="text-sm font-semibold text-foreground mb-1">{row.title}</p>
           <div
+            ref={bodyRef}
             className={cn(
               "text-sm whitespace-pre-wrap break-words text-foreground/90 leading-relaxed",
               !expanded && "line-clamp-[10]",
@@ -395,13 +408,15 @@ function TemplateCard({
           >
             <HighlightedBody body={row.body} />
           </div>
-          <button
-            type="button"
-            onClick={() => setExpanded((v) => !v)}
-            className="mt-1 text-xs font-medium text-muted-foreground hover:text-foreground"
-          >
-            {expanded ? "See less" : "See more"}
-          </button>
+          {(overflows || expanded) && (
+            <button
+              type="button"
+              onClick={() => setExpanded((v) => !v)}
+              className="mt-1 text-xs font-medium text-muted-foreground hover:text-foreground"
+            >
+              {expanded ? "See less" : "See more"}
+            </button>
+          )}
         </div>
 
         {/* Footer actions, pinned to the bottom so cards in a row align. */}

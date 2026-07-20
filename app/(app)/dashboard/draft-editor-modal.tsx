@@ -275,7 +275,9 @@ export function DraftEditorModal({
     setSaving(false);
     if (id) {
       toast.success(isNew ? "Post created" : "Post saved");
-      if (!isNew) onOpenChange(false);
+      // Close on every successful save — new or existing — so the action has
+      // one consistent outcome (the board reflects the change immediately).
+      onOpenChange(false);
     }
   };
 
@@ -810,9 +812,6 @@ export function DraftEditorModal({
             {handing ? "Opening…" : "Model with Cowork"}
           </Button>
           <div className="flex items-center gap-2">
-            <span className="hidden text-xs text-muted-foreground sm:inline">
-              {saveState}
-            </span>
             <Button
               size="sm"
               className="gap-1.5"
@@ -954,7 +953,13 @@ function LinkedInPostPreview({
               })}
             </div>
           )}
-          {attachments.slice(0, 4).map((attachment) => (
+          {/* File rows cover only what the image grid above doesn't already
+              show — images with a preview render in the grid, everything else
+              (and preview-less items) gets a row here. */}
+          {(attachments[0]?.type === "image" && attachments.some((a) => a.previewUrl || a.url)
+            ? attachments.filter((a) => a.type !== "image" || (!a.previewUrl && !a.url))
+            : attachments
+          ).slice(0, 4).map((attachment) => (
             <div
               key={attachment.id}
               className="flex items-center gap-2 rounded-xl border border-border bg-muted/30 px-3 py-2 text-sm"

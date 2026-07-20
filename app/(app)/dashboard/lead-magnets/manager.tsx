@@ -1,6 +1,6 @@
 "use client";
 
-import { useDeferredValue, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useDeferredValue, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -743,6 +743,8 @@ function LeadMagnetMarkdownEditor({
   onChange: (value: string) => void;
 }) {
   const [mode, setMode] = useState<EditorMode>("edit");
+  const [urlDialog, setUrlDialog] = useState<null | "link" | "image">(null);
+  const [urlValue, setUrlValue] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const undoStackRef = useRef<Array<{ value: string; start: number; end: number }>>([]);
 
@@ -856,11 +858,14 @@ function LeadMagnetMarkdownEditor({
     });
   };
 
-  const insertLink = () => {
-    const href = window.prompt("Paste the link URL");
-    if (!href) return;
-    const normalizedHref = href.trim();
-    if (!/^https?:\/\//i.test(normalizedHref)) {
+  const openUrlDialog = (kind: "link" | "image") => {
+    setUrlValue("");
+    setUrlDialog(kind);
+  };
+  const confirmUrlDialog = () => {
+    const url = urlValue.trim();
+    if (!url || !urlDialog) return;
+    if (urlDialog === "link" && !/^https?:\/\//i.test(url)) {
       toast.error("Use a full http or https URL.");
       return;
     }
@@ -868,28 +873,24 @@ function LeadMagnetMarkdownEditor({
     const start = textarea?.selectionStart ?? value.length;
     const end = textarea?.selectionEnd ?? value.length;
     const selected = value.slice(start, end).trim();
-    replaceRange({
-      snippet: `[${selected || normalizedHref}](${normalizedHref})`,
-      selectText: selected ? undefined : normalizedHref,
-      start,
-      end,
-      preserveSpacing: Boolean(selected),
-    });
-  };
-  const insertImage = () => {
-    const src = window.prompt("Paste the image URL");
-    if (!src) return;
-    const textarea = textareaRef.current;
-    const start = textarea?.selectionStart ?? value.length;
-    const end = textarea?.selectionEnd ?? value.length;
-    const selected = value.slice(start, end).trim();
-    replaceRange({
-      snippet: `![${selected || "Image description"}](${src.trim()})`,
-      selectText: selected ? undefined : "Image description",
-      start,
-      end,
-      preserveSpacing: Boolean(selected),
-    });
+    if (urlDialog === "link") {
+      replaceRange({
+        snippet: `[${selected || url}](${url})`,
+        selectText: selected ? undefined : url,
+        start,
+        end,
+        preserveSpacing: Boolean(selected),
+      });
+    } else {
+      replaceRange({
+        snippet: `![${selected || "Image description"}](${url})`,
+        selectText: selected ? undefined : "Image description",
+        start,
+        end,
+        preserveSpacing: Boolean(selected),
+      });
+    }
+    setUrlDialog(null);
   };
 
   return (
@@ -965,12 +966,42 @@ function LeadMagnetMarkdownEditor({
           >
             <Quote className="h-4 w-4" />
           </EditorToolButton>
-          <EditorToolButton label="Link" onClick={insertLink}>
+          <EditorToolButton label="Link" onClick={() => openUrlDialog("link")}>
             <LinkIcon className="h-4 w-4" />
           </EditorToolButton>
-          <EditorToolButton label="Image" onClick={insertImage}>
+          <EditorToolButton label="Image" onClick={() => openUrlDialog("image")}>
             <ImageIcon className="h-4 w-4" />
           </EditorToolButton>
+        </div>
+      )}
+
+      {mode !== "preview" && urlDialog && (
+        <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-border/70 bg-muted/20 p-2">
+          <Input
+            autoFocus
+            value={urlValue}
+            onChange={(e) => setUrlValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                confirmUrlDialog();
+              }
+              if (e.key === "Escape") setUrlDialog(null);
+            }}
+            placeholder={
+              urlDialog === "link"
+                ? "https://example.com/resource"
+                : "https://example.com/image.png"
+            }
+            aria-label={urlDialog === "link" ? "Link URL" : "Image URL"}
+            className="h-9 min-w-56 flex-1"
+          />
+          <Button size="sm" onClick={confirmUrlDialog} disabled={!urlValue.trim()}>
+            Insert
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => setUrlDialog(null)}>
+            Cancel
+          </Button>
         </div>
       )}
 
@@ -1092,18 +1123,8 @@ function GenerateForm({
   const [ctaUrl, setCtaUrl] = useState("");
   const [ctaLabel, setCtaLabel] = useState("Book a call");
   const [saving, setSaving] = useState(false);
-  const [activeStep, setActiveStep] = useState(0);
-
-  useEffect(() => {
-    if (!saving) return;
-    const interval = window.setInterval(() => {
-      setActiveStep((current) => Math.min(current + 1, LEAD_MAGNET_GENERATION_STEPS.length - 1));
-    }, 1800);
-    return () => window.clearInterval(interval);
-  }, [saving]);
 
   const submit = async () => {
-    setActiveStep(0);
     setSaving(true);
     try {
       const data = await fetchJson<{
@@ -1188,52 +1209,23 @@ function GenerateForm({
                       SwipeIn is writing the resource, parsing the summary, and creating the public page.
                     </p>
                   </div>
-                  <StatusPill tone="info">
-                    {activeStep + 1} / {LEAD_MAGNET_GENERATION_STEPS.length}
-                  </StatusPill>
+                  <StatusPill tone="info">Working…</StatusPill>
                 </div>
-                <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-primary/10">
-                  <div
-                    className="h-full w-full origin-left rounded-full bg-primary transition-transform duration-200 ease-[cubic-bezier(0.25,1,0.5,1)] motion-reduce:transition-none"
-                    style={{
-                      transform: `scaleX(${(activeStep + 1) / LEAD_MAGNET_GENERATION_STEPS.length})`,
-                    }}
-                  />
-                </div>
-                <div className="mt-4 grid gap-2">
-                  {LEAD_MAGNET_GENERATION_STEPS.map((step, index) => {
-                    const complete = index < activeStep;
-                    const current = index === activeStep;
-                    return (
-                      <div
-                        key={step}
-                        className={[
-                          "flex items-center gap-2 text-xs transition-colors",
-                          complete || current ? "text-foreground" : "text-muted-foreground",
-                        ].join(" ")}
-                      >
-                        <span
-                          className={[
-                            "flex h-5 w-5 shrink-0 items-center justify-center rounded-full border",
-                            complete
-                              ? "border-primary bg-primary text-primary-foreground"
-                              : current
-                                ? "border-primary/50 bg-background text-primary"
-                                : "border-border bg-background text-muted-foreground",
-                          ].join(" ")}
-                        >
-                          {complete ? (
-                            <Check className="h-3 w-3" />
-                          ) : current ? (
-                            <Loader2 className="h-3 w-3 animate-spin" />
-                          ) : (
-                            <span className="h-1.5 w-1.5 rounded-full bg-current" />
-                          )}
-                        </span>
-                        {step}
-                      </div>
-                    );
-                  })}
+                {/* No fake progress: generation is a single request, so we show
+                    the steps as information about what happens — not as a
+                    timer-driven progress bar that lies about real progress. */}
+                <div className="mt-4 grid gap-2" aria-live="polite">
+                  {LEAD_MAGNET_GENERATION_STEPS.map((step) => (
+                    <div
+                      key={step}
+                      className="flex items-center gap-2 text-xs text-muted-foreground"
+                    >
+                      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-border bg-background">
+                        <span className="h-1.5 w-1.5 rounded-full bg-current" />
+                      </span>
+                      {step}
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>

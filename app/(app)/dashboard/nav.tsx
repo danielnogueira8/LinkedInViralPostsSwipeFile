@@ -13,6 +13,7 @@ import {
   Zap,
   Fingerprint,
   ChartNoAxesColumn,
+  Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ClaudeIcon } from "@/components/claude-icon";
@@ -104,8 +105,10 @@ export function SideNav({ badges: initialBadges }: { badges?: Record<string, num
     [pathname, router],
   );
 
-  // Once the URL catches up, clear the optimistic highlight.
-  if (pendingHref && pendingHref === pathname && !isPending) {
+  // Once the transition settles, clear the optimistic highlight — whether the
+  // URL caught up (success) or the push failed, so a stale highlight never
+  // sticks on the wrong item.
+  if (pendingHref && !isPending) {
     // setState in render is fine when guarded; avoids an extra effect tick.
     setPendingHref(null);
   }
@@ -139,12 +142,13 @@ export function SideNav({ badges: initialBadges }: { badges?: Record<string, num
                     active
                       ? "bg-card border-border text-foreground shadow-soft"
                       : "border-transparent text-muted-foreground hover:bg-accent/60 hover:text-foreground",
-                    loading && "opacity-90",
                   )}
                 >
                   <Icon className="h-4 w-4 shrink-0" />
                   <span className="truncate flex-1">{n.label}</span>
-                  {badges?.[n.href] ? (
+                  {loading ? (
+                    <Loader2 className="ml-auto h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                  ) : badges?.[n.href] ? (
                     <span
                       className="ml-auto h-4 min-w-4 px-1 rounded-full bg-primary text-background text-[10px] font-semibold inline-flex items-center justify-center"
                       aria-label={`${badges[n.href]} pending`}
