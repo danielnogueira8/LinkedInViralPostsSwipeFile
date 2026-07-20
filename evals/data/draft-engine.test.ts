@@ -2256,6 +2256,31 @@ describe("prompt-threading assertions ported from legacy runAgent evals (D6)", (
     const prompt = JSON.stringify(writer.requests[0].messages);
     expect(prompt).not.toContain("recent taste feedback");
   });
+
+  test("post-performance learnings reach the writer prompt", async () => {
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(200, 120) },
+    ]);
+    await collect(writer, {
+      lean: true,
+      postPerformanceBlock:
+        "Your own published posts' measured engagement (last 45 days) suggests:\n- Posts with a hook under 80 characters earned 2.8x your median engagement rate (5 posts)",
+    });
+
+    const prompt = JSON.stringify(writer.requests[0].messages);
+    expect(prompt).toContain("measured engagement");
+    expect(prompt).toContain("2.8x your median engagement rate");
+  });
+
+  test("empty post-performance block keeps the writer prompt unchanged", async () => {
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(200, 120) },
+    ]);
+    await collect(writer, { lean: true, postPerformanceBlock: "" });
+
+    const prompt = JSON.stringify(writer.requests[0].messages);
+    expect(prompt).not.toContain("measured engagement");
+  });
 });
 
 describe("writer plan narration (narratePlan)", () => {

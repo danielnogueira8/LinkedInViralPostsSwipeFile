@@ -230,6 +230,7 @@ export type TurnSetupResult = {
     creatorName: string;
   } | null;
   feedbackMemory: ContentFeedback[];
+  postPerformanceBlock: string;
   preferences: ContentPreference[];
   priorPostDrafts: RecentDraft[];
   preloadedVoiceResult: ToolResult | null;
@@ -1015,6 +1016,7 @@ export async function setupChatTurn(
     creatorName: string;
   } | null = null;
   let feedbackMemory: ContentFeedback[] = [];
+  let postPerformanceBlock = "";
   let preferences: ContentPreference[] = [];
   let priorPostDrafts: RecentDraft[] = [];
   let preloadedVoiceResult: ToolResult | null = null;
@@ -1082,6 +1084,7 @@ export async function setupChatTurn(
     creatorStyleBlock = turnContext.creatorStyleBlock;
     appliedCreatorStyle = turnContext.appliedCreatorStyle;
     feedbackMemory = turnContext.feedbackMemory;
+    postPerformanceBlock = turnContext.postPerformanceBlock;
     preferences = turnContext.preferences;
     priorPostDrafts = turnContext.priorPostDrafts;
     resolvedCustomSkills = turnContext.resolvedCustomSkills;
@@ -1364,6 +1367,7 @@ export async function setupChatTurn(
     creatorStyleBlock,
     appliedCreatorStyle,
     feedbackMemory,
+    postPerformanceBlock,
     preferences,
     priorPostDrafts,
     preloadedVoiceResult,
