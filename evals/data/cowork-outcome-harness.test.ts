@@ -4206,6 +4206,64 @@ describe("production-shaped Cowork outcome harness", () => {
     expect(sequence.attempts[1]?.safe.route).toBe("read_only_orchestrator");
   });
 
+  test("a research starter overrides a pinned direct-writer lane so the search actually runs", async () => {
+    // Regression: a chat pinned to direct_writer forced EVERY later turn into
+    // the writer lane — including research-required starters — so a "model a
+    // top viral post" request free-wrote with no swipe-file search (and no
+    // research narration: the UI jumped from "Planning next moves" to draft).
+    const report = await runCoworkOutcomeScenario({
+      id: "pin-direct-writer-research-starter",
+      seed: { pinnedCoworkRoute: "direct_writer" },
+      request: {
+        message:
+          "Find a top-performing regular post in my swipe file and rewrite it in my voice on a topic that fits me. Keep its structure and hook style, but make the content original.",
+        starterId: "model-top-viral",
+      },
+      model: {
+        provider: { rounds: [] },
+        readOnlyOrchestrator: {
+          plans: [
+            {
+              model: PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL,
+              toolArgs: null,
+              usage: usage(90, 18, 0.001),
+            },
+          ],
+          toolResults: {
+            search_viral_posts: [
+              {
+                ok: true,
+                count: 1,
+                posts: [
+                  {
+                    id: "source-pinned-starter",
+                    text: "A sourcing lesson.",
+                    post_url: "https://linkedin.com/pinned-starter",
+                  },
+                ],
+              },
+            ],
+          },
+        },
+        directWriter: [
+          {
+            text: COMPLETE_POST,
+            finishReason: "stop",
+            usage: usage(210, 95, 0.0001888),
+          },
+        ],
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [COMPLETE_POST],
+        actionNames: ["search_viral_posts", "write_grounded_post"],
+        route: "read_only_orchestrator",
+      },
+    });
+
+    expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+  });
+
   test("a pinned action lane keeps an ambiguous follow-up out of the answer lane", async () => {
     const draftId = "00000000-0000-4000-8000-000000000800";
     const sequence = await runCoworkOutcomeSequence([

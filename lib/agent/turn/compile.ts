@@ -2035,7 +2035,14 @@ export async function compileTurnPlan(
     !hasExplicitWorkflowContinuation &&
     pinnedCoworkRoute !== "answer";
   if (honorPinnedRoute) {
-    if (pinnedCoworkRoute === "direct_writer") {
+    // The pin never overrides an explicit research requirement: a starter that
+    // asks for workspace/web/news evidence must actually RUN that research.
+    // Pinning it to the writer lane would silently free-write with no sources
+    // (and no research narration — the "Planning next moves → draft" jump).
+    if (
+      pinnedCoworkRoute === "direct_writer" &&
+      !composerTaskContext?.researchRequirement
+    ) {
       useDirectWriter = true;
     } else if (
       pinnedCoworkRoute === "action_orchestrator" &&

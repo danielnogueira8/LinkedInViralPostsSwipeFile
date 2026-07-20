@@ -205,6 +205,8 @@ async function* runTurnPlan(
       sessionId: chatId,
       history,
       task: directWriterTask,
+      // No orchestrator narrates this lane — the writer shows its own steps.
+      narratePlan: true,
       deadlineAtMs: turnStartedAtMs + WRITER_TURN_BUDGET_MS,
       ...(useDirectLeadMagnet ? { leadMagnetBlock } : {}),
       ...(useDirectCreatorStyle ? { creatorStyleBlock } : {}),
