@@ -27,7 +27,6 @@ import {
   type PersistedHarnessUsage,
 } from "@/evals/cowork-harness-store";
 import type { SourceFidelityVerdict } from "@/lib/agent/specialists/source-fidelity";
-import type { DraftEngineGroundedSource } from "@/lib/agent/draft-engine";
 import type {
   DraftWriterAdapter,
   DraftWriterRequest,
@@ -37,18 +36,26 @@ import {
   logOpenRouterUsage,
   type Usage,
 } from "@/lib/openrouter";
-import { runWriterTurn } from "@/lib/agent/execute/writer";
-import { runAgentTurn } from "@/lib/agent/execute/agent";
 import {
+  runWriterTurn,
+  type GroundedSource,
+  executeModeledDraftBatch,
+  runModeledDraftSlot,
+  type AcquiredModeledDraftBatch,
+  type ModeledDraftBatchRepository,
+  type ModeledDraftBatchSource,
+  type ModeledDraftSlotCheckpoint,
+  type ModeledPostArtifact,
+} from "@/lib/agent/execute/writer";
+import {
+  runAgentTurn,
+  actionOperationKey,
   type ReadOnlyOrchestratorAdapter,
   type ReadOnlyPlannerRequest,
-} from "@/lib/agent/read-only-orchestrator";
-import {
-  actionOperationKey,
   type ActionOrchestratorAdapter,
   type ActionPlannerRequest,
   type MutationAction,
-} from "@/lib/agent/action-orchestrator";
+} from "@/lib/agent/execute/agent";
 import {
   compileActionOrchestratorRoute,
   compileReadOnlyOrchestratorRoute,
@@ -56,18 +63,6 @@ import {
 import { continuationForModeledDraftRoute } from "@/lib/agent/modeled-draft-continuation";
 import { runTool as runAgentTool } from "@/lib/agent/tools";
 import { AdapterHealthRegistry } from "@/lib/agent/adapter-health";
-import {
-  executeModeledDraftBatch,
-  type AcquiredModeledDraftBatch,
-  type ModeledDraftBatchRepository,
-  type ModeledDraftBatchSource,
-  type ModeledDraftSlotCheckpoint,
-  type ModeledPostArtifact,
-} from "@/lib/agent/modeled-draft-batch";
-import {
-  runModeledDraftSlot,
-  type ModeledDraftSlotRunner,
-} from "@/lib/agent/modeled-draft-slot-runner";
 
 export type CoworkOutcomeScenario = {
   id: string;
@@ -94,7 +89,7 @@ export type CoworkOutcomeScenario = {
           Array<Record<string, unknown>>
         >
       >;
-      attachmentSources?: DraftEngineGroundedSource[];
+      attachmentSources?: GroundedSource[];
       retryModeledBatch?: boolean;
       malformedModeledRetry?: "root" | "continuation" | "root_only";
       disabled?: boolean;
@@ -843,7 +838,7 @@ async function runCoworkOutcomeScenarioWithStore(
   const harnessRunSlot = directWriter
     ? (slotInput: Parameters<typeof runModeledDraftSlot>[0]) =>
         runModeledDraftSlot(slotInput, {
-          runDraftEngine: harnessRunWriterTurn as unknown as ModeledDraftSlotRunner,
+          runDraftEngine: harnessRunWriterTurn,
         })
     : runModeledDraftSlot;
 

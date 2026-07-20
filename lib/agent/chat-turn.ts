@@ -9,15 +9,15 @@ import {
 } from "@/lib/generation-config";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { NoWorkspaceError } from "@/lib/workspace";
-import type { DraftFinalizerSpecialists } from "@/lib/agent/draft-finalizer";
 import {
-  type DraftEngineSource,
-  type DraftEngineTask,
-} from "@/lib/agent/draft-engine";
+  type DraftFinalizerSpecialists,
+} from "@/lib/agent/finalize/finalizer";
 import {
   runWriterTurn,
   WRITER_TURN_BUDGET_MS,
   type WriterInput,
+  type Source,
+  type WriterTask,
 } from "@/lib/agent/execute/writer";
 import {
   runAgentTurn,
@@ -1173,7 +1173,7 @@ export function withLeadMagnetResourcePlanStep(
 // A resolved find-and-model source: the lean engine input (id + raw body) plus
 // the post_url so chat-turn can stamp the draft's "Source post" chip.
 export type ResolvedFindAndModelSource = {
-  source: DraftEngineSource;
+  source: Source;
   sourceUrl: string | null;
 };
 
@@ -2414,7 +2414,7 @@ export async function executeChatTurn(
   const resolvedFindSource = wantsFindAndModel
     ? await resolveFindAndModelSource(workspaceId, signal)
     : undefined;
-  const directSource: DraftEngineSource | undefined =
+  const directSource: Source | undefined =
     currentModelSource?.post_text.trim()
       ? {
           id: currentModelSource.source_post_id ?? currentModelSource.id,
@@ -2763,7 +2763,7 @@ export async function executeChatTurn(
         deterministicModeledRoute ||
         deps.readOnlyOrchestratorEnabledForWorkspace()),
   );
-  const directWriterTask: DraftEngineTask = useDirectRefine
+  const directWriterTask: WriterTask = useDirectRefine
     ? {
         kind: "refine",
         instruction: refineInstruction!,

@@ -17,11 +17,11 @@ import {
 import { POST_INTENTS } from "@/lib/post-intents";
 import { CHAT_MODEL } from "@/lib/openrouter";
 import { PRIMARY_DRAFT_WRITER_MODEL } from "@/lib/agent/draft-writer";
-import { PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL } from "@/lib/agent/read-only-orchestrator";
 import {
   FALLBACK_ACTION_ORCHESTRATOR_MODEL,
   PRIMARY_ACTION_ORCHESTRATOR_MODEL,
-} from "@/lib/agent/action-orchestrator";
+  PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL,
+} from "@/lib/agent/execute/agent";
 
 vi.mock("@/lib/openrouter", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/lib/openrouter")>();

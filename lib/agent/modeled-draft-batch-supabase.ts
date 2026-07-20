@@ -4,14 +4,14 @@ import {
   artifactMatchesModeledDraftSlotContract,
   executeModeledDraftBatch,
   isCanonicalModeledSourceUrl,
-  productionModeledDraftBatchDependencies,
+  runModeledDraftSlot,
   type AcquiredModeledDraftBatch,
   type ExecuteModeledDraftBatchInput,
   type ModeledDraftBatchRepository,
   type ModeledDraftBatchSource,
   type ModeledDraftSlotCheckpoint,
   type ModeledPostArtifact,
-} from "@/lib/agent/modeled-draft-batch";
+} from "@/lib/agent/execute/writer";
 
 const LEASE_SECONDS = 270;
 
@@ -362,7 +362,7 @@ export async function executeProductionModeledDraftBatch(
 ) {
   return executeModeledDraftBatch(input, {
     repository: createSupabaseModeledDraftBatchRepository(),
-    runSlot: productionModeledDraftBatchDependencies.runSlot,
+    runSlot: runModeledDraftSlot,
     now: Date.now,
   });
 }

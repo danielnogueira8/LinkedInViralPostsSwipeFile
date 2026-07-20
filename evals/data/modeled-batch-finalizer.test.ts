@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { modeledBatchFinalizerSpecialists } from "@/lib/agent/lean-finalizer";
+import { modeledBatchFinalizerSpecialists } from "@/lib/agent/finalize/finalizer";
 
 describe("modeledBatchFinalizerSpecialists", () => {
   test("keeps paid rewrite specialists off the modeled-batch blocking path", async () => {

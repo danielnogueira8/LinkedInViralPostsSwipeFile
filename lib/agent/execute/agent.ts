@@ -42,12 +42,10 @@ import {
   type GroundedSource,
   type ModeledDraftBatchResult,
   type ExecuteModeledDraftBatchInput,
+  isCanonicalModeledSourceUrl,
 } from "@/lib/agent/execute/writer";
 
 // Read-only branch dependencies
-import {
-  isCanonicalModeledSourceUrl,
-} from "@/lib/agent/modeled-draft-batch";
 import {
   continuationForModeledDraftRoute,
   type ModeledDraftBatchContinuation,
@@ -61,6 +59,11 @@ import {
 import { safeFilename } from "@/lib/agent/untrusted";
 import type { ContentBlock } from "@/lib/openrouter";
 import {
+  FALLBACK_READ_ONLY_ORCHESTRATOR_MODEL,
+  PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL,
+} from "@/lib/agent/model-config";
+
+export {
   FALLBACK_READ_ONLY_ORCHESTRATOR_MODEL,
   PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL,
 } from "@/lib/agent/model-config";
@@ -226,6 +229,89 @@ export async function* runAgentTurn(
   }
 }
 
+// Back-compat shims: the canonical executor is runAgentTurn. These thin
+// wrappers keep existing unit tests and harness adapters working while the
+// old orchestrator modules are deleted (PLAN-cowork-unification Phase 2).
+export async function* runActionOrchestrator(
+  input: ActionOrchestratorInput,
+  dependencies: Partial<ActionOrchestratorDependencies> = {},
+): AsyncGenerator<AgentEvent> {
+  const agentInput: AgentInput = {
+    workspaceId: input.workspaceId,
+    chatId: input.chatId,
+    turnMessageId: input.turnMessageId,
+    userInstruction: input.userInstruction,
+    history: input.history,
+    task: { kind: "action", route: input.route },
+    confirmedActionTargetIds: input.confirmedTargetIds,
+    signal: input.signal,
+    cancellationProbe: input.cancellationProbe,
+    onModelUsed: input.onModelUsed,
+    telemetry: input.telemetry,
+    writerInput: {
+      workspaceId: input.workspaceId,
+      userInstruction: input.userInstruction,
+      history: input.history,
+      voiceResult: { ok: true, voice: {} },
+      preferences: [],
+      feedbackMemory: [],
+      priorPostDrafts: [],
+    },
+  };
+  const agentDeps: Partial<AgentDependencies> = {
+    actionAdapters: dependencies.adapters,
+    checkpoints: dependencies.checkpoints,
+    runTool: dependencies.runTool,
+    recordUsage: dependencies.recordUsage,
+    idFactory: dependencies.idFactory,
+    cancelPollMs: dependencies.cancelPollMs,
+    cancelProbeTimeoutMs: dependencies.cancelProbeTimeoutMs,
+    turnDeadlineMs: dependencies.turnDeadlineMs,
+    adapterHealth: dependencies.adapterHealth,
+    ...dependencies,
+  };
+  yield* runAgentTurn({ ...agentInput, dependencies: agentDeps });
+}
+
+export async function* runReadOnlyOrchestrator(
+  input: ReadOnlyOrchestratorInput,
+  dependencies: Partial<ReadOnlyOrchestratorDependencies> = {},
+): AsyncGenerator<AgentEvent> {
+  const agentInput: AgentInput = {
+    workspaceId: input.workspaceId,
+    chatId: "",
+    turnMessageId: input.turnMessageId,
+    userInstruction: input.userInstruction,
+    history: input.history,
+    task: { kind: "research", route: input.route },
+    attachmentNames: input.attachmentNames,
+    attachmentBlocks: input.attachmentBlocks,
+    modeledBatchContinuation: input.modeledBatchContinuation,
+    signal: input.signal,
+    cancellationProbe: input.cancellationProbe,
+    onModelUsed: input.onModelUsed,
+    telemetry: input.telemetry,
+    writerInput: input.writerInput,
+  };
+  const agentDeps: Partial<AgentDependencies> = {
+    researchAdapters: dependencies.adapters,
+    runTool: dependencies.runTool,
+    runWebResearch: dependencies.runWebResearch,
+    inspectAttachments: dependencies.inspectAttachments,
+    recordUsage: dependencies.recordUsage,
+    idFactory: dependencies.idFactory,
+    now: dependencies.now,
+    cancelPollMs: dependencies.cancelPollMs,
+    cancelProbeTimeoutMs: dependencies.cancelProbeTimeoutMs,
+    turnDeadlineMs: dependencies.turnDeadlineMs,
+    adapterHealth: dependencies.adapterHealth,
+    runProse: dependencies.runProse,
+    executeModeledDraftBatch: dependencies.executeModeledDraftBatch,
+    ...dependencies,
+  };
+  yield* runAgentTurn({ ...agentInput, dependencies: agentDeps });
+}
+
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
@@ -268,9 +354,9 @@ function withoutUndefined<T extends Record<string, unknown>>(
 // OPENROUTER_ACTION_ORCHESTRATOR_MODEL. The fallback stays independent (safety
 // net only). Note: the orchestrator plans multi-step tool actions — keep the
 // chat model tool-calling-capable, or pin a capable model here.
-const PRIMARY_ACTION_ORCHESTRATOR_MODEL =
+export const PRIMARY_ACTION_ORCHESTRATOR_MODEL =
   process.env.OPENROUTER_ACTION_ORCHESTRATOR_MODEL || CHAT_MODEL;
-const FALLBACK_ACTION_ORCHESTRATOR_MODEL = distinctFallbackModel(
+export const FALLBACK_ACTION_ORCHESTRATOR_MODEL = distinctFallbackModel(
   PRIMARY_ACTION_ORCHESTRATOR_MODEL,
   process.env.OPENROUTER_ACTION_ORCHESTRATOR_FALLBACK_MODEL ||
     "google/gemini-3.5-flash",
@@ -309,18 +395,18 @@ const ClarifyTargetActionSchema = z
   })
   .strict();
 
-const ActionPlanActionSchema = z.discriminatedUnion("type", [
+export const ActionPlanActionSchema = z.discriminatedUnion("type", [
   MoveActionSchema,
   ScheduleActionSchema,
   ClarifyTargetActionSchema,
 ]);
-type ActionPlanAction = z.infer<typeof ActionPlanActionSchema>;
-type MutationAction = Exclude<
+export type ActionPlanAction = z.infer<typeof ActionPlanActionSchema>;
+export type MutationAction = Exclude<
   ActionPlanAction,
   { type: "clarify_target" }
 >;
 
-const ActionPlanSchema = z
+export const ActionPlanSchema = z
   .object({ actions: z.array(ActionPlanActionSchema).min(1).max(6) })
   .strict()
   .superRefine((plan, ctx) => {
@@ -361,7 +447,7 @@ const ActionPlanSchema = z
       });
     }
   });
-type ActionPlan = z.infer<typeof ActionPlanSchema>;
+export type ActionPlan = z.infer<typeof ActionPlanSchema>;
 
 const ActionDraftSchema = z
   .object({
@@ -373,9 +459,9 @@ const ActionDraftSchema = z
     created_at: z.string(),
   })
   .passthrough();
-type ActionDraft = z.infer<typeof ActionDraftSchema>;
+export type ActionDraft = z.infer<typeof ActionDraftSchema>;
 
-type ManagementRoute = Extract<
+export type ManagementRoute = Extract<
   ActionOrchestratorRoute,
   { kind: "action_management" }
 >;
@@ -389,7 +475,7 @@ function sameIdSet(left: MutationAction[], right: MutationAction[]): boolean {
   );
 }
 
-function parseActionPlan(
+export function parseActionPlan(
   route: ManagementRoute,
   drafts: ActionDraft[],
   raw: unknown,
@@ -489,7 +575,7 @@ function parseActionPlan(
   return plan;
 }
 
-function actionOperationKey(
+export function actionOperationKey(
   turnMessageId: string,
   action: MutationAction,
 ): string {
@@ -500,7 +586,7 @@ function actionOperationKey(
     .slice(0, 200);
 }
 
-function assertPlanMatchesCheckpoints(
+export function assertPlanMatchesCheckpoints(
   turnMessageId: string,
   checkpoints: ActionCheckpoint[],
   plan: ActionPlan,
@@ -555,7 +641,7 @@ function actionFromCheckpoint(
   return parsed;
 }
 
-function planFromCheckpoints(
+export function planFromCheckpoints(
   route: ManagementRoute,
   turnMessageId: string,
   checkpoints: ActionCheckpoint[],
@@ -604,7 +690,7 @@ function checkpointTerminalSummary(checkpoints: ActionCheckpoint[]): string {
   return "No board update was committed. Cowork will not replay the incomplete checkpoint set. Send the request again as a new message.";
 }
 
-type ActionPlannerRequest = {
+export type ActionPlannerRequest = {
   route: ManagementRoute;
   userInstruction: string;
   history: ChatMessage[];
@@ -620,7 +706,7 @@ type ActionPlannerResponse = {
   model?: string;
 };
 
-type ActionOrchestratorAdapter = {
+export type ActionOrchestratorAdapter = {
   readonly model: string;
   createPlan(request: ActionPlannerRequest): Promise<ActionPlannerResponse>;
 };
@@ -710,7 +796,7 @@ function requirementText(requirement: ActionRequirement): string {
     : `schedule_post date=${requirement.date ?? "null"}`;
 }
 
-class OpenRouterActionOrchestratorAdapter
+export class OpenRouterActionOrchestratorAdapter
   implements ActionOrchestratorAdapter
 {
   constructor(readonly model: string) {}
@@ -783,7 +869,7 @@ const actionDefaultAdapters: ActionOrchestratorAdapter[] = [
   new OpenRouterActionOrchestratorAdapter(FALLBACK_ACTION_ORCHESTRATOR_MODEL),
 ];
 
-type ActionOrchestratorInput = {
+export type ActionOrchestratorInput = {
   workspaceId: string;
   chatId: string;
   turnMessageId: string;
@@ -797,7 +883,7 @@ type ActionOrchestratorInput = {
   telemetry?: CoworkTurnTelemetry;
 };
 
-type ActionOrchestratorDependencies = {
+export type ActionOrchestratorDependencies = {
   adapters: ActionOrchestratorAdapter[];
   checkpoints: ActionCheckpointRepository;
   runTool: typeof runTool;
@@ -944,7 +1030,7 @@ function actionToolCall(
   };
 }
 
-function actionDraftTitleQueries(
+export function actionDraftTitleQueries(
   instruction: string,
   expectedTargetCount?: number,
 ): string[] {
@@ -1166,7 +1252,7 @@ function cleanTitle(draft: ActionDraft, index: number): string {
   return (title || `Draft ${index + 1}`).slice(0, 52);
 }
 
-function candidateOptionLabels(candidates: ActionDraft[]): string[] {
+export function candidateOptionLabels(candidates: ActionDraft[]): string[] {
   const bases = candidates.map(cleanTitle);
   const counts = new Map<string, number>();
   for (const base of bases) counts.set(base, (counts.get(base) ?? 0) + 1);
@@ -2293,7 +2379,7 @@ const ClarifyActionSchema = z
   })
   .strict();
 
-const ReadOnlyActionSchema = z.discriminatedUnion("type", [
+export const ReadOnlyActionSchema = z.discriminatedUnion("type", [
   SearchNewsActionSchema,
   SearchWebActionSchema,
   SearchViralPostsActionSchema,
@@ -2301,9 +2387,9 @@ const ReadOnlyActionSchema = z.discriminatedUnion("type", [
   DraftPostActionSchema,
   ClarifyActionSchema,
 ]);
-type ReadOnlyAction = z.infer<typeof ReadOnlyActionSchema>;
+export type ReadOnlyAction = z.infer<typeof ReadOnlyActionSchema>;
 
-const ReadOnlyPlanSchema = z
+export const ReadOnlyPlanSchema = z
   .object({
     actions: z.array(ReadOnlyActionSchema).min(1).max(5),
   })
@@ -2378,9 +2464,9 @@ const ReadOnlyPlanSchema = z
       }
     }
   });
-type ReadOnlyPlan = z.infer<typeof ReadOnlyPlanSchema>;
+export type ReadOnlyPlan = z.infer<typeof ReadOnlyPlanSchema>;
 
-function parseReadOnlyPlan(
+export function parseReadOnlyPlan(
   route: ReadOnlyOrchestratorRoute,
   raw: unknown,
 ): ReadOnlyPlan {
@@ -2788,7 +2874,7 @@ function authorizedWorkspaceNiche(
   );
 }
 
-function planSearchQueriesMatchInstruction(
+export function planSearchQueriesMatchInstruction(
   plan: ReadOnlyPlan,
   userInstruction: string,
 ): boolean {
@@ -2851,7 +2937,7 @@ function authoritativeResearchClause(userInstruction: string): string {
  * prose. The planner chooses a typed action; it cannot redirect that action to
  * a different topic by smuggling extra words into its query field.
  */
-function authoritativeResearchQuery(userInstruction: string): string {
+export function authoritativeResearchQuery(userInstruction: string): string {
   const normalized = userInstruction.replace(/\s+/g, " ").trim();
   const researchClause = authoritativeResearchClause(normalized)
     .replace(
@@ -2930,7 +3016,7 @@ function compiledWorkspaceSearchAction(
  * caller, and every evidence route is handled here). Every returned plan
  * passes parseReadOnlyPlan + planSearchQueriesMatchInstruction by construction.
  */
-function compileServerReadOnlyPlan(
+export function compileServerReadOnlyPlan(
   route: ReadOnlyOrchestratorRoute,
   authoritativeInstruction: string,
 ): ReadOnlyPlan | null {
@@ -3020,7 +3106,7 @@ function compileServerReadOnlyPlan(
   return null;
 }
 
-type ReadOnlyPlannerRequest = {
+export type ReadOnlyPlannerRequest = {
   route: ReadOnlyOrchestratorRoute;
   userInstruction: string;
   history: ChatMessage[];
@@ -3034,7 +3120,7 @@ type ReadOnlyPlannerResponse = {
   model?: string;
 };
 
-type ReadOnlyOrchestratorAdapter = {
+export type ReadOnlyOrchestratorAdapter = {
   readonly model: string;
   createPlan(request: ReadOnlyPlannerRequest): Promise<ReadOnlyPlannerResponse>;
 };
@@ -3161,7 +3247,7 @@ function readOnlyPlannerSystem(route: ReadOnlyOrchestratorRoute): string {
   ].join("\n\n");
 }
 
-function boundedReadOnlyPlannerHistory(
+export function boundedReadOnlyPlannerHistory(
   history: ChatMessage[],
 ): ChatMessage[] {
   return history
@@ -3195,7 +3281,7 @@ function boundedReadOnlyPlannerHistory(
     });
 }
 
-class OpenRouterReadOnlyOrchestratorAdapter
+export class OpenRouterReadOnlyOrchestratorAdapter
   implements ReadOnlyOrchestratorAdapter
 {
   constructor(readonly model: string) {}
@@ -3264,7 +3350,7 @@ function safeHttpUrl(value: string): string | null {
 // OPENROUTER_WEB_RESEARCH_MODEL. This is a text LLM call that adds OpenRouter's
 // web plugin — keep the chat model web-grounding-capable, or pin a model here
 // (Haiku was the prior cheap default). The fallback stays independent.
-const PRIMARY_WEB_RESEARCH_MODEL =
+export const PRIMARY_WEB_RESEARCH_MODEL =
   process.env.OPENROUTER_WEB_RESEARCH_MODEL || CHAT_MODEL;
 const FALLBACK_WEB_RESEARCH_MODEL = distinctFallbackModel(
   PRIMARY_WEB_RESEARCH_MODEL,
@@ -3290,7 +3376,7 @@ type RunWebResearch = (input: {
   ) => Promise<void>;
 }) => Promise<WebResearchResult>;
 
-const runGroundedWebResearch: RunWebResearch = async (input) => {
+export const runGroundedWebResearch: RunWebResearch = async (input) => {
   const attempts: ModelAttempt[] = [];
   for (const [modelIndex, model] of [
     PRIMARY_WEB_RESEARCH_MODEL,
@@ -3438,7 +3524,7 @@ type InspectAttachments = (input: {
   ) => Promise<void>;
 }) => Promise<AttachmentInspectionResult>;
 
-const inspectAttachmentEvidence: InspectAttachments = async (input) => {
+export const inspectAttachmentEvidence: InspectAttachments = async (input) => {
   const hasUndescribedImage = input.attachmentBlocks.some(
     (block) =>
       block.type === "text" &&
@@ -3614,7 +3700,7 @@ const inspectAttachmentEvidence: InspectAttachments = async (input) => {
 };
 
 
-type ReadOnlyOrchestratorInput = {
+export type ReadOnlyOrchestratorInput = {
   workspaceId: string;
   turnMessageId: string;
   userInstruction: string;
@@ -3630,7 +3716,7 @@ type ReadOnlyOrchestratorInput = {
   telemetry?: CoworkTurnTelemetry;
 };
 
-type ReadOnlyOrchestratorDependencies = {
+export type ReadOnlyOrchestratorDependencies = {
   adapters: ReadOnlyOrchestratorAdapter[];
   runTool: typeof runTool;
   runProse: (input: WriterInput) => AsyncGenerator<AgentEvent>;

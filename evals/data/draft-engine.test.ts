@@ -46,10 +46,10 @@ vi.mock("@/lib/agent/specialists/ai-tell-repair", async (importOriginal) => {
 import { UsagePersistenceError } from "@/lib/openrouter";
 import {
   GROUNDED_EVIDENCE_TEXT_BUDGET_CHARS,
-  runDraftEngine,
-  type DraftEngineDependencies,
-  type DraftEngineInput,
-} from "@/lib/agent/draft-engine";
+  runWriterTurn,
+  type WriterDependencies,
+  type WriterInput,
+} from "@/lib/agent/execute/writer";
 import {
   FALLBACK_DRAFT_WRITER_MODEL,
   PRIMARY_DRAFT_WRITER_MODEL,
@@ -135,7 +135,7 @@ class ScriptedWriter implements DraftWriterAdapter {
   }
 }
 
-function input(overrides: Partial<DraftEngineInput> = {}): DraftEngineInput {
+function input(overrides: Partial<WriterInput> = {}): WriterInput {
   return {
     workspaceId: "ws-1",
     userInstruction:
@@ -173,23 +173,26 @@ function input(overrides: Partial<DraftEngineInput> = {}): DraftEngineInput {
 
 async function collect(
   writer: ScriptedWriter,
-  overrides: Partial<DraftEngineInput> = {},
-  dependencyOverrides: Partial<DraftEngineDependencies> = {},
+  overrides: Partial<WriterInput> = {},
+  dependencyOverrides: Partial<WriterDependencies> = {},
 ) {
   const recorded: Parameters<
-    NonNullable<DraftEngineDependencies["recordUsage"]>
+    NonNullable<WriterDependencies["recordUsage"]>
   >[] = [];
   const events: AgentEvent[] = [];
-  for await (const event of runDraftEngine(input(overrides), {
-    writer,
-    recordUsage: vi.fn(
-      async (
-        ...args: Parameters<NonNullable<DraftEngineDependencies["recordUsage"]>>
-      ) => {
-        recorded.push(args);
-      },
-    ),
-    ...dependencyOverrides,
+  for await (const event of runWriterTurn({
+    ...input(overrides),
+    dependencies: {
+      writer,
+      recordUsage: vi.fn(
+        async (
+          ...args: Parameters<NonNullable<WriterDependencies["recordUsage"]>>
+        ) => {
+          recorded.push(args);
+        },
+      ),
+      ...dependencyOverrides,
+    },
   })) {
     events.push(event);
   }
@@ -1459,11 +1462,14 @@ describe("DraftEngine", () => {
     ]);
 
     const consume = async () => {
-      for await (const event of runDraftEngine(input(), {
-        writer,
-        recordUsage: vi.fn(async () => {
-          throw new UsagePersistenceError("usage insert unavailable");
-        }),
+      for await (const event of runWriterTurn({
+        ...input(),
+        dependencies: {
+          writer,
+          recordUsage: vi.fn(async () => {
+            throw new UsagePersistenceError("usage insert unavailable");
+          }),
+        },
       })) {
         // The engine must throw before emitting or attempting another model.
         void event;
@@ -1480,14 +1486,14 @@ describe("DraftEngine", () => {
     ]);
     const events: AgentEvent[] = [];
 
-    for await (const event of runDraftEngine(
-      input({ cancellationProbe: () => new Promise(() => {}) }),
-      {
+    for await (const event of runWriterTurn({
+      ...input({ cancellationProbe: () => new Promise(() => {}) }),
+      dependencies: {
         writer,
         recordUsage: vi.fn(async () => undefined),
         cancelProbeTimeoutMs: 5,
       },
-    )) {
+    })) {
       events.push(event);
     }
 
@@ -1542,8 +1548,8 @@ describe("DraftEngine", () => {
     ]);
     const events: AgentEvent[] = [];
 
-    for await (const event of runDraftEngine(
-      input({
+    for await (const event of runWriterTurn({
+      ...input({
         cancellationProbe: (signal) =>
           new Promise<boolean>((resolve) => {
             active += 1;
@@ -1567,13 +1573,13 @@ describe("DraftEngine", () => {
             );
           }),
       }),
-      {
+      dependencies: {
         writer,
         recordUsage: vi.fn(async () => undefined),
         cancelPollMs: 1,
         cancelProbeTimeoutMs: 100,
       },
-    )) {
+    })) {
       events.push(event);
     }
 
@@ -1669,9 +1675,12 @@ describe("DraftEngine", () => {
     ]);
     const events: AgentEvent[] = [];
     for await (const event of observeCoworkTurn({
-      stream: runDraftEngine(input({ telemetry }), {
-        writer,
-        recordUsage: vi.fn(async () => undefined),
+      stream: runWriterTurn({
+        ...input({ telemetry }),
+        dependencies: {
+          writer,
+          recordUsage: vi.fn(async () => undefined),
+        },
       }),
       telemetry,
       contract: { kind: "post", expectedCount: 1 },
