@@ -3978,6 +3978,13 @@ function taggedWithResearchProvenance(
             ...(modeledSource.url ? { source_url: modeledSource.url } : {}),
           }
         : {}),
+      // The user's own explicit post-type pick for this turn (a starter's
+      // contract or a free-text Generation Settings selection) — never a
+      // guess derived from instruction text. The client must treat this as
+      // authoritative on save and skip body-text auto-classification.
+      ...(route.explicitPostType
+        ? { explicit_post_type: route.explicitPostType }
+        : {}),
       research_provenance: {
         route: route.kind,
         sources: artifactSources.map((source) => ({
@@ -4587,6 +4594,28 @@ async function* runReadOnlyOrchestratorCore(
             ),
         });
         sources = workspaceSources(result);
+        // Diagnose the "search succeeded but produced zero usable sources"
+        // dead-end without needing a live repro: workspaceSources() silently
+        // drops any row that fails normalizeModelingSourceCandidate (empty
+        // id/text after canonicalScrapedPostText) via flatMap, so a non-empty
+        // raw result can still yield sources.length === 0 with no visibility
+        // into why. Only logs when the drop is non-trivial, so this stays
+        // silent on the normal path.
+        if (result.ok) {
+          const rawCount = Array.isArray(result.posts) ? result.posts.length : 0;
+          if (rawCount > 0 && sources.length < rawCount) {
+            console.warn(
+              JSON.stringify({
+                search_viral_posts_candidates_dropped: {
+                  workspace_id: input.workspaceId,
+                  raw_count: rawCount,
+                  usable_count: sources.length,
+                  dropped_count: rawCount - sources.length,
+                },
+              }),
+            );
+          }
+        }
         if (input.route.workspaceDraftSourceMode === "one_to_one") {
           modeledSourcePoolByAction.set(
             action.id,
@@ -4750,7 +4779,18 @@ async function* runReadOnlyOrchestratorCore(
   const verifiedSourceCount = minimumWorkspaceSources
     ? groundedSources.filter((source) => source.kind === "workspace_post").length
     : groundedSources.length;
-  const minimumSources = minimumWorkspaceSources ?? 1;
+  // For a one-to-one modeling request the requested draft COUNT is authoritative
+  // (the user's chip) — it is NOT a demand for that many distinct sources. When
+  // fewer distinct sources exist than drafts requested, we still write the
+  // requested number of drafts (reusing the sources we have via the shared-pool
+  // multi path below), rather than dead-ending. So a one-to-one modeling turn
+  // needs only ≥1 verified source to proceed; every other turn keeps its
+  // requested-source-count floor.
+  const oneToOneModeling =
+    input.route.workspaceDraftSourceMode === "one_to_one";
+  const minimumSources = oneToOneModeling
+    ? 1
+    : (minimumWorkspaceSources ?? 1);
   if (!resumingModeledBatch && verifiedSourceCount < minimumSources) {
     const message = `I found only ${verifiedSourceCount} of the ${minimumSources} distinct verified sources you requested, so I did not draft from incomplete research.`;
     yield {
@@ -4816,65 +4856,44 @@ async function* runReadOnlyOrchestratorCore(
     });
   };
   const expectedDrafts = input.route.expectedDrafts ?? 1;
+  // The selection search may inspect up to ten candidates, but the durable
+  // coordinator accepts only the requested slots plus five frozen reserves.
+  // Preserve ranking order while bounding the persisted pool; retries reuse
+  // this exact slice and never re-run selection against a different set.
+  // A url is NOT required — it only stamps the "Open on LinkedIn" chip on
+  // the finished draft, and the batch accepts a url-less source. Requiring
+  // one here dropped fully-modelable scraped posts whose url column is null
+  // from the candidate pool for no modeling-quality reason. When a url IS
+  // present it must still be genuinely canonical (not malformed/untrusted).
+  const canonicalPool = modeledSourcePool
+    .flatMap((source) =>
+      source.kind === "workspace_post" &&
+      (source.url === undefined || isCanonicalModeledSourceUrl(source.url))
+        ? [
+            {
+              id: source.id,
+              text: source.text,
+              ...(source.url ? { url: source.url } : {}),
+              ...(source.title ? { title: source.title } : {}),
+              ...(source.publishedAt
+                ? { publishedAt: source.publishedAt }
+                : {}),
+            },
+          ]
+        : [],
+    )
+    .slice(0, expectedDrafts + 5);
+  // The durable one-source-per-draft BATCH runs only when the workspace can
+  // actually supply a distinct verified source for every requested draft.
+  // When the chip asks for more drafts than there are distinct canonical
+  // sources, fall through to the shared-pool multi path below (which reuses
+  // the available sources), so the user always gets the requested count.
+  // On a resume the frozen batch is authoritative and skips this check.
   const modeledBatch =
-    input.route.workspaceDraftSourceMode === "one_to_one" && expectedDrafts >= 2;
+    input.route.workspaceDraftSourceMode === "one_to_one" &&
+    expectedDrafts >= 2 &&
+    (resumingModeledBatch || canonicalPool.length >= expectedDrafts);
   if (modeledBatch) {
-    // The selection search may inspect up to ten candidates, but the durable
-    // coordinator accepts only the requested slots plus five frozen reserves.
-    // Preserve ranking order while bounding the persisted pool; retries reuse
-    // this exact slice and never re-run selection against a different set.
-    const canonicalPool = modeledSourcePool
-      .flatMap((source) =>
-        source.kind === "workspace_post" &&
-        isCanonicalModeledSourceUrl(source.url)
-          ? [
-              {
-                id: source.id,
-                text: source.text,
-                url: source.url,
-                ...(source.title ? { title: source.title } : {}),
-                ...(source.publishedAt
-                  ? { publishedAt: source.publishedAt }
-                  : {}),
-              },
-            ]
-          : [],
-      )
-      .slice(0, expectedDrafts + 5);
-    if (!resumingModeledBatch && canonicalPool.length < expectedDrafts) {
-      input.telemetry?.setProvenanceStatus("missing");
-      const message = `I found only ${canonicalPool.length} of the ${expectedDrafts} distinct verified sources with resolvable source links, so I did not draft from incomplete research.`;
-      yield {
-        type: "tool_end",
-        id: draftCallId,
-        name: draftCall.function.name,
-        ok: false,
-      };
-      messages.push(
-        readOnlyToolMessage(draftCallId, {
-          ok: false,
-          delivered: false,
-          verified_sources: canonicalPool.length,
-          expected_sources: expectedDrafts,
-          error: "insufficient_resolvable_sources",
-        }),
-      );
-      yield {
-        type: "error",
-        code: "orchestrator_evidence_insufficient",
-        message,
-        recovery: "continue",
-      };
-      yield completedDone({
-        content: message,
-        toolCalls: calls,
-        toolMessages: messages,
-        inputTokens,
-        outputTokens,
-      });
-      return;
-    }
-
     if (deps.executeModeledDraftBatch) {
       let batchResult: Awaited<ReturnType<typeof deps.executeModeledDraftBatch>>;
       try {
@@ -5025,9 +5044,12 @@ async function* runReadOnlyOrchestratorCore(
       const reason = batchResult.reason;
       const durableBatchExists =
         batchResult.kind === "incomplete" && Boolean(batchResult.batchId);
-      const terminalFailure =
-        batchResult.kind === "failed" &&
-        (batchResult.reason !== "insufficient_sources" || resumingModeledBatch);
+      // insufficient_sources is never recoverable by retrying the same turn,
+      // fresh or resuming: the workspace does not have enough distinct
+      // verified sources, full stop, and retrying re-runs the identical
+      // acquisition against the identical pool. Every kind:"failed" reason is
+      // terminal (cancelled/deadline are kind:"incomplete", never reach here).
+      const terminalFailure = batchResult.kind === "failed";
       const message = cancelled
         ? "Stopped before the complete modeled set was produced."
         : batchResult.kind === "failed" &&
@@ -5041,11 +5063,14 @@ async function* runReadOnlyOrchestratorCore(
                 resumingModeledBatch
               ? "The saved modeled set is no longer available. Send the request again as a new message to start a fresh set."
               : batchResult.kind === "failed" &&
-                  batchResult.reason === "invalid_request"
-                ? "This modeled request did not pass the server’s batch contract, so it was not run. Send it again as a new message."
-                : presentableArtifacts.length > 0
-                  ? `I completed ${presentableArtifacts.length} of ${expectedDrafts} verified drafts — the finished drafts are shown above. The remaining slot could not be completed safely, and Retry will continue only the unfinished work.`
-                  : "I couldn’t complete the verified modeled set safely. Retry will resume the same bounded batch.";
+                  batchResult.reason === "insufficient_sources"
+                ? "I don’t have enough distinct verified sources in your swipe file to complete this modeled set. Add more posts to your swipe file, or ask for fewer drafts, then send the request again as a new message."
+                : batchResult.kind === "failed" &&
+                    batchResult.reason === "invalid_request"
+                  ? "This modeled request did not pass the server’s batch contract, so it was not run. Send it again as a new message."
+                  : presentableArtifacts.length > 0
+                    ? `I completed ${presentableArtifacts.length} of ${expectedDrafts} verified drafts — the finished drafts are shown above. The remaining slot could not be completed safely, and Retry will continue only the unfinished work.`
+                    : "I couldn’t complete the verified modeled set safely. Retry will resume the same bounded batch.";
       for (const artifact of presentableArtifacts) {
         yield { type: "artifact", artifact };
       }

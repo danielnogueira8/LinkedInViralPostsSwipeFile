@@ -758,6 +758,71 @@ That makes the lesson practical and repeatable for the reader.`;
     ).toBe(1);
   });
 
+  // Regression: this is the EXACT call shape resolveFindAndModelSource issues
+  // for "find a top-performing post and model it" (autoSelectModelingSources:
+  // true, limit:1). Before this fix, the confirmed-modeling branch hardcoded
+  // its cursor to 0 regardless of the durable claim_modeling_source_rotation_
+  // cursor RPC's return value, so this exact request shape always returned the
+  // literal #1-ranked post — the user-reported "always the same post" bug.
+  test("confirmed-modeling (find-and-model) with limit:1 rotates across the durable cursor", async () => {
+    // Modeling candidates go through normalizeModelingSourceCandidate, which
+    // (unlike the plain-MIMIC path VIRAL_POOL above is designed for) rejects
+    // bodies too short/empty to model — so this pool needs real post text.
+    const structured = (label: string) => `${label} works better with a clear system.
+
+1. Start with the real constraint.
+2. Explain one useful change.
+3. Close with the next action.
+
+That makes the lesson practical and repeatable for the reader.`;
+    const MODELABLE_VIRAL_POOL = {
+      posts: {
+        rows: [
+          { id: "v1", text: structured("Post one"), viral_score: 90, accounts: [{ name: "A1" }] },
+          { id: "v2", text: structured("Post two"), viral_score: 80, accounts: [{ name: "A2" }] },
+          { id: "v3", text: structured("Post three"), viral_score: 70, accounts: [{ name: "A3" }] },
+          { id: "v4", text: structured("Post four"), viral_score: 60, accounts: [{ name: "A4" }] },
+        ],
+      },
+    };
+    const args = { post_type: "regular", sort: "viral", dir: "desc", limit: 1 };
+    const toolContext = { autoSelectModelingSources: true };
+
+    dbRef.current = makeFakeSupabase(MODELABLE_VIRAL_POOL);
+    const r0 = (await runTool(
+      "search_viral_posts",
+      args,
+      "ws-modeled-l1-0",
+      undefined,
+      toolContext,
+    )) as { posts: { id: string }[] };
+    expect(r0.posts[0].id).toBe("v1");
+
+    dbRef.current = makeFakeSupabase(MODELABLE_VIRAL_POOL, {
+      claim_modeling_source_rotation_cursor: { data: 1 },
+    });
+    const r1 = (await runTool(
+      "search_viral_posts",
+      args,
+      "ws-modeled-l1-1",
+      undefined,
+      toolContext,
+    )) as { posts: { id: string }[] };
+    expect(r1.posts[0].id).toBe("v2");
+
+    dbRef.current = makeFakeSupabase(MODELABLE_VIRAL_POOL, {
+      claim_modeling_source_rotation_cursor: { data: 3 },
+    });
+    const r3 = (await runTool(
+      "search_viral_posts",
+      args,
+      "ws-modeled-l1-3",
+      undefined,
+      toolContext,
+    )) as { posts: { id: string }[] };
+    expect(r3.posts[0].id).toBe("v4");
+  });
+
   test("exact-count modeling returns a complete pool without semantic topic filtering", async () => {
     const structured = (topic: string) => `${topic} becomes useful when the system is concrete.
 

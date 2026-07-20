@@ -2139,6 +2139,7 @@ describe("production-shaped Cowork outcome harness", () => {
         version: 1,
         draftCount,
         draftCountSource: "ui",
+        postTypeSource: "default",
       });
     },
   );
@@ -2197,28 +2198,31 @@ describe("production-shaped Cowork outcome harness", () => {
     expect(report.observed.savedPostReads).toBe(0);
   });
 
-  test("a URL-less modeled source fails closed before durable acquisition or writing", async () => {
-    const scenario = modeledThreeScenario("modeled-three-url-less-source");
+  test("honors the requested draft count via the shared-pool path when fewer distinct sources than requested exist", async () => {
+    // The reported bug. A request for 3 drafts must produce 3 drafts even when
+    // the workspace can only supply 2 distinct canonical sources. Rather than
+    // the old fail-closed dead-end ("I couldn't complete the verified modeled
+    // set safely"), the turn now falls through to the shared-pool multi path —
+    // which reuses the available sources to write the number of drafts the
+    // chip asked for. The durable one-source-per-draft batch is skipped (it
+    // needs N distinct canonical sources), so no batch operation key is
+    // recorded. (A url-less source no longer causes this shortfall on its
+    // own — see the sibling test below — so this fixture returns fewer
+    // sources than requested outright to keep exercising the fallback path.)
+    const scenario = modeledThreeScenario("modeled-three-fewer-sources-than-requested");
     scenario.model.readOnlyOrchestrator!.allowNoModel = true;
     scenario.model.readOnlyOrchestrator!.toolResults = {
       search_viral_posts: [
         {
           ok: true,
-          count: 3,
-          posts: [
-            MODELED_SOURCE_ROWS[0],
-            {
-              id: MODELED_SOURCE_ROWS[1].id,
-              text: MODELED_SOURCE_ROWS[1].text,
-            },
-            MODELED_SOURCE_ROWS[2],
-          ],
+          count: 2,
+          posts: [MODELED_SOURCE_ROWS[0], MODELED_SOURCE_ROWS[1]],
         },
       ],
     };
     scenario.expected = {
       terminal: "done",
-      artifactBodies: [],
+      artifactBodies: [COMPLETE_POST, SECOND_POST, THIRD_POST],
       actionNames: ["search_viral_posts", "write_grounded_post"],
     };
 
@@ -2228,24 +2232,21 @@ describe("production-shaped Cowork outcome harness", () => {
       report.pass,
       JSON.stringify({ failures: report.failureCodes, safe: report.safe }),
     ).toBe(true);
-    expect(report.persisted.artifacts).toEqual([]);
-    expect(report.observed.directWriterRequests).toEqual([]);
+    // The requested 3 drafts were delivered — not a dead-end.
+    expect(report.persisted.artifacts).toHaveLength(3);
+    // The strict durable batch did NOT run (fewer distinct canonical sources
+    // than requested drafts); the shared-pool path handled it instead.
     expect(report.observed.modeledBatchOperationKeys).toEqual([]);
-    expect(report.frames).toContainEqual({
-      event: "error",
-      data: expect.objectContaining({
-        code: "orchestrator_evidence_insufficient",
-        recovery: "continue",
-      }),
-    });
-    const recoverableRow = report.persisted.messages.find(
-      (message) => message.role === "assistant",
-    );
-    expect(recoverableRow?.recoverable_error).toBeDefined();
-    expect(recoverableRow?.recoverable_error).toMatchObject({
-      code: "orchestrator_evidence_insufficient",
-      retryRootUserMessageId: "00000000-0000-4000-8000-000000000002",
-    });
+    // The shared-pool fallback succeeds silently; no recoverable error is
+    // emitted because enough verified sources exist to fulfill the request.
+    expect(
+      report.frames.some(
+        (frame) =>
+          frame.event === "error" &&
+          (frame.data as { code?: string })?.code ===
+            "orchestrator_evidence_insufficient",
+      ),
+    ).toBe(false);
   });
 
   test("routes an output-count-only modeled request through the same exact batch", async () => {
@@ -2411,6 +2412,7 @@ describe("production-shaped Cowork outcome harness", () => {
       version: 1,
       draftCount: 4,
       draftCountSource: "ui",
+      postTypeSource: "default",
     });
   });
 
@@ -2519,6 +2521,40 @@ describe("production-shaped Cowork outcome harness", () => {
     expect(sequence.attempts[1]?.observed.readOnlyTools).toEqual([]);
     expect(sequence.attempts[2]?.observed.readOnlyTools).toEqual([]);
     expect(sequence.attempts[2]?.persisted.artifacts).toHaveLength(3);
+  });
+
+  test("suppresses the credit-usage marker on a recoverable, zero-artifact failed turn", async () => {
+    // A failed turn that delivered nothing shouldn't show a credit line at
+    // all — "~1 credit" next to a dead-end error reads as "you were charged
+    // for nothing." A busy durable-batch coordinator is a genuine,
+    // still-recoverable (Retry offered) failure that delivers zero
+    // artifacts — exactly the case _turn_usage must be withheld on.
+    const scenario = modeledThreeScenario("modeled-three-busy-usage-suppressed");
+    scenario.model.readOnlyOrchestrator!.modeledBatchOutcome = "busy";
+    scenario.expected = {
+      terminal: "failure",
+      artifactBodies: [],
+      actionNames: ["search_viral_posts", "write_grounded_post"],
+    };
+
+    const report = await runCoworkOutcomeScenario(scenario);
+
+    expect(
+      report.pass,
+      JSON.stringify({ failures: report.failureCodes, safe: report.safe }),
+    ).toBe(true);
+    expect(report.persisted.artifacts).toHaveLength(0);
+    const failureRow = report.persisted.messages.findLast(
+      (m) => m.role === "assistant",
+    );
+    expect(failureRow?.recoverable_error).toMatchObject({
+      code: "modeled_batch_resumable_busy",
+    });
+    expect(failureRow?.turn_usage).toEqual({
+      stages: [],
+      total_cost_usd: 0,
+      total_credits: 1,
+    });
   });
 
   test("a post-checkpoint Retry preserves creator style and resumes the frozen modeled batch", async () => {
@@ -3528,6 +3564,7 @@ describe("production-shaped Cowork outcome harness", () => {
       version: 1,
       draftCount: 2,
       draftCountSource: "ui",
+      postTypeSource: "default",
     });
   });
 

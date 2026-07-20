@@ -288,6 +288,107 @@ describe("DraftFinalizer", () => {
     expect(finalizer.acceptedCount()).toBe(0);
   });
 
+  test("a legacy_fence draft with multiple discovered-but-unrequired sources is NOT trapped by provenance_missing (brandjack/namejack/newsjack regression)", async () => {
+    // Regression for a real prod bug: a brandjack/namejack/newsjack turn
+    // researches multiple REFERENCE posts (required: false — this is not a
+    // strict "model this one exact post" turn) but the model wrote its
+    // final draft as a fenced legacy_fence block, which structurally has no
+    // sourcePostId field to fill. Before this fix, resolveSource treated
+    // "any sources were discovered" as an auto-requirement regardless of
+    // origin, so this shape was rejected every single time — retrying
+    // produced the identical unwinnable shape.
+    const specialists = passThroughSpecialists();
+    const finalizer = createDraftFinalizer({
+      workspaceId: "ws-1",
+      policy: policy(),
+      priorDrafts: [],
+      specialists,
+    });
+
+    const result = await finalizer.finalize({
+      origin: "legacy_fence",
+      body: COMPLETE_POST,
+      envelopeComplete: true,
+      provenance: {
+        required: false,
+        requestedSourceId: null,
+        discoveredSources: [
+          { id: "11111111-1111-4111-8111-111111111111", text: "Reference post one" },
+          { id: "22222222-2222-4222-8222-222222222222", text: "Reference post two" },
+        ],
+        userRequest: "Brandjack apple — write 3 LinkedIn posts in my voice...",
+        verifiedContext: "USER: Brandjack apple...",
+      },
+    });
+
+    expect(result).toMatchObject({ ok: true, sourcePostId: null });
+  });
+
+  test.each([
+    ["forced_final_fence"],
+    ["forced_final_leak"],
+    ["refine_leak"],
+  ] as const)(
+    "a %s draft with multiple discovered-but-unrequired sources is also not trapped",
+    async (origin) => {
+      const specialists = passThroughSpecialists();
+      const finalizer = createDraftFinalizer({
+        workspaceId: "ws-1",
+        policy: policy(),
+        priorDrafts: [],
+        specialists,
+      });
+
+      const result = await finalizer.finalize({
+        origin,
+        body: COMPLETE_POST,
+        provenance: {
+          required: false,
+          requestedSourceId: null,
+          discoveredSources: [
+            { id: "11111111-1111-4111-8111-111111111111", text: "Reference post one" },
+            { id: "22222222-2222-4222-8222-222222222222", text: "Reference post two" },
+          ],
+          userRequest: "Namejack Elon Musk — write 3 LinkedIn posts...",
+          verifiedContext: "USER: Namejack Elon Musk...",
+        },
+      });
+
+      expect(result).toMatchObject({ ok: true, sourcePostId: null });
+    },
+  );
+
+  test("a render_tool draft with multiple discovered-but-unrequired sources still auto-requires a match (the safety net is preserved for the ONE origin that can supply one)", async () => {
+    // Sanity check for the opposite direction: this fix must NOT weaken the
+    // safety net for render_tool candidates — a model that discovered
+    // multiple sources and called render_post without a sourcePostId is
+    // still caught, because render_post genuinely HAS that field to fill.
+    const specialists = passThroughSpecialists();
+    const finalizer = createDraftFinalizer({
+      workspaceId: "ws-1",
+      policy: policy(),
+      priorDrafts: [],
+      specialists,
+    });
+
+    const result = await finalizer.finalize({
+      origin: "render_tool",
+      body: COMPLETE_POST,
+      provenance: {
+        required: false,
+        requestedSourceId: null,
+        discoveredSources: [
+          { id: "11111111-1111-4111-8111-111111111111", text: "Reference post one" },
+          { id: "22222222-2222-4222-8222-222222222222", text: "Reference post two" },
+        ],
+        userRequest: "Find posts and model one",
+        verifiedContext: "USER: Find posts and model one",
+      },
+    });
+
+    expect(result).toMatchObject({ ok: false, rejection: { code: "provenance_missing" } });
+  });
+
   test("infers the only verified source and returns canonical provenance", async () => {
     const specialists = passThroughSpecialists();
     const finalizer = createDraftFinalizer({
@@ -515,6 +616,62 @@ describe("DraftFinalizer", () => {
       rejection: { code: "source_fidelity_unavailable" },
     });
     expect(finalizer.acceptedCount()).toBe(0);
+  });
+
+  test("a reviewer-unavailable rejection does NOT poison the dedupe cache: the same body finalizes once the reviewer recovers", async () => {
+    // Regression for the compounding dead-end: an availability failure used to
+    // add the candidate to the rejected-key cache, so a retry that re-rendered
+    // the IDENTICAL good draft (after the reviewer came back) was rejected as
+    // `duplicate` — a draft whose only problem was a briefly-unreachable
+    // reviewer could never be delivered. An outage must never poison the
+    // content cache (mirrors the source_unavailable recovery contract).
+    const specialists = passThroughSpecialists();
+    const reviewSourceFidelity = vi
+      .fn()
+      // First pass: both reviewers down.
+      .mockResolvedValueOnce({ outcome: "unavailable" as const })
+      // Retry (reviewer recovered): clean verdict.
+      .mockResolvedValue({ outcome: "verified" as const });
+    specialists.reviewSourceFidelity = reviewSourceFidelity;
+    const finalizer = createDraftFinalizer({
+      workspaceId: "ws-1",
+      policy: policy(),
+      priorDrafts: [],
+      specialists,
+    });
+    const provenance = {
+      required: true,
+      requestedSourceId: "11111111-1111-4111-8111-111111111111",
+      discoveredSources: [
+        {
+          id: "11111111-1111-4111-8111-111111111111",
+          text: "A verified source post with a clear problem-solution progression.",
+        },
+      ],
+      userRequest: "Model this source as an original post.",
+      verifiedContext: "USER: Model this source as an original post.",
+    };
+
+    const unavailable = await finalizer.finalize({
+      origin: "render_tool",
+      body: COMPLETE_POST,
+      provenance,
+    });
+    const recovered = await finalizer.finalize({
+      origin: "render_tool",
+      // The EXACT same body the model produced the first time.
+      body: COMPLETE_POST,
+      provenance,
+    });
+
+    expect(unavailable).toMatchObject({
+      ok: false,
+      rejection: { code: "source_fidelity_unavailable" },
+    });
+    // The identical body is accepted on the recovery pass — NOT rejected as a
+    // duplicate. (If the cache had been poisoned, this would be `duplicate`.)
+    expect(recovered).toMatchObject({ ok: true, artifact: { body: COMPLETE_POST } });
+    expect(reviewSourceFidelity).toHaveBeenCalledTimes(2);
   });
 
   test("never bypasses source review for a different retry or missing source text", async () => {

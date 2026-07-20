@@ -867,18 +867,18 @@ export function evaluateDraftOutput(
   }
 
   const range = policy.characterRange;
-  if (range?.max !== undefined && body.length > range.max) {
+  if (range?.max !== undefined && body.trim().length > range.max) {
     return {
       ok: false,
       code: "character_range",
-      error: `Your draft was ${body.length} characters, but the user explicitly requested at most ${range.max}. Tighten it and call render_post again.`,
+      error: `Your draft was ${body.trim().length} characters, but the user explicitly requested at most ${range.max}. Tighten it and call render_post again.`,
     };
   }
-  if (range?.min !== undefined && body.length < range.min) {
+  if (range?.min !== undefined && body.trim().length < range.min) {
     return {
       ok: false,
       code: "character_range",
-      error: `Your draft was ${body.length} characters, but the user explicitly requested at least ${range.min}. Develop the idea without filler and call render_post again.`,
+      error: `Your draft was ${body.trim().length} characters, but the user explicitly requested at least ${range.min}. Develop the idea without filler and call render_post again.`,
     };
   }
 

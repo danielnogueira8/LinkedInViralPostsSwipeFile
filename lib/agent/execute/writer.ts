@@ -27,6 +27,7 @@ import { validatePartialTextOutput } from "@/lib/agent/partial-output-policy";
 import type { DirectPartialTextSpec } from "@/lib/agent/direct-deliverable-policy";
 import {
   areDraftsNearDuplicate,
+  duplicateReasonFor,
   looksCorruptedDraft,
   normalizeDraftKey,
 } from "@/lib/agent/specialists/nets";
@@ -112,6 +113,58 @@ export const SLOT_CALL_TIMEOUT_MS = Math.floor(
 export const GROUNDED_EVIDENCE_TEXT_BUDGET_CHARS = 72_000;
 const DRAFT_READY_TEXT = "Your draft is ready.";
 const UPDATED_DRAFT_READY_TEXT = "Your updated draft is ready.";
+
+// A candidate can never legally be longer than the material it's drawn from
+// without inventing padding, so scale the too_short floor to that source's
+// own length (min 60, max 180, bounded by the requested range). Shared by
+// the refine floor and the source floor (fix #1265) — both scale off their
+// own source text identically.
+function lengthScaledCompletePostFloor(
+  sourceText: string,
+  requestedMax: number | undefined,
+): number {
+  return Math.min(
+    180,
+    Math.max(60, Math.floor(sourceText.trim().length * 0.5)),
+    requestedMax ?? 180,
+  );
+}
+
+// Short, human-facing clauses for the terminal "couldn't complete a reliable
+// post" message — one per DraftFinalizerRejectionCode. The finalizer's own
+// rejection.message is written as a corrective instruction TO THE MODEL (see
+// repairMessages below) and would read as gibberish appended to a chat reply;
+// this is a SEPARATE, deliberately short mapping for the human reading the
+// dead-ended turn. Codes not listed fall back to a generic clause rather than
+// throwing, since new codes can be added to DRAFT_FINALIZER_REJECTION_CODES
+// without this list being updated in lockstep.
+const REJECTION_REASON_CLAUSES: Record<string, string> = {
+  too_short: "the draft kept coming back shorter than the post you asked for",
+  character_range: "the draft kept missing the length you asked for",
+  unsupported_specificity:
+    "the draft kept including a specific number or date that wasn't backed by your instruction or source",
+  unsupported_claim:
+    "the draft kept making a claim that wasn't backed by your instruction or source",
+  structure_mismatch:
+    "the draft's structure kept drifting too far from what you asked to keep",
+  duplicate: "the draft kept staying too close to the original wording",
+  source_fidelity:
+    "the draft kept drifting from the source post's structure and hook style",
+  provenance_missing: "the draft kept losing track of the source it should model",
+  provenance_unverified: "the draft kept losing track of the source it should model",
+  domain_constraint: "the draft kept missing a requirement from your instruction",
+  count_complete: "the draft kept returning the wrong number of items",
+  truncated: "the draft kept cutting off before it was complete",
+  incomplete: "the draft kept ending before it was complete",
+  corrupted: "the draft kept coming back malformed",
+  assistant_framing: "the draft kept including framing text instead of just the post",
+};
+
+function rejectionSummary(code: string | null): string {
+  if (!code) return "";
+  const clause = REJECTION_REASON_CLAUSES[code] ?? "the draft kept getting rejected by a quality check";
+  return ` Specifically, ${clause}.`;
+}
 
 // Slot-batch implementation constants.
 const MAX_RESERVE_SOURCES = 5;
@@ -1065,10 +1118,9 @@ export async function* runSingleDraftTurn(
   const refineMinimumCompletePostChars = (() => {
     if (task.kind !== "refine") return null;
     if (task.focus === "hook" || task.focus === "cta") return 1;
-    const ordinaryFloor = Math.min(
-      180,
-      Math.max(60, Math.floor(task.target.body.trim().length * 0.5)),
-      range?.max ?? 180,
+    const ordinaryFloor = lengthScaledCompletePostFloor(
+      task.target.body,
+      range?.max,
     );
     if (task.focus !== "shorten") return ordinaryFloor;
     const requestedMaximum = Math.max(
@@ -1163,10 +1215,17 @@ export async function* runSingleDraftTurn(
       enforceGrounding: !input.lean || task.kind === "grounded",
       enforceFactualSpecificity:
         !input.lean || task.kind === "grounded" || task.kind === "source",
+      // A source shorter than the flat 180-char floor (a short-form swipe
+      // post, a quote, a one-liner) can never legally produce a 180-char
+      // modeled draft without inventing padding the source never had — the
+      // too_short gate then rejects every honest candidate outright. Scale
+      // to the source's own length, mirroring the refine floor above exactly.
       minimumCompletePostChars:
         task.kind === "refine"
           ? (refineMinimumCompletePostChars ?? 1)
-          : Math.min(180, range?.max ?? 180),
+          : task.kind === "source"
+            ? lengthScaledCompletePostFloor(task.source.text, range?.max)
+            : Math.min(180, range?.max ?? 180),
       requireCompletePost: true,
     },
   });
@@ -1198,20 +1257,57 @@ export async function* runSingleDraftTurn(
     );
   };
 
-  const salvageGroundedDraft = (): (Artifact & { kind: "post" }) | null => {
+  // Tracks the last finalizer rejection code so the terminal exhaust message
+  // can name WHICH gate kept rejecting the draft (see rejectionSummary).
+  let lastRejectionCode: string | null = null;
+
+  // Best-effort salvage. Two turn shapes would otherwise dead-end even though
+  // the writer produced a usable draft:
+  //   • grounded/news — every attempt fails the (kept-on) grounding gate;
+  //   • a TRUSTED source-modeling turn whose only failure was the source-
+  //     fidelity REVIEWER being unavailable (both reviewer LLMs timed out /
+  //     errored — an infrastructure blip, NOT evidence the draft is unfaithful).
+  // In both cases we run the last drafted body through the CORRUPTION-only nets
+  // (em-dash strip + normalize) and, unless it's genuinely broken or too long,
+  // deliver it flagged for verification — a usable draft the user can check
+  // beats an opaque "retry" with no post at all.
+  //
+  // `copyGuardSource`, when given, is the modeled source text: the salvaged
+  // body is rejected if it's a near-duplicate of it. This is the DETERMINISTIC
+  // half of the fidelity gate — it runs with no model at all, so an unavailable
+  // reviewer can never let a plagiarized draft through the salvage path. (For
+  // the grounded case there is no single source to copy from, so it's omitted.)
+  // Returns null when there's nothing safe to salvage (empty / corrupt /
+  // oversize / too close to the source).
+  const salvageUnverifiedDraft = (
+    copyGuardSource?: string,
+  ): (Artifact & { kind: "post" }) | null => {
     const raw = lastDraftedBody.trim();
     if (!raw) return null;
     const { body } = editDraftBodySync(raw, "post", engineEditOptions);
     const cleaned = body.trim();
     if (!cleaned) return null;
+    // Never salvage a broken or over-cap body — those are real corruption, not a
+    // gate-strictness or reviewer-availability casualty.
     if (looksCorruptedDraft(cleaned)) return null;
     if (cleaned.length > RENDER_POST_MAX_CHARS) return null;
+    // Deterministic anti-plagiarism: a modeled draft that copies the source's
+    // wording is a real quality failure, not a reviewer outage — never salvage
+    // it even when the LLM reviewer is down.
+    if (copyGuardSource && areDraftsNearDuplicate(copyGuardSource, cleaned)) {
+      return null;
+    }
     const title = cleaned.split("\n", 1)[0].slice(0, 60).trim() || "Draft post";
     return {
       id: `art_salvage_${writerAttempt}`,
       kind: "post",
       title,
       body: cleaned,
+      // Stamped on the artifact itself (not just the ephemeral chat text) so
+      // the unverified status survives into chat_artifacts.meta and is still
+      // visible whenever this draft is viewed later on the board — the chat
+      // disclaimer alone disappears from view the moment the transcript
+      // scrolls past it.
       meta: { needs_verification: true },
     };
   };
@@ -1307,6 +1403,26 @@ export async function* runSingleDraftTurn(
       result.rejection.code !== "source_fidelity_unavailable"
     ) {
       return null;
+    }
+    // A `source` task models the user's OWN attached/workspace post — a trusted
+    // source. When the ONLY reason the draft was rejected is that the fidelity
+    // REVIEWER was unavailable (both reviewer LLMs timed out or errored — infra,
+    // not a quality verdict), killing a content-valid draft is user-hostile and
+    // security-unnecessary: the deterministic anti-plagiarism check still runs
+    // inside the salvage (copyGuardSource), so a copied draft is never shipped.
+    // Deliver the best-effort draft flagged for verification instead of dead-
+    // ending. (Grounded turns already salvage above; every other task kind keeps
+    // the strict retry.)
+    if (task.kind === "source") {
+      const salvaged = salvageUnverifiedDraft(task.source.text);
+      if (salvaged) {
+        return [
+          { type: "artifact", artifact: deliveredArtifact(salvaged) },
+          finish(
+            `${successText} I couldn’t reach the source-fidelity reviewer this time, so give it a quick once-over against the original before you post.`,
+          ),
+        ];
+      }
     }
     const message =
       "I couldn’t verify source fidelity because both reviewers were unavailable. Please continue to retry the draft.";
@@ -1486,6 +1602,7 @@ export async function* runSingleDraftTurn(
           for (const event of unavailableEvents) yield event;
           return;
         }
+        lastRejectionCode = result.rejection.code;
         fallbackMessages = repairMessages(
           baseMessages,
           primary.text,
@@ -1535,6 +1652,7 @@ export async function* runSingleDraftTurn(
                 for (const event of unavailableEvents) yield event;
                 return;
               }
+              lastRejectionCode = repairedResult.rejection.code;
               fallbackMessages = repairMessages(
                 baseMessages,
                 repaired.text,
@@ -1594,6 +1712,71 @@ export async function* runSingleDraftTurn(
             for (const event of unavailableEvents) yield event;
             return;
           }
+          lastRejectionCode = fallbackResult.rejection.code;
+
+          // Fallback runs a SEPARATE model from primary/repair; a rejection
+          // here is not yet proof the request is unwinnable, so give it the
+          // same one self-correction pass primary already gets rather than
+          // dead-ending on its first attempt. This also restores a real
+          // second chance for the case where primary failed at the TRANSPORT
+          // level (bad model slug, 404, timeout) rather than being rejected —
+          // that path skips repair above (there is no rejected primary draft
+          // to repair), so fallback was previously the turn's only attempt.
+          if (!input.slotMode) {
+            try {
+              const fallbackRepair = await call(
+                "repair",
+                fallbackModel,
+                repairMessages(baseMessages, fallback.text, fallbackResult, task),
+              );
+              if (await cancellationRequestedNow()) {
+                yield interrupted();
+                return;
+              }
+              if (fallbackRepair.text.trim()) {
+                const fallbackRepairResult = await finalize(fallbackRepair);
+                if (fallbackRepairResult.ok) {
+                  if (await cancellationRequestedNow()) {
+                    yield interrupted();
+                    return;
+                  }
+                  if (fallbackRepairResult.kind === "text") {
+                    yield { type: "text", delta: fallbackRepairResult.text };
+                    yield finish(fallbackRepairResult.text);
+                  } else {
+                    yield {
+                      type: "artifact",
+                      artifact: deliveredArtifact(fallbackRepairResult.artifact),
+                    };
+                    yield finish(successText);
+                  }
+                  return;
+                }
+                if (
+                  fallbackRepairResult.rejection.code === "cancelled" ||
+                  (await cancellationRequestedNow())
+                ) {
+                  yield interrupted();
+                  return;
+                }
+                const unavailableEvents = unavailableFidelityEvents(
+                  fallbackRepairResult,
+                );
+                if (unavailableEvents) {
+                  for (const event of unavailableEvents) yield event;
+                  return;
+                }
+                lastRejectionCode = fallbackRepairResult.rejection.code;
+              }
+            } catch (error) {
+              rethrowUsagePersistence(error);
+              if (isAbort(error, turnSignal)) {
+                yield interrupted();
+                return;
+              }
+              noteWriterStageFailure("repair", error);
+            }
+          }
         }
       } catch (error) {
         rethrowUsagePersistence(error);
@@ -1613,7 +1796,7 @@ export async function* runSingleDraftTurn(
     }
 
     if (task.kind === "grounded") {
-      const salvaged = salvageGroundedDraft();
+      const salvaged = salvageUnverifiedDraft();
       if (salvaged) {
         if (!(await cancellationRequestedNow())) {
           yield { type: "artifact", artifact: deliveredArtifact(salvaged) };
@@ -1626,7 +1809,9 @@ export async function* runSingleDraftTurn(
     }
 
     const failureMessage =
-      "I couldn’t complete a reliable post this time. Please continue to retry the draft.";
+      "I couldn’t complete a reliable post this time." +
+      rejectionSummary(lastRejectionCode) +
+      " Please continue to retry the draft.";
     if (stageFailures.length > 0) {
       console.error(
         `[cowork][writer] exhausted without a deliverable (task=${task.kind}); ` +
@@ -1656,11 +1841,7 @@ export type ModeledDraftSlotIdentity = Readonly<{
   index: number;
 }>;
 
-export type ModeledDraftBatchSource = Omit<
-  CanonicalWorkspaceModelingSource,
-  "url"
-> &
-  Readonly<{ url: string }>;
+export type ModeledDraftBatchSource = CanonicalWorkspaceModelingSource;
 
 export type ModeledPostArtifact = Artifact & { kind: "post" };
 
@@ -2247,7 +2428,7 @@ function validSourcePool(
       ids.has(id) ||
       !text ||
       source.text.length > MAX_SOURCE_TEXT_CHARS ||
-      !isCanonicalModeledSourceUrl(source.url)
+      (source.url !== undefined && !isCanonicalModeledSourceUrl(source.url))
     ) {
       return false;
     }
@@ -2326,6 +2507,13 @@ function replayArtifactIsCanonical(
   const provenanceSource = recordOf(provenanceSources[0]);
   const sourceUrl = meta?.source_url;
   const provenanceUrl = provenanceSource?.url;
+  // A url is optional on the source. When one was stamped it must be genuinely
+  // canonical AND match between the two meta locations; when the source had
+  // none, both fields are absent, and that absence-match is the valid state.
+  const urlIsCanonical =
+    sourceUrl === undefined
+      ? provenanceUrl === undefined
+      : isCanonicalModeledSourceUrl(sourceUrl) && provenanceUrl === sourceUrl;
   return (
     meta?.modeled_draft_slot_id === `${batchId}:slot-${slotIndex}` &&
     meta.modeled_draft_slot_index === slotIndex &&
@@ -2335,8 +2523,7 @@ function replayArtifactIsCanonical(
     provenanceSources.length === 1 &&
     provenanceSource?.id === sourceId &&
     provenanceSource.kind === "workspace_post" &&
-    isCanonicalModeledSourceUrl(sourceUrl) &&
-    provenanceUrl === sourceUrl
+    urlIsCanonical
   );
 }
 
@@ -2796,7 +2983,15 @@ export async function executeModeledDraftBatch(
             });
             return;
           }
-        } else if (outcome.kind !== "rejected") {
+        } else if (
+          outcome.kind !== "rejected" &&
+          // A reviewer OUTAGE on one slot is transient — retry the slot with a
+          // fresh source (and a fresh reviewer call) instead of aborting the
+          // WHOLE set and discarding every already-accepted slot's work. Only
+          // if the slot then exhausts its replacements does it stop the batch.
+          // (writer_error / protocol failures still stop, as before.)
+          outcome.kind !== "reviewer_unavailable"
+        ) {
           stopReasons.push({
             slotIndex: slot.index,
             reason: outcomeReason(outcome),
@@ -2807,7 +3002,12 @@ export async function executeModeledDraftBatch(
         if (slot.replacements >= MAX_SOURCE_REPLACEMENTS_PER_SLOT) {
           stopReasons.push({
             slotIndex: slot.index,
-            reason: "slot_exhausted",
+            // A slot that never got a reviewer verdict across every replacement
+            // is a sustained outage, not a content problem — report it as such.
+            reason:
+              outcome.kind === "reviewer_unavailable"
+                ? "reviewer_unavailable"
+                : "slot_exhausted",
           });
           return;
         }
@@ -2815,12 +3015,23 @@ export async function executeModeledDraftBatch(
         if (reserveIndex === null) {
           stopReasons.push({
             slotIndex: slot.index,
-            reason: "source_pool_exhausted",
+            // A reviewer outage with no reserve source left is still a reviewer
+            // problem, not a pool problem — attribute it honestly so the user
+            // sees "reviewer unavailable, retry" rather than a misleading
+            // "ran out of sources".
+            reason:
+              outcome.kind === "reviewer_unavailable"
+                ? "reviewer_unavailable"
+                : "source_pool_exhausted",
           });
           return;
         }
         const failureCode =
-          outcome.kind === "rejected" ? outcome.code : "duplicate";
+          outcome.kind === "rejected"
+            ? outcome.code
+            : outcome.kind === "reviewer_unavailable"
+              ? "source_fidelity_unavailable"
+              : "duplicate";
         if (stopSignal.aborted) return;
         let replaced = false;
         try {
@@ -2999,6 +3210,29 @@ export async function executeModeledDraftBatch(
 // Local (non-durable) multi-draft coordinator for plain sources and originals.
 // ---------------------------------------------------------------------------
 
+// Repair instruction fed back to the writer after duplicateGuard rejects a
+// candidate. Naming the collision axis (same words vs. same sentence-order)
+// gives the model something concrete to change instead of a generic "be
+// different" — which for a same-source, keep-the-structure request tends to
+// reproduce the same skeleton every attempt otherwise. Escalates to an
+// explicit topic-swap instruction on the slot's final attempt.
+function duplicateRepairMessage(
+  reason: "vocabulary" | "progression" | "exact",
+  slotAttempt: number,
+): string {
+  const diagnosis =
+    reason === "exact"
+      ? "It is word-for-word the same as an earlier accepted post."
+      : reason === "vocabulary"
+        ? "It reuses almost all the same words and phrases as an earlier accepted post — same topic, same specifics."
+        : "It follows the exact same sentence-by-sentence progression as an earlier accepted post, even where individual words differ.";
+  const instruction =
+    slotAttempt >= 2
+      ? "Pick a genuinely different topic, example, or angle from the earlier accepted post(s) — keep only the requested structure and hook STYLE, not the same content dressed differently."
+      : "Write a materially distinct complete replacement: different topic, example, or angle, not just reworded sentences.";
+  return `This version duplicates an earlier accepted post. ${diagnosis} ${instruction}`;
+}
+
 async function* runLocalSlotBatch(
   input: WriterInput,
   task: Extract<WriterTask, { kind: "multi" }>,
@@ -3039,6 +3273,17 @@ async function* runLocalSlotBatch(
   let inputTokens = 0;
   let outputTokens = 0;
 
+  // Slots retried against the duplicate guard, and how the last attempt for
+  // the CURRENT slot failed. A duplicate-guard exhaustion is a qualitatively
+  // different failure than a transport/writer error: the model has a real
+  // shot at a topic swap, it just wasn't told WHICH axis collided or told to
+  // change topic outright. Give each slot one extra full child-engine attempt
+  // (bounded — never an unbounded loop) with a sharper, escalating repair
+  // instruction before giving up on the whole set. A non-duplicate failure
+  // (childError, wrong artifact count) still aborts immediately — that's a
+  // real error, not a "try a different angle" situation.
+  const MAX_SLOT_ATTEMPTS = 2;
+
   try {
     for (let index = 1; index <= task.expectedCount; index += 1) {
       if (multiSignal.aborted) break;
@@ -3048,130 +3293,164 @@ async function* runLocalSlotBatch(
         count: task.expectedCount,
         previousBodies,
       };
-      const duplicateGuard: DraftCandidateTransform = (body) => {
-        const externallyTransformed = input.finalTransformCandidate?.(body) ?? {
-          ok: true as const,
-          body,
-        };
-        if (!externallyTransformed.ok) return externallyTransformed;
-        const key = normalizeDraftKey(externallyTransformed.body);
-        if (
-          key &&
-          (acceptedKeys.has(key) ||
-            accepted.some((artifact) =>
-              areDraftsNearDuplicate(artifact.body, externallyTransformed.body),
-            ))
-        ) {
-          return {
-            ok: false,
-            message:
-              "This version duplicates an earlier accepted post. Write a materially distinct complete replacement.",
-          };
-        }
-        return externallyTransformed;
-      };
+      let slotArtifact: (Artifact & { kind: "post" }) | null = null;
+      let lastDuplicateReason: "vocabulary" | "progression" | "exact" | null =
+        null;
 
-      let childTask: SingleTask;
-      if (task.groundedSources) {
-        childTask = {
-          kind: "grounded",
-          sources: task.groundedSources,
-          variation,
-        };
-      } else if (task.source) {
-        childTask = {
-          kind: "source",
-          source: task.source,
-          variation,
-        };
-      } else {
-        childTask = { kind: "original", variation };
-      }
-
-      const childInput: WriterInput = {
-        ...input,
-        task: childTask,
-        signal: multiSignal,
-        priorPostDrafts: [
-          ...input.priorPostDrafts,
-          ...accepted.map((artifact, acceptedIndex) => ({
-            id: artifact.id,
-            body: artifact.body,
-            createdAt: new Date(acceptedIndex).toISOString(),
-          })),
-        ],
-        finalTransformCandidate: duplicateGuard,
-        deadlineAtMs,
-      };
-
-      const childEvents: AgentEvent[] = [];
-      try {
-        for await (const event of runSingleDraftTurn(childInput)) {
-          childEvents.push(event);
-        }
-      } catch (error) {
-        if (isUsagePersistenceError(error)) throw error;
-      }
-
-      const childDone = childEvents.find(
-        (event): event is Extract<AgentEvent, { type: "done" }> =>
-          event.type === "done",
-      );
-      inputTokens += childDone?.message.inputTokens ?? 0;
-      outputTokens += childDone?.message.outputTokens ?? 0;
-      if (childDone?.terminalReason === "cancelled" || multiSignal.aborted) {
-        break;
-      }
-      const childArtifacts = childEvents
-        .filter(
-          (event): event is Extract<AgentEvent, { type: "artifact" }> =>
-            event.type === "artifact" && event.artifact.kind === "post",
-        )
-        .map((event) => event.artifact as Artifact & { kind: "post" });
-      const childError = childEvents.find(
-        (event): event is Extract<AgentEvent, { type: "error" }> =>
-          event.type === "error",
-      );
-      if (childError || childArtifacts.length !== 1) {
-        const failureMessage =
-          accepted.length > 0
-            ? `I couldn’t complete the full draft set this time. I kept the ${accepted.length} completed ${accepted.length === 1 ? "draft" : "drafts"}. Retry will run the original task again.`
-            : "I couldn’t complete the full draft set this time. Retry will run the original task again.";
-        for (const artifact of accepted) yield { type: "artifact", artifact };
-        yield {
-          type: "error",
-          code: childError?.code ?? "draft_engine_exhausted",
-          message: failureMessage,
-          recovery: "continue",
-        };
-        yield engineDone(failureMessage, inputTokens, outputTokens, "error");
-        return;
-      }
-      const artifact = childArtifacts[0];
-      const key = normalizeDraftKey(artifact.body);
-      if (
-        !key ||
-        acceptedKeys.has(key) ||
-        accepted.some((prior) =>
-          areDraftsNearDuplicate(prior.body, artifact.body),
-        )
+      for (
+        let slotAttempt = 1;
+        slotAttempt <= MAX_SLOT_ATTEMPTS && !slotArtifact;
+        slotAttempt += 1
       ) {
-        const failureMessage =
-          accepted.length > 0
-            ? `I couldn’t produce the requested number of distinct drafts. I kept the ${accepted.length} completed ${accepted.length === 1 ? "draft" : "drafts"}. Retry will run the original task again.`
-            : "I couldn’t produce the requested number of distinct drafts. Retry will run the original task again.";
-        for (const artifact of accepted) yield { type: "artifact", artifact };
-        yield {
-          type: "error",
-          code: "draft_engine_duplicate_set",
-          message: failureMessage,
-          recovery: "continue",
+        const duplicateGuard: DraftCandidateTransform = (body) => {
+          const externallyTransformed = input.finalTransformCandidate?.(body) ?? {
+            ok: true as const,
+            body,
+          };
+          if (!externallyTransformed.ok) return externallyTransformed;
+          const key = normalizeDraftKey(externallyTransformed.body);
+          const exactKeyMatch = Boolean(key && acceptedKeys.has(key));
+          const matchedPrior = accepted.find((artifact) =>
+            areDraftsNearDuplicate(artifact.body, externallyTransformed.body),
+          );
+          if (key && (exactKeyMatch || matchedPrior)) {
+            const reason = exactKeyMatch
+              ? "exact"
+              : duplicateReasonFor(
+                  matchedPrior!.body,
+                  externallyTransformed.body,
+                );
+            lastDuplicateReason = reason;
+            return {
+              ok: false,
+              message: duplicateRepairMessage(reason, slotAttempt),
+            };
+          }
+          return externallyTransformed;
         };
-        yield engineDone(failureMessage, inputTokens, outputTokens, "error");
-        return;
+
+        let childTask: SingleTask;
+        if (task.groundedSources) {
+          childTask = {
+            kind: "grounded",
+            sources: task.groundedSources,
+            variation,
+          };
+        } else if (task.source) {
+          childTask = {
+            kind: "source",
+            source: task.source,
+            variation,
+          };
+        } else {
+          childTask = { kind: "original", variation };
+        }
+
+        const childInput: WriterInput = {
+          ...input,
+          task: childTask,
+          signal: multiSignal,
+          priorPostDrafts: [
+            ...input.priorPostDrafts,
+            ...accepted.map((artifact, acceptedIndex) => ({
+              id: artifact.id,
+              body: artifact.body,
+              createdAt: new Date(acceptedIndex).toISOString(),
+            })),
+          ],
+          finalTransformCandidate: duplicateGuard,
+          deadlineAtMs,
+        };
+
+        const childEvents: AgentEvent[] = [];
+        try {
+          for await (const event of runSingleDraftTurn(childInput)) {
+            childEvents.push(event);
+          }
+        } catch (error) {
+          if (isUsagePersistenceError(error)) throw error;
+        }
+
+        const childDone = childEvents.find(
+          (event): event is Extract<AgentEvent, { type: "done" }> =>
+            event.type === "done",
+        );
+        inputTokens += childDone?.message.inputTokens ?? 0;
+        outputTokens += childDone?.message.outputTokens ?? 0;
+        if (childDone?.terminalReason === "cancelled" || multiSignal.aborted) {
+          break;
+        }
+        const childArtifacts = childEvents
+          .filter(
+            (event): event is Extract<AgentEvent, { type: "artifact" }> =>
+              event.type === "artifact" && event.artifact.kind === "post",
+          )
+          .map((event) => event.artifact as Artifact & { kind: "post" });
+        const childError = childEvents.find(
+          (event): event is Extract<AgentEvent, { type: "error" }> =>
+            event.type === "error",
+        );
+        // Only a duplicate-only exhaustion (no other error, exactly the
+        // draft_engine_exhausted shape the child gives when every one of its
+        // own attempts hit our finalTransformCandidate rejection) qualifies
+        // for the extra slot attempt. Any other error code means something
+        // besides duplication broke, so it aborts immediately below.
+        const duplicateOnlyExhaustion =
+          childError?.code === "draft_engine_exhausted" &&
+          lastDuplicateReason !== null &&
+          childArtifacts.length === 0;
+        if (childError || childArtifacts.length !== 1) {
+          if (duplicateOnlyExhaustion && slotAttempt < MAX_SLOT_ATTEMPTS) {
+            continue;
+          }
+          const failureMessage =
+            accepted.length > 0
+              ? `I couldn’t complete the full draft set this time. I kept the ${accepted.length} completed ${accepted.length === 1 ? "draft" : "drafts"}. Retry will run the original task again.`
+              : "I couldn’t complete the full draft set this time. Retry will run the original task again.";
+          for (const artifact of accepted) yield { type: "artifact", artifact };
+          yield {
+            type: "error",
+            code: childError?.code ?? "draft_engine_exhausted",
+            message: failureMessage,
+            recovery: "continue",
+          };
+          yield engineDone(failureMessage, inputTokens, outputTokens, "error");
+          return;
+        }
+        const artifact = childArtifacts[0];
+        const key = normalizeDraftKey(artifact.body);
+        const stillDuplicate =
+          !key ||
+          acceptedKeys.has(key) ||
+          accepted.some((prior) =>
+            areDraftsNearDuplicate(prior.body, artifact.body),
+          );
+        if (stillDuplicate) {
+          if (slotAttempt < MAX_SLOT_ATTEMPTS) {
+            continue;
+          }
+          const failureMessage =
+            accepted.length > 0
+              ? `I couldn’t produce the requested number of distinct drafts. I kept the ${accepted.length} completed ${accepted.length === 1 ? "draft" : "drafts"}. Retry will run the original task again.`
+              : "I couldn’t produce the requested number of distinct drafts. Retry will run the original task again.";
+          for (const artifact of accepted) yield { type: "artifact", artifact };
+          yield {
+            type: "error",
+            code: "draft_engine_duplicate_set",
+            message: failureMessage,
+            recovery: "continue",
+          };
+          yield engineDone(failureMessage, inputTokens, outputTokens, "error");
+          return;
+        }
+        acceptedKeys.add(key);
+        slotArtifact = artifact;
       }
-      acceptedKeys.add(key);
-      accepted.push(artifact);
+
+      // A null slotArtifact here means the slot was interrupted (cancelled);
+      // failure cases above already yielded their events and returned.
+      if (!slotArtifact) break;
+      accepted.push(slotArtifact);
     }
 
     if (multiSignal.aborted) {

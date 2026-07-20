@@ -37,14 +37,26 @@ export function looksCorruptedDraft(body: string): string | null {
   //    That's JSON closing-brace structure welded into prose — never legitimate
   //    writing. We require the braces to ABUT letters (no space) so a post that
   //    legitimately writes "}}" (e.g. a code snippet on its own line) with
-  //    surrounding whitespace doesn't trip it.
-  if (/\}{2,}[A-Za-z]/.test(body)) {
+  //    surrounding whitespace doesn't trip it. A BALANCED "{{word}}" template
+  //    variable (e.g. "{{company}}'s" or "{{name}}s") is excluded even though
+  //    its closing "}}" also abuts a letter — that's legitimate templating
+  //    syntax some creators write in their own posts, not corrupted JSON.
+  const balancedTemplateVariable = /\{\{\w+\}\}[A-Za-z]/;
+  if (
+    /\}{2,}[A-Za-z]/.test(body) &&
+    !balancedTemplateVariable.test(body)
+  ) {
     return "JSON brace fragment fused into text";
   }
   // 3) A stray JSON key fragment from the tool-args envelope leaking into prose:
   //    a quoted key like "permalink": / "body": / "postId": sitting inside the
-  //    body. Real posts don't contain JSON key-value syntax.
-  if (/"(?:permalink|body|postId|title)"\s*:/.test(body)) {
+  //    body. Real posts don't contain JSON key-value syntax. "title" is
+  //    deliberately excluded from this alternation — unlike permalink/body/
+  //    postId (internal-only field names that never occur in legitimate
+  //    prose), "title" is an ordinary English word that a post can
+  //    legitimately quote (e.g. discussing a job "title": field, or a
+  //    template's own placeholder syntax) without being corrupted output.
+  if (/"(?:permalink|body|postId)"\s*:/.test(body)) {
     return "JSON key fragment in body";
   }
   // 4) Hallucinated tool-call XML leaked into the body: <tool_call…>, <invoke
@@ -119,6 +131,33 @@ export function areDraftsNearDuplicate(left: string, right: string): boolean {
     bigrams(rightWords),
   );
   return vocabularySimilarity >= 0.88 || progressionSimilarity >= 0.74;
+}
+
+/**
+ * Which axis tripped areDraftsNearDuplicate, for a human/model-facing repair
+ * message — NOT a gating decision. "vocabulary" means the two drafts reuse
+ * mostly the same words (a topic/angle problem); "progression" means the
+ * word-to-word sequence overwhelmingly matches even if some words differ (a
+ * structure/phrasing problem). Callers should already know the pair is a
+ * near-duplicate (e.g. via areDraftsNearDuplicate) before asking why.
+ */
+export function duplicateReasonFor(
+  left: string,
+  right: string,
+): "vocabulary" | "progression" {
+  const leftWords = draftWords(left);
+  const rightWords = draftWords(right);
+  const vocabularySimilarity = setJaccard(
+    new Set(leftWords),
+    new Set(rightWords),
+  );
+  const progressionSimilarity = setJaccard(
+    bigrams(leftWords),
+    bigrams(rightWords),
+  );
+  return vocabularySimilarity >= progressionSimilarity
+    ? "vocabulary"
+    : "progression";
 }
 
 // Strip the em-dash AI tell from a draft body. The em dash (—) is THE signature

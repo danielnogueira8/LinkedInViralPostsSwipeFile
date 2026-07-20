@@ -311,16 +311,6 @@ describe("executeModeledDraftBatch", () => {
       { count: 2, sources: [{ ...sources[0], text: "" }, sources[1]] },
     ],
     [
-      "a source without a resolvable chip URL",
-      {
-        count: 2,
-        sources: [
-          { ...sources[0], url: undefined },
-          sources[1],
-        ] as unknown as ModeledDraftBatchSource[],
-      },
-    ],
-    [
       "a malformed source URL that only resembles an absolute URL",
       {
         count: 2,
@@ -399,10 +389,93 @@ describe("executeModeledDraftBatch", () => {
 
     expect(retry).toMatchObject({ kind: "complete", batchId: "batch-1" });
     expect(retryRunner).toHaveBeenCalledOnce();
+    // A reviewer outage on slot 1 no longer aborts the run — it retries the
+    // slot with the next reserve source (source-2) IN the first run. That
+    // in-run retry also came back unavailable and exhausted the slot's one
+    // replacement, so the slot's next reserve (source-3) is what the resume
+    // run picks up from — the batch tried harder before checkpointing.
     expect(retryRunner.mock.calls[0][0]).toMatchObject({
       slot: { index: 1 },
-      source: { id: "source-2" },
+      source: { id: "source-3" },
     });
+  });
+
+  test("accepts a url-less source: a source with only id + text is fully modelable and completes the batch", async () => {
+    // A url is NOT required to model a source — it only stamps the "Open on
+    // LinkedIn" chip on the finished draft. Requiring one made the durable
+    // batch strictly MORE demanding than the single-draft path (which never
+    // requires a url), so a scraped post whose url column is null (a real,
+    // common condition) was silently dropped from the candidate pool even
+    // though it's fully modelable. This is the reported dead-end's concrete
+    // data-condition — the batch itself must accept a url-less source.
+    const repository = new MemoryRepository();
+    const urlLessSource = { id: sources[0].id, text: sources[0].text };
+    const runner = vi.fn(async (input: ModeledDraftSlotInput) =>
+      accepted(input, distinctBodies[input.slot.index]),
+    );
+
+    const result = await executeModeledDraftBatch(
+      batchInput({
+        count: 2,
+        sources: [urlLessSource, sources[1]],
+      }),
+      { repository, runSlot: runner, now: () => 1_000 },
+    );
+
+    expect(result).toMatchObject({ kind: "complete", batchId: "batch-1" });
+    expect(result.kind === "complete" ? result.artifacts : []).toHaveLength(2);
+    // The url-less source's own artifact carries NO source_url — the
+    // deliberate absence, not a forged/empty value.
+    const urlLessArtifact =
+      result.kind === "complete"
+        ? result.artifacts.find(
+            (artifact) => artifact.meta?.source_post_id === urlLessSource.id,
+          )
+        : undefined;
+    expect(urlLessArtifact).toBeDefined();
+    expect(urlLessArtifact?.meta?.source_url).toBeUndefined();
+  });
+
+  test("a transient reviewer outage on one slot retries with a reserve source and completes the whole set", async () => {
+    // The core fix: one slot's reviewer being briefly unavailable must NOT
+    // discard the whole N-draft set. The slot retries with the next reserve
+    // source (a fresh reviewer call), succeeds, and the batch completes — the
+    // already-accepted slots' work is never thrown away.
+    const repository = new MemoryRepository();
+    let slot1Attempts = 0;
+    const runner = vi.fn(async (input: ModeledDraftSlotInput) => {
+      if (input.slot.index === 0) {
+        return accepted(input, distinctBodies[0]);
+      }
+      // Slot 1: reviewer down on the first source, fine on the reserve.
+      slot1Attempts += 1;
+      if (slot1Attempts === 1) {
+        return {
+          kind: "reviewer_unavailable" as const,
+          slot: input.slot,
+          inputTokens: 10,
+          outputTokens: 5,
+        };
+      }
+      return accepted(input, distinctBodies[1]);
+    });
+
+    const result = await executeModeledDraftBatch(
+      batchInput({ count: 2, sources: sources.slice(0, 3) }),
+      { repository, runSlot: runner, now: () => 1_000 },
+    );
+
+    // The whole set is delivered in ONE run — no dead-end, no lost slot-0 work.
+    expect(result).toMatchObject({ kind: "complete", batchId: "batch-1" });
+    expect(result.kind === "complete" ? result.artifacts : []).toHaveLength(2);
+    // Slot 1 was retried exactly once (its one allowed replacement), on a
+    // DIFFERENT reserve source than its original — not aborted. (The exact
+    // reserve index is an allocation detail; the point is it retried on a new
+    // source and succeeded.)
+    expect(slot1Attempts).toBe(2);
+    const lastSlot1Call = runner.mock.calls.at(-1)?.[0];
+    expect(lastSlot1Call).toMatchObject({ slot: { index: 1 } });
+    expect(lastSlot1Call?.source.id).not.toBe("source-1");
   });
 
   test("replays an exact completed batch without another writer call", async () => {

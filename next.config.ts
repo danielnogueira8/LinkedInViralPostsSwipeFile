@@ -60,6 +60,7 @@ const CSP_DIRECTIVES = {
     "data:",
     "blob:",
     "https://*.licdn.com",
+    "https://api.dicebear.com",
     "https://img.clerk.com",
     "https://*.vercel.app",
     "https://vercel.live",
@@ -135,6 +136,7 @@ const nextConfig: NextConfig = {
     remotePatterns: [
       { protocol: "https", hostname: "media.licdn.com" },
       { protocol: "https", hostname: "*.licdn.com" },
+      { protocol: "https", hostname: "api.dicebear.com" },
     ],
   },
   async headers() {

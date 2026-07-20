@@ -34,6 +34,7 @@ import type {
 } from "@/lib/agent/draft-writer";
 import {
   logOpenRouterUsage,
+  type ChatMessage,
   type Usage,
 } from "@/lib/openrouter";
 import {

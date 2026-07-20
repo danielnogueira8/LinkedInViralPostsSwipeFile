@@ -34,6 +34,17 @@ export type CoworkAdapterAttemptInput<TResponse, TValue> = {
   fallbackReason?: string;
   rejectedReasonCode: string;
   cancellationReason?: () => "cancelled" | "deadline";
+  // When true, a validate() throw on this attempt is reported to the caller
+  // (retry/fallback logic still runs) but does NOT count as a failure sample
+  // on the adapter's health circuit. Use only where a malformed tool-call
+  // response is known to reflect this one call's own flakiness rather than
+  // provider-level unreliability worth tracking — e.g. a reviewer whose
+  // schema-invalid output must not degrade the shared circuit for unrelated
+  // turns. Genuine transport failures (timeouts, 5xx, rate limits) still
+  // count toward the circuit even when this is set; only the validate()
+  // throw path is affected. Defaults to false (validate throws behave as
+  // today: they degrade the circuit like transport failures).
+  validationFailureIsHealthNeutral?: boolean;
 };
 
 export type CoworkAdapterAttemptResult<TResponse, TValue> = {
@@ -46,8 +57,12 @@ export type CoworkAdapterAttemptResult<TResponse, TValue> = {
  * Own one paid adapter attempt from permit acquisition through validation,
  * authoritative usage persistence, and safe telemetry. Validation is inside
  * the health boundary so malformed model output degrades the circuit just like
- * transport failures. Usage is persisted exactly once whenever a provider
- * returned a response, including rejected responses.
+ * transport failures, UNLESS the caller opts a specific attempt into
+ * validationFailureIsHealthNeutral (see that field's docs) — that is the one
+ * exception, for callers where a validate() throw is known to reflect this
+ * one call's own flakiness rather than provider-level unreliability. Usage is
+ * persisted exactly once whenever a provider returned a response, including
+ * rejected responses.
  */
 export async function runCoworkAdapterAttempt<TResponse, TValue>(
   input: CoworkAdapterAttemptInput<TResponse, TValue>,
@@ -60,6 +75,11 @@ export async function runCoworkAdapterAttempt<TResponse, TValue>(
       input.model,
       response === null ? undefined : input.responseModel?.(response),
     ).model;
+  // Identifies the exact error instance thrown by validate() on this attempt
+  // (as opposed to an error thrown by call() itself, e.g. a real transport
+  // failure) so isHealthNeutral below can be precise rather than pattern
+  // matching on the error's name/shape.
+  const healthNeutralErrors = new WeakSet<object>();
 
   try {
     result = await runHealthyAdapter({
@@ -75,9 +95,16 @@ export async function runCoworkAdapterAttempt<TResponse, TValue>(
             cause,
           });
           invalid.name = "InvalidAdapterResponseError";
+          if (input.validationFailureIsHealthNeutral) {
+            healthNeutralErrors.add(invalid);
+          }
           throw invalid;
         }
       },
+      isHealthNeutral: (error) =>
+        typeof error === "object" &&
+        error !== null &&
+        healthNeutralErrors.has(error),
     });
   } catch (error) {
     input.telemetry?.recordAttempt({

@@ -331,9 +331,12 @@ const searchViralPosts: ToolFn = async (args, workspaceId, signal, context) => {
 
     const usedIds = await recentlyUsedSourceIds(workspaceId, signal);
     const surfacedIds = getSurfacedIds(workspaceId);
-    const cursor = autoSelectModelingSources
-      ? 0
-      : await nextRotationCursor(workspaceId, signal);
+    // Both branches below rotate the same durable per-workspace cursor: the
+    // in-memory surfacedIds map is best-effort only (resets on every cold
+    // start, see its own comment below), so without this the confirmed-
+    // modeling branch returned the literal same top-ranked post on most real
+    // requests — the durable claim below is what actually varies results.
+    const cursor = await nextRotationCursor(workspaceId, signal);
     signal?.throwIfAborted();
     // Server-confirmed auto-modeling uses the single secure selection policy.
     // Ordinary idea discovery retains its pre-existing stable rank + rotation.
@@ -344,6 +347,7 @@ const searchViralPosts: ToolFn = async (args, workspaceId, signal, context) => {
           reserveLimit: context?.modelingReserveCount ?? 0,
           usedIds,
           surfacedIds,
+          rotationCursor: cursor,
         })
       : null;
     const selected = modeledPool?.primaries ?? rotateFreshBand(
@@ -674,9 +678,12 @@ const getTopFromBatch: ToolFn = async (args, workspaceId, _signal, context) => {
         new Date(b.posted_at as string).getTime() -
         new Date(a.posted_at as string).getTime(),
     );
-    const cursor = autoSelectModelingSources
-      ? 0
-      : await nextRotationCursor(workspaceId);
+    // Durable per-workspace cursor for BOTH branches — see the matching
+    // comment in searchViralPosts above: the confirmed-modeling branch used
+    // to hardcode this to 0, which meant the in-memory-only surfacedIds map
+    // (best-effort, resets on every cold start) was the sole rotation signal
+    // on most real requests, producing the same top-ranked post every time.
+    const cursor = await nextRotationCursor(workspaceId);
     const modeledPool = autoSelectModelingSources
       ? selectModelingSourcePool({
           candidates: byRecency,
@@ -684,6 +691,7 @@ const getTopFromBatch: ToolFn = async (args, workspaceId, _signal, context) => {
           reserveLimit: context.modelingReserveCount ?? 0,
           usedIds,
           surfacedIds,
+          rotationCursor: cursor,
         })
       : null;
     const picked = modeledPool?.primaries ?? pickLegacyIdeas(

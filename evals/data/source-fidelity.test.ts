@@ -81,6 +81,82 @@ describe("reviewModeledDraft outcomes", () => {
     expect(openRouterMocks.completeChat).toHaveBeenCalledTimes(2);
   });
 
+  test("a burst of schema-invalid verdicts does not trip the shared circuit for a later, well-formed draft review", async () => {
+    // Tight config so a handful of calls is enough to open the circuit
+    // deterministically and quickly (same failureRateToOpen/minimumSamples
+    // pattern used in cowork-adapter-attempt.test.ts and
+    // adapter-health.test.ts).
+    const registry = new AdapterHealthRegistry({
+      windowSize: 4,
+      minimumSamples: 2,
+      failureRateToOpen: 0.5,
+      openCooldownMs: 60_000,
+    });
+
+    // Every call (primary + fallback model) returns a schema-invalid tool
+    // response: the model literally failed to call the tool correctly, not a
+    // transport failure and not a real "draft doesn't match source" verdict.
+    openRouterMocks.completeChat.mockResolvedValue({
+      text: "",
+      toolArgs: {
+        pass: "not-a-boolean",
+        reasons: "nope",
+        retry_instruction: null,
+      },
+      finishReason: "tool_calls",
+      usage: undefined,
+      citations: [],
+    });
+
+    const malformedReview = () =>
+      reviewModeledDraft({
+        sourceText: "A source with a clear opening and progression.",
+        draftBody: "An original draft with a comparable progression.",
+        userRequest: "Model this source.",
+        verifiedContext: "",
+        workspaceId: "ws",
+        adapterHealth: registry,
+      });
+
+    // Enough schema-invalid attempts on the PRIMARY model's adapterKey that,
+    // on the pre-fix code (where a validate() throw records a failure sample
+    // just like a transport error), opens its circuit under the tight config
+    // above (2 calls to reviewModeledDraft = 2 primary-model attempts, both
+    // invalid — failureRateToOpen 0.5 over minimumSamples 2). The decisive
+    // proof is the assertion after this burst: does the NEXT, unrelated,
+    // well-formed call actually reach the model, or does it get
+    // short-circuited by a tripped breaker?
+    for (let i = 0; i < 2; i += 1) {
+      const verdict = await malformedReview();
+      expect(verdict).toEqual({ outcome: "unavailable" });
+    }
+
+    openRouterMocks.completeChat.mockReset();
+    openRouterMocks.completeChat.mockResolvedValue({
+      text: "",
+      toolArgs: { pass: true, reasons: [], retry_instruction: "" },
+      finishReason: "tool_calls",
+      usage: undefined,
+      citations: [],
+    });
+
+    // The next, UNRELATED, well-formed draft review must still actually
+    // execute against the model rather than short-circuiting to
+    // "unavailable" because the shared circuit for that model was tripped by
+    // an earlier burst of tool-calling glitches on a different draft/turn.
+    const verdict = await reviewModeledDraft({
+      sourceText: "A different, unrelated source with its own progression.",
+      draftBody: "A different, unrelated draft that is a faithful model.",
+      userRequest: "Model this different source.",
+      verifiedContext: "",
+      workspaceId: "ws",
+      adapterHealth: registry,
+    });
+
+    expect(openRouterMocks.completeChat).toHaveBeenCalled();
+    expect(verdict).toEqual({ outcome: "verified" });
+  });
+
   test("a distinct fallback reviewer verifies the draft after a primary outage", async () => {
     openRouterMocks.completeChat
       .mockRejectedValueOnce(new Error("primary reviewer unavailable"))
