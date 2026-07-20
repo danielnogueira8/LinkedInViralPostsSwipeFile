@@ -32,6 +32,7 @@ import {
   compileReadOnlyOrchestratorReserveRoute,
   readOnlyOrchestratorEnabledForWorkspace,
   type ActionOrchestratorRoute,
+  type ReadOnlyOrchestratorRoute,
 } from "@/lib/agent/turn/compile";
 import {
   createSupabaseActionRetryRepository,
@@ -530,6 +531,23 @@ export function isRecentUnansweredUserMessage(
   }
   const ageMs = now - new Date(message.created_at).getTime();
   return ageMs >= 0 && ageMs < 30_000;
+}
+
+const PINNED_COWORK_ROUTE_VALUES = new Set<CoworkRoute>([
+  "direct_writer",
+  "action_orchestrator",
+  "read_only_orchestrator",
+  "answer",
+]);
+
+function normalizePinnedCoworkRoute(value: unknown): CoworkRoute | null {
+  if (
+    typeof value === "string" &&
+    PINNED_COWORK_ROUTE_VALUES.has(value as CoworkRoute)
+  ) {
+    return value as CoworkRoute;
+  }
+  return null;
 }
 
 const CUSTOM_SKILLS_TOOL_NAME = "_custom_skills_applied";
@@ -1282,6 +1300,8 @@ export async function executeChatTurn(
   let confirmedActionTargetIds: string[] = [];
   let actionRetryRepository: ActionRetryRepository | null = null;
   let persistedActionContinuation = false;
+  let pendingActionAsk = false;
+  let pendingAskOnly = false;
   let modeledBatchContinuation: ModeledDraftBatchContinuation | null = null;
   let modeledBatchContractRequested = false;
   let currentTurnModelSourceOwnership:
@@ -1307,6 +1327,9 @@ export async function executeChatTurn(
   // Post-clarification composer post count, hoisted out of the setup block so
   // the persistence gates and the single contract resolution can use it.
   let postClarificationPostCount: number | null = null;
+  // Session-sticky lane preference for this chat. Loaded from the chat row and
+  // honored unless this turn is explicitly continuing a saved workflow.
+  let pinnedCoworkRoute: CoworkRoute | null = null;
   // Kind projection of the best available estimate, used only for
   // zero-delivery telemetry finishes before the single contract exists.
   const estimatedContractKind = (): TurnContract["kind"] =>
@@ -1359,7 +1382,7 @@ export async function executeChatTurn(
 
     const { data: chat, error } = await sbRaw
       .from("chats")
-      .select("id, title")
+      .select("id, title, pinned_cowork_route")
       .eq("id", chatId)
       .eq("workspace_id", workspaceId)
       .is("archived_at", null)
@@ -1368,6 +1391,9 @@ export async function executeChatTurn(
     if (!chat) {
       return turnError("Chat not found", 404);
     }
+    pinnedCoworkRoute = normalizePinnedCoworkRoute(
+      (chat as { pinned_cowork_route?: unknown }).pinned_cowork_route,
+    );
 
     const promptCheck = preflightUserPrompt(userText);
     if (!promptCheck.ok) {
@@ -1454,8 +1480,8 @@ export async function executeChatTurn(
         | null;
       user_stop_requested_at: string | null;
     }>;
-    const pendingAskOnly = hasPendingAskOnly(recentMessageWindow);
-    const pendingActionAsk = hasPendingActionAsk(recentMessageWindow);
+    pendingAskOnly = hasPendingAskOnly(recentMessageWindow);
+    pendingActionAsk = hasPendingActionAsk(recentMessageWindow);
     const actionAnswer = validatePendingActionAnswer(
       recentMessageWindow,
       userText,
@@ -2104,6 +2130,8 @@ export async function executeChatTurn(
       cancellationReason: () =>
         setupDeadline?.didExpire() ? "deadline" : "cancelled",
       coworkTelemetry,
+      pinnedCoworkRoute:
+        pinnedCoworkRoute === "setup" ? undefined : pinnedCoworkRoute,
       deps: {
         fetchRecentPostDrafts: deps.fetchRecentPostDrafts,
         generateLeadMagnetResource: deps.generateLeadMagnetResource,
@@ -2523,7 +2551,7 @@ export async function executeChatTurn(
       isRefine: skipDecision,
       composerTaskContext: composerTaskContext ?? undefined,
     });
-  const useDirectWriter =
+  let useDirectWriter =
     !modeledBatchContractRequested &&
     (useDirectRefine ||
       useDirectPartial ||
@@ -2532,9 +2560,35 @@ export async function executeChatTurn(
       useDirectOriginal ||
       useDirectLeadMagnet ||
       useDirectCreatorStyle);
-  const actionOrchestratorRoute = useDirectWriter
+  let actionOrchestratorRoute: ActionOrchestratorRoute | null = useDirectWriter
     ? null
     : normalizedActionRoute;
+
+  // Session-sticky lane pinning: unless this turn is explicitly continuing a
+  // saved workflow (retry, action clarification, or any pending ask answer),
+  // reuse the chat's pinned lane. The compiler stays authoritative for the
+  // contract/count; the pin only selects the lane. "answer" is allowed in the
+  // schema but never pinned, so it is treated as no preference.
+  const hasExplicitWorkflowContinuation =
+    Boolean(body.retryOfUserMessageId) || pendingActionAsk || pendingAskOnly;
+  const honorPinnedRoute =
+    pinnedCoworkRoute &&
+    !hasExplicitWorkflowContinuation &&
+    pinnedCoworkRoute !== "answer";
+  if (honorPinnedRoute) {
+    if (pinnedCoworkRoute === "direct_writer") {
+      useDirectWriter = true;
+    } else if (
+      pinnedCoworkRoute === "action_orchestrator" &&
+      !actionOrchestratorRoute
+    ) {
+      actionOrchestratorRoute = {
+        kind: "clarify_action",
+        clarificationReason: "action",
+      };
+    }
+  }
+
   const useActionOrchestrator = Boolean(
     actionOrchestratorRoute &&
       (deps.actionOrchestratorEnabledForWorkspace() ||
@@ -2598,7 +2652,7 @@ export async function executeChatTurn(
       );
     }
   }
-  const readOnlyOrchestratorRoute =
+  let readOnlyOrchestratorRoute: ReadOnlyOrchestratorRoute | null =
     useDirectWriter || useActionOrchestrator
       ? null
       : modeledBatchContinuation?.route ??
@@ -2618,6 +2672,21 @@ export async function executeChatTurn(
           hasCreatorStyle: Boolean(creatorStyleId),
           composerTaskContext: composerTaskContext ?? undefined,
         });
+
+  if (
+    honorPinnedRoute &&
+    pinnedCoworkRoute === "read_only_orchestrator" &&
+    !readOnlyOrchestratorRoute
+  ) {
+    readOnlyOrchestratorRoute = {
+      kind: "workspace_research",
+      expectsDraft: true,
+      expectedDrafts: directPostCount ?? 1,
+      minimumSources: 2,
+      workspaceSearchMode: "diverse",
+    };
+  }
+
   const modeledBatchRouteContract = continuationForModeledDraftRoute(
     readOnlyOrchestratorRoute,
   );
@@ -2749,6 +2818,25 @@ export async function executeChatTurn(
     route: coworkRoute,
     requestedContract: turnContract,
   });
+
+  // Persist the first non-answer lane selection so the next ambiguous turn
+  // stays in the same drafting workflow. Answer turns are not part of a
+  // multi-turn drafting workflow and never pin a lane.
+  if (!pinnedCoworkRoute && coworkRoute !== "answer") {
+    try {
+      await sbRaw
+        .from("chats")
+        .update({
+          pinned_cowork_route: coworkRoute,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", chatId)
+        .eq("workspace_id", workspaceId);
+    } catch {
+      // Best-effort: a failed pin write does not abort the turn.
+    }
+  }
+
   const activeModeledBatchContinuation = useReadOnlyOrchestrator
     ? modeledBatchRouteContract
     : null;

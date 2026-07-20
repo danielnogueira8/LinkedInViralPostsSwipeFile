@@ -137,6 +137,7 @@ export class CoworkHarnessStore {
       turn_started_at: null,
       turn_cost_operation_key: null,
       live_plan: null,
+      pinned_cowork_route: null,
       created_at: this.iso(),
       updated_at: this.iso(),
     });
@@ -422,6 +423,12 @@ export class CoworkHarnessStore {
       name: skill.name,
       body: skill.body,
     });
+  }
+
+  seedPinnedCoworkRoute(route: string | null): void {
+    const chat = this.tables.chats[0];
+    if (!chat) return;
+    chat.pinned_cowork_route = route;
   }
 
   seedMessageArtifact(artifact: Artifact): void {

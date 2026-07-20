@@ -170,6 +170,9 @@ export type CoworkOutcomeScenario = {
       meta?: Record<string, unknown>;
       mediaAttachments?: Artifact["media_attachments"];
     }>;
+    // Pre-seed the chat's pinned Cowork lane. Use this to assert that a turn
+    // stays in a pinned lane even when its wording would normally route elsewhere.
+    pinnedCoworkRoute?: CoworkRoute | null;
   };
   negativeControl?: {
     duplicatePersistedArtifact?: boolean;
@@ -619,6 +622,9 @@ async function runCoworkOutcomeScenarioWithStore(
   }
   for (const draft of scenario.seed?.drafts ?? []) {
     store.seedDraft(draft);
+  }
+  if (typeof scenario.seed?.pinnedCoworkRoute === "string") {
+    store.seedPinnedCoworkRoute(scenario.seed.pinnedCoworkRoute);
   }
   if (scenario.seed?.messageArtifact) {
     store.seedMessageArtifact(scenario.seed.messageArtifact);

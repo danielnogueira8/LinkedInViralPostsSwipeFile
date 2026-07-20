@@ -987,6 +987,8 @@ export type BuildTurnContextInput = {
   currentTurnModelSourceOwnership:
     | "historical_continuation"
     | "server_selected";
+  /** Session-sticky Cowork lane preference, if any. Used to preload voice for pinned drafting lanes. */
+  pinnedCoworkRoute?: "direct_writer" | "read_only_orchestrator" | "action_orchestrator" | "answer" | null;
   /** Every read races this signal (claim's setup deadline ⊕ client abort). */
   setupSignal: AbortSignal;
   /** Distinguishes setup-deadline expiry from client cancellation for telemetry on paid vision/lead-magnet calls. */
@@ -1028,6 +1030,7 @@ export async function buildTurnContext(
     setupSignal,
     cancellationReason,
     coworkTelemetry,
+    pinnedCoworkRoute,
     deps,
   } = input;
   let composerTaskContext = input.composerTaskContext;
@@ -1149,6 +1152,8 @@ export async function buildTurnContext(
     compileDirectPartialTextSpec(userText) ||
     requestedDirectPostCount(userText) ||
     isNoModelPostRequest(userText, Boolean(modelSourceId)) ||
+    pinnedCoworkRoute === "direct_writer" ||
+    pinnedCoworkRoute === "read_only_orchestrator" ||
     compileReadOnlyOrchestratorReserveRoute({
       userInstruction: userText,
       ...(activeDraftCountOverride

@@ -4119,4 +4119,199 @@ describe("production-shaped Cowork outcome harness", () => {
     expect(line).not.toContain("Write a private post");
     expect(JSON.parse(line)).toEqual(report.safe);
   });
+
+  test("a pinned read-only lane keeps an ambiguous follow-up out of the answer lane", async () => {
+    const sequence = await runCoworkOutcomeSequence([
+      modeledThreeScenario("pin-read-only-turn-1"),
+      {
+        id: "pin-read-only-turn-2",
+        request: { message: "Keep going." },
+        model: {
+          provider: { rounds: [] },
+          readOnlyOrchestrator: {
+            plans: [
+              {
+                model: PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL,
+                toolArgs: {
+                  actions: [
+                    {
+                      id: "sources",
+                      type: "search_viral_posts",
+                      limit: 1,
+                    },
+                    {
+                      id: "draft",
+                      type: "draft_post",
+                      evidenceActionIds: ["sources"],
+                    },
+                  ],
+                },
+                usage: usage(90, 18, 0.001),
+              },
+            ],
+            toolResults: {
+              search_viral_posts: [
+                {
+                  ok: true,
+                  count: 2,
+                  posts: [
+                    {
+                      id: "source-pinned-a",
+                      text: "A sourcing lesson.",
+                      post_url: "https://linkedin.com/pinned-a",
+                    },
+                    {
+                      id: "source-pinned-b",
+                      text: "Another sourcing lesson.",
+                      post_url: "https://linkedin.com/pinned-b",
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+          directWriter: [
+            {
+              text: COMPLETE_POST,
+              finishReason: "stop",
+              usage: usage(210, 95, 0.0001888),
+            },
+          ],
+        },
+        expected: {
+          terminal: "done",
+          artifactBodies: [COMPLETE_POST],
+          actionNames: ["search_viral_posts", "write_grounded_post"],
+          route: "read_only_orchestrator",
+        },
+      },
+    ]);
+
+    expect(sequence.pass, JSON.stringify(sequence.attempts)).toBe(true);
+    expect(sequence.attempts[0]?.safe.route).toBe("read_only_orchestrator");
+    expect(sequence.attempts[1]?.safe.route).toBe("read_only_orchestrator");
+  });
+
+  test("a pinned action lane keeps an ambiguous follow-up out of the answer lane", async () => {
+    const draftId = "00000000-0000-4000-8000-000000000800";
+    const sequence = await runCoworkOutcomeSequence([
+      {
+        id: "pin-action-turn-1",
+        request: { message: "Move the pricing draft to ready." },
+        seed: {
+          draft: {
+            id: draftId,
+            title: "Pricing discipline",
+            body: COMPLETE_POST,
+            status: "drafting",
+          },
+        },
+        model: {
+          provider: { rounds: [] },
+          actionOrchestrator: {
+            plans: [
+              {
+                model: PRIMARY_ACTION_ORCHESTRATOR_MODEL,
+                toolArgs: {
+                  actions: [
+                    {
+                      id: "move",
+                      type: "move_on_board",
+                      draftId,
+                      status: "ready",
+                    },
+                  ],
+                },
+                usage: usage(75, 15, 0.0008),
+              },
+            ],
+          },
+        },
+        expected: {
+          terminal: "done",
+          artifactBodies: [],
+          actionNames: ["list_drafts", "move_on_board"],
+          route: "action_orchestrator",
+        },
+      },
+      {
+        id: "pin-action-turn-2",
+        request: { message: "What about the other one?" },
+        seed: {
+          draft: {
+            id: "00000000-0000-4000-8000-000000000801",
+            title: "Hiring discipline",
+            body: SECOND_POST,
+            status: "drafting",
+          },
+        },
+        model: {
+          provider: { rounds: [] },
+          actionOrchestrator: { plans: [], allowNoModel: true },
+        },
+        expected: {
+          terminal: "ask",
+          artifactBodies: [],
+          actionNames: ["ask_user"],
+          route: "action_orchestrator",
+        },
+      },
+    ]);
+
+    expect(sequence.pass, JSON.stringify(sequence.attempts)).toBe(true);
+    expect(sequence.attempts[0]?.safe.route).toBe("action_orchestrator");
+    expect(sequence.attempts[1]?.safe.route).toBe("action_orchestrator");
+  });
+
+  test("a pinned direct-writer lane keeps an ambiguous follow-up out of the answer lane", async () => {
+    const sequence = await runCoworkOutcomeSequence([
+      {
+        id: "pin-direct-writer-turn-1",
+        request: {
+          message:
+            "Write an original post in my voice about why a personal brand is career leverage.",
+        },
+        model: {
+          provider: { rounds: [] },
+          directWriter: [
+            {
+              text: COMPLETE_POST,
+              finishReason: "stop",
+              usage: usage(210, 95, 0.0001888),
+            },
+          ],
+        },
+        expected: {
+          terminal: "done",
+          artifactBodies: [COMPLETE_POST],
+          actionNames: [],
+          route: "direct_writer",
+        },
+      },
+      {
+        id: "pin-direct-writer-turn-2",
+        request: { message: "Another angle?" },
+        model: {
+          provider: { rounds: [] },
+          directWriter: [
+            {
+              text: SECOND_POST,
+              finishReason: "stop",
+              usage: usage(220, 100, 0.0002),
+            },
+          ],
+        },
+        expected: {
+          terminal: "done",
+          artifactBodies: [SECOND_POST],
+          actionNames: [],
+          route: "direct_writer",
+        },
+      },
+    ]);
+
+    expect(sequence.pass, JSON.stringify(sequence.attempts)).toBe(true);
+    expect(sequence.attempts[0]?.safe.route).toBe("direct_writer");
+    expect(sequence.attempts[1]?.safe.route).toBe("direct_writer");
+  });
 });
