@@ -76,8 +76,8 @@ UUID format validation).
 
 ### 5. The agent system prompt treats tool results as DATA
 
-`lib/agent/run.ts` system prompt has explicit instructions to treat scraped
-post text and tool results as data, never as instructions. This is a **soft**
+The agent system prompt has explicit instructions to treat scraped post text
+and tool results as data, never as instructions. This is a **soft**
 defense — it can be defeated by sufficiently clever injection — which is why
 the **hard** defenses (CSP, scoping, neutralization) above matter more.
 

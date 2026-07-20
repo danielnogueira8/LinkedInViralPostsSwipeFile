@@ -1,8 +1,5 @@
 # Quality coverage map
 
-Cowork v2 has a separate fail-closed rollout and evidence runbook:
-[`cowork-v2-rollout-runbook.md`](./cowork-v2-rollout-runbook.md).
-
 The release-readiness source of truth is `critical-journeys.json`. It maps each
 critical product capability to one user-visible invariant, the highest useful
 test seam, current evidence, gap status, and the GitHub issue that closes the
@@ -39,24 +36,7 @@ npm run test:evals       # fast deterministic regression suite
 npm run test:coverage    # deterministic suite plus concise coverage summary
 npm run e2e:smoke        # authenticated render smoke checks
 npm run e2e:ui           # critical UI workflow checks
-npm run test:evals:live  # opt-in paid live-model contracts
 ```
-
-Live contracts require `RUN_LIVE_EVALS=1` and `OPENROUTER_API_KEY`. They reserve
-a conservative cost estimate before every model call and stop before crossing
-`LIVE_EVAL_SPEND_CEILING_USD` (default `$2.00`). The release harness pins
-GLM-5.2 and limits live-only agent execution to two model rounds with 1,024
-output tokens per round. Its `$0.125` pre-call reservation uses UTF-8 byte
-length as a conservative maximum input-token count and covers three complete
-connection attempts at the pinned pricing and bounded fixed-fixture prompt size;
-authoritative OpenRouter cost is reconciled afterward and an underestimated
-bound fails closed. Use
-`LIVE_EVAL_REPETITIONS` to reproduce variance; each structured result records
-the model, parameters, requested/completed repetitions, pass rate, threshold,
-and reserved cost. Reports intentionally omit prompts, fixtures, model output,
-and failure text so secrets cannot leak into CI logs or committed artifacts.
-Older exploratory audits remain available through `npm run test:evals:live:legacy`;
-they are diagnostic and are not the budget-enforced release contract job.
 
 ## Cowork persisted-outcome harness
 
@@ -125,12 +105,8 @@ remain valid.
   block merge. Authenticated critical journeys run when E2E secrets are present;
   one diagnostic retry is allowed, but a failed-then-passed test still fails the
   zero-flake policy. Traces, screenshots, JSON, and HTML reports upload on failure.
-- Nightly: browser journeys run on pushes to `main`; the budget-capped live-model
-  contracts run every Monday or by manual dispatch. Live results are non-blocking
-  and publish a 90-day safe trend summary with pass rates and actual/reserved cost.
-- Pre-release: run `npm run test:coverage`, `npm run e2e:critical:ci`, then opt in
-  to `LIVE_EVAL_SPEND_CEILING_USD=2 npm run test:evals:live`. Never run legacy
-  exploratory live audits as a release gate.
+- Nightly: browser journeys run on pushes to `main`.
+- Pre-release: run `npm run test:coverage` and `npm run e2e:critical:ci`.
 
 Focused thresholds live in `docs/testing/focused-coverage.json`. They protect a
 small set of concurrency/ownership modules; no arbitrary global percentage is

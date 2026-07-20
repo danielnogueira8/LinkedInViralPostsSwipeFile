@@ -2,7 +2,7 @@ import { describe, expect, test, vi } from "vitest";
 import {
   createDraftFinalizer,
   type DraftFinalizerSpecialists,
-} from "@/lib/agent/draft-finalizer";
+} from "@/lib/agent/finalize/finalizer";
 import type { DraftOutputPolicy } from "@/lib/agent/draft-output-policy";
 import { editDraftBodySync } from "@/lib/agent/specialists/editor";
 
@@ -79,7 +79,8 @@ describe("DraftFinalizer", () => {
     expect(finalizer.acceptedCount()).toBe(1);
     expect(specialists.edit).toHaveBeenCalledOnce();
     expect(specialists.repairAiTells).toHaveBeenCalledOnce();
-    expect(specialists.checkSameness).toHaveBeenCalledOnce();
+    // Cross-slot sameness rewrite is no longer on the blocking finalizer path.
+    expect(specialists.checkSameness).not.toHaveBeenCalled();
   });
 
   test("does not trim accepted bytes before documented repair stages", async () => {
@@ -175,7 +176,7 @@ describe("DraftFinalizer", () => {
     expect(finalizer.acceptedCount()).toBe(2);
   });
 
-  test("revalidates policy after editing, AI-tell repair, and sameness rewriting", async () => {
+  test("revalidates policy after editing and AI-tell repair", async () => {
     const specialists = passThroughSpecialists();
     specialists.edit = vi.fn((body) => ({
       body: `${body}\n\nEdited safely.`,
@@ -185,15 +186,9 @@ describe("DraftFinalizer", () => {
       notes: [],
     }));
     specialists.repairAiTells = vi.fn(async ({ body }) => ({
-      body: `${body}\n\nRepaired safely.`,
+      body: `${body}\n\nRepaired past the limit.`,
       repaired: true,
       detected: ["formulaic-opener"],
-    }));
-    specialists.checkSameness = vi.fn(async ({ body }) => ({
-      body: `${body}\n\nRewritten past the limit.`,
-      rewrote: true,
-      overlapMarkers: ["same hook", "same anecdote"],
-      reason: "repeated identity anchors",
     }));
     const max = COMPLETE_POST.length + 40;
     const finalizer = createDraftFinalizer({
@@ -464,17 +459,18 @@ describe("DraftFinalizer", () => {
     expect(finalizer.acceptedCount()).toBe(0);
   });
 
-  test("reviews the final post-specialist bytes for source fidelity", async () => {
+  test("reviews the final post-editor bytes for source fidelity", async () => {
     const specialists = passThroughSpecialists();
     const rewrittenBody = COMPLETE_POST.replace(
       "That is what makes an idea worth publishing.",
       "A rewrite that no longer follows the verified source.",
     );
-    specialists.checkSameness = vi.fn(async () => ({
+    specialists.edit = vi.fn(() => ({
       body: rewrittenBody,
-      rewrote: true,
-      overlapMarkers: ["repeated structure"],
-      reason: "rewrote the ending",
+      changed: true,
+      usedModel: false,
+      fixedCategories: [],
+      notes: [],
     }));
     specialists.reviewSourceFidelity = vi.fn(async ({ draftBody }) => ({
       outcome: "rejected" as const,

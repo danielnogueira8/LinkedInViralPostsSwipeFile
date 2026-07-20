@@ -1,5 +1,4 @@
-import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { dirname, join, normalize } from "node:path";
+import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
 import {
   AgentEventSchema,
@@ -104,57 +103,4 @@ describe("agent and chat contracts", () => {
     expect(specialistSource).not.toMatch(/from ["']@\/lib\/agent\/run["']/);
   });
 
-  test("the agent runtime is not part of an import cycle", () => {
-    const files: string[] = [];
-    const visitDirectory = (directory: string) => {
-      for (const entry of readdirSync(directory, { withFileTypes: true })) {
-        const path = join(directory, entry.name);
-        if (entry.isDirectory()) visitDirectory(path);
-        else if (path.endsWith(".ts")) files.push(path);
-      }
-    };
-    visitDirectory("lib");
-
-    const fileSet = new Set(files.map(normalize));
-    const graph = new Map<string, string[]>();
-    const resolveImport = (from: string, specifier: string): string | null => {
-      const base = specifier.startsWith("@/")
-        ? specifier.slice(2)
-        : specifier.startsWith(".")
-          ? normalize(join(dirname(from), specifier))
-          : null;
-      if (!base) return null;
-      for (const candidate of [base, `${base}.ts`, join(base, "index.ts")]) {
-        const normalized = normalize(candidate);
-        if (existsSync(normalized) && fileSet.has(normalized)) return normalized;
-      }
-      return null;
-    };
-
-    for (const file of files) {
-      const dependencies = Array.from(
-        readFileSync(file, "utf8").matchAll(
-          /(?:import|export)\s+(?:[\s\S]*?\s+from\s+)?["']([^"']+)["']/g,
-        ),
-      )
-        .map((match) => resolveImport(file, match[1]))
-        .filter((dependency): dependency is string => dependency !== null);
-      graph.set(normalize(file), [...new Set(dependencies)]);
-    }
-
-    const runtime = normalize("lib/agent/run.ts");
-    const reachesRuntime = (current: string, visited = new Set<string>()): boolean => {
-      if (visited.has(current)) return false;
-      visited.add(current);
-      for (const dependency of graph.get(current) ?? []) {
-        if (dependency === runtime) return true;
-        if (reachesRuntime(dependency, visited)) return true;
-      }
-      return false;
-    };
-
-    for (const dependency of graph.get(runtime) ?? []) {
-      expect(reachesRuntime(dependency), `${dependency} reaches ${runtime}`).toBe(false);
-    }
-  });
 });

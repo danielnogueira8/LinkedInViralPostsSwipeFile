@@ -4,7 +4,7 @@ import { createSupabaseModeledDraftBatchRepository } from "@/lib/agent/modeled-d
 import type {
   ModeledDraftBatchSource,
   ModeledPostArtifact,
-} from "@/lib/agent/modeled-draft-batch";
+} from "@/lib/agent/execute/writer";
 
 const mocks = vi.hoisted(() => ({ rpc: vi.fn() }));
 

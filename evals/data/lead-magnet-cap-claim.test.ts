@@ -1,11 +1,15 @@
 import { describe, expect, test, vi } from "vitest";
 import { claimLeadMagnetGeneration } from "@/lib/lead-magnet-ai";
 
-vi.mock("@/lib/openrouter", () => ({
-  BACKGROUND_MODEL: "test-model",
-  completeChat: vi.fn(),
-  logOpenRouterUsage: vi.fn(),
-}));
+vi.mock("@/lib/openrouter", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/openrouter")>();
+  return {
+    ...actual,
+    completeChat: vi.fn(),
+    logOpenRouterUsage: vi.fn(),
+    streamChat: vi.fn(),
+  };
+});
 
 describe("lead magnet generation claims", () => {
   test("returns the database reservation and current usage", async () => {

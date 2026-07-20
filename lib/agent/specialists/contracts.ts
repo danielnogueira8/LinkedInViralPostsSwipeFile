@@ -1,9 +1,21 @@
 // Agent specialist contracts.
 //
-// This is the typed boundary layer used by the AI-tell editor
-// (lib/agent/specialists/editor.ts): a runtime-validated shape for the
-// cleaned-draft result the editor produces, so a malformed editor output is
-// caught at the boundary rather than deep inside the loop.
+// This is the typed boundary layer for the Cowork "orchestration" refactor.
+// It defines the narrow input/output shapes each specialist stage produces so
+// that the chat turn execution layer (lib/agent/chat-turn.ts) and the headless
+// batch path (lib/batch/weekly.ts) can share ONE set of generation modules
+// instead of the two divergent copies they carry today.
+//
+// Design rules (see the reviewed plan):
+//   - Every pipeline envelope has a runtime schema factory, so callers validate
+//     the concrete input/output contract selected for that specialist stage.
+//   - Every model-produced specialist output gets a Zod schema so a malformed
+//     model response is caught at the boundary, not deep inside the loop.
+//   - We REUSE the dependency-free Artifact and PostMediaAttachment contracts
+//     rather than redefining them, so specialist outputs cannot drift from what
+//     the runtime and UI exchange.
+//   - Pipeline selection is DETERMINISTIC (no new orchestrator model call): the
+//     PipelineKind is chosen from signals the stream route already computes.
 //
 // Zod is already a dependency (v4) and is used throughout the codebase, so
 // these schemas follow the same `z.infer` pattern as the shared agent contract.

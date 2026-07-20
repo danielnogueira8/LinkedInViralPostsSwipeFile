@@ -87,6 +87,12 @@ export type RawDbMessage = {
   transport_recovery_requested_at?: string | null;
   user_stop_requested_at?: string | null;
   terminal_reason?: "done" | "ask" | "cancelled" | "deadline" | "error" | null;
+  applied_skills?: unknown;
+  no_model_format_id?: string | null;
+  creator_style_context?: unknown;
+  lead_magnet_id?: string | null;
+  recoverable_error?: unknown;
+  turn_usage?: unknown;
   tool_calls?: {
     id: string;
     type: "function";
@@ -215,8 +221,35 @@ function extractPersistedAsk(
   };
 }
 
-function extractPersistedSkills(calls: RawDbMessage["tool_calls"]): string[] | undefined {
-  const args = toolArgs(calls, "_custom_skills_applied");
+type HydrationSource = {
+  tool_calls?: RawDbMessage["tool_calls"];
+  applied_skills?: unknown;
+  no_model_format_id?: string | null;
+  creator_style_context?: unknown;
+  lead_magnet_id?: string | null;
+  recoverable_error?: unknown;
+  turn_usage?: unknown;
+};
+
+type HydrationInput = HydrationSource | RawDbMessage["tool_calls"];
+
+function normalizeHydrationSource(input: HydrationInput): HydrationSource {
+  if (input === null || input === undefined || Array.isArray(input)) {
+    return { tool_calls: input as RawDbMessage["tool_calls"] };
+  }
+  return input;
+}
+
+function extractPersistedSkills(input: HydrationInput): string[] | undefined {
+  const source = normalizeHydrationSource(input);
+  if (source.applied_skills !== undefined && source.applied_skills !== null) {
+    const args = source.applied_skills as Record<string, unknown>;
+    const names = Array.isArray(args.names)
+      ? args.names.filter((name): name is string => typeof name === "string")
+      : [];
+    if (names.length > 0) return names;
+  }
+  const args = toolArgs(source.tool_calls, "_custom_skills_applied");
   const names = Array.isArray(args?.names)
     ? args.names.filter((name): name is string => typeof name === "string")
     : [];
@@ -224,9 +257,24 @@ function extractPersistedSkills(calls: RawDbMessage["tool_calls"]): string[] | u
 }
 
 function extractPersistedRecoverable(
-  calls: RawDbMessage["tool_calls"],
+  input: HydrationInput,
 ): RecoverableError | undefined {
-  const args = toolArgs(calls, "_recoverable");
+  const source = normalizeHydrationSource(input);
+  if (
+    source.recoverable_error !== undefined &&
+    source.recoverable_error !== null
+  ) {
+    const args = source.recoverable_error as Record<string, unknown>;
+    const message = typeof args.message === "string" ? args.message : "";
+    if (message) {
+      return {
+        code: typeof args.code === "string" ? args.code : "",
+        message,
+        recovery: "continue",
+      };
+    }
+  }
+  const args = toolArgs(source.tool_calls, "_recoverable");
   const message = typeof args?.message === "string" ? args.message : "";
   if (!message) return undefined;
   return {
@@ -237,24 +285,53 @@ function extractPersistedRecoverable(
 }
 
 function extractPersistedTurnUsage(
-  calls: RawDbMessage["tool_calls"],
+  input: HydrationInput,
 ): CoworkTurnUsage | undefined {
-  return parseCoworkTurnUsage(toolArgs(calls, "_turn_usage")) ?? undefined;
+  const source = normalizeHydrationSource(input);
+  if (source.turn_usage !== undefined && source.turn_usage !== null) {
+    return parseCoworkTurnUsage(source.turn_usage) ?? undefined;
+  }
+  return parseCoworkTurnUsage(toolArgs(source.tool_calls, "_turn_usage")) ?? undefined;
 }
 
 function extractPersistedPostFormat(
-  calls: RawDbMessage["tool_calls"],
+  input: HydrationInput,
 ): string | undefined {
-  const args = toolArgs(calls, "_post_format_selected");
+  const source = normalizeHydrationSource(input);
+  if (
+    typeof source.no_model_format_id === "string" &&
+    source.no_model_format_id.trim()
+  ) {
+    const id = source.no_model_format_id.trim();
+    return isNoModelFormatId(id) ? noModelFormatLabel(id) : undefined;
+  }
+  const args = toolArgs(source.tool_calls, "_post_format_selected");
   if (!args) return undefined;
   if (typeof args.label === "string" && args.label.trim()) return args.label.trim();
   return isNoModelFormatId(args.id) ? noModelFormatLabel(args.id) : undefined;
 }
 
 export function extractPersistedCreatorStyle(
-  calls: RawDbMessage["tool_calls"],
+  input: HydrationInput,
 ): { name: string; creatorName: string | null } | undefined {
-  const args = toolArgs(calls, "_creator_style_selected");
+  const source = normalizeHydrationSource(input);
+  if (
+    source.creator_style_context !== undefined &&
+    source.creator_style_context !== null
+  ) {
+    const args = source.creator_style_context as Record<string, unknown>;
+    const name = typeof args.name === "string" ? args.name.trim() : "";
+    if (name) {
+      return {
+        name,
+        creatorName:
+          typeof args.creatorName === "string" && args.creatorName.trim()
+            ? args.creatorName.trim()
+            : null,
+      };
+    }
+  }
+  const args = toolArgs(source.tool_calls, "_creator_style_selected");
   const name = typeof args?.name === "string" ? args.name.trim() : "";
   if (!name) return undefined;
   return {
@@ -267,11 +344,23 @@ export function extractPersistedCreatorStyle(
 }
 
 export function extractPersistedLeadMagnet(
-  calls: RawDbMessage["tool_calls"],
+  input: HydrationInput,
 ): AppliedLeadMagnet | undefined {
-  const args = toolArgs(calls, "_lead_magnet_selected");
-  const id = typeof args?.id === "string" ? args.id.trim() : "";
-  const title = typeof args?.title === "string" ? args.title.trim() : "";
+  const source = normalizeHydrationSource(input);
+  const columnId =
+    typeof source.lead_magnet_id === "string" && source.lead_magnet_id.trim()
+      ? source.lead_magnet_id.trim()
+      : undefined;
+  let args: Record<string, unknown> | undefined;
+  if (columnId !== undefined) {
+    args = toolArgs(source.tool_calls, "_lead_magnet_selected");
+  }
+  if (!args) {
+    args = toolArgs(source.tool_calls, "_lead_magnet_selected");
+  }
+  if (!args) return undefined;
+  const id = columnId || (typeof args.id === "string" ? args.id.trim() : "");
+  const title = typeof args.title === "string" ? args.title.trim() : "";
   if (!title) return undefined;
   const deliverables = Array.isArray(args?.deliverables)
     ? args.deliverables
@@ -325,20 +414,18 @@ export function hydrate(rows: RawDbMessage[]): Message[] {
       row.role === "assistant" &&
       isLast &&
       !pairedUser?.user_stop_requested_at
-        ? extractPersistedRecoverable(row.tool_calls)
+        ? extractPersistedRecoverable(row)
         : undefined;
     const usage =
-      row.role === "assistant"
-        ? extractPersistedTurnUsage(row.tool_calls)
-        : undefined;
+      row.role === "assistant" ? extractPersistedTurnUsage(row) : undefined;
     const skills =
-      row.role === "user" ? extractPersistedSkills(row.tool_calls) : undefined;
+      row.role === "user" ? extractPersistedSkills(row) : undefined;
     const postFormat =
-      row.role === "user" ? extractPersistedPostFormat(row.tool_calls) : undefined;
+      row.role === "user" ? extractPersistedPostFormat(row) : undefined;
     const creatorStyle =
-      row.role === "user" ? extractPersistedCreatorStyle(row.tool_calls) : undefined;
+      row.role === "user" ? extractPersistedCreatorStyle(row) : undefined;
     const leadMagnet =
-      row.role === "user" ? extractPersistedLeadMagnet(row.tool_calls) : undefined;
+      row.role === "user" ? extractPersistedLeadMagnet(row) : undefined;
     return {
       id: row.id,
       role: row.role as "user" | "assistant",

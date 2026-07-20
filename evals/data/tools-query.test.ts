@@ -9,8 +9,8 @@ import {
 // ---------------------------------------------------------------------------
 // Tier 1: data-layer tests for the agent tools.
 //
-// The stubbed loop suite (golden-tasks) and the live prompt suite both sit
-// ABOVE the tool queries — they take tool output as given. This tier tests the
+// Higher-level integration suites sit ABOVE the tool queries — they take tool
+// output as given. This tier tests the
 // queries THEMSELVES: which column a tool filters on, the ordering, the limit
 // clamps, and how it shapes the result. That's exactly where the "top from
 // latest scrape" recency bug lived (filtering `scraped_at` instead of

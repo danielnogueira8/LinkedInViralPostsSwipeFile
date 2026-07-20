@@ -751,8 +751,8 @@ async function generateDraftBody(opts: {
 }> {
   // NOTE: the weekly batch is a MODELING flow — it adapts a picked source post,
   // so it deliberately gets NO viral-learning RAG (exemplars / pattern brief).
-  // RAG lives only on the ORIGINAL-drafting chat flows (lib/agent/run.ts), where
-  // there's no source to honor. Keeping it off here means a modeled draft is
+  // RAG lives only on the ORIGINAL-drafting chat flows (lib/agent/draft-engine.ts),
+  // where there's no source to honor. Keeping it off here means a modeled draft is
   // never out-shouted by retrieved exemplars.
   const messages: ChatMessage[] = [
     { role: "system", content: opts.system },
@@ -1448,7 +1448,7 @@ export async function runWeeklyBatch(opts: {
     ]);
   // NOTE: no viral-learning RAG here. The batch is a MODELING flow (adapts a
   // picked source), so the "what's working now" brief and exemplars stay OFF —
-  // they belong only to the original-drafting chat flows (lib/agent/run.ts).
+  // they belong only to the original-drafting chat flows (lib/agent/draft-engine.ts).
   // The brief is still GENERATED weekly by the pattern-briefs cron; only its
   // CONSUMPTION moved.
 

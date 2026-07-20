@@ -1,8 +1,8 @@
-import type { ReadOnlyOrchestratorRoute } from "@/lib/agent/read-only-orchestrator-routing";
+import type { ReadOnlyOrchestratorRoute } from "@/lib/agent/turn/compile";
 
 const MODELED_DRAFT_BATCH_CONTINUATION_VERSION = 1;
 
-type ModeledDraftCount = 2 | 3 | 4 | 5;
+type ModeledDraftCount = 2 | 3 | 4 | 5 | 6;
 
 export type ModeledDraftBatchContinuation = Readonly<{
   kind: "modeled_draft_batch";
@@ -27,15 +27,15 @@ function recordOf(value: unknown): Record<string, unknown> | null {
 }
 
 function modeledDraftCount(value: unknown): ModeledDraftCount | null {
-  return Number.isInteger(value) && Number(value) >= 2 && Number(value) <= 5
+  return Number.isInteger(value) && Number(value) >= 2 && Number(value) <= 6
     ? (Number(value) as ModeledDraftCount)
     : null;
 }
 
 /**
  * Freeze the server-compiled lane contract beside the recoverable marker.
- * A Retry reuses this value instead of asking current rollout flags or a future
- * routing implementation to decide whether the durable batch still exists.
+ * A Retry reuses this value instead of asking a future routing implementation
+ * whether the durable batch still exists.
  */
 export function continuationForModeledDraftRoute(
   route: ReadOnlyOrchestratorRoute | null | undefined,

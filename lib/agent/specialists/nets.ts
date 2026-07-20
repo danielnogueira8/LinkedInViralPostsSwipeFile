@@ -1,12 +1,11 @@
 // Draft-body anti-slop nets — the deterministic, code-side guarantees that
 // clean up or gate a generated post body regardless of which model produced it.
 //
-// These are PURE functions with no dependency on the agent loop. They were
-// moved here (verbatim) out of lib/agent/run.ts so BOTH generation paths — the
-// interactive chat loop (run.ts) and the headless weekly-batch path
-// (lib/batch/weekly.ts) — import ONE copy instead of the batch worker reaching
-// into the 3000-line run.ts module for them. Every consumer, run.ts included,
-// now imports directly from this module; this move is behavior-identical.
+// These are PURE functions with no dependency on the agent turn execution
+// layer. They were moved here (verbatim) out of the legacy run.ts loop so BOTH
+// generation paths — the interactive chat turn (lib/agent/chat-turn.ts) and the
+// headless weekly-batch path (lib/batch/weekly.ts) — import ONE copy instead of
+// the batch worker reaching into the 3000-line run.ts module for them.
 //
 // The upcoming AI-Tell Editor (a later PR) is the natural next resident of this
 // module.

@@ -42,6 +42,10 @@ describe("modeled post intent compiler", () => {
       "Find 4 top-performing regular posts in my swipe file and produce one original post per source.",
       { relation: "one_to_one", expectedDrafts: 4, minimumSources: 4 },
     ],
+    [
+      "Find 6 top posts and rewrite each one.",
+      { relation: "one_to_one", expectedDrafts: 6, minimumSources: 6 },
+    ],
   ] as const)("compiles one explicit source-selection-output contract: %s", (text, expected) => {
     expect(compileModeledPostIntent(text)).toMatchObject({
       kind: "exact",
@@ -309,7 +313,7 @@ describe("modeled post intent compiler", () => {
     "Find 4 top posts and write 11 posts modeled after them.",
     "Find 4 top posts and rewrite them into eleven posts.",
     "Find 4 top posts, choose zero, and rewrite them.",
-    "Find 6 top posts and rewrite each one.",
+    "Find 7 top posts and rewrite each one.",
     "Find 2 regular posts and 2 lead magnet posts, then create 4 posts modeled after them.",
     "Find 4 top posts and create 2 regular posts and 2 lead magnet posts modeled after them.",
     "Find 2 top posts and write 2 original posts plus 2 variations modeled after them.",

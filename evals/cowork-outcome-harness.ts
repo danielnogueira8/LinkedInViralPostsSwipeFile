@@ -9,6 +9,10 @@ import {
 import type { Artifact } from "@/lib/agent/contracts";
 import type { ChatTurnTerminal } from "@/lib/agent/chat-turn-lifecycle";
 import {
+  type CoworkRoute,
+  type CoworkTurnTelemetryRecord,
+} from "@/lib/agent/cowork-telemetry";
+import {
   parseChatSseFrame,
   type ChatSseFrame,
 } from "@/lib/transport/contracts";
@@ -23,8 +27,6 @@ import {
   type PersistedHarnessUsage,
 } from "@/evals/cowork-harness-store";
 import type { SourceFidelityVerdict } from "@/lib/agent/specialists/source-fidelity";
-import { runDraftEngine } from "@/lib/agent/draft-engine";
-import type { DraftEngineGroundedSource } from "@/lib/agent/draft-engine";
 import type {
   DraftWriterAdapter,
   DraftWriterRequest,
@@ -35,52 +37,33 @@ import {
   type ChatMessage,
   type Usage,
 } from "@/lib/openrouter";
-import { runReadOnlyOrchestrator } from "@/lib/agent/read-only-orchestrator";
-
-/**
- * Test-only stand-ins for the LLM read-only planner adapter interface removed
- * from lib/agent/read-only-orchestrator.ts (production plans are always
- * server-compiled — see compileServerReadOnlyPlan). HarnessReadOnlyPlanner
- * below is inert: runReadOnlyOrchestrator never reads a dependency-injected
- * planner, so these types exist only to keep its shape self-documenting.
- */
-type ReadOnlyPlannerRequest = {
-  route: unknown;
-  userInstruction: string;
-  history: ChatMessage[];
-  attachmentNames: string[];
-  signal?: AbortSignal;
-};
-
-type ReadOnlyOrchestratorAdapter = {
-  readonly model: string;
-  createPlan(request: ReadOnlyPlannerRequest): Promise<{
-    toolArgs: Record<string, unknown> | null;
-    usage?: Usage;
-    model?: string;
-  }>;
-};
 import {
-  actionOperationKey,
-  runActionOrchestrator,
-  type ActionOrchestratorAdapter,
-  type ActionPlannerRequest,
-  type MutationAction,
-} from "@/lib/agent/action-orchestrator";
-import { compileActionOrchestratorRoute } from "@/lib/agent/action-orchestrator-routing";
-import { compileReadOnlyOrchestratorRoute } from "@/lib/agent/read-only-orchestrator-routing";
-import { continuationForModeledDraftRoute } from "@/lib/agent/modeled-draft-continuation";
-import { runTool as runAgentTool } from "@/lib/agent/tools";
-import { AdapterHealthRegistry } from "@/lib/agent/adapter-health";
-import {
+  runWriterTurn,
+  type GroundedSource,
   executeModeledDraftBatch,
+  runModeledDraftSlot,
   type AcquiredModeledDraftBatch,
   type ModeledDraftBatchRepository,
   type ModeledDraftBatchSource,
   type ModeledDraftSlotCheckpoint,
   type ModeledPostArtifact,
-} from "@/lib/agent/modeled-draft-batch";
-import { runModeledDraftSlot } from "@/lib/agent/modeled-draft-slot-runner";
+} from "@/lib/agent/execute/writer";
+import {
+  runAgentTurn,
+  actionOperationKey,
+  type ReadOnlyOrchestratorAdapter,
+  type ReadOnlyPlannerRequest,
+  type ActionOrchestratorAdapter,
+  type ActionPlannerRequest,
+  type MutationAction,
+} from "@/lib/agent/execute/agent";
+import {
+  compileActionOrchestratorRoute,
+  compileReadOnlyOrchestratorRoute,
+} from "@/lib/agent/turn/compile";
+import { continuationForModeledDraftRoute } from "@/lib/agent/modeled-draft-continuation";
+import { runTool as runAgentTool } from "@/lib/agent/tools";
+import { AdapterHealthRegistry } from "@/lib/agent/adapter-health";
 
 export type CoworkOutcomeScenario = {
   id: string;
@@ -107,10 +90,10 @@ export type CoworkOutcomeScenario = {
           Array<Record<string, unknown>>
         >
       >;
-      attachmentSources?: DraftEngineGroundedSource[];
+      attachmentSources?: GroundedSource[];
       retryModeledBatch?: boolean;
       malformedModeledRetry?: "root" | "continuation" | "root_only";
-      rolloutDisabled?: boolean;
+      disabled?: boolean;
       voiceUnavailable?: boolean;
       frozenModeledSources?: ModeledDraftBatchSource[];
       allowNoModel?: boolean;
@@ -129,7 +112,7 @@ export type CoworkOutcomeScenario = {
       cancelAfterMutationCount?: number;
       allowNoModel?: boolean;
       failRetryContextSave?: boolean;
-      rolloutDisabled?: boolean;
+      disabled?: boolean;
     };
   };
   seed?: {
@@ -146,6 +129,17 @@ export type CoworkOutcomeScenario = {
       status?: "ready" | "pending" | "failed";
     };
     messageArtifact?: Artifact;
+    // A completed earlier user→assistant exchange, seeded before the scenario
+    // request so the turn's history window has a prior conversation.
+    priorTurn?: {
+      user: string;
+      assistant: string;
+    };
+    attachmentTurn?: {
+      user: string;
+      contentBlocks: PersistedHarnessMessage["content_blocks"];
+      assistant: string;
+    };
     bookmarkModelSource?: {
       id: string;
       sourcePostId: string;
@@ -174,6 +168,9 @@ export type CoworkOutcomeScenario = {
       meta?: Record<string, unknown>;
       mediaAttachments?: Artifact["media_attachments"];
     }>;
+    // Pre-seed the chat's pinned Cowork lane. Use this to assert that a turn
+    // stays in a pinned lane even when its wording would normally route elsewhere.
+    pinnedCoworkRoute?: CoworkRoute | null;
   };
   negativeControl?: {
     duplicatePersistedArtifact?: boolean;
@@ -186,12 +183,14 @@ export type CoworkOutcomeScenario = {
     assistantContents?: string[];
     sourcePostIds?: string[];
     sourceReferences?: Array<{ id: string; url: string }>;
+    route?: CoworkRoute;
   };
 };
 
 export type CoworkOutcomeFailureCode =
   | "http_status"
   | "terminal"
+  | "route"
   | "deliverable_count"
   | "draft_body"
   | "action_count"
@@ -229,6 +228,7 @@ export type CoworkOutcomeReport = {
     fallbackUsed: boolean;
     latencyMs: number;
     costUsd: number;
+    route: CoworkRoute;
     modelStages: Array<{ kind: string; model: string }>;
   };
   persisted: {
@@ -621,8 +621,24 @@ async function runCoworkOutcomeScenarioWithStore(
   for (const draft of scenario.seed?.drafts ?? []) {
     store.seedDraft(draft);
   }
+  if (typeof scenario.seed?.pinnedCoworkRoute === "string") {
+    store.seedPinnedCoworkRoute(scenario.seed.pinnedCoworkRoute);
+  }
   if (scenario.seed?.messageArtifact) {
     store.seedMessageArtifact(scenario.seed.messageArtifact);
+  }
+  if (scenario.seed?.priorTurn) {
+    store.seedConversationTurn(
+      scenario.seed.priorTurn.user,
+      scenario.seed.priorTurn.assistant,
+    );
+  }
+  if (scenario.seed?.attachmentTurn) {
+    store.seedAttachmentTurn(
+      scenario.seed.attachmentTurn.user,
+      scenario.seed.attachmentTurn.contentBlocks,
+      scenario.seed.attachmentTurn.assistant,
+    );
   }
   let requestBody = { ...scenario.request };
   if (scenario.retryLatestUser) {
@@ -796,6 +812,7 @@ async function runCoworkOutcomeScenarioWithStore(
     () => requestController.abort(),
   );
   const sourceFidelity = [...(scenario.model.sourceFidelity ?? [])];
+  const telemetryRecords: CoworkTurnTelemetryRecord[] = [];
   const draftAdapterHealth = new AdapterHealthRegistry();
   const modeledBatchRepository =
     sharedModeledBatchRepository ??
@@ -805,32 +822,100 @@ async function runCoworkOutcomeScenarioWithStore(
   modeledBatchRepository.setFrozenSources(
     scenario.model.readOnlyOrchestrator?.frozenModeledSources,
   );
-  const harnessRunDraftEngine: ChatTurnDependencies["runDraftEngine"] =
+  const harnessRunWriterTurn: ChatTurnDependencies["runWriterTurn"] =
     directWriter
       ? (input) =>
-          runDraftEngine(input, {
-            writer: directWriter,
-            recordUsage: logOpenRouterUsage,
-            cancelPollMs: 1,
-            adapterHealth: draftAdapterHealth,
+          runWriterTurn({
+            ...input,
+            dependencies: {
+              ...input.dependencies,
+              writer: directWriter,
+              recordUsage: logOpenRouterUsage,
+              cancelPollMs: 1,
+              adapterHealth: draftAdapterHealth,
+            },
           })
-      : runDraftEngine;
+      : runWriterTurn;
+
+  const harnessRunSlot = directWriter
+    ? (slotInput: Parameters<typeof runModeledDraftSlot>[0]) =>
+        runModeledDraftSlot(slotInput, {
+          runDraftEngine: harnessRunWriterTurn,
+        })
+    : runModeledDraftSlot;
+
+  const harnessRunAgentTurn: ChatTurnDependencies["runAgentTurn"] = (input) => {
+    if (input.task.kind === "action") {
+      return runAgentTurn({
+        ...input,
+        dependencies: {
+          actionAdapters: actionPlannerAdapters,
+          runTool: async (name, args, workspaceId, toolSignal) => {
+            actionTools.push({ name, args });
+            return runAgentTool(name, args, workspaceId, toolSignal);
+          },
+          recordUsage: logOpenRouterUsage,
+          cancelPollMs: 1,
+        },
+      });
+    }
+    return runAgentTurn({
+      ...input,
+      dependencies: {
+        researchAdapters: readOnlyPlannerAdapters,
+        runTool: async (name, args) => {
+          readOnlyTools.push({ name, args });
+          const result = readOnlyToolResults[name]?.shift();
+          return (
+            result ?? {
+              ok: false,
+              error: `No scripted ${name} result.`,
+            }
+          );
+        },
+        runProse: directWriter
+          ? (writerInput) =>
+              harnessRunWriterTurn({
+                ...writerInput,
+                dependencies: {
+                  ...writerInput.dependencies,
+                  writer: directWriter,
+                  recordUsage: logOpenRouterUsage,
+                  cancelPollMs: 1,
+                  adapterHealth: draftAdapterHealth,
+                },
+              })
+          : runWriterTurn,
+        executeModeledDraftBatch: async (batchInput) => {
+          modeledBatchOperationKeys.push(batchInput.operationKey);
+          if (
+            scenario.model.readOnlyOrchestrator?.modeledBatchOutcome ===
+            "busy"
+          ) {
+            modeledBatchRepository.prepareBusyAcquire();
+          } else {
+            modeledBatchRepository.expireLease();
+          }
+          return executeModeledDraftBatch(batchInput, {
+            repository: modeledBatchRepository,
+            runSlot: harnessRunSlot,
+            now: () => new Date("2026-07-14T12:00:00.000Z").getTime(),
+          });
+        },
+        inspectAttachments: async () => ({
+          sources:
+            scenario.model.readOnlyOrchestrator?.attachmentSources ?? [],
+          attempts: [],
+          complete: true,
+        }),
+        recordUsage: logOpenRouterUsage,
+        cancelPollMs: 1,
+      },
+    });
+  };
 
   const dependencies: Partial<ChatTurnDependencies> = {
     now: () => new Date("2026-07-14T23:30:00.000Z"),
-    loadCoworkRolloutHealth: async () => ({
-      isOpen: () => false,
-      source: "shared",
-      snapshot: {
-        state: "healthy",
-        sampleSize: 200,
-        hardFailures: 0,
-        hardFailureRate: 0,
-        alertRate: 0.005,
-        rollbackRate: 0.01,
-        minimumSample: 200,
-      },
-    }),
     scopedSupabase: (async () => ({
       workspaceId: store.workspaceId,
       raw: store.client,
@@ -851,94 +936,21 @@ async function runCoworkOutcomeScenarioWithStore(
     generateLeadMagnetResource: (async () => {
       throw new Error("Lead-magnet generation is not scripted for this scenario.");
     }) as ChatTurnDependencies["generateLeadMagnetResource"],
+    coworkTelemetrySink: (record) => {
+      telemetryRecords.push(record);
+    },
     draftFinalizerSpecialists: {
       reviewSourceFidelity: async () =>
         sourceFidelity.shift() ?? { outcome: "verified" },
     },
-    ...(directWriter
-      ? {
-          directWriterEnabledForWorkspace: () => true,
-          runDraftEngine: harnessRunDraftEngine,
-        }
-      : {
-          directWriterEnabledForWorkspace: () => false,
-        }),
-    ...(scenario.model.readOnlyOrchestrator
-      ? {
-          readOnlyOrchestratorEnabledForWorkspace: () =>
-            !scenario.model.readOnlyOrchestrator?.rolloutDisabled,
-          runReadOnlyOrchestrator: (input, runtimeDependencies) =>
-            runReadOnlyOrchestrator(input, {
-              runTool: async (name, args) => {
-                readOnlyTools.push({ name, args });
-                const result = readOnlyToolResults[name]?.shift();
-                return (
-                  result ?? {
-                    ok: false,
-                    error: `No scripted ${name} result.`,
-                  }
-                );
-              },
-              runDraftEngine: harnessRunDraftEngine,
-              executeModeledDraftBatch: async (input) => {
-                modeledBatchOperationKeys.push(input.operationKey);
-                if (
-                  scenario.model.readOnlyOrchestrator?.modeledBatchOutcome ===
-                  "busy"
-                ) {
-                  modeledBatchRepository.prepareBusyAcquire();
-                } else {
-                  modeledBatchRepository.expireLease();
-                }
-                return executeModeledDraftBatch(input, {
-                  repository: modeledBatchRepository,
-                  runSlot: (slotInput) =>
-                    runModeledDraftSlot(slotInput, {
-                      runDraftEngine: (engineInput) =>
-                        harnessRunDraftEngine(engineInput),
-                    }),
-                  now: () => new Date("2026-07-14T12:00:00.000Z").getTime(),
-                });
-              },
-              inspectAttachments: async () => ({
-                sources:
-                  scenario.model.readOnlyOrchestrator?.attachmentSources ?? [],
-                attempts: [],
-                complete: true,
-              }),
-              recordUsage: logOpenRouterUsage,
-              now: () => new Date("2026-07-14T12:00:00.000Z"),
-              ...runtimeDependencies,
-            }),
-        }
-      : {
-          readOnlyOrchestratorEnabledForWorkspace: () => false,
-        }),
-    ...(scenario.model.actionOrchestrator
-      ? {
-          actionOrchestratorEnabledForWorkspace: () =>
-            !scenario.model.actionOrchestrator?.rolloutDisabled,
-          runActionOrchestrator: (input, runtimeDependencies) => {
-            return runActionOrchestrator(input, {
-              adapters: actionPlannerAdapters,
-              runTool: async (name, args, workspaceId, toolSignal) => {
-                actionTools.push({ name, args });
-                return runAgentTool(
-                  name,
-                  args,
-                  workspaceId,
-                  toolSignal,
-                );
-              },
-              recordUsage: logOpenRouterUsage,
-              cancelPollMs: 1,
-              ...runtimeDependencies,
-            });
-          },
-        }
-      : {
-          actionOrchestratorEnabledForWorkspace: () => false,
-        }),
+    runWriterTurn: harnessRunWriterTurn,
+    runAgentTurn: harnessRunAgentTurn,
+    readOnlyOrchestratorEnabledForWorkspace: scenario.model.readOnlyOrchestrator
+      ? () => !scenario.model.readOnlyOrchestrator?.disabled
+      : () => false,
+    actionOrchestratorEnabledForWorkspace: scenario.model.actionOrchestrator
+      ? () => !scenario.model.actionOrchestrator?.disabled
+      : () => false,
   };
 
   const handler = createChatStreamPost({
@@ -1065,6 +1077,8 @@ async function runCoworkOutcomeScenarioWithStore(
     usage.reduce((total, row) => total + row.cost_usd, 0).toFixed(6),
   );
   const modelStages = usage.map(({ kind, model }) => ({ kind, model }));
+  const route: CoworkRoute =
+    telemetryRecords.at(-1)?.route ?? ("unknown" as CoworkRoute);
   const failureCodes: CoworkOutcomeFailureCode[] = [];
   if (response.status !== (scenario.expected.httpStatus ?? 200)) {
     failureCodes.push("http_status");
@@ -1140,6 +1154,9 @@ async function runCoworkOutcomeScenarioWithStore(
       failureCodes.push("provenance");
     }
   }
+  if (scenario.expected.route !== undefined && route !== scenario.expected.route) {
+    failureCodes.push("route");
+  }
   failureCodes.push(
     ...duplicateOutcomeFailureCodes({ artifacts, actions }),
   );
@@ -1175,7 +1192,7 @@ async function runCoworkOutcomeScenarioWithStore(
     failureCodes.push("empty_turn");
   }
 
-  return {
+  const report = {
     pass: failureCodes.length === 0,
     failureCodes,
     safe: {
@@ -1192,6 +1209,7 @@ async function runCoworkOutcomeScenarioWithStore(
       fallbackUsed,
       latencyMs: Number(latencyMs.toFixed(3)),
       costUsd,
+      route,
       modelStages,
     },
     persisted: {
@@ -1218,6 +1236,7 @@ async function runCoworkOutcomeScenarioWithStore(
     },
     frames,
   };
+  return report;
 }
 
 export async function runCoworkOutcomeScenario(

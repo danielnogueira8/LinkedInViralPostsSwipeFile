@@ -1366,7 +1366,7 @@ export const TOOL_DEFS: ToolDef[] = [
   // regex-parse. That makes a whole class of bugs structurally impossible:
   // empty-body cards, leaked raw fences, unclosed fences during streaming.
   //
-  // See RENDER_TOOL_NAMES in lib/agent/run.ts.
+  // See RENDER_TOOL_NAMES below.
   // -----------------------------------------------------------------------
   {
     type: "function",
@@ -1421,8 +1421,8 @@ export const TOOL_DEFS: ToolDef[] = [
   },
   // ---------------------------------------------------------------------------
   // Plan tools — show the user a live checklist of the task. Intercepted in the
-  // agent loop (lib/agent/run.ts), NOT in TOOL_FNS: they emit plan events, not
-  // server work. See PLAN_TOOL_NAMES / dispatchPlanTool there.
+  // turn execution layer, NOT in TOOL_FNS: they emit plan events, not server
+  // work. See PLAN_TOOL_NAMES / dispatchPlanTool in chat-turn.ts.
   // ---------------------------------------------------------------------------
   {
     type: "function",

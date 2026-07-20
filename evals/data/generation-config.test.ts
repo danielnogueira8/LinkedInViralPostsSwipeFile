@@ -13,15 +13,15 @@ import {
 } from "@/lib/agent/chat-turn";
 
 describe("generation configuration", () => {
-  test("serializes only an explicit 1-5 draft selection", () => {
+  test("serializes only an explicit 1-6 draft selection", () => {
     expect(generationConfigForSelection("auto")).toBeUndefined();
     expect(generationConfigForSelection(1)).toEqual({
       version: 1,
       draftCount: 1,
     });
-    expect(generationConfigForSelection(5)).toEqual({
+    expect(generationConfigForSelection(6)).toEqual({
       version: 1,
-      draftCount: 5,
+      draftCount: 6,
     });
   });
 
@@ -46,7 +46,7 @@ describe("generation configuration", () => {
     {},
     { version: 2, draftCount: 3 },
     { version: 1, draftCount: 0 },
-    { version: 1, draftCount: 6 },
+    { version: 1, draftCount: 7 },
     { version: 1, draftCount: 2.5 },
     { version: 1, draftCount: "3" },
     { version: 1, draftCount: 3, extra: true },
@@ -154,6 +154,23 @@ describe("generation configuration", () => {
       version: 1,
       draftCount: 2,
       draftCountSource: "ui",
+      postTypeSource: "default",
+    });
+  });
+
+  test("clamps an out-of-range message count into the 1-6 rule", () => {
+    expect(
+      resolveGenerationConfig({ explicitMessageDraftCount: 10 }),
+    ).toEqual({
+      version: 1,
+      draftCount: 6,
+      draftCountSource: "message",
+      postTypeSource: "default",
+    });
+    expect(resolveGenerationConfig({ explicitMessageDraftCount: 0 })).toEqual({
+      version: 1,
+      draftCount: 1,
+      draftCountSource: "message",
       postTypeSource: "default",
     });
   });

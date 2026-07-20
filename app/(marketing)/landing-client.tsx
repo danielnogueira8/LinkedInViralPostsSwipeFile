@@ -15,8 +15,8 @@ import {
   Mic2,
   Palette,
   Search,
-  Sparkles,
   ThumbsUp,
+  Zap,
 } from "lucide-react";
 import { AiIcon } from "@/components/ai-icon";
 import type { LandingStats, LandingTopCreator } from "@/lib/landing-stats";
@@ -488,7 +488,7 @@ function PostsBoardPanel() {
 function CalendarPanel() {
   return (
     <div className="h-full rounded-[12px] bg-card p-4 shadow-soft sm:p-5">
-      <div className="flex items-center justify-between border-b border-border pb-4"><div><p className="text-sm font-medium">This week</p><p className="mt-1 text-xs text-muted-foreground">3 posts ready</p></div><span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-2.5 py-1 text-[11px] font-medium text-muted-foreground"><Sparkles className="size-3" />Auto-scheduled</span></div>
+      <div className="flex items-center justify-between border-b border-border pb-4"><div><p className="text-sm font-medium">This week</p><p className="mt-1 text-xs text-muted-foreground">3 posts ready</p></div><span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-2.5 py-1 text-[11px] font-medium text-muted-foreground"><Zap className="size-3" />Auto-scheduled</span></div>
       <div className="mt-4 grid grid-cols-3 gap-2">
         {["Tue 14", "Wed 15", "Thu 16"].map((day, index) => (
           <div key={day} className="min-h-40 rounded-[8px] border border-border bg-background p-2.5">

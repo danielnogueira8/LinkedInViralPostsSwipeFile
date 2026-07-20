@@ -82,7 +82,7 @@ describe("modeled-post intent invariants", () => {
       expect(intent.kind, text).toBe("exact");
       if (intent.kind !== "exact") continue;
       expect(intent.expectedDrafts, text).toBeGreaterThanOrEqual(1);
-      expect(intent.expectedDrafts, text).toBeLessThanOrEqual(5);
+      expect(intent.expectedDrafts, text).toBeLessThanOrEqual(6);
       expect(intent.minimumSources, text).toBeGreaterThanOrEqual(1);
       expect(intent.minimumSources, text).toBeLessThanOrEqual(10);
       if (intent.relation === "one_to_one") {

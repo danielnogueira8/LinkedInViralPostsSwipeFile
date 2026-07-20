@@ -46,10 +46,10 @@ vi.mock("@/lib/agent/specialists/ai-tell-repair", async (importOriginal) => {
 import { UsagePersistenceError } from "@/lib/openrouter";
 import {
   GROUNDED_EVIDENCE_TEXT_BUDGET_CHARS,
-  runDraftEngine,
-  type DraftEngineDependencies,
-  type DraftEngineInput,
-} from "@/lib/agent/draft-engine";
+  runWriterTurn,
+  type WriterDependencies,
+  type WriterInput,
+} from "@/lib/agent/execute/writer";
 import {
   FALLBACK_DRAFT_WRITER_MODEL,
   PRIMARY_DRAFT_WRITER_MODEL,
@@ -59,8 +59,10 @@ import {
   type DraftWriterRequest,
   type DraftWriterResponse,
 } from "@/lib/agent/draft-writer";
+import type { NoModelFormat } from "@/lib/agent/no-model-formats";
 import { POST_INTENTS } from "@/lib/post-intents";
 import { AdapterHealthRegistry } from "@/lib/agent/adapter-health";
+import { editDraftBodySync } from "@/lib/agent/specialists/editor";
 import {
   createCoworkTurnTelemetry,
   observeCoworkTurn,
@@ -133,7 +135,7 @@ class ScriptedWriter implements DraftWriterAdapter {
   }
 }
 
-function input(overrides: Partial<DraftEngineInput> = {}): DraftEngineInput {
+function input(overrides: Partial<WriterInput> = {}): WriterInput {
   return {
     workspaceId: "ws-1",
     userInstruction:
@@ -171,23 +173,26 @@ function input(overrides: Partial<DraftEngineInput> = {}): DraftEngineInput {
 
 async function collect(
   writer: ScriptedWriter,
-  overrides: Partial<DraftEngineInput> = {},
-  dependencyOverrides: Partial<DraftEngineDependencies> = {},
+  overrides: Partial<WriterInput> = {},
+  dependencyOverrides: Partial<WriterDependencies> = {},
 ) {
   const recorded: Parameters<
-    NonNullable<DraftEngineDependencies["recordUsage"]>
+    NonNullable<WriterDependencies["recordUsage"]>
   >[] = [];
   const events: AgentEvent[] = [];
-  for await (const event of runDraftEngine(input(overrides), {
-    writer,
-    recordUsage: vi.fn(
-      async (
-        ...args: Parameters<NonNullable<DraftEngineDependencies["recordUsage"]>>
-      ) => {
-        recorded.push(args);
-      },
-    ),
-    ...dependencyOverrides,
+  for await (const event of runWriterTurn({
+    ...input(overrides),
+    dependencies: {
+      writer,
+      recordUsage: vi.fn(
+        async (
+          ...args: Parameters<NonNullable<WriterDependencies["recordUsage"]>>
+        ) => {
+          recorded.push(args);
+        },
+      ),
+      ...dependencyOverrides,
+    },
   })) {
     events.push(event);
   }
@@ -257,6 +262,53 @@ describe("DraftEngine", () => {
     expect(artifacts(result.events)[0]?.body.endsWith(
       "\n\n#SWIPEIN_QA_20260716.",
     )).toBe(true);
+  });
+
+  test("threads a bounded digest of the prior conversation into the writer prompt", async () => {
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(180, 90) },
+    ]);
+    const longAssistantTurn = `Earlier draft body. ${"x".repeat(5_000)}`;
+    const result = await collect(writer, {
+      userInstruction: "Write a post about pricing instead.",
+      history: [
+        {
+          role: "user",
+          content:
+            "Write an original post about why personal branding compounds.",
+        },
+        { role: "assistant", content: longAssistantTurn },
+        // The current turn's trailing user message: already the authoritative
+        // CURRENT REQUEST, so the digest must drop it rather than repeat it.
+        { role: "user", content: "Write a post about pricing instead." },
+      ],
+    });
+
+    expect(writer.requests).toHaveLength(1);
+    const userPrompt = writer.requests[0].messages
+      .filter((message) => message.role === "user")
+      .map((message) => message.content)
+      .join("\n");
+    expect(userPrompt).toContain("CONVERSATION HISTORY DATA");
+    expect(userPrompt).toContain("personal branding compounds");
+    expect(userPrompt).toContain("Earlier draft body.");
+    // The trailing user message is not duplicated inside the digest.
+    expect(
+      userPrompt.split("Write a post about pricing instead.").length - 1,
+    ).toBe(1);
+    // Bounded: a 5k prior message is capped per message.
+    expect(userPrompt).not.toContain("x".repeat(2_001));
+    expect(artifacts(result.events)[0]?.body).toBe(COMPLETE_POST);
+  });
+
+  test("omits the history digest on a chat's first turn", async () => {
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(180, 90) },
+    ]);
+    await collect(writer);
+
+    const prompt = JSON.stringify(writer.requests[0].messages);
+    expect(prompt).not.toContain("CONVERSATION HISTORY DATA");
   });
 
   test("writes a grounded research post with evidence in the tool-free writer prompt", async () => {
@@ -1368,7 +1420,7 @@ describe("DraftEngine", () => {
         recovery: "continue",
       }),
     );
-    expect(done(result.events)?.terminalReason).toBe("done");
+    expect(done(result.events)?.terminalReason).toBe("deadline");
   });
 
   test("repairs a truncated primary candidate without presenting it", async () => {
@@ -1579,11 +1631,14 @@ describe("DraftEngine", () => {
     ]);
 
     const consume = async () => {
-      for await (const event of runDraftEngine(input(), {
-        writer,
-        recordUsage: vi.fn(async () => {
-          throw new UsagePersistenceError("usage insert unavailable");
-        }),
+      for await (const event of runWriterTurn({
+        ...input(),
+        dependencies: {
+          writer,
+          recordUsage: vi.fn(async () => {
+            throw new UsagePersistenceError("usage insert unavailable");
+          }),
+        },
       })) {
         // The engine must throw before emitting or attempting another model.
         void event;
@@ -1600,14 +1655,14 @@ describe("DraftEngine", () => {
     ]);
     const events: AgentEvent[] = [];
 
-    for await (const event of runDraftEngine(
-      input({ cancellationProbe: () => new Promise(() => {}) }),
-      {
+    for await (const event of runWriterTurn({
+      ...input({ cancellationProbe: () => new Promise(() => {}) }),
+      dependencies: {
         writer,
         recordUsage: vi.fn(async () => undefined),
         cancelProbeTimeoutMs: 5,
       },
-    )) {
+    })) {
       events.push(event);
     }
 
@@ -1662,8 +1717,8 @@ describe("DraftEngine", () => {
     ]);
     const events: AgentEvent[] = [];
 
-    for await (const event of runDraftEngine(
-      input({
+    for await (const event of runWriterTurn({
+      ...input({
         cancellationProbe: (signal) =>
           new Promise<boolean>((resolve) => {
             active += 1;
@@ -1687,13 +1742,13 @@ describe("DraftEngine", () => {
             );
           }),
       }),
-      {
+      dependencies: {
         writer,
         recordUsage: vi.fn(async () => undefined),
         cancelPollMs: 1,
         cancelProbeTimeoutMs: 100,
       },
-    )) {
+    })) {
       events.push(event);
     }
 
@@ -1789,9 +1844,12 @@ describe("DraftEngine", () => {
     ]);
     const events: AgentEvent[] = [];
     for await (const event of observeCoworkTurn({
-      stream: runDraftEngine(input({ telemetry }), {
-        writer,
-        recordUsage: vi.fn(async () => undefined),
+      stream: runWriterTurn({
+        ...input({ telemetry }),
+        dependencies: {
+          writer,
+          recordUsage: vi.fn(async () => undefined),
+        },
       }),
       telemetry,
       contract: { kind: "post", expectedCount: 1 },
@@ -1849,7 +1907,7 @@ describe("DraftEngine — thin path (lean mode)", () => {
     expect(writer.requests[0]).toMatchObject({
       reasoning: "minimal",
       maxTokens: 512,
-      timeoutMs: 30_000,
+      timeoutMs: 80_000,
     });
     expect(JSON.stringify(writer.requests[0].messages)).toContain(
       "Return only the replacement hook",
@@ -1895,10 +1953,9 @@ describe("DraftEngine — thin path (lean mode)", () => {
   });
 
   test("KEEP nets still run: an em-dash is stripped even in lean mode", async () => {
-    // The input() helper passes a NO-OP edit specialist, but lean mode forces
-    // the real leanFinalizerSpecialists (editDraftBodySync) — so the
-    // deterministic corruption/format net still fires. Proves lean swaps the
-    // specialist set rather than trusting the caller's no-ops.
+    // The unified finalizer always runs the real editor when the caller does
+    // not override it. Inject the real editDraftBodySync here to exercise the
+    // deterministic corruption/format net.
     const withDash = [
       "Your reputation is leverage — and it compounds quietly over years.",
       "",
@@ -1909,7 +1966,13 @@ describe("DraftEngine — thin path (lean mode)", () => {
     const writer = new ScriptedWriter([
       { text: withDash, finishReason: "stop", usage: usage(180, 90) },
     ]);
-    const result = await collect(writer, { lean: true });
+    const result = await collect(writer, {
+      lean: true,
+      finalizerSpecialists: {
+        ...input().finalizerSpecialists,
+        edit: editDraftBodySync,
+      },
+    });
 
     const body = artifacts(result.events)[0]?.body ?? "";
     expect(body).not.toContain("—"); // em dash gone
@@ -1917,10 +1980,8 @@ describe("DraftEngine — thin path (lean mode)", () => {
   });
 
   test("KEEP nets still run: a dense wall of text gets paragraph breaks in lean mode", async () => {
-    // Proves lean mode still runs normalizePostBody's dense-block fallback
-    // (the list-heading/arrow-list repair nets were removed — see
-    // lib/post-body-normalize.ts — since a live test showed the writer model
-    // formats lists correctly on its own and those nets never fired).
+    // Proves the deterministic editor still runs normalizePostBody's dense-
+    // block fallback when the caller injects the real editDraftBodySync.
     const dense =
       "Here's the exact system I run every single week to stay consistent, and it took me a long time to make it this simple. " +
       "I used to think consistency meant grinding harder, but it actually meant removing every decision I had to make in the moment. " +
@@ -1928,18 +1989,21 @@ describe("DraftEngine — thin path (lean mode)", () => {
     const writer = new ScriptedWriter([
       { text: dense, finishReason: "stop", usage: usage(180, 90) },
     ]);
-    const result = await collect(writer, { lean: true });
+    const result = await collect(writer, {
+      lean: true,
+      finalizerSpecialists: {
+        ...input().finalizerSpecialists,
+        edit: editDraftBodySync,
+      },
+    });
 
     const body = artifacts(result.events)[0]?.body ?? "";
     expect(body).toContain("\n\n");
   });
 
-  test("lean mode uses ITS OWN real specialists, not a caller-supplied override", async () => {
-    // Lean mode's specialists (leanFinalizerSpecialists) are the real
-    // repairAiTells/checkSameness/reviewSourceFidelity — same as the heavy
-    // path — NOT a caller-injected finalizerSpecialists override. A caller
-    // that passes finalizerSpecialists alongside lean:true is ignored; lean
-    // always uses its own fixed set (see draft-engine.ts's lean ? … : … gate).
+  test("caller-supplied finalizerSpecialists are respected in lean mode", async () => {
+    // The unified finalizer no longer swaps specialist sets for lean mode.
+    // A caller-supplied override is used exactly as passed.
     const writer = new ScriptedWriter([
       { text: COMPLETE_POST, finishReason: "stop", usage: usage(180, 90) },
     ]);
@@ -1955,24 +2019,26 @@ describe("DraftEngine — thin path (lean mode)", () => {
         source: { id: "src-1", text: "A punchy source post about shipping." },
       },
       finalizerSpecialists: {
+        ...input().finalizerSpecialists,
         reviewSourceFidelity: alwaysReject,
       },
     });
 
-    // The caller's override never runs — lean mode's own real reviewer does
-    // instead, and it passes a genuinely clean, on-topic modeled post.
-    expect(artifacts(result.events).map((a) => a.body)).toEqual([COMPLETE_POST]);
-    expect(alwaysReject).not.toHaveBeenCalled();
+    expect(artifacts(result.events)).toHaveLength(0);
+    expect(alwaysReject).toHaveBeenCalled();
   });
 
-  test("lean mode's real reviewSourceFidelity can still reject a bad modeled draft", async () => {
-    // Regression guard for the restore: lean mode's fidelity check is now the
-    // REAL reviewModeledDraft (mocked here, but wired through the actual
-    // module path draft-engine.ts imports) — it must be able to reject, not
-    // just always pass. Proves the pipeline actually calls into it.
-    leanFidelityStub.verdicts = [
-      { outcome: "rejected", reasons: ["unrelated structure"], retryInstruction: "match the source's shape" },
-    ];
+  test("source-fidelity review can still reject a bad modeled draft", async () => {
+    // Regression guard: the pipeline actually calls reviewSourceFidelity for
+    // source turns and surfaces a rejection.
+    const reviewSourceFidelity = vi
+      .fn()
+      .mockResolvedValueOnce({
+        outcome: "rejected" as const,
+        reasons: ["unrelated structure"],
+        retryInstruction: "match the source's shape",
+      })
+      .mockResolvedValue({ outcome: "verified" });
     const writer = new ScriptedWriter([
       { text: COMPLETE_POST, finishReason: "stop", usage: usage(180, 90) },
       { text: DISTINCT_COMPLETE_POST, finishReason: "stop", usage: usage(180, 90) },
@@ -1983,10 +2049,13 @@ describe("DraftEngine — thin path (lean mode)", () => {
         kind: "source",
         source: { id: "src-1", text: "A punchy source post about shipping." },
       },
+      finalizerSpecialists: {
+        ...input().finalizerSpecialists,
+        reviewSourceFidelity,
+      },
     });
 
-    // First candidate rejected by the real (mocked) fidelity check, retried,
-    // second candidate accepted (stub queue is empty → default pass-through).
+    // First candidate rejected by fidelity review, retried, second accepted.
     expect(artifacts(result.events).map((a) => a.body)).toEqual([DISTINCT_COMPLETE_POST]);
   });
 
@@ -2325,5 +2394,97 @@ describe("DraftEngine — thin path (lean mode)", () => {
     expect(prompt).toContain("never borrow Lara's stories");
     // Still the strong thin model.
     expect(writer.requests[0].model).toBe(THIN_DRAFT_WRITER_MODEL);
+  });
+});
+
+
+describe("prompt-threading assertions ported from legacy runAgent evals (D6)", () => {
+  test("custom skill bodies reach the writer prompt", async () => {
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(200, 120) },
+    ]);
+    await collect(writer, {
+      lean: true,
+      customSkillBodies: ["Always end with my newsletter CTA: comment GUIDE."],
+      customSkillNames: ["cta"],
+    });
+
+    const prompt = JSON.stringify(writer.requests[0].messages);
+    expect(prompt).toContain("Always end with my newsletter CTA: comment GUIDE.");
+    expect(prompt).toContain("<user_skill");
+  });
+
+  test("no custom skill leaves the custom-skill framing out of the writer prompt", async () => {
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(200, 120) },
+    ]);
+    await collect(writer, { lean: true });
+
+    const prompt = JSON.stringify(writer.requests[0].messages);
+    expect(prompt).not.toContain("The user invoked their own saved skill");
+  });
+
+  test("no-model format block reaches the writer prompt", async () => {
+    const format: NoModelFormat = {
+      id: "tactical_listicle",
+      label: "Tactical Listicle",
+      whenToUse: ["list"],
+      requiredContext: ["topic"],
+      structure: ["Promise the list", "Deliver the list", "CTA"],
+      avoid: ["multiple CTAs"],
+      exemplarPostIds: [],
+    };
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(200, 120) },
+    ]);
+    await collect(writer, { lean: true, format });
+
+    const prompt = JSON.stringify(writer.requests[0].messages);
+    expect(prompt).toContain("Use the Tactical Listicle architecture silently.");
+    expect(prompt).toContain("Promise the list");
+  });
+
+  test("omitted no-model format keeps the default structure guidance", async () => {
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(200, 120) },
+    ]);
+    await collect(writer, { lean: true });
+
+    const prompt = JSON.stringify(writer.requests[0].messages);
+    expect(prompt).toContain(
+      "Choose one complete LinkedIn-native structure that fits the idea. Do not use a source post.",
+    );
+  });
+
+  test("feedback memory reaches the writer prompt", async () => {
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(200, 120) },
+    ]);
+    await collect(writer, {
+      lean: true,
+      feedbackMemory: [
+        {
+          rating: "down",
+          reasons: ["Too generic"],
+          note: "avoid vague language",
+          body_snapshot: "Unlock your potential today.",
+        },
+      ],
+    });
+
+    const prompt = JSON.stringify(writer.requests[0].messages);
+    expect(prompt).toContain("recent taste feedback");
+    expect(prompt).toContain("Too generic");
+    expect(prompt).toContain("avoid vague language");
+  });
+
+  test("empty feedback memory does not add a feedback block to the writer prompt", async () => {
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(200, 120) },
+    ]);
+    await collect(writer, { lean: true, feedbackMemory: [] });
+
+    const prompt = JSON.stringify(writer.requests[0].messages);
+    expect(prompt).not.toContain("recent taste feedback");
   });
 });

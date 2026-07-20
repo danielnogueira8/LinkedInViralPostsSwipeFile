@@ -3,11 +3,11 @@ import {
   compileServerReadOnlyPlan,
   parseReadOnlyPlan,
   planSearchQueriesMatchInstruction,
-} from "@/lib/agent/read-only-orchestrator";
+} from "@/lib/agent/execute/agent";
 import {
   compileReadOnlyOrchestratorRoute,
   type ReadOnlyOrchestratorRoute,
-} from "@/lib/agent/read-only-orchestrator-routing";
+} from "@/lib/agent/turn/compile";
 
 // ---------------------------------------------------------------------------
 // The read-only orchestrator no longer asks an LLM to produce its action plan.

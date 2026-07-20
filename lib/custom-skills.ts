@@ -161,9 +161,8 @@ export function filterSkillsByQuery<T extends { name: string }>(
 
 // Content-check the skill body at save time. A skill body is injected as a
 // system-role message on every invocation, so we don't want it to carry:
-//   1) High-confidence abuse content (same regex set the agent's user-turn
-//      refusal uses in lib/agent/decide.ts — malware, credential theft,
-//      targeted hate, named wrongdoing).
+//   1) High-confidence abuse content (malware, credential theft, targeted hate,
+//      named wrongdoing).
 //   2) Jailbreak-style directives aimed at the agent (persona swap,
 //      instruction-override, prompt-reveal, refusal-disable). The <user_skill>
 //      wrap + INJECTION_GUARD in the system prompt already tell the model to

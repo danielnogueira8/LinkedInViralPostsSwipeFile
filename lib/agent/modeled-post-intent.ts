@@ -1780,7 +1780,7 @@ function reduceEvents(
   if (
     [discovered].some((value) => value !== null && (value < 1 || value > 10)) ||
     [selected, outputTotal].some(
-      (value) => value !== null && (value < 1 || value > 5),
+      (value) => value !== null && (value < 1 || value > 6),
     )
   ) {
     return ambiguousIntent(
@@ -1840,7 +1840,7 @@ function reduceEvents(
         )
       : { kind: "none" };
   }
-  if (expectedDrafts < 1 || expectedDrafts > 5) {
+  if (expectedDrafts < 1 || expectedDrafts > 6) {
     return ambiguousIntent(
       "invalid_quantity",
       source.cardinality,

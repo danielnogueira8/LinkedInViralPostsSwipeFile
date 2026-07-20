@@ -18,10 +18,7 @@ describe("Cowork v2 structured telemetry", () => {
       sink,
       () => now,
     );
-    telemetry.configure({
-      rolloutMode: "dark",
-      shadowCandidateRoute: "direct_writer",
-    });
+    telemetry.configure({});
     now = 1_120;
     telemetry.recordAttempt({
       stage: "writer_primary",
@@ -87,8 +84,6 @@ describe("Cowork v2 structured telemetry", () => {
       charged_cost_usd: 0.02,
       provenance_status: "verified",
       terminal_outcome: "delivered",
-      rollout_mode: "dark",
-      shadow_candidate_route: "direct_writer",
     });
     expect(sink.mock.calls[0][0].stage_attempts).toHaveLength(3);
   });
@@ -305,7 +300,7 @@ describe("Cowork v2 structured telemetry", () => {
       {
         traceId: "legacy-answer",
         workspaceId: "ws-2",
-        route: "legacy_agent",
+        route: "answer",
         requestedContract: { kind: "answer", expectedCount: 1 },
       },
       sink,
@@ -347,7 +342,7 @@ describe("Cowork v2 structured telemetry", () => {
       {
         traceId: "legacy-ask",
         workspaceId: "ws-2",
-        route: "legacy_agent",
+        route: "answer",
         requestedContract: { kind: "answer", expectedCount: 1 },
       },
       sink,
@@ -395,7 +390,7 @@ describe("Cowork v2 structured telemetry", () => {
       {
         traceId: "legacy-recoverable",
         workspaceId: "ws-2",
-        route: "legacy_agent",
+        route: "answer",
         requestedContract: { kind: "answer", expectedCount: 1 },
       },
       sink,

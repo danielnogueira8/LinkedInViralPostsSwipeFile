@@ -28,7 +28,6 @@
       "existing_coverage": [
         "evals/data/cowork-outcome-harness.test.ts",
         "evals/data/draft-output-policy.test.ts",
-        "evals/data/agent-output-integrity.test.ts",
         "evals/data/draft-corruption.test.ts"
       ],
       "status": "protected",
@@ -42,7 +41,6 @@
       "existing_coverage": [
         "evals/data/modeling-source-selection.test.ts",
         "evals/data/source-modeling-intent.test.ts",
-        "evals/data/read-only-orchestrator-routing.test.ts",
         "evals/data/tools-query.test.ts",
         "evals/data/read-only-orchestrator.test.ts",
         "evals/data/cowork-outcome-harness.test.ts",
@@ -54,7 +52,7 @@
     {
       "id": "cowork-draft-count-precedence",
       "capability": "Cowork",
-      "invariant": "Draft count defaults to Auto; Auto follows an explicit message count and otherwise defaults to one, while an explicit 1–5 generation setting overrides contradictory message text across direct, modeled, legacy-fallback, and Retry paths.",
+      "invariant": "Draft count defaults to Auto; Auto follows an explicit message count and otherwise defaults to one, while an explicit 1\u20135 generation setting overrides contradictory message text across direct, modeled, legacy-fallback, and Retry paths.",
       "preferred_seam": "api-contract",
       "existing_coverage": [
         "evals/data/generation-config.test.ts",
@@ -138,9 +136,7 @@
       "invariant": "Templates, creator styles, and custom skills affect only the intended turn and survive supported handoffs.",
       "preferred_seam": "agent-loop",
       "existing_coverage": [
-        "evals/data/templates.test.ts",
-        "evals/data/creator-style-runagent.test.ts",
-        "evals/data/custom-skills-runagent.test.ts"
+        "evals/data/templates.test.ts"
       ],
       "status": "partial",
       "follow_up_issue": 999

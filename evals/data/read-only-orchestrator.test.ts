@@ -1,13 +1,8 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { AgentEvent } from "@/lib/agent/contracts";
-import type { DraftEngineInput } from "@/lib/agent/draft-engine";
-import type { ExecuteModeledDraftBatchInput } from "@/lib/agent/modeled-draft-batch";
-import {
-  CHAT_MODEL,
-  UsagePersistenceError,
-  type ChatMessage,
-  type Usage,
-} from "@/lib/openrouter";
+import type { WriterInput } from "@/lib/agent/execute/writer";
+import type { ExecuteModeledDraftBatchInput } from "@/lib/agent/execute/writer";
+import { CHAT_MODEL, UsagePersistenceError, type Usage } from "@/lib/openrouter";
 import {
   FALLBACK_READ_ONLY_ORCHESTRATOR_MODEL,
   PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL,
@@ -21,14 +16,15 @@ import {
   runReadOnlyOrchestrator,
   type ReadOnlyOrchestratorDependencies,
   type ReadOnlyOrchestratorInput,
-} from "@/lib/agent/read-only-orchestrator";
+  type ReadOnlyPlannerRequest,
+} from "@/lib/agent/execute/agent";
 import { AdapterHealthRegistry } from "@/lib/agent/adapter-health";
 import { createCoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
 import {
   wrapScrapedPostText,
   type ToolExecutionContext,
 } from "@/lib/agent/tools";
-import { compileReadOnlyOrchestratorRoute } from "@/lib/agent/read-only-orchestrator-routing";
+import { compileReadOnlyOrchestratorRoute } from "@/lib/agent/turn/compile";
 import { continuationForModeledDraftRoute } from "@/lib/agent/modeled-draft-continuation";
 
 /**
@@ -99,7 +95,7 @@ function input(
 ): ReadOnlyOrchestratorInput {
   return {
     workspaceId: "ws-1",
-    operationKey: "root-user-message-1",
+    turnMessageId: "root-user-message-1",
     userInstruction:
       "Research the latest OpenAI announcement and write a LinkedIn post about what it means for founders.",
     history: [
@@ -112,7 +108,7 @@ function input(
     route: { kind: "news_research", expectsDraft: true },
     attachmentNames: [],
     attachmentBlocks: [],
-    draftEngineInput: {
+    writerInput: {
       workspaceId: "ws-1",
       userInstruction:
         "Research the latest OpenAI announcement and write a LinkedIn post about what it means for founders.",
@@ -126,7 +122,7 @@ function input(
 }
 
 async function* successfulDraft(
-  draftInput: DraftEngineInput,
+  draftInput: WriterInput,
 ): AsyncGenerator<AgentEvent> {
   expect(draftInput.task).toMatchObject({ kind: "grounded" });
   yield {
@@ -166,10 +162,10 @@ async function collect(
 ) {
   const events: AgentEvent[] = [];
   const recorded: unknown[][] = [];
-  const draftInputs: DraftEngineInput[] = [];
+  const draftInputs: WriterInput[] = [];
   for await (const event of runReadOnlyOrchestrator(orchestratorInput, {
     runTool,
-    runDraftEngine: (draftInput) => {
+    runProse: (draftInput) => {
       draftInputs.push(draftInput);
       return successfulDraft(draftInput);
     },
@@ -1153,8 +1149,8 @@ describe("read-only orchestrator execution", () => {
       input({
         userInstruction: instruction,
         history: [{ role: "user", content: instruction }],
-        draftEngineInput: {
-          ...input().draftEngineInput,
+        writerInput: {
+          ...input().writerInput,
           userInstruction: instruction,
         },
       }),
@@ -1235,8 +1231,8 @@ describe("read-only orchestrator execution", () => {
           minimumSources: 2,
           workspaceSearchMode: "strict_top",
         },
-        draftEngineInput: {
-          ...input().draftEngineInput,
+        writerInput: {
+          ...input().writerInput,
           userInstruction: instruction,
         },
       }),
@@ -1590,7 +1586,7 @@ describe("read-only orchestrator execution", () => {
           ],
         }),
         {
-          runDraftEngine: async function* () {
+          runProse: async function* () {
             throw new UsagePersistenceError("writer usage insert failed");
           },
         },
@@ -1600,7 +1596,7 @@ describe("read-only orchestrator execution", () => {
 
   test("fails closed when news search returns no verified fresh result", async () => {
     const events: AgentEvent[] = [];
-    const runDraftEngine = vi.fn(successfulDraft);
+    const runProse = vi.fn(successfulDraft);
     for await (const event of runReadOnlyOrchestrator(input(), {
       runTool: async () => ({
         ok: true,
@@ -1609,14 +1605,14 @@ describe("read-only orchestrator execution", () => {
         results: [],
         note: "No fresh news. Do not invent or use older news.",
       }),
-      runDraftEngine,
+      runProse,
       recordUsage: vi.fn(async () => {}),
       idFactory: () => "fixed",
     })) {
       events.push(event);
     }
 
-    expect(runDraftEngine).not.toHaveBeenCalled();
+    expect(runProse).not.toHaveBeenCalled();
     expect(events.some((event) => event.type === "artifact")).toBe(false);
     expect(events).toContainEqual(
       expect.objectContaining({
@@ -1811,7 +1807,7 @@ describe("read-only orchestrator execution", () => {
         ],
       }),
       {
-        runDraftEngine: async function* () {
+        runProse: async function* () {
           yield {
             type: "artifact",
             artifact: {
@@ -1885,7 +1881,25 @@ describe("read-only orchestrator execution", () => {
     expect(done?.type === "done" && done.terminalReason).toBe("cancelled");
   });
 
-  test("a writer exception persists completed research without exposing a partial artifact", async () => {
+  test("a writer exception presents drafts completed before the failure with an honest message", async () => {
+    // The buffered artifact came through the engine's artifact channel, which
+    // only carries finalizer-accepted drafts — dropping it would lose accepted
+    // work and leave the chat text claiming nothing exists. Present it instead.
+    const planner = new ScriptedPlanner(PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL, [
+      {
+        toolArgs: {
+          actions: [
+            { id: "news", type: "search_news", query: "OpenAI announcement" },
+            {
+              id: "write",
+              type: "draft_post",
+              evidenceActionIds: ["news"],
+            },
+          ],
+        },
+        usage: usage(70, 15),
+      },
+    ]);
     const events: AgentEvent[] = [];
     for await (const event of runReadOnlyOrchestrator(input(), {
       runTool: async () => ({
@@ -1900,14 +1914,14 @@ describe("read-only orchestrator execution", () => {
           },
         ],
       }),
-      runDraftEngine: async function* () {
+      runProse: async function* () {
         yield {
           type: "artifact",
           artifact: {
             id: "partial",
             kind: "post",
             title: "Partial",
-            body: "This must never escape.",
+            body: "This accepted draft survives the crash.",
           },
         };
         throw new Error("writer disconnected");
@@ -1921,7 +1935,12 @@ describe("read-only orchestrator execution", () => {
       events.push(event);
     }
 
-    expect(events.some((event) => event.type === "artifact")).toBe(false);
+    const artifacts = events.filter((event) => event.type === "artifact");
+    expect(artifacts).toHaveLength(1);
+    expect(artifacts[0]).toMatchObject({
+      type: "artifact",
+      artifact: { id: "partial" },
+    });
     expect(events).toContainEqual(
       expect.objectContaining({
         type: "error",
@@ -1929,6 +1948,9 @@ describe("read-only orchestrator execution", () => {
       }),
     );
     const done = events.find((event) => event.type === "done");
+    expect(done?.type === "done" && done.message.content).toContain(
+      "had already completed safely",
+    );
     expect(done?.type === "done" && done.message.tool_calls).toHaveLength(2);
     expect(done?.type === "done" && done.message.toolMessages).toHaveLength(2);
   });
@@ -2189,7 +2211,7 @@ describe("read-only orchestrator execution", () => {
         ],
       }),
       {
-        runDraftEngine: (draftInput) => {
+        runProse: (draftInput) => {
           modeledSourceId =
             draftInput.task?.kind === "source"
               ? draftInput.task.source.id
@@ -2244,8 +2266,8 @@ describe("read-only orchestrator execution", () => {
       input({
         route,
         userInstruction,
-        draftEngineInput: {
-          ...input().draftEngineInput,
+        writerInput: {
+          ...input().writerInput,
           userInstruction,
         },
       }),
@@ -2465,7 +2487,7 @@ describe("read-only orchestrator execution", () => {
       }),
       {
         executeModeledDraftBatch,
-        runDraftEngine: (draftInput) => {
+        runProse: (draftInput) => {
           capturedTask = draftInput.task;
           return (async function* () {
             for (let i = 0; i < 3; i += 1) {
@@ -2549,7 +2571,7 @@ describe("read-only orchestrator execution", () => {
       input({
         route,
         userInstruction,
-        draftEngineInput: { ...input().draftEngineInput, userInstruction },
+        writerInput: { ...input().writerInput, userInstruction },
       }),
       [],
       async () => ({
@@ -2575,7 +2597,7 @@ describe("read-only orchestrator execution", () => {
       }),
       {
         executeModeledDraftBatch,
-        runDraftEngine: () => {
+        runProse: () => {
           throw new Error(
             "the shared-pool multi path must NOT run when 3 distinct canonical sources satisfy a 3-draft request",
           );
@@ -2681,7 +2703,7 @@ describe("read-only orchestrator execution", () => {
         route,
         modeledBatchContinuation: continuation,
         userInstruction,
-        draftEngineInput: { ...input().draftEngineInput, userInstruction },
+        writerInput: { ...input().writerInput, userInstruction },
       }),
       [],
       runTool,
@@ -2724,6 +2746,21 @@ describe("read-only orchestrator execution", () => {
         batchId: "batch-saved",
         reason: "reviewer_unavailable" as const,
         preservedSlots: 1,
+        preservedArtifacts: [
+          {
+            id: "draft-preserved",
+            kind: "post" as const,
+            title: "Preserved draft",
+            body: COMPLETE_POST,
+            meta: {
+              modeled_draft_slot_id: "batch-saved:slot-0",
+              modeled_draft_slot_index: 0,
+              source: "model_source",
+              source_post_id: "source-1",
+              source_url: "https://linkedin.com/posts/source-1",
+            },
+          },
+        ],
         requestedCount: 2,
         usage: { inputTokens: 10, outputTokens: 5 },
       },
@@ -2735,6 +2772,7 @@ describe("read-only orchestrator execution", () => {
         kind: "incomplete" as const,
         reason: "store_unavailable" as const,
         preservedSlots: 0,
+        preservedArtifacts: [],
         requestedCount: 2,
         usage: { inputTokens: 0, outputTokens: 0 },
       },
@@ -2747,6 +2785,7 @@ describe("read-only orchestrator execution", () => {
         batchId: "batch-busy",
         reason: "busy" as const,
         preservedSlots: 0,
+        preservedArtifacts: [],
         requestedCount: 2,
         usage: { inputTokens: 0, outputTokens: 0 },
       },
@@ -2770,7 +2809,7 @@ describe("read-only orchestrator execution", () => {
       input({
         route,
         userInstruction,
-        draftEngineInput: { ...input().draftEngineInput, userInstruction },
+        writerInput: { ...input().writerInput, userInstruction },
       }),
       [],
       async () => ({
@@ -2788,6 +2827,30 @@ describe("read-only orchestrator execution", () => {
     expect(result.events).toContainEqual(
       expect.objectContaining({ type: "error", code, recovery: "continue" }),
     );
+    const artifactEvents = result.events.filter(
+      (event) => event.type === "artifact",
+    );
+    expect(artifactEvents).toHaveLength(batchResult.preservedArtifacts.length);
+    if (batchResult.preservedArtifacts.length > 0) {
+      expect(artifactEvents[0]).toMatchObject({
+        artifact: { id: "draft-preserved" },
+      });
+      expect(result.events.at(-1)).toMatchObject({
+        type: "done",
+        message: {
+          content: expect.stringContaining(
+            "I completed 1 of 2 verified drafts",
+          ),
+        },
+      });
+    } else {
+      expect(result.events.at(-1)).toMatchObject({
+        type: "done",
+        message: {
+          content: expect.not.stringContaining("verified drafts"),
+        },
+      });
+    }
   });
 
   test("terminates a FRESH insufficient_sources batch failure with no Retry offer", async () => {
@@ -2875,7 +2938,7 @@ describe("read-only orchestrator execution", () => {
         route,
         userInstruction,
         signal: controller.signal,
-        draftEngineInput: { ...input().draftEngineInput, userInstruction },
+        writerInput: { ...input().writerInput, userInstruction },
       }),
       [],
       async () => ({ ok: true, count: 2, posts: sourceRows }),
@@ -2936,7 +2999,7 @@ describe("read-only orchestrator execution", () => {
       input({
         route,
         userInstruction,
-        draftEngineInput: { ...input().draftEngineInput, userInstruction },
+        writerInput: { ...input().writerInput, userInstruction },
       }),
       [],
       async () => ({ ok: true, count: 2, posts: sourceRows }),
@@ -2980,9 +3043,11 @@ describe("read-only orchestrator execution", () => {
   });
 
   test.each([
-    ["too few artifacts", ["only-draft"]],
-    ["duplicate artifact identities", ["same", "same", "same", "same"]],
-  ] as const)("fails closed on %s", async (_case, artifactIds) => {
+    ["too few artifacts", ["only-draft"], 1],
+    ["duplicate artifact identities", ["same", "same", "same", "same"], 1],
+  ] as const)(
+    "presents the accepted partial set on %s",
+    async (_case, artifactIds, expectedPresented) => {
     const result = await collect(
       input({
         route: {
@@ -3007,7 +3072,7 @@ describe("read-only orchestrator execution", () => {
         ],
       }),
       {
-        runDraftEngine: async function* () {
+        runProse: async function* () {
           for (const [index, id] of artifactIds.entries()) {
             yield {
               type: "artifact",
@@ -3035,12 +3100,18 @@ describe("read-only orchestrator execution", () => {
       },
     );
 
-    expect(result.events.some((event) => event.type === "artifact")).toBe(false);
+    expect(result.events.filter((event) => event.type === "artifact")).toHaveLength(
+      expectedPresented,
+    );
     expect(result.events).toContainEqual(
       expect.objectContaining({
         type: "error",
         code: "orchestrator_draft_count_mismatch",
       }),
+    );
+    const done = result.events.find((event) => event.type === "done");
+    expect(done?.type === "done" && done.message.content).toContain(
+      `completed ${expectedPresented} of the 4 requested drafts`,
     );
   });
 
@@ -3133,7 +3204,7 @@ describe("read-only orchestrator execution", () => {
       }),
       {
         runTool: vi.fn(async () => ({ ok: true })),
-        runDraftEngine: writer,
+        runProse: writer,
         recordUsage: vi.fn(async () => {}),
         idFactory: () => "clarify-call",
       },
@@ -3174,7 +3245,7 @@ describe("read-only orchestrator execution", () => {
       }),
       {
         runTool: vi.fn(async () => ({ ok: true })),
-        runDraftEngine: vi.fn(successfulDraft),
+        runProse: vi.fn(successfulDraft),
         recordUsage: vi.fn(async () => {}),
         idFactory: () => "modeled-count-clarify",
       },

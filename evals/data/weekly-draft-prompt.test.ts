@@ -73,9 +73,9 @@ describe("weekly draft prompt policy", () => {
   });
 
   it("does NOT inject the viral-learning pattern brief — the batch is a modeling flow", () => {
-    // RAG (the "what's working now" brief + exemplars) moved to the original-
-    // drafting CHAT flows (lib/agent/run.ts). The weekly batch adapts a picked
-    // source, so it must stay RAG-free and honor that source.
+    // RAG (the "what's working now" brief + exemplars) lives on the original-
+    // drafting CHAT flows (lib/agent/draft-engine.ts). The weekly batch adapts a
+    // picked source, so it must stay RAG-free and honor that source.
     const prompt = buildWeeklyDraftSystem({ voice, preferences: [], isLeadMagnet: false });
     expect(prompt).not.toContain("WHAT'S WORKING NOW");
   });

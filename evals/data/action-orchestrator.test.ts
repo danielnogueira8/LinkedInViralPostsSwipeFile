@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { CHAT_MODEL } from "@/lib/openrouter";
 import type { AgentEvent } from "@/lib/agent/contracts";
-import type { ActionOrchestratorRoute } from "@/lib/agent/action-orchestrator-routing";
+import type { ActionOrchestratorRoute } from "@/lib/agent/turn/compile";
+import {
+  type ActionCheckpoint,
+  type ActionCheckpointRepository,
+} from "@/lib/agent/action-checkpoints";
 import {
   FALLBACK_ACTION_ORCHESTRATOR_MODEL,
   PRIMARY_ACTION_ORCHESTRATOR_MODEL,
@@ -11,15 +15,13 @@ import {
   candidateOptionLabels,
   parseActionPlan,
   runActionOrchestrator,
-  type ActionCheckpoint,
-  type ActionCheckpointRepository,
   type ActionDraft,
   type ActionOrchestratorAdapter,
   type ActionOrchestratorDependencies,
   type ActionOrchestratorInput,
   type ActionPlannerRequest,
   type MutationAction,
-} from "@/lib/agent/action-orchestrator";
+} from "@/lib/agent/execute/agent";
 import { AdapterHealthRegistry } from "@/lib/agent/adapter-health";
 import { createCoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
 
