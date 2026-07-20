@@ -39,7 +39,8 @@ export async function GET() {
     const [
       voiceRes,
       trackedRes,
-      batchRes,
+      draftRes,
+      assistantMsgRes,
       scheduledRes,
       connection,
       dismissedRes,
@@ -53,10 +54,18 @@ export async function GET() {
         .from("workspace_accounts")
         .select("account_id", { count: "exact", head: true })
         .eq("workspace_id", workspaceId),
+      // "Generate a post" ticks off on real chat activity: a saved draft
+      // (chat_artifacts) OR any assistant response. The old batch_runs signal
+      // died with the weekly-batch flow, so the item never ticked.
       sb
-        .from("batch_runs")
+        .from("chat_artifacts")
         .select("id", { count: "exact", head: true })
         .eq("workspace_id", workspaceId),
+      sb
+        .from("chat_messages")
+        .select("id", { count: "exact", head: true })
+        .eq("workspace_id", workspaceId)
+        .eq("role", "assistant"),
       sb
         .from("chat_artifacts")
         .select("id", { count: "exact", head: true })
@@ -95,7 +104,7 @@ export async function GET() {
         linkedin: canPublish(connection),
         creators: trackedCount > 0,
         inspiration: (inspirationRes.count ?? 0) > 0,
-        batch: (batchRes.count ?? 0) > 0,
+        batch: (draftRes.count ?? 0) > 0 || (assistantMsgRes.count ?? 0) > 0,
         scheduled: (scheduledRes.count ?? 0) > 0,
       },
     });
