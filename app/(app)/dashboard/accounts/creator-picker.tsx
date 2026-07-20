@@ -300,7 +300,7 @@ function CreatorCard({
           disabled={busy}
         >
           {busy ? <Loader2 className="animate-spin" /> : tracked ? <Check /> : <Layers3 />}
-          {tracked ? (mode === "sources" ? "Pause" : "Tracking") : "Track"}
+          {tracked ? "Untrack" : "Track"}
         </Button>
       </div>
     </article>
@@ -448,7 +448,7 @@ export function CreatorPicker({
       if (action === "track") {
         toast.success(`Tracking ${result.affected} creators`);
       } else {
-        toast.success(`Paused ${result.affected} creators`, {
+        toast.success(`Untracked ${result.affected} creators`, {
           action: {
             label: "Undo",
             onClick: () => void setMany(ids, "track", globalBaselineOnly),
@@ -633,7 +633,7 @@ export function CreatorPicker({
         </div>
         {mode === "sources" && visibleRows.length > 0 && (
           <Button variant="ghost" size="sm" disabled={busyBulk} onClick={() => setMany(visibleRows.map((creator) => creator.id), "untrack")}>
-            {busyBulk && <Loader2 className="animate-spin" />} Pause visible
+            {busyBulk && <Loader2 className="animate-spin" />} Untrack visible
           </Button>
         )}
       </div>

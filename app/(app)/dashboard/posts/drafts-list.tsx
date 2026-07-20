@@ -217,7 +217,7 @@ const COLUMNS: {
   {
     id: "idea",
     moveStatus: "idea",
-    label: "Idea",
+    label: "Ideas & hooks",
     description: "Capture raw angles before they become drafts.",
     accent: "text-state-warning",
     dot: "bg-state-warning",
@@ -255,13 +255,13 @@ const COLUMNS: {
   },
 ];
 const STATUS_LABEL: Record<DraftStatus, string> = {
-  idea: "Idea",
+  idea: "Ideas & hooks",
   drafting: "Draft",
   ready: "Ready",
   posted: "Posted",
 };
 const STATUS_HELP: Record<BoardColumnId, string> = {
-  idea: "Idea: a raw angle or hook that still needs drafting.",
+  idea: "Ideas & hooks: a raw angle or hook that still needs drafting.",
   drafting: "Draft: a post still being written or edited.",
   ready: "Ready: reviewed and ready to schedule or publish.",
   scheduled: "Scheduled: queued to auto-publish on LinkedIn. Open the post to change the schedule.",

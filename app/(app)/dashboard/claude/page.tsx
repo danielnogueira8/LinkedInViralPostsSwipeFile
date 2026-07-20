@@ -1,4 +1,5 @@
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { PageHeader } from "@/components/app-surface";
 import {
   Plug,
   Shield,
@@ -164,18 +165,15 @@ export default async function ClaudePage() {
 
   return (
     <div className="space-y-8">
-      <div className="flex items-start gap-4">
-        <div className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-foreground text-background">
-          <ClaudeIcon className="h-5 w-5" />
-        </div>
-        <div className="space-y-1">
-          <h1 className="text-4xl font-display tracking-tight">Claude Workflows</h1>
-          <p className="max-w-2xl text-sm text-muted-foreground">
-            Advanced, external workflow support for people who want to run SwipeIn data inside Claude.
-            For day-to-day drafting and scheduling, Cowork is the simpler path.
-          </p>
-        </div>
-      </div>
+      <PageHeader
+        meta={
+          <span className="grid h-9 w-9 place-items-center rounded-lg bg-foreground text-background">
+            <ClaudeIcon className="h-4 w-4" />
+          </span>
+        }
+        title="Claude Workflows"
+        description="Advanced, external workflow support for people who want to run SwipeIn data inside Claude. For day-to-day drafting and scheduling, Cowork is the simpler path."
+      />
 
       <div className="grid gap-3 rounded-xl border border-border/60 bg-muted/20 p-3 md:grid-cols-2">
         <div className="rounded-lg bg-background px-3 py-2.5">

@@ -81,10 +81,6 @@ export function CategoryFilterRail({
     );
   }
 
-  const assumedLabel =
-    categories.find((category) => category.id === assumedCategoryId)?.label ??
-    "All categories";
-
   return (
     <>
       <HorizontalCategoryRail>
@@ -101,9 +97,6 @@ export function CategoryFilterRail({
           </span>
         ))}
       </HorizontalCategoryRail>
-      <div className="hidden shrink-0 items-center border-l border-border/60 pl-2 text-[11px] text-muted-foreground md:flex">
-        <span className="font-medium text-foreground">{assumedLabel}</span>
-      </div>
     </>
   );
 }
