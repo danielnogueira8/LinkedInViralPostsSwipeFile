@@ -123,13 +123,32 @@ Each fix: targeted vitest runs + `tsc --noEmit` + lint, separate commit.
       2 concurrency × 2 calls × 40 s. Action turns 85 s; research turns reserve
       120 s for tools and pass the remainder to the writer.
 
-### Phase 3 — State as data, decomposition
+### Phase 3 — State as data, decomposition — COMPLETE
 
-- Turn state in columns/RPC, not transcript JSONB markers (7 marker types,
-  3 parsers today).
-- Break `executeChatTurn` (~3,200 lines) into the five stage modules.
-- Trim eval harness to the seams (context, compile, finalizer deterministic;
-  writer/agent behind scripted adapters).
+- [x] Turn state in columns/RPC, not transcript JSONB markers:
+  - Migration 112 adds 9 real columns (`model_source_id`, `applied_skills`,
+    `no_model_format_id`, `creator_style_context`, `lead_magnet_id`,
+    `composer_starter_id`, `generation_config`, `recoverable_error`, `turn_usage`)
+    and backfills from synthetic markers.
+  - Migration 113 updates `persist_chat_assistant_turn` RPC to write
+    `recoverable_error` and `turn_usage` columns.
+  - Read paths prefer real columns and fall back to markers during the
+    transition window.
+  - Dual-write (columns + markers) committed, then marker writes dropped for
+    both user and assistant rows.
+- [x] Break `executeChatTurn` into the five stage modules:
+  - `lib/agent/turn/setup.ts` — claim, rate limits, context assembly, user-row
+    column persistence.
+  - `lib/agent/turn/compile.ts` — expanded to emit a single immutable `TurnPlan`.
+  - `lib/agent/turn/execute.ts` — writer / agent / answer dispatch.
+  - `lib/agent/turn/finalize.ts` — SSE framing, assistant persistence, outcome
+    resolution.
+  - `lib/agent/turn/outcome.ts` — single terminal vocabulary (already existed).
+- [x] Eval harness exercises the new stage seams through the refactored
+  `executeChatTurn`; targeted tests updated to assert on real columns instead of
+  synthetic markers.
+- [ ] Full removal of read-path marker fallback and unused marker constants
+  deferred to a follow-up cleanup pass (low risk; columns are now authoritative).
 
 ## Testing strategy (per PR/commit)
 
