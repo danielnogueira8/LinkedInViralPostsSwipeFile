@@ -15,7 +15,7 @@ import {
   type DraftCandidateTransform,
   type DraftFinalizerDecision,
   type DraftFinalizerSpecialists,
-} from "@/lib/agent/draft-finalizer";
+} from "@/lib/agent/finalize/finalizer";
 import {
   requestedCharacterRange,
   unsupportedFactualSpecific,
@@ -63,10 +63,7 @@ import {
   type DraftWriterResponse,
   type DraftWriterStage,
 } from "@/lib/agent/draft-writer";
-import {
-  leanFinalizerSpecialists,
-  modeledBatchFinalizerSpecialists,
-} from "@/lib/agent/lean-finalizer";
+
 import {
   requestedShortenReduction,
   transformDirectRefineCandidate,
@@ -1417,25 +1414,12 @@ export async function* runDraftEngine(
     signal: turnSignal,
     editOptions: engineEditOptions,
     structureSkeleton: modeledStructureSkeleton,
-    // Thin path: no-op the taste specialists (fidelity/sameness/ai-tell), keep
-    // the deterministic editor. Otherwise use whatever the caller passed.
-    specialists:
-      input.finalizationProfile === "modeled_batch"
-        ? {
-            ...modeledBatchFinalizerSpecialists,
-            ...(input.finalizerSpecialists?.reviewSourceFidelity
-              ? {
-                  reviewSourceFidelity:
-                    input.finalizerSpecialists.reviewSourceFidelity,
-                }
-              : {}),
-          }
-        : input.lean
-          ? leanFinalizerSpecialists
-          : input.finalizerSpecialists,
+    // Unified finalizer: one default specialist set. Callers may still inject
+    // partial overrides (mainly tests); lean / modeled_batch no longer swaps
+    // specialists — cross-slot distinctness is handled by the slot coordinator.
+    specialists: input.finalizerSpecialists,
     transformCandidate: input.transformCandidate,
     finalTransformCandidate,
-    skipSameness: task.kind === "refine",
     onDecision: (decision) => {
       input.telemetry?.recordFinalizer({
         outcome: decision.outcome,

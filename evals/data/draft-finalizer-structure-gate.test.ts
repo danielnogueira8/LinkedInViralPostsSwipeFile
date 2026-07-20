@@ -190,9 +190,9 @@ describe("DraftFinalizer — coarse structure gate", () => {
     expect(specialists.reviewSourceFidelity).toHaveBeenCalledOnce();
   });
 
-  test("revalidates the final body after a specialist rewrites its layout", async () => {
+  test("revalidates the final body after the editor rewrites its layout", async () => {
     const specialists = passThroughSpecialists();
-    specialists.checkSameness = vi.fn(async () => ({
+    specialists.edit = vi.fn(() => ({
       body: [
         "Here's what changed for me this year:",
         "",
@@ -202,9 +202,10 @@ describe("DraftFinalizer — coarse structure gate", () => {
         "→ stronger retention",
         "→ better satisfaction scores",
       ].join("\n"),
-      rewrote: true,
-      overlapMarkers: [],
-      reason: "Changed the angle.",
+      changed: true,
+      usedModel: false,
+      fixedCategories: [],
+      notes: [],
     }));
     const finalizer = createDraftFinalizer({
       workspaceId: "ws-1",
