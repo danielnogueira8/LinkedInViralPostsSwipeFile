@@ -4,11 +4,14 @@ import {
   getThresholds,
   score,
   getRelativeConfig,
+  getTemplateOutlierConfig,
   decideRelativeViral,
+  decideTemplateOutlier,
   classifyPostForAllWorkspaces,
 } from "./viral";
 import { classifyPost } from "./post-type";
-import { extractHookWithClaude } from "./claude";
+import { extractHookWithClaude, templatizeOutlierPost } from "./claude";
+import { TEMPLATES_PER_WORKSPACE_MAX } from "./templates";
 import {
   extractHookHeuristic,
   qualifiesForHookLibrary,
@@ -249,6 +252,13 @@ export async function runDailyPipeline(
     });
     const thresholds = await getThresholds(workspaceId ?? null);
     const relConfig = getRelativeConfig();
+    const templateOutlierConfig = getTemplateOutlierConfig();
+    // How many rows of per-creator history to keep. Must serve BOTH gates
+    // below: relative virality (relConfig.window) and the template-outlier
+    // gate (templateOutlierConfig.minHistory, default 20) — each + 1 so that
+    // excluding the re-scraped post's own row still leaves a full sample.
+    const historyKeepDepth =
+      Math.max(relConfig.window, templateOutlierConfig.minHistory) + 1;
 
     // Per-creator score history for relative virality (option 4). One batched
     // read up front instead of a query per creator: pull each scraped
@@ -287,10 +297,10 @@ export async function runDailyPipeline(
             for (const row of rows) {
               const accId = row.account_id as string;
               const arr = priorByAccount.get(accId) ?? [];
-              // Keep a little more than `window` (window + 1) so that excluding
-              // the current post (a re-scrape of an existing row) still leaves a
-              // full window behind it.
-              if (arr.length <= relConfig.window) {
+              // Keep a little more than each gate needs (see historyKeepDepth)
+              // so that excluding the current post (a re-scrape of an existing
+              // row) still leaves a full window behind it.
+              if (arr.length < historyKeepDepth) {
                 arr.push({
                   linkedin_post_id: row.linkedin_post_id as string,
                   viral_score: Number(row.viral_score ?? 0),
@@ -300,12 +310,12 @@ export async function runDailyPipeline(
             }
             if (rows.length < PAGE) break;
             from += PAGE;
-            // Stop paging this chunk once every account IN THIS CHUNK already has
-            // more than a full window of history — further pages can't change
+            // Stop paging this chunk once every account IN THIS CHUNK already
+            // has a full keep-depth of history — further pages can't change
             // any baseline for these accounts.
             if (
               accChunk.every(
-                (id) => (priorByAccount.get(id)?.length ?? 0) > relConfig.window,
+                (id) => (priorByAccount.get(id)?.length ?? 0) >= historyKeepDepth,
               )
             ) {
               break;
@@ -314,6 +324,16 @@ export async function runDailyPipeline(
         }
       }
     }
+
+    // Posts that qualify as genuine creator outliers (decideTemplateOutlier),
+    // collected during the scrape pool and templatized in the templating phase
+    // below. Carries everything the phase needs so it never re-reads `posts`.
+    const templateOutliers: Array<{
+      postId: string;
+      accountId: string;
+      creatorName: string;
+      text: string;
+    }> = [];
 
     const { stoppedEarly } = await pool(
       toScrape,
@@ -361,6 +381,15 @@ export async function runDailyPipeline(
           config: relConfig,
         });
         const viral = decision.viral;
+        // Template-outlier gate: percentile-only, same priorScores sample as
+        // the viral decision (no flat-floor fallback — a creator needs ≥
+        // MIN_HISTORY stored posts before "outlier" means anything). The row
+        // is collected for the templating phase after the scrape pool.
+        const outlierDecision = decideTemplateOutlier({
+          score: vScore,
+          priorScores,
+          config: templateOutlierConfig,
+        });
         const { post_type, detected_via } = classifyPost(norm.text);
 
         // Cheap side-effect: keep accounts.profile_pic_url / headline fresh.
@@ -444,6 +473,15 @@ export async function runDailyPipeline(
           norm.reactions,
           norm.comments,
         );
+        // Genuine outlier with usable text → queue for the templating phase.
+        if (outlierDecision.qualifies && norm.text?.trim()) {
+          templateOutliers.push({
+            postId: upserted.id as string,
+            accountId: acc.id,
+            creatorName: acc.name,
+            text: norm.text,
+          });
+        }
       } catch (e) {
         progress.set(acc.linkedin_handle, {
           ...progress.get(acc.linkedin_handle)!,
@@ -535,14 +573,60 @@ export async function runDailyPipeline(
       console.warn(`post embedding skipped: ${(e as Error).message}`);
     }
 
-    // NOTE: the daily auto-TEMPLATIZE step was removed here. It ran a paid
-    // Haiku call on every viral post to write the old post-derived `templates`
-    // table (a {placeholder} skeleton of one specific post). Nothing reads that
-    // table anymore — the Templates page moved to the generic, workspace-owned
-    // `content_templates` library (built-ins + user-authored), and users model a
-    // real post via "Model in Chat" on the swipe file / Posts instead. The old
-    // `templates` table is left in place (the landing-page "templates generated"
-    // stat still counts its historical rows), but we no longer GENERATE into it.
+    // Auto-TEMPLATIZE genuine creator outliers (decideTemplateOutlier, gated in
+    // the scrape loop above) into the content_templates library (migration
+    // 116). This replaces the old auto-templatize step removed here: that one
+    // ran a paid call on EVERY viral post to write the old post-derived
+    // `templates` table, which nothing reads anymore. The new gate is far
+    // stricter (creator's own top 5% over ≥ 20 stored posts) and writes the
+    // generic, workspace-owned content_templates library the Templates page
+    // actually uses.
+    //
+    // Per qualifying post: one templatize call (attributed to the platform
+    // workspace), then one atomic slot-claim insert per workspace tracking the
+    // account (the tracker lookup mirrors classifyPostForAllWorkspaces). The
+    // unique partial index on (workspace_id, origin_post_id) makes a re-scrape
+    // of the same post a cheap no-op, and the RPC enforces the per-workspace
+    // cap. Fail-open per post: a model or insert failure logs and continues —
+    // templates are a bonus, never a scrape blocker.
+    for (let i = 0; i < templateOutliers.length; i++) {
+      const candidate = templateOutliers[i];
+      await persist({
+        phase: "templating",
+        phase_msg: `Template ${i + 1}/${templateOutliers.length} — ${candidate.creatorName}`,
+      });
+      try {
+        const templatized = await templatizeOutlierPost(candidate.text);
+        const { data: trackers, error: trackersErr } = await sb
+          .from("workspace_accounts")
+          .select("workspace_id")
+          .eq("account_id", candidate.accountId);
+        if (trackersErr) throw trackersErr;
+        const workspaceIds = [
+          ...new Set((trackers ?? []).map((r) => r.workspace_id as string)),
+        ];
+        for (const wsId of workspaceIds) {
+          const { error: claimErr } = await sb.rpc("claim_content_template_slot", {
+            p_workspace_id: wsId,
+            p_max_templates: TEMPLATES_PER_WORKSPACE_MAX,
+            p_title: templatized.title,
+            p_category: templatized.category,
+            p_body: templatized.body,
+            p_source: "auto",
+            p_origin_post_id: candidate.postId,
+          });
+          // 23505 (unique_violation): this workspace already has a template
+          // from this post — expected on a re-scrape, skip quietly.
+          if (claimErr && claimErr.code !== "23505") {
+            console.warn(
+              `template insert failed for workspace ${wsId}, post ${candidate.postId}: ${claimErr.message}`,
+            );
+          }
+        }
+      } catch (e) {
+        console.error("template outlier fail", candidate.postId, (e as Error).message);
+      }
+    }
 
     // Hook extraction for viral posts that QUALIFY for the library and don't
     // already have a hook. Heuristic first (free, instant); Claude Haiku
