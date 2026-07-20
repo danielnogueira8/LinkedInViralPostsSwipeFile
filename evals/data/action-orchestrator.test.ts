@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { CHAT_MODEL } from "@/lib/openrouter";
 import type { AgentEvent } from "@/lib/agent/contracts";
-import type { ActionOrchestratorRoute } from "@/lib/agent/action-orchestrator-routing";
+import type { ActionOrchestratorRoute } from "@/lib/agent/turn/compile";
 import {
   FALLBACK_ACTION_ORCHESTRATOR_MODEL,
   PRIMARY_ACTION_ORCHESTRATOR_MODEL,

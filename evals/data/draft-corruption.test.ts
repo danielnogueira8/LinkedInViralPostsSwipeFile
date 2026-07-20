@@ -8,7 +8,7 @@ import { normalizePostBody } from "@/lib/post-body-normalize";
 import { extractArtifacts } from "@/lib/agent/artifact-policy";
 
 // ---------------------------------------------------------------------------
-// Unit tests for the render-draft corruption gate (lib/agent/run.ts).
+// Unit tests for the render-draft corruption gate (lib/agent/specialists/nets.ts).
 //
 // A garbled render_post/render_hook body (observed: "...spec sheet.}}ermalink
 // Long..." — JSON/fence control chars fused into prose) must be REJECTED so it

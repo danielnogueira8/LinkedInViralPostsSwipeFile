@@ -139,7 +139,7 @@ describe("buildExemplarBlock", () => {
       {
         traceId: "exemplar-embedding",
         workspaceId: "ws-1",
-        route: "legacy_agent",
+        route: "answer",
         requestedContract: { kind: "post", expectedCount: 1 },
       },
       sink,

@@ -17,8 +17,8 @@ The agent **already has a skills system** — it's just hardcoded, not user-owne
 - `lib/agent/skills/index.ts` — `Skill = { id, triggers, body }`, a `SKILLS`
   array of built-ins (hooks, lead-magnet, voice-match, …), plus `selectSkills()`
   (keyword match) and `renderSkills()` (join bodies into one block).
-- `lib/agent/run.ts:191` — `const skillBlock = renderSkills(selectSkills(latestUserText(history)))`,
-  injected as a `system` message into the agent turn.
+- `lib/agent/draft-engine.ts` — `renderCombinedSkills(selectSkills(instruction), customSkillBodies, customSkillNames)`,
+  injected as a `system` message into the writer turn.
 - The chat already has a **slash menu** (`STARTERS` + `slashQuery`/`slashMatches`
   in `chat-workspace.tsx` ~1209) — the `/skill-name` surface.
 - `neutralizeMarkers()` (`lib/agent/untrusted.ts`) for sanitising pasted text.
@@ -113,13 +113,14 @@ The cleanest path that reuses the existing skill-injection point:
 2. **Stream route (`app/api/chats/[id]/stream/route.ts`):**
    - Add `skillIds: z.array(z.string().uuid()).max(3).optional()` to `bodySchema`.
    - Fetch those skills' bodies (workspace-scoped), `neutralizeMarkers` again
-     (idempotent), and pass them into `runAgent`.
+     (idempotent), and pass them to the turn handler as `customSkillBodies` /
+     `customSkillNames`.
 
-3. **Agent (`lib/agent/run.ts`):**
-   - `runAgent` gains an optional `extraSkills: string[]` (the resolved bodies).
-   - Fold them into the existing `skillBlock`: `renderSkills([...selected, ...userSkills])`
-     — or just append the user-skill bodies to the same system block. They use
-     the SAME injection mechanism that already works for built-ins.
+3. **Agent (`lib/agent/draft-engine.ts`):**
+   - `runDraftEngine` accepts `customSkillBodies` and `customSkillNames`.
+   - `renderCombinedSkills` folds them into the writer's system prompt alongside
+     the built-in skills. They use the SAME injection mechanism that already
+     works for built-ins.
 
 This means **zero new agent plumbing** — user skills flow through the exact path
 the built-in skills already use. The only new agent change is "also accept some

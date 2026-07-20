@@ -1,6 +1,7 @@
 import { z } from "zod";
+import { resolveTurnCount } from "@/lib/agent/turn/compile";
 
-export const DRAFT_COUNT_OPTIONS = [1, 2, 3, 4, 5] as const;
+export const DRAFT_COUNT_OPTIONS = [1, 2, 3, 4, 5, 6] as const;
 
 export type DraftCount = (typeof DRAFT_COUNT_OPTIONS)[number];
 export type DraftCountSelection = "auto" | DraftCount;
@@ -11,6 +12,7 @@ export const draftCountSchema = z.union([
   z.literal(3),
   z.literal(4),
   z.literal(5),
+  z.literal(6),
 ]);
 
 export const generationConfigV1Schema = z
@@ -43,28 +45,20 @@ export function generationConfigForSelection(
 /**
  * Resolve draft count once at the request boundary. Callers pass only a count
  * that was explicitly attached to the output noun in the user's message;
- * research/source quantities are deliberately excluded.
+ * research/source quantities are deliberately excluded. The priority and the
+ * 1-6 clamp live in resolveTurnCount — the ONE count rule for a turn.
  */
 export function resolveGenerationConfig(input: {
   selected?: GenerationConfigV1 | null;
   explicitMessageDraftCount?: number | null;
 }): ResolvedGenerationConfig {
-  const selectedCount = input.selected?.draftCount;
-  const messageCount = input.explicitMessageDraftCount ?? null;
-  if (selectedCount !== undefined) {
-    return {
-      version: 1,
-      draftCount: selectedCount,
-      draftCountSource: "ui",
-    };
-  }
-  const parsedMessageCount = draftCountSchema.safeParse(messageCount);
-  if (parsedMessageCount.success) {
-    return {
-      version: 1,
-      draftCount: parsedMessageCount.data,
-      draftCountSource: "message",
-    };
-  }
-  return { version: 1, draftCount: 1, draftCountSource: "default" };
+  const resolved = resolveTurnCount({
+    uiDraftCount: input.selected?.draftCount,
+    messageCount: input.explicitMessageDraftCount,
+  });
+  return {
+    version: 1,
+    draftCount: resolved.count,
+    draftCountSource: resolved.source,
+  };
 }

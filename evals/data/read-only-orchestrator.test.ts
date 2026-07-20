@@ -27,7 +27,7 @@ import {
   wrapScrapedPostText,
   type ToolExecutionContext,
 } from "@/lib/agent/tools";
-import { compileReadOnlyOrchestratorRoute } from "@/lib/agent/read-only-orchestrator-routing";
+import { compileReadOnlyOrchestratorRoute } from "@/lib/agent/turn/compile";
 import { continuationForModeledDraftRoute } from "@/lib/agent/modeled-draft-continuation";
 
 afterEach(() => {
@@ -2002,7 +2002,10 @@ describe("read-only orchestrator execution", () => {
     expect(done?.type === "done" && done.terminalReason).toBe("cancelled");
   });
 
-  test("a writer exception persists completed research without exposing a partial artifact", async () => {
+  test("a writer exception presents drafts completed before the failure with an honest message", async () => {
+    // The buffered artifact came through the engine's artifact channel, which
+    // only carries finalizer-accepted drafts — dropping it would lose accepted
+    // work and leave the chat text claiming nothing exists. Present it instead.
     const planner = new ScriptedPlanner(PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL, [
       {
         toolArgs: {
@@ -2040,7 +2043,7 @@ describe("read-only orchestrator execution", () => {
             id: "partial",
             kind: "post",
             title: "Partial",
-            body: "This must never escape.",
+            body: "This accepted draft survives the crash.",
           },
         };
         throw new Error("writer disconnected");
@@ -2054,7 +2057,12 @@ describe("read-only orchestrator execution", () => {
       events.push(event);
     }
 
-    expect(events.some((event) => event.type === "artifact")).toBe(false);
+    const artifacts = events.filter((event) => event.type === "artifact");
+    expect(artifacts).toHaveLength(1);
+    expect(artifacts[0]).toMatchObject({
+      type: "artifact",
+      artifact: { id: "partial" },
+    });
     expect(events).toContainEqual(
       expect.objectContaining({
         type: "error",
@@ -2062,6 +2070,9 @@ describe("read-only orchestrator execution", () => {
       }),
     );
     const done = events.find((event) => event.type === "done");
+    expect(done?.type === "done" && done.message.content).toContain(
+      "had already completed safely",
+    );
     expect(done?.type === "done" && done.message.tool_calls).toHaveLength(2);
     expect(done?.type === "done" && done.message.toolMessages).toHaveLength(2);
   });
@@ -2556,6 +2567,21 @@ describe("read-only orchestrator execution", () => {
         batchId: "batch-saved",
         reason: "reviewer_unavailable" as const,
         preservedSlots: 1,
+        preservedArtifacts: [
+          {
+            id: "draft-preserved",
+            kind: "post" as const,
+            title: "Preserved draft",
+            body: COMPLETE_POST,
+            meta: {
+              modeled_draft_slot_id: "batch-saved:slot-0",
+              modeled_draft_slot_index: 0,
+              source: "model_source",
+              source_post_id: "source-1",
+              source_url: "https://linkedin.com/posts/source-1",
+            },
+          },
+        ],
         requestedCount: 2,
         usage: { inputTokens: 10, outputTokens: 5 },
       },
@@ -2567,6 +2593,7 @@ describe("read-only orchestrator execution", () => {
         kind: "incomplete" as const,
         reason: "store_unavailable" as const,
         preservedSlots: 0,
+        preservedArtifacts: [],
         requestedCount: 2,
         usage: { inputTokens: 0, outputTokens: 0 },
       },
@@ -2579,6 +2606,7 @@ describe("read-only orchestrator execution", () => {
         batchId: "batch-busy",
         reason: "busy" as const,
         preservedSlots: 0,
+        preservedArtifacts: [],
         requestedCount: 2,
         usage: { inputTokens: 0, outputTokens: 0 },
       },
@@ -2620,6 +2648,30 @@ describe("read-only orchestrator execution", () => {
     expect(result.events).toContainEqual(
       expect.objectContaining({ type: "error", code, recovery: "continue" }),
     );
+    const artifactEvents = result.events.filter(
+      (event) => event.type === "artifact",
+    );
+    expect(artifactEvents).toHaveLength(batchResult.preservedArtifacts.length);
+    if (batchResult.preservedArtifacts.length > 0) {
+      expect(artifactEvents[0]).toMatchObject({
+        artifact: { id: "draft-preserved" },
+      });
+      expect(result.events.at(-1)).toMatchObject({
+        type: "done",
+        message: {
+          content: expect.stringContaining(
+            "I completed 1 of 2 verified drafts",
+          ),
+        },
+      });
+    } else {
+      expect(result.events.at(-1)).toMatchObject({
+        type: "done",
+        message: {
+          content: expect.not.stringContaining("verified drafts"),
+        },
+      });
+    }
   });
 
   test("does not publish a completed modeled set after the turn is cancelled", async () => {
@@ -2752,9 +2804,11 @@ describe("read-only orchestrator execution", () => {
   });
 
   test.each([
-    ["too few artifacts", ["only-draft"]],
-    ["duplicate artifact identities", ["same", "same", "same", "same"]],
-  ] as const)("fails closed on %s", async (_case, artifactIds) => {
+    ["too few artifacts", ["only-draft"], 1],
+    ["duplicate artifact identities", ["same", "same", "same", "same"], 1],
+  ] as const)(
+    "presents the accepted partial set on %s",
+    async (_case, artifactIds, expectedPresented) => {
     const result = await collect(
       input({
         route: {
@@ -2807,12 +2861,18 @@ describe("read-only orchestrator execution", () => {
       },
     );
 
-    expect(result.events.some((event) => event.type === "artifact")).toBe(false);
+    expect(result.events.filter((event) => event.type === "artifact")).toHaveLength(
+      expectedPresented,
+    );
     expect(result.events).toContainEqual(
       expect.objectContaining({
         type: "error",
         code: "orchestrator_draft_count_mismatch",
       }),
+    );
+    const done = result.events.find((event) => event.type === "done");
+    expect(done?.type === "done" && done.message.content).toContain(
+      `completed ${expectedPresented} of the 4 requested drafts`,
     );
   });
 

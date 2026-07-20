@@ -72,7 +72,7 @@ function materializeResearchRequirement(
       definition.oneSourcePerDraft === true &&
       expectedDraftCount !== null &&
       expectedDraftCount >= 1 &&
-      expectedDraftCount <= 5,
+      expectedDraftCount <= 6,
   };
 }
 

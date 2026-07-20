@@ -108,7 +108,7 @@ const productionDependencies: ModeledDraftSlotDependencies = {
 };
 
 const MIN_MODELED_BATCH_COUNT = 2;
-const MAX_MODELED_BATCH_COUNT = 5;
+const MAX_MODELED_BATCH_COUNT = 6;
 const rejectionCodes = new Set<string>(MODELED_DRAFT_SLOT_REJECTION_CODES);
 
 type SourceTask = Extract<
@@ -299,13 +299,14 @@ export async function runModeledDraftSlot(
     if (artifacts.length > 0) return protocol("unexpected_terminal");
     return { kind: "cancelled", slot: input.slot, ...usage };
   }
-  if (terminal.terminalReason === "error") {
-    if (artifacts.length > 0) return protocol("unexpected_terminal");
-    return { kind: "writer_error", slot: input.slot, ...usage };
-  }
   if (terminal.terminalReason === "ask") {
     return protocol("unexpected_terminal");
   }
+  // Classify error-bearing streams by their error codes BEFORE the blanket
+  // "error" terminal branch: the engine reports failed turns with an honest
+  // terminalReason "error", and a finalizer-rejected candidate (retry the
+  // slot) must stay distinguishable from an infrastructure failure
+  // (writer_error).
   if (errors.length > 0) {
     const errorCodes = new Set(errors.map((error) => String(error.code ?? "")));
     const rejectionCode =
@@ -333,6 +334,10 @@ export async function runModeledDraftSlot(
         ...usage,
       };
     }
+    return { kind: "writer_error", slot: input.slot, ...usage };
+  }
+  if (terminal.terminalReason === "error") {
+    if (artifacts.length > 0) return protocol("unexpected_terminal");
     return { kind: "writer_error", slot: input.slot, ...usage };
   }
 

@@ -61,7 +61,7 @@ describe("backstory paid-attempt boundary", () => {
       {
         traceId: "backstory-prepass",
         workspaceId: "ws-1",
-        route: "legacy_agent",
+        route: "answer",
         requestedContract: { kind: "post", expectedCount: 1 },
       },
       sink,

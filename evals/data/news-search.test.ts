@@ -271,7 +271,7 @@ describe("searchNews", () => {
       {
         traceId: "news-normalization-failure",
         workspaceId: "ws1",
-        route: "legacy_agent",
+        route: "answer",
         requestedContract: { kind: "post", expectedCount: 1 },
       },
       sink,

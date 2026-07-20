@@ -9,6 +9,10 @@ import {
 import type { Artifact } from "@/lib/agent/contracts";
 import type { ChatTurnTerminal } from "@/lib/agent/chat-turn-lifecycle";
 import {
+  type CoworkRoute,
+  type CoworkTurnTelemetryRecord,
+} from "@/lib/agent/cowork-telemetry";
+import {
   parseChatSseFrame,
   type ChatSseFrame,
 } from "@/lib/transport/contracts";
@@ -46,8 +50,10 @@ import {
   type ActionPlannerRequest,
   type MutationAction,
 } from "@/lib/agent/action-orchestrator";
-import { compileActionOrchestratorRoute } from "@/lib/agent/action-orchestrator-routing";
-import { compileReadOnlyOrchestratorRoute } from "@/lib/agent/read-only-orchestrator-routing";
+import {
+  compileActionOrchestratorRoute,
+  compileReadOnlyOrchestratorRoute,
+} from "@/lib/agent/turn/compile";
 import { continuationForModeledDraftRoute } from "@/lib/agent/modeled-draft-continuation";
 import { runTool as runAgentTool } from "@/lib/agent/tools";
 import { AdapterHealthRegistry } from "@/lib/agent/adapter-health";
@@ -89,7 +95,7 @@ export type CoworkOutcomeScenario = {
       attachmentSources?: DraftEngineGroundedSource[];
       retryModeledBatch?: boolean;
       malformedModeledRetry?: "root" | "continuation" | "root_only";
-      rolloutDisabled?: boolean;
+      disabled?: boolean;
       voiceUnavailable?: boolean;
       frozenModeledSources?: ModeledDraftBatchSource[];
       allowNoModel?: boolean;
@@ -108,7 +114,7 @@ export type CoworkOutcomeScenario = {
       cancelAfterMutationCount?: number;
       allowNoModel?: boolean;
       failRetryContextSave?: boolean;
-      rolloutDisabled?: boolean;
+      disabled?: boolean;
     };
   };
   seed?: {
@@ -125,6 +131,17 @@ export type CoworkOutcomeScenario = {
       status?: "ready" | "pending" | "failed";
     };
     messageArtifact?: Artifact;
+    // A completed earlier user→assistant exchange, seeded before the scenario
+    // request so the turn's history window has a prior conversation.
+    priorTurn?: {
+      user: string;
+      assistant: string;
+    };
+    attachmentTurn?: {
+      user: string;
+      contentBlocks: PersistedHarnessMessage["content_blocks"];
+      assistant: string;
+    };
     bookmarkModelSource?: {
       id: string;
       sourcePostId: string;
@@ -153,6 +170,9 @@ export type CoworkOutcomeScenario = {
       meta?: Record<string, unknown>;
       mediaAttachments?: Artifact["media_attachments"];
     }>;
+    // Pre-seed the chat's pinned Cowork lane. Use this to assert that a turn
+    // stays in a pinned lane even when its wording would normally route elsewhere.
+    pinnedCoworkRoute?: CoworkRoute | null;
   };
   negativeControl?: {
     duplicatePersistedArtifact?: boolean;
@@ -165,12 +185,14 @@ export type CoworkOutcomeScenario = {
     assistantContents?: string[];
     sourcePostIds?: string[];
     sourceReferences?: Array<{ id: string; url: string }>;
+    route?: CoworkRoute;
   };
 };
 
 export type CoworkOutcomeFailureCode =
   | "http_status"
   | "terminal"
+  | "route"
   | "deliverable_count"
   | "draft_body"
   | "action_count"
@@ -208,6 +230,7 @@ export type CoworkOutcomeReport = {
     fallbackUsed: boolean;
     latencyMs: number;
     costUsd: number;
+    route: CoworkRoute;
     modelStages: Array<{ kind: string; model: string }>;
   };
   persisted: {
@@ -600,8 +623,24 @@ async function runCoworkOutcomeScenarioWithStore(
   for (const draft of scenario.seed?.drafts ?? []) {
     store.seedDraft(draft);
   }
+  if (typeof scenario.seed?.pinnedCoworkRoute === "string") {
+    store.seedPinnedCoworkRoute(scenario.seed.pinnedCoworkRoute);
+  }
   if (scenario.seed?.messageArtifact) {
     store.seedMessageArtifact(scenario.seed.messageArtifact);
+  }
+  if (scenario.seed?.priorTurn) {
+    store.seedConversationTurn(
+      scenario.seed.priorTurn.user,
+      scenario.seed.priorTurn.assistant,
+    );
+  }
+  if (scenario.seed?.attachmentTurn) {
+    store.seedAttachmentTurn(
+      scenario.seed.attachmentTurn.user,
+      scenario.seed.attachmentTurn.contentBlocks,
+      scenario.seed.attachmentTurn.assistant,
+    );
   }
   let requestBody = { ...scenario.request };
   if (scenario.retryLatestUser) {
@@ -775,6 +814,7 @@ async function runCoworkOutcomeScenarioWithStore(
     () => requestController.abort(),
   );
   const sourceFidelity = [...(scenario.model.sourceFidelity ?? [])];
+  const telemetryRecords: CoworkTurnTelemetryRecord[] = [];
   const draftAdapterHealth = new AdapterHealthRegistry();
   const modeledBatchRepository =
     sharedModeledBatchRepository ??
@@ -797,19 +837,6 @@ async function runCoworkOutcomeScenarioWithStore(
 
   const dependencies: Partial<ChatTurnDependencies> = {
     now: () => new Date("2026-07-14T23:30:00.000Z"),
-    loadCoworkRolloutHealth: async () => ({
-      isOpen: () => false,
-      source: "shared",
-      snapshot: {
-        state: "healthy",
-        sampleSize: 200,
-        hardFailures: 0,
-        hardFailureRate: 0,
-        alertRate: 0.005,
-        rollbackRate: 0.01,
-        minimumSample: 200,
-      },
-    }),
     scopedSupabase: (async () => ({
       workspaceId: store.workspaceId,
       raw: store.client,
@@ -830,22 +857,22 @@ async function runCoworkOutcomeScenarioWithStore(
     generateLeadMagnetResource: (async () => {
       throw new Error("Lead-magnet generation is not scripted for this scenario.");
     }) as ChatTurnDependencies["generateLeadMagnetResource"],
+    coworkTelemetrySink: (record) => {
+      telemetryRecords.push(record);
+    },
     draftFinalizerSpecialists: {
       reviewSourceFidelity: async () =>
         sourceFidelity.shift() ?? { outcome: "verified" },
     },
     ...(directWriter
       ? {
-          directWriterEnabledForWorkspace: () => true,
           runDraftEngine: harnessRunDraftEngine,
         }
-      : {
-          directWriterEnabledForWorkspace: () => false,
-        }),
+      : {}),
     ...(scenario.model.readOnlyOrchestrator
       ? {
           readOnlyOrchestratorEnabledForWorkspace: () =>
-            !scenario.model.readOnlyOrchestrator?.rolloutDisabled,
+            !scenario.model.readOnlyOrchestrator?.disabled,
           runReadOnlyOrchestrator: (input, runtimeDependencies) =>
             runReadOnlyOrchestrator(input, {
               adapters: readOnlyPlannerAdapters,
@@ -897,7 +924,7 @@ async function runCoworkOutcomeScenarioWithStore(
     ...(scenario.model.actionOrchestrator
       ? {
           actionOrchestratorEnabledForWorkspace: () =>
-            !scenario.model.actionOrchestrator?.rolloutDisabled,
+            !scenario.model.actionOrchestrator?.disabled,
           runActionOrchestrator: (input, runtimeDependencies) => {
             return runActionOrchestrator(input, {
               adapters: actionPlannerAdapters,
@@ -1045,6 +1072,8 @@ async function runCoworkOutcomeScenarioWithStore(
     usage.reduce((total, row) => total + row.cost_usd, 0).toFixed(6),
   );
   const modelStages = usage.map(({ kind, model }) => ({ kind, model }));
+  const route: CoworkRoute =
+    telemetryRecords.at(-1)?.route ?? ("unknown" as CoworkRoute);
   const failureCodes: CoworkOutcomeFailureCode[] = [];
   if (response.status !== (scenario.expected.httpStatus ?? 200)) {
     failureCodes.push("http_status");
@@ -1120,6 +1149,9 @@ async function runCoworkOutcomeScenarioWithStore(
       failureCodes.push("provenance");
     }
   }
+  if (scenario.expected.route !== undefined && route !== scenario.expected.route) {
+    failureCodes.push("route");
+  }
   failureCodes.push(
     ...duplicateOutcomeFailureCodes({ artifacts, actions }),
   );
@@ -1172,6 +1204,7 @@ async function runCoworkOutcomeScenarioWithStore(
       fallbackUsed,
       latencyMs: Number(latencyMs.toFixed(3)),
       costUsd,
+      route,
       modelStages,
     },
     persisted: {

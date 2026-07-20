@@ -770,9 +770,9 @@ export async function generateImage(opts: {
 // Streaming chat completion
 // ---------------------------------------------------------------------------
 //
-// Yields decoded SSE delta chunks. The caller (lib/agent/run.ts) accumulates
-// text deltas and tool_call deltas, decides whether to dispatch tools, and
-// loops. We keep this transport-only: no agent logic here.
+// Yields decoded SSE delta chunks. Callers accumulate text deltas and
+// tool_call deltas and dispatch tools as needed. We keep this transport-only:
+// no agent logic here.
 
 export type StreamDelta = {
   // incremental assistant text
@@ -1065,10 +1065,10 @@ const OPENROUTER_PRICING: Record<
   "z-ai/glm-5": { input: 1.0, output: 3.2, cachedInput: 0.2 },
   // Retained for historical usage rows and explicit env overrides.
   "anthropic/claude-sonnet-4.6": { input: 3.0, output: 15.0, cachedInput: 0.3 },
-  // The decision pre-pass (lib/agent/decide.ts) runs on Sonnet 5 via OpenRouter.
+  // Sonnet 5 is used as a fallback by the thin writer and orchestrators.
   // Without this entry openRouterCost would fall back to the GLM-5.1 rate and
-  // under-count decision spend, so the monthly cost cap would be wrong. Sonnet 5
-  // is currently $2 in / $10 out; cache-read is 0.1x input = $0.20.
+  // under-count spend, so the monthly cost cap would be wrong. Sonnet 5 is
+  // currently $2 in / $10 out; cache-read is 0.1x input = $0.20.
   "anthropic/claude-sonnet-5": { input: 2.0, output: 10.0, cachedInput: 0.2 },
   // Cross-provider fallback for the read-only Cowork orchestrator. OpenRouter's
   // model catalog lists $1.50/M input, $9/M output, and $0.15/M cache reads.

@@ -136,7 +136,7 @@ describe("runModeledDraftSlot", () => {
 
   test.each([
     ["a non-integer count", { count: 3.5, previousBodies: ["one", "two"] }],
-    ["a count above the batch limit", { count: 6, previousBodies: ["one", "two"] }],
+    ["a count above the batch limit", { count: 7, previousBodies: ["one", "two"] }],
     ["an out-of-range slot", { count: 2, previousBodies: ["one", "two"] }],
     [
       "too many preceding drafts",
@@ -159,7 +159,7 @@ describe("runModeledDraftSlot", () => {
     expect(runner).not.toHaveBeenCalled();
   });
 
-  test.each([-1, 1.5, 5])(
+  test.each([-1, 1.5, 6])(
     "rejects invalid standalone slot index %s before invoking the engine",
     async (index) => {
       const runner = vi.fn<ModeledDraftSlotRunner>();

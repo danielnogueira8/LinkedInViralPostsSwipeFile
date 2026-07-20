@@ -5,16 +5,13 @@ import {
   hasOpenRouterPricing,
   CHAT_MODEL,
 } from "@/lib/openrouter";
-import { DECISION_MODEL } from "@/lib/agent/decide";
 
 // ---------------------------------------------------------------------------
 // Cost-table correctness. If a model's id isn't in the pricing table,
 // openRouterCost falls back to the GLM-5.1 rate and under-counts spend (so the
-// monthly cost cap undercounts it). These pin the Sonnet 5 rate (still used as a
-// fallback for the thin writer + orchestrators) AND prove the DECISION_MODEL's
-// exact slug is priced — guarding against a silent fallback regression. NOTE:
-// DECISION_MODEL now defaults to OPENROUTER_CHAT_MODEL (one model everywhere),
-// so these no longer assume it's Sonnet.
+// monthly cost cap undercounts it). These pin the Sonnet 5 rate (still used as
+// a fallback for the thin writer + orchestrators) AND prove the configured chat
+// model's exact slug is priced — guarding against a silent fallback regression.
 // ---------------------------------------------------------------------------
 
 const M = 1_000_000;
@@ -33,14 +30,14 @@ describe("openRouterCost — pricing-table correctness", () => {
     expect(openRouterCost("anthropic/claude-sonnet-5", M, 0, M)).toBeCloseTo(0.2, 6);
   });
 
-  test("the DECISION_MODEL slug is actually in the price table (no GLM-5.1 fallback)", () => {
+  test("the CHAT_MODEL slug is actually in the price table (no GLM-5.1 fallback)", () => {
     // If decide.ts's model id ever drifts from a pricing key, the rate would
     // silently revert to the GLM-5.1 fallback and under-count decision spend.
-    expect(hasOpenRouterPricing(DECISION_MODEL)).toBe(true);
+    expect(hasOpenRouterPricing(CHAT_MODEL)).toBe(true);
   });
 
   test("a realistic decision call (~800 in / 120 out) costs a fraction of a cent", () => {
-    const cost = openRouterCost(DECISION_MODEL, 800, 120);
+    const cost = openRouterCost(CHAT_MODEL, 800, 120);
     expect(cost).toBeGreaterThan(0);
     expect(cost).toBeLessThan(0.01);
   });

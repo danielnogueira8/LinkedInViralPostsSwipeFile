@@ -1,13 +1,9 @@
 name: evals
 
-# Runs the deterministic agent-loop eval suite on every PR and every push to
-# main. The suite stubs the model + tool dispatch, so it's free, fast, and
-# catches the bug classes we've shipped to production (empty turn, raw fence
-# leak, in-band error mishandling, blank artifact). Live-model evals are a
-# separate tier — not run here, since they'd burn API tokens on every push.
-#
-# See evals/golden-tasks.test.ts for the scenarios + evals/assertions.ts for
-# the six core assertion helpers.
+# Runs the deterministic eval suite on every PR and every push to main. The
+# suite uses stubbed dependencies, so it's free, fast, and catches the focused
+# bug classes we've shipped to production. Live-model evals were removed during
+# the cowork unification plan and are not run here.
 
 on:
   pull_request:

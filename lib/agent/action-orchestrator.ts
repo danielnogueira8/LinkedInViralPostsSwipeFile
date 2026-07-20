@@ -1,10 +1,10 @@
 import { z } from "zod";
 import type { AgentEvent, PlanStep } from "@/lib/agent/contracts";
-import type {
-  ActionOrchestratorRoute,
-  ActionRequirement,
-} from "@/lib/agent/action-orchestrator-routing";
-import { explicitBoardDestinationStatuses } from "@/lib/agent/action-orchestrator-routing";
+import {
+  explicitBoardDestinationStatuses,
+  type ActionOrchestratorRoute,
+  type ActionRequirement,
+} from "@/lib/agent/turn/compile";
 import {
   createSupabaseActionCheckpointRepository,
   type ActionCheckpoint,

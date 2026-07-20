@@ -14,7 +14,7 @@ import {
   continuationForModeledDraftRoute,
   type ModeledDraftBatchContinuation,
 } from "@/lib/agent/modeled-draft-continuation";
-import type { ReadOnlyOrchestratorRoute } from "@/lib/agent/read-only-orchestrator-routing";
+import type { ReadOnlyOrchestratorRoute } from "@/lib/agent/turn/compile";
 import { runTool, toolSummary } from "@/lib/agent/tools";
 import {
   admitDistinctModelingSource,
@@ -2582,6 +2582,19 @@ async function* runReadOnlyOrchestratorCore(
   let childDone: Extract<AgentEvent, { type: "done" }> | null = null;
   let childReportedError = false;
   const bufferedArtifacts: Array<Extract<AgentEvent, { type: "artifact" }>> = [];
+  // The buffer holds only finalizer-accepted, provenance-tagged artifacts from
+  // the engine. When the writer chain fails after producing some of them,
+  // presenting the partial set with an honest message beats silently dropping
+  // them — the chat text otherwise claims drafts were "kept" while no cards
+  // appear, and the accepted work is lost permanently.
+  const uniqueBufferedArtifacts = () => {
+    const seen = new Set<string>();
+    return bufferedArtifacts.filter((event) => {
+      if (seen.has(event.artifact.id)) return false;
+      seen.add(event.artifact.id);
+      return true;
+    });
+  };
   const expectedDrafts = input.route.expectedDrafts ?? 1;
   const modeledBatch =
     input.route.workspaceDraftSourceMode === "one_to_one" &&
@@ -2781,6 +2794,13 @@ async function* runReadOnlyOrchestratorCore(
       batchResult.reason === "cancelled";
     const preserved =
       batchResult.kind === "incomplete" ? batchResult.preservedSlots : 0;
+    // A user-initiated stop presents nothing — mirroring the engine path,
+    // which drops the buffer on purpose. Otherwise the finished drafts are
+    // shown so the message never claims drafts it does not present.
+    const presentableArtifacts =
+      batchResult.kind === "incomplete" && !cancelled
+        ? batchResult.preservedArtifacts
+        : [];
     const reason = batchResult.reason;
     const durableBatchExists =
       batchResult.kind === "incomplete" && Boolean(batchResult.batchId);
@@ -2800,9 +2820,12 @@ async function* runReadOnlyOrchestratorCore(
             ? "The saved modeled set is no longer available. Send the request again as a new message to start a fresh set."
           : batchResult.kind === "failed" && batchResult.reason === "invalid_request"
             ? "This modeled request did not pass the server’s batch contract, so it was not run. Send it again as a new message."
-      : preserved > 0
-        ? `I preserved ${preserved} of ${expectedDrafts} verified drafts, but the remaining slot could not be completed safely. Retry will continue only the unfinished work.`
+      : presentableArtifacts.length > 0
+        ? `I completed ${presentableArtifacts.length} of ${expectedDrafts} verified drafts — the finished drafts are shown above. The remaining slot could not be completed safely, and Retry will continue only the unfinished work.`
         : "I couldn’t complete the verified modeled set safely. Retry will resume the same bounded batch.";
+    for (const artifact of presentableArtifacts) {
+      yield { type: "artifact", artifact };
+    }
     yield {
       type: "tool_end",
       id: draftCallId,
@@ -2900,9 +2923,15 @@ async function* runReadOnlyOrchestratorCore(
   } catch (error) {
     rethrowUsagePersistence(error);
     const interrupted = await input.cancellationBoundary();
+    // A user-initiated stop drops the buffer on purpose; a writer crash does
+    // not — the accepted drafts completed before the failure are still shown.
+    const partials = interrupted ? [] : uniqueBufferedArtifacts();
     const message = interrupted
       ? interruptionContent(input, "Stopped before a draft was produced.")
-      : "The grounded writer stopped unexpectedly, so I did not present a partial draft.";
+      : partials.length > 0
+        ? `The writer stopped unexpectedly, but ${partials.length} ${partials.length === 1 ? "draft" : "drafts"} had already completed safely — here ${partials.length === 1 ? "it is" : "they are"}. Send the request again to complete the set.`
+        : "The grounded writer stopped unexpectedly, so I did not present a partial draft.";
+    for (const artifact of partials) yield artifact;
     yield {
       type: "tool_end",
       id: draftCallId,
@@ -2912,7 +2941,8 @@ async function* runReadOnlyOrchestratorCore(
     messages.push(
       toolMessage(draftCallId, {
         ok: false,
-        delivered: false,
+        delivered: partials.length > 0,
+        delivered_drafts: partials.length,
         error: interrupted ? interruptionReason(input) : "writer_failed",
       }),
     );
@@ -2966,8 +2996,12 @@ async function* runReadOnlyOrchestratorCore(
     return;
   }
   if (!childDone) {
+    const partials = uniqueBufferedArtifacts();
     const message =
-      "The grounded writer ended without a complete result, so I did not present a partial draft.";
+      partials.length > 0
+        ? `The writer stopped before completing the full set — here ${partials.length === 1 ? "is the 1 draft" : `are the ${partials.length} drafts`} that completed safely. Send the request again to complete the set.`
+        : "The grounded writer ended without a complete result, so I did not present a partial draft.";
+    for (const artifact of partials) yield artifact;
     yield {
       type: "tool_end",
       id: draftCallId,
@@ -2977,7 +3011,8 @@ async function* runReadOnlyOrchestratorCore(
     messages.push(
       toolMessage(draftCallId, {
         ok: false,
-        delivered: false,
+        delivered: partials.length > 0,
+        delivered_drafts: partials.length,
         error: "writer_missing_terminal",
       }),
     );
@@ -3009,7 +3044,12 @@ async function* runReadOnlyOrchestratorCore(
     childDone.terminalReason !== "deadline" &&
     childDone.terminalReason !== "error";
   if (writerCompletedNormally && !deliveredExpectedSet) {
-    const message = `I couldn’t produce all ${expectedDrafts} distinct drafts reliably, so I did not present a partial set.`;
+    const partials = uniqueBufferedArtifacts();
+    const message =
+      partials.length > 0
+        ? `I completed ${partials.length} of the ${expectedDrafts} requested drafts reliably — here ${partials.length === 1 ? "it is" : "they are"}. Send the request again to complete the set.`
+        : `I couldn’t produce all ${expectedDrafts} distinct drafts reliably, so I did not present a partial set.`;
+    for (const artifact of partials) yield artifact;
     yield {
       type: "tool_end",
       id: draftCallId,
@@ -3019,7 +3059,8 @@ async function* runReadOnlyOrchestratorCore(
     messages.push(
       toolMessage(draftCallId, {
         ok: false,
-        delivered: false,
+        delivered: partials.length > 0,
+        delivered_drafts: partials.length,
         expected_drafts: expectedDrafts,
         produced_artifacts: bufferedArtifacts.length,
         distinct_artifact_ids: deliveredArtifactIds.size,
@@ -3045,6 +3086,11 @@ async function* runReadOnlyOrchestratorCore(
     delivered && deliveredExpectedSet && writerCompletedNormally;
   if (draftOk) {
     for (const artifact of bufferedArtifacts) yield artifact;
+  } else if (delivered) {
+    // Partial set: the engine's message below is already honest about it
+    // ("I kept the N completed drafts…") — present the accepted drafts so the
+    // cards match the words instead of vanishing.
+    for (const artifact of uniqueBufferedArtifacts()) yield artifact;
   }
   yield {
     type: "tool_end",
@@ -3056,6 +3102,8 @@ async function* runReadOnlyOrchestratorCore(
     toolMessage(draftCallId, {
       ok: draftOk,
       delivered,
+      delivered_drafts: uniqueBufferedArtifacts().length,
+      expected_drafts: expectedDrafts,
       terminal_reason: childDone.terminalReason ?? "done",
     }),
   );
