@@ -82,14 +82,16 @@ vi.mock("@/lib/viral", () => ({
   getThresholds: async () => ({ min_reactions: 50, min_comments: 50 }),
   score: vi.fn(),
   getRelativeConfig: () => ({ minHistory: 5, window: 15, cutoffPct: 20 }),
+  getTemplateOutlierConfig: () => ({ minHistory: 20, window: 100, cutoffPct: 5 }),
   decideRelativeViral: vi.fn(),
+  decideTemplateOutlier: vi.fn(() => ({ qualifies: false, baseline: null, sampleSize: 0 })),
 }));
 vi.mock("@/lib/hooks", () => ({
   extractHookHeuristic: vi.fn(),
   qualifiesForHookLibrary: vi.fn(),
   normalizeHookForDedupe: vi.fn(),
 }));
-vi.mock("@/lib/claude", () => ({ extractHookWithClaude: vi.fn() }));
+vi.mock("@/lib/claude", () => ({ extractHookWithClaude: vi.fn(), templatizeOutlierPost: vi.fn() }));
 
 const { runDailyPipeline } = await import("@/lib/pipeline");
 

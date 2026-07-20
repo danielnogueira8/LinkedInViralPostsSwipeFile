@@ -255,3 +255,73 @@ export function decideRelativeViral(args: {
   const viral = args.score >= cutoff;
   return { viral, basis: "relative", baseline: cutoff, sampleSize };
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Template outliers — the creator's GENUINE outliers, templatized into the
+// content_templates library.
+//
+// A post qualifies ⇔ the creator has at least MIN_HISTORY other stored posts
+// AND this post's score is in the creator's own top CUTOFF_PCT % (default:
+// top 5% over ≥ 20 prior posts). Deliberately separate from
+// decideRelativeViral: that function's cold-start flat-floor fallback exists
+// so a thin-history creator can still be viral, but a template generalizes a
+// pattern to OTHER creators' audiences — we only trust the percentile once
+// the creator's own history is deep enough to make "outlier" meaningful.
+// ─────────────────────────────────────────────────────────────────────────
+
+export type TemplateOutlierConfig = {
+  /** Min OTHER stored posts before a creator can produce a template outlier
+   *  at all. Below this there is no trustworthy percentile, so nothing
+   *  qualifies (no fallback — unlike relative virality). */
+  minHistory: number;
+  /** How many of the creator's most recent posts feed the percentile. */
+  window: number;
+  /** Surface the TOP N % of the creator's posts, where N is this value.
+   *  Default 5 → only the creator's genuine outliers qualify. */
+  cutoffPct: number;
+};
+
+// Env-overridable, matching the VIRAL_REL_* / HOOK_* pattern. The gate runs
+// in the GLOBAL pipeline with no per-workspace context, so there's no
+// settings override — one global bar, tunable via env.
+const DEFAULT_TEMPLATE_OUTLIER: TemplateOutlierConfig = {
+  minHistory: Number(process.env.TEMPLATE_OUTLIER_MIN_HISTORY ?? 20),
+  window: Number(process.env.TEMPLATE_OUTLIER_WINDOW ?? 100),
+  cutoffPct: Number(process.env.TEMPLATE_OUTLIER_CUTOFF_PCT ?? 5),
+};
+
+export function getTemplateOutlierConfig(): TemplateOutlierConfig {
+  return { ...DEFAULT_TEMPLATE_OUTLIER };
+}
+
+export type TemplateOutlierDecision = {
+  qualifies: boolean;
+  /** The percentile cutoff the post had to reach (null when the creator is
+   *  below MIN_HISTORY and no percentile was computed). */
+  baseline: number | null;
+  /** How many prior posts fed the percentile. */
+  sampleSize: number;
+};
+
+/**
+ * Pure decision: given this post's score and the creator's prior scores
+ * (most-recent first or any order — we window + percentile internally),
+ * decide whether this post is a genuine outlier worth templatizing.
+ */
+export function decideTemplateOutlier(args: {
+  score: number;
+  priorScores: number[]; // creator's other posts' viral_score (numeric)
+  config?: TemplateOutlierConfig;
+}): TemplateOutlierDecision {
+  const cfg = args.config ?? getTemplateOutlierConfig();
+  const sample = args.priorScores.slice(0, cfg.window);
+  const sampleSize = sample.length;
+
+  // Not enough history for a trustworthy percentile → never qualifies.
+  if (sampleSize < cfg.minHistory) {
+    return { qualifies: false, baseline: null, sampleSize };
+  }
+
+  const cutoff = percentile(sample, 100 - cfg.cutoffPct) ?? 0;
+  return { qualifies: args.score >= cutoff, baseline: cutoff, sampleSize };
+}

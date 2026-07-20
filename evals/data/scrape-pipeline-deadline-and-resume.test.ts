@@ -117,14 +117,16 @@ describe("runDailyPipeline — resume dedupe + deadline self-stop", () => {
       getThresholds: async () => ({ min_reactions: 50, min_comments: 50 }),
       score: vi.fn(),
       getRelativeConfig: () => ({ minHistory: 5, window: 15, cutoffPct: 20 }),
+      getTemplateOutlierConfig: () => ({ minHistory: 20, window: 100, cutoffPct: 5 }),
       decideRelativeViral: vi.fn(),
+      decideTemplateOutlier: vi.fn(() => ({ qualifies: false, baseline: null, sampleSize: 0 })),
     }));
     vi.doMock("@/lib/hooks", () => ({
       extractHookHeuristic: vi.fn(),
       qualifiesForHookLibrary: vi.fn(),
       normalizeHookForDedupe: vi.fn(),
     }));
-    vi.doMock("@/lib/claude", () => ({ extractHookWithClaude: vi.fn() }));
+    vi.doMock("@/lib/claude", () => ({ extractHookWithClaude: vi.fn(), templatizeOutlierPost: vi.fn() }));
 
     const { runDailyPipeline } = await import("@/lib/pipeline");
     await runDailyPipeline(undefined, { runId: "resumed-run" });
@@ -198,14 +200,16 @@ describe("runDailyPipeline — resume dedupe + deadline self-stop", () => {
       getThresholds: async () => ({ min_reactions: 50, min_comments: 50 }),
       score: vi.fn(),
       getRelativeConfig: () => ({ minHistory: 5, window: 15, cutoffPct: 20 }),
+      getTemplateOutlierConfig: () => ({ minHistory: 20, window: 100, cutoffPct: 5 }),
       decideRelativeViral: vi.fn(),
+      decideTemplateOutlier: vi.fn(() => ({ qualifies: false, baseline: null, sampleSize: 0 })),
     }));
     vi.doMock("@/lib/hooks", () => ({
       extractHookHeuristic: vi.fn(),
       qualifiesForHookLibrary: vi.fn(),
       normalizeHookForDedupe: vi.fn(),
     }));
-    vi.doMock("@/lib/claude", () => ({ extractHookWithClaude: vi.fn() }));
+    vi.doMock("@/lib/claude", () => ({ extractHookWithClaude: vi.fn(), templatizeOutlierPost: vi.fn() }));
 
     const { runDailyPipeline } = await import("@/lib/pipeline");
     // Started 6 minutes ago — well past CRON_BUDGET_MS(300s) - CRON_DEADLINE_MARGIN_MS(90s).

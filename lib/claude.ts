@@ -8,6 +8,14 @@ import {
 import { z } from "zod";
 import { HOOK_PATTERNS, type HookPattern } from "./hooks";
 import { classifyPost } from "./post-type";
+import {
+  TEMPLATE_BODY_MAX,
+  TEMPLATE_CATEGORIES,
+  TEMPLATE_TITLE_MAX,
+  extractPlaceholders,
+  isTemplateCategory,
+  type TemplateCategory,
+} from "./templates";
 import { INJECTION_GUARD, wrapUntrustedXml } from "./agent/untrusted";
 import { providerModelAttribution } from "./agent/cowork-adapter-attempt";
 import type { MechanicsFingerprint } from "./voice-mechanics";
@@ -36,12 +44,16 @@ export function setAnthropicKey(key?: string | undefined): void {
   // intentionally empty — see comment above
 }
 
-// NOTE: templatizePost was removed here. It converted a viral post into the old
-// post-derived `templates` table via a paid Haiku call; that table is no longer
-// surfaced (the Templates page uses the generic content_templates library), and
-// its callers — the daily pipeline step + the /api/templates(+backfill) routes —
-// are gone/410'd. Its shared helpers (INJECTION_GUARD, untrusted post wrapping,
-// PLATFORM_WORKSPACE, BACKGROUND_MODEL) stay; extractHookWithClaude below uses them.
+// NOTE: the old templatizePost was removed here. It converted a viral post
+// into the old post-derived `templates` table via a paid Haiku call; that table
+// is no longer surfaced (the Templates page uses the generic content_templates
+// library), and its callers — the daily pipeline step + the
+// /api/templates(+backfill) routes — are gone/410'd. The successor is
+// templatizeOutlierPost below: it writes the content_templates library and
+// only fires for a creator's genuine outliers (see lib/viral.ts
+// decideTemplateOutlier). Its shared helpers (INJECTION_GUARD, untrusted post
+// wrapping, PLATFORM_WORKSPACE, BACKGROUND_MODEL) stay;
+// extractHookWithClaude below uses them too.
 
 // Extract a hook + pattern tag from a post in one call. Used as fallback
 // when the heuristic in lib/hooks.ts can't produce a usable hook, and
@@ -105,6 +117,82 @@ export function parseHookExtractionText(text: string): {
   const parsed = parseJsonObject(text);
   if (!parsed) return null;
   return coerceHookExtraction(parsed);
+}
+
+// Convert a creator's genuine outlier post (decideTemplateOutlier in
+// lib/viral.ts) into a GENERIC, reusable fill-in-the-blank template for the
+// workspace content_templates library. The pipeline's templating phase and
+// the outlier backfill both call this; both are fail-open at the call site.
+export async function templatizeOutlierPost(
+  postText: string,
+  workspaceId: string = PLATFORM_WORKSPACE,
+): Promise<{ title: string; category: TemplateCategory; body: string }> {
+  const res = await completeChat({
+    // The body is a full post skeleton (bounded by TEMPLATE_BODY_MAX), so this
+    // needs a much larger budget than hook extraction's 256.
+    maxTokens: 4096,
+    // Mechanical structure extraction: preserve the output budget for the
+    // template JSON instead of spending it on GLM reasoning.
+    glmReasoning: "none",
+    messages: [
+      {
+        role: "system",
+        content:
+          `You convert a high-performing LinkedIn post into a GENERIC, reusable fill-in-the-blank template other people can model a new post after. Output strict JSON only, no prose, in the shape: {"title": "...", "category": "...", "body": "..."}. The "title" is a short human name for the structure (max ${TEMPLATE_TITLE_MAX} chars), NOT a summary of this specific post. The "category" must be exactly one of: ${TEMPLATE_CATEGORIES.join(", ")}. The "body" is the post rewritten as a reusable skeleton: keep the hook shape, structure, line breaks, and rhythm, but replace every specific name, company, number, date, and anecdote with a {placeholder} token (e.g. {your niche}, {the result you got}, {a specific number}). The body MUST contain at least one {placeholder} — a template with nothing to fill in is useless. ` +
+          INJECTION_GUARD,
+      },
+      { role: "user", content: wrapUntrustedXml("post", postText) },
+    ],
+  });
+  const templatizeAttribution = providerModelAttribution(BACKGROUND_MODEL, res.model);
+  await logOpenRouterUsage(
+    "templatize_post",
+    templatizeAttribution.model,
+    res.usage,
+    workspaceId,
+    templatizeAttribution.metadata,
+  );
+  const raw = res.text.trim();
+  if (!raw) throw new Error("Empty response from the model");
+  const coerced = parseTemplatizePostText(raw);
+  if (!coerced) throw new Error("Claude returned no usable template JSON");
+  return coerced;
+}
+
+const TemplatizePostSchema = z.object({
+  title: z.string().trim().min(1),
+  category: z.string().trim().optional(),
+  body: z.string().trim().min(1),
+});
+
+export function coerceTemplatizePost(input: unknown): {
+  title: string;
+  category: TemplateCategory;
+  body: string;
+} | null {
+  const parsed = TemplatizePostSchema.safeParse(input);
+  if (!parsed.success) return null;
+  const body = parsed.data.body.slice(0, TEMPLATE_BODY_MAX);
+  // A skeleton with no fill-in point is just a copy of the post — reject it
+  // rather than filing a "template" the user can't actually reuse.
+  if (extractPlaceholders(body).length === 0) return null;
+  return {
+    title: parsed.data.title.slice(0, TEMPLATE_TITLE_MAX),
+    category: isTemplateCategory(parsed.data.category)
+      ? parsed.data.category
+      : "other",
+    body,
+  };
+}
+
+export function parseTemplatizePostText(text: string): {
+  title: string;
+  category: TemplateCategory;
+  body: string;
+} | null {
+  const parsed = parseJsonObject(text);
+  if (!parsed) return null;
+  return coerceTemplatizePost(parsed);
 }
 
 // -----------------------------------------------------------------------------

@@ -1,7 +1,7 @@
 {
   "generatedBy": "npm run migrations:metadata",
-  "highest": 115,
-  "count": 115,
+  "highest": 116,
+  "count": 116,
   "files": [
     "migration-001-progress.sql",
     "migration-002-usage.sql",
@@ -117,6 +117,7 @@
     "migration-112-turn-state-columns.sql",
     "migration-113-assistant-turn-state-columns.sql",
     "migration-114-modeled-batch-url-optional.sql",
-    "migration-115-cleanup-weekly-batch.sql"
+    "migration-115-cleanup-weekly-batch.sql",
+    "migration-116-template-outlier-autogen.sql"
   ]
 }
