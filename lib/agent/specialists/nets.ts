@@ -3,9 +3,9 @@
 //
 // These are PURE functions with no dependency on the agent turn execution
 // layer. They were moved here (verbatim) out of the legacy run.ts loop so BOTH
-// generation paths — the interactive chat turn (lib/agent/chat-turn.ts) and the
-// headless weekly-batch path (lib/batch/weekly.ts) — import ONE copy instead of
-// the batch worker reaching into the 3000-line run.ts module for them.
+// generation paths — the interactive chat turn and the modeled-batch path —
+// import ONE copy instead of each worker reaching into the 3000-line run.ts
+// module for them.
 //
 // The upcoming AI-Tell Editor (a later PR) is the natural next resident of this
 // module.
@@ -62,7 +62,7 @@ export function looksCorruptedDraft(body: string): string | null {
   // 4) Hallucinated tool-call XML leaked into the body: <tool_call…>, <invoke
   //    name="…">, <parameter name="…">, <turn_state>. GLM occasionally emits
   //    these when it gets confused about the transport format (observed after
-  //    a batch chat's follow-up turn — the panel got a card whose body was
+  //    a modeled-batch chat's follow-up turn — the panel got a card whose body was
   //    pure XML garbage that then rendered as an unreadable card). Never legit
   //    prose. See PR context: batch-chat followup + invisible-card fix.
   if (

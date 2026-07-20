@@ -1905,8 +1905,8 @@ async function* executeActionOrchestrator(
   }
 
   const mutations = plan.actions as MutationAction[];
-  let steps = mutations.map((action) => actionStep(action, "pending"));
-  yield { type: "plan", steps };
+  // Reveal board-action checklist steps as they start, not all upfront.
+  let steps: PlanStep[] = [];
   const existingByKey = new Map(
     checkpoints.map((checkpoint) => [checkpoint.operationKey, checkpoint]),
   );
@@ -2060,11 +2060,12 @@ async function* executeActionOrchestrator(
       return;
     }
     const { action, operationKey } = item;
-    steps = steps.map((step, stepIndex) => ({
-      ...step,
-      status:
-        stepIndex < index ? "done" : stepIndex === index ? "active" : "pending",
-    }));
+    steps = [
+      ...steps.map((step) =>
+        step.status === "active" ? { ...step, status: "done" as const } : step,
+      ),
+      actionStep(action, "active"),
+    ];
     yield { type: "plan_update", steps };
     const args = { ...actionArguments(action), operation_key: operationKey };
     const callId = deps.idFactory();
@@ -4278,8 +4279,9 @@ async function* runReadOnlyOrchestratorCore(
     return;
   }
 
-  let steps = plan.actions.map((action) => plannerStep(action, "pending"));
-  yield { type: "plan", steps };
+  // Reveal checklist steps as they start, not all upfront. The UI replaces the
+  // whole list on each plan_update, so we can build it incrementally.
+  let steps: PlanStep[] = [];
   const calls: ToolCall[] = [];
   const messages: ChatMessage[] = [];
   const evidenceByAction = new Map<string, GroundedSource[]>();
@@ -4374,15 +4376,14 @@ async function* runReadOnlyOrchestratorCore(
       return;
     }
     const action = plan.actions[actionIndex];
-    steps = steps.map((step, index) => ({
-      ...step,
-      status:
-        index < actionIndex
-          ? "done"
-          : index === actionIndex
-            ? "active"
-            : "pending",
-    }));
+    // Reveal this research step as it starts. Mark any previously active step
+    // done so the checklist stays honest about progress.
+    steps = [
+      ...steps.map((step) =>
+        step.status === "active" ? { ...step, status: "done" as const } : step,
+      ),
+      plannerStep(action, "active"),
+    ];
     yield { type: "plan_update", steps };
     const id = deps.idFactory();
     const dispatchedQuery =
@@ -4724,10 +4725,7 @@ async function* runReadOnlyOrchestratorCore(
         message,
         recovery: "continue",
       };
-      steps = steps.map((step, index) => ({
-        ...step,
-        status: index <= actionIndex ? "done" : "pending",
-      }));
+      steps = steps.map((step) => ({ ...step, status: "done" as const }));
       yield { type: "plan_update", steps };
       yield completedDone({
         content: message,
@@ -4827,10 +4825,12 @@ async function* runReadOnlyOrchestratorCore(
   const draftCallId = deps.idFactory();
   const draftCall = readOnlyToolCall(draftAction, draftCallId);
   calls.push(draftCall);
-  steps = steps.map((step, index) => ({
-    ...step,
-    status: index < steps.length - 1 ? "done" : "active",
-  }));
+  steps = [
+    ...steps.map((step) =>
+      step.status === "active" ? { ...step, status: "done" as const } : step,
+    ),
+    plannerStep(draftAction, "active"),
+  ];
   yield { type: "plan_update", steps };
   yield {
     type: "tool_start",

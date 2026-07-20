@@ -2,7 +2,12 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import type { AgentEvent } from "@/lib/agent/contracts";
 import type { WriterInput } from "@/lib/agent/execute/writer";
 import type { ExecuteModeledDraftBatchInput } from "@/lib/agent/execute/writer";
-import { CHAT_MODEL, UsagePersistenceError, type Usage } from "@/lib/openrouter";
+import {
+  CHAT_MODEL,
+  UsagePersistenceError,
+  type ChatMessage,
+  type Usage,
+} from "@/lib/openrouter";
 import {
   FALLBACK_READ_ONLY_ORCHESTRATOR_MODEL,
   PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL,
@@ -34,7 +39,7 @@ import { continuationForModeledDraftRoute } from "@/lib/agent/modeled-draft-cont
  * inert: runReadOnlyOrchestrator never reads a dependency-injected planner,
  * so these types exist only to keep ScriptedPlanner's shape self-documenting.
  */
-type ReadOnlyPlannerRequest = {
+type TestReadOnlyPlannerRequest = {
   route: unknown;
   userInstruction: string;
   history: ChatMessage[];
@@ -44,7 +49,7 @@ type ReadOnlyPlannerRequest = {
 
 type ReadOnlyOrchestratorAdapter = {
   readonly model: string;
-  createPlan(request: ReadOnlyPlannerRequest): Promise<{
+  createPlan(request: TestReadOnlyPlannerRequest): Promise<{
     toolArgs: Record<string, unknown> | null;
     usage?: Usage;
     model?: string;
@@ -2458,13 +2463,13 @@ describe("read-only orchestrator execution", () => {
         "the strict one-source-per-draft batch must NOT run when distinct canonical sources < requested drafts",
       );
     });
-    let capturedTask: DraftEngineInput["task"] | undefined;
+    let capturedTask: WriterInput["task"] | undefined;
 
     const result = await collect(
       input({
         route,
         userInstruction,
-        draftEngineInput: { ...input().draftEngineInput, userInstruction },
+        writerInput: { ...input().writerInput, userInstruction },
       }),
       [],
       async () => ({
@@ -2657,7 +2662,7 @@ describe("read-only orchestrator execution", () => {
       input({
         route,
         userInstruction,
-        draftEngineInput: { ...input().draftEngineInput, userInstruction },
+        writerInput: { ...input().writerInput, userInstruction },
       }),
       [],
       async () => ({
@@ -2879,7 +2884,7 @@ describe("read-only orchestrator execution", () => {
       input({
         route,
         userInstruction,
-        draftEngineInput: { ...input().draftEngineInput, userInstruction },
+        writerInput: { ...input().writerInput, userInstruction },
       }),
       [],
       async () => ({

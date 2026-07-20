@@ -157,7 +157,7 @@ export const trackedAccountIds = cache(
  * triggering a manual re-scrape would skew workspace A's "recent posts"
  * freshness window and displayed scrape date to B's run, even though A's own
  * posts/accounts stayed correctly scoped. Centralizing here so every caller
- * (Cowork's get_top_from_batch tool, the weekly batch, the hosted MCP tool)
+ * (Cowork's get_top_from_batch tool, modeled batches, the hosted MCP tool)
  * gets the fix once instead of re-implementing the same unscoped query.
  */
 export async function latestRelevantScrape(

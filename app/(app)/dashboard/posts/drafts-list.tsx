@@ -78,9 +78,9 @@ function kindBadge(kind: DraftKind): { label: string; cls: string } | null {
 // scheduled → publishing → published | failed (set by the cron).
 
 // Reconcile a fresh server snapshot into the current client list — ADD-ONLY.
-// A router.refresh() (e.g. when a weekly batch files new drafts) passes a new
+// A router.refresh() (e.g. when a background job files new drafts) passes a new
 // `server` array; we prepend drafts present server-side but missing locally (the
-// freshly-filed batch cards, newest-first) and keep every existing local card
+// freshly-filed draft cards, newest-first) and keep every existing local card
 // untouched, so an in-flight optimistic edit/drag isn't clobbered by a refresh.
 // Returns the SAME reference when nothing is new (no needless re-render). Pure +
 // exported for tests.
@@ -282,11 +282,11 @@ export function DraftsList({
 }) {
   const [drafts, setDrafts] = useState<Draft[]>(initialDrafts);
   // Reconcile server refreshes into local state. `initialDrafts` is a mount-time
-  // snapshot; a router.refresh() (e.g. when a weekly batch files new drafts)
+  // snapshot; a router.refresh() (e.g. when a background job files new drafts)
   // re-runs the server component and passes a NEW initialDrafts prop, but a plain
   // useState initializer ignores prop changes — so the board never showed the
-  // batch's drafts until a full page reload. This merges the incoming set in:
-  // ADD drafts we don't have yet (the freshly-filed batch cards), and refresh the
+  // incoming drafts until a full page reload. This merges the incoming set in:
+  // ADD drafts we don't have yet (the freshly-filed draft cards), and refresh the
   // server-owned fields of ones we do — WITHOUT clobbering a card the user is
   // optimistically editing (we keep locals not present server-side, e.g. a brand
   // new unsaved one, and don't overwrite while an edit is mid-flight elsewhere).

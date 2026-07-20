@@ -51,8 +51,7 @@
       "boundary": "worker lease",
       "invariant": "A stale worker cannot requeue, complete, fail, or release locks owned by a newer worker.",
       "evidence": [
-        { "path": "evals/data/background-jobs.test.ts", "test": "stale worker cannot requeue" },
-        { "path": "evals/data/background-job-worker.test.ts", "test": "lease was reclaimed" }
+        { "path": "evals/data/background-jobs.test.ts", "test": "stale worker cannot requeue" }
       ]
     },
     {
@@ -62,15 +61,6 @@
       "evidence": [
         { "path": "evals/data/background-jobs.test.ts", "test": "rolls the claim increment back" },
         { "path": "evals/data/background-job-worker.test.ts", "test": "capacity is full" }
-      ]
-    },
-    {
-      "id": "weekly-batch-bounded-fanout",
-      "boundary": "batch worker pool",
-      "invariant": "Weekly batch fanout stays bounded while preserving every result and same-type backfill semantics.",
-      "evidence": [
-        { "path": "evals/data/weekly-batch-status.test.ts", "test": "caps real provider fanout at four" },
-        { "path": "evals/data/weekly-batch-status.test.ts", "test": "lead-magnet slots backfill only from lead-magnet candidates" }
       ]
     },
     {

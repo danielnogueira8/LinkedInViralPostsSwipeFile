@@ -20,7 +20,7 @@ import { withoutSourceDiscoveryOptOut } from "@/lib/agent/source-policy";
 // LinkedIn-native archetype, fetch 1-2 REAL exemplar posts from the DB by id,
 // and hand the writing agent format rules + full examples to model the STRUCTURE
 // of (never the facts/text). It does NOT touch the modeled / template / refine /
-// weekly-batch flows — when a source post exists, that source stays the
+// modeled-batch flows — when a source post exists, that source stays the
 // structural authority. See run.ts (noModelFormatBlock) + the stream route for
 // the activation gate.
 //

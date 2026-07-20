@@ -86,9 +86,9 @@ type Agent = {
 
 const AGENTS: Agent[] = [
   {
-    tag: "Batch Writer Agent",
+    tag: "Bulk Writer Agent",
     title: "10 posts, modeled on what's winning right now",
-    payoff: "Walk away with 10 ready-to-edit posts in your voice — a week-plus of content in one run.",
+    payoff: "Walk away with 10 ready-to-edit posts in your voice — a full content pipeline in one run.",
     time: "~3 min",
     icon: AiIcon,
     prompt:
@@ -128,7 +128,7 @@ const AGENTS: Agent[] = [
     time: "~2 min",
     icon: Lightbulb,
     prompt:
-      "Use the SwipeIn connector. Call get_voice first to load my writing voice. Then look at every viral post from the last batch and rank the hook patterns by average engagement. Give me the top 5 patterns and write one fresh hook for each in my voice, with a one-line note on why that pattern is working right now.",
+      "Use the SwipeIn connector. Call get_voice first to load my writing voice. Then look at every viral post from the last 7 days and rank the hook patterns by average engagement. Give me the top 5 patterns and write one fresh hook for each in my voice, with a one-line note on why that pattern is working right now.",
   },
   {
     tag: "Timing Strategist Agent",
@@ -179,7 +179,7 @@ export default async function ClaudePage() {
         <div className="rounded-lg bg-background px-3 py-2.5">
           <div className="text-sm font-medium">Use Cowork inside SwipeIn</div>
           <p className="mt-1 text-xs leading-snug text-muted-foreground">
-            Best for drafting, weekly batches, approving posts, and saving work
+            Best for drafting, multi-draft runs, approving posts, and saving work
             straight into your Posts board.
           </p>
         </div>

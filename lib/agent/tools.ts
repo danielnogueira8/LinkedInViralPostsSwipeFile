@@ -43,7 +43,7 @@ import { rankIdeaPosts, rotateFreshBand } from "@/lib/idea-ranking";
 // ---------------------------------------------------------------------------
 
 // Hard caps on generated post/hook length. render_post's cap is well above the
-// weekly-batch cap (3200) so the interactive path has room for a slightly-long
+// modeled-batch cap (3200) so the interactive path has room for a slightly-long
 // post if the user really asked for one; render_hook's cap is well above the
 // LinkedIn above-the-fold preview (~210 chars) but low enough that "hook"
 // can't quietly balloon into a full post. Both are enforced in the tool schema
@@ -529,7 +529,7 @@ async function nextRotationCursor(
 }
 
 // Source-post ids this workspace has ALREADY drafted from recently — across BOTH
-// the weekly batch AND interactive Cowork drafts (both stash meta.source_post_id
+// modeled batches AND interactive Cowork drafts (both stash meta.source_post_id
 // when a draft is modeled from a source). Used to rank ideas: a post already
 // turned into a draft is "most-mentioned" and should fall behind fresh ones, so
 // the agent doesn't keep pitching the same idea. Best-effort: on any read error
@@ -1042,7 +1042,7 @@ const listDrafts: ToolFn = async (args, workspaceId, signal) => {
     } else {
       // Board tools only see BOARD drafts — exclude the off-board review
       // statuses (pending_review awaiting approval, rejected) so "what's in my
-      // queue?" never surfaces an unvetted weekly-batch draft.
+      // queue?" never surfaces an unvetted off-board draft.
       q = q.in("status", DRAFT_STATUSES as readonly string[]);
     }
     if (signal) q = q.abortSignal(signal);

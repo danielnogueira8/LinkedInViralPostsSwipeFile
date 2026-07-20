@@ -2,7 +2,6 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabaseAdmin } from "@/lib/supabase";
 
 export const BACKGROUND_JOB_TYPES = [
-  "weekly_batch",
   "lead_magnet_resource",
   "lead_magnet_image",
   "creator_style_generation",

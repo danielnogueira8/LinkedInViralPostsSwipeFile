@@ -36,7 +36,7 @@ export const NAV_SECTIONS: NavSection[] = [
   {
     label: "Create",
     items: [
-      { href: "/dashboard", label: "Cowork", icon: Handshake, tooltip: "Chat with the writing agent and run weekly batches." },
+      { href: "/dashboard", label: "Cowork", icon: Handshake, tooltip: "Chat with the writing agent." },
       { href: "/dashboard/posts", label: "Posts", icon: FileText, tooltip: "Review, edit, schedule, and track your draft posts." },
       { href: "/dashboard/lead-magnets", label: "Lead Magnets", icon: Gift, tooltip: "Create and share markdown resources for lead-magnet posts." },
     ],

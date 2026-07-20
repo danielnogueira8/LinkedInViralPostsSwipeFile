@@ -178,7 +178,7 @@ export function buildSamenessUserContent(
         "",
         "---",
       ].join("\n"),
-      // A weekly batch checks seven new drafts against this exact same history.
+      // A modeled batch checks several new drafts against this exact same history.
       // Keep that large prefix byte-identical and cacheable; the per-draft body
       // remains in the uncached suffix below.
       cache_control: { type: "ephemeral" },
@@ -228,7 +228,7 @@ export function isAcceptableRewrite(
   }
   // Upper bound mirrors the AI-Tell editor's maxChars guard — a rewrite that
   // pads the body past the caller's length contract must not silently ship
-  // (callers like the weekly batch persist this body with no finalizer pass
+  // (callers like the modeled batch persist this body with no finalizer pass
   // afterward, so this is the only length recheck it gets).
   if (clean.length > maxChars) {
     return { ok: false, reason: "too_long" };

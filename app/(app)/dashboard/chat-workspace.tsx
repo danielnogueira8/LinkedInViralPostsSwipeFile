@@ -188,7 +188,6 @@ import {
   guardRefineCollapse,
   assistantAfterPersistedUserMessage,
   hasAssistantAfterPersistedUserMessage,
-  isWeeklyBatchArtifact,
   kindNoun,
   labelArtifacts,
   looksLikeComposerRefine,
@@ -198,7 +197,6 @@ import {
   refineSuggestions,
   reinsertArtifact,
   shouldShowActivityRail,
-  shouldShowBatchStatusForChat,
   skillNamesToIds,
   stripPlaceholders,
   suggestedLeadMagnetPromptForPost,
@@ -207,21 +205,10 @@ import {
   truncateHeadline,
   visibleActivityTools,
 } from "@/lib/chat-ui-policy";
-import {
-  WeeklyBatchPollResponseSchema,
-  WeeklyBatchReadinessResponseSchema,
-  WeeklyBatchSlotsResponseSchema,
-} from "@/lib/transport/contracts";
 import { partitionCoworkStarters } from "@/lib/cowork-starter-policy";
-import {
-  parseCoworkTurnUsage,
-  researchSourcesFromArtifact,
-} from "@/lib/cowork-turn-usage";
+import { parseCoworkTurnUsage } from "@/lib/cowork-turn-usage";
 import { modeledSourceAttribution } from "@/lib/model-source-attribution";
-import {
-  ResearchSources,
-  TaskUsageSummary,
-} from "./cowork-trust-details";
+import { TaskUsageSummary } from "./cowork-trust-details";
 
 export type { Artifact } from "@/lib/agent/contracts";
 
@@ -255,8 +242,6 @@ const VOICE_WARNING_DISMISSED_KEY = "swipein:cowork-voice-warning-dismissed";
 const DRAFT_PANEL_MIN_WIDTH = 320;
 const DRAFT_PANEL_MAX_WIDTH = 640;
 const DRAFT_PANEL_DEFAULT_WIDTH = 384;
-// UI preview only. The server remains the source of truth for actual batch size.
-const WEEKLY_BATCH_DRAFT_COUNT = 7;
 
 function clampDraftPanelWidth(width: number): number {
   return Math.min(DRAFT_PANEL_MAX_WIDTH, Math.max(DRAFT_PANEL_MIN_WIDTH, width));
@@ -306,24 +291,6 @@ type ChatSummary = {
   updated_at: string;
 };
 
-// The subset of the /api/batch/weekly run row the client renders inline. Kept
-// permissive (each field optional) because the poll's error branch might hand
-// us a partial payload, and the strip degrades gracefully to just "Working…"
-// when a field is missing.
-type BatchRunSnapshot = {
-  id?: string | null;
-  status?: string;
-  stage?: string | null;
-  total?: number;
-  attempted?: number;
-  created?: number;
-  error?: string | null;
-};
-
-// The exact string prefix createBatchChat writes for a weekly-batch chat's
-// title ("Weekly batch — <weekOf>"). Kept here so a chat-title match is the
-// batch-chat detector — no schema change on chat_messages, no new column on
-// chats. If the batch route ever renames the title, update this too.
 const STOPPED_EMPTY_MESSAGE = "Stopped before a response was produced.";
 
 type ArtifactScheduleMeta = {
@@ -499,14 +466,6 @@ export function ChatWorkspace({
   // draft" affordance. Set in the ?model= handoff; a chat stays linked to its
   // source post for its lifetime.
   const [refiningByChat, setRefiningByChat] = useState<Record<string, string>>({});
-  // Batch review outcomes keyed by artifact id. Set when the user clicks
-  // Approve / Reject on a weekly-batch draft inside its Cowork chat. Drives
-  // the per-card badge that replaces the buttons after the action lands so
-  // the user sees confirmation without the card vanishing. Session-only —
-  // a page reload re-reads the DB status to reconcile.
-  const [batchReviewOutcomes, setBatchReviewOutcomes] = useState<
-    Record<string, "approved" | "rejected">
-  >({});
   const [attachmentsByChat, setAttachmentsByChat] = useState<Map<string, Attachment[]>>(
     () => new Map(),
   );
@@ -556,19 +515,18 @@ export function ChatWorkspace({
   // toggle it back open) closes it.
   const [skillPickerOpen, setSkillPickerOpen] = useState(false);
   const skillPickerRef = useRef<HTMLDivElement>(null);
-  const skillPickerButtonRef = useRef<HTMLButtonElement>(null);
   const [postFormatPickerOpen, setPostFormatPickerOpen] = useState(false);
   const postFormatPickerRef = useRef<HTMLDivElement>(null);
-  const postFormatPickerButtonRef = useRef<HTMLButtonElement>(null);
   const [creatorStylePickerOpen, setCreatorStylePickerOpen] = useState(false);
   const creatorStylePickerRef = useRef<HTMLDivElement>(null);
-  const creatorStylePickerButtonRef = useRef<HTMLButtonElement>(null);
   const [leadMagnetPickerOpen, setLeadMagnetPickerOpen] = useState(false);
   const leadMagnetPickerRef = useRef<HTMLDivElement>(null);
-  const leadMagnetPickerButtonRef = useRef<HTMLButtonElement>(null);
   const [generationSettingsOpen, setGenerationSettingsOpen] = useState(false);
   const generationSettingsRef = useRef<HTMLDivElement>(null);
   const generationSettingsButtonRef = useRef<HTMLButtonElement>(null);
+  const [contextMenuOpen, setContextMenuOpen] = useState(false);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
+  const contextMenuButtonRef = useRef<HTMLButtonElement>(null);
   const [draftCountSelection, setDraftCountSelection] =
     useState<DraftCountSelection>("auto");
   // Explicit post-type pick for a plain composer send with no starter (a
@@ -591,12 +549,7 @@ export function ChatWorkspace({
       setCreatorStylePickerOpen(false);
       setLeadMagnetPickerOpen(false);
       setGenerationSettingsOpen(false);
-      // Batch approve/reject badges are session-only UI keyed by artifact id, with
-      // no per-chat scoping. On a chat switch they must clear: a stale "Approved"
-      // badge from chat A could otherwise ride into chat B (and mask the real
-      // pending_review status of a same-id draft after a reload). Cleared here so
-      // each chat reflects only what the user acted on in THAT chat this session.
-      setBatchReviewOutcomes({});
+      setContextMenuOpen(false);
     });
     return () => cancelAnimationFrame(id);
   }, [activeId]);
@@ -670,18 +623,6 @@ export function ChatWorkspace({
   );
   // Live in-flight stream per chat (independent of which chat is on screen).
   const runsByChat = sessionSnapshot.runsByChat;
-  // Live snapshot of the workspace's current batch run — kept fresh by the
-  // /api/batch/weekly poll below. Nulled when no run has ever been made or
-  // between runs. Rendered as an inline activity strip on batch chats so the
-  // user sees stage + counters ("Finding this week's top posts…" → "Drafting
-  // 3 of 5") during the ~15-40s silence between the intro line and the first
-  // draft card landing. See BatchActivityStrip.
-  const [batchRun, setBatchRun] = useState<BatchRunSnapshot | null>(null);
-  // Live per-writer lanes for the running batch (batch_draft_slots rows), kept
-  // fresh by the same poll. Rendered as the worker board inside the batch chat
-  // so the user watches each writer advance queued → drafting → filed, instead
-  // of staring at a stage line while 7 workers run silently in parallel.
-  const [batchSlots, setBatchSlots] = useState<BatchSlot[]>([]);
   // Bumped on every run update to trigger a render.
   const bump = useCallback(() => chatSession.changed(), [chatSession]);
 
@@ -691,24 +632,13 @@ export function ChatWorkspace({
   const messages: Message[] = activeId
     ? [...activeBase, ...(activeRun ? runOverlay(activeRun, activeBase) : [])]
     : [];
-  // The active chat's sidebar row, used for the title-based batch-chat check
-  // below. Prefer local state, but also consult fresh server props because a
-  // soft navigation to a newly-created batch chat can update initialChats
-  // without remounting this client component.
+  // The active chat's sidebar row. Prefer local state, but also consult fresh
+  // server props because a soft navigation can update initialChats without
+  // remounting this client component.
   const activeChat = activeId
     ? chats.find((c) => c.id === activeId) ??
       initialChats.find((c) => c.id === activeId)
     : undefined;
-  // Show batch progress when the active chat is the weekly-batch session. The
-  // title prefix is the primary signal, but after a soft navigation the active
-  // chat can be visible before the sidebar list has merged the new server props;
-  // persisted batch transcript/artifact content is the fallback so the progress
-  // UI does not disappear during that handoff.
-  // Draft cards expose persistence-backed actions (edit, save, schedule, and
-  // delete), so live-run artifacts remain progress-only. The panel receives a
-  // card only after the canonical assistant message is loaded from the server.
-  // This closes the window where Save could create a board row and then fail
-  // to link it back to an assistant artifact that did not exist in the DB yet.
   const activeArtifactsAll: Artifact[] = activeId
     ? persistedDraftPanelArtifacts(artifactsByChat.get(activeId) ?? [])
     : [];
@@ -716,67 +646,6 @@ export function ChatWorkspace({
     const status = generatedLeadMagnetImageStatus(artifact)?.status;
     return status === "queued" || status === "running";
   });
-  const isBatchChat = shouldShowBatchStatusForChat({
-    title: activeChat?.title,
-    messages,
-    artifacts: activeArtifactsAll,
-    run: batchRun,
-  });
-  // Only pin the LIVE batch strip while a run is actually pending/running.
-  // Once the batch settles (done / failed), the strip must retire so the chat
-  // flows normally — otherwise the transcript's inline `BatchWorkerBoard` and
-  // the panel's `BatchPanelStatus` both stay glued to the bottom/top of their
-  // scroll containers forever, and every follow-up turn renders ABOVE them.
-  // The settle message (weekly.ts writes it as a real assistant chat_messages
-  // row) already lives in the transcript, so nothing is lost when the strip
-  // disappears.
-  const batchRunActive =
-    batchRun?.status === "pending" || batchRun?.status === "running";
-  const showBatchStrip = isBatchChat && !!batchRun && batchRunActive;
-  // Mirror isBatchChat into a ref so the long-lived poll closure (deps don't
-  // include isBatchChat) can gate the extra slots fetch on it without re-firing.
-  const isBatchChatRef = useRef(isBatchChat);
-  useEffect(() => {
-    isBatchChatRef.current = isBatchChat;
-  }, [isBatchChat]);
-  const fetchBatchSlotsForRun = useCallback(
-    async (
-      runId: string,
-      options?: { shouldApply?: () => boolean },
-    ): Promise<void> => {
-      try {
-        const sres = await fetch(
-          `/api/batch/weekly/slots?batchId=${encodeURIComponent(runId)}`,
-          { cache: "no-store" },
-        );
-        const sdata = (await sres.json().catch(() => ({}))) as {
-          ok?: boolean;
-          slots?: BatchSlot[];
-        };
-        if (
-          sdata?.ok &&
-          Array.isArray(sdata.slots) &&
-          (options?.shouldApply?.() ?? true)
-        ) {
-          setBatchSlots(sdata.slots);
-        }
-      } catch {
-        /* transient — the normal batch poll will retry */
-      }
-    },
-    [],
-  );
-  useEffect(() => {
-    const runId =
-      typeof batchRun?.id === "string" && batchRun.id.trim() ? batchRun.id : null;
-    if (!showBatchStrip || !runId) {
-      return;
-    }
-    const timeout = window.setTimeout(() => {
-      void fetchBatchSlotsForRun(runId);
-    }, 0);
-    return () => window.clearTimeout(timeout);
-  }, [batchRun?.id, fetchBatchSlotsForRun, showBatchStrip]);
   // The drafts panel shows generated post/hook drafts ONLY: "cite" artifacts
   // (read-only source references) render inline in the conversation, and a
   // body-less artifact would render as a blank "Draft" card — so both are
@@ -796,8 +665,7 @@ export function ChatWorkspace({
   // ("Draft N" chip visible, no readable body) because the LinkedIn-style
   // preview renders 1-2 chars as effectively empty space. 40 chars is well
   // below any real hook (typical LinkedIn hook: 60-120 chars) so a genuine
-  // draft is never dropped. The batch drafts you already have all have 100+
-  // char bodies — safe floor.
+  // draft is never dropped. Real drafts have 100+ char bodies — safe floor.
   const MIN_PANEL_DRAFT_LENGTH = 40;
   // Only POST drafts reach the panel. Hooks are never rendered as cards
   // (render_hook removed); a stray/legacy kind:"hook" artifact is dropped here
@@ -808,7 +676,7 @@ export function ChatWorkspace({
       a.body.trim().length >= MIN_PANEL_DRAFT_LENGTH &&
       !looksCorruptedDraft(a.body),
   );
-  const hasDraftPanel = artifacts.length > 0 || showBatchStrip;
+  const hasDraftPanel = artifacts.length > 0;
   const sending = !!activeRun && activeRun.streaming;
   // Chats with a live background run, for the sidebar spinner.
   const streamingChatIds = new Set<string>();
@@ -827,8 +695,7 @@ export function ChatWorkspace({
   }, [activeId]);
 
   // React to a server-driven change of the ?chat= query. `useState(initialChatId)`
-  // only fires ONCE at mount — so a soft nav that changes the query (e.g. the
-  // HomeBatchCard firing `router.push('/dashboard?chat=<batchChatId>')`) re-runs
+  // only fires ONCE at mount — so a soft nav that changes the query re-runs
   // page.tsx and hands us a fresh initialChatId prop, but activeId stays parked
   // on whatever was open before. Result: the user saw the toast, then… nothing,
   // and had to hard-refresh to unstick the view.
@@ -841,8 +708,7 @@ export function ChatWorkspace({
     if (!initialChatId) return;
     if (initialChatId === activeIdRef.current) return;
     const id = initialChatId;
-    // Mark loading unless we already have this chat cached (rare on this
-    // path — a soft nav to a brand-new batch chat). Skips the empty-state
+    // Mark loading unless we already have this chat cached. Skips the empty-state
     // flash while the fetch is in flight.
     const hasContent =
       (baseByChat.get(id)?.length ?? 0) > 0 || !!runsByChat.get(id);
@@ -867,7 +733,7 @@ export function ChatWorkspace({
           data.messages.flatMap((m) => m.artifacts ?? []),
         );
       } catch {
-        /* the batch poll below will retry if this was a blip */
+        /* transient — next tick retries */
       } finally {
         if (!cancelled) {
           setLoadingChatId((cur) => (cur === id ? null : cur));
@@ -899,7 +765,6 @@ export function ChatWorkspace({
     const onDocPointerDown = (e: globalThis.MouseEvent) => {
       const t = e.target as Node;
       if (skillPickerRef.current?.contains(t)) return;
-      if (skillPickerButtonRef.current?.contains(t)) return;
       setSkillPickerOpen(false);
     };
     const onKey = (e: globalThis.KeyboardEvent) => {
@@ -918,7 +783,6 @@ export function ChatWorkspace({
     const onDocPointerDown = (e: globalThis.MouseEvent) => {
       const t = e.target as Node;
       if (postFormatPickerRef.current?.contains(t)) return;
-      if (postFormatPickerButtonRef.current?.contains(t)) return;
       setPostFormatPickerOpen(false);
     };
     const onKey = (e: globalThis.KeyboardEvent) => {
@@ -937,7 +801,6 @@ export function ChatWorkspace({
     const onDocPointerDown = (e: globalThis.MouseEvent) => {
       const t = e.target as Node;
       if (creatorStylePickerRef.current?.contains(t)) return;
-      if (creatorStylePickerButtonRef.current?.contains(t)) return;
       setCreatorStylePickerOpen(false);
     };
     const onKey = (e: globalThis.KeyboardEvent) => {
@@ -956,7 +819,6 @@ export function ChatWorkspace({
     const onDocPointerDown = (e: globalThis.MouseEvent) => {
       const t = e.target as Node;
       if (leadMagnetPickerRef.current?.contains(t)) return;
-      if (leadMagnetPickerButtonRef.current?.contains(t)) return;
       setLeadMagnetPickerOpen(false);
     };
     const onKey = (e: globalThis.KeyboardEvent) => {
@@ -988,6 +850,26 @@ export function ChatWorkspace({
       document.removeEventListener("keydown", onKey);
     };
   }, [generationSettingsOpen]);
+
+  // Add context menu: close on outside click + Escape.
+  useEffect(() => {
+    if (!contextMenuOpen) return;
+    const onDocPointerDown = (e: globalThis.MouseEvent) => {
+      const target = e.target as Node;
+      if (contextMenuRef.current?.contains(target)) return;
+      if (contextMenuButtonRef.current?.contains(target)) return;
+      setContextMenuOpen(false);
+    };
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === "Escape") setContextMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDocPointerDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocPointerDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [contextMenuOpen]);
 
   // Reconcile the workspace's custom skills with the DB on mount (for the /
   // autocomplete + ⚡ picker). The list is SEEDED from the server prop above, so
@@ -1695,6 +1577,7 @@ export function ChatWorkspace({
         setLeadMagnetPickerOpen(false);
         setPendingCreatorStyle(null);
         setCreatorStylePickerOpen(false);
+        setContextMenuOpen(false);
         setModelSource({
           id: s.id,
           authorName: s.author_name ?? null,
@@ -1773,6 +1656,7 @@ export function ChatWorkspace({
       setPendingLeadMagnet(null);
       setLeadMagnetPickerOpen(false);
       setCreatorStylePickerOpen(false);
+      setContextMenuOpen(false);
       setPendingCreatorStyle(match);
       /* eslint-enable react-hooks/set-state-in-effect */
       bump();
@@ -1986,143 +1870,8 @@ export function ChatWorkspace({
   }, []);
 
   // -----------------------------------------------------------------------------
-  // Batch chat live-feedback poll.
+  // Lead-magnet image live-feedback poll.
   //
-  // The weekly batch runs in the background worker and writes to chat_messages
-  // as each draft finishes — no SSE, no push. Before this poll, the transcript
-  // hydrated once and then sat frozen: the user saw the intro line (if that,
-  // and only after a hard refresh — see the initialChatId sync effect above)
-  // and had to keep refreshing to watch the drafts land. This poll makes the
-  // batch chat feel LIVE: while the workspace's batch_runs row is
-  // pending|running, we refetch the active chat every ~2.5s and merge new
-  // rows into baseByChat.
-  //
-  // Design notes:
-  //   • Trigger is a workspace-level status ping (/api/batch/weekly), not a
-  //     per-chat one. Only ONE batch runs per workspace at a time, so this
-  //     matches the invariant naturally and needs no new endpoint.
-  //   • If the active chat isn't the batch chat, the extra reload is
-  //     harmless (message ids haven't changed → no re-render).
-  //   • Stops on done/failed and issues ONE final reload so the closing
-  //     "Review them on your Posts page" line lands even if it hit the DB
-  //     right as we stopped.
-  //   • When no run is active (idle workspace), tick() short-circuits after
-  //     one ping; no infinite polling of a quiet API.
-  //   • Re-fires whenever activeId flips — so opening the fresh batch chat
-  //     via the initialChatId sync effect kicks the poll immediately.
-  // -----------------------------------------------------------------------------
-  useEffect(() => {
-    if (!activeId) return;
-    let stopped = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-
-    const reloadActive = async (): Promise<void> => {
-      const id = activeIdRef.current;
-      if (!id) return;
-      try {
-        const res = await fetch(`/api/chats/${id}`, { cache: "no-store" });
-        if (!res.ok) return;
-        const data = (await res.json()) as {
-          ok?: boolean;
-          messages?: RawDbMessage[];
-        };
-        if (!data.ok || !Array.isArray(data.messages)) return;
-        // Never clobber a live in-flight run's overlay by rewriting base
-        // mid-turn. Ordinary batch turns don't set runsByChat, so this only
-        // guards the (rare) case where the user sends a normal message
-        // AGAINST the batch chat while workers are still filing drafts.
-        if (runsByChat.has(id)) return;
-        const nextBase = hydrate(data.messages);
-        const prevBase = baseByChat.get(id) ?? [];
-        // Cheap change detection: length or last-id delta. Avoids
-        // reconstructing identical Message[] arrays each tick.
-        const prevLast = prevBase[prevBase.length - 1]?.id ?? null;
-        const nextLast = nextBase[nextBase.length - 1]?.id ?? null;
-        if (prevBase.length === nextBase.length && prevLast === nextLast) return;
-        chatSession.reconcile(
-          id,
-          nextBase,
-          data.messages.flatMap((m) => m.artifacts ?? []),
-        );
-      } catch {
-        /* transient — next tick retries */
-      }
-    };
-
-    const tick = async (): Promise<void> => {
-      if (stopped) return;
-      try {
-        const data = await safeJsonSchema(
-          WeeklyBatchPollResponseSchema,
-          "/api/batch/weekly",
-          { cache: "no-store" },
-        );
-        const run = (data?.run as BatchRunSnapshot | null | undefined) ?? null;
-        // Publish the snapshot every tick so the inline activity strip
-        // reflects the live stage + counters. Guard: only overwrite state
-        // if it actually changed (cheap shallow compare) — spare a re-render
-        // on every idle 2.5s tick when nothing's moving.
-        if (!stopped) {
-          setBatchRun((prev) => {
-            if (prev === run) return prev;
-            if (!prev && !run) return prev;
-            if (
-              prev &&
-              run &&
-              prev.status === run.status &&
-              prev.stage === run.stage &&
-              prev.total === run.total &&
-              prev.created === run.created &&
-              prev.attempted === run.attempted
-            ) {
-              return prev;
-            }
-            return run;
-          });
-        }
-        const status = run?.status;
-        const running = status === "pending" || status === "running";
-        // Fetch the per-writer lanes so the worker board can render live and
-        // remain visible after settle. Only on the batch chat (no point paying
-        // for slots on a normal chat). run.id IS the batchId.
-        const runId = (run as { id?: string } | null)?.id ?? null;
-        if (runId && isBatchChatRef.current) {
-          await fetchBatchSlotsForRun(runId, { shouldApply: () => !stopped });
-        }
-        if (typeof document !== "undefined" && document.hidden && running) {
-          if (!stopped) timer = setTimeout(() => void tick(), CHAT_BATCH_HIDDEN_POLL_MS);
-        } else if (running) {
-          await reloadActive();
-          if (!stopped) {
-            timer = setTimeout(
-              () => void tick(),
-              status === "pending" ? CHAT_BATCH_QUEUED_POLL_MS : CHAT_BATCH_RUNNING_POLL_MS,
-            );
-          }
-        } else if (status === "done" || status === "failed") {
-          // One final reload so the closing "Review them on your Posts page"
-          // line and any last-worker card that raced with settle both land.
-          await reloadActive();
-        }
-        // status === undefined (workspace has never run a batch) → don't tick
-      } catch {
-        // API blip → back off slightly, don't spin.
-        if (!stopped) {
-          timer = setTimeout(
-            () => void tick(),
-            typeof document !== "undefined" && document.hidden ? CHAT_BATCH_HIDDEN_POLL_MS : 5000,
-          );
-        }
-      }
-    };
-
-    void tick();
-    return () => {
-      stopped = true;
-      if (timer) clearTimeout(timer);
-    };
-  }, [activeId, bump, baseByChat, artifactsByChat, fetchBatchSlotsForRun, runsByChat, chatSession]);
-
   // Lead-magnet images are generated by the background worker after the text
   // draft is already saved. While the active chat has a queued/running image
   // artifact, refresh the transcript lightly until the worker patches it with
@@ -2156,7 +1905,7 @@ export function ChatWorkspace({
         if (!stopped) {
           timer = setTimeout(
             () => void tick(),
-            typeof document !== "undefined" && document.hidden ? CHAT_BATCH_HIDDEN_POLL_MS : IMAGE_ARTIFACT_POLL_MS,
+            typeof document !== "undefined" && document.hidden ? HIDDEN_POLL_MS : IMAGE_ARTIFACT_POLL_MS,
           );
         }
       }
@@ -2201,6 +1950,7 @@ export function ChatWorkspace({
     setLeadMagnetPickerOpen(false);
     setPendingCreatorStyle(null);
     setCreatorStylePickerOpen(false);
+    setContextMenuOpen(false);
     const request = (async (): Promise<string | null> => {
       try {
         const res = await fetch("/api/chats", {
@@ -2505,6 +2255,7 @@ export function ChatWorkspace({
       setCreatorStylePickerOpen(false);
       setLeadMagnetPickerOpen(false);
       setGenerationSettingsOpen(false);
+      setContextMenuOpen(false);
 
       // Capture + consume file attachments for this turn.
       const files = attachments;
@@ -3543,49 +3294,6 @@ export function ChatWorkspace({
     [artifactsByChat, runsByChat, bump, chatSession],
   );
 
-  // Batch review: approve or reject a weekly-batch draft directly from its
-  // Cowork draft card. Approve moves it to Ready on the /posts board; reject
-  // flips it to 'rejected' (off-board but preserves the source-post dedup
-  // signal so next week's batch skips the same source). Optimistic: paint
-  // the outcome badge first, PATCH under it. On failure roll back so the
-  // user can retry. The artifact.id here IS the chat_artifacts row id
-  // (batch worker inserts a chat_artifacts row per draft, then mirrors the
-  // artifact into chat_messages.artifacts with the same id) so
-  // /api/drafts/:id targets the review row directly.
-  const submitBatchReviewOutcome = useCallback(
-    async (artifactId: string, outcome: "approved" | "rejected") => {
-      setBatchReviewOutcomes((prev) =>
-        prev[artifactId] === outcome ? prev : { ...prev, [artifactId]: outcome },
-      );
-      try {
-        const res = await fetch(`/api/drafts/${artifactId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            status: outcome === "approved" ? "ready" : "rejected",
-          }),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!data?.ok) throw new Error(data?.error || "Failed");
-        if (outcome === "approved") {
-          toast.success("Approved — it's in your Ready column.");
-        } else {
-          toast.success("Rejected — this won't be re-served next week.");
-        }
-      } catch (e) {
-        setBatchReviewOutcomes((prev) => {
-          const next = { ...prev };
-          delete next[artifactId];
-          return next;
-        });
-        toast.error(
-          (e as Error).message || "Couldn't update the draft — try again.",
-        );
-      }
-    },
-    [],
-  );
-
   // Delete one draft/hook card from the chat panel. The card lives in the owning
   // assistant message's artifacts (persisted jsonb), so an in-memory-only
   // removal would reappear on reload — we hit the server, then prune both the
@@ -3771,19 +3479,7 @@ export function ChatWorkspace({
   const draftsList = labelArtifacts(artifacts)
     .reverse() // newest first
     .map(({ a, label }) =>
-      // Weekly-batch drafts are review-gated (pending_review) — render a
-      // READ-ONLY preview with no Save/Refine, so the review panel stays the one
-      // approval writer. Never the editable card, never the Save-able collapsed
-      // row.
-      (a.meta as { source?: unknown } | undefined)?.source === "weekly_batch" ? (
-        <BatchPreviewCard
-          key={a.id}
-          artifact={a}
-          onApprove={() => void submitBatchReviewOutcome(a.id, "approved")}
-          onReject={() => void submitBatchReviewOutcome(a.id, "rejected")}
-          outcome={batchReviewOutcomes[a.id]}
-        />
-      ) : a.id === expandedArtifactId ? (
+      a.id === expandedArtifactId ? (
         <ArtifactCard
           key={a.id}
           artifact={a}
@@ -3806,18 +3502,6 @@ export function ChatWorkspace({
           // disable the controls + show why instead of a dead click.
           refineDisabled={sending}
           onDelete={() => deleteArtifact(a.id)}
-          // Batch review inline on the card: a weekly-batch draft
-          // (meta.source === 'weekly_batch') gets Approve / Reject actions.
-          // Once acted on, a badge replaces them (batchReviewOutcomes).
-          {...(isWeeklyBatchArtifact(a)
-            ? {
-                onApproveBatchReview: () =>
-                  void submitBatchReviewOutcome(a.id, "approved"),
-                onRejectBatchReview: () =>
-                  void submitBatchReviewOutcome(a.id, "rejected"),
-                batchReviewOutcome: batchReviewOutcomes[a.id],
-              }
-            : {})}
         />
       ) : (
         <CollapsedDraftRow
@@ -3825,13 +3509,7 @@ export function ChatWorkspace({
           label={label ?? (a.kind === "hook" ? "Hook" : "Draft")}
           artifact={a}
           onExpand={() => setExpandedArtifactId(a.id)}
-          // Delete is hidden on batch drafts awaiting review — see the
-          // matching gate on the expanded card's header. Reject is the
-          // correct discard flow for a batch draft; the transcript-only
-          // delete would half-orphan the chat_artifacts row.
-          {...(isWeeklyBatchArtifact(a)
-            ? {}
-            : { onDelete: () => deleteArtifact(a.id) })}
+          onDelete={() => deleteArtifact(a.id)}
         />
       ),
     );
@@ -4002,7 +3680,7 @@ export function ChatWorkspace({
               />
             )
           ) : (
-            <div className={cn("mx-auto flex max-w-4xl flex-col pb-2", isBatchChat ? "gap-3" : "gap-7")}>
+            <div className={cn("mx-auto flex max-w-4xl flex-col pb-2", "gap-7")}>
               {messages.map((m) => (
                   <MessageBubble
                     key={m.id}
@@ -4142,16 +3820,6 @@ export function ChatWorkspace({
                   }}
                 />
               ))}
-              {/* Live worker board for the batch chat — bridges the silence
-                  while N writers draft in parallel. A header (stage + counter +
-                  progress bar) over one live lane per writer (queued → drafting
-                  → filed/skipped), reusing the home card's WorkerLane. Reads the
-                  polled batchRun snapshot + batchSlots. Rendered inside the
-                  transcript flex so it sits like another message, and disappears
-                  when the batch settles. */}
-              {showBatchStrip && batchRun && (
-                <BatchWorkerBoard run={batchRun} slots={batchSlots} />
-              )}
               {/* Reattach indicator: this chat's turn is running server-side but
                   we hold no live local run (a full-page navigation destroyed the
                   stream + plan). Show "Cowork is still working…" so the user gets
@@ -4936,21 +4604,6 @@ export function ChatWorkspace({
               />
               <div className="flex items-center gap-1.5 border-t border-border pt-2.5">
               <Button
-                type="button"
-                size="icon"
-                variant="outline"
-                onClick={() => fileInputRef.current?.click()}
-                // Attaching while a turn streams is fine — the files ride on the
-                // NEXT send (attachments are consumed per-send), matching the
-                // compose-ahead composer.
-                disabled={attachments.length >= MAX_ATTACHMENTS}
-                className="h-9 w-9 shrink-0 rounded-xl border-border bg-card hover:bg-muted"
-                aria-label="Attach a file"
-                title="Attach an image, PDF, Word doc, or text file"
-              >
-                <Paperclip className="h-4 w-4" />
-              </Button>
-              <Button
                 ref={generationSettingsButtonRef}
                 type="button"
                 variant="outline"
@@ -4959,6 +4612,7 @@ export function ChatWorkspace({
                   setPostFormatPickerOpen(false);
                   setCreatorStylePickerOpen(false);
                   setLeadMagnetPickerOpen(false);
+                  setContextMenuOpen(false);
                   setGenerationSettingsOpen((open) => !open);
                 }}
                 className={cn(
@@ -4991,120 +4645,181 @@ export function ChatWorkspace({
                     ` · ${postTypeSelection === "regular" ? "Regular" : "Lead magnet"}`}
                 </span>
               </Button>
-              {/* ⚡ Custom-skills picker — only when the workspace has skills.
-                  Opens a panel above the composer to browse + toggle skills. */}
-              {customSkills.length > 0 && (
+              <div className="relative">
                 <Button
-                  ref={skillPickerButtonRef}
+                  ref={contextMenuButtonRef}
                   type="button"
-                  size="icon"
                   variant="outline"
                   onClick={() => {
                     setGenerationSettingsOpen(false);
+                    setSkillPickerOpen(false);
                     setPostFormatPickerOpen(false);
                     setCreatorStylePickerOpen(false);
                     setLeadMagnetPickerOpen(false);
-                    setSkillPickerOpen((o) => !o);
+                    setContextMenuOpen((open) => !open);
                   }}
                   className={cn(
-                    "h-9 w-9 shrink-0 rounded-xl border-border bg-card hover:bg-muted",
-                    (skillPickerOpen || pendingSkills.length > 0) &&
-                      "border-state-warning-border text-state-warning",
+                    "h-9 shrink-0 gap-1.5 rounded-xl border-border bg-card px-2.5 hover:bg-muted",
+                    (contextMenuOpen ||
+                      attachments.length > 0 ||
+                      pendingSkills.length > 0 ||
+                      pendingPostFormat ||
+                      pendingCreatorStyle ||
+                      pendingLeadMagnet) &&
+                      "border-primary/60 text-primary",
                   )}
-                  aria-label="Apply a custom skill"
-                  aria-expanded={skillPickerOpen}
-                  title="Apply a custom skill"
+                  aria-label="Add context"
+                  aria-expanded={contextMenuOpen}
+                  title="Attach files, apply skills, pick format, style, or lead magnet"
                 >
-                  <Zap className="h-4 w-4" />
+                  <Plus className="h-4 w-4" aria-hidden />
+                  <span className="text-xs font-medium">Add context</span>
+                  {(attachments.length > 0 ||
+                    pendingSkills.length > 0 ||
+                    pendingPostFormat ||
+                    pendingCreatorStyle ||
+                    pendingLeadMagnet) && (
+                    <span className="text-xs font-medium tabular-nums">
+                      {attachments.length +
+                        pendingSkills.length +
+                        (pendingPostFormat ? 1 : 0) +
+                        (pendingCreatorStyle ? 1 : 0) +
+                        (pendingLeadMagnet ? 1 : 0)}
+                    </span>
+                  )}
                 </Button>
-              )}
-              <Button
-                ref={postFormatPickerButtonRef}
-                type="button"
-                size="icon"
-                variant="outline"
-                onClick={() => {
-                  setGenerationSettingsOpen(false);
-                  setSkillPickerOpen(false);
-                  setCreatorStylePickerOpen(false);
-                  setLeadMagnetPickerOpen(false);
-                  setPostFormatPickerOpen((o) => !o);
-                }}
-                disabled={!!modelSource}
-                className={cn(
-                  "h-9 w-9 shrink-0 rounded-xl border-border bg-card hover:bg-muted",
-                  (postFormatPickerOpen || pendingPostFormat) &&
-                    "border-primary/60 text-primary",
+                {contextMenuOpen && (
+                  <div
+                    ref={contextMenuRef}
+                    role="dialog"
+                    aria-label="Add context"
+                    className="absolute bottom-full left-0 z-20 mb-3 w-64 overflow-hidden rounded-2xl border border-border bg-card/90 shadow-[0_24px_80px_rgba(28,28,26,0.16)] backdrop-blur"
+                  >
+                    <div className="flex items-center justify-between border-b border-border px-3.5 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                      <span>Add context</span>
+                      <button
+                        type="button"
+                        onClick={() => setContextMenuOpen(false)}
+                        className="text-muted-foreground hover:text-foreground"
+                        aria-label="Close"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                    <div className="flex flex-col py-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setContextMenuOpen(false);
+                          fileInputRef.current?.click();
+                        }}
+                        disabled={attachments.length >= MAX_ATTACHMENTS}
+                        className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <Paperclip className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                        <span className="flex-1 text-foreground">Attach a file</span>
+                        <span className="text-xs text-muted-foreground">
+                          {attachments.length}/{MAX_ATTACHMENTS}
+                        </span>
+                      </button>
+                      {customSkills.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setContextMenuOpen(false);
+                            setSkillPickerOpen(true);
+                          }}
+                          className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm transition-colors hover:bg-muted"
+                        >
+                          <Zap
+                            className={cn(
+                              "h-4 w-4 shrink-0",
+                              pendingSkills.length > 0
+                                ? "text-state-warning"
+                                : "text-muted-foreground",
+                            )}
+                            aria-hidden
+                          />
+                          <span className="flex-1 text-foreground">Apply a skill</span>
+                          {pendingSkills.length > 0 && (
+                            <span className="text-xs text-state-warning">
+                              {pendingSkills.length}
+                            </span>
+                          )}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setContextMenuOpen(false);
+                          setPostFormatPickerOpen(true);
+                        }}
+                        disabled={!!modelSource}
+                        className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <FileText
+                          className={cn(
+                            "h-4 w-4 shrink-0",
+                            pendingPostFormat
+                              ? "text-primary"
+                              : "text-muted-foreground",
+                          )}
+                          aria-hidden
+                        />
+                        <span className="flex-1 text-foreground">Choose post format</span>
+                        {pendingPostFormat && (
+                          <Check className="ml-auto h-3.5 w-3.5 text-primary" />
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setContextMenuOpen(false);
+                          setCreatorStylePickerOpen(true);
+                        }}
+                        disabled={!!modelSource}
+                        className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <Fingerprint
+                          className={cn(
+                            "h-4 w-4 shrink-0",
+                            pendingCreatorStyle
+                              ? "text-primary"
+                              : "text-muted-foreground",
+                          )}
+                          aria-hidden
+                        />
+                        <span className="flex-1 text-foreground">Choose creator style</span>
+                        {pendingCreatorStyle && (
+                          <Check className="ml-auto h-3.5 w-3.5 text-primary" />
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setContextMenuOpen(false);
+                          setLeadMagnetPickerOpen(true);
+                        }}
+                        className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm transition-colors hover:bg-muted"
+                      >
+                        <Gift
+                          className={cn(
+                            "h-4 w-4 shrink-0",
+                            pendingLeadMagnet
+                              ? "text-primary"
+                              : "text-muted-foreground",
+                          )}
+                          aria-hidden
+                        />
+                        <span className="flex-1 text-foreground">Choose lead magnet</span>
+                        {pendingLeadMagnet && (
+                          <Check className="ml-auto h-3.5 w-3.5 text-primary" />
+                        )}
+                      </button>
+                    </div>
+                  </div>
                 )}
-                aria-label="Choose post format"
-                aria-expanded={postFormatPickerOpen}
-                title={
-                  modelSource
-                    ? "Source post controls the structure"
-                    : "Choose post format"
-                }
-              >
-                <FileText className="h-4 w-4" />
-              </Button>
-              <Button
-                ref={leadMagnetPickerButtonRef}
-                type="button"
-                size="icon"
-                variant="outline"
-                onClick={() => {
-                  setGenerationSettingsOpen(false);
-                  setSkillPickerOpen(false);
-                  setPostFormatPickerOpen(false);
-                  setCreatorStylePickerOpen(false);
-                  setLeadMagnetPickerOpen((o) => !o);
-                }}
-                className={cn(
-                  "h-9 w-9 shrink-0 rounded-xl border-border bg-card hover:bg-muted",
-                  (leadMagnetPickerOpen ||
-                    pendingLeadMagnet ||
-                    modelSource?.postType === "lead_magnet") &&
-                    "border-primary/60 text-primary",
-                )}
-                aria-label="Choose lead magnet"
-                aria-expanded={leadMagnetPickerOpen}
-                title={
-                  modelSource?.postType === "lead_magnet"
-                      ? "Choose the giveaway for this modeled lead magnet post"
-                      : modelSource?.postType === "regular"
-                        ? "Choose a giveaway if you want this modeled source to become a lead magnet post"
-                        : "Choose lead magnet"
-                }
-              >
-                <Gift className="h-4 w-4" />
-              </Button>
-              <Button
-                ref={creatorStylePickerButtonRef}
-                type="button"
-                size="icon"
-                variant="outline"
-                onClick={() => {
-                  setGenerationSettingsOpen(false);
-                  setSkillPickerOpen(false);
-                  setPostFormatPickerOpen(false);
-                  setLeadMagnetPickerOpen(false);
-                  setCreatorStylePickerOpen((o) => !o);
-                }}
-                disabled={!!modelSource}
-                className={cn(
-                  "h-9 w-9 shrink-0 rounded-xl border-border bg-card hover:bg-muted",
-                  (creatorStylePickerOpen || pendingCreatorStyle) &&
-                    "border-primary/60 text-primary",
-                )}
-                aria-label="Choose creator style"
-                aria-expanded={creatorStylePickerOpen}
-                title={
-                  modelSource
-                    ? "Source post controls the style"
-                    : "Choose creator style"
-                }
-              >
-                <Fingerprint className="h-4 w-4" />
-              </Button>
+              </div>
               <div className="min-w-0 flex-1" />
               {sending ? (
                 // Mid-stream: the primary button stops the run (aborts the SSE
@@ -5217,9 +4932,6 @@ export function ChatWorkspace({
             </button>
           </div>
           <div className="flex-1 min-h-0 overflow-y-scroll [scrollbar-gutter:stable] p-3.5 flex flex-col gap-3">
-            {showBatchStrip && batchRun && (
-              <BatchPanelStatus run={batchRun} slots={batchSlots} />
-            )}
             {draftsList}
           </div>
         </aside>
@@ -5261,9 +4973,6 @@ export function ChatWorkspace({
               </button>
             </div>
             <div className="flex-1 min-h-0 overflow-y-auto p-3.5 flex flex-col gap-3 pb-[env(safe-area-inset-bottom)]">
-              {showBatchStrip && batchRun && (
-                <BatchPanelStatus run={batchRun} slots={batchSlots} />
-              )}
               {draftsList}
             </div>
           </div>
@@ -6119,462 +5828,6 @@ function ActivityStream({
   );
 }
 
-// Live worker board for the weekly batch, rendered inline in the batch chat's
-// transcript while the workspace-level poll reports a pending/running run. It's
-// the fix for "the chat gives no feedback while the writers draft" — instead of
-// one static stage line, the user watches a team: a header (live stage +
-// counter + progress bar) over one lane per writer that advances queued →
-// drafting (spinner) → filed (title) / skipped, reusing the SAME WorkerLane the
-// home card renders so the two surfaces never drift.
-//
-// Degrades gracefully: before the slots arrive (or if that fetch blips) it's
-// just the header — the same ambient strip as before, never a blank box. Fades
-// out entirely when the run settles (done|failed), via showBatchStrip.
-function BatchWorkerBoard({
-  run,
-  slots,
-}: {
-  run: BatchRunSnapshot;
-  slots: BatchSlot[];
-}) {
-  // The pipeline publishes stage strings like "Finding this week's top posts",
-  // "Setting up your writers", "Dispatched N writers". We render the raw stage
-  // so a copy tweak in lib/batch/weekly.ts flows through without a client change.
-  const stage = (run.stage ?? "").trim() || "Working on your week";
-  // Prefer the live lane counts (filed slots) once lanes exist — they're the
-  // ground truth the user is literally watching — and fall back to the run
-  // rollup's counters before slots load. total: lane count if we have lanes,
-  // else the run's committed source count.
-  const filed = slots.filter((s) => s.status === "filed").length;
-  const total = slots.length > 0 ? slots.length : (run.total ?? 0);
-  const created = slots.length > 0 ? filed : (run.created ?? 0);
-  const attempted = run.attempted ?? 0;
-  // Progress denominator: `total` (source count committed at fan-out). Before
-  // fan-out both are 0 → hide the bar/counter; the spinner + stage still move.
-  const showCounter = total > 0;
-  const progressPct = showCounter
-    ? Math.min(100, Math.max(0, Math.round((created / total) * 100)))
-    : 0;
-  const counterLine = showCounter
-    ? created > 0
-      ? `${created} of ${total} drafted`
-      : attempted > 0
-        ? `${attempted} of ${total} in progress`
-        : `${total} in the queue`
-    : null;
-  const terminal = run.status === "done" || run.status === "failed";
-  const HeaderIcon = run.status === "done" ? CheckCircle2 : terminal ? Circle : Loader2;
-  // Lanes render newest-progress-first-ish by their stable slot order (the
-  // pipeline created them in source order). Keep insertion order so a lane
-  // doesn't jump around as its status flips.
-  const ordered = [...slots].sort((a, b) => a.slot_index - b.slot_index);
-  const placeholderCount =
-    ordered.length === 0 && total > 0 ? Math.min(total, WEEKLY_BATCH_DRAFT_COUNT) : 0;
-  return (
-    <div
-      className="agent-card-in rounded-xl border border-primary/25 bg-primary/[0.04] px-4 py-3"
-      aria-live="polite"
-      role="status"
-    >
-      <div className="flex items-center gap-2.5">
-        <HeaderIcon
-          className={cn(
-            "h-4 w-4 shrink-0 text-primary",
-            !terminal && "animate-spin",
-            run.status === "failed" && "text-muted-foreground",
-          )}
-          aria-hidden
-        />
-        <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
-          {stage}
-          {!terminal && (
-            <span className="ml-1 inline-block animate-pulse text-primary">…</span>
-          )}
-        </span>
-        {counterLine && (
-          <span className="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">
-            {counterLine}
-          </span>
-        )}
-      </div>
-      {showCounter && (
-        <div
-          className="mt-2 h-1 w-full overflow-hidden rounded-full bg-primary/10"
-          aria-hidden
-        >
-          <div
-            className="h-full w-full origin-left rounded-full bg-primary/70 transition-transform duration-200 ease-[cubic-bezier(0.25,1,0.5,1)] motion-reduce:transition-none"
-            style={{ transform: `scaleX(${progressPct / 100})` }}
-          />
-        </div>
-      )}
-      {ordered.length > 0 && (
-        <div className="mt-3 flex flex-col gap-1.5">
-          {ordered.map((s) => (
-            <WorkerLane key={s.slot_index} slot={s} />
-          ))}
-        </div>
-      )}
-      {placeholderCount > 0 && (
-        <div className="mt-3 flex flex-col gap-1.5">
-          {Array.from({ length: placeholderCount }).map((_, i) => (
-            <div
-              key={i}
-              className="flex items-center gap-2.5 rounded-xl border border-border/60 bg-background px-3 py-2.5"
-            >
-              <Circle className="h-4 w-4 shrink-0 text-muted-foreground/40" />
-              <div className="min-w-0 flex-1">
-                <div className="h-3 w-32 rounded bg-muted animate-pulse" />
-                <div className="mt-1.5 h-2.5 w-20 rounded bg-muted/70 animate-pulse" />
-              </div>
-              <span className="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
-                Queued
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function BatchPanelStatus({
-  run,
-  slots,
-}: {
-  run: BatchRunSnapshot;
-  slots: BatchSlot[];
-}) {
-  const stage = (run.stage ?? "").trim() || "Working on your week";
-  const filed = slots.filter((s) => s.status === "filed").length;
-  const writing = slots.filter((s) => s.status === "drafting").length;
-  const total = slots.length > 0 ? slots.length : (run.total ?? 0);
-  const created = slots.length > 0 ? filed : (run.created ?? 0);
-  const progressPct =
-    total > 0 ? Math.min(100, Math.max(0, Math.round((created / total) * 100))) : 0;
-  const terminal = run.status === "done" || run.status === "failed";
-  const StatusIcon = run.status === "done" ? CheckCircle2 : terminal ? Circle : Loader2;
-  return (
-    <div className="rounded-xl border border-primary/25 bg-primary/[0.04] p-3">
-      <div className="flex items-start gap-2.5">
-        <StatusIcon
-          className={cn(
-            "mt-0.5 h-4 w-4 shrink-0 text-primary",
-            !terminal && "animate-spin",
-            run.status === "failed" && "text-muted-foreground",
-          )}
-        />
-        <div className="min-w-0 flex-1">
-          <div className="text-sm font-medium leading-snug">{stage}</div>
-          <div className="mt-1 text-xs text-muted-foreground">
-            {total > 0
-              ? `${created}/${total} drafts ready${
-                  writing > 0 ? ` · ${writing} writing now` : ""
-                }`
-              : "Finding the right posts and preparing writers"}
-          </div>
-        </div>
-      </div>
-      {total > 0 && (
-        <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-primary/10">
-          <div
-            className="h-full w-full origin-left rounded-full bg-primary/70 transition-transform duration-200 ease-[cubic-bezier(0.25,1,0.5,1)] motion-reduce:transition-none"
-            style={{ transform: `scaleX(${progressPct / 100})` }}
-          />
-        </div>
-      )}
-      <div className="mt-3 text-xs leading-snug text-muted-foreground">
-        Drafts appear here one by one as each writer finishes.
-      </div>
-    </div>
-  );
-}
-
-// Navigate to the Posts page, dropping the client Router Cache first.
-//
-// The sidebar's <Link href="/dashboard/posts" prefetch> caches the Posts RSC
-// payload early; during a batch, drafts are written server-side but that
-// prefetched client payload is stale, so a plain router.push served the
-// pre-batch snapshot and the review panel looked empty until a manual reload.
-// router.refresh() clears the WHOLE client Router Cache (all routes), so the
-// subsequent push re-fetches /dashboard/posts fresh and the just-filed drafts
-// are there on arrival. Same class of fix as the bookmark button.
-function compactBatchDraftPreview(title: string | null | undefined, body: string): string {
-  const normalizedTitle = (title ?? "").trim().toLowerCase();
-  return body
-    .split(/\n+/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .filter((line, index) => index > 0 || line.toLowerCase() !== normalizedTitle)
-    .slice(0, 2)
-    .join("\n");
-}
-
-// A weekly-batch draft rendered in the chat transcript. READ-ONLY: batch drafts
-// are status='pending_review' and the ONE approval surface is the review panel
-// on /dashboard/posts — so this card has no Save/Refine (which would be a second
-// writer). It shows the draft + a lead-magnet badge + "Adapted from" link, and a
-// single "Review this batch" button that deep-links to the review panel.
-function BatchPreviewCard({
-  artifact,
-  onApprove,
-  onReject,
-  outcome,
-}: {
-  artifact: Artifact;
-  // Approve = PATCH /api/drafts/:id { status:'ready' } → Ready column.
-  // Reject = PATCH { status:'rejected' } → off-board + dedup preserved.
-  // Absent while a batch is still filing this draft (parent gates on the
-  // artifact reaching pending_review before wiring these in).
-  onApprove?: () => void;
-  onReject?: () => void;
-  outcome?: "approved" | "rejected";
-}) {
-  const [copied, markCopied] = useCopiedFlag();
-  const [expanded, setExpanded] = useState(false);
-  const meta = (artifact.meta ?? {}) as {
-    is_lead_magnet?: boolean;
-    source_url?: string | null;
-  };
-  const title = (artifact.title ?? "").trim() || "Draft";
-  const displayBody =
-    artifact.kind === "post" ? normalizePostBody(artifact.body) : artifact.body;
-  const linkedInBody = draftEgressBody(displayBody, artifact.meta);
-  const preview = compactBatchDraftPreview(title, linkedInBody);
-  // The auto-selected lead-magnet resource for this batch draft. Shown as a
-  // "Giveaway: X" pill so the user sees which resource got attached without
-  // opening the full artifact card. Uses the same reader as ArtifactCard.
-  const leadMagnet = artifactLeadMagnet(artifact);
-  // Generated lead-magnet image state. Two data sources:
-  //   • media_attachments — the image, once the job persisted an asset.
-  //   • meta.generated_lead_magnet_image — job status (queued / running /
-  //     done / failed / skipped) + failure reason. Set by the batch worker
-  //     when it enqueues + updated by the image job on completion.
-  // We surface all three states below the expanded body so the user can see
-  // WHY credits were spent even if the image isn't ready yet or the job failed.
-  const mediaAttachments = artifactMediaAttachments(artifact);
-  const imageAttachments = mediaAttachments.filter(
-    (a) => a.type === "image" && (a.previewUrl || a.url),
-  );
-  const generatedImageStatus = generatedLeadMagnetImageStatus(artifact);
-  const imageJobPending =
-    !imageAttachments.length &&
-    (generatedImageStatus?.status === "queued" ||
-      generatedImageStatus?.status === "running");
-  const imageJobFailed =
-    !imageAttachments.length &&
-    (generatedImageStatus?.status === "failed" ||
-      generatedImageStatus?.status === "skipped");
-  const copy = async () => {
-    // For a markdown-model draft, copy the LinkedIn-ready form (Unicode bold, "• "
-    // bullets, no raw markdown) so pasting into LinkedIn matches publish.
-    if (await copyToClipboard(linkedInBody)) {
-      markCopied();
-    }
-  };
-  return (
-    <div className="rounded-xl border border-primary/30 bg-primary/[0.03]">
-      {/* Header row — title is the focal point (bumped to sm/foreground), the
-          lead-magnet chip is small and matches the posts-board kindBadge for
-          cross-surface consistency. When the draft has been reviewed
-          (approved/rejected in this session), the status swaps from
-          "Pending review" to a confirmation. */}
-      <button
-        type="button"
-        className="block w-full px-4 py-3 text-left transition-colors hover:bg-primary/[0.035]"
-        onClick={() => setExpanded((open) => !open)}
-        aria-expanded={expanded}
-      >
-        <div className="flex items-center gap-2">
-          <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
-            {title}
-          </span>
-          {meta.is_lead_magnet && (
-            <span
-              className="shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary"
-              title={postTypeHelp(true)}
-            >
-              lead magnet
-            </span>
-          )}
-          {outcome === "approved" ? (
-            <span
-              className="inline-flex shrink-0 items-center gap-1 text-[11px] text-state-success"
-              title="Approved — this draft is on the Ready column of your Posts board."
-            >
-              <span
-                className="h-1.5 w-1.5 rounded-full bg-state-success"
-                aria-hidden
-              />
-              Approved
-            </span>
-          ) : outcome === "rejected" ? (
-            <span
-              className="inline-flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground"
-              title="Rejected — kept off the board; the source post won't be re-served next week."
-            >
-              <span
-                className="h-1.5 w-1.5 rounded-full bg-muted-foreground/50"
-                aria-hidden
-              />
-              Rejected
-            </span>
-          ) : (
-            <span
-              className="inline-flex shrink-0 items-center gap-1 text-[11px] text-state-warning"
-              title="Pending review — approve or reject below to move this draft to Ready or rejected."
-            >
-              <span
-                className="h-1.5 w-1.5 rounded-full bg-state-warning"
-                aria-hidden
-              />
-              Pending review
-            </span>
-          )}
-          <ChevronDown
-            className={cn(
-              "h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform",
-              expanded && "rotate-180",
-            )}
-            aria-hidden
-          />
-        </div>
-        {!expanded && preview && (
-          <div className="mt-2 whitespace-pre-line text-sm leading-snug text-muted-foreground line-clamp-2">
-            {preview}
-          </div>
-        )}
-      </button>
-      {expanded && (
-        <div className="whitespace-pre-wrap px-4 pb-3 text-sm leading-relaxed">
-          {linkedInBody}
-        </div>
-      )}
-      {/* Generated lead-magnet image — the credit-spend feedback surface. Three
-          states, in priority order:
-          1) image ready → render the asset (LinkedIn-style aspect, 1 tile).
-          2) job in-flight → skeleton placeholder so the user can see credits
-             are being spent for a reason (the batch worker enqueued a job).
-          3) job failed/skipped → muted one-liner explaining the null result.
-          Nothing renders when no lead-magnet image was ever intended. */}
-      {expanded && imageAttachments.length > 0 && (
-        <div className="px-4 pb-3">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={imageAttachments[0].previewUrl || imageAttachments[0].url || ""}
-            alt=""
-            className="aspect-[4/3] w-full rounded-lg border border-border/60 bg-muted/30 object-cover"
-          />
-          <p className="mt-1.5 text-[11px] text-muted-foreground">
-            Image ready in your media library. It travels with the draft when
-            you approve it, so it will attach on the Posts board.
-          </p>
-        </div>
-      )}
-      {expanded && imageJobPending && (
-        <div className="px-4 pb-3">
-          <div
-            className="aspect-[4/3] w-full animate-pulse rounded-lg border border-border/60 bg-muted/40"
-            aria-label="Generating image"
-          />
-          <p className="mt-1.5 text-[11px] text-muted-foreground">
-            Generating image…
-          </p>
-        </div>
-      )}
-      {expanded && imageJobFailed && (
-        <div className="px-4 pb-3">
-          <p className="text-[11px] text-muted-foreground">
-            Image couldn’t be generated for this draft
-            {generatedImageStatus?.reason
-              ? ` (${generatedImageStatus.reason})`
-              : ""}
-            .
-          </p>
-        </div>
-      )}
-      {expanded && (
-        <div className="border-t border-border/50 px-4 py-2.5">
-        {/* Lead-magnet resource pill — surfaces the auto-selected giveaway
-            when meta.lead_magnet was set by the batch resolver. Same
-            component the ArtifactCard uses (artifactLeadMagnet reader). */}
-        {leadMagnet && (
-          <div className="mb-2 flex flex-wrap items-center gap-1.5">
-            <span
-              className="inline-flex items-center gap-1 rounded-full border border-state-danger-border bg-state-danger-bg px-2.5 py-0.5 text-[10px] font-semibold text-primary"
-              title={`Lead magnet ${leadMagnet.selection === "auto" ? "auto-selected" : "selected"}: ${leadMagnet.title}`}
-            >
-              <Gift className="h-2.5 w-2.5" aria-hidden />
-              <span className="max-w-[220px] truncate">
-                Giveaway: {leadMagnet.title}
-              </span>
-            </span>
-          </div>
-        )}
-        {!outcome && (
-          <div className="mb-2 text-[11px] leading-snug text-muted-foreground">
-            Generated in Cowork. Approve to move it to Ready on your Posts
-            board, or reject to keep it off the board.
-          </div>
-        )}
-        <div className="flex flex-wrap items-center gap-2">
-        <Button variant="outline" size="sm" className="h-8 gap-1.5" onClick={copy}>
-          {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-          {copied ? "Copied" : "Copy"}
-        </Button>
-        {onApprove && onReject && !outcome && (
-          <>
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-8 gap-1.5 border-state-success-border text-state-success hover:bg-state-success-bg hover:text-state-success"
-              onClick={onApprove}
-              title="Approve this batch draft and send it to Ready on the Posts board"
-            >
-              <Check className="h-3.5 w-3.5" />
-              Approve
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-8 gap-1.5 border-border text-muted-foreground hover:text-foreground"
-              onClick={onReject}
-              title="Reject this batch draft (kept off the board; the source won't be re-served next week)"
-            >
-              <X className="h-3.5 w-3.5" />
-              Reject
-            </Button>
-          </>
-        )}
-        {outcome === "approved" && (
-          <span className="inline-flex h-8 items-center gap-1.5 rounded-full border border-state-success-border bg-state-success-bg px-3 text-xs font-medium text-state-success">
-            <Check className="h-3.5 w-3.5" />
-            Approved · on the Ready column
-          </span>
-        )}
-        {outcome === "rejected" && (
-          <span className="inline-flex h-8 items-center gap-1.5 rounded-full border border-border bg-muted px-3 text-xs font-medium text-muted-foreground">
-            <X className="h-3.5 w-3.5" />
-            Rejected
-          </span>
-        )}
-        {meta.source_url && (
-          <a
-            href={meta.source_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="ml-auto inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-primary"
-          >
-            Adapted from <ExternalLink className="h-3 w-3" aria-hidden />
-          </a>
-        )}
-        </div>
-      </div>
-      )}
-    </div>
-  );
-}
-
 function CoworkLeadMagnetResource({
   leadMagnet,
   href,
@@ -6663,9 +5916,6 @@ function ArtifactCard({
   leadMagnetHref,
   refineDisabled,
   onDelete,
-  onApproveBatchReview,
-  onRejectBatchReview,
-  batchReviewOutcome,
 }: {
   artifact: Artifact;
   chatId: string | null;
@@ -6690,16 +5940,6 @@ function ArtifactCard({
   // Remove this draft from the chat. Confirmed before firing. Absent → no
   // delete affordance (e.g. a context where deletion doesn't apply).
   onDelete?: () => void;
-  // Batch review — set on a weekly-batch draft awaiting user validation
-  // (status='pending_review' in chat_artifacts). Approve moves the draft to
-  // 'ready' on the /posts board; reject flips it to 'rejected' (off-board,
-  // preserves the dedup signal). Absent for regular chat drafts.
-  onApproveBatchReview?: () => void;
-  onRejectBatchReview?: () => void;
-  // "Approved" / "Rejected" transient state after the user acts, so the card
-  // stays visible with a small badge instead of vanishing. Absent for cards
-  // that haven't been acted on.
-  batchReviewOutcome?: "approved" | "rejected";
 }) {
   const [copied, markCopied] = useCopiedFlag();
   const [saving, setSaving] = useState(false);
@@ -6805,7 +6045,6 @@ function ArtifactCard({
     return Array.isArray(v) ? v.filter((s): s is string => typeof s === "string") : [];
   })();
   const draftSource = modeledSourceAttribution(artifact.meta);
-  const researchSources = researchSourcesFromArtifact(artifact.meta);
   const draftLeadMagnet = artifactLeadMagnet(artifact);
   const draftLeadMagnetHref = leadMagnetHref?.(draftLeadMagnet) ?? null;
   const generatedImageStatus = generatedLeadMagnetImageStatus(artifact);
@@ -7211,15 +6450,8 @@ function ArtifactCard({
           )}
         </div>
         <div className="shrink-0 flex items-center gap-1">
-          {/* Delete this draft from the chat. Confirmed; hidden when no handler.
-              Also hidden on batch drafts awaiting review — the header delete
-              only removes from chat_messages.artifacts jsonb, NOT from
-              chat_artifacts, so a batch draft would end up half-deleted
-              (invisible in Cowork but still pending_review in the DB). Reject
-              is the correct discard flow for a batch draft: it moves the
-              chat_artifacts row to 'rejected' AND preserves the source-post
-              dedup signal so next week's batch skips the same source. */}
-          {onDelete && !editing && !onApproveBatchReview && (
+          {/* Delete this draft from the chat. Confirmed; hidden when no handler. */}
+          {onDelete && !editing && (
             <button
               type="button"
               onClick={() => {
@@ -7350,14 +6582,11 @@ function ArtifactCard({
       )}
 
       {/* "Why I wrote it this way" — the collaborator note. Stamped onto
-          meta.rationale ONLY by the interactive render_post tool (never batch/
-          MCP), and only when it passed the generic-rationale net server-side.
-          The source guard is belt-and-suspenders: a weekly-batch draft never
-          carries a rationale, but this keeps the note strictly off batch cards
-          even if meta ever drifted. Absent rationale → nothing renders. */}
+          meta.rationale by the interactive render_post tool, and only when it
+          passed the generic-rationale net server-side. Absent rationale →
+          nothing renders. */}
       {typeof artifact.meta?.rationale === "string" &&
-        artifact.meta.rationale.trim() &&
-        artifact.meta?.source !== "weekly_batch" && (
+        artifact.meta.rationale.trim() && (
           <div className="flex items-start gap-1.5 px-3 pb-1 text-[11px] leading-relaxed text-muted-foreground">
             <Lightbulb
               className="h-3 w-3 mt-0.5 shrink-0 text-primary/70"
@@ -7374,11 +6603,6 @@ function ArtifactCard({
         />
       )}
 
-      {/* Only show the full "Sources used" list when the draft does NOT already
-          carry its own per-draft source chip (modeled drafts show the chip at
-          the top; news/web research drafts show the list here). */}
-      {!draftSource && <ResearchSources sources={researchSources} />}
-
       <CoworkDraftFeedback
         key={artifact.id}
         artifact={artifact}
@@ -7394,50 +6618,7 @@ function ArtifactCard({
           fit the panel width (e.g. when "Save as new" is present), they wrap to a
           second line instead of clipping off the right edge. */}
       <div className="flex flex-wrap items-center gap-2 px-3 py-2.5 bg-card shrink-0">
-        {/* Batch review: a weekly-batch draft awaiting user validation gets
-            Approve / Reject buttons AT THE FRONT of the action bar. Approve
-            moves it to Ready on the /posts board; reject flips it to
-            'rejected' (off-board but keeps the dedup signal so next week's
-            batch skips the same source). Once acted on, a small pill replaces
-            the buttons so the user sees what they did without the card
-            vanishing. */}
-        {onApproveBatchReview && onRejectBatchReview && !batchReviewOutcome && (
-          <>
-            <Button
-              size="sm"
-              variant="outline"
-              className="gap-1.5 h-8 rounded-full border-state-success-border text-state-success hover:bg-state-success-bg hover:text-state-success"
-              onClick={onApproveBatchReview}
-              title="Approve this batch draft and send it to Ready on the Posts board"
-            >
-              <Check className="h-3.5 w-3.5" />
-              Approve
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              className="gap-1.5 h-8 rounded-full border-border text-muted-foreground hover:text-foreground"
-              onClick={onRejectBatchReview}
-              title="Reject this batch draft (kept off the board; the source won't be re-served next week)"
-            >
-              <X className="h-3.5 w-3.5" />
-              Reject
-            </Button>
-          </>
-        )}
-        {batchReviewOutcome === "approved" && (
-          <span className="inline-flex h-8 items-center gap-1.5 rounded-full border border-state-success-border bg-state-success-bg px-3 text-xs font-medium text-state-success">
-            <Check className="h-3.5 w-3.5" />
-            Approved · on the Ready column
-          </span>
-        )}
-        {batchReviewOutcome === "rejected" && (
-          <span className="inline-flex h-8 items-center gap-1.5 rounded-full border border-border bg-muted px-3 text-xs font-medium text-muted-foreground">
-            <X className="h-3.5 w-3.5" />
-            Rejected
-          </span>
-        )}
-        {!canUpdateOriginal && !onApproveBatchReview && (
+        {!canUpdateOriginal && (
           <p className="basis-full px-1 text-[11px] font-medium text-muted-foreground">
             Save adds this draft to your Posts board, ready to schedule.
           </p>
@@ -7455,13 +6636,6 @@ function ArtifactCard({
           )}
           {copied ? "Copied" : "Copy"}
         </Button>
-        {/* Save is HIDDEN on a batch draft awaiting review: the draft is
-            already in chat_artifacts as pending_review, so Approve IS save
-            (moves to Ready). Clicking Save would POST /api/chats/[id]/
-            artifacts and create a DUPLICATE row. Delete stays available
-            below so the user can still discard mid-review; Approve/Reject
-            at the front of the bar are the primary path. */}
-        {!onApproveBatchReview && (
         <Button
           size="sm"
           variant="outline"
@@ -7497,7 +6671,6 @@ function ArtifactCard({
                   ? "Update post"
                   : `Save ${kindNoun(artifact.kind).toLowerCase()}`}
         </Button>
-        )}
         {/* When updating the original post is the primary action, offer a
             secondary "Save as new" so the user can still branch off a copy. */}
         {canUpdateOriginal && (
@@ -8214,501 +7387,8 @@ function ChatLoading() {
   );
 }
 
-// Readiness snapshot from GET /api/batch/weekly/status (fetched once on mount).
-type BatchReadiness = {
-  available: number;
-  cooldown: { onCooldown: false } | { onCooldown: true; retryAtIso: string };
-};
-
-// The live run row (subset) the card polls while a batch generates.
-type HomeBatchRun = {
-  id?: string;
-  status: "pending" | "running" | "done" | "failed";
-  stage: string | null;
-  total: number;
-  created: number;
-  error: string | null;
-};
-
-// One worker lane — a batch_draft_slots row. Each is an agent adapting one
-// source post into the user's voice; the board renders these live.
-type BatchSlot = {
-  slot_index: number;
-  source_first_line: string | null;
-  source_url: string | null;
-  is_lead_magnet: boolean;
-  skill_label: string | null;
-  status: "queued" | "drafting" | "filed" | "skipped" | "failed";
-  draft_title: string | null;
-  error: string | null;
-};
-
-// Whole days from now until an ISO instant (min 1, so "unlocks tomorrow" never
-// reads as "in 0 days"). Used for the cooldown copy.
-function daysUntil(iso: string): number {
-  const ms = new Date(iso).getTime() - Date.now();
-  return Math.max(1, Math.ceil(ms / (24 * 60 * 60 * 1000)));
-}
-
-const HOME_BATCH_POLL_MS = 2500;
-const CHAT_BATCH_RUNNING_POLL_MS = 2000;
-const CHAT_BATCH_QUEUED_POLL_MS = 6000;
-const CHAT_BATCH_HIDDEN_POLL_MS = 8000;
 const IMAGE_ARTIFACT_POLL_MS = 5000;
-
-// Icon + tint for a worker lane's status.
-function slotVisual(status: BatchSlot["status"]) {
-  switch (status) {
-    case "filed":
-      return { icon: CheckCircle2, cls: "text-primary", ring: "border-primary/40 bg-primary/[0.06]" };
-    case "drafting":
-      return { icon: Loader2, cls: "text-primary animate-spin", ring: "border-primary/40 bg-primary/[0.04]" };
-    case "skipped":
-    case "failed":
-      return { icon: Circle, cls: "text-muted-foreground/50", ring: "border-border/60 bg-muted/30" };
-    default:
-      return { icon: Circle, cls: "text-muted-foreground/40", ring: "border-border/60 bg-background" };
-  }
-}
-
-const SLOT_STATUS_HELP: Record<BatchSlot["status"], string> = {
-  queued: "Queued: this writer is waiting to start.",
-  drafting: "Writing: this writer is adapting the source post now.",
-  filed: "Written: the draft is ready for review.",
-  skipped: "Couldn't adapt: the source was not usable this time.",
-  failed: "Couldn't adapt: this writer hit an error.",
-};
-
-function slotStatusHelp(slot: BatchSlot): string {
-  if ((slot.status === "skipped" || slot.status === "failed") && slot.error) {
-    return `Couldn't adapt: ${slot.error}`;
-  }
-  return SLOT_STATUS_HELP[slot.status];
-}
-
-function postTypeHelp(isLeadMagnet: boolean): string {
-  return isLeadMagnet
-    ? "Lead Magnet Post: designed to drive replies, signups, or interest."
-    : "Regular Post: a standard thought-leadership or engagement post.";
-}
-
-// One worker lane: the source it grabbed, the voice/skill chip, and its live
-// status — advancing to the finished draft's title. A "team member" you watch.
-function WorkerLane({ slot }: { slot: BatchSlot }) {
-  const v = slotVisual(slot.status);
-  const Icon = v.icon;
-  const help = slotStatusHelp(slot);
-  const title =
-    slot.status === "filed" && slot.draft_title
-      ? slot.draft_title
-      : slot.status === "skipped" || slot.status === "failed"
-        ? "Couldn't adapt this one"
-        : slot.source_first_line || "A top post";
-  const sub =
-    slot.status === "filed"
-      ? "Written · ready to review"
-      : slot.status === "drafting"
-        ? "Writing…"
-        : slot.status === "queued"
-          ? "Queued"
-          : slot.error || "Skipped";
-  return (
-    <div
-      className={cn("flex items-center gap-2.5 rounded-xl border px-3 py-2.5 transition-colors", v.ring)}
-      title={help}
-    >
-      <Icon className={cn("h-4 w-4 shrink-0", v.cls)} aria-label={help} />
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-[13px] font-medium">{title}</div>
-        <div className="truncate text-[11px] text-muted-foreground" title={help}>
-          {sub}
-        </div>
-      </div>
-      <span
-        className={cn(
-          "shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium",
-          slot.is_lead_magnet
-            ? "bg-state-warning-bg text-state-warning"
-            : "bg-primary/10 text-primary",
-        )}
-        title={postTypeHelp(slot.is_lead_magnet)}
-      >
-        {slot.skill_label || (slot.is_lead_magnet ? "Lead Magnet Post" : "Regular Post")}
-      </span>
-    </div>
-  );
-}
-
-// The "Generate this week's batch" card on the chat home — and, once you fire it,
-// a live AGENT WORKERS BOARD. Instead of a fake progress bar, you watch a team of
-// writers: each lane grabs one of this week's top posts, shows which voice/skill
-// it's applying, and advances queued → writing → filed as it produces a real
-// draft (the finished title appears in-lane). Skipped sources show honestly.
-//
-// It fires the same real pipeline as the board button (POST /api/batch/weekly)
-// and polls the per-worker slots — one behavior, no drift. Reacts to readiness +
-// cooldown before a run, and resumes the live board if you land here mid-batch.
-function HomeBatchCard({ featured = false }: { featured?: boolean }) {
-  const router = useRouter();
-  const [ready, setReady] = useState<BatchReadiness | null>(null);
-  const [loaded, setLoaded] = useState(false);
-  const [starting, setStarting] = useState(false);
-  const [run, setRun] = useState<HomeBatchRun | null>(null);
-  const [slots, setSlots] = useState<BatchSlot[]>([]);
-  // A PERSISTENT start error (cost cap / transient) shown inline on the card —
-  // NOT a toast, because "why your primary action didn't run" is the one message
-  // the user most needs to still be able to read a few seconds later. A cooldown
-  // rejection is handled separately (it flips the card to the cooldown panel).
-  const [startError, setStartError] = useState<string | null>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const batchIdRef = useRef<string | null>(null);
-  const refreshedRef = useRef(false);
-
-  const stopPolling = useCallback(() => {
-    if (pollRef.current) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
-    }
-  }, []);
-
-  // Poll BOTH the run rollup (for status/stage) and the worker lanes (slots).
-  const poll = useCallback(async () => {
-    if (typeof document !== "undefined" && document.hidden) return;
-    try {
-      const runData = await safeJsonSchema(
-        WeeklyBatchPollResponseSchema,
-        "/api/batch/weekly",
-        { cache: "no-store" },
-      );
-      if (runData) {
-        const r = (runData.run as HomeBatchRun | null) ?? null;
-        setRun(r);
-        const id = r?.id ?? batchIdRef.current;
-        if (id) {
-          batchIdRef.current = id;
-          const slotData = await safeJsonSchema(
-            WeeklyBatchSlotsResponseSchema,
-            `/api/batch/weekly/slots?batchId=${encodeURIComponent(id)}`,
-            { cache: "no-store" },
-          );
-          if (slotData) setSlots(slotData.slots as BatchSlot[]);
-        }
-        if (r && (r.status === "done" || r.status === "failed")) {
-          stopPolling();
-          if (!refreshedRef.current) {
-            refreshedRef.current = true;
-            if (r.status === "done" && r.created > 0) router.refresh();
-          }
-        }
-      }
-    } catch {
-      /* transient — next tick retries */
-    }
-  }, [router, stopPolling]);
-
-  const startPolling = useCallback(() => {
-    stopPolling();
-    pollRef.current = setInterval(poll, HOME_BATCH_POLL_MS);
-  }, [poll, stopPolling]);
-
-  // On mount: readiness snapshot AND resume any in-flight run (rebuild the live
-  // board if the user landed here mid-batch). One call returns both.
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const data = await safeJsonSchema(
-          WeeklyBatchReadinessResponseSchema,
-          "/api/batch/weekly/status",
-          { cache: "no-store" },
-        );
-        if (cancelled || !data) return;
-        setReady(data.readiness as BatchReadiness);
-        const run = data.run as HomeBatchRun | null;
-        if (run && (run.status === "pending" || run.status === "running")) {
-          setRun(run);
-          if (run.id) {
-            batchIdRef.current = run.id;
-          }
-          startPolling();
-          void poll();
-        }
-      } catch {
-        /* leave ready null → default copy */
-      } finally {
-        if (!cancelled) setLoaded(true);
-      }
-    })();
-    return () => {
-      cancelled = true;
-      stopPolling();
-    };
-  }, [startPolling, stopPolling, poll]);
-
-  const onCooldown = ready?.cooldown.onCooldown === true ? ready.cooldown : null;
-  const active = run?.status === "pending" || run?.status === "running";
-  const done = run?.status === "done";
-  const filedCount = slots.filter((s) => s.status === "filed").length;
-  const previewCount = ready
-    ? Math.max(Math.min(ready.available, WEEKLY_BATCH_DRAFT_COUNT), 0)
-    : WEEKLY_BATCH_DRAFT_COUNT;
-
-  const fire = async () => {
-    if (starting || active || onCooldown) return;
-    setStarting(true);
-    setStartError(null);
-    refreshedRef.current = false;
-    const { startWeeklyBatch } = await import("@/lib/batch/client");
-    const result = await startWeeklyBatch();
-    if (!result.ok) {
-      // Cooldown → flip the card to the persistent cooldown panel (with the
-      // unlock time) instead of a toast that vanishes. This is the fix for the
-      // "I click Generate and nothing happens" bug: the readiness snapshot was
-      // fetched at mount and went stale after a run, so a second click 429'd
-      // silently. Now the rejection itself updates the card.
-      if (result.reason === "cooldown" && result.retryAt) {
-        setReady((r) =>
-          r
-            ? { ...r, cooldown: { onCooldown: true, retryAtIso: result.retryAt! } }
-            : { available: 0, cooldown: { onCooldown: true, retryAtIso: result.retryAt! } },
-        );
-      } else {
-        // Cost cap / transient → a PERSISTENT inline banner, not a flash.
-        setStartError(result.message);
-      }
-      setStarting(false);
-      return;
-    }
-    // The batch runs AS a Cowork chat — open it so the drafts stream into the
-    // transcript. (We're already in the chat workspace; navigating with ?chat
-    // switches the active chat to the fresh batch session.)
-    if (result.chatId) {
-      setStarting(false);
-      toast.success("Queued your weekly batch", {
-        description: "We'll start as soon as capacity opens.",
-      });
-      router.push(`/dashboard?chat=${result.chatId}`);
-      return;
-    }
-    // No chat (rare) → keep the inline live view as a fallback.
-    if (result.runId) {
-      batchIdRef.current = result.runId;
-    }
-    setRun({
-      status: "pending",
-      stage: "Queued. We'll start as soon as capacity opens.",
-      total: 0,
-      created: 0,
-      error: null,
-    });
-    setStarting(false);
-    startPolling();
-    void poll();
-  };
-
-  // ---- Cooldown: calm muted panel, no active button. ----
-  if (onCooldown && !run) {
-    const days = daysUntil(onCooldown.retryAtIso);
-    return (
-      <div className="col-span-full w-full rounded-2xl border border-border/60 bg-muted/40 p-3">
-        <div className="flex items-center gap-2.5">
-          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-            <Clock className="h-4 w-4" />
-          </div>
-          <div className="flex-1 text-left">
-            <div className="text-sm font-medium">This week&apos;s batch is done</div>
-            <div className="text-xs text-muted-foreground">
-              Your next batch unlocks in {days} day{days === 1 ? "" : "s"}. Your
-              drafts are waiting on your board.
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={() => {
-              router.push("/dashboard/posts");
-            }}
-            title="Open the Posts board."
-            className="shrink-0 rounded-lg border border-border/70 bg-background px-3 py-1.5 text-xs font-medium hover:bg-accent/60 transition-colors"
-          >
-            View board
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  const noSources = loaded && ready !== null && ready.available === 0 && !run;
-  // A run only earns the full-height worker board once it's actually going.
-  const showBoard = !!run && slots.length > 0;
-
-  // --- RUNNING / DONE: the run earns the full card (live worker board). ---
-  if (run) {
-    return (
-      <div className="col-span-full w-full overflow-hidden rounded-2xl border border-primary/40 bg-primary/[0.035]">
-        <div className="flex items-center gap-2.5 px-3.5 pt-3 pb-2">
-          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-            {active ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : done ? (
-              <ClipboardCheck className="h-4 w-4" />
-            ) : (
-              <AlertCircle className="h-4 w-4" />
-            )}
-          </div>
-          <div className="flex-1 text-left">
-            <div className="text-sm font-medium">
-              {active ? "Your writers are on it" : done ? `${filedCount} draft${filedCount === 1 ? "" : "s"} ready to review` : "That didn't finish"}
-            </div>
-            <div className="text-xs text-muted-foreground">
-              {active
-                ? `${filedCount} of ${slots.length || previewCount} written · working in parallel`
-                : done
-                  ? "Open your batch chat to approve or edit each draft."
-                  : run.error || "Please try again."}
-            </div>
-          </div>
-          {active && (
-            <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-              {filedCount}/{slots.length}
-            </span>
-          )}
-        </div>
-
-        {showBoard && (
-          <div className="flex flex-col gap-1.5 px-3.5">
-            {slots.map((s) => (
-              <WorkerLane key={s.slot_index} slot={s} />
-            ))}
-          </div>
-        )}
-
-        <div className="px-3.5 pt-2.5 pb-3">
-          {active ? (
-            <span className="text-xs font-medium text-muted-foreground">
-              Your batch chat is streaming — see the sidebar.
-            </span>
-          ) : done ? (
-            <button
-              type="button"
-              onClick={() => {
-                // The batch chat lives in the sidebar (title "Weekly batch —
-                // Mon D"); a refresh + navigate to /dashboard makes sure it
-                // appears in the list on a fresh load. Approve/Reject
-                // happens inside the batch chat now (per-card).
-                router.refresh();
-                router.push("/dashboard");
-              }}
-              title="Open your batch chat below to approve or edit each draft."
-              className="w-full flex items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
-            >
-              Open your batch <ArrowRight className="h-4 w-4" />
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={fire}
-              title="Run the weekly batch again."
-              className="w-full flex items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
-            >
-              <AiIcon className="h-4 w-4" /> Try again
-            </button>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  // --- NO SOURCES: a calm muted row, no button (nothing to run). ---
-  if (noSources) {
-    return (
-      <div className="col-span-full w-full flex items-center gap-2.5 rounded-2xl border border-border/60 bg-muted/30 px-3.5 py-2.5">
-        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-          <Search className="h-4 w-4" />
-        </div>
-        <div className="flex-1 text-left">
-          <div className="text-sm font-medium">Your weekly batch</div>
-          <div className="text-xs text-muted-foreground">
-            No fresh posts to adapt yet — check back after your next scrape.
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // --- READY: primary command-center CTA or normal starter tile. ---
-  return (
-    <>
-      <button
-        type="button"
-        onClick={fire}
-        disabled={starting}
-        title="Find this week's top posts, adapt them into drafts, and open the batch chat so you can watch progress."
-        className={cn(
-          "group flex items-center text-left shadow-sm transition-[color,background-color,border-color,box-shadow,opacity,transform] duration-150 ease-[cubic-bezier(0.25,1,0.5,1)] motion-reduce:transform-none motion-reduce:transition-none hover:-translate-y-0.5 hover:shadow-md disabled:translate-y-0 disabled:opacity-60",
-          featured
-            ? "min-h-[5.75rem] gap-3 rounded-2xl border border-primary/30 bg-primary px-4 py-4 text-primary-foreground hover:bg-primary/95 sm:px-5"
-            : "min-h-14 gap-2.5 rounded-xl border border-primary/25 bg-primary/[0.06] px-3.5 py-3 text-sm hover:bg-primary/[0.08]",
-        )}
-      >
-        <span
-          className={cn(
-            "grid shrink-0 place-items-center rounded-lg transition-colors",
-            featured
-              ? "h-11 w-11 bg-card/15 text-primary-foreground ring-1 ring-white/20"
-              : "h-9 w-9 bg-primary/10 text-primary group-hover:bg-primary group-hover:text-primary-foreground",
-          )}
-        >
-          {starting ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <CalendarClock className="h-4 w-4" />
-          )}
-        </span>
-        <span className="min-w-0 flex-1">
-          <span
-            className={cn(
-              "block font-medium leading-tight",
-              featured && "text-base sm:text-lg",
-            )}
-          >
-            {starting
-              ? "Dispatching your writers…"
-              : "Draft weekly batch"}
-          </span>
-          <span
-            className={cn(
-              "mt-1 block leading-tight",
-              featured
-                ? "text-sm text-primary-foreground/82"
-                : "text-xs leading-4 text-muted-foreground",
-            )}
-          >
-            5 regular + 2 lead magnet posts
-          </span>
-        </span>
-        <ArrowRight
-          className={cn(
-            "h-4 w-4 shrink-0 -translate-x-1 opacity-0 transition-[opacity,transform] duration-150 ease-[cubic-bezier(0.25,1,0.5,1)] motion-reduce:transform-none group-hover:translate-x-0 group-hover:opacity-100",
-            featured ? "text-primary-foreground" : "text-primary",
-          )}
-        />
-      </button>
-      {startError && (
-        <div className="col-span-full flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
-          <span className="flex-1">{startError}</span>
-          <button
-            type="button"
-            onClick={() => setStartError(null)}
-            aria-label="Dismiss"
-            className="shrink-0 hover:opacity-70"
-          >
-            <X className="h-3.5 w-3.5" />
-          </button>
-        </div>
-      )}
-    </>
-  );
-}
+const HIDDEN_POLL_MS = 8000;
 
 function EmptyState({
   onPick,
@@ -8743,7 +7423,7 @@ function EmptyState({
     },
     {
       title: "Campaigns",
-      description: "Generate a coordinated week of content.",
+      description: "Coordinate multi-post campaigns.",
       starters: [],
     },
   ];
@@ -8797,7 +7477,7 @@ function EmptyState({
           <span className="min-w-0 flex-1">
             <span className="block text-sm font-medium text-foreground">Browse more workflows</span>
             <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
-              Research, lead magnets, attention, and weekly campaigns.
+              Research, lead magnets, attention, and campaigns.
             </span>
           </span>
           <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-150 group-open:rotate-180 motion-reduce:transition-none" />
@@ -8813,7 +7493,6 @@ function EmptyState({
                 {group.starters.map((starter) => (
                   <StarterCommand key={starter.id} starter={starter} onPick={onPick} />
                 ))}
-                {group.title === "Campaigns" && <HomeBatchCard />}
               </div>
             </section>
           ))}

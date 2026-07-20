@@ -1,26 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
-  WeeklyBatchStartResponseSchema,
   encodeChatSseFrame,
   parseChatSseFrame,
 } from "@/lib/transport/contracts";
 
 describe("validated transport contracts", () => {
-  it("accepts the complete weekly-batch start envelope", () => {
-    expect(WeeklyBatchStartResponseSchema.parse({
-      ok: true,
-      jobId: "job-1",
-      batchId: "batch-1",
-      runId: "batch-1",
-      chatId: null,
-      status: "queued",
-    })).toMatchObject({ ok: true, runId: "batch-1" });
-  });
-
-  it("rejects incomplete success envelopes instead of guessing defaults", () => {
-    expect(WeeklyBatchStartResponseSchema.safeParse({ ok: true }).success).toBe(false);
-  });
-
   it("uses one schema for server encoding and client parsing of SSE", () => {
     const wire = encodeChatSseFrame("text", { delta: "hello" });
     expect(wire).toBe('event: text\ndata: {"delta":"hello"}\n\n');

@@ -574,21 +574,17 @@ function createTransformDraftCandidate(
   plan: TurnPlan,
 ): (
   body: string,
-) => { ok: false; message: string } | { ok: true; body: string } {
+) => { ok: true; body: string } {
   return (body: string) => {
-    if (
+    // Never reject here for lead-magnet mismatch; the finalizer owns the hard
+    // acceptance policy. If the post already mentions the campaign resource,
+    // enforce the canonical CTA link. Otherwise leave the draft as-is so a
+    // usable post is not lost to a soft structure gate.
+    let transformedBody =
       setup.activeLeadMagnetCampaign &&
-      !hasLeadMagnetResourceOverlap(body, setup.activeLeadMagnetCampaign)
-    ) {
-      return {
-        ok: false,
-        message:
-          "The generated post did not match the selected lead magnet, so no draft was saved. Please try again.",
-      };
-    }
-    let transformedBody = setup.activeLeadMagnetCampaign
-      ? enforceLeadMagnetCampaignCta(body, setup.activeLeadMagnetCampaign)
-      : body;
+      hasLeadMagnetResourceOverlap(body, setup.activeLeadMagnetCampaign)
+        ? enforceLeadMagnetCampaignCta(body, setup.activeLeadMagnetCampaign)
+        : body;
     const legacyHookOnlyAllowed =
       !setup.refineInstruction || isExclusiveHookRefine(setup.refineInstruction);
     if (

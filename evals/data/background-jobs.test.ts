@@ -79,7 +79,7 @@ describe("background job helpers", () => {
     const job: BackgroundJob = {
       id: "job-1",
       workspace_id: "org_1",
-      type: "weekly_batch",
+      type: "scrape",
       status: "queued",
       payload: { secret: "not returned" },
       progress: { stage: "Queued" },
@@ -98,7 +98,7 @@ describe("background job helpers", () => {
 
     expect(publicJob(job)).toEqual({
       id: "job-1",
-      type: "weekly_batch",
+      type: "scrape",
       status: "queued",
       progress: { stage: "Queued" },
       result: null,

@@ -9,7 +9,6 @@ import {
   requeueJob,
   jobWorkerId,
 } from "@/lib/background-jobs";
-import { weeklyBatch } from "@/lib/batch/weekly-batch";
 import {
   BATCH_JOB_COST_RESERVE_USD,
   MONTHLY_BUDGET_USD,
@@ -123,7 +122,6 @@ function costEstimateForJob(job: BackgroundJob): number {
   switch (job.type) {
     case "lead_magnet_image":
       return LEAD_MAGNET_IMAGE_COST_RESERVE_USD;
-    case "weekly_batch":
     case "scrape":
       return BATCH_JOB_COST_RESERVE_USD;
     case "voice_generation":
@@ -144,8 +142,6 @@ async function runBackgroundJobClaimed(job: BackgroundJob): Promise<{
   const sb = supabaseAdmin();
   try {
     switch (job.type) {
-      case "weekly_batch":
-        return await runWeeklyBatchJob(job);
       case "lead_magnet_image":
         return await runLeadMagnetImageBackgroundJob(job);
       case "creator_style_generation":
@@ -158,6 +154,13 @@ async function runBackgroundJobClaimed(job: BackgroundJob): Promise<{
         await markJobFailed(
           job,
           `No worker handler is registered for '${job.type}' yet.`,
+          sb,
+        );
+        return { completed: 0, failed: 1, requeued: 0, unsupported: 1 };
+      default:
+        await markJobFailed(
+          job,
+          `Unsupported background job type '${job.type}'.`,
           sb,
         );
         return { completed: 0, failed: 1, requeued: 0, unsupported: 1 };
@@ -466,111 +469,4 @@ async function runScrapeBackgroundJob(job: BackgroundJob): Promise<{
     sb,
   );
   return { completed: 1, failed: 0, requeued: 0, unsupported: 0 };
-}
-
-async function runWeeklyBatchJob(job: BackgroundJob): Promise<{
-  completed: number;
-  failed: number;
-  requeued: number;
-  unsupported: number;
-}> {
-  const sb = supabaseAdmin();
-  const workspaceId = job.workspace_id;
-  const batchId = getStringPayload(job, "batchId")!;
-  const runId = getStringPayload(job, "runId", { optional: true }) ?? undefined;
-  const chatId = getStringPayload(job, "chatId", { optional: true }) ?? undefined;
-  const userId = getStringPayload(job, "userId", { optional: true }) ?? undefined;
-  const nowIso = getStringPayload(job, "nowIso")!;
-
-  const locked = await acquireProviderLock({
-    provider: "openrouter",
-    workType: "text",
-    jobId: job.id,
-    workspaceId,
-    limit: JOB_LIMITS.openrouterText(),
-    sb,
-  });
-
-  if (!locked) {
-    if (runId) {
-      await weeklyBatch.status({
-        workspaceId,
-        includeRun: false,
-        transition: {
-          runId,
-          patch: {
-            status: "pending",
-            stage: "Queued. We'll start as soon as capacity opens.",
-          },
-        },
-      });
-    }
-    await requeueJob(
-      job,
-      "Queued behind other OpenRouter text jobs.",
-      sb,
-      { resetAttempt: true },
-    );
-    return { completed: 0, failed: 0, requeued: 1, unsupported: 0 };
-  }
-
-  try {
-    const result = await weeklyBatch.run({
-      workspaceId,
-      userId,
-      batchId,
-      nowIso,
-      runId,
-      chatId,
-    });
-    revalidatePath("/dashboard/posts");
-    await markJobDone(
-      job,
-      {
-        batchId,
-        runId: runId ?? null,
-        chatId: chatId ?? null,
-        attempted: result.attempted,
-        created: result.drafts.length,
-        reason: result.reason ?? null,
-      },
-      sb,
-    );
-    console.log(
-      JSON.stringify({
-        weekly_batch: {
-          workspace_id: workspaceId,
-          batch_id: batchId,
-          run_id: runId ?? null,
-          job_id: job.id,
-          attempted: result.attempted,
-          created: result.drafts.length,
-          reason: result.reason ?? null,
-        },
-      }),
-    );
-    return { completed: 1, failed: 0, requeued: 0, unsupported: 0 };
-  } catch (e) {
-    const message = (e as Error)?.message || "Weekly batch job failed.";
-    const willRetry = job.attempts < job.max_attempts;
-    if (runId) {
-      await weeklyBatch.status({
-        workspaceId,
-        includeRun: false,
-        transition: {
-          runId,
-          patch: {
-            status: willRetry ? "pending" : "failed",
-            stage: willRetry ? "Queued for retry" : "Something went wrong",
-            error: willRetry
-              ? "We hit a snag and queued this batch to retry."
-              : "We hit a snag generating your batch. Please try again in a bit.",
-            finished: !willRetry,
-          },
-        },
-      });
-    }
-    console.error("weekly_batch job failed", message);
-    throw e;
-  }
 }
