@@ -3349,8 +3349,10 @@ async function* runSlotBatchTurn(
   const canUseDurable =
     deps.repository &&
     task.groundedSources &&
-    task.groundedSources.length > 0 &&
-    task.groundedSources.every((source) => source.url);
+    task.groundedSources.length >= task.expectedCount &&
+    task.groundedSources.every(
+      (source) => source.kind === "workspace_post" && source.url,
+    );
 
   if (canUseDurable) {
     const sources: ModeledDraftBatchSource[] = task.groundedSources!.map(

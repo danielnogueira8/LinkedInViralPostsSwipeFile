@@ -3254,6 +3254,9 @@ export async function executeChatTurn(
           finalTransformCandidate: transformDraftCandidate,
           telemetry: coworkTelemetry,
           onModelUsed: recordResponseModel,
+          dependencies: {
+            now: () => deps.now().getTime(),
+          },
           ...(shouldAttachLeadMagnet && leadMagnetBlock.trim()
             ? { leadMagnetBlock }
             : {}),

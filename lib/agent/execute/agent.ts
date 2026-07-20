@@ -5099,7 +5099,10 @@ async function* runReadOnlyOrchestratorCore(
       : undefined;
 
   let writerTask: WriterTask;
-  if (modeledBatch) {
+  if (
+    modeledBatch ||
+    (expectedDrafts >= 2 && groundedSources.length > 0)
+  ) {
     writerTask = {
       kind: "multi",
       expectedCount: expectedDrafts,

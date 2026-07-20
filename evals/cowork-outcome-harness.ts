@@ -827,6 +827,7 @@ async function runCoworkOutcomeScenarioWithStore(
           runWriterTurn({
             ...input,
             dependencies: {
+              ...input.dependencies,
               writer: directWriter,
               recordUsage: logOpenRouterUsage,
               cancelPollMs: 1,
@@ -876,6 +877,7 @@ async function runCoworkOutcomeScenarioWithStore(
               harnessRunWriterTurn({
                 ...writerInput,
                 dependencies: {
+                  ...writerInput.dependencies,
                   writer: directWriter,
                   recordUsage: logOpenRouterUsage,
                   cancelPollMs: 1,
@@ -1189,7 +1191,7 @@ async function runCoworkOutcomeScenarioWithStore(
     failureCodes.push("empty_turn");
   }
 
-  return {
+  const report = {
     pass: failureCodes.length === 0,
     failureCodes,
     safe: {
@@ -1233,6 +1235,7 @@ async function runCoworkOutcomeScenarioWithStore(
     },
     frames,
   };
+  return report;
 }
 
 export async function runCoworkOutcomeScenario(

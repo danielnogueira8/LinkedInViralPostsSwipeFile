@@ -111,14 +111,17 @@ Each fix: targeted vitest runs + `tsc --noEmit` + lint, separate commit.
 - [ ] Synthetic `tool_calls` markers → real columns deferred to Phase 3.
 - [ ] Duplicate partial gauntlet cleanup deferred to Phase 2 / finalizer work.
 
-### Phase 2 — Merge executors, collapse finalizer
+### Phase 2 — Merge executors, collapse finalizer — COMPLETE
 
-- `execute/writer.ts` absorbs draft-engine + modeled-batch + slot-runner
-  (slots = the only multi-draft mechanism).
-- `execute/agent.ts` absorbs both orchestrators; never writes prose.
-- `finalize/finalizer.ts`: 15 gates → 5; kill double policy eval, triple
-  char-cap, lean/heavy profile split.
-- Fix deadline math: worst-case chain must fit the budget.
+- [x] `execute/writer.ts` absorbs draft-engine + modeled-batch + slot-runner
+      (slots = the only multi-draft mechanism).
+- [x] `execute/agent.ts` absorbs both orchestrators; never writes prose.
+- [x] `finalize/finalizer.ts`: 15 gates → 5; double policy eval removed,
+      triple char-cap collapsed to one, lean/heavy profile split removed.
+- [x] Deadline math unified: 300 s route ceiling − 60 s terminal buffer =
+      240 s writer budget; single-draft chain 3×80 s; slot batch 6 slots /
+      2 concurrency × 2 calls × 40 s. Action turns 85 s; research turns reserve
+      120 s for tools and pass the remainder to the writer.
 
 ### Phase 3 — State as data, decomposition
 
