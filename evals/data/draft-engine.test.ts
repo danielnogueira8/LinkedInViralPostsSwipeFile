@@ -1281,7 +1281,11 @@ describe("DraftEngine", () => {
           "Write exactly 2 different posts about career leverage. Do not search.",
         task: { kind: "multi", expectedCount: 2 },
       },
-      { multiDeadlineMs: 20 },
+      // 250ms, not 20: slot 1 must reliably COMPLETE before the deadline or
+      // the test races its own setup and flakes (~60% failure at 20ms under
+      // load). The stall in slot 2 is event-driven (rejects on abort), so a
+      // wider window changes nothing about what the deadline cancels.
+      { multiDeadlineMs: 250 },
     );
 
     expect(artifacts(result.events).map((artifact) => artifact.body)).toEqual([
