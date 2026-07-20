@@ -57,16 +57,16 @@ const included = [
 ];
 
 // Illustrative sample for the marquee — the shapes of creators people track,
-// not real users.
+// not real users. Avatars generated with DiceBear Notionists (CC0).
 const sampleCreators = [
-  ["Elena Marsh", "B2B SaaS"],
-  ["Derek Osei", "Sales"],
-  ["Priya Nair", "Startups"],
-  ["Tom Alvarez", "Marketing"],
-  ["Sofia Lindqvist", "Product"],
-  ["Marcus Webb", "Venture"],
-  ["Hana Sato", "Growth"],
-  ["Leo Moreau", "Bootstrapping"],
+  ["Elena Marsh", "B2B SaaS", "elena-marsh"],
+  ["Derek Osei", "Sales", "derek-osei"],
+  ["Priya Nair", "Startups", "priya-nair"],
+  ["Tom Alvarez", "Marketing", "tom-alvarez"],
+  ["Sofia Lindqvist", "Product", "sofia-lindqvist"],
+  ["Marcus Webb", "Venture", "marcus-webb"],
+  ["Hana Sato", "Growth", "hana-sato"],
+  ["Leo Moreau", "Bootstrapping", "leo-moreau"],
 ] as const;
 
 function PrimaryLink({ children }: { children: React.ReactNode }) {
@@ -141,14 +141,19 @@ export default function LandingClient({ stats }: { stats: LandingStats }) {
           </p>
           <div className="scroll-fade-x mt-4 overflow-hidden">
             <div className="marquee-track flex w-max items-center gap-3">
-              {[...sampleCreators, ...sampleCreators].map(([name, niche], index) => (
+              {[...sampleCreators, ...sampleCreators].map(([name, niche, avatar], index) => (
                 <span
                   key={`${name}-${index}`}
                   aria-hidden={index >= sampleCreators.length}
                   className="inline-flex shrink-0 items-center gap-2.5 rounded-full border border-border bg-background py-1.5 pl-1.5 pr-4"
                 >
-                  <span className="grid size-6 place-items-center rounded-full bg-primary text-[10px] font-medium text-primary-foreground">
-                    {name.split(" ").map((part) => part[0]).join("")}
+                  <span className="relative size-7 overflow-hidden rounded-full border border-border bg-muted">
+                    <Image
+                      src={`/creator-icons/${avatar}.svg`}
+                      alt=""
+                      fill
+                      className="object-cover"
+                    />
                   </span>
                   <span className="text-xs font-medium">{name}</span>
                   <span className="text-[11px] text-muted-foreground">{niche}</span>
