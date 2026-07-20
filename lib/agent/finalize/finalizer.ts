@@ -526,7 +526,7 @@ export function createDraftFinalizer(
     // -------------------------------------------------------------------------
     // Gate 3: Provenance — resolve the verified source (if any).
     // -------------------------------------------------------------------------
-    const resolvedSource = resolveSource(candidate.provenance);
+    const resolvedSource = resolveSource(candidate.provenance, candidate.origin);
     if (!resolvedSource.ok) {
       return emit(
         candidate,

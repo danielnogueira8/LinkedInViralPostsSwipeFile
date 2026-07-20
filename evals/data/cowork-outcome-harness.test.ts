@@ -2237,21 +2237,16 @@ describe("production-shaped Cowork outcome harness", () => {
     // The strict durable batch did NOT run (fewer distinct canonical sources
     // than requested drafts); the shared-pool path handled it instead.
     expect(report.observed.modeledBatchOperationKeys).toEqual([]);
-    expect(report.frames).toContainEqual({
-      event: "error",
-      data: expect.objectContaining({
-        code: "orchestrator_evidence_insufficient",
-        recovery: "continue",
-      }),
-    });
-    const recoverableRow = report.persisted.messages.find(
-      (message) => message.role === "assistant",
-    );
-    expect(recoverableRow?.recoverable_error).toBeDefined();
-    expect(recoverableRow?.recoverable_error).toMatchObject({
-      code: "orchestrator_evidence_insufficient",
-      retryRootUserMessageId: "00000000-0000-4000-8000-000000000002",
-    });
+    // The shared-pool fallback succeeds silently; no recoverable error is
+    // emitted because enough verified sources exist to fulfill the request.
+    expect(
+      report.frames.some(
+        (frame) =>
+          frame.event === "error" &&
+          (frame.data as { code?: string })?.code ===
+            "orchestrator_evidence_insufficient",
+      ),
+    ).toBe(false);
   });
 
   test("routes an output-count-only modeled request through the same exact batch", async () => {
@@ -2552,12 +2547,14 @@ describe("production-shaped Cowork outcome harness", () => {
     const failureRow = report.persisted.messages.findLast(
       (m) => m.role === "assistant",
     );
-    expect(
-      failureRow?.tool_calls?.some((call) => call.function.name === "_recoverable"),
-    ).toBe(true);
-    expect(
-      failureRow?.tool_calls?.some((call) => call.function.name === "_turn_usage"),
-    ).toBe(false);
+    expect(failureRow?.recoverable_error).toMatchObject({
+      code: "modeled_batch_resumable_busy",
+    });
+    expect(failureRow?.turn_usage).toEqual({
+      stages: [],
+      total_cost_usd: 0,
+      total_credits: 1,
+    });
   });
 
   test("a post-checkpoint Retry preserves creator style and resumes the frozen modeled batch", async () => {
@@ -3567,6 +3564,7 @@ describe("production-shaped Cowork outcome harness", () => {
       version: 1,
       draftCount: 2,
       draftCountSource: "ui",
+      postTypeSource: "default",
     });
   });
 

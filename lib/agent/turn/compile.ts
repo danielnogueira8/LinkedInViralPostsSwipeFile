@@ -871,6 +871,11 @@ export type ReadOnlyOrchestratorRoute = {
   workspaceSearchMode?: "diverse" | "strict_top";
   workspaceSince?: "1d" | "7d" | "30d";
   workspacePostType?: PostType;
+  // Genuine explicit user choice for the saved draft's post type (UI / starter
+  // contract), distinct from workspacePostType which is used for source
+  // filtering. Carried through to the artifact meta so the client does not
+  // reclassify from body text.
+  explicitPostType?: PostType;
   workspaceDraftSourceMode?: "one_to_one";
   clarificationReason?: "outcome" | "research_topic" | "modeled_mapping";
   modeledAmbiguityReason?: Extract<
@@ -884,6 +889,7 @@ export type ReadOnlyOrchestratorRoutingInput = {
   userInstruction: string;
   draftCountOverride?: number;
   composerTaskContext?: ComposerTaskContext;
+  explicitPostType?: PostType;
   isRefine: boolean;
   hasModelSource: boolean;
   hasAttachments: boolean;
@@ -1608,6 +1614,7 @@ export function compileReadOnlyOrchestratorRoute(
       expectedDrafts,
       allowExternalSearch: allowedSearchKinds.length > 0,
       allowedSearchKinds,
+      ...(input.explicitPostType ? { explicitPostType: input.explicitPostType } : {}),
       ...(needsWorkspaceResearch
         ? {
             minimumSources: workspaceMinimumSources,
@@ -1630,7 +1637,12 @@ export function compileReadOnlyOrchestratorRoute(
         clarificationReason: "research_topic",
       };
     }
-    return { kind: "news_research", expectsDraft: true, expectedDrafts };
+    return {
+      kind: "news_research",
+      expectsDraft: true,
+      expectedDrafts,
+      ...(input.explicitPostType ? { explicitPostType: input.explicitPostType } : {}),
+    };
   }
   if (needsWorkspaceResearch) {
     return {
@@ -1646,6 +1658,7 @@ export function compileReadOnlyOrchestratorRoute(
         : {}),
       ...(workspacePostType ? { workspacePostType } : {}),
       ...(workspaceDraftSourceMode ? { workspaceDraftSourceMode } : {}),
+      ...(input.explicitPostType ? { explicitPostType: input.explicitPostType } : {}),
     };
   }
   if (RESEARCH_RE.test(instruction)) {
@@ -1656,7 +1669,12 @@ export function compileReadOnlyOrchestratorRoute(
         clarificationReason: "research_topic",
       };
     }
-    return { kind: "web_research", expectsDraft: true, expectedDrafts };
+    return {
+      kind: "web_research",
+      expectsDraft: true,
+      expectedDrafts,
+      ...(input.explicitPostType ? { explicitPostType: input.explicitPostType } : {}),
+    };
   }
   return null;
 }
@@ -1829,6 +1847,7 @@ export async function compileTurnPlan(
     leadMagnetBlock,
     creatorStyleBlock,
     preloadedVoiceResult,
+    resolvedGenerationConfig,
     turnError,
   } = setup;
 
@@ -2101,6 +2120,9 @@ export async function compileTurnPlan(
           userInstruction: effectiveUserInstruction,
           ...(activeDraftCountOverride
             ? { draftCountOverride: activeDraftCountOverride }
+            : {}),
+          ...(resolvedGenerationConfig?.postType
+            ? { explicitPostType: resolvedGenerationConfig.postType }
             : {}),
           isRefine: skipDecision,
           hasModelSource: Boolean(modelSourceId),

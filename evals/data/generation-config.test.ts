@@ -161,11 +161,17 @@ describe("generation configuration", () => {
   test("clamps an out-of-range message count into the 1-6 rule", () => {
     expect(
       resolveGenerationConfig({ explicitMessageDraftCount: 10 }),
-    ).toEqual({ version: 1, draftCount: 6, draftCountSource: "message" });
+    ).toEqual({
+      version: 1,
+      draftCount: 6,
+      draftCountSource: "message",
+      postTypeSource: "default",
+    });
     expect(resolveGenerationConfig({ explicitMessageDraftCount: 0 })).toEqual({
       version: 1,
       draftCount: 1,
       draftCountSource: "message",
+      postTypeSource: "default",
     });
   });
 

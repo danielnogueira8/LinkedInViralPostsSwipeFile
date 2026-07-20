@@ -88,5 +88,8 @@ export function resolveGenerationConfig(input: {
     version: 1,
     draftCount: resolved.count,
     draftCountSource: resolved.source,
+    ...(input.selected?.postType
+      ? { postType: input.selected.postType, postTypeSource: "ui" as const }
+      : { postTypeSource: "default" as const }),
   };
 }

@@ -2487,7 +2487,7 @@ describe("read-only orchestrator execution", () => {
       }),
       {
         executeModeledDraftBatch,
-        runDraftEngine: (draftInput) => {
+        runProse: (draftInput) => {
           capturedTask = draftInput.task;
           return (async function* () {
             for (let i = 0; i < 3; i += 1) {
@@ -2597,7 +2597,7 @@ describe("read-only orchestrator execution", () => {
       }),
       {
         executeModeledDraftBatch,
-        runDraftEngine: () => {
+        runProse: () => {
           throw new Error(
             "the shared-pool multi path must NOT run when 3 distinct canonical sources satisfy a 3-draft request",
           );

@@ -792,7 +792,7 @@ export async function setupChatTurn(
         messageCount: preclaimPostDraftEstimate,
       });
       resolvedGenerationConfig = {
-        version: 1,
+        ...resolvedGenerationConfig,
         draftCount: contractCount.count,
         draftCountSource:
           deps.explicitMessageDraftCount(preclaimInstruction) !== null ||

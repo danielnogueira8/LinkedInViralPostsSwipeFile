@@ -273,7 +273,14 @@ export async function runHealthyAdapter<T>(input: {
 }): Promise<{ value: T; latencyMs: number }> {
   input.signal?.throwIfAborted();
   const permit = input.registry.acquire(input.key);
-  if (!permit.allowed) throw new AdapterCircuitOpenError(input.key);
+  if (!permit.allowed) {
+    if (process.env.DEBUG_CIRCUIT) {
+      console.error(
+        `[debug] circuit denied key=${input.key} snapshot=${JSON.stringify(input.registry.snapshot(input.key))}`,
+      );
+    }
+    throw new AdapterCircuitOpenError(input.key);
+  }
   if (input.signal?.aborted) {
     input.registry.release(input.key, permit);
     input.signal.throwIfAborted();
