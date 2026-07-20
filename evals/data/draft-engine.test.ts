@@ -62,6 +62,7 @@ import {
 import type { NoModelFormat } from "@/lib/agent/no-model-formats";
 import { POST_INTENTS } from "@/lib/post-intents";
 import { AdapterHealthRegistry } from "@/lib/agent/adapter-health";
+import { editDraftBodySync } from "@/lib/agent/specialists/editor";
 import {
   createCoworkTurnTelemetry,
   observeCoworkTurn,
@@ -1774,10 +1775,9 @@ describe("DraftEngine — thin path (lean mode)", () => {
   });
 
   test("KEEP nets still run: an em-dash is stripped even in lean mode", async () => {
-    // The input() helper passes a NO-OP edit specialist, but lean mode forces
-    // the real leanFinalizerSpecialists (editDraftBodySync) — so the
-    // deterministic corruption/format net still fires. Proves lean swaps the
-    // specialist set rather than trusting the caller's no-ops.
+    // The unified finalizer always runs the real editor when the caller does
+    // not override it. Inject the real editDraftBodySync here to exercise the
+    // deterministic corruption/format net.
     const withDash = [
       "Your reputation is leverage — and it compounds quietly over years.",
       "",
@@ -1788,7 +1788,13 @@ describe("DraftEngine — thin path (lean mode)", () => {
     const writer = new ScriptedWriter([
       { text: withDash, finishReason: "stop", usage: usage(180, 90) },
     ]);
-    const result = await collect(writer, { lean: true });
+    const result = await collect(writer, {
+      lean: true,
+      finalizerSpecialists: {
+        ...input().finalizerSpecialists,
+        edit: editDraftBodySync,
+      },
+    });
 
     const body = artifacts(result.events)[0]?.body ?? "";
     expect(body).not.toContain("—"); // em dash gone
@@ -1796,10 +1802,8 @@ describe("DraftEngine — thin path (lean mode)", () => {
   });
 
   test("KEEP nets still run: a dense wall of text gets paragraph breaks in lean mode", async () => {
-    // Proves lean mode still runs normalizePostBody's dense-block fallback
-    // (the list-heading/arrow-list repair nets were removed — see
-    // lib/post-body-normalize.ts — since a live test showed the writer model
-    // formats lists correctly on its own and those nets never fired).
+    // Proves the deterministic editor still runs normalizePostBody's dense-
+    // block fallback when the caller injects the real editDraftBodySync.
     const dense =
       "Here's the exact system I run every single week to stay consistent, and it took me a long time to make it this simple. " +
       "I used to think consistency meant grinding harder, but it actually meant removing every decision I had to make in the moment. " +
@@ -1807,18 +1811,21 @@ describe("DraftEngine — thin path (lean mode)", () => {
     const writer = new ScriptedWriter([
       { text: dense, finishReason: "stop", usage: usage(180, 90) },
     ]);
-    const result = await collect(writer, { lean: true });
+    const result = await collect(writer, {
+      lean: true,
+      finalizerSpecialists: {
+        ...input().finalizerSpecialists,
+        edit: editDraftBodySync,
+      },
+    });
 
     const body = artifacts(result.events)[0]?.body ?? "";
     expect(body).toContain("\n\n");
   });
 
-  test("lean mode uses ITS OWN real specialists, not a caller-supplied override", async () => {
-    // Lean mode's specialists (leanFinalizerSpecialists) are the real
-    // repairAiTells/checkSameness/reviewSourceFidelity — same as the heavy
-    // path — NOT a caller-injected finalizerSpecialists override. A caller
-    // that passes finalizerSpecialists alongside lean:true is ignored; lean
-    // always uses its own fixed set (see draft-engine.ts's lean ? … : … gate).
+  test("caller-supplied finalizerSpecialists are respected in lean mode", async () => {
+    // The unified finalizer no longer swaps specialist sets for lean mode.
+    // A caller-supplied override is used exactly as passed.
     const writer = new ScriptedWriter([
       { text: COMPLETE_POST, finishReason: "stop", usage: usage(180, 90) },
     ]);
@@ -1834,24 +1841,26 @@ describe("DraftEngine — thin path (lean mode)", () => {
         source: { id: "src-1", text: "A punchy source post about shipping." },
       },
       finalizerSpecialists: {
+        ...input().finalizerSpecialists,
         reviewSourceFidelity: alwaysReject,
       },
     });
 
-    // The caller's override never runs — lean mode's own real reviewer does
-    // instead, and it passes a genuinely clean, on-topic modeled post.
-    expect(artifacts(result.events).map((a) => a.body)).toEqual([COMPLETE_POST]);
-    expect(alwaysReject).not.toHaveBeenCalled();
+    expect(artifacts(result.events)).toHaveLength(0);
+    expect(alwaysReject).toHaveBeenCalled();
   });
 
-  test("lean mode's real reviewSourceFidelity can still reject a bad modeled draft", async () => {
-    // Regression guard for the restore: lean mode's fidelity check is now the
-    // REAL reviewModeledDraft (mocked here, but wired through the actual
-    // module path draft-engine.ts imports) — it must be able to reject, not
-    // just always pass. Proves the pipeline actually calls into it.
-    leanFidelityStub.verdicts = [
-      { outcome: "rejected", reasons: ["unrelated structure"], retryInstruction: "match the source's shape" },
-    ];
+  test("source-fidelity review can still reject a bad modeled draft", async () => {
+    // Regression guard: the pipeline actually calls reviewSourceFidelity for
+    // source turns and surfaces a rejection.
+    const reviewSourceFidelity = vi
+      .fn()
+      .mockResolvedValueOnce({
+        outcome: "rejected" as const,
+        reasons: ["unrelated structure"],
+        retryInstruction: "match the source's shape",
+      })
+      .mockResolvedValue({ outcome: "verified" });
     const writer = new ScriptedWriter([
       { text: COMPLETE_POST, finishReason: "stop", usage: usage(180, 90) },
       { text: DISTINCT_COMPLETE_POST, finishReason: "stop", usage: usage(180, 90) },
@@ -1862,10 +1871,13 @@ describe("DraftEngine — thin path (lean mode)", () => {
         kind: "source",
         source: { id: "src-1", text: "A punchy source post about shipping." },
       },
+      finalizerSpecialists: {
+        ...input().finalizerSpecialists,
+        reviewSourceFidelity,
+      },
     });
 
-    // First candidate rejected by the real (mocked) fidelity check, retried,
-    // second candidate accepted (stub queue is empty → default pass-through).
+    // First candidate rejected by fidelity review, retried, second accepted.
     expect(artifacts(result.events).map((a) => a.body)).toEqual([DISTINCT_COMPLETE_POST]);
   });
 

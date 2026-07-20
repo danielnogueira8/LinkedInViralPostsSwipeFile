@@ -6,7 +6,7 @@ import {
 import type {
   DraftFinalizerDecision,
   DraftFinalizerRejectionCode,
-} from "@/lib/agent/draft-finalizer";
+} from "@/lib/agent/finalize/finalizer";
 import { RENDER_POST_MAX_CHARS } from "@/lib/agent/tools";
 import { UsagePersistenceError } from "@/lib/openrouter";
 
