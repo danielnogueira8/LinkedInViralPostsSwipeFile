@@ -73,6 +73,7 @@ export function SideNav({ badges: initialBadges }: { badges?: Record<string, num
                   href={n.href}
                   prefetch
                   onClick={(e) => onNavigate(e, n.href)}
+                  aria-current={active ? "page" : undefined}
                   title={n.tooltip ?? n.label}
                   className={cn(
                     "group flex items-center gap-3 px-3 py-2 text-sm rounded-lg border transition-colors duration-100",

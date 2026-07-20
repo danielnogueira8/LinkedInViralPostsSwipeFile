@@ -5674,7 +5674,7 @@ function MessageBubble({
         {message.text && (
           <MessageCopyButton
             text={message.text}
-            className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
+            className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity"
           />
         )}
       </div>
@@ -5743,7 +5743,7 @@ function MessageBubble({
             message.text,
             message.contentFormat ?? legacyContentFormat,
           )}
-          className="-ml-1.5 self-start opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
+          className="-ml-1.5 self-start opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity"
         />
       )}
 

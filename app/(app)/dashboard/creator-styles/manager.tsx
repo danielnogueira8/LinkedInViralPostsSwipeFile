@@ -475,10 +475,10 @@ function StyleCard({
               className="relative inline-flex items-center text-[10px] text-muted-foreground"
               title="See the full style breakdown"
             >
-              <span className="group-hover/card:opacity-0">
+              <span className="group-hover/card:opacity-0 group-focus-within/card:opacity-0 [@media(hover:none)]:opacity-0">
                 {relativeTime(row.updated_at)}
               </span>
-              <span className="absolute left-0 inline-flex items-center gap-0.5 whitespace-nowrap font-medium text-primary opacity-0 transition-opacity group-hover/card:opacity-100 hover:underline">
+              <span className="absolute left-0 inline-flex items-center gap-0.5 whitespace-nowrap font-medium text-primary opacity-0 transition-opacity group-hover/card:opacity-100 group-focus-within/card:opacity-100 [@media(hover:none)]:opacity-100 hover:underline">
                 View details <ChevronRight className="h-3 w-3" />
               </span>
             </button>

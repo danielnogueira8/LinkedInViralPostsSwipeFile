@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { Button } from "@/components/ui/button";
@@ -27,6 +27,12 @@ export function WelcomeWizard({ categories }: { categories: WelcomeCategory[] })
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [profileUrl, setProfileUrl] = useState("");
+  // Move focus to the new step's heading on every step change so keyboard and
+  // screen-reader users land in the right place (each step has one h1).
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    headingRef.current?.focus();
+  }, [step]);
 
   // Returning from Zernio's LinkedIn OAuth (finalize bounced us to
   // /welcome?linkedin=connected|connect_failed). Land on the final "You're in"
@@ -165,7 +171,7 @@ export function WelcomeWizard({ categories }: { categories: WelcomeCategory[] })
                 className="h-12 w-12 rounded-xl"
                 priority
               />
-              <h1 className="font-display text-3xl tracking-tight">
+              <h1 ref={headingRef} tabIndex={-1} className="font-display text-3xl tracking-tight outline-none">
                 Welcome to SwipeIn
               </h1>
             </div>
@@ -190,7 +196,7 @@ export function WelcomeWizard({ categories }: { categories: WelcomeCategory[] })
         {step === 2 && (
           <div className="space-y-5">
             <div>
-              <h1 className="font-display text-2xl tracking-tight">
+              <h1 ref={headingRef} tabIndex={-1} className="font-display text-2xl tracking-tight outline-none">
                 Pick your categories
               </h1>
               <p className="text-sm text-muted-foreground mt-1">
@@ -221,6 +227,7 @@ export function WelcomeWizard({ categories }: { categories: WelcomeCategory[] })
                   <button
                     key={cat.id}
                     type="button"
+                    aria-pressed={isSelected}
                     onClick={() => toggle(cat.id)}
                     className={cn(
                       "text-left rounded-lg border p-3 transition-colors",
@@ -257,13 +264,18 @@ export function WelcomeWizard({ categories }: { categories: WelcomeCategory[] })
             </div>
 
             <div className="flex justify-between gap-2 pt-2">
-              <Button
-                variant="ghost"
-                onClick={() => trackCategories({ track: false })}
-                disabled={busy}
-              >
-                Skip for now
-              </Button>
+              <div className="flex gap-2">
+                <Button variant="ghost" onClick={() => setStep(1)} disabled={busy}>
+                  Back
+                </Button>
+                <Button
+                  variant="ghost"
+                  onClick={() => trackCategories({ track: false })}
+                  disabled={busy}
+                >
+                  Skip for now
+                </Button>
+              </div>
               <Button
                 onClick={() => trackCategories({ track: true })}
                 disabled={busy || selected.size === 0}
@@ -287,7 +299,7 @@ export function WelcomeWizard({ categories }: { categories: WelcomeCategory[] })
                 <AudioLines className="h-6 w-6 text-primary" />
               </div>
               <div>
-                <h1 className="font-display text-2xl tracking-tight">
+                <h1 ref={headingRef} tabIndex={-1} className="font-display text-2xl tracking-tight outline-none">
                   Teach us your voice
                 </h1>
                 <p className="text-sm text-muted-foreground mt-1">
@@ -314,9 +326,14 @@ export function WelcomeWizard({ categories }: { categories: WelcomeCategory[] })
             </div>
 
             <div className="flex justify-between gap-2 pt-2">
-              <Button variant="ghost" onClick={() => finishVoice({ generate: false })}>
-                Skip for now
-              </Button>
+              <div className="flex gap-2">
+                <Button variant="ghost" onClick={() => setStep(2)} disabled={busy}>
+                  Back
+                </Button>
+                <Button variant="ghost" onClick={() => finishVoice({ generate: false })}>
+                  Skip for now
+                </Button>
+              </div>
               <Button
                 onClick={() => finishVoice({ generate: true })}
                 disabled={!profileUrl.trim()}
@@ -335,7 +352,7 @@ export function WelcomeWizard({ categories }: { categories: WelcomeCategory[] })
                 <Link2 className="h-6 w-6 text-primary" />
               </div>
               <div>
-                <h1 className="font-display text-2xl tracking-tight">
+                <h1 ref={headingRef} tabIndex={-1} className="font-display text-2xl tracking-tight outline-none">
                   Connect LinkedIn
                 </h1>
                 <p className="text-sm text-muted-foreground mt-1">
@@ -352,9 +369,14 @@ export function WelcomeWizard({ categories }: { categories: WelcomeCategory[] })
             </p>
 
             <div className="flex justify-between gap-2 pt-2">
-              <Button variant="ghost" onClick={() => setStep(5)} disabled={busy}>
-                Skip for now
-              </Button>
+              <div className="flex gap-2">
+                <Button variant="ghost" onClick={() => setStep(3)} disabled={busy}>
+                  Back
+                </Button>
+                <Button variant="ghost" onClick={() => setStep(5)} disabled={busy}>
+                  Skip for now
+                </Button>
+              </div>
               <Button onClick={connectLinkedIn} disabled={busy}>
                 {busy ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -373,7 +395,7 @@ export function WelcomeWizard({ categories }: { categories: WelcomeCategory[] })
               <Flame className="h-7 w-7 text-primary" />
             </div>
             <div>
-              <h1 className="font-display text-2xl tracking-tight">You&apos;re in</h1>
+              <h1 ref={headingRef} tabIndex={-1} className="font-display text-2xl tracking-tight outline-none">You&apos;re in</h1>
               <p className="text-sm text-muted-foreground mt-2 max-w-md mx-auto">
                 Your swipe file is ready — the best posts from the creators you
                 picked are waiting. Open it, or just ask the AI to draft your
@@ -398,9 +420,13 @@ export function WelcomeWizard({ categories }: { categories: WelcomeCategory[] })
 function Stepper({ step }: { step: Step }) {
   const steps = [1, 2, 3, 4, 5];
   return (
-    <div className="flex items-center gap-2 text-xs">
+    <ol className="flex items-center gap-2 text-xs" aria-label="Onboarding progress">
       {steps.map((n) => (
-        <div key={n} className="flex items-center gap-2">
+        <li
+          key={n}
+          className="flex items-center gap-2"
+          aria-current={n === step ? "step" : undefined}
+        >
           <div
             className={cn(
               "h-6 w-6 rounded-full flex items-center justify-center tabular-nums text-[11px] font-medium border",
@@ -410,8 +436,9 @@ function Stepper({ step }: { step: Step }) {
                   ? "bg-foreground text-background border-foreground"
                   : "bg-background text-muted-foreground border-border",
             )}
+            aria-label={n < step ? `Step ${n} complete` : `Step ${n}`}
           >
-            {n < step ? <Check className="h-3 w-3" /> : n}
+            {n < step ? <Check className="h-3 w-3" aria-hidden /> : n}
           </div>
           {n < steps.length && (
             <div
@@ -419,10 +446,11 @@ function Stepper({ step }: { step: Step }) {
                 "h-px w-6",
                 n < step ? "bg-primary" : "bg-border",
               )}
+              aria-hidden
             />
           )}
-        </div>
+        </li>
       ))}
-    </div>
+    </ol>
   );
 }

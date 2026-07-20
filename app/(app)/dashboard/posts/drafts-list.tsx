@@ -15,6 +15,7 @@ import {
   Paperclip,
   Link as LinkIcon,
   Gift,
+  MoreHorizontal,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -476,6 +477,7 @@ export function DraftsList({
       key={d.id}
       draft={d}
       onOpen={() => openEdit(d)}
+      onMove={(status) => void moveTo(d.id, status)}
       draggable={boardColumnForDraft(d) !== "scheduled"}
     />
   );
@@ -981,14 +983,50 @@ function formatShortDate(value: string | null | undefined): string | null {
 function DraftCard({
   draft,
   onOpen,
+  onMove,
   draggable: canDrag,
 }: {
   draft: Draft;
   onOpen: () => void;
+  onMove: (status: DraftStatus) => void;
   draggable: boolean;
 }) {
   const cardRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
+  // Keyboard-accessible lane moves (drag-and-drop is mouse-only): a small
+  // "Move to" menu per card. Focus shows it, just like hover.
+  const [moveOpen, setMoveOpen] = useState(false);
+  const moveTriggerRef = useRef<HTMLButtonElement>(null);
+  const moveMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (moveOpen) {
+      moveMenuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+    }
+  }, [moveOpen]);
+  const onMoveMenuKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      setMoveOpen(false);
+      moveTriggerRef.current?.focus();
+      return;
+    }
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      const items = Array.from(
+        moveMenuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [],
+      );
+      if (items.length === 0) return;
+      const idx = items.indexOf(document.activeElement as HTMLElement);
+      const next =
+        e.key === "ArrowDown"
+          ? (idx + 1) % items.length
+          : (idx - 1 + items.length) % items.length;
+      items[next]?.focus();
+      return;
+    }
+    if (e.key === "Tab") setMoveOpen(false);
+  };
 
   // Fall back to a body-derived label if the title is somehow empty, so a card
   // is never blank.
@@ -1036,7 +1074,7 @@ function DraftCard({
       }}
       onDragEnd={() => setDragging(false)}
       className={cn(
-        "group rounded-xl border border-border/60 bg-card px-3 py-3 text-card-foreground shadow-soft",
+        "group relative rounded-xl border border-border/60 bg-card px-3 py-3 text-card-foreground shadow-soft",
         "cursor-pointer transition-colors hover:border-primary/20 hover:bg-accent/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/35",
         draft.status === "posted" && !dragging && "opacity-70",
         canDrag ? "cursor-grab active:cursor-grabbing" : "cursor-pointer",
@@ -1044,6 +1082,65 @@ function DraftCard({
       )}
       title={`Open post. ${STATUS_HELP[column]}`}
     >
+      {/* "Move to" menu — the keyboard/touch alternative to drag-and-drop.
+          Visible on hover, on card focus, and while its trigger is focused. */}
+      <div className="absolute right-2 top-2">
+        <button
+          ref={moveTriggerRef}
+          type="button"
+          aria-haspopup="menu"
+          aria-expanded={moveOpen}
+          aria-label={`Move ${name}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            setMoveOpen((v) => !v);
+          }}
+          onKeyDown={(e) => {
+            // Keep the card's Enter/Space → open behavior from firing.
+            if (e.key === "Enter" || e.key === " ") e.stopPropagation();
+          }}
+          className="grid size-7 place-items-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/35 group-hover:opacity-100 group-focus-within:opacity-100 data-[open]:opacity-100"
+          data-open={moveOpen || undefined}
+        >
+          <MoreHorizontal className="h-4 w-4" />
+        </button>
+        {moveOpen && (
+          <>
+            <div
+              className="fixed inset-0 z-40"
+              onClick={(e) => {
+                e.stopPropagation();
+                setMoveOpen(false);
+              }}
+              aria-hidden="true"
+            />
+            <div
+              ref={moveMenuRef}
+              role="menu"
+              aria-label={`Move ${name} to`}
+              onKeyDown={onMoveMenuKeyDown}
+              onClick={(e) => e.stopPropagation()}
+              className="absolute right-0 top-full z-50 mt-1 min-w-36 rounded-lg border border-border/60 bg-card py-1 shadow-soft-lg"
+            >
+              {COLUMNS.filter((c) => c.moveStatus && c.id !== column).map((c) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setMoveOpen(false);
+                    onMove(c.moveStatus!);
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm transition-colors hover:bg-muted"
+                >
+                  <span className={cn("h-2 w-2 rounded-full", c.dot)} aria-hidden />
+                  Move to {c.label}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
       <div className="flex items-start gap-2.5">
         <span
           className={cn("mt-1.5 h-2 w-2 shrink-0 rounded-full", STATUS_DOT[column])}
@@ -1051,7 +1148,7 @@ function DraftCard({
           aria-hidden
         />
         <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 items-start gap-2">
+          <div className="flex min-w-0 items-start gap-2 pr-7">
             <span className="min-w-0 flex-1 text-[13px] font-semibold leading-5 tracking-tight">
               {name}
             </span>

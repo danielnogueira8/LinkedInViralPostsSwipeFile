@@ -475,6 +475,7 @@ function FilterChip({
     <button
       type="button"
       onClick={onClick}
+      aria-pressed={active}
       className={cn(
         segmentedItemClass(active),
       )}

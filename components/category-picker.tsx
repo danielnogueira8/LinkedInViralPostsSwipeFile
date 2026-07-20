@@ -151,8 +151,9 @@ export function CategoryPicker({
       <button
         type="button"
         onClick={() => onChange("")}
+        aria-pressed={!value}
         className={cn(
-          "px-2.5 py-1 rounded-full border text-xs transition-colors",
+          "px-2.5 py-1 min-h-8 rounded-full border text-xs transition-colors",
           !value
             ? "bg-foreground text-background border-foreground"
             : "bg-background text-muted-foreground border-border hover:text-foreground hover:bg-accent/60",
@@ -167,8 +168,9 @@ export function CategoryPicker({
             key={c.id}
             type="button"
             onClick={() => onChange(c.id)}
+            aria-pressed={active}
             className={cn(
-              "px-2.5 py-1 rounded-full border text-xs transition-colors",
+              "px-2.5 py-1 min-h-8 rounded-full border text-xs transition-colors",
               active
                 ? "bg-primary text-primary-foreground border-primary"
                 : "bg-background text-muted-foreground border-border hover:text-foreground hover:bg-accent/60",

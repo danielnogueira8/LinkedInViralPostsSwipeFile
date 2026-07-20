@@ -908,6 +908,7 @@ function LeadMagnetMarkdownEditor({
               key={nextMode}
               type="button"
               onClick={() => setMode(nextMode)}
+              aria-pressed={mode === nextMode}
               className={cn(segmentedItemClass(mode === nextMode), "capitalize")}
             >
               {nextMode}
