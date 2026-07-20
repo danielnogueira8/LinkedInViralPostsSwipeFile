@@ -2238,11 +2238,11 @@ describe("production-shaped Cowork outcome harness", () => {
         recovery: "continue",
       }),
     });
-    const recoverable = report.persisted.messages
-      .find((message) => message.role === "assistant")
-      ?.tool_calls?.find((call) => call.function.name === "_recoverable");
-    expect(recoverable).toBeDefined();
-    expect(JSON.parse(recoverable?.function.arguments ?? "{}")).toMatchObject({
+    const recoverableRow = report.persisted.messages.find(
+      (message) => message.role === "assistant",
+    );
+    expect(recoverableRow?.recoverable_error).toBeDefined();
+    expect(recoverableRow?.recoverable_error).toMatchObject({
       code: "orchestrator_evidence_insufficient",
       retryRootUserMessageId: "00000000-0000-4000-8000-000000000002",
     });
@@ -2363,17 +2363,17 @@ describe("production-shaped Cowork outcome harness", () => {
         })),
       ),
     ).toBe(true);
-    const firstMarker = sequence.attempts[0]?.persisted.messages
-      .find((message) => message.role === "assistant")
-      ?.tool_calls?.find((call) => call.function.name === "_recoverable");
-    expect(firstMarker).toBeDefined();
-    expect(JSON.parse(firstMarker?.function.arguments ?? "{}")).toMatchObject({
+    const firstRecoverableRow = sequence.attempts[0]?.persisted.messages.find(
+      (message) => message.role === "assistant",
+    );
+    expect(firstRecoverableRow?.recoverable_error).toBeDefined();
+    expect(firstRecoverableRow?.recoverable_error).toMatchObject({
       code: "orchestrator_evidence_unavailable",
       retryRootUserMessageId: "00000000-0000-4000-8000-000000000002",
     });
-    expect(
-      JSON.parse(firstMarker?.function.arguments ?? "{}"),
-    ).not.toHaveProperty("continuation");
+    expect(firstRecoverableRow?.recoverable_error).not.toHaveProperty(
+      "continuation",
+    );
     expect(sequence.attempts[1]?.observed.readOnlyTools).toHaveLength(1);
     expect(sequence.attempts[1]?.persisted.artifacts).toHaveLength(3);
   });

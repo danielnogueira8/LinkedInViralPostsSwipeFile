@@ -554,7 +554,6 @@ const GENERATION_CONFIG_TOOL_NAME = "_generation_config_selected";
 // (cut-off / stalled, including before SSE headers). hydrate() reads it back so
 // the one-click Retry banner survives the canonical reload.
 const RECOVERABLE_TOOL_NAME = "_recoverable";
-const TURN_USAGE_TOOL_NAME = "_turn_usage";
 
 type RecoverableMarker = {
   code: string | number;
@@ -658,19 +657,6 @@ export function modeledDraftBatchContinuationMarkerFromToolCalls(
   return { kind: "valid", continuation };
 }
 
-// Build the synthetic marker persisted on the assistant row for a recoverable
-// turn. Carries the code + message so hydrate can rebuild the exact banner.
-function recoverableToolCall(marker: RecoverableMarker): ToolCall {
-  return {
-    id: "_recoverable",
-    type: "function",
-    function: {
-      name: RECOVERABLE_TOOL_NAME,
-      arguments: JSON.stringify(recoverableErrorValue(marker)),
-    },
-  };
-}
-
 function recoverableErrorValue(
   marker: RecoverableMarker,
 ): Record<string, unknown> {
@@ -681,17 +667,6 @@ function recoverableErrorValue(
       ? { retryRootUserMessageId: marker.retryRootUserMessageId }
       : {}),
     ...(marker.continuation ? { continuation: marker.continuation } : {}),
-  };
-}
-
-function turnUsageToolCall(usage: CoworkTurnUsageWire): ToolCall {
-  return {
-    id: TURN_USAGE_TOOL_NAME,
-    type: "function",
-    function: {
-      name: TURN_USAGE_TOOL_NAME,
-      arguments: JSON.stringify(usage),
-    },
   };
 }
 
@@ -783,10 +758,7 @@ async function persistChatSetupFailure(opts: {
       role: "assistant",
       content: opts.content,
       ...(opts.recoverable
-        ? {
-            tool_calls: [recoverableToolCall(opts.recoverable)],
-            recoverable_error: recoverableErrorValue(opts.recoverable),
-          }
+        ? { recoverable_error: recoverableErrorValue(opts.recoverable) }
         : {}),
     });
     if (error) throw error;
@@ -3738,13 +3710,7 @@ export async function executeChatTurn(
                         modeledBatchRetryRootUserMessageId,
                     }
                   : null);
-              const doneToolCalls = [
-                ...(ev.message.tool_calls ?? []),
-                ...(persistedRecoverableMarker
-                  ? [recoverableToolCall(persistedRecoverableMarker)]
-                  : []),
-                turnUsageToolCall(turnUsage),
-              ];
+              const doneToolCalls = ev.message.tool_calls ?? [];
               const saved = await persistAssistant(
                 ev.message.content,
                 doneToolCalls,
