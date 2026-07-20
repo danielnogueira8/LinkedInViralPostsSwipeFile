@@ -7374,7 +7374,10 @@ function ArtifactCard({
         />
       )}
 
-      <ResearchSources sources={researchSources} />
+      {/* Only show the full "Sources used" list when the draft does NOT already
+          carry its own per-draft source chip (modeled drafts show the chip at
+          the top; news/web research drafts show the list here). */}
+      {!draftSource && <ResearchSources sources={researchSources} />}
 
       <CoworkDraftFeedback
         key={artifact.id}
