@@ -77,7 +77,6 @@ export type {
 export {
   applyCiteSourceToDraftArtifacts,
   isDraftArtifact,
-  modelSourceStructureSkeleton,
   sourceReferenceFromCiteArtifact,
   tagArtifactWithCreatorStyle,
   tagArtifactWithLeadMagnet,

@@ -99,7 +99,7 @@ describe("runModeledDraftSlot", () => {
             previousBodies: ["One concurrently accepted post."],
           },
         },
-        enableStructureGate: true,
+        slotMode: true,
       }),
     );
     expect(result).toEqual({

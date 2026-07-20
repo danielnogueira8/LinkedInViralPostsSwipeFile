@@ -258,7 +258,6 @@ export type WriterInput = {
   onModelUsed?: (model: string) => void;
   telemetry?: CoworkTurnTelemetry;
   lean?: boolean;
-  enableStructureGate?: boolean;
   dependencies?: Partial<WriterDependencies>;
   /** Absolute deadline for this turn (claimed start + budget). */
   deadlineAtMs?: number;
@@ -1166,17 +1165,12 @@ export async function* runSingleDraftTurn(
   const engineEditOptions = {
     keepEmDashes: voiceResultKeepsEmDashes(input.voiceResult),
   };
-  const modeledStructureSkeleton =
-    task.kind === "source" && input.enableStructureGate
-      ? computeStructureSkeleton(task.source.text)
-      : undefined;
   const finalizer = createDraftFinalizer({
     workspaceId: input.workspaceId,
     contract: { kind: "post", expectedCount: 1 },
     priorDrafts: input.priorPostDrafts,
     signal: turnSignal,
     editOptions: engineEditOptions,
-    structureSkeleton: modeledStructureSkeleton,
     specialists: input.finalizerSpecialists,
     transformCandidate: input.transformCandidate,
     finalTransformCandidate,
@@ -2177,6 +2171,44 @@ function taggedArtifact(
   };
 }
 
+// Tag a shared-pool multi draft with its assigned canonical source. Unlike the
+// durable batch's `taggedArtifact`, this does NOT stamp slot identity (there is
+// no durable batch here) — only the source chip + provenance.
+function tagSharedPoolArtifact(
+  artifact: Artifact & { kind: "post" },
+  source: GroundedSource,
+): Artifact & { kind: "post" } {
+  const canonicalMeta = { ...(artifact.meta ?? {}) };
+  delete canonicalMeta.source;
+  delete canonicalMeta.source_post_id;
+  delete canonicalMeta.source_url;
+  delete canonicalMeta.research_provenance;
+
+  return {
+    ...artifact,
+    meta: {
+      ...canonicalMeta,
+      source: "model_source",
+      source_post_id: source.id,
+      ...(source.url ? { source_url: source.url } : {}),
+      research_provenance: {
+        route: "workspace_research",
+        sources: [
+          {
+            id: source.id,
+            kind: "workspace_post",
+            ...(source.title ? { title: source.title } : {}),
+            ...(source.url ? { url: source.url } : {}),
+            ...(source.publishedAt
+              ? { published_at: source.publishedAt }
+              : {}),
+          },
+        ],
+      },
+    },
+  };
+}
+
 export async function runModeledDraftSlot(
   input: ModeledDraftSlotInput,
   dependencies: Partial<{
@@ -2208,7 +2240,6 @@ export async function runModeledDraftSlot(
     for await (const event of runSingle({
       ...input.engineInput,
       task,
-      enableStructureGate: true,
       slotMode: true,
       deadlineAtMs: input.engineInput.deadlineAtMs,
       onFinalizerDecision: (decision) => {
@@ -3329,11 +3360,20 @@ async function* runLocalSlotBatch(
           return externallyTransformed;
         };
 
+        // Shared-pool multi: when the workspace supplies at least as many
+        // distinct sources as drafts requested, assign one source per slot so
+        // each draft models (and chips) its own source. When there are fewer
+        // sources than drafts, reuse the pool in order so every draft still
+        // gets a canonical source chip.
+        const assignedSource = task.groundedSources
+          ? task.groundedSources[(index - 1) % task.groundedSources.length]
+          : undefined;
+
         let childTask: SingleTask;
-        if (task.groundedSources) {
+        if (assignedSource) {
           childTask = {
-            kind: "grounded",
-            sources: task.groundedSources,
+            kind: "source",
+            source: { id: assignedSource.id, text: assignedSource.text },
             variation,
           };
         } else if (task.source) {
@@ -3444,7 +3484,9 @@ async function* runLocalSlotBatch(
           return;
         }
         acceptedKeys.add(key);
-        slotArtifact = artifact;
+        slotArtifact = assignedSource
+          ? tagSharedPoolArtifact(artifact, assignedSource)
+          : artifact;
       }
 
       // A null slotArtifact here means the slot was interrupted (cancelled);
