@@ -3975,7 +3975,7 @@ export function ChatWorkspace({
                     <div>
                       <p className="text-sm font-medium text-foreground">Post type</p>
                       <p className="mt-0.5 text-xs text-muted-foreground">
-                        Only applies when sourcing from your swipe file.
+                        Only applies when generating a new original post.
                       </p>
                     </div>
                     <div
