@@ -10,15 +10,9 @@ import { scopedSupabase } from "@/lib/supabase-scoped";
 import {
   type DraftFinalizerSpecialists,
 } from "@/lib/agent/finalize/finalizer";
-import {
-  runWriterTurn,
-  WRITER_TURN_BUDGET_MS,
-  type WriterInput,
-} from "@/lib/agent/execute/writer";
-import {
-  runAgentTurn,
-  ACTION_ORCHESTRATOR_DEADLINE_MS,
-} from "@/lib/agent/execute/agent";
+import { executeTurnPlan } from "@/lib/agent/turn/execute";
+import { runWriterTurn } from "@/lib/agent/execute/writer";
+import { runAgentTurn } from "@/lib/agent/execute/agent";
 import {
   actionOrchestratorEnabledForWorkspace,
   compileTurnPlan,
@@ -34,12 +28,10 @@ import {
 import { requestedDirectPostCount } from "@/lib/agent/direct-deliverable-policy";
 import { stripArtifactFences } from "@/lib/artifact-fences";
 import {
-  type AgentEvent,
   type Artifact,
   type PlanStep,
 } from "@/lib/agent/contracts";
 import {
-  observeCoworkTurn,
   type CoworkRoute,
   type CoworkTelemetrySink,
 } from "@/lib/agent/cowork-telemetry";
@@ -58,7 +50,6 @@ import { resolveTurnOutcome } from "@/lib/agent/turn/outcome";
 import { setupChatTurn } from "@/lib/agent/turn/setup";
 
 import {
-  loadCitedSwipePostImage,
   CREATOR_STYLE_RETRY_CONTEXT_VERSION,
   CUSTOM_SKILL_RETRY_CONTEXT_VERSION,
   LEAD_MAGNET_TOOL_NAME,
@@ -66,8 +57,6 @@ import {
   MODEL_SOURCE_TOOL_NAME,
   type CreatorStyleRetryContext,
   type CustomSkillRetryContext,
-  type ModelSourceReference,
-  type ModelSourceRow,
 } from "@/lib/agent/turn/context";
 // Back-compat re-exports: the context-assembly helpers now live in
 // lib/agent/turn/context.ts (PLAN-cowork-unification Phase 1, step 4);
@@ -94,19 +83,29 @@ export type {
   CustomSkillRetryContext,
   FrozenCustomSkill,
 } from "@/lib/agent/turn/context";
+// Artifact tagging helpers moved to their own module so the execution stream can
+// use them without creating an import cycle with this file.
+export {
+  applyCiteSourceToDraftArtifacts,
+  isDraftArtifact,
+  modelSourceStructureSkeleton,
+  sourceReferenceFromCiteArtifact,
+  tagArtifactWithCreatorStyle,
+  tagArtifactWithLeadMagnet,
+  tagArtifactWithModelSourceReference,
+  tagArtifactWithNoModelFormat,
+  tagArtifactWithSkills,
+  withGeneratedImageMeta,
+  withLeadMagnetImagePlanStep,
+  withLeadMagnetResourcePlanStep,
+} from "@/lib/agent/turn/artifact-tags";
 import {
   checkChatRateLimit,
   claimChatTurn,
   releaseChatTurn,
 } from "@/lib/agent/rate-limit";
 
-import { isCancelRequested } from "@/lib/agent/cancel";
 import { safeFilename } from "@/lib/agent/untrusted";
-import {
-  computeStructureSkeleton,
-  type StructureSkeleton,
-} from "@/lib/post-structure-skeleton";
-import { splicePreservedBody } from "@/lib/hook-splice";
 
 import { compileModeledPostIntent } from "@/lib/agent/modeled-post-intent";
 import {
@@ -122,40 +121,15 @@ import {
 } from "@/lib/lead-magnets";
 import { generateLeadMagnetResource } from "@/lib/lead-magnet-ai";
 import {
-  campaignImageContext,
-  enforceLeadMagnetCampaignCta,
-  hasLeadMagnetResourceOverlap,
-} from "@/lib/lead-magnet-campaign";
-import {
   SKILL_BODY_MAX,
   SKILL_NAME_MAX,
   SKILLS_PER_TURN_MAX,
 } from "@/lib/custom-skills";
 import { fetchRecentPostDrafts } from "@/lib/recent-drafts";
-import {
-  completeChat,
-  logOpenRouterUsage,
-  streamChat,
-  CHAT_MODEL,
-  type ChatMessage,
-  type ToolCall,
-  type Usage,
-} from "@/lib/openrouter";
-import {
-  contentFormatForModel,
-  stampDraftFormat,
-} from "@/lib/markdown/mode";
-import {
-  AUTOMATIC_LEAD_MAGNET_IMAGE_GENERATION_ENABLED,
-  shouldGenerateLeadMagnetImage,
-  type LeadMagnetImageContext,
-  type SourcePostImage,
-} from "@/lib/lead-magnet-image-generation";
-import { enqueueLeadMagnetImageJob } from "@/lib/lead-magnet-image-jobs";
+import { completeChat, CHAT_MODEL, type ToolCall } from "@/lib/openrouter";
+import { contentFormatForModel } from "@/lib/markdown/mode";
 import type { AppliedLeadMagnet } from "@/lib/chat-hydration";
 import { persistChatAssistantTurn } from "@/lib/chat-message-persistence";
-
-import { isExclusiveHookRefine } from "@/lib/agent/direct-refine-policy";
 
 export const runtime = "nodejs";
 // The agent loop can run several tool rounds + a long final generation. Give it
@@ -693,140 +667,6 @@ async function persistChatSetupFailure(opts: {
   }
 }
 
-// The raw skeleton (not the rendered prose block) for a genuine modeling
-// source — same genre gate as modelSourceStructureBlock. Feeds the
-// finalizer's coarse structure gate (DraftFinalizerOptions.structureSkeleton
-// in lib/agent/draft-finalizer.ts): its mere presence scopes that gate to
-// modeled-post turns only, so a refine/template source must yield undefined
-// here, not just an empty prose block.
-export function modelSourceStructureSkeleton(
-  src: Pick<ModelSourceRow, "post_text" | "source">,
-): StructureSkeleton | undefined {
-  if (src.source === "draft" || src.source === "template") return undefined;
-  const clean = src.post_text.trim();
-  if (!clean) return undefined;
-  return computeStructureSkeleton(clean);
-}
-
-function withGeneratedImageMeta(
-  artifact: Artifact,
-  generatedImageMeta: Record<string, unknown>,
-): Artifact {
-  return {
-    ...artifact,
-    meta: {
-      ...(artifact.meta ?? {}),
-      generated_lead_magnet_image: generatedImageMeta,
-    },
-  };
-}
-
-export function tagArtifactWithModelSourceReference(
-  artifact: Artifact,
-  sourceRef: ModelSourceReference | null,
-): Artifact {
-  if (!sourceRef) return artifact;
-  if (artifact.kind === "cite") return artifact;
-  const meta = artifact.meta ?? {};
-  const existingSourceId =
-    typeof meta.source_post_id === "string" && meta.source_post_id.trim()
-      ? meta.source_post_id
-      : null;
-  // A durable modeled batch already owns one canonical source per artifact.
-  // Turn-level history may still contain an older attached source; that
-  // convenience reference may fill missing provenance, but it must never
-  // replace an artifact's explicit slot identity.
-  if (
-    existingSourceId &&
-    existingSourceId !== sourceRef.source_post_id
-  ) {
-    return artifact;
-  }
-  return {
-    ...artifact,
-    meta: {
-      ...meta,
-      source: "model_source",
-      source_post_id: sourceRef.source_post_id,
-      ...(sourceRef.source_url ? { source_url: sourceRef.source_url } : {}),
-    },
-  };
-}
-
-export function sourceReferenceFromCiteArtifact(
-  artifact: Artifact,
-): ModelSourceReference | null {
-  if (artifact.kind !== "cite") return null;
-  const meta = artifact.meta as
-    | {
-        postId?: unknown;
-        card?: { id?: unknown; postUrl?: unknown };
-      }
-    | undefined;
-  const sourcePostId =
-    typeof meta?.card?.id === "string"
-      ? meta.card.id
-      : typeof meta?.postId === "string"
-        ? meta.postId
-        : "";
-  const sourceUrl =
-    typeof meta?.card?.postUrl === "string" &&
-    /^https?:\/\//i.test(meta.card.postUrl)
-      ? meta.card.postUrl
-      : null;
-  if (!sourcePostId) return null;
-  return { source_post_id: sourcePostId, source_url: sourceUrl };
-}
-
-function sourceReferenceFromCiteArtifacts(
-  citeArtifacts: Artifact[],
-): ModelSourceReference | null {
-  for (const artifact of citeArtifacts) {
-    const sourceRef = sourceReferenceFromCiteArtifact(artifact);
-    if (sourceRef) return sourceRef;
-  }
-  return null;
-}
-
-function isDraftArtifact(artifact: Artifact): boolean {
-  return artifact.kind === "post" || artifact.kind === "hook";
-}
-
-// Mutates `artifacts` in place (an already-streamed draft gets its source_url
-// backfilled) AND returns the artifacts that actually changed, so the caller
-// can re-send exactly those over the live SSE stream. Without that second
-// half, a cite arriving AFTER its draft (the prompt's own instructed order —
-// "call render_cite AFTER mentioning the post") patches the SERVER's copy but
-// the browser — which already rendered the draft with no chip — never learns
-// about the correction until a later page reload re-fetches from the DB.
-export function applyCiteSourceToDraftArtifacts(
-  artifacts: Artifact[],
-  citeArtifacts: Artifact[],
-): Artifact[] {
-  const sourceRef = sourceReferenceFromCiteArtifacts(citeArtifacts);
-  if (!sourceRef) return [];
-  const updated: Artifact[] = [];
-  for (let i = 0; i < artifacts.length; i++) {
-    const artifact = artifacts[i];
-    if (!isDraftArtifact(artifact)) continue;
-    const currentMeta = artifact.meta as
-      | { source_post_id?: unknown; source_url?: unknown }
-      | undefined;
-    const currentSourceId =
-      typeof currentMeta?.source_post_id === "string"
-        ? currentMeta.source_post_id
-        : "";
-    if (currentSourceId && currentSourceId !== sourceRef.source_post_id) {
-      continue;
-    }
-    const currentUrl = currentMeta?.source_url;
-    if (typeof currentUrl === "string" && currentUrl) continue;
-    artifacts[i] = tagArtifactWithModelSourceReference(artifact, sourceRef);
-    updated.push(artifacts[i]);
-  }
-  return updated;
-}
-
 export function modelSourceToolCall(modelSourceId: string): ToolCall {
   return {
     id: "_model_source_attached",
@@ -1117,69 +957,6 @@ export function leadMagnetToolCall(
   };
 }
 
-const LEAD_MAGNET_IMAGE_PLAN_STEP_ID = "server_lead_magnet_image";
-const LEAD_MAGNET_RESOURCE_PLAN_STEP_ID = "server_lead_magnet_resource";
-
-export function withLeadMagnetImagePlanStep(
-  steps: PlanStep[],
-  status: PlanStep["status"],
-): PlanStep[] {
-  const imageStep: PlanStep = {
-    id: LEAD_MAGNET_IMAGE_PLAN_STEP_ID,
-    label: "Adapt the source image",
-    status,
-  };
-  if (steps.length === 0) {
-    return [
-      {
-        id: "server_draft_lead_magnet_post",
-        label: "Draft the lead-magnet post",
-        status: "done",
-      },
-      imageStep,
-    ];
-  }
-  const existing = steps.findIndex(
-    (step) => step.id === LEAD_MAGNET_IMAGE_PLAN_STEP_ID,
-  );
-  if (existing >= 0) {
-    return steps.map((step, index) =>
-      index === existing ? { ...step, status } : step,
-    );
-  }
-  return [...steps, imageStep];
-}
-
-export function withLeadMagnetResourcePlanStep(
-  steps: PlanStep[],
-  status: PlanStep["status"],
-): PlanStep[] {
-  const resourceStep: PlanStep = {
-    id: LEAD_MAGNET_RESOURCE_PLAN_STEP_ID,
-    label: "Generate or match the lead magnet resource",
-    status,
-  };
-  if (steps.length === 0) {
-    return [
-      {
-        id: "server_draft_lead_magnet_post",
-        label: "Draft the lead-magnet post",
-        status: "done",
-      },
-      resourceStep,
-    ];
-  }
-  const existing = steps.findIndex(
-    (step) => step.id === LEAD_MAGNET_RESOURCE_PLAN_STEP_ID,
-  );
-  if (existing >= 0) {
-    return steps.map((step, index) =>
-      index === existing ? { ...step, status } : step,
-    );
-  }
-  return [...steps, resourceStep];
-}
-
 // -----------------------------------------------------------------------------
 // POST /api/chats/[id]/stream
 //
@@ -1223,44 +1000,12 @@ export async function executeChatTurn(
   const {
     workspaceId,
     sbRaw,
-    attachments,
-    refineInstruction,
-    hookOnly,
-    hookOnlyOriginalBody,
-    customSkillBodies,
-    customSkillNames,
     turnCostOperationKey,
     claimedTurnStartedAt,
     claimedUserMessageId,
-    actionTurnMessageId,
-    confirmedActionTargetIds,
     pinnedCoworkRoute,
     coworkTelemetry,
-    history,
-    effectiveUserInstruction,
-    orchestratorAttachmentBlocks,
-    currentModelSource,
-    modelSourceImage,
-    modelSourceImageSkipReason,
-    modelSourceImageSourcePostId,
-    appliedNoModelFormat,
-    selectedNoModelFormat,
-    leadMagnetBlock,
-    appliedLeadMagnet,
-    shouldAttachLeadMagnet,
-    activeLeadMagnetCampaign,
-    imageGenerationAuthor,
-    creatorStyleBlock,
-    appliedCreatorStyle,
-    feedbackMemory,
-    preferences,
-    priorPostDrafts,
-    preloadedVoiceResult,
   } = setupResult;
-
-  let citedSourceImage = setupResult.citedSourceImage;
-  let citedSourceImageSkipReason = setupResult.citedSourceImageSkipReason;
-  let citedSourceImageSourcePostId = setupResult.citedSourceImageSourcePostId;
 
   const plan = await compileTurnPlan(
     setupResult,
@@ -1279,20 +1024,8 @@ export async function executeChatTurn(
 
   const {
     route: coworkRoute,
-    contract: turnContract,
-    useDirectWriter,
-    directWriterTask,
-    useDirectRefine,
-    useDirectLeadMagnet,
-    useDirectCreatorStyle,
-    useActionOrchestrator,
-    actionOrchestratorRoute,
-    useReadOnlyOrchestrator,
-    readOnlyOrchestratorRoute,
-    modeledBatchContinuation,
     activeModeledBatchContinuation,
     modeledBatchRetryRootUserMessageId,
-    modelSourceReference,
   } = plan;
 
   // Persist the first non-answer lane selection so the next ambiguous turn
@@ -1368,22 +1101,6 @@ export async function executeChatTurn(
         },
       });
       const artifacts: Artifact[] = [];
-      const pendingCiteArtifacts: Artifact[] = [];
-      let movedCiteSourceToDraft = false;
-      let leadMagnetImageGeneratedThisTurn = false;
-      // A lead-magnet draft that was ready to get an image EXCEPT no source
-      // image had loaded yet (neither model-source nor cited). render_cite is
-      // its own SSE event, processed separately from the draft — and the
-      // system prompt tells the model to call it AFTER the draft, so on a
-      // normal turn the draft's own image decision runs before the cite (and
-      // its image) has arrived. Stashed here so a LATER cite arrival can
-      // retroactively trigger generation instead of the turn's one shot at an
-      // image being silently spent with sourceImage: null. Cleared the moment
-      // an image decision (fire OR explicit skip) actually lands for it.
-      let pendingImageDraft: {
-        artifact: Artifact;
-        leadMagnet: LeadMagnetImageContext;
-      } | null = null;
       // Accumulate streamed text + whether we've already persisted the assistant
       // turn, so an error/abort mid-stream still saves a row (otherwise the user
       // message is orphaned with no reply, which corrupts the next turn's
@@ -1394,7 +1111,6 @@ export async function executeChatTurn(
       const recordResponseModel = (model: string) => {
         responseModel = model;
       };
-      let latestPlanSteps: PlanStep[] = [];
       // Persist the current plan to chats.live_plan so a client that navigated
       // away mid-turn and came back can restore the literal checklist (not just a
       // "still working…" indicator). Never throws (a failed write only costs the
@@ -1415,89 +1131,6 @@ export async function executeChatTurn(
           () => {},
           () => {},
         );
-      // Attempt lead-magnet image generation for `artifact` given whatever
-      // source image is available RIGHT NOW. Shared by two call sites:
-      //   (a) the draft artifact's own arrival (the common case), and
-      //   (b) a LATER cite arrival retrying a draft that had no source image
-      //       yet when (a) ran — see pendingImageDraft above.
-      // Mutates nothing; returns the artifact with generation meta attached
-      // (queued/failed) OR unchanged if a source image genuinely isn't
-      // available yet (caller decides whether to stash it for retry).
-      // Emits the same tool_start/tool_end/plan_update events either way, so
-      // a retry-triggered generation looks identical in the activity rail to
-      // one triggered on the first pass.
-      const attemptLeadMagnetImage = async (
-        artifact: Artifact,
-        leadMagnetContext: LeadMagnetImageContext,
-      ): Promise<{ artifact: Artifact; fired: boolean }> => {
-        if (!AUTOMATIC_LEAD_MAGNET_IMAGE_GENERATION_ENABLED) {
-          return { artifact, fired: false };
-        }
-        const sourceImageForLeadMagnet = modelSourceImage ?? citedSourceImage;
-        if (
-          !shouldGenerateLeadMagnetImage({
-            artifact,
-            leadMagnet: leadMagnetContext,
-            sourceImage: sourceImageForLeadMagnet,
-          })
-        ) {
-          return { artifact, fired: false };
-        }
-        const imageToolId = `lead_magnet_image_${artifact.id}`;
-        latestPlanSteps = withLeadMagnetImagePlanStep(
-          latestPlanSteps,
-          "active",
-        );
-        void persistLivePlan(latestPlanSteps);
-        send(controller, "plan_update", { steps: latestPlanSteps });
-        send(controller, "tool_start", {
-          id: imageToolId,
-          name: "generate_lead_magnet_image",
-          args: JSON.stringify({ leadMagnet: leadMagnetContext.title }),
-        });
-        let tagged = artifact;
-        try {
-          const queued = await enqueueLeadMagnetImageJob({
-            sb: sbRaw,
-            workspaceId,
-            target: {
-              kind: "chat_message_artifact",
-              chatId,
-              artifactId: artifact.id,
-            },
-            sourceImage: sourceImageForLeadMagnet as SourcePostImage,
-            leadMagnet: leadMagnetContext,
-            artifact,
-            author: imageGenerationAuthor,
-          });
-          tagged = withGeneratedImageMeta(artifact, queued.queuedMeta);
-          send(controller, "tool_end", {
-            id: imageToolId,
-            name: "generate_lead_magnet_image",
-            ok: true,
-            summary: "Image queued",
-          });
-        } catch (e) {
-          tagged = withGeneratedImageMeta(artifact, {
-            status: "failed",
-            reason: (e as Error)?.message || "Image could not be queued.",
-            source_post_id: (sourceImageForLeadMagnet as SourcePostImage)
-              .postId,
-            lead_magnet_id: leadMagnetContext.id ?? null,
-            lead_magnet_title: leadMagnetContext.title,
-          });
-          send(controller, "tool_end", {
-            id: imageToolId,
-            name: "generate_lead_magnet_image",
-            ok: false,
-            summary: "Image could not be queued",
-          });
-        }
-        latestPlanSteps = withLeadMagnetImagePlanStep(latestPlanSteps, "done");
-        void persistLivePlan(latestPlanSteps);
-        send(controller, "plan_update", { steps: latestPlanSteps });
-        return { artifact: tagged, fired: true };
-      };
       // Returns true iff the assistant row was actually committed. The Supabase
       // JS client RESOLVES with { error } (it does not throw), so a bare
       // `await insert()` swallows a failed write — and this is the app's single
@@ -1591,229 +1224,15 @@ export async function executeChatTurn(
       // error is followed by a `done` that persists the reply, so we stash this
       // on the assistant row there to keep the Continue banner across reloads.
       let recoverableMarker: RecoverableMarker | null = null;
-      const transformDraftCandidate = (body: string) => {
-        if (
-          activeLeadMagnetCampaign &&
-          !hasLeadMagnetResourceOverlap(body, activeLeadMagnetCampaign)
-        ) {
-          return {
-            ok: false as const,
-            message:
-              "The generated post did not match the selected lead magnet, so no draft was saved. Please try again.",
-          };
-        }
-        let transformedBody = activeLeadMagnetCampaign
-          ? enforceLeadMagnetCampaignCta(body, activeLeadMagnetCampaign)
-          : body;
-        const legacyHookOnlyAllowed =
-          !refineInstruction || isExclusiveHookRefine(refineInstruction);
-        if (
-          !useDirectRefine &&
-          hookOnly &&
-          hookOnlyOriginalBody &&
-          legacyHookOnlyAllowed
-        ) {
-          transformedBody = splicePreservedBody(
-            hookOnlyOriginalBody,
-            transformedBody,
-          );
-        }
-        return { ok: true as const, body: transformedBody };
-      };
-      async function* executeAnswerTurn(): AsyncGenerator<AgentEvent> {
-        const startedAt = Date.now();
-        const systemMessage: ChatMessage = {
-          role: "system",
-          content:
-            "You are Cowork, a LinkedIn content assistant. Answer the user's question or brainstorming request helpfully and concisely. Do not write a LinkedIn post draft unless the user explicitly asks for one.",
-        };
-        const messages: ChatMessage[] = [systemMessage, ...history];
-        const stream = streamChat({
-          model: CHAT_MODEL,
-          messages,
-          signal,
-          sessionId: chatId,
-        });
-        let text = "";
-        let model = CHAT_MODEL;
-        let usage: Usage | undefined;
-        try {
-          for await (const delta of stream) {
-            if (delta.model) model = delta.model;
-            if (delta.text) {
-              text += delta.text;
-              yield { type: "text", delta: delta.text };
-            }
-            if (delta.usage) usage = delta.usage;
-          }
-        } catch (error) {
-          coworkTelemetry.recordAttempt({
-            stage: "answer",
-            attempt: 1,
-            model,
-            provider: "openrouter",
-            outcome: "failed",
-            reasonCode:
-              error instanceof Error
-                ? error.name === "AbortError"
-                  ? "cancelled"
-                  : error.message
-                : String(error),
-            latencyMs: Date.now() - startedAt,
-            usage,
-          });
-          throw error;
-        }
-        const latencyMs = Date.now() - startedAt;
-        recordResponseModel(model);
-        coworkTelemetry.recordAttempt({
-          stage: "answer",
-          attempt: 1,
-          model,
-          provider: "openrouter",
-          outcome: "accepted",
-          latencyMs,
-          usage,
-        });
-        await logOpenRouterUsage(
-          "cowork_answer",
-          model,
-          usage,
-          workspaceId,
-          {
-            chat_id: chatId,
-            reasoning_tokens:
-              usage?.completion_tokens_details?.reasoning_tokens ?? 0,
-            cached_input_tokens:
-              usage?.prompt_tokens_details?.cached_tokens ?? 0,
-          },
-        );
-        yield {
-          type: "done",
-          message: {
-            content: text,
-            tool_calls: null,
-            artifacts: [],
-            toolMessages: [],
-            inputTokens: usage?.prompt_tokens ?? 0,
-            outputTokens: usage?.completion_tokens ?? 0,
-          },
-        };
-      }
-      const observeTurn = (turn: AsyncGenerator<AgentEvent>) =>
-        observeCoworkTurn({
-          stream: turn,
-          telemetry: coworkTelemetry,
-          contract: turnContract,
-          signal,
-          deferFinish: true,
-        });
-      const runTurn = () => {
-        const turnStartedAtMs = Date.parse(claimedTurnStartedAt!);
-        const cancellationProbe = (probeSignal: AbortSignal) =>
-          isCancelRequested(chatId, turnStartedAtMs, probeSignal);
 
-        const writerInput: Omit<WriterInput, "task"> = {
-          workspaceId,
-          userInstruction: effectiveUserInstruction,
-          voiceResult: preloadedVoiceResult!,
-          preferences,
-          feedbackMemory,
-          priorPostDrafts,
-          format: selectedNoModelFormat,
-          customSkillBodies,
-          customSkillNames,
-          signal,
-          cancellationProbe,
-          finalizerSpecialists: deps.draftFinalizerSpecialists,
-          transformCandidate: transformDraftCandidate,
-          finalTransformCandidate: transformDraftCandidate,
-          telemetry: coworkTelemetry,
-          onModelUsed: recordResponseModel,
-          dependencies: {
-            now: () => deps.now().getTime(),
-          },
-          ...(shouldAttachLeadMagnet && leadMagnetBlock.trim()
-            ? { leadMagnetBlock }
-            : {}),
-          ...(creatorStyleBlock.trim() ? { creatorStyleBlock } : {}),
-        };
+      const { run } = executeTurnPlan(plan, setupResult, chatId, deps, {
+        signal,
+        onModelUsed: recordResponseModel,
+      });
 
-        if (useDirectWriter) {
-          return observeTurn(
-            deps.runWriterTurn({
-              ...writerInput,
-              sessionId: chatId,
-              history,
-              task: directWriterTask,
-              deadlineAtMs: turnStartedAtMs + WRITER_TURN_BUDGET_MS,
-              // Coarse structure gate opt-in — true ONLY for a genuine
-              // "model this post" source (mirrors modelSourceStructureBlock's
-              // own genre split; false for a refine/template source, or when
-              // there's no attached source at all).
-              enableStructureGate: Boolean(
-                currentModelSource &&
-                  modelSourceStructureSkeleton(currentModelSource),
-              ),
-              // Lead-magnet framing for the writer prompt. The comment-CTA is
-              // still HARD-enforced by transformDraftCandidate above, so a draft
-              // that ignores this block is rejected rather than shipped CTA-less.
-              ...(useDirectLeadMagnet ? { leadMagnetBlock } : {}),
-              // Creator-style mechanics for the writer prompt.
-              ...(useDirectCreatorStyle ? { creatorStyleBlock } : {}),
-            }),
-          );
-        }
-        if (useActionOrchestrator && actionOrchestratorRoute) {
-          return observeTurn(
-            deps.runAgentTurn({
-              workspaceId,
-              chatId,
-              turnMessageId: actionTurnMessageId ?? claimedUserMessageId!,
-              userInstruction: effectiveUserInstruction,
-              history,
-              task: { kind: "action", route: actionOrchestratorRoute },
-              confirmedActionTargetIds,
-              signal,
-              cancellationProbe,
-              telemetry: coworkTelemetry,
-              onModelUsed: recordResponseModel,
-              writerInput,
-              deadlineAtMs: turnStartedAtMs + ACTION_ORCHESTRATOR_DEADLINE_MS,
-            }),
-          );
-        }
-        if (useReadOnlyOrchestrator && readOnlyOrchestratorRoute) {
-          return observeTurn(
-            deps.runAgentTurn({
-              workspaceId,
-              chatId,
-              turnMessageId: actionTurnMessageId ?? claimedUserMessageId!,
-              userInstruction: effectiveUserInstruction,
-              history,
-              task: { kind: "research", route: readOnlyOrchestratorRoute },
-              ...(modeledBatchContinuation
-                ? { modeledBatchContinuation }
-                : {}),
-              attachmentNames: attachments.map((attachment) =>
-                safeFilename(attachment.filename),
-              ),
-              attachmentBlocks: orchestratorAttachmentBlocks,
-              cancellationProbe,
-              writerInput,
-              signal,
-              telemetry: coworkTelemetry,
-              onModelUsed: recordResponseModel,
-              deadlineAtMs: turnStartedAtMs + WRITER_TURN_BUDGET_MS,
-            }),
-          );
-        }
-        // Step 9: every unrouted turn resolves to the deterministic answer lane.
-        return observeTurn(executeAnswerTurn());
-      };
       const outcome = await executeAcceptedChatTurn({
         signal,
-        run: runTurn,
+        run,
         persist: async (ev) => {
           switch (ev.type) {
             case "text":
@@ -1843,7 +1262,6 @@ export async function executeChatTurn(
               // with the finished message, but MIRRORED to chats.live_plan while
               // in flight so a client that navigated away and back restores the
               // checklist (cleared on settle in the finally below).
-              latestPlanSteps = ev.steps;
               void persistLivePlan(ev.steps);
               send(controller, ev.type, { steps: ev.steps });
               break;
@@ -1863,216 +1281,11 @@ export async function executeChatTurn(
                 rule: ev.rule,
               });
               break;
-            case "artifact": {
-              if (ev.artifact.kind === "cite") {
-                pendingCiteArtifacts.push(ev.artifact);
-                const updatedDrafts = applyCiteSourceToDraftArtifacts(
-                  artifacts,
-                  [ev.artifact],
-                );
-                if (updatedDrafts.length > 0) {
-                  movedCiteSourceToDraft = true;
-                  // Re-send each corrected draft so the LIVE client (which
-                  // already rendered it with no source chip, before this cite
-                  // arrived) picks up the patched meta.source_url. Without
-                  // this, only the server's own `artifacts` array — and a
-                  // later page reload — ever see the correction.
-                  for (const draft of updatedDrafts) {
-                    send(controller, "artifact", draft);
-                  }
-                }
-                // LEAD-MAGNET IMAGE RETRY. A draft that arrived before this
-                // cite had no source image to work with (render_cite is its
-                // own event, and the prompt tells the model to call it AFTER
-                // the draft) — pendingImageDraft stashed it rather than
-                // silently spending the turn's one image attempt on
-                // sourceImage: null. Now that a cite has landed, resolve its
-                // image and retroactively try generation on that stashed
-                // draft, re-sending the result so the live client (which
-                // already rendered the draft with no image) sees it.
-                if (
-                  pendingImageDraft &&
-                  !leadMagnetImageGeneratedThisTurn &&
-                  !modelSourceImage &&
-                  !citedSourceImage
-                ) {
-                  const citeSourceRefForRetry = sourceReferenceFromCiteArtifact(
-                    ev.artifact,
-                  );
-                  if (citeSourceRefForRetry) {
-                    const citedSourceImageDecision =
-                      await loadCitedSwipePostImage({
-                        sbRaw,
-                        workspaceId,
-                        sourceRef: citeSourceRefForRetry,
-                        signal,
-                      });
-                    citedSourceImage = citedSourceImageDecision.image;
-                    citedSourceImageSkipReason =
-                      citedSourceImageDecision.skipReason;
-                    citedSourceImageSourcePostId =
-                      citedSourceImageDecision.sourcePostId;
-                  }
-                }
-                if (
-                  pendingImageDraft &&
-                  !leadMagnetImageGeneratedThisTurn &&
-                  (modelSourceImage ?? citedSourceImage)
-                ) {
-                  const {
-                    artifact: pendingArtifact,
-                    leadMagnet: pendingLeadMagnet,
-                  } = pendingImageDraft;
-                  pendingImageDraft = null;
-                  const attempt = await attemptLeadMagnetImage(
-                    pendingArtifact,
-                    pendingLeadMagnet,
-                  );
-                  if (attempt.fired) {
-                    leadMagnetImageGeneratedThisTurn = true;
-                    const idx = artifacts.findIndex(
-                      (a) => a.id === attempt.artifact.id,
-                    );
-                    if (idx !== -1) artifacts[idx] = attempt.artifact;
-                    send(controller, "artifact", attempt.artifact);
-                  }
-                }
-                break;
-              }
-
-              // Stamp the active custom skills into the artifact's meta so the
-              // draft card can show a /skill badge. cite artifacts are
-              // passthrough references, not generated content — left untagged.
-              // ONE decorate before push (persist) and send (live stream) so
-              // both reload + streaming see the same badge.
-              let tagged = tagArtifactWithCreatorStyle(
-                tagArtifactWithLeadMagnet(
-                  tagArtifactWithModelSourceReference(
-                    tagArtifactWithNoModelFormat(
-                      tagArtifactWithSkills(ev.artifact, customSkillNames),
-                      appliedNoModelFormat,
-                    ),
-                    modelSourceReference,
-                  ),
-                  appliedLeadMagnet,
-                ),
-                appliedCreatorStyle,
-              );
-              if (isDraftArtifact(tagged) && turnContract.kind === "post") {
-                tagged = {
-                  ...tagged,
-                  meta: stampDraftFormat(tagged.meta, responseModel),
-                };
-              }
-              const citeSourceRef = modelSourceReference
-                ? null
-                : sourceReferenceFromCiteArtifacts(pendingCiteArtifacts);
-              if (citeSourceRef) {
-                tagged = tagArtifactWithModelSourceReference(
-                  tagged,
-                  citeSourceRef,
-                );
-                movedCiteSourceToDraft = true;
-                if (
-                  AUTOMATIC_LEAD_MAGNET_IMAGE_GENERATION_ENABLED &&
-                  !modelSourceImage &&
-                  !citedSourceImage
-                ) {
-                  const citedSourceImageDecision =
-                    await loadCitedSwipePostImage({
-                      sbRaw,
-                      workspaceId,
-                      sourceRef: citeSourceRef,
-                      signal,
-                    });
-                  citedSourceImage = citedSourceImageDecision.image;
-                  citedSourceImageSkipReason =
-                    citedSourceImageDecision.skipReason;
-                  citedSourceImageSourcePostId =
-                    citedSourceImageDecision.sourcePostId;
-                }
-              } else if (
-                pendingCiteArtifacts.length > 0 &&
-                isDraftArtifact(tagged)
-              ) {
-                movedCiteSourceToDraft = true;
-              }
-              const sourceImageForLeadMagnet =
-                modelSourceImage ?? citedSourceImage;
-              const sourceImageSkipReason =
-                modelSourceImageSkipReason ?? citedSourceImageSkipReason;
-              const sourceImageSourcePostId =
-                modelSourceImageSourcePostId ?? citedSourceImageSourcePostId;
-              const imageLeadMagnetContext = activeLeadMagnetCampaign
-                ? campaignImageContext(activeLeadMagnetCampaign)
-                : null;
-              const imageLeadMagnetTitle =
-                appliedLeadMagnet?.title ??
-                imageLeadMagnetContext?.title ??
-                "Lead magnet";
-              if (
-                AUTOMATIC_LEAD_MAGNET_IMAGE_GENERATION_ENABLED &&
-                !leadMagnetImageGeneratedThisTurn &&
-                imageLeadMagnetContext
-              ) {
-                const attempt = await attemptLeadMagnetImage(
-                  tagged,
-                  imageLeadMagnetContext,
-                );
-                tagged = attempt.artifact;
-                if (attempt.fired) {
-                  leadMagnetImageGeneratedThisTurn = true;
-                } else if (
-                  isDraftArtifact(tagged) &&
-                  !sourceImageForLeadMagnet
-                ) {
-                  if (sourceImageSkipReason) {
-                    // A decision REJECTED the source image (wrong media type,
-                    // fetch failure, etc.) — record why, nothing left to wait
-                    // for.
-                    leadMagnetImageGeneratedThisTurn = true;
-                    latestPlanSteps = withLeadMagnetImagePlanStep(
-                      latestPlanSteps,
-                      "done",
-                    );
-                    void persistLivePlan(latestPlanSteps);
-                    send(controller, "plan_update", { steps: latestPlanSteps });
-                    tagged = withGeneratedImageMeta(tagged, {
-                      status: "skipped",
-                      reason: sourceImageSkipReason,
-                      source_post_id: sourceImageSourcePostId,
-                      lead_magnet_id: imageLeadMagnetContext.id ?? null,
-                      lead_magnet_title: imageLeadMagnetTitle,
-                    });
-                  } else {
-                    // No source image AND no explicit rejection yet — the
-                    // model likely hasn't called render_cite yet this round
-                    // (it's told to cite AFTER the draft). Stash this draft so
-                    // a LATER cite arrival (which resolves citedSourceImage)
-                    // can retroactively fire generation instead of silently
-                    // spending the turn's one shot on sourceImage: null.
-                    pendingImageDraft = {
-                      artifact: tagged,
-                      leadMagnet: imageLeadMagnetContext,
-                    };
-                  }
-                }
-              }
-              artifacts.push(tagged);
-              send(controller, "artifact", tagged);
+            case "artifact":
+              artifacts.push(ev.artifact);
+              send(controller, "artifact", ev.artifact);
               break;
-            }
             case "done": {
-              if (
-                pendingCiteArtifacts.length > 0 &&
-                !movedCiteSourceToDraft &&
-                !artifacts.some(isDraftArtifact)
-              ) {
-                for (const citeArtifact of pendingCiteArtifacts) {
-                  artifacts.push(citeArtifact);
-                  send(controller, "artifact", citeArtifact);
-                }
-              }
               // If a recoverable error preceded this done, stash the marker on
               // the assistant row so hydrate can re-derive the Continue banner
               // after the post-stream reload (recoverable is otherwise live-only).
@@ -2287,68 +1500,4 @@ function logChatReject(
   status: number,
 ): void {
   console.log(chatRejectLogLine(workspaceId, chatId, reason, status));
-}
-
-// Stamp the turn's active custom-skill slugs onto a generated artifact's meta
-// so the draft card can show "produced with /name" chips. Pure — exported so
-// the contract (cite is never tagged; existing meta keys are preserved; no
-// skills → passthrough) is unit-tested.
-export function tagArtifactWithSkills(
-  artifact: Artifact,
-  skillNames: string[],
-): Artifact {
-  if (skillNames.length === 0) return artifact;
-  if (artifact.kind === "cite") return artifact;
-  return {
-    ...artifact,
-    meta: { ...(artifact.meta ?? {}), skills: skillNames },
-  };
-}
-
-export function tagArtifactWithNoModelFormat(
-  artifact: Artifact,
-  format: { id: NoModelFormatId; label: string; forced: boolean } | null,
-): Artifact {
-  if (!format) return artifact;
-  if (artifact.kind === "cite") return artifact;
-  return {
-    ...artifact,
-    meta: {
-      ...(artifact.meta ?? {}),
-      no_model_format: format,
-    },
-  };
-}
-
-export function tagArtifactWithLeadMagnet(
-  artifact: Artifact,
-  leadMagnet: (AppliedLeadMagnet & { id: string }) | null,
-): Artifact {
-  if (!leadMagnet) return artifact;
-  if (artifact.kind === "cite") return artifact;
-  return {
-    ...artifact,
-    meta: {
-      ...(artifact.meta ?? {}),
-      lead_magnet: leadMagnet,
-    },
-  };
-}
-
-// Stamp the applied creator style onto a generated artifact's meta (not shown on
-// cards in v1, but preserved for reload context + parity with the skill/format
-// tags). Same contract: cite untagged, no style → passthrough, meta preserved.
-export function tagArtifactWithCreatorStyle(
-  artifact: Artifact,
-  style: { id: string; name: string; creatorName: string } | null,
-): Artifact {
-  if (!style) return artifact;
-  if (artifact.kind === "cite") return artifact;
-  return {
-    ...artifact,
-    meta: {
-      ...(artifact.meta ?? {}),
-      creator_style: style,
-    },
-  };
 }
