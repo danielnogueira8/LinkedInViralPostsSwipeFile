@@ -57,6 +57,7 @@ import {
   ThumbsUp,
   ImageIcon,
   Newspaper,
+  ListOrdered,
   SlidersHorizontal,
   type LucideIcon,
 } from "lucide-react";
@@ -7310,7 +7311,7 @@ function scheduleMetaFromArtifact(artifact: Artifact): ArtifactScheduleMeta {
 // agent can actually execute, so a click leads somewhere useful rather than a
 // dead end. Prompts with a [placeholder] expect the user to fill a detail —
 // prefillPrompt selects that span on click.
-type StarterGroup = "explore" | "create" | "borrow-attention";
+type StarterGroup = "explore" | "create" | "borrow-attention" | "campaigns";
 type Starter = {
   id: ComposerStarterId;
   group: StarterGroup;
@@ -7388,6 +7389,14 @@ const STARTERS: Starter[] = [
     prompt:
       "Newsjack a recent event about [topic]. Search for verified news from the last 14 days first, choose the most relevant story for my expertise, and write a timely LinkedIn post in my voice with an original insight. If nothing fresh and appropriate exists, tell me instead of using old or invented news.",
   },
+  {
+    id: "series",
+    group: "campaigns",
+    icon: ListOrdered,
+    label: "Turn one idea into a series",
+    prompt:
+      "Turn [idea] into a 3-part LinkedIn post series in my voice. Each part must stand alone but build on the last — Part 1 sets up the problem, Part 2 delivers the core insight or method, Part 3 lands the takeaway. Keep the arc connected without repeating yourself.",
+  },
 ];
 
 const STARTER_LAYOUT = partitionCoworkStarters(STARTERS);
@@ -7441,7 +7450,9 @@ function EmptyState({
     {
       title: "Campaigns",
       description: "Coordinate multi-post campaigns.",
-      starters: [],
+      starters: STARTER_LAYOUT.library.filter(
+        (starter) => starter.group === "campaigns",
+      ),
     },
   ];
 
