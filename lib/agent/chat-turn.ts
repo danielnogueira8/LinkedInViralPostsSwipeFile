@@ -667,17 +667,21 @@ function recoverableToolCall(marker: RecoverableMarker): ToolCall {
     type: "function",
     function: {
       name: RECOVERABLE_TOOL_NAME,
-      arguments: JSON.stringify({
-        code: String(marker.code ?? ""),
-        message: marker.message,
-        ...(marker.retryRootUserMessageId
-          ? { retryRootUserMessageId: marker.retryRootUserMessageId }
-          : {}),
-        ...(marker.continuation
-          ? { continuation: marker.continuation }
-          : {}),
-      }),
+      arguments: JSON.stringify(recoverableErrorValue(marker)),
     },
+  };
+}
+
+function recoverableErrorValue(
+  marker: RecoverableMarker,
+): Record<string, unknown> {
+  return {
+    code: String(marker.code ?? ""),
+    message: marker.message,
+    ...(marker.retryRootUserMessageId
+      ? { retryRootUserMessageId: marker.retryRootUserMessageId }
+      : {}),
+    ...(marker.continuation ? { continuation: marker.continuation } : {}),
   };
 }
 
@@ -780,7 +784,10 @@ async function persistChatSetupFailure(opts: {
       role: "assistant",
       content: opts.content,
       ...(opts.recoverable
-        ? { tool_calls: [recoverableToolCall(opts.recoverable)] }
+        ? {
+            tool_calls: [recoverableToolCall(opts.recoverable)],
+            recoverable_error: recoverableErrorValue(opts.recoverable),
+          }
         : {}),
     });
     if (error) throw error;
@@ -2289,9 +2296,15 @@ export async function executeChatTurn(
     // Most display-only metadata remains best-effort. Creator-style metadata
     // and custom skills on a durable modeled batch freeze generation context
     // for Retry, so those writes are authoritative before generation starts.
+    //
+    // Phase 3 of the Cowork unification refactor writes the same state to real
+    // chat_messages columns alongside the legacy markers; the markers are kept
+    // during the dual-write window for backward compatibility.
     const userToolCalls: ToolCall[] = [];
+    const userColumnPatch: Record<string, unknown> = {};
     if (modelSourceId && currentModelEnvelope) {
       userToolCalls.push(modelSourceToolCall(modelSourceId));
+      userColumnPatch.model_source_id = modelSourceId;
     }
     if (customSkillNames.length > 0) {
       userToolCalls.push(
@@ -2300,9 +2313,17 @@ export async function executeChatTurn(
           skills: resolvedCustomSkills,
         }),
       );
+      userColumnPatch.applied_skills = {
+        names: customSkillNames,
+        retryContext: {
+          version: CUSTOM_SKILL_RETRY_CONTEXT_VERSION,
+          skills: resolvedCustomSkills,
+        },
+      };
     }
     if (appliedNoModelFormat?.forced) {
       userToolCalls.push(postFormatToolCall(appliedNoModelFormat));
+      userColumnPatch.no_model_format_id = appliedNoModelFormat.id;
     }
     if (appliedCreatorStyle) {
       userToolCalls.push(
@@ -2311,12 +2332,21 @@ export async function executeChatTurn(
           resolvedBlock: creatorStyleBlock,
         }),
       );
+      userColumnPatch.creator_style_context = {
+        ...appliedCreatorStyle,
+        retryContext: {
+          version: CREATOR_STYLE_RETRY_CONTEXT_VERSION,
+          resolvedBlock: creatorStyleBlock,
+        },
+      };
     }
     if (appliedLeadMagnet) {
       userToolCalls.push(leadMagnetToolCall(appliedLeadMagnet));
+      userColumnPatch.lead_magnet_id = appliedLeadMagnet.id;
     }
     if (composerStarterId) {
       userToolCalls.push(composerStarterToolCall(composerStarterId));
+      userColumnPatch.composer_starter_id = composerStarterId;
     }
     // Post-shaped turns stamp the resolved generation config onto the user row
     // so a later Retry can integrity-check the draft count. Post-clarification
@@ -2330,6 +2360,7 @@ export async function executeChatTurn(
         skipDecision);
     if (stampsGenerationConfig && resolvedGenerationConfig) {
       userToolCalls.push(generationConfigToolCall(resolvedGenerationConfig));
+      userColumnPatch.generation_config = resolvedGenerationConfig;
     }
     let userToolCallWriteFailed = false;
     if (userToolCalls.length > 0) {
@@ -2340,7 +2371,7 @@ export async function executeChatTurn(
         } = await waitForChatSetup(
           sbRaw
             .from("chat_messages")
-            .update({ tool_calls: userToolCalls })
+            .update({ tool_calls: userToolCalls, ...userColumnPatch })
             .eq("id", claimedUserMessageId)
             .eq("workspace_id", workspaceId)
             .select("id")
@@ -3154,6 +3185,8 @@ export async function executeChatTurn(
         terminalReason: "done" | "ask" | "cancelled" | "deadline" | "error",
         tokens?: { input: number; output: number },
         toolMessages?: { content: string; tool_call_id: string | null }[],
+        recoverableError?: Record<string, unknown> | null,
+        turnUsage?: CoworkTurnUsageWire | null,
       ): Promise<boolean> => {
         if (persisted) return true;
         persisted = true;
@@ -3188,6 +3221,8 @@ export async function executeChatTurn(
           toolMessages: toolMessages ?? [],
           terminalReason,
           contentFormat: contentFormatForModel(responseModel),
+          recoverableError,
+          turnUsage,
         });
         if (asstErr) {
           // THE critical failure: the reply wasn't stored. Metric it (grep
@@ -3752,6 +3787,10 @@ export async function executeChatTurn(
                   content: typeof t.content === "string" ? t.content : "",
                   tool_call_id: t.tool_call_id ?? null,
                 })),
+                persistedRecoverableMarker
+                  ? recoverableErrorValue(persistedRecoverableMarker)
+                  : null,
+                turnUsage,
               );
               if (!saved) {
                 // The reply was generated but the DB save failed. Do NOT send a
