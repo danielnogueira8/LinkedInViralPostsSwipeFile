@@ -68,7 +68,7 @@ export type ExecuteTurnHandlers = {
 };
 
 export type ExecuteTurnPlanResult = {
-  run: () => AsyncIterable<AgentEvent>;
+  run: (handlers: ExecuteTurnHandlers) => AsyncIterable<AgentEvent>;
 };
 
 /**
@@ -77,17 +77,16 @@ export type ExecuteTurnPlanResult = {
  * This isolates the "what to run" dispatch (direct writer, action orchestrator,
  * read-only orchestrator, deterministic answer lane) and the event-stream mapping
  * (artifact tagging, cite-source backfill, lead-magnet image generation) from the
- * SSE framing and persistence finalizer that lives in `chat-turn.ts`.
+ * SSE framing and persistence finalizer that lives in `finalize.ts`.
  */
 export function executeTurnPlan(
   plan: TurnPlan,
   setup: TurnSetupResult,
   chatId: string,
   deps: TurnExecuteDependencies,
-  handlers: ExecuteTurnHandlers,
 ): ExecuteTurnPlanResult {
   return {
-    run: () => runTurnPlan(plan, setup, chatId, deps, handlers),
+    run: (handlers) => runTurnPlan(plan, setup, chatId, deps, handlers),
   };
 }
 
