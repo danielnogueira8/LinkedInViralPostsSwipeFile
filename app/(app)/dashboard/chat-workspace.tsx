@@ -206,9 +206,12 @@ import {
   visibleActivityTools,
 } from "@/lib/chat-ui-policy";
 import { partitionCoworkStarters } from "@/lib/cowork-starter-policy";
-import { parseCoworkTurnUsage } from "@/lib/cowork-turn-usage";
+import {
+  parseCoworkTurnUsage,
+  researchSourcesFromArtifact,
+} from "@/lib/cowork-turn-usage";
 import { modeledSourceAttribution } from "@/lib/model-source-attribution";
-import { TaskUsageSummary } from "./cowork-trust-details";
+import { ResearchSources, TaskUsageSummary } from "./cowork-trust-details";
 
 export type { Artifact } from "@/lib/agent/contracts";
 
@@ -6045,6 +6048,15 @@ function ArtifactCard({
     return Array.isArray(v) ? v.filter((s): s is string => typeof s === "string") : [];
   })();
   const draftSource = modeledSourceAttribution(artifact.meta);
+  const researchRoute = (
+    artifact.meta?.research_provenance as
+      | { route?: string }
+      | undefined
+  )?.route;
+  const researchSources =
+    researchRoute === "news_research" || researchRoute === "web_research"
+      ? researchSourcesFromArtifact(artifact.meta)
+      : [];
   const draftLeadMagnet = artifactLeadMagnet(artifact);
   const draftLeadMagnetHref = leadMagnetHref?.(draftLeadMagnet) ?? null;
   const generatedImageStatus = generatedLeadMagnetImageStatus(artifact);
@@ -6602,6 +6614,11 @@ function ArtifactCard({
           href={draftLeadMagnetHref}
         />
       )}
+
+      {/* Show the full "Sources used" list only for news/web research drafts.
+          Modeled drafts already carry a per-draft source chip at the top, so
+          listing every research source here duplicates information. */}
+      <ResearchSources sources={researchSources} />
 
       <CoworkDraftFeedback
         key={artifact.id}
