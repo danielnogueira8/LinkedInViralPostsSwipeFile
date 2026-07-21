@@ -32,7 +32,7 @@ import {
   Search,
   Lightbulb,
   Flame,
-  Gift,
+  Magnet,
   TrendingUp,
   PenLine,
   ClipboardCheck,
@@ -4147,7 +4147,7 @@ export function ChatWorkspace({
                     }}
                     className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm transition-colors hover:bg-muted"
                   >
-                    <Gift
+                    <Magnet
                       className={cn(
                         "h-4 w-4 shrink-0",
                         pendingLeadMagnet
@@ -4326,7 +4326,7 @@ export function ChatWorkspace({
                       pendingLeadMagnet === null && "bg-muted",
                     )}
                   >
-                    <Gift className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                    <Magnet className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
                     <span className="text-foreground">Auto</span>
                     <span className="truncate text-xs text-muted-foreground">
                       Pick the best resource only for a lead magnet post
@@ -4442,7 +4442,7 @@ export function ChatWorkspace({
                             on && "bg-state-danger-bg",
                           )}
                         >
-                          <Gift
+                          <Magnet
                             className={cn(
                               "h-4 w-4 shrink-0",
                               on ? "text-primary" : "text-muted-foreground",
@@ -4684,7 +4684,7 @@ export function ChatWorkspace({
             {pendingLeadMagnet && (
               <div className="flex flex-wrap gap-1.5">
                 <span className="inline-flex items-center gap-1.5 rounded-full border border-state-danger-border bg-state-danger-bg pl-2.5 pr-1.5 py-1 text-xs text-primary">
-                  <Gift className="h-3 w-3" aria-hidden />
+                  <Magnet className="h-3 w-3" aria-hidden />
                   <span className="max-w-[220px] truncate">
                     Giveaway: {pendingLeadMagnet.title}
                   </span>
@@ -5050,7 +5050,7 @@ function SourcePostChip({
               className="inline-flex items-center gap-1 rounded-full border border-state-danger-border bg-state-danger-bg px-1.5 py-0.5 text-[10px] font-normal text-primary"
               title="Lead Magnet: Auto. Cowork will keep this as a lead-magnet post and pick a saved resource if one fits."
             >
-              <Gift className="h-2.5 w-2.5" aria-hidden />
+              <Magnet className="h-2.5 w-2.5" aria-hidden />
               Lead Magnet: Auto
             </span>
           )}
@@ -5399,7 +5399,7 @@ function MessageBubble({
               className="inline-flex items-center gap-1.5 rounded-full border border-state-danger-border bg-state-danger-bg px-2.5 py-0.5 text-[11px] text-primary"
               title={`Lead magnet ${message.leadMagnet.selection === "auto" ? "auto-selected" : "selected"}: ${message.leadMagnet.title}`}
             >
-              <Gift className="h-3 w-3" aria-hidden />
+              <Magnet className="h-3 w-3" aria-hidden />
               <span className="max-w-[200px] truncate">
                 Giveaway: {message.leadMagnet.title}
               </span>
@@ -5876,7 +5876,7 @@ function CoworkLeadMagnetResource({
     <section className="border-t border-border/70 bg-muted/25 px-4 py-4">
       <div className="flex items-start gap-3">
         <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-state-brand-border bg-state-brand-bg text-state-brand">
-          <Gift className="h-4 w-4" aria-hidden />
+          <Magnet className="h-4 w-4" aria-hidden />
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] font-medium text-muted-foreground">
@@ -7369,7 +7369,7 @@ const STARTERS: Starter[] = [
   {
     id: "model-recent-lead-magnet",
     group: "create",
-    icon: Gift,
+    icon: Magnet,
     label: "Model a recent viral lead magnet",
     prompt:
       "Find the most recent high-performing lead-magnet post in my swipe file and adapt it into a lead-magnet post in my voice, using my lead-magnet style.",
