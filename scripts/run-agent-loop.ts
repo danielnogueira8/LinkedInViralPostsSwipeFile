@@ -5,6 +5,11 @@
  * waiting for the daily cron. Defaults to a dry scan so you can inspect what
  * would be proposed before spending any LLM calls.
  *
+ * NOTE: `--execute` runs the chat pipeline in this standalone tsx process. That
+ * path imports Next.js server modules and can fail outside the Next runtime.
+ * For a real production execution, use scripts/trigger-agent-loop.ts against
+ * the deployed cron route instead.
+ *
  * Usage:
  *   npx tsx --env-file=.env.local scripts/run-agent-loop.ts \
  *     --workspace <workspace_id> [--execute] [--cap 2]

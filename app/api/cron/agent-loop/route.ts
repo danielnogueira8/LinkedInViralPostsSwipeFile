@@ -23,23 +23,33 @@ export async function GET(req: Request) {
 
   try {
     const sb = supabaseAdmin();
+    const url = new URL(req.url);
+    const workspaceParam = url.searchParams.get("workspace");
+    const capParam = Number(url.searchParams.get("cap"));
     const draftCap = Math.max(
       1,
-      Number(process.env.AGENT_DAILY_DRAFT_CAP ?? DEFAULT_DAILY_DRAFT_CAP) ||
+      (Number.isFinite(capParam) && capParam > 0 ? capParam : undefined) ??
+        Number(process.env.AGENT_DAILY_DRAFT_CAP ?? DEFAULT_DAILY_DRAFT_CAP) ??
         DEFAULT_DAILY_DRAFT_CAP,
     );
 
-    // Always-on: the loop runs for every workspace that tracks at least one
-    // creator (the scanner no-ops cleanly when a workspace has none). Workspaces
-    // are capped per run so a large fleet can't blow the cron budget.
-    const { data: tracked, error: trackedError } = await sb
-      .from("workspace_accounts")
-      .select("workspace_id")
-      .limit(500);
-    if (trackedError) throw trackedError;
-    const workspaceIds = [
-      ...new Set((tracked ?? []).map((row) => row.workspace_id as string)),
-    ].slice(0, 20);
+    let workspaceIds: string[];
+    if (workspaceParam) {
+      // Manual single-workspace trigger (scripts/trigger-agent-loop.ts).
+      workspaceIds = [workspaceParam];
+    } else {
+      // Always-on: the loop runs for every workspace that tracks at least one
+      // creator (the scanner no-ops cleanly when a workspace has none). Workspaces
+      // are capped per run so a large fleet can't blow the cron budget.
+      const { data: tracked, error: trackedError } = await sb
+        .from("workspace_accounts")
+        .select("workspace_id")
+        .limit(500);
+      if (trackedError) throw trackedError;
+      workspaceIds = [
+        ...new Set((tracked ?? []).map((row) => row.workspace_id as string)),
+      ].slice(0, 20);
+    }
 
     const results: Array<{
       workspaceId: string;
