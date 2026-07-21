@@ -8,6 +8,10 @@ import {
   opportunityIsLeadMagnet,
   opportunitySourcePostIds,
 } from "@/lib/agent-loop/opportunity-post-type";
+import {
+  composeWorkingNowMix,
+  WORKING_NOW_POOL_LIMIT,
+} from "@/lib/agent-loop/working-now-mix";
 
 export const runtime = "nodejs";
 
@@ -34,20 +38,23 @@ export async function GET() {
       .limit(5);
     if (draftsError) throw draftsError;
 
-    const { data: opportunities, error: oppError } = await sb.raw
+    // Fetch a scored POOL (not just the final slots) so we can compose a healthy
+    // content mix — 2 regular posts + 1 lead magnet by default — from the top
+    // candidates rather than whatever the raw top-3 by score happens to be.
+    const { data: opportunityPool, error: oppError } = await sb.raw
       .from("agent_opportunities")
       .select("id, kind, score, payload, created_at, source_post_id")
       .eq("workspace_id", sb.workspaceId)
       .eq("status", "proposed")
       .order("score", { ascending: false })
-      .limit(3);
+      .limit(WORKING_NOW_POOL_LIMIT);
     if (oppError) throw oppError;
 
     // Which of these model a LEAD MAGNET post? `posts.post_type` is the
     // authoritative flag (stamped at scrape time, also what act.ts reads), and
-    // agent_opportunities only carries source_post_id — so resolve it here.
-    // At most 3 opportunities, so this is a single small IN query.
-    const sourcePostIds = opportunitySourcePostIds(opportunities);
+    // agent_opportunities only carries source_post_id — so resolve it here for
+    // the whole pool (needed to compose the mix). One small IN query.
+    const sourcePostIds = opportunitySourcePostIds(opportunityPool);
     let leadMagnetIds = new Set<string>();
     if (sourcePostIds.length > 0) {
       const { data: sourcePosts, error: sourcePostsError } = await sb.raw
@@ -61,7 +68,7 @@ export async function GET() {
     // payload.headline is persisted at scan time, so rows written before the
     // headline copy changed still carry the old "<creator> went N×" wording
     // (see lib/agent-loop/headline.ts). Normalise on the way out.
-    const normalisedOpportunities = (opportunities ?? []).map((opportunity) => {
+    const normalisedPool = (opportunityPool ?? []).map((opportunity) => {
       const payload = (opportunity.payload ?? {}) as Record<string, unknown>;
       return {
         ...opportunity,
@@ -69,6 +76,12 @@ export async function GET() {
         is_lead_magnet: opportunityIsLeadMagnet(opportunity, leadMagnetIds),
       };
     });
+
+    // Compose the visible slots as a healthy content mix (2 regular + 1 lead
+    // magnet by default), backfilling from either type when the bank is thin.
+    // The pool is already score-sorted, so the mixer keeps the strongest of
+    // each type. Falls back to plain top-N behaviour when the pool has one type.
+    const normalisedOpportunities = composeWorkingNowMix(normalisedPool);
 
     return NextResponse.json({
       ok: true,
