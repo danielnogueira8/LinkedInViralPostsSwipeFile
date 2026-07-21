@@ -8,7 +8,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-const DEFAULT_DAILY_DRAFT_CAP = 2;
+const DEFAULT_DAILY_DRAFT_CAP = 3;
 
 // Daily agent loop (PLAN-agent-loop Phase D3). For every workspace that tracks
 // at least one creator, scan for fresh opportunities and draft the top 1–2 into
@@ -56,6 +56,7 @@ export async function GET(req: Request) {
       scanned?: number;
       inserted?: number;
       expired?: number;
+      draftedToday?: number;
       acted?: Array<{ id: string; ok: boolean; reason?: string }>;
       error?: string;
     }> = [];
@@ -63,23 +64,39 @@ export async function GET(req: Request) {
     for (const workspaceId of workspaceIds) {
       try {
         const scan = await scanAgentOpportunities(sb, workspaceId);
-        const { data: opportunities, error: oppError } = await sb
+
+        // Hard daily cap: count drafts already completed today (UTC) so manual
+        // triggers can't push a workspace past the limit.
+        const startOfDay = new Date();
+        startOfDay.setUTCHours(0, 0, 0, 0);
+        const { count: draftedToday, error: countError } = await sb
           .from("agent_opportunities")
-          .select("id, source_post_id, payload")
+          .select("id", { count: "exact", head: true })
           .eq("workspace_id", workspaceId)
-          .eq("status", "proposed")
-          .order("score", { ascending: false })
-          .limit(draftCap);
-        if (oppError) throw oppError;
+          .eq("status", "drafted")
+          .gte("acted_at", startOfDay.toISOString());
+        if (countError) throw countError;
+        const remaining = Math.max(0, draftCap - (draftedToday ?? 0));
 
         const acted: Array<{ id: string; ok: boolean; reason?: string }> = [];
-        for (const opportunity of (opportunities ?? []) as AgentOpportunityRow[]) {
-          const result = await actOnOpportunity(sb, workspaceId, opportunity);
-          acted.push(
-            result.ok
-              ? { id: opportunity.id, ok: true }
-              : { id: opportunity.id, ok: false, reason: result.reason },
-          );
+        if (remaining > 0) {
+          const { data: opportunities, error: oppError } = await sb
+            .from("agent_opportunities")
+            .select("id, source_post_id, payload")
+            .eq("workspace_id", workspaceId)
+            .eq("status", "proposed")
+            .order("score", { ascending: false })
+            .limit(remaining);
+          if (oppError) throw oppError;
+
+          for (const opportunity of (opportunities ?? []) as AgentOpportunityRow[]) {
+            const result = await actOnOpportunity(sb, workspaceId, opportunity);
+            acted.push(
+              result.ok
+                ? { id: opportunity.id, ok: true }
+                : { id: opportunity.id, ok: false, reason: result.reason },
+            );
+          }
         }
 
         results.push({
@@ -87,6 +104,7 @@ export async function GET(req: Request) {
           scanned: scan.scanned,
           inserted: scan.inserted,
           expired: scan.expired,
+          draftedToday: draftedToday ?? 0,
           acted,
         });
       } catch (error) {
