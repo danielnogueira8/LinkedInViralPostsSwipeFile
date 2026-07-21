@@ -122,11 +122,48 @@ export default async function ChatPage({
           .in("account_id", trackedAccountIds)
           .gte("posted_at", freshSince)
       : { count: 0 };
+
+  // Breakout radar (Phase E4): the hottest fresh regular post across tracked
+  // creators in the last 48h. Already-scraped data, no LLM. Regular posts only
+  // (same reason as the scanner: lead-magnet modeling needs a resource).
+  const { data: breakoutPost } =
+    trackedAccountIds.length > 0
+      ? await sb.raw
+          .from("posts")
+          .select("id, viral_score, posted_at, accounts!inner(name, archived_at)")
+          .in("account_id", trackedAccountIds)
+          .eq("is_viral", true)
+          .or("post_type.is.null,post_type.eq.regular")
+          .is("accounts.archived_at", null)
+          .gte(
+            "posted_at",
+            new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString(),
+          )
+          .order("viral_score", { ascending: false })
+          .limit(1)
+          .maybeSingle()
+      : { data: null };
+  const breakout = breakoutPost
+    ? {
+        postId: breakoutPost.id as string,
+        authorName:
+          ((Array.isArray(breakoutPost.accounts)
+            ? breakoutPost.accounts[0]
+            : breakoutPost.accounts)?.name as string | null) ?? "A creator",
+        score:
+          typeof breakoutPost.viral_score === "number"
+            ? breakoutPost.viral_score
+            : 0,
+        postedAt: (breakoutPost.posted_at as string | null) ?? null,
+      }
+    : null;
+
   const voiceReady = Boolean(voice?.status === "ready" && voice?.profile);
   const initialNextAction = getCoworkNextAction({
     hasTrackedCreators: trackedAccountIds.length > 0,
     voiceReady,
     freshInspirationCount: freshInspirationCount ?? 0,
+    breakout,
     pendingReviewCount: pendingReviewCount ?? 0,
     readyUnscheduledCount: readyUnscheduledCount ?? 0,
   });
@@ -210,16 +247,25 @@ export default async function ChatPage({
   );
 }
 
-function getCoworkNextAction({
+export type CoworkBreakout = {
+  postId: string;
+  authorName: string;
+  score: number;
+  postedAt: string | null;
+};
+
+export function getCoworkNextAction({
   hasTrackedCreators,
   voiceReady,
   freshInspirationCount,
+  breakout,
   pendingReviewCount,
   readyUnscheduledCount,
 }: {
   hasTrackedCreators: boolean;
   voiceReady: boolean;
   freshInspirationCount: number;
+  breakout?: CoworkBreakout | null;
   pendingReviewCount: number;
   readyUnscheduledCount: number;
 }): CoworkNextAction {
@@ -248,6 +294,28 @@ function getCoworkNextAction({
       description: "Browse the Swipe File after your tracked creators are scraped.",
       cta: "Browse inspiration",
       href: "/dashboard/swipe",
+    };
+  }
+  // Breakout radar: time-sensitive, so it outranks the standing review/schedule
+  // nudges — a 3-hour-old outlier is gone tomorrow, the review queue is not.
+  if (breakout) {
+    const ageHours = breakout.postedAt
+      ? Math.max(
+          1,
+          Math.round(
+            (Date.now() - Date.parse(breakout.postedAt)) / (1000 * 60 * 60),
+          ),
+        )
+      : null;
+    return {
+      kind: "breakout",
+      title: `${breakout.authorName} went ${Math.round(breakout.score)}×${
+        ageHours ? ` ${ageHours}h ago` : ""
+      } — model it while it's hot`,
+      description: "The freshest outlier from your tracked creators.",
+      cta: "Model it",
+      href: "/dashboard",
+      breakoutPostId: breakout.postId,
     };
   }
   if (pendingReviewCount > 0) {
