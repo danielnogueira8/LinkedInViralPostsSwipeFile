@@ -24,13 +24,11 @@ import {
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { AvatarImg } from "@/components/avatar-img";
 import { EmptyState, StatusPill, Toolbar, segmentedItemClass } from "@/components/app-surface";
-import { FileText, Plus, Trash2, Pencil, Loader2, Copy, Check, Lock, MessageSquare } from "lucide-react";
+import { FileText, Plus, Trash2, Pencil, Loader2, Lock, MessageSquare } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { fetchJson } from "@/lib/api-fetch";
 import { byId, removeById, reinsertById } from "@/lib/optimistic";
-import { copyToClipboard } from "@/lib/clipboard";
-import { useCopiedFlag } from "@/lib/use-copied-flag";
 import {
   extractPlaceholders,
   isPlaceholderToken,
@@ -287,7 +285,6 @@ function TemplateCard({
   onDelete: () => void;
 }) {
   const router = useRouter();
-  const [copied, markCopied] = useCopiedFlag();
   const [modeling, setModeling] = useState(false);
   const [expanded, setExpanded] = useState(false);
   // Only show "See more/less" when the clamped body actually overflows —
@@ -309,12 +306,6 @@ function TemplateCard({
   // it does.
   const authorName = author.name?.trim() || "You";
   const categoryLabel = row.category ? templateCategoryLabel(row.category) : null;
-
-  async function copy() {
-    const ok = await copyToClipboard(row.body, "Template copied");
-    if (!ok) return;
-    markCopied();
-  }
 
   // Take this template into the chat: stash its body server-side (resolved by
   // id — a built-in slug or a custom row) via /api/model-source, then open the
@@ -434,10 +425,6 @@ function TemplateCard({
               <MessageSquare className="h-3.5 w-3.5" />
             )}
             {modeling ? "Opening…" : "Model with Cowork"}
-          </Button>
-          <Button variant="outline" size="sm" className="gap-1.5" onClick={copy}>
-            {copied ? <Check className="h-3.5 w-3.5 text-state-success" /> : <Copy className="h-3.5 w-3.5" />}
-            {copied ? "Copied" : "Copy"}
           </Button>
           {!row.builtin && (
             <>
