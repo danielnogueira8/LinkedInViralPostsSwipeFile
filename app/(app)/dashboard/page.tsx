@@ -7,6 +7,11 @@ import type { CustomSkill } from "@/lib/custom-skills";
 import { CHAT_MODEL } from "@/lib/openrouter";
 import { contentFormatForModel } from "@/lib/markdown/mode";
 import { ChatWorkspace, type Author, type CoworkNextAction } from "./chat-workspace";
+import {
+  creatorBaselinesFromRows,
+  outlierMetricLabel,
+  type MetricBaseline,
+} from "@/lib/outlier-metric";
 
 // The workspace home is now a Claude-Cowork-style chat where users run the
 // content workflows (search the swipe file, mimic a viral post, create original
@@ -130,7 +135,9 @@ export default async function ChatPage({
     trackedAccountIds.length > 0
       ? await sb.raw
           .from("posts")
-          .select("id, viral_score, posted_at, accounts!inner(name, archived_at)")
+          .select(
+            "id, account_id, viral_score, reactions, comments, posted_at, accounts!inner(name, archived_at)",
+          )
           .in("account_id", trackedAccountIds)
           .eq("is_viral", true)
           .or("post_type.is.null,post_type.eq.regular")
@@ -143,6 +150,28 @@ export default async function ChatPage({
           .limit(1)
           .maybeSingle()
       : { data: null };
+  // The creator's 90-day norm, so the chip can say WHICH metric broke out
+  // ("2.3k likes" / "140 comments" / "1.5× their norm").
+  let breakoutBaseline: MetricBaseline | null = null;
+  if (breakoutPost?.account_id) {
+    const { data: baselineRows } = await sb.raw
+      .from("posts")
+      .select("account_id, reactions, comments")
+      .eq("account_id", breakoutPost.account_id)
+      .gte(
+        "posted_at",
+        new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString(),
+      )
+      .limit(300);
+    breakoutBaseline =
+      creatorBaselinesFromRows(
+        (baselineRows ?? []) as Array<{
+          account_id: string;
+          reactions: number | null;
+          comments: number | null;
+        }>,
+      ).get(breakoutPost.account_id as string) ?? null;
+  }
   const breakout = breakoutPost
     ? {
         postId: breakoutPost.id as string,
@@ -150,10 +179,13 @@ export default async function ChatPage({
           ((Array.isArray(breakoutPost.accounts)
             ? breakoutPost.accounts[0]
             : breakoutPost.accounts)?.name as string | null) ?? "A creator",
-        score:
-          typeof breakoutPost.viral_score === "number"
-            ? breakoutPost.viral_score
-            : 0,
+        metricLabel: outlierMetricLabel(
+          {
+            reactions: (breakoutPost.reactions as number | null) ?? null,
+            comments: (breakoutPost.comments as number | null) ?? null,
+          },
+          breakoutBaseline,
+        ),
         postedAt: (breakoutPost.posted_at as string | null) ?? null,
       }
     : null;
@@ -250,7 +282,8 @@ export default async function ChatPage({
 export type CoworkBreakout = {
   postId: string;
   authorName: string;
-  score: number;
+  /** "2.3k likes" / "140 comments" / "1.5× their norm" — the winning metric. */
+  metricLabel: string;
   postedAt: string | null;
 };
 
@@ -309,8 +342,8 @@ export function getCoworkNextAction({
       : null;
     return {
       kind: "breakout",
-      title: `${breakout.authorName} went ${Math.round(breakout.score)}×${
-        ageHours ? ` ${ageHours}h ago` : ""
+      title: `${breakout.authorName} — ${breakout.metricLabel}${
+        ageHours ? ` · ${ageHours}h ago` : ""
       } — model it while it's hot`,
       description: "The freshest outlier from your tracked creators.",
       cta: "Model it",

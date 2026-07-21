@@ -12,7 +12,7 @@ const BASE = {
 const BREAKOUT = {
   postId: "post-1",
   authorName: "Creator One",
-  score: 12.4,
+  metricLabel: "1.2k likes",
   postedAt: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
 };
 
@@ -39,7 +39,7 @@ describe("getCoworkNextAction", () => {
     expect(action.kind).toBe("breakout");
     expect(action.breakoutPostId).toBe("post-1");
     expect(action.title).toContain("Creator One");
-    expect(action.title).toContain("12×");
+    expect(action.title).toContain("1.2k likes");
     expect(action.title).toContain("3h ago");
   });
 
