@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
 import { AGENT_SUGGESTED_BY } from "@/lib/agent-loop/constants";
+import { readOpportunityHeadline } from "@/lib/agent-loop/headline";
 
 export const runtime = "nodejs";
 
@@ -34,10 +35,21 @@ export async function GET() {
       .limit(3);
     if (oppError) throw oppError;
 
+    // payload.headline is persisted at scan time, so rows written before the
+    // headline copy changed still carry the old "<creator> went N×" wording
+    // (see lib/agent-loop/headline.ts). Normalise on the way out.
+    const normalisedOpportunities = (opportunities ?? []).map((opportunity) => {
+      const payload = (opportunity.payload ?? {}) as Record<string, unknown>;
+      return {
+        ...opportunity,
+        payload: { ...payload, headline: readOpportunityHeadline(payload) },
+      };
+    });
+
     return NextResponse.json({
       ok: true,
       drafts: drafts ?? [],
-      opportunities: opportunities ?? [],
+      opportunities: normalisedOpportunities,
     });
   } catch (e) {
     return errorResponse(e);

@@ -5,6 +5,7 @@ import { neutralizeMarkers } from "@/lib/agent/untrusted";
 import { DraftLifecycle } from "@/lib/draft-lifecycle";
 import { createSupabaseDraftLifecycleRepository } from "@/lib/draft-lifecycle-supabase";
 import { AGENT_CHAT_TITLE, AGENT_SUGGESTED_BY } from "@/lib/agent-loop/constants";
+import { readOpportunityHeadline } from "@/lib/agent-loop/headline";
 import {
   LEAD_MAGNET_COLS,
   coerceLeadMagnet,
@@ -216,9 +217,12 @@ export async function actOnOpportunity(
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), ACT_TIMEOUT_MS);
     try {
+      // Read through the normaliser: this string is fed to the model as the
+      // user turn, so a stale "<creator> went 2530×" payload would teach the
+      // draft a false claim about the creator, not just render badly.
       const headline =
         typeof opportunity.payload?.headline === "string"
-          ? opportunity.payload.headline
+          ? readOpportunityHeadline(opportunity.payload)
           : "Model this post.";
       // Lead-magnet source: attach a resource so the modeled giveaway post can
       // actually promote something — the best-fit saved lead magnet, or a
