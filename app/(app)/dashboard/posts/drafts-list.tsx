@@ -17,6 +17,8 @@ import {
   Gift,
   MoreHorizontal,
 } from "lucide-react";
+import { AiIcon } from "@/components/ai-icon";
+import { isAgentSuggestedMeta } from "@/lib/agent-loop/constants";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
@@ -1045,6 +1047,7 @@ function DraftCard({
   const publishedDate = formatShortDate(draft.publishedAt);
   const mediaCount = draft.mediaAttachments?.length ?? 0;
   const badge = kindBadge(draft.kind);
+  const agentSuggested = isAgentSuggestedMeta(draft.meta);
   const column = boardColumnForDraft(draft);
 
   return (
@@ -1158,6 +1161,15 @@ function DraftCard({
                 title={KIND_HELP[draft.kind]}
               >
                 {badge.label}
+              </span>
+            )}
+            {agentSuggested && (
+              <span
+                className="inline-flex shrink-0 items-center gap-0.5 rounded-full border border-primary/20 bg-primary/[0.07] px-1.5 py-0.5 text-[10px] font-medium text-primary"
+                title="Drafted by your agent from a tracked outlier."
+              >
+                <AiIcon className="h-2.5 w-2.5" aria-hidden />
+                Agent
               </span>
             )}
           </div>

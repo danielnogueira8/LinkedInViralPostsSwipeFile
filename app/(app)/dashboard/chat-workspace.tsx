@@ -123,6 +123,8 @@ import {
   runOverlay,
   shouldApplyAskTurnReload,
 } from "@/lib/chat-session-view";
+import { AGENT_CHAT_TITLE } from "@/lib/agent-loop/constants";
+import { AgentBriefing } from "./agent-briefing";
 import {
   clearComposerStarter,
   moveComposerDraft,
@@ -5249,7 +5251,11 @@ function ChatRow({
       )}
       onClick={onOpen}
     >
-      <MessageSquare className={cn("h-3.5 w-3.5 shrink-0", active ? "text-primary" : "opacity-60")} />
+      {chat.title === AGENT_CHAT_TITLE ? (
+        <AiIcon className={cn("h-3.5 w-3.5 shrink-0", active ? "text-primary" : "opacity-60")} />
+      ) : (
+        <MessageSquare className={cn("h-3.5 w-3.5 shrink-0", active ? "text-primary" : "opacity-60")} />
+      )}
       <span className={cn("truncate flex-1", active && "font-medium")}>{chat.title}</span>
       {working ? (
         <WorkingLabel />
@@ -7486,6 +7492,8 @@ function EmptyState({
         </div>
         <NextActionChip action={nextAction} />
       </div>
+
+      <AgentBriefing />
 
       <div className="mt-7 grid gap-2 lg:grid-cols-3">
         <StarterCommand

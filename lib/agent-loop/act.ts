@@ -4,6 +4,7 @@ import type { scopedSupabase } from "@/lib/supabase-scoped";
 import { neutralizeMarkers } from "@/lib/agent/untrusted";
 import { DraftLifecycle } from "@/lib/draft-lifecycle";
 import { createSupabaseDraftLifecycleRepository } from "@/lib/draft-lifecycle-supabase";
+import { AGENT_CHAT_TITLE, AGENT_SUGGESTED_BY } from "@/lib/agent-loop/constants";
 
 // ---------------------------------------------------------------------------
 // Agent loop actor (PLAN-agent-loop Phase D3).
@@ -15,7 +16,6 @@ import { createSupabaseDraftLifecycleRepository } from "@/lib/draft-lifecycle-su
 // opportunity: a failed turn leaves the opportunity proposed so it can retry.
 // ---------------------------------------------------------------------------
 
-const SYSTEM_CHAT_TITLE = "Your agent";
 const ACT_TIMEOUT_MS = 240_000;
 
 export type AgentOpportunityRow = {
@@ -36,7 +36,7 @@ async function getOrCreateSystemChat(
     .from("chats")
     .select("id")
     .eq("workspace_id", workspaceId)
-    .eq("title", SYSTEM_CHAT_TITLE)
+    .eq("title", AGENT_CHAT_TITLE)
     .is("archived_at", null)
     .maybeSingle();
   if (existingError) throw existingError;
@@ -44,7 +44,7 @@ async function getOrCreateSystemChat(
 
   const { data: created, error: createError } = await sb
     .from("chats")
-    .insert({ workspace_id: workspaceId, title: SYSTEM_CHAT_TITLE })
+    .insert({ workspace_id: workspaceId, title: AGENT_CHAT_TITLE })
     .select("id")
     .single();
   if (createError) throw createError;
@@ -88,6 +88,7 @@ async function saveChatArtifactsToBoard(
   workspaceId: string,
   chatId: string,
   turnStartedAt: string,
+  opportunityId: string,
 ): Promise<string[]> {
   // Only artifacts from THIS turn. The agent chat accumulates turns, so an
   // unscoped "latest assistant with artifacts" read could re-save a previous
@@ -123,7 +124,13 @@ async function saveChatArtifactsToBoard(
       body: artifact.body,
       title: artifact.title,
       kind: "post",
-      meta: artifact.meta ?? undefined,
+      // Stamp agent provenance so the board can badge + filter these drafts
+      // (Phase E3) without a new status column.
+      meta: {
+        ...(artifact.meta ?? {}),
+        suggested_by: AGENT_SUGGESTED_BY,
+        agent_opportunity_id: opportunityId,
+      },
     });
     if (outcome.ok) draftIds.push(outcome.value.draft.id);
   }
@@ -203,6 +210,7 @@ export async function actOnOpportunity(
         workspaceId,
         chatId,
         turnStartedAt,
+        opportunity.id,
       );
       if (draftIds.length === 0) {
         throw new Error("Chat turn produced no draft artifact.");

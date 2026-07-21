@@ -9,8 +9,14 @@ execute the remaining phases cold, without the conversation that produced it.
 - ❌ Phase B — two-draft presentation (PR #1308). DROPPED: too much complexity;
   keep modeled-only drafting and continuous learning on modeled posts instead.
 - ✅ Phase C — edit-delta learning (PR #1309). Migration 118.
-- ⬜ Phase D — agent loop (scan → rank → act daily). Migration 119.
-- ⬜ Phase E — "While you were away" home surface.
+- ✅ Phase D — agent loop (PRs #1310–#1315). Migration 119. Verified end-to-end
+  in production: scan → rank → draft → board. Daily cap 2/workspace
+  (`AGENT_DAILY_DRAFT_CAP`). Regular posts only (lead-magnet sources fail
+  closed by design).
+- ✅ Phase E — "While you were away" surface: agent tag on board drafts
+  (meta.suggested_by + badge), robot icon for the agent chat, briefing API +
+  home section with Draft-it/Dismiss actions. E4 (breakout radar chip) not
+  done yet.
 - ⬜ Phase F — Plan-my-week (ephemeral planner).
 
 ---

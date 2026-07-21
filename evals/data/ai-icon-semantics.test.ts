@@ -3,11 +3,13 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const AI_SURFACES = new Set([
+  "app/(app)/dashboard/agent-briefing.tsx",
   "app/(app)/dashboard/chat-workspace.tsx",
   "app/(app)/dashboard/claude/page.tsx",
   "app/(app)/dashboard/draft-editor.tsx",
   "app/(app)/dashboard/first-run-checklist.tsx",
   "app/(app)/dashboard/lead-magnets/manager.tsx",
+  "app/(app)/dashboard/posts/drafts-list.tsx",
   "app/(app)/dashboard/voice/manager.tsx",
   "app/(app)/dashboard/voice/preferences.tsx",
   "app/(app)/dashboard/voice/voice-interview-card.tsx",
