@@ -1306,7 +1306,7 @@ function DraftCard({
             )}
             {agentSuggested && (
               <span
-                className="inline-flex shrink-0 items-center gap-0.5 rounded-full border border-primary/20 bg-primary/[0.07] px-1.5 py-0.5 text-[10px] font-medium text-primary"
+                className="inline-flex shrink-0 items-center gap-0.5 rounded-full border border-accent-brand/25 bg-accent-brand/[0.08] px-1.5 py-0.5 text-[10px] font-medium text-accent-brand"
                 title="Drafted by your agent from a tracked outlier."
               >
                 <AiIcon className="h-2.5 w-2.5" aria-hidden />
