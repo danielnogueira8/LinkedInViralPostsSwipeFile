@@ -17,7 +17,9 @@ execute the remaining phases cold, without the conversation that produced it.
   board drafts (meta.suggested_by + badge), robot icon for the agent chat,
   briefing API + home section with Draft-it/Dismiss actions, breakout radar on
   the next-action chip.
-- ⬜ Phase F — Plan-my-week (ephemeral planner). Only remaining phase.
+- ✅ Phase F — plan-my-week (PR #1340): ephemeral regenerate-on-click weekly
+  plan on the Your Agent feed; weekday assignment + posting-gap note are
+  deterministic, "Draft this" reuses the grounded-turn action. ALL PHASES DONE.
 
 ---
 
