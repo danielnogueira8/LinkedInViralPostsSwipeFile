@@ -93,7 +93,9 @@ describe("briefing route exposes the flag", () => {
 
   it("reads post_type from posts, not from a re-classification of the text", () => {
     expect(src).toContain('.from("posts")');
-    expect(src).toContain('.select("id, post_type")');
+    // post_type is read from the posts row (the avatar join may extend the
+    // select list); it is never re-derived from the post text.
+    expect(src).toMatch(/\.select\("id, post_type[",]/);
     expect(src).not.toContain("classifyPost");
   });
 

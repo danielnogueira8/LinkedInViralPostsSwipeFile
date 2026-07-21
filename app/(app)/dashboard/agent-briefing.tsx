@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { X, Loader2, Magnet, ArrowRight, CalendarDays } from "lucide-react";
 import { AiIcon } from "@/components/ai-icon";
+import { AvatarImg } from "@/components/avatar-img";
 import { cn } from "@/lib/utils";
 
 // -----------------------------------------------------------------------------
@@ -26,6 +27,8 @@ type BriefingDraft = {
   kind: string;
   status: string;
   created_at: string;
+  /** Stamped when the draft promotes a lead magnet (tagArtifactWithLeadMagnet). */
+  meta?: { lead_magnet?: unknown } | null;
 };
 
 type BriefingOpportunity = {
@@ -38,7 +41,33 @@ type BriefingOpportunity = {
   // post (see lib/agent-loop/opportunity-post-type.ts). Optional so a stale
   // client against an older payload just renders no badge.
   is_lead_magnet?: boolean;
+  /** Creator's profile pic, resolved server-side from the source post's account. */
+  author_avatar?: string | null;
 };
+
+/** Tiny creator avatar for opportunity rows. LinkedIn CDN URLs expire, so this
+ *  degrades to the creator's initial via AvatarImg's error fallback. */
+function CreatorAvatar({
+  src,
+  name,
+}: {
+  src: string | null | undefined;
+  name: string;
+}) {
+  const initial = (name.trim()[0] ?? "?").toUpperCase();
+  return (
+    <AvatarImg
+      src={src}
+      alt={name}
+      className="size-5 shrink-0 rounded-full object-cover"
+      fallback={
+        <span className="grid size-5 shrink-0 place-items-center rounded-full bg-muted text-[10px] font-semibold text-muted-foreground">
+          {initial}
+        </span>
+      }
+    />
+  );
+}
 
 const LEAD_MAGNET_HINT =
   "Lead magnet post — the source gives away a resource for a comment or DM. Drafting from it produces a comment-gated CTA post.";
@@ -95,6 +124,7 @@ type WeekPlanItem = {
     id: string;
     headline: string;
     is_lead_magnet?: boolean;
+    author_avatar?: string | null;
   };
 };
 
@@ -298,6 +328,10 @@ export function AgentBriefing({
                       hintId={`week-plan-lead-magnet-${item.opportunity.id}`}
                     />
                   ) : null}
+                  <CreatorAvatar
+                    src={item.opportunity.author_avatar}
+                    name={item.opportunity.headline}
+                  />
                   <p className="min-w-0 flex-1 truncate text-sm text-foreground">
                     {item.opportunity.headline}
                   </p>
@@ -344,32 +378,35 @@ export function AgentBriefing({
             Drafts ready for review
           </p>
           <ul className="mt-2 flex flex-col gap-2">
-            {drafts.map((draft) => (
-              <li
-                key={draft.id}
-                className="flex items-center gap-3 rounded-xl border border-border bg-background px-3 py-2.5"
-              >
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium text-foreground">
+            {drafts.map((draft) => {
+              const isLeadMagnet =
+                draft.kind === "lead_magnet" || Boolean(draft.meta?.lead_magnet);
+              return (
+                <li
+                  key={draft.id}
+                  className="flex items-center gap-2.5 rounded-xl border border-border bg-background px-3 py-2.5"
+                >
+                  {isLeadMagnet ? (
+                    <LeadMagnetBadge hintId={`agent-draft-lead-magnet-${draft.id}`} />
+                  ) : null}
+                  {/* One line only — the second preview line duplicated the title. */}
+                  <p className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
                     {(draft.title ?? "").trim() || snippet(draft.body, 60)}
                   </p>
-                  <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                    {snippet(draft.body)}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => review(draft.id)}
-                  className={cn(
-                    "inline-flex shrink-0 items-center gap-1 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground",
-                    "transition-colors hover:border-primary/30 hover:text-primary",
-                  )}
-                >
-                  Review
-                  <ArrowRight className="h-3 w-3" aria-hidden />
-                </button>
-              </li>
-            ))}
+                  <button
+                    type="button"
+                    onClick={() => review(draft.id)}
+                    className={cn(
+                      "inline-flex shrink-0 items-center gap-1 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground",
+                      "transition-colors hover:border-primary/30 hover:text-primary",
+                    )}
+                  >
+                    Review
+                    <ArrowRight className="h-3 w-3" aria-hidden />
+                  </button>
+                </li>
+              );
+            })}
           </ul>
         </div>
       )}
@@ -390,6 +427,10 @@ export function AgentBriefing({
                     hintId={`agent-briefing-lead-magnet-${opportunity.id}`}
                   />
                 ) : null}
+                <CreatorAvatar
+                  src={opportunity.author_avatar}
+                  name={opportunity.payload?.author ?? opportunity.payload?.headline ?? "?"}
+                />
                 <p className="min-w-0 flex-1 truncate text-sm text-foreground">
                   {opportunity.payload?.headline ?? "New opportunity"}
                 </p>

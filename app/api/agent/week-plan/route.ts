@@ -39,13 +39,23 @@ export async function GET() {
 
     const sourcePostIds = opportunitySourcePostIds(opportunities);
     let leadMagnetIds = new Set<string>();
+    const avatarByPostId = new Map<string, string>();
     if (sourcePostIds.length > 0) {
       const { data: sourcePosts, error: sourcePostsError } = await sb.raw
         .from("posts")
-        .select("id, post_type")
+        .select("id, post_type, accounts(profile_pic_url)")
         .in("id", sourcePostIds);
       if (sourcePostsError) throw sourcePostsError;
       leadMagnetIds = leadMagnetPostIds(sourcePosts);
+      for (const post of sourcePosts ?? []) {
+        const acc = Array.isArray(post.accounts)
+          ? post.accounts[0]
+          : post.accounts;
+        const url = acc?.profile_pic_url;
+        if (typeof post.id === "string" && typeof url === "string" && url) {
+          avatarByPostId.set(post.id, url);
+        }
+      }
     }
 
     // Posting gap: days since the user's last PUBLISHED post.
@@ -67,12 +77,19 @@ export async function GET() {
     const dayLabels = nextWeekdays((opportunities ?? []).length);
     const items = (opportunities ?? []).map((opportunity, index) => {
       const payload = (opportunity.payload ?? {}) as Record<string, unknown>;
+      const sourcePostId =
+        typeof opportunity.source_post_id === "string"
+          ? opportunity.source_post_id
+          : null;
       return {
         day: dayLabels[index] ?? `Day ${index + 1}`,
         opportunity: {
           id: opportunity.id as string,
           headline: readOpportunityHeadline(payload),
           is_lead_magnet: opportunityIsLeadMagnet(opportunity, leadMagnetIds),
+          author_avatar: sourcePostId
+            ? (avatarByPostId.get(sourcePostId) ?? null)
+            : null,
         },
       };
     });
