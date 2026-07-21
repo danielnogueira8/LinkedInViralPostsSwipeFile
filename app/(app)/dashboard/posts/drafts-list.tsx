@@ -211,6 +211,10 @@ export const STATUS_CHIP: Record<DraftStatus, string> = {
 // The columns, in pipeline order. `accent` tints the header so the stages read
 // as a progression. Scheduled is display-only: scheduling requires choosing a
 // date/time from the post drawer, so drag/drop never writes a "scheduled" status.
+// Pipeline color language — BRIGHT variants of the state hues so columns are
+// distinguishable at a glance (the muted state-* tones read as one muddy row):
+// Ideas orange, Draft grey, Ready green, Scheduled blue, Posted black. Written
+// as literal class strings so Tailwind's build-time scanner sees them.
 const COLUMNS: {
   id: BoardColumnId;
   moveStatus?: DraftStatus;
@@ -218,55 +222,62 @@ const COLUMNS: {
   description: string;
   accent: string;
   dot: string;
+  /** Notion-style lane tint: a very light wash of the dot color (bg + border). */
+  surface: string;
 }[] = [
   {
     id: "idea",
     moveStatus: "idea",
-    label: "Ideas & hooks",
+    label: "Ideas",
     description: "Capture raw angles before they become drafts.",
-    accent: "text-state-warning",
-    dot: "bg-state-warning",
+    accent: "text-[oklch(0.66_0.18_60)]",
+    dot: "bg-[oklch(0.66_0.18_60)]",
+    surface: "border-[oklch(0.92_0.05_60)] bg-[oklch(0.968_0.028_60)]",
   },
   {
     id: "drafting",
     moveStatus: "drafting",
     label: "Draft",
     description: "Edit drafts before approving them.",
-    accent: "text-state-info",
-    dot: "bg-state-info",
+    accent: "text-[oklch(0.556_0.02_106)]",
+    dot: "bg-[oklch(0.556_0.02_106)]",
+    surface: "border-[oklch(0.92_0.012_106)] bg-[oklch(0.96_0.01_106)]",
   },
   {
     id: "ready",
     moveStatus: "ready",
     label: "Ready",
     description: "Approved posts waiting for a publish plan.",
-    accent: "text-state-success",
-    dot: "bg-state-success",
+    accent: "text-[oklch(0.58_0.17_155)]",
+    dot: "bg-[oklch(0.58_0.17_155)]",
+    surface: "border-[oklch(0.92_0.05_155)] bg-[oklch(0.968_0.03_155)]",
   },
   {
     id: "scheduled",
     label: "Scheduled",
     description: "Posts queued to publish on LinkedIn.",
-    accent: "text-primary",
-    dot: "bg-primary",
+    accent: "text-[oklch(0.58_0.19_245)]",
+    dot: "bg-[oklch(0.58_0.19_245)]",
+    surface: "border-[oklch(0.92_0.05_245)] bg-[oklch(0.968_0.03_245)]",
   },
   {
     id: "posted",
     moveStatus: "posted",
     label: "Posted",
     description: "Published posts and completed work.",
-    accent: "text-muted-foreground",
-    dot: "bg-muted-foreground/45",
+    accent: "text-[oklch(0.25_0.01_106)]",
+    dot: "bg-[oklch(0.25_0.01_106)]",
+    surface: "border-[oklch(0.91_0.008_106)] bg-[oklch(0.952_0.006_106)]",
   },
 ];
 const STATUS_LABEL: Record<DraftStatus, string> = {
-  idea: "Ideas & hooks",
+  idea: "Ideas",
   drafting: "Draft",
   ready: "Ready",
   posted: "Posted",
 };
 const STATUS_HELP: Record<BoardColumnId, string> = {
-  idea: "Ideas & hooks: a raw angle or hook that still needs drafting.",
+  idea: "Ideas: a raw angle or hook that still needs drafting.",
   drafting: "Draft: a post still being written or edited.",
   ready: "Ready: reviewed and ready to schedule or publish.",
   scheduled: "Scheduled: queued to auto-publish on LinkedIn. Open the post to change the schedule.",
@@ -630,7 +641,7 @@ export function DraftsList({
             {(() => {
               const column = COLUMNS.find((c) => c.id === mobileCol) ?? COLUMNS[0];
               return (
-                <div className="rounded-lg border border-border/60 bg-card/70 px-3 py-2.5 shadow-soft">
+                <div className={cn("rounded-lg border px-3 py-2.5 shadow-soft", column.surface)}>
                   <div className="flex items-center justify-between gap-3">
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
@@ -678,10 +689,10 @@ export function DraftsList({
                   onDrop(e, c.moveStatus);
                 }}
                 className={cn(
-                  "rounded-xl border bg-card/70 p-2.5 flex flex-col gap-2 min-h-[220px] shadow-soft",
-                  c.moveStatus && dragOver === c.moveStatus
-                    ? "border-primary border-dashed bg-primary/5"
-                    : "border-border/60",
+                  "rounded-xl border p-2.5 flex flex-col gap-2 min-h-[220px] shadow-soft",
+                  c.surface,
+                  c.moveStatus && dragOver === c.moveStatus &&
+                    "border-primary border-dashed bg-primary/5",
                 )}
               >
                 <div className="flex items-start justify-between gap-2 rounded-xl border border-border/50 bg-background/55 px-3 py-2">
@@ -1059,11 +1070,11 @@ function EmptyColumn() {
 // (the column already groups by status, but the dot helps on the mobile single-
 // column view and reinforces the pipeline color language).
 const STATUS_DOT: Record<BoardColumnId, string> = {
-  idea: "bg-state-warning",
-  drafting: "bg-state-info",
-  ready: "bg-state-success",
-  scheduled: "bg-primary",
-  posted: "bg-muted-foreground/40",
+  idea: "bg-[oklch(0.66_0.18_60)]",
+  drafting: "bg-[oklch(0.556_0.02_106)]",
+  ready: "bg-[oklch(0.58_0.17_155)]",
+  scheduled: "bg-[oklch(0.58_0.19_245)]",
+  posted: "bg-[oklch(0.25_0.01_106)]",
 };
 
 function formatShortDate(value: string | null | undefined): string | null {

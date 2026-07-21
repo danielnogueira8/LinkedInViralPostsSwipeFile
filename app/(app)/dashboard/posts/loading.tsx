@@ -18,7 +18,7 @@ export default function PostsLoading() {
       </Surface>
 
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-5">
-        {["Ideas & hooks", "Drafting", "Ready", "Scheduled", "Posted"].map((label) => (
+        {["Ideas", "Drafting", "Ready", "Scheduled", "Posted"].map((label) => (
           <div
             key={label}
             className="rounded-xl border border-border/60 bg-muted/30 p-2"
