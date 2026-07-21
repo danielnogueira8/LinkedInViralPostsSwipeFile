@@ -7,22 +7,89 @@
 // they're unit-testable without a database.
 // ---------------------------------------------------------------------------
 
-/** Weekday labels for the next `count` business days, starting TOMORROW. */
-export function nextWeekdays(count: number, from: Date = new Date()): string[] {
+/** Day labels for the next `count` calendar days (weekends included), starting TOMORROW. */
+export function nextDays(count: number, from: Date = new Date()): string[] {
   const labels: string[] = [];
   const cursor = new Date(from);
   cursor.setDate(cursor.getDate() + 1);
-  // Safety bound: 7 extra days always covers 5 business days.
-  for (let guard = 0; labels.length < count && guard < 14; guard += 1) {
-    const day = cursor.getDay();
-    if (day !== 0 && day !== 6) {
-      labels.push(
-        cursor.toLocaleDateString("en-US", { weekday: "short" }),
-      );
-    }
+  for (let i = 0; i < count; i += 1) {
+    labels.push(cursor.toLocaleDateString("en-US", { weekday: "short" }));
     cursor.setDate(cursor.getDate() + 1);
   }
   return labels;
+}
+
+/**
+ * Generic plan-day prompts (Phase F v2). Opportunity days are the backbone of
+ * the week, but a few days should just be the user's OWN stories — the agent
+ * can't source those, and they round out a credible week. The list is long
+ * enough that a 7-day plan never repeats one; the daily seed rotates where the
+ * fill starts so consecutive days don't produce identical plans.
+ */
+export const GENERIC_WEEK_PROMPTS: readonly string[] = [
+  "talk about a recent client win",
+  "talk about a failure and the lesson it taught you",
+  "talk about the turning point in your career",
+  "share one unpopular opinion you hold in your industry",
+  "talk about a mistake you see your peers making over and over",
+  "share the best piece of advice you ever received",
+  "talk about something you changed your mind about this year",
+  "share a small habit that made you better at your craft",
+  "talk about a lesson you learned the hard way",
+  "share what you would tell yourself three years ago",
+];
+
+export type WeekPlanSlot =
+  | { kind: "opportunity"; id: string }
+  | { kind: "generic"; prompt: string };
+
+/**
+ * Compose one week of plan slots: opportunities first (score order, lead
+ * magnets capped), generic prompt days filling the rest. Pure — the route
+ * supplies the candidates, this decides the shape of the week.
+ */
+export function composeWeekPlan(input: {
+  opportunities: Array<{ id: string; isLeadMagnet: boolean }>;
+  days?: number;
+  /** At least this many days stay generic (the user's own stories). */
+  minGenericDays?: number;
+  maxLeadMagnets?: number;
+  genericPrompts?: readonly string[];
+  /** Rotates the generic fill (e.g. day-of-year) so plans vary day to day. */
+  seed?: number;
+}): WeekPlanSlot[] {
+  const days = input.days ?? 7;
+  const maxLeadMagnets = input.maxLeadMagnets ?? 2;
+  const prompts = input.genericPrompts ?? GENERIC_WEEK_PROMPTS;
+  const maxOpportunityDays = Math.max(
+    0,
+    days - (input.minGenericDays ?? 2),
+  );
+
+  const slots: WeekPlanSlot[] = [];
+  let leadMagnets = 0;
+  for (const opportunity of input.opportunities) {
+    if (slots.length >= maxOpportunityDays) break;
+    if (opportunity.isLeadMagnet) {
+      if (leadMagnets >= maxLeadMagnets) continue;
+      leadMagnets += 1;
+    }
+    slots.push({ kind: "opportunity", id: opportunity.id });
+  }
+
+  const offset = prompts.length
+    ? (input.seed ?? 0) % prompts.length
+    : 0;
+  for (
+    let i = 0;
+    slots.length < days && i < prompts.length * 2;
+    i += 1
+  ) {
+    const prompt = prompts[(offset + i) % prompts.length];
+    if (slots.some((s) => s.kind === "generic" && s.prompt === prompt)) continue;
+    slots.push({ kind: "generic", prompt });
+  }
+  return slots.slice(0, days);
 }
 
 /** Whole days since an ISO timestamp; null when the input is missing/invalid. */

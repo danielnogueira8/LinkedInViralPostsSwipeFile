@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { X, Loader2, Magnet, ArrowRight, CalendarDays } from "lucide-react";
+import { X, Loader2, Magnet, ArrowRight, CalendarDays, Lightbulb } from "lucide-react";
 import { AiIcon } from "@/components/ai-icon";
 import { AvatarImg } from "@/components/avatar-img";
 import { cn } from "@/lib/utils";
@@ -120,12 +120,15 @@ type Briefing = {
 
 type WeekPlanItem = {
   day: string;
-  opportunity: {
+  kind: "opportunity" | "generic";
+  opportunity?: {
     id: string;
     headline: string;
     is_lead_magnet?: boolean;
     author_avatar?: string | null;
   };
+  /** Generic "your story" day: the under-the-hood drafting prompt. */
+  prompt?: string;
 };
 
 type WeekPlan = {
@@ -245,6 +248,30 @@ export function AgentBriefing({
     }
   };
 
+  // "Draft this" on a generic plan day — the prompt rides under the hood; the
+  // user just sees the story suggestion.
+  const draftGeneric = async (prompt: string) => {
+    if (busyId) return;
+    setBusyId(prompt);
+    setActionError(null);
+    try {
+      const res = await fetch("/api/agent/week-plan/draft", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.ok) {
+        throw new Error(data?.error || "Couldn't draft that — try again.");
+      }
+      await refresh();
+    } catch (error) {
+      setActionError((error as Error).message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   // Until the first fetch lands, render nothing (avoids a flash of the empty
   // state). After it lands we always render the panel — even when empty — so the
   // pinned "Your Agent" destination is never a dead click.
@@ -315,42 +342,72 @@ export function AgentBriefing({
             </p>
           ) : (
             <ul className="mt-2 flex flex-col gap-1.5">
-              {weekPlan.items.map((item) => (
-                <li
-                  key={item.opportunity.id}
-                  className="flex items-center gap-2.5 rounded-lg bg-background/70 px-2.5 py-2"
-                >
-                  <span className="w-9 shrink-0 text-xs font-semibold text-accent-brand">
-                    {item.day}
-                  </span>
-                  {item.opportunity.is_lead_magnet ? (
-                    <LeadMagnetBadge
-                      hintId={`week-plan-lead-magnet-${item.opportunity.id}`}
-                    />
-                  ) : null}
-                  <CreatorAvatar
-                    src={item.opportunity.author_avatar}
-                    name={item.opportunity.headline}
-                  />
-                  <p className="min-w-0 flex-1 truncate text-sm text-foreground">
-                    {item.opportunity.headline}
-                  </p>
-                  <button
-                    type="button"
-                    disabled={busyId !== null}
-                    onClick={() => void act(item.opportunity.id, "draft")}
-                    className={cn(
-                      "inline-flex shrink-0 items-center gap-1 rounded-full bg-accent-brand px-2.5 py-1 text-[11px] font-medium text-accent-brand-foreground",
-                      "transition-opacity hover:opacity-90 disabled:opacity-50",
-                    )}
+              {weekPlan.items.map((item, index) => {
+                const key =
+                  item.kind === "generic"
+                    ? `generic-${item.prompt}`
+                    : (item.opportunity?.id ?? `opp-${index}`);
+                const busy =
+                  item.kind === "generic"
+                    ? busyId === item.prompt
+                    : busyId === item.opportunity?.id;
+                return (
+                  <li
+                    key={key}
+                    className="flex items-center gap-2.5 rounded-lg bg-background/70 px-2.5 py-2"
                   >
-                    {busyId === item.opportunity.id ? (
-                      <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
-                    ) : null}
-                    Draft this
-                  </button>
-                </li>
-              ))}
+                    <span className="w-9 shrink-0 text-xs font-semibold text-accent-brand">
+                      {item.day}
+                    </span>
+                    {item.kind === "generic" ? (
+                      <>
+                        <span
+                          className="grid size-5 shrink-0 place-items-center rounded-md bg-muted text-muted-foreground"
+                          title="A post from your own stories — no source needed"
+                        >
+                          <Lightbulb className="h-3 w-3" aria-hidden />
+                        </span>
+                        <p className="min-w-0 flex-1 truncate text-sm text-foreground">
+                          <span className="capitalize">{item.prompt}</span>
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        {item.opportunity?.is_lead_magnet ? (
+                          <LeadMagnetBadge
+                            hintId={`week-plan-lead-magnet-${item.opportunity.id}`}
+                          />
+                        ) : null}
+                        <CreatorAvatar
+                          src={item.opportunity?.author_avatar}
+                          name={item.opportunity?.headline ?? "?"}
+                        />
+                        <p className="min-w-0 flex-1 truncate text-sm text-foreground">
+                          {item.opportunity?.headline}
+                        </p>
+                      </>
+                    )}
+                    <button
+                      type="button"
+                      disabled={busyId !== null}
+                      onClick={() =>
+                        item.kind === "generic"
+                          ? void draftGeneric(item.prompt ?? "")
+                          : void act(item.opportunity?.id ?? "", "draft")
+                      }
+                      className={cn(
+                        "inline-flex shrink-0 items-center gap-1 rounded-full bg-accent-brand px-2.5 py-1 text-[11px] font-medium text-accent-brand-foreground",
+                        "transition-opacity hover:opacity-90 disabled:opacity-50",
+                      )}
+                    >
+                      {busy ? (
+                        <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+                      ) : null}
+                      Draft this
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>
