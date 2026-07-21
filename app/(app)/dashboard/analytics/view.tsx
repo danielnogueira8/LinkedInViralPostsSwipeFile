@@ -21,6 +21,21 @@ export type PostMetricsRow = {
 
 export type TrendPoint = { date: string; impressions: number };
 
+// Order the analytics table with the most recent posts on top: publish date
+// descending, undated posts last, ties broken by impressions (desc) so the
+// order is deterministic. Sorts a copy; pure + exported for unit tests.
+export function sortPostsByRecency(posts: PostMetricsRow[]): PostMetricsRow[] {
+  return [...posts].sort((a, b) => {
+    const at = a.publishedAt ? Date.parse(a.publishedAt) : NaN;
+    const bt = b.publishedAt ? Date.parse(b.publishedAt) : NaN;
+    const aValid = !Number.isNaN(at);
+    const bValid = !Number.isNaN(bt);
+    if (aValid && bValid && at !== bt) return bt - at;
+    if (aValid !== bValid) return aValid ? -1 : 1; // dated before undated
+    return (b.impressions ?? 0) - (a.impressions ?? 0);
+  });
+}
+
 export type AnalyticsEmptyState = "connect" | "awaiting_first_fetch" | "no_posts" | null;
 
 export function getAnalyticsEmptyState(opts: {
