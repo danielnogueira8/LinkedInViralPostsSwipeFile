@@ -1,9 +1,9 @@
 import { describe, expect, test } from "vitest";
+import { getAnalyticsEmptyState } from "@/app/(app)/dashboard/analytics/view";
 import {
-  getAnalyticsEmptyState,
   sortPostsByRecency,
   type PostMetricsRow,
-} from "@/app/(app)/dashboard/analytics/view";
+} from "@/lib/analytics-view-model";
 
 // A post row with only the fields the sort reads; the rest are filled with
 // harmless zeros so the object satisfies PostMetricsRow.

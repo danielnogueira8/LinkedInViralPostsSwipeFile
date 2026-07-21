@@ -2,12 +2,15 @@ import { scopedSupabase } from "@/lib/supabase-scoped";
 import { getConnection, canPublish } from "@/lib/publishing";
 import { PageHeader, PageShell } from "@/components/app-surface";
 import { SurfaceHelp } from "@/components/surface-help";
+import { AnalyticsView } from "./view";
+// Import the pure helpers + types from the server-safe module directly — NOT
+// from "./view" (a "use client" module). Calling a client module's function on
+// the server throws "Attempted to call sortPostsByRecency() from the server".
 import {
-  AnalyticsView,
   sortPostsByRecency,
   type PostMetricsRow,
   type TrendPoint,
-} from "./view";
+} from "@/lib/analytics-view-model";
 
 export const dynamic = "force-dynamic";
 

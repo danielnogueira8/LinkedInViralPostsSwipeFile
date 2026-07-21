@@ -5,36 +5,21 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  sortPostsByRecency,
+  type PostMetricsRow,
+  type TrendPoint,
+} from "@/lib/analytics-view-model";
 
-export type PostMetricsRow = {
-  artifactId: string;
-  title: string;
-  publishedAt: string | null;
-  impressions: number | null;
-  reach: number | null;
-  likes: number | null;
-  comments: number | null;
-  shares: number | null;
-  saves: number | null;
-  sends: number | null;
-};
-
-export type TrendPoint = { date: string; impressions: number };
-
-// Order the analytics table with the most recent posts on top: publish date
-// descending, undated posts last, ties broken by impressions (desc) so the
-// order is deterministic. Sorts a copy; pure + exported for unit tests.
-export function sortPostsByRecency(posts: PostMetricsRow[]): PostMetricsRow[] {
-  return [...posts].sort((a, b) => {
-    const at = a.publishedAt ? Date.parse(a.publishedAt) : NaN;
-    const bt = b.publishedAt ? Date.parse(b.publishedAt) : NaN;
-    const aValid = !Number.isNaN(at);
-    const bValid = !Number.isNaN(bt);
-    if (aValid && bValid && at !== bt) return bt - at;
-    if (aValid !== bValid) return aValid ? -1 : 1; // dated before undated
-    return (b.impressions ?? 0) - (a.impressions ?? 0);
-  });
-}
+// Re-export the server-safe view-model so existing importers of "./view" (the
+// server page, tests) keep working. The definitions themselves live in
+// lib/analytics-view-model.ts (no "use client"), so the server page can call
+// sortPostsByRecency without tripping the client-function-from-server error.
+export {
+  sortPostsByRecency,
+  type PostMetricsRow,
+  type TrendPoint,
+} from "@/lib/analytics-view-model";
 
 export type AnalyticsEmptyState = "connect" | "awaiting_first_fetch" | "no_posts" | null;
 
