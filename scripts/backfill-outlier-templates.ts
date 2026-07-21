@@ -21,6 +21,7 @@ import {
 } from "../lib/viral";
 import { templatizeOutlierPost } from "../lib/claude";
 import { TEMPLATES_PER_WORKSPACE_MAX } from "../lib/templates";
+import { embedTemplateBody } from "../lib/template-embeddings";
 import { selectAllRows, selectInChunks } from "../lib/db-paginate";
 
 type PostRow = {
@@ -148,6 +149,7 @@ async function main() {
     if (workspaceIds.length === 0) continue;
     try {
       const templatized = await templatizeOutlierPost(q.post.text as string);
+      const embedding = await embedTemplateBody(templatized.body);
       for (const wsId of workspaceIds) {
         const { error: claimErr } = await sb.rpc("claim_content_template_slot", {
           p_workspace_id: wsId,
@@ -157,6 +159,8 @@ async function main() {
           p_body: templatized.body,
           p_source: "auto",
           p_origin_post_id: q.post.id,
+          p_embedding: `[${embedding.join(",")}]`,
+          p_structure_type: templatized.structureType,
         });
         // 23505 (unique_violation): a workspace already has this post's
         // template (a second workspace pass can't happen via the skip above,

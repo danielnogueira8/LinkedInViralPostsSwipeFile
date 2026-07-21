@@ -10,6 +10,7 @@ import {
   type ContentTemplate,
   type TemplateInput,
 } from "@/lib/templates";
+import { embedTemplateBody, structureTypeFromCategory } from "@/lib/template-embeddings";
 import {
   isDuplicatePreference,
   PREFS_PER_WORKSPACE_MAX,
@@ -107,6 +108,8 @@ export async function createTemplateResource(input: {
   data: TemplateInput;
 }): Promise<OperationResult<ContentTemplate>> {
   const { db, workspaceId, data: request } = input;
+  const embedding = await embedTemplateBody(request.body);
+  const inferredStructureType = structureTypeFromCategory(request.category);
   const { data, error } = await db
     .rpc("claim_content_template_slot", {
       p_workspace_id: workspaceId,
@@ -116,6 +119,8 @@ export async function createTemplateResource(input: {
       p_body: request.body,
       p_source: "custom",
       p_origin_post_id: null,
+      p_embedding: `[${embedding.join(",")}]`,
+      p_structure_type: inferredStructureType,
     })
     .single();
   if (error) throw error;

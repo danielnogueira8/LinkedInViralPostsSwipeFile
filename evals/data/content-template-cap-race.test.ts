@@ -2,6 +2,11 @@ import { describe, test, expect, vi } from "vitest";
 import { createTemplateResource } from "@/lib/content-resource-operations";
 import { TEMPLATES_PER_WORKSPACE_MAX } from "@/lib/templates";
 
+vi.mock("@/lib/template-embeddings", () => ({
+  embedTemplateBody: vi.fn(async () => new Array(1536).fill(0)),
+  structureTypeFromCategory: vi.fn((category) => category ?? "story"),
+}));
+
 // ---------------------------------------------------------------------------
 // createTemplateResource used to enforce the per-workspace template cap as
 // TWO separate round trips: a SELECT count, then (if under the limit) an
@@ -69,6 +74,8 @@ describe("createTemplateResource — atomic cap via claim_content_template_slot"
       p_body: "Body {placeholder}",
       p_source: "custom",
       p_origin_post_id: null,
+      p_embedding: `[${new Array(1536).fill(0).join(",")}]`,
+      p_structure_type: "story",
     });
   });
 

@@ -19,6 +19,23 @@ import { z } from "zod";
 
 export type TemplateSource = "builtin" | "custom" | "auto";
 
+// Structural arcs used by the structure matcher (PLAN-agent-loop Phase A).
+// A template's stored category is its UI bucket; structure_type is the arc it
+// serves for matching purposes.
+export const STRUCTURE_CONTENT_TYPES = [
+  "story",
+  "how_to",
+  "contrarian",
+  "teardown",
+  "announcement",
+  "metric",
+] as const;
+export type StructureContentType = (typeof STRUCTURE_CONTENT_TYPES)[number];
+
+export function isStructureContentType(v: unknown): v is StructureContentType {
+  return typeof v === "string" && (STRUCTURE_CONTENT_TYPES as readonly string[]).includes(v);
+}
+
 // A custom (DB-backed) template row.
 export type ContentTemplate = {
   id: string;
@@ -30,6 +47,10 @@ export type ContentTemplate = {
   origin_post_id: string | null;
   created_at: string;
   updated_at: string;
+  /** Semantic embedding of the body (added in migration 117). */
+  embedding?: number[] | null;
+  /** Structural arc this template serves (added in migration 117). */
+  structure_type?: string | null;
 };
 
 // A built-in template (app-owned, from BUILTIN_TEMPLATES). Same display shape as

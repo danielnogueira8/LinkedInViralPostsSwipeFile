@@ -12,9 +12,12 @@ import {
   TEMPLATE_BODY_MAX,
   TEMPLATE_CATEGORIES,
   TEMPLATE_TITLE_MAX,
+  STRUCTURE_CONTENT_TYPES,
   extractPlaceholders,
   isTemplateCategory,
+  isStructureContentType,
   type TemplateCategory,
+  type StructureContentType,
 } from "./templates";
 import { INJECTION_GUARD, wrapUntrustedXml } from "./agent/untrusted";
 import { providerModelAttribution } from "./agent/cowork-adapter-attempt";
@@ -126,7 +129,12 @@ export function parseHookExtractionText(text: string): {
 export async function templatizeOutlierPost(
   postText: string,
   workspaceId: string = PLATFORM_WORKSPACE,
-): Promise<{ title: string; category: TemplateCategory; body: string }> {
+): Promise<{
+  title: string;
+  category: TemplateCategory;
+  body: string;
+  structureType: StructureContentType;
+}> {
   const res = await completeChat({
     // The body is a full post skeleton (bounded by TEMPLATE_BODY_MAX), so this
     // needs a much larger budget than hook extraction's 256.
@@ -138,7 +146,7 @@ export async function templatizeOutlierPost(
       {
         role: "system",
         content:
-          `You convert a high-performing LinkedIn post into a GENERIC, reusable fill-in-the-blank template other people can model a new post after. Output strict JSON only, no prose, in the shape: {"title": "...", "category": "...", "body": "..."}. The "title" is a short human name for the structure (max ${TEMPLATE_TITLE_MAX} chars), NOT a summary of this specific post. The "category" must be exactly one of: ${TEMPLATE_CATEGORIES.join(", ")}. The "body" is the post rewritten as a reusable skeleton: keep the hook shape, structure, line breaks, and rhythm, but replace every specific name, company, number, date, and anecdote with a {placeholder} token (e.g. {your niche}, {the result you got}, {a specific number}). The body MUST contain at least one {placeholder} — a template with nothing to fill in is useless. ` +
+          `You convert a high-performing LinkedIn post into a GENERIC, reusable fill-in-the-blank template other people can model a new post after. Output strict JSON only, no prose, in the shape: {"title": "...", "category": "...", "body": "...", "structure_type": "..."}. The "title" is a short human name for the structure (max ${TEMPLATE_TITLE_MAX} chars), NOT a summary of this specific post. The "category" must be exactly one of: ${TEMPLATE_CATEGORIES.join(", ")}. The "structure_type" must be exactly one of: ${STRUCTURE_CONTENT_TYPES.join(", ")} — pick the arc the post's structure best serves. The "body" is the post rewritten as a reusable skeleton: keep the hook shape, structure, line breaks, and rhythm, but replace every specific name, company, number, date, and anecdote with a {placeholder} token (e.g. {your niche}, {the result you got}, {a specific number}). The body MUST contain at least one {placeholder} — a template with nothing to fill in is useless. ` +
           INJECTION_GUARD,
       },
       { role: "user", content: wrapUntrustedXml("post", postText) },
@@ -163,12 +171,14 @@ const TemplatizePostSchema = z.object({
   title: z.string().trim().min(1),
   category: z.string().trim().optional(),
   body: z.string().trim().min(1),
+  structure_type: z.string().trim().optional(),
 });
 
 export function coerceTemplatizePost(input: unknown): {
   title: string;
   category: TemplateCategory;
   body: string;
+  structureType: StructureContentType;
 } | null {
   const parsed = TemplatizePostSchema.safeParse(input);
   if (!parsed.success) return null;
@@ -182,6 +192,9 @@ export function coerceTemplatizePost(input: unknown): {
       ? parsed.data.category
       : "other",
     body,
+    structureType: isStructureContentType(parsed.data.structure_type)
+      ? parsed.data.structure_type
+      : "story",
   };
 }
 
@@ -189,6 +202,7 @@ export function parseTemplatizePostText(text: string): {
   title: string;
   category: TemplateCategory;
   body: string;
+  structureType: StructureContentType;
 } | null {
   const parsed = parseJsonObject(text);
   if (!parsed) return null;
@@ -831,7 +845,7 @@ const VOICE_TOOL_WITH_LEAD_MAGNET: ToolDef = {
 // brace/bracket. Returns the parsed object, or null if nothing parseable is
 // found. We deliberately only accept objects ({...}) — a bare array or scalar
 // is not a valid voice profile.
-function parseJsonObject(text: string): Record<string, unknown> | null {
+export function parseJsonObject(text: string): Record<string, unknown> | null {
   // Strip a surrounding markdown code fence if present (```json ... ``` or ``` ... ```).
   let body = text.trim();
   const fence = body.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);

@@ -132,6 +132,10 @@ async function runPipeline(opts: {
     extractHookWithClaude: vi.fn(),
     templatizeOutlierPost,
   }));
+  vi.doMock("@/lib/template-embeddings", () => ({
+    embedTemplateBody: vi.fn(async () => new Array(1536).fill(0)),
+    structureTypeFromCategory: vi.fn((category) => category ?? "story"),
+  }));
 
   const { runDailyPipeline } = await import("@/lib/pipeline");
   const result = await runDailyPipeline();

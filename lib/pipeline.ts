@@ -12,6 +12,7 @@ import {
 import { classifyPost } from "./post-type";
 import { extractHookWithClaude, templatizeOutlierPost } from "./claude";
 import { TEMPLATES_PER_WORKSPACE_MAX } from "./templates";
+import { embedTemplateBody } from "./template-embeddings";
 import {
   extractHookHeuristic,
   qualifiesForHookLibrary,
@@ -597,6 +598,7 @@ export async function runDailyPipeline(
       });
       try {
         const templatized = await templatizeOutlierPost(candidate.text);
+        const embedding = await embedTemplateBody(templatized.body);
         const { data: trackers, error: trackersErr } = await sb
           .from("workspace_accounts")
           .select("workspace_id")
@@ -614,6 +616,8 @@ export async function runDailyPipeline(
             p_body: templatized.body,
             p_source: "auto",
             p_origin_post_id: candidate.postId,
+            p_embedding: `[${embedding.join(",")}]`,
+            p_structure_type: templatized.structureType,
           });
           // 23505 (unique_violation): this workspace already has a template
           // from this post — expected on a re-scrape, skip quietly.
