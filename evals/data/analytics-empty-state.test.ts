@@ -2,6 +2,8 @@ import { describe, expect, test } from "vitest";
 import { getAnalyticsEmptyState } from "@/app/(app)/dashboard/analytics/view";
 import {
   sortPostsByRecency,
+  niceCeil,
+  impressionAxisTicks,
   type PostMetricsRow,
 } from "@/lib/analytics-view-model";
 
@@ -117,5 +119,44 @@ describe("analytics table order — most recent posts on top", () => {
 
   test("empty input → empty output", () => {
     expect(sortPostsByRecency([])).toEqual([]);
+  });
+});
+
+describe("impressions chart Y-axis — nice rounded scale", () => {
+  test("niceCeil rounds up to a 1/2/5 × 10ⁿ figure", () => {
+    expect(niceCeil(7)).toBe(10);
+    expect(niceCeil(10)).toBe(10);
+    expect(niceCeil(11)).toBe(20);
+    expect(niceCeil(4200)).toBe(5000);
+    expect(niceCeil(8800)).toBe(10000);
+    expect(niceCeil(13000)).toBe(20000);
+    expect(niceCeil(1)).toBe(1);
+  });
+
+  test("niceCeil guards zero / negative / non-finite", () => {
+    expect(niceCeil(0)).toBe(1);
+    expect(niceCeil(-5)).toBe(1);
+    expect(niceCeil(NaN)).toBe(1);
+    expect(niceCeil(Infinity)).toBe(1);
+  });
+
+  test("impressionAxisTicks gives a clean top and evenly spaced ticks (top→0)", () => {
+    const { top, ticks } = impressionAxisTicks(8800);
+    expect(top).toBe(10000);
+    // Default 2 divisions → 3 ticks, descending so the axis reads top-to-bottom.
+    expect(ticks).toEqual([10000, 5000, 0]);
+  });
+
+  test("the axis always ends at 0 and starts at the nice top", () => {
+    const { top, ticks } = impressionAxisTicks(4200, 4);
+    expect(ticks[ticks.length - 1]).toBe(0);
+    expect(ticks[0]).toBe(top);
+    expect(ticks).toEqual([5000, 3750, 2500, 1250, 0]);
+  });
+
+  test("a flat/zero series still yields a usable scale", () => {
+    const { top, ticks } = impressionAxisTicks(0);
+    expect(top).toBe(1);
+    expect(ticks[ticks.length - 1]).toBe(0);
   });
 });

@@ -20,6 +20,29 @@ export type PostMetricsRow = {
 
 export type TrendPoint = { date: string; impressions: number };
 
+// Round a value UP to a "nice" number (1/2/5 × 10ⁿ) so the chart's top
+// gridline is a clean round figure (7 → 10, 4200 → 5000, 13000 → 20000).
+export function niceCeil(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) return 1;
+  const magnitude = Math.pow(10, Math.floor(Math.log10(value)));
+  const normalized = value / magnitude; // 1 ≤ normalized < 10
+  const step = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
+  return step * magnitude;
+}
+
+// The Y-axis scale for the impressions chart: a nice rounded top plus evenly
+// spaced tick values from top down to 0 (so the axis reads top-to-bottom).
+// Pure + exported so the tick math is unit-tested.
+export function impressionAxisTicks(
+  maxValue: number,
+  divisions = 2,
+): { top: number; ticks: number[] } {
+  const top = niceCeil(Math.max(1, maxValue));
+  const ticks: number[] = [];
+  for (let i = divisions; i >= 0; i--) ticks.push((top / divisions) * i);
+  return { top, ticks };
+}
+
 // Order the analytics table with the most recent posts on top: publish date
 // descending, undated posts last, ties broken by impressions (desc) so the
 // order is deterministic. Sorts a copy; pure + exported for unit tests.
