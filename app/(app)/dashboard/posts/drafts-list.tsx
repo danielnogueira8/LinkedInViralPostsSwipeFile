@@ -212,10 +212,10 @@ export const STATUS_CHIP: Record<DraftStatus, string> = {
 // The columns, in pipeline order. `accent` tints the header so the stages read
 // as a progression. Scheduled is display-only: scheduling requires choosing a
 // date/time from the post drawer, so drag/drop never writes a "scheduled" status.
-// Pipeline color language — BRIGHT variants of the state hues so columns are
-// distinguishable at a glance (the muted state-* tones read as one muddy row):
-// Ideas orange, Draft grey, Ready green, Scheduled blue, Posted black. Written
-// as literal class strings so Tailwind's build-time scanner sees them.
+// Pipeline color language, tuned to Notion's restraint: the dot/label color is
+// muted (never neon), and the lane is a barely-there wash of the same hue with
+// NO border — the tint alone separates lanes. Written as literal class strings
+// so Tailwind's build-time scanner sees them.
 const COLUMNS: {
   id: BoardColumnId;
   moveStatus?: DraftStatus;
@@ -223,7 +223,7 @@ const COLUMNS: {
   description: string;
   accent: string;
   dot: string;
-  /** Notion-style lane tint: a very light wash of the dot color (bg + border). */
+  /** Notion-style lane tint: a barely-there wash of the dot color, no border. */
   surface: string;
 }[] = [
   {
@@ -231,44 +231,44 @@ const COLUMNS: {
     moveStatus: "idea",
     label: "Ideas",
     description: "Capture raw angles before they become drafts.",
-    accent: "text-[oklch(0.66_0.18_60)]",
-    dot: "bg-[oklch(0.66_0.18_60)]",
-    surface: "border-[oklch(0.92_0.05_60)] bg-[oklch(0.968_0.028_60)]",
+    accent: "text-[oklch(0.60_0.12_60)]",
+    dot: "bg-[oklch(0.60_0.12_60)]",
+    surface: "border-transparent bg-[oklch(0.978_0.014_60)]",
   },
   {
     id: "drafting",
     moveStatus: "drafting",
     label: "Draft",
     description: "Edit drafts before approving them.",
-    accent: "text-[oklch(0.556_0.02_106)]",
-    dot: "bg-[oklch(0.556_0.02_106)]",
-    surface: "border-[oklch(0.92_0.012_106)] bg-[oklch(0.96_0.01_106)]",
+    accent: "text-[oklch(0.52_0.012_106)]",
+    dot: "bg-[oklch(0.52_0.012_106)]",
+    surface: "border-transparent bg-[oklch(0.972_0.004_106)]",
   },
   {
     id: "ready",
     moveStatus: "ready",
     label: "Ready",
     description: "Approved posts waiting for a publish plan.",
-    accent: "text-[oklch(0.58_0.17_155)]",
-    dot: "bg-[oklch(0.58_0.17_155)]",
-    surface: "border-[oklch(0.92_0.05_155)] bg-[oklch(0.968_0.03_155)]",
+    accent: "text-[oklch(0.52_0.11_155)]",
+    dot: "bg-[oklch(0.52_0.11_155)]",
+    surface: "border-transparent bg-[oklch(0.978_0.014_155)]",
   },
   {
     id: "scheduled",
     label: "Scheduled",
     description: "Posts queued to publish on LinkedIn.",
-    accent: "text-[oklch(0.58_0.19_245)]",
-    dot: "bg-[oklch(0.58_0.19_245)]",
-    surface: "border-[oklch(0.92_0.05_245)] bg-[oklch(0.968_0.03_245)]",
+    accent: "text-[oklch(0.54_0.13_245)]",
+    dot: "bg-[oklch(0.54_0.13_245)]",
+    surface: "border-transparent bg-[oklch(0.978_0.014_245)]",
   },
   {
     id: "posted",
     moveStatus: "posted",
     label: "Posted",
     description: "Published posts and completed work.",
-    accent: "text-[oklch(0.25_0.01_106)]",
-    dot: "bg-[oklch(0.25_0.01_106)]",
-    surface: "border-[oklch(0.91_0.008_106)] bg-[oklch(0.952_0.006_106)]",
+    accent: "text-[oklch(0.30_0.008_106)]",
+    dot: "bg-[oklch(0.30_0.008_106)]",
+    surface: "border-transparent bg-[oklch(0.968_0.003_106)]",
   },
 ];
 const STATUS_LABEL: Record<DraftStatus, string> = {
@@ -687,7 +687,7 @@ export function DraftsList({
                         {column.description}
                       </p>
                     </div>
-                    <span className="rounded-full border border-border/60 bg-background/70 px-2 py-0.5 text-xs font-medium text-muted-foreground tabular-nums">
+                    <span className="rounded-full bg-black/[0.04] px-2 py-0.5 text-xs font-medium text-muted-foreground tabular-nums">
                       {byStatus[column.id].length}
                     </span>
                   </div>
@@ -728,7 +728,9 @@ export function DraftsList({
                     "border-primary border-dashed bg-primary/5",
                 )}
               >
-                <div className="flex items-start justify-between gap-2 rounded-xl border border-border/50 bg-background/55 px-3 py-2">
+                {/* Header sits directly on the lane tint (Notion-style) — no
+                    inner white box, which read as a muddy grey mixture. */}
+                <div className="flex items-start justify-between gap-2 px-1.5 py-1">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
                       <span className={cn("h-2 w-2 rounded-full", c.dot)} aria-hidden />
@@ -740,7 +742,7 @@ export function DraftsList({
                       {c.description}
                     </p>
                   </div>
-                  <span className="rounded-full border border-border/60 bg-card px-2 py-0.5 text-xs font-medium text-muted-foreground tabular-nums">
+                  <span className="rounded-full bg-black/[0.04] px-2 py-0.5 text-xs font-medium text-muted-foreground tabular-nums">
                     {byStatus[c.id].length}
                   </span>
                 </div>
@@ -1103,11 +1105,11 @@ function EmptyColumn() {
 // (the column already groups by status, but the dot helps on the mobile single-
 // column view and reinforces the pipeline color language).
 const STATUS_DOT: Record<BoardColumnId, string> = {
-  idea: "bg-[oklch(0.66_0.18_60)]",
-  drafting: "bg-[oklch(0.556_0.02_106)]",
-  ready: "bg-[oklch(0.58_0.17_155)]",
-  scheduled: "bg-[oklch(0.58_0.19_245)]",
-  posted: "bg-[oklch(0.25_0.01_106)]",
+  idea: "bg-[oklch(0.60_0.12_60)]",
+  drafting: "bg-[oklch(0.52_0.012_106)]",
+  ready: "bg-[oklch(0.52_0.11_155)]",
+  scheduled: "bg-[oklch(0.54_0.13_245)]",
+  posted: "bg-[oklch(0.30_0.008_106)]",
 };
 
 function formatShortDate(value: string | null | undefined): string | null {
