@@ -28,6 +28,7 @@ import {
   Circle,
   PanelRightClose,
   PanelLeftOpen,
+  Layers,
   MessageSquare,
   Search,
   Lightbulb,
@@ -63,6 +64,11 @@ import {
 import { AiIcon } from "@/components/ai-icon";
 import { renderRichText } from "@/components/chat-rich-text";
 import { cn } from "@/lib/utils";
+import { ChatContextPanel } from "./chat-context-panel";
+import {
+  summarizeChatContext,
+  isContextSummaryEmpty,
+} from "@/lib/cowork-context-summary";
 import {
   filterSkillsByQuery,
   SKILLS_PER_TURN_MAX,
@@ -450,6 +456,12 @@ export function ChatWorkspace({
   // artifact streams in. It can still be collapsed; the floating "Drafts (N)"
   // button brings it back.
   const [panelOpen, setPanelOpen] = useState(true);
+  // The context rail (right side) — an aggregated, referenceable view of what's
+  // shaping this chat (source post, skills, format, style, giveaway, files).
+  // Opt-in: closed by default so it never competes with the drafts panel for
+  // attention; opened from the header toggle. Mobile uses a bottom sheet.
+  const [contextPanelOpen, setContextPanelOpen] = useState(false);
+  const [mobileContextOpen, setMobileContextOpen] = useState(false);
   const [draftPanelWidth, setDraftPanelWidth] = useState(DRAFT_PANEL_DEFAULT_WIDTH);
   const [draftPanelWidthReady, setDraftPanelWidthReady] = useState(false);
   const [resizingDraftPanel, setResizingDraftPanel] = useState(false);
@@ -653,6 +665,24 @@ export function ChatWorkspace({
   const messages: Message[] = activeId
     ? [...activeBase, ...(activeRun ? runOverlay(activeRun, activeBase) : [])]
     : [];
+  // Aggregate everything shaping this chat into one referenceable summary for the
+  // context rail: the per-message context the transcript already carries + the
+  // live source post being modeled. Pure fold — no new data. Empty until a chat
+  // actually has context, which gates whether the rail/toggle appear at all.
+  const contextSummary = summarizeChatContext({
+    messages,
+    sourcePost: modelSource
+      ? {
+          authorName: modelSource.authorName,
+          authorAvatar: modelSource.authorAvatar,
+          postText: modelSource.postText,
+          partial: modelSource.partial,
+          postType: modelSource.postType,
+          kind: modelSource.kind,
+        }
+      : null,
+  });
+  const hasContext = !isContextSummaryEmpty(contextSummary);
   // The active chat's sidebar row. Prefer local state, but also consult fresh
   // server props because a soft navigation can update initialChats without
   // remounting this client component.
@@ -3720,6 +3750,23 @@ export function ChatWorkspace({
             {panelTitle(artifacts)} ({artifacts.length})
           </button>
         )}
+        {/* Open the context rail. Shown when the chat has context to show and the
+            rail is closed. Sits top-right; when the drafts reopen pill is also
+            visible (drafts exist but its panel is collapsed) it drops a row so
+            the two never overlap. */}
+        {hasContext && !contextPanelOpen && !agentViewOpen && (
+          <button
+            onClick={() => setContextPanelOpen(true)}
+            className={cn(
+              "hidden lg:inline-flex absolute right-4 z-10 items-center gap-1.5 rounded-full border border-border bg-card/90 px-3 py-1.5 text-xs font-medium shadow-sm backdrop-blur hover:bg-card transition-colors",
+              !panelOpen && hasDraftPanel ? "top-16" : "top-4",
+            )}
+            aria-label="Show chat context"
+          >
+            <Layers className="h-3.5 w-3.5" />
+            Context
+          </button>
+        )}
         <div
           ref={scrollRef}
           className={cn(
@@ -5013,6 +5060,77 @@ export function ChatWorkspace({
             {draftsList}
           </div>
         </aside>
+      )}
+
+      {/* Right: context rail — desktop inline column. A read-only, aggregated
+          view of what's shaping this chat. Fixed-width (compact card, no resize),
+          sibling to the drafts panel so both can sit side by side on wide
+          screens. */}
+      {contextPanelOpen && hasContext && !agentViewOpen && (
+        <aside className="relative hidden lg:flex w-80 shrink-0 flex-col border-l border-border bg-muted/80">
+          <div className="flex items-center justify-between px-4 h-14 border-b border-border bg-card/70">
+            <span className="flex items-center gap-2 text-sm font-semibold tracking-[-0.01em]">
+              <Layers className="h-4 w-4 text-muted-foreground" />
+              Context
+            </span>
+            <button
+              onClick={() => setContextPanelOpen(false)}
+              className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-card hover:text-foreground"
+              aria-label="Close context panel"
+            >
+              <PanelRightClose className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="flex-1 min-h-0 overflow-y-auto [scrollbar-gutter:stable] p-3.5">
+            <ChatContextPanel summary={contextSummary} />
+          </div>
+        </aside>
+      )}
+
+      {/* Mobile: a floating "Context" pill that opens the context card as a
+          bottom sheet (the desktop rail is hidden below lg). Sits above the
+          drafts pill so the two don't stack on top of each other. */}
+      {hasContext && !mobileContextOpen && !agentViewOpen && (
+        <button
+          type="button"
+          onClick={() => setMobileContextOpen(true)}
+          className={cn(
+            "lg:hidden absolute left-1/2 -translate-x-1/2 z-20 inline-flex items-center gap-1.5 rounded-full border border-border bg-card/90 px-3.5 py-2 text-xs font-medium shadow-md backdrop-blur hover:bg-card transition-colors",
+            hasDraftPanel ? "bottom-44" : "bottom-32",
+          )}
+          aria-label="Show chat context"
+        >
+          <Layers className="h-3.5 w-3.5" />
+          Context
+        </button>
+      )}
+      {mobileContextOpen && hasContext && (
+        <div className="lg:hidden absolute inset-0 z-40 flex flex-col justify-end" role="dialog" aria-modal="true">
+          <div
+            className="absolute inset-0 bg-black/40"
+            onClick={() => setMobileContextOpen(false)}
+            aria-hidden="true"
+          />
+          <div className="relative max-h-[80%] flex flex-col rounded-t-[1.35rem] border-t border-border bg-card shadow-xl animate-in slide-in-from-bottom duration-200">
+            <div className="flex items-center justify-between px-4 h-14 border-b border-border shrink-0">
+              <span className="flex items-center gap-2 text-sm font-semibold">
+                <Layers className="h-4 w-4 text-muted-foreground" />
+                Context
+              </span>
+              <button
+                type="button"
+                onClick={() => setMobileContextOpen(false)}
+                className="rounded-lg p-1.5 text-muted-foreground hover:bg-card hover:text-foreground"
+                aria-label="Close context"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="flex-1 min-h-0 overflow-y-auto p-3.5 pb-[env(safe-area-inset-bottom)]">
+              <ChatContextPanel summary={contextSummary} />
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Mobile: a floating "Drafts (N)" pill above the composer that opens the
