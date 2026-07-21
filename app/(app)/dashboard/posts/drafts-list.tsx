@@ -14,7 +14,7 @@ import {
   ChevronRight,
   Paperclip,
   Link as LinkIcon,
-  Gift,
+  Magnet,
   MoreHorizontal,
   Check,
   Trash2,
@@ -1345,7 +1345,7 @@ function DraftCard({
                 tone="brand"
                 title={`Lead magnet giveaway: ${draft.leadMagnet.title}`}
               >
-                <Gift className="h-3 w-3" aria-hidden />
+                <Magnet className="h-3 w-3" aria-hidden />
                 Giveaway
               </StatusPill>
             )}

@@ -32,7 +32,7 @@ import {
   ThumbsUp,
   Images,
   HardDrive,
-  Gift,
+  Magnet,
 } from "lucide-react";
 import {
   Dialog,
@@ -779,7 +779,7 @@ export function DraftEditorModal({
                     </PropRow>
 
                     {draft?.leadMagnet && (
-                      <PropRow icon={<Gift className="h-4 w-4" />} label="Giveaway">
+                      <PropRow icon={<Magnet className="h-4 w-4" />} label="Giveaway">
                         <span
                           className="inline-flex min-w-0 items-center gap-1 px-1 text-sm text-muted-foreground"
                           title={`Lead magnet giveaway: ${draft.leadMagnet.title}`}
