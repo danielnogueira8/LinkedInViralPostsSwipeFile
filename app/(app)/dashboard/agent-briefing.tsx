@@ -338,7 +338,7 @@ export function AgentBriefing({
   const twoColumns = drafts.length > 0 && opportunities.length > 0;
 
   return (
-    <section className="rounded-2xl border border-border bg-card/60 p-4 sm:p-5">
+    <section className="rounded-2xl border border-border bg-card/60 p-4 sm:p-5 overflow-x-hidden">
       <div className="flex items-center gap-2">
         {/* Coral = the agent's identity color everywhere it surfaces. */}
         <span className="grid size-7 place-items-center rounded-lg bg-accent-brand/10 text-accent-brand">
@@ -478,25 +478,25 @@ export function AgentBriefing({
       {!isEmpty && (
       <div
         className={cn(
-          "mt-4 grid gap-4",
+          "mt-4 grid min-w-0 gap-4",
           // Side-by-side on wide screens when both sections have content; a
           // single column otherwise (and always on narrow screens).
           twoColumns && "lg:grid-cols-2",
         )}
       >
       {drafts.length > 0 && (
-        <div>
+        <div className="min-w-0">
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
             Drafts ready for review
           </p>
-          <ul className="mt-2 flex flex-col gap-2">
+          <ul className="mt-2 flex min-w-0 flex-col gap-2">
             {drafts.map((draft) => {
               const isLeadMagnet =
                 draft.kind === "lead_magnet" || Boolean(draft.meta?.lead_magnet);
               return (
                 <li
                   key={draft.id}
-                  className="flex items-center gap-2.5 rounded-xl border border-border bg-background px-3 py-2.5"
+                  className="flex min-w-0 items-center gap-2.5 rounded-xl border border-border bg-background px-3 py-2.5"
                 >
                   {isLeadMagnet ? (
                     <LeadMagnetBadge hintId={`agent-draft-lead-magnet-${draft.id}`} />
@@ -524,15 +524,15 @@ export function AgentBriefing({
       )}
 
       {opportunities.length > 0 && (
-        <div>
+        <div className="min-w-0">
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
             Model recently viral posts
           </p>
-          <ul className="mt-2 flex flex-col gap-2">
+          <ul className="mt-2 flex min-w-0 flex-col gap-2">
             {opportunities.map((opportunity) => (
               <li
                 key={opportunity.id}
-                className="flex items-center gap-3 rounded-xl border border-border bg-background px-3 py-2.5"
+                className="flex min-w-0 items-center gap-2.5 rounded-xl border border-border bg-background px-3 py-2.5"
               >
                 {opportunity.is_lead_magnet ? (
                   <LeadMagnetBadge

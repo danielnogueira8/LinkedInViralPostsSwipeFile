@@ -5344,7 +5344,7 @@ function AgentView({
   onClose: () => void;
 }) {
   return (
-    <div className="mx-auto flex w-full max-w-5xl flex-col py-2">
+    <div className="mx-auto flex w-full min-w-0 max-w-5xl flex-col overflow-x-hidden py-2">
       <div className="mb-1 flex items-center justify-between gap-2">
         <div>
           <h2 className="text-lg font-semibold tracking-[-0.02em] text-foreground">
