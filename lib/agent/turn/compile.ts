@@ -38,7 +38,6 @@ import type { Source, WriterTask } from "@/lib/agent/execute/writer";
 import type { CoworkRoute } from "@/lib/agent/cowork-telemetry";
 import type { ModelSourceReference } from "@/lib/agent/turn/context";
 import type { TurnSetupResult } from "@/lib/agent/turn/setup";
-import { getWorkspaceBooleanSetting } from "@/lib/workspace-settings";
 
 export {
   resolveTurnCount,
@@ -1891,18 +1890,12 @@ export async function compileTurnPlan(
         }
       : resolvedFindSource?.source;
 
-  // Two-draft presentation (PLAN-agent-loop Phase B): when the workspace has the
-  // agent_two_draft flag and the turn matched a structure for an original post,
-  // force the count to 2 so the writer produces one modeled draft + one
-  // grounded-original draft. Explicit counts > 2 are left alone.
-  const agentTwoDraftEnabled = await getWorkspaceBooleanSetting(
-    sbRaw,
-    workspaceId,
-    "agent_two_draft",
-  ).catch(() => false);
+  // Two-draft presentation (PLAN-agent-loop Phase B): when the turn matched a
+  // structure for an original post, force the count to 2 so the writer produces
+  // one modeled draft + one grounded-original draft. Explicit counts > 2 are
+  // left alone.
   const twoDraftMode = Boolean(
-    agentTwoDraftEnabled &&
-      !skipDecision &&
+    !skipDecision &&
       !modeledBatchContractRequested &&
       structureMatch &&
       directSource &&
