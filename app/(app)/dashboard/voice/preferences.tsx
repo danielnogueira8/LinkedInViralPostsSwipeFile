@@ -326,6 +326,12 @@ function PreferenceRow({
           Learned
         </StatusPill>
       )}
+      {pref.source === "edit_delta" && (
+        <StatusPill tone="brand" className="h-5 shrink-0 px-2 text-[10px]">
+          <AiIcon className="h-3 w-3" aria-hidden />
+          Learned from edits
+        </StatusPill>
+      )}
       <Button
         size="icon"
         variant="ghost"
