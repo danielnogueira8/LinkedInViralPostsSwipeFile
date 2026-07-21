@@ -185,6 +185,24 @@ export function DraftEditorModal({
     liveDraftRef.current = draft;
   }, [draft]);
 
+  // NEW-POST form state — a new post can now set status + planned date up front
+  // (previously disabled until after create). Title uses titleDraft below. These
+  // seed to sensible defaults each time the "New post" panel opens.
+  const [newStatus, setNewStatus] = useState<DraftStatus>("drafting");
+  const [newDate, setNewDate] = useState<string>("");
+  // A new post's Kind. Empty (undefined) → the server auto-classifies from the
+  // body; picking one makes it explicit (auto-classify then respects it).
+  const [newKind, setNewKind] = useState<DraftKind | "">("");
+  // The giveaway a new lead-magnet post hands out — only surfaced (and only sent)
+  // when the Kind is "lead_magnet". "" = none chosen. Resolved server-side into
+  // meta.lead_magnet so the board's Giveaway row + the comment-to-DM automation
+  // both see the same resource.
+  const [newLeadMagnetId, setNewLeadMagnetId] = useState<string>("");
+  // The workspace's lead magnets, loaded lazily the first time the giveaway
+  // picker is shown (a new lead-magnet post). null = not yet loaded.
+  const [leadMagnetOptions, setLeadMagnetOptions] = useState<LeadMagnetOption[] | null>(null);
+  const [leadMagnetsLoading, setLeadMagnetsLoading] = useState(false);
+
   // Lazily load the workspace's lead magnets the first time the giveaway picker
   // is actually shown (a NEW lead-magnet post). Loaded once per mount and cached
   // in state — reopening the modal or toggling Kind won't refetch. Errors leave
@@ -193,8 +211,11 @@ export function DraftEditorModal({
   useEffect(() => {
     if (!wantsLeadMagnets || leadMagnetOptions !== null || leadMagnetsLoading) return;
     let cancelled = false;
-    setLeadMagnetsLoading(true);
+    // Flip the loading flag inside the async task (not synchronously in the
+    // effect body) so the render-driven set-state stays out of the effect's
+    // sync path.
     void (async () => {
+      setLeadMagnetsLoading(true);
       try {
         const data = await fetchJson<{
           ok: boolean;
@@ -219,23 +240,6 @@ export function DraftEditorModal({
     };
   }, [wantsLeadMagnets, leadMagnetOptions, leadMagnetsLoading]);
 
-  // NEW-POST form state — a new post can now set status + planned date up front
-  // (previously disabled until after create). Title uses titleDraft below. These
-  // seed to sensible defaults each time the "New post" panel opens.
-  const [newStatus, setNewStatus] = useState<DraftStatus>("drafting");
-  const [newDate, setNewDate] = useState<string>("");
-  // A new post's Kind. Empty (undefined) → the server auto-classifies from the
-  // body; picking one makes it explicit (auto-classify then respects it).
-  const [newKind, setNewKind] = useState<DraftKind | "">("");
-  // The giveaway a new lead-magnet post hands out — only surfaced (and only sent)
-  // when the Kind is "lead_magnet". "" = none chosen. Resolved server-side into
-  // meta.lead_magnet so the board's Giveaway row + the comment-to-DM automation
-  // both see the same resource.
-  const [newLeadMagnetId, setNewLeadMagnetId] = useState<string>("");
-  // The workspace's lead magnets, loaded lazily the first time the giveaway
-  // picker is shown (a new lead-magnet post). null = not yet loaded.
-  const [leadMagnetOptions, setLeadMagnetOptions] = useState<LeadMagnetOption[] | null>(null);
-  const [leadMagnetsLoading, setLeadMagnetsLoading] = useState(false);
   const [newMedia, setNewMedia] = useState<PostMediaAttachment[]>([]);
   const [uploadingMedia, setUploadingMedia] = useState(false);
   const [mediaLibraryOpen, setMediaLibraryOpen] = useState(false);
@@ -848,7 +852,7 @@ export function DraftEditorModal({
                           <Select
                             value={newLeadMagnetId || "none"}
                             onValueChange={(v) =>
-                              setNewLeadMagnetId(v === "none" ? "" : v)
+                              setNewLeadMagnetId(!v || v === "none" ? "" : v)
                             }
                           >
                             <SelectTrigger
