@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { X, Loader2 } from "lucide-react";
+import { X, Loader2, Magnet } from "lucide-react";
 import { AiIcon } from "@/components/ai-icon";
 import { cn } from "@/lib/utils";
 
@@ -29,7 +29,55 @@ type BriefingOpportunity = {
   score: number;
   payload: { headline?: string; author?: string } | null;
   created_at: string;
+  // Resolved server-side from posts.post_type on the opportunity's source
+  // post (see lib/agent-loop/opportunity-post-type.ts). Optional so a stale
+  // client against an older payload just renders no badge.
+  is_lead_magnet?: boolean;
 };
+
+const LEAD_MAGNET_HINT =
+  "Lead magnet post — the source gives away a resource for a comment or DM. Drafting from it produces a comment-gated CTA post.";
+
+// Accessible hint badge. No tooltip primitive exists in this codebase and we
+// are not adding a dependency for one icon, so this is the established
+// hover+focus CSS pattern used elsewhere in the dashboard, hardened for a11y:
+//  - focusable (tabIndex 0) so keyboard users can reach it
+//  - the tooltip is shown on hover AND focus-visible, and is always rendered
+//    on touch devices' terms via aria — hover is never the only channel
+//  - role="img" + aria-label gives screen readers the short name,
+//    aria-describedby points at the full explanation
+function LeadMagnetBadge({ hintId }: { hintId: string }) {
+  return (
+    <span className="relative shrink-0">
+      <span
+        role="img"
+        tabIndex={0}
+        aria-label="Lead magnet post"
+        aria-describedby={hintId}
+        title={LEAD_MAGNET_HINT}
+        className={cn(
+          "peer grid size-5 place-items-center rounded-md bg-muted text-muted-foreground",
+          "transition-colors hover:text-foreground focus-visible:text-foreground",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
+        )}
+      >
+        <Magnet className="h-3 w-3" aria-hidden />
+      </span>
+      <span
+        id={hintId}
+        role="tooltip"
+        className={cn(
+          "pointer-events-none absolute left-0 top-full z-20 mt-1.5 w-60 rounded-lg border border-border",
+          "bg-popover px-2.5 py-1.5 text-[11px] leading-4 text-popover-foreground shadow-md",
+          "opacity-0 transition-opacity peer-hover:opacity-100 peer-focus-visible:opacity-100",
+          "motion-reduce:transition-none",
+        )}
+      >
+        {LEAD_MAGNET_HINT}
+      </span>
+    </span>
+  );
+}
 
 type Briefing = {
   drafts: BriefingDraft[];
@@ -155,6 +203,11 @@ export function AgentBriefing() {
                 key={opportunity.id}
                 className="flex items-center gap-3 rounded-xl border border-border bg-background px-3 py-2.5"
               >
+                {opportunity.is_lead_magnet ? (
+                  <LeadMagnetBadge
+                    hintId={`agent-briefing-lead-magnet-${opportunity.id}`}
+                  />
+                ) : null}
                 <p className="min-w-0 flex-1 truncate text-sm text-foreground">
                   {opportunity.payload?.headline ?? "New opportunity"}
                 </p>
