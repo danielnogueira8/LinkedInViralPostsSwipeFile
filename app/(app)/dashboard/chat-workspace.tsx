@@ -5344,7 +5344,9 @@ function AgentView({
   onClose: () => void;
 }) {
   return (
-    <div className="mx-auto flex w-full min-w-0 max-w-5xl flex-col overflow-x-hidden py-2">
+    // overflow-x-clip (not hidden): `hidden` would force overflow-y to `auto`
+    // per the CSS spec and create a phantom scrollbar when the view fits.
+    <div className="mx-auto flex w-full min-w-0 max-w-5xl flex-col overflow-x-clip py-2">
       <div className="mb-1 flex items-center justify-between gap-2">
         <div>
           <h2 className="text-lg font-semibold tracking-[-0.02em] text-foreground">
