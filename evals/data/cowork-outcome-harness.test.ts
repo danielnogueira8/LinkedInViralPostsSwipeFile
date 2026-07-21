@@ -3354,6 +3354,100 @@ describe("production-shaped Cowork outcome harness", () => {
     expect(report.observed.directWriterRequests).toHaveLength(2);
   });
 
+  test("the series starter produces one separate draft per part", async () => {
+    // Regression: the message-count parser reads no number from "3-part", and
+    // the parser's IMPLICIT single-post fallback used to beat the starter's
+    // default of 3 — so the turn collapsed to ONE draft with all three parts
+    // crammed in instead of three separate drafts.
+    const report = await runCoworkOutcomeScenario({
+      id: "typed-series-starter-three-drafts",
+      request: {
+        message:
+          "Turn my morning routine framework into a 3-part LinkedIn post series in my voice — 3 separate posts, one draft per part. Part 1 sets up the problem, Part 2 delivers the core insight or method, Part 3 lands the takeaway. Each part must stand alone but build on the last, keeping the arc connected without repeating yourself.",
+        starterId: "series",
+      },
+      model: {
+        provider: { rounds: [] },
+        directWriter: [COMPLETE_POST, SECOND_POST, THIRD_POST].map(
+          (text, index) => ({
+            text,
+            finishReason: "stop" as const,
+            usage: usage(200 + index * 10, 90 + index * 5, 0.0002),
+          }),
+        ),
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [COMPLETE_POST, SECOND_POST, THIRD_POST],
+        actionNames: [],
+      },
+    });
+
+    expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+    expect(report.observed.agentProviderRounds).toBe(0);
+    expect(report.observed.directWriterRequests).toHaveLength(3);
+    expect(report.persisted.artifacts).toHaveLength(3);
+    // Each slot prompt is scoped to its own part, so slot 1 cannot satisfy the
+    // whole series brief in a single collapsed draft.
+    const firstSystemPrompt =
+      report.observed.directWriterRequests[0]?.messages.find(
+        (message) => message.role === "system",
+      )?.content ?? "";
+    expect(firstSystemPrompt).toContain("part 1 of the 3-part series");
+  });
+
+  test("the series starter honors a UI-picked draft count over its default", async () => {
+    const report = await runCoworkOutcomeScenario({
+      id: "typed-series-starter-ui-count",
+      request: {
+        message:
+          "Turn my morning routine framework into a LinkedIn post series in my voice.",
+        starterId: "series",
+        generationConfig: { version: 1, draftCount: 2 },
+      },
+      model: {
+        provider: { rounds: [] },
+        directWriter: [COMPLETE_POST, SECOND_POST].map((text, index) => ({
+          text,
+          finishReason: "stop" as const,
+          usage: usage(200 + index * 10, 90 + index * 5, 0.0002),
+        })),
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [COMPLETE_POST, SECOND_POST],
+        actionNames: [],
+      },
+    });
+
+    expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+    expect(report.persisted.artifacts).toHaveLength(2);
+  });
+
+  test("a multi-draft modeled campaign searches regular posts only", async () => {
+    // Campaign/series modeling must never pull lead magnets as source
+    // material. The message names no post type, so the search used to run
+    // unfiltered; it must now be pinned to regular posts.
+    const scenario = modeledThreeScenario(
+      "typed-modeled-campaign-regular-sources",
+    );
+    scenario.request = {
+      message:
+        "Select 3 top posts from my swipe file and adapt them into 3 original posts in my voice.",
+    };
+
+    const report = await runCoworkOutcomeScenario(scenario);
+
+    expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+    expect(report.persisted.artifacts).toHaveLength(3);
+    expect(report.observed.readOnlyTools.map((tool) => tool.name)).toEqual([
+      "search_viral_posts",
+    ]);
+    expect(report.observed.readOnlyTools[0]?.args).toMatchObject({
+      post_type: "regular",
+    });
+  });
+
   test("a terse modeled-post starter still selects one workspace source per draft", async () => {
     const scenario = modeledStructuredCountScenario(
       "typed-modeled-starter-terse-copy",

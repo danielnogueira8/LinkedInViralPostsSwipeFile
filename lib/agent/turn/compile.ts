@@ -1522,10 +1522,16 @@ export function compileReadOnlyOrchestratorRoute(
   const explicitSourceCount = sourceModelingRequest
     ? modeledIntent.discoveryCount
     : null;
-  const workspacePostType = sourceModelingRequest
-    ? (modeledIntent.sourcePostType ??
-      requestedWorkspacePostType(researchClause))
-    : requestedWorkspacePostType(researchClause);
+  const workspacePostType =
+    (sourceModelingRequest
+      ? (modeledIntent.sourcePostType ??
+        requestedWorkspacePostType(researchClause))
+      : requestedWorkspacePostType(researchClause)) ??
+    // A multi-draft campaign/series must model REGULAR posts only: without an
+    // explicit type the workspace search would also return lead magnets as
+    // source material. An explicit lead-magnet request (message or modeled
+    // intent) still wins — that is a lead-magnet flow, not a campaign/series.
+    ((explicitDraftCount ?? 1) >= 2 ? ("regular" as const) : undefined);
   const writingOutputClause = instruction.match(
     /\b(?:write|draft|create|generate|make|produce|prepare|give\s+me)\b[\s\S]{0,180}?\b(?:linkedin\s+)?posts?\b/i,
   )?.[0] ?? "";
@@ -2171,6 +2177,11 @@ export async function compileTurnPlan(
       expectedDrafts: directPostCount ?? 1,
       minimumSources: 2,
       workspaceSearchMode: "diverse",
+      // Multi-draft campaigns/series model REGULAR posts only (see the same
+      // default inside compileReadOnlyOrchestratorRoute).
+      ...((directPostCount ?? 1) >= 2
+        ? { workspacePostType: "regular" as const }
+        : {}),
     };
   }
 

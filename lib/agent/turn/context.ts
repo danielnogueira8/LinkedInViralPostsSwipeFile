@@ -950,6 +950,21 @@ export function requestedBasePostCount(
 }
 
 /**
+ * Only the count the user EXPLICITLY stated in the message — the same two
+ * explicit tiers as requestedBasePostCount without its implicit single-post
+ * assumption. Used to decide whether a starter-implied default draft count
+ * (e.g. a 3-part series) may apply: an implicit 1 must not beat it.
+ */
+export function requestedExplicitBasePostCount(
+  instruction: string,
+): number | null {
+  return (
+    deriveDeliverableContract(instruction)?.expectedCount ??
+    requestedDirectPostCount(instruction)
+  );
+}
+
+/**
  * Everything a turn learns about the world, assembled once by
  * buildTurnContext. Field names mirror the locals executeChatTurn consumed
  * before this extraction. The voice/preferences/feedback/prior-drafts loads
@@ -1325,6 +1340,9 @@ export async function buildTurnContext(
   composerTaskContext = resolveComposerTaskContext({
     ...composerTaskSelection,
     fallbackPostCount: effectiveBasePostCount,
+    explicitMessagePostCount: requestedExplicitBasePostCount(
+      effectiveUserInstruction,
+    ),
   });
   const effectiveComposerPostCount =
     composerTaskContext.kind === "post"
