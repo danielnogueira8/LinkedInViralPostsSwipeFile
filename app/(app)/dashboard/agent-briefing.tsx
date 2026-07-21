@@ -88,7 +88,9 @@ function LeadMagnetBadge({ hintId }: { hintId: string }) {
         tabIndex={0}
         aria-label="Lead magnet post"
         aria-describedby={hintId}
-        title={LEAD_MAGNET_HINT}
+        // No `title` here: the native (grey) browser tooltip was stacking on
+        // top of the styled one below. The custom tooltip + aria-describedby
+        // already carry the full explanation for everyone.
         className={cn(
           "peer grid size-5 place-items-center rounded-md bg-muted text-muted-foreground",
           "transition-colors hover:text-foreground focus-visible:text-foreground",
