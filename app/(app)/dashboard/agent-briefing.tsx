@@ -143,6 +143,45 @@ function snippet(body: string, max = 110): string {
   return clean.length > max ? `${clean.slice(0, max)}…` : clean;
 }
 
+// The week's plan stays visible until it would actually change — the next
+// day, when the day-seeded composition differs — instead of disappearing on
+// every reload or navigation. Persisted per day in localStorage.
+const PLAN_STORAGE_KEY = "swipein:agent-week-plan";
+
+function todayKey(): string {
+  return new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD, local
+}
+
+function readPlanStorage(): { generatedFor: string; dismissed: boolean } | null {
+  try {
+    const raw = window.localStorage.getItem(PLAN_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as {
+      generatedFor?: unknown;
+      dismissed?: unknown;
+    };
+    return typeof parsed.generatedFor === "string"
+      ? {
+          generatedFor: parsed.generatedFor,
+          dismissed: parsed.dismissed === true,
+        }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function writePlanStorage(dismissed: boolean) {
+  try {
+    window.localStorage.setItem(
+      PLAN_STORAGE_KEY,
+      JSON.stringify({ generatedFor: todayKey(), dismissed }),
+    );
+  } catch {
+    /* private mode — the plan just won't persist */
+  }
+}
+
 export function AgentBriefing({
   onCountsChange,
 }: {
@@ -217,6 +256,7 @@ export function AgentBriefing({
           items: Array.isArray(data.items) ? data.items : [],
         });
         setPlanOpen(true);
+        writePlanStorage(false);
       }
     } catch {
       // Fail-open: the plan just doesn't open.
@@ -224,6 +264,19 @@ export function AgentBriefing({
       setPlanLoading(false);
     }
   }, []);
+
+  const closePlan = useCallback(() => {
+    setPlanOpen(false);
+    writePlanStorage(true);
+  }, []);
+
+  // Re-open today's plan on mount/navigation until it goes stale (next day).
+  useEffect(() => {
+    const stored = readPlanStorage();
+    if (stored && stored.generatedFor === todayKey() && !stored.dismissed) {
+      void loadWeekPlan();
+    }
+  }, [loadWeekPlan]);
 
   const act = async (id: string, action: "draft" | "dismiss") => {
     if (busyId) return;
@@ -299,7 +352,7 @@ export function AgentBriefing({
         </div>
         <button
           type="button"
-          onClick={() => (planOpen ? setPlanOpen(false) : void loadWeekPlan())}
+          onClick={() => (planOpen ? closePlan() : void loadWeekPlan())}
           disabled={planLoading}
           className={cn(
             "inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
@@ -327,7 +380,7 @@ export function AgentBriefing({
             </p>
             <button
               type="button"
-              onClick={() => setPlanOpen(false)}
+              onClick={closePlan}
               className="grid size-6 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-black/[0.04] hover:text-foreground"
               aria-label="Close plan"
             >
