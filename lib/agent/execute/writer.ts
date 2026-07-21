@@ -199,6 +199,13 @@ export type DraftVariation = {
   index: number;
   count: number;
   previousBodies: string[];
+  /**
+   * True when the request describes an ordered multi-part deliverable (a
+   * series: "3-part", "Part 1, Part 2…") rather than N interchangeable
+   * variations. Slot N must then write ONLY part N — otherwise slot 1
+   * satisfies the whole brief in one draft and the set collapses.
+   */
+  seriesPart?: boolean;
 };
 
 export type WriterTask =
@@ -558,14 +565,28 @@ export function writerHistoryDigest(history: ChatMessage[]): string {
 
 type SingleTask = Exclude<WriterTask, { kind: "multi" }>;
 
+/**
+ * Slot-scope line for a multi-draft turn. A series ("3-part", "Part 1…") is
+ * NOT N interchangeable variations: each slot must write only its own part,
+ * or the first slot satisfies the whole brief in a single collapsed draft.
+ */
+function variationScopeLine(
+  variation: DraftVariation,
+  variationLine: string,
+): string {
+  if (variation.seriesPart) {
+    return `This is part ${variation.index} of the ${variation.count}-part series in the request. Write ONLY part ${variation.index} as one complete, standalone post — do not write, summarize, or preview the other parts.`;
+  }
+  return variationLine;
+}
+
 function compileMessages(
   input: WriterInput,
   task: SingleTask,
   variation?: DraftVariation,
 ): ChatMessage[] {
   const instruction =
-    task.kind === "refine" ? task.instruction : input.userInstruction;
-  const selectedSkills = selectSkills(instruction);
+    task.kind === "refine" ? task.instruction : input.userInstruction;  const selectedSkills = selectSkills(instruction);
   const skills = renderCombinedSkills(
     selectedSkills,
     input.customSkillBodies ?? [],
@@ -604,7 +625,10 @@ function compileMessages(
           "For news, never present a claim as current unless its evidence includes a verified URL and publication date.",
           "Synthesize the evidence in original language. Do not copy source wording or pretend the source author's experience belongs to the user.",
           variation
-            ? `This is version ${variation.index} of ${variation.count}. Make it materially distinct from every earlier accepted version while satisfying the same request and verified evidence.`
+            ? variationScopeLine(
+                variation,
+                `This is version ${variation.index} of ${variation.count}. Make it materially distinct from every earlier accepted version while satisfying the same request and verified evidence.`,
+              )
             : "Write one finished grounded post.",
           INJECTION_GUARD,
           writingSkill,
@@ -760,7 +784,10 @@ function compileMessages(
           SOURCE_STRUCTURE_REFERENCE_POLICY,
           "Never transplant or invent the source author's anecdotes, clients, results, dates, timelines, numbers, relationships, or first-person experiences.",
           variation
-            ? `This is version ${variation.index} of ${variation.count}. Make it materially distinct from every earlier accepted version while satisfying the same request and source.`
+            ? variationScopeLine(
+                variation,
+                `This is version ${variation.index} of ${variation.count}. Make it materially distinct from every earlier accepted version while satisfying the same request and source.`,
+              )
             : "Write one finished modeled post.",
           INJECTION_GUARD,
           writingSkill,
@@ -805,7 +832,10 @@ function compileMessages(
         "The post must be complete. Never stop inside a sentence or list item. Never invent facts, results, clients, quotes, dates, or metrics.",
         "Write an original post from the supplied brief and voice. Do not search for, cite, imitate, or mention a source post.",
         variation
-          ? `This is version ${variation.index} of ${variation.count}. Make it materially distinct from every earlier accepted version while satisfying the same request.`
+          ? variationScopeLine(
+              variation,
+              `This is version ${variation.index} of ${variation.count}. Make it materially distinct from every earlier accepted version while satisfying the same request.`,
+            )
           : "",
         INJECTION_GUARD,
         writingSkill,
@@ -3282,11 +3312,20 @@ function duplicateRepairMessage(
   return `This version duplicates an earlier accepted post. ${diagnosis} ${instruction}`;
 }
 
+// Ordered multi-part deliverable phrasing ("3-part series", "Part 1…"). Used
+// to scope each multi-slot draft to its own part instead of N interchangeable
+// variations of the same post.
+const SERIES_PARTS_RE = /\b\d+\s*[-–]\s*part\b|\bpart\s+\d+\b/i;
+
 async function* runLocalSlotBatch(
   input: WriterInput,
   task: Extract<WriterTask, { kind: "multi" }>,
 ): AsyncGenerator<AgentEvent> {
   const deps = resolveDependencies(input.dependencies);
+  // An ordered "N-part / Part 1, Part 2…" request is a series, not N
+  // interchangeable variations: each slot must write ONLY its own part, or
+  // slot 1 satisfies the whole brief in one collapsed draft.
+  const seriesScoped = SERIES_PARTS_RE.test(input.userInstruction);
   if (
     !Number.isInteger(task.expectedCount) ||
     task.expectedCount < MIN_TURN_DRAFT_COUNT ||
@@ -3357,6 +3396,7 @@ async function* runLocalSlotBatch(
         index,
         count: task.expectedCount,
         previousBodies,
+        ...(seriesScoped ? { seriesPart: true } : {}),
       };
       let slotArtifact: (Artifact & { kind: "post" }) | null = null;
       let lastDuplicateReason: "vocabulary" | "progression" | "exact" | null =

@@ -1205,6 +1205,53 @@ describe("compileReadOnlyOrchestratorRoute", () => {
     },
   );
 
+  test("defaults a multi-draft modeled campaign to regular-only sources", () => {
+    // Campaign/series modeling must never pull lead magnets as source
+    // material: the message names no post type, so the search used to run
+    // unfiltered and lead magnets were eligible sources.
+    expect(
+      compileReadOnlyOrchestratorRoute({
+        ...readOnlyBase,
+        userInstruction:
+          "Select 3 top posts from my swipe file and adapt them into 3 original posts in my voice.",
+      }),
+    ).toMatchObject({
+      kind: "workspace_research",
+      expectsDraft: true,
+      expectedDrafts: 3,
+      workspacePostType: "regular",
+    });
+  });
+
+  test("keeps an explicit lead-magnet batch on the lead-magnet lane", () => {
+    // An explicit lead-magnet request is a lead-magnet flow, not a
+    // campaign/series — the regular-only campaign default must not override it.
+    expect(
+      compileReadOnlyOrchestratorRoute({
+        ...readOnlyBase,
+        userInstruction:
+          "Find 3 top-performing lead magnet posts in my swipe file and adapt them into original posts in my voice.",
+      }),
+    ).toMatchObject({
+      kind: "workspace_research",
+      expectedDrafts: 3,
+      workspacePostType: "lead_magnet",
+    });
+  });
+
+  test("leaves single-post modeling untouched by the campaign default", () => {
+    const route = compileReadOnlyOrchestratorRoute({
+      ...readOnlyBase,
+      userInstruction:
+        "Find my top-performing post in my swipe file and rewrite it in my voice.",
+    });
+    expect(route).toMatchObject({
+      kind: "workspace_research",
+      expectedDrafts: 1,
+    });
+    expect(route?.workspacePostType).toBeUndefined();
+  });
+
   test.each([
     { hasLeadMagnet: true, hasCreatorStyle: false },
     { hasLeadMagnet: false, hasCreatorStyle: true },

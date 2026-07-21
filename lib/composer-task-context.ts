@@ -245,6 +245,15 @@ export function composerStarterMarkerFromToolCalls(
  */
 export function resolveComposerTaskContext(input: ComposerTaskSelection & {
   fallbackPostCount: number | null;
+  /**
+   * A count the user explicitly stated in the message ("make it 5 posts").
+   * Distinct from `fallbackPostCount`, which also carries the parser's
+   * IMPLICIT single-post assumption (requestedBasePostCount returns 1 for any
+   * post request whose count it cannot parse). Only the explicit count may
+   * beat a starter-implied default — otherwise a 3-part series collapses to
+   * one draft whenever the message has no parseable number.
+   */
+  explicitMessagePostCount?: number | null;
 }): ComposerTaskContext {
   const starter = input.starterId ? STARTER_TASKS[input.starterId] : undefined;
   const selectedSourceId = input.selectedSourceId?.trim();
@@ -261,12 +270,14 @@ export function resolveComposerTaskContext(input: ComposerTaskSelection & {
   };
   if (kind === "post") {
     // Priority: explicit UI pick > explicit message count > starter-implied
-    // default > 1. The starter default only fires when the first two are
-    // silent, so a user edit like "make it a 5-part series" still wins.
+    // default > parser fallback (which may be an implicit 1) > 1. The starter
+    // default only fires when the first two are silent, so a user edit like
+    // "make it a 5-part series" still wins.
     const expectedDraftCount =
       input.selectedDraftCount ??
-      input.fallbackPostCount ??
+      input.explicitMessagePostCount ??
       starter?.defaultDraftCount ??
+      input.fallbackPostCount ??
       1;
     const researchRequirement = materializeResearchRequirement(
       !selectedSourceId ? starter?.research : undefined,

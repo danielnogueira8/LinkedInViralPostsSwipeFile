@@ -65,8 +65,23 @@ describe("resolveComposerTaskContext", () => {
       resolveComposerTaskContext({
         starterId: "series",
         fallbackPostCount: 5,
+        explicitMessagePostCount: 5,
       }).expectedDraftCount,
     ).toBe(5);
+  });
+
+  test("does not let the parser's implicit single post beat the series default", () => {
+    // Production regression: requestedBasePostCount returns an IMPLICIT 1 for
+    // any post request whose count it cannot parse ("3-part" is not a number),
+    // and that 1 used to win over the starter default — collapsing the series
+    // to ONE draft with all parts crammed in.
+    expect(
+      resolveComposerTaskContext({
+        starterId: "series",
+        fallbackPostCount: 1,
+        explicitMessagePostCount: null,
+      }).expectedDraftCount,
+    ).toBe(3);
   });
 
   test("automatically treats an attached bookmark as the selected source", () => {

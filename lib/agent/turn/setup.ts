@@ -36,6 +36,7 @@ import {
   CUSTOM_SKILL_RETRY_CONTEXT_VERSION,
   LEAD_MAGNET_SELECTION_REQUIRED_ERROR,
   requestedBasePostCount,
+  requestedExplicitBasePostCount,
   type CreatorStyleRetryContext,
   type CustomSkillRetryContext,
   type FrozenCustomSkill,
@@ -723,6 +724,9 @@ export async function setupChatTurn(
     composerTaskContext = resolveComposerTaskContext({
       ...composerTaskSelection,
       fallbackPostCount: fallbackPreclaimPostCount,
+      explicitMessagePostCount: requestedExplicitBasePostCount(
+        preclaimInstruction,
+      ),
     });
     const preclaimBasePostCount =
       composerTaskContext.kind === "post"
