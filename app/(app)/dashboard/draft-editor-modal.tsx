@@ -781,10 +781,10 @@ export function DraftEditorModal({
                     {draft?.leadMagnet && (
                       <PropRow icon={<Magnet className="h-4 w-4" />} label="Giveaway">
                         <span
-                          className="inline-flex min-w-0 items-center gap-1 px-1 text-sm text-muted-foreground"
+                          className="flex min-w-0 items-center gap-1 px-1 text-sm text-muted-foreground"
                           title={`Lead magnet giveaway: ${draft.leadMagnet.title}`}
                         >
-                          <span className="truncate">{draft.leadMagnet.title}</span>
+                          <span className="min-w-0 truncate">{draft.leadMagnet.title}</span>
                         </span>
                       </PropRow>
                     )}
