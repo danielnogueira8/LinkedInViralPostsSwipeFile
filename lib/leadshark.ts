@@ -293,6 +293,239 @@ export async function verifyKey(
   return { ok: false, error: res.error };
 }
 
-// NOTE: automation create / read-back / list-posts / stats-fetch land in
-// Phase 2 & 3 and will be added here as typed functions over `request()` so the
-// [PROBE] response shapes stay quarantined to this module.
+// ---------------------------------------------------------------------------
+// Automation create — the §2 field mapping. This is the object we POST to
+// /api/automations. Callers pass a normalized config; we shape the wire body.
+// ---------------------------------------------------------------------------
+
+// What SwipeIn holds about an automation's behavior (our domain shape). The
+// binding job combines this with the resolved LinkedIn identity to create it.
+export type AutomationConfig = {
+  name: string;
+  keywords: string[]; // max 20; [] = every comment
+  dmTemplate: string; // required, ≤2000
+  dmTemplateVariations: string[]; // rotated
+  commentReplyTemplates: string[];
+  nonConnectionReplyTemplates: string[];
+  autoConnect: boolean;
+  autoLike: boolean;
+  followUpEnabled: boolean;
+  followUpTemplate: string | null;
+  followUpDelayMinutes: number;
+  followUpOnlyIfNoResponse: boolean;
+};
+
+// The resolved LinkedIn identity for the post (from the binding step).
+export type BoundPostIdentity = {
+  postId: string; // MUST be an activity URN — asserted by the caller
+  linkedinPostUrl: string;
+};
+
+// Build the wire body for POST /api/automations from our config. `auto_like` is
+// included only when true so a Pro key isn't rejected for a Pro+ field it never
+// asked for; likewise follow-up fields only when enabled. `links_enabled` is
+// deliberately left UNSET (plain URLs, no Pro+ requirement).
+function toCreateBody(
+  config: AutomationConfig,
+  post: BoundPostIdentity,
+): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    name: config.name,
+    post_id: post.postId,
+    linkedin_post_url: post.linkedinPostUrl,
+    keywords: config.keywords.slice(0, MAX_KEYWORDS),
+    dm_template: config.dmTemplate,
+    auto_connect: config.autoConnect,
+  };
+  if (config.dmTemplateVariations.length) {
+    body.dm_templates = config.dmTemplateVariations;
+  }
+  if (config.commentReplyTemplates.length) {
+    body.comment_reply_template = config.commentReplyTemplates;
+  }
+  if (config.nonConnectionReplyTemplates.length) {
+    body.non_first_degree_reply_template = config.nonConnectionReplyTemplates;
+  }
+  if (config.autoLike) {
+    // Pro+ only. If a Pro key 403s, the caller retries WITHOUT this field
+    // (see createAutomation's fallback) rather than failing the whole create.
+    body.auto_like = true;
+  }
+  if (config.followUpEnabled && config.followUpTemplate) {
+    body.enable_follow_up = true;
+    body.follow_up_template = config.followUpTemplate;
+    body.follow_up_delay_minutes = config.followUpDelayMinutes;
+    body.follow_up_only_if_no_response = config.followUpOnlyIfNoResponse;
+  }
+  return body;
+}
+
+export type CreatedAutomation = {
+  id: string;
+  postId: string | null; // echoed back — used to confirm the bind stuck
+  raw: unknown;
+};
+
+function normalizeAutomation(json: unknown): CreatedAutomation {
+  const o = (json ?? {}) as Record<string, unknown>;
+  // LeadShark may nest the object under `automation` or `data`; accept either.
+  const a = (o.automation ?? o.data ?? o) as Record<string, unknown>;
+  return {
+    id: String(a.id ?? a._id ?? ""),
+    postId: typeof a.post_id === "string" ? a.post_id : null,
+    raw: json,
+  };
+}
+
+/**
+ * Create an automation. The post_id MUST already be a validated activity URN
+ * (caller runs assertActivityUrn). If `auto_like` triggers a 403 (Pro+ only on
+ * a Pro key), we retry once WITHOUT it rather than failing — a degraded
+ * automation beats no automation.
+ */
+export async function createAutomation(
+  apiKey: string,
+  config: AutomationConfig,
+  post: BoundPostIdentity,
+  signal?: AbortSignal,
+): Promise<
+  | { ok: true; automation: CreatedAutomation; autoLikeDropped: boolean }
+  | { ok: false; error: LeadSharkError }
+> {
+  const res = await request(apiKey, "/api/automations", {
+    method: "POST",
+    body: toCreateBody(config, post),
+    label: "leadshark_create_automation",
+    signal,
+  });
+  if (res.ok) {
+    return { ok: true, automation: normalizeAutomation(res.json), autoLikeDropped: false };
+  }
+  // Pro+ auto_like on a Pro key → retry once without it.
+  if (res.error.kind === "forbidden" && config.autoLike) {
+    const retry = await request(apiKey, "/api/automations", {
+      method: "POST",
+      body: toCreateBody({ ...config, autoLike: false }, post),
+      label: "leadshark_create_automation_no_autolike",
+      signal,
+    });
+    if (retry.ok) {
+      return { ok: true, automation: normalizeAutomation(retry.json), autoLikeDropped: true };
+    }
+    return { ok: false, error: retry.error };
+  }
+  return { ok: false, error: res.error };
+}
+
+/**
+ * Read an automation back after creating it — confirms the bind stuck (the
+ * stored post_id matches what we sent). Catches the silent-bind failure.
+ */
+export async function getAutomation(
+  apiKey: string,
+  automationId: string,
+  signal?: AbortSignal,
+): Promise<
+  | { ok: true; automation: CreatedAutomation }
+  | { ok: false; error: LeadSharkError }
+> {
+  const res = await request(apiKey, `/api/automations/${encodeURIComponent(automationId)}`, {
+    label: "leadshark_get_automation",
+    signal,
+  });
+  if (res.ok) return { ok: true, automation: normalizeAutomation(res.json) };
+  return { ok: false, error: res.error };
+}
+
+// ---------------------------------------------------------------------------
+// Post listing — the URL-match binding path (§6.3). We list LeadShark's own
+// view of the user's posts and join on the permalink. The share_url form and
+// the post_id namespace are [PROBE]-unconfirmed, so we normalize both here.
+// ---------------------------------------------------------------------------
+
+export type LeadSharkPost = {
+  postId: string; // LeadShark's post_id (the thing its matcher binds on)
+  shareUrl: string | null;
+  raw: unknown;
+};
+
+function normalizePosts(json: unknown): LeadSharkPost[] {
+  const o = (json ?? {}) as Record<string, unknown>;
+  const items = (o.items ?? o.data ?? o.posts ?? []) as unknown[];
+  if (!Array.isArray(items)) return [];
+  return items.map((it) => {
+    const p = (it ?? {}) as Record<string, unknown>;
+    return {
+      postId: String(p.post_id ?? p.id ?? p._id ?? ""),
+      shareUrl:
+        typeof p.share_url === "string"
+          ? p.share_url
+          : typeof p.linkedin_post_url === "string"
+            ? p.linkedin_post_url
+            : null,
+      raw: it,
+    };
+  });
+}
+
+export async function listPosts(
+  apiKey: string,
+  opts?: { limit?: number; signal?: AbortSignal },
+): Promise<{ ok: true; posts: LeadSharkPost[] } | { ok: false; error: LeadSharkError }> {
+  const limit = opts?.limit ?? 25;
+  const res = await request(apiKey, `/api/v1/posts?limit=${limit}`, {
+    label: "leadshark_list_posts",
+    signal: opts?.signal,
+  });
+  if (res.ok) return { ok: true, posts: normalizePosts(res.json) };
+  return { ok: false, error: res.error };
+}
+
+// ---------------------------------------------------------------------------
+// Automation listing — used to (a) adopt an existing automation for our URN if
+// Auto-Automate already made one (§9.4), and (b) batch-fetch stats (§7).
+// ---------------------------------------------------------------------------
+
+export type ListedAutomation = {
+  id: string;
+  postId: string | null;
+  stats: Record<string, number>;
+  raw: unknown;
+};
+
+function normalizeListedAutomations(json: unknown): ListedAutomation[] {
+  const o = (json ?? {}) as Record<string, unknown>;
+  const items = (o.items ?? o.data ?? o.automations ?? []) as unknown[];
+  if (!Array.isArray(items)) return [];
+  return items.map((it) => {
+    const a = (it ?? {}) as Record<string, unknown>;
+    const rawStats = (a.stats ?? {}) as Record<string, unknown>;
+    const stats: Record<string, number> = {};
+    for (const [k, v] of Object.entries(rawStats)) {
+      if (typeof v === "number") stats[k] = v;
+    }
+    return {
+      id: String(a.id ?? a._id ?? ""),
+      postId: typeof a.post_id === "string" ? a.post_id : null,
+      stats,
+      raw: it,
+    };
+  });
+}
+
+export async function listAutomations(
+  apiKey: string,
+  opts?: { page?: number; limit?: number; signal?: AbortSignal },
+): Promise<
+  | { ok: true; automations: ListedAutomation[] }
+  | { ok: false; error: LeadSharkError }
+> {
+  const page = opts?.page ?? 1;
+  const limit = opts?.limit ?? 50;
+  const res = await request(apiKey, `/api/automations?page=${page}&limit=${limit}`, {
+    label: "leadshark_list_automations",
+    signal: opts?.signal,
+  });
+  if (res.ok) return { ok: true, automations: normalizeListedAutomations(res.json) };
+  return { ok: false, error: res.error };
+}

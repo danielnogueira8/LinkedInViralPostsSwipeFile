@@ -88,11 +88,13 @@ describe("crypto tamper detection", () => {
   });
 
   function flipOneBase64Char(b64: string): string {
-    // Replace the last non-padding char with a different one, preserving length.
-    const i = b64.replace(/=+$/, "").length - 1;
-    const c = b64[i];
+    // Mutate the FIRST base64 char, where every one of its 6 bits is
+    // significant. (The LAST non-padding char of a fixed-length payload can
+    // encode only a couple of significant bits — the rest are padding — so a
+    // flip there may decode identically and not register as tampering.)
+    const c = b64[0];
     const swap = c === "A" ? "B" : "A";
-    return b64.slice(0, i) + swap + b64.slice(i + 1);
+    return swap + b64.slice(1);
   }
 
   test("tampered ciphertext throws (auth tag fails)", () => {

@@ -24,6 +24,7 @@ import {
 import { ensureZernioMediaAttachments } from "@/lib/media-library";
 import { earliestZernioMediaExpiry } from "@/lib/draft-scheduling";
 import { draftEgressBody } from "@/lib/markdown/mode";
+import { onPublishedForLeadShark } from "@/lib/leadshark-bind-job";
 
 export type PublishingConnection = {
   id: string;
@@ -515,6 +516,28 @@ export async function publishDueDrafts(nowIso: string): Promise<{
         artifact_id: currentRow.id,
         zernio_post_id: result.postId,
       });
+      // LeadShark: if this draft has a configured automation, capture the
+      // Zernio post identity and enqueue the binding job NOW (not the next cron
+      // tick — every minute is potentially lost commenters). Best-effort and
+      // fully isolated: a LeadShark failure must never break publishing.
+      try {
+        await onPublishedForLeadShark({
+          workspaceId: currentRow.workspace_id,
+          artifactId: currentRow.id,
+          platformPostUrl: result.platformPostUrl ?? null,
+          platformPostId: result.platformPostId ?? null,
+        });
+      } catch (e) {
+        console.error(
+          JSON.stringify({
+            leadshark_publish_hook_failed: {
+              workspace_id: currentRow.workspace_id,
+              artifact_id: currentRow.id,
+              error: (e as Error)?.message ?? "unknown",
+            },
+          }),
+        );
+      }
       published++;
       console.log(JSON.stringify({ linkedin_publish: { workspace_id: currentRow.workspace_id, artifact_id: currentRow.id } }));
     } else {

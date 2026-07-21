@@ -50,6 +50,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { DraftEditor } from "./draft-editor";
+import { LeadSharkPanel } from "./leadshark-panel";
 import { cn } from "@/lib/utils";
 import { POST_INTENTS } from "@/lib/post-intents";
 import { AvatarImg } from "@/components/avatar-img";
@@ -920,6 +921,10 @@ export function DraftEditorModal({
                 </section>
 
                 {!isNew && draft && <ScheduleRow draft={draft} onMeta={onMeta} />}
+
+                {!isNew && draft && draft.kind === "lead_magnet" && (
+                  <LeadSharkPanel draft={draft} />
+                )}
 
                 <PostMediaSection
                   attachments={mediaAttachments}
