@@ -5,6 +5,14 @@ import { neutralizeMarkers } from "@/lib/agent/untrusted";
 import { DraftLifecycle } from "@/lib/draft-lifecycle";
 import { createSupabaseDraftLifecycleRepository } from "@/lib/draft-lifecycle-supabase";
 import { AGENT_CHAT_TITLE, AGENT_SUGGESTED_BY } from "@/lib/agent-loop/constants";
+import {
+  LEAD_MAGNET_COLS,
+  coerceLeadMagnet,
+  selectLeadMagnetForPrompt,
+  type LeadMagnet,
+} from "@/lib/lead-magnets";
+import { leadMagnetSelectionPromptBeforeDraft } from "@/lib/lead-magnet-campaign";
+import type { PostType } from "@/lib/post-type";
 
 // ---------------------------------------------------------------------------
 // Agent loop actor (PLAN-agent-loop Phase D3).
@@ -55,7 +63,7 @@ async function createModelingSource(
   sb: SupabaseClient,
   workspaceId: string,
   postId: string,
-): Promise<string | null> {
+): Promise<{ id: string; postType: PostType; postText: string } | null> {
   const { data: post, error } = await sb
     .from("posts")
     .select("id, text, post_type, accounts(name)")
@@ -67,6 +75,8 @@ async function createModelingSource(
   const acc = Array.isArray(post?.accounts)
     ? post?.accounts[0]
     : post?.accounts;
+  const postType: PostType =
+    post?.post_type === "lead_magnet" ? "lead_magnet" : "regular";
   const { data: source, error: insertError } = await sb
     .from("chat_modeling_sources")
     .insert({
@@ -75,12 +85,52 @@ async function createModelingSource(
       author_name: (acc?.name as string | null) ?? null,
       source: "swipe",
       source_post_id: postId,
-      post_type: post?.post_type === "lead_magnet" ? "lead_magnet" : "regular",
+      post_type: postType,
     })
     .select("id")
     .single();
   if (insertError) throw insertError;
-  return source.id as string;
+  return { id: source.id as string, postType, postText: text };
+}
+
+/**
+ * A modeled lead-magnet post needs a resource to promote (the turn pipeline
+ * fails closed without one). Pick the workspace's best-fit saved lead magnet
+ * for this source; when the user has none, ask the pipeline to generate one
+ * from the source post's promise.
+ */
+async function leadMagnetForTurn(
+  sb: SupabaseClient,
+  workspaceId: string,
+  headline: string,
+  postText: string,
+): Promise<
+  | { leadMagnetId: string }
+  | { createLeadMagnet: { prompt: string } }
+> {
+  const { data: rows, error } = await sb
+    .from("lead_magnets")
+    .select(LEAD_MAGNET_COLS)
+    .eq("workspace_id", workspaceId)
+    .order("updated_at", { ascending: false })
+    .limit(30);
+  if (error) throw error;
+  const candidates = ((rows ?? []) as LeadMagnet[]).map(coerceLeadMagnet);
+  const selected = selectLeadMagnetForPrompt(
+    leadMagnetSelectionPromptBeforeDraft({
+      userText: headline,
+      sourceText: postText,
+    }),
+    candidates,
+  );
+  if (selected) return { leadMagnetId: selected.id };
+  return {
+    createLeadMagnet: {
+      prompt:
+        "Create a lead magnet resource this post can promote. Base it on the promise of the source post below — same topic, rewritten as the user's own resource.\n\n" +
+        postText.slice(0, 600),
+    },
+  };
 }
 
 async function saveChatArtifactsToBoard(
@@ -153,12 +203,12 @@ export async function actOnOpportunity(
     .eq("workspace_id", workspaceId);
 
   try {
-    const modelSourceId = await createModelingSource(
+    const source = await createModelingSource(
       sb,
       workspaceId,
       opportunity.source_post_id,
     );
-    if (!modelSourceId) {
+    if (!source) {
       throw new Error("Could not load the source post text.");
     }
     const chatId = await getOrCreateSystemChat(sb, workspaceId);
@@ -170,13 +220,22 @@ export async function actOnOpportunity(
         typeof opportunity.payload?.headline === "string"
           ? opportunity.payload.headline
           : "Model this post.";
+      // Lead-magnet source: attach a resource so the modeled giveaway post can
+      // actually promote something — the best-fit saved lead magnet, or a
+      // freshly generated one when the user has none (issue #2: previously the
+      // turn failed closed with "Select or create a lead magnet").
+      const leadMagnetContext =
+        source.postType === "lead_magnet"
+          ? await leadMagnetForTurn(sb, workspaceId, headline, source.postText)
+          : null;
       const result = await executeChatTurn(
         {
           chatId,
           userId: workspaceId,
           body: {
             message: `${headline}\n\nWrite one post in my voice modeled on the attached source.`,
-            modelSourceId,
+            modelSourceId: source.id,
+            ...(leadMagnetContext ?? {}),
           },
           signal: controller.signal,
         },
