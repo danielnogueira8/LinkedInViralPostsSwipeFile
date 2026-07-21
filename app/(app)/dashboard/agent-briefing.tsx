@@ -96,7 +96,8 @@ export function AgentBriefing() {
   return (
     <section className="mt-6 rounded-2xl border border-border bg-card/60 p-4 sm:p-5">
       <div className="flex items-center gap-2">
-        <span className="grid size-7 place-items-center rounded-lg bg-primary/[0.07] text-primary">
+        {/* Coral = the agent's identity color everywhere it surfaces. */}
+        <span className="grid size-7 place-items-center rounded-lg bg-accent-brand/10 text-accent-brand">
           <AiIcon className="h-4 w-4" aria-hidden />
         </span>
         <div>
@@ -162,7 +163,7 @@ export function AgentBriefing() {
                   disabled={busyId !== null}
                   onClick={() => void act(opportunity.id, "draft")}
                   className={cn(
-                    "inline-flex shrink-0 items-center gap-1 rounded-full bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground",
+                    "inline-flex shrink-0 items-center gap-1 rounded-full bg-accent-brand px-3 py-1.5 text-xs font-medium text-accent-brand-foreground",
                     "transition-opacity hover:opacity-90 disabled:opacity-50",
                   )}
                 >
