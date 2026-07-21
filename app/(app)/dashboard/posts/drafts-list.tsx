@@ -240,9 +240,9 @@ const COLUMNS: {
     moveStatus: "drafting",
     label: "Draft",
     description: "Edit drafts before approving them.",
-    accent: "text-[oklch(0.52_0.012_106)]",
-    dot: "bg-[oklch(0.52_0.012_106)]",
-    surface: "border-transparent bg-[oklch(0.972_0.004_106)]",
+    accent: "text-[oklch(0.54_0.11_300)]",
+    dot: "bg-[oklch(0.54_0.11_300)]",
+    surface: "border-transparent bg-[oklch(0.978_0.014_300)]",
   },
   {
     id: "ready",
@@ -1106,7 +1106,7 @@ function EmptyColumn() {
 // column view and reinforces the pipeline color language).
 const STATUS_DOT: Record<BoardColumnId, string> = {
   idea: "bg-[oklch(0.60_0.12_60)]",
-  drafting: "bg-[oklch(0.52_0.012_106)]",
+  drafting: "bg-[oklch(0.54_0.11_300)]",
   ready: "bg-[oklch(0.52_0.11_155)]",
   scheduled: "bg-[oklch(0.54_0.13_245)]",
   posted: "bg-[oklch(0.30_0.008_106)]",
