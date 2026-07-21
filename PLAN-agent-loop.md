@@ -1,8 +1,17 @@
 # PLAN — The Agent Loop ("your content agent")
 
-Status: APPROVED DIRECTION, pre-implementation. Written 2026-07-20 as a complete
-handoff spec: any LLM harness or engineer should be able to execute it cold,
-without the conversation that produced it.
+Status: IN PROGRESS. Written 2026-07-20 as a complete handoff spec; updated
+2026-07-21 with execution status. Any LLM harness or engineer should be able to
+execute the remaining phases cold, without the conversation that produced it.
+
+**Execution status (2026-07-21)**
+- ✅ Phase A — structure matching engine (PR #1307). Default-on.
+- ❌ Phase B — two-draft presentation (PR #1308). DROPPED: too much complexity;
+  keep modeled-only drafting and continuous learning on modeled posts instead.
+- ✅ Phase C — edit-delta learning (PR #1309). Migration 118.
+- ⬜ Phase D — agent loop (scan → rank → act daily). Migration 119.
+- ⬜ Phase E — "While you were away" home surface.
+- ⬜ Phase F — Plan-my-week (ephemeral planner).
 
 ---
 
@@ -126,7 +135,12 @@ draft-engine test that the matched source reaches the writer.
 
 ---
 
-### PHASE B — Two-draft presentation (modeled + grounded-original) · ~1ed
+### PHASE B — Two-draft presentation (modeled + grounded-original) · ~1ed · DROPPED
+
+> DROPPED 2026-07-21: the two-draft UI/routing added complexity without improving
+> output quality. The product stays modeled-only; learning happens continuously
+> via Phase C edit-delta rules applied to modeled posts. Kept here only as a
+> record of the rejected design.
 
 Kill the original-vs-model decision for the user. Every post request produces
 TWO drafts: one modeled on the top structure (Phase A), one grounded-original
@@ -204,10 +218,11 @@ create table if not exists agent_opportunities (
 RLS mirrors chats/workspace tables (see migration-036 pattern).
 
 **D2. Scanner+ranker (`lib/agent-loop/scan.ts`, pure + SQL)**
-- Per workspace (flagged only): fresh outliers (posted_at < 72h, top-1% gate
-  already stamped at ingest), news hooks (reuse news-search deterministically:
-  last-14d, topic overlap with user niches), pattern gaps (pattern brief +
-  days since user's last post).
+- Per workspace (default-on; scanner no-ops when no creators are tracked):
+  fresh outliers (posted_at < 72h, top-1% gate already stamped at ingest),
+  news hooks (reuse news-search deterministically: last-14d, topic overlap
+  with user niches), pattern gaps (pattern brief + days since user's last
+  post).
 - Rank = freshness × nicheOverlap × dismissalHistory(−) × cooldown(−) — all
   pure. Top 3 kept as `proposed`; older than 5 days → `expired`.
 
@@ -304,6 +319,11 @@ create index if not exists draft_edit_events_ws_idx
 alter table public.draft_edit_events enable row level security;
 create policy draft_edit_events_isolation on public.draft_edit_events
   using (workspace_id = auth_workspace_id());
+alter table public.content_preferences
+  drop constraint if exists content_preferences_source_check;
+alter table public.content_preferences
+  add constraint content_preferences_source_check
+  check (source in ('user', 'learned', 'edit_delta'));
 insert into public.app_schema_version (singleton, version, updated_at)
 values (true, 118, now())
 on conflict (singleton) do update
@@ -340,10 +360,10 @@ roll to all users — tune the ranker first.
 
 ## 7. Rollout order & flags
 
-A → C → D/E → B → F (B and F are independent, can swap). Flags are workspace
-settings KV rows: `agent_structure_match`, `agent_edit_learning`,
-`agent_loop`, `agent_two_draft`, `agent_week_plan`. Owner's workspace first,
-then hand-picked beta users, then everyone.
+A → C → D/E → F (B dropped). All shipped features are default-on; no workspace
+flags remain (`agent_structure_match` and `agent_loop` shipped default-on;
+`agent_two_draft` was dropped). Cost is bounded by per-run caps
+(`AGENT_DAILY_DRAFT_CAP`, workspaces-per-cron) instead of flags.
 
 ## 8. Handoff notes for the executing harness
 
