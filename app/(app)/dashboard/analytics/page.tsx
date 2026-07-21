@@ -2,7 +2,12 @@ import { scopedSupabase } from "@/lib/supabase-scoped";
 import { getConnection, canPublish } from "@/lib/publishing";
 import { PageHeader, PageShell } from "@/components/app-surface";
 import { SurfaceHelp } from "@/components/surface-help";
-import { AnalyticsView, type PostMetricsRow, type TrendPoint } from "./view";
+import {
+  AnalyticsView,
+  sortPostsByRecency,
+  type PostMetricsRow,
+  type TrendPoint,
+} from "./view";
 
 export const dynamic = "force-dynamic";
 
@@ -70,8 +75,9 @@ export default async function AnalyticsPage() {
           sends: (m.sends as number | null) ?? null,
         } satisfies PostMetricsRow;
       })
-      .filter((p): p is PostMetricsRow => p !== null)
-      .sort((a, b) => (b.impressions ?? 0) - (a.impressions ?? 0));
+      .filter((p): p is PostMetricsRow => p !== null);
+    // Most recent posts on top (was impressions-desc, which read as arbitrary).
+    posts = sortPostsByRecency(posts);
   }
 
   // Daily impressions trend (last 30 days): sum each day's snapshots. Days
