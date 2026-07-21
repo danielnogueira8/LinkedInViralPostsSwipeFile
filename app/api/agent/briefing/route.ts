@@ -26,6 +26,9 @@ export async function GET() {
       .select("id, title, body, kind, status, created_at, meta")
       .eq("workspace_id", sb.workspaceId)
       .eq("meta->>suggested_by", AGENT_SUGGESTED_BY)
+      // Reviewed drafts stay off the list across reloads (POST
+      // /api/agent/briefing/reviewed stamps meta.reviewed_at on Review click).
+      .is("meta->>reviewed_at", null)
       .in("status", ["idea", "drafting"])
       .order("created_at", { ascending: false })
       .limit(5);
