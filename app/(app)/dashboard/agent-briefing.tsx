@@ -1,17 +1,19 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import Link from "next/link";
-import { X, Loader2, Magnet } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { X, Loader2, Magnet, ArrowRight } from "lucide-react";
 import { AiIcon } from "@/components/ai-icon";
 import { cn } from "@/lib/utils";
 
 // -----------------------------------------------------------------------------
-// "While you were away" (Phase E2) — the agent loop's home surface on the
-// cowork empty state. Shows drafts the agent wrote since your last review
-// (link through to the Posts board) and the currently proposed opportunities
-// with one-click "Draft it" / "Not relevant". Renders nothing when the agent
-// has nothing to say — the empty state is byte-identical to before.
+// "Your Agent" — the agent loop's home surface. Reached from the pinned "Your
+// Agent" row in the sidebar (it opens as a dedicated panel view, replacing the
+// oversized inline briefing that used to sit on the empty state).
+//
+// Shows drafts the agent wrote since your last review (Review opens the post
+// ON the Posts board and marks it reviewed so it drops off this list for good)
+// and the currently proposed opportunities with one-click Draft it / dismiss.
 // -----------------------------------------------------------------------------
 
 type BriefingDraft = {
@@ -89,7 +91,14 @@ function snippet(body: string, max = 110): string {
   return clean.length > max ? `${clean.slice(0, max)}…` : clean;
 }
 
-export function AgentBriefing() {
+export function AgentBriefing({
+  onCountsChange,
+}: {
+  // Lets the sidebar's pinned "Your Agent" row show a live count badge without
+  // duplicating the fetch. Called every refresh with the current tallies.
+  onCountsChange?: (counts: { drafts: number; opportunities: number }) => void;
+} = {}) {
+  const router = useRouter();
   const [briefing, setBriefing] = useState<Briefing | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -99,21 +108,47 @@ export function AgentBriefing() {
       const res = await fetch("/api/agent/briefing", { cache: "no-store" });
       const data = await res.json().catch(() => ({}));
       if (res.ok && data?.ok) {
-        setBriefing({
+        const next: Briefing = {
           drafts: Array.isArray(data.drafts) ? data.drafts : [],
           opportunities: Array.isArray(data.opportunities)
             ? data.opportunities
             : [],
+        };
+        setBriefing(next);
+        onCountsChange?.({
+          drafts: next.drafts.length,
+          opportunities: next.opportunities.length,
         });
       }
     } catch {
       // Fail-open: no briefing, no section.
     }
-  }, []);
+  }, [onCountsChange]);
 
   useEffect(() => {
+    // Initial + refetch-on-refresh sync with the server briefing (an external
+    // system). refresh is memoized so this runs on mount and when it changes.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void refresh();
   }, [refresh]);
+
+  // Review → mark the draft reviewed (so it stays off this list across reloads),
+  // drop it locally right away, and land the user ON the post inside the board.
+  // The mark is best-effort: even if it fails we still navigate, because the
+  // deep-linked modal is what the user asked for.
+  const review = (draftId: string) => {
+    setBriefing((cur) =>
+      cur ? { ...cur, drafts: cur.drafts.filter((d) => d.id !== draftId) } : cur,
+    );
+    void fetch("/api/agent/briefing/reviewed", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ draftId }),
+    }).catch(() => {
+      /* non-fatal — navigation still happens */
+    });
+    router.push(`/dashboard/posts?open=${encodeURIComponent(draftId)}`);
+  };
 
   const act = async (id: string, action: "draft" | "dismiss") => {
     if (busyId) return;
@@ -137,26 +172,34 @@ export function AgentBriefing() {
     }
   };
 
+  // Until the first fetch lands, render nothing (avoids a flash of the empty
+  // state). After it lands we always render the panel — even when empty — so the
+  // pinned "Your Agent" destination is never a dead click.
   if (!briefing) return null;
   const { drafts, opportunities } = briefing;
-  if (drafts.length === 0 && opportunities.length === 0) return null;
+  const isEmpty = drafts.length === 0 && opportunities.length === 0;
 
   return (
-    <section className="mt-6 rounded-2xl border border-border bg-card/60 p-4 sm:p-5">
+    <section className="rounded-2xl border border-border bg-card/60 p-4 sm:p-5">
       <div className="flex items-center gap-2">
         {/* Coral = the agent's identity color everywhere it surfaces. */}
         <span className="grid size-7 place-items-center rounded-lg bg-accent-brand/10 text-accent-brand">
           <AiIcon className="h-4 w-4" aria-hidden />
         </span>
         <div>
-          <h3 className="text-sm font-semibold text-foreground">
-            While you were away
-          </h3>
+          <h3 className="text-sm font-semibold text-foreground">Your agent</h3>
           <p className="text-xs text-muted-foreground">
-            Your agent watched your tracked creators.
+            Watching your tracked creators for you.
           </p>
         </div>
       </div>
+
+      {isEmpty && (
+        <p className="mt-4 rounded-xl border border-dashed border-border bg-background/60 px-3 py-4 text-center text-xs text-muted-foreground">
+          Nothing to review right now. When your agent spots a strong post from a
+          tracked creator, drafts and opportunities show up here.
+        </p>
+      )}
 
       {drafts.length > 0 && (
         <div className="mt-4">
@@ -177,15 +220,17 @@ export function AgentBriefing() {
                     {snippet(draft.body)}
                   </p>
                 </div>
-                <Link
-                  href="/dashboard/posts"
+                <button
+                  type="button"
+                  onClick={() => review(draft.id)}
                   className={cn(
-                    "shrink-0 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground",
+                    "inline-flex shrink-0 items-center gap-1 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground",
                     "transition-colors hover:border-primary/30 hover:text-primary",
                   )}
                 >
                   Review
-                </Link>
+                  <ArrowRight className="h-3 w-3" aria-hidden />
+                </button>
               </li>
             ))}
           </ul>
@@ -249,7 +294,8 @@ export function AgentBriefing() {
 
       {drafts.length > 0 && (
         <p className="mt-3 text-[11px] leading-4 text-muted-foreground">
-          Drafts land on your Posts board — refine any of them from there.
+          Review opens each draft on your Posts board — refine, schedule, or
+          publish it from there.
         </p>
       )}
     </section>

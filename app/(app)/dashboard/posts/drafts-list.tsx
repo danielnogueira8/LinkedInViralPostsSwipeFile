@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import dynamic from "next/dynamic";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import {
   Search,
@@ -355,6 +356,38 @@ export function DraftsList({
       COLUMNS.find((c) => initialDrafts.some((d) => boardColumnForDraft(d) === c.id))
         ?.id ?? "drafting",
   );
+
+  // Deep-link: /dashboard/posts?open=<draftId> opens that post's editor on
+  // arrival. The agent's "Your Agent" panel links here so Review lands the user
+  // ON the post, not just the board. We open at most once per id (tracked in a
+  // ref) and strip the param afterward so a refresh/close doesn't reopen it.
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const openedDeepLinkRef = useRef<string | null>(null);
+  const openParam = searchParams.get("open");
+  useEffect(() => {
+    if (!openParam) return;
+    if (openedDeepLinkRef.current === openParam) return;
+    // Wait until the target draft is in the list (it may arrive via the
+    // mergeServerDrafts sync a tick after mount). If it never shows, we still
+    // clear the param below so the URL doesn't stay dirty.
+    const exists = drafts.some((d) => d.id === openParam);
+    if (exists) {
+      openedDeepLinkRef.current = openParam;
+      // Opening the editor in response to the URL is a deliberate sync with an
+      // external system (the address bar), guarded by openedDeepLinkRef so it
+      // fires once per id — not a render-loop.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setEditingId(openParam);
+      setEditorOpen(true);
+      // Drop ?open= from the URL without a navigation/scroll jump.
+      const next = new URLSearchParams(searchParams);
+      next.delete("open");
+      const qs = next.toString();
+      router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+    }
+  }, [openParam, drafts, pathname, router, searchParams]);
 
   const remove = async (id: string) => {
     // Reconcile-don't-restore: capture the removed draft + index, and on failure
