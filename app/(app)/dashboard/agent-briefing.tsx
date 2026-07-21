@@ -178,6 +178,9 @@ export function AgentBriefing({
   if (!briefing) return null;
   const { drafts, opportunities } = briefing;
   const isEmpty = drafts.length === 0 && opportunities.length === 0;
+  // Two columns only when there's something in BOTH sections — otherwise the
+  // lone section spans the full width instead of leaving a dead column.
+  const twoColumns = drafts.length > 0 && opportunities.length > 0;
 
   return (
     <section className="rounded-2xl border border-border bg-card/60 p-4 sm:p-5">
@@ -201,8 +204,17 @@ export function AgentBriefing({
         </p>
       )}
 
+      {!isEmpty && (
+      <div
+        className={cn(
+          "mt-4 grid gap-4",
+          // Side-by-side on wide screens when both sections have content; a
+          // single column otherwise (and always on narrow screens).
+          twoColumns && "lg:grid-cols-2",
+        )}
+      >
       {drafts.length > 0 && (
-        <div className="mt-4">
+        <div>
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
             Drafts ready for review
           </p>
@@ -238,7 +250,7 @@ export function AgentBriefing({
       )}
 
       {opportunities.length > 0 && (
-        <div className="mt-4">
+        <div>
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
             Working now
           </p>
@@ -286,6 +298,8 @@ export function AgentBriefing({
             ))}
           </ul>
         </div>
+      )}
+      </div>
       )}
 
       {actionError && (

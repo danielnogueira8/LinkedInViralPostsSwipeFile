@@ -80,3 +80,27 @@ describe("the agent lives in a pinned Your Agent panel, not the empty state", ()
     expect(newChatCloses).toBe(true);
   });
 });
+
+describe("the agent view uses the horizontal space (two columns, wider panel)", () => {
+  const workspace = source(WORKSPACE);
+  const briefing = source(BRIEFING_COMPONENT);
+
+  test("the panel is widened past the old narrow max-w-2xl", () => {
+    // AgentView was max-w-2xl (~672px) and left most of a wide screen empty.
+    expect(workspace).toContain("function AgentView");
+    expect(workspace).toContain("max-w-5xl");
+    expect(workspace).not.toContain(
+      'mx-auto flex w-full max-w-2xl flex-col py-2',
+    );
+  });
+
+  test("drafts + working-now sit in a responsive two-column grid", () => {
+    // Side-by-side on wide screens, stacked on narrow — gated on both sections
+    // having content so a lone section spans full width (no dead column).
+    expect(briefing).toContain("lg:grid-cols-2");
+    expect(briefing).toContain("const twoColumns =");
+    expect(briefing).toContain(
+      "drafts.length > 0 && opportunities.length > 0",
+    );
+  });
+});
