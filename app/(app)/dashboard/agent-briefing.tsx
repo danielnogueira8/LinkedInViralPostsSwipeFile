@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { X, Loader2, Magnet, ArrowRight } from "lucide-react";
+import { X, Loader2, Magnet, ArrowRight, CalendarDays } from "lucide-react";
 import { AiIcon } from "@/components/ai-icon";
 import { cn } from "@/lib/utils";
 
@@ -14,6 +14,9 @@ import { cn } from "@/lib/utils";
 // Shows drafts the agent wrote since your last review (Review opens the post
 // ON the Posts board and marks it reviewed so it drops off this list for good)
 // and the currently proposed opportunities with one-click Draft it / dismiss.
+//
+// Phase F adds "Plan my week": an ephemeral, regenerate-on-click weekly plan
+// built from the same live signals, each day actionable via "Draft this".
 // -----------------------------------------------------------------------------
 
 type BriefingDraft = {
@@ -86,6 +89,20 @@ type Briefing = {
   opportunities: BriefingOpportunity[];
 };
 
+type WeekPlanItem = {
+  day: string;
+  opportunity: {
+    id: string;
+    headline: string;
+    is_lead_magnet?: boolean;
+  };
+};
+
+type WeekPlan = {
+  gapNote: string | null;
+  items: WeekPlanItem[];
+};
+
 function snippet(body: string, max = 110): string {
   const clean = body.replace(/\s+/g, " ").trim();
   return clean.length > max ? `${clean.slice(0, max)}…` : clean;
@@ -102,6 +119,10 @@ export function AgentBriefing({
   const [briefing, setBriefing] = useState<Briefing | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  // Plan-my-week (Phase F): ephemeral plan, rebuilt from live signals per click.
+  const [weekPlan, setWeekPlan] = useState<WeekPlan | null>(null);
+  const [planLoading, setPlanLoading] = useState(false);
+  const [planOpen, setPlanOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -150,6 +171,25 @@ export function AgentBriefing({
     router.push(`/dashboard/posts?open=${encodeURIComponent(draftId)}`);
   };
 
+  const loadWeekPlan = useCallback(async () => {
+    setPlanLoading(true);
+    try {
+      const res = await fetch("/api/agent/week-plan", { cache: "no-store" });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data?.ok) {
+        setWeekPlan({
+          gapNote: typeof data.gapNote === "string" ? data.gapNote : null,
+          items: Array.isArray(data.items) ? data.items : [],
+        });
+        setPlanOpen(true);
+      }
+    } catch {
+      // Fail-open: the plan just doesn't open.
+    } finally {
+      setPlanLoading(false);
+    }
+  }, []);
+
   const act = async (id: string, action: "draft" | "dismiss") => {
     if (busyId) return;
     setBusyId(id);
@@ -165,6 +205,9 @@ export function AgentBriefing({
         throw new Error(data?.error || "Couldn't do that — try again.");
       }
       await refresh();
+      // A drafted/dismissed opportunity leaves the plan too — regenerate it so
+      // the week view always reflects the current signal pool.
+      if (planOpen) void loadWeekPlan();
     } catch (error) {
       setActionError((error as Error).message);
     } finally {
@@ -189,13 +232,95 @@ export function AgentBriefing({
         <span className="grid size-7 place-items-center rounded-lg bg-accent-brand/10 text-accent-brand">
           <AiIcon className="h-4 w-4" aria-hidden />
         </span>
-        <div>
+        <div className="min-w-0 flex-1">
           <h3 className="text-sm font-semibold text-foreground">Your agent</h3>
           <p className="text-xs text-muted-foreground">
             Watching your tracked creators for you.
           </p>
         </div>
+        <button
+          type="button"
+          onClick={() => (planOpen ? setPlanOpen(false) : void loadWeekPlan())}
+          disabled={planLoading}
+          className={cn(
+            "inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
+            planOpen
+              ? "border-accent-brand/30 bg-accent-brand/[0.08] text-accent-brand"
+              : "border-border bg-card text-foreground hover:border-accent-brand/30 hover:text-accent-brand",
+            "disabled:opacity-50",
+          )}
+          title="Generate a fresh weekly plan from what your agent sees right now"
+        >
+          {planLoading ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+          ) : (
+            <CalendarDays className="h-3.5 w-3.5" aria-hidden />
+          )}
+          Plan my week
+        </button>
       </div>
+
+      {planOpen && weekPlan && (
+        <div className="mt-4 rounded-xl border border-accent-brand/20 bg-accent-brand/[0.04] p-3">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs font-medium uppercase tracking-wide text-accent-brand">
+              Your week
+            </p>
+            <button
+              type="button"
+              onClick={() => setPlanOpen(false)}
+              className="grid size-6 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-black/[0.04] hover:text-foreground"
+              aria-label="Close plan"
+            >
+              <X className="h-3.5 w-3.5" aria-hidden />
+            </button>
+          </div>
+          {weekPlan.gapNote && (
+            <p className="mt-1 text-xs text-muted-foreground">{weekPlan.gapNote}</p>
+          )}
+          {weekPlan.items.length === 0 ? (
+            <p className="mt-2 text-xs text-muted-foreground">
+              No fresh signals to plan around yet — check back after the next
+              scrape of your tracked creators.
+            </p>
+          ) : (
+            <ul className="mt-2 flex flex-col gap-1.5">
+              {weekPlan.items.map((item) => (
+                <li
+                  key={item.opportunity.id}
+                  className="flex items-center gap-2.5 rounded-lg bg-background/70 px-2.5 py-2"
+                >
+                  <span className="w-9 shrink-0 text-xs font-semibold text-accent-brand">
+                    {item.day}
+                  </span>
+                  {item.opportunity.is_lead_magnet ? (
+                    <LeadMagnetBadge
+                      hintId={`week-plan-lead-magnet-${item.opportunity.id}`}
+                    />
+                  ) : null}
+                  <p className="min-w-0 flex-1 truncate text-sm text-foreground">
+                    {item.opportunity.headline}
+                  </p>
+                  <button
+                    type="button"
+                    disabled={busyId !== null}
+                    onClick={() => void act(item.opportunity.id, "draft")}
+                    className={cn(
+                      "inline-flex shrink-0 items-center gap-1 rounded-full bg-accent-brand px-2.5 py-1 text-[11px] font-medium text-accent-brand-foreground",
+                      "transition-opacity hover:opacity-90 disabled:opacity-50",
+                    )}
+                  >
+                    {busyId === item.opportunity.id ? (
+                      <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+                    ) : null}
+                    Draft this
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
 
       {isEmpty && (
         <p className="mt-4 rounded-xl border border-dashed border-border bg-background/60 px-3 py-4 text-center text-xs text-muted-foreground">
