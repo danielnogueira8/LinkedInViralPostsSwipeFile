@@ -218,10 +218,11 @@ create table if not exists agent_opportunities (
 RLS mirrors chats/workspace tables (see migration-036 pattern).
 
 **D2. Scanner+ranker (`lib/agent-loop/scan.ts`, pure + SQL)**
-- Per workspace (flagged only): fresh outliers (posted_at < 72h, top-1% gate
-  already stamped at ingest), news hooks (reuse news-search deterministically:
-  last-14d, topic overlap with user niches), pattern gaps (pattern brief +
-  days since user's last post).
+- Per workspace (default-on; scanner no-ops when no creators are tracked):
+  fresh outliers (posted_at < 72h, top-1% gate already stamped at ingest),
+  news hooks (reuse news-search deterministically: last-14d, topic overlap
+  with user niches), pattern gaps (pattern brief + days since user's last
+  post).
 - Rank = freshness × nicheOverlap × dismissalHistory(−) × cooldown(−) — all
   pure. Top 3 kept as `proposed`; older than 5 days → `expired`.
 
@@ -359,10 +360,10 @@ roll to all users — tune the ranker first.
 
 ## 7. Rollout order & flags
 
-A → C → D/E → F (B dropped). Flags are workspace settings KV rows where still
-needed: `agent_loop`, `agent_week_plan`. `agent_structure_match` shipped
-default-on; `agent_two_draft` was dropped. Owner's workspace first, then
-hand-picked beta users, then everyone.
+A → C → D/E → F (B dropped). All shipped features are default-on; no workspace
+flags remain (`agent_structure_match` and `agent_loop` shipped default-on;
+`agent_two_draft` was dropped). Cost is bounded by per-run caps
+(`AGENT_DAILY_DRAFT_CAP`, workspaces-per-cron) instead of flags.
 
 ## 8. Handoff notes for the executing harness
 

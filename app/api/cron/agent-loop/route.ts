@@ -10,10 +10,10 @@ export const maxDuration = 300;
 
 const DEFAULT_DAILY_DRAFT_CAP = 2;
 
-// Daily agent loop (PLAN-agent-loop Phase D3). For each workspace with the
-// `agent_loop` setting enabled, scan for fresh opportunities and draft the top
-// 1–2 into the system chat ("Your agent"). Hard-capped per run; a failed
-// opportunity stays proposed for a retry on the next run.
+// Daily agent loop (PLAN-agent-loop Phase D3). For every workspace that tracks
+// at least one creator, scan for fresh opportunities and draft the top 1–2 into
+// the system chat ("Your agent"). Hard-capped per run; a failed opportunity
+// stays proposed for a retry on the next run.
 export async function GET(req: Request) {
   const secret = process.env.CRON_SECRET;
   const auth = req.headers.get("authorization");
@@ -29,14 +29,16 @@ export async function GET(req: Request) {
         DEFAULT_DAILY_DRAFT_CAP,
     );
 
-    const { data: flagged, error: flagError } = await sb
-      .from("settings")
+    // Always-on: the loop runs for every workspace that tracks at least one
+    // creator (the scanner no-ops cleanly when a workspace has none). Workspaces
+    // are capped per run so a large fleet can't blow the cron budget.
+    const { data: tracked, error: trackedError } = await sb
+      .from("workspace_accounts")
       .select("workspace_id")
-      .eq("key", "agent_loop")
-      .eq("value", true);
-    if (flagError) throw flagError;
+      .limit(500);
+    if (trackedError) throw trackedError;
     const workspaceIds = [
-      ...new Set((flagged ?? []).map((row) => row.workspace_id as string)),
+      ...new Set((tracked ?? []).map((row) => row.workspace_id as string)),
     ].slice(0, 20);
 
     const results: Array<{
