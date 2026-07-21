@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { executeChatTurn } from "@/lib/agent/chat-turn";
+import type { scopedSupabase } from "@/lib/supabase-scoped";
 import { neutralizeMarkers } from "@/lib/agent/untrusted";
 import { DraftLifecycle } from "@/lib/draft-lifecycle";
 import { createSupabaseDraftLifecycleRepository } from "@/lib/draft-lifecycle-supabase";
@@ -165,14 +166,30 @@ export async function actOnOpportunity(
           },
           signal: controller.signal,
         },
-        {},
+        {
+          // The cron has no Clerk session, so the default scopedSupabase (which
+          // resolves the workspace from auth) would throw before the turn
+          // starts. Pin the workspace + service-role client explicitly; setup
+          // only reads `.workspaceId` and `.raw`.
+          scopedSupabase: (async () => ({
+            workspaceId,
+            raw: sb,
+          })) as unknown as typeof scopedSupabase,
+        },
       );
       if (result instanceof Response) {
-        throw new Error(`Chat turn failed with status ${result.status}.`);
+        const bodyText = await result.text().catch(() => "");
+        throw new Error(
+          `Chat turn failed with status ${result.status}: ${bodyText.slice(0, 200)}`,
+        );
       }
       const outcome = await result.terminal;
       if (outcome.terminal !== "done") {
-        throw new Error(`Chat turn ended as ${outcome.terminal}.`);
+        throw new Error(
+          `Chat turn ended as ${outcome.terminal}${
+            outcome.error ? `: ${outcome.error.message}` : ""
+          }`,
+        );
       }
       const draftIds = await saveChatArtifactsToBoard(sb, workspaceId, chatId);
       if (draftIds.length === 0) {
