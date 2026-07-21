@@ -571,7 +571,7 @@ describe("model-source history", () => {
       },
       {
         id: "draft",
-        label: "Draft the lead-magnet post",
+        label: "Drafting the lead-magnet post",
         status: "active" as const,
       },
     ];
@@ -581,7 +581,7 @@ describe("model-source history", () => {
       ...initial,
       {
         id: "server_lead_magnet_image",
-        label: "Adapt the source image",
+        label: "Adapting the source image",
         status: "active",
       },
     ]);
@@ -589,7 +589,7 @@ describe("model-source history", () => {
     const done = withLeadMagnetImagePlanStep(active, "done");
     expect(done.at(-1)).toEqual({
       id: "server_lead_magnet_image",
-      label: "Adapt the source image",
+      label: "Adapting the source image",
       status: "done",
     });
     expect(done).toHaveLength(3);
@@ -599,12 +599,12 @@ describe("model-source history", () => {
     expect(withLeadMagnetImagePlanStep([], "active")).toEqual([
       {
         id: "server_draft_lead_magnet_post",
-        label: "Draft the lead-magnet post",
+        label: "Drafted the lead-magnet post",
         status: "done",
       },
       {
         id: "server_lead_magnet_image",
-        label: "Adapt the source image",
+        label: "Adapting the source image",
         status: "active",
       },
     ]);

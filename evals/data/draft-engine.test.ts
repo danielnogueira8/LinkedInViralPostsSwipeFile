@@ -2308,12 +2308,12 @@ describe("writer plan narration (narratePlan)", () => {
       {
         type: "plan_update",
         steps: [
-          { id: "write_post", label: "Write your post", status: "active" },
+          { id: "write_post", label: "Writing your post", status: "active" },
         ],
       },
       {
         type: "plan_update",
-        steps: [{ id: "write_post", label: "Write your post", status: "done" }],
+        steps: [{ id: "write_post", label: "Writing your post", status: "done" }],
       },
     ]);
     expect(artifacts(events)).toHaveLength(1);
@@ -2344,7 +2344,7 @@ describe("writer plan narration (narratePlan)", () => {
         steps: [
           {
             id: "write_draft_1",
-            label: "Write draft 1 of 2",
+            label: "Writing draft 1 of 2",
             status: "active",
           },
         ],
@@ -2352,10 +2352,10 @@ describe("writer plan narration (narratePlan)", () => {
       {
         type: "plan_update",
         steps: [
-          { id: "write_draft_1", label: "Write draft 1 of 2", status: "done" },
+          { id: "write_draft_1", label: "Writing draft 1 of 2", status: "done" },
           {
             id: "write_draft_2",
-            label: "Write draft 2 of 2",
+            label: "Writing draft 2 of 2",
             status: "active",
           },
         ],
@@ -2363,8 +2363,8 @@ describe("writer plan narration (narratePlan)", () => {
       {
         type: "plan_update",
         steps: [
-          { id: "write_draft_1", label: "Write draft 1 of 2", status: "done" },
-          { id: "write_draft_2", label: "Write draft 2 of 2", status: "done" },
+          { id: "write_draft_1", label: "Writing draft 1 of 2", status: "done" },
+          { id: "write_draft_2", label: "Writing draft 2 of 2", status: "done" },
         ],
       },
     ]);
@@ -2383,7 +2383,7 @@ describe("writer plan narration (narratePlan)", () => {
       {
         type: "plan_update",
         steps: [
-          { id: "write_post", label: "Write your post", status: "active" },
+          { id: "write_post", label: "Writing your post", status: "active" },
         ],
       },
     ]);

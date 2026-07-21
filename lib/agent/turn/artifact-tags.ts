@@ -224,14 +224,16 @@ export function withLeadMagnetImagePlanStep(
 ): PlanStep[] {
   const imageStep: PlanStep = {
     id: LEAD_MAGNET_IMAGE_PLAN_STEP_ID,
-    label: "Adapt the source image",
+    label: "Adapting the source image",
     status,
   };
   if (steps.length === 0) {
     return [
       {
         id: "server_draft_lead_magnet_post",
-        label: "Draft the lead-magnet post",
+        // Synthetic already-completed step — reads in past tense next to its
+        // green check, matching the done-side of the tool phrases.
+        label: "Drafted the lead-magnet post",
         status: "done",
       },
       imageStep,
@@ -254,14 +256,16 @@ export function withLeadMagnetResourcePlanStep(
 ): PlanStep[] {
   const resourceStep: PlanStep = {
     id: LEAD_MAGNET_RESOURCE_PLAN_STEP_ID,
-    label: "Generate or match the lead magnet resource",
+    label: "Generating or matching the lead magnet resource",
     status,
   };
   if (steps.length === 0) {
     return [
       {
         id: "server_draft_lead_magnet_post",
-        label: "Draft the lead-magnet post",
+        // Synthetic already-completed step — reads in past tense next to its
+        // green check, matching the done-side of the tool phrases.
+        label: "Drafted the lead-magnet post",
         status: "done",
       },
       resourceStep,
