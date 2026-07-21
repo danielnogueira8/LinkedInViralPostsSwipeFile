@@ -360,11 +360,20 @@ export type Author = {
 };
 
 export type CoworkNextAction = {
-  kind: "track_creators" | "voice" | "inspiration" | "review" | "schedule" | "batch";
+  kind:
+    | "track_creators"
+    | "voice"
+    | "inspiration"
+    | "breakout"
+    | "review"
+    | "schedule"
+    | "batch";
   title: string;
   description: string;
   cta: string;
   href: string;
+  /** Breakout radar (Phase E4): the swipe post to model on click. */
+  breakoutPostId?: string;
 };
 
 // A post the user clicked "Model this post" on, carried in via ?model=<id> and
@@ -7583,18 +7592,44 @@ function StarterCommand({
 }
 
 function NextActionChip({ action }: { action: CoworkNextAction }) {
+  const [breakoutBusy, setBreakoutBusy] = useState(false);
   const iconByKind: Record<CoworkNextAction["kind"], LucideIcon> = {
     track_creators: AtSign,
     voice: Fingerprint,
     inspiration: Search,
+    breakout: Flame,
     review: ClipboardCheck,
     schedule: CalendarClock,
     batch: AiIcon,
   };
   const Icon = iconByKind[action.kind];
+
+  // Breakout radar (Phase E4): stash the post as a modeling source, then open a
+  // fresh chat with it attached — a grounded turn, one click from the chip.
+  const openBreakout = async (e: React.MouseEvent) => {
+    if (!action.breakoutPostId || breakoutBusy) return;
+    e.preventDefault();
+    setBreakoutBusy(true);
+    try {
+      const res = await fetch("/api/model-source", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source: "swipe", postId: action.breakoutPostId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.id) throw new Error(data?.error || "Couldn't open it.");
+      window.location.assign(`/dashboard?model=${encodeURIComponent(data.id)}`);
+    } catch (error) {
+      toast.error((error as Error).message);
+      setBreakoutBusy(false);
+    }
+  };
+
   return (
     <a
       href={action.href}
+      onClick={action.breakoutPostId ? (e) => void openBreakout(e) : undefined}
+      aria-busy={breakoutBusy || undefined}
       className="group inline-flex max-w-full items-center gap-2 rounded-full border border-state-info-border bg-state-info-bg px-3 py-1.5 text-left text-xs shadow-sm transition-colors hover:border-state-info"
     >
       <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-card text-muted-foreground">
