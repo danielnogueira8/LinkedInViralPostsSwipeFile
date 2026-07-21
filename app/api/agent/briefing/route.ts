@@ -3,6 +3,11 @@ import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
 import { AGENT_SUGGESTED_BY } from "@/lib/agent-loop/constants";
 import { readOpportunityHeadline } from "@/lib/agent-loop/headline";
+import {
+  leadMagnetPostIds,
+  opportunityIsLeadMagnet,
+  opportunitySourcePostIds,
+} from "@/lib/agent-loop/opportunity-post-type";
 
 export const runtime = "nodejs";
 
@@ -28,12 +33,27 @@ export async function GET() {
 
     const { data: opportunities, error: oppError } = await sb.raw
       .from("agent_opportunities")
-      .select("id, kind, score, payload, created_at")
+      .select("id, kind, score, payload, created_at, source_post_id")
       .eq("workspace_id", sb.workspaceId)
       .eq("status", "proposed")
       .order("score", { ascending: false })
       .limit(3);
     if (oppError) throw oppError;
+
+    // Which of these model a LEAD MAGNET post? `posts.post_type` is the
+    // authoritative flag (stamped at scrape time, also what act.ts reads), and
+    // agent_opportunities only carries source_post_id — so resolve it here.
+    // At most 3 opportunities, so this is a single small IN query.
+    const sourcePostIds = opportunitySourcePostIds(opportunities);
+    let leadMagnetIds = new Set<string>();
+    if (sourcePostIds.length > 0) {
+      const { data: sourcePosts, error: sourcePostsError } = await sb.raw
+        .from("posts")
+        .select("id, post_type")
+        .in("id", sourcePostIds);
+      if (sourcePostsError) throw sourcePostsError;
+      leadMagnetIds = leadMagnetPostIds(sourcePosts);
+    }
 
     // payload.headline is persisted at scan time, so rows written before the
     // headline copy changed still carry the old "<creator> went N×" wording
@@ -43,6 +63,7 @@ export async function GET() {
       return {
         ...opportunity,
         payload: { ...payload, headline: readOpportunityHeadline(payload) },
+        is_lead_magnet: opportunityIsLeadMagnet(opportunity, leadMagnetIds),
       };
     });
 
