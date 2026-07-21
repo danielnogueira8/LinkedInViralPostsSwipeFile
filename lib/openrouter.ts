@@ -1,6 +1,7 @@
 import { supabaseAdmin } from "./supabase";
 import { holdWorkspaceCostClaims } from "./workspace-cost-claims";
 import { providerModelAttribution } from "./agent/cowork-adapter-attempt";
+export { providerModelAttribution } from "./agent/cowork-adapter-attempt";
 
 // ---------------------------------------------------------------------------
 // OpenRouter client (OpenAI-compatible Chat Completions)
