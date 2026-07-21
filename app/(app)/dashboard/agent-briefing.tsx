@@ -337,11 +337,11 @@ export function AgentBriefing({
   // lone section spans the full width instead of leaving a dead column.
   const twoColumns = drafts.length > 0 && opportunities.length > 0;
 
+  // overflow-x-clip, NOT hidden: `hidden` forces overflow-y to compute to
+  // `auto` (CSS spec), which creates a nested scroll context and can surface
+  // a phantom scrollbar when the content actually fits. `clip` contains the
+  // paint with zero side effects on the vertical axis.
   return (
-    {/* overflow-x-clip, NOT hidden: `hidden` forces overflow-y to compute to
-        `auto` (CSS spec), which creates a nested scroll context and can surface
-        a phantom scrollbar when the content actually fits. `clip` contains the
-        paint with zero side effects on the vertical axis. */}
     <section className="rounded-2xl border border-border bg-card/60 p-4 sm:p-5 overflow-x-clip">
       <div className="flex items-center gap-2">
         {/* Coral = the agent's identity color everywhere it surfaces. */}
