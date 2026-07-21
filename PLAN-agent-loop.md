@@ -13,11 +13,11 @@ execute the remaining phases cold, without the conversation that produced it.
   in production: scan → rank → draft → board. Daily cap 2/workspace
   (`AGENT_DAILY_DRAFT_CAP`). Regular posts only (lead-magnet sources fail
   closed by design).
-- ✅ Phase E — "While you were away" surface: agent tag on board drafts
-  (meta.suggested_by + badge), robot icon for the agent chat, briefing API +
-  home section with Draft-it/Dismiss actions. E4 (breakout radar chip) not
-  done yet.
-- ⬜ Phase F — Plan-my-week (ephemeral planner).
+- ✅ Phase E — "While you were away" surface (PRs #1316, #1319): agent tag on
+  board drafts (meta.suggested_by + badge), robot icon for the agent chat,
+  briefing API + home section with Draft-it/Dismiss actions, breakout radar on
+  the next-action chip.
+- ⬜ Phase F — Plan-my-week (ephemeral planner). Only remaining phase.
 
 ---
 
