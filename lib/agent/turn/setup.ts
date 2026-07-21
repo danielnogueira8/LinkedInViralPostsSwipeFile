@@ -35,6 +35,7 @@ import {
   CREATOR_STYLE_SELECTION_REQUIRED_ERROR,
   CUSTOM_SKILL_RETRY_CONTEXT_VERSION,
   LEAD_MAGNET_SELECTION_REQUIRED_ERROR,
+  latestChatDraft,
   requestedBasePostCount,
   requestedExplicitBasePostCount,
   type CreatorStyleRetryContext,
@@ -71,6 +72,7 @@ import {
   type ComposerTaskSelection,
 } from "@/lib/composer-task-context";
 import { leadMagnetGenerateSchema } from "@/lib/lead-magnets";
+import { looksLikeComposerRefine } from "@/lib/chat-composer-policy";
 
 import type { ContentFeedback } from "@/lib/content-feedback";
 import type { ContentPreference } from "@/lib/preferences";
@@ -697,6 +699,40 @@ export async function setupChatTurn(
               )
             : context.route;
     }
+
+    // Implicit refine target (draft continuity): when the user types a plain
+    // edit like "make it punchier" without clicking a card's Refine button, the
+    // client sends no refineTargetId, so the server used to regenerate a NEW
+    // draft instead of editing the one on screen. Resolve the chat's latest
+    // draft as the refine target here — this reuses the exact client-driven
+    // refine pipeline (resolveTrustedRefineTarget → direct-refine lane →
+    // same-artifact-id in-place update + version stepper). Guards:
+    //   • only when the client sent no explicit target (client always wins),
+    //   • not when a fresh source is attached this turn (modelSourceId) — that's
+    //     a new modeling turn, not an edit of the prior draft,
+    //   • not on retry / action-continuation turns (those own their routing),
+    //   • only when the wording reads like an edit — looksLikeComposerRefine
+    //     already rejects "another / new / variation / version N / give me N",
+    //   • only when a post/hook draft actually exists in this chat.
+    // The full draft body is ALSO injected into the model's context in
+    // buildTurnContext (latestChatDraft) so the model can see it even when a
+    // refine falls outside the narrow direct-refine lane (e.g. a hook edit).
+    if (
+      !refineTargetId &&
+      !modelSourceId &&
+      !body.retryOfUserMessageId &&
+      !persistedActionContinuation &&
+      !pendingActionAsk &&
+      looksLikeComposerRefine(userText)
+    ) {
+      const implicitTarget = latestChatDraft(recentMessageWindow);
+      if (implicitTarget) {
+        refineTargetId = implicitTarget.id;
+        refineInstruction = userText;
+        skipDecision = true;
+      }
+    }
+
     if (!resolvedGenerationConfig) {
       resolvedGenerationConfig = resolveGenerationConfig({
         selected: requestedGenerationConfig,

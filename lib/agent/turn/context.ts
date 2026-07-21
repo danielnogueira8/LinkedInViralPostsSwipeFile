@@ -207,6 +207,24 @@ export function resolveTrustedRefineTarget(input: {
   return null;
 }
 
+// The most recent post/hook draft the chat has produced, scanning history
+// newest-first (latest row, latest artifact within it). This is "the draft the
+// chat is currently working on" — the target a plain follow-up edit refers to,
+// and the body a turn injects so the model can see what it already wrote. Pure +
+// exported for tests. 'cite' artifacts (source-post previews) are never drafts.
+export function latestChatDraft(
+  rows: readonly Pick<DbMessage, "artifacts">[],
+): Artifact | null {
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const artifacts = rows[i].artifacts ?? [];
+    for (let j = artifacts.length - 1; j >= 0; j--) {
+      if (artifacts[j].kind === "post" || artifacts[j].kind === "hook")
+        return artifacts[j];
+    }
+  }
+  return null;
+}
+
 export function latestDraftForVariation(
   rows: DbMessage[],
   userText: string,
@@ -223,14 +241,7 @@ export function latestDraftForVariation(
   if (!currentRequestsVariation && !recentUserRequestedVariation) {
     return null;
   }
-  for (let i = rows.length - 1; i >= 0; i--) {
-    const artifacts = rows[i].artifacts ?? [];
-    for (let j = artifacts.length - 1; j >= 0; j--) {
-      if (artifacts[j].kind === "post" || artifacts[j].kind === "hook")
-        return artifacts[j];
-    }
-  }
-  return null;
+  return latestChatDraft(rows);
 }
 
 const LEAD_MAGNET_INTENT_RE =
@@ -1376,6 +1387,35 @@ export async function buildTurnContext(
           text: variationSource.body,
         }) +
         "\nWrite the requested variation on a different topic, but keep this exact draft's structural sequence, hook pattern, pacing, and ending shape. Do not search for or substitute a different source post unless the user explicitly asks for a new source.",
+    });
+  }
+
+  // Draft continuity: show the model the draft this chat already produced so a
+  // follow-up ("make it punchier", "change the hook") edits THAT draft instead
+  // of hallucinating a new one. The generated draft body is otherwise absent
+  // from the model's context — history drops artifacts and the reply text is
+  // fenced. We inject whenever a draft exists (except the variation flow, which
+  // pushes its own structure-anchored block above). Deliberately NOT gated on
+  // the refine routing: the direct-refine writer lane also injects the target
+  // via currentPostBlock, but only for kind:"post" refines that clear a narrow
+  // eligibility bar — a hook edit, or a refine with a lead magnet / attachment /
+  // creator style, falls outside it, and skipping here on those would leave the
+  // model blind to the draft. A harmless second consistent copy in the direct
+  // case is the safe trade vs. omitting the body in every other case.
+  // Skipped when a fresh source is attached this turn (modelSourceId): that's a
+  // new modeling turn working from the attached source, not an edit of the prior
+  // draft, so the old body would only be noise.
+  const currentDraft = modelSourceId ? null : latestChatDraft(dbRows);
+  if (currentDraft && currentDraft.id !== variationSource?.id) {
+    blocks.push({
+      type: "text",
+      text:
+        wrapUntrustedDelimited({
+          label: "CURRENT DRAFT (the post this chat is working on)",
+          endLabel: "END CURRENT DRAFT",
+          text: currentDraft.body,
+        }) +
+        "\nThis is the draft already shown in this chat. If the user is asking to change, refine, or iterate on it, edit THIS draft rather than writing a new one. Only write a fresh post if they clearly ask for a different or additional post.",
     });
   }
 
