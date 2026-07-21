@@ -356,6 +356,10 @@ function toCreateBody(
     body.follow_up_template = config.followUpTemplate;
     body.follow_up_delay_minutes = config.followUpDelayMinutes;
     body.follow_up_only_if_no_response = config.followUpOnlyIfNoResponse;
+    // NOTE: the Phase-0 probe confirmed LeadShark ALSO exposes a second follow-up
+    // (`follow_up_template_2` / `follow_up_delay_minutes_2`, present-but-null in
+    // the create response). We deliberately send only one for v1 (§9.2); a second
+    // is an additive change here + one column when we choose to offer it.
   }
   return body;
 }

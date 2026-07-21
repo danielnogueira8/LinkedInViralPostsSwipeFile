@@ -81,9 +81,19 @@ describe("validateAutomationConfig", () => {
     expect(issues.find((i) => i.field === "template")?.message).toContain("{{lastName}}");
   });
 
-  test("all four documented variables are allowed", () => {
+  test("all allowed variables pass, including the probe-confirmed {{fullNameMention}}", () => {
     const dm = ALLOWED_TEMPLATE_VARS.map((v) => `{{${v}}}`).join(" ") + " https://x";
     expect(validateAutomationConfig(cfg({ dmTemplate: dm }))).toEqual([]);
+    // {{fullNameMention}} is real (round-trips through the API) — explicitly allowed.
+    expect(validateAutomationConfig(cfg({ dmTemplate: "Hi {{fullNameMention}} https://x" }))).toEqual(
+      [],
+    );
+    // …but {{lastName}} is still refused (never seen in any API response).
+    expect(
+      validateAutomationConfig(cfg({ dmTemplate: "Hi {{lastName}} https://x" })).some(
+        (i) => i.field === "template",
+      ),
+    ).toBe(true);
   });
 });
 

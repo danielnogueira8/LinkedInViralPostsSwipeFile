@@ -394,9 +394,11 @@ export function LeadSharkPanel({ draft }: { draft: Draft }) {
               placeholder="Hey {{firstName}}! Here's the…"
               className="min-h-20"
             />
-            <div className="flex items-center justify-between text-xs text-muted-foreground">
-              <span>{ALLOWED_TEMPLATE_VARS.map((v) => `{{${v}}}`).join("  ")}</span>
-              <span className={cn(form.dmTemplate.length > 2000 && "text-state-danger")}>
+            <div className="flex items-start justify-between gap-3 text-xs text-muted-foreground">
+              <span className="min-w-0 flex-1 break-words font-mono">
+                {ALLOWED_TEMPLATE_VARS.map((v) => `{{${v}}}`).join("  ")}
+              </span>
+              <span className={cn("shrink-0", form.dmTemplate.length > 2000 && "text-state-danger")}>
                 {form.dmTemplate.length}/2000
               </span>
             </div>

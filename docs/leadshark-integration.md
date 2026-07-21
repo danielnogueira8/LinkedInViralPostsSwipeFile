@@ -7,6 +7,30 @@ automations when lead-magnet posts publish.
 This doc covers what an operator must do to ship and run Phase 1
 (credentials + Integrations UI). Phases 2–3 add their own steps.
 
+## Phase 0 probe — verified against the live API
+
+Run against a real LeadShark Pro key + a connected LinkedIn account. Results:
+
+- **Auth + API access:** `GET /api/automations?limit=1` → 200. A Pro plan
+  includes API access.
+- **Post listing:** `GET /api/v1/posts` returns posts published OUTSIDE LeadShark,
+  each with `post_id` in the **`urn:li:activity:…`** namespace and a `share_url`
+  embedding the **same** numeric id. So the default `url_match` binding strategy
+  works — no need for `LEADSHARK_BINDING_STRATEGY=snapshot_diff`.
+- **Create:** `POST /api/automations` → 201, accepts the full field set we send
+  (`keywords`, `dm_template`, `dm_templates`, `comment_reply_template`,
+  `non_first_degree_reply_template`, `enable_follow_up` + the follow-up fields,
+  `auto_connect`) and echoes them back intact. Read-back `post_id` matches
+  exactly. `links_enabled` defaults to false (plain URLs, no Pro+ needed).
+- **Template vars:** `{{fullNameMention}}` is confirmed live (round-trips) and is
+  now allowed. `{{lastName}}` never appeared in any response and stays refused.
+- **Follow-up:** a second follow-up slot (`follow_up_template_2`) exists; v1
+  sends one (§9.2).
+
+Still unverified (need a second LinkedIn account to comment): does a keyword
+comment actually trigger a DM end-to-end, retroactive-comment behavior, and
+whether blank keywords truly DM every commenter.
+
 ## New environment variable — `CREDENTIAL_ENCRYPTION_KEY`
 
 The first user-supplied secret in the app. LeadShark API keys are stored as

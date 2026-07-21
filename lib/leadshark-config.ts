@@ -4,15 +4,17 @@
 
 import { DM_TEMPLATE_MAX_CHARS, MAX_KEYWORDS } from "@/lib/leadshark";
 
-// The ONLY template variables we offer. LeadShark's dashboard shows more
-// ({{lastName}}, a full-name-mention chip) but they're not in the API reference,
-// so an unsubstituted one could reach a real prospect — we don't allow them
-// until a probe confirms.
+// The template variables we offer. The first four are documented; {{fullNameMention}}
+// is undocumented but CONFIRMED live by the Phase-0 probe (it round-trips through
+// POST /api/automations and appears in real automations' comment replies). We
+// still withhold {{lastName}}, which is shown in LeadShark's dashboard but never
+// appeared in any API response — an unsubstituted one could reach a real prospect.
 export const ALLOWED_TEMPLATE_VARS = [
   "firstName",
   "fullName",
   "linkedinUsername",
   "firstNameMention",
+  "fullNameMention",
 ] as const;
 
 const TEMPLATE_VAR_RE = /\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g;
