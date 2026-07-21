@@ -1234,12 +1234,12 @@ function actionStep(action: ActionPlanAction, status: PlanStep["status"]): PlanS
     id: `action_${action.id}`,
     label:
       action.type === "move_on_board"
-        ? `Move saved draft to ${action.status}`
+        ? `Moving saved draft to ${action.status}`
         : action.type === "schedule_post"
           ? action.date
-            ? `Plan saved draft for ${action.date}`
-            : "Clear planned draft date"
-          : "Choose the saved draft",
+            ? `Planning saved draft for ${action.date}`
+            : "Clearing planned draft date"
+          : "Choosing the saved draft",
     status,
   };
 }
@@ -3791,16 +3791,16 @@ async function observeReadOnlyToolStage<T extends Record<string, unknown>>(input
 function plannerStep(action: ReadOnlyAction, status: PlanStep["status"]): PlanStep {
   const label =
     action.type === "search_news"
-      ? "Search fresh news"
+      ? "Searching fresh news"
       : action.type === "search_web"
-        ? "Research verified web sources"
+        ? "Researching verified web sources"
         : action.type === "search_viral_posts"
-          ? "Search the swipe file"
+          ? "Searching the swipe file"
           : action.type === "inspect_attachments"
-            ? "Inspect attachments"
+            ? "Inspecting attachments"
             : action.type === "draft_post"
-              ? "Write and verify the post"
-              : "Clarify the requested outcome";
+              ? "Writing and verifying the post"
+              : "Clarifying the requested outcome";
   return { id: action.id, label, status };
 }
 

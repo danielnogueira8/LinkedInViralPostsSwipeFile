@@ -3822,7 +3822,7 @@ function writerSlotStep(
 ): PlanStep {
   return {
     id: `write_draft_${index}`,
-    label: count > 1 ? `Write draft ${index} of ${count}` : "Write your post",
+    label: count > 1 ? `Writing draft ${index} of ${count}` : "Writing your post",
     status,
   };
 }
@@ -3830,9 +3830,9 @@ function writerSlotStep(
 function writerSingleStepLabel(
   task: Exclude<WriterTask, { kind: "multi" }>,
 ): string {
-  if (task.kind === "refine") return "Rewrite the post";
-  if (task.kind === "partial") return "Write the deliverable";
-  return "Write your post";
+  if (task.kind === "refine") return "Rewriting the post";
+  if (task.kind === "partial") return "Writing the deliverable";
+  return "Writing your post";
 }
 
 // ---------------------------------------------------------------------------
