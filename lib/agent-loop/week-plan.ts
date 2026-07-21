@@ -67,27 +67,61 @@ export function composeWeekPlan(input: {
   );
 
   const slots: WeekPlanSlot[] = [];
-  let leadMagnets = 0;
-  for (const opportunity of input.opportunities) {
-    if (slots.length >= maxOpportunityDays) break;
-    if (opportunity.isLeadMagnet) {
-      if (leadMagnets >= maxLeadMagnets) continue;
-      leadMagnets += 1;
-    }
-    slots.push({ kind: "opportunity", id: opportunity.id });
-  }
-
   const offset = prompts.length
     ? (input.seed ?? 0) % prompts.length
     : 0;
-  for (
-    let i = 0;
-    slots.length < days && i < prompts.length * 2;
-    i += 1
-  ) {
-    const prompt = prompts[(offset + i) % prompts.length];
-    if (slots.some((s) => s.kind === "generic" && s.prompt === prompt)) continue;
-    slots.push({ kind: "generic", prompt });
+  let genericCursor = 0;
+  const pushGenericDay = (): boolean => {
+    for (
+      let i = 0;
+      i < prompts.length * 2 && slots.length < days;
+      i += 1
+    ) {
+      const prompt = prompts[(offset + genericCursor) % prompts.length];
+      genericCursor += 1;
+      if (slots.some((s) => s.kind === "generic" && s.prompt === prompt)) {
+        continue;
+      }
+      slots.push({ kind: "generic", prompt });
+      return true;
+    }
+    return false;
+  };
+
+  const leadMagnetIds = new Set(
+    input.opportunities
+      .filter((opportunity) => opportunity.isLeadMagnet)
+      .map((opportunity) => opportunity.id),
+  );
+  const previousWasLeadMagnet = () => {
+    const previous = slots[slots.length - 1];
+    return (
+      previous?.kind === "opportunity" && leadMagnetIds.has(previous.id)
+    );
+  };
+
+  let opportunityDays = 0;
+  let leadMagnets = 0;
+  for (const opportunity of input.opportunities) {
+    if (opportunityDays >= maxOpportunityDays || slots.length >= days) break;
+    if (opportunity.isLeadMagnet) {
+      if (leadMagnets >= maxLeadMagnets) continue;
+      // Spacing rule: never two lead-magnet days back-to-back — two giveaways
+      // in a row reads as spam. Insert a generic story day between them, so a
+      // Wednesday lead magnet's next one lands on Friday at the earliest.
+      // Only when there's room for BOTH the spacer and this lead magnet —
+      // otherwise the slice at the end would drop the lead magnet itself.
+      if (previousWasLeadMagnet() && slots.length + 1 < days) {
+        pushGenericDay();
+      }
+      leadMagnets += 1;
+    }
+    slots.push({ kind: "opportunity", id: opportunity.id });
+    opportunityDays += 1;
+  }
+
+  while (slots.length < days && pushGenericDay()) {
+    // fill remaining days
   }
   return slots.slice(0, days);
 }

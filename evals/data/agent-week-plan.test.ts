@@ -72,6 +72,43 @@ describe("composeWeekPlan", () => {
     const firstB = b.find((s) => s.kind === "generic");
     expect(firstA).not.toEqual(firstB);
   });
+
+  test("two lead magnets in score order are never on back-to-back days", () => {
+    const slots = composeWeekPlan({
+      opportunities: [
+        { id: "lm1", isLeadMagnet: true },
+        { id: "lm2", isLeadMagnet: true },
+      ],
+      seed: 0,
+    });
+    const lmIndexes = slots.flatMap((slot, index) =>
+      slot.kind === "opportunity" && ["lm1", "lm2"].includes(slot.id)
+        ? [index]
+        : [],
+    );
+    expect(lmIndexes).toHaveLength(2);
+    expect(lmIndexes[1] - lmIndexes[0]).toBeGreaterThanOrEqual(2);
+    // The day between them is a generic story day, not another opportunity.
+    const between = slots[lmIndexes[0] + 1];
+    expect(between.kind).toBe("generic");
+  });
+
+  test("a lead magnet after a regular opportunity needs no spacer", () => {
+    const slots = composeWeekPlan({
+      opportunities: [
+        { id: "reg1", isLeadMagnet: false },
+        { id: "lm1", isLeadMagnet: true },
+        { id: "lm2", isLeadMagnet: true },
+      ],
+      seed: 0,
+    });
+    const lmIndexes = slots.flatMap((slot, index) =>
+      slot.kind === "opportunity" && ["lm1", "lm2"].includes(slot.id)
+        ? [index]
+        : [],
+    );
+    expect(lmIndexes[1] - lmIndexes[0]).toBeGreaterThanOrEqual(2);
+  });
 });
 
 describe("daysSince", () => {
