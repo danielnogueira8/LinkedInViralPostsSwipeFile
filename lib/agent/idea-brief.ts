@@ -7,6 +7,11 @@ import {
 } from "@/lib/openrouter";
 import { INJECTION_GUARD, wrapUntrustedXml } from "@/lib/agent/untrusted";
 import { parseJsonObject } from "@/lib/claude";
+import {
+  STRUCTURE_CONTENT_TYPES,
+  isStructureContentType,
+  type StructureContentType,
+} from "@/lib/templates";
 
 // ---------------------------------------------------------------------------
 // Idea brief compiler (PLAN-agent-loop Phase A1).
@@ -17,20 +22,6 @@ import { parseJsonObject } from "@/lib/claude";
 // Fail-open: any error, timeout, or malformed JSON returns null and the turn
 // falls back to embedding-only structure matching.
 // ---------------------------------------------------------------------------
-
-export const STRUCTURE_CONTENT_TYPES = [
-  "story",
-  "how_to",
-  "contrarian",
-  "teardown",
-  "announcement",
-  "metric",
-] as const;
-export type StructureContentType = (typeof STRUCTURE_CONTENT_TYPES)[number];
-
-export function isStructureContentType(v: unknown): v is StructureContentType {
-  return typeof v === "string" && (STRUCTURE_CONTENT_TYPES as readonly string[]).includes(v);
-}
 
 export type IdeaBrief = {
   /** Detected arc of the requested post. */
