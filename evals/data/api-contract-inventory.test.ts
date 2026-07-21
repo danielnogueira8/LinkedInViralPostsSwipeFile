@@ -24,6 +24,7 @@ const requiredFamilies = [
   "authentication-workspaces",
   "settings-preferences-feedback",
   "integrations-account-lifecycle",
+  "leadshark-integration",
 ];
 
 describe("critical API contract inventory", () => {

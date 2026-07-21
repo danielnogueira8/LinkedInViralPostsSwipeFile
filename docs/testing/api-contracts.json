@@ -91,6 +91,13 @@
       "failure_evidence": ["evals/data/clerk-webhook-purge.test.ts"],
       "isolation_evidence": ["evals/data/clerk-webhook-purge.test.ts"],
       "mutation_evidence": ["evals/data/clerk-webhook-purge.test.ts"]
+    },
+    {
+      "id": "leadshark-integration",
+      "success_evidence": ["evals/data/leadshark-integration-route.test.ts"],
+      "failure_evidence": ["evals/data/leadshark-integration-route.test.ts"],
+      "isolation_evidence": ["evals/data/leadshark-integration-route.test.ts"],
+      "mutation_evidence": ["evals/data/leadshark-integration-route.test.ts"]
     }
   ]
 }
