@@ -8,21 +8,24 @@ import {
   opportunitySourcePostIds,
 } from "@/lib/agent-loop/opportunity-post-type";
 import {
+  composeWeekPlan,
   daysSince,
-  nextWeekdays,
+  nextDays,
   postingGapNote,
 } from "@/lib/agent-loop/week-plan";
 
 export const runtime = "nodejs";
 
-const PLAN_ITEMS = 5;
+const PLAN_DAYS = 7;
+const MAX_LEAD_MAGNET_DAYS = 2;
+const OPPORTUNITY_POOL_LIMIT = 10;
 
 // -----------------------------------------------------------------------------
 // GET /api/agent/week-plan — Plan-my-week (Phase F). EPHEMERAL: builds a fresh
-// plan from this moment's signals on every call (top proposed opportunities +
-// posting gap). No tables, no cron — re-clicking regenerates from live data.
-// Each item carries the opportunity id so "Draft this" can reuse the normal
-// grounded-turn action (POST /api/agent/opportunities/[id]).
+// 7-day plan (weekends included) from this moment's signals on every call. The
+// week mixes opportunity days (top proposals, max 2 lead magnets) with generic
+// "your story" days (curated prompts the agent can't source). No tables, no
+// cron — re-clicking regenerates from live data with a day-seeded rotation.
 // -----------------------------------------------------------------------------
 export async function GET() {
   try {
@@ -34,7 +37,7 @@ export async function GET() {
       .eq("workspace_id", sb.workspaceId)
       .eq("status", "proposed")
       .order("score", { ascending: false })
-      .limit(PLAN_ITEMS);
+      .limit(OPPORTUNITY_POOL_LIMIT);
     if (oppError) throw oppError;
 
     const sourcePostIds = opportunitySourcePostIds(opportunities);
@@ -74,23 +77,51 @@ export async function GET() {
         null,
     );
 
-    const dayLabels = nextWeekdays((opportunities ?? []).length);
-    const items = (opportunities ?? []).map((opportunity, index) => {
-      const payload = (opportunity.payload ?? {}) as Record<string, unknown>;
-      const sourcePostId =
-        typeof opportunity.source_post_id === "string"
-          ? opportunity.source_post_id
-          : null;
+    // Compose the week: opportunities first (score order, lead magnets capped
+    // at MAX_LEAD_MAGNET_DAYS), generic "your story" prompts filling the rest.
+    // Day-of-year seeds the generic rotation so tomorrow's plan differs from
+    // today's without any randomness to reproduce.
+    const byId = new Map(
+      (opportunities ?? []).map((opportunity) => {
+        const payload = (opportunity.payload ?? {}) as Record<string, unknown>;
+        const sourcePostId =
+          typeof opportunity.source_post_id === "string"
+            ? opportunity.source_post_id
+            : null;
+        return [
+          opportunity.id as string,
+          {
+            id: opportunity.id as string,
+            headline: readOpportunityHeadline(payload),
+            is_lead_magnet: opportunityIsLeadMagnet(opportunity, leadMagnetIds),
+            author_avatar: sourcePostId
+              ? (avatarByPostId.get(sourcePostId) ?? null)
+              : null,
+          },
+        ] as const;
+      }),
+    );
+    const dayOfYear = Math.floor(Date.now() / (1000 * 60 * 60 * 24));
+    const slots = composeWeekPlan({
+      opportunities: (opportunities ?? []).map((opportunity) => ({
+        id: opportunity.id as string,
+        isLeadMagnet: opportunityIsLeadMagnet(opportunity, leadMagnetIds),
+      })),
+      days: PLAN_DAYS,
+      maxLeadMagnets: MAX_LEAD_MAGNET_DAYS,
+      minGenericDays: 2,
+      seed: dayOfYear,
+    });
+    const dayLabels = nextDays(slots.length);
+    const items = slots.map((slot, index) => {
+      const day = dayLabels[index] ?? `Day ${index + 1}`;
+      if (slot.kind === "generic") {
+        return { day, kind: "generic" as const, prompt: slot.prompt };
+      }
       return {
-        day: dayLabels[index] ?? `Day ${index + 1}`,
-        opportunity: {
-          id: opportunity.id as string,
-          headline: readOpportunityHeadline(payload),
-          is_lead_magnet: opportunityIsLeadMagnet(opportunity, leadMagnetIds),
-          author_avatar: sourcePostId
-            ? (avatarByPostId.get(sourcePostId) ?? null)
-            : null,
-        },
+        day,
+        kind: "opportunity" as const,
+        opportunity: byId.get(slot.id) ?? { id: slot.id, headline: "New opportunity" },
       };
     });
 
