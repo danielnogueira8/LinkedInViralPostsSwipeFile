@@ -55,4 +55,28 @@ describe("createDraftSchema", () => {
     const r = createDraftSchema.safeParse({ body: "A real post body." });
     expect(r.success).toBe(true);
   });
+
+  test("accepts a lead_magnet_id (the chosen giveaway)", () => {
+    const id = "11111111-1111-4111-8111-111111111111";
+    const r = createDraftSchema.safeParse({
+      body: "Comment PLAYBOOK for the guide.",
+      kind: "lead_magnet",
+      lead_magnet_id: id,
+    });
+    expect(r.success).toBe(true);
+    if (r.success) expect(r.data.lead_magnet_id).toBe(id);
+  });
+
+  test("lead_magnet_id may be null or omitted", () => {
+    expect(
+      createDraftSchema.safeParse({ body: "x", lead_magnet_id: null }).success,
+    ).toBe(true);
+    expect(createDraftSchema.safeParse({ body: "x" }).success).toBe(true);
+  });
+
+  test("rejects a non-uuid lead_magnet_id", () => {
+    expect(
+      createDraftSchema.safeParse({ body: "x", lead_magnet_id: "not-a-uuid" }).success,
+    ).toBe(false);
+  });
 });

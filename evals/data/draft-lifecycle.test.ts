@@ -213,6 +213,31 @@ describe("DraftLifecycle command outcomes", () => {
     expect(repository.rows.size).toBe(2);
   });
 
+  test("standalone create forwards a lead-magnet giveaway through meta", async () => {
+    // The "New post" form resolves a picked giveaway into meta.lead_magnet and
+    // passes it to create(); it must land on the row (not the old hardcoded null).
+    const meta = {
+      lead_magnet: {
+        id: "lm-1",
+        title: "150 AI Prompts",
+        selection: "manual",
+        public_slug: "150-ai-prompts",
+      },
+    };
+    const created = await lifecycle.create({
+      body: "Comment PROMPTS for the pack.",
+      kind: "lead_magnet",
+      meta,
+    });
+    expect(created.outcome).toBe("saved");
+    expect(created.draft.meta).toEqual(meta);
+  });
+
+  test("standalone create without a giveaway leaves meta null (unchanged default)", async () => {
+    const created = await lifecycle.create({ body: "A plain board post" });
+    expect(created.draft.meta).toBeNull();
+  });
+
   test("rejects mutations and deletion after the publish lock is held", async () => {
     repository.rows.set("draft-1", draft({ scheduleStatus: "publishing" }));
 

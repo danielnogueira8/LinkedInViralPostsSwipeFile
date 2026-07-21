@@ -8,8 +8,40 @@ import {
 } from "@/lib/draft-lifecycle";
 import { createSupabaseDraftLifecycleRepository } from "@/lib/draft-lifecycle-supabase";
 import { createDraftSchema } from "@/lib/draft-create-schema";
+import { resolveDraftKind } from "@/lib/post-type";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
+
+// Resolve a picker-chosen lead-magnet id into the meta.lead_magnet stamp the
+// board's "Giveaway" row and the comment-to-DM automation read. Workspace-scoped
+// so a client can't attach another workspace's magnet. Returns null (no giveaway
+// attached) when there's no id, the id doesn't resolve, or the post isn't a lead
+// magnet — a giveaway only makes sense on a lead-magnet-kind post.
+async function resolveLeadMagnetMeta(
+  db: SupabaseClient,
+  workspaceId: string,
+  leadMagnetId: string | null | undefined,
+  resolvedKind: string,
+): Promise<Record<string, unknown> | null> {
+  if (!leadMagnetId || resolvedKind !== "lead_magnet") return null;
+  const { data, error } = await db
+    .from("lead_magnets")
+    .select("id, title, public_slug")
+    .eq("id", leadMagnetId)
+    .eq("workspace_id", workspaceId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  return {
+    lead_magnet: {
+      id: data.id,
+      title: data.title,
+      selection: "manual",
+      public_slug: data.public_slug,
+    },
+  };
+}
 
 // -----------------------------------------------------------------------------
 // GET /api/drafts — list this workspace's saved drafts (chat_artifacts rows the
@@ -42,6 +74,15 @@ export async function POST(req: Request) {
   try {
     const sb = await scopedSupabase();
     const input = createDraftSchema.parse(await req.json());
+    // Compute the kind exactly as the lifecycle will, so we only attach a
+    // giveaway to a post that actually ends up a lead magnet.
+    const resolvedKind = resolveDraftKind(input.kind, input.body);
+    const meta = await resolveLeadMagnetMeta(
+      sb.raw,
+      sb.workspaceId,
+      input.lead_magnet_id,
+      resolvedKind,
+    );
     const result = await new DraftLifecycle(
       createSupabaseDraftLifecycleRepository(sb.raw, sb.workspaceId),
     ).create({
@@ -51,6 +92,7 @@ export async function POST(req: Request) {
       status: input.status,
       planToPostOn: input.plan_to_post_on,
       mediaAttachments: input.media_attachments,
+      meta,
     });
     revalidatePath("/dashboard/posts");
     // A double-click on "New post" with identical (empty/default) content

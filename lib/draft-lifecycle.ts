@@ -168,6 +168,10 @@ export class DraftLifecycle {
     status?: BoardDraftStatus;
     planToPostOn?: string | null;
     mediaAttachments?: PostMediaAttachment[];
+    // Board-authored drafts carry no chat context, so meta is normally null.
+    // The "New post" form can attach a chosen lead-magnet giveaway here
+    // (meta.lead_magnet), resolved server-side from the picker's selection.
+    meta?: Record<string, unknown> | null;
   }) {
     const kind = resolveDraftKind(input.kind, input.body);
     return this.repository.createStandalone({
@@ -175,7 +179,7 @@ export class DraftLifecycle {
       status: input.status ?? defaultDraftStatus(kind),
       title: input.title?.trim() || deriveDraftTitle(input.body),
       body: input.body,
-      meta: null,
+      meta: input.meta ?? null,
       mediaAttachments: input.mediaAttachments ?? [],
       ...(input.planToPostOn !== undefined
         ? { planToPostOn: input.planToPostOn }

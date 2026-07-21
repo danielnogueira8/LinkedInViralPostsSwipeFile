@@ -71,6 +71,11 @@ import {
 
 const FEEDBACK_REASON_LIMIT = 4;
 
+// The minimal lead-magnet shape the create-form picker needs: id to send, title
+// to show. Comes from GET /api/lead-magnets (which returns the full LeadMagnet,
+// but the picker only reads these two).
+type LeadMagnetOption = { id: string; title: string };
+
 export type PostPreviewAuthor = {
   name: string;
   avatarUrl: string | null;
@@ -188,6 +193,53 @@ export function DraftEditorModal({
   // A new post's Kind. Empty (undefined) → the server auto-classifies from the
   // body; picking one makes it explicit (auto-classify then respects it).
   const [newKind, setNewKind] = useState<DraftKind | "">("");
+  // The giveaway a new lead-magnet post hands out — only surfaced (and only sent)
+  // when the Kind is "lead_magnet". "" = none chosen. Resolved server-side into
+  // meta.lead_magnet so the board's Giveaway row + the comment-to-DM automation
+  // both see the same resource.
+  const [newLeadMagnetId, setNewLeadMagnetId] = useState<string>("");
+  // The workspace's lead magnets, loaded lazily the first time the giveaway
+  // picker is shown (a new lead-magnet post). null = not yet loaded.
+  const [leadMagnetOptions, setLeadMagnetOptions] = useState<LeadMagnetOption[] | null>(null);
+  const [leadMagnetsLoading, setLeadMagnetsLoading] = useState(false);
+
+  // Lazily load the workspace's lead magnets the first time the giveaway picker
+  // is actually shown (a NEW lead-magnet post). Loaded once per mount and cached
+  // in state — reopening the modal or toggling Kind won't refetch. Errors leave
+  // the list empty (the picker degrades to the "create one first" hint).
+  const wantsLeadMagnets = open && isNew && newKind === "lead_magnet";
+  useEffect(() => {
+    if (!wantsLeadMagnets || leadMagnetOptions !== null || leadMagnetsLoading) return;
+    let cancelled = false;
+    // Flip the loading flag inside the async task (not synchronously in the
+    // effect body) so the render-driven set-state stays out of the effect's
+    // sync path.
+    void (async () => {
+      setLeadMagnetsLoading(true);
+      try {
+        const data = await fetchJson<{
+          ok: boolean;
+          error?: string;
+          leadMagnets?: { id: string; title: string }[];
+        }>("/api/lead-magnets");
+        if (cancelled) return;
+        if (!data.ok) throw new Error(data.error || "Couldn't load lead magnets.");
+        setLeadMagnetOptions(
+          (data.leadMagnets ?? []).map((m) => ({ id: m.id, title: m.title })),
+        );
+      } catch (e) {
+        if (cancelled) return;
+        setLeadMagnetOptions([]);
+        toast.error((e as Error).message);
+      } finally {
+        if (!cancelled) setLeadMagnetsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [wantsLeadMagnets, leadMagnetOptions, leadMagnetsLoading]);
+
   const [newMedia, setNewMedia] = useState<PostMediaAttachment[]>([]);
   const [uploadingMedia, setUploadingMedia] = useState(false);
   const [mediaLibraryOpen, setMediaLibraryOpen] = useState(false);
@@ -205,6 +257,7 @@ export function DraftEditorModal({
         setNewStatus("drafting");
         setNewDate("");
         setNewKind("");
+        setNewLeadMagnetId("");
         setNewMedia([]);
       }
       setMode("edit");
@@ -251,6 +304,11 @@ export function DraftEditorModal({
             // Only send an explicit kind when the user picked one; otherwise the
             // server auto-classifies (regular vs lead-magnet) from the body.
             ...(newKind ? { kind: newKind } : {}),
+            // The chosen giveaway — only meaningful (and only sent) for a
+            // lead-magnet post. The server ignores it for other kinds.
+            ...(newKind === "lead_magnet" && newLeadMagnetId
+              ? { lead_magnet_id: newLeadMagnetId }
+              : {}),
             ...(newMedia.length ? { media_attachments: newMedia } : {}),
           }),
         });
@@ -777,6 +835,62 @@ export function DraftEditorModal({
                         </SelectContent>
                       </Select>
                     </PropRow>
+
+                    {/* NEW lead-magnet post → pick the resource to give away.
+                        The choice is resolved server-side into meta.lead_magnet,
+                        which drives the board's Giveaway row and the comment-to-DM
+                        automation. Only shown for a new lead-magnet post; existing
+                        drafts show the read-only row below. */}
+                    {isNew && newKind === "lead_magnet" && (
+                      <PropRow icon={<Magnet className="h-4 w-4" />} label="Giveaway">
+                        {leadMagnetsLoading && leadMagnetOptions === null ? (
+                          <span className="flex items-center gap-1.5 px-1 text-sm text-muted-foreground">
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            Loading…
+                          </span>
+                        ) : leadMagnetOptions && leadMagnetOptions.length > 0 ? (
+                          <Select
+                            value={newLeadMagnetId || "none"}
+                            onValueChange={(v) =>
+                              setNewLeadMagnetId(!v || v === "none" ? "" : v)
+                            }
+                          >
+                            <SelectTrigger
+                              className="-ml-1 h-8 border-transparent px-1 hover:bg-accent focus-visible:bg-accent"
+                              aria-label="Giveaway"
+                              title="The lead magnet resource this post gives away."
+                            >
+                              <SelectValue>
+                                {(v) =>
+                                  v === "none"
+                                    ? "None"
+                                    : (leadMagnetOptions.find((m) => m.id === v)?.title ??
+                                      "None")
+                                }
+                              </SelectValue>
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="none">None</SelectItem>
+                              {leadMagnetOptions.map((m) => (
+                                <SelectItem key={m.id} value={m.id}>
+                                  {m.title}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <a
+                            href="/dashboard/lead-magnets"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 px-1 text-sm text-primary hover:underline"
+                          >
+                            Create a lead magnet
+                            <ExternalLink className="h-3 w-3" aria-hidden />
+                          </a>
+                        )}
+                      </PropRow>
+                    )}
 
                     {draft?.leadMagnet && (
                       <PropRow icon={<Magnet className="h-4 w-4" />} label="Giveaway">

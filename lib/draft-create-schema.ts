@@ -7,6 +7,11 @@ export const createDraftSchema = z
     body: z.string().trim().max(20_000).default(""),
     title: z.string().trim().max(200).optional(),
     kind: z.enum(["post", "hook", "lead_magnet"]).optional(),
+    // The lead-magnet resource to give away, chosen in the create form when the
+    // user sets the kind to "lead_magnet". Only meaningful for that kind; the
+    // server resolves the id to a title + public_slug and stamps meta.lead_magnet
+    // so the board's "Giveaway" row and the comment-to-DM automation can read it.
+    lead_magnet_id: z.string().uuid().nullable().optional(),
     status: z.enum(["idea", "drafting", "ready", "posted"]).optional(),
     plan_to_post_on: z
       .string()
