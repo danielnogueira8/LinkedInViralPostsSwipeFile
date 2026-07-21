@@ -3482,14 +3482,24 @@ export function ChatWorkspace({
   // so the two never drift.
   const draftsList = labelArtifacts(artifacts)
     .reverse() // newest first
-    .map(({ a, label }) =>
-      a.id === expandedArtifactId ? (
+    .map(({ a, label }) => {
+      const aVariant = (a.meta as { draft_variant?: unknown } | undefined)?.draft_variant;
+      const competedAgainstId = aVariant
+        ? (artifacts.find((other) => {
+            if (other.id === a.id) return false;
+            const otherVariant = (other.meta as { draft_variant?: unknown } | undefined)
+              ?.draft_variant;
+            return Boolean(otherVariant);
+          })?.id ?? null)
+        : null;
+      return a.id === expandedArtifactId ? (
         <ArtifactCard
           key={a.id}
           artifact={a}
           chatId={activeId}
           author={author}
           label={label}
+          competedAgainstId={competedAgainstId}
           refiningDraftId={
             a.kind === "post" && activeId
               ? refiningByChat[activeId] ?? null
@@ -3515,8 +3525,8 @@ export function ChatWorkspace({
           onExpand={() => setExpandedArtifactId(a.id)}
           onDelete={() => deleteArtifact(a.id)}
         />
-      ),
-    );
+      );
+    });
 
   return (
     <div className="relative flex h-[calc(100vh-7.5rem)] min-h-[520px] gap-0 overflow-hidden bg-card lg:h-screen">
@@ -5918,6 +5928,7 @@ function ArtifactCard({
   chatId,
   author,
   label,
+  competedAgainstId,
   refiningDraftId,
   onRefine,
   onBodyChange,
@@ -5931,6 +5942,8 @@ function ArtifactCard({
   author: Author;
   // "Draft N" badge shown when the chat has more than one draft (accordion).
   label?: string;
+  // Sibling artifact id in a two-draft comparison (Phase B), if any.
+  competedAgainstId?: string | null;
   // When set, this chat is refining an existing Posts-board post (this id). The
   // primary save action UPDATES that row instead of creating a new draft.
   refiningDraftId?: string | null;
@@ -6054,6 +6067,11 @@ function ArtifactCard({
     return Array.isArray(v) ? v.filter((s): s is string => typeof s === "string") : [];
   })();
   const draftSource = modeledSourceAttribution(artifact.meta);
+  const draftVariant = (
+    artifact.meta as { draft_variant?: { label?: unknown } } | undefined
+  )?.draft_variant;
+  const draftVariantLabel =
+    typeof draftVariant?.label === "string" ? draftVariant.label : null;
   const researchRoute = (
     artifact.meta?.research_provenance as
       | { route?: string }
@@ -6398,11 +6416,19 @@ function ArtifactCard({
           stamping meta.skills onto the artifact when one was active for the
           turn that produced it (see route's artifact case). Renders even when
           there's no draft label, so a single-draft turn still shows /name. */}
-      {(label || draftSkills.length > 0 || draftSource) && (
+      {(label || draftSkills.length > 0 || draftSource || draftVariantLabel) && (
         <div className="flex flex-wrap items-center gap-1.5 px-3 pt-2.5 pb-0.5 shrink-0">
           {label && (
             <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
               {label}
+            </span>
+          )}
+          {draftVariantLabel && (
+            <span
+              className="inline-flex items-center gap-1 rounded-full border border-border bg-white px-2.5 py-0.5 text-[10px] font-semibold text-muted-foreground"
+              title="How this draft was produced."
+            >
+              {draftVariantLabel}
             </span>
           )}
           {/* Source-post chip sits directly to the RIGHT of the "Draft" chip so
@@ -6632,6 +6658,7 @@ function ArtifactCard({
         chatId={chatId}
         body={body}
         draftId={boardDraftId}
+        competedAgainstId={competedAgainstId}
       />
 
       <div className="border-t border-border shrink-0" />
@@ -7060,11 +7087,13 @@ function CoworkDraftFeedback({
   chatId,
   body,
   draftId,
+  competedAgainstId,
 }: {
   artifact: Artifact;
   chatId: string | null;
   body: string;
   draftId: string | null;
+  competedAgainstId?: string | null;
 }) {
   const [rating, setRating] = useState<ContentFeedbackRating | null>(null);
   const [selected, setSelected] = useState<ContentFeedbackReason[]>([]);
@@ -7141,6 +7170,7 @@ function CoworkDraftFeedback({
           artifactId: artifact.id,
           ...(chatId ? { chatId } : {}),
           ...(draftId ? { draftId } : {}),
+          ...(competedAgainstId ? { competedAgainst: competedAgainstId } : {}),
         }),
       });
       const data = await res.json().catch(() => ({}));

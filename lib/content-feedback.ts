@@ -30,6 +30,8 @@ export type ContentFeedback = {
   reasons: ContentFeedbackReason[];
   note: string | null;
   body_snapshot: string;
+  /** Sibling artifact id in a two-draft comparison (Phase B), if any. */
+  competed_against: string | null;
   created_at: string;
 };
 
@@ -69,6 +71,7 @@ export const contentFeedbackInputSchema = z
     chatId: z.string().uuid().optional().nullable(),
     artifactId: z.string().trim().min(1).max(120).optional().nullable(),
     draftId: z.string().uuid().optional().nullable(),
+    competedAgainst: z.string().trim().min(1).max(120).optional().nullable(),
   })
   .transform((input) => ({
     rating: input.rating,
@@ -78,6 +81,7 @@ export const contentFeedbackInputSchema = z
     chat_id: input.chatId ?? null,
     artifact_id: input.artifactId ?? null,
     draft_id: input.draftId ?? null,
+    competed_against: input.competedAgainst ?? null,
   }));
 
 export type ContentFeedbackInput = z.infer<typeof contentFeedbackInputSchema>;

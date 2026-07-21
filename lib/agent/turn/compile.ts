@@ -38,6 +38,7 @@ import type { Source, WriterTask } from "@/lib/agent/execute/writer";
 import type { CoworkRoute } from "@/lib/agent/cowork-telemetry";
 import type { ModelSourceReference } from "@/lib/agent/turn/context";
 import type { TurnSetupResult } from "@/lib/agent/turn/setup";
+import { getWorkspaceBooleanSetting } from "@/lib/workspace-settings";
 
 export {
   resolveTurnCount,
@@ -1861,7 +1862,7 @@ export async function compileTurnPlan(
   const directPartialSpec = compileDirectPartialTextSpec(
     effectiveUserInstruction,
   );
-  const directPostCount =
+  let directPostCount =
     activeDraftCountOverride ??
     (composerTaskContext?.kind === "post"
       ? composerTaskContext.expectedDraftCount
@@ -1889,6 +1890,31 @@ export async function compileTurnPlan(
           text: currentModelSource.post_text,
         }
       : resolvedFindSource?.source;
+
+  // Two-draft presentation (PLAN-agent-loop Phase B): when the workspace has the
+  // agent_two_draft flag and the turn matched a structure for an original post,
+  // force the count to 2 so the writer produces one modeled draft + one
+  // grounded-original draft. Explicit counts > 2 are left alone.
+  const agentTwoDraftEnabled = await getWorkspaceBooleanSetting(
+    sbRaw,
+    workspaceId,
+    "agent_two_draft",
+  ).catch(() => false);
+  const twoDraftMode = Boolean(
+    agentTwoDraftEnabled &&
+      !skipDecision &&
+      !modeledBatchContractRequested &&
+      structureMatch &&
+      directSource &&
+      (directPostCount === null ||
+        directPostCount === 1 ||
+        directPostCount === 2) &&
+      (composerTaskContext?.kind === "post" ||
+        requestsFullPostDeliverable(effectiveUserInstruction)),
+  );
+  if (twoDraftMode) {
+    directPostCount = 2;
+  }
 
   // Stamp the "Source post" chip for a find-and-model draft. The chip is drawn
   // from `modelSourceReference` (tagArtifactWithModelSourceReference below);
@@ -2273,6 +2299,12 @@ export async function compileTurnPlan(
             kind: "multi",
             expectedCount: directPostCount!,
             ...(directSource ? { source: directSource } : {}),
+            ...(twoDraftMode
+              ? {
+                  mixedMode: "modeled_plus_grounded" as const,
+                  sourceLabel: structureMatch?.candidate.title,
+                }
+              : {}),
           }
         : useDirectSource
           ? { kind: "source", source: directSource! }

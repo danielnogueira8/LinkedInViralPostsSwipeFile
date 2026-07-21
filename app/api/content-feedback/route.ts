@@ -9,7 +9,7 @@ import {
 export const runtime = "nodejs";
 
 const FEEDBACK_COLS =
-  "id, workspace_id, chat_id, artifact_id, draft_id, rating, reasons, note, body_snapshot, created_at";
+  "id, workspace_id, chat_id, artifact_id, draft_id, rating, reasons, note, body_snapshot, competed_against, created_at";
 const FEEDBACK_LIST_DEFAULT_LIMIT = 20;
 const FEEDBACK_LIST_MAX_LIMIT = 50;
 

@@ -2389,4 +2389,46 @@ describe("writer plan narration (narratePlan)", () => {
     ]);
     expect(events.some((event) => event.type === "error")).toBe(true);
   });
+
+  test("two-draft mixed mode: slot 1 modeled, slot 2 grounded-original", async () => {
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(100, 70) },
+      {
+        text: DISTINCT_COMPLETE_POST,
+        finishReason: "stop",
+        usage: usage(120, 80),
+      },
+    ]);
+    const result = await collect(writer, {
+      userInstruction: "Write a post about career leverage.",
+      task: {
+        kind: "multi",
+        expectedCount: 2,
+        source: { id: "tpl-1", text: "A proven structure skeleton." },
+        mixedMode: "modeled_plus_grounded",
+        sourceLabel: "Story arc",
+      },
+      narratePlan: true,
+    });
+
+    const drafts = artifacts(result.events);
+    expect(drafts).toHaveLength(2);
+    expect(drafts[0]?.meta?.draft_variant).toEqual({
+      kind: "modeled",
+      label: "Modeled on Story arc",
+    });
+    expect(drafts[1]?.meta?.draft_variant).toEqual({
+      kind: "grounded",
+      label: "From your patterns",
+    });
+
+    const labels = result.events
+      .filter(
+        (event): event is Extract<AgentEvent, { type: "plan_update" }> =>
+          event.type === "plan_update",
+      )
+      .flatMap((event) => event.steps.map((step) => step.label));
+    expect(labels).toContain("Write modeled draft");
+    expect(labels).toContain("Write grounded-original draft");
+  });
 });

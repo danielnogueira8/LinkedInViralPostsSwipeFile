@@ -217,6 +217,10 @@ export type WriterTask =
       expectedCount: number;
       source?: Source;
       groundedSources?: GroundedSource[];
+      /** Two-draft presentation: slot 1 = modeled on source, slot 2 = grounded-original. */
+      mixedMode?: "modeled_plus_grounded";
+      /** Human label for the modeled source, used on the draft card. */
+      sourceLabel?: string;
     };
 
 export type WriterDependencies = {
@@ -3322,6 +3326,7 @@ async function* runLocalSlotBatch(
   let inputTokens = 0;
   let outputTokens = 0;
   const preamble = input.planPreambleSteps ?? [];
+  const isMixedMode = task.mixedMode === "modeled_plus_grounded";
 
   // Slots retried against the duplicate guard, and how the last attempt for
   // the CURRENT slot failed. A duplicate-guard exhaustion is a qualitatively
@@ -3343,11 +3348,17 @@ async function* runLocalSlotBatch(
         const steps: PlanStep[] = [...preamble];
         for (let j = 1; j <= index; j += 1) {
           steps.push(
-            writerSlotStep(
-              j,
-              task.expectedCount,
-              j < index ? "done" : "active",
-            ),
+            isMixedMode
+              ? writerMixedSlotStep(
+                  j,
+                  task.expectedCount,
+                  j < index ? "done" : "active",
+                )
+              : writerSlotStep(
+                  j,
+                  task.expectedCount,
+                  j < index ? "done" : "active",
+                ),
           );
         }
         yield { type: "plan_update", steps };
@@ -3403,14 +3414,22 @@ async function* runLocalSlotBatch(
           ? task.groundedSources[(index - 1) % task.groundedSources.length]
           : undefined;
 
+        // Two-draft presentation: slot 1 models the matched structure, slot 2 is
+        // a grounded-original with no single source (voice + learnings + pattern).
         let childTask: SingleTask;
-        if (assignedSource) {
+        if (isMixedMode && index === 1 && task.source) {
+          childTask = {
+            kind: "source",
+            source: task.source,
+            variation,
+          };
+        } else if (assignedSource) {
           childTask = {
             kind: "source",
             source: { id: assignedSource.id, text: assignedSource.text },
             variation,
           };
-        } else if (task.source) {
+        } else if (task.source && !isMixedMode) {
           childTask = {
             kind: "source",
             source: task.source,
@@ -3548,6 +3567,21 @@ async function* runLocalSlotBatch(
         slotArtifact = assignedSource
           ? tagSharedPoolArtifact(artifact, assignedSource)
           : artifact;
+        if (isMixedMode && slotArtifact) {
+          slotArtifact = {
+            ...slotArtifact,
+            meta: {
+              ...(slotArtifact.meta ?? {}),
+              draft_variant: {
+                kind: index === 1 ? "modeled" : "grounded",
+                label:
+                  index === 1
+                    ? `Modeled on ${task.sourceLabel ?? "a proven structure"}`
+                    : "From your patterns",
+              },
+            },
+          };
+        }
       }
 
       // A null slotArtifact here means the slot was interrupted (cancelled);
@@ -3615,7 +3649,9 @@ async function* runLocalSlotBatch(
         steps: [
           ...preamble,
           ...Array.from({ length: task.expectedCount }, (_, i) =>
-            writerSlotStep(i + 1, task.expectedCount, "done"),
+            isMixedMode
+              ? writerMixedSlotStep(i + 1, task.expectedCount, "done")
+              : writerSlotStep(i + 1, task.expectedCount, "done"),
           ),
         ],
       };
@@ -3779,6 +3815,20 @@ function writerSlotStep(
     label: count > 1 ? `Write draft ${index} of ${count}` : "Write your post",
     status,
   };
+}
+
+function writerMixedSlotStep(
+  index: number,
+  count: number,
+  status: PlanStep["status"],
+): PlanStep {
+  const label =
+    index === 1
+      ? "Write modeled draft"
+      : index === 2
+        ? "Write grounded-original draft"
+        : `Write draft ${index} of ${count}`;
+  return { id: `write_draft_${index}`, label, status };
 }
 
 function writerSingleStepLabel(
