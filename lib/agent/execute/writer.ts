@@ -49,6 +49,7 @@ import {
 import type { NoModelFormat } from "@/lib/agent/no-model-formats";
 import {
   GLOBAL_WRITING_SKILL,
+  OUTPUT_LANGUAGE_RULE,
   POST_STRUCTURE_SKILL,
   renderCombinedSkills,
   selectSkills,
@@ -631,6 +632,7 @@ function compileMessages(
               )
             : "Write one finished grounded post.",
           INJECTION_GUARD,
+          OUTPUT_LANGUAGE_RULE,
           writingSkill,
           structureSkill,
           skills,
@@ -687,6 +689,7 @@ function compileMessages(
             ? "Use the supplied source for its verified ideas and writing mechanics. Do not attribute the source author's life or results to the user."
             : "Use only the request and supplied voice as grounding.",
           INJECTION_GUARD,
+          OUTPUT_LANGUAGE_RULE,
           writingSkill,
           skills,
           preferences,
@@ -743,6 +746,7 @@ function compileMessages(
             : "The replacement post must be complete. Never stop inside a sentence or list item. Never invent facts, results, clients, quotes, dates, or metrics.",
           focusConstraint,
           INJECTION_GUARD,
+          OUTPUT_LANGUAGE_RULE,
           writingSkill,
           skills,
           preferences,
@@ -790,6 +794,7 @@ function compileMessages(
               )
             : "Write one finished modeled post.",
           INJECTION_GUARD,
+          OUTPUT_LANGUAGE_RULE,
           writingSkill,
           skills,
           creatorStyle,
@@ -838,6 +843,7 @@ function compileMessages(
             )
           : "",
         INJECTION_GUARD,
+        OUTPUT_LANGUAGE_RULE,
         writingSkill,
         structureSkill,
         skills,

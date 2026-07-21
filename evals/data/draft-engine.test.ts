@@ -2390,3 +2390,102 @@ describe("writer plan narration (narratePlan)", () => {
     expect(events.some((event) => event.type === "error")).toBe(true);
   });
 });
+
+// The writer must always hand back an English draft, even when the source post
+// it's modeling (or the request itself) is in another language. The rule lives
+// in OUTPUT_LANGUAGE_RULE (lib/agent/skills) and is compiled into EVERY branch
+// of compileMessages, so these tests walk each draft-generation path rather
+// than trusting one call site.
+describe("output language", () => {
+  function systemOf(writer: ScriptedWriter): string {
+    return String(
+      writer.requests[0].messages.find((message) => message.role === "system")
+        ?.content ?? "",
+    );
+  }
+
+  test("every draft path compiles the always-English output rule", async () => {
+    const cases: Array<{ label: string; overrides: Partial<WriterInput> }> = [
+      { label: "original", overrides: {} },
+      { label: "lean original", overrides: { lean: true } },
+      {
+        label: "refine",
+        overrides: {
+          userInstruction: "Refine this post: Tighten the hook.",
+          task: {
+            kind: "refine",
+            instruction: "Tighten the hook.",
+            focus: "hook",
+            target: REFINE_TARGET,
+          },
+        },
+      },
+      {
+        label: "grounded",
+        overrides: {
+          task: {
+            kind: "grounded",
+            sources: [
+              {
+                id: "https://openai.com/news/example",
+                kind: "news",
+                title: "OpenAI launches a verified product",
+                url: "https://openai.com/news/example",
+                publishedAt: "2026-07-14",
+                text: "OpenAI announced a product for faster workflow automation.",
+              },
+            ],
+          },
+        },
+      },
+      {
+        label: "source modeling",
+        overrides: {
+          userInstruction: POST_INTENTS.model.prompt,
+          task: {
+            kind: "source",
+            source: {
+              id: "source-1",
+              text: "Os fundadores erram nisto: acham que o problema e o trafego.",
+            },
+          },
+        },
+      },
+    ];
+
+    for (const { label, overrides } of cases) {
+      const writer = new ScriptedWriter([
+        { text: COMPLETE_POST, finishReason: "stop", usage: usage(100, 70) },
+      ]);
+      await collect(writer, overrides);
+      const system = systemOf(writer);
+      expect(system, label).toContain("Output language: always English");
+      expect(system, label).toContain(
+        "must be written in English",
+      );
+    }
+  });
+
+  test("the English rule fixes the output language without blocking non-English input", async () => {
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(100, 70) },
+    ]);
+    await collect(writer, {
+      userInstruction: POST_INTENTS.model.prompt,
+      task: {
+        kind: "source",
+        source: {
+          id: "source-1",
+          text: "La mayoria de los fundadores confunden trafico con demanda.",
+        },
+      },
+    });
+
+    const system = systemOf(writer);
+    // Reads and models the non-English source in full...
+    expect(system).toContain("Keep reading non-English input normally");
+    expect(system).toContain("model its hook, structure, rhythm, and progression");
+    // ...but never mirrors its language.
+    expect(system).toContain("Never mirror the source post's language");
+  });
+});
