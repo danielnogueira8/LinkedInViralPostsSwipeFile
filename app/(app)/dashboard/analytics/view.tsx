@@ -7,6 +7,7 @@ import { RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   sortPostsByRecency,
+  impressionAxisTicks,
   type PostMetricsRow,
   type TrendPoint,
 } from "@/lib/analytics-view-model";
@@ -17,6 +18,8 @@ import {
 // sortPostsByRecency without tripping the client-function-from-server error.
 export {
   sortPostsByRecency,
+  niceCeil,
+  impressionAxisTicks,
   type PostMetricsRow,
   type TrendPoint,
 } from "@/lib/analytics-view-model";
@@ -96,10 +99,13 @@ export function AnalyticsView({
     };
   }, [posts]);
 
-  const maxTrend = useMemo(
-    () => Math.max(1, ...trend.map((t) => t.impressions)),
+  // Y-axis scale for the trend chart: a nice rounded top + evenly-spaced ticks.
+  const axis = useMemo(
+    () => impressionAxisTicks(Math.max(1, ...trend.map((t) => t.impressions))),
     [trend],
   );
+  // Which bar's tooltip is showing (by index), set on hover/focus. null = none.
+  const [hoveredBar, setHoveredBar] = useState<number | null>(null);
   const emptyState = getAnalyticsEmptyState({
     linkedInConnected,
     postCount: posts.length,
@@ -176,27 +182,90 @@ export function AnalyticsView({
         ))}
       </div>
 
-      {/* Impressions trend — simple CSS bars over the daily snapshot totals. */}
+      {/* Impressions trend — CSS bars over the daily snapshot totals, with a
+          Y-axis, gridlines, and a per-bar hover/focus tooltip. */}
       {trend.length >= 2 && (
         <div className="rounded-xl border border-border bg-card p-4">
-          <div className="mb-3 text-sm font-medium text-foreground">
+          <div className="mb-4 text-sm font-medium text-foreground">
             Impressions over time
           </div>
           <div
-            className="flex h-28 items-end gap-1"
+            className="flex gap-3"
             role="img"
-            aria-label={`Bar chart of daily impressions from ${trend[0].date} to ${trend[trend.length - 1].date}, peaking at ${maxTrend.toLocaleString("en-US")} impressions.`}
+            aria-label={`Bar chart of daily impressions from ${trend[0].date} to ${trend[trend.length - 1].date}, peaking at ${axis.top.toLocaleString("en-US")} impressions.`}
           >
-            {trend.map((t) => (
-              <div
-                key={t.date}
-                aria-hidden="true"
-                className="flex-1 rounded-t bg-primary/80 transition-[height]"
-                style={{ height: `${Math.max(3, (t.impressions / maxTrend) * 100)}%` }}
-              />
-            ))}
+            {/* Y-axis: nice rounded tick labels, top-to-bottom. */}
+            <div className="flex h-36 w-10 shrink-0 flex-col justify-between py-0.5 text-right text-[10px] leading-none text-muted-foreground tabular-nums">
+              {axis.ticks.map((tick) => (
+                <span key={tick}>{fmt(tick)}</span>
+              ))}
+            </div>
+
+            {/* Plot: gridlines behind, bars in front. */}
+            <div className="relative min-w-0 flex-1">
+              {/* Recessive horizontal gridlines, one per tick. */}
+              <div className="pointer-events-none absolute inset-0 flex flex-col justify-between">
+                {axis.ticks.map((tick, i) => (
+                  <div
+                    key={tick}
+                    className={cn(
+                      "h-px w-full",
+                      i === axis.ticks.length - 1 ? "bg-border" : "bg-border/50",
+                    )}
+                  />
+                ))}
+              </div>
+
+              <div className="relative flex h-36 items-end gap-[2px]">
+                {trend.map((t, i) => {
+                  const pct = (t.impressions / axis.top) * 100;
+                  const active = hoveredBar === i;
+                  return (
+                    <div
+                      key={t.date}
+                      className="group relative flex h-full flex-1 items-end justify-center"
+                      onMouseEnter={() => setHoveredBar(i)}
+                      onMouseLeave={() =>
+                        setHoveredBar((cur) => (cur === i ? null : cur))
+                      }
+                    >
+                      {/* Tooltip: value leads, date follows. Shown on hover/focus. */}
+                      {active && (
+                        <div
+                          role="tooltip"
+                          className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-1.5 -translate-x-1/2 whitespace-nowrap rounded-lg border border-border bg-popover px-2.5 py-1.5 text-center shadow-md"
+                        >
+                          <div className="text-xs font-semibold text-popover-foreground tabular-nums">
+                            {t.impressions.toLocaleString("en-US")}
+                          </div>
+                          <div className="text-[10px] text-muted-foreground tabular-nums">
+                            {t.date}
+                          </div>
+                        </div>
+                      )}
+                      <button
+                        type="button"
+                        aria-label={`${t.date}: ${t.impressions.toLocaleString("en-US")} impressions`}
+                        onFocus={() => setHoveredBar(i)}
+                        onBlur={() =>
+                          setHoveredBar((cur) => (cur === i ? null : cur))
+                        }
+                        className={cn(
+                          "w-full max-w-[22px] rounded-t-[4px] transition-[height,background-color] outline-none",
+                          "focus-visible:ring-2 focus-visible:ring-ring/50",
+                          active ? "bg-primary" : "bg-primary/75 hover:bg-primary",
+                        )}
+                        style={{ height: `${Math.max(2, pct)}%` }}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           </div>
-          <div className="mt-2 flex justify-between text-xs text-muted-foreground tabular-nums">
+
+          {/* X-axis: first and last dates, aligned under the plot (past the axis). */}
+          <div className="mt-2 flex justify-between pl-[52px] text-xs text-muted-foreground tabular-nums">
             <span>{trend[0].date}</span>
             <span>{trend[trend.length - 1].date}</span>
           </div>
