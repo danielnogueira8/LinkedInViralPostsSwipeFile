@@ -14,7 +14,6 @@ const starters = [
   { id: "namejack", label: "Namejack a person" },
   { id: "brandjack", label: "Brandjack a company" },
   { id: "newsjack", label: "Newsjack a recent event" },
-  { id: "series", label: "Turn one idea into a series" },
 ];
 
 describe("Cowork starter disclosure policy", () => {
