@@ -22,7 +22,7 @@ import { z } from "zod";
 //                 aside never silently corrupts future drafts.
 // ---------------------------------------------------------------------------
 
-export type PreferenceSource = "user" | "learned";
+export type PreferenceSource = "user" | "learned" | "edit_delta";
 
 export type ContentPreference = {
   id: string;

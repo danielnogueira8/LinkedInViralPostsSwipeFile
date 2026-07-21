@@ -11,6 +11,7 @@ import {
   rewriteArtifactInPlace,
   type StoredArtifact,
 } from "@/lib/artifact-rewrite";
+import { recordDraftEditEvent } from "@/lib/draft-edit-events";
 
 export const runtime = "nodejs";
 
@@ -167,6 +168,19 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       .not("artifacts", "is", null);
     if (rowsErr) throw rowsErr;
 
+    // Phase C1: capture the before body so a manual body edit can be distilled
+    // into voice rules later.
+    let beforeBody: string | null = null;
+    for (const m of rows ?? []) {
+      const arts = m.artifacts as StoredArtifact[];
+      if (!Array.isArray(arts)) continue;
+      const target = arts.find((a) => a?.id === input.targetId);
+      if (target && typeof target.body === "string") {
+        beforeBody = target.body;
+        break;
+      }
+    }
+
     let updated = false;
     let conflict = false;
     for (const m of rows ?? []) {
@@ -195,6 +209,16 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         continue;
       }
       updated = true;
+    }
+
+    if (updated && beforeBody) {
+      await recordDraftEditEvent({
+        sb: sb.raw,
+        workspaceId: sb.workspaceId,
+        artifactId: input.targetId,
+        beforeBody,
+        afterBody: input.body,
+      });
     }
 
     if (conflict && !updated) {

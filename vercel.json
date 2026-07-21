@@ -5,6 +5,7 @@
     { "path": "/api/cron/jobs", "schedule": "* * * * *" },
     { "path": "/api/cron/publish-scheduled", "schedule": "*/5 * * * *" },
     { "path": "/api/cron/sweep-media", "schedule": "0 3 * * *" },
-    { "path": "/api/cron/pattern-briefs", "schedule": "0 4 * * 1" }
+    { "path": "/api/cron/pattern-briefs", "schedule": "0 4 * * 1" },
+    { "path": "/api/cron/edit-delta-distill", "schedule": "0 5 * * *" }
   ]
 }

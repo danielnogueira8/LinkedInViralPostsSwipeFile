@@ -11,6 +11,7 @@ import {
   type DraftRecord,
 } from "@/lib/draft-lifecycle";
 import { createSupabaseDraftLifecycleRepository } from "@/lib/draft-lifecycle-supabase";
+import { recordDraftEditEvent } from "@/lib/draft-edit-events";
 
 export const runtime = "nodejs";
 
@@ -93,9 +94,13 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     const { id } = await params;
     const sb = await scopedSupabase();
     const input = patchSchema.parse(await req.json());
-    const outcome = await new DraftLifecycle(
+    const lifecycle = new DraftLifecycle(
       createSupabaseDraftLifecycleRepository(sb.raw, sb.workspaceId),
-    ).mutate(id, {
+    );
+    // Phase C1: capture the before body so a manual body edit can be distilled
+    // into voice rules later.
+    const beforeDraft = input.body !== undefined ? await lifecycle.find(id) : null;
+    const outcome = await lifecycle.mutate(id, {
       body: input.body,
       title: input.title,
       status: input.status,
@@ -105,6 +110,15 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       contentFormat: input.content_format,
     });
     if (!outcome.ok) return outcomeResponse(outcome);
+    if (beforeDraft && input.body !== undefined) {
+      await recordDraftEditEvent({
+        sb: sb.raw,
+        workspaceId: sb.workspaceId,
+        artifactId: id,
+        beforeBody: beforeDraft.body,
+        afterBody: outcome.value.body,
+      });
+    }
     revalidatePath("/dashboard/posts");
     return outcomeResponse(outcome);
   } catch (e) {
