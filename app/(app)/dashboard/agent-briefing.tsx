@@ -473,7 +473,7 @@ export function AgentBriefing({
       {opportunities.length > 0 && (
         <div>
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Working now
+            Model recently viral posts
           </p>
           <ul className="mt-2 flex flex-col gap-2">
             {opportunities.map((opportunity) => (
