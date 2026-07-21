@@ -39,16 +39,29 @@ export async function GET(req: Request) {
       workspaceIds = [workspaceParam];
     } else {
       // Always-on: the loop runs for every workspace that tracks at least one
-      // creator (the scanner no-ops cleanly when a workspace has none). Workspaces
-      // are capped per run so a large fleet can't blow the cron budget.
-      const { data: tracked, error: trackedError } = await sb
-        .from("workspace_accounts")
-        .select("workspace_id")
-        .limit(500);
-      if (trackedError) throw trackedError;
-      workspaceIds = [
-        ...new Set((tracked ?? []).map((row) => row.workspace_id as string)),
-      ].slice(0, 20);
+      // creator (the scanner no-ops cleanly when a workspace has none).
+      // Paginate the full join table: a flat LIMIT here truncates on row order
+      // (insertion order), which silently skipped live workspaces whose
+      // workspace_accounts rows sort late (the org→user rekey ghost bug —
+      // drafts landed in a workspace the user can't see). Deterministic order
+      // + full pagination guarantees every workspace is discovered.
+      const discovered = new Set<string>();
+      const PAGE = 1000;
+      for (let from = 0; from < 20 * PAGE; from += PAGE) {
+        const { data: tracked, error: trackedError } = await sb
+          .from("workspace_accounts")
+          .select("workspace_id")
+          .order("workspace_id", { ascending: true })
+          .range(from, from + PAGE - 1);
+        if (trackedError) throw trackedError;
+        for (const row of tracked ?? []) {
+          discovered.add(row.workspace_id as string);
+        }
+        if ((tracked ?? []).length < PAGE) break;
+      }
+      // Workspaces are capped per run so a large fleet can't blow the cron
+      // budget; deterministic order keeps coverage stable run-over-run.
+      workspaceIds = [...discovered].sort().slice(0, 50);
     }
 
     const results: Array<{
