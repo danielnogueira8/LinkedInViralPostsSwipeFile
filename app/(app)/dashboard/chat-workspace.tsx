@@ -7090,6 +7090,11 @@ function CoworkDraftFeedback({
   const [rating, setRating] = useState<ContentFeedbackRating | null>(null);
   const [selected, setSelected] = useState<ContentFeedbackReason[]>([]);
   const [phrase, setPhrase] = useState("");
+  // Free-form note — the real teaching channel. Chips are quick picks; the
+  // user's own take (which can differ from anything the AI would infer) is
+  // saved with the feedback and injected into future writer prompts via the
+  // existing feedback-memory block.
+  const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState<ContentFeedbackRating | null>(null);
 
@@ -7107,6 +7112,7 @@ function CoworkDraftFeedback({
     if (changed) {
       setSelected([]);
       setPhrase("");
+      setNote("");
       setSaved(null);
     }
   };
@@ -7130,8 +7136,9 @@ function CoworkDraftFeedback({
       toast.error("There is no draft text to save feedback for.");
       return;
     }
-    if (selected.length === 0) {
-      toast.error("Pick at least one feedback chip.");
+    // A chip OR a free-form note is enough — free text alone is valid feedback.
+    if (selected.length === 0 && !note.trim()) {
+      toast.error("Pick a chip or write a quick note.");
       return;
     }
     if (phraseSelected && !phrase.trim()) {
@@ -7160,6 +7167,7 @@ function CoworkDraftFeedback({
           reasons: selected,
           bodySnapshot: snapshot,
           artifactId: artifact.id,
+          ...(note.trim() ? { note: note.trim() } : {}),
           ...(chatId ? { chatId } : {}),
           ...(draftId ? { draftId } : {}),
         }),
@@ -7171,6 +7179,7 @@ function CoworkDraftFeedback({
       setRating(null);
       setSelected([]);
       setPhrase("");
+      setNote("");
       toast.success(phraseSelected ? "Saved to memory" : "Saved feedback");
     } catch (e) {
       toast.error((e as Error).message);
@@ -7269,6 +7278,22 @@ function CoworkDraftFeedback({
             />
           )}
 
+          {/* Free-form note — works on its own (no chip required) so the user
+              can teach takes/opinions the AI would never infer. */}
+          <textarea
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            rows={2}
+            maxLength={500}
+            placeholder={
+              rating === "up"
+                ? "What landed? Your take teaches Cowork what to repeat (optional)…"
+                : "What felt off? Your take teaches Cowork what to avoid (optional)…"
+            }
+            className="w-full resize-none rounded-xl border border-border bg-white px-3 py-2 text-xs leading-4 text-foreground outline-none placeholder:text-muted-foreground/55 focus:ring-2 focus:ring-primary/15"
+            disabled={saving}
+          />
+
           <div className="flex items-center justify-between gap-2">
             <span className="text-[11px] text-muted-foreground">
               {selected.length}/{FEEDBACK_REASON_LIMIT} selected
@@ -7278,7 +7303,7 @@ function CoworkDraftFeedback({
               size="sm"
               className="h-8 rounded-full"
               onClick={save}
-              disabled={saving || selected.length === 0}
+              disabled={saving || (selected.length === 0 && !note.trim())}
             >
               {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
               Save feedback
