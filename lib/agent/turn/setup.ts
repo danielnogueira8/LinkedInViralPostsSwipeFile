@@ -234,6 +234,7 @@ export type TurnSetupResult = {
   preferences: ContentPreference[];
   priorPostDrafts: RecentDraft[];
   preloadedVoiceResult: ToolResult | null;
+  structureMatch: import("@/lib/structure-match").StructureMatchResult | null;
   estimatedContractKind: () => TurnContract["kind"];
   turnError: (
     message: string,
@@ -1020,6 +1021,7 @@ export async function setupChatTurn(
   let preferences: ContentPreference[] = [];
   let priorPostDrafts: RecentDraft[] = [];
   let preloadedVoiceResult: ToolResult | null = null;
+  let structureMatch: import("@/lib/structure-match").StructureMatchResult | null = null;
 
   try {
     const turnContext = await buildTurnContext({
@@ -1090,6 +1092,7 @@ export async function setupChatTurn(
     resolvedCustomSkills = turnContext.resolvedCustomSkills;
     customSkillBodies = turnContext.customSkillBodies;
     customSkillNames = turnContext.customSkillNames;
+    structureMatch = turnContext.structureMatch;
 
     const userColumnPatch: Record<string, unknown> = {};
     if (modelSourceId && currentModelEnvelope) {
@@ -1371,6 +1374,7 @@ export async function setupChatTurn(
     preferences,
     priorPostDrafts,
     preloadedVoiceResult,
+    structureMatch,
     estimatedContractKind,
     turnError,
     disarmSetupGuards,

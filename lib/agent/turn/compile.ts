@@ -4,6 +4,7 @@ import {
   explicitlyRequestsSourceDiscovery,
   requestsDurableOrAction,
   requestsDirectSourceModeling,
+  requestsFullPostDeliverable,
 } from "@/lib/agent/source-policy";
 import {
   compileDirectPartialTextSpec,
@@ -1849,6 +1850,7 @@ export async function compileTurnPlan(
     preloadedVoiceResult,
     resolvedGenerationConfig,
     turnError,
+    structureMatch,
   } = setup;
 
   let modelSourceReference = initialModelSourceReference;
@@ -1940,6 +1942,20 @@ export async function compileTurnPlan(
     requestedCount: directPostCount ?? undefined,
     composerTaskContext: composerTaskContext ?? undefined,
   });
+  // Server-selected structure match: the user asked for an original post, but
+  // the deterministic matcher found a strong template/swipe/built-in source.
+  // Treat it as a fixed-source direct write so the source's structure is
+  // actually modeled rather than silently ignored.
+  const useDirectStructureSource = Boolean(
+    !modeledBatchContractRequested &&
+      !skipDecision &&
+      structureMatch &&
+      directSource &&
+      (composerTaskContext?.kind === "post" ||
+        requestsFullPostDeliverable(effectiveUserInstruction) ||
+        directPostCount === 1),
+  );
+
   const useDirectSource =
     isDirectFixedSourcePostEligible({
       ...directWritingContext,
@@ -1956,7 +1972,8 @@ export async function compileTurnPlan(
         userInstruction: effectiveUserInstruction,
         sourceResolved: Boolean(directSource),
         isRefine: skipDecision,
-      }));
+      })) ||
+    useDirectStructureSource;
   const useDirectOriginal = isDirectOriginalPostEligible({
     userInstruction: effectiveUserInstruction,
     requestedCount: directPostCount ?? undefined,

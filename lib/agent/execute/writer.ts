@@ -273,6 +273,8 @@ export type WriterInput = {
    * clobber each other.
    */
   narratePlan?: boolean;
+  /** Optional preamble steps injected before the writer's own narration. */
+  planPreambleSteps?: PlanStep[];
 };
 
 const productionDependencies: WriterDependencies = {
@@ -3319,6 +3321,7 @@ async function* runLocalSlotBatch(
   const acceptedKeys = new Set<string>();
   let inputTokens = 0;
   let outputTokens = 0;
+  const preamble = input.planPreambleSteps ?? [];
 
   // Slots retried against the duplicate guard, and how the last attempt for
   // the CURRENT slot failed. A duplicate-guard exhaustion is a qualitatively
@@ -3337,7 +3340,7 @@ async function* runLocalSlotBatch(
       if (input.narratePlan) {
         // Reveal steps as they start (same contract as the read-only lane):
         // previous drafts done, the current one active.
-        const steps: PlanStep[] = [];
+        const steps: PlanStep[] = [...preamble];
         for (let j = 1; j <= index; j += 1) {
           steps.push(
             writerSlotStep(
@@ -3609,9 +3612,12 @@ async function* runLocalSlotBatch(
     if (input.narratePlan) {
       yield {
         type: "plan_update",
-        steps: Array.from({ length: task.expectedCount }, (_, i) =>
-          writerSlotStep(i + 1, task.expectedCount, "done"),
-        ),
+        steps: [
+          ...preamble,
+          ...Array.from({ length: task.expectedCount }, (_, i) =>
+            writerSlotStep(i + 1, task.expectedCount, "done"),
+          ),
+        ],
       };
     }
     for (const artifact of accepted) {
@@ -3809,7 +3815,10 @@ export async function* runWriterTurn(
     label: writerSingleStepLabel(task),
     status: "active",
   };
-  yield { type: "plan_update", steps: [step] };
+  yield {
+    type: "plan_update",
+    steps: [...(input.planPreambleSteps ?? []), step],
+  };
   let failed = false;
   for await (const event of runSingleDraftTurn(input)) {
     if (event.type === "error") failed = true;

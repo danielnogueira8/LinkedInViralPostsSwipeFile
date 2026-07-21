@@ -33,6 +33,7 @@ import {
   type NoModelFormat,
 } from "@/lib/agent/no-model-formats";
 import {
+  explicitlyRequestsSourceDiscovery,
   requestsDirectSourceModeling,
   requestsFullPostDeliverable,
 } from "@/lib/agent/source-policy";
@@ -97,6 +98,12 @@ import {
 } from "@/lib/image-analysis-cache";
 import { waitForChatSetup } from "@/lib/chat-stream-policy";
 import { loadVoiceProfile, type ToolResult } from "@/lib/agent/tools";
+import { compileIdeaBrief } from "@/lib/agent/idea-brief";
+import {
+  findBestStructureMatch,
+  type StructureMatchResult,
+} from "@/lib/structure-match";
+import { getWorkspaceBooleanSetting } from "@/lib/workspace-settings";
 
 /**
  * The ONE turn-context builder (PLAN-cowork-unification Phase 1, step 2
@@ -1001,6 +1008,8 @@ export type TurnContext = {
   resolvedCustomSkills: FrozenCustomSkill[];
   customSkillBodies: string[];
   customSkillNames: string[];
+  /** Best template / swipe / built-in structure chosen by the deterministic matcher, if any. */
+  structureMatch: StructureMatchResult | null;
 };
 
 export type BuildTurnContextInput = {
@@ -1131,6 +1140,7 @@ export async function buildTurnContext(
   // it never asks "which skill?" when one is already applied (see decide.ts).
   let customSkillNames: string[] = [];
   let postClarificationPostCount: number | null = null;
+  let structureMatch: StructureMatchResult | null = null;
 
   // Load prior transcript (excluding the message we just inserted is fine —
   // include it; it's the latest user turn the agent should answer).
@@ -1369,6 +1379,53 @@ export async function buildTurnContext(
   currentModelSource = effectiveModelSourceId
     ? (sourcesById.get(effectiveModelSourceId) ?? null)
     : null;
+
+  // Server-side structure matching (PLAN-agent-loop Phase A4): when the user did
+  // not attach an explicit source and the workspace has the agent_structure_match
+  // flag, find the best template / swipe post / built-in to model after and
+  // synthesize a ModelSourceRow so the existing source-plumbing (envelope,
+  // "Source post" chip, direct writer) works unchanged.
+  if (!currentModelSource && !skipDecision && !modelSourceId) {
+    const structureMatchEnabled = await getWorkspaceBooleanSetting(
+      sbRaw,
+      workspaceId,
+      "agent_structure_match",
+    ).catch(() => false);
+    const wantsOwnSource =
+      requestsDirectSourceModeling(effectiveUserInstruction) ||
+      explicitlyRequestsSourceDiscovery(effectiveUserInstruction);
+    if (structureMatchEnabled && !wantsOwnSource) {
+      const brief = await compileIdeaBrief(
+        effectiveUserInstruction,
+        workspaceId,
+        setupSignal,
+      ).catch(() => null);
+      structureMatch = await findBestStructureMatch({
+        sb: sbRaw,
+        workspaceId,
+        userText: effectiveUserInstruction,
+        brief,
+        recentDrafts: priorPostDrafts,
+        cooldownIds: new Set(),
+        includeBuiltins: true,
+        signal: setupSignal,
+      }).catch(() => null);
+      if (structureMatch) {
+        const candidate = structureMatch.candidate;
+        currentModelSource = {
+          id: candidate.id,
+          source:
+            candidate.kind === "template" || candidate.kind === "builtin"
+              ? "template"
+              : "swipe",
+          post_text: candidate.text,
+          source_post_id: candidate.id,
+          post_type: null,
+        };
+      }
+    }
+  }
+
   const [resolvedModelSourceReference, modelSourceImageDecision] =
     await Promise.all([
       loadModelSourceReference({
@@ -1411,7 +1468,7 @@ export async function buildTurnContext(
         currentModelSource.post_text,
       )
     : null;
-  if (modelSourceId && currentModelEnvelope) {
+  if (currentModelEnvelope) {
     blocks.push({ type: "text", text: currentModelEnvelope });
     // Soft structure reference — genuine "model this post" turns only
     // (currentModelSource.source === "post"); a no-op for refine/template
@@ -1438,7 +1495,10 @@ export async function buildTurnContext(
   // skipDecision (a refine) is excluded too — a refine always has a source,
   // but this is a cheap belt-and-suspenders. Fail-open: the loader never
   // throws, so a DB blip just yields format-rules-only or an empty block.
-  hasModelSource = !!(modelSourceId && currentModelEnvelope);
+  hasModelSource = Boolean(
+    (modelSourceId && currentModelEnvelope) ||
+      (structureMatch && currentModelEnvelope),
+  );
   const effectivePostTurn = Boolean(
     composerTaskContext?.kind === "post" ||
     skipDecision ||
@@ -1836,5 +1896,6 @@ export async function buildTurnContext(
     resolvedCustomSkills,
     customSkillBodies,
     customSkillNames,
+    structureMatch,
   };
 }

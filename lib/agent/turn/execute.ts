@@ -168,6 +168,16 @@ async function* runTurnPlan(
 
   const transformDraftCandidate = createTransformDraftCandidate(setup, plan);
 
+  const structureMatchPreamble: PlanStep[] | undefined = setup.structureMatch
+    ? [
+        {
+          id: "structure_match",
+          label: `Picked a ${setup.structureMatch.candidate.structureType} structure from ${setup.structureMatch.candidate.title}`,
+          status: "done",
+        },
+      ]
+    : undefined;
+
   const turnStartedAtMs = Date.parse(claimedTurnStartedAt!);
   const cancellationProbe = (probeSignal: AbortSignal) =>
     isCancelRequested(chatId, turnStartedAtMs, probeSignal);
@@ -193,6 +203,7 @@ async function* runTurnPlan(
     dependencies: {
       now: () => deps.now().getTime(),
     },
+    ...(structureMatchPreamble ? { planPreambleSteps: structureMatchPreamble } : {}),
     ...(shouldAttachLeadMagnet && leadMagnetBlock.trim()
       ? { leadMagnetBlock }
       : {}),
