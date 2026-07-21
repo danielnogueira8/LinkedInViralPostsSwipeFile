@@ -831,7 +831,7 @@ const VOICE_TOOL_WITH_LEAD_MAGNET: ToolDef = {
 // brace/bracket. Returns the parsed object, or null if nothing parseable is
 // found. We deliberately only accept objects ({...}) — a bare array or scalar
 // is not a valid voice profile.
-function parseJsonObject(text: string): Record<string, unknown> | null {
+export function parseJsonObject(text: string): Record<string, unknown> | null {
   // Strip a surrounding markdown code fence if present (```json ... ``` or ``` ... ```).
   let body = text.trim();
   const fence = body.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
