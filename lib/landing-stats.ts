@@ -87,6 +87,9 @@ export async function getTopCreatorsForLanding(limit = 8): Promise<LandingTopCre
     .from("posts")
     .select("account_id, accounts!inner(id, name, niche, profile_pic_url)")
     .eq("is_viral", true)
+    // Soft-archived creators are removed from the baseline catalog — they
+    // shouldn't keep ranking on the marketing marquee either.
+    .is("accounts.archived_at", null)
     .not("account_id", "is", null);
 
   if (error || !data) {
