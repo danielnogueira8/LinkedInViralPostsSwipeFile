@@ -38,9 +38,13 @@ describe("agent loop scanner ranking", () => {
     );
   });
 
-  test("headline is templated from the post payload", () => {
-    const headline = agentOpportunityHeadline(row());
+  test("headline is templated from the post payload with the winning metric", () => {
+    const headline = agentOpportunityHeadline(row({ reactions: 100, comments: 10 }), {
+      medianReactions: 10,
+      medianComments: 2,
+    });
     expect(headline).toContain("Creator One");
+    expect(headline).toContain("100 likes");
     expect(headline).toContain("A useful post about career leverage.");
     expect(headline).toContain("draft it?");
   });

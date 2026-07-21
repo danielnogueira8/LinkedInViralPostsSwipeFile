@@ -1,4 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import {
+  creatorBaselinesFromRows,
+  outlierMetricLabel,
+  type MetricBaseline,
+} from "@/lib/outlier-metric";
 
 // ---------------------------------------------------------------------------
 // Agent loop scanner (PLAN-agent-loop Phase D2).
@@ -9,12 +14,14 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 // ---------------------------------------------------------------------------
 
 const FRESH_WINDOW_HOURS = 72;
+const BASELINE_WINDOW_DAYS = 90;
 const EXPIRE_AFTER_DAYS = 5;
 const SOURCE_COOLDOWN_DAYS = 30;
 const MAX_PROPOSED_PER_RUN = 3;
 
 export type AgentOpportunityPostRow = {
   id: string;
+  account_id?: string;
   text: string | null;
   post_url: string | null;
   viral_score: number | null;
@@ -51,11 +58,17 @@ function snippet(text: string | null, max = 80): string {
   return clean.length > max ? `${clean.slice(0, max)}…` : clean;
 }
 
-export function agentOpportunityHeadline(row: AgentOpportunityPostRow): string {
+export function agentOpportunityHeadline(
+  row: AgentOpportunityPostRow,
+  baseline?: MetricBaseline | null,
+): string {
   const author = accountName(row);
-  const score = typeof row.viral_score === "number" ? row.viral_score : 0;
+  const label = outlierMetricLabel(
+    { reactions: row.reactions, comments: row.comments },
+    baseline,
+  );
   const excerpt = snippet(row.text);
-  return `${author} went ${score > 0 ? `${Math.round(score)}×` : "viral"} — "${excerpt}" — draft it?`;
+  return `${author} — ${label} — "${excerpt}" — draft it?`;
 }
 
 export type ScanAgentOpportunitiesResult = {
@@ -115,7 +128,7 @@ export async function scanAgentOpportunities(
   const { data: posts, error: postsError } = await sb
     .from("posts")
     .select(
-      "id, text, post_url, viral_score, reactions, comments, posted_at, accounts(name)",
+      "id, account_id, text, post_url, viral_score, reactions, comments, posted_at, accounts(name)",
     )
     .in("account_id", accountIds)
     .eq("is_viral", true)
@@ -124,6 +137,27 @@ export async function scanAgentOpportunities(
     .order("viral_score", { ascending: false })
     .limit(50);
   if (postsError) throw postsError;
+
+  // Creator norms for the headline label ("2.3k likes" / "140 comments" /
+  // "1.5× their norm" — whichever metric is the strongest outlier for THAT
+  // creator). 90-day median per account over the same posts table.
+  const baselineCutoff = new Date(
+    Date.now() - BASELINE_WINDOW_DAYS * 24 * 60 * 60 * 1000,
+  ).toISOString();
+  const { data: metricRows, error: metricsError } = await sb
+    .from("posts")
+    .select("account_id, reactions, comments")
+    .in("account_id", accountIds)
+    .gte("posted_at", baselineCutoff)
+    .limit(5000);
+  if (metricsError) throw metricsError;
+  const baselines = creatorBaselinesFromRows(
+    (metricRows ?? []) as Array<{
+      account_id: string;
+      reactions: number | null;
+      comments: number | null;
+    }>,
+  );
 
   const candidates = ((posts ?? []) as AgentOpportunityPostRow[])
     .filter((row) => !cooldownIds.has(row.id))
@@ -141,7 +175,10 @@ export async function scanAgentOpportunities(
       status: "proposed",
       score,
       payload: {
-        headline: agentOpportunityHeadline(row),
+        headline: agentOpportunityHeadline(
+          row,
+          row.account_id ? baselines.get(row.account_id) : null,
+        ),
         author: accountName(row),
         metrics: {
           viral_score: row.viral_score ?? 0,
