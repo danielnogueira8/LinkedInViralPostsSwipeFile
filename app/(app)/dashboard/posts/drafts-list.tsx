@@ -16,6 +16,9 @@ import {
   Link as LinkIcon,
   Gift,
   MoreHorizontal,
+  Check,
+  Trash2,
+  X,
 } from "lucide-react";
 import { AiIcon } from "@/components/ai-icon";
 import { isAgentSuggestedMeta } from "@/lib/agent-loop/constants";
@@ -359,6 +362,68 @@ export function DraftsList({
     }
   };
 
+  // Multi-select (⌘/Ctrl/Shift+click a card, or click its status dot) → the
+  // bulk bar at the bottom offers Delete for the whole selection.
+  const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const toggleSelect = (id: string) =>
+    setSelectedIds((cur) => {
+      const next = new Set(cur);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const clearSelection = () => setSelectedIds(new Set());
+
+  const deleteSelected = async () => {
+    const ids = [...selectedIds];
+    if (ids.length === 0 || bulkDeleting) return;
+    if (
+      !window.confirm(
+        `Delete ${ids.length} selected post${ids.length === 1 ? "" : "s"}? This can't be undone.`,
+      )
+    ) {
+      return;
+    }
+    setBulkDeleting(true);
+    try {
+      const results = await Promise.allSettled(
+        ids.map(async (id) => {
+          const res = await fetch(`/api/drafts/${id}`, { method: "DELETE" });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok || !data?.ok) {
+            throw new Error(data?.error || "Failed to delete");
+          }
+          return id;
+        }),
+      );
+      const deleted = results
+        .filter(
+          (r): r is PromiseFulfilledResult<string> => r.status === "fulfilled",
+        )
+        .map((r) => r.value);
+      const failed = results.length - deleted.length;
+      if (deleted.length > 0) {
+        setDrafts((cur) => cur.filter((d) => !deleted.includes(d.id)));
+        setSelectedIds((cur) => {
+          const next = new Set(cur);
+          for (const id of deleted) next.delete(id);
+          return next;
+        });
+        if (editingId && deleted.includes(editingId)) setEditorOpen(false);
+      }
+      if (failed > 0) {
+        toast.error(
+          `Deleted ${deleted.length} post${deleted.length === 1 ? "" : "s"}; ${failed} failed.`,
+        );
+      } else {
+        toast.success(`Deleted ${deleted.length} post${deleted.length === 1 ? "" : "s"}.`);
+      }
+    } finally {
+      setBulkDeleting(false);
+    }
+  };
+
   const applyEdit = (id: string, body: string) =>
     setDrafts((d) => d.map((x) => (x.id === id ? { ...x, body } : x)));
 
@@ -481,6 +546,8 @@ export function DraftsList({
       onOpen={() => openEdit(d)}
       onMove={(status) => void moveTo(d.id, status)}
       draggable={boardColumnForDraft(d) !== "scheduled"}
+      selected={selectedIds.has(d.id)}
+      onToggleSelect={() => toggleSelect(d.id)}
     />
   );
   return (
@@ -659,6 +726,35 @@ export function DraftsList({
         onMeta={applyMeta}
         onDelete={remove}
       />
+
+      {/* Bulk action bar — appears once at least one card is selected. */}
+      {selectedIds.size > 0 && (
+        <div className="fixed bottom-4 left-1/2 z-40 flex -translate-x-1/2 items-center gap-2 rounded-full border border-border bg-card px-3 py-2 shadow-lg">
+          <span className="pl-1 text-xs font-medium text-foreground">
+            {selectedIds.size} selected
+          </span>
+          <Button
+            size="sm"
+            variant="destructive"
+            className="gap-1.5"
+            onClick={() => void deleteSelected()}
+            disabled={bulkDeleting}
+          >
+            <Trash2 className="h-3.5 w-3.5" aria-hidden />
+            {bulkDeleting ? "Deleting…" : "Delete"}
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="gap-1"
+            onClick={clearSelection}
+            disabled={bulkDeleting}
+          >
+            <X className="h-3.5 w-3.5" aria-hidden />
+            Clear
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
@@ -987,11 +1083,15 @@ function DraftCard({
   onOpen,
   onMove,
   draggable: canDrag,
+  selected,
+  onToggleSelect,
 }: {
   draft: Draft;
   onOpen: () => void;
   onMove: (status: DraftStatus) => void;
   draggable: boolean;
+  selected: boolean;
+  onToggleSelect: () => void;
 }) {
   const cardRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
@@ -1055,7 +1155,15 @@ function DraftCard({
       ref={cardRef}
       role="button"
       tabIndex={0}
-      onClick={onOpen}
+      onClick={(e) => {
+        // ⌘/Ctrl/Shift+click toggles multi-select instead of opening the post.
+        if (e.metaKey || e.ctrlKey || e.shiftKey) {
+          e.preventDefault();
+          onToggleSelect();
+          return;
+        }
+        onOpen();
+      }}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
@@ -1082,6 +1190,7 @@ function DraftCard({
         draft.status === "posted" && !dragging && "opacity-70",
         canDrag ? "cursor-grab active:cursor-grabbing" : "cursor-pointer",
         dragging && "opacity-40",
+        selected && "border-primary/40 bg-primary/[0.04] ring-2 ring-primary/25",
       )}
       title={`Open post. ${STATUS_HELP[column]}`}
     >
@@ -1145,16 +1254,48 @@ function DraftCard({
         )}
       </div>
       <div className="flex items-start gap-2.5">
-        <span
-          className={cn("mt-1.5 h-2 w-2 shrink-0 rounded-full", STATUS_DOT[column])}
-          title={STATUS_HELP[column]}
-          aria-hidden
-        />
+        {/* The status dot doubles as the multi-select affordance: hover reveals
+            the checkbox ring, selected turns it into a check. */}
+        <button
+          type="button"
+          aria-pressed={selected}
+          aria-label={selected ? "Deselect post" : "Select post"}
+          title={selected ? "Deselect post" : "Select post (or ⌘/Ctrl+click the card)"}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleSelect();
+          }}
+          className={cn(
+            "mt-1 grid h-4 w-4 shrink-0 place-items-center rounded-full border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/35",
+            selected
+              ? "border-primary bg-primary text-primary-foreground"
+              : "border-transparent group-hover:border-border group-hover:bg-card",
+          )}
+        >
+          {selected ? (
+            <Check className="h-2.5 w-2.5" aria-hidden />
+          ) : (
+            <span
+              className={cn("h-2 w-2 rounded-full", STATUS_DOT[column])}
+              title={STATUS_HELP[column]}
+              aria-hidden
+            />
+          )}
+        </button>
         <div className="min-w-0 flex-1">
+          {/* Title takes the full row; kind/agent badges live in the pills row
+              below so they never squeeze the title into one-word lines. */}
           <div className="flex min-w-0 items-start gap-2 pr-7">
             <span className="min-w-0 flex-1 text-[13px] font-semibold leading-5 tracking-tight">
               {name}
             </span>
+          </div>
+          {preview && (
+            <p className="mt-1 line-clamp-2 text-[12px] leading-5 text-muted-foreground">
+              {preview}
+            </p>
+          )}
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
             {badge && (
               <span
                 className={cn("shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] font-medium", badge.cls)}
@@ -1172,13 +1313,6 @@ function DraftCard({
                 Agent
               </span>
             )}
-          </div>
-          {preview && (
-            <p className="mt-1 line-clamp-2 text-[12px] leading-5 text-muted-foreground">
-              {preview}
-            </p>
-          )}
-          <div className="mt-2 flex flex-wrap items-center gap-1.5">
             {draft.scheduleStatus === "scheduled" || draft.scheduleStatus === "publishing" ? (
               <StatusPill tone="info" title="Scheduled to auto-publish on LinkedIn.">
                 <CalendarClock className="h-3 w-3" aria-hidden />
