@@ -53,16 +53,27 @@ export async function GET() {
     // Which of these model a LEAD MAGNET post? `posts.post_type` is the
     // authoritative flag (stamped at scrape time, also what act.ts reads), and
     // agent_opportunities only carries source_post_id — so resolve it here for
-    // the whole pool (needed to compose the mix). One small IN query.
+    // the whole pool (needed to compose the mix). One small IN query. The same
+    // read also grabs the creator's avatar for the Working now rows.
     const sourcePostIds = opportunitySourcePostIds(opportunityPool);
     let leadMagnetIds = new Set<string>();
+    const avatarByPostId = new Map<string, string>();
     if (sourcePostIds.length > 0) {
       const { data: sourcePosts, error: sourcePostsError } = await sb.raw
         .from("posts")
-        .select("id, post_type")
+        .select("id, post_type, accounts(profile_pic_url)")
         .in("id", sourcePostIds);
       if (sourcePostsError) throw sourcePostsError;
       leadMagnetIds = leadMagnetPostIds(sourcePosts);
+      for (const post of sourcePosts ?? []) {
+        const acc = Array.isArray(post.accounts)
+          ? post.accounts[0]
+          : post.accounts;
+        const url = acc?.profile_pic_url;
+        if (typeof post.id === "string" && typeof url === "string" && url) {
+          avatarByPostId.set(post.id, url);
+        }
+      }
     }
 
     // payload.headline is persisted at scan time, so rows written before the
@@ -70,10 +81,17 @@ export async function GET() {
     // (see lib/agent-loop/headline.ts). Normalise on the way out.
     const normalisedPool = (opportunityPool ?? []).map((opportunity) => {
       const payload = (opportunity.payload ?? {}) as Record<string, unknown>;
+      const sourcePostId =
+        typeof opportunity.source_post_id === "string"
+          ? opportunity.source_post_id
+          : null;
       return {
         ...opportunity,
         payload: { ...payload, headline: readOpportunityHeadline(payload) },
         is_lead_magnet: opportunityIsLeadMagnet(opportunity, leadMagnetIds),
+        author_avatar: sourcePostId
+          ? (avatarByPostId.get(sourcePostId) ?? null)
+          : null,
       };
     });
 
