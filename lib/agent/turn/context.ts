@@ -103,7 +103,6 @@ import {
   findBestStructureMatch,
   type StructureMatchResult,
 } from "@/lib/structure-match";
-import { getWorkspaceBooleanSetting } from "@/lib/workspace-settings";
 
 /**
  * The ONE turn-context builder (PLAN-cowork-unification Phase 1, step 2
@@ -1381,20 +1380,15 @@ export async function buildTurnContext(
     : null;
 
   // Server-side structure matching (PLAN-agent-loop Phase A4): when the user did
-  // not attach an explicit source and the workspace has the agent_structure_match
-  // flag, find the best template / swipe post / built-in to model after and
-  // synthesize a ModelSourceRow so the existing source-plumbing (envelope,
-  // "Source post" chip, direct writer) works unchanged.
+  // not attach an explicit source, find the best template / swipe post / built-in
+  // to model after and synthesize a ModelSourceRow so the existing source-plumbing
+  // (envelope, "Source post" chip, direct writer) works unchanged. Runs for every
+  // eligible original-post turn.
   if (!currentModelSource && !skipDecision && !modelSourceId) {
-    const structureMatchEnabled = await getWorkspaceBooleanSetting(
-      sbRaw,
-      workspaceId,
-      "agent_structure_match",
-    ).catch(() => false);
     const wantsOwnSource =
       requestsDirectSourceModeling(effectiveUserInstruction) ||
       explicitlyRequestsSourceDiscovery(effectiveUserInstruction);
-    if (structureMatchEnabled && !wantsOwnSource) {
+    if (!wantsOwnSource) {
       const brief = await compileIdeaBrief(
         effectiveUserInstruction,
         workspaceId,
