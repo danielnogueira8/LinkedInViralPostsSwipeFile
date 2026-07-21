@@ -8,7 +8,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-const DEFAULT_DAILY_DRAFT_CAP = 3;
+const DEFAULT_DAILY_DRAFT_CAP = 2;
 
 // Daily agent loop (PLAN-agent-loop Phase D3). For every workspace that tracks
 // at least one creator, scan for fresh opportunities and draft the top 1–2 into
