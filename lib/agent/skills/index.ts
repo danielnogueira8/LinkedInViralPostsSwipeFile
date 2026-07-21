@@ -196,6 +196,23 @@ export const SKILLS: Skill[] = [
 // drafting, not a filter that flattens every founder to the same de-slopped
 // tone. The voice profile (get_voice) and the user's explicit instructions
 // always override anything below.
+// GLOBAL output-language rule — always on, in every writing path.
+//
+// Why this exists: the app lets users model a swipe-file source post, and some
+// of those sources are not in English. Without this rule the writer mirrors the
+// source's language and hands back a draft the user can't publish. This product
+// ships English drafts only, so the OUTPUT language is fixed even though the
+// INPUT language is not — the model still has to read and understand a
+// non-English source in full to model its structure.
+export const OUTPUT_LANGUAGE_RULE = `# Output language: always English (non-negotiable)
+
+Every draft, rewrite, hook, and caption you produce must be written in English. This rule governs the language you WRITE IN. It governs nothing else.
+
+- Keep reading non-English input normally. A source post, swipe-file example, voice sample, brief, instruction, or earlier message written in another language is still valid input: understand it fully and model its hook, structure, rhythm, and progression exactly as you would an English one.
+- Then write the output in English regardless. Never mirror the source post's language, and never switch languages because the request, the source, or the conversation happens to be in another language.
+- Short non-English fragments that carry meaning — brand names, product names, job titles, a quoted line that matters — stay as they are; the prose around them is still English. Do not translate proper nouns.
+- Never add a translator's note, a language disclaimer, or an "originally in [language]" caption. Deliver the English post and nothing else.`;
+
 export const GLOBAL_WRITING_SKILL = `# Write like a human, not like AI (always apply)
 
 Everything you draft — posts, hooks, rewrites, captions, any prose — must avoid statistically detectable AI writing patterns. Apply these silently; never mention them.
