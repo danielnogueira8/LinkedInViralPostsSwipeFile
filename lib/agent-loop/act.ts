@@ -87,7 +87,12 @@ async function saveChatArtifactsToBoard(
   sb: SupabaseClient,
   workspaceId: string,
   chatId: string,
+  turnStartedAt: string,
 ): Promise<string[]> {
+  // Only artifacts from THIS turn. The agent chat accumulates turns, so an
+  // unscoped "latest assistant with artifacts" read could re-save a previous
+  // turn's draft and mark this opportunity drafted even though this turn
+  // produced nothing.
   const { data: message, error } = await sb
     .from("chat_messages")
     .select("artifacts")
@@ -95,6 +100,7 @@ async function saveChatArtifactsToBoard(
     .eq("workspace_id", workspaceId)
     .eq("role", "assistant")
     .not("artifacts", "is", null)
+    .gte("created_at", turnStartedAt)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -149,6 +155,7 @@ export async function actOnOpportunity(
       throw new Error("Could not load the source post text.");
     }
     const chatId = await getOrCreateSystemChat(sb, workspaceId);
+    const turnStartedAt = new Date().toISOString();
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), ACT_TIMEOUT_MS);
     try {
@@ -191,7 +198,12 @@ export async function actOnOpportunity(
           }`,
         );
       }
-      const draftIds = await saveChatArtifactsToBoard(sb, workspaceId, chatId);
+      const draftIds = await saveChatArtifactsToBoard(
+        sb,
+        workspaceId,
+        chatId,
+        turnStartedAt,
+      );
       if (draftIds.length === 0) {
         throw new Error("Chat turn produced no draft artifact.");
       }

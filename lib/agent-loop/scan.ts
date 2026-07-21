@@ -108,6 +108,10 @@ export async function scanAgentOpportunities(
   const freshCutoff = new Date(
     Date.now() - FRESH_WINDOW_HOURS * 60 * 60 * 1000,
   ).toISOString();
+  // Regular posts only: lead-magnet posts fail closed in the turn pipeline
+  // (a modeled giveaway needs a resource attached, which the agent cannot
+  // fabricate safely), so proposing them just burns a turn on a guaranteed
+  // failure.
   const { data: posts, error: postsError } = await sb
     .from("posts")
     .select(
@@ -115,6 +119,7 @@ export async function scanAgentOpportunities(
     )
     .in("account_id", accountIds)
     .eq("is_viral", true)
+    .or("post_type.is.null,post_type.eq.regular")
     .gte("posted_at", freshCutoff)
     .order("viral_score", { ascending: false })
     .limit(50);
