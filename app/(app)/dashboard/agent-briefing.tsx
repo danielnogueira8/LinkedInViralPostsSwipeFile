@@ -192,6 +192,12 @@ export function AgentBriefing() {
       {actionError && (
         <p className="mt-3 text-xs text-destructive">{actionError}</p>
       )}
+
+      {drafts.length > 0 && (
+        <p className="mt-3 text-[11px] leading-4 text-muted-foreground">
+          Drafts land on your Posts board — refine any of them from there.
+        </p>
+      )}
     </section>
   );
 }

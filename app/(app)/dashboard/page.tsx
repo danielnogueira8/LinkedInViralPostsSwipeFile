@@ -12,6 +12,7 @@ import {
   outlierMetricLabel,
   type MetricBaseline,
 } from "@/lib/outlier-metric";
+import { AGENT_CHAT_TITLE } from "@/lib/agent-loop/constants";
 
 // The workspace home is now a Claude-Cowork-style chat where users run the
 // content workflows (search the swipe file, mimic a viral post, create original
@@ -59,6 +60,11 @@ export default async function ChatPage({
     .select("id, title, created_at, updated_at")
     .eq("workspace_id", sb.workspaceId)
     .is("archived_at", null)
+    // The agent's system chat is an execution detail (it exists so the turn
+    // pipeline has a transcript), not a user surface — the "While you were
+    // away" section + the board are where agent work shows up. Hide it here
+    // and in /api/chats so it never clutters the sidebar or search.
+    .neq("title", AGENT_CHAT_TITLE)
     .order("updated_at", { ascending: false })
     .limit(100);
 

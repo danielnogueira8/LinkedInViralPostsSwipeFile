@@ -2,11 +2,15 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
+import { AGENT_CHAT_TITLE } from "@/lib/agent-loop/constants";
 
 export const runtime = "nodejs";
 
 // -----------------------------------------------------------------------------
 // GET /api/chats — list this workspace's non-archived chats, most recent first.
+// The agent's system chat is excluded: it exists so the turn pipeline has a
+// transcript, but the agent is a buttons-only surface (briefing + board), not
+// a conversation.
 // -----------------------------------------------------------------------------
 export async function GET() {
   try {
@@ -16,6 +20,7 @@ export async function GET() {
       .select("id, title, created_at, updated_at")
       .eq("workspace_id", sb.workspaceId)
       .is("archived_at", null)
+      .neq("title", AGENT_CHAT_TITLE)
       .order("updated_at", { ascending: false })
       .limit(100);
     if (error) throw error;
