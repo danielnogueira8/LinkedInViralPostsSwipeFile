@@ -123,7 +123,6 @@ import {
   runOverlay,
   shouldApplyAskTurnReload,
 } from "@/lib/chat-session-view";
-import { AGENT_CHAT_TITLE } from "@/lib/agent-loop/constants";
 import { AgentBriefing } from "./agent-briefing";
 import {
   clearComposerStarter,
@@ -5260,11 +5259,7 @@ function ChatRow({
       )}
       onClick={onOpen}
     >
-      {chat.title === AGENT_CHAT_TITLE ? (
-        <AiIcon className={cn("h-3.5 w-3.5 shrink-0", active ? "text-primary" : "opacity-60")} />
-      ) : (
-        <MessageSquare className={cn("h-3.5 w-3.5 shrink-0", active ? "text-primary" : "opacity-60")} />
-      )}
+      <MessageSquare className={cn("h-3.5 w-3.5 shrink-0", active ? "text-primary" : "opacity-60")} />
       <span className={cn("truncate flex-1", active && "font-medium")}>{chat.title}</span>
       {working ? (
         <WorkingLabel />
