@@ -125,7 +125,12 @@ describe("createLinkedInPost", () => {
       json: async () => ({ post: { _id: "post-123" } }),
     });
     const out = await createLinkedInPost({ accountId: "acct-1", content: "hello world" });
-    expect(out).toEqual({ ok: true, postId: "post-123" });
+    expect(out).toEqual({
+      ok: true,
+      postId: "post-123",
+      platformPostUrl: null,
+      platformPostId: null,
+    });
     // Body shape: linkedin platform, the accountId, publishNow.
     const body = JSON.parse(initOf(fetchFn).body as string);
     expect(body.publishNow).toBe(true);
@@ -191,8 +196,18 @@ describe("createLinkedInPost", () => {
       content: "same logical publish",
       requestId: "publish-artifact-42",
     };
-    expect(await createLinkedInPost(publish)).toEqual({ ok: true, postId: "post-123" });
-    expect(await createLinkedInPost(publish)).toEqual({ ok: true, postId: "post-123" });
+    expect(await createLinkedInPost(publish)).toEqual({
+      ok: true,
+      postId: "post-123",
+      platformPostUrl: null,
+      platformPostId: null,
+    });
+    expect(await createLinkedInPost(publish)).toEqual({
+      ok: true,
+      postId: "post-123",
+      platformPostUrl: null,
+      platformPostId: null,
+    });
 
     expect(fetchFn).toHaveBeenCalledTimes(3);
     const idempotencyKeys = fetchFn.mock.calls.map((call) => {

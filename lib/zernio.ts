@@ -121,7 +121,18 @@ export function mapZernioError(
 // Publish
 // ---------------------------------------------------------------------------
 export type CreatePostResult =
-  | { ok: true; postId: string | null }
+  | {
+      ok: true;
+      postId: string | null;
+      // LinkedIn post identity, when Zernio returns it on the publish response.
+      // platformPostUrl is the feed permalink; platformPostId is the URN
+      // (urn:li:share:… — NOT the activity URN LeadShark needs; see the
+      // LeadShark binding plan §6). Both are optional: the publish response may
+      // not carry them immediately (they can fill in once LinkedIn confirms), so
+      // callers must tolerate null.
+      platformPostUrl?: string | null;
+      platformPostId?: string | null;
+    }
   | { ok: false; error: ZernioError };
 
 // Publish a text post to LinkedIn NOW via Zernio. `accountId` MUST come from the
@@ -185,13 +196,26 @@ export async function createLinkedInPost(opts: {
   }
 
   // A same-request replay returns the original row as `existingPost`.
-  const data = (await res.json().catch(() => ({}))) as {
-    post?: { _id?: string };
-    existingPost?: { _id?: string };
+  type PostShape = {
+    _id?: string;
+    platformPostId?: string;
+    platformPostUrl?: string;
+    platforms?: Array<{ platformPostId?: string; platformPostUrl?: string }>;
   };
+  const data = (await res.json().catch(() => ({}))) as {
+    post?: PostShape;
+    existingPost?: PostShape;
+  };
+  const post = data.post ?? data.existingPost;
+  // The LinkedIn identity appears at the top level and again inside platforms[0]
+  // (see the LeadShark plan §6.1). It may be absent on the immediate publish
+  // response — that's fine, callers tolerate null and can re-read/poll later.
+  const platform = post?.platforms?.[0];
   return {
     ok: true,
-    postId: data.post?._id ?? data.existingPost?._id ?? null,
+    postId: post?._id ?? null,
+    platformPostUrl: post?.platformPostUrl ?? platform?.platformPostUrl ?? null,
+    platformPostId: post?.platformPostId ?? platform?.platformPostId ?? null,
   };
 }
 

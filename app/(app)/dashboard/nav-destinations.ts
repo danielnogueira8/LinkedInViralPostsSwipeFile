@@ -11,6 +11,7 @@ import {
   Fingerprint,
   ChartNoAxesColumn,
   LayoutTemplate,
+  Plug,
 } from "lucide-react";
 import { ClaudeIcon } from "@/components/claude-icon";
 import { SwipeInIcon } from "@/components/swipein-icon";
@@ -62,6 +63,7 @@ export const NAV_SECTIONS: NavSection[] = [
     items: [
       { href: "/dashboard/analytics", label: "Analytics", icon: ChartNoAxesColumn, tooltip: "LinkedIn performance of posts published through SwipeIn." },
       { href: "/dashboard/claude", label: "Claude Workflows", icon: ClaudeIcon, tooltip: "Reusable AI workflows for content tasks." },
+      { href: "/dashboard/integrations", label: "Integrations", icon: Plug, tooltip: "Connect third-party tools like LeadShark." },
       { href: "/dashboard/settings", label: "Settings", icon: Settings, tooltip: "Workspace settings and publishing connections." },
     ],
   },

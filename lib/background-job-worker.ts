@@ -26,6 +26,8 @@ import {
 } from "@/lib/lead-magnet-image-jobs";
 import { runDailyPipeline } from "@/lib/pipeline";
 import { runVoiceGeneration } from "@/lib/voice-generation";
+import { runLeadSharkBindJob } from "@/lib/leadshark-bind-job";
+import { runLeadSharkStatsSyncJob } from "@/lib/leadshark-stats-job";
 import { supabaseAdmin } from "@/lib/supabase";
 import { revalidatePath } from "next/cache";
 import { UsagePersistenceError } from "@/lib/openrouter";
@@ -150,6 +152,10 @@ async function runBackgroundJobClaimed(job: BackgroundJob): Promise<{
         return await runVoiceGenerationBackgroundJob(job);
       case "scrape":
         return await runScrapeBackgroundJob(job);
+      case "leadshark_bind_automation":
+        return await runLeadSharkBindJob(job);
+      case "leadshark_sync_stats":
+        return await runLeadSharkStatsSyncJob(job);
       case "lead_magnet_resource":
         await markJobFailed(
           job,
