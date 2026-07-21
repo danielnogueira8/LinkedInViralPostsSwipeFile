@@ -84,13 +84,13 @@ const DEFAULT_POST_PREVIEW_AUTHOR: PostPreviewAuthor = {
 };
 
 const STATUS_OPTIONS: { value: DraftStatus; label: string }[] = [
-  { value: "idea", label: "Ideas & hooks" },
+  { value: "idea", label: "Ideas" },
   { value: "drafting", label: "Drafting" },
   { value: "ready", label: "Ready" },
   { value: "posted", label: "Posted" },
 ];
 const STATUS_HELP: Record<DraftStatus, string> = {
-  idea: "Ideas & hooks: a saved concept that still needs drafting.",
+  idea: "Ideas: a saved concept that still needs drafting.",
   drafting: "Drafting: work in progress, not ready to publish yet.",
   ready: "Ready: reviewed and ready to schedule or publish.",
   posted: "Posted: already published or archived as done.",

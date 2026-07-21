@@ -361,7 +361,7 @@ describe("defaultDraftStatus — kind → pipeline stage", () => {
   test("a full post starts in 'drafting' (the Drafting column), not 'idea'", () => {
     expect(defaultDraftStatus("post")).toBe("drafting");
   });
-  test("a hook starts in 'idea' (the Ideas & hooks column)", () => {
+  test("a hook starts in 'idea' (the Ideas column)", () => {
     expect(defaultDraftStatus("hook")).toBe("idea");
   });
   test("a lead magnet post starts in 'drafting'", () => {
