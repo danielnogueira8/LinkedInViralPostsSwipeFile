@@ -35,9 +35,12 @@ import { type CoworkTelemetrySink } from "@/lib/agent/cowork-telemetry";
 
 import { setupChatTurn } from "@/lib/agent/turn/setup";
 import {
+  chatTurnOperationSchema,
   TURN_OPERATION_TOOL_NAME,
   TURN_OPERATION_VERSION,
+  type ChatTurnOperation,
 } from "@/lib/agent/turn/operation-marker";
+export type { ChatTurnOperation } from "@/lib/agent/turn/operation-marker";
 
 import {
   CREATOR_STYLE_RETRY_CONTEXT_VERSION,
@@ -298,24 +301,6 @@ const chatContextPolicySchema = z
       }
     }
   });
-const chatTurnOperationSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("create_post") }).strict(),
-  z
-    .object({
-      kind: z.literal("edit_artifact"),
-      artifactId: z.string().min(1).max(200),
-      instruction: z.string().trim().min(1).max(4_000),
-      editMode: z.enum(["general", "hook_only"]).optional(),
-    })
-    .strict(),
-  z
-    .object({
-      kind: z.literal("review_artifact"),
-      artifactId: z.string().min(1).max(200).optional(),
-    })
-    .strict(),
-]);
-
 export type TurnOperationMarker =
   | { kind: "none" }
   | { kind: "invalid" }
@@ -427,7 +412,6 @@ export const chatTurnRequestSchema = z.object({
 });
 
 export type ChatTurnRequest = z.infer<typeof chatTurnRequestSchema>;
-export type ChatTurnOperation = NonNullable<ChatTurnRequest["operation"]>;
 
 /**
  * Return only a quantity explicitly attached to the requested post output.

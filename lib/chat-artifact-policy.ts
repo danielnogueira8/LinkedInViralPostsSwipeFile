@@ -54,7 +54,7 @@ export function buildArtifactIndex(
   const entries = writable.map((artifact): ArtifactIndexEntry => {
     const kind = artifact.kind as WritableArtifactKind;
     const ordinal = ++ordinals[kind];
-    const noun = kind === "hook" ? "Hook Artifact" : "Post Artifact";
+    const noun = kindNoun(kind);
     return {
       artifactId: artifact.id,
       artifact,
@@ -66,7 +66,36 @@ export function buildArtifactIndex(
   return { entries };
 }
 
-const ORDINAL_WORDS: Readonly<Record<string, number>> = {
+const CARDINAL_NUMBER_WORDS: Readonly<Record<string, number>> = {
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+  six: 6,
+  seven: 7,
+  eight: 8,
+  nine: 9,
+  ten: 10,
+  eleven: 11,
+  twelve: 12,
+  thirteen: 13,
+  fourteen: 14,
+  fifteen: 15,
+  sixteen: 16,
+  seventeen: 17,
+  eighteen: 18,
+  nineteen: 19,
+  twenty: 20,
+  thirty: 30,
+  forty: 40,
+  fifty: 50,
+  sixty: 60,
+  seventy: 70,
+  eighty: 80,
+  ninety: 90,
+};
+const ORDINAL_NUMBER_WORDS: Readonly<Record<string, number>> = {
   first: 1,
   second: 2,
   third: 3,
@@ -87,15 +116,38 @@ const ORDINAL_WORDS: Readonly<Record<string, number>> = {
   eighteenth: 18,
   nineteenth: 19,
   twentieth: 20,
+  thirtieth: 30,
+  fortieth: 40,
+  fiftieth: 50,
+  sixtieth: 60,
+  seventieth: 70,
+  eightieth: 80,
+  ninetieth: 90,
 };
 const ARTIFACT_REFERENCE_NOUN_PATTERN =
   String.raw`(?:post\s+artifact|hook\s+artifact|draft|post|hook)`;
+const CARDINAL_NUMBER_WORD_PATTERN = Object.keys(CARDINAL_NUMBER_WORDS).join(
+  "|",
+);
+const ORDINAL_NUMBER_WORD_PATTERN = Object.keys(ORDINAL_NUMBER_WORDS).join(
+  "|",
+);
 const ARTIFACT_ORDINAL_PATTERN =
-  String.raw`(?:\d+(?:st|nd|rd|th)?|${Object.keys(ORDINAL_WORDS).join("|")})`;
+  String.raw`(?:\d+(?:st|nd|rd|th)?|(?:(?:${CARDINAL_NUMBER_WORD_PATTERN}|hundred|and)[\s-]+)*(?:${ORDINAL_NUMBER_WORD_PATTERN}|hundredth))`;
 
 function artifactOrdinal(value: string): number {
   const numeric = /^\d+/.exec(value)?.[0];
-  return numeric ? Number(numeric) : (ORDINAL_WORDS[value.toLowerCase()] ?? 0);
+  if (numeric) return Number(numeric);
+  let total = 0;
+  for (const token of value.toLowerCase().split(/[\s-]+/)) {
+    if (!token || token === "and") continue;
+    if (token === "hundred" || token === "hundredth") {
+      total = Math.max(total, 1) * 100;
+      continue;
+    }
+    total += CARDINAL_NUMBER_WORDS[token] ?? ORDINAL_NUMBER_WORDS[token] ?? 0;
+  }
+  return total;
 }
 
 function artifactKindForNoun(noun: string): WritableArtifactKind {
@@ -114,7 +166,7 @@ function explicitArtifactOrdinal(message: string): {
     return { noun: nounFirst[1], ordinal: artifactOrdinal(nounFirst[2]) };
   }
   const ordinalFirst = new RegExp(
-    String.raw`\b(?:the\s+)?(${ARTIFACT_ORDINAL_PATTERN})\s+(${ARTIFACT_REFERENCE_NOUN_PATTERN})\b`,
+    String.raw`(?<![\w-])(?:the\s+)?(${ARTIFACT_ORDINAL_PATTERN})\s+(${ARTIFACT_REFERENCE_NOUN_PATTERN})\b`,
     "i",
   ).exec(message);
   return ordinalFirst
@@ -144,7 +196,7 @@ export function resolveArtifactReference(
       ? { kind: "selected", artifactId }
       : {
           kind: "unresolved_explicit",
-          reference: `${kind === "post" ? "Post Artifact" : "Hook Artifact"} ${ordinal}`,
+          reference: `${kindNoun(kind)} ${ordinal}`,
         };
   }
   const latest =
@@ -175,10 +227,7 @@ export function resolveArtifactReference(
   return artifactId ? { kind: "selected", artifactId } : { kind: "none" };
 }
 
-export function panelTitle(artifacts: Artifact[]): string {
-  void artifacts;
-  return "Artifacts";
-}
+export const ARTIFACT_PANEL_TITLE = "Artifacts";
 
 export function refineSuggestions(kind: Artifact["kind"]): string[] {
   if (kind === "hook") {

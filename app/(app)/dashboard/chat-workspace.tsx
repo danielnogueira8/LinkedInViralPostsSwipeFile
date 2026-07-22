@@ -196,9 +196,9 @@ import {
   guardRefineCollapse,
   assistantAfterPersistedUserMessage,
   hasAssistantAfterPersistedUserMessage,
+  ARTIFACT_PANEL_TITLE,
   buildArtifactIndex,
   kindNoun,
-  panelTitle,
   planProgressTitle,
   prettyBytes,
   refineSuggestions,
@@ -3666,10 +3666,10 @@ export function ChatWorkspace({
           <button
             onClick={() => setPanelOpen(true)}
             className="hidden lg:inline-flex absolute top-4 right-4 z-10 items-center gap-1.5 rounded-full border border-border bg-card/90 px-3 py-1.5 text-xs font-medium shadow-sm backdrop-blur hover:bg-card transition-colors"
-            aria-label={`Show ${panelTitle(artifacts).toLowerCase()}`}
+            aria-label={`Show ${ARTIFACT_PANEL_TITLE.toLowerCase()}`}
           >
             <PanelLeftOpen className="h-3.5 w-3.5" />
-            {panelTitle(artifacts)} ({artifacts.length})
+            {ARTIFACT_PANEL_TITLE} ({artifacts.length})
           </button>
         )}
         {/* Open the context rail. Shown when the chat has context to show and the
@@ -4926,7 +4926,7 @@ export function ChatWorkspace({
           </div>
           <div className="flex items-center justify-between px-4 h-14 border-b border-border bg-card/70">
             <span className="text-sm font-semibold tracking-[-0.01em]">
-              {panelTitle(artifacts)} ({artifacts.length})
+              {ARTIFACT_PANEL_TITLE} ({artifacts.length})
             </span>
             <button
               onClick={() => setPanelOpen(false)}
@@ -5021,10 +5021,10 @@ export function ChatWorkspace({
           type="button"
           onClick={() => setMobileDraftsOpen(true)}
           className="lg:hidden absolute bottom-32 left-1/2 -translate-x-1/2 z-20 inline-flex items-center gap-1.5 rounded-full border border-border bg-card/90 px-3.5 py-2 text-xs font-medium shadow-md backdrop-blur hover:bg-card transition-colors"
-          aria-label={`Show ${panelTitle(artifacts).toLowerCase()}`}
+          aria-label={`Show ${ARTIFACT_PANEL_TITLE.toLowerCase()}`}
         >
           <FileText className="h-3.5 w-3.5" />
-          {panelTitle(artifacts)} ({artifacts.length})
+          {ARTIFACT_PANEL_TITLE} ({artifacts.length})
         </button>
       )}
       {mobileDraftsOpen && hasDraftPanel && (
@@ -5037,7 +5037,7 @@ export function ChatWorkspace({
           <div className="relative max-h-[80%] flex flex-col rounded-t-[1.35rem] border-t border-border bg-card shadow-xl animate-in slide-in-from-bottom duration-200">
             <div className="flex items-center justify-between px-4 h-14 border-b border-border shrink-0">
               <span className="text-sm font-semibold">
-                {panelTitle(artifacts)} ({artifacts.length})
+                {ARTIFACT_PANEL_TITLE} ({artifacts.length})
               </span>
               <button
                 type="button"

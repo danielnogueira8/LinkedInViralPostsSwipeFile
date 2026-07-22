@@ -15,7 +15,7 @@ const COORDINATION_BOUNDARY_RE = /\b(?:then|and|but|plus)\b/gi;
 const MUTATION_NEGATION_RE =
   /\b(?:do\s+not|don(?:'|’)?t|dont|never|without)\b/i;
 const MUTATION_ADVICE_PREFIX_RE =
-  /\b(?:(?:how|what|why|whether)\s+(?:(?:can|could|should|would|do|might)\s+(?:i|we|you)|(?:i|we|you)\s+(?:can|could|should|would|might)|to)|ways?\s+to)\s*$/i;
+  /\b(?:(?:how|what|why|whether|which|where|if)\s+(?:[a-z0-9'’-]+\s+){0,5}?(?:(?:can|could|should|would|do|might)\s+(?:i|we|you)|(?:i|we|you)\s+(?:can|could|should|would|might)|to)|ways?\s+to)\s*$/i;
 const EXPLICIT_NEW_ARTIFACT_RE =
   /\b(?:(?:another|new|fresh|different|other)\s+(?:draft|post|version|hook|one|variation|angle|take)|(?:write|create|draft|generate|produce|give(?:\s+me)?|show(?:\s+me)?)\s+(?:an?\s+)?(?:alternative|variation)(?:\s+(?:draft|post|version|hook|one))?|(?:an?\s+)?(?:alternative|variation)\s+(?:draft|post|version|hook|one)|make\s+it\s+(?:an?\s+)?(?:[a-z-]+\s+)?(?:alternative|variation)|version\s+(?!(?:history|control)\b)(?:#?\d+|[a-z][a-z-]*)|v\d+|(?:\d+(?:st|nd|rd|th)|[a-z]+(?:st|nd|rd|th))\s+version|a\s+second\s+(?:draft|post|version|hook|one)|one\s+more\s+(?:draft|post|version|hook|one)|give\s+me\s+\d+\s+(?:drafts?|posts?|versions?|hooks?)|draft\s+\d+\s+more)\b/gi;
 const REVIEW_IMPERATIVE_RE =

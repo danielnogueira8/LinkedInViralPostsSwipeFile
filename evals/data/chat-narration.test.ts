@@ -1,8 +1,8 @@
 import { describe, test, expect } from "vitest";
 import {
+  ARTIFACT_PANEL_TITLE,
   buildArtifactIndex,
   kindNoun,
-  panelTitle,
   prettyToolName,
   planProgressTitle,
   toolDetail,
@@ -157,18 +157,9 @@ describe("shared Artifact index", () => {
   });
 });
 
-describe("panelTitle", () => {
-  test("posts only → Artifacts", () => {
-    expect(panelTitle([art("post"), art("post")])).toBe("Artifacts");
-  });
-  test("hooks only → Artifacts", () => {
-    expect(panelTitle([art("hook")])).toBe("Artifacts");
-  });
-  test("both → Artifacts", () => {
-    expect(panelTitle([art("post"), art("hook")])).toBe("Artifacts");
-  });
-  test("empty → Artifacts (default)", () => {
-    expect(panelTitle([])).toBe("Artifacts");
+describe("ARTIFACT_PANEL_TITLE", () => {
+  test("uses the canonical domain noun", () => {
+    expect(ARTIFACT_PANEL_TITLE).toBe("Artifacts");
   });
 });
 

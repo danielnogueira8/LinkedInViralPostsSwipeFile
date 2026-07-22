@@ -171,6 +171,9 @@ describe("server-owned free-text Artifact intent", () => {
     "Review Draft 1 and tell me how to improve it.",
     "Tell me what works in Draft 1 and what I should improve.",
     "Review this draft and explain why you would improve the hook.",
+    "Tell me what works in Draft 1 and which parts I should improve.",
+    "Tell me what works in Draft 1 and where I should improve.",
+    "Review this draft and explain if I should improve the hook.",
   ])("advice about improving remains a read-only review: %s", (message) => {
     expect(
       resolveFreeTextArtifactIntent({
@@ -245,6 +248,16 @@ describe("server-owned free-text Artifact intent", () => {
       kind: "operation",
       operation: { kind: "review_artifact", artifactId: "hook-2" },
     });
+  });
+
+  test("a compound word ordinal never degrades to its suffix ordinal", () => {
+    expect(
+      resolveFreeTextArtifactIntent({
+        message: "Rewrite the twenty-first draft.",
+        artifacts: [artifact("post-1"), artifact("post-2")],
+        selectedArtifactId: "post-1",
+      }),
+    ).toMatchObject({ kind: "clarification" });
   });
 
   test("an unavailable numbered reference asks for clarification", () => {
