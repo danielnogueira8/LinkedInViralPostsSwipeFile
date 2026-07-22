@@ -595,6 +595,7 @@ async function runCoworkOutcomeScenarioWithStore(
   scenario: CoworkOutcomeScenario,
   sharedModeledBatchRepository?: HarnessModeledDraftBatchRepository,
 ): Promise<CoworkOutcomeReport> {
+  const scenarioNow = () => new Date("2026-07-14T23:30:00.000Z");
   let terminalPromise: Promise<{ terminal: ChatTurnTerminal }> | null = null;
   const requestController = new AbortController();
   store.failCreatorStyleMarkerUpdate =
@@ -695,15 +696,19 @@ async function runCoworkOutcomeScenarioWithStore(
       rootTurnMessageId: retryRootId,
       effectiveInstruction:
         scenario.model.actionOrchestrator.retryEffectiveInstruction,
-      route: compileActionOrchestratorRoute({
-        userInstruction:
-          scenario.model.actionOrchestrator.retryEffectiveInstruction,
-        isRefine: false,
-        hasModelSource: false,
-        hasAttachments: false,
-        hasLeadMagnet: false,
-        hasCreatorStyle: false,
-      }) ?? { kind: "clarify_action", clarificationReason: "action" },
+      route:
+        compileActionOrchestratorRoute(
+          {
+            userInstruction:
+              scenario.model.actionOrchestrator.retryEffectiveInstruction,
+            isRefine: false,
+            hasModelSource: false,
+            hasAttachments: false,
+            hasLeadMagnet: false,
+            hasCreatorStyle: false,
+          },
+          scenarioNow(),
+        ) ?? { kind: "clarify_action", clarificationReason: "action" },
     });
     requestBody = { ...requestBody, retryOfUserMessageId: retryRootId };
   }
@@ -915,7 +920,7 @@ async function runCoworkOutcomeScenarioWithStore(
   };
 
   const dependencies: Partial<ChatTurnDependencies> = {
-    now: () => new Date("2026-07-14T23:30:00.000Z"),
+    now: scenarioNow,
     scopedSupabase: (async () => ({
       workspaceId: store.workspaceId,
       raw: store.client,
