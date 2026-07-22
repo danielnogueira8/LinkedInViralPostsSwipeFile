@@ -1,7 +1,9 @@
 import { describe, expect, test } from "vitest";
 import {
+  chatContextPolicyToolCall,
   recoverLatestForcedNoModelFormatId,
   recoverLatestSelection,
+  rowsAfterLatestContextClear,
 } from "@/lib/agent/turn/sticky-context";
 import { NO_MODEL_FORMAT_CATALOG } from "@/lib/agent/no-model-format-catalog";
 import {
@@ -10,10 +12,8 @@ import {
 } from "@/lib/agent/chat-turn";
 
 // ---------------------------------------------------------------------------
-// Sticky chat context recovery: a skill / creator style / forced post format
-// applied earlier keeps applying on later turns. These test the pure walk —
-// newest-first, first-valid-wins, stop at the latest bearing row so a changed
-// selection supersedes an older one.
+// Explicit chat-context recovery: when a client opts into inheritance, recover
+// the newest selection without crossing a changed selection or clear marker.
 // ---------------------------------------------------------------------------
 
 type Marker<T> =
@@ -184,5 +184,35 @@ describe("recoverLatestForcedNoModelFormatId", () => {
     expect(
       recoverLatestForcedNoModelFormatId([fmtRow("assistant", formatId)]),
     ).toBeNull();
+  });
+});
+
+describe("explicit chat-context clears", () => {
+  test("a clear tombstone prevents older context from being revived", () => {
+    const rows = [
+      { role: "user", tool_calls: null, value: "old" },
+      {
+        role: "user",
+        tool_calls: [chatContextPolicyToolCall({ clear: ["skills"] })],
+        value: null,
+      },
+      { role: "user", tool_calls: null, value: null },
+    ];
+
+    const scoped = rowsAfterLatestContextClear(rows, "skills");
+    expect(scoped).toEqual(rows.slice(1));
+    expect(scoped.some((item) => item.value === "old")).toBe(false);
+  });
+
+  test("clearing one context kind does not clear the others", () => {
+    const rows = [
+      { role: "user", tool_calls: null },
+      {
+        role: "user",
+        tool_calls: [chatContextPolicyToolCall({ clear: ["skills"] })],
+      },
+    ];
+
+    expect(rowsAfterLatestContextClear(rows, "creator_style")).toEqual(rows);
   });
 });

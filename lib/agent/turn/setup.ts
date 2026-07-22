@@ -46,7 +46,6 @@ import {
 } from "@/lib/agent/turn/context";
 import {
   createCoworkTurnTelemetry,
-  type CoworkRoute,
   type CoworkTurnTelemetry,
 } from "@/lib/agent/cowork-telemetry";
 import {
@@ -78,8 +77,10 @@ import {
   INTENT_DECISION_ENABLED,
 } from "@/lib/agent/turn/intent-decision";
 import {
+  chatContextPolicyToolCall,
   recoverLatestForcedNoModelFormatId,
   recoverLatestSelection,
+  rowsAfterLatestContextClear,
 } from "@/lib/agent/turn/sticky-context";
 
 import type { ContentFeedback } from "@/lib/content-feedback";
@@ -97,6 +98,7 @@ import type { Artifact } from "@/lib/agent/contracts";
 import type {
   ChatTurnDependencies,
   ChatTurnRequest,
+  ChatTurnOperation,
   customSkillSelectionMarkerFromToolCalls,
   creatorStyleSelectionMarkerFromToolCalls,
   generationConfigSelectionMarkerFromToolCalls,
@@ -104,7 +106,6 @@ import type {
   retryRootMarkerFromToolCalls,
   isServerRecoverableToolCall,
   isRecentUnansweredUserMessage,
-  normalizePinnedCoworkRoute,
   explicitMessageDraftCount,
   jsonError,
 } from "@/lib/agent/chat-turn";
@@ -147,7 +148,6 @@ export type TurnSetupDependencies = ChatTurnDependencies & {
     recoverable?: RecoverableMarker;
   }) => Promise<void>;
   isRecentUnansweredUserMessage: typeof isRecentUnansweredUserMessage;
-  normalizePinnedCoworkRoute: typeof normalizePinnedCoworkRoute;
   isServerRecoverableToolCall: typeof isServerRecoverableToolCall;
   customSkillSelectionMarkerFromToolCalls: typeof customSkillSelectionMarkerFromToolCalls;
   creatorStyleSelectionMarkerFromToolCalls: typeof creatorStyleSelectionMarkerFromToolCalls;
@@ -163,6 +163,7 @@ export type TurnSetupResult = {
   workspaceId: string;
   sbRaw: SupabaseClient;
   userText: string;
+  currentTurnOperation: ChatTurnOperation | null;
   attachments: Attachment[];
   modelSourceId: string | undefined;
   skipDecision: boolean;
@@ -210,7 +211,6 @@ export type TurnSetupResult = {
   preclaimContractPlaceholder: TurnContract;
   preclaimPostDraftEstimate: number | null;
   postClarificationPostCount: number | null;
-  pinnedCoworkRoute: CoworkRoute | null;
   coworkTelemetry: CoworkTurnTelemetry;
   history: ChatMessage[];
   effectiveUserInstruction: string;
@@ -271,6 +271,7 @@ export async function setupChatTurn(
   let workspaceId: string;
   let sbRaw: SupabaseClient;
   let userText: string;
+  let currentTurnOperation: ChatTurnOperation | null = null;
   let attachments: Attachment[] = [];
   let modelSourceId: string | undefined;
   let currentModelSource: ModelSourceRow | null = null;
@@ -324,7 +325,6 @@ export async function setupChatTurn(
   };
   let preclaimPostDraftEstimate: number | null = null;
   let postClarificationPostCount: number | null = null;
-  let pinnedCoworkRoute: CoworkRoute | null = null;
   const estimatedContractKind = (): TurnContract["kind"] =>
     postClarificationPostCount !== null
       ? "post"
@@ -353,11 +353,17 @@ export async function setupChatTurn(
     workspaceId = sb.workspaceId;
     sbRaw = sb.raw;
     userText = body.message;
+    currentTurnOperation = body.operation ?? null;
     attachments = body.attachments ?? [];
     modelSourceId = body.modelSourceId;
     skipDecision = body.skipDecision ?? false;
     refineTargetId = body.refineTargetId;
     refineInstruction = body.refineInstruction;
+    if (currentTurnOperation?.kind === "edit_artifact") {
+      skipDecision = true;
+      refineTargetId = currentTurnOperation.artifactId;
+      refineInstruction = currentTurnOperation.instruction;
+    }
     skillIds = body.skillIds ?? [];
     forcedNoModelFormatId = body.forcedNoModelFormatId;
     creatorStyleId = body.creatorStyleId;
@@ -372,7 +378,7 @@ export async function setupChatTurn(
 
     const { data: chat, error } = await sbRaw
       .from("chats")
-      .select("id, title, pinned_cowork_route")
+      .select("id, title")
       .eq("id", chatId)
       .eq("workspace_id", workspaceId)
       .is("archived_at", null)
@@ -381,10 +387,6 @@ export async function setupChatTurn(
     if (!chat) {
       return turnError("Chat not found", 404);
     }
-    pinnedCoworkRoute = deps.normalizePinnedCoworkRoute(
-      (chat as { pinned_cowork_route?: unknown }).pinned_cowork_route,
-    );
-
     const promptCheck = preflightUserPrompt(userText);
     if (!promptCheck.ok) {
       deps.logChatReject(
@@ -456,6 +458,13 @@ export async function setupChatTurn(
       generation_config?: unknown;
       recoverable_error?: unknown;
     }>;
+    // The database query is newest-first because pending/retry resolution needs
+    // the most recent message at index 0. Draft and sticky-context helpers have
+    // the opposite, explicit contract (oldest -> newest) and scan backward.
+    // Passing the query result directly made them resolve the oldest draft or
+    // selection in the window. Keep both orderings named at this boundary so a
+    // caller cannot silently invert "latest" again.
+    const chronologicalRecentMessageWindow = [...recentMessageWindow].reverse();
     pendingAskOnly = hasPendingAskOnly(recentMessageWindow);
     pendingActionAsk = hasPendingActionAsk(recentMessageWindow);
     const actionAnswer = validatePendingActionAnswer(
@@ -708,16 +717,15 @@ export async function setupChatTurn(
             : context.route;
     }
 
-    // Sticky chat context: a custom skill / creator style / forced post format
-    // applied earlier in the chat keeps applying on later turns, so a plain
-    // follow-up ("make it shorter") still honors the skill/style/format the user
-    // picked once — mirroring how the model source and a manual lead magnet
-    // already persist. We recover the LATEST bearing user row's selection when
-    // the client sent none this turn. The persisted markers already carry the
+    // Explicit chat-context inheritance: selections are current-turn-only by
+    // default. A client may opt a specific context kind into inheritance; an
+    // explicit clear marker prevents older selections from being revived later.
+    // The persisted markers already carry the
     // fully-resolved payloads (applied_skills.retryContext.skills = full bodies;
     // creator_style_context.resolvedBlock), reused verbatim via the same parsers
     // the Retry path uses — no DB re-fetch. Scope/guards:
     //   • an explicit selection this turn always wins (only recover when empty),
+    //   • inheritance must be named in contextPolicy for this turn,
     //   • not on retry / action-continuation turns (those own their context),
     //   • newest-first, first bearing row wins → the user's most recent choice,
     //     and a turn that changes/clears the selection supersedes older ones,
@@ -727,9 +735,18 @@ export async function setupChatTurn(
     // durable batch rebind; a normal follow-up just inherits, and an explicit
     // new selection overrides.
     if (!body.retryOfUserMessageId && !persistedActionContinuation) {
-      if (skillIds.length === 0) {
+      const inheritedContext = new Set(body.contextPolicy?.inherit ?? []);
+      const clearedContext = new Set(body.contextPolicy?.clear ?? []);
+      if (
+        skillIds.length === 0 &&
+        inheritedContext.has("skills") &&
+        !clearedContext.has("skills")
+      ) {
         const recovered = recoverLatestSelection(
-          recentMessageWindow,
+          rowsAfterLatestContextClear(
+            chronologicalRecentMessageWindow,
+            "skills",
+          ),
           deps.customSkillSelectionMarkerFromToolCalls,
         );
         if (recovered) {
@@ -737,9 +754,16 @@ export async function setupChatTurn(
           customSkillRetryContext = recovered;
         }
       }
-      if (!creatorStyleId) {
+      if (
+        !creatorStyleId &&
+        inheritedContext.has("creator_style") &&
+        !clearedContext.has("creator_style")
+      ) {
         const recovered = recoverLatestSelection(
-          recentMessageWindow,
+          rowsAfterLatestContextClear(
+            chronologicalRecentMessageWindow,
+            "creator_style",
+          ),
           deps.creatorStyleSelectionMarkerFromToolCalls,
         );
         if (recovered) {
@@ -747,9 +771,19 @@ export async function setupChatTurn(
           creatorStyleRetryContext = recovered;
         }
       }
-      if (!forcedNoModelFormatId) {
+      if (
+        !forcedNoModelFormatId &&
+        inheritedContext.has("post_format") &&
+        !clearedContext.has("post_format")
+      ) {
         forcedNoModelFormatId =
-          recoverLatestForcedNoModelFormatId(recentMessageWindow) ?? undefined;
+          recoverLatestForcedNoModelFormatId(
+            rowsAfterLatestContextClear(
+              chronologicalRecentMessageWindow,
+              "post_format",
+            ),
+          ) ??
+          undefined;
       }
     }
 
@@ -772,12 +806,13 @@ export async function setupChatTurn(
     // refine falls outside the narrow direct-refine lane (e.g. a hook edit).
     const implicitRefineGuardsPass =
       !refineTargetId &&
+      !currentTurnOperation &&
       !modelSourceId &&
       !body.retryOfUserMessageId &&
       !persistedActionContinuation &&
       !pendingActionAsk;
     if (implicitRefineGuardsPass && looksLikeComposerRefine(userText)) {
-      const implicitTarget = latestChatDraft(recentMessageWindow);
+      const implicitTarget = latestChatDraft(chronologicalRecentMessageWindow);
       if (implicitTarget) {
         refineTargetId = implicitTarget.id;
         refineInstruction = userText;
@@ -797,7 +832,7 @@ export async function setupChatTurn(
       INTENT_DECISION_ENABLED &&
       implicitRefineGuardsPass
     ) {
-      const implicitTarget = latestChatDraft(recentMessageWindow);
+      const implicitTarget = latestChatDraft(chronologicalRecentMessageWindow);
       if (implicitTarget) {
         const decision = await decideFallthroughIntent({
           userText,
@@ -1174,8 +1209,6 @@ export async function setupChatTurn(
       cancellationReason: () =>
         setupDeadline?.didExpire() ? "deadline" : "cancelled",
       coworkTelemetry,
-      pinnedCoworkRoute:
-        pinnedCoworkRoute === "setup" ? undefined : pinnedCoworkRoute,
       deps: {
         fetchRecentPostDrafts: deps.fetchRecentPostDrafts,
         generateLeadMagnetResource: deps.generateLeadMagnetResource,
@@ -1216,6 +1249,23 @@ export async function setupChatTurn(
     structureMatch = turnContext.structureMatch;
 
     const userColumnPatch: Record<string, unknown> = {};
+    const currentTurnMarkers: ToolCall[] = [];
+    if (currentTurnOperation) {
+      currentTurnMarkers.push({
+        id: "_turn_operation",
+        type: "function",
+        function: {
+          name: "_turn_operation",
+          arguments: JSON.stringify({ version: 1, ...currentTurnOperation }),
+        },
+      });
+    }
+    if (body.contextPolicy) {
+      currentTurnMarkers.push(chatContextPolicyToolCall(body.contextPolicy));
+    }
+    if (currentTurnMarkers.length > 0) {
+      userColumnPatch.tool_calls = currentTurnMarkers;
+    }
     if (modelSourceId && currentModelEnvelope) {
       userColumnPatch.model_source_id = modelSourceId;
     }
@@ -1421,6 +1471,7 @@ export async function setupChatTurn(
     workspaceId,
     sbRaw,
     userText,
+    currentTurnOperation,
     attachments,
     modelSourceId,
     skipDecision,
@@ -1468,7 +1519,6 @@ export async function setupChatTurn(
     preclaimContractPlaceholder,
     preclaimPostDraftEstimate,
     postClarificationPostCount,
-    pinnedCoworkRoute,
     coworkTelemetry,
     history,
     effectiveUserInstruction,

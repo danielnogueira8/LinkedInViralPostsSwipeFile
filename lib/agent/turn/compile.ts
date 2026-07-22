@@ -33,7 +33,7 @@ import {
   type ModeledPostIntent,
 } from "@/lib/agent/modeled-post-intent";
 import { wrapUntrustedXml } from "@/lib/agent/untrusted";
-import type { Artifact } from "@/lib/agent/contracts";
+import type { Artifact, AskQuestion } from "@/lib/agent/contracts";
 import type { PostType } from "@/lib/post-type";
 import type { ComposerTaskContext } from "@/lib/composer-task-context";
 import type { Source, WriterTask } from "@/lib/agent/execute/writer";
@@ -1768,28 +1768,68 @@ export async function resolveFindAndModelSource(
   }
 }
 
-export type TurnPlan = {
-  route: CoworkRoute;
+type TurnPlanCommon = {
   contract: TurnContract;
-  // Direct writer
-  useDirectWriter: boolean;
-  directWriterTask: WriterTask;
-  useDirectRefine: boolean;
-  useDirectLeadMagnet: boolean;
-  useDirectCreatorStyle: boolean;
-  // Action orchestrator
-  useActionOrchestrator: boolean;
-  actionOrchestratorRoute: ActionOrchestratorRoute | null;
-  // Read-only orchestrator
-  useReadOnlyOrchestrator: boolean;
-  readOnlyOrchestratorRoute: ReadOnlyOrchestratorRoute | null;
   modeledBatchContinuation: ModeledDraftBatchContinuation | null;
   activeModeledBatchContinuation: ModeledDraftBatchContinuation | null;
   modeledBatchRetryRootUserMessageId: string | undefined;
-  // Shared execution inputs
   directPostCount: number | null;
   modelSourceReference: ModelSourceReference | null;
 };
+
+/**
+ * The one operation authorized for the current turn. A discriminated union
+ * makes contradictory states (for example writer=true and action=true) unable
+ * to compile, instead of relying on an if/else priority to hide them.
+ */
+export type TurnPlan = TurnPlanCommon &
+  (
+    | {
+        kind: "write";
+        route: "direct_writer";
+        task: WriterTask;
+        isDirectRefine: boolean;
+        usesLeadMagnet: boolean;
+        usesCreatorStyle: boolean;
+      }
+    | {
+        kind: "action";
+        route: "action_orchestrator";
+        actionRoute: ActionOrchestratorRoute;
+      }
+    | {
+        kind: "research";
+        route: "read_only_orchestrator";
+        researchRoute: ReadOnlyOrchestratorRoute;
+      }
+    | {
+        kind: "clarify";
+        route: "answer";
+        ask: AskQuestion;
+      }
+    | {
+        kind: "answer";
+        route: "answer";
+      }
+  );
+
+const AMBIGUOUS_CONTINUATION_RE =
+  /^\s*(?:keep going|continue|go on|another one|another angle|what about (?:the )?other one|do (?:the )?other one|same again)\s*[?.!]*\s*$/i;
+
+export function clarificationForAmbiguousContinuation(
+  instruction: string,
+): AskQuestion | null {
+  if (!AMBIGUOUS_CONTINUATION_RE.test(instruction)) return null;
+  return {
+    question: "What would you like me to continue with?",
+    options: [
+      "Edit the current draft",
+      "Create a new draft",
+      "Continue the previous research or board task",
+    ],
+    allowOther: true,
+  };
+}
 
 export type TurnCompileDependencies = {
   actionOrchestratorEnabledForWorkspace: () => boolean;
@@ -1816,7 +1856,6 @@ export type TurnCompileDependencies = {
 export async function compileTurnPlan(
   setup: TurnSetupResult,
   chatId: string,
-  retryOfUserMessageId: string | undefined,
   deps: TurnCompileDependencies,
 ): Promise<TurnPlan | Response> {
   const {
@@ -1836,18 +1875,17 @@ export async function compileTurnPlan(
     confirmedActionTargetIds,
     actionRetryRepository,
     persistedActionContinuation,
-    pendingActionAsk,
     pendingAskOnly,
     modeledBatchContinuation,
     modeledBatchContractRequested,
     setupDeadline,
     setupSignal,
     postClarificationPostCount,
-    pinnedCoworkRoute,
     coworkTelemetry,
     currentModelSource,
     modelSourceReference: initialModelSourceReference,
     effectiveUserInstruction,
+    currentTurnOperation,
     composerTaskContext,
     activeDraftCountOverride,
     shouldAttachLeadMagnet,
@@ -1866,6 +1904,7 @@ export async function compileTurnPlan(
   // Direct writer is the unified drafting path; the COWORK_THIN_PATH rollout
   // flag has been removed and lean mode is no longer forced (default false).
   const directWriterEnabled = true;
+  const reviewOperation = currentTurnOperation?.kind === "review_artifact";
   const directPartialSpec = compileDirectPartialTextSpec(
     effectiveUserInstruction,
   );
@@ -2048,7 +2087,8 @@ export async function compileTurnPlan(
       composerTaskContext: composerTaskContext ?? undefined,
     });
 
-  let useDirectWriter =
+  const useDirectWriter =
+    !reviewOperation &&
     !modeledBatchContractRequested &&
     (useDirectRefine ||
       useGeneralRefine ||
@@ -2058,47 +2098,11 @@ export async function compileTurnPlan(
       useDirectOriginal ||
       useDirectLeadMagnet ||
       useDirectCreatorStyle);
-  let actionOrchestratorRoute: ActionOrchestratorRoute | null = useDirectWriter
+  const actionOrchestratorRoute: ActionOrchestratorRoute | null = useDirectWriter
     ? null
-    : normalizedActionRoute;
-
-  // Session-sticky lane pinning: unless this turn is explicitly continuing a
-  // saved workflow (retry, action clarification, or any pending ask answer),
-  // reuse the chat's pinned lane. The compiler stays authoritative for the
-  // contract/count; the pin only selects the lane. "answer" is allowed in the
-  // schema but never pinned, so it is treated as no preference.
-  const hasExplicitWorkflowContinuation =
-    Boolean(retryOfUserMessageId) || pendingActionAsk || pendingAskOnly;
-  const honorPinnedRoute =
-    pinnedCoworkRoute &&
-    !hasExplicitWorkflowContinuation &&
-    pinnedCoworkRoute !== "answer" &&
-    // A pure question/opinion always escapes the sticky pin to the answer lane.
-    // The pin exists to keep AMBIGUOUS drafting follow-ups in the writer lane
-    // (a chat that wrote a post stays a drafting chat), but a clear question
-    // like "why is this post good or bad?" must be answered, not written into a
-    // new post just because the chat is pinned to direct_writer.
-    !isOpinionOrQuestionAboutContent(effectiveUserInstruction);
-  if (honorPinnedRoute) {
-    // The pin never overrides an explicit research requirement: a starter that
-    // asks for workspace/web/news evidence must actually RUN that research.
-    // Pinning it to the writer lane would silently free-write with no sources
-    // (and no research narration — the "Planning next moves → draft" jump).
-    if (
-      pinnedCoworkRoute === "direct_writer" &&
-      !composerTaskContext?.researchRequirement
-    ) {
-      useDirectWriter = true;
-    } else if (
-      pinnedCoworkRoute === "action_orchestrator" &&
-      !actionOrchestratorRoute
-    ) {
-      actionOrchestratorRoute = {
-        kind: "clarify_action",
-        clarificationReason: "action",
-      };
-    }
-  }
+    : reviewOperation
+      ? null
+      : normalizedActionRoute;
 
   const useActionOrchestrator = Boolean(
     actionOrchestratorRoute &&
@@ -2164,8 +2168,8 @@ export async function compileTurnPlan(
     }
   }
 
-  let readOnlyOrchestratorRoute: ReadOnlyOrchestratorRoute | null =
-    useDirectWriter || useActionOrchestrator
+  const readOnlyOrchestratorRoute: ReadOnlyOrchestratorRoute | null =
+    useDirectWriter || useActionOrchestrator || skipDecision || reviewOperation
       ? null
       : modeledBatchContinuation?.route ??
         compileReadOnlyOrchestratorRoute({
@@ -2188,24 +2192,6 @@ export async function compileTurnPlan(
           composerTaskContext: composerTaskContext ?? undefined,
         });
 
-  if (
-    honorPinnedRoute &&
-    pinnedCoworkRoute === "read_only_orchestrator" &&
-    !readOnlyOrchestratorRoute
-  ) {
-    readOnlyOrchestratorRoute = {
-      kind: "workspace_research",
-      expectsDraft: true,
-      expectedDrafts: directPostCount ?? 1,
-      minimumSources: 2,
-      workspaceSearchMode: "diverse",
-      // Multi-draft campaigns/series model REGULAR posts only (see the same
-      // default inside compileReadOnlyOrchestratorRoute).
-      ...((directPostCount ?? 1) >= 2
-        ? { workspacePostType: "regular" as const }
-        : {}),
-    };
-  }
 
   const modeledBatchRouteContract = continuationForModeledDraftRoute(
     readOnlyOrchestratorRoute,
@@ -2218,7 +2204,78 @@ export async function compileTurnPlan(
           draftCountOverride: activeDraftCountOverride,
         }).kind !== "none"),
   );
-  if (deterministicModeledRoute && preloadedVoiceResult?.ok !== true) {
+  // Eligibility predicates include voice as an execution prerequisite. Re-run
+  // only that pure prerequisite as "available" to distinguish a real writing
+  // operation with a missing voice from a compound/brainstorm request that was
+  // deliberately left to the answer lane.
+  const voiceAssumedContext = {
+    ...directWritingContext,
+    voiceResolved: true,
+  };
+  const directWriterWouldBeEligibleWithVoice = Boolean(
+    isDirectRefineEligible({
+      ...refineEligibilityInput,
+      voiceResolved: true,
+    }) ||
+      isGeneralRefineEligible({
+        ...refineEligibilityInput,
+        voiceResolved: true,
+      }) ||
+      isDirectPartialTextEligible({
+        ...voiceAssumedContext,
+        userInstruction: effectiveUserInstruction,
+        sourceRequested: Boolean(modelSourceId),
+        sourceResolved: Boolean(directSource),
+        isRefine: skipDecision,
+      }) ||
+      isDirectMultiPostEligible({
+        ...voiceAssumedContext,
+        userInstruction: effectiveUserInstruction,
+        sourceRequested: Boolean(modelSourceId),
+        sourceResolved: Boolean(directSource),
+        isRefine: skipDecision,
+        requestedCount: directPostCount ?? undefined,
+        composerTaskContext: composerTaskContext ?? undefined,
+      }) ||
+      isDirectFixedSourcePostEligible({
+        ...voiceAssumedContext,
+        userInstruction: effectiveUserInstruction,
+        sourceResolved: Boolean(directSource),
+        isRefine: skipDecision,
+      }) ||
+      isDirectOriginalPostEligible({
+        ...voiceAssumedContext,
+        userInstruction: effectiveUserInstruction,
+        requestedCount: directPostCount ?? undefined,
+        hasModelSource: Boolean(modelSourceId),
+        isRefine: skipDecision,
+        composerTaskContext: composerTaskContext ?? undefined,
+      }) ||
+      (activeLeadMagnetForDirect &&
+        isDirectLeadMagnetEligible({
+          ...voiceAssumedContext,
+          userInstruction: effectiveUserInstruction,
+          hasModelSource: Boolean(modelSourceId),
+          isRefine: skipDecision,
+        })) ||
+      (activeCreatorStyleForDirect &&
+        isDirectOriginalPostEligible({
+          ...voiceAssumedContext,
+          userInstruction: effectiveUserInstruction,
+          requestedCount: directPostCount ?? undefined,
+          hasCreatorStyle: false,
+          hasModelSource: Boolean(modelSourceId),
+          isRefine: skipDecision,
+          composerTaskContext: composerTaskContext ?? undefined,
+        })),
+  );
+  const writingOperationRequested = Boolean(
+    directWriterWouldBeEligibleWithVoice ||
+      skipDecision ||
+      modeledBatchContractRequested ||
+      deterministicModeledRoute,
+  );
+  if (writingOperationRequested && preloadedVoiceResult?.ok !== true) {
     // A missing voice profile is never transient — retrying re-runs the exact
     // same lookup and fails the exact same way every time, so offering "Retry"
     // is a loop with no exit. loadVoiceProfile marks that case with a `status`
@@ -2249,7 +2306,9 @@ export async function compileTurnPlan(
     }
     const message = modeledBatchContinuation
       ? "I couldn’t load the writing context required to resume this modeled set safely. Retry will continue the same saved batch."
-      : "I couldn’t load the writing context required to start this modeled set safely. Retry will try the request again without creating a partial set.";
+      : deterministicModeledRoute
+        ? "I couldn’t load the writing context required to start this modeled set safely. Retry will try the request again without creating a partial set."
+        : "I couldn’t load the writing context required for this draft safely. Please retry.";
     await deps.persistChatSetupFailure({
       sb: sbRaw,
       chatId,
@@ -2287,13 +2346,45 @@ export async function compileTurnPlan(
         deterministicModeledRoute ||
         deps.readOnlyOrchestratorEnabledForWorkspace()),
   );
+  // A completed lane is never authority for the next turn. If the current
+  // message does not identify an operation on its own, stop before any model or
+  // tool can guess whether to create, edit, research, or mutate board state.
+  const clarificationAsk =
+    currentTurnOperation?.kind === "create_post" && !useDirectWriter
+      ? {
+          question: "What topic or angle should the new post cover?",
+          options: ["I’ll provide the topic", "Choose a topic from my profile"],
+          allowOther: true,
+        }
+      : skipDecision && !useDirectWriter
+        ? trustedRefineTarget
+        ? {
+            question:
+              "This turn includes extra source or attachment context that the in-place editor cannot apply safely. How should I proceed?",
+            options: [
+              "Edit the current draft without the extra context",
+              "Create a new draft using the extra context",
+            ],
+            allowOther: true,
+          }
+        : {
+            question: "Which draft should I edit?",
+            options: ["Edit the latest chat draft", "Choose a saved draft"],
+            allowOther: true,
+          }
+      : !useDirectWriter &&
+          !useActionOrchestrator &&
+          !useReadOnlyOrchestrator &&
+          !pendingAskOnly
+        ? clarificationForAmbiguousContinuation(effectiveUserInstruction)
+        : null;
 
   const directWriterTask: WriterTask = useDirectRefine
     ? {
         kind: "refine",
         instruction: refineInstruction!,
         focus: classifyDirectRefineFocus(refineInstruction!),
-        target: trustedRefineTarget as Artifact & { kind: "post" },
+        target: trustedRefineTarget as Artifact & { kind: "post" | "hook" },
       }
     : useGeneralRefine
       ? {
@@ -2303,7 +2394,7 @@ export async function compileTurnPlan(
           kind: "refine",
           instruction: refineInstruction!,
           focus: "general",
-          target: trustedRefineTarget as Artifact & { kind: "post" },
+          target: trustedRefineTarget as Artifact & { kind: "post" | "hook" },
         }
     : useDirectPartial
       ? {
@@ -2335,7 +2426,9 @@ export async function compileTurnPlan(
   // effectiveUserInstruction the executors consume. The only other contract
   // value in the turn is the telemetry placeholder above, produced by this
   // same builder and overwritten here.
-  const turnContract: TurnContract = resolveTurnContract({
+  const turnContract: TurnContract = clarificationAsk
+    ? { kind: "answer", expectedCount: 0 }
+    : resolveTurnContract({
     directWriterTask: useDirectWriter ? directWriterTask : null,
     actionRoute: actionOrchestratorRoute,
     useActionOrchestrator,
@@ -2346,7 +2439,7 @@ export async function compileTurnPlan(
       activeDraftCountOverride ??
       postClarificationPostCount ??
       (skipDecision ? 1 : null),
-  });
+      });
   coworkTelemetry.configure({
     traceId: claimedUserMessageId ?? chatId,
     route: coworkRoute,
@@ -2360,22 +2453,49 @@ export async function compileTurnPlan(
     ? actionTurnMessageId ?? claimedUserMessageId ?? undefined
     : undefined;
 
-  return {
-    route: coworkRoute,
+  const commonPlan: TurnPlanCommon = {
     contract: turnContract,
-    useDirectWriter,
-    directWriterTask,
-    useDirectRefine,
-    useDirectLeadMagnet,
-    useDirectCreatorStyle,
-    useActionOrchestrator,
-    actionOrchestratorRoute,
-    useReadOnlyOrchestrator,
-    readOnlyOrchestratorRoute,
     modeledBatchContinuation,
     activeModeledBatchContinuation,
     modeledBatchRetryRootUserMessageId,
     directPostCount,
     modelSourceReference,
   };
+
+  if (useDirectWriter) {
+    return {
+      ...commonPlan,
+      kind: "write",
+      route: "direct_writer",
+      task: directWriterTask,
+      isDirectRefine: useDirectRefine,
+      usesLeadMagnet: useDirectLeadMagnet,
+      usesCreatorStyle: useDirectCreatorStyle,
+    };
+  }
+  if (useActionOrchestrator && actionOrchestratorRoute) {
+    return {
+      ...commonPlan,
+      kind: "action",
+      route: "action_orchestrator",
+      actionRoute: actionOrchestratorRoute,
+    };
+  }
+  if (useReadOnlyOrchestrator && readOnlyOrchestratorRoute) {
+    return {
+      ...commonPlan,
+      kind: "research",
+      route: "read_only_orchestrator",
+      researchRoute: readOnlyOrchestratorRoute,
+    };
+  }
+  if (clarificationAsk) {
+    return {
+      ...commonPlan,
+      kind: "clarify",
+      route: "answer",
+      ask: clarificationAsk,
+    };
+  }
+  return { ...commonPlan, kind: "answer", route: "answer" };
 }

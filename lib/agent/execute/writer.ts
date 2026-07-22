@@ -224,7 +224,7 @@ export type WriterTask =
       kind: "refine";
       instruction: string;
       focus: DirectRefineFocus;
-      target: Artifact & { kind: "post" };
+      target: Artifact & { kind: "post" | "hook" };
     }
   | { kind: "partial"; spec: PartialTextSpec; source?: Source }
   | {
@@ -1281,7 +1281,8 @@ export async function* runSingleDraftTurn(
           : task.kind === "source"
             ? lengthScaledCompletePostFloor(task.source.text, range?.max)
             : Math.min(180, range?.max ?? 180),
-      requireCompletePost: true,
+      requireCompletePost:
+        task.kind !== "refine" || task.target.kind === "post",
     },
   });
   let inputTokens = 0;
@@ -1289,7 +1290,7 @@ export async function* runSingleDraftTurn(
 
   const deliveredArtifact = (
     artifact: Artifact & { kind: "post" },
-  ): Artifact & { kind: "post" } =>
+  ): Artifact =>
     task.kind === "refine"
       ? {
           ...task.target,

@@ -57,7 +57,7 @@ const DIRECT_PARTIAL_REQUEST_RE =
 const AMBIGUOUS_POST_RE =
   /^\s*(?:please\s+)?(?:write|draft|create|make)(?:\s+me)?\s+(?:a|one)?\s*(?:linkedin\s+)?post[.!?]?\s*$/i;
 const FULL_POST_REQUEST_RE =
-  /\b(?:(?:write|draft|create|make|generate)\s+(?:me\s+)?|give\s+me\s+)(?:(?:a|an|one)\s+)?(?:(?:short|concise|brief|punchy|detailed|in-depth|long-form|long|original|complete|full)\s+){0,4}(?:linkedin\s+)?post\b/i;
+  /\b(?:(?:write|draft|create|make|generate)\s+(?:me\s+)?|give\s+me\s+)(?:(?:a|an|one|another)\s+)?(?:(?:short|concise|brief|punchy|detailed|in-depth|long-form|long|original|complete|full)\s+){0,4}(?:linkedin\s+)?post\b/i;
 const CONTROLLED_PLURAL_POST_REQUEST_RE =
   /\b(?:(?:write|draft|create|make|generate)\s+(?:me\s+)?|give\s+me\s+)(?:(?:short|concise|brief|punchy|detailed|in-depth|long-form|long|original|complete|full|different|distinct)\s+){0,4}(?:linkedin\s+)?posts\b/i;
 const NEGATED_WRITING_RE =
@@ -150,9 +150,15 @@ const OPINION_CUE_RE =
 // mention like "this hook" — so an opinion ask about a hook isn't disqualified.
 const WRITE_EDIT_COMMAND_RE =
   /^\s*(?:please\s+|(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:write|draft|create|generate|produce|prepare|rewrite|rework|remix|model|mimic|adapt|shorten|lengthen|tighten|refine|polish|improve|tweak|revise|make\s+(?:it|this|the)|give\s+me|turn\s+(?:it|this|that)|edit|fix|change|update)\b/i;
+const FEEDBACK_COMMAND_RE =
+  /^\s*(?:please\s+)?(?:review|critique|analy[sz]e|assess|evaluate|grade|rate)\b|^\s*(?:please\s+)?give\s+me\s+(?:your\s+)?(?:honest\s+)?feedback\b|^\s*(?:please\s+)?(?:tell\s+me|explain|list)\b[\s\S]{0,100}\b(?:feedback|strengths?|weaknesses?|issues?|problems?|works?|working|change|improve|effective|land|resonate|why|how)\b/i;
 export function isOpinionOrQuestionAboutContent(instruction: string): boolean {
   const trimmed = instruction.trim();
   if (!trimmed) return false;
+  // Feedback is a read operation even when phrased as an imperative. Keep it
+  // separate from write/edit commands so "review this and give feedback" can
+  // never be captured by a historical writer route.
+  if (FEEDBACK_COMMAND_RE.test(trimmed)) return true;
   const isQuestion =
     /\?\s*$/.test(trimmed) || EVAL_QUESTION_START_RE.test(trimmed);
   if (!isQuestion) return false;
@@ -279,9 +285,11 @@ export type DirectRefineEligibility = {
 
 /**
  * Tier-1 hard checks shared by every direct-refine lane: a resolved complete
- * POST target, a real instruction, resolved voice, and NO external context the
- * simple tool-less writer can't carry (attachments, lead magnet, creator style,
- * model source). These genuinely block any direct refine — unlike the Tier-2
+ * POST or HOOK target, a real instruction, resolved voice, and NO external context the
+ * simple tool-less writer can't carry (attachments or a competing model
+ * source). Lead-magnet and creator-style blocks are already first-class writer
+ * inputs, so they must not knock an edit into the artifact-free answer lane.
+ * These checks genuinely block any direct refine — unlike the Tier-2
  * instruction-shape checks in isDirectRefineEligible, which only protect the
  * hook/CTA SPLICE focuses (a general full-post rewrite doesn't need them).
  */
@@ -291,12 +299,9 @@ function passesDirectRefineHardChecks(input: DirectRefineEligibility): boolean {
     input.isRefine &&
     input.refineInstruction.trim().length > 0 &&
     input.targetResolved &&
-    input.targetKind === "post" &&
-    !input.targetHasLeadMagnet &&
+    (input.targetKind === "post" || input.targetKind === "hook") &&
     !input.hasModelSource &&
     !input.hasAttachments &&
-    !input.hasLeadMagnet &&
-    !input.hasCreatorStyle &&
     input.voiceResolved
   );
 }

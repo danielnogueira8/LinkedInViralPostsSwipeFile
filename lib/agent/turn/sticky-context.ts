@@ -1,10 +1,63 @@
 import { isNoModelFormatId, type NoModelFormatId } from "@/lib/agent/no-model-format-catalog";
+import type { ToolCall } from "@/lib/openrouter";
 
-// Sticky chat context: recover a context selection (custom skill, creator style,
-// forced post format) a user applied earlier in the chat so it keeps applying on
-// later turns, mirroring how the model source and a manual lead magnet already
-// persist. Pure + exported so the newest-first / first-valid-wins / stop-at-a-
-// changed-selection walk is unit-testable in isolation from setupChatTurn.
+export type ChatContextKind = "skills" | "creator_style" | "post_format";
+export const CHAT_CONTEXT_POLICY_TOOL_NAME = "_chat_context_policy";
+
+export function chatContextPolicyToolCall(policy: {
+  inherit?: ChatContextKind[];
+  clear?: ChatContextKind[];
+}): ToolCall {
+  return {
+    id: CHAT_CONTEXT_POLICY_TOOL_NAME,
+    type: "function",
+    function: {
+      name: CHAT_CONTEXT_POLICY_TOOL_NAME,
+      arguments: JSON.stringify({ version: 1, ...policy }),
+    },
+  };
+}
+
+function clearedKinds(row: { tool_calls?: readonly ToolCall[] | null }): Set<ChatContextKind> {
+  const marker = row.tool_calls?.find(
+    (call) =>
+      call.id === CHAT_CONTEXT_POLICY_TOOL_NAME &&
+      call.function.name === CHAT_CONTEXT_POLICY_TOOL_NAME,
+  );
+  if (!marker) return new Set();
+  try {
+    const value = JSON.parse(marker.function.arguments) as {
+      version?: unknown;
+      clear?: unknown;
+    };
+    if (value.version !== 1 || !Array.isArray(value.clear)) return new Set();
+    return new Set(
+      value.clear.filter(
+        (kind): kind is ChatContextKind =>
+          kind === "skills" ||
+          kind === "creator_style" ||
+          kind === "post_format",
+      ),
+    );
+  } catch {
+    return new Set();
+  }
+}
+
+/** Limit recovery to rows after the latest explicit clear for this context. */
+export function rowsAfterLatestContextClear<
+  TRow extends { tool_calls?: readonly ToolCall[] | null },
+>(rows: readonly TRow[], kind: ChatContextKind): readonly TRow[] {
+  for (let i = rows.length - 1; i >= 0; i -= 1) {
+    if (clearedKinds(rows[i]).has(kind)) return rows.slice(i);
+  }
+  return rows;
+}
+
+// Explicit chat-context recovery for a client that opts into inheritance.
+// Context is current-turn-only by default; clear markers below prevent an
+// opt-in on a future turn from reaching behind a user's reset. Pure + exported
+// so ordering and tombstone behavior are unit-testable without setupChatTurn.
 //
 // The recovery reuses the SAME marker parsers the Retry path uses, so it inherits
 // the fully-resolved, already-validated payloads persisted per turn (skill bodies

@@ -315,8 +315,7 @@ describe("production-shaped Cowork outcome harness", () => {
     const report = await runCoworkOutcomeScenario({
       id: "original-post",
       request: {
-        message:
-          "Write an original post in my voice about why a personal brand is career leverage.",
+        message: "What makes a personal brand useful career leverage?",
       },
       model: { provider: textProvider(answer) },
       expected: {
@@ -4300,7 +4299,7 @@ describe("production-shaped Cowork outcome harness", () => {
     expect(JSON.parse(line)).toEqual(report.safe);
   });
 
-  test("a pinned read-only lane keeps an ambiguous follow-up out of the answer lane", async () => {
+  test("a completed read-only lane cannot guess the meaning of an ambiguous follow-up", async () => {
     const sequence = await runCoworkOutcomeSequence([
       modeledThreeScenario("pin-read-only-turn-1"),
       {
@@ -4359,17 +4358,17 @@ describe("production-shaped Cowork outcome harness", () => {
           ],
         },
         expected: {
-          terminal: "done",
-          artifactBodies: [COMPLETE_POST],
-          actionNames: ["search_viral_posts", "write_grounded_post"],
-          route: "read_only_orchestrator",
+          terminal: "ask",
+          artifactBodies: [],
+          actionNames: ["ask_user"],
+          route: "answer",
         },
       },
     ]);
 
     expect(sequence.pass, JSON.stringify(sequence.attempts)).toBe(true);
     expect(sequence.attempts[0]?.safe.route).toBe("read_only_orchestrator");
-    expect(sequence.attempts[1]?.safe.route).toBe("read_only_orchestrator");
+    expect(sequence.attempts[1]?.safe.route).toBe("answer");
   });
 
   test("a research starter overrides a pinned direct-writer lane so the search actually runs", async () => {
@@ -4430,7 +4429,7 @@ describe("production-shaped Cowork outcome harness", () => {
     expect(report.pass, report.failureCodes.join(", ")).toBe(true);
   });
 
-  test("a pinned action lane keeps an ambiguous follow-up out of the answer lane", async () => {
+  test("a completed action lane cannot authorize a second action from an ambiguous follow-up", async () => {
     const draftId = "00000000-0000-4000-8000-000000000800";
     const sequence = await runCoworkOutcomeSequence([
       {
@@ -4491,17 +4490,17 @@ describe("production-shaped Cowork outcome harness", () => {
           terminal: "ask",
           artifactBodies: [],
           actionNames: ["ask_user"],
-          route: "action_orchestrator",
+          route: "answer",
         },
       },
     ]);
 
     expect(sequence.pass, JSON.stringify(sequence.attempts)).toBe(true);
     expect(sequence.attempts[0]?.safe.route).toBe("action_orchestrator");
-    expect(sequence.attempts[1]?.safe.route).toBe("action_orchestrator");
+    expect(sequence.attempts[1]?.safe.route).toBe("answer");
   });
 
-  test("a pinned direct-writer lane keeps an ambiguous follow-up out of the answer lane", async () => {
+  test("a completed writer lane cannot turn an ambiguous follow-up into a new draft", async () => {
     const sequence = await runCoworkOutcomeSequence([
       {
         id: "pin-direct-writer-turn-1",
@@ -4540,24 +4539,24 @@ describe("production-shaped Cowork outcome harness", () => {
           ],
         },
         expected: {
-          terminal: "done",
-          artifactBodies: [SECOND_POST],
-          actionNames: [],
-          route: "direct_writer",
+          terminal: "ask",
+          artifactBodies: [],
+          actionNames: ["ask_user"],
+          route: "answer",
         },
       },
     ]);
 
     expect(sequence.pass, JSON.stringify(sequence.attempts)).toBe(true);
     expect(sequence.attempts[0]?.safe.route).toBe("direct_writer");
-    expect(sequence.attempts[1]?.safe.route).toBe("direct_writer");
+    expect(sequence.attempts[1]?.safe.route).toBe("answer");
   });
 
-  test("an OPINION question after a post draft is answered, not written into a new post (pin does not hijack it)", async () => {
-    // The reported bug: turn 1 writes a post (pins the chat to direct_writer),
+  test("an OPINION question after a post draft is answered, not written into a new post", async () => {
+    // The reported bug: turn 1 writes a post,
     // then "why do you think this post is good or bad?" produced ANOTHER post
     // instead of an answer. The opinion guard must send it to the answer lane
-    // despite the sticky direct_writer pin.
+    // regardless of the lane used by the previous turn.
     const opinion = "This post opens strong but the middle drags a little.";
     const sequence = await runCoworkOutcomeSequence([
       {
@@ -4602,5 +4601,276 @@ describe("production-shaped Cowork outcome harness", () => {
     // The question is answered on the answer lane — not written into a new post.
     expect(sequence.attempts[1]?.safe.route).toBe("answer");
     expect(sequence.attempts[1]?.safe.artifactCount).toBe(0);
+  });
+
+  test("an imperative feedback request after a draft answers with feedback and creates no artifact", async () => {
+    const feedback = "The hook is clear, but the middle needs a more concrete example.";
+    const sequence = await runCoworkOutcomeSequence([
+      {
+        id: "feedback-command-turn-1",
+        request: {
+          message:
+            "Write an original post in my voice about why a personal brand is career leverage.",
+        },
+        model: {
+          provider: { rounds: [] },
+          directWriter: [
+            {
+              text: COMPLETE_POST,
+              finishReason: "stop",
+              usage: usage(210, 95, 0.0001888),
+            },
+          ],
+        },
+        expected: {
+          terminal: "done",
+          artifactBodies: [COMPLETE_POST],
+          actionNames: [],
+          route: "direct_writer",
+        },
+      },
+      {
+        id: "feedback-command-turn-2",
+        request: { message: "Review this post and give me feedback." },
+        model: { provider: textProvider(feedback) },
+        expected: {
+          terminal: "done",
+          artifactBodies: [],
+          actionNames: [],
+          assistantContents: [feedback],
+          route: "answer",
+        },
+      },
+    ]);
+
+    expect(sequence.pass, JSON.stringify(sequence.attempts)).toBe(true);
+    expect(sequence.attempts[1]?.safe.artifactCount).toBe(0);
+  });
+
+  test("a server-resolved typed edit updates the newest draft, never an older draft", async () => {
+    const revised = SECOND_POST.replace("Most people", "Too many people");
+    const sequence = await runCoworkOutcomeSequence([
+      {
+        id: "newest-refine-turn-1",
+        request: {
+          message:
+            "Write an original post in my voice about why a personal brand is career leverage.",
+        },
+        model: {
+          provider: { rounds: [] },
+          directWriter: [
+            {
+              text: COMPLETE_POST,
+              finishReason: "stop",
+              usage: usage(210, 95, 0.0001888),
+            },
+          ],
+        },
+        expected: {
+          terminal: "done",
+          artifactBodies: [COMPLETE_POST],
+          actionNames: [],
+          route: "direct_writer",
+        },
+      },
+      {
+        id: "newest-refine-turn-2",
+        request: {
+          message:
+            "Write another original post about why distribution beats perfection. Do not search.",
+        },
+        model: {
+          provider: { rounds: [] },
+          directWriter: [
+            {
+              text: SECOND_POST,
+              finishReason: "stop",
+              usage: usage(215, 98, 0.00019),
+            },
+          ],
+        },
+        expected: {
+          terminal: "done",
+          artifactBodies: [SECOND_POST],
+          actionNames: [],
+          route: "direct_writer",
+        },
+      },
+      {
+        id: "newest-refine-turn-3",
+        request: { message: "Make it punchier." },
+        model: {
+          provider: { rounds: [] },
+          directWriter: [
+            {
+              text: revised,
+              finishReason: "stop",
+              usage: usage(180, 82, 0.00016),
+            },
+          ],
+        },
+        expected: {
+          terminal: "done",
+          artifactBodies: [revised],
+          actionNames: [],
+          route: "direct_writer",
+        },
+      },
+    ]);
+
+    expect(sequence.pass, JSON.stringify(sequence.attempts)).toBe(true);
+    const firstId = sequence.attempts[0]?.persisted.artifacts[0]?.id;
+    const secondId = sequence.attempts[1]?.persisted.artifacts[0]?.id;
+    const refinedId = sequence.attempts[2]?.persisted.artifacts[0]?.id;
+    expect(firstId).toBeTruthy();
+    expect(secondId).toBeTruthy();
+    expect(secondId).not.toBe(firstId);
+    expect(refinedId).toBe(secondId);
+  });
+
+  test("refining a hook card updates that hook in place instead of creating a post", async () => {
+    const targetId = "00000000-0000-4000-8000-000000000610";
+    const originalHook = "Your audience is the moat.";
+    const revisedHook = "Your offer is copyable. Your audience is not.";
+    const report = await runCoworkOutcomeScenario({
+      id: "direct-refine-hook-card",
+      request: {
+        message: "Make this hook sharper.",
+        operation: {
+          kind: "edit_artifact",
+          artifactId: targetId,
+          instruction: "Make this hook sharper.",
+        },
+      },
+      seed: {
+        messageArtifact: {
+          id: targetId,
+          kind: "hook",
+          title: "Audience moat hook",
+          body: originalHook,
+        },
+      },
+      model: {
+        provider: { rounds: [] },
+        directWriter: [
+          {
+            text: revisedHook,
+            finishReason: "stop",
+            usage: usage(90, 24, 0.00008),
+          },
+        ],
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [revisedHook],
+        actionNames: [],
+        route: "direct_writer",
+      },
+    });
+
+    expect(report.pass, JSON.stringify(report)).toBe(true);
+    expect(report.persisted.artifacts).toEqual([
+      expect.objectContaining({
+        id: targetId,
+        kind: "hook",
+        body: revisedHook,
+      }),
+    ]);
+  });
+
+  test("an edit with an unresolved target clarifies instead of drafting or answering", async () => {
+    const report = await runCoworkOutcomeScenario({
+      id: "refine-missing-target",
+      request: {
+        message: "Make this draft sharper.",
+        operation: {
+          kind: "edit_artifact",
+          artifactId: "00000000-0000-4000-8000-000000000999",
+          instruction: "Make this draft sharper.",
+        },
+      },
+      model: {
+        provider: { rounds: [] },
+        // Supplies the ready voice fixture; the response must remain unused.
+        directWriter: [
+          {
+            text: COMPLETE_POST,
+            finishReason: "stop",
+            usage: usage(90, 20, 0.00008),
+          },
+        ],
+      },
+      expected: {
+        terminal: "ask",
+        artifactBodies: [],
+        actionNames: ["ask_user"],
+        route: "answer",
+      },
+    });
+
+    expect(report.pass, JSON.stringify(report.safe)).toBe(true);
+    expect(report.observed.directWriterRequests).toHaveLength(0);
+  });
+
+  test("a clear writing request fails before execution when voice is unavailable", async () => {
+    const report = await runCoworkOutcomeScenario({
+      id: "direct-original-no-voice",
+      request: {
+        message:
+          "Write an original post in my voice about why a personal brand is career leverage.",
+      },
+      model: {
+        provider: { rounds: [] },
+        readOnlyOrchestrator: {
+          plans: [],
+          disabled: true,
+          voiceUnavailable: true,
+        },
+      },
+      expected: {
+        terminal: "failure",
+        httpStatus: 422,
+        artifactBodies: [],
+        actionNames: [],
+        assistantContents: [
+          "⚠️ This needs a voice profile to write in your voice, and your workspace doesn't have one yet. Head to the Voice tab to generate one, then send this again.",
+        ],
+      },
+    });
+
+    expect(report.pass, JSON.stringify(report.safe)).toBe(true);
+    expect(report.observed.agentProviderRounds).toBe(0);
+    expect(report.observed.directWriterRequests).toHaveLength(0);
+  });
+
+  test("a typed review operation cannot be reinterpreted as an edit", async () => {
+    const targetId = "00000000-0000-4000-8000-000000000620";
+    const feedback = "The opening is clear; the final paragraph needs a firmer point.";
+    const report = await runCoworkOutcomeScenario({
+      id: "typed-review-not-edit",
+      request: {
+        message: "Make it punchier.",
+        operation: { kind: "review_artifact", artifactId: targetId },
+      },
+      seed: {
+        messageArtifact: {
+          id: targetId,
+          kind: "post",
+          title: "Career leverage",
+          body: COMPLETE_POST,
+        },
+      },
+      model: { provider: textProvider(feedback) },
+      expected: {
+        terminal: "done",
+        artifactBodies: [],
+        actionNames: [],
+        assistantContents: [feedback],
+        route: "answer",
+      },
+    });
+
+    expect(report.pass, JSON.stringify(report.safe)).toBe(true);
+    expect(report.persisted.artifacts).toHaveLength(0);
   });
 });

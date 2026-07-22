@@ -2546,15 +2546,19 @@ export function ChatWorkspace({
               : {}),
             ...(attached ? { modelSourceId: attached.id } : {}),
             ...(filePayload.length ? { attachments: filePayload } : {}),
-            ...(refineThisTurn ? { skipDecision: true } : {}),
             ...(refineThisTurn &&
             refineTargetIdThisTurn &&
             refineInstructionThisTurn
               ? {
-                  refineTargetId: refineTargetIdThisTurn,
-                  refineInstruction: refineInstructionThisTurn,
+                  operation: {
+                    kind: "edit_artifact",
+                    artifactId: refineTargetIdThisTurn,
+                    instruction: refineInstructionThisTurn,
+                  },
                 }
-              : {}),
+              : refineThisTurn
+                ? { skipDecision: true }
+                : {}),
             // Hook-only refine: the server splices the model's new opener onto
             // this original body byte-for-byte before persisting the artifact,
             // so a hook-only refine can never let the body drift.
