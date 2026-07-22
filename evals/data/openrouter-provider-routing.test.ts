@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   completeChat,
+  hasOpenRouterPricing,
   openRouterCost,
   openRouterProviderPreferences,
   streamChat,
@@ -63,6 +64,20 @@ describe("OpenRouter provider routing", () => {
     );
     expect(
       openRouterCost("google/gemini-3.5-flash", 1_000_000, 0, 1_000_000),
+    ).toBe(0.15);
+  });
+
+  test("prices Gemini 3.6 Flash exactly (a supported OPENROUTER_CHAT_MODEL)", () => {
+    // Guard against silent fallback to the GLM-5.1 rate if this slug is ever
+    // dropped from the pricing table — that would under-count the cost cap on
+    // responses lacking usage.cost. $1.50 in + $7.50 out per 1M.
+    expect(hasOpenRouterPricing("google/gemini-3.6-flash")).toBe(true);
+    expect(openRouterCost("google/gemini-3.6-flash", 1_000_000, 1_000_000)).toBe(
+      9.0,
+    );
+    // Cache reads bill at $0.15/M (Gemini's 0.1x-input convention).
+    expect(
+      openRouterCost("google/gemini-3.6-flash", 1_000_000, 0, 1_000_000),
     ).toBe(0.15);
   });
 
