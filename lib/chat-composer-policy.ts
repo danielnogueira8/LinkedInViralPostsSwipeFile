@@ -70,8 +70,7 @@ export function clientShouldApplyLeadMagnet(
 export function leadMagnetPickerDisabledForSource(
   modelSourcePostType: "regular" | "lead_magnet" | null | undefined,
 ): boolean {
-  void modelSourcePostType;
-  return false;
+  return modelSourcePostType === "regular";
 }
 
 export function suggestedLeadMagnetPromptForPost(
