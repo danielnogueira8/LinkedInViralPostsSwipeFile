@@ -177,6 +177,7 @@ function dropErrorItems(arr: unknown[]): unknown[] {
 export async function runProfileHistory(
   username: string,
   maxPosts = 50,
+  options: { includeMetadataOnly?: boolean } = {},
 ): Promise<ScrapedPost[]> {
   const handle = username.toLowerCase();
   const url = `https://api.apify.com/v2/acts/${ACTOR}/run-sync-get-dataset-items?token=${token()}`;
@@ -236,7 +237,7 @@ export async function runProfileHistory(
   const normalized: ScrapedPost[] = [];
   for (const it of rawPosts) {
     const post = normalizePost(it as Record<string, unknown>);
-    if (post && post.text && post.text.trim().length > 0) normalized.push(post);
+    if (post && (options.includeMetadataOnly || (post.text && post.text.trim().length > 0))) normalized.push(post);
   }
   return normalized;
 }
