@@ -625,10 +625,21 @@ async function* executeAnswerTurn(
 ): AsyncGenerator<AgentEvent> {
   const telemetry: CoworkTurnTelemetry = setup.coworkTelemetry;
   const startedAt = Date.now();
+  // This lane is the deterministic router's fallback: it runs when no writer /
+  // orchestrator lane claimed the turn. The transcript may carry a "CURRENT
+  // DRAFT" block (the post this chat is working on). Two failure modes to guard:
+  //   • a plain question about the post → answer it (don't rewrite),
+  //   • an EDIT of the post the writer lanes couldn't route (e.g. a compound or
+  //     removal instruction) → the old prompt said "don't write a draft", so the
+  //     model free-associated a brand-new, unrelated post. Instead: return the
+  //     current draft revised as asked. Never invent a NEW, unrelated post.
   const systemMessage: ChatMessage = {
     role: "system",
-    content:
-      "You are Cowork, a LinkedIn content assistant. Answer the user's question or brainstorming request helpfully and concisely. Do not write a LinkedIn post draft unless the user explicitly asks for one.",
+    content: [
+      "You are Cowork, a LinkedIn content assistant. Answer the user's question or brainstorming request helpfully and concisely.",
+      "If the transcript includes a CURRENT DRAFT and the user is asking to change, edit, refine, shorten, or fix it, return the FULL current draft revised exactly as asked — preserve everything they did not ask to change, and change only what they asked. Do not restart from a blank page and never write a different, unrelated post.",
+      "Otherwise, just answer — do not write a LinkedIn post draft unless the user explicitly asks for a new one.",
+    ].join("\n\n"),
   };
   const messages: ChatMessage[] = [systemMessage, ...setup.history];
   const stream = streamChat({
