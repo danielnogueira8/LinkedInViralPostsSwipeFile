@@ -88,7 +88,15 @@ import {
 import { createHash } from "node:crypto";
 import { createSupabaseModeledDraftBatchRepository } from "@/lib/agent/modeled-draft-batch-supabase";
 
-const DIRECT_WRITER_MAX_TOKENS = 1_500;
+// Budget covers reasoning + visible output together (OpenRouter counts them as
+// one pool). A LinkedIn post is well under 1.5k tokens, but a reasoning-default
+// model that ignores our reasoning-off request (deepseek-v4-pro et al. under the
+// auto-router) can spend a chunk on a hidden trace first; the old 1.5k cap let it
+// exhaust the budget before writing a word ("empty_output"). Doubled to 6k so the
+// post still fits even behind a large reasoning trace, while the primary defense
+// stays turning reasoning OFF (see openRouterDraftWriter). max_tokens is only a
+// CEILING — a normal post that finishes early is unaffected and costs the same.
+const DIRECT_WRITER_MAX_TOKENS = 6_000;
 const THIN_WRITER_MAX_TOKENS = 4_000;
 const NARROW_REFINE_MAX_TOKENS = 512;
 
@@ -1617,6 +1625,43 @@ export async function* runSingleDraftTurn(
       if (await cancellationRequestedNow()) {
         yield interrupted();
         return;
+      }
+
+      // Empty-output retry (SAME model, one extra attempt). A 200 response with
+      // no visible text is never retried by completeChat's connection-phase retry
+      // — yet it's frequently transient (a provider hiccup, or a reasoning-default
+      // model that burned the budget on one unlucky call). Before spending the
+      // cross-model fallback, give the primary one more identical try. Bounded to
+      // a single retry so it can't loop or blow up cost.
+      //
+      // CRITICAL: only retry a SUCCESSFUL-but-empty response (primary is non-null,
+      // its text blank). A primary that THREW (timeout/429/503/disconnect) is a
+      // transport failure whose right recovery is the cross-model FALLBACK, not
+      // hammering the same failing model again — so `primary === null` skips this
+      // and falls straight through. A rejected-but-non-empty draft likewise skips
+      // this and takes the normal repair path (a strictly better use of the round).
+      // Skipped in slotMode (batch generation manages its own attempt budget).
+      if (
+        !input.slotMode &&
+        primary !== null &&
+        !primary.text.trim() &&
+        !(await cancellationRequestedNow())
+      ) {
+        try {
+          const retried = await call("primary", primaryModel, baseMessages);
+          if (retried.text.trim()) primary = retried;
+        } catch (error) {
+          rethrowUsagePersistence(error);
+          if (isAbort(error, turnSignal)) {
+            yield interrupted();
+            return;
+          }
+          noteWriterStageFailure("primary", error);
+        }
+        if (await cancellationRequestedNow()) {
+          yield interrupted();
+          return;
+        }
       }
 
       if (primary?.text.trim()) {

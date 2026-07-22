@@ -5,6 +5,19 @@ import {
   openRouterProviderPreferences,
   streamChat,
 } from "@/lib/openrouter";
+import { openRouterDraftWriter } from "@/lib/agent/draft-writer";
+
+// Shared writer request skeleton; individual tests override model.
+function writerRequest(model: string) {
+  return {
+    stage: "primary" as const,
+    model,
+    messages: [{ role: "user" as const, content: "model this post" }],
+    maxTokens: 3_000,
+    timeoutMs: 60_000,
+    reasoning: "none" as const,
+  };
+}
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -363,6 +376,70 @@ describe("OpenRouter provider routing", () => {
     })) {
       expect(delta).toBeDefined();
     }
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  // The draft writer's `"none"` reasoning value is model-aware: GLM self-limits
+  // its trace and is left on completeChat's High policy (tuned, working behavior
+  // inside a small token budget), while a reasoning-DEFAULT model must have
+  // reasoning genuinely OFF or it burns the whole budget on hidden reasoning and
+  // returns empty content ("empty_output"). Regression guard for the auto-router
+  // rollout (deepseek-v4-pro et al.).
+  test("draft writer turns reasoning OFF on `none` for a non-GLM model", async () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "test-key");
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      expect(body.model).toBe("deepseek/deepseek-v4-pro");
+      expect(body.reasoning).toEqual({ enabled: false });
+      return Response.json({
+        choices: [{ message: { content: "A real post body." }, finish_reason: "stop" }],
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await openRouterDraftWriter.write(
+      writerRequest("deepseek/deepseek-v4-pro"),
+    );
+
+    expect(result.text).toBe("A real post body.");
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  test("draft writer leaves GLM on its High policy for `none` (no regression)", async () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "test-key");
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      expect(body.model).toBe("z-ai/glm-5.2");
+      // GLM `none` must NOT send `enabled: false`; completeChat's GLM policy
+      // still applies High — exactly today's behavior.
+      expect(body.reasoning).toEqual({ effort: "high" });
+      return Response.json({
+        choices: [{ message: { content: "A real post body." }, finish_reason: "stop" }],
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await openRouterDraftWriter.write(writerRequest("z-ai/glm-5.2"));
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  test("draft writer passes an explicit reasoning effort straight through", async () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "test-key");
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      expect(body.reasoning).toEqual({ effort: "medium" });
+      return Response.json({
+        choices: [{ message: { content: "Thin-path post." }, finish_reason: "stop" }],
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await openRouterDraftWriter.write({
+      ...writerRequest("deepseek/deepseek-v4-pro"),
+      reasoning: "medium",
+    });
 
     expect(fetchMock).toHaveBeenCalledOnce();
   });

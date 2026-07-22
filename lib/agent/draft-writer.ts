@@ -58,6 +58,23 @@ export interface DraftWriterAdapter {
   write(request: DraftWriterRequest): Promise<DraftWriterResponse>;
 }
 
+// GLM self-limits its reasoning trace, so on the `"none"` path it is left to
+// completeChat's GLM policy (High) and writes a full post inside a small token
+// budget — the tuned, working behavior we must not regress. A reasoning-DEFAULT
+// model (deepseek-v4-pro, and whatever else the auto-router picks) instead burns
+// the ENTIRE max_tokens budget on hidden reasoning and returns empty content
+// ("empty_output" rejection). For those, `"none"` must mean reasoning genuinely
+// OFF (disableReasoning → `{ enabled: false }`, top precedence in completeChat)
+// so the whole budget goes to the visible draft. Matched on the GLM slug family
+// so the guarantee is model-agnostic for everything else.
+function reasoningControlForNone(model: string): {
+  disableReasoning?: boolean;
+} {
+  return model.toLowerCase().startsWith("z-ai/glm-")
+    ? {}
+    : { disableReasoning: true };
+}
+
 export const openRouterDraftWriter: DraftWriterAdapter = {
   async write(request) {
     const result = await completeChat({
@@ -68,7 +85,7 @@ export const openRouterDraftWriter: DraftWriterAdapter = {
       timeoutMs: request.timeoutMs,
       sessionId: request.sessionId,
       ...(request.reasoning === "none"
-        ? {}
+        ? reasoningControlForNone(request.model)
         : { reasoningEffort: request.reasoning }),
     });
     return {
