@@ -71,6 +71,10 @@ import {
 } from "@/lib/content-feedback-catalog";
 
 const FEEDBACK_REASON_LIMIT = 4;
+// Vercel rejects multipart request bodies above its platform limit before our
+// fallback route can return a useful response. Large files must stay on the
+// direct, presigned-storage path.
+const SERVER_UPLOAD_FALLBACK_MAX_BYTES = 4 * 1024 * 1024;
 
 // The minimal lead-magnet shape the create-form picker needs: id to send, title
 // to show. Comes from GET /api/lead-magnets (which returns the full LeadMagnet,
@@ -496,16 +500,23 @@ export function DraftEditorModal({
         let publicUrl = presignRes.publicUrl;
         let key = presignRes.key ?? null;
         try {
-          const uploadRes = await fetch(presignRes.uploadUrl, {
-            method: "PUT",
-            headers: { "Content-Type": validation.normalizedContentType },
-            body: file,
-          });
-          if (!uploadRes.ok) throw new Error("Direct media upload failed.");
+          await uploadMediaDirectly(file, presignRes.uploadUrl, validation.normalizedContentType);
         } catch {
-          const fallback = await uploadMediaViaServer(file);
-          publicUrl = fallback.publicUrl;
-          key = fallback.key;
+          // A freshly-issued URL handles an expired/one-shot presign without
+          // proxying the file through our server.
+          const retry = await requestMediaPresign(file, validation.normalizedContentType);
+          publicUrl = retry.publicUrl;
+          key = retry.key;
+          try {
+            await uploadMediaDirectly(file, retry.uploadUrl, validation.normalizedContentType);
+          } catch {
+            if (file.size > SERVER_UPLOAD_FALLBACK_MAX_BYTES) {
+              throw new Error("Direct upload failed. Please try again; large files cannot be proxied through the app.");
+            }
+            const fallback = await uploadMediaViaServer(file);
+            publicUrl = fallback.publicUrl;
+            key = fallback.key;
+          }
         }
         next = [
           ...next,
@@ -1871,6 +1882,37 @@ async function uploadMediaViaServer(file: File): Promise<{
     throw new Error(data.error || "Media upload failed. Try again.");
   }
   return { publicUrl: data.publicUrl, key: data.key ?? null };
+}
+
+async function requestMediaPresign(file: File, contentType: string): Promise<{
+  uploadUrl: string;
+  publicUrl: string;
+  key: string | null;
+}> {
+  const data = await fetchJson<{
+    ok: boolean;
+    error?: string;
+    uploadUrl?: string;
+    publicUrl?: string;
+    key?: string | null;
+  }>("/api/zernio/media/presign", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ filename: file.name, contentType, size: file.size }),
+  });
+  if (!data.ok || !data.uploadUrl || !data.publicUrl) {
+    throw new Error(data.error || "Couldn't prepare media upload.");
+  }
+  return { uploadUrl: data.uploadUrl, publicUrl: data.publicUrl, key: data.key ?? null };
+}
+
+async function uploadMediaDirectly(file: File, uploadUrl: string, contentType: string) {
+  const response = await fetch(uploadUrl, {
+    method: "PUT",
+    headers: { "Content-Type": contentType },
+    body: file,
+  });
+  if (!response.ok) throw new Error(`Direct media upload failed (${response.status}).`);
 }
 
 function mediaIcon(type: PostMediaType) {
