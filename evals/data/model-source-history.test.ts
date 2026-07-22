@@ -57,7 +57,7 @@ describe("model-source history", () => {
         currentTurnSourceOwnership: "historical_continuation",
         rows,
       }),
-    ).toBe(historicalId);
+    ).toBeNull();
     expect(
       modelSourceIdForTurn({
         isRefine: true,
@@ -65,6 +65,26 @@ describe("model-source history", () => {
         rows,
       }),
     ).toBeNull();
+  });
+
+  test("historical recovery is bounded to the immediately pending ask root", () => {
+    const historicalId = "11111111-1111-1111-1111-111111111111";
+    const staleId = "33333333-3333-4333-8333-333333333333";
+    const rows = [
+      { role: "user", tool_calls: [modelSourceToolCall(staleId)] },
+      { role: "assistant", tool_calls: null },
+      { role: "user", tool_calls: [modelSourceToolCall(historicalId)] },
+      { role: "assistant", tool_calls: null },
+      { role: "user", tool_calls: null },
+    ];
+
+    expect(
+      modelSourceIdForTurn({
+        isRefine: false,
+        currentTurnSourceOwnership: "historical_continuation",
+        rows,
+      }),
+    ).toBe(historicalId);
   });
 
   test("a fresh server-selected modeled turn cannot inherit a historical attached source", () => {

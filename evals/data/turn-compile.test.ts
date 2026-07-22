@@ -22,6 +22,15 @@ import {
   isGeneralRefineEligible,
   isOpinionOrQuestionAboutContent,
 } from "@/lib/agent/direct-writer-policy";
+import { requestsDurableOrAction } from "@/lib/agent/source-policy";
+
+test.each([
+  "Move this draft to Ready on my Posts board.",
+  "Move that post to drafting.",
+  "Set this one to ready.",
+])("recognizes an explicit board mutation before model fallthrough: %s", (instruction) => {
+  expect(requestsDurableOrAction(instruction)).toBe(true);
+});
 
 describe("resolveTurnCount — the ONE turn count rule (1-6, UI > message > default)", () => {
   test("defaults to 1 when neither source provides a count", () => {

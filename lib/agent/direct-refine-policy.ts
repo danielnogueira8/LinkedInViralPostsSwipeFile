@@ -30,6 +30,8 @@ const EXACT_LINE_PRESERVATION_CLAUSE_RE =
 const GENERAL_MODIFIER_CONTINUATION_RE =
   /^(?:more|less)\s+(?:direct|story[ -]?driven|narrative|conversational|personal|punchy|engaging|clear|confident|contrarian|specific|practical|emotional)[.!?]*$/i;
 const COURTESY_CLAUSE_RE = /^(?:please|thanks?|thank\s+you)[.!?]*$/i;
+const EXACT_HOOK_REPLACEMENT_RE =
+  /^\s*(?:replace|change)\s+(?:only\s+)?(?:the\s+)?(?:opening|first)\s+(?:sentence|line|hook|opener)\s+(?:with|to)\s*:\s*(\S[\s\S]*?)\s*$/i;
 
 export const MAX_DIRECT_SHORTEN_PERCENTAGE = 50;
 
@@ -80,6 +82,7 @@ export function directRefineFocusSignals(
 export function hasUnrecognizedCompoundRefineClause(
   instruction: string,
 ): boolean {
+  if (EXACT_HOOK_REPLACEMENT_RE.test(instruction)) return false;
   if (!COMPOUND_SEPARATOR_RE.test(instruction)) return false;
   const instructionSignals = directRefineFocusSignals(instruction);
   const clauses = instruction
@@ -245,6 +248,25 @@ export function transformDirectRefineCandidate(input: {
   // artifact, so imperfect-but-usable revisions reach the user instead of
   // burning retries on dead-end structure gates.
   if (input.focus === "hook") {
+    const exactReplacement = input.instruction
+      ?.match(EXACT_HOOK_REPLACEMENT_RE)?.[1]
+      ?.trim()
+      .replace(/^(["'“‘])([\s\S]*)["'”’]$/, "$2");
+    if (exactReplacement) {
+      const original = input.originalBody;
+      const sentenceEnd = original.search(/[.!?…](?=\s|$)/u);
+      const lineEnd = original.indexOf("\n");
+      const replacementEnd =
+        sentenceEnd >= 0
+          ? sentenceEnd + 1
+          : lineEnd >= 0
+            ? lineEnd
+            : original.length;
+      return {
+        ok: true,
+        body: `${exactReplacement}${original.slice(replacementEnd)}`,
+      };
+    }
     return {
       ok: true,
       body: splicePreservedBody(input.originalBody, input.candidateBody),

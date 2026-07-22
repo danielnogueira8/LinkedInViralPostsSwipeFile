@@ -1,6 +1,7 @@
 import { describe, test, expect } from "vitest";
 import {
   assistantAfterPersistedUserMessage,
+  looksLikeArtifactReviewRequest,
   looksLikeComposerRefine,
   askAnswerShouldRefineLatestDraft,
   artifactSkillNames,
@@ -9,6 +10,7 @@ import {
   guardRefineCollapse,
   hasAssistantAfterPersistedUserMessage,
   reinsertArtifact,
+  reviewArtifactIdForComposer,
 } from "@/lib/chat-ui-policy";
 import type { Artifact } from "@/lib/agent/contracts";
 import type { ChatRun } from "@/lib/chat-hydration";
@@ -641,6 +643,45 @@ describe("looksLikeComposerRefine — chat-typed refine detection", () => {
   test("case-insensitive", () => {
     expect(looksLikeComposerRefine("MAKE IT SHORTER")).toBe(true);
     expect(looksLikeComposerRefine("Tighten The Hook")).toBe(true);
+  });
+
+  test.each([
+    "Review this post and give me feedback only. Do not rewrite or edit the draft.",
+    "Give me a one-sentence summary of the current draft. Do not edit it.",
+    "Critique Draft 1 without changing it.",
+  ])("'%s' is a read-only artifact request, never a refine", (msg) => {
+    expect(looksLikeArtifactReviewRequest(msg)).toBe(true);
+    expect(looksLikeComposerRefine(msg)).toBe(false);
+  });
+
+  test("a review operation targets the expanded non-newest draft", () => {
+    const drafts = [
+      { id: "draft-1", kind: "post" },
+      { id: "draft-2", kind: "post" },
+    ];
+
+    expect(
+      reviewArtifactIdForComposer(
+        "Review the selected Draft 1 and give feedback only.",
+        drafts,
+        "draft-1",
+      ),
+    ).toBe("draft-1");
+    expect(
+      reviewArtifactIdForComposer("Make it punchier.", drafts, "draft-1"),
+    ).toBeUndefined();
+  });
+
+  test("a read-only command about some other object does not bind the open draft", () => {
+    expect(looksLikeArtifactReviewRequest("Review my weekly content strategy."))
+      .toBe(false);
+    expect(
+      reviewArtifactIdForComposer(
+        "Summarize the attached research file.",
+        [{ id: "draft-1", kind: "post" }],
+        "draft-1",
+      ),
+    ).toBeUndefined();
   });
 });
 
