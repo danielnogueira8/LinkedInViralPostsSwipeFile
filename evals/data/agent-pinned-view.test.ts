@@ -85,6 +85,21 @@ describe("the agent view uses the horizontal space (two columns, wider panel)", 
   const workspace = source(WORKSPACE);
   const briefing = source(BRIEFING_COMPONENT);
 
+  test("horizontal clipping does not create nested vertical scrollers", () => {
+    // `overflow-x-hidden` computes the other axis to `auto`, which made both
+    // wrappers capture vertical scrolling even though they only need to clip
+    // over-wide row content. `clip` contains horizontal paint without turning
+    // either wrapper into a vertical scroll container.
+    expect(workspace).toContain(
+      "max-w-5xl flex-col overflow-x-clip py-2",
+    );
+    expect(briefing).toContain("sm:p-5 overflow-x-clip");
+    expect(workspace).not.toContain(
+      "max-w-5xl flex-col overflow-x-hidden py-2",
+    );
+    expect(briefing).not.toContain("sm:p-5 overflow-x-hidden");
+  });
+
   test("the panel is widened past the old narrow max-w-2xl", () => {
     // AgentView was max-w-2xl (~672px) and left most of a wide screen empty.
     expect(workspace).toContain("function AgentView");

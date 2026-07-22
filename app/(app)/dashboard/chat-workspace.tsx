@@ -5432,8 +5432,11 @@ function AgentView({
   onCountsChange: (counts: { drafts: number; opportunities: number }) => void;
   onClose: () => void;
 }) {
+  // `overflow-x-hidden` makes the other axis compute to `auto`, creating a
+  // nested vertical scroll container. `clip` contains wide rows without taking
+  // vertical scrolling away from the chat canvas.
   return (
-    <div className="mx-auto flex w-full min-w-0 max-w-5xl flex-col overflow-x-hidden py-2">
+    <div className="mx-auto flex w-full min-w-0 max-w-5xl flex-col overflow-x-clip py-2">
       <div className="mb-1 flex items-center justify-between gap-2">
         <div>
           <h2 className="text-lg font-semibold tracking-[-0.02em] text-foreground">
