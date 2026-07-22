@@ -1075,6 +1075,14 @@ const OPENROUTER_PRICING: Record<
   // model catalog lists $1.50/M input, $9/M output, and $0.15/M cache reads.
   // Keep the local fallback accurate for rare responses without usage.cost.
   "google/gemini-3.5-flash": { input: 1.5, output: 9.0, cachedInput: 0.15 },
+  // A supported OPENROUTER_CHAT_MODEL choice. OpenRouter lists $1.50/M input,
+  // $7.50/M output; cache reads aren't published, so use Gemini's standard
+  // 0.1x-input convention ($0.15) to match gemini-3.5-flash above. Without this
+  // entry an unpriced slug falls back to the GLM-5.1 rate ($4.40/M out) and
+  // under-counts the monthly cost cap on the rare responses lacking usage.cost
+  // (aborted/stalled streams, providers that omit cost). usage.cost is still
+  // preferred whenever present (see openRouterUsageCost).
+  "google/gemini-3.6-flash": { input: 1.5, output: 7.5, cachedInput: 0.15 },
   // Embedding model for the viral-learning loop. text-embedding-3-small is
   // $0.02/1M input; embeddings have no output tokens and no cache-read tier, so
   // output/cachedInput mirror input to keep the cost math well-defined.
