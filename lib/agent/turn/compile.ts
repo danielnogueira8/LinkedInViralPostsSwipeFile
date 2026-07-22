@@ -1876,6 +1876,7 @@ export async function compileTurnPlan(
     actionRetryRepository,
     persistedActionContinuation,
     pendingAskOnly,
+    fallthroughClarification,
     modeledBatchContinuation,
     modeledBatchContractRequested,
     setupDeadline,
@@ -1950,154 +1951,158 @@ export async function compileTurnPlan(
     };
   }
 
-  const directWritingContext = {
-    enabled: directWriterEnabled,
-    hasAttachments: attachments.length > 0,
-    hasLeadMagnet: Boolean(
-      shouldAttachLeadMagnet || appliedLeadMagnet || activeLeadMagnetCampaign,
-    ),
-    hasCreatorStyle: Boolean(creatorStyleId),
-    voiceResolved: preloadedVoiceResult?.ok === true,
-  };
-
-  const refineEligibilityInput = {
-    ...directWritingContext,
-    isRefine: skipDecision,
-    refineInstruction: refineInstruction ?? "",
-    targetResolved: trustedRefineTarget !== null,
-    targetKind:
-      trustedRefineTarget?.kind === "post" ||
-      trustedRefineTarget?.kind === "hook"
-        ? trustedRefineTarget.kind
-        : null,
-    targetHasLeadMagnet: Boolean(trustedRefineTarget?.meta?.lead_magnet),
-    hasModelSource: Boolean(modelSourceId),
-  };
-  const useDirectRefine = isDirectRefineEligible(refineEligibilityInput);
-  // Fallback: a resolved-post refine that the strict lane rejects only on an
-  // instruction-shape check (compound/removal/mixed-focus, e.g. "edit the draft,
-  // remove the sentence on the hook") still gets a real writer via a full-post
-  // general rewrite — instead of falling through to the tool-less answer lane,
-  // which regenerates a fresh post. Reuses the same eligibility input; the extra
-  // Tier-2 gate on the strict lane keeps the risky hook/CTA splice out of here.
-  const useGeneralRefine =
-    !useDirectRefine && isGeneralRefineEligible(refineEligibilityInput);
-  const useDirectPartial = isDirectPartialTextEligible({
-    ...directWritingContext,
-    userInstruction: effectiveUserInstruction,
-    sourceRequested: Boolean(modelSourceId),
-    sourceResolved: Boolean(directSource),
-    isRefine: skipDecision,
-  });
-  const useDirectMulti = isDirectMultiPostEligible({
-    ...directWritingContext,
-    userInstruction: effectiveUserInstruction,
-    sourceRequested: Boolean(modelSourceId),
-    sourceResolved: Boolean(directSource),
-    isRefine: skipDecision,
-    requestedCount: directPostCount ?? undefined,
-    composerTaskContext: composerTaskContext ?? undefined,
-  });
-  // Server-selected structure match: the user asked for an original post, but
-  // the deterministic matcher found a strong template/swipe/built-in source.
-  // Treat it as a fixed-source direct write so the source's structure is
-  // actually modeled rather than silently ignored.
-  const useDirectStructureSource = Boolean(
-    !modeledBatchContractRequested &&
-      !skipDecision &&
-      structureMatch &&
-      directSource &&
-      // A pure question/opinion about the current draft is not a post request,
-      // even under a "post"-kind composer starter — otherwise the matcher picks
-      // a structure and writes a post instead of answering the question.
-      !isOpinionOrQuestionAboutContent(effectiveUserInstruction) &&
-      (composerTaskContext?.kind === "post" ||
-        requestsFullPostDeliverable(effectiveUserInstruction) ||
-        directPostCount === 1),
-  );
-
-  const useDirectSource =
-    isDirectFixedSourcePostEligible({
-      ...directWritingContext,
-      userInstruction: effectiveUserInstruction,
-      sourceResolved: Boolean(directSource),
-      isRefine: skipDecision,
-    }) ||
-    // Find-and-model: source was resolved up front by resolveFindAndModelSource,
-    // so the discovery-phrasing turn now qualifies for the direct route instead
-    // of the heavy GLM render loop.
-    (Boolean(resolvedFindSource) &&
-      isDirectFindAndModelEligible({
-        ...directWritingContext,
-        userInstruction: effectiveUserInstruction,
-        sourceResolved: Boolean(directSource),
-        isRefine: skipDecision,
-      })) ||
-    useDirectStructureSource;
-  const useDirectOriginal = isDirectOriginalPostEligible({
-    userInstruction: effectiveUserInstruction,
-    requestedCount: directPostCount ?? undefined,
-    ...directWritingContext,
-    // Intent must fail closed here. A supplied source/style id can resolve to
-    // nothing (deleted, not ready, or outside the workspace); that still means
-    // the user requested context the direct engine does not own.
-    hasModelSource: Boolean(modelSourceId),
-    isRefine: skipDecision,
-    composerTaskContext: composerTaskContext ?? undefined,
-  });
-
   // Lead-magnet direct route. A lead-magnet post is a from-scratch original post
-  // with the giveaway framing. The direct engine injects that framing
-  // (leadMagnetBlock) and the CTA is HARD-enforced downstream by
-  // transformDraftCandidate (rejects a draft that doesn't mention the resource),
-  // so a lead-magnet post can be written by the strong model without ever
-  // shipping without its comment-CTA.
+  // with the giveaway framing. The lead-magnet and creator-style flags are
+  // inputs to the single eligibility compiler below so actual routing and
+  // missing-voice diagnosis can never drift into different route matrices.
   const activeLeadMagnetForDirect = Boolean(
     activeLeadMagnetCampaign && leadMagnetBlock.trim(),
   );
-  const useDirectLeadMagnet =
-    activeLeadMagnetForDirect &&
-    isDirectLeadMagnetEligible({
-      userInstruction: effectiveUserInstruction,
-      ...directWritingContext,
-      hasModelSource: Boolean(modelSourceId),
-      isRefine: skipDecision,
-    });
-
-  // Creator-style direct route. A creator-style post is a from-scratch original
-  // post that borrows another creator's WRITING MECHANICS (hooks, cadence,
-  // formatting) for the user's own topic. The direct engine injects that
-  // mechanics-only block (creatorStyleBlock), so the strong model can write it.
-  // Reuses the original-post eligibility with hasCreatorStyle forced false (the
-  // engine owns it now). No hard CTA-style guard is needed — creator style
-  // shapes rhythm, it has no mandatory element to enforce; the block's own
-  // wrapper already forbids copying the creator's topics/claims.
   const activeCreatorStyleForDirect = Boolean(
     creatorStyleId && !hasModelSource && creatorStyleBlock.trim(),
   );
-  const useDirectCreatorStyle =
-    activeCreatorStyleForDirect &&
-    isDirectOriginalPostEligible({
+
+  const compileDirectWriterEligibility = (voiceResolved: boolean) => {
+    const context = {
+      enabled: directWriterEnabled,
+      hasAttachments: attachments.length > 0,
+      hasLeadMagnet: Boolean(
+        shouldAttachLeadMagnet || appliedLeadMagnet || activeLeadMagnetCampaign,
+      ),
+      hasCreatorStyle: Boolean(creatorStyleId),
+      voiceResolved,
+    };
+    const refineInput = {
+      ...context,
+      isRefine: skipDecision,
+      refineInstruction: refineInstruction ?? "",
+      targetResolved: trustedRefineTarget !== null,
+      targetKind:
+        trustedRefineTarget?.kind === "post" ||
+        trustedRefineTarget?.kind === "hook"
+          ? trustedRefineTarget.kind
+          : null,
+      targetHasLeadMagnet: Boolean(trustedRefineTarget?.meta?.lead_magnet),
+      hasModelSource: Boolean(modelSourceId),
+    };
+    const directRefine = isDirectRefineEligible(refineInput);
+    // A resolved refine rejected only by the strict instruction-shape gate can
+    // still use the full-post rewrite lane, but it must retain edit identity.
+    const generalRefine =
+      !directRefine && isGeneralRefineEligible(refineInput);
+    const directPartial = isDirectPartialTextEligible({
+      ...context,
+      userInstruction: effectiveUserInstruction,
+      sourceRequested: Boolean(modelSourceId),
+      sourceResolved: Boolean(directSource),
+      isRefine: skipDecision,
+    });
+    const directMulti = isDirectMultiPostEligible({
+      ...context,
+      userInstruction: effectiveUserInstruction,
+      sourceRequested: Boolean(modelSourceId),
+      sourceResolved: Boolean(directSource),
+      isRefine: skipDecision,
+      requestedCount: directPostCount ?? undefined,
+      composerTaskContext: composerTaskContext ?? undefined,
+    });
+    const directStructureSource = Boolean(
+      voiceResolved &&
+        !modeledBatchContractRequested &&
+        !skipDecision &&
+        structureMatch &&
+        directSource &&
+        !isOpinionOrQuestionAboutContent(effectiveUserInstruction) &&
+        (composerTaskContext?.kind === "post" ||
+          requestsFullPostDeliverable(effectiveUserInstruction) ||
+          directPostCount === 1),
+    );
+    const directSourceEligible =
+      isDirectFixedSourcePostEligible({
+        ...context,
+        userInstruction: effectiveUserInstruction,
+        sourceResolved: Boolean(directSource),
+        isRefine: skipDecision,
+      }) ||
+      (Boolean(resolvedFindSource) &&
+        isDirectFindAndModelEligible({
+          ...context,
+          userInstruction: effectiveUserInstruction,
+          sourceResolved: Boolean(directSource),
+          isRefine: skipDecision,
+        })) ||
+      directStructureSource;
+    const directOriginal = isDirectOriginalPostEligible({
       userInstruction: effectiveUserInstruction,
       requestedCount: directPostCount ?? undefined,
-      ...directWritingContext,
-      hasCreatorStyle: false,
+      ...context,
       hasModelSource: Boolean(modelSourceId),
       isRefine: skipDecision,
       composerTaskContext: composerTaskContext ?? undefined,
     });
+    const directLeadMagnet = Boolean(
+      activeLeadMagnetForDirect &&
+        isDirectLeadMagnetEligible({
+          userInstruction: effectiveUserInstruction,
+          ...context,
+          hasModelSource: Boolean(modelSourceId),
+          isRefine: skipDecision,
+        }),
+    );
+    const directCreatorStyle = Boolean(
+      activeCreatorStyleForDirect &&
+        isDirectOriginalPostEligible({
+          userInstruction: effectiveUserInstruction,
+          requestedCount: directPostCount ?? undefined,
+          ...context,
+          hasCreatorStyle: false,
+          hasModelSource: Boolean(modelSourceId),
+          isRefine: skipDecision,
+          composerTaskContext: composerTaskContext ?? undefined,
+        }),
+    );
+
+    return {
+      useDirectRefine: directRefine,
+      useGeneralRefine: generalRefine,
+      useDirectPartial: directPartial,
+      useDirectMulti: directMulti,
+      useDirectSource: directSourceEligible,
+      useDirectOriginal: directOriginal,
+      useDirectLeadMagnet: directLeadMagnet,
+      useDirectCreatorStyle: directCreatorStyle,
+      eligible: Boolean(
+        directRefine ||
+          generalRefine ||
+          directPartial ||
+          directMulti ||
+          directSourceEligible ||
+          directOriginal ||
+          directLeadMagnet ||
+          directCreatorStyle
+      ),
+    };
+  };
+
+  const directWriterEligibility = compileDirectWriterEligibility(
+    preloadedVoiceResult?.ok === true,
+  );
+  const {
+    useDirectRefine,
+    useGeneralRefine,
+    useDirectPartial,
+    useDirectMulti,
+    useDirectSource,
+    useDirectLeadMagnet,
+    useDirectCreatorStyle,
+  } = directWriterEligibility;
 
   const useDirectWriter =
     !reviewOperation &&
     !modeledBatchContractRequested &&
-    (useDirectRefine ||
-      useGeneralRefine ||
-      useDirectPartial ||
-      useDirectMulti ||
-      useDirectSource ||
-      useDirectOriginal ||
-      useDirectLeadMagnet ||
-      useDirectCreatorStyle);
+    directWriterEligibility.eligible;
+  const directWriterWouldBeEligibleWithVoice =
+    compileDirectWriterEligibility(true).eligible;
   const actionOrchestratorRoute: ActionOrchestratorRoute | null = useDirectWriter
     ? null
     : reviewOperation
@@ -2204,71 +2209,9 @@ export async function compileTurnPlan(
           draftCountOverride: activeDraftCountOverride,
         }).kind !== "none"),
   );
-  // Eligibility predicates include voice as an execution prerequisite. Re-run
-  // only that pure prerequisite as "available" to distinguish a real writing
-  // operation with a missing voice from a compound/brainstorm request that was
-  // deliberately left to the answer lane.
-  const voiceAssumedContext = {
-    ...directWritingContext,
-    voiceResolved: true,
-  };
-  const directWriterWouldBeEligibleWithVoice = Boolean(
-    isDirectRefineEligible({
-      ...refineEligibilityInput,
-      voiceResolved: true,
-    }) ||
-      isGeneralRefineEligible({
-        ...refineEligibilityInput,
-        voiceResolved: true,
-      }) ||
-      isDirectPartialTextEligible({
-        ...voiceAssumedContext,
-        userInstruction: effectiveUserInstruction,
-        sourceRequested: Boolean(modelSourceId),
-        sourceResolved: Boolean(directSource),
-        isRefine: skipDecision,
-      }) ||
-      isDirectMultiPostEligible({
-        ...voiceAssumedContext,
-        userInstruction: effectiveUserInstruction,
-        sourceRequested: Boolean(modelSourceId),
-        sourceResolved: Boolean(directSource),
-        isRefine: skipDecision,
-        requestedCount: directPostCount ?? undefined,
-        composerTaskContext: composerTaskContext ?? undefined,
-      }) ||
-      isDirectFixedSourcePostEligible({
-        ...voiceAssumedContext,
-        userInstruction: effectiveUserInstruction,
-        sourceResolved: Boolean(directSource),
-        isRefine: skipDecision,
-      }) ||
-      isDirectOriginalPostEligible({
-        ...voiceAssumedContext,
-        userInstruction: effectiveUserInstruction,
-        requestedCount: directPostCount ?? undefined,
-        hasModelSource: Boolean(modelSourceId),
-        isRefine: skipDecision,
-        composerTaskContext: composerTaskContext ?? undefined,
-      }) ||
-      (activeLeadMagnetForDirect &&
-        isDirectLeadMagnetEligible({
-          ...voiceAssumedContext,
-          userInstruction: effectiveUserInstruction,
-          hasModelSource: Boolean(modelSourceId),
-          isRefine: skipDecision,
-        })) ||
-      (activeCreatorStyleForDirect &&
-        isDirectOriginalPostEligible({
-          ...voiceAssumedContext,
-          userInstruction: effectiveUserInstruction,
-          requestedCount: directPostCount ?? undefined,
-          hasCreatorStyle: false,
-          hasModelSource: Boolean(modelSourceId),
-          isRefine: skipDecision,
-          composerTaskContext: composerTaskContext ?? undefined,
-        })),
-  );
+  // Re-running the same eligibility compiler with only voice marked available
+  // distinguishes a real writing request with a missing prerequisite from a
+  // compound/brainstorm request intentionally left to the answer lane.
   const writingOperationRequested = Boolean(
     directWriterWouldBeEligibleWithVoice ||
       skipDecision ||
@@ -2350,7 +2293,15 @@ export async function compileTurnPlan(
   // message does not identify an operation on its own, stop before any model or
   // tool can guess whether to create, edit, research, or mutate board state.
   const clarificationAsk =
-    currentTurnOperation?.kind === "create_post" && !useDirectWriter
+    currentTurnOperation?.kind === "review_artifact" &&
+    currentTurnOperation.artifactId &&
+    !trustedRefineTarget
+      ? {
+          question: "Which draft should I review?",
+          options: ["Review the latest chat draft", "Choose a saved draft"],
+          allowOther: true,
+        }
+      : currentTurnOperation?.kind === "create_post" && !useDirectWriter
       ? {
           question: "What topic or angle should the new post cover?",
           options: ["I’ll provide the topic", "Choose a topic from my profile"],
@@ -2376,7 +2327,8 @@ export async function compileTurnPlan(
           !useActionOrchestrator &&
           !useReadOnlyOrchestrator &&
           !pendingAskOnly
-        ? clarificationForAmbiguousContinuation(effectiveUserInstruction)
+        ? fallthroughClarification ??
+          clarificationForAmbiguousContinuation(effectiveUserInstruction)
         : null;
 
   const directWriterTask: WriterTask = useDirectRefine

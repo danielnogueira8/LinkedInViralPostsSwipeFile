@@ -225,6 +225,16 @@ export function latestChatDraft(
   return null;
 }
 
+/** Resolve the exact artifact named by a typed operation, otherwise recency. */
+export function draftForCurrentTurn(
+  rows: DbMessage[],
+  targetId: string | undefined,
+): Artifact | null {
+  return targetId
+    ? resolveTrustedRefineTarget({ targetId, rows })
+    : latestChatDraft(rows);
+}
+
 export function latestDraftForVariation(
   rows: DbMessage[],
   userText: string,
@@ -1400,7 +1410,12 @@ export async function buildTurnContext(
   // Skipped when a fresh source is attached this turn (modelSourceId): that's a
   // new modeling turn working from the attached source, not an edit of the prior
   // draft, so the old body would only be noise.
-  const currentDraft = modelSourceId ? null : latestChatDraft(dbRows);
+  // Explicit edit/review identity wins over recency. If the requested id is
+  // absent, inject no fallback draft: reviewing the wrong artifact is worse
+  // than asking the user to choose again.
+  const currentDraft = modelSourceId
+    ? null
+    : draftForCurrentTurn(dbRows, refineTargetId);
   if (currentDraft && currentDraft.id !== variationSource?.id) {
     blocks.push({
       type: "text",

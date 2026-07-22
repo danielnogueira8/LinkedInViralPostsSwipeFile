@@ -1,5 +1,8 @@
 import { describe, expect, test } from "vitest";
-import { latestChatDraft } from "@/lib/agent/turn/context";
+import {
+  draftForCurrentTurn,
+  latestChatDraft,
+} from "@/lib/agent/turn/context";
 import type { Artifact } from "@/lib/agent/contracts";
 
 // ---------------------------------------------------------------------------
@@ -87,5 +90,29 @@ describe("latestChatDraft", () => {
         assistant([draft]),
       ]),
     ).toEqual(draft);
+  });
+
+  test("an explicit review target wins over the newest draft", () => {
+    const older = post("art_requested", "Review this exact older draft.");
+    const newer = post("art_latest", "Do not review this newer draft.");
+    const rows = [
+      {
+        role: "assistant" as const,
+        content: "",
+        tool_calls: null,
+        tool_call_id: null,
+        artifacts: [older],
+      },
+      {
+        role: "assistant" as const,
+        content: "",
+        tool_calls: null,
+        tool_call_id: null,
+        artifacts: [newer],
+      },
+    ];
+
+    expect(draftForCurrentTurn(rows, older.id)).toEqual(older);
+    expect(draftForCurrentTurn(rows, "missing")).toBeNull();
   });
 });

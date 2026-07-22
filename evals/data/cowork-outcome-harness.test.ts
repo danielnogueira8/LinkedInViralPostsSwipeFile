@@ -4778,6 +4778,51 @@ describe("production-shaped Cowork outcome harness", () => {
     ]);
   });
 
+  test("a creator-style edit preserves artifact identity on the writer lane", async () => {
+    const targetId = "00000000-0000-4000-8000-000000000615";
+    const revised = SECOND_POST.replace("Most people", "Too many people");
+    const report = await runCoworkOutcomeScenario({
+      id: "direct-refine-creator-style",
+      request: {
+        message: "Make this draft more direct.",
+        operation: {
+          kind: "edit_artifact",
+          artifactId: targetId,
+          instruction: "Make this draft more direct.",
+        },
+        creatorStyleId: CREATOR_STYLE.id,
+      },
+      seed: {
+        creatorStyle: CREATOR_STYLE,
+        messageArtifact: {
+          id: targetId,
+          kind: "post",
+          title: "Distribution",
+          body: SECOND_POST,
+        },
+      },
+      model: {
+        provider: { rounds: [] },
+        directWriter: [
+          {
+            text: revised,
+            finishReason: "stop",
+            usage: usage(180, 82, 0.00016),
+          },
+        ],
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [revised],
+        actionNames: [],
+        route: "direct_writer",
+      },
+    });
+
+    expect(report.pass, JSON.stringify(report.safe)).toBe(true);
+    expect(report.persisted.artifacts[0]?.id).toBe(targetId);
+  });
+
   test("an edit with an unresolved target clarifies instead of drafting or answering", async () => {
     const report = await runCoworkOutcomeScenario({
       id: "refine-missing-target",
@@ -4872,5 +4917,71 @@ describe("production-shaped Cowork outcome harness", () => {
 
     expect(report.pass, JSON.stringify(report.safe)).toBe(true);
     expect(report.persisted.artifacts).toHaveLength(0);
+  });
+
+  test("a typed create operation overrides conflicting legacy edit fields", async () => {
+    const legacyTargetId = "00000000-0000-4000-8000-000000000630";
+    const report = await runCoworkOutcomeScenario({
+      id: "typed-create-authoritative",
+      request: {
+        message: "Write an original post in my voice about durable systems.",
+        operation: { kind: "create_post" },
+        skipDecision: true,
+        refineTargetId: legacyTargetId,
+        refineInstruction: "Replace the old draft.",
+      },
+      seed: {
+        messageArtifact: {
+          id: legacyTargetId,
+          kind: "post",
+          title: "Old draft",
+          body: SECOND_POST,
+        },
+      },
+      model: {
+        provider: { rounds: [] },
+        directWriter: [
+          {
+            text: COMPLETE_POST,
+            finishReason: "stop",
+            usage: usage(210, 95, 0.0001888),
+          },
+        ],
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [COMPLETE_POST],
+        actionNames: [],
+        route: "direct_writer",
+      },
+    });
+
+    expect(report.pass, JSON.stringify(report.safe)).toBe(true);
+    expect(report.persisted.artifacts[0]?.id).not.toBe(legacyTargetId);
+  });
+
+  test("an unavailable fallthrough classifier fails closed to clarification", async () => {
+    const report = await runCoworkOutcomeScenario({
+      id: "fallthrough-classifier-failure",
+      request: { message: "Take the next step with this." },
+      seed: {
+        messageArtifact: {
+          id: "00000000-0000-4000-8000-000000000640",
+          kind: "post",
+          title: "Current draft",
+          body: COMPLETE_POST,
+        },
+      },
+      model: { provider: { rounds: [] } },
+      expected: {
+        terminal: "ask",
+        artifactBodies: [],
+        actionNames: ["ask_user"],
+        route: "answer",
+      },
+    });
+
+    expect(report.pass, JSON.stringify(report.safe)).toBe(true);
+    expect(report.observed.directWriterRequests).toHaveLength(0);
   });
 });

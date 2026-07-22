@@ -2593,6 +2593,22 @@ export function ChatWorkspace({
             ...(turnCreatorStyle && turnCreatorStyleApplies
               ? { creatorStyleId: turnCreatorStyle.id }
               : {}),
+            // Context is scoped to this turn. Stamp explicit clears for every
+            // unselected binding so a later opt-in cannot revive a stale skill,
+            // creator style, or format from behind this turn.
+            ...(appliesComposerControls
+              ? {
+                  contextPolicy: {
+                    clear: [
+                      ...(turnSkillIds.length ? [] : ["skills"]),
+                      ...(turnCreatorStyle && turnCreatorStyleApplies
+                        ? []
+                        : ["creator_style"]),
+                      ...(turnPostFormat ? [] : ["post_format"]),
+                    ],
+                  },
+                }
+              : {}),
             ...(turnGenerationConfig
               ? { generationConfig: turnGenerationConfig }
               : {}),

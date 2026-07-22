@@ -7,6 +7,7 @@ import type {
 } from "@/lib/cowork-turn-usage";
 import type { TurnOutcome } from "@/lib/agent/turn/outcome";
 import type { TurnContract } from "@/lib/agent/turn/compile";
+import { isBoardMutationToolName } from "@/lib/agent/tool-capabilities";
 
 export type CoworkRoute =
   | "setup"
@@ -384,11 +385,6 @@ export function createCoworkTurnTelemetry(
   };
 }
 
-const MUTATING_TOOL_NAMES = new Set([
-  "move_on_board",
-  "schedule_post",
-]);
-
 export async function* observeCoworkTurn(input: {
   stream: AsyncGenerator<AgentEvent>;
   telemetry: CoworkTurnTelemetry;
@@ -415,7 +411,7 @@ export async function* observeCoworkTurn(input: {
       if (
         event.type === "tool_end" &&
         event.ok &&
-        MUTATING_TOOL_NAMES.has(event.name)
+        isBoardMutationToolName(event.name)
       ) {
         committedActionCount += 1;
       }

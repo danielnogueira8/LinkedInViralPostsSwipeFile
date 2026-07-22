@@ -285,10 +285,9 @@ export type DirectRefineEligibility = {
 
 /**
  * Tier-1 hard checks shared by every direct-refine lane: a resolved complete
- * POST or HOOK target, a real instruction, resolved voice, and NO external context the
- * simple tool-less writer can't carry (attachments or a competing model
- * source). Lead-magnet and creator-style blocks are already first-class writer
- * inputs, so they must not knock an edit into the artifact-free answer lane.
+ * POST or HOOK target, a real instruction, resolved voice, and no attachment
+ * or competing model source. Lead-magnet and creator-style blocks are already
+ * first-class writer inputs, so the editor can preserve them in place.
  * These checks genuinely block any direct refine — unlike the Tier-2
  * instruction-shape checks in isDirectRefineEligible, which only protect the
  * hook/CTA SPLICE focuses (a general full-post rewrite doesn't need them).

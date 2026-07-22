@@ -72,6 +72,7 @@ import {
 } from "@/lib/composer-task-context";
 import { leadMagnetGenerateSchema } from "@/lib/lead-magnets";
 import { looksLikeComposerRefine } from "@/lib/chat-composer-policy";
+import { isOpinionOrQuestionAboutContent } from "@/lib/agent/direct-writer-policy";
 import {
   decideFallthroughIntent,
   INTENT_DECISION_ENABLED,
@@ -81,6 +82,7 @@ import {
   recoverLatestForcedNoModelFormatId,
   recoverLatestSelection,
   rowsAfterLatestContextClear,
+  type ChatContextKind,
 } from "@/lib/agent/turn/sticky-context";
 
 import type { ContentFeedback } from "@/lib/content-feedback";
@@ -93,7 +95,7 @@ import { buildLeadMagnetCampaign } from "@/lib/lead-magnet-campaign";
 import type { ToolResult } from "@/lib/agent/tools";
 import type { NoModelFormat } from "@/lib/agent/no-model-formats";
 import type { NoModelFormatId } from "@/lib/agent/no-model-format-catalog";
-import type { Artifact } from "@/lib/agent/contracts";
+import type { Artifact, AskQuestion } from "@/lib/agent/contracts";
 
 import type {
   ChatTurnDependencies,
@@ -203,6 +205,7 @@ export type TurnSetupResult = {
   persistedActionContinuation: boolean;
   pendingActionAsk: boolean;
   pendingAskOnly: boolean;
+  fallthroughClarification: AskQuestion | null;
   modeledBatchContinuation: ModeledDraftBatchContinuation | null;
   modeledBatchContractRequested: boolean;
   currentTurnModelSourceOwnership: "historical_continuation" | "server_selected";
@@ -312,6 +315,7 @@ export async function setupChatTurn(
   let persistedActionContinuation = false;
   let pendingActionAsk = false;
   let pendingAskOnly = false;
+  let fallthroughClarification: AskQuestion | null = null;
   let modeledBatchContinuation: ModeledDraftBatchContinuation | null = null;
   let modeledBatchContractRequested = false;
   let currentTurnModelSourceOwnership:
@@ -359,10 +363,19 @@ export async function setupChatTurn(
     skipDecision = body.skipDecision ?? false;
     refineTargetId = body.refineTargetId;
     refineInstruction = body.refineInstruction;
-    if (currentTurnOperation?.kind === "edit_artifact") {
-      skipDecision = true;
-      refineTargetId = currentTurnOperation.artifactId;
-      refineInstruction = currentTurnOperation.instruction;
+    // A typed operation is authoritative. Legacy refine fields remain accepted
+    // only when no typed operation is present; they can never alter its meaning.
+    if (currentTurnOperation) {
+      skipDecision = currentTurnOperation.kind === "edit_artifact";
+      refineTargetId =
+        currentTurnOperation.kind === "edit_artifact" ||
+        currentTurnOperation.kind === "review_artifact"
+          ? currentTurnOperation.artifactId
+          : undefined;
+      refineInstruction =
+        currentTurnOperation.kind === "edit_artifact"
+          ? currentTurnOperation.instruction
+          : undefined;
     }
     skillIds = body.skillIds ?? [];
     forcedNoModelFormatId = body.forcedNoModelFormatId;
@@ -371,7 +384,12 @@ export async function setupChatTurn(
     createLeadMagnet = body.createLeadMagnet;
     requestedGenerationConfig = body.generationConfig ?? null;
     composerStarterId = body.starterId;
-    if (body.hookOnly && body.hookOnlyOriginalBody) {
+    if (
+      (!currentTurnOperation ||
+        currentTurnOperation.kind === "edit_artifact") &&
+      body.hookOnly &&
+      body.hookOnlyOriginalBody
+    ) {
       hookOnly = true;
       hookOnlyOriginalBody = body.hookOnlyOriginalBody;
     }
@@ -737,16 +755,15 @@ export async function setupChatTurn(
     if (!body.retryOfUserMessageId && !persistedActionContinuation) {
       const inheritedContext = new Set(body.contextPolicy?.inherit ?? []);
       const clearedContext = new Set(body.contextPolicy?.clear ?? []);
-      if (
-        skillIds.length === 0 &&
-        inheritedContext.has("skills") &&
-        !clearedContext.has("skills")
-      ) {
+      const inheritedRowsFor = (kind: ChatContextKind) =>
+        inheritedContext.has(kind) && !clearedContext.has(kind)
+          ? rowsAfterLatestContextClear(chronologicalRecentMessageWindow, kind)
+          : null;
+
+      const inheritedSkillRows = inheritedRowsFor("skills");
+      if (skillIds.length === 0 && inheritedSkillRows) {
         const recovered = recoverLatestSelection(
-          rowsAfterLatestContextClear(
-            chronologicalRecentMessageWindow,
-            "skills",
-          ),
+          inheritedSkillRows,
           deps.customSkillSelectionMarkerFromToolCalls,
         );
         if (recovered) {
@@ -754,16 +771,10 @@ export async function setupChatTurn(
           customSkillRetryContext = recovered;
         }
       }
-      if (
-        !creatorStyleId &&
-        inheritedContext.has("creator_style") &&
-        !clearedContext.has("creator_style")
-      ) {
+      const inheritedCreatorStyleRows = inheritedRowsFor("creator_style");
+      if (!creatorStyleId && inheritedCreatorStyleRows) {
         const recovered = recoverLatestSelection(
-          rowsAfterLatestContextClear(
-            chronologicalRecentMessageWindow,
-            "creator_style",
-          ),
+          inheritedCreatorStyleRows,
           deps.creatorStyleSelectionMarkerFromToolCalls,
         );
         if (recovered) {
@@ -771,18 +782,10 @@ export async function setupChatTurn(
           creatorStyleRetryContext = recovered;
         }
       }
-      if (
-        !forcedNoModelFormatId &&
-        inheritedContext.has("post_format") &&
-        !clearedContext.has("post_format")
-      ) {
+      const inheritedPostFormatRows = inheritedRowsFor("post_format");
+      if (!forcedNoModelFormatId && inheritedPostFormatRows) {
         forcedNoModelFormatId =
-          recoverLatestForcedNoModelFormatId(
-            rowsAfterLatestContextClear(
-              chronologicalRecentMessageWindow,
-              "post_format",
-            ),
-          ) ??
+          recoverLatestForcedNoModelFormatId(inheritedPostFormatRows) ??
           undefined;
       }
     }
@@ -825,12 +828,13 @@ export async function setupChatTurn(
       // that otherwise drops into the tool-less answer lane and hallucinates a
       // new post. Ask GPT-Luna whether the user actually means to edit the
       // current draft; if so, set the same implicit refine target the heuristic
-      // would have, and the general-refine lane edits it in place. FAILS OPEN:
-      // null / disabled / any error → today's exact behavior. Flag-gated.
+      // would have, and the general-refine lane edits it in place. A missing or
+      // malformed verdict fails closed to a typed clarification.
       // (This is the `else` of the heuristic branch, so looksLikeComposerRefine
       // is already false here.)
       INTENT_DECISION_ENABLED &&
-      implicitRefineGuardsPass
+      implicitRefineGuardsPass &&
+      !isOpinionOrQuestionAboutContent(userText)
     ) {
       const implicitTarget = latestChatDraft(chronologicalRecentMessageWindow);
       if (implicitTarget) {
@@ -845,6 +849,23 @@ export async function setupChatTurn(
           refineTargetId = implicitTarget.id;
           refineInstruction = userText;
           skipDecision = true;
+        } else if (decision?.intent === "ambiguous" && decision.clarify) {
+          fallthroughClarification = {
+            question: decision.clarify.question,
+            options: decision.clarify.options,
+            allowOther: true,
+          };
+        } else if (!decision) {
+          fallthroughClarification = {
+            question:
+              "I couldn’t safely determine what you want to do with the current draft. What should I do?",
+            options: [
+              "Edit the current draft",
+              "Create a new draft",
+              "Give feedback without editing",
+            ],
+            allowOther: true,
+          };
         }
       }
     }
@@ -1511,6 +1532,7 @@ export async function setupChatTurn(
     persistedActionContinuation,
     pendingActionAsk,
     pendingAskOnly,
+    fallthroughClarification,
     modeledBatchContinuation,
     modeledBatchContractRequested,
     currentTurnModelSourceOwnership,

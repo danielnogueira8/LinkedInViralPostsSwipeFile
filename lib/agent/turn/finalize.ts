@@ -18,6 +18,7 @@ import {
 import { contentFormatForModel } from "@/lib/markdown/mode";
 import { CHAT_MODEL, type ToolCall } from "@/lib/openrouter";
 import type { ModeledDraftBatchContinuation } from "@/lib/agent/modeled-draft-continuation";
+import { TurnOutcomeInvariantError } from "@/lib/agent/turn/outcome-guard";
 
 const CHAT_SSE_HEARTBEAT_MS = configuredSseHeartbeatInterval(
   Number(process.env.CHAT_SSE_HEARTBEAT_MS || 15_000),
@@ -58,6 +59,16 @@ export function recoverableErrorValue(
       : {}),
     ...(marker.continuation ? { continuation: marker.continuation } : {}),
   };
+}
+
+export function persistedFailureContent(
+  cause: unknown,
+  streamedText: string,
+): string {
+  return cause instanceof TurnOutcomeInvariantError
+    ? "⚠️ Cowork discarded a response that did not match the authorized operation. Nothing was changed."
+    : stripArtifactFences(streamedText) ||
+        "⚠️ The assistant hit an error and couldn't finish this response.";
 }
 
 /**
@@ -439,11 +450,12 @@ export function finalizeTurn(
         },
         persistFailure: async (e) => {
           // Thrown mid-stream (incl. client abort): persist the partial so the
-          // turn isn't lost, then surface the error (preserving any provider
-          // error code so the client can render a specific message).
+          // turn isn't lost. Outcome-invariant failures are different: any
+          // streamed draft-shaped text is untrusted and must be discarded,
+          // otherwise a rejected artifact could survive as plain chat content.
+          const persistedFailureText = persistedFailureContent(e, streamedText);
           await persistAssistant(
-            stripArtifactFences(streamedText) ||
-              "⚠️ The assistant hit an error and couldn't finish this response.",
+            persistedFailureText,
             null,
             signal.aborted ? "cancelled" : "error",
           ).catch(() => {});

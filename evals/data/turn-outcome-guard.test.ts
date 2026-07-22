@@ -5,6 +5,7 @@ import {
   enforceTurnOutcome,
   TurnOutcomeInvariantError,
 } from "@/lib/agent/turn/outcome-guard";
+import { persistedFailureContent } from "@/lib/agent/turn/finalize";
 
 const target: Artifact & { kind: "post" } = {
   id: "draft-current",
@@ -111,5 +112,16 @@ describe("turn outcome guard", () => {
       ),
     );
     expect(output.map((event) => event.type)).toEqual(["artifact", "done"]);
+  });
+
+  test("invariant failures cannot persist streamed draft text as an answer", () => {
+    const leakedDraft = "This unauthorized replacement must not survive.";
+    const persisted = persistedFailureContent(
+      new TurnOutcomeInvariantError("answer emitted a draft"),
+      leakedDraft,
+    );
+
+    expect(persisted).not.toContain(leakedDraft);
+    expect(persisted).toContain("Nothing was changed");
   });
 });

@@ -1,4 +1,5 @@
 import type { AgentEvent, Artifact } from "@/lib/agent/contracts";
+import { isBoardMutationToolName } from "@/lib/agent/tool-capabilities";
 import type { TurnPlan } from "@/lib/agent/turn/compile";
 
 export class TurnOutcomeInvariantError extends Error {
@@ -9,8 +10,6 @@ export class TurnOutcomeInvariantError extends Error {
     this.name = "TurnOutcomeInvariantError";
   }
 }
-
-const BOARD_MUTATIONS = new Set(["move_on_board", "schedule_post"]);
 
 function assertArtifactAuthorized(plan: TurnPlan, artifact: Artifact): void {
   if (artifact.kind === "cite") {
@@ -87,7 +86,7 @@ export async function* enforceTurnOutcome(
     }
     if (
       event.type === "tool_start" &&
-      BOARD_MUTATIONS.has(event.name) &&
+      isBoardMutationToolName(event.name) &&
       plan.kind !== "action"
     ) {
       throw new TurnOutcomeInvariantError(
