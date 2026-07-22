@@ -68,6 +68,7 @@ import {
   type GroundedAnswerAttempt,
   type SynthesizeGroundedAnswer,
 } from "@/lib/agent/grounded-answer";
+import { groundedWorkspaceSourceArtifacts } from "@/lib/agent/grounded-source-citations";
 
 export {
   FALLBACK_READ_ONLY_ORCHESTRATOR_MODEL,
@@ -4193,6 +4194,7 @@ function taggedWithResearchProvenance(
 
 function completedDone(input: {
   content: string;
+  artifacts?: Artifact[];
   terminalReason?: "done" | "ask" | "cancelled" | "deadline" | "error";
   toolCalls: ToolCall[];
   toolMessages: ChatMessage[];
@@ -4205,7 +4207,7 @@ function completedDone(input: {
     message: {
       content: input.content,
       tool_calls: input.toolCalls,
-      artifacts: [],
+      artifacts: input.artifacts ?? [],
       toolMessages: input.toolMessages,
       inputTokens: input.inputTokens,
       outputTokens: input.outputTokens,
@@ -4996,6 +4998,9 @@ async function* runReadOnlyOrchestratorCore(
     if (groundedSources.length === 0) {
       throw new Error("Validated grounded-answer plan produced no evidence.");
     }
+    const sourceArtifacts = groundedWorkspaceSourceArtifacts(groundedSources);
+    const hasStructuredWorkspaceSources =
+      sourceArtifacts.length === groundedSources.length;
     if (await input.cancellationBoundary()) {
       yield completedDone({
         content: readOnlyInterruptionContent(
@@ -5052,6 +5057,9 @@ async function* runReadOnlyOrchestratorCore(
         instruction: authoritativeInstruction,
         format: terminalAction.format,
         evidence: groundedSources,
+        ...(hasStructuredWorkspaceSources
+          ? { sourcePresentation: "structured_workspace" as const }
+          : {}),
         signal: input.signal,
       });
       await recordSynthesisAttempts(
@@ -5071,6 +5079,7 @@ async function* runReadOnlyOrchestratorCore(
       yield { type: "text", delta: answer.content };
       yield completedDone({
         content: answer.content,
+        artifacts: hasStructuredWorkspaceSources ? sourceArtifacts : [],
         toolCalls: calls,
         toolMessages: messages,
         inputTokens,

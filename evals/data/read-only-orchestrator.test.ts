@@ -1412,7 +1412,7 @@ describe("read-only orchestrator execution", () => {
     );
   });
 
-  test("returns a grounded swipe-file summary without invoking the writer or emitting an artifact", async () => {
+  test("returns a grounded swipe-file summary with a read-only source citation and no draft", async () => {
     const instruction =
       "Find one top-performing regular post in my swipe file about AI agents and summarize why it worked. Do not draft or rewrite.";
     const synthesizeGroundedAnswer = vi.fn(async () => ({
@@ -1448,14 +1448,14 @@ describe("read-only orchestrator execution", () => {
         ok: true,
         posts: [
           {
-            id: "top-ai-agent-post",
+            id: "10000000-0000-4000-8000-000000000001",
             text: "AI agents fail when teams confuse permission with instruction.",
             post_url: "https://www.linkedin.com/posts/top-ai-agent-post",
             reactions: 840,
             comments: 96,
           },
           {
-            id: "runner-up",
+            id: "10000000-0000-4000-8000-000000000002",
             text: "A second verified AI-agent post.",
             reactions: 510,
             comments: 42,
@@ -1469,9 +1469,10 @@ describe("read-only orchestrator execution", () => {
       expect.objectContaining({
         instruction,
         format: "summary",
+        sourcePresentation: "structured_workspace",
         evidence: [
           expect.objectContaining({
-            id: "top-ai-agent-post",
+            id: "10000000-0000-4000-8000-000000000001",
             text: "AI agents fail when teams confuse permission with instruction.",
             url: "https://www.linkedin.com/posts/top-ai-agent-post",
             metrics: expect.objectContaining({ reactions: 840, comments: 96 }),
@@ -1487,7 +1488,19 @@ describe("read-only orchestrator execution", () => {
       message: {
         content:
           "The strongest post used a concrete AI-agent failure as its hook, then converted it into a practical three-step lesson.",
-        artifacts: [],
+        artifacts: [
+          {
+            id: "grounded-source:10000000-0000-4000-8000-000000000001",
+            kind: "cite",
+            title: "Verified source post",
+            body: "",
+            meta: {
+              postId: "10000000-0000-4000-8000-000000000001",
+              presentation: "grounded_answer_source",
+              sourceUrl: "https://www.linkedin.com/posts/top-ai-agent-post",
+            },
+          },
+        ],
       },
     });
   });

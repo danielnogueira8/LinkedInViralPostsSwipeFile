@@ -17,6 +17,7 @@ export type GroundedAnswerInput = {
   instruction: string;
   format: GroundedAnswerFormat;
   evidence: GroundedSource[];
+  sourcePresentation?: "structured_workspace";
   signal?: AbortSignal;
 };
 
@@ -134,6 +135,13 @@ function withVerifiedSources(
   ].join("\n");
 }
 
+function flattenMarkdownLinks(content: string): string {
+  return content.replace(
+    /\[([^\]\n]+)\]\((?:https?:\/\/)[^)\s]+(?:\s+"[^"]*")?\)/gi,
+    "$1",
+  );
+}
+
 export const synthesizeGroundedAnswer: SynthesizeGroundedAnswer = async (
   input,
 ) => {
@@ -157,7 +165,9 @@ export const synthesizeGroundedAnswer: SynthesizeGroundedAnswer = async (
               "You are SwipeIn's grounded research-answer synthesizer.",
               "Return the requested analysis as ordinary assistant text. Never draft, rewrite, or edit a LinkedIn post, and never claim that an artifact was created.",
               "Use only the supplied verified evidence. If the evidence does not support a claim, omit it. Distinguish direct observations from inference.",
-              "When a source URL is supplied, include a concise Markdown source link. Never invent a URL, metric, author, date, or performance claim.",
+              input.sourcePresentation === "structured_workspace"
+                ? "The verified source links are attached separately by the server. Do not include a source list, Markdown link, or URL in your answer."
+                : "When a source URL is supplied, include a concise Markdown source link. Never invent a URL, metric, author, date, or performance claim.",
               `Requested answer format: ${input.format}.`,
               INJECTION_GUARD,
             ].join("\n\n"),
@@ -182,8 +192,12 @@ export const synthesizeGroundedAnswer: SynthesizeGroundedAnswer = async (
         latencyMs: Math.max(0, Date.now() - startedAt),
         usage,
       });
+      const presentedContent =
+        input.sourcePresentation === "structured_workspace"
+          ? flattenMarkdownLinks(content)
+          : withVerifiedSources(content, input.evidence);
       return {
-        content: withVerifiedSources(content, input.evidence),
+        content: presentedContent,
         model: response.model || model,
         usage,
         attempts,

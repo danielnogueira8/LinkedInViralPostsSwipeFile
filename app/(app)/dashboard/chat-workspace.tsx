@@ -63,6 +63,7 @@ import {
 } from "lucide-react";
 import { AiIcon } from "@/components/ai-icon";
 import { renderRichText } from "@/components/chat-rich-text";
+import { GroundedSourceLinks } from "@/components/grounded-source-links";
 import { cn } from "@/lib/utils";
 import { ChatContextPanel } from "./chat-context-panel";
 import {
@@ -2716,12 +2717,13 @@ export function ChatWorkspace({
             });
           } else if (event === "artifact") {
             const incoming = data as unknown as Artifact;
+            const isDraft = incoming.kind === "post" || incoming.kind === "hook";
             // Re-sent artifact id (e.g. a cite backfilling its draft's
             // source_url after the draft already streamed) → REPLACE the card
             // already on screen, not a second copy of it.
             if (ownedRun.artifacts.some((a) => a.id === incoming.id)) {
               ownedRun.artifacts = replaceOrAppendArtifact(ownedRun.artifacts, incoming);
-              if (chatId === activeIdRef.current) setPanelOpen(true);
+              if (isDraft && chatId === activeIdRef.current) setPanelOpen(true);
               return;
             }
             // Direct AI refine: the server reuses the target id, so this run
@@ -2733,7 +2735,6 @@ export function ChatWorkspace({
             //   (b) collapse guard: if GLM shrunk a real post into a fragment,
             //       we drop the fragment entirely rather than shipping garbage.
             const pending = pendingRefineRef.current.get(chatId);
-            const isDraft = incoming.kind === "post" || incoming.kind === "hook";
             if (pending && isDraft) {
               // The direct refine lane reuses the target id. Keep the streamed
               // result as one replacement and wait for canonical persistence
@@ -2778,7 +2779,7 @@ export function ChatWorkspace({
             }
             // Drafts live in the right-hand panel — open it (only for the chat
             // on screen) so a freshly generated post is immediately visible.
-            if (chatId === activeIdRef.current) setPanelOpen(true);
+            if (isDraft && chatId === activeIdRef.current) setPanelOpen(true);
           } else if (event === "done") {
             // A failed turn that delivered nothing shouldn't show a credit
             // line — "~1 credit" next to a dead-end error reads as "you were
@@ -5738,6 +5739,8 @@ function MessageBubble({
         </div>
       )}
 
+      <GroundedSourceLinks artifacts={message.artifacts} />
+
       {/* Copy the assistant's text reply — appears once the turn finishes
           streaming. Cards have their own copy; this covers the prose (e.g. a
           list of angles the user wants to grab). Hover-reveal on desktop, always
@@ -5756,12 +5759,9 @@ function MessageBubble({
         <TaskUsageSummary usage={message.usage} />
       )}
 
-      {/* Cited source posts are intentionally NOT rendered in the chat. A "what's
-          working" analysis references many posts but the model cited only some,
-          which read as an inconsistent, partial source list. Sources belong on
-          DRAFTS (a modeled draft shows its "Source post" link via meta.source_url),
-          not floating under chat prose. The cite artifacts still carry draft
-          source metadata upstream; they just no longer render as chat cards. */}
+      {/* Ordinary modeled citations remain hidden. GroundedSourceLinks accepts
+          only the server-tagged grounded-answer presentation and a verified
+          LinkedIn URL, so broad research analyses do not regain partial cards. */}
 
       {/* Clarifying question (ask_user): an interactive card with the agent's
           options + a free-text box. Shown once the turn settles; submitting

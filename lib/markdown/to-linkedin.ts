@@ -48,7 +48,8 @@ function protect(
 ): { text: string; restore: (value: string) => string } {
   const sentinelEnd = String.fromCodePoint(0xe001);
   let sentinelStart = String.fromCodePoint(0xe000);
-  while (input.includes(`${sentinelStart}${namespace}`)) {
+  const namespaceCodePoint = namespace === "code" ? 0xe100 : 0xe500;
+  while (input.includes(sentinelStart)) {
     sentinelStart += String.fromCodePoint(0xe000);
   }
   const values: string[] = [];
@@ -56,16 +57,23 @@ function protect(
     const value = pattern === INLINE_CODE_RE && typeof groups[0] === "string"
       ? groups[0]
       : match;
-    const token = `${sentinelStart}${namespace}${values.length}${sentinelEnd}`;
+    // Private-use-only tokens survive Unicode emphasis conversion. The old
+    // ASCII `url0` token was styled when a link sat inside **bold**, so it could
+    // no longer be restored and leaked into chat as `(url0)`.
+    const token = `${sentinelStart}${String.fromCodePoint(namespaceCodePoint + values.length)}${sentinelEnd}`;
     values.push(value);
     return token;
   });
   return {
     text,
     restore: (value) =>
-      value.replace(
-        new RegExp(`${sentinelStart}${namespace}(\\d+)${sentinelEnd}`, "g"),
-        (_match, index: string) => values[Number(index)] ?? "",
+      values.reduce(
+        (restored, item, index) =>
+          restored.replaceAll(
+            `${sentinelStart}${String.fromCodePoint(namespaceCodePoint + index)}${sentinelEnd}`,
+            item,
+          ),
+        value,
       ),
   };
 }

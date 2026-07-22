@@ -119,6 +119,44 @@ describe("grounded research answers", () => {
     });
   });
 
+  test("defers workspace links to structured citations and strips model-authored markdown links", async () => {
+    completeChat.mockResolvedValue({
+      text: [
+        "The post worked because it made the risk concrete.",
+        "",
+        "**[View the original LinkedIn post](https://www.linkedin.com/posts/post-1)**",
+      ].join("\n"),
+      model: "primary",
+    });
+
+    const result = await synthesizeGroundedAnswer({
+      instruction: "Summarize why the post worked.",
+      format: "summary",
+      sourcePresentation: "structured_workspace",
+      evidence: [
+        {
+          id: "10000000-0000-4000-8000-000000000001",
+          kind: "workspace_post",
+          url: "https://www.linkedin.com/posts/post-1",
+          text: "A verified post.",
+        },
+      ],
+    });
+
+    expect(result.content).toBe(
+      [
+        "The post worked because it made the risk concrete.",
+        "",
+        "**View the original LinkedIn post**",
+      ].join("\n"),
+    );
+    expect(result.content).not.toContain("https://");
+    expect(result.content).not.toContain("Sources:");
+    expect(String(completeChat.mock.calls[0]?.[0]?.messages?.[0]?.content)).toContain(
+      "verified source links are attached separately",
+    );
+  });
+
   test("never interpolates untrusted source labels into Markdown", async () => {
     completeChat.mockResolvedValue({
       text: "A grounded observation.",
