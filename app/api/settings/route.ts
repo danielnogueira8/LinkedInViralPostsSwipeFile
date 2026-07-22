@@ -48,7 +48,7 @@ export async function POST(req: Request) {
       sb.upsertSetting("template_thresholds", parsed.data.template),
     ]);
     if (r1.error || r2.error) {
-      return NextResponse.json({ ok: false, error: (r1.error || r2.error)!.message }, { status: 500 });
+      return errorResponse(r1.error || r2.error);
     }
 
     // Re-evaluate is_viral for posts from accounts THIS workspace tracks.
@@ -92,10 +92,7 @@ export async function POST(req: Request) {
           .or(`comments.lt.${min_comments},comments.is.null`),
       ]);
       if (upTrue.error || upFalse.error) {
-        return NextResponse.json(
-          { ok: false, error: (upTrue.error || upFalse.error)!.message },
-          { status: 500 },
-        );
+        return errorResponse(upTrue.error || upFalse.error);
       }
 
       // Foundation for per-workspace classification (migration-075): also

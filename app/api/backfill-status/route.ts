@@ -26,7 +26,7 @@ export async function GET(req: NextRequest) {
       ? sb.from("backfill_runs").select("*").eq("id", runId).maybeSingle()
       : sb.from("backfill_runs").select("*").order("started_at", { ascending: false }).limit(1).maybeSingle();
     const { data, error } = await q;
-    if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+    if (error) return errorResponse(error);
     return NextResponse.json({ ok: true, run: data });
   } catch (e) {
     return errorResponse(e);

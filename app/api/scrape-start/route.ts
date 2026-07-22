@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireWorkspaceId } from "@/lib/workspace";
+import { errorResponse, requireWorkspaceId } from "@/lib/workspace";
 import { isAdmin } from "@/lib/admin";
 import { enqueueScrapeJob, findActiveScrapeRun } from "@/lib/scrape-jobs";
 
@@ -32,6 +32,6 @@ export async function POST() {
       alreadyRunning,
     });
   } catch (e) {
-    return NextResponse.json({ ok: false, error: (e as Error).message }, { status: 500 });
+    return errorResponse(e);
   }
 }

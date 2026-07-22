@@ -30,10 +30,7 @@ export async function POST(req: Request) {
     const sb = await scopedSupabase();
     const result = await draftFromPrompt(sb.raw, sb.workspaceId, prompt);
     if (!result.ok) {
-      return NextResponse.json(
-        { ok: false, error: result.reason },
-        { status: 500 },
-      );
+      return errorResponse(new Error(result.reason));
     }
     return NextResponse.json({ ok: true, draftIds: result.draftIds });
   } catch (e) {

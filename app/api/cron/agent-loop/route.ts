@@ -3,6 +3,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { postCronAlert } from "@/lib/cron-alert";
 import { scanAgentOpportunities } from "@/lib/agent-loop/scan";
 import { actOnOpportunity, type AgentOpportunityRow } from "@/lib/agent-loop/act";
+import { errorResponse } from "@/lib/workspace";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -132,9 +133,6 @@ export async function GET(req: Request) {
   } catch (error) {
     console.error("agent-loop cron failed", (error as Error)?.message);
     await postCronAlert({ cron: "agent-loop" }, error);
-    return NextResponse.json(
-      { ok: false, error: (error as Error)?.message ?? "Unexpected error" },
-      { status: 500 },
-    );
+    return errorResponse(error);
   }
 }

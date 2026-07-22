@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { requireWorkspaceId } from "@/lib/workspace";
+import { errorResponse, requireWorkspaceId } from "@/lib/workspace";
 import { isAdmin } from "@/lib/admin";
 import { fetchEmbedCard } from "@/lib/linkedin-embed-scrape";
 import { postedAtFromLinkedInId, probeEmbedUrn } from "@/lib/linkedin-url";
@@ -102,6 +102,6 @@ export async function POST(req: Request) {
       remaining: remaining ?? 0,
     });
   } catch (e) {
-    return NextResponse.json({ ok: false, error: (e as Error).message }, { status: 500 });
+    return errorResponse(e);
   }
 }

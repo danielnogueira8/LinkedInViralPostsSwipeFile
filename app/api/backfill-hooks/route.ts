@@ -9,7 +9,7 @@ import {
   qualifiesForHookLibrary,
   normalizeHookForDedupe,
 } from "@/lib/hooks";
-import { requireWorkspaceId } from "@/lib/workspace";
+import { errorResponse, requireWorkspaceId } from "@/lib/workspace";
 import { selectAllRows, idChunks } from "@/lib/db-paginate";
 import { isAdmin } from "@/lib/admin";
 
@@ -75,7 +75,7 @@ export async function POST(req: Request) {
         .not("text", "is", null),
     );
   } catch (e) {
-    return NextResponse.json({ ok: false, error: (e as Error).message }, { status: 500 });
+    return errorResponse(e);
   }
   const withText = viral.filter((p) => !!p.text);
 
@@ -106,7 +106,7 @@ export async function POST(req: Request) {
         if (delErr) throw new Error(delErr.message);
       }
     } catch (e) {
-      return NextResponse.json({ ok: false, error: (e as Error).message }, { status: 500 });
+      return errorResponse(e);
     }
     purged = purgeIds.length;
   }

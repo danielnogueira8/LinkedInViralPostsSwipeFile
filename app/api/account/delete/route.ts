@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { purgeWorkspaceData } from "@/lib/purge-workspace";
+import { errorResponse } from "@/lib/workspace";
 
 export const runtime = "nodejs";
 
@@ -58,7 +59,6 @@ export async function POST(req: Request) {
           ok: false,
           error:
             "We couldn't fully delete your data just now. Nothing was removed from your account access — please try again, or email us and we'll complete it.",
-          details: purge.errors,
         },
         { status: 500 },
       );
@@ -66,6 +66,6 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ ok: true, deleted: purge.deleted });
   } catch (e) {
-    return NextResponse.json({ ok: false, error: (e as Error).message }, { status: 500 });
+    return errorResponse(e);
   }
 }

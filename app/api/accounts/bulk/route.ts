@@ -3,6 +3,7 @@ import { z } from "zod";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { TrackedCreatorError, TrackedCreators } from "@/lib/tracked-creators";
 import { createSupabaseTrackedCreatorsRepository } from "@/lib/tracked-creators-supabase";
+import { errorResponse } from "@/lib/workspace";
 
 export const runtime = "nodejs";
 
@@ -45,9 +46,6 @@ export async function POST(req: Request) {
         { status: error.status },
       );
     }
-    return NextResponse.json(
-      { ok: false, error: (error as Error)?.message ?? "Unexpected error" },
-      { status: 500 },
-    );
+    return errorResponse(error);
   }
 }

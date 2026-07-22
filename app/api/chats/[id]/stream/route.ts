@@ -5,6 +5,7 @@ import {
   executeChatTurn,
   jsonError,
 } from "@/lib/agent/chat-turn";
+import { errorResponse } from "@/lib/workspace";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -30,7 +31,12 @@ export function createChatStreamPost(
     req: Request,
     { params }: { params: Promise<{ id: string }> },
   ) {
-    const userId = (await authenticate()).userId;
+    let userId: string | null;
+    try {
+      userId = (await authenticate()).userId;
+    } catch (error) {
+      return errorResponse(error);
+    }
     if (!userId) return jsonError("Sign in required", 401);
 
     let body: z.infer<typeof chatTurnRequestSchema>;
@@ -39,16 +45,26 @@ export function createChatStreamPost(
     } catch (error) {
       if (error instanceof z.ZodError)
         return jsonError("Invalid request body", 400);
-      return jsonError((error as Error)?.message ?? "Unexpected error", 500);
+      return errorResponse(error);
     }
 
-    const { id: chatId } = await params;
-    const result = await execute({
-      chatId,
-      userId,
-      body,
-      signal: req.signal,
-    });
+    let chatId: string;
+    try {
+      ({ id: chatId } = await params);
+    } catch (error) {
+      return errorResponse(error);
+    }
+    let result: Awaited<ReturnType<typeof executeChatTurn>>;
+    try {
+      result = await execute({
+        chatId,
+        userId,
+        body,
+        signal: req.signal,
+      });
+    } catch (error) {
+      return errorResponse(error);
+    }
     if (result instanceof Response) return result;
 
     return new Response(result.stream, {

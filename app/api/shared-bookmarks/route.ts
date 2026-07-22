@@ -3,6 +3,7 @@ import { z } from "zod";
 import { auth } from "@clerk/nextjs/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { resolveWorkspaceDisplays } from "@/lib/workspace-display";
+import { errorResponse } from "@/lib/workspace";
 
 export const runtime = "nodejs";
 
@@ -78,10 +79,7 @@ export async function GET() {
       }),
     });
   } catch (e) {
-    return NextResponse.json(
-      { ok: false, error: (e as Error).message },
-      { status: 500 },
-    );
+    return errorResponse(e);
   }
 }
 
@@ -149,9 +147,6 @@ export async function POST(req: Request) {
     }
     return NextResponse.json({ ok: true, share: inserted, alreadyInvited: false });
   } catch (e) {
-    return NextResponse.json(
-      { ok: false, error: (e as Error).message },
-      { status: 500 },
-    );
+    return errorResponse(e);
   }
 }

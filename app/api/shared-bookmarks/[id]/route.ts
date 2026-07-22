@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { verifiedPrimaryEmail } from "@/lib/shared-bookmarks";
+import { errorResponse } from "@/lib/workspace";
 
 export const runtime = "nodejs";
 
@@ -127,10 +128,7 @@ export async function PATCH(
     if (!updated) return transitionConflict();
     return NextResponse.json({ ok: true });
   } catch (e) {
-    return NextResponse.json(
-      { ok: false, error: (e as Error).message },
-      { status: 500 },
-    );
+    return errorResponse(e);
   }
 }
 

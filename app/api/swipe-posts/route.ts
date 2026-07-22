@@ -6,6 +6,7 @@ import {
   SWIPE_PAGE_SIZE,
   type SwipeAccountScope,
 } from "@/lib/swipe-query";
+import { errorResponse } from "@/lib/workspace";
 
 export const runtime = "nodejs";
 
@@ -80,6 +81,6 @@ export async function GET(req: Request) {
 
     return NextResponse.json({ ok: true, ...page });
   } catch (e) {
-    return NextResponse.json({ ok: false, error: (e as Error).message }, { status: 500 });
+    return errorResponse(e);
   }
 }

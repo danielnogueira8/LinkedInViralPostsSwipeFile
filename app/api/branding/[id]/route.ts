@@ -13,7 +13,7 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
     // or belongs to another tenant) — report 404 instead of a misleading
     // { ok: true } that tells the client a delete happened when it didn't.
     const { data: deleted, error } = await sb.deleteClient(id).select("id");
-    if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+    if (error) return errorResponse(error);
     if (!deleted || deleted.length === 0) {
       return NextResponse.json({ ok: false, error: "Brand not found" }, { status: 404 });
     }

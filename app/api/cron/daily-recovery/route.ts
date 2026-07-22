@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { postCronAlert } from "@/lib/cron-alert";
+import { errorResponse } from "@/lib/workspace";
 import { recoverMissingDailyScrape } from "@/lib/scrape-jobs";
 import { supabaseAdmin } from "@/lib/supabase";
 
@@ -35,9 +36,6 @@ export async function GET(req: Request) {
   } catch (e) {
     console.error("daily recovery cron failed", (e as Error).message);
     await postCronAlert({ cron: "daily-recovery" }, e);
-    return NextResponse.json(
-      { ok: false, error: (e as Error).message },
-      { status: 500 },
-    );
+    return errorResponse(e);
   }
 }

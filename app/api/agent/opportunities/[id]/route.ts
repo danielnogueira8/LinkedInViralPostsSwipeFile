@@ -64,10 +64,7 @@ export async function POST(
       opportunity as AgentOpportunityRow,
     );
     if (!result.ok) {
-      return NextResponse.json(
-        { ok: false, error: result.reason },
-        { status: 500 },
-      );
+      return errorResponse(new Error(result.reason));
     }
     return NextResponse.json({ ok: true, status: "drafted", draftIds: result.draftIds });
   } catch (e) {
