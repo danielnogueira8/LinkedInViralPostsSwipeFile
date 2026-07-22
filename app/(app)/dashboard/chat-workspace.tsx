@@ -15,6 +15,7 @@ import {
 import dynamic from "next/dynamic";
 import { useSearchParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { leadMagnetPickerDisabledForSource } from "@/lib/chat-composer-policy";
 import {
   Plus,
   Send,
@@ -490,6 +491,7 @@ export function ChatWorkspace({
   const modelSource = modelSourceBelongsToChat(activeId, modelSourceChatId)
     ? pendingModelSource
     : null;
+  const leadMagnetPickerDisabled = leadMagnetPickerDisabledForSource(modelSource?.postType);
   // When a chat was opened via Posts → "Model in Chat", this maps that chat's id
   // to the original chat_artifacts row it's refining. Saving a refined post in
   // that chat UPDATES the original row instead of creating a duplicate. Per-chat
@@ -552,6 +554,14 @@ export function ChatWorkspace({
   const creatorStylePickerRef = useRef<HTMLDivElement>(null);
   const [leadMagnetPickerOpen, setLeadMagnetPickerOpen] = useState(false);
   const leadMagnetPickerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!leadMagnetPickerDisabled) return;
+    // A modeled source is an external navigation state; clear incompatible
+    // composer-only context when it changes to a regular post.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setPendingLeadMagnet(null);
+    setLeadMagnetPickerOpen(false);
+  }, [leadMagnetPickerDisabled]);
   const [generationSettingsOpen, setGenerationSettingsOpen] = useState(false);
   const generationSettingsRef = useRef<HTMLDivElement>(null);
   const generationSettingsButtonRef = useRef<HTMLButtonElement>(null);
@@ -599,7 +609,7 @@ export function ChatWorkspace({
   const [lastNewestArtifactId, setLastNewestArtifactId] = useState<
     string | null
   >(null);
-
+  
   // --- per-chat state so streams keep running in the background when you ---
   // --- switch chats. The rendered view (messages/artifacts) is DERIVED   ---
   // --- per active chat from these maps; `tick` forces a re-render when a  ---
@@ -2245,7 +2255,7 @@ export function ChatWorkspace({
       // uses it regardless of when the state clears.)
       const turnSkills = pendingSkills;
       const turnPostFormat = pendingPostFormat;
-      const turnLeadMagnet = pendingLeadMagnet;
+      const turnLeadMagnet = leadMagnetPickerDisabled ? null : pendingLeadMagnet;
       const turnLeadMagnetApplies = clientShouldApplyLeadMagnet(
         text,
         !!attached,
@@ -4130,7 +4140,8 @@ export function ChatWorkspace({
                       setContextMenuOpen(false);
                       setLeadMagnetPickerOpen(true);
                     }}
-                    className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm transition-colors hover:bg-muted"
+                    disabled={leadMagnetPickerDisabled}
+                    className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <Magnet
                       className={cn(
