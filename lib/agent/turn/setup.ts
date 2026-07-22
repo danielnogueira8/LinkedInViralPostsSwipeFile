@@ -73,6 +73,10 @@ import {
 } from "@/lib/composer-task-context";
 import { leadMagnetGenerateSchema } from "@/lib/lead-magnets";
 import { looksLikeComposerRefine } from "@/lib/chat-composer-policy";
+import {
+  recoverLatestForcedNoModelFormatId,
+  recoverLatestSelection,
+} from "@/lib/agent/turn/sticky-context";
 
 import type { ContentFeedback } from "@/lib/content-feedback";
 import type { ContentPreference } from "@/lib/preferences";
@@ -698,6 +702,51 @@ export async function setupChatTurn(
                 body.clientTimezone,
               )
             : context.route;
+    }
+
+    // Sticky chat context: a custom skill / creator style / forced post format
+    // applied earlier in the chat keeps applying on later turns, so a plain
+    // follow-up ("make it shorter") still honors the skill/style/format the user
+    // picked once — mirroring how the model source and a manual lead magnet
+    // already persist. We recover the LATEST bearing user row's selection when
+    // the client sent none this turn. The persisted markers already carry the
+    // fully-resolved payloads (applied_skills.retryContext.skills = full bodies;
+    // creator_style_context.resolvedBlock), reused verbatim via the same parsers
+    // the Retry path uses — no DB re-fetch. Scope/guards:
+    //   • an explicit selection this turn always wins (only recover when empty),
+    //   • not on retry / action-continuation turns (those own their context),
+    //   • newest-first, first bearing row wins → the user's most recent choice,
+    //     and a turn that changes/clears the selection supersedes older ones,
+    //   • only frozen/valid markers are reused (a legacy names-only skill row or
+    //     an unparseable style is skipped rather than half-applied).
+    // Deliberately NOT the retry path's strict 409 guards: those protect a
+    // durable batch rebind; a normal follow-up just inherits, and an explicit
+    // new selection overrides.
+    if (!body.retryOfUserMessageId && !persistedActionContinuation) {
+      if (skillIds.length === 0) {
+        const recovered = recoverLatestSelection(
+          recentMessageWindow,
+          deps.customSkillSelectionMarkerFromToolCalls,
+        );
+        if (recovered) {
+          skillIds = recovered.skills.map((skill) => skill.id);
+          customSkillRetryContext = recovered;
+        }
+      }
+      if (!creatorStyleId) {
+        const recovered = recoverLatestSelection(
+          recentMessageWindow,
+          deps.creatorStyleSelectionMarkerFromToolCalls,
+        );
+        if (recovered) {
+          creatorStyleId = recovered.id;
+          creatorStyleRetryContext = recovered;
+        }
+      }
+      if (!forcedNoModelFormatId) {
+        forcedNoModelFormatId =
+          recoverLatestForcedNoModelFormatId(recentMessageWindow) ?? undefined;
+      }
     }
 
     // Implicit refine target (draft continuity): when the user types a plain
