@@ -7,9 +7,10 @@
     { "path": "lib/background-jobs.ts", "statements": 43, "branches": 65, "functions": 52, "lines": 43 },
     { "path": "lib/generation-config.ts", "statements": 100, "branches": 100, "functions": 100, "lines": 100 },
     { "path": "lib/agent/modeled-post-intent.ts", "statements": 95, "branches": 90, "functions": 100, "lines": 95 },
-    { "path": "lib/agent/modeled-draft-batch.ts", "statements": 90, "branches": 85, "functions": 100, "lines": 90 },
+    { "path": "lib/agent/execute/writer.ts", "statements": 85, "branches": 80, "functions": 90, "lines": 85 },
     { "path": "lib/agent/modeled-draft-batch-supabase.ts", "statements": 85, "branches": 65, "functions": 90, "lines": 85 },
-    { "path": "lib/agent/read-only-orchestrator-routing.ts", "statements": 90, "branches": 80, "functions": 100, "lines": 90 },
-    { "path": "lib/agent/direct-writer-routing.ts", "statements": 95, "branches": 90, "functions": 100, "lines": 95 }
+    { "path": "lib/agent/turn/compile.ts", "statements": 90, "branches": 80, "functions": 100, "lines": 90 },
+    { "path": "lib/agent/direct-writer-policy.ts", "statements": 95, "branches": 90, "functions": 100, "lines": 95 },
+    { "path": "lib/agent/source-policy.ts", "statements": 95, "branches": 90, "functions": 100, "lines": 95 }
   ]
 }
