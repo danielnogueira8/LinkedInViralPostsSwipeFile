@@ -1,0 +1,5 @@
+# Cowork operations are explicit per turn
+
+Cowork accepts a typed Ask, Create, or Edit command for every new browser-authored turn, and natural-language instructions cannot grant a different operation or target. Retry and clarification answers replay the command already persisted by the server instead of asking the browser to reconstruct it. We chose a small amount of visible per-turn UI state over automatic intent routing because language classification cannot reliably distinguish every review, rewrite, continuation, and action phrasing; natural-language detection may suggest a command but cannot execute it. Ask has no post-write or board-mutation authority, Create cannot update an existing Post, Edit can update only its versioned target, and board mutations remain explicit UI operations.
+
+During a rolling deployment, requests from an older browser bundle may use the legacy transport, but the new browser always sends the typed command. Legacy transport is removed after deployment compatibility telemetry reaches zero; it must not become a second permanent command interface.

@@ -17,6 +17,8 @@ const target: Artifact & { kind: "post" } = {
 function common(contract: TurnPlan["contract"]) {
   return {
     contract,
+    existingArtifactIds: [],
+    atomicDraftSet: false,
     modeledBatchContinuation: null,
     activeModeledBatchContinuation: null,
     modeledBatchRetryRootUserMessageId: undefined,
@@ -94,6 +96,28 @@ describe("turn outcome guard", () => {
     ).rejects.toThrow("different artifact id");
   });
 
+  test("a create operation cannot reuse an existing post identity", async () => {
+    const plan: TurnPlan = {
+      ...common({ kind: "post", expectedCount: 1 }),
+      existingArtifactIds: [target.id],
+      kind: "write",
+      route: "direct_writer",
+      task: { kind: "original" },
+      isDirectRefine: false,
+      usesLeadMagnet: false,
+      usesCreatorStyle: false,
+    };
+
+    await expect(
+      collect(
+        enforceTurnOutcome(
+          plan,
+          events({ type: "artifact", artifact: target }, done([target])),
+        ),
+      ),
+    ).rejects.toThrow("create operation attempted to reuse an existing artifact id");
+  });
+
   test("authorized artifacts are released only with a valid successful terminal", async () => {
     const plan: TurnPlan = {
       ...common({ kind: "post", expectedCount: 1 }),
@@ -112,6 +136,72 @@ describe("turn outcome guard", () => {
       ),
     );
     expect(output.map((event) => event.type)).toEqual(["artifact", "done"]);
+  });
+
+  test("an explicit Create discards a recoverable partial set", async () => {
+    const plan: TurnPlan = {
+      ...common({ kind: "post", expectedCount: 2 }),
+      atomicDraftSet: true,
+      kind: "write",
+      route: "direct_writer",
+      task: { kind: "original" },
+      isDirectRefine: false,
+      usesLeadMagnet: false,
+      usesCreatorStyle: false,
+    };
+    const output = await collect(
+      enforceTurnOutcome(
+        plan,
+        events(
+          { type: "artifact", artifact: target },
+          {
+            type: "error",
+            code: "partial_batch",
+            message: "One slot could not be completed.",
+            recovery: "continue",
+          },
+          {
+            type: "done",
+            terminalReason: "error",
+            message: {
+              content: "Done",
+              tool_calls: null,
+              artifacts: [target],
+              toolMessages: [],
+              inputTokens: 0,
+              outputTokens: 0,
+            },
+          },
+        ),
+      ),
+    );
+
+    expect(output.some((event) => event.type === "artifact")).toBe(false);
+    const terminal = output.find((event) => event.type === "done");
+    expect(terminal?.type === "done" ? terminal.message.artifacts : null).toEqual([]);
+  });
+
+  test("a Create Post contract rejects Hook artifacts", async () => {
+    const plan: TurnPlan = {
+      ...common({ kind: "post", expectedCount: 1 }),
+      atomicDraftSet: true,
+      kind: "write",
+      route: "direct_writer",
+      task: { kind: "original" },
+      isDirectRefine: false,
+      usesLeadMagnet: false,
+      usesCreatorStyle: false,
+    };
+    const hook: Artifact = { ...target, kind: "hook" };
+
+    await expect(
+      collect(
+        enforceTurnOutcome(
+          plan,
+          events({ type: "artifact", artifact: hook }, done([hook])),
+        ),
+      ),
+    ).rejects.toThrow("non-Post artifact");
   });
 
   test("invariant failures cannot persist streamed draft text as an answer", () => {

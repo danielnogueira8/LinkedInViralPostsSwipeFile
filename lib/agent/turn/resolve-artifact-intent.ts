@@ -162,13 +162,13 @@ export function resolveFreeTextArtifactIntent(input: {
       kind: "clarification",
       clarification: {
         question: missingCurrentPost
-          ? `I couldn't find a post to ${action} in this chat.`
-          : `I couldn't find ${target.reference}. Which post should I ${action}?`,
+          ? `I couldn't find a Post to ${action} in this chat.`
+          : `I couldn't find ${target.reference}. Which Post should I ${action}?`,
         options: missingCurrentPost
-          ? ["Paste the post here", "Cancel"]
+          ? ["Paste the Post here", "Cancel"]
           : edit
-            ? ["Edit the latest post", "Choose a post"]
-            : ["Review the latest post", "Choose a post"],
+            ? ["Edit the latest Post", "Choose a Post"]
+            : ["Review the latest Post", "Choose a Post"],
         allowOther: true,
       },
     };

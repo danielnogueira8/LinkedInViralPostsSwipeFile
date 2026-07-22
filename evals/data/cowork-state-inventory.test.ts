@@ -12,6 +12,8 @@ const requiredInvariants = [
   "artifact-handoff-deduplication",
   "navigation-and-background-reconciliation",
   "checkpointed-action-idempotency",
+  "explicit-command-authority",
+  "exact-post-targeting",
 ];
 
 describe("Cowork state invariant inventory", () => {

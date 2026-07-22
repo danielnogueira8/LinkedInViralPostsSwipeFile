@@ -11,6 +11,11 @@ test.describe("composer generation settings", () => {
 
   test.afterEach(async ({ page }) => {
     const failures: string[] = [];
+    try {
+      await consoleGuard.assertNoErrors();
+    } catch (error) {
+      failures.push((error as Error).message);
+    }
     for (const id of chatsToDelete.splice(0)) {
       try {
         const status = await page.evaluate(async (chatId) => {
@@ -24,15 +29,10 @@ test.describe("composer generation settings", () => {
         failures.push(`chat ${id}: ${(error as Error).message}`);
       }
     }
-    try {
-      await consoleGuard.assertNoErrors();
-    } catch (error) {
-      failures.push((error as Error).message);
-    }
     if (failures.length) throw new Error(failures.join("\n"));
   });
 
-  test("selects an exact count, sends the versioned contract, and can return to Auto", async ({
+  test("sends explicit Ask/Create commands and resets every completed turn to Ask", async ({
     page,
   }) => {
     await page.goto("/dashboard");
@@ -50,48 +50,73 @@ test.describe("composer generation settings", () => {
     });
 
     await page.goto(`/dashboard?chat=${chatId}`);
-    const composer = page.getByPlaceholder("What do you want to write?");
+    const composer = page.getByPlaceholder("Ask Cowork anything…");
     await expect(composer).toBeVisible();
 
-    const autoButton = page.getByRole("button", { name: "Draft count: Auto" });
+    const commandGroup = page.getByRole("group", { name: "Cowork command" });
+    const askButton = commandGroup.getByRole("button", { name: "Ask", exact: true });
+    const createButton = commandGroup.getByRole("button", { name: "Create", exact: true });
+    await expect(askButton).toHaveAttribute("aria-pressed", "true");
+
+    await composer.fill("Write three posts even though this turn is Ask.");
+    await page.getByRole("button", { name: "Send message" }).click();
+    await expect.poll(() => streamBodies.length).toBe(1);
+    expect(streamBodies[0]).toMatchObject({
+      message: "Write three posts even though this turn is Ask.",
+      command: { kind: "ask" },
+    });
+    await expect(askButton).toHaveAttribute("aria-pressed", "true");
+
+    await page.getByRole("button", { name: "Add context", exact: true }).last().click();
+    await page.getByRole("button", { name: "Choose post format" }).click();
+    const formatDialog = page.getByRole("dialog", { name: "Choose post format" });
+    await formatDialog
+      .getByRole("button", { name: /Lead Magnet: System Breakdown/ })
+      .click();
+    await expect(createButton).toHaveAttribute("aria-pressed", "true");
+    await expect(
+      page.getByRole("button", {
+        name: /Generation settings — Post count: 1, post type: Any/,
+      }),
+    ).toBeVisible();
+
+    await createButton.click();
+    await expect(createButton).toHaveAttribute("aria-pressed", "true");
+    await expect(
+      page.getByPlaceholder("What should the new post be about?"),
+    ).toBeVisible();
+
+    const autoButton = page.getByRole("button", {
+      name: /Generation settings — Post count: 1, post type: Any/,
+    });
     await expect(autoButton).toHaveAttribute("aria-expanded", "false");
     await autoButton.click();
 
     const dialog = page.getByRole("dialog", { name: "Generation settings" });
     await expect(dialog).toBeVisible();
-    const draftGroup = dialog.getByRole("group", { name: "Number of drafts" });
+    const draftGroup = dialog.getByRole("group", { name: "Number of Posts" });
     await expect(
-      draftGroup.getByRole("button", { name: "Auto", exact: true }),
+      draftGroup.getByRole("button", { name: "1", exact: true }),
     ).toHaveAttribute("aria-pressed", "true");
     await draftGroup.getByRole("button", { name: "3", exact: true }).click();
 
-    const exactButton = page.getByRole("button", { name: "Draft count: 3" });
-    await expect(exactButton).toBeVisible();
-    await composer.fill("Write original LinkedIn posts about content systems.");
-    await page.getByRole("button", { name: "Send message" }).click();
-    await expect.poll(() => streamBodies.length).toBe(1);
-    expect(streamBodies[0]).toMatchObject({
-      message: "Write original LinkedIn posts about content systems.",
-      generationConfig: { version: 1, draftCount: 3 },
+    const exactButton = page.getByRole("button", {
+      name: /Generation settings — Post count: 3, post type: Any/,
     });
     await expect(exactButton).toBeVisible();
-
-    await exactButton.click();
-    const resetDialog = page.getByRole("dialog", {
-      name: "Generation settings",
-    });
-    await resetDialog
-      .getByRole("group", { name: "Number of drafts" })
-      .getByRole("button", { name: "Auto", exact: true })
-      .click();
-    await expect(
-      page.getByRole("button", { name: "Draft count: Auto" }),
-    ).toBeVisible();
-
-    await composer.fill("Write an original LinkedIn post about content systems.");
+    const createComposer = page.getByPlaceholder(
+      "What should the new post be about?",
+    );
+    await createComposer.fill("Review my current post and give feedback only.");
     await page.getByRole("button", { name: "Send message" }).click();
     await expect.poll(() => streamBodies.length).toBe(2);
-    expect(streamBodies[1]).not.toHaveProperty("generationConfig");
+    expect(streamBodies[1]).toMatchObject({
+      message: "Review my current post and give feedback only.",
+      command: { kind: "create", count: 3 },
+      generationConfig: { version: 1, draftCount: 3 },
+    });
+    await expect(askButton).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByPlaceholder("Ask Cowork anything…")).toBeVisible();
   });
 });
 

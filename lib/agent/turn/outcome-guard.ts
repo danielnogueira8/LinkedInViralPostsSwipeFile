@@ -31,6 +31,16 @@ function assertArtifactAuthorized(plan: TurnPlan, artifact: Artifact): void {
       "partial writing operation emitted a draft artifact",
     );
   }
+  if (
+    artifact.kind !== "post" &&
+    plan.contract.kind === "post" &&
+    (plan.kind === "research" ||
+      (plan.kind === "write" && plan.task.kind !== "refine"))
+  ) {
+    throw new TurnOutcomeInvariantError(
+      "create operation emitted a non-Post artifact",
+    );
+  }
   if (plan.kind === "write" && plan.task.kind === "refine") {
     if (artifact.id !== plan.task.target.id) {
       throw new TurnOutcomeInvariantError(
@@ -42,6 +52,15 @@ function assertArtifactAuthorized(plan: TurnPlan, artifact: Artifact): void {
         "edit operation attempted to change the artifact kind",
       );
     }
+  }
+  if (
+    (plan.kind === "research" ||
+      (plan.kind === "write" && plan.task.kind !== "refine")) &&
+    plan.existingArtifactIds.includes(artifact.id)
+  ) {
+    throw new TurnOutcomeInvariantError(
+      "create operation attempted to reuse an existing artifact id",
+    );
   }
 }
 
@@ -110,6 +129,20 @@ export async function* enforceTurnOutcome(
       }
       const successful =
         event.terminalReason === undefined || event.terminalReason === "done";
+
+      // Explicit Create is an atomic product command: either the complete,
+      // validated set crosses the persistence boundary or none of it does.
+      // Legacy turns keep their resumable subset checkpoint behavior during
+      // the compatibility window.
+      if (plan.atomicDraftSet && (!successful || sawRecoverableError)) {
+        buffered.clear();
+        sawRecoverableError = false;
+        yield {
+          ...event,
+          message: { ...event.message, artifacts: [] },
+        };
+        continue;
+      }
       if (successful && !sawRecoverableError) {
         const drafts = new Map<string, Artifact>();
         for (const bufferedEvent of buffered.values()) {

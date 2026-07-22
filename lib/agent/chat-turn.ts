@@ -32,6 +32,7 @@ import {
 } from "@/lib/agent/modeled-draft-continuation";
 import { requestedDirectPostCount } from "@/lib/agent/direct-deliverable-policy";
 import { type CoworkTelemetrySink } from "@/lib/agent/cowork-telemetry";
+import { coworkCommandSchema } from "@/lib/cowork-command";
 
 import { setupChatTurn } from "@/lib/agent/turn/setup";
 import {
@@ -336,6 +337,10 @@ export const chatTurnRequestSchema = z.object({
   // Empty/overlong/junk user text is handled by preflightUserPrompt below so
   // the user gets a friendly, specific rejection and no turn is claimed.
   message: z.string(),
+  // The current browser sends exactly one explicit Cowork Command per turn.
+  // `operation` remains below only for rolling compatibility with cached
+  // clients and explicit card actions during the migration.
+  command: coworkCommandSchema.optional(),
   // Immutable current-turn intent supplied by explicit UI controls that
   // already know the operation. Ordinary composer language is compiled by the
   // server. Legacy refine fields remain accepted during migration, but this
@@ -348,6 +353,11 @@ export const chatTurnRequestSchema = z.object({
   clientTurnId: z.string().uuid().optional(),
   retryOfUserMessageId: z.string().min(1).max(200).optional(),
   actionSelectionIds: z.array(z.string().uuid()).min(1).max(5).optional(),
+  // Stable index of a selected single-choice clarification option. The server
+  // validates it against the persisted ask_user card before using it to fill
+  // or safely cancel the saved command; free text never fabricates an index.
+  clarificationChoiceIndex: z.number().int().min(0).max(20).optional(),
+  clarificationAssistantMessageId: z.string().min(1).max(200).optional(),
   clientTimezone: z.string().min(1).max(64).optional(),
   // "Model this post": the stashed source id (chat_modeling_sources). The server
   // fetches + weaves the post text, so a long post never hits the message cap.
@@ -409,6 +419,14 @@ export const chatTurnRequestSchema = z.object({
         ) <= MAX_TOTAL_ATTACHMENT_LEN,
       { message: "Attachments exceed the total size limit." },
     ),
+}).superRefine((request, ctx) => {
+  if (request.command && request.operation) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "A turn cannot include both command and operation.",
+      path: ["command"],
+    });
+  }
 });
 
 export type ChatTurnRequest = z.infer<typeof chatTurnRequestSchema>;

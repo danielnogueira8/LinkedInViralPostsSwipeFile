@@ -5,7 +5,18 @@ export const TURN_OPERATION_TOOL_NAME = "_turn_operation";
 export const TURN_OPERATION_VERSION = 1;
 
 export const chatTurnOperationSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("create_post") }).strict(),
+  z
+    .object({
+      kind: z.literal("ask"),
+      artifactId: z.string().min(1).max(200).optional(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("create_post"),
+      delivery: z.literal("atomic").optional(),
+    })
+    .strict(),
   z
     .object({
       kind: z.literal("edit_artifact"),

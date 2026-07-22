@@ -339,7 +339,7 @@ describe("server-owned free-text Artifact intent", () => {
     });
     expect(result.kind).toBe("clarification");
     if (result.kind !== "clarification") return;
-    expect(result.clarification.question).toContain("post");
+    expect(result.clarification.question).toContain("Post");
     expect(result.clarification.question).not.toContain("Artifact");
     expect(result.clarification.options.join(" ")).not.toContain("Artifact");
   });
