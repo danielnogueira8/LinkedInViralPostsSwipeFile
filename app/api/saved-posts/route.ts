@@ -30,6 +30,11 @@ import {
 } from "@/lib/bookmarks-query";
 import { validateCategoryId, visibleCategoriesOr } from "@/lib/categories";
 import { classifyPost, normalizePostType, type PostType } from "@/lib/post-type";
+import {
+  BOOKMARK_RESOURCE_COLS,
+  findBookmarkResource,
+  saveBookmarkResource,
+} from "@/lib/content-resource-operations";
 
 // Invalidate the Next.js Router Cache for Inspiration so a save
 // (or delete) done from any other tab — Swipe File especially — surfaces
@@ -47,9 +52,6 @@ function invalidateBookmarksSegment(): void {
     /* never surface a cache-invalidation glitch to the caller */
   }
 }
-
-const SELECT_COLS =
-  "id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, text, profile_pic_url, media_type, media_urls, video_url, reactions, comments, note, category_id, post_type, posted_at, saved_at, workspace_id, created_by_user_id";
 
 export const runtime = "nodejs";
 // oEmbed fetch can take a few seconds; default Vercel 10s is fine but bump
@@ -259,12 +261,11 @@ export async function POST(req: Request) {
     // dedupe by (workspace_id, activity_id) — same regardless of which
     // contributor added it, so a recipient can't double-save the
     // owner's post.
-    const { data: existing } = await sb.raw
-      .from("saved_posts")
-      .select(SELECT_COLS)
-      .eq("workspace_id", active.workspaceId)
-      .eq("activity_id", activityId)
-      .maybeSingle();
+    const existing = await findBookmarkResource({
+      db: sb.raw,
+      workspaceId: active.workspaceId,
+      activityId,
+    });
 
     if (existing) {
       // Opportunistic backfill: rows saved before migration 017, or rows
@@ -294,7 +295,7 @@ export async function POST(req: Request) {
             // above, but every mutation in this app stamps workspace_id so the
             // tenancy boundary is enforced at the query, not just by RLS.
             .eq("workspace_id", active.workspaceId)
-            .select(SELECT_COLS)
+            .select(BOOKMARK_RESOURCE_COLS)
             .single();
           if (relinked) existing.post_url = relinked.post_url;
         }
@@ -312,7 +313,7 @@ export async function POST(req: Request) {
             .update({ posted_at: derived })
             .eq("id", existing.id)
             .eq("workspace_id", active.workspaceId)
-            .select(SELECT_COLS)
+            .select(BOOKMARK_RESOURCE_COLS)
             .single();
           if (dated) existing.posted_at = dated.posted_at;
         }
@@ -373,7 +374,7 @@ export async function POST(req: Request) {
             .eq("id", existing.id)
             // Same tenancy guard as the relink update above.
             .eq("workspace_id", active.workspaceId)
-            .select(SELECT_COLS)
+            .select(BOOKMARK_RESOURCE_COLS)
             .single();
           if (updated) {
             invalidateBookmarksSegment();
@@ -392,7 +393,7 @@ export async function POST(req: Request) {
               .update(patch)
               .eq("id", existing.id)
               .eq("workspace_id", active.workspaceId)
-              .select(SELECT_COLS)
+              .select(BOOKMARK_RESOURCE_COLS)
               .single();
             if (updated) {
               invalidateBookmarksSegment();
@@ -471,15 +472,16 @@ export async function POST(req: Request) {
       (handle ? displayNameFromHandle(handle) : null);
     const profilePicUrl = card?.profilePicUrl ?? profileMeta.picUrl ?? null;
 
-    const { data: inserted, error } = await sb.raw
-      .from("saved_posts")
-      .insert({
+    const savedResult = await saveBookmarkResource({
+      db: sb.raw,
+      workspaceId: active.workspaceId,
+      activityId,
+      knownAbsent: true,
+      values: {
         // Use active.workspaceId so a save into a shared library lands
         // under the OWNER's workspace (the recipient is contributing,
         // not collecting in their own library). created_by_user_id
         // attributes the contribution.
-        workspace_id: active.workspaceId,
-        activity_id: activityId,
         post_url: openUrl,
         original_url: rawUrl,
         author_name: authorName,
@@ -517,30 +519,15 @@ export async function POST(req: Request) {
         category_id: categoryId,
         saved_by: userId ?? null,
         created_by_user_id: userId ?? null,
-      })
-      .select(SELECT_COLS)
-      .single();
-
-    if (error || !inserted) {
-      // Treat unique-violation as "already saved" (race condition between two
-      // concurrent saves of the same URL). Other errors propagate.
-      if (error?.code === "23505") {
-        const { data: row } = await sb.raw
-          .from("saved_posts")
-          .select(SELECT_COLS)
-          .eq("workspace_id", active.workspaceId)
-          .eq("activity_id", activityId)
-          .maybeSingle();
-        if (row) {
-          invalidateBookmarksSegment();
-          return NextResponse.json({ ok: true, saved: row, alreadySaved: true });
-        }
-      }
-      throw error || new Error("insert failed");
-    }
+      },
+    });
 
     invalidateBookmarksSegment();
-    return NextResponse.json({ ok: true, saved: inserted, alreadySaved: false });
+    return NextResponse.json({
+      ok: true,
+      saved: savedResult.saved,
+      alreadySaved: savedResult.existed,
+    });
   } catch (e) {
     return NextResponse.json({ ok: false, error: (e as Error).message }, { status: 500 });
   }

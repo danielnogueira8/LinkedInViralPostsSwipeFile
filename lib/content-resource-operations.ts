@@ -7,9 +7,11 @@ import {
 } from "@/lib/custom-skills";
 import {
   TEMPLATES_PER_WORKSPACE_MAX,
+  type BuiltinTemplate,
   type ContentTemplate,
   type TemplateInput,
 } from "@/lib/templates";
+import { BUILTIN_TEMPLATES } from "@/lib/templates-builtin";
 import { embedTemplateBody, structureTypeFromCategory } from "@/lib/template-embeddings";
 import {
   isDuplicatePreference,
@@ -32,6 +34,284 @@ export const TEMPLATE_COLS = "id, workspace_id, title, category, body, source, o
 export const SKILL_COLS = "id, workspace_id, name, description, body, created_at, updated_at";
 export const PREF_COLS = "id, workspace_id, rule, detail, source, created_at, updated_at";
 export const BRAND_COLS = "id, name, brand_colors, notes, logo_url, font_primary, font_secondary, created_at";
+export const LEAD_MAGNET_LIST_COLS =
+  "id, workspace_id, user_id, title, source_url, source_type, public_slug, is_public, metadata, created_at, updated_at";
+export const BOOKMARK_RESOURCE_COLS =
+  "id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, text, profile_pic_url, media_type, media_urls, video_url, reactions, comments, note, category_id, post_type, posted_at, saved_at, workspace_id, created_by_user_id";
+
+export type SavedBookmarkResource = {
+  id: string;
+  post_url: string;
+  activity_id: string;
+  embed_urn: string | null;
+  author_name: string | null;
+  author_handle: string | null;
+  text_snippet: string | null;
+  text: string | null;
+  profile_pic_url: string | null;
+  media_type: string | null;
+  media_urls: unknown[] | null;
+  video_url: string | null;
+  reactions: number | null;
+  comments: number | null;
+  note: string | null;
+  category_id: string | null;
+  post_type: string | null;
+  posted_at: string | null;
+  saved_at: string;
+  workspace_id: string;
+  created_by_user_id: string | null;
+};
+
+export type BookmarkResourceSummary = Pick<
+  SavedBookmarkResource,
+  | "id"
+  | "post_url"
+  | "activity_id"
+  | "embed_urn"
+  | "author_name"
+  | "author_handle"
+  | "text_snippet"
+  | "note"
+  | "category_id"
+  | "saved_at"
+>;
+
+export function summarizeBookmarkResource(
+  bookmark: SavedBookmarkResource,
+): BookmarkResourceSummary {
+  return {
+    id: bookmark.id,
+    post_url: bookmark.post_url,
+    activity_id: bookmark.activity_id,
+    embed_urn: bookmark.embed_urn,
+    author_name: bookmark.author_name,
+    author_handle: bookmark.author_handle,
+    text_snippet: bookmark.text_snippet,
+    note: bookmark.note,
+    category_id: bookmark.category_id,
+    saved_at: bookmark.saved_at,
+  };
+}
+
+export async function findBookmarkResource(input: {
+  db: SupabaseClient;
+  workspaceId: string;
+  activityId: string;
+}): Promise<SavedBookmarkResource | null> {
+  const { data, error } = await input.db
+    .from("saved_posts")
+    .select(BOOKMARK_RESOURCE_COLS)
+    .eq("workspace_id", input.workspaceId)
+    .eq("activity_id", input.activityId)
+    .maybeSingle();
+  if (error) throw error;
+  return (data as unknown as SavedBookmarkResource | null) ?? null;
+}
+
+export async function saveBookmarkResource(input: {
+  db: SupabaseClient;
+  workspaceId: string;
+  activityId: string;
+  values: Record<string, unknown>;
+  knownAbsent?: boolean;
+}): Promise<{ saved: SavedBookmarkResource; existed: boolean }> {
+  if (!input.knownAbsent) {
+    const existing = await findBookmarkResource(input);
+    if (existing) return { saved: existing, existed: true };
+  }
+
+  const { data, error } = await input.db
+    .from("saved_posts")
+    .insert({
+      ...input.values,
+      workspace_id: input.workspaceId,
+      activity_id: input.activityId,
+    })
+    .select(BOOKMARK_RESOURCE_COLS)
+    .single();
+  if (!error && data) {
+    return {
+      saved: data as unknown as SavedBookmarkResource,
+      existed: false,
+    };
+  }
+  if (error?.code === "23505") {
+    const raced = await findBookmarkResource(input);
+    if (raced) return { saved: raced, existed: true };
+  }
+  throw error ?? new Error("Bookmark insert returned no row.");
+}
+
+export async function listBookmarkResources(input: {
+  db: SupabaseClient;
+  workspaceId: string;
+  limit: number;
+}): Promise<SavedBookmarkResource[]> {
+  const { data, error } = await input.db
+    .from("saved_posts")
+    .select(BOOKMARK_RESOURCE_COLS)
+    .eq("workspace_id", input.workspaceId)
+    .order("saved_at", { ascending: false })
+    .limit(input.limit);
+  if (error) throw error;
+  return (data ?? []) as unknown as SavedBookmarkResource[];
+}
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export type TemplateResource = ContentTemplate | BuiltinTemplate;
+
+export async function listTemplateResources(input: {
+  db: SupabaseClient;
+  workspaceId: string;
+}): Promise<TemplateResource[]> {
+  const { data, error } = await input.db
+    .from("content_templates")
+    .select(TEMPLATE_COLS)
+    .eq("workspace_id", input.workspaceId)
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return [...BUILTIN_TEMPLATES, ...((data ?? []) as ContentTemplate[])];
+}
+
+export async function getTemplateResource(input: {
+  db: SupabaseClient;
+  workspaceId: string;
+  id: string;
+}): Promise<TemplateResource | null> {
+  const builtin = BUILTIN_TEMPLATES.find((template) => template.id === input.id);
+  if (builtin) return builtin;
+  if (!UUID_RE.test(input.id)) return null;
+  const { data, error } = await input.db
+    .from("content_templates")
+    .select(TEMPLATE_COLS)
+    .eq("id", input.id)
+    .eq("workspace_id", input.workspaceId)
+    .maybeSingle();
+  if (error) throw error;
+  return (data as ContentTemplate | null) ?? null;
+}
+
+export async function listSkillResources(input: {
+  db: SupabaseClient;
+  workspaceId: string;
+}): Promise<CustomSkill[]> {
+  const { data, error } = await input.db
+    .from("custom_skills")
+    .select(SKILL_COLS)
+    .eq("workspace_id", input.workspaceId)
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as CustomSkill[];
+}
+
+export async function getSkillResource(input: {
+  db: SupabaseClient;
+  workspaceId: string;
+  id?: string;
+  name?: string;
+}): Promise<CustomSkill | null> {
+  let query = input.db
+    .from("custom_skills")
+    .select(SKILL_COLS)
+    .eq("workspace_id", input.workspaceId)
+    .limit(1);
+  query = input.id ? query.eq("id", input.id) : query.eq("name", input.name!);
+  const { data, error } = await query.maybeSingle();
+  if (error) throw error;
+  return (data as CustomSkill | null) ?? null;
+}
+
+export async function getSkillsByIds(input: {
+  db: SupabaseClient;
+  workspaceId: string;
+  ids: readonly string[];
+}): Promise<CustomSkill[]> {
+  if (input.ids.length === 0) return [];
+  const { data, error } = await input.db
+    .from("custom_skills")
+    .select(SKILL_COLS)
+    .eq("workspace_id", input.workspaceId)
+    .in("id", [...input.ids]);
+  if (error) throw error;
+  return (data ?? []) as CustomSkill[];
+}
+
+export async function listPreferenceResources(input: {
+  db: SupabaseClient;
+  workspaceId: string;
+  limit?: number;
+}): Promise<ContentPreference[]> {
+  let query = input.db
+    .from("content_preferences")
+    .select(PREF_COLS)
+    .eq("workspace_id", input.workspaceId)
+    .order("created_at", { ascending: false });
+  if (input.limit !== undefined) query = query.limit(input.limit);
+  const { data, error } = await query;
+  if (error) throw error;
+  return (data ?? []) as ContentPreference[];
+}
+
+export type LeadMagnetSummary = Omit<LeadMagnet, "markdown_body">;
+
+export function listLeadMagnetResources(input: {
+  db: SupabaseClient;
+  workspaceId: string;
+  limit: number;
+  offset?: number;
+  includeBody: true;
+}): Promise<{ rows: LeadMagnet[]; total: number }>;
+export function listLeadMagnetResources(input: {
+  db: SupabaseClient;
+  workspaceId: string;
+  limit: number;
+  offset?: number;
+  includeBody?: false;
+}): Promise<{ rows: LeadMagnetSummary[]; total: number }>;
+export async function listLeadMagnetResources(input: {
+  db: SupabaseClient;
+  workspaceId: string;
+  limit: number;
+  offset?: number;
+  includeBody?: boolean;
+}): Promise<{ rows: Array<LeadMagnet | LeadMagnetSummary>; total: number }> {
+  const offset = input.offset ?? 0;
+  let query = input.db
+    .from("lead_magnets")
+    .select(input.includeBody ? LEAD_MAGNET_COLS : LEAD_MAGNET_LIST_COLS, {
+      count: "exact",
+    })
+    .eq("workspace_id", input.workspaceId)
+    .order("updated_at", { ascending: false });
+  query = query.range(offset, offset + input.limit - 1);
+  const { data, error, count } = await query;
+  if (error) throw error;
+  const rows = (data ?? []) as unknown as Array<LeadMagnet | LeadMagnetSummary>;
+  return {
+    rows: input.includeBody
+      ? (rows as LeadMagnet[]).map(coerceLeadMagnet)
+      : rows,
+    total: count ?? 0,
+  };
+}
+
+export async function getLeadMagnetResource(input: {
+  db: SupabaseClient;
+  workspaceId: string;
+  id: string;
+}): Promise<LeadMagnet | null> {
+  const { data, error } = await input.db
+    .from("lead_magnets")
+    .select(LEAD_MAGNET_COLS)
+    .eq("id", input.id)
+    .eq("workspace_id", input.workspaceId)
+    .maybeSingle();
+  if (error) throw error;
+  return data ? coerceLeadMagnet(data as LeadMagnet) : null;
+}
 
 export const brandInputSchema = z.object({
   name: z.string().trim().min(1).max(120),
