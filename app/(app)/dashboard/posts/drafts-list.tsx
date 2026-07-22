@@ -516,6 +516,10 @@ export function DraftsList({
   // The live draft for the open drawer, derived from `drafts` by id (so meta
   // edits reflect instantly). null when creating a new post.
   const editing = editingId ? drafts.find((d) => d.id === editingId) ?? null : null;
+  // Keep editor navigation in the board's canonical draft order. This does not
+  // depend on which columns happen to be expanded, so moving between posts does
+  // not unexpectedly stop at a collapsed column boundary.
+  const { previousId, nextId } = adjacentDraftIds(drafts, editingId);
 
   // Move a card to a new status (optimistic; rolls back on failure). Shared by
   // the per-card status menu and drag-and-drop.
@@ -771,6 +775,8 @@ export function DraftsList({
         onSaved={applyEdit}
         onMeta={applyMeta}
         onDelete={remove}
+        onPrevious={previousId ? () => setEditingId(previousId) : undefined}
+        onNext={nextId ? () => setEditingId(nextId) : undefined}
       />
 
       {/* Bulk action bar — appears once at least one card is selected. */}
@@ -1047,6 +1053,21 @@ function CalendarView({
 // Keeps a busy column (e.g. 20 Ready posts) from becoming an endless scroll —
 // the Notion board pattern.
 export const COLUMN_PREVIEW_COUNT = 10;
+
+// Resolve the posts on either side of the open editor in the canonical board
+// order. Keeping this pure makes the boundary behavior easy to cover without
+// rendering the full board.
+export function adjacentDraftIds(
+  drafts: readonly Pick<Draft, "id">[],
+  currentId: string | null,
+): { previousId: string | null; nextId: string | null } {
+  const index = currentId ? drafts.findIndex((draft) => draft.id === currentId) : -1;
+  if (index < 0) return { previousId: null, nextId: null };
+  return {
+    previousId: drafts[index - 1]?.id ?? null,
+    nextId: drafts[index + 1]?.id ?? null,
+  };
+}
 
 // Decide a column's collapse state. Pure + exported so the threshold/slice is
 // unit-testable without rendering. `visibleCount` is how many cards to show,
