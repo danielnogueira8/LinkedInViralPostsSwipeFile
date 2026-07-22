@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { makeFakeSupabase, type FakeDb } from "./fake-supabase";
 import { MAX_PROMPT_CHARS } from "@/lib/agent/prompt-preflight";
+import { NoWorkspaceError } from "@/lib/workspace";
 
 const dbRef: { current: FakeDb } = {
   current: makeFakeSupabase({}),
@@ -12,12 +13,16 @@ const calls = {
   releaseChatTurn: 0,
 };
 let abortAfterClaim: AbortController | null = null;
+let workspaceFailure: Error | null = null;
 
 vi.mock("@/lib/supabase-scoped", () => ({
-  scopedSupabase: async () => ({
-    workspaceId: "ws_1",
-    raw: dbRef.current.client,
-  }),
+  scopedSupabase: async () => {
+    if (workspaceFailure) throw workspaceFailure;
+    return {
+      workspaceId: "ws_1",
+      raw: dbRef.current.client,
+    };
+  },
 }));
 
 vi.mock("@clerk/nextjs/server", () => ({
@@ -48,6 +53,77 @@ const {
   latestDraftForVariation,
 } =
   await import("@/lib/agent/chat-turn");
+
+test("the route returns a sanitized envelope when the executor rejects", async () => {
+  const handler = createChatStreamPost({
+    authenticate: async () => ({ userId: "user_harness" }),
+    execute: vi.fn(async () => {
+      throw new Error("provider api key=secret");
+    }),
+  });
+
+  const response = await handler(
+    new Request("http://test.local/api/chats/chat_harness/stream", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "Write one original post" }),
+    }),
+    { params: Promise.resolve({ id: "chat_harness" }) },
+  );
+
+  expect(response.status).toBe(500);
+  await expect(response.json()).resolves.toEqual({
+    ok: false,
+    error: "Unexpected error",
+  });
+});
+
+test("the route returns a sanitized envelope when authentication rejects", async () => {
+  const handler = createChatStreamPost({
+    authenticate: async () => {
+      throw new Error("clerk secret=internal");
+    },
+  });
+
+  const response = await handler(
+    req("Write one original post"),
+    { params: Promise.resolve({ id: "chat_harness" }) },
+  );
+
+  expect(response.status).toBe(500);
+  await expect(response.json()).resolves.toEqual({
+    ok: false,
+    error: "Unexpected error",
+  });
+});
+
+test("turn setup returns 401 when the workspace session is missing", async () => {
+  workspaceFailure = new NoWorkspaceError();
+  const response = await POST(req("Write one original post"), {
+    params: Promise.resolve({ id: "chat_1" }),
+  });
+
+  expect(response.status).toBe(401);
+  await expect(response.json()).resolves.toEqual({
+    ok: false,
+    error: "You're not signed in.",
+  });
+  workspaceFailure = null;
+});
+
+test("turn setup never reflects raw internal failures", async () => {
+  workspaceFailure = new Error("postgres password=secret");
+  const response = await POST(req("Write one original post"), {
+    params: Promise.resolve({ id: "chat_1" }),
+  });
+
+  expect(response.status).toBe(500);
+  await expect(response.json()).resolves.toEqual({
+    ok: false,
+    error: "Unexpected error",
+  });
+  workspaceFailure = null;
+});
 
 test("the authenticated route can run the production turn through an injected adapter", async () => {
   const execute = vi.fn(async () => new Response("ok", { status: 202 }));
@@ -190,6 +266,7 @@ beforeEach(() => {
   calls.claimChatTurn = 0;
   calls.releaseChatTurn = 0;
   abortAfterClaim = null;
+  workspaceFailure = null;
 });
 
 describe("chat stream prompt preflight", () => {

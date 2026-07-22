@@ -8,6 +8,8 @@ export class NoWorkspaceError extends Error {
   }
 }
 
+export const INTERNAL_ERROR_MESSAGE = "Unexpected error";
+
 export type WorkspaceSession = {
   workspaceId: string;
   getSupabaseToken: () => Promise<string | null>;
@@ -22,15 +24,17 @@ export type WorkspaceSession = {
  * an HTML error page — and `fetchJson` then either mislabels it
  * `Request failed (500)` or (on some statuses) `AuthExpiredError`, hiding the
  * real cause. Funnel route errors through here so the client always gets the
- * proper envelope: 400 for the recoverable no-session case, 500 for anything
- * genuinely server-side.
+ * proper envelope: 401 for a missing session, 500 for anything genuinely
+ * server-side. Internal failures are logged here but never reflected to the
+ * client, since database/provider messages can contain implementation details.
  */
 export function errorResponse(e: unknown): NextResponse {
   if (e instanceof NoWorkspaceError) {
-    return NextResponse.json({ ok: false, error: e.message }, { status: 400 });
+    return NextResponse.json({ ok: false, error: e.message }, { status: 401 });
   }
+  console.error("[api:error]", e);
   return NextResponse.json(
-    { ok: false, error: (e as Error)?.message ?? "Unexpected error" },
+    { ok: false, error: INTERNAL_ERROR_MESSAGE },
     { status: 500 },
   );
 }

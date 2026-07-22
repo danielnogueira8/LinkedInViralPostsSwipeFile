@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { scopedSupabase, trackedAccountIds } from "@/lib/supabase-scoped";
+import { errorResponse } from "@/lib/workspace";
 
 export const runtime = "nodejs";
 
@@ -103,6 +104,6 @@ export async function GET(req: Request) {
 
     return NextResponse.json({ ok: true, pages });
   } catch (e) {
-    return NextResponse.json({ ok: false, error: (e as Error).message }, { status: 500 });
+    return errorResponse(e);
   }
 }

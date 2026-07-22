@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { NotAdminError, requireAdmin } from "@/lib/admin";
 import { supabaseAdmin } from "@/lib/supabase";
 import { JOB_LIMITS } from "@/lib/background-jobs";
+import { errorResponse } from "@/lib/workspace";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -87,9 +88,6 @@ export async function GET(req: Request) {
     if (e instanceof NotAdminError) {
       return NextResponse.json({ ok: false, error: e.message }, { status: 403 });
     }
-    return NextResponse.json(
-      { ok: false, error: (e as Error)?.message ?? "Unexpected error" },
-      { status: 500 },
-    );
+    return errorResponse(e);
   }
 }

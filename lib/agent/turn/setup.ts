@@ -5,7 +5,10 @@ import {
   type GenerationConfigV1,
   type ResolvedGenerationConfig,
 } from "@/lib/generation-config";
-import { NoWorkspaceError } from "@/lib/workspace";
+import {
+  INTERNAL_ERROR_MESSAGE,
+  NoWorkspaceError,
+} from "@/lib/workspace";
 import {
   advanceActionOrchestratorClarification,
   compileActionOrchestratorRoute,
@@ -341,8 +344,9 @@ export async function setupChatTurn(
     message: string,
     status: number,
     extraHeaders?: Record<string, string>,
-  ) =>
-    deps.jsonError(message, status, {
+  ) => {
+    if (status === 500) console.error("[api:chat-setup]", message);
+    return deps.jsonError(status === 500 ? INTERNAL_ERROR_MESSAGE : message, status, {
       ...(extraHeaders ?? {}),
       ...(claimedUserMessageId
         ? { "X-User-Message-Id": claimedUserMessageId }
@@ -351,6 +355,7 @@ export async function setupChatTurn(
         ? { "X-Turn-Started-At": claimedTurnStartedAt }
         : {}),
     });
+  };
 
   try {
     const sb = await deps.scopedSupabase();
@@ -1153,7 +1158,7 @@ export async function setupChatTurn(
       await deps.releaseChatTurn(workspaceId!, chatId, turnCostOperationKey);
       turnClaimed = false;
     }
-    if (e instanceof NoWorkspaceError) return turnError(e.message, 400);
+    if (e instanceof NoWorkspaceError) return turnError(e.message, 401);
     if (e instanceof z.ZodError) return turnError("Invalid request body", 400);
     if (setupExpired || requestAborted) {
       const message = setupExpired

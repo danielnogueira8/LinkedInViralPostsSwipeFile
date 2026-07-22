@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
-import { requireWorkspaceId } from "@/lib/workspace";
+import { errorResponse, requireWorkspaceId } from "@/lib/workspace";
 import { isAdmin } from "@/lib/admin";
 import { classifyPost } from "@/lib/post-type";
 
@@ -28,7 +28,7 @@ export async function POST() {
       .select("id, text, post_type, post_type_detected_via")
       .order("id")
       .range(from, from + pageSize - 1);
-    if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+    if (error) return errorResponse(error);
     if (!data || data.length === 0) break;
 
     for (const p of data) {

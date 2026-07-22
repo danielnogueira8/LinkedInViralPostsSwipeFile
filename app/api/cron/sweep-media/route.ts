@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { sweepDeletedMedia } from "@/lib/media-sweep";
 import { purgeExpiredModeledDraftBatches } from "@/lib/modeled-draft-batch-retention";
 import { postCronAlert } from "@/lib/cron-alert";
+import { errorResponse } from "@/lib/workspace";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -46,6 +47,6 @@ export async function GET(req: Request) {
   } catch (e) {
     console.error("sweep-media cron failed", (e as Error).message);
     await postCronAlert({ cron: "sweep-media" }, e);
-    return NextResponse.json({ ok: false, error: (e as Error).message }, { status: 500 });
+    return errorResponse(e);
   }
 }

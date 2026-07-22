@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { publishDueDrafts } from "@/lib/draft-publishing";
 import { postCronAlert } from "@/lib/cron-alert";
+import { errorResponse } from "@/lib/workspace";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -29,6 +30,6 @@ export async function GET(req: Request) {
     // Alert on failure: this cron publishes users' scheduled LinkedIn posts, so
     // a silent break means posts quietly never go out. Best-effort; never throws.
     await postCronAlert({ cron: "publish-scheduled" }, e);
-    return NextResponse.json({ ok: false, error: (e as Error).message }, { status: 500 });
+    return errorResponse(e);
   }
 }

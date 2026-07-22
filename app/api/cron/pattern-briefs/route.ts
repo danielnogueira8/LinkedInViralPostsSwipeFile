@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { runWeeklyPatternBriefs } from "@/lib/batch/pattern-brief";
 import { postCronAlert } from "@/lib/cron-alert";
+import { errorResponse } from "@/lib/workspace";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -33,6 +34,6 @@ export async function GET(req: Request) {
   } catch (e) {
     console.error("pattern-briefs cron failed", (e as Error).message);
     await postCronAlert({ cron: "pattern-briefs" }, e);
-    return NextResponse.json({ ok: false, error: (e as Error).message }, { status: 500 });
+    return errorResponse(e);
   }
 }

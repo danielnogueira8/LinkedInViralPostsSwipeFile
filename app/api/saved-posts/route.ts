@@ -35,6 +35,7 @@ import {
   findBookmarkResource,
   saveBookmarkResource,
 } from "@/lib/content-resource-operations";
+import { errorResponse } from "@/lib/workspace";
 
 // Invalidate the Next.js Router Cache for Inspiration so a save
 // (or delete) done from any other tab — Swipe File especially — surfaces
@@ -120,7 +121,7 @@ export async function GET(req: Request) {
 
     return NextResponse.json({ ok: true, ...page });
   } catch (e) {
-    return NextResponse.json({ ok: false, error: (e as Error).message }, { status: 500 });
+    return errorResponse(e);
   }
 }
 
@@ -529,7 +530,7 @@ export async function POST(req: Request) {
       alreadySaved: savedResult.existed,
     });
   } catch (e) {
-    return NextResponse.json({ ok: false, error: (e as Error).message }, { status: 500 });
+    return errorResponse(e);
   }
 }
 
@@ -583,6 +584,6 @@ export async function DELETE(req: Request) {
     invalidateBookmarksSegment();
     return NextResponse.json({ ok: true });
   } catch (e) {
-    return NextResponse.json({ ok: false, error: (e as Error).message }, { status: 500 });
+    return errorResponse(e);
   }
 }

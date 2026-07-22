@@ -5,6 +5,7 @@ import {
   SharedBookmarkAccessError,
 } from "@/lib/shared-bookmarks";
 import { validateCategoryId } from "@/lib/categories";
+import { errorResponse } from "@/lib/workspace";
 
 export const runtime = "nodejs";
 
@@ -144,9 +145,6 @@ export async function PUT(
     if (error) throw error;
     return NextResponse.json({ ok: true });
   } catch (e) {
-    return NextResponse.json(
-      { ok: false, error: (e as Error).message },
-      { status: 500 },
-    );
+    return errorResponse(e);
   }
 }

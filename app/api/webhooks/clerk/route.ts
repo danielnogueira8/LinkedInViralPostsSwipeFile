@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { verifyWebhook } from "@clerk/nextjs/webhooks";
 import { purgeWorkspaceData } from "@/lib/purge-workspace";
+import { errorResponse } from "@/lib/workspace";
 
 export const runtime = "nodejs";
 
@@ -42,7 +43,7 @@ export async function POST(req: NextRequest) {
   } catch (e) {
     // Return 500 so Clerk retries — better than silently dropping an erasure.
     console.error("clerk webhook handler error", (e as Error).message);
-    return NextResponse.json({ ok: false, error: (e as Error).message }, { status: 500 });
+    return errorResponse(e);
   }
 }
 

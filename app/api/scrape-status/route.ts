@@ -16,7 +16,7 @@ export async function GET(req: NextRequest) {
       ? sb.runsSelect(COLS).eq("id", runId)
       : sb.runsSelect(COLS).order("started_at", { ascending: false }).limit(1);
     const { data, error } = await q.maybeSingle();
-    if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+    if (error) return errorResponse(error);
     return NextResponse.json({ ok: true, run: data });
   } catch (e) {
     return errorResponse(e);
