@@ -635,6 +635,8 @@ async function* executeClarificationTurn(
     question: ask.question,
     options: ask.options,
     allowOther: ask.allowOther,
+    ...(ask.choiceIds ? { choiceIds: ask.choiceIds } : {}),
+    ...(ask.doneOption ? { doneOption: ask.doneOption } : {}),
   });
   const call = {
     id: askId,
@@ -679,7 +681,9 @@ async function* executeAnswerTurn(
     role: "system",
     content: [
       "You are Cowork, a LinkedIn content assistant. Answer the user's question or brainstorming request helpfully and concisely.",
-      setup.currentTurnOperation?.kind === "review_artifact"
+      setup.currentTurnOperation?.kind === "review_artifact" ||
+      (setup.currentTurnOperation?.kind === "ask" &&
+        setup.currentTurnOperation.artifactId)
         ? "The authoritative typed operation is REVIEW. Give critique or feedback only. Do not rewrite the draft, even if the message itself sounds like an edit command."
         : "This answer operation is not authorized to create or edit an artifact. Answer or brainstorm only; never return a replacement LinkedIn post draft.",
     ].join("\n\n"),

@@ -20,6 +20,8 @@ export type PostIntentKey =
 
 export type PostIntent = {
   key: PostIntentKey;
+  command: "ask" | "create";
+  count?: 1 | 2 | 3 | 4 | 5 | 6;
   // Menu label shown on the card.
   label: string;
   // Lucide icon name — resolved to a component at the call site so this module
@@ -36,6 +38,7 @@ export type PostIntent = {
 export const POST_INTENTS: Record<PostIntentKey, PostIntent> = {
   model: {
     key: "model",
+    command: "create",
     label: "Model this post",
     icon: "message-square",
     // Predefined + ready to send: no [placeholder] to fill, so "Model in Chat"
@@ -47,6 +50,7 @@ export const POST_INTENTS: Record<PostIntentKey, PostIntent> = {
   },
   refine: {
     key: "refine",
+    command: "create",
     label: "Refine this post",
     icon: "message-square",
     // The attached post is the user's OWN draft (source: 'draft'). Refine it in
@@ -58,6 +62,7 @@ export const POST_INTENTS: Record<PostIntentKey, PostIntent> = {
   },
   breakdown: {
     key: "breakdown",
+    command: "ask",
     label: "Break down the hook",
     icon: "scan-text",
     prompt:
@@ -65,6 +70,8 @@ export const POST_INTENTS: Record<PostIntentKey, PostIntent> = {
   },
   variations: {
     key: "variations",
+    command: "create",
+    count: 3,
     label: "Draft 3 variations in my voice",
     icon: "copy-plus",
     prompt:
@@ -72,6 +79,7 @@ export const POST_INTENTS: Record<PostIntentKey, PostIntent> = {
   },
   why: {
     key: "why",
+    command: "ask",
     label: "Why did this work?",
     icon: "lightbulb",
     prompt:
@@ -83,6 +91,7 @@ export const POST_INTENTS: Record<PostIntentKey, PostIntent> = {
   // so the user can name the topic before sending; the composer selects it.
   fill_template: {
     key: "fill_template",
+    command: "create",
     label: "Model in Chat",
     icon: "message-square",
     prompt:

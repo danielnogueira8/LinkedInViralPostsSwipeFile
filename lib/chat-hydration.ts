@@ -214,6 +214,11 @@ function extractPersistedAsk(
         (draftId): draftId is string => typeof draftId === "string",
       )
     : [];
+  const choiceIds = Array.isArray(args.choiceIds)
+    ? args.choiceIds.filter(
+        (choiceId): choiceId is string => typeof choiceId === "string",
+      )
+    : [];
   return {
     question,
     options,
@@ -221,6 +226,7 @@ function extractPersistedAsk(
     ...(args.multiSelect === true ? { multiSelect: true } : {}),
     ...(typeof args.targetCount === "number" ? { targetCount: args.targetCount } : {}),
     ...(optionIds.length === options.length ? { optionIds } : {}),
+    ...(choiceIds.length === options.length ? { choiceIds } : {}),
     ...(doneOption ? { doneOption } : {}),
   };
 }

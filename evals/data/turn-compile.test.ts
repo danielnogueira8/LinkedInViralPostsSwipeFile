@@ -1020,19 +1020,28 @@ describe("compileReadOnlyOrchestratorRoute", () => {
   });
 
   test.each(["brainstorm", "working-this-week"] as const)(
-    "does not send the non-draft %s starter into a draft-only orchestrator",
+    "routes the non-draft %s starter through a grounded-answer orchestrator",
     (starterId) => {
       const composerTaskContext = resolveComposerTaskContext({
         starterId,
         fallbackPostCount: null,
       });
-      expect(
+      const route =
         compileReadOnlyOrchestratorRoute({
           ...readOnlyBase,
           userInstruction: "A terse subject.",
           composerTaskContext,
-        }),
-      ).toBeNull();
+        });
+      expect(route).toMatchObject({
+        kind: "workspace_research",
+        outcome: {
+          kind: "grounded_answer",
+          format: starterId === "brainstorm" ? "takeaways" : "summary",
+        },
+        minimumSources: starterId === "brainstorm" ? 5 : 1,
+        workspaceSearchMode: "strict_top",
+        workspaceSince: starterId === "brainstorm" ? "30d" : "7d",
+      });
     },
   );
 

@@ -970,13 +970,21 @@ function composerResearchRoute(
   context: ComposerTaskContext | undefined,
 ): ReadOnlyOrchestratorRoute | null {
   const requirement = context?.researchRequirement;
-  // This orchestrator owns researched drafts only. Plain answer/ideas turns are
-  // routed to the deterministic answer lane, so they never reach here.
-  if (!context || context.kind !== "post" || !requirement) return null;
+  if (!context || !requirement) return null;
+  const outcome =
+    context.kind === "post"
+      ? ({ kind: "draft", expectedDrafts: context.expectedDraftCount } as const)
+      : ({
+          kind: "grounded_answer",
+          format: context.kind === "ideas" ? "takeaways" : "summary",
+          ...(requirement.lane === "workspace"
+            ? { resultCount: requirement.minimumSources }
+            : {}),
+        } as const);
   if (requirement.lane === "workspace") {
     return {
       kind: "workspace_research",
-      outcome: { kind: "draft", expectedDrafts: context.expectedDraftCount },
+      outcome,
       minimumSources: requirement.minimumSources,
       workspaceSearchMode: requirement.searchMode,
       ...(requirement.since ? { workspaceSince: requirement.since } : {}),
@@ -990,7 +998,7 @@ function composerResearchRoute(
   }
   return {
     kind: requirement.lane === "news" ? "news_research" : "web_research",
-    outcome: { kind: "draft", expectedDrafts: context.expectedDraftCount },
+    outcome,
   };
 }
 
@@ -1920,6 +1928,8 @@ export async function resolveFindAndModelSource(
 
 type TurnPlanCommon = {
   contract: TurnContract;
+  existingArtifactIds: string[];
+  atomicDraftSet: boolean;
   modeledBatchContinuation: ModeledDraftBatchContinuation | null;
   activeModeledBatchContinuation: ModeledDraftBatchContinuation | null;
   modeledBatchRetryRootUserMessageId: string | undefined;
@@ -1973,8 +1983,8 @@ export function clarificationForAmbiguousContinuation(
   return {
     question: "What would you like me to continue with?",
     options: [
-      "Edit the current draft",
-      "Create a new draft",
+      "Edit the current Post",
+      "Create a new Post",
       "Continue the previous research or board task",
     ],
     allowOther: true,
@@ -2016,6 +2026,7 @@ export async function compileTurnPlan(
     skipDecision,
     refineInstruction,
     trustedRefineTarget,
+    existingArtifactIds,
     creatorStyleId,
     hasModelSource,
     turnCostOperationKey,
@@ -2052,6 +2063,9 @@ export async function compileTurnPlan(
   } = setup;
 
   let modelSourceReference = initialModelSourceReference;
+  const atomicDraftSet =
+    currentTurnOperation?.kind === "create_post" &&
+    currentTurnOperation.delivery === "atomic";
 
   // Direct writer is the unified drafting path; the COWORK_THIN_PATH rollout
   // flag has been removed and lean mode is no longer forced (default false).
@@ -2066,6 +2080,101 @@ export async function compileTurnPlan(
       ? composerTaskContext.expectedDraftCount
       : null) ??
     requestedDirectPostCount(effectiveUserInstruction);
+
+  if (
+    currentTurnOperation?.kind === "create_post" &&
+    modelSourceId &&
+    !currentModelSource
+  ) {
+    const message =
+      "The selected source Post is no longer available in this workspace, so Cowork did not create an unmodeled replacement. Choose the source again and send a new request.";
+    coworkTelemetry.configure({
+      traceId: claimedUserMessageId ?? chatId,
+      route: "answer",
+      requestedContract: { kind: "post", expectedCount: directPostCount ?? 1 },
+    });
+    await deps.persistChatSetupFailure({
+      sb: sbRaw,
+      chatId,
+      workspaceId,
+      content: `⚠️ ${message}`,
+    });
+    await coworkTelemetry.finish({
+      deliveredContract: { kind: "post", deliveredCount: 0 },
+      provenanceStatus: "missing",
+      terminalOutcome: "hard_failure",
+    });
+    await deps.releaseChatTurn(workspaceId, chatId, turnCostOperationKey);
+    return turnError(message, 409);
+  }
+
+  // Ask is a capability boundary, not a best-effort routing hint. Once the
+  // browser selects Ask, no wording, attachment, prior question, source, or
+  // missing voice profile may promote the turn into writing or mutation.
+  if (currentTurnOperation?.kind === "ask") {
+    const missingContext = Boolean(
+      currentTurnOperation.artifactId && !trustedRefineTarget,
+    );
+    const askResearchRoute = composerTaskContext?.researchRequirement
+      ? compileReadOnlyOrchestratorRoute({
+          userInstruction: effectiveUserInstruction,
+          isRefine: false,
+          hasModelSource: Boolean(modelSourceId),
+          hasAttachments: attachments.length > 0,
+          hasLeadMagnet: false,
+          hasCreatorStyle: false,
+          composerTaskContext,
+        })
+      : null;
+    const servesResearch = Boolean(
+      !missingContext &&
+        askResearchRoute?.outcome?.kind === "grounded_answer" &&
+        deps.readOnlyOrchestratorEnabledForWorkspace(),
+    );
+    const contract: TurnContract = servesResearch
+      ? { kind: "research", expectedCount: 1 }
+      : {
+          kind: "answer",
+          expectedCount: missingContext ? 0 : 1,
+        };
+    coworkTelemetry.configure({
+      traceId: claimedUserMessageId ?? chatId,
+      route: servesResearch ? "read_only_orchestrator" : "answer",
+      requestedContract: contract,
+    });
+    const common = {
+      contract,
+      existingArtifactIds,
+      atomicDraftSet,
+      modeledBatchContinuation,
+      activeModeledBatchContinuation: null,
+      modeledBatchRetryRootUserMessageId: undefined,
+      directPostCount: null,
+      modelSourceReference,
+    };
+    if (servesResearch && askResearchRoute) {
+      return {
+        ...common,
+        kind: "research",
+        route: "read_only_orchestrator",
+        researchRoute: askResearchRoute,
+      };
+    }
+    return missingContext
+      ? {
+          ...common,
+          kind: "clarify",
+          route: "answer",
+          ask: {
+            question: "I couldn't find that Post in this chat.",
+            options: ["Ask without a Post", "Cancel"],
+            choiceIds: ["ask.without_post", "cancel"],
+            doneOption: "Cancel",
+            allowOther: true,
+          },
+        }
+      : { ...common, kind: "answer", route: "answer" };
+  }
 
   // A clarification compiled during setup is already the server's terminal
   // decision for this turn. Return the typed plan before any writer, research,
@@ -2082,6 +2191,8 @@ export async function compileTurnPlan(
     });
     return {
       contract,
+      existingArtifactIds,
+      atomicDraftSet,
       modeledBatchContinuation,
       activeModeledBatchContinuation: null,
       modeledBatchRetryRootUserMessageId: undefined,
@@ -2138,6 +2249,8 @@ export async function compileTurnPlan(
   const activeCreatorStyleForDirect = Boolean(
     creatorStyleId && !hasModelSource && creatorStyleBlock.trim(),
   );
+  const explicitCreateOperation = currentTurnOperation?.kind === "create_post";
+  const explicitEditOperation = currentTurnOperation?.kind === "edit_artifact";
 
   const compileDirectWriterEligibility = (voiceResolved: boolean) => {
     const context = {
@@ -2162,11 +2275,27 @@ export async function compileTurnPlan(
       targetHasLeadMagnet: Boolean(trustedRefineTarget?.meta?.lead_magnet),
       hasModelSource: Boolean(modelSourceId),
     };
-    const directRefine = isDirectRefineEligible(refineInput);
+    const commandEditEligible = Boolean(
+      explicitEditOperation &&
+        currentTurnOperation?.kind === "edit_artifact" &&
+        currentTurnOperation.editMode !== undefined &&
+        voiceResolved &&
+        trustedRefineTarget?.kind === "post" &&
+        attachments.length === 0 &&
+        !context.hasLeadMagnet &&
+        !context.hasCreatorStyle,
+    );
+    const supportedRefineTarget =
+      !explicitEditOperation || trustedRefineTarget?.kind === "post";
+    const directRefine =
+      supportedRefineTarget &&
+      (commandEditEligible || isDirectRefineEligible(refineInput));
     // A resolved refine rejected only by the strict instruction-shape gate can
     // still use the full-post rewrite lane, but it must retain edit identity.
     const generalRefine =
-      !directRefine && isGeneralRefineEligible(refineInput);
+      supportedRefineTarget &&
+      !directRefine &&
+      isGeneralRefineEligible(refineInput);
     const directPartial = isDirectPartialTextEligible({
       ...context,
       userInstruction: effectiveUserInstruction,
@@ -2174,7 +2303,15 @@ export async function compileTurnPlan(
       sourceResolved: Boolean(directSource),
       isRefine: skipDecision,
     });
-    const directMulti = isDirectMultiPostEligible({
+    const commandCreateEligible = Boolean(
+      explicitCreateOperation &&
+        voiceResolved &&
+        attachments.length === 0 &&
+        !composerTaskContext?.researchRequirement,
+    );
+    const directMulti = Boolean(
+      commandCreateEligible && (directPostCount ?? 1) > 1,
+    ) || isDirectMultiPostEligible({
       ...context,
       userInstruction: effectiveUserInstruction,
       sourceRequested: Boolean(modelSourceId),
@@ -2195,6 +2332,7 @@ export async function compileTurnPlan(
           directPostCount === 1),
     );
     const directSourceEligible =
+      Boolean(commandCreateEligible && directSource && (directPostCount ?? 1) === 1) ||
       isDirectFixedSourcePostEligible({
         ...context,
         userInstruction: effectiveUserInstruction,
@@ -2209,7 +2347,9 @@ export async function compileTurnPlan(
           isRefine: skipDecision,
         })) ||
       directStructureSource;
-    const directOriginal = isDirectOriginalPostEligible({
+    const directOriginal = Boolean(
+      commandCreateEligible && !directSource && (directPostCount ?? 1) === 1,
+    ) || isDirectOriginalPostEligible({
       userInstruction: effectiveUserInstruction,
       requestedCount: directPostCount ?? undefined,
       ...context,
@@ -2281,7 +2421,7 @@ export async function compileTurnPlan(
     compileDirectWriterEligibility(true).eligible;
   const actionOrchestratorRoute: ActionOrchestratorRoute | null = useDirectWriter
     ? null
-    : reviewOperation
+    : currentTurnOperation
       ? null
       : normalizedActionRoute;
 
@@ -2349,7 +2489,7 @@ export async function compileTurnPlan(
     }
   }
 
-  const readOnlyOrchestratorRoute: ReadOnlyOrchestratorRoute | null =
+  const inferredReadOnlyOrchestratorRoute: ReadOnlyOrchestratorRoute | null =
     useDirectWriter || useActionOrchestrator || skipDecision || reviewOperation
       ? null
       : modeledBatchContinuation?.route ??
@@ -2373,6 +2513,23 @@ export async function compileTurnPlan(
           composerTaskContext: composerTaskContext ?? undefined,
         });
 
+  const readOnlyOrchestratorRoute: ReadOnlyOrchestratorRoute | null =
+    explicitCreateOperation && attachments.length > 0
+      ? {
+          ...(inferredReadOnlyOrchestratorRoute?.kind === "file_inspection"
+            ? inferredReadOnlyOrchestratorRoute
+            : {
+                kind: "file_inspection" as const,
+                allowExternalSearch: false,
+                allowedSearchKinds: [],
+              }),
+          outcome: {
+            kind: "draft",
+            expectedDrafts: directPostCount ?? 1,
+          },
+        }
+      : inferredReadOnlyOrchestratorRoute;
+
 
   const modeledBatchRouteContract = continuationForModeledDraftRoute(
     readOnlyOrchestratorRoute,
@@ -2390,6 +2547,7 @@ export async function compileTurnPlan(
   // compound/brainstorm request intentionally left to the answer lane.
   const writingOperationRequested = Boolean(
     directWriterWouldBeEligibleWithVoice ||
+      explicitCreateOperation ||
       skipDecision ||
       modeledBatchContractRequested ||
       deterministicModeledRoute,
@@ -2427,7 +2585,7 @@ export async function compileTurnPlan(
       ? "I couldn’t load the writing context required to resume this modeled set safely. Retry will continue the same saved batch."
       : deterministicModeledRoute
         ? "I couldn’t load the writing context required to start this modeled set safely. Retry will try the request again without creating a partial set."
-        : "I couldn’t load the writing context required for this draft safely. Please retry.";
+        : "I couldn’t load the writing context required for this Post safely. Please retry.";
     await deps.persistChatSetupFailure({
       sb: sbRaw,
       chatId,
@@ -2470,17 +2628,32 @@ export async function compileTurnPlan(
   // message does not identify an operation on its own, stop before any model or
   // tool can guess whether to create, edit, research, or mutate board state.
   const clarificationAsk =
-    currentTurnOperation?.kind === "review_artifact" &&
+    currentTurnOperation?.kind === "edit_artifact" &&
+      trustedRefineTarget?.kind !== "post"
+      ? {
+          question: "Which Post should I edit?",
+          options: ["Edit the latest chat Post", "Cancel"],
+          choiceIds: ["edit.latest_post", "cancel"],
+          doneOption: "Cancel",
+          allowOther: false,
+        }
+      : currentTurnOperation?.kind === "review_artifact" &&
       (!currentTurnOperation.artifactId || !trustedRefineTarget)
       ? {
-          question: "Which post should I review?",
-          options: ["Review the latest post", "Choose a post"],
-          allowOther: true,
+          question: "Which Post should I review?",
+          options: ["Review the latest Post", "Cancel"],
+          choiceIds: ["review.latest_post", "cancel"],
+          doneOption: "Cancel",
+          allowOther: false,
         }
-      : currentTurnOperation?.kind === "create_post" && !useDirectWriter
+      : currentTurnOperation?.kind === "create_post" &&
+          !useDirectWriter &&
+          !useReadOnlyOrchestrator
       ? {
           question: "What topic or angle should the new post cover?",
-          options: ["I’ll provide the topic", "Choose a topic from my profile"],
+          options: ["Choose a topic from my profile", "Cancel"],
+          choiceIds: ["create.profile_topic", "cancel"],
+          doneOption: "Cancel",
           allowOther: true,
         }
       : skipDecision && !useDirectWriter
@@ -2489,15 +2662,22 @@ export async function compileTurnPlan(
             question:
               "This turn includes extra source or attachment context that the in-place editor cannot apply safely. How should I proceed?",
             options: [
-              "Edit the current draft without the extra context",
-              "Create a new draft using the extra context",
+              "Edit the current Post without the extra context",
+              "Cancel",
             ],
-            allowOther: true,
+            choiceIds: [
+              "edit.ignore_extra_context",
+              "cancel",
+            ],
+            doneOption: "Cancel",
+            allowOther: false,
           }
         : {
-            question: "Which draft should I edit?",
-            options: ["Edit the latest chat draft", "Choose a saved draft"],
-            allowOther: true,
+            question: "Which Post should I edit?",
+            options: ["Edit the latest chat Post", "Cancel"],
+            choiceIds: ["edit.latest_post", "cancel"],
+            doneOption: "Cancel",
+            allowOther: false,
           }
       : !useDirectWriter &&
           !useActionOrchestrator &&
@@ -2513,8 +2693,10 @@ export async function compileTurnPlan(
         instruction: refineInstruction!,
         focus:
           currentTurnOperation?.kind === "edit_artifact" &&
-          currentTurnOperation.editMode === "hook_only"
-            ? "hook"
+          currentTurnOperation.editMode
+            ? currentTurnOperation.editMode === "hook_only"
+              ? "hook"
+              : "general"
             : classifyDirectRefineFocus(refineInstruction!),
         target: trustedRefineTarget as Artifact & { kind: "post" | "hook" },
       }
@@ -2587,6 +2769,8 @@ export async function compileTurnPlan(
 
   const commonPlan: TurnPlanCommon = {
     contract: turnContract,
+    existingArtifactIds,
+    atomicDraftSet,
     modeledBatchContinuation,
     activeModeledBatchContinuation,
     modeledBatchRetryRootUserMessageId,

@@ -21,6 +21,7 @@ export const AskQuestionSchema = z
     multiSelect: z.boolean().optional(),
     targetCount: z.number().int().min(2).max(5).optional(),
     optionIds: z.array(z.string().uuid()).min(2).max(5).optional(),
+    choiceIds: z.array(z.string().min(1).max(64)).min(2).max(6).optional(),
     doneOption: z.string().min(1).optional(),
   })
   .superRefine((question, ctx) => {
@@ -61,6 +62,17 @@ export const AskQuestionSchema = z
         code: z.ZodIssueCode.custom,
         message: "optionIds must map one-to-one to unique rendered options",
         path: ["optionIds"],
+      });
+    }
+    if (
+      question.choiceIds &&
+      (question.choiceIds.length !== question.options.length ||
+        new Set(question.choiceIds).size !== question.choiceIds.length)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "choiceIds must map one-to-one to unique rendered options",
+        path: ["choiceIds"],
       });
     }
   });

@@ -119,7 +119,13 @@ import type {
   AskQuestion,
   PlanStep,
 } from "@/lib/agent/contracts";
-import type { ChatTurnOperation } from "@/lib/agent/chat-turn";
+import {
+  commandForComposer,
+  resumesPersistedCoworkOperation,
+  type CoworkCommand,
+  type CoworkComposerCommandKind,
+  type CoworkComposerState,
+} from "@/lib/cowork-command";
 import {
   isAskSelectionComplete,
   resolveAskSubmission,
@@ -451,6 +457,15 @@ export function ChatWorkspace({
   // initializer makes the client render an enabled send button while the server
   // rendered it disabled, which React reports as a hydration mismatch.
   const [input, setInput] = useState("");
+  // Operation authority is visible and scoped to one turn. Ask is always the
+  // safe default; Create must be selected explicitly, while Edit is launched
+  // from a specific Post card.
+  const [coworkComposer, setCoworkComposer] = useState<CoworkComposerState>({
+    kind: "ask",
+  });
+  const composerCommandKind = coworkComposer.kind;
+  const askContextPostId =
+    coworkComposer.kind === "ask" ? coworkComposer.contextPostId : undefined;
   // Generated drafts/hooks live in the right-hand panel (not inline in the
   // conversation), so the panel opens by default and re-opens whenever a new
   // artifact streams in. It can still be collapsed; the floating "Drafts (N)"
@@ -571,6 +586,18 @@ export function ChatWorkspace({
   const contextMenuButtonRef = useRef<HTMLButtonElement>(null);
   const [draftCountSelection, setDraftCountSelection] =
     useState<DraftCountSelection>("auto");
+  const enterCreateCommand = useCallback(
+    (count?: Exclude<DraftCountSelection, "auto">) => {
+      setCoworkComposer({ kind: "create" });
+      setDraftCountSelection((current) =>
+        count ?? (current === "auto" ? 1 : current),
+      );
+    },
+    [],
+  );
+  const preserveCommandOnNextChatChangeRef = useRef<
+    string | null | undefined
+  >(undefined);
   // Explicit post-type pick for a plain composer send with no starter (a
   // starter like "model a lead magnet" already carries its own post type via
   // composerTaskContext — this only matters for free-text requests, which
@@ -592,6 +619,12 @@ export function ChatWorkspace({
       setLeadMagnetPickerOpen(false);
       setGenerationSettingsOpen(false);
       setContextMenuOpen(false);
+      if (preserveCommandOnNextChatChangeRef.current === activeId) {
+        preserveCommandOnNextChatChangeRef.current = undefined;
+      } else {
+        preserveCommandOnNextChatChangeRef.current = undefined;
+        setCoworkComposer({ kind: "ask" });
+      }
     });
     return () => cancelAnimationFrame(id);
   }, [activeId]);
@@ -726,6 +759,9 @@ export function ChatWorkspace({
       a.kind === "post" &&
       a.body.trim().length >= MIN_PANEL_DRAFT_LENGTH &&
       !looksCorruptedDraft(a.body),
+  );
+  const askContextPost = buildArtifactIndex(artifacts).entries.find(
+    (entry) => entry.artifactId === askContextPostId,
   );
   const hasDraftPanel = artifacts.length > 0;
   const sending = !!activeRun && activeRun.streaming;
@@ -1057,12 +1093,14 @@ export function ChatWorkspace({
         ctaUrl: leadMagnetCreateCtaUrl.trim() || null,
         ctaLabel: leadMagnetCreateCtaLabel.trim() || null,
       });
+      enterCreateCommand();
       setLeadMagnetCreateOpen(false);
       setLeadMagnetPickerOpen(false);
       toast.success("Lead magnet will be created after the draft");
     },
     [
       aiLeadMagnetLimitReached,
+      enterCreateCommand,
       leadMagnetCreateCtaLabel,
       leadMagnetCreateCtaUrl,
       leadMagnetCreatePrompt,
@@ -1638,6 +1676,7 @@ export function ChatWorkspace({
         setModelSourceChatId(newChatId);
         setForcedDraftByChat((prev) => ({ ...prev, [newChatId]: intent.prompt }));
         writeDraft(newChatId, intent.prompt);
+        preserveCommandOnNextChatChangeRef.current = newChatId;
         setActiveId(newChatId);
         setPendingPostFormat(null);
         setPostFormatPickerOpen(false);
@@ -1646,6 +1685,11 @@ export function ChatWorkspace({
         setPendingCreatorStyle(null);
         setCreatorStylePickerOpen(false);
         setContextMenuOpen(false);
+        if (intent.command === "create") {
+          enterCreateCommand(intent.count ?? 1);
+        } else {
+          setCoworkComposer({ kind: "ask" });
+        }
         setModelSource({
           id: s.id,
           authorName: s.author_name ?? null,
@@ -1716,6 +1760,8 @@ export function ChatWorkspace({
       // is declared below this effect. One-shot: we clear ?style= in the same
       // tick so the effect can't re-run and clobber a chat the user then starts.
       /* eslint-disable react-hooks/set-state-in-effect */
+      preserveCommandOnNextChatChangeRef.current =
+        activeId === null ? undefined : null;
       setActiveId(null);
       setInput("");
       setModelSource(null);
@@ -1726,6 +1772,7 @@ export function ChatWorkspace({
       setCreatorStylePickerOpen(false);
       setContextMenuOpen(false);
       setPendingCreatorStyle(match);
+      enterCreateCommand();
       /* eslint-enable react-hooks/set-state-in-effect */
     }
     router.replace("/dashboard");
@@ -1739,6 +1786,10 @@ export function ChatWorkspace({
   // they can type straight over it; otherwise drop the cursor at the end.
   const prefillPrompt = useCallback((starter: Starter) => {
     const { id, prompt } = starter;
+    setCoworkComposer({ kind: starter.command });
+    if (starter.command === "create" && draftCountSelection === "auto") {
+      setDraftCountSelection(1);
+    }
     writeComposerDraft(activeIdRef.current, { text: prompt, starterId: id });
     setInput(prompt);
     requestAnimationFrame(() => {
@@ -1752,7 +1803,7 @@ export function ChatWorkspace({
         el.setSelectionRange(prompt.length, prompt.length);
       }
     });
-  }, []);
+  }, [draftCountSelection]);
 
   // ----- chat list management -----
 
@@ -2137,16 +2188,18 @@ export function ChatWorkspace({
   const send = useCallback(async (
     overrideText?: string,
     sendOpts?: {
-      operation?: ChatTurnOperation;
+      command?: CoworkCommand;
       retryOfUserMessageId?: string;
       actionSelectionIds?: string[];
+      clarificationChoiceIndex?: number;
+      clarificationAssistantMessageId?: string;
     },
   ) => {
     // Caller passes overrideText to send a specific message without going
     // through the composer input — used by the "Continue" recovery button on
     // a cut-off/truncated assistant turn. Default path reads `input`.
-    // sendOpts.operation is set only by explicit UI actions whose target and
-    // verb are already known; ordinary composer language is server-compiled.
+    // Every ordinary browser turn carries one explicit command. Retry and a
+    // pending structured answer replay server-persisted authority instead.
     let text = (overrideText ?? input).trim();
     if (!text) return;
 
@@ -2274,11 +2327,40 @@ export function ChatWorkspace({
       // rule as Post Format — the badge + stream field are gated on it.
       const turnCreatorStyle = pendingCreatorStyle;
       const turnCreatorStyleApplies = !attached;
+      // The Ask-card submission callback always supplies this field, including
+      // an empty array for free-text/non-board answers. Presence means "resume
+      // the persisted pending operation"; checking length would accidentally
+      // compile an empty-selection answer as a brand-new Ask command.
+      const resumesPersistedOperation = resumesPersistedCoworkOperation({
+        ...(sendOpts?.retryOfUserMessageId
+          ? { retryOfUserMessageId: sendOpts.retryOfUserMessageId }
+          : {}),
+        ...(sendOpts?.actionSelectionIds !== undefined
+          ? { actionSelectionIds: sendOpts.actionSelectionIds }
+          : {}),
+        ...(sendOpts?.clarificationAssistantMessageId
+          ? {
+              clarificationAssistantMessageId:
+                sendOpts.clarificationAssistantMessageId,
+            }
+          : {}),
+      });
       const appliesComposerControls =
         overrideText === undefined &&
-        !sendOpts?.retryOfUserMessageId &&
-        !sendOpts?.operation &&
-        !sendOpts?.actionSelectionIds?.length;
+        !resumesPersistedOperation &&
+        !sendOpts?.command;
+      const turnCommand =
+        resumesPersistedOperation
+          ? undefined
+          : sendOpts?.command ??
+            commandForComposer({
+              kind: composerCommandKind,
+              count:
+                draftCountSelection === "auto" ? 1 : draftCountSelection,
+              ...(composerCommandKind === "ask" && askContextPost
+                ? { contextPostId: askContextPost.artifactId }
+                : {}),
+            });
       const turnStarterOwnerId = targetChatId;
       const turnStarterId = appliesComposerControls
         ? readComposerDraft(turnStarterOwnerId).starterId ?? undefined
@@ -2365,12 +2447,12 @@ export function ChatWorkspace({
       // The browser creates operations only for explicit UI actions. Ordinary
       // composer text carries the selected card as non-authoritative context;
       // the server owns all language interpretation and target validation.
-      const explicitEditOperation =
-        sendOpts?.operation?.kind === "edit_artifact"
-          ? sendOpts.operation
+      const explicitEditCommand =
+        turnCommand?.kind === "edit"
+          ? turnCommand
           : null;
-      const refineThisTurn = Boolean(explicitEditOperation);
-      const refineTargetIdThisTurn = explicitEditOperation?.artifactId;
+      const refineThisTurn = Boolean(explicitEditCommand);
+      const refineTargetIdThisTurn = explicitEditCommand?.targetPostId;
       const persistedArtifacts = chatSession.artifactsFor(chatId);
       const liveArtifacts = chatSession.runFor(chatId)?.artifacts ?? [];
       const seenIds = new Set(persistedArtifacts.map((artifact) => artifact.id));
@@ -2381,11 +2463,6 @@ export function ChatWorkspace({
       const writableArtifacts = combined.filter(
         (artifact) => artifact.kind === "post" || artifact.kind === "hook",
       );
-      const selectedArtifactIdThisTurn = writableArtifacts.some(
-        (artifact) => artifact.id === expandedArtifactId,
-      )
-        ? (expandedArtifactId ?? undefined)
-        : undefined;
       if (refineThisTurn && refineTargetIdThisTurn) {
         const target = writableArtifacts.find(
           (artifact) => artifact.id === refineTargetIdThisTurn,
@@ -2394,7 +2471,7 @@ export function ChatWorkspace({
           pendingRefineRef.current.set(chatId, {
             artifactId: target.id,
             originalBody: target.body,
-            ...(explicitEditOperation?.editMode === "hook_only"
+            ...(explicitEditCommand?.scope === "hook"
               ? { hookOnly: true }
               : {}),
           });
@@ -2489,6 +2566,9 @@ export function ChatWorkspace({
       if (turnLeadMagnet) setPendingLeadMagnet(null);
       if (turnCreatorStyle) setPendingCreatorStyle(null);
       if (turnStarterId) clearComposerStarter(turnStarterOwnerId);
+      if (turnCommand) {
+        setCoworkComposer({ kind: "ask" });
+      }
 
       // Optimistically title an untitled chat from this first message, matching
       // the server's auto-title (first 60 chars).
@@ -2523,12 +2603,18 @@ export function ChatWorkspace({
             ...(sendOpts?.actionSelectionIds?.length
               ? { actionSelectionIds: sendOpts.actionSelectionIds }
               : {}),
+            ...(sendOpts?.clarificationChoiceIndex !== undefined
+              ? { clarificationChoiceIndex: sendOpts.clarificationChoiceIndex }
+              : {}),
+            ...(sendOpts?.clarificationAssistantMessageId
+              ? {
+                  clarificationAssistantMessageId:
+                    sendOpts.clarificationAssistantMessageId,
+                }
+              : {}),
             ...(attached ? { modelSourceId: attached.id } : {}),
             ...(filePayload.length ? { attachments: filePayload } : {}),
-            ...(!sendOpts?.operation && selectedArtifactIdThisTurn
-              ? { selectedArtifactId: selectedArtifactIdThisTurn }
-              : {}),
-            ...(sendOpts?.operation ? { operation: sendOpts.operation } : {}),
+            ...(turnCommand ? { command: turnCommand } : {}),
             ...(turnSkillIds.length ? { skillIds: turnSkillIds } : {}),
             ...(turnPostFormat ? { forcedNoModelFormatId: turnPostFormat } : {}),
             ...(turnLeadMagnet &&
@@ -2855,6 +2941,16 @@ export function ChatWorkspace({
             if (turnStarterId) {
               writeComposerDraft(chatId, { text, starterId: turnStarterId });
             }
+            if (turnCommand?.kind === "ask") {
+              setCoworkComposer({
+                kind: "ask",
+                ...(turnCommand.contextPostId
+                  ? { contextPostId: turnCommand.contextPostId }
+                  : {}),
+              });
+            } else if (turnCommand?.kind === "create") {
+              enterCreateCommand(turnCommand.count);
+            }
           }
           return;
         }
@@ -3087,7 +3183,10 @@ export function ChatWorkspace({
     pendingSkills,
     pendingPostFormat,
     pendingLeadMagnet,
+    leadMagnetPickerDisabled,
     pendingCreatorStyle,
+    composerCommandKind,
+    askContextPost,
     draftCountSelection,
     postTypeSelection,
     initialVoiceReady,
@@ -3097,7 +3196,7 @@ export function ChatWorkspace({
     chatSession,
     setActiveId,
     writerContentFormat,
-    expandedArtifactId,
+    enterCreateCommand,
   ]);
 
   // Stop the active chat's in-flight run — really stop it, not just cancel
@@ -3219,15 +3318,14 @@ export function ChatWorkspace({
         : `Refine this ${noun}: ${instruction}\n\n` +
           `Keep it in my voice. Here's the current ${noun}:\n` +
           `"""\n${draftBody}\n"""`;
-      // The Refine control is an explicit UI action, so it sends one typed edit
-      // operation. The server validates the canonical target, inherits its
+      // The Refine control is an explicit UI action, so it sends one typed Edit
+      // command. The server validates the canonical target, inherits its
       // Custom Skills, and preserves everything after the opener in hook mode.
       void send(message, {
-        operation: {
-          kind: "edit_artifact",
-          artifactId,
-          instruction,
-          ...(hookOnly ? { editMode: "hook_only" as const } : {}),
+        command: {
+          kind: "edit",
+          targetPostId: artifactId,
+          scope: hookOnly ? "hook" : "full_post",
         },
       });
     },
@@ -3522,6 +3620,10 @@ export function ChatWorkspace({
           onRefine={(instruction) =>
             refineDraft(a.id, a.body, a.kind === "hook" ? "hook" : "post", instruction)
           }
+          onAsk={() => {
+            setCoworkComposer({ kind: "ask", contextPostId: a.id });
+            requestAnimationFrame(() => inputRef.current?.focus());
+          }}
           onBodyChange={(newBody) => updateArtifactBody(a.id, newBody)}
           onMetaChange={(metaPatch) => updateArtifactMeta(a.id, metaPatch)}
           leadMagnetHref={leadMagnetHref}
@@ -3833,10 +3935,16 @@ export function ChatWorkspace({
                       );
                     }
                   }}
-                  onAnswer={(text, _ask, actionSelectionIds) => {
+                  onAnswer={(text, _ask, actionSelectionIds, clarificationChoiceIndex) => {
                     // Ask-card answers are free text, not explicit card actions:
                     // only the server may interpret them as Artifact operations.
-                    void send(text, { actionSelectionIds });
+                    void send(text, {
+                      actionSelectionIds,
+                      clarificationAssistantMessageId: m.id,
+                      ...(clarificationChoiceIndex !== undefined
+                        ? { clarificationChoiceIndex }
+                        : {}),
+                    });
                   }}
                 />
               ))}
@@ -3958,19 +4066,19 @@ export function ChatWorkspace({
                 <div className="flex flex-col divide-y divide-border p-3.5">
                   <div className="flex items-center justify-between gap-3 pb-3.5">
                     <div>
-                      <p className="text-sm font-medium text-foreground">Drafts</p>
+                      <p className="text-sm font-medium text-foreground">Posts</p>
                       <p className="mt-0.5 text-xs text-muted-foreground">
-                        Choose an exact count, or let your message decide.
+                        Choose exactly how many new Posts to create.
                       </p>
                     </div>
                     <div
                       role="group"
-                      aria-label="Number of drafts"
+                      aria-label="Number of Posts"
                       className="flex shrink-0 items-center gap-1 rounded-xl border border-border bg-muted/50 p-1"
                     >
-                      {(["auto", ...DRAFT_COUNT_OPTIONS] as const).map((option) => {
+                      {DRAFT_COUNT_OPTIONS.map((option) => {
                         const selected = draftCountSelection === option;
-                        const label = option === "auto" ? "Auto" : String(option);
+                        const label = String(option);
                         return (
                           <button
                             key={label}
@@ -4275,6 +4383,9 @@ export function ChatWorkspace({
                         type="button"
                         onClick={() => {
                           setPendingPostFormat(on ? null : format.id);
+                          if (!on) {
+                            enterCreateCommand();
+                          }
                           setPostFormatPickerOpen(false);
                         }}
                         className={cn(
@@ -4446,6 +4557,9 @@ export function ChatWorkspace({
                           type="button"
                           onClick={() => {
                             setPendingLeadMagnet(on ? null : leadMagnet);
+                            if (!on) {
+                              enterCreateCommand();
+                            }
                             setLeadMagnetPickerOpen(false);
                           }}
                           className={cn(
@@ -4525,6 +4639,9 @@ export function ChatWorkspace({
                           type="button"
                           onClick={() => {
                             setPendingCreatorStyle(on ? null : style);
+                            if (!on) {
+                              enterCreateCommand();
+                            }
                             setCreatorStylePickerOpen(false);
                           }}
                           className={cn(
@@ -4757,14 +4874,57 @@ export function ChatWorkspace({
                 onKeyDown={onKeyDown}
                 rows={1}
                 placeholder={
-                  sending ? "Type your next message…" : "What do you want to write?"
+                  sending
+                    ? "Type your next message…"
+                    : composerCommandKind === "create"
+                      ? "What should the new post be about?"
+                      : askContextPost
+                        ? `Ask about ${askContextPost.label}…`
+                        : "Ask Cowork anything…"
                 }
                 // Rests at ONE line (min-h-10 ≈ one line of text-base leading-relaxed
                 // + py-1.5), then the auto-grow effect expands it up to 10 rows as you
                 // type. text-base + leading-relaxed keeps what you type readable.
                 className="min-h-10 w-full resize-none border-0 bg-transparent px-1 py-1.5 text-base leading-relaxed text-foreground outline-none placeholder:text-muted-foreground focus:ring-0"
               />
-              <div className="flex items-center gap-1.5 border-t border-border pt-2.5">
+              <div className="flex flex-wrap items-center gap-1.5 border-t border-border pt-2.5">
+              <div
+                className="inline-flex h-9 shrink-0 items-center rounded-xl border border-border bg-card p-0.5"
+                role="group"
+                aria-label="Cowork command"
+              >
+                <button
+                  type="button"
+                  aria-pressed={composerCommandKind === "ask"}
+                  onClick={() => setCoworkComposer({ kind: "ask" })}
+                  className={cn(
+                    "inline-flex h-8 items-center gap-1.5 rounded-[0.6rem] px-2.5 text-xs font-medium transition-colors",
+                    composerCommandKind === "ask"
+                      ? "bg-primary text-primary-foreground shadow-sm"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                  )}
+                >
+                  <MessageSquare className="h-3.5 w-3.5" aria-hidden />
+                  {askContextPost ? `Ask · ${askContextPost.label}` : "Ask"}
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={composerCommandKind === "create"}
+                  onClick={() => {
+                    enterCreateCommand();
+                  }}
+                  className={cn(
+                    "inline-flex h-8 items-center gap-1.5 rounded-[0.6rem] px-2.5 text-xs font-medium transition-colors",
+                    composerCommandKind === "create"
+                      ? "bg-primary text-primary-foreground shadow-sm"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                  )}
+                >
+                  <PenLine className="h-3.5 w-3.5" aria-hidden />
+                  Create
+                </button>
+              </div>
+              {composerCommandKind === "create" && (
               <Button
                 ref={generationSettingsButtonRef}
                 type="button"
@@ -4784,7 +4944,7 @@ export function ChatWorkspace({
                     postTypeSelection !== "auto") &&
                     "border-primary/60 text-primary",
                 )}
-                aria-label={`Generation settings — draft count: ${
+                aria-label={`Generation settings — Post count: ${
                   draftCountSelection === "auto"
                     ? "Auto"
                     : draftCountSelection
@@ -4796,17 +4956,18 @@ export function ChatWorkspace({
                       : "Lead magnet"
                 }`}
                 aria-expanded={generationSettingsOpen}
-                title="Choose how many drafts to create and which post type to source"
+                title="Choose how many Posts to create and which post type to source"
               >
                 <SlidersHorizontal className="h-4 w-4" aria-hidden />
                 <span className="text-xs font-medium tabular-nums">
                   {draftCountSelection === "auto"
                     ? "Auto"
-                    : `${draftCountSelection} drafts`}
+                    : `${draftCountSelection} ${draftCountSelection === 1 ? "post" : "posts"}`}
                   {postTypeSelection !== "auto" &&
                     ` · ${postTypeSelection === "regular" ? "Regular" : "Lead magnet"}`}
                 </span>
               </Button>
+              )}
               <div className="relative">
                 <Button
                   ref={contextMenuButtonRef}
@@ -5506,7 +5667,12 @@ function MessageBubble({
   onRetry: () => void;
   // Submit handler for the clarifying-question card (ask_user): sends the
   // composed answer as the next user message.
-  onAnswer: (text: string, ask: AskQuestion, actionSelectionIds: string[]) => void;
+  onAnswer: (
+    text: string,
+    ask: AskQuestion,
+    actionSelectionIds: string[],
+    clarificationChoiceIndex?: number,
+  ) => void;
   legacyContentFormat: ContentFormat;
 }) {
   if (message.role === "user") {
@@ -5712,7 +5878,12 @@ function AskCard({
   onSubmit,
 }: {
   ask: AskQuestion;
-  onSubmit: (text: string, ask: AskQuestion, actionSelectionIds: string[]) => void;
+  onSubmit: (
+    text: string,
+    ask: AskQuestion,
+    actionSelectionIds: string[],
+    clarificationChoiceIndex?: number,
+  ) => void;
 }) {
   const [selected, setSelected] = useState<string[]>([]);
   const [other, setOther] = useState("");
@@ -5759,7 +5930,18 @@ function AskCard({
       const id = index >= 0 ? ask.optionIds?.[index] : undefined;
       return id ? [id] : [];
     });
-    onSubmit(action.text, ask, actionSelectionIds);
+    const clarificationChoiceIndex =
+      !isMulti && selected.length === 1
+        ? ask.options.indexOf(selected[0]!)
+        : undefined;
+    onSubmit(
+      action.text,
+      ask,
+      actionSelectionIds,
+      clarificationChoiceIndex !== undefined && clarificationChoiceIndex >= 0
+        ? clarificationChoiceIndex
+        : undefined,
+    );
   };
 
   if (submitted !== null) {
@@ -6117,6 +6299,7 @@ function ArtifactCard({
   label,
   refiningDraftId,
   onRefine,
+  onAsk,
   onBodyChange,
   onMetaChange,
   leadMagnetHref,
@@ -6134,6 +6317,8 @@ function ArtifactCard({
   // Send this draft back to the agent with an instruction. The result UPDATES
   // this card in place (with version history), not a separate new draft.
   onRefine: (instruction: string) => void;
+  // Bind the next Ask turn to this exact Post without authorizing an edit.
+  onAsk: () => void;
   // The Done-edit PATCH succeeded — the parent updates its session cache
   // cache so the next render reflects the saved body (otherwise the parent's
   // stale prop would seed-reset the local body on a re-render).
@@ -6915,6 +7100,17 @@ function ArtifactCard({
             Save as new
           </Button>
         )}
+        <Button
+          size="sm"
+          variant="outline"
+          className="gap-1.5 h-8 rounded-full border-border"
+          onClick={onAsk}
+          disabled={refineDisabled}
+          title="Ask for feedback or discuss this post without changing it"
+        >
+          <MessageSquare className="h-3.5 w-3.5" />
+          Ask
+        </Button>
         {/* Refine with AI — sends this draft back to the agent. Toggles the
             quick-action row below; the original card stays, the refined version
             arrives as a new card. Disabled while a turn is streaming in this
@@ -7551,6 +7747,7 @@ type StarterGroup = "explore" | "create" | "borrow-attention";
 type Starter = {
   id: ComposerStarterId;
   group: StarterGroup;
+  command: CoworkComposerCommandKind;
   icon: LucideIcon;
   label: string;
   prompt: string;
@@ -7561,6 +7758,7 @@ const STARTERS: Starter[] = [
   {
     id: "brainstorm",
     group: "explore",
+    command: "ask",
     icon: Lightbulb,
     label: "Brainstorm new post ideas",
     recommendedDescription: "Explore angles that are already working.",
@@ -7570,6 +7768,7 @@ const STARTERS: Starter[] = [
   {
     id: "model-top-viral",
     group: "create",
+    command: "create",
     icon: Flame,
     label: "Model a top viral post",
     recommendedDescription: "Adapt a proven Swipe File structure.",
@@ -7579,6 +7778,7 @@ const STARTERS: Starter[] = [
   {
     id: "model-recent-lead-magnet",
     group: "create",
+    command: "create",
     icon: Magnet,
     label: "Model a recent viral lead magnet",
     prompt:
@@ -7587,6 +7787,7 @@ const STARTERS: Starter[] = [
   {
     id: "working-this-week",
     group: "explore",
+    command: "ask",
     icon: TrendingUp,
     label: "What's working this week",
     prompt:
@@ -7595,6 +7796,7 @@ const STARTERS: Starter[] = [
   {
     id: "write-original",
     group: "create",
+    command: "create",
     icon: PenLine,
     label: "Write an original post",
     recommendedDescription: "Recommended · Start with a topic.",
@@ -7604,6 +7806,7 @@ const STARTERS: Starter[] = [
   {
     id: "namejack",
     group: "borrow-attention",
+    command: "create",
     icon: AtSign,
     label: "Namejack a person",
     prompt:
@@ -7612,6 +7815,7 @@ const STARTERS: Starter[] = [
   {
     id: "brandjack",
     group: "borrow-attention",
+    command: "create",
     icon: Building2,
     label: "Brandjack a company",
     prompt:
@@ -7620,6 +7824,7 @@ const STARTERS: Starter[] = [
   {
     id: "newsjack",
     group: "borrow-attention",
+    command: "create",
     icon: Newspaper,
     label: "Newsjack a recent event",
     prompt:

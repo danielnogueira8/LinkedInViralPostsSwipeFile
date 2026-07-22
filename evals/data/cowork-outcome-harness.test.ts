@@ -1550,6 +1550,36 @@ describe("production-shaped Cowork outcome harness", () => {
     expect(report.safe.route).toBe("answer");
   });
 
+  test("an explicit Create fails closed when its selected source is missing", async () => {
+    const report = await runCoworkOutcomeScenario({
+      id: "command-create-missing-model-source",
+      request: {
+        message: "Model the selected source into one Post.",
+        command: { kind: "create", count: 1 },
+        modelSourceId: "00000000-0000-4000-8000-000000000402",
+      },
+      model: {
+        provider: { rounds: [] },
+        directWriter: [
+          {
+            text: COMPLETE_POST,
+            finishReason: "stop",
+            usage: usage(180, 82, 0.00016),
+          },
+        ],
+      },
+      expected: {
+        terminal: "failure",
+        httpStatus: 409,
+        artifactBodies: [],
+        actionNames: [],
+      },
+    });
+
+    expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+    expect(report.observed.directWriterRequests).toHaveLength(0);
+  });
+
   test.each(["missing", "not ready"] as const)(
     "fails an explicitly selected creator style closed when it is %s",
     async (state) => {
@@ -2885,6 +2915,67 @@ describe("production-shaped Cowork outcome harness", () => {
     ).toContain("customer said onboarding delays");
   });
 
+  test("Create with an attachment produces its exact Post despite summary wording", async () => {
+    const report = await runCoworkOutcomeScenario({
+      id: "command-create-file-summary-wording",
+      request: {
+        message: "Summarize this attachment.",
+        command: { kind: "create", count: 1 },
+        attachments: [
+          {
+            kind: "text",
+            filename: "interview.txt",
+            text: "The customer said onboarding delays made the next step unclear.",
+          },
+        ],
+      },
+      model: {
+        provider: { rounds: [] },
+        readOnlyOrchestrator: {
+          plans: [
+            {
+              model: PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL,
+              toolArgs: {
+                actions: [
+                  { id: "file", type: "inspect_attachments" },
+                  {
+                    id: "draft",
+                    type: "draft_post",
+                    evidenceActionIds: ["file"],
+                  },
+                ],
+              },
+              usage: usage(80, 16, 0.0009),
+            },
+          ],
+          attachmentSources: [
+            {
+              id: "interview-create-1",
+              kind: "attachment",
+              title: "interview.txt",
+              text: "The customer said onboarding delays made the next step unclear.",
+            },
+          ],
+        },
+        directWriter: [
+          {
+            text: COMPLETE_POST,
+            finishReason: "stop",
+            usage: usage(210, 95, 0.0001888),
+          },
+        ],
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [COMPLETE_POST],
+        actionNames: ["inspect_attachments", "write_grounded_post"],
+        route: "read_only_orchestrator",
+      },
+    });
+
+    expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+  });
+
   test("follow-up turn re-injects persisted attachment text without a re-attach", async () => {
     const sequence = await runCoworkOutcomeSequence([
       {
@@ -3146,6 +3237,71 @@ describe("production-shaped Cowork outcome harness", () => {
     ).not.toBe("");
     expect(sequence.attempts[0]?.observed.agentProviderRounds).toBe(0);
     expect(sequence.attempts[1]?.observed.agentProviderRounds).toBe(0);
+  });
+
+  test("Retry replays the original modeled source and provenance", async () => {
+    const modelSourceId = "00000000-0000-4000-8000-000000000231";
+    const sourcePostId = "00000000-0000-4000-8000-000000000232";
+    const message = "Model the attached source into one original post.";
+    const sequence = await runCoworkOutcomeSequence([
+      {
+        id: "modeled-source-retry-failure",
+        request: {
+          message,
+          command: { kind: "create", count: 1 },
+          modelSourceId,
+        },
+        seed: {
+          bookmarkModelSource: {
+            id: modelSourceId,
+            sourcePostId,
+            postText:
+              "A verified source explains why public proof compounds across career changes.",
+            postUrl: "https://www.linkedin.com/feed/update/urn:li:activity:231",
+          },
+        },
+        model: {
+          sourceFidelity: [{ outcome: "verified" }, { outcome: "verified" }],
+          provider: { rounds: [] },
+          directWriter: [
+            { text: "", finishReason: "stop", usage: usage(120, 0, 0.00004) },
+            { text: "", finishReason: "stop", usage: usage(140, 0, 0.00013) },
+          ],
+        },
+        expected: {
+          terminal: "failure",
+          artifactBodies: [],
+          actionNames: [],
+        },
+      },
+      {
+        id: "modeled-source-retry-success",
+        request: { message },
+        retryLatestUser: true,
+        model: {
+          sourceFidelity: [{ outcome: "verified" }, { outcome: "verified" }],
+          provider: { rounds: [] },
+          directWriter: [
+            {
+              text: SECOND_POST,
+              finishReason: "stop",
+              usage: usage(210, 95, 0.0001888),
+            },
+          ],
+        },
+        expected: {
+          terminal: "done",
+          artifactBodies: [SECOND_POST],
+          actionNames: [],
+          sourcePostIds: [sourcePostId],
+        },
+      },
+    ]);
+
+    expect(sequence.pass, JSON.stringify(sequence.attempts)).toBe(true);
+    expect(sequence.attempts[1]?.persisted.artifacts[0]?.meta).toMatchObject({
+      source_post_id: sourcePostId,
+    });
   });
 
   test("the durable Stop flag aborts a pending direct writer before repair, fallback, or persistence", async () => {
@@ -3617,6 +3773,7 @@ describe("production-shaped Cowork outcome harness", () => {
       id: "typed-newsjack-starter-terse-copy",
       request: {
         message: "OpenAI agents for small teams.",
+        command: { kind: "create", count: 1 },
         starterId: "newsjack",
         generationConfig: { version: 1, draftCount: 1 },
       },
@@ -3753,6 +3910,38 @@ describe("production-shaped Cowork outcome harness", () => {
       draftCountSource: "ui",
       postTypeSource: "default",
     });
+  });
+
+  test("an explicit Create never persists a partial Post set", async () => {
+    const report = await runCoworkOutcomeScenario({
+      id: "command-create-atomic-partial-failure",
+      request: {
+        message: "Create two distinct Posts about AI slop.",
+        command: { kind: "create", count: 2 },
+        generationConfig: { version: 1, draftCount: 2 },
+      },
+      model: {
+        provider: { rounds: [] },
+        directWriter: [
+          COMPLETE_POST,
+          COMPLETE_POST,
+          COMPLETE_POST,
+          COMPLETE_POST,
+        ].map((text, index) => ({
+          text,
+          finishReason: "stop" as const,
+          usage: usage(200 + index * 20, 90 + index * 10, 0.0002),
+        })),
+      },
+      expected: {
+        terminal: "failure",
+        artifactBodies: [],
+        actionNames: [],
+      },
+    });
+
+    expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+    expect(report.persisted.artifacts).toHaveLength(0);
   });
 
   test("Retry rejects a starter that differs from the original task", async () => {
@@ -4776,7 +4965,7 @@ describe("production-shaped Cowork outcome harness", () => {
         terminal: "ask",
         artifactBodies: [],
         actionNames: ["ask_user"],
-        assistantContents: ["I couldn't find a post to review in this chat."],
+        assistantContents: ["I couldn't find a Post to review in this chat."],
         route: "answer",
       },
     });
@@ -4926,7 +5115,7 @@ describe("production-shaped Cowork outcome harness", () => {
           artifactBodies: [],
           actionNames: ["ask_user"],
           assistantContents: [
-            "I couldn't find Post 21. Which post should I edit?",
+            "I couldn't find Post 21. Which Post should I edit?",
           ],
           route: "answer",
         },
@@ -5225,56 +5414,6 @@ describe("production-shaped Cowork outcome harness", () => {
     expect(refinedId).toBe(secondId);
   });
 
-  test("refining a hook card updates that hook in place instead of creating a post", async () => {
-    const targetId = "00000000-0000-4000-8000-000000000610";
-    const originalHook = "Your audience is the moat.";
-    const revisedHook = "Your offer is copyable. Your audience is not.";
-    const report = await runCoworkOutcomeScenario({
-      id: "direct-refine-hook-card",
-      request: {
-        message: "Make this hook sharper.",
-        operation: {
-          kind: "edit_artifact",
-          artifactId: targetId,
-          instruction: "Make this hook sharper.",
-        },
-      },
-      seed: {
-        messageArtifact: {
-          id: targetId,
-          kind: "hook",
-          title: "Audience moat hook",
-          body: originalHook,
-        },
-      },
-      model: {
-        provider: { rounds: [] },
-        directWriter: [
-          {
-            text: revisedHook,
-            finishReason: "stop",
-            usage: usage(90, 24, 0.00008),
-          },
-        ],
-      },
-      expected: {
-        terminal: "done",
-        artifactBodies: [revisedHook],
-        actionNames: [],
-        route: "direct_writer",
-      },
-    });
-
-    expect(report.pass, JSON.stringify(report)).toBe(true);
-    expect(report.persisted.artifacts).toEqual([
-      expect.objectContaining({
-        id: targetId,
-        kind: "hook",
-        body: revisedHook,
-      }),
-    ]);
-  });
-
   test("a creator-style edit preserves artifact identity on the writer lane", async () => {
     const targetId = "00000000-0000-4000-8000-000000000615";
     const revised = SECOND_POST.replace("Most people", "Too many people");
@@ -5414,6 +5553,359 @@ describe("production-shaped Cowork outcome harness", () => {
 
     expect(report.pass, JSON.stringify(report.safe)).toBe(true);
     expect(report.persisted.artifacts).toHaveLength(0);
+  });
+
+  test("an Ask command cannot be reinterpreted as Create by any wording", async () => {
+    const answer = "I can help you choose an angle before you create the post.";
+    const report = await runCoworkOutcomeScenario({
+      id: "command-ask-denies-create-wording",
+      request: {
+        message: "Write three new posts and replace the current one.",
+        command: { kind: "ask" },
+      },
+      model: {
+        provider: textProvider(answer),
+        directWriter: [{
+          text: COMPLETE_POST,
+          finishReason: "stop",
+          usage: usage(180, 82, 0.00016),
+        }],
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [],
+        actionNames: [],
+        assistantContents: [answer],
+        route: "answer",
+      },
+    });
+
+    expect(report.pass, JSON.stringify(report.safe)).toBe(true);
+    expect(report.observed.directWriterRequests).toHaveLength(0);
+    expect(report.observed.readOnlyPlannerRequests).toHaveLength(0);
+  });
+
+  test("an Ask starter may research but still cannot emit a post", async () => {
+    const answer = "Five evidence-backed angles are ready to explore.";
+    const report = await runCoworkOutcomeScenario({
+      id: "command-ask-read-only-research",
+      request: {
+        message: "Write five posts immediately.",
+        command: { kind: "ask" },
+        starterId: "brainstorm",
+      },
+      model: {
+        provider: { rounds: [] },
+        readOnlyOrchestrator: {
+          plans: [],
+          groundedAnswer: { content: answer, usage: usage(80, 35, 0.0002) },
+          toolResults: {
+            search_viral_posts: [
+              {
+                ok: true,
+                count: MODELED_FIVE_SOURCE_ROWS.length,
+                posts: [...MODELED_FIVE_SOURCE_ROWS],
+              },
+            ],
+          },
+        },
+        directWriter: [{
+          text: COMPLETE_POST,
+          finishReason: "stop",
+          usage: usage(180, 82, 0.00016),
+        }],
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [],
+        actionNames: ["search_viral_posts"],
+        assistantContents: [answer],
+        route: "read_only_orchestrator",
+      },
+    });
+
+    expect(report.pass, JSON.stringify(report.safe)).toBe(true);
+    expect(report.observed.directWriterRequests).toHaveLength(0);
+  });
+
+  test("a pending Ask clarification preserves Ask authority on its answer turn", async () => {
+    const missingPostId = "00000000-0000-4000-8000-000000000629";
+    const sequence = await runCoworkOutcomeSequence([
+      {
+        id: "command-ask-missing-context",
+        request: {
+          message: "Review this post.",
+          command: { kind: "ask", contextPostId: missingPostId },
+        },
+        model: { provider: { rounds: [] }, directWriter: [] },
+        expected: {
+          terminal: "ask",
+          artifactBodies: [],
+          actionNames: ["ask_user"],
+          route: "answer",
+        },
+      },
+      {
+        id: "command-ask-missing-context-answer",
+        request: {
+          message: "Ask without a Post",
+          clarificationChoiceIndex: 0,
+        },
+        model: {
+          provider: textProvider("I can review the idea without a Post attached."),
+          directWriter: [
+            {
+              text: COMPLETE_POST,
+              finishReason: "stop",
+              usage: usage(180, 82, 0.00016),
+            },
+            {
+              text: SECOND_POST,
+              finishReason: "stop",
+              usage: usage(170, 70, 0.00014),
+            },
+          ],
+        },
+        expected: {
+          terminal: "done",
+          artifactBodies: [],
+          actionNames: [],
+          route: "answer",
+        },
+      },
+    ]);
+
+    expect(sequence.pass, JSON.stringify(sequence.attempts)).toBe(true);
+    expect(sequence.attempts[1]?.observed.directWriterRequests).toHaveLength(0);
+    expect(sequence.attempts[1]?.observed.readOnlyPlannerRequests).toHaveLength(0);
+  });
+
+  test("a stale Ask card cannot answer the latest pending command", async () => {
+    const sequence = await runCoworkOutcomeSequence([
+      {
+        id: "command-ask-owner-binding-pending",
+        request: {
+          message: "Review this Post.",
+          command: {
+            kind: "ask",
+            contextPostId: "00000000-0000-4000-8000-000000000636",
+          },
+        },
+        model: { provider: { rounds: [] }, directWriter: [] },
+        expected: {
+          terminal: "ask",
+          artifactBodies: [],
+          actionNames: ["ask_user"],
+          route: "answer",
+        },
+      },
+      {
+        id: "command-ask-owner-binding-stale",
+        request: {
+          message: "Ask without a Post",
+          clarificationChoiceIndex: 0,
+          clarificationAssistantMessageId:
+            "00000000-0000-4000-8000-000000000637",
+        },
+        model: {
+          provider: { rounds: [] },
+          directWriter: [
+            {
+              text: COMPLETE_POST,
+              finishReason: "stop",
+              usage: usage(180, 82, 0.00016),
+            },
+          ],
+        },
+        expected: {
+          terminal: "failure",
+          httpStatus: 409,
+          artifactBodies: [],
+          actionNames: [],
+        },
+      },
+    ]);
+
+    expect(sequence.pass, JSON.stringify(sequence.attempts)).toBe(true);
+    expect(sequence.attempts[1]?.observed.directWriterRequests).toHaveLength(0);
+  });
+
+  test("an Edit clarification can bind the saved command to the latest Post", async () => {
+    const latestId = "00000000-0000-4000-8000-000000000633";
+    const missingId = "00000000-0000-4000-8000-000000000634";
+    const sequence = await runCoworkOutcomeSequence([
+      {
+        id: "command-edit-missing-target",
+        request: {
+          message: "Make the opening sharper.",
+          command: {
+            kind: "edit",
+            targetPostId: missingId,
+            scope: "full_post",
+          },
+        },
+        seed: {
+          messageArtifact: {
+            id: latestId,
+            kind: "post",
+            title: "Current",
+            body: COMPLETE_POST,
+          },
+        },
+        model: { provider: { rounds: [] }, directWriter: [] },
+        expected: {
+          terminal: "ask",
+          artifactBodies: [],
+          actionNames: ["ask_user"],
+          route: "answer",
+        },
+      },
+      {
+        id: "command-edit-latest-target-answer",
+        request: {
+          message: "Edit the latest chat Post",
+          clarificationChoiceIndex: 0,
+        },
+        model: {
+          provider: { rounds: [] },
+          directWriter: [
+            {
+              text: SECOND_POST,
+              finishReason: "stop",
+              usage: usage(190, 88, 0.00018),
+            },
+          ],
+        },
+        expected: {
+          terminal: "done",
+          artifactBodies: [SECOND_POST],
+          actionNames: [],
+          route: "direct_writer",
+        },
+      },
+    ]);
+
+    expect(sequence.pass, JSON.stringify(sequence.attempts)).toBe(true);
+    expect(sequence.attempts[1]?.persisted.artifacts).toEqual([
+      expect.objectContaining({ id: latestId, body: SECOND_POST }),
+    ]);
+  });
+
+  test("a Create command produces its exact count despite review wording", async () => {
+    const report = await runCoworkOutcomeScenario({
+      id: "command-create-denies-review-wording",
+      request: {
+        message: "Review the current post and tell me whether it works.",
+        command: { kind: "create", count: 2 },
+      },
+      model: {
+        provider: { rounds: [] },
+        directWriter: [
+          {
+            text: COMPLETE_POST,
+            finishReason: "stop",
+            usage: usage(180, 82, 0.00016),
+          },
+          {
+            text: SECOND_POST,
+            finishReason: "stop",
+            usage: usage(170, 70, 0.00014),
+          },
+        ],
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [COMPLETE_POST, SECOND_POST],
+        actionNames: [],
+        route: "direct_writer",
+      },
+    });
+
+    expect(report.pass, JSON.stringify(report.safe)).toBe(true);
+    expect(report.observed.directWriterRequests).toHaveLength(2);
+  });
+
+  test("an Edit command updates only its target despite feedback wording", async () => {
+    const targetId = "00000000-0000-4000-8000-000000000624";
+    const report = await runCoworkOutcomeScenario({
+      id: "command-edit-denies-ask-wording",
+      request: {
+        message: "Tell me what you think about the opening.",
+        command: {
+          kind: "edit",
+          targetPostId: targetId,
+          scope: "full_post",
+        },
+      },
+      seed: {
+        messageArtifact: {
+          id: targetId,
+          kind: "post",
+          title: "Current Post",
+          body: COMPLETE_POST,
+        },
+      },
+      model: {
+        provider: { rounds: [] },
+        directWriter: [{
+          text: SECOND_POST,
+          finishReason: "stop",
+          usage: usage(180, 82, 0.00016),
+        }],
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [SECOND_POST],
+        actionNames: [],
+        route: "direct_writer",
+      },
+    });
+
+    expect(report.pass, JSON.stringify(report.safe)).toBe(true);
+    expect(report.persisted.artifacts).toHaveLength(1);
+    expect(report.persisted.artifacts[0]?.id).toBe(targetId);
+  });
+
+  test("an Edit command rejects a Hook target instead of mutating it", async () => {
+    const targetId = "00000000-0000-4000-8000-000000000635";
+    const report = await runCoworkOutcomeScenario({
+      id: "command-edit-rejects-hook-target",
+      request: {
+        message: "Rewrite this.",
+        command: {
+          kind: "edit",
+          targetPostId: targetId,
+          scope: "full_post",
+        },
+      },
+      seed: {
+        messageArtifact: {
+          id: targetId,
+          kind: "hook",
+          title: "Current Hook",
+          body: "A short opening hook.",
+        },
+      },
+      model: {
+        provider: { rounds: [] },
+        directWriter: [
+          {
+            text: SECOND_POST,
+            finishReason: "stop",
+            usage: usage(180, 82, 0.00016),
+          },
+        ],
+      },
+      expected: {
+        terminal: "ask",
+        artifactBodies: [],
+        actionNames: ["ask_user"],
+        route: "answer",
+      },
+    });
+
+    expect(report.pass, JSON.stringify(report.safe)).toBe(true);
+    expect(report.observed.directWriterRequests).toHaveLength(0);
   });
 
   test("a targetless typed review clarifies instead of guessing an Artifact", async () => {

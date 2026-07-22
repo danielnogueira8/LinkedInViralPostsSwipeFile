@@ -36,9 +36,13 @@ _Avoid_: Reference, inspiration, attachment
 One user instruction and Cowork's resulting response, including any clarification, actions, or deliverables.
 _Avoid_: Request, run, generation
 
+**Cowork Command**:
+The explicit, per-turn choice to Ask, Create, or Edit. A command owns what Cowork may change; the accompanying instruction only describes the requested content.
+_Avoid_: Intent, inferred route, chat mode
+
 **Artifact**:
-A deliverable presented inside a Cowork conversation, such as a post, hook, or citation card. An Artifact is not a board item until the user saves it as a Draft.
-_Avoid_: Draft, message, output
+The internal storage envelope for a deliverable presented inside a Cowork conversation. Product interfaces name the enclosed item Post, Hook, or Source; an Artifact is not a board item until the user saves it as a Draft.
+_Avoid_: User-facing label, Draft, message, output
 
 **Draft**:
 Editable content saved to the Posts workflow, where it can move from idea through drafting and readiness to publication.

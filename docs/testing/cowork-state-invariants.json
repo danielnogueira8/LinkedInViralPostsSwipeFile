@@ -9,6 +9,8 @@
     { "id": "stop-retry-recovery", "evidence": ["evals/data/cowork-outcome-harness.test.ts", "evals/data/chat-stop-turn-ownership.test.ts", "evals/data/chat-stop-client.test.ts", "evals/data/hydrate-ask.test.ts"] },
     { "id": "artifact-handoff-deduplication", "evidence": ["evals/data/cowork-outcome-harness.test.ts", "evals/data/sse-overlay.test.ts", "evals/data/refine-in-place.test.ts"] },
     { "id": "navigation-and-background-reconciliation", "evidence": ["evals/data/chats-reuse-empty.test.ts", "e2e/client-reconciliation.spec.ts"] },
-    { "id": "checkpointed-action-idempotency", "evidence": ["evals/data/action-orchestrator.test.ts", "evals/data/migration-095-postgres.test.ts", "evals/data/cowork-outcome-harness.test.ts", "evals/data/chat-stop-turn-ownership.test.ts"] }
+    { "id": "checkpointed-action-idempotency", "evidence": ["evals/data/action-orchestrator.test.ts", "evals/data/migration-095-postgres.test.ts", "evals/data/cowork-outcome-harness.test.ts", "evals/data/chat-stop-turn-ownership.test.ts"] },
+    { "id": "explicit-command-authority", "evidence": ["evals/data/cowork-command.test.ts", "evals/data/cowork-outcome-harness.test.ts", "evals/data/turn-outcome-guard.test.ts", "e2e/generation-settings.spec.ts"] },
+    { "id": "exact-post-targeting", "evidence": ["evals/data/refine-target-resolution.test.ts", "evals/data/cowork-outcome-harness.test.ts", "evals/data/refine-in-place.test.ts"] }
   ]
 }

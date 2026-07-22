@@ -81,6 +81,7 @@ import {
 } from "@/lib/chat-artifact-policy";
 import { resolveFreeTextArtifactIntent } from "@/lib/agent/turn/resolve-artifact-intent";
 import { turnOperationToolCall } from "@/lib/agent/turn/operation-marker";
+import { commandToTurnOperation } from "@/lib/cowork-command";
 import { getSkillsByNames } from "@/lib/content-resource-operations";
 import { SKILLS_PER_TURN_MAX } from "@/lib/custom-skills";
 import { selectAllRows } from "@/lib/db-paginate";
@@ -183,6 +184,7 @@ export type TurnSetupResult = {
   refineTargetId: string | undefined;
   refineInstruction: string | undefined;
   trustedRefineTarget: Artifact | null;
+  existingArtifactIds: string[];
   skillIds: string[];
   customSkillRetryContext: CustomSkillRetryContext | null;
   resolvedCustomSkills: FrozenCustomSkill[];
@@ -328,6 +330,7 @@ export async function setupChatTurn(
   let persistedActionContinuation = false;
   let pendingActionAsk = false;
   let pendingAskOnly = false;
+  let usedLegacyCommandTransport = false;
   let artifactClarification: AskQuestion | null = null;
   let fallthroughClarification: AskQuestion | null = null;
   let modeledBatchContinuation: ModeledDraftBatchContinuation | null = null;
@@ -356,6 +359,8 @@ export async function setupChatTurn(
     refineTargetId =
       operation.kind === "edit_artifact" || operation.kind === "review_artifact"
         ? operation.artifactId
+        : operation.kind === "ask"
+          ? operation.artifactId
         : undefined;
     refineInstruction =
       operation.kind === "edit_artifact" ? operation.instruction : undefined;
@@ -388,7 +393,9 @@ export async function setupChatTurn(
     workspaceId = sb.workspaceId;
     sbRaw = sb.raw;
     userText = body.message;
-    currentTurnOperation = body.operation ?? null;
+    currentTurnOperation = body.command
+      ? commandToTurnOperation(body.command, userText)
+      : (body.operation ?? null);
     attachments = body.attachments ?? [];
     modelSourceId = body.modelSourceId;
     skipDecision = body.skipDecision ?? false;
@@ -425,7 +432,10 @@ export async function setupChatTurn(
     creatorStyleId = body.creatorStyleId;
     leadMagnetId = body.leadMagnetId;
     createLeadMagnet = body.createLeadMagnet;
-    requestedGenerationConfig = body.generationConfig ?? null;
+    requestedGenerationConfig =
+      body.command?.kind === "create"
+        ? { version: 1, draftCount: body.command.count }
+        : (body.generationConfig ?? null);
     composerStarterId = body.starterId;
     const { data: chat, error } = await sbRaw
       .from("chats")
@@ -469,7 +479,7 @@ export async function setupChatTurn(
     const { data: recentMessages, error: recentMessagesError } = await sbRaw
       .from("chat_messages")
       .select(
-        "id, role, content, created_at, tool_calls, artifacts, terminal_reason, user_stop_requested_at, applied_skills, no_model_format_id, creator_style_context, lead_magnet_id, composer_starter_id, generation_config, recoverable_error",
+        "id, role, content, created_at, tool_calls, artifacts, terminal_reason, user_stop_requested_at, applied_skills, no_model_format_id, creator_style_context, lead_magnet_id, composer_starter_id, generation_config, recoverable_error, model_source_id",
       )
       .eq("chat_id", chatId)
       .eq("workspace_id", workspaceId)
@@ -509,6 +519,7 @@ export async function setupChatTurn(
       composer_starter_id?: string | null;
       generation_config?: unknown;
       recoverable_error?: unknown;
+      model_source_id?: string | null;
     }>;
     // The database query is newest-first because pending/retry resolution needs
     // the most recent message at index 0. Draft and sticky-context helpers have
@@ -552,6 +563,151 @@ export async function setupChatTurn(
         400,
       );
     }
+    const pendingAssistantIndex = recentMessageWindow.findIndex(
+      (message) =>
+        message.role === "assistant" &&
+        message.tool_calls?.some(
+          (call) => call.function.name === "ask_user",
+        ),
+    );
+    const pendingAssistant =
+      pendingAssistantIndex >= 0
+        ? recentMessageWindow[pendingAssistantIndex]
+        : undefined;
+    if (
+      body.clarificationAssistantMessageId &&
+      (!pendingAskOnly ||
+        pendingAssistant?.id !== body.clarificationAssistantMessageId)
+    ) {
+      return turnError(
+        "That clarification is no longer active. Answer the latest Cowork question instead.",
+        409,
+      );
+    }
+    if (pendingAskOnly && !pendingActionAsk && !currentTurnOperation) {
+      const pendingOperationOwner =
+        pendingAssistantIndex >= 0
+          ? recentMessageWindow
+              .slice(pendingAssistantIndex + 1)
+              .find((message) => message.role === "user")
+          : undefined;
+      const pendingOperation =
+        deps.turnOperationMarkerFromToolCalls(pendingOperationOwner);
+      if (pendingOperation.kind === "invalid") {
+        return turnError(
+          "The pending Cowork command failed its integrity check. Send the request again as a new message.",
+          409,
+        );
+      }
+      if (pendingOperation.kind === "valid") {
+        applyTurnOperation(pendingOperation.operation);
+
+        // A clarification answer may fill only a server-presented choice. The
+        // index is validated against the persisted ask card; free text cannot
+        // retarget Edit. Choices that require a separate card selection safely
+        // become Ask instead of repeating an impossible target forever.
+        const pendingAskCall =
+          pendingAssistantIndex >= 0
+            ? recentMessageWindow[pendingAssistantIndex]?.tool_calls?.find(
+                (call) => call.function.name === "ask_user",
+              )
+            : undefined;
+        let selectedClarificationChoiceId: string | undefined;
+        if (body.clarificationChoiceIndex !== undefined) {
+          try {
+            const args = pendingAskCall
+              ? JSON.parse(pendingAskCall.function.arguments)
+              : null;
+            const choiceIds = Array.isArray(args?.choiceIds)
+              ? args.choiceIds.filter(
+                  (choiceId: unknown): choiceId is string =>
+                    typeof choiceId === "string",
+                )
+              : [];
+            selectedClarificationChoiceId =
+              choiceIds[body.clarificationChoiceIndex];
+          } catch {
+            selectedClarificationChoiceId = undefined;
+          }
+          if (!selectedClarificationChoiceId) {
+            return turnError(
+              "That clarification choice is stale. Answer the latest question again.",
+              409,
+            );
+          }
+        }
+        if (pendingOperation.operation.kind === "ask") {
+          applyTurnOperation({ kind: "ask" });
+        } else if (pendingOperation.operation.kind === "edit_artifact") {
+          if (selectedClarificationChoiceId === "edit.latest_post") {
+            const artifacts = await ensureCanonicalConversationArtifacts();
+            const latest = [...artifacts]
+              .reverse()
+              .find((artifact) => artifact.kind === "post");
+            if (!latest) {
+              return turnError(
+                "There is no Post in this chat to edit. Create or select a Post first.",
+                409,
+              );
+            }
+            applyTurnOperation({
+              ...pendingOperation.operation,
+              artifactId: latest.id,
+            });
+          } else if (
+            selectedClarificationChoiceId !== "edit.ignore_extra_context"
+          ) {
+            applyTurnOperation({ kind: "ask" });
+          }
+        } else if (pendingOperation.operation.kind === "review_artifact") {
+          if (selectedClarificationChoiceId === "review.latest_post") {
+            const artifacts = await ensureCanonicalConversationArtifacts();
+            const latest = [...artifacts]
+              .reverse()
+              .find((artifact) => artifact.kind === "post");
+            if (!latest) {
+              return turnError(
+                "There is no Post in this chat to review. Create or select a Post first.",
+                409,
+              );
+            }
+            applyTurnOperation({
+              ...pendingOperation.operation,
+              artifactId: latest.id,
+            });
+          } else {
+            applyTurnOperation({ kind: "ask" });
+          }
+        }
+
+        const pendingGeneration =
+          deps.generationConfigSelectionMarkerFromToolCalls(
+            pendingOperationOwner,
+          );
+        if (pendingGeneration.kind === "invalid") {
+          return turnError(
+            "The pending Post count failed its integrity check. Send the request again as a new message.",
+            409,
+          );
+        }
+        if (pendingGeneration.kind === "valid") {
+          resolvedGenerationConfig = pendingGeneration.config;
+          generationConfigRestoredFromRetry = true;
+        }
+
+        const pendingStarter =
+          composerStarterMarkerFromToolCalls(pendingOperationOwner);
+        if (pendingStarter.kind === "invalid") {
+          return turnError(
+            "The pending Cowork workflow failed its integrity check. Send the request again as a new message.",
+            409,
+          );
+        }
+        if (pendingStarter.kind === "valid") {
+          composerStarterId = pendingStarter.starterId;
+        }
+      }
+    }
     let preclaimInstruction = userText;
     if (actionAnswer.cancelled && pendingActionAsk) {
       persistedActionContinuation = true;
@@ -581,6 +737,14 @@ export async function setupChatTurn(
         // if a newer client heuristic now points at another visible Artifact.
         applyTurnOperation(pairedTurnOperation.operation);
       }
+      const frozenModelSourceId = retryUser?.model_source_id ?? undefined;
+      if (modelSourceId && modelSourceId !== frozenModelSourceId) {
+        return turnError(
+          "That Retry no longer matches the source Post used by the original task. Send a new request instead.",
+          409,
+        );
+      }
+      modelSourceId = frozenModelSourceId;
       const pairedCustomSkillMarker =
         deps.customSkillSelectionMarkerFromToolCalls(retryUser);
       if (pairedCustomSkillMarker.kind === "invalid") {
@@ -900,14 +1064,21 @@ export async function setupChatTurn(
         clarificationForAmbiguousContinuation(userText);
     }
 
-    // Free-text Artifact intent has one owner: the server. The browser may
-    // identify the visibly selected card as context, but only this compiler can
-    // turn ordinary language into edit/review authority. It resolves labels
-    // and identity through the same Artifact index the UI uses, persists the
-    // resulting typed operation, and fails closed when the target is missing.
-    // Explicit UI operations, retries, modeled turns, and actions already have
-    // stronger contracts and therefore bypass this compiler.
+    // Rolling-deploy quarantine only. The current browser always sends a
+    // command for an ordinary composer turn; this branch exists solely so a
+    // cached pre-command bundle does not fail midway through a deployment.
+    // Telemetry below records every use so the entire branch and the legacy
+    // request fields can be deleted once compatibility traffic reaches zero.
+    // It is deliberately bypassed by commands, retries, modeled turns, and
+    // explicit/pending board actions, and must not gain new callers.
+    usedLegacyCommandTransport =
+      !body.command &&
+      !currentTurnOperation &&
+      !body.retryOfUserMessageId &&
+      !persistedActionContinuation &&
+      !pendingActionAsk;
     const implicitRefineGuardsPass =
+      usedLegacyCommandTransport &&
       !refineTargetId &&
       !currentTurnOperation &&
       !modelSourceId &&
@@ -935,7 +1106,7 @@ export async function setupChatTurn(
     // Every edit surface converges here after its operation is known. The
     // server validates identity against the complete transcript and inherits
     // the target's Custom Skills unless this turn explicitly selected others.
-    if (refineTargetId) {
+    if (refineTargetId || currentTurnOperation?.kind === "create_post") {
       await ensureCanonicalConversationArtifacts();
     }
     const editOperation =
@@ -982,6 +1153,13 @@ export async function setupChatTurn(
       resolvedGenerationConfig.draftCountSource === "ui" ||
       generationConfigRestoredFromRetry;
     composerTaskSelection = {
+      ...(currentTurnOperation?.kind === "create_post"
+        ? { commandKind: "create" as const }
+        : currentTurnOperation?.kind === "ask"
+          ? { commandKind: "ask" as const }
+          : currentTurnOperation?.kind === "edit_artifact"
+            ? { commandKind: "edit" as const }
+            : {}),
       ...(composerStarterId ? { starterId: composerStarterId } : {}),
       ...(hasAuthoritativeDraftCount
         ? { selectedDraftCount: resolvedGenerationConfig.draftCount }
@@ -1119,6 +1297,16 @@ export async function setupChatTurn(
       },
       deps.coworkTelemetrySink,
     );
+    if (usedLegacyCommandTransport) {
+      coworkTelemetry.recordAttempt({
+        stage: "legacy_commandless_transport",
+        attempt: 1,
+        provider: "server",
+        outcome: "accepted",
+        reasonCode: "rolling_deploy_compatibility",
+        latencyMs: 0,
+      });
+    }
 
     if (signal.aborted) {
       const message = "The chat request was cancelled before it started.";
@@ -1608,6 +1796,9 @@ export async function setupChatTurn(
     refineTargetId,
     refineInstruction,
     trustedRefineTarget,
+    existingArtifactIds: canonicalConversationArtifacts.map(
+      (artifact) => artifact.id,
+    ),
     skillIds,
     customSkillRetryContext,
     resolvedCustomSkills,

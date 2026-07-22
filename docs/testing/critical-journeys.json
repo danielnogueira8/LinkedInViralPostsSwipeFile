@@ -34,6 +34,21 @@
       "follow_up_issue": 999
     },
     {
+      "id": "cowork-explicit-command-authority",
+      "capability": "Cowork",
+      "invariant": "Ask, Create, and Edit are explicit per-turn commands: wording cannot broaden their authority, Create honors its exact selected count, and Edit can update only its canonical target.",
+      "preferred_seam": "browser",
+      "existing_coverage": [
+        "evals/data/cowork-command.test.ts",
+        "evals/data/cowork-outcome-harness.test.ts",
+        "evals/data/turn-outcome-guard.test.ts",
+        "evals/data/refine-target-resolution.test.ts",
+        "e2e/generation-settings.spec.ts"
+      ],
+      "status": "protected",
+      "follow_up_issue": 999
+    },
+    {
       "id": "cowork-draft-output-integrity",
       "capability": "Cowork",
       "invariant": "Full posts with high-confidence evidence of emptiness, corruption, truncation, or contract violations are rejected before presentation without yielding the rejected artifact.",

@@ -171,6 +171,7 @@ export type ComposerTaskSelection = {
   starterId?: ComposerStarterId;
   selectedDraftCount?: DraftCount;
   selectedSourceId?: string;
+  commandKind?: "ask" | "create" | "edit";
 };
 
 export function composerStarterToolCall(
@@ -258,8 +259,18 @@ export function resolveComposerTaskContext(input: ComposerTaskSelection & {
   const starter = input.starterId ? STARTER_TASKS[input.starterId] : undefined;
   const selectedSourceId = input.selectedSourceId?.trim();
   const kind =
-    starter?.kind ??
-    (selectedSourceId || input.fallbackPostCount !== null ? "post" : "answer");
+    input.commandKind === "create"
+      ? "post"
+      : input.commandKind === "ask"
+        ? starter?.kind === "ideas"
+          ? "ideas"
+          : "answer"
+        : input.commandKind === "edit"
+          ? "answer"
+        : starter?.kind ??
+          (selectedSourceId || input.fallbackPostCount !== null
+            ? "post"
+            : "answer");
   const sourceMode = selectedSourceId
     ? "selected"
     : (starter?.sourceMode ?? "unspecified");
