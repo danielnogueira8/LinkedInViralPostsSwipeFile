@@ -41,7 +41,7 @@ describe("authenticated database seams", () => {
     const source = readFileSync(resolve(ROOT, "lib/supabase-scoped.ts"), "utf8");
 
     expect(source).toContain('.eq("workspace_id", workspaceId)');
-    expect(source).toContain("supabaseForWorkspaceRequest(");
+    expect(source).toContain("const sb = supabaseAdmin();");
     expect(source).not.toMatch(/raw:\s*supabaseAdmin\(\)/);
   });
 
