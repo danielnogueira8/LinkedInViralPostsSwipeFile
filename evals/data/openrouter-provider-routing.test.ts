@@ -380,18 +380,21 @@ describe("OpenRouter provider routing", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
-  // The draft writer's `"none"` reasoning value is model-aware: GLM self-limits
-  // its trace and is left on completeChat's High policy (tuned, working behavior
-  // inside a small token budget), while a reasoning-DEFAULT model must have
-  // reasoning genuinely OFF or it burns the whole budget on hidden reasoning and
-  // returns empty content ("empty_output"). Regression guard for the auto-router
-  // rollout (deepseek-v4-pro et al.).
-  test("draft writer turns reasoning OFF on `none` for a non-GLM model", async () => {
+  // The draft writer's `"none"` reasoning value must NOT send a `reasoning` field
+  // for a non-GLM model. The request carries provider.require_parameters:true, and
+  // `reasoning: { enabled: false }` is rejected by some models (Gemini 3.x) as a
+  // 400 Bad Request — which broke google/gemini-3.6-flash as a writer model (every
+  // primary 400'd in ~145ms → fell back to Sonnet). Omitting the field entirely is
+  // the safe, model-agnostic behavior. Regression guard for that incident.
+  test("draft writer sends NO reasoning field on `none` for a non-GLM model (Gemini 400 guard)", async () => {
     vi.stubEnv("OPENROUTER_API_KEY", "test-key");
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body));
-      expect(body.model).toBe("deepseek/deepseek-v4-pro");
-      expect(body.reasoning).toEqual({ enabled: false });
+      expect(body.model).toBe("google/gemini-3.6-flash");
+      // The load-bearing assertion: absent, not { enabled: false }.
+      expect("reasoning" in body).toBe(false);
+      // And require_parameters is still on, so this is the exact prod shape.
+      expect(body.provider).toMatchObject({ require_parameters: true });
       return Response.json({
         choices: [{ message: { content: "A real post body." }, finish_reason: "stop" }],
       });
@@ -399,7 +402,7 @@ describe("OpenRouter provider routing", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const result = await openRouterDraftWriter.write(
-      writerRequest("deepseek/deepseek-v4-pro"),
+      writerRequest("google/gemini-3.6-flash"),
     );
 
     expect(result.text).toBe("A real post body.");
@@ -411,7 +414,7 @@ describe("OpenRouter provider routing", () => {
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body));
       expect(body.model).toBe("z-ai/glm-5.2");
-      // GLM `none` must NOT send `enabled: false`; completeChat's GLM policy
+      // GLM `none` sends no field from the writer; completeChat's GLM policy
       // still applies High — exactly today's behavior.
       expect(body.reasoning).toEqual({ effort: "high" });
       return Response.json({

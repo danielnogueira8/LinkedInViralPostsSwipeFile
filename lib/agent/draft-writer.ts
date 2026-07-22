@@ -58,25 +58,24 @@ export interface DraftWriterAdapter {
   write(request: DraftWriterRequest): Promise<DraftWriterResponse>;
 }
 
-// GLM self-limits its reasoning trace, so on the `"none"` path it is left to
-// completeChat's GLM policy (High) and writes a full post inside a small token
-// budget — the tuned, working behavior we must not regress. A reasoning-DEFAULT
-// model (deepseek-v4-pro, and whatever else the auto-router picks) instead burns
-// the ENTIRE max_tokens budget on hidden reasoning and returns empty content
-// ("empty_output" rejection). For those, `"none"` must mean reasoning genuinely
-// OFF (disableReasoning → `{ enabled: false }`, top precedence in completeChat)
-// so the whole budget goes to the visible draft. Matched on the GLM slug family
-// so the guarantee is model-agnostic for everything else.
-function reasoningControlForNone(model: string): {
-  disableReasoning?: boolean;
-} {
-  return model.toLowerCase().startsWith("z-ai/glm-")
-    ? {}
-    : { disableReasoning: true };
-}
-
 export const openRouterDraftWriter: DraftWriterAdapter = {
   async write(request) {
+    // reasoning === "none": send NO reasoning-related field at all. completeChat
+    // then applies its own per-model default (GLM → High, which GLM self-limits;
+    // everything else → nothing). We deliberately do NOT send
+    // `reasoning: { enabled: false }` for non-GLM models: the request also carries
+    // `provider: { require_parameters: true }`, so OpenRouter only routes to
+    // providers accepting EVERY parameter — and `enabled: false` is not a valid
+    // reasoning shape for some models (Gemini 3.x maps reasoning.effort →
+    // thinkingLevel and rejects enabled:false), which returns a 400 Bad Request.
+    // That 400 is exactly what broke google/gemini-3.6-flash as a writer model:
+    // every primary attempt 400'd in ~145ms and fell back to Sonnet. The
+    // reasoning-DEFAULT over-reasoning case (deepseek-v4-pro burning the whole
+    // budget) can only occur under the auto-router, where the writer already pins
+    // Sonnet→Luna (model-config writerPrimary), so no writer call runs a
+    // reasoning-default model; the 6k max_tokens ceiling is the remaining
+    // backstop. An explicit ReasoningEffort ("medium"/"minimal", thin path) is
+    // still passed through — those ARE valid across models.
     const result = await completeChat({
       messages: request.messages,
       model: request.model,
@@ -85,7 +84,7 @@ export const openRouterDraftWriter: DraftWriterAdapter = {
       timeoutMs: request.timeoutMs,
       sessionId: request.sessionId,
       ...(request.reasoning === "none"
-        ? reasoningControlForNone(request.model)
+        ? {}
         : { reasoningEffort: request.reasoning }),
     });
     return {
