@@ -88,6 +88,9 @@ export function normalizeToolCallArguments(name: string, raw: string): string {
   if (typeof input.niche === "string" && input.niche.trim()) {
     normalized.niche = input.niche.trim().slice(0, 100);
   }
+  if (typeof input.query === "string" && input.query.trim()) {
+    normalized.query = input.query.trim().slice(0, 160);
+  }
   if (SEARCH_WINDOWS.includes(input.since as (typeof SEARCH_WINDOWS)[number])) {
     normalized.since = input.since;
   }
@@ -261,8 +264,10 @@ export function isMimicSearch(args: Record<string, unknown>): boolean {
     typeof args.since === "string" ||
     typeof args.from === "string" ||
     typeof args.to === "string";
+  const hasTopicQuery = typeof args.query === "string" && args.query.trim().length > 0;
   return (
     !strictRanking &&
+    !hasTopicQuery &&
     !explicitSort &&
     !explicitDir &&
     !hasThreshold &&
@@ -310,6 +315,12 @@ const searchViralPosts: ToolFn = async (args, workspaceId, signal, context) => {
     // in casing ("saas" vs "SaaS"). `ilike` without wildcards preserves exact
     // punctuation/spacing while making that identity comparison case-insensitive.
     if (args.niche) q = q.ilike("accounts.niche", args.niche as string);
+    if (typeof args.query === "string" && args.query.trim()) {
+      q = q.textSearch("text", args.query.trim(), {
+        type: "websearch",
+        config: "english",
+      });
+    }
     const sinceIso = sinceCutoff(args.since as string | undefined);
     const fromIso = parseDayStart(args.from as string | undefined);
     const toIso = parseDayEnd(args.to as string | undefined);
@@ -1193,6 +1204,12 @@ export const TOOL_DEFS: ToolDef[] = [
             type: "string",
             maxLength: 100,
             description: "Exact account niche, e.g. 'AI', 'SaaS'.",
+          },
+          query: {
+            type: "string",
+            maxLength: 160,
+            description:
+              "Full-text topic to find in post bodies, e.g. 'AI agents'. This is distinct from the account niche.",
           },
           since: {
             type: "string",

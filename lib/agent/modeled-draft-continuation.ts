@@ -40,10 +40,18 @@ function modeledDraftCount(value: unknown): ModeledDraftCount | null {
 export function continuationForModeledDraftRoute(
   route: ReadOnlyOrchestratorRoute | null | undefined,
 ): ModeledDraftBatchContinuation | null {
-  const expectedDrafts = modeledDraftCount(route?.expectedDrafts);
+  const legacyDraftRoute =
+    route?.outcome === undefined && route?.expectsDraft === true;
+  const expectedDrafts = modeledDraftCount(
+    route?.outcome?.kind === "draft"
+      ? route.outcome.expectedDrafts
+      : legacyDraftRoute
+        ? route?.expectedDrafts
+        : undefined,
+  );
   if (
     route?.kind !== "workspace_research" ||
-    route.expectsDraft !== true ||
+    (route.outcome?.kind !== "draft" && !legacyDraftRoute) ||
     route.workspaceDraftSourceMode !== "one_to_one" ||
     !expectedDrafts ||
     !Number.isInteger(route.minimumSources) ||
@@ -116,7 +124,35 @@ export function parseModeledDraftBatchContinuation(
   ) {
     return null;
   }
-  return continuationForModeledDraftRoute(
-    rawRoute as ReadOnlyOrchestratorRoute,
-  );
+  const expectedDrafts = modeledDraftCount(rawRoute.expectedDrafts);
+  if (
+    rawRoute.kind !== "workspace_research" ||
+    rawRoute.expectsDraft !== true ||
+    rawRoute.workspaceDraftSourceMode !== "one_to_one" ||
+    !expectedDrafts
+  ) {
+    return null;
+  }
+  return continuationForModeledDraftRoute({
+    kind: "workspace_research",
+    outcome: { kind: "draft", expectedDrafts },
+    minimumSources: Number(rawRoute.minimumSources),
+    workspaceSearchMode: rawRoute.workspaceSearchMode as
+      | "diverse"
+      | "strict_top",
+    workspaceDraftSourceMode: "one_to_one",
+    ...(typeof rawRoute.workspaceSince === "string"
+      ? { workspaceSince: rawRoute.workspaceSince as "1d" | "7d" | "30d" }
+      : {}),
+    ...(typeof rawRoute.workspacePostType === "string"
+      ? {
+          workspacePostType: rawRoute.workspacePostType as
+            | "regular"
+            | "lead_magnet",
+        }
+      : {}),
+    ...(typeof rawRoute.authoritativeInstruction === "string"
+      ? { authoritativeInstruction: rawRoute.authoritativeInstruction }
+      : {}),
+  });
 }

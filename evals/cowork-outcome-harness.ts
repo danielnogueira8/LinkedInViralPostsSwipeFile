@@ -33,8 +33,8 @@ import type {
   DraftWriterResponse,
 } from "@/lib/agent/draft-writer";
 import {
+  CHAT_MODEL,
   logOpenRouterUsage,
-  type ChatMessage,
   type Usage,
 } from "@/lib/openrouter";
 import {
@@ -91,6 +91,11 @@ export type CoworkOutcomeScenario = {
         >
       >;
       attachmentSources?: GroundedSource[];
+      groundedAnswer?: {
+        content: string;
+        model?: string;
+        usage?: Usage;
+      };
       retryModeledBatch?: boolean;
       malformedModeledRetry?: "root" | "continuation" | "root_only";
       disabled?: boolean;
@@ -911,6 +916,16 @@ async function runCoworkOutcomeScenarioWithStore(
             scenario.model.readOnlyOrchestrator?.attachmentSources ?? [],
           attempts: [],
           complete: true,
+        }),
+        synthesizeGroundedAnswer: async () => ({
+          content:
+            scenario.model.readOnlyOrchestrator?.groundedAnswer?.content ??
+            "Grounded answer fixture.",
+          model:
+            scenario.model.readOnlyOrchestrator?.groundedAnswer?.model ??
+            CHAT_MODEL,
+          usage:
+            scenario.model.readOnlyOrchestrator?.groundedAnswer?.usage,
         }),
         recordUsage: logOpenRouterUsage,
         cancelPollMs: 1,

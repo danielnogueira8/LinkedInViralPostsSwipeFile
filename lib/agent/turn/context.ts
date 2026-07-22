@@ -1286,7 +1286,7 @@ export async function buildTurnContext(
       hasLeadMagnet: Boolean(leadMagnetId || createLeadMagnet),
       hasCreatorStyle: Boolean(creatorStyleId),
       composerTaskContext: composerTaskContext ?? undefined,
-    }),
+    })?.outcome?.kind === "draft",
   );
   const voicePromise = shouldPreloadVoice
     ? waitForChatSetup(

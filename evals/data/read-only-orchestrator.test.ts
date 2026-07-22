@@ -494,6 +494,86 @@ describe("read-only orchestrator plan contract", () => {
     ]);
   });
 
+  test("groups multiple claims by file so a comparison cannot drop a requested attachment", async () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "test-key");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({
+          choices: [
+            {
+              message: {
+                content: "",
+                tool_calls: [
+                  {
+                    function: {
+                      name: "report_attachment_evidence",
+                      arguments: JSON.stringify({
+                        evidence: [
+                          {
+                            sourceName: "brief.pdf",
+                            claim: "The brief names onboarding as the bottleneck.",
+                            supportingExcerpt: "Onboarding remains the bottleneck.",
+                          },
+                          {
+                            sourceName: "brief.pdf",
+                            claim: "The brief recommends a checklist.",
+                            supportingExcerpt: "Use a five-step checklist.",
+                          },
+                          {
+                            sourceName: "notes.pdf",
+                            claim: "The notes recommend guided setup.",
+                            supportingExcerpt: "Guide every customer through setup.",
+                          },
+                        ],
+                      }),
+                    },
+                  },
+                ],
+              },
+              finish_reason: "tool_calls",
+            },
+          ],
+          usage: { prompt_tokens: 60, completion_tokens: 30 },
+        }),
+      ),
+    );
+
+    const result = await inspectAttachmentEvidence({
+      userInstruction: "Compare both files.",
+      attachmentNames: ["brief.pdf", "notes.pdf"],
+      attachmentBlocks: [
+        {
+          type: "file",
+          file: {
+            filename: "brief.pdf",
+            file_data: "data:application/pdf;base64,BRIEF",
+          },
+        },
+        {
+          type: "file",
+          file: {
+            filename: "notes.pdf",
+            file_data: "data:application/pdf;base64,NOTES",
+          },
+        },
+      ],
+    });
+
+    expect(result.complete).toBe(true);
+    expect(result.sources).toHaveLength(2);
+    expect(result.sources).toEqual([
+      expect.objectContaining({
+        title: "brief.pdf",
+        text: expect.stringContaining("five-step checklist"),
+      }),
+      expect.objectContaining({
+        title: "notes.pdf",
+        text: expect.stringContaining("guided setup"),
+      }),
+    ]);
+  });
+
   test("does not require query matching for plans with no external query", () => {
     const plan = parseReadOnlyPlan(
       {
@@ -1329,6 +1409,151 @@ describe("read-only orchestrator execution", () => {
           limit: 2,
         }),
       }),
+    );
+  });
+
+  test("returns a grounded swipe-file summary without invoking the writer or emitting an artifact", async () => {
+    const instruction =
+      "Find one top-performing regular post in my swipe file about AI agents and summarize why it worked. Do not draft or rewrite.";
+    const synthesizeGroundedAnswer = vi.fn(async () => ({
+      content:
+        "The strongest post used a concrete AI-agent failure as its hook, then converted it into a practical three-step lesson.",
+      model: CHAT_MODEL,
+      usage: usage(80, 35),
+    }));
+
+    const result = await collect(
+      input({
+        userInstruction: instruction,
+        history: [{ role: "user", content: instruction }],
+        route: {
+          kind: "workspace_research",
+          expectsDraft: false,
+          minimumSources: 1,
+          workspaceSearchMode: "strict_top",
+          workspacePostType: "regular",
+          outcome: {
+            kind: "grounded_answer",
+            format: "summary",
+            resultCount: 1,
+          },
+        },
+        writerInput: {
+          ...input().writerInput,
+          userInstruction: instruction,
+        },
+      }),
+      [],
+      async () => ({
+        ok: true,
+        posts: [
+          {
+            id: "top-ai-agent-post",
+            text: "AI agents fail when teams confuse permission with instruction.",
+            post_url: "https://www.linkedin.com/posts/top-ai-agent-post",
+            reactions: 840,
+            comments: 96,
+          },
+          {
+            id: "runner-up",
+            text: "A second verified AI-agent post.",
+            reactions: 510,
+            comments: 42,
+          },
+        ],
+      }),
+      { synthesizeGroundedAnswer },
+    );
+
+    expect(synthesizeGroundedAnswer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        instruction,
+        format: "summary",
+        evidence: [
+          expect.objectContaining({
+            id: "top-ai-agent-post",
+            text: "AI agents fail when teams confuse permission with instruction.",
+            url: "https://www.linkedin.com/posts/top-ai-agent-post",
+            metrics: expect.objectContaining({ reactions: 840, comments: 96 }),
+          }),
+        ],
+      }),
+    );
+    expect(result.draftInputs).toHaveLength(0);
+    expect(result.events.some((event) => event.type === "artifact")).toBe(false);
+    const done = result.events.find((event) => event.type === "done");
+    expect(done).toMatchObject({
+      type: "done",
+      message: {
+        content:
+          "The strongest post used a concrete AI-agent failure as its hook, then converted it into a practical three-step lesson.",
+        artifacts: [],
+      },
+    });
+  });
+
+  test("fails a grounded answer honestly when verified workspace evidence is unavailable", async () => {
+    const instruction =
+      "Find one top-performing regular post in my swipe file about AI agents and summarize why it worked. Do not draft or rewrite.";
+    const result = await collect(
+      input({
+        userInstruction: instruction,
+        route: {
+          kind: "workspace_research",
+          outcome: {
+            kind: "grounded_answer",
+            format: "summary",
+            resultCount: 1,
+          },
+          minimumSources: 1,
+          workspaceSearchMode: "strict_top",
+          workspacePostType: "regular",
+        },
+      }),
+      [],
+      async () => ({ ok: true, posts: [] }),
+    );
+
+    expect(result.events.some((event) => event.type === "artifact")).toBe(false);
+    const done = result.events.find((event) => event.type === "done");
+    expect(done?.type === "done" && done.message.content).toBe(
+      "I couldn’t retrieve enough verified evidence to answer this request.",
+    );
+  });
+
+  test("does not synthesize a partial grounded comparison when fewer sources exist than requested", async () => {
+    const instruction =
+      "Find 4 top posts in my swipe file, but don't rewrite them; just compare them.";
+    const synthesizeGroundedAnswer = vi.fn();
+    const result = await collect(
+      input({
+        userInstruction: instruction,
+        route: {
+          kind: "workspace_research",
+          outcome: {
+            kind: "grounded_answer",
+            format: "comparison",
+            resultCount: 4,
+          },
+          minimumSources: 4,
+          workspaceSearchMode: "strict_top",
+        },
+      }),
+      [],
+      async () => ({
+        ok: true,
+        posts: [
+          { id: "one", text: "First verified post." },
+          { id: "two", text: "Second verified post." },
+        ],
+      }),
+      { synthesizeGroundedAnswer },
+    );
+
+    expect(synthesizeGroundedAnswer).not.toHaveBeenCalled();
+    const done = result.events.find((event) => event.type === "done");
+    expect(done?.type === "done" && done.message.content).toBe(
+      "I found only 2 of the 4 verified sources you requested, so I did not return an incomplete comparison.",
     );
   });
 

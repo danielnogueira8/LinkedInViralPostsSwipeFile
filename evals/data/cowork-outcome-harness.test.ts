@@ -310,6 +310,67 @@ function modeledStructuredCountScenario(
 }
 
 describe("production-shaped Cowork outcome harness", () => {
+  test("answers the exact swipe-file summary request without voice or a draft", async () => {
+    const instruction =
+      "Find one top-performing regular post in my swipe file about AI agents and summarize why it worked. Do not draft or rewrite.";
+    const sourceUrl = "https://www.linkedin.com/posts/top-ai-agent-post";
+    const answer = `The post worked because its concrete AI-agent failure hook made the risk immediately legible.\n\nSources:\n- [Top AI-agent post](${sourceUrl})`;
+    const report = await runCoworkOutcomeScenario({
+      id: "grounded-workspace-summary-no-voice",
+      request: { message: instruction },
+      model: {
+        provider: { rounds: [] },
+        readOnlyOrchestrator: {
+          plans: [],
+          voiceUnavailable: true,
+          groundedAnswer: { content: answer, usage: usage(80, 35, 0.0002) },
+          toolResults: {
+            search_viral_posts: [
+              {
+                ok: true,
+                count: 1,
+                posts: [
+                  {
+                    id: "top-ai-agent-post",
+                    text: "AI agents fail when teams confuse permission with instruction.",
+                    post_url: sourceUrl,
+                    reactions: 840,
+                    comments: 96,
+                    post_type: "regular",
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [],
+        actionNames: ["search_viral_posts"],
+        assistantContents: [answer],
+        route: "read_only_orchestrator",
+      },
+    });
+
+    expect(report.pass, JSON.stringify(report.failureCodes)).toBe(true);
+    expect(report.observed.directWriterRequests).toEqual([]);
+    expect(report.observed.readOnlyTools).toEqual([
+      {
+        name: "search_viral_posts",
+        args: {
+          query: "AI agents",
+          post_type: "regular",
+          sort: "viral",
+          dir: "desc",
+          strict_ranking: true,
+          limit: 2,
+        },
+      },
+    ]);
+    expect(report.persisted.artifacts).toEqual([]);
+  });
+
   test("runs the real agent through the authenticated answer lane and canonical persistence", async () => {
     const answer = "Finished the requested deliverable.";
     const report = await runCoworkOutcomeScenario({

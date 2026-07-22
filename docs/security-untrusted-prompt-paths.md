@@ -13,6 +13,7 @@ boundary neutralization.
 | Creator style synthesis | tracked/saved/scraped creator posts | `wrapUntrustedXml("post", ...)` + shared `INJECTION_GUARD` |
 | No-model format examples | curated exemplar post bodies | `neutralizeMarkers` on load + `wrapUntrustedDelimited` on render |
 | Cite resolution | swipe-file post text used in rendered citation metadata | `neutralizeMarkers` |
+| Grounded research answers | swipe-file, web, news, and attachment evidence summarized as chat text | static `wrapUntrustedDelimited` evidence blocks + shared `INJECTION_GUARD` |
 | Chat title generation | first user/assistant snippets | `neutralizeMarkers` |
 | Model-source staging | post/template/draft text saved for later chat modeling | `neutralizeMarkers` before insert |
 

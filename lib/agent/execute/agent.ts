@@ -62,6 +62,12 @@ import {
   FALLBACK_READ_ONLY_ORCHESTRATOR_MODEL,
   PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL,
 } from "@/lib/agent/model-config";
+import {
+  GroundedAnswerSynthesisError,
+  synthesizeGroundedAnswer,
+  type GroundedAnswerAttempt,
+  type SynthesizeGroundedAnswer,
+} from "@/lib/agent/grounded-answer";
 
 export {
   FALLBACK_READ_ONLY_ORCHESTRATOR_MODEL,
@@ -107,6 +113,7 @@ export type AgentDependencies = {
   researchAdapters?: ReadOnlyOrchestratorAdapter[];
   runWebResearch?: RunWebResearch;
   inspectAttachments?: InspectAttachments;
+  synthesizeGroundedAnswer?: SynthesizeGroundedAnswer;
   now?: () => Date;
   // Prose delegation (research only). Defaults to runWriterTurn.
   runProse?: (input: WriterInput) => AsyncGenerator<AgentEvent>;
@@ -205,6 +212,8 @@ export async function* runAgentTurn(
       input.dependencies?.runWebResearch ?? runGroundedWebResearch,
     inspectAttachments:
       input.dependencies?.inspectAttachments ?? inspectAttachmentEvidence,
+    synthesizeGroundedAnswer:
+      input.dependencies?.synthesizeGroundedAnswer ?? synthesizeGroundedAnswer,
     now: input.dependencies?.now ?? (() => new Date()),
     turnDeadlineMs:
       input.dependencies?.turnDeadlineMs ?? researchTurnDeadlineMs,
@@ -2329,6 +2338,7 @@ const SearchViralPostsActionSchema = z
     id: ReadOnlyActionIdSchema,
     type: z.literal("search_viral_posts"),
     niche: z.string().trim().min(1).max(100).optional(),
+    query: z.string().trim().min(1).max(160).optional(),
     limit: z.number().int().min(2).max(10),
     since: z.enum(["1d", "7d", "30d"]).optional(),
     post_type: z.enum(["regular", "lead_magnet"]).optional(),
@@ -2345,6 +2355,15 @@ const DraftPostActionSchema = z
     id: ReadOnlyActionIdSchema,
     type: z.literal("draft_post"),
     evidenceActionIds: z.array(ReadOnlyActionIdSchema).min(1).max(4),
+  })
+  .strict();
+const AnswerFromEvidenceActionSchema = z
+  .object({
+    id: ReadOnlyActionIdSchema,
+    type: z.literal("answer_from_evidence"),
+    evidenceActionIds: z.array(ReadOnlyActionIdSchema).min(1).max(4),
+    format: z.enum(["summary", "takeaways", "comparison", "report"]),
+    resultCount: z.number().int().min(1).max(10).optional(),
   })
   .strict();
 const ClarificationQuestionSchema = z
@@ -2386,6 +2405,7 @@ export const ReadOnlyActionSchema = z.discriminatedUnion("type", [
   SearchViralPostsActionSchema,
   InspectAttachmentsActionSchema,
   DraftPostActionSchema,
+  AnswerFromEvidenceActionSchema,
   ClarifyActionSchema,
 ]);
 export type ReadOnlyAction = z.infer<typeof ReadOnlyActionSchema>;
@@ -2408,7 +2428,10 @@ export const ReadOnlyPlanSchema = z
       ids.add(action.id);
     }
     const terminals = plan.actions.filter(
-      (action) => action.type === "draft_post" || action.type === "clarify",
+      (action) =>
+        action.type === "draft_post" ||
+        action.type === "answer_from_evidence" ||
+        action.type === "clarify",
     );
     if (terminals.length !== 1) {
       ctx.addIssue({
@@ -2449,7 +2472,10 @@ export const ReadOnlyPlanSchema = z
         });
       }
     }
-    if (terminal.type === "draft_post") {
+    if (
+      terminal.type === "draft_post" ||
+      terminal.type === "answer_from_evidence"
+    ) {
       const evidenceIds = plan.actions
         .slice(0, -1)
         .map((action) => action.id);
@@ -2480,14 +2506,23 @@ export function parseReadOnlyPlan(
     }
     return plan;
   }
-  if (!route.expectsDraft || terminal?.type !== "draft_post") {
-    throw new Error("Grounded writing routes must end in draft_post.");
+  const expectedTerminal =
+    route.outcome?.kind === "grounded_answer"
+      ? "answer_from_evidence"
+      : "draft_post";
+  if (terminal?.type !== expectedTerminal) {
+    throw new Error(
+      expectedTerminal === "draft_post"
+        ? "Grounded writing routes must end in draft_post."
+        : "Grounded answer routes must end in answer_from_evidence.",
+    );
   }
+  const allowedTerminalTypes = new Set<string>([expectedTerminal]);
   if (route.kind === "news_research") {
     if (
       types.filter((type) => type === "search_news").length !== 1 ||
       types.some(
-        (type) => type !== "search_news" && type !== "draft_post",
+        (type) => type !== "search_news" && !allowedTerminalTypes.has(type),
       )
     ) {
       throw new Error(
@@ -2498,7 +2533,7 @@ export function parseReadOnlyPlan(
   if (route.kind === "web_research") {
     if (
       types.filter((type) => type === "search_web").length !== 1 ||
-      types.some((type) => type !== "search_web" && type !== "draft_post")
+      types.some((type) => type !== "search_web" && !allowedTerminalTypes.has(type))
     ) {
       throw new Error(
         "A web research route requires exactly one grounded web search before drafting.",
@@ -2514,7 +2549,8 @@ export function parseReadOnlyPlan(
     if (
       searches.length === 0 ||
       types.some(
-        (type) => type !== "search_viral_posts" && type !== "draft_post",
+        (type) =>
+          type !== "search_viral_posts" && !allowedTerminalTypes.has(type),
       )
     ) {
       throw new Error(
@@ -2575,7 +2611,7 @@ export function parseReadOnlyPlan(
             "search_news",
             "search_web",
             "search_viral_posts",
-            "draft_post",
+            expectedTerminal,
           ].includes(type),
       )
     ) {
@@ -2802,14 +2838,6 @@ function authoritativeWorkspaceNicheCandidate(
   userInstruction: string,
 ): WorkspaceNicheCandidate | null {
   const clause = authoritativeResearchClause(userInstruction);
-  const trailingTopic = clause.match(/\bposts?\s+(?:about|on|for)\s+([\s\S]+)$/i)?.[1];
-  if (trailingTopic) {
-    const raw = trailingTopic
-      .split(/\b(?:from|within|using)\s+(?:my|the)\b/i, 1)[0]
-      .trim();
-    const terms = semanticWorkspaceNicheTerms(raw);
-    return terms.size > 0 ? { raw: raw.slice(0, 100), terms } : null;
-  }
   const tokens = [...clause.matchAll(/[\p{L}\p{N}][\p{L}\p{N}-]+/gu)];
   const postIndex = tokens.findIndex((match) =>
     /^(?:post|posts)$/i.test(match[0]),
@@ -2849,6 +2877,26 @@ function authoritativeWorkspaceNicheCandidate(
   return terms.size > 0 ? { raw: raw.slice(0, 100), terms } : null;
 }
 
+/** Parse a topic attached after the source-post noun as a body query. */
+function authoritativeWorkspaceQueryCandidate(
+  userInstruction: string,
+): WorkspaceNicheCandidate | null {
+  const clause = authoritativeResearchClause(userInstruction);
+  const trailingTopic = clause.match(
+    /\bposts?(?:\s+(?:in|from)\s+(?:my|the)\s+swipe\s+file)?\s+(?:about|on|for)\s+([\s\S]+)$/i,
+  )?.[1];
+  if (!trailingTopic) return null;
+  const raw = trailingTopic
+    .split(
+      /(?:\s*,?\s*\b(?:and|then)\s+(?:summari[sz]e|compare|review|explain|report|list|give|tell|write|draft|rewrite|create|generate)\b)|[.!?](?:\s|$)/i,
+      1,
+    )[0]
+    .split(/\b(?:from|within|using)\s+(?:my|the)\b/i, 1)[0]
+    .trim();
+  const terms = semanticWorkspaceNicheTerms(raw);
+  return terms.size > 0 ? { raw: raw.slice(0, 160), terms } : null;
+}
+
 function sameTerms(left: Set<string>, right: Set<string>): boolean {
   return (
     left.size === right.size && [...left].every((term) => right.has(term))
@@ -2875,6 +2923,21 @@ function authorizedWorkspaceNiche(
   );
 }
 
+function authorizedWorkspaceQuery(
+  userInstruction: string,
+  plannedQuery: string | undefined,
+): string | null | undefined {
+  const authoritative = authoritativeWorkspaceQueryCandidate(userInstruction);
+  if (!authoritative) return plannedQuery ? undefined : null;
+  if (!plannedQuery) return undefined;
+  return sameTerms(
+    authoritative.terms,
+    semanticWorkspaceNicheTerms(plannedQuery),
+  )
+    ? authoritative.raw
+    : undefined;
+}
+
 export function planSearchQueriesMatchInstruction(
   plan: ReadOnlyPlan,
   userInstruction: string,
@@ -2891,8 +2954,26 @@ export function planSearchQueriesMatchInstruction(
   );
   return queryActions.every((action) => {
     if (action.type === "search_viral_posts") {
+      const legacyTopicAsNiche =
+        !action.query &&
+        Boolean(action.niche) &&
+        (() => {
+          const topic = authoritativeWorkspaceQueryCandidate(userInstruction);
+          return Boolean(
+            topic &&
+              sameTerms(
+                topic.terms,
+                semanticWorkspaceNicheTerms(action.niche ?? ""),
+              ),
+          );
+        })();
       return (
-        authorizedWorkspaceNiche(userInstruction, action.niche) !== undefined
+        (legacyTopicAsNiche ||
+          authorizedWorkspaceNiche(userInstruction, action.niche) !==
+            undefined) &&
+        (legacyTopicAsNiche ||
+          authorizedWorkspaceQuery(userInstruction, action.query) !==
+            undefined)
       );
     }
     const plannedQuery =
@@ -2988,6 +3069,20 @@ function compiledWorkspaceNiche(
   return typeof authorized === "string" ? authorized : undefined;
 }
 
+function compiledWorkspaceQuery(
+  authoritativeInstruction: string,
+): string | undefined {
+  const candidate = authoritativeWorkspaceQueryCandidate(
+    authoritativeInstruction,
+  );
+  if (!candidate) return undefined;
+  const authorized = authorizedWorkspaceQuery(
+    authoritativeInstruction,
+    candidate.raw,
+  );
+  return typeof authorized === "string" ? authorized : undefined;
+}
+
 // Build the workspace search action(s). One action carrying the full minimum
 // source limit (clamped to the schema's 2..10) satisfies the "limits cover at
 // least minimumSources" validator. The executor overrides niche/since/ranking
@@ -3001,13 +3096,36 @@ function compiledWorkspaceSearchAction(
 ): z.infer<typeof SearchViralPostsActionSchema> {
   const minimumSources = Math.max(2, minimumSourcesRaw ?? 2);
   const niche = compiledWorkspaceNiche(authoritativeInstruction);
+  const query = compiledWorkspaceQuery(authoritativeInstruction);
   return {
     id,
     type: "search_viral_posts",
     limit: Math.min(Math.max(minimumSources, 2), 10),
     ...(niche ? { niche } : {}),
+    ...(query ? { query } : {}),
     ...(postType ? { post_type: postType } : {}),
   };
+}
+
+function compiledResearchTerminal(
+  route: ReadOnlyOrchestratorRoute,
+  evidenceActionIds: string[],
+): ReadOnlyAction {
+  if (route.outcome?.kind === "grounded_answer") {
+    return {
+      id: "answer",
+      type: "answer_from_evidence",
+      evidenceActionIds,
+      format: route.outcome.format,
+      ...(route.outcome.resultCount
+        ? { resultCount: route.outcome.resultCount }
+        : {}),
+    };
+  }
+  if (route.outcome?.kind !== "draft" && route.expectsDraft !== true) {
+    throw new Error("Evidence routes require one typed terminal outcome.");
+  }
+  return { id: "draft", type: "draft_post", evidenceActionIds };
 }
 
 /**
@@ -3029,7 +3147,7 @@ export function compileServerReadOnlyPlan(
           type: "search_news",
           query: authoritativeResearchQuery(authoritativeInstruction),
         },
-        { id: "draft", type: "draft_post", evidenceActionIds: ["news"] },
+        compiledResearchTerminal(route, ["news"]),
       ],
     };
   }
@@ -3041,7 +3159,7 @@ export function compileServerReadOnlyPlan(
           type: "search_web",
           query: authoritativeResearchQuery(authoritativeInstruction),
         },
-        { id: "draft", type: "draft_post", evidenceActionIds: ["web"] },
+        compiledResearchTerminal(route, ["web"]),
       ],
     };
   }
@@ -3055,7 +3173,7 @@ export function compileServerReadOnlyPlan(
     return {
       actions: [
         search,
-        { id: "draft", type: "draft_post", evidenceActionIds: ["swipe"] },
+        compiledResearchTerminal(route, ["swipe"]),
       ],
     };
   }
@@ -3095,11 +3213,10 @@ export function compileServerReadOnlyPlan(
     return {
       actions: [
         ...evidence,
-        {
-          id: "draft",
-          type: "draft_post",
-          evidenceActionIds: evidence.map((action) => action.id),
-        },
+        compiledResearchTerminal(
+          route,
+          evidence.map((action) => action.id),
+        ),
       ],
     };
   }
@@ -3169,6 +3286,7 @@ const READ_ONLY_PLAN_TOOL: ToolDef = {
                   id: { type: "string" },
                   type: { const: "search_viral_posts" },
                   niche: { type: "string" },
+                  query: { type: "string" },
                   limit: { type: "integer", minimum: 2, maximum: 10 },
                   since: { type: "string", enum: ["1d", "7d", "30d"] },
                   post_type: {
@@ -3207,6 +3325,26 @@ const READ_ONLY_PLAN_TOOL: ToolDef = {
                 additionalProperties: false,
                 properties: {
                   id: { type: "string" },
+                  type: { const: "answer_from_evidence" },
+                  evidenceActionIds: {
+                    type: "array",
+                    minItems: 1,
+                    maxItems: 4,
+                    items: { type: "string" },
+                  },
+                  format: {
+                    type: "string",
+                    enum: ["summary", "takeaways", "comparison", "report"],
+                  },
+                  resultCount: { type: "integer", minimum: 1, maximum: 10 },
+                },
+                required: ["id", "type", "evidenceActionIds", "format"],
+              },
+              {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                  id: { type: "string" },
                   type: { const: "clarify" },
                   question: { type: "string" },
                   options: {
@@ -3228,22 +3366,26 @@ const READ_ONLY_PLAN_TOOL: ToolDef = {
 };
 
 function readOnlyPlannerSystem(route: ReadOnlyOrchestratorRoute): string {
+  const terminal =
+    route.outcome?.kind === "grounded_answer"
+      ? `answer_from_evidence using format ${route.outcome.format}`
+      : "draft_post";
   return [
     "You are SwipeIn's read-only action planner.",
     "Return only a schema-valid action plan through return_read_only_plan.",
     "You choose read-only evidence actions and a terminal handoff. You never write, outline, summarize, or include any part of the finished LinkedIn post.",
     "Never add facts, sources, search results, or attachment findings yourself. The server executes actions after validating the whole plan.",
-    "Every evidence action must precede draft_post, and draft_post.evidenceActionIds must list every evidence action id.",
+    `Every evidence action must precede ${terminal}, whose evidenceActionIds must list every evidence action id.`,
     route.kind === "news_research"
-      ? "Use exactly one search_news action with a focused query, then draft_post."
+      ? `Use exactly one search_news action with a focused query, then ${terminal}.`
       : route.kind === "web_research"
-        ? "Use exactly one search_web action with a focused research query, then draft_post."
+        ? `Use exactly one search_web action with a focused research query, then ${terminal}.`
         : route.kind === "workspace_research"
-          ? `Use one or more search_viral_posts actions whose limits cover at least ${Math.max(2, route.minimumSources ?? 2)} distinct sources, then draft_post. Omit niche for a cross-niche search; if the request explicitly names a source niche, copy only that niche from the research clause before the writing instruction.${route.workspaceSearchMode === "strict_top" ? " The server will enforce the requested strict top ranking." : ""}`
+          ? `Use one or more search_viral_posts actions whose limits cover at least ${Math.max(2, route.minimumSources ?? 2)} distinct sources, then ${terminal}. Omit niche for a cross-niche search; if the request explicitly names a source niche, copy only that niche. Put a topic following "posts about/on" in query, never niche.${route.workspaceSearchMode === "strict_top" ? " The server will enforce the requested strict top ranking." : ""}`
           : route.kind === "file_inspection"
             ? route.allowedSearchKinds?.length
-              ? `Use inspect_attachments and exactly the requested search capabilities (${route.allowedSearchKinds.join(", ")}), then draft_post. Do not add any other search type.${route.allowedSearchKinds.includes("workspace") ? ` The search_viral_posts action limits must cover at least ${Math.max(2, route.minimumSources ?? 2)} distinct sources. Copy only explicitly requested source niches. Omit since because the server enforces ${route.workspaceSince ?? "the unrestricted"} window.${route.workspaceSearchMode === "strict_top" ? " The server also enforces strict top ranking." : ""}` : ""}`
-              : "Use inspect_attachments, then draft_post. No external or workspace search was requested."
+              ? `Use inspect_attachments and exactly the requested search capabilities (${route.allowedSearchKinds.join(", ")}), then ${terminal}. Do not add any other search type.${route.allowedSearchKinds.includes("workspace") ? ` The search_viral_posts action limits must cover at least ${Math.max(2, route.minimumSources ?? 2)} distinct sources. Copy only explicitly requested source niches. Omit since because the server enforces ${route.workspaceSince ?? "the unrestricted"} window.${route.workspaceSearchMode === "strict_top" ? " The server also enforces strict top ranking." : ""}` : ""}`
+              : `Use inspect_attachments, then ${terminal}. No external or workspace search was requested.`
             : "The requested outcome is unresolved. Return exactly one clarify action with one necessary question and 2-5 concrete options.",
   ].join("\n\n");
 }
@@ -3628,29 +3770,48 @@ export const inspectAttachmentEvidence: InspectAttachments = async (input) => {
           }
           const covered = new Set<string>();
           let returnedUnknownSource = false;
-          const fileSources = parsed.evidence.flatMap((item, index) => {
+          const evidenceByFilename = new Map<
+            string,
+            Array<z.infer<typeof AttachmentEvidenceSchema>["evidence"][number]>
+          >();
+          parsed.evidence.forEach((item) => {
             const sourceKey = item.sourceName
               .trim()
               .toLocaleLowerCase("en-US");
             const canonicalName = expectedFileNames.get(sourceKey);
             if (!canonicalName) {
               returnedUnknownSource = true;
-              return [];
+              return;
             }
             covered.add(sourceKey);
-            return [
-              {
-                id: `attachment-file-${index + 1}`,
-                kind: "attachment" as const,
-                title: canonicalName,
-                text: [
-                  item.claim,
-                  `Supporting excerpt: ${item.supportingExcerpt}`,
-                  ...(item.location ? [`Location: ${item.location}`] : []),
-                ].join("\n"),
-              },
-            ];
+            const items = evidenceByFilename.get(sourceKey) ?? [];
+            items.push(item);
+            evidenceByFilename.set(sourceKey, items);
           });
+          const fileSources = [...expectedFileNames.entries()].flatMap(
+            ([sourceKey, canonicalName], index) => {
+              const items = evidenceByFilename.get(sourceKey);
+              if (!items?.length) return [];
+              return [
+                {
+                  id: `attachment-file-${index + 1}`,
+                  kind: "attachment" as const,
+                  title: canonicalName,
+                  text: items
+                    .map((item) =>
+                      [
+                        item.claim,
+                        `Supporting excerpt: ${item.supportingExcerpt}`,
+                        ...(item.location
+                          ? [`Location: ${item.location}`]
+                          : []),
+                      ].join("\n"),
+                    )
+                    .join("\n\n"),
+                },
+              ];
+            },
+          );
           rejectedFileSources = fileSources;
           const coveredEveryFile = [...expectedFileNames.keys()].every((name) =>
             covered.has(name),
@@ -3726,6 +3887,7 @@ export type ReadOnlyOrchestratorDependencies = {
   ) => Promise<ModeledDraftBatchResult>;
   runWebResearch: RunWebResearch;
   inspectAttachments: InspectAttachments;
+  synthesizeGroundedAnswer: SynthesizeGroundedAnswer;
   recordUsage: typeof logOpenRouterUsage;
   idFactory: () => string;
   now: () => Date;
@@ -3743,6 +3905,7 @@ const readOnlyProductionDependencies: Omit<
   runTool,
   runWebResearch: runGroundedWebResearch,
   inspectAttachments: inspectAttachmentEvidence,
+  synthesizeGroundedAnswer,
   recordUsage: logOpenRouterUsage,
   idFactory: () => crypto.randomUUID(),
   now: () => new Date(),
@@ -3826,6 +3989,7 @@ function readOnlyToolCall(
       : action.type === "search_viral_posts"
         ? {
             ...(action.niche ? { niche: action.niche } : {}),
+            ...(action.query ? { query: action.query } : {}),
             ...(action.since ? { since: action.since } : {}),
             ...(action.post_type ? { post_type: action.post_type } : {}),
             ...(action.sort ? { sort: action.sort } : {}),
@@ -3925,6 +4089,29 @@ function workspaceSources(
     if (!normalized) return [];
     const postedAt =
       typeof item.posted_at === "string" ? item.posted_at.trim() : undefined;
+    const accountRow = Array.isArray(item.accounts)
+      ? item.accounts[0]
+      : item.accounts;
+    const author =
+      accountRow &&
+      typeof accountRow === "object" &&
+      typeof (accountRow as Record<string, unknown>).name === "string"
+        ? String((accountRow as Record<string, unknown>).name).trim()
+        : undefined;
+    const metric = (key: "reactions" | "comments" | "reposts") => {
+      const value = item[key];
+      return typeof value === "number" && Number.isFinite(value) && value >= 0
+        ? Math.floor(value)
+        : undefined;
+    };
+    const metrics = {
+      reactions: metric("reactions"),
+      comments: metric("comments"),
+      reposts: metric("reposts"),
+    };
+    const hasMetrics = Object.values(metrics).some(
+      (value) => value !== undefined,
+    );
     if (!admitDistinctModelingSource(normalized, seen)) {
       return [];
     }
@@ -3935,6 +4122,8 @@ function workspaceSources(
         text: normalized.text,
         ...(normalized.url ? { url: normalized.url } : {}),
         ...(postedAt ? { publishedAt: postedAt } : {}),
+        ...(author ? { author } : {}),
+        ...(hasMetrics ? { metrics } : {}),
       },
     ];
   });
@@ -4394,9 +4583,14 @@ async function* runReadOnlyOrchestratorCore(
       action.type === "search_viral_posts"
         ? authorizedWorkspaceNiche(authoritativeInstruction, action.niche)
         : null;
+    const dispatchedWorkspaceQuery =
+      action.type === "search_viral_posts"
+        ? authorizedWorkspaceQuery(authoritativeInstruction, action.query)
+        : null;
     if (
       action.type === "search_viral_posts" &&
-      dispatchedWorkspaceNiche === undefined
+      (dispatchedWorkspaceNiche === undefined ||
+        dispatchedWorkspaceQuery === undefined)
     ) {
       throw new Error("Validated workspace niche could not be compiled.");
     }
@@ -4408,6 +4602,7 @@ async function* runReadOnlyOrchestratorCore(
           ? {
               ...action,
               niche: dispatchedWorkspaceNiche ?? undefined,
+              query: dispatchedWorkspaceQuery ?? undefined,
               since: input.route.workspaceSince,
               post_type: input.route.workspacePostType,
               ...(input.route.workspaceSearchMode === "strict_top"
@@ -4572,6 +4767,9 @@ async function* runReadOnlyOrchestratorCore(
                 ...(dispatchedWorkspaceNiche
                   ? { niche: dispatchedWorkspaceNiche }
                   : {}),
+                ...(dispatchedWorkspaceQuery
+                  ? { query: dispatchedWorkspaceQuery }
+                  : {}),
                 ...(input.route.workspaceSince
                   ? { since: input.route.workspaceSince }
                   : {}),
@@ -4586,10 +4784,16 @@ async function* runReadOnlyOrchestratorCore(
               input.workspaceId,
               input.signal,
               {
-                autoSelectModelingSources: true,
+                autoSelectModelingSources:
+                  input.route.outcome?.kind === "draft",
                 modelingReserveCount:
                   input.route.workspaceDraftSourceMode === "one_to_one"
-                    ? Math.min(input.route.expectedDrafts ?? 1, 5)
+                    ? Math.min(
+                        input.route.outcome?.kind === "draft"
+                          ? input.route.outcome.expectedDrafts
+                          : (input.route.expectedDrafts ?? 1),
+                        5,
+                      )
                     : 0,
               },
             ),
@@ -4714,7 +4918,9 @@ async function* runReadOnlyOrchestratorCore(
     if (!ok) {
       input.telemetry?.setProvenanceStatus("missing");
       const message =
-        action.type === "search_news"
+        input.route.outcome?.kind === "grounded_answer"
+          ? "I couldn’t retrieve enough verified evidence to answer this request."
+          : action.type === "search_news"
           ? "I couldn’t find a verified fresh story for this request, so I did not draft from stale or invented news."
           : action.type === "search_web"
             ? "I couldn’t verify enough web evidence for this research request, so I did not draft from uncited model memory."
@@ -4754,7 +4960,174 @@ async function* runReadOnlyOrchestratorCore(
     }
   }
 
-  const draftAction = plan.actions.at(-1);
+  const terminalAction = plan.actions.at(-1);
+  if (terminalAction?.type === "answer_from_evidence") {
+    const availableSources = distinctGroundedSources(
+      terminalAction.evidenceActionIds.flatMap(
+        (id) => evidenceByAction.get(id) ?? [],
+      ),
+    );
+    const requestedResultCount = terminalAction.resultCount;
+    if (
+      requestedResultCount !== undefined &&
+      availableSources.length < requestedResultCount
+    ) {
+      const message = `I found only ${availableSources.length} of the ${requestedResultCount} verified sources you requested, so I did not return an incomplete ${terminalAction.format}.`;
+      yield {
+        type: "error",
+        code: "orchestrator_evidence_insufficient",
+        message,
+        recovery: "continue",
+      };
+      yield completedDone({
+        content: message,
+        terminalReason: "error",
+        toolCalls: calls,
+        toolMessages: messages,
+        inputTokens,
+        outputTokens,
+      });
+      return;
+    }
+    const groundedSources = availableSources.slice(
+      0,
+      requestedResultCount ?? undefined,
+    );
+    if (groundedSources.length === 0) {
+      throw new Error("Validated grounded-answer plan produced no evidence.");
+    }
+    if (await input.cancellationBoundary()) {
+      yield completedDone({
+        content: readOnlyInterruptionContent(
+          input,
+          "Stopped before the research answer was produced.",
+        ),
+        terminalReason: readOnlyInterruptionReason(input),
+        toolCalls: calls,
+        toolMessages: messages,
+        inputTokens,
+        outputTokens,
+      });
+      return;
+    }
+    const synthesisStartedAt = deps.now().getTime();
+    const recordSynthesisAttempts = async (
+      attempts: GroundedAnswerAttempt[],
+    ) => {
+      for (const [index, attempt] of attempts.entries()) {
+        const used = tokenCounts(attempt.usage);
+        inputTokens += used.input;
+        outputTokens += used.output;
+        input.onModelUsed?.(attempt.model);
+        if (attempt.usage) {
+          await deps.recordUsage(
+            "cowork_grounded_answer",
+            attempt.model,
+            attempt.usage,
+            input.workspaceId,
+            {
+              format: terminalAction.format,
+              stage: attempt.stage,
+              outcome: attempt.outcome,
+            },
+          );
+        }
+        input.telemetry?.recordAttempt({
+          stage:
+            attempt.stage === "primary"
+              ? "grounded_answer_primary"
+              : "grounded_answer_fallback",
+          attempt: index + 1,
+          model: attempt.model,
+          provider: "openrouter",
+          outcome: attempt.outcome,
+          ...(attempt.reasonCode ? { reasonCode: attempt.reasonCode } : {}),
+          latencyMs: attempt.latencyMs,
+          usage: attempt.usage,
+        });
+      }
+    };
+    try {
+      const answer = await deps.synthesizeGroundedAnswer({
+        instruction: authoritativeInstruction,
+        format: terminalAction.format,
+        evidence: groundedSources,
+        signal: input.signal,
+      });
+      await recordSynthesisAttempts(
+        answer.attempts ?? [
+          {
+            model: answer.model,
+            stage: "primary",
+            outcome: "accepted",
+            latencyMs: Math.max(
+              0,
+              deps.now().getTime() - synthesisStartedAt,
+            ),
+            usage: answer.usage,
+          },
+        ],
+      );
+      yield { type: "text", delta: answer.content };
+      yield completedDone({
+        content: answer.content,
+        toolCalls: calls,
+        toolMessages: messages,
+        inputTokens,
+        outputTokens,
+      });
+      return;
+    } catch (error) {
+      rethrowUsagePersistence(error);
+      if (error instanceof GroundedAnswerSynthesisError) {
+        await recordSynthesisAttempts(error.attempts);
+      }
+      if (await input.cancellationBoundary()) {
+        yield completedDone({
+          content: readOnlyInterruptionContent(
+            input,
+            "Stopped while the research answer was being produced.",
+          ),
+          terminalReason: readOnlyInterruptionReason(input),
+          toolCalls: calls,
+          toolMessages: messages,
+          inputTokens,
+          outputTokens,
+        });
+        return;
+      }
+      if (!(error instanceof GroundedAnswerSynthesisError)) {
+        input.telemetry?.recordAttempt({
+          stage: "grounded_answer_primary",
+          attempt: 1,
+          model: CHAT_MODEL,
+          provider: "openrouter",
+          outcome: "failed",
+          reasonCode: error instanceof Error ? error.message : String(error),
+          latencyMs: Math.max(0, deps.now().getTime() - synthesisStartedAt),
+        });
+      }
+      const message =
+        "I found verified research evidence, but I couldn’t safely summarize it. Please retry this request.";
+      yield {
+        type: "error",
+        code: "grounded_answer_failed",
+        message,
+        recovery: "continue",
+      };
+      yield completedDone({
+        content: message,
+        terminalReason: "error",
+        toolCalls: calls,
+        toolMessages: messages,
+        inputTokens,
+        outputTokens,
+      });
+      return;
+    }
+  }
+
+  const draftAction = terminalAction;
   if (!draftAction || draftAction.type !== "draft_post") {
     throw new Error("Validated plan lost its terminal draft action.");
   }
@@ -4855,7 +5228,10 @@ async function* runReadOnlyOrchestratorCore(
       return true;
     });
   };
-  const expectedDrafts = input.route.expectedDrafts ?? 1;
+  const expectedDrafts =
+    input.route.outcome?.kind === "draft"
+      ? input.route.outcome.expectedDrafts
+      : (input.route.expectedDrafts ?? 1);
   // The selection search may inspect up to ten candidates, but the durable
   // coordinator accepts only the requested slots plus five frozen reserves.
   // Preserve ranking order while bounding the persisted pool; retries reuse
