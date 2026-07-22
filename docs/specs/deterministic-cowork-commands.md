@@ -14,6 +14,8 @@ Cowork exposes one visible command for every turn: Ask, Create, or Edit. The com
 
 The command is scoped to one turn. Create and Edit reset to safe Ask after submission. Conversation history supplies content context only and cannot select the next command.
 
+Every unscoped Cowork turn receives the canonical current version of every Post and Hook already created in that chat. Re-emitted edits are deduplicated by ID, so the latest body replaces its older version without appearing twice. Large histories use deterministic, evenly allocated excerpts so every Post remains represented without overflowing the provider context. A card-scoped Ask or Edit receives only its explicit target and never falls back to another Post.
+
 ## User interface
 
 The composer shows its current command. Ask is the safe default. Create exposes an exact Post count. Edit is entered from a Post card and visibly names the target. Starter cards set their known command from stable starter metadata rather than prompt wording.
