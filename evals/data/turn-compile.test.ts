@@ -20,6 +20,7 @@ import {
   isDirectPartialTextEligible,
   isDirectRefineEligible,
   isGeneralRefineEligible,
+  isOpinionOrQuestionAboutContent,
 } from "@/lib/agent/direct-writer-policy";
 
 describe("resolveTurnCount — the ONE turn count rule (1-6, UI > message > default)", () => {
@@ -1935,7 +1936,84 @@ const BASE = {
 };
 
 describe("direct writer eligibility predicates", () => {
+  describe("isOpinionOrQuestionAboutContent — pure question/opinion detector", () => {
+    test("catches opinion/evaluation questions ABOUT the draft (should be answered, not written)", () => {
+      for (const q of [
+        "why do you think this post is good or bad?",
+        "is this post good?",
+        "what do you think of this hook?",
+        "how does this look?",
+        "do you think this works?",
+        "is this any good?",
+        "does this hook land?",
+        "would this resonate with founders?",
+        "what's your honest opinion of this?",
+      ]) {
+        expect(isOpinionOrQuestionAboutContent(q)).toBe(true);
+      }
+    });
+
+    test("NEVER catches a write / edit / generative request (they must still route to the writer)", () => {
+      for (const req of [
+        "write an original post about ai slop",
+        "make it punchier",
+        "shorten the hook",
+        "give me 3 posts about hiring",
+        "rewrite this to be more direct",
+        "edit the draft, remove the sentence on the hook",
+        "draft a variation on a different topic",
+        "can you rewrite this?", // a question, but a command-position write verb
+        "can you make the hook stronger?", // command-position "make the"
+        // Terse generative follow-ups (question-shaped but NO opinion cue) — the
+        // sticky drafting pin must keep these in the writer lane.
+        "Another angle?",
+        "different hook?",
+        "a shorter version?",
+      ]) {
+        expect(isOpinionOrQuestionAboutContent(req)).toBe(false);
+      }
+    });
+
+    test("a non-question statement is not an opinion ask", () => {
+      expect(isOpinionOrQuestionAboutContent("this post is great")).toBe(false);
+      expect(isOpinionOrQuestionAboutContent("")).toBe(false);
+    });
+  });
+
   describe("direct original-post eligibility", () => {
+    test("an opinion/question about the draft is NOT a post request, even under a 'write post' composer starter", () => {
+      // The regression: a "write original post" starter leaves sourceMode:"original"
+      // active, which bypasses the text gates — so a plain follow-up question used
+      // to be answered with a fresh post. The opinion guard must fire regardless.
+      const originalStarter = resolveComposerTaskContext({
+        starterId: "write-original",
+        fallbackPostCount: null,
+      });
+      expect(originalStarter.sourceMode).toBe("original"); // guard the premise
+      expect(
+        isDirectOriginalPostEligible({
+          ...BASE,
+          userInstruction: "why do you think this post is good or bad?",
+          composerTaskContext: originalStarter,
+        }),
+      ).toBe(false);
+      expect(
+        isDirectOriginalPostEligible({
+          ...BASE,
+          userInstruction: "what do you think of this hook?",
+          composerTaskContext: originalStarter,
+        }),
+      ).toBe(false);
+      // And a genuine write request under the same starter still passes.
+      expect(
+        isDirectOriginalPostEligible({
+          ...BASE,
+          userInstruction: "Write a post about hiring discipline. Do not search.",
+          composerTaskContext: originalStarter,
+        }),
+      ).toBe(true);
+    });
+
     test("accepts a self-contained original post and an explicit no-search post", () => {
       expect(isDirectOriginalPostEligible(BASE)).toBe(true);
       expect(

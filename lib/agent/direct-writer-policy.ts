@@ -126,6 +126,40 @@ function discussesWritingInsteadOfRequesting(instruction: string): boolean {
   );
 }
 
+// An OPINION / EVALUATION question ABOUT existing content ("why is this post
+// good or bad?", "what do you think of this hook?", "how does this look?", "does
+// this land?") — the user wants an assessment, not a new/edited post. This must
+// pre-empt the writer lanes even when a "write a post" composer starter is still
+// active: the starter makes isDirectOriginalPostEligible skip its text gates (the
+// knownOriginalPost bypass) and lets the structure matcher / sticky pin claim the
+// turn, so a plain follow-up question used to be answered with a fresh post.
+//
+// Deliberately NARROW so it never steals a drafting follow-up. It requires ALL:
+//   (a) a question (ends with "?" or an evaluation interrogative),
+//   (b) an opinion/evaluation cue (think / opinion / good / bad / look / work /
+//       feedback / land / resonate …), so "Another angle?" / "different hook?"
+//       — generative asks with no judgment cue — are NOT caught, and
+//   (c) NO command-position write/edit verb, so "can you rewrite this?" /
+//       "make the hook stronger?" stay write requests.
+// Pure + exported for tests and the compile.ts route gates.
+const EVAL_QUESTION_START_RE =
+  /^\s*(?:why|what|how|is|are|was|were|do|does|did|would|should|which|can|could)\b/i;
+const OPINION_CUE_RE =
+  /\b(?:think|thoughts?|opinion|feel|feedback|good|bad|better|worse|strong|weak|works?|working|effective|solid|decent|great|terrible|rate|assess|evaluate|review|impression|look|sound|land|resonate|honest|any\s+good)\b/i;
+// A command-position write/edit verb (imperative or "can you X"), NOT a noun
+// mention like "this hook" — so an opinion ask about a hook isn't disqualified.
+const WRITE_EDIT_COMMAND_RE =
+  /^\s*(?:please\s+|(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:write|draft|create|generate|produce|prepare|rewrite|rework|remix|model|mimic|adapt|shorten|lengthen|tighten|refine|polish|improve|tweak|revise|make\s+(?:it|this|the)|give\s+me|turn\s+(?:it|this|that)|edit|fix|change|update)\b/i;
+export function isOpinionOrQuestionAboutContent(instruction: string): boolean {
+  const trimmed = instruction.trim();
+  if (!trimmed) return false;
+  const isQuestion =
+    /\?\s*$/.test(trimmed) || EVAL_QUESTION_START_RE.test(trimmed);
+  if (!isQuestion) return false;
+  if (WRITE_EDIT_COMMAND_RE.test(trimmed)) return false;
+  return OPINION_CUE_RE.test(trimmed);
+}
+
 /**
  * The direct lane is intentionally narrow: one fully specified, original post
  * whose domain context is already loaded. Anything that may need a tool stays
@@ -148,6 +182,11 @@ export function isDirectOriginalPostEligible(
   ) {
     return false;
   }
+  // A pure question/opinion about existing content is never a post request —
+  // even when a "write a post" composer starter is still active (which would
+  // otherwise skip the text gates below via knownOriginalPost). Without this,
+  // "why do you think this post is good or bad?" gets answered with a fresh post.
+  if (isOpinionOrQuestionAboutContent(instruction)) return false;
   const forbidsDiscovery = explicitlyForbidsSourceDiscovery(instruction);
   if (
     !knownOriginalPost &&

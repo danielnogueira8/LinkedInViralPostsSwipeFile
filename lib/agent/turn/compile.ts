@@ -19,6 +19,7 @@ import {
   isDirectPartialTextEligible,
   isDirectRefineEligible,
   isGeneralRefineEligible,
+  isOpinionOrQuestionAboutContent,
 } from "@/lib/agent/direct-writer-policy";
 import { classifyDirectRefineFocus } from "@/lib/agent/direct-refine-policy";
 import {
@@ -1967,6 +1968,10 @@ export async function compileTurnPlan(
       !skipDecision &&
       structureMatch &&
       directSource &&
+      // A pure question/opinion about the current draft is not a post request,
+      // even under a "post"-kind composer starter — otherwise the matcher picks
+      // a structure and writes a post instead of answering the question.
+      !isOpinionOrQuestionAboutContent(effectiveUserInstruction) &&
       (composerTaskContext?.kind === "post" ||
         requestsFullPostDeliverable(effectiveUserInstruction) ||
         directPostCount === 1),
@@ -2067,7 +2072,13 @@ export async function compileTurnPlan(
   const honorPinnedRoute =
     pinnedCoworkRoute &&
     !hasExplicitWorkflowContinuation &&
-    pinnedCoworkRoute !== "answer";
+    pinnedCoworkRoute !== "answer" &&
+    // A pure question/opinion always escapes the sticky pin to the answer lane.
+    // The pin exists to keep AMBIGUOUS drafting follow-ups in the writer lane
+    // (a chat that wrote a post stays a drafting chat), but a clear question
+    // like "why is this post good or bad?" must be answered, not written into a
+    // new post just because the chat is pinned to direct_writer.
+    !isOpinionOrQuestionAboutContent(effectiveUserInstruction);
   if (honorPinnedRoute) {
     // The pin never overrides an explicit research requirement: a starter that
     // asks for workspace/web/news evidence must actually RUN that research.
