@@ -79,6 +79,14 @@ describe("the agent lives in a pinned Your Agent panel, not the empty state", ()
     expect(loadChatCloses).toBe(true);
     expect(newChatCloses).toBe(true);
   });
+
+  test("persists and restores Your Agent on a bare Cowork return", () => {
+    const file = source(WORKSPACE);
+    expect(file).toContain("readCoworkDestination");
+    expect(file).toContain("writeCoworkDestination(\"agent\")");
+    expect(file).toContain("clearCoworkDestination()");
+    expect(file).toContain("shouldRestoreAgentDestination");
+  });
 });
 
 describe("the agent view isolates mobile chat affordances", () => {

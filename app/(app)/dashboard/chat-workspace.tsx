@@ -224,6 +224,12 @@ import {
   researchSourcesFromArtifact,
 } from "@/lib/cowork-turn-usage";
 import { modeledSourceAttribution } from "@/lib/model-source-attribution";
+import {
+  clearCoworkDestination,
+  readCoworkDestination,
+  shouldRestoreAgentDestination,
+  writeCoworkDestination,
+} from "@/lib/cowork-destination";
 import { ResearchSources, TaskUsageSummary } from "./cowork-trust-details";
 
 export type { Artifact } from "@/lib/agent/contracts";
@@ -1830,6 +1836,38 @@ export function ChatWorkspace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [styleParam, creatorStyles]);
 
+  // A bare return to Cowork should reopen the last destination, including the
+  // pinned Your Agent view. Query-driven routes always win: a direct chat,
+  // model, or style handoff must never be hidden by the saved Agent view.
+  const hasExplicitCoworkDestination = Boolean(
+    searchParams.get("chat") ||
+      modelParam ||
+      intentParam ||
+      handoffParam ||
+      styleParam,
+  );
+  useEffect(() => {
+    if (hasExplicitCoworkDestination) {
+      clearCoworkDestination();
+      return;
+    }
+    if (
+      !shouldRestoreAgentDestination({
+        savedDestination: readCoworkDestination(),
+        hasExplicitDestination: hasExplicitCoworkDestination,
+      })
+    ) {
+      return;
+    }
+    // sessionStorage is browser-only, so this restoration intentionally happens
+    // after hydration rather than in the initial state (which would mismatch
+    // the server render).
+    /* eslint-disable react-hooks/set-state-in-effect */
+    setAgentViewOpen(true);
+    setMobileDraftsOpen(false);
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, [hasExplicitCoworkDestination]);
+
   // Prefill the composer from a starter chip. If the prompt has a [placeholder]
   // (e.g. a topic the user must fill), focus the input and select that span so
   // they can type straight over it; otherwise drop the cursor at the end.
@@ -1860,6 +1898,7 @@ export function ChatWorkspace({
     async (id: string, options: { pushHistory?: boolean } = {}) => {
       // Opening a real conversation leaves the "Your Agent" panel view.
       setAgentViewOpen(false);
+      clearCoworkDestination();
       if (id === activeId) return;
       try {
         const url = new URL(window.location.href);
@@ -2100,6 +2139,7 @@ export function ChatWorkspace({
     setInput("");
     // Starting a session leaves the "Your Agent" panel view.
     setAgentViewOpen(false);
+    clearCoworkDestination();
     // Sever send ownership from the previous chat before the eager create's
     // first await. Users can start typing immediately; send() waits for the
     // pending destination below instead of leaking that turn into the old chat.
@@ -3741,6 +3781,7 @@ export function ChatWorkspace({
               onOpen={() => {
                 setAgentViewOpen(true);
                 setMobileDraftsOpen(false);
+                writeCoworkDestination("agent");
                 setSidebarOpen(false);
               }}
             />
