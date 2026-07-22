@@ -463,7 +463,6 @@ export function ChatWorkspace({
   const [coworkComposer, setCoworkComposer] = useState<CoworkComposerState>({
     kind: "ask",
   });
-  const composerCommandKind = coworkComposer.kind;
   const askContextPostId =
     coworkComposer.kind === "ask" ? coworkComposer.contextPostId : undefined;
   // Generated drafts/hooks live in the right-hand panel (not inline in the
@@ -761,13 +760,35 @@ export function ChatWorkspace({
       !looksCorruptedDraft(a.body),
   );
   const artifactIndex = buildArtifactIndex(artifacts);
+  const hasEditablePosts = artifactIndex.entries.length > 0;
+  // Edit is a capability, not a permanent navigation option. Keep the
+  // effective command safe during the render where the final Post disappears;
+  // the effect below then removes the now-invalid stored selection as well.
+  const effectiveCoworkComposer = useMemo<CoworkComposerState>(
+    () =>
+      coworkComposer.kind === "edit" && !hasEditablePosts
+        ? { kind: "ask" }
+        : coworkComposer,
+    [coworkComposer, hasEditablePosts],
+  );
+  const composerCommandKind = effectiveCoworkComposer.kind;
+  useEffect(() => {
+    if (coworkComposer.kind !== "edit" || hasEditablePosts) return;
+    // The editable collection can change outside the command bar (delete,
+    // reload, or stream reconciliation), so enforce the invariant at its
+    // canonical source rather than only in click handlers.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setCoworkComposer({ kind: "ask" });
+  }, [coworkComposer.kind, hasEditablePosts]);
   const askContextPost = artifactIndex.entries.find(
     (entry) => entry.artifactId === askContextPostId,
   );
   const editTargetPostId =
-    coworkComposer.kind === "edit" ? coworkComposer.targetPostId : undefined;
+    effectiveCoworkComposer.kind === "edit"
+      ? effectiveCoworkComposer.targetPostId
+      : undefined;
   const editTargetPost =
-    coworkComposer.kind === "edit"
+    effectiveCoworkComposer.kind === "edit"
       ? resolveArtifactEditTarget(artifactIndex.entries, {
           targetArtifactId: editTargetPostId,
           expandedArtifactId,
@@ -2397,10 +2418,10 @@ export function ChatWorkspace({
               ...(composerCommandKind === "ask" && askContextPost
                 ? { contextPostId: askContextPost.artifactId }
                 : {}),
-              ...(composerCommandKind === "edit" && editTargetPost
+              ...(effectiveCoworkComposer.kind === "edit" && editTargetPost
                 ? {
                     targetPostId: editTargetPost.artifactId,
-                    scope: coworkComposer.scope,
+                    scope: effectiveCoworkComposer.scope,
                   }
                 : {}),
             });
@@ -3237,7 +3258,7 @@ export function ChatWorkspace({
     composerCommandKind,
     askContextPost,
     editTargetPost,
-    coworkComposer,
+    effectiveCoworkComposer,
     draftCountSelection,
     postTypeSelection,
     initialVoiceReady,
@@ -4924,53 +4945,49 @@ export function ChatWorkspace({
                   <PenLine className="h-3.5 w-3.5" aria-hidden />
                   Create
                 </button>
-                <button
-                  type="button"
-                  aria-pressed={composerCommandKind === "edit"}
-                  onClick={() => enterEditCommand()}
-                  className={cn(
-                    "inline-flex h-8 items-center gap-1.5 rounded-[0.6rem] px-2.5 text-xs font-medium transition-colors",
-                    composerCommandKind === "edit"
-                      ? "bg-primary text-primary-foreground shadow-sm"
-                      : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                  )}
-                >
-                  <Pencil className="h-3.5 w-3.5" aria-hidden />
-                  {editTargetPost ? `Edit · ${editTargetPost.label}` : "Edit"}
-                </button>
+                {hasEditablePosts && (
+                  <button
+                    type="button"
+                    aria-pressed={composerCommandKind === "edit"}
+                    onClick={() => enterEditCommand()}
+                    className={cn(
+                      "inline-flex h-8 items-center gap-1.5 rounded-[0.6rem] px-2.5 text-xs font-medium transition-colors",
+                      composerCommandKind === "edit"
+                        ? "bg-primary text-primary-foreground shadow-sm"
+                        : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                    )}
+                  >
+                    <Pencil className="h-3.5 w-3.5" aria-hidden />
+                    {editTargetPost ? `Edit · ${editTargetPost.label}` : "Edit"}
+                  </button>
+                )}
               </div>
-              {composerCommandKind === "edit" && (
+              {effectiveCoworkComposer.kind === "edit" && (
                 <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-                  {artifactIndex.entries.length > 0 ? (
-                    <select
-                      value={editTargetPost?.artifactId ?? ""}
-                      onChange={(event) =>
-                        setCoworkComposer({
-                          kind: "edit",
-                          targetPostId: event.target.value,
-                          scope: coworkComposer.scope,
-                        })
-                      }
-                      aria-label="Post to edit"
-                      className="h-9 max-w-56 rounded-xl border border-border bg-card px-2.5 text-xs font-medium text-foreground outline-none focus:border-primary"
-                    >
-                      {!editTargetPost && (
-                        <option value="" disabled>
-                          Select a Post
-                        </option>
-                      )}
-                      {artifactIndex.entries.map((entry) => (
-                        <option key={entry.artifactId} value={entry.artifactId}>
-                          {entry.label} — {entry.artifact.body.replace(/\s+/g, " ").slice(0, 48)}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <span className="inline-flex h-9 items-center rounded-xl border border-border bg-muted px-2.5 text-xs text-muted-foreground">
-                      No Posts in this chat to edit.
-                    </span>
-                  )}
-                  {artifactIndex.entries.length > 0 && (
+                  <select
+                    value={editTargetPost?.artifactId ?? ""}
+                    onChange={(event) =>
+                      setCoworkComposer({
+                        kind: "edit",
+                        targetPostId: event.target.value,
+                        scope: effectiveCoworkComposer.scope,
+                      })
+                    }
+                    aria-label="Post to edit"
+                    className="h-9 max-w-56 rounded-xl border border-border bg-card px-2.5 text-xs font-medium text-foreground outline-none focus:border-primary"
+                  >
+                    {!editTargetPost && (
+                      <option value="" disabled>
+                        Select a Post
+                      </option>
+                    )}
+                    {artifactIndex.entries.map((entry) => (
+                      <option key={entry.artifactId} value={entry.artifactId}>
+                        {entry.label} — {entry.artifact.body.replace(/\s+/g, " ").slice(0, 48)}
+                      </option>
+                    ))}
+                  </select>
+                  {hasEditablePosts && (
                     <div
                       className="inline-flex h-9 items-center rounded-xl border border-border bg-card p-0.5"
                       role="group"
@@ -4978,13 +4995,16 @@ export function ChatWorkspace({
                     >
                       <button
                         type="button"
-                        aria-pressed={coworkComposer.scope === "full_post"}
+                        aria-pressed={effectiveCoworkComposer.scope === "full_post"}
                         onClick={() =>
-                          setCoworkComposer({ ...coworkComposer, scope: "full_post" })
+                          setCoworkComposer({
+                            ...effectiveCoworkComposer,
+                            scope: "full_post",
+                          })
                         }
                         className={cn(
                           "h-8 rounded-[0.6rem] px-2.5 text-xs font-medium transition-colors",
-                          coworkComposer.scope === "full_post"
+                          effectiveCoworkComposer.scope === "full_post"
                             ? "bg-muted text-foreground"
                             : "text-muted-foreground hover:text-foreground",
                         )}
@@ -4993,13 +5013,16 @@ export function ChatWorkspace({
                       </button>
                       <button
                         type="button"
-                        aria-pressed={coworkComposer.scope === "hook"}
+                        aria-pressed={effectiveCoworkComposer.scope === "hook"}
                         onClick={() =>
-                          setCoworkComposer({ ...coworkComposer, scope: "hook" })
+                          setCoworkComposer({
+                            ...effectiveCoworkComposer,
+                            scope: "hook",
+                          })
                         }
                         className={cn(
                           "h-8 rounded-[0.6rem] px-2.5 text-xs font-medium transition-colors",
-                          coworkComposer.scope === "hook"
+                          effectiveCoworkComposer.scope === "hook"
                             ? "bg-muted text-foreground"
                             : "text-muted-foreground hover:text-foreground",
                         )}
