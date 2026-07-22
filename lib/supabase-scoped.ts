@@ -1,27 +1,24 @@
 import { cache } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { supabaseAdmin, supabaseForWorkspaceRequest } from "./supabase";
-import { requireWorkspaceSession } from "./workspace";
+import { supabaseAdmin } from "./supabase";
+import { requireWorkspaceId } from "./workspace";
 import { retryRead } from "./retry-read";
 import { encodePostgrestValue } from "./postgrest";
 
 /**
  * Workspace-scoped Supabase client.
  *
- * Uses the current Clerk session token with the anon key, so ordinary queries
- * are checked by Postgres RLS against the same user id that the app treats as
- * workspace_id. A fixed capability allowlist preserves only service-only RPCs;
- * service-only tables and storage stay behind operation-specific adapters.
- * Queries still filter or stamp workspace_id explicitly: app-layer scoping and
- * RLS are independent defenses.
+ * Uses the server-only service client and enforces workspace isolation at the
+ * app layer by filtering or stamping every workspace-owned operation. The
+ * Clerk-token/RLS request client remains available in lib/supabase.ts, but must
+ * not be enabled until the production Clerk third-party provider is configured
+ * and verified end-to-end against Supabase.
  *
  * For workspace-scoped tables (clients, image_prompts, settings,
  * workspace_accounts, runs): use the helpers below.
  *
- * `.raw` is the request capability client retained as the compatibility name
- * used by domain repositories. For global tables
- * (accounts, posts, templates), filter by `workspace_accounts.account_id` via
- * `trackedAccountIds()`; their RLS policies enforce the same relationship.
+ * For global tables (accounts, posts, templates), drop to `.raw` and filter by
+ * `workspace_accounts.account_id` via `trackedAccountIds()`.
  *
  * Cron + background pipelines should use supabaseAdmin() directly.
  */
@@ -30,11 +27,11 @@ import { encodePostgrestValue } from "./postgrest";
 // underlying Supabase chain be typed loosely. Threading generic literal types
 // through Supabase's typegen blew up type-checking (recursive depth). Runtime
 // isolation comes from both the explicit .eq("workspace_id", ...) predicates
-// and the authenticated client's RLS policies, not from these helper types.
+// and the server-only service client never being exposed to the browser.
 
 export const scopedSupabase = cache(async function scopedSupabase() {
-  const { workspaceId, getSupabaseToken } = await requireWorkspaceSession();
-  const sb = supabaseForWorkspaceRequest(getSupabaseToken, workspaceId);
+  const workspaceId = await requireWorkspaceId();
+  const sb = supabaseAdmin();
 
   return {
     workspaceId,
@@ -130,14 +127,7 @@ export const scopedSupabase = cache(async function scopedSupabase() {
  */
 export const trackedAccountIds = cache(
   async (workspaceId: string): Promise<string[]> => {
-    const session = await requireWorkspaceSession();
-    if (session.workspaceId !== workspaceId) {
-      throw new Error("Workspace identity mismatch");
-    }
-    return trackedAccountIdsWithClient(
-      supabaseForWorkspaceRequest(session.getSupabaseToken, workspaceId),
-      workspaceId,
-    );
+    return trackedAccountIdsWithClient(supabaseAdmin(), workspaceId);
   },
 );
 
@@ -192,14 +182,7 @@ export function trackedAccountIdsForService(
 export async function latestRelevantScrape(
   workspaceId: string,
 ): Promise<{ started_at: string; finished_at: string | null } | null> {
-  const session = await requireWorkspaceSession();
-  if (session.workspaceId !== workspaceId) {
-    throw new Error("Workspace identity mismatch");
-  }
-  return latestRelevantScrapeWithClient(
-    supabaseForWorkspaceRequest(session.getSupabaseToken, workspaceId),
-    workspaceId,
-  );
+  return latestRelevantScrapeWithClient(supabaseAdmin(), workspaceId);
 }
 
 async function latestRelevantScrapeWithClient(
