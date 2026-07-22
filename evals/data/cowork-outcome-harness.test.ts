@@ -4763,6 +4763,29 @@ describe("production-shaped Cowork outcome harness", () => {
     });
   });
 
+  test("a review request without a post asks for the missing post, not a research outcome", async () => {
+    const report = await runCoworkOutcomeScenario({
+      id: "targetless-post-review",
+      request: { message: "Review this draft and give feedback only." },
+      model: {
+        provider: { rounds: [] },
+        readOnlyOrchestrator: { plans: [] },
+        directWriter: [],
+      },
+      expected: {
+        terminal: "ask",
+        artifactBodies: [],
+        actionNames: ["ask_user"],
+        assistantContents: ["I couldn't find a post to review in this chat."],
+        route: "answer",
+      },
+    });
+
+    expect(report.pass, JSON.stringify(report.safe)).toBe(true);
+    expect(report.observed.directWriterRequests).toHaveLength(0);
+    expect(report.observed.readOnlyPlannerRequests).toHaveLength(0);
+  });
+
   test("free text resolves a numbered Artifact once and edits that exact id", async () => {
     const firstId = "00000000-0000-4000-8000-000000000601";
     const secondId = "00000000-0000-4000-8000-000000000602";
@@ -4808,6 +4831,111 @@ describe("production-shaped Cowork outcome harness", () => {
       kind: "edit_artifact",
       artifactId: firstId,
     });
+  });
+
+  test("an unavailable compound ordinal asks instead of creating another post", async () => {
+    const report = await runCoworkOutcomeScenario({
+      id: "server-free-text-unavailable-compound-ordinal",
+      request: {
+        message: "Rewrite the twenty-first draft.",
+      },
+      seed: {
+        messageArtifacts: [
+          {
+            id: "00000000-0000-4000-8000-000000000611",
+            kind: "post",
+            title: "First",
+            body: COMPLETE_POST,
+          },
+          {
+            id: "00000000-0000-4000-8000-000000000612",
+            kind: "post",
+            title: "Second",
+            body: SECOND_POST,
+          },
+        ],
+      },
+      model: {
+        provider: { rounds: [] },
+        readOnlyOrchestrator: { plans: [] },
+        directWriter: [{
+          text: THIRD_POST,
+          finishReason: "stop",
+          usage: usage(180, 82, 0.00016),
+        }],
+      },
+      expected: {
+        terminal: "ask",
+        artifactBodies: [],
+        actionNames: ["ask_user"],
+        route: "answer",
+      },
+    });
+
+    expect(report.pass, JSON.stringify(report.safe)).toBe(true);
+    expect(report.observed.directWriterRequests).toHaveLength(0);
+  });
+
+  test("an invalid post target overrides an older pending research question", async () => {
+    const messageArtifacts = [
+      {
+        id: "00000000-0000-4000-8000-000000000621",
+        kind: "post" as const,
+        title: "First",
+        body: COMPLETE_POST,
+      },
+      {
+        id: "00000000-0000-4000-8000-000000000622",
+        kind: "post" as const,
+        title: "Second",
+        body: SECOND_POST,
+      },
+    ];
+    const sequence = await runCoworkOutcomeSequence([
+      {
+        id: "pending-research-question-before-invalid-target",
+        request: { message: "Research the latest OpenAI news." },
+        seed: { messageArtifacts },
+        model: {
+          provider: { rounds: [] },
+          readOnlyOrchestrator: { plans: [] },
+          directWriter: [],
+        },
+        expected: {
+          terminal: "ask",
+          artifactBodies: [],
+          actionNames: ["ask_user"],
+          assistantContents: ["What should I create from this research?"],
+          route: "read_only_orchestrator",
+        },
+      },
+      {
+        id: "invalid-target-after-pending-research-question",
+        request: { message: "Rewrite the twenty-first draft." },
+        model: {
+          provider: { rounds: [] },
+          readOnlyOrchestrator: { plans: [] },
+          directWriter: [{
+            text: THIRD_POST,
+            finishReason: "stop",
+            usage: usage(180, 82, 0.00016),
+          }],
+        },
+        expected: {
+          terminal: "ask",
+          artifactBodies: [],
+          actionNames: ["ask_user"],
+          assistantContents: [
+            "I couldn't find Post 21. Which post should I edit?",
+          ],
+          route: "answer",
+        },
+      },
+    ]);
+
+    expect(sequence.pass, JSON.stringify(sequence.attempts)).toBe(true);
+    expect(sequence.attempts[1]?.observed.directWriterRequests).toHaveLength(0);
+    expect(sequence.attempts[1]?.observed.readOnlyPlannerRequests).toHaveLength(0);
   });
 
   test("numbered free text resolves from canonical history beyond the routing and context windows", async () => {

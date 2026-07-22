@@ -156,17 +156,19 @@ export function resolveFreeTextArtifactIntent(input: {
     input.selectedArtifactId,
   );
   if (target.kind !== "selected") {
-    const reference =
-      target.kind === "unresolved_explicit"
-        ? target.reference
-        : "the current Artifact";
+    const action = edit ? "edit" : "review";
+    const missingCurrentPost = target.kind === "none";
     return {
       kind: "clarification",
       clarification: {
-        question: `I couldn’t resolve ${reference} safely. Which Artifact should I ${edit ? "edit" : "review"}?`,
-        options: edit
-          ? ["Edit the latest post Artifact", "Choose a post or Hook Artifact"]
-          : ["Review the latest post Artifact", "Choose a post or Hook Artifact"],
+        question: missingCurrentPost
+          ? `I couldn't find a post to ${action} in this chat.`
+          : `I couldn't find ${target.reference}. Which post should I ${action}?`,
+        options: missingCurrentPost
+          ? ["Paste the post here", "Cancel"]
+          : edit
+            ? ["Edit the latest post", "Choose a post"]
+            : ["Review the latest post", "Choose a post"],
         allowOther: true,
       },
     };

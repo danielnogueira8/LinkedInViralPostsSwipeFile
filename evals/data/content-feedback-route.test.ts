@@ -244,7 +244,7 @@ describe("POST /api/content-feedback", () => {
 
     expect(res.status).toBe(404);
     expect(data.ok).toBe(false);
-    expect(data.error).toBe("Artifact not found");
+    expect(data.error).toBe("Post not found");
     expect(queryFor(dbRef.current, "content_feedback")).toBeUndefined();
   });
 

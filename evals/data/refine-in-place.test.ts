@@ -766,7 +766,7 @@ describe("looksLikeComposerRefine — chat-typed refine detection", () => {
       ),
     ).toEqual({
       kind: "unresolved_explicit",
-      reference: "Post Artifact 9",
+      reference: "Post 9",
     });
   });
 

@@ -2026,6 +2026,7 @@ export async function compileTurnPlan(
     actionRetryRepository,
     persistedActionContinuation,
     pendingAskOnly,
+    artifactClarification,
     fallthroughClarification,
     modeledBatchContinuation,
     modeledBatchContractRequested,
@@ -2065,6 +2066,32 @@ export async function compileTurnPlan(
       ? composerTaskContext.expectedDraftCount
       : null) ??
     requestedDirectPostCount(effectiveUserInstruction);
+
+  // A clarification compiled during setup is already the server's terminal
+  // decision for this turn. Return the typed plan before any writer, research,
+  // action, source lookup, or missing-voice logic can reinterpret the text.
+  const authoritativeClarification =
+    artifactClarification ??
+    (pendingAskOnly ? null : fallthroughClarification);
+  if (authoritativeClarification) {
+    const contract: TurnContract = { kind: "answer", expectedCount: 0 };
+    coworkTelemetry.configure({
+      traceId: claimedUserMessageId ?? chatId,
+      route: "answer",
+      requestedContract: contract,
+    });
+    return {
+      contract,
+      modeledBatchContinuation,
+      activeModeledBatchContinuation: null,
+      modeledBatchRetryRootUserMessageId: undefined,
+      directPostCount,
+      modelSourceReference,
+      kind: "clarify",
+      route: "answer",
+      ask: authoritativeClarification,
+    };
+  }
 
   // Find-and-model: a "find a top post in my swipe file and rewrite it" turn
   // has NO pre-attached source, so directSource is empty and the fixed-source
@@ -2246,7 +2273,6 @@ export async function compileTurnPlan(
     useDirectLeadMagnet,
     useDirectCreatorStyle,
   } = directWriterEligibility;
-
   const useDirectWriter =
     !reviewOperation &&
     !modeledBatchContractRequested &&
@@ -2445,10 +2471,10 @@ export async function compileTurnPlan(
   // tool can guess whether to create, edit, research, or mutate board state.
   const clarificationAsk =
     currentTurnOperation?.kind === "review_artifact" &&
-    (!currentTurnOperation.artifactId || !trustedRefineTarget)
+      (!currentTurnOperation.artifactId || !trustedRefineTarget)
       ? {
-          question: "Which Artifact should I review?",
-          options: ["Review the latest post Artifact", "Choose a post or Hook"],
+          question: "Which post should I review?",
+          options: ["Review the latest post", "Choose a post"],
           allowOther: true,
         }
       : currentTurnOperation?.kind === "create_post" && !useDirectWriter
