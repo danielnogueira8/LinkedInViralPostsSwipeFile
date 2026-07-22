@@ -1,6 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabase";
 import { requestedDirectPostCount } from "@/lib/agent/direct-deliverable-policy";
-import { resolveTurnCount } from "@/lib/agent/turn/compile";
+import { resolveTurnCount } from "@/lib/agent/turn/count";
 import { selectAllRows } from "@/lib/db-paginate";
 
 // ---------------------------------------------------------------------------

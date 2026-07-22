@@ -86,7 +86,6 @@ import {
   requestedExactFinalLine,
 } from "@/lib/agent/exact-output";
 import { createHash } from "node:crypto";
-import { createSupabaseModeledDraftBatchRepository } from "@/lib/agent/modeled-draft-batch-supabase";
 
 // Budget covers reasoning + visible output together (OpenRouter counts them as
 // one pool). A LinkedIn post is well under 1.5k tokens, but a reasoning-default
@@ -3725,16 +3724,16 @@ async function* runLocalSlotBatch(
 }
 
 // ---------------------------------------------------------------------------
-// Durable modeled batch coordinator (uses Supabase repository).
+// Durable modeled batch coordinator (uses the injected repository adapter).
 // ---------------------------------------------------------------------------
 
 async function* runDurableSlotBatch(
   input: WriterInput,
   task: Extract<WriterTask, { kind: "multi" }>,
   sources: ModeledDraftBatchSource[],
+  repository: ModeledDraftBatchRepository,
 ): AsyncGenerator<AgentEvent> {
   const deps = resolveDependencies(input.dependencies);
-  const repository = deps.repository ?? createSupabaseModeledDraftBatchRepository();
   const runSlot = deps.runSlot ?? runModeledDraftSlot;
   const now = deps.now ?? Date.now;
   const deadlineAtMs =
@@ -3830,16 +3829,18 @@ async function* runSlotBatchTurn(
   task: Extract<WriterTask, { kind: "multi" }>,
 ): AsyncGenerator<AgentEvent> {
   const deps = resolveDependencies(input.dependencies);
+  const repository = deps.repository;
+  const groundedSources = task.groundedSources;
   const canUseDurable =
-    deps.repository &&
-    task.groundedSources &&
-    task.groundedSources.length >= task.expectedCount &&
-    task.groundedSources.every(
+    repository &&
+    groundedSources &&
+    groundedSources.length >= task.expectedCount &&
+    groundedSources.every(
       (source) => source.kind === "workspace_post" && source.url,
     );
 
   if (canUseDurable) {
-    const sources: ModeledDraftBatchSource[] = task.groundedSources!.map(
+    const sources: ModeledDraftBatchSource[] = groundedSources.map(
       (source) => ({
         id: source.id,
         text: source.text,
@@ -3849,7 +3850,7 @@ async function* runSlotBatchTurn(
         ...(source.publishedAt ? { publishedAt: source.publishedAt } : {}),
       }),
     );
-    yield* runDurableSlotBatch(input, task, sources);
+    yield* runDurableSlotBatch(input, task, sources, repository);
     return;
   }
 
