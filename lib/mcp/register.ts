@@ -69,9 +69,9 @@ const SORT_COLUMN = {
 // ~10K tokens per result re-sent every tool round. Kept in sync with that file.
 // Only fields an LLM reasons over — kept in sync with the in-app agent's
 // POST_COLS (lib/agent/tools.ts). Trimmed the fields the model never consumes
-// and that downstream code re-fetches on its own (media_urls, account_id,
+// and that downstream code re-fetches on its own (account_id,
 // accounts.id/handle/profile_pic_url, scraped_at [top-level scrape date is
-// surfaced separately], visual_kind, is_viral [constant — every query filters
+// surfaced separately], is_viral [constant — every query filters
 // is_viral=true]). Keeps text + engagement + author name/niche + post_url/id.
 // workspace_post_classification!inner(is_viral) is embedded (not filtered on
 // the GLOBAL posts.is_viral column two workspaces tracking the same creator
@@ -80,6 +80,12 @@ const SORT_COLUMN = {
 // .eq("workspace_post_classification.is_viral", true).
 const POST_COLS =
   "id, text, post_url, posted_at, reactions, comments, reposts, media_type, post_type, accounts!inner(name, niche), workspace_post_classification!inner(is_viral)";
+
+// Visual URLs can be large and are rarely needed to answer a broad research
+// query. Fetch them only when the caller is looking at one post, or has
+// explicitly asked to see the post's visual asset.
+const POST_WITH_VISUAL_COLS =
+  "id, text, post_url, posted_at, reactions, comments, reposts, media_type, post_type, media_urls, visual_kind, accounts!inner(name, niche), workspace_post_classification!inner(is_viral)";
 
 const NO_ROWS_SENTINEL = "00000000-0000-0000-0000-000000000000";
 
@@ -94,12 +100,41 @@ const TOP_BATCH_WINDOW_DAYS = 7;
 // field the model needs) and unwraps the accounts embed.
 function normalizeEmbed<
   T extends { accounts: unknown; workspace_post_classification?: unknown },
->(p: T) {
-  const { workspace_post_classification: _wpc, ...rest } = p;
-  return {
+>(p: T, includeVisual = false) {
+  const {
+    workspace_post_classification: _wpc,
+    media_urls,
+    visual_kind,
+    ...rest
+  } = p as T & { media_urls?: unknown; visual_kind?: unknown };
+  void _wpc;
+  const post = {
     ...rest,
     accounts: Array.isArray(p.accounts) ? (p.accounts[0] ?? null) : p.accounts,
   };
+  if (!includeVisual) return post;
+
+  return {
+    ...post,
+    media_urls: Array.isArray(media_urls)
+      ? media_urls.filter((url): url is string => typeof url === "string")
+      : [],
+    visual_kind: typeof visual_kind === "string" ? visual_kind : null,
+  };
+}
+
+function postColumns(includeVisual: boolean): typeof POST_COLS {
+  // supabase-js's select-string parser only accepts the baseline literal type.
+  // The visual projection is a strict superset of that shape, and
+  // normalizeEmbed narrows those optional fields before exposing them.
+  return (includeVisual ? POST_WITH_VISUAL_COLS : POST_COLS) as typeof POST_COLS;
+}
+
+function shouldIncludePostVisual(
+  limit: number,
+  includeVisual: boolean | undefined,
+) {
+  return limit === 1 || includeVisual === true;
 }
 
 /**
@@ -174,7 +209,7 @@ export function registerSwipeTools(server: McpServer) {
     {
       title: "Search viral posts",
       description:
-        "Search the viral swipe file. Filter by niche, date range, engagement thresholds, and post type. Returns top matching posts from accounts your workspace tracks.",
+        "Search the viral swipe file. Filter by niche, date range, engagement thresholds, and post type. Returns top matching posts from accounts your workspace tracks. A one-post search includes its original visual URLs when available; set include_visual to true for visuals in a larger result set.",
       inputSchema: {
         niche: z.string().optional().describe("Exact account niche, e.g. 'AI', 'SaaS'."),
         since: z
@@ -192,6 +227,10 @@ export function registerSwipeTools(server: McpServer) {
           .describe("Sort key. Default 'viral' (composite viral_score)."),
         dir: z.enum(["asc", "desc"]).optional().describe("Default 'desc'."),
         limit: z.number().int().min(1).max(50).optional().describe("Default 10, max 50."),
+        include_visual: z
+          .boolean()
+          .optional()
+          .describe("Include original visual asset URLs and visual metadata. Use when the user asks to see a post's image or visual asset. Always included when limit is 1."),
       },
     },
     async (args, extra) => {
@@ -204,10 +243,11 @@ export function registerSwipeTools(server: McpServer) {
         const sortCol = SORT_COLUMN[sortKey];
         const ascending = args.dir === "asc";
         const limit = args.limit ?? 10;
+        const includeVisual = shouldIncludePostVisual(limit, args.include_visual);
 
         let q = sb
           .from("posts")
-          .select(POST_COLS)
+          .select(postColumns(includeVisual))
           .in("account_id", accountIds.length ? accountIds : [NO_ROWS_SENTINEL])
           .eq("workspace_post_classification.workspace_id", workspaceId)
           .eq("workspace_post_classification.is_viral", true)
@@ -228,7 +268,7 @@ export function registerSwipeTools(server: McpServer) {
 
         const { data, error } = await q;
         if (error) return dbErrorContent("search_viral_posts", error);
-        const posts = (data ?? []).map(normalizeEmbed);
+        const posts = (data ?? []).map((post) => normalizeEmbed(post, includeVisual));
         return jsonContent({ ok: true, count: posts.length, posts });
       } catch (e) {
         return errorContent((e as Error).message);
@@ -241,7 +281,7 @@ export function registerSwipeTools(server: McpServer) {
     {
       title: "Get post by id",
       description:
-        "Fetch a single post by id, including the generated template if one exists. Only returns posts from accounts your workspace tracks.",
+        "Fetch a single post by id, including its original visual URLs and visual metadata when available. Only returns posts from accounts your workspace tracks.",
       inputSchema: { id: z.string().uuid().describe("Post UUID.") },
     },
     async ({ id }, extra) => {
@@ -254,13 +294,13 @@ export function registerSwipeTools(server: McpServer) {
         const sb = supabaseAdmin();
         const { data, error } = await sb
           .from("posts")
-          .select(POST_COLS)
+          .select(postColumns(true))
           .eq("id", id)
           .in("account_id", accountIds)
           .maybeSingle();
         if (error) return notFoundContent("Post", id);
         if (!data) return notFoundContent("Post", id);
-        return jsonContent({ ok: true, post: normalizeEmbed(data) });
+        return jsonContent({ ok: true, post: normalizeEmbed(data, true) });
       } catch (e) {
         return errorContent((e as Error).message);
       }
@@ -316,16 +356,20 @@ export function registerSwipeTools(server: McpServer) {
     {
       title: "Get top recently-published posts as of the most recent scrape",
       description:
-        "Returns the highest-engagement RECENTLY-PUBLISHED posts (last 7 days before the most recent scrape — 'this week' / what's working now) from your workspace's tracked accounts. Filtered by publish date, not scrape date — a scrape re-ingests old posts too, so ranking by scrape date would surface stale posts. The result's `scrape.scraped_at` is the real scrape date and `scrape.window_days` the window used; each post carries its own `posted_at`. Pass `post_type` to restrict to 'regular' or 'lead_magnet' posts; omit to include both.",
+        "Returns the highest-engagement RECENTLY-PUBLISHED posts (last 7 days before the most recent scrape — 'this week' / what's working now) from your workspace's tracked accounts. Filtered by publish date, not scrape date — a scrape re-ingests old posts too, so ranking by scrape date would surface stale posts. The result's `scrape.scraped_at` is the real scrape date and `scrape.window_days` the window used; each post carries its own `posted_at`. Pass `post_type` to restrict to 'regular' or 'lead_magnet' posts; omit to include both. A one-post request includes its original visual URLs when available; set include_visual to true for visuals in a larger result set.",
       inputSchema: {
         limit: z.number().int().min(1).max(20).optional().describe("Default 5, max 20."),
         post_type: z
           .enum(POST_TYPES)
           .optional()
           .describe("Restrict to 'regular' or 'lead_magnet' posts. Omit to include both."),
+        include_visual: z
+          .boolean()
+          .optional()
+          .describe("Include original visual asset URLs and visual metadata. Use when the user asks to see a post's image or visual asset. Always included when limit is 1."),
       },
     },
-    async ({ limit, post_type }, extra) => {
+    async ({ limit, post_type, include_visual }, extra) => {
       try {
         const workspaceId = workspaceFromExtra(extra);
         if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
@@ -347,16 +391,18 @@ export function registerSwipeTools(server: McpServer) {
         const sinceIso = new Date(
           runStartMs - TOP_BATCH_WINDOW_DAYS * 24 * 60 * 60 * 1000,
         ).toISOString();
+        const resultLimit = limit ?? 5;
+        const includeVisual = shouldIncludePostVisual(resultLimit, include_visual);
         let q = sb
           .from("posts")
-          .select(POST_COLS)
+          .select(postColumns(includeVisual))
           .in("account_id", accountIds)
           .eq("workspace_post_classification.workspace_id", workspaceId)
           .eq("workspace_post_classification.is_viral", true)
           .is("accounts.archived_at", null)
           .gte("posted_at", sinceIso)
           .order("reactions", { ascending: false, nullsFirst: false })
-          .limit(limit ?? 5);
+          .limit(resultLimit);
         // Optional post-type filter (regular vs lead_magnet) so "top regular
         // posts" doesn't silently include lead-magnet posts.
         if (post_type) q = q.eq("post_type", post_type);
@@ -370,7 +416,7 @@ export function registerSwipeTools(server: McpServer) {
             window_days: TOP_BATCH_WINDOW_DAYS,
           },
           count: data?.length ?? 0,
-          posts: (data ?? []).map(normalizeEmbed),
+          posts: (data ?? []).map((post) => normalizeEmbed(post, includeVisual)),
         });
       } catch (e) {
         return errorContent((e as Error).message);
