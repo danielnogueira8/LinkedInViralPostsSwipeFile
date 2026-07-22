@@ -83,6 +83,9 @@ function toCategory(tell: string): AiTellCategory | null {
       "unfilled-placeholder",
       "citation-markup-leak",
       "hashtag-stuffing",
+      "faux-insight-setup",
+      "colon-reveal",
+      "rhetorical-setup",
     ].includes(tell)
   ) return "fake_polish";
   return null;

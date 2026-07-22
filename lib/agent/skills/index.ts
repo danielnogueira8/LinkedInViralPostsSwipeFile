@@ -255,6 +255,10 @@ delve/delves/delving, tapestry, landscape (figurative), realm, paradigm, embark,
 - Use only one hedge. Never stack "could potentially," "may eventually," or "might ultimately." Do not hide missing facts behind "is believed to," "likely," or "appears to have." Verify the fact or omit it.
 - Cut infomercial suspense: "The catch?", "The kicker?", "The best part?", "Plot twist:", and "Here's what stood out." State the information directly.
 - Do not manufacture novelty with "nobody is talking about this," "the insight everyone is missing," "what nobody tells you," or an invented label that is never defined. Explain the mechanism instead.
+- Cut faux-insight setups such as "the part everyone misses," "what most people get wrong," and "here's what nobody tells you." They flatter the writer before making the claim. State the mechanism or opinion directly.
+- Do not use a colon reveal for fake drama: "The detail that makes it work: a saved reply." Write a normal sentence instead. Colons are still useful for real lists, labels, quotes, and grammar.
+- Cut rhetorical setups such as "What if I told you..." and "Think about it:". Make the claim without making the reader wait for it.
+- Delete fake-profound kickers and summary-recap endings. Do not replace them with a shinier metaphor. End on the last concrete point, takeaway, or next action.
 - Avoid strings of -ing clauses that pretend to analyze ("symbolizing..., reflecting..., showcasing..."). Replace them with a specific consequence or cut them.
 - Do not use false ranges ("from ancient civilizations to modern startups"), stacked historical analogies, or lists of prestigious names to borrow credibility. Keep the one comparison or source that does real work.
 - Lists must carry information. Avoid five or more symmetrical bare noun phrases, repeated bold labels, and label fragments ending in periods where a colon belongs. Genuine steps, comparisons, and parameters are fine.

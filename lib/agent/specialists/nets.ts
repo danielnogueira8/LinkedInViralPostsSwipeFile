@@ -287,6 +287,11 @@ export function aiTellMetrics(body: string): string[] {
     // at the very start of the post (or a paragraph), which reads as a chatbot
     // tic. Bounded to the opener position + the classic phrases.
     ["rhetorical-opener", /(?:^|\n)\s*(?:Honestly[,?]|Real talk[,.:]?|Truth be told[,.]?|Let'?s face it[,.]?|Look[,.]|Here'?s the thing[,.:])/i],
+    // High-signal no-ai-slop patterns: promotional setups that delay a claim
+    // instead of making it. Kept narrow because these reach the repair pass.
+    ["faux-insight-setup", /(?:^|[.!?]\s)(?:This is the part (?:most people|everyone) (?:skip|miss)|What (?:most people|everyone) (?:get wrong|miss)(?: is|:)|Here'?s what nobody tells you|The part everyone misses)\b/i],
+    ["colon-reveal", /(?:^|[.!?]\s)(?:The (?:detail|thing|part) that (?:makes it work|matters)|The (?:best|real) part)\s*:\s*[a-z]/i],
+    ["rhetorical-setup", /(?:^|[.!?]\s)(?:What if I told you\b|Think about it\s*:)/i],
   ];
   for (const [name, pattern] of patterns) {
     if (pattern.test(body)) tells.push(name);
