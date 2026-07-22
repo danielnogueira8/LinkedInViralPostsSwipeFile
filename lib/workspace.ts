@@ -60,7 +60,9 @@ export async function requireWorkspaceSession(): Promise<WorkspaceSession> {
   if (!userId) throw new NoWorkspaceError();
   return {
     workspaceId: userId,
-    getSupabaseToken: () => getToken({ template: "supabase" }),
+    // Supabase's native Clerk integration accepts the normal session token.
+    // The legacy custom "supabase" JWT template is deprecated and may not exist.
+    getSupabaseToken: () => getToken(),
   };
 }
 
