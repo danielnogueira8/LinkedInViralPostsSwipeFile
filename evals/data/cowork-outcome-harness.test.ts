@@ -4754,6 +4754,132 @@ describe("production-shaped Cowork outcome harness", () => {
 
     expect(sequence.pass, JSON.stringify(sequence.attempts)).toBe(true);
     expect(sequence.attempts[1]?.safe.artifactCount).toBe(0);
+    const persistedReview = sequence.attempts[1]?.persisted.messages
+      .find((message) => message.role === "user")
+      ?.tool_calls?.find((call) => call.id === "_turn_operation");
+    expect(JSON.parse(persistedReview?.function.arguments ?? "null")).toMatchObject({
+      version: 1,
+      kind: "review_artifact",
+    });
+  });
+
+  test("free text resolves a numbered Artifact once and edits that exact id", async () => {
+    const firstId = "00000000-0000-4000-8000-000000000601";
+    const secondId = "00000000-0000-4000-8000-000000000602";
+    const revised = COMPLETE_POST.replace(
+      "Building a personal brand",
+      "Your personal brand",
+    );
+    const report = await runCoworkOutcomeScenario({
+      id: "server-free-text-numbered-edit",
+      request: {
+        message: "Review Draft 1 and make it punchier.",
+        selectedArtifactId: secondId,
+      },
+      seed: {
+        messageArtifacts: [
+          { id: firstId, kind: "post", title: "First", body: COMPLETE_POST },
+          { id: secondId, kind: "post", title: "Second", body: SECOND_POST },
+        ],
+      },
+      model: {
+        provider: { rounds: [] },
+        directWriter: [{
+          text: revised,
+          finishReason: "stop",
+          usage: usage(180, 82, 0.00016),
+        }],
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [revised],
+        actionNames: [],
+        route: "direct_writer",
+      },
+    });
+
+    expect(report.pass, JSON.stringify(report.safe)).toBe(true);
+    expect(report.persisted.artifacts[0]?.id).toBe(firstId);
+    const operation = report.persisted.messages
+      .find((message) => message.role === "user")
+      ?.tool_calls?.find((call) => call.id === "_turn_operation");
+    expect(JSON.parse(operation?.function.arguments ?? "null")).toMatchObject({
+      version: 1,
+      kind: "edit_artifact",
+      artifactId: firstId,
+    });
+  });
+
+  test("a server-compiled edit inherits the target Artifact's custom skill", async () => {
+    const targetId = "00000000-0000-4000-8000-000000000606";
+    const report = await runCoworkOutcomeScenario({
+      id: "server-free-text-inherited-skill",
+      request: { message: "Make this punchier.", selectedArtifactId: targetId },
+      seed: {
+        customSkill: CUSTOM_SKILL,
+        messageArtifact: {
+          id: targetId,
+          kind: "post",
+          title: "Skilled draft",
+          body: COMPLETE_POST,
+          meta: { skills: [CUSTOM_SKILL.name] },
+        },
+      },
+      model: {
+        provider: { rounds: [] },
+        directWriter: [{
+          text: SECOND_POST,
+          finishReason: "stop",
+          usage: usage(180, 82, 0.00016),
+        }],
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [SECOND_POST],
+        actionNames: [],
+        route: "direct_writer",
+      },
+    });
+
+    expect(report.pass, JSON.stringify(report.safe)).toBe(true);
+    expect(
+      JSON.stringify(report.observed.directWriterRequests[0]?.messages ?? []),
+    ).toContain("CUSTOM_SKILL_RETRY_SENTINEL");
+  });
+
+  test("stale selected-card context clarifies instead of editing another Artifact", async () => {
+    const report = await runCoworkOutcomeScenario({
+      id: "server-free-text-stale-selected-edit",
+      request: {
+        message: "Make this punchier.",
+        selectedArtifactId: "deleted-draft",
+      },
+      seed: {
+        messageArtifact: {
+          id: "00000000-0000-4000-8000-000000000605",
+          kind: "post",
+          title: "Current",
+          body: COMPLETE_POST,
+        },
+      },
+      model: {
+        provider: { rounds: [] },
+        directWriter: [{
+          text: SECOND_POST,
+          finishReason: "stop",
+          usage: usage(180, 82, 0.00016),
+        }],
+      },
+      expected: {
+        terminal: "ask",
+        artifactBodies: [],
+        actionNames: ["ask_user"],
+        route: "answer",
+      },
+    });
+
+    expect(report.pass, JSON.stringify(report.safe)).toBe(true);
+    expect(report.observed.directWriterRequests).toHaveLength(0);
   });
 
   test("a server-resolved typed edit updates the newest draft, never an older draft", async () => {

@@ -349,10 +349,15 @@ export const chatTurnRequestSchema = z.object({
   // Empty/overlong/junk user text is handled by preflightUserPrompt below so
   // the user gets a friendly, specific rejection and no turn is claimed.
   message: z.string(),
-  // Immutable current-turn intent supplied by clients that already know the
-  // operation (card Edit/Review buttons and typed composer starters). Legacy
-  // refine fields remain accepted during migration, but this object wins.
+  // Immutable current-turn intent supplied by explicit UI controls that
+  // already know the operation. Ordinary composer language is compiled by the
+  // server. Legacy refine fields remain accepted during migration, but this
+  // object wins.
   operation: chatTurnOperationSchema.optional(),
+  // Non-authoritative browser context for free-text references such as
+  // "improve this". The server re-resolves this id against canonical chat
+  // Artifacts before compiling an operation; explicit UI actions use operation.
+  selectedArtifactId: z.string().min(1).max(200).optional(),
   clientTurnId: z.string().uuid().optional(),
   retryOfUserMessageId: z.string().min(1).max(200).optional(),
   actionSelectionIds: z.array(z.string().uuid()).min(1).max(5).optional(),

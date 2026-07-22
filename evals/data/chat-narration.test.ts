@@ -1,5 +1,6 @@
 import { describe, test, expect } from "vitest";
 import {
+  buildArtifactIndex,
   kindNoun,
   labelArtifacts,
   panelTitle,
@@ -10,6 +11,7 @@ import {
   activityTailLabel,
   refineSuggestions,
   visibleActivityTools,
+  resolveArtifactReference,
 } from "@/lib/chat-ui-policy";
 import type { Artifact } from "@/lib/agent/contracts";
 import type { Message } from "@/lib/chat-hydration";
@@ -76,6 +78,60 @@ describe("labelArtifacts — Draft/Hook numbering", () => {
     const a = art("post", "first");
     const b = art("post", "second");
     expect(labelArtifacts([a, b]).map((o) => o.a.body)).toEqual(["first", "second"]);
+  });
+});
+
+describe("shared Artifact index", () => {
+  test("deduplicates a re-emitted Artifact while preserving its original ordinal", () => {
+    const original = { ...art("post", "first"), id: "artifact-1" };
+    const updated = { ...original, body: "updated body" };
+    const second = { ...art("post", "second"), id: "artifact-2" };
+
+    expect(buildArtifactIndex([original, updated, second]).entries).toEqual([
+      expect.objectContaining({
+        artifactId: "artifact-1",
+        ordinal: 1,
+        label: "Draft 1",
+        artifact: updated,
+      }),
+      expect.objectContaining({
+        artifactId: "artifact-2",
+        ordinal: 2,
+        label: "Draft 2",
+        artifact: second,
+      }),
+    ]);
+  });
+
+  test("resolves UI labels, selected context, and missing explicit references", () => {
+    const artifacts = [
+      { ...art("hook", "first hook"), id: "hook-1" },
+      { ...art("post", "first post"), id: "post-1" },
+      { ...art("post", "second post"), id: "post-2" },
+    ];
+
+    expect(resolveArtifactReference("Review Draft 1", artifacts, "post-2"))
+      .toEqual({ kind: "selected", artifactId: "post-1" });
+    expect(resolveArtifactReference("Improve this", artifacts, "post-1"))
+      .toEqual({ kind: "selected", artifactId: "post-1" });
+    expect(resolveArtifactReference("Review Draft 9", artifacts, null))
+      .toEqual({ kind: "unresolved_explicit", reference: "Draft 9" });
+  });
+
+  test("does not silently replace a stale selected Artifact with the latest one", () => {
+    expect(
+      resolveArtifactReference(
+        "Make this punchier",
+        [
+          { id: "post-1", kind: "post" },
+          { id: "post-2", kind: "post" },
+        ],
+        "deleted-draft",
+      ),
+    ).toEqual({
+      kind: "unresolved_explicit",
+      reference: "the selected Artifact",
+    });
   });
 });
 

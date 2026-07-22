@@ -39,7 +39,6 @@ import {
   CREATOR_STYLE_SELECTION_REQUIRED_ERROR,
   CUSTOM_SKILL_RETRY_CONTEXT_VERSION,
   LEAD_MAGNET_SELECTION_REQUIRED_ERROR,
-  latestChatDraft,
   requestedBasePostCount,
   requestedExplicitBasePostCount,
   type CreatorStyleRetryContext,
@@ -75,9 +74,19 @@ import {
   type ComposerTaskSelection,
 } from "@/lib/composer-task-context";
 import { leadMagnetGenerateSchema } from "@/lib/lead-magnets";
-import { looksLikeComposerRefine } from "@/lib/chat-composer-policy";
 import { isOpinionOrQuestionAboutContent } from "@/lib/agent/direct-writer-policy";
 import { requestsDurableOrAction } from "@/lib/agent/source-policy";
+import {
+  artifactSkillNames,
+  buildArtifactIndex,
+  resolveArtifactReference,
+} from "@/lib/chat-artifact-policy";
+import {
+  explicitlyRequestsNewArtifact,
+  resolveFreeTextArtifactIntent,
+} from "@/lib/agent/turn/resolve-artifact-intent";
+import { getSkillsByNames } from "@/lib/content-resource-operations";
+import { SKILLS_PER_TURN_MAX } from "@/lib/custom-skills";
 import {
   decideFallthroughIntent,
   INTENT_DECISION_ENABLED,
@@ -863,23 +872,13 @@ export async function setupChatTurn(
         clarificationForAmbiguousContinuation(userText);
     }
 
-    // Implicit refine target (draft continuity): when the user types a plain
-    // edit like "make it punchier" without clicking a card's Refine button, the
-    // client sends no refineTargetId, so the server used to regenerate a NEW
-    // draft instead of editing the one on screen. Resolve the chat's latest
-    // draft as the refine target here — this reuses the exact client-driven
-    // refine pipeline (resolveTrustedRefineTarget → direct-refine lane →
-    // same-artifact-id in-place update + version stepper). Guards:
-    //   • only when the client sent no explicit target (client always wins),
-    //   • not when a fresh source is attached this turn (modelSourceId) — that's
-    //     a new modeling turn, not an edit of the prior draft,
-    //   • not on retry / action-continuation turns (those own their routing),
-    //   • only when the wording reads like an edit — looksLikeComposerRefine
-    //     already rejects "another / new / variation / version N / give me N",
-    //   • only when a post/hook draft actually exists in this chat.
-    // The full draft body is ALSO injected into the model's context in
-    // buildTurnContext (latestChatDraft) so the model can see it even when a
-    // refine falls outside the narrow direct-refine lane (e.g. a hook edit).
+    // Free-text Artifact intent has one owner: the server. The browser may
+    // identify the visibly selected card as context, but only this compiler can
+    // turn ordinary language into edit/review authority. It resolves labels
+    // and identity through the same Artifact index the UI uses, persists the
+    // resulting typed operation, and fails closed when the target is missing.
+    // Explicit UI operations, retries, modeled turns, and actions already have
+    // stronger contracts and therefore bypass this compiler.
     const implicitRefineGuardsPass =
       !refineTargetId &&
       !currentTurnOperation &&
@@ -889,56 +888,96 @@ export async function setupChatTurn(
       !pendingActionAsk &&
       !normalizedActionRoute &&
       !fallthroughClarification;
-    if (implicitRefineGuardsPass && looksLikeComposerRefine(userText)) {
-      const implicitTarget = latestChatDraft(chronologicalRecentMessageWindow);
-      if (implicitTarget) {
-        refineTargetId = implicitTarget.id;
-        refineInstruction = userText;
-        skipDecision = true;
-      }
-    } else if (
-      // Fallthrough intent-decision (Piece 1): the deterministic
-      // looksLikeComposerRefine heuristic did NOT recognize this as an edit,
-      // but a draft exists and nothing else claims the turn — exactly the case
-      // that otherwise drops into the tool-less answer lane and hallucinates a
-      // new post. Ask GPT-Luna whether the user actually means to edit the
-      // current draft; if so, set the same implicit refine target the heuristic
-      // would have, and the general-refine lane edits it in place. A missing or
-      // malformed verdict fails closed to a typed clarification.
-      // (This is the `else` of the heuristic branch, so looksLikeComposerRefine
-      // is already false here.)
-      INTENT_DECISION_ENABLED &&
-      implicitRefineGuardsPass &&
-      !isOpinionOrQuestionAboutContent(userText)
-    ) {
-      const implicitTarget = latestChatDraft(chronologicalRecentMessageWindow);
-      if (implicitTarget) {
-        const decision = await decideFallthroughIntent({
+    if (implicitRefineGuardsPass) {
+      const conversationArtifacts = chronologicalRecentMessageWindow.flatMap(
+        (message) => message.artifacts ?? [],
+      );
+      const artifactIntent = resolveFreeTextArtifactIntent({
+        message: userText,
+        artifacts: conversationArtifacts,
+        selectedArtifactId: body.selectedArtifactId ?? null,
+      });
+      if (artifactIntent.kind === "operation") {
+        applyTurnOperation(artifactIntent.operation);
+        if (
+          artifactIntent.operation.kind === "edit_artifact" &&
+          skillIds.length === 0 &&
+          !customSkillRetryContext
+        ) {
+          const target = buildArtifactIndex(conversationArtifacts).entries.find(
+            (entry) =>
+              entry.artifactId === artifactIntent.operation.artifactId,
+          )?.artifact;
+          const inheritedNames = target
+            ? artifactSkillNames(target).slice(0, SKILLS_PER_TURN_MAX)
+            : [];
+          if (inheritedNames.length > 0) {
+            const inheritedSkills = await getSkillsByNames({
+              db: sbRaw,
+              workspaceId,
+              names: inheritedNames,
+            });
+            const idsByName = new Map(
+              inheritedSkills.map((skill) => [skill.name, skill.id]),
+            );
+            skillIds = inheritedNames
+              .map((name) => idsByName.get(name))
+              .filter((id): id is string => Boolean(id));
+          }
+        }
+      } else if (artifactIntent.kind === "clarification") {
+        fallthroughClarification = artifactIntent.clarification;
+      } else if (
+        // Truly unclear fallthrough language still gets the bounded classifier
+        // used before this compiler existed. Its edit verdict is converted into
+        // the same persisted operation and its target is resolved by the shared
+        // Artifact module; it cannot introduce a second execution pathway.
+        INTENT_DECISION_ENABLED &&
+        !isOpinionOrQuestionAboutContent(userText) &&
+        !explicitlyRequestsNewArtifact(userText)
+      ) {
+        const fallbackTarget = resolveArtifactReference(
           userText,
-          workspaceId,
-          hasCurrentDraft: true,
-          hasModelSource: false,
-          signal: setupSignal,
-        });
-        if (decision?.intent === "edit_current_draft") {
-          refineTargetId = implicitTarget.id;
-          refineInstruction = userText;
-          skipDecision = true;
-        } else if (decision?.intent === "ambiguous" && decision.clarify) {
+          conversationArtifacts,
+          body.selectedArtifactId ?? null,
+        );
+        if (fallbackTarget.kind === "selected") {
+          const decision = await decideFallthroughIntent({
+            userText,
+            workspaceId,
+            hasCurrentDraft: true,
+            hasModelSource: false,
+            signal: setupSignal,
+          });
+          if (decision?.intent === "edit_current_draft") {
+            applyTurnOperation({
+              kind: "edit_artifact",
+              artifactId: fallbackTarget.artifactId,
+              instruction: userText,
+              editMode: "general",
+            });
+          } else if (decision?.intent === "ambiguous" && decision.clarify) {
+            fallthroughClarification = {
+              question: decision.clarify.question,
+              options: decision.clarify.options,
+              allowOther: true,
+            };
+          } else if (!decision) {
+            fallthroughClarification = {
+              question:
+                "I couldn’t safely determine what you want to do with the current draft. What should I do?",
+              options: [
+                "Edit the current draft",
+                "Create a new draft",
+                "Give feedback without editing",
+              ],
+              allowOther: true,
+            };
+          }
+        } else if (fallbackTarget.kind === "unresolved_explicit") {
           fallthroughClarification = {
-            question: decision.clarify.question,
-            options: decision.clarify.options,
-            allowOther: true,
-          };
-        } else if (!decision) {
-          fallthroughClarification = {
-            question:
-              "I couldn’t safely determine what you want to do with the current draft. What should I do?",
-            options: [
-              "Edit the current draft",
-              "Create a new draft",
-              "Give feedback without editing",
-            ],
+            question: `I couldn’t resolve ${fallbackTarget.reference} safely. Which Artifact should I use?`,
+            options: ["Use the latest Draft", "Choose a Draft or Hook"],
             allowOther: true,
           };
         }

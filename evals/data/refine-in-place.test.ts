@@ -1,8 +1,6 @@
 import { describe, test, expect } from "vitest";
 import {
   assistantAfterPersistedUserMessage,
-  looksLikeArtifactReviewRequest,
-  looksLikeComposerRefine,
   askAnswerShouldRefineLatestDraft,
   artifactSkillNames,
   skillNamesToIds,
@@ -10,7 +8,6 @@ import {
   guardRefineCollapse,
   hasAssistantAfterPersistedUserMessage,
   reinsertArtifact,
-  reviewArtifactIdForComposer,
   writableArtifactSelectionForComposer,
   writableArtifactIdForComposer,
 } from "@/lib/chat-ui-policy";
@@ -23,6 +20,10 @@ import {
   splicePreservedBody,
 } from "@/lib/hook-splice";
 import { turnOperationMarkerFromToolCalls } from "@/lib/agent/chat-turn";
+import {
+  looksLikeArtifactReviewRequest,
+  looksLikeComposerRefine,
+} from "@/lib/agent/turn/resolve-artifact-intent";
 
 describe("persisted turn completion identity", () => {
   const repeatedPrompt = "Write one original post";
@@ -719,54 +720,6 @@ describe("looksLikeComposerRefine — chat-typed refine detection", () => {
     expect(looksLikeComposerRefine(msg)).toBe(false);
   });
 
-  test("a review operation targets the expanded non-newest draft", () => {
-    const drafts = [
-      { id: "draft-1", kind: "post" },
-      { id: "draft-2", kind: "post" },
-    ];
-
-    expect(
-      reviewArtifactIdForComposer(
-        "Review the selected Draft 1 and give feedback only.",
-        drafts,
-        "draft-1",
-      ),
-    ).toBe("draft-1");
-    expect(
-      reviewArtifactIdForComposer("Make it punchier.", drafts, "draft-1"),
-    ).toBeUndefined();
-  });
-
-  test("an explicit artifact ordinal wins over the expanded artifact", () => {
-    const artifacts = [
-      { id: "artifact-1", kind: "post" },
-      { id: "artifact-2", kind: "post" },
-    ];
-
-    expect(
-      reviewArtifactIdForComposer(
-        "Review Draft 1 and give me feedback.",
-        artifacts,
-        "artifact-2",
-      ),
-    ).toBe("artifact-1");
-  });
-
-  test("an explicit latest-artifact review wins over an older expanded artifact", () => {
-    const artifacts = [
-      { id: "artifact-1", kind: "post" },
-      { id: "artifact-2", kind: "post" },
-    ];
-
-    expect(
-      reviewArtifactIdForComposer(
-        "Review the latest draft.",
-        artifacts,
-        "artifact-1",
-      ),
-    ).toBe("artifact-2");
-  });
-
   test("a compound review and rewrite is an edit, not a read-only review", () => {
     const instruction =
       "Review this draft, then rewrite it to make the hook punchier.";
@@ -853,13 +806,6 @@ describe("looksLikeComposerRefine — chat-typed refine detection", () => {
   test("a read-only command about some other object does not bind the open draft", () => {
     expect(looksLikeArtifactReviewRequest("Review my weekly content strategy."))
       .toBe(false);
-    expect(
-      reviewArtifactIdForComposer(
-        "Summarize the attached research file.",
-        [{ id: "draft-1", kind: "post" }],
-        "draft-1",
-      ),
-    ).toBeUndefined();
   });
 });
 

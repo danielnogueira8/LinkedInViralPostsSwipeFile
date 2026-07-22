@@ -6,6 +6,140 @@ export function kindNoun(kind: Artifact["kind"]): string {
   return kind === "hook" ? "Hook" : "Draft";
 }
 
+export type WritableArtifactKind = "post" | "hook";
+
+export type ArtifactIndexEntry<
+  T extends { id: string; kind: string } = Artifact,
+> = {
+  artifactId: string;
+  artifact: T;
+  kind: WritableArtifactKind;
+  ordinal: number;
+  label: string;
+};
+
+export type ArtifactReferenceResolution =
+  | { kind: "selected"; artifactId: string }
+  | { kind: "unresolved_explicit"; reference: string }
+  | { kind: "none" };
+
+/**
+ * Canonical writable-Artifact ordering shared by presentation and intent
+ * resolution. A re-emitted Artifact keeps its first creation position while
+ * its latest value wins, so source backfills and streamed replacements cannot
+ * renumber Drafts or Hooks.
+ */
+export function buildArtifactIndex<T extends { id: string; kind: string }>(
+  artifacts: readonly T[],
+): { entries: ArtifactIndexEntry<T>[] } {
+  const orderedIds: string[] = [];
+  const latestById = new Map<string, T>();
+  for (const artifact of artifacts) {
+    if (artifact.kind !== "post" && artifact.kind !== "hook") continue;
+    if (!latestById.has(artifact.id)) orderedIds.push(artifact.id);
+    latestById.set(artifact.id, artifact);
+  }
+  const writable = orderedIds.flatMap((id) => {
+    const artifact = latestById.get(id);
+    return artifact ? [artifact] : [];
+  });
+  const totals = writable.reduce<Record<WritableArtifactKind, number>>(
+    (counts, artifact) => {
+      counts[artifact.kind as WritableArtifactKind] += 1;
+      return counts;
+    },
+    { post: 0, hook: 0 },
+  );
+  const ordinals: Record<WritableArtifactKind, number> = { post: 0, hook: 0 };
+  const entries = writable.map((artifact): ArtifactIndexEntry<T> => {
+    const kind = artifact.kind as WritableArtifactKind;
+    const ordinal = ++ordinals[kind];
+    const noun = kind === "hook" ? "Hook" : "Draft";
+    return {
+      artifactId: artifact.id,
+      artifact,
+      kind,
+      ordinal,
+      label: totals[kind] > 1 ? `${noun} ${ordinal}` : noun,
+    };
+  });
+  return { entries };
+}
+
+/** Resolve a textual Artifact reference without inferring the turn operation. */
+export function resolveArtifactReference<T extends { id: string; kind: string }>(
+  message: string,
+  artifacts: readonly T[],
+  selectedArtifactId: string | null,
+): ArtifactReferenceResolution {
+  const { entries } = buildArtifactIndex(artifacts);
+  const explicitOrdinal =
+    /\b(draft|hook)\s+#?\s*(\d+)\b(?!\s+(?:posts?|hooks?)\b)/i.exec(message);
+  if (explicitOrdinal) {
+    const noun = explicitOrdinal[1].toLowerCase();
+    const ordinal = Number(explicitOrdinal[2]);
+    const kind: WritableArtifactKind = noun === "draft" ? "post" : "hook";
+    const artifactId = entries.find(
+      (entry) => entry.kind === kind && entry.ordinal === ordinal,
+    )?.artifactId;
+    return artifactId
+      ? { kind: "selected", artifactId }
+      : {
+          kind: "unresolved_explicit",
+          reference: `${noun === "draft" ? "Draft" : "Hook"} ${ordinal}`,
+        };
+  }
+  const latest =
+    /\b(?:latest|newest|most\s+recent)\s+(post|draft|hook|one)\b/i.exec(
+      message,
+    );
+  if (latest) {
+    const noun = latest[1].toLowerCase();
+    const matching =
+      noun === "draft" || noun === "post"
+        ? entries.filter((entry) => entry.kind === "post")
+        : noun === "hook"
+          ? entries.filter((entry) => entry.kind === "hook")
+          : entries;
+    const artifactId = matching.at(-1)?.artifactId;
+    return artifactId ? { kind: "selected", artifactId } : { kind: "none" };
+  }
+  const selected = entries.find(
+    (entry) => entry.artifactId === selectedArtifactId,
+  )?.artifactId;
+  if (selectedArtifactId && !selected) {
+    return {
+      kind: "unresolved_explicit",
+      reference: "the selected Artifact",
+    };
+  }
+  const artifactId = selected ?? entries.at(-1)?.artifactId;
+  return artifactId ? { kind: "selected", artifactId } : { kind: "none" };
+}
+
+/** Compatibility name retained while non-UI call sites migrate. */
+export function writableArtifactSelectionForComposer(
+  message: string,
+  artifacts: readonly { id: string; kind: string }[],
+  expandedArtifactId: string | null,
+): ArtifactReferenceResolution {
+  return resolveArtifactReference(message, artifacts, expandedArtifactId);
+}
+
+/** Compatibility name retained while non-UI call sites migrate. */
+export function writableArtifactIdForComposer(
+  message: string,
+  artifacts: readonly { id: string; kind: string }[],
+  expandedArtifactId: string | null,
+): string | undefined {
+  const selection = resolveArtifactReference(
+    message,
+    artifacts,
+    expandedArtifactId,
+  );
+  return selection.kind === "selected" ? selection.artifactId : undefined;
+}
+
 // Assign each artifact a display label numbered WITHIN its kind ("Hook 1",
 // "Hook 2", "Draft 1"…), in creation order. The number is omitted when there's
 // only one of that kind (a lone draft is just "Draft", matching the old single-
@@ -14,17 +148,10 @@ export function kindNoun(kind: Artifact["kind"]): string {
 export function labelArtifacts(
   artifacts: Artifact[],
 ): { a: Artifact; label: string | undefined }[] {
-  const totals = artifacts.reduce<Record<string, number>>((acc, a) => {
-    acc[a.kind] = (acc[a.kind] ?? 0) + 1;
-    return acc;
-  }, {});
-  const seq: Record<string, number> = {};
-  return artifacts.map((a) => {
-    seq[a.kind] = (seq[a.kind] ?? 0) + 1;
-    const noun = kindNoun(a.kind);
-    const label = totals[a.kind] > 1 ? `${noun} ${seq[a.kind]}` : noun;
-    return { a, label };
-  });
+  return buildArtifactIndex(artifacts).entries.map((entry) => ({
+    a: entry.artifact,
+    label: entry.label,
+  }));
 }
 
 // Panel header noun: "Drafts", "Hooks", or "Drafts & Hooks" depending on the mix.
