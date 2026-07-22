@@ -74,6 +74,10 @@ import {
 import { leadMagnetGenerateSchema } from "@/lib/lead-magnets";
 import { looksLikeComposerRefine } from "@/lib/chat-composer-policy";
 import {
+  decideFallthroughIntent,
+  INTENT_DECISION_ENABLED,
+} from "@/lib/agent/turn/intent-decision";
+import {
   recoverLatestForcedNoModelFormatId,
   recoverLatestSelection,
 } from "@/lib/agent/turn/sticky-context";
@@ -766,19 +770,47 @@ export async function setupChatTurn(
     // The full draft body is ALSO injected into the model's context in
     // buildTurnContext (latestChatDraft) so the model can see it even when a
     // refine falls outside the narrow direct-refine lane (e.g. a hook edit).
-    if (
+    const implicitRefineGuardsPass =
       !refineTargetId &&
       !modelSourceId &&
       !body.retryOfUserMessageId &&
       !persistedActionContinuation &&
-      !pendingActionAsk &&
-      looksLikeComposerRefine(userText)
-    ) {
+      !pendingActionAsk;
+    if (implicitRefineGuardsPass && looksLikeComposerRefine(userText)) {
       const implicitTarget = latestChatDraft(recentMessageWindow);
       if (implicitTarget) {
         refineTargetId = implicitTarget.id;
         refineInstruction = userText;
         skipDecision = true;
+      }
+    } else if (
+      // Fallthrough intent-decision (Piece 1): the deterministic
+      // looksLikeComposerRefine heuristic did NOT recognize this as an edit,
+      // but a draft exists and nothing else claims the turn — exactly the case
+      // that otherwise drops into the tool-less answer lane and hallucinates a
+      // new post. Ask GPT-Luna whether the user actually means to edit the
+      // current draft; if so, set the same implicit refine target the heuristic
+      // would have, and the general-refine lane edits it in place. FAILS OPEN:
+      // null / disabled / any error → today's exact behavior. Flag-gated.
+      // (This is the `else` of the heuristic branch, so looksLikeComposerRefine
+      // is already false here.)
+      INTENT_DECISION_ENABLED &&
+      implicitRefineGuardsPass
+    ) {
+      const implicitTarget = latestChatDraft(recentMessageWindow);
+      if (implicitTarget) {
+        const decision = await decideFallthroughIntent({
+          userText,
+          workspaceId,
+          hasCurrentDraft: true,
+          hasModelSource: false,
+          signal: setupSignal,
+        });
+        if (decision?.intent === "edit_current_draft") {
+          refineTargetId = implicitTarget.id;
+          refineInstruction = userText;
+          skipDecision = true;
+        }
       }
     }
 
