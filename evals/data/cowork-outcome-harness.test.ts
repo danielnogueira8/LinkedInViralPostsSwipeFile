@@ -4631,7 +4631,10 @@ describe("production-shaped Cowork outcome harness", () => {
       },
       {
         id: "feedback-command-turn-2",
-        request: { message: "Review this post and give me feedback." },
+        request: {
+          message:
+            "Review this post and give me feedback only. Do not rewrite or edit the draft.",
+        },
         model: { provider: textProvider(feedback) },
         expected: {
           terminal: "done",

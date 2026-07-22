@@ -46,6 +46,26 @@ describe("direct refine policy", () => {
     expect(
       isExclusiveHookRefine("Tighten the hook and strengthen the CTA"),
     ).toBe(false);
+    expect(
+      isExclusiveHookRefine(
+        "Replace only the opening sentence with: Authority must come before execution.",
+      ),
+    ).toBe(true);
+  });
+
+  test("an exact opening-sentence replacement is deterministic and preserves the body", () => {
+    expect(
+      transformDirectRefineCandidate({
+        focus: "hook",
+        instruction:
+          "Replace only the opening sentence with: Authority must come before execution.",
+        originalBody: ORIGINAL,
+        candidateBody: "The model ignored the requested sentence.\n\nWrong body.",
+      }).body,
+    ).toBe(ORIGINAL.replace(
+      "The safest career is the one people can see you building.",
+      "Authority must come before execution.",
+    ));
   });
 
   test("treats an exact final-line preservation constraint as non-actionable", () => {

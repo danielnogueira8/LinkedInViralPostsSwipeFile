@@ -43,7 +43,7 @@ const SOURCE_TO_FULL_POST_RE =
 const WORKSPACE_CONTEXT_RE =
   /\b(?:in\s+my\s+voice|my\s+(?:voice|brand|profile|workspace|swipe\s+file|saved\s+posts?|tracked\s+accounts?|audience)|based\s+on\s+(?:my|the)\s+(?:voice|brand|profile|workspace|swipe\s+file|saved\s+posts?))\b/i;
 const DURABLE_OR_ACTION_RE =
-  /\b(?:always|never|from\s+now\s+on|remember\s+(?:that|this)|save|schedule|queue|publish|post\s+it|delete|remove)\b|\b(?:plan|put|place|add|slot)\s+(?:it|this|that|the\s+(?:post|draft))?\s*(?:for|on|into|to)\s+(?:the\s+)?(?:calendar|queue|board|today|tomorrow|(?:mon|tues|wednes|thurs|fri|satur|sun)day)\b|\b(?:set|mark|move)\s+(?:it|this|that|the\s+(?:post|draft))?\s*(?:to|as|into)?\s*(?:idea|drafting|ready|posted)\b/i;
+  /\b(?:always|never|from\s+now\s+on|remember\s+(?:that|this)|save|schedule|queue|publish|post\s+it|delete|remove)\b|\b(?:plan|put|place|add|slot)\s+(?:it|this|that|(?:this|that|the)\s+(?:post|draft|one))?\s*(?:for|on|into|to)\s+(?:the\s+)?(?:calendar|queue|board|today|tomorrow|(?:mon|tues|wednes|thurs|fri|satur|sun)day)\b|\b(?:set|mark|move)\s+(?:it|this|that|(?:this|that|the)\s+(?:post|draft|one))?\s*(?:to|as|into)?\s*(?:idea|drafting|ready|posted)\b/i;
 
 /** True when the turn also asks Cowork to remember or mutate durable state. */
 export function requestsDurableOrAction(text: string): boolean {

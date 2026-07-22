@@ -34,9 +34,11 @@ import {
 } from "@/lib/agent/no-model-formats";
 import {
   explicitlyRequestsSourceDiscovery,
+  requestsDurableOrAction,
   requestsDirectSourceModeling,
   requestsFullPostDeliverable,
 } from "@/lib/agent/source-policy";
+import { isOpinionOrQuestionAboutContent } from "@/lib/agent/direct-writer-policy";
 import { compileModeledPostIntent } from "@/lib/agent/modeled-post-intent";
 import {
   resolveComposerTaskContext,
@@ -602,7 +604,22 @@ export function modelSourceIdForTurn(input: {
   ) {
     return null;
   }
-  return latestAttachedModelSourceId(input.rows);
+  // Historical provenance is valid only across the immediately pending
+  // ask→answer boundary. Searching the entire chat revives a source from a
+  // completed writing turn and can pin its writer route onto an unrelated
+  // later question or board action.
+  const latestUserIndex = input.rows.findLastIndex(
+    (row) => row.role === "user",
+  );
+  const precedingAssistantIndex = input.rows.findLastIndex(
+    (row, index) => index < latestUserIndex && row.role === "assistant",
+  );
+  const askRootUserIndex = input.rows.findLastIndex(
+    (row, index) => index < precedingAssistantIndex && row.role === "user",
+  );
+  if (askRootUserIndex < 0) return null;
+  const askRoot = input.rows[askRootUserIndex];
+  return extractModelSourceId(askRoot);
 }
 
 export function extractLeadMagnetSelection(
@@ -1451,12 +1468,23 @@ export async function buildTurnContext(
     ? (sourcesById.get(effectiveModelSourceId) ?? null)
     : null;
 
-  // Server-side structure matching (PLAN-agent-loop Phase A4): when the user did
-  // not attach an explicit source, find the best template / swipe post / built-in
-  // to model after and synthesize a ModelSourceRow so the existing source-plumbing
-  // (envelope, "Source post" chip, direct writer) works unchanged. Runs for every
-  // eligible original-post turn.
-  if (!currentModelSource && !skipDecision && !modelSourceId) {
+  // Server-side structure matching (PLAN-agent-loop Phase A4): only a current-
+  // turn POST deliverable may select a writing structure. Previously this ran
+  // for every message; a review, summary, board action, or ambiguous follow-up
+  // could therefore acquire a source and accidentally satisfy a writer lane.
+  const currentTurnRequestsPost =
+    requestedBasePostCount(
+      effectiveUserInstruction,
+      Boolean(modelSourceId),
+    ) !== null &&
+    !isOpinionOrQuestionAboutContent(effectiveUserInstruction) &&
+    !requestsDurableOrAction(effectiveUserInstruction);
+  if (
+    currentTurnRequestsPost &&
+    !currentModelSource &&
+    !skipDecision &&
+    !modelSourceId
+  ) {
     const wantsOwnSource =
       requestsDirectSourceModeling(effectiveUserInstruction) ||
       explicitlyRequestsSourceDiscovery(effectiveUserInstruction);

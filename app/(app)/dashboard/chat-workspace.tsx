@@ -204,6 +204,7 @@ import {
   prettyBytes,
   refineSuggestions,
   reinsertArtifact,
+  reviewArtifactIdForComposer,
   shouldShowActivityRail,
   skillNamesToIds,
   stripPlaceholders,
@@ -2390,7 +2391,24 @@ export function ChatWorkspace({
       let refineThisTurn = !!sendOpts?.skipDecision;
       let refineTargetIdThisTurn = sendOpts?.refineTargetId;
       let refineInstructionThisTurn = sendOpts?.refineInstruction;
+      // Resolve the visible accordion selection once for this turn. Read-only
+      // review/summary requests carry this exact id to the server, so selecting
+      // Draft 1 cannot silently review or overwrite a newer Draft 2.
+      const persisted = chatSession.artifactsFor(chatId);
+      const runArts = chatSession.runFor(chatId)?.artifacts ?? [];
+      const seenIds = new Set(persisted.map((a) => a.id));
+      const combined = [
+        ...persisted,
+        ...runArts.filter((a) => !seenIds.has(a.id)),
+      ];
+      const drafts = combined.filter(
+        (a) => a.kind === "post" || a.kind === "hook",
+      );
+      const reviewTargetIdThisTurn = !refineThisTurn
+        ? reviewArtifactIdForComposer(text, drafts, expandedArtifactId)
+        : undefined;
       if (
+        !reviewTargetIdThisTurn &&
         !pendingRefineRef.current.get(chatId) &&
         (sendOpts?.forceRefine || looksLikeComposerRefine(text))
       ) {
@@ -2399,13 +2417,6 @@ export function ChatWorkspace({
         // in the live run (not yet folded into the session cache by a post-stream
         // reload); include it so hook-only preservation still works for a
         // refine right after the first draft renders.
-        const persisted = chatSession.artifactsFor(chatId);
-        const runArts = chatSession.runFor(chatId)?.artifacts ?? [];
-        const seenIds = new Set(persisted.map((a) => a.id));
-        const combined = [...persisted, ...runArts.filter((a) => !seenIds.has(a.id))];
-        const drafts = combined.filter(
-          (a) => a.kind === "post" || a.kind === "hook",
-        );
         const target = drafts[drafts.length - 1]; // latest draft
         if (target) {
           pendingRefineRef.current.set(chatId, {
@@ -2556,6 +2567,13 @@ export function ChatWorkspace({
                     instruction: refineInstructionThisTurn,
                   },
                 }
+              : reviewTargetIdThisTurn
+                ? {
+                    operation: {
+                      kind: "review_artifact",
+                      artifactId: reviewTargetIdThisTurn,
+                    },
+                  }
               : refineThisTurn
                 ? { skipDecision: true }
                 : {}),
@@ -3127,6 +3145,7 @@ export function ChatWorkspace({
     chatSession,
     setActiveId,
     writerContentFormat,
+    expandedArtifactId,
   ]);
 
   // Stop the active chat's in-flight run — really stop it, not just cancel

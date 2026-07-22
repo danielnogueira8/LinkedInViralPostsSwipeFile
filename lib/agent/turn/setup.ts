@@ -13,6 +13,7 @@ import {
   advanceActionOrchestratorClarification,
   compileActionOrchestratorRoute,
   compileReadOnlyOrchestratorReserveRoute,
+  clarificationForAmbiguousContinuation,
   type ActionOrchestratorRoute,
 } from "@/lib/agent/turn/compile";
 import {
@@ -76,6 +77,7 @@ import {
 import { leadMagnetGenerateSchema } from "@/lib/lead-magnets";
 import { looksLikeComposerRefine } from "@/lib/chat-composer-policy";
 import { isOpinionOrQuestionAboutContent } from "@/lib/agent/direct-writer-policy";
+import { requestsDurableOrAction } from "@/lib/agent/source-policy";
 import {
   decideFallthroughIntent,
   INTENT_DECISION_ENABLED,
@@ -795,6 +797,47 @@ export async function setupChatTurn(
       }
     }
 
+    // Deterministic action and ambiguity rules run before the model fallback.
+    // The fallback classifier is useful only for true fallthroughs; letting it
+    // reinterpret "Move this draft to Ready" as an edit grants the writer the
+    // wrong authority, while letting it reinterpret "Another angle" guesses at
+    // an intentionally ambiguous request.
+    if (
+      !currentTurnOperation &&
+      !refineTargetId &&
+      !modelSourceId &&
+      !body.retryOfUserMessageId &&
+      !persistedActionContinuation &&
+      !pendingActionAsk &&
+      requestsDurableOrAction(userText)
+    ) {
+      normalizedActionRoute ??= compileActionOrchestratorRoute(
+        {
+          userInstruction: userText,
+          isRefine: false,
+          hasModelSource: false,
+          hasAttachments: attachments.length > 0,
+          hasLeadMagnet: Boolean(leadMagnetId || createLeadMagnet),
+          hasCreatorStyle: Boolean(creatorStyleId),
+          hasUnsavedDraftReferent:
+            hasUnsavedAssistantDraftReferent(recentMessageWindow),
+          clientTimezone: body.clientTimezone,
+        },
+        deps.now(),
+      );
+    }
+    if (
+      !currentTurnOperation &&
+      !refineTargetId &&
+      !modelSourceId &&
+      !body.retryOfUserMessageId &&
+      !persistedActionContinuation &&
+      !pendingActionAsk
+    ) {
+      fallthroughClarification ??=
+        clarificationForAmbiguousContinuation(userText);
+    }
+
     // Implicit refine target (draft continuity): when the user types a plain
     // edit like "make it punchier" without clicking a card's Refine button, the
     // client sends no refineTargetId, so the server used to regenerate a NEW
@@ -818,7 +861,9 @@ export async function setupChatTurn(
       !modelSourceId &&
       !body.retryOfUserMessageId &&
       !persistedActionContinuation &&
-      !pendingActionAsk;
+      !pendingActionAsk &&
+      !normalizedActionRoute &&
+      !fallthroughClarification;
     if (implicitRefineGuardsPass && looksLikeComposerRefine(userText)) {
       const implicitTarget = latestChatDraft(chronologicalRecentMessageWindow);
       if (implicitTarget) {
@@ -947,9 +992,13 @@ export async function setupChatTurn(
             draftCountOverride: activeDraftCountOverride,
           }).kind !== "none"),
     );
-    currentTurnModelSourceOwnership = preclaimModeledRoute
-      ? "server_selected"
-      : "historical_continuation";
+    // Historical source recovery is reserved for an actual ask→answer
+    // continuation. A completed writing turn cannot pin its source (or writer
+    // lane) onto an unrelated later review, action, or question.
+    currentTurnModelSourceOwnership =
+      pendingAskOnly && !currentTurnOperation && !skipDecision
+        ? "historical_continuation"
+        : "server_selected";
     modeledBatchContractRequested = Boolean(preclaimModeledContinuation);
     preclaimContractPlaceholder = resolveTurnContract({
       actionRoute: preclaimActionRoute,

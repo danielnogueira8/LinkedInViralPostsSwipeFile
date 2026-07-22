@@ -116,9 +116,63 @@ export function stripPlaceholders(text: string): string {
     .trim();
 }
 
+// A read-only request about the draft currently shown in the panel. The client
+// uses this only to attach the selected artifact identity to a typed REVIEW
+// operation; the server remains the authority for execution. Keeping this
+// deterministic prevents phrases such as "do not edit" from accidentally
+// tripping the edit heuristic below, and lets a user review Draft 1 even when
+// Draft 2 is newer.
+export function looksLikeArtifactReviewRequest(message: string): boolean {
+  const t = message.trim();
+  if (!t) return false;
+  const hasArtifactReferent =
+    /\b(?:this|that|the|current|selected|latest)\s+(?:post|draft|hook|one)\b|\bdraft\s+\d+\b|\bit\b/i.test(
+      t,
+    );
+  const imperative =
+    /^\s*(?:please\s+)?(?:review|critique|analy[sz]e|assess|evaluate|grade|rate|summari[sz]e|explain)\b/i.test(
+      t,
+    ) ||
+    /^\s*(?:please\s+)?give\s+me\b[\s\S]{0,100}\b(?:feedback|critique|review|summary|assessment|analysis|strengths?|weaknesses?|takeaways?)\b/i.test(
+      t,
+    );
+  const evaluativeQuestion =
+    /^\s*(?:what|why|how|is|are|does|do|would|should|can|could)\b/i.test(t) &&
+    /\b(?:think|feedback|good|bad|strong|weak|work|effective|land|resonate|improve|issue|problem|summary|mean|argument|point)\b/i.test(
+      t,
+    );
+  return hasArtifactReferent && (imperative || evaluativeQuestion);
+}
+
+export function reviewArtifactIdForComposer(
+  message: string,
+  artifacts: readonly { id: string; kind: string }[],
+  expandedArtifactId: string | null,
+): string | undefined {
+  if (!looksLikeArtifactReviewRequest(message)) return undefined;
+  const drafts = artifacts.filter(
+    (artifact) => artifact.kind === "post" || artifact.kind === "hook",
+  );
+  return (
+    drafts.find((draft) => draft.id === expandedArtifactId)?.id ??
+    drafts[drafts.length - 1]?.id
+  );
+}
+
 export function looksLikeComposerRefine(message: string): boolean {
   const t = message.toLowerCase().trim();
   if (!t) return false;
+  // Review/summary requests are read-only even when they explicitly negate an
+  // edit ("review it; do not rewrite or edit the draft"). A bag-of-words edit
+  // matcher must never turn the word inside that prohibition into authority.
+  if (looksLikeArtifactReviewRequest(message)) return false;
+  if (
+    /\b(?:do\s+not|don(?:'|’)?t|dont|never|without)\b[\s\S]{0,80}\b(?:rewrite|edit|change|update|refine|revise|modify)\b/.test(
+      t,
+    )
+  ) {
+    return false;
+  }
   // Explicit "make a new / another / different" requests are NOT refines.
   // These take priority over the refine signal — if both fire, treat as new.
   if (
