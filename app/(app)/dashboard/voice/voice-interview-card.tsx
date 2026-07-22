@@ -139,28 +139,37 @@ export function VoiceInterviewCard({
 
         {expanded && (
           <div className="space-y-4">
-            {INTERVIEW_QUESTIONS.map((q, i) => (
-              <div key={q.id} className="space-y-1.5">
-                <label
-                  htmlFor={`interview-${q.id}`}
-                  className="block text-sm font-medium text-foreground"
-                >
-                  <span className="mr-1.5 text-muted-foreground tabular-nums">{i + 1}.</span>
-                  {q.prompt}
-                </label>
-                <p className="text-xs text-muted-foreground">{q.helper}</p>
-                <Textarea
-                  id={`interview-${q.id}`}
-                  rows={2}
-                  placeholder={q.placeholder}
-                  value={answers[q.id] ?? ""}
-                  onChange={(e) =>
-                    setAnswers((prev) => ({ ...prev, [q.id]: e.target.value }))
-                  }
-                  className="resize-y"
-                />
-              </div>
-            ))}
+            {/* Keep the action bar reachable while long question sets scroll.
+                On mobile the page remains the only scroll surface; adding an
+                inner scroller there makes textareas difficult to use. */}
+            <div
+              aria-label="Interview questions"
+              className="space-y-4 lg:max-h-[min(42vh,34rem)] lg:overflow-y-auto lg:overscroll-contain lg:pr-2"
+              data-testid="interview-questions-scroll"
+            >
+              {INTERVIEW_QUESTIONS.map((q, i) => (
+                <div key={q.id} className="space-y-1.5">
+                  <label
+                    htmlFor={`interview-${q.id}`}
+                    className="block text-sm font-medium text-foreground"
+                  >
+                    <span className="mr-1.5 text-muted-foreground tabular-nums">{i + 1}.</span>
+                    {q.prompt}
+                  </label>
+                  <p className="text-xs text-muted-foreground">{q.helper}</p>
+                  <Textarea
+                    id={`interview-${q.id}`}
+                    rows={2}
+                    placeholder={q.placeholder}
+                    value={answers[q.id] ?? ""}
+                    onChange={(e) =>
+                      setAnswers((prev) => ({ ...prev, [q.id]: e.target.value }))
+                    }
+                    className="resize-y"
+                  />
+                </div>
+              ))}
+            </div>
 
             <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
               <span className="text-xs text-muted-foreground">
