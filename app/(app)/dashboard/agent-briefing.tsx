@@ -274,7 +274,10 @@ export function AgentBriefing({
   useEffect(() => {
     const stored = readPlanStorage();
     if (stored && stored.generatedFor === todayKey() && !stored.dismissed) {
-      void loadWeekPlan();
+      const loadTimer = window.setTimeout(() => {
+        void loadWeekPlan();
+      }, 0);
+      return () => window.clearTimeout(loadTimer);
     }
   }, [loadWeekPlan]);
 

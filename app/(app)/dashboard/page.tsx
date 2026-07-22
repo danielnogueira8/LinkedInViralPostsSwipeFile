@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import { currentUser } from "@clerk/nextjs/server";
+import { connection } from "next/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { rehydrateCites } from "@/lib/cite-resolve";
 import { rehydrateDraftLifecycle } from "@/lib/draft-lifecycle-rehydrate";
@@ -25,6 +26,8 @@ import { AGENT_CHAT_TITLE } from "@/lib/agent-loop/constants";
 export const dynamic = "force-dynamic";
 
 const FRESH_INSPIRATION_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
+const BREAKOUT_WINDOW_MS = 48 * 60 * 60 * 1000;
+const BASELINE_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
 
 type ChatRow = {
   id: string;
@@ -43,9 +46,13 @@ type MessageRow = {
   created_at: string;
 };
 
-function requestFreshWindow() {
+function requestWindows() {
   const now = Date.now();
-  return new Date(now - FRESH_INSPIRATION_WINDOW_MS).toISOString();
+  return {
+    freshSince: new Date(now - FRESH_INSPIRATION_WINDOW_MS).toISOString(),
+    breakoutSince: new Date(now - BREAKOUT_WINDOW_MS).toISOString(),
+    baselineSince: new Date(now - BASELINE_WINDOW_MS).toISOString(),
+  };
 }
 
 export default async function ChatPage({
@@ -124,7 +131,10 @@ export default async function ChatPage({
   const trackedAccountIds = ((trackedAccounts ?? []) as Array<{ account_id: string }>).map(
     (row) => row.account_id,
   );
-  const freshSince = requestFreshWindow();
+  // These rolling windows must be unique to the incoming request rather than
+  // captured during prerendering or revalidation.
+  await connection();
+  const { freshSince, breakoutSince, baselineSince } = requestWindows();
   const { count: freshInspirationCount } =
     trackedAccountIds.length > 0
       ? await sb.raw
@@ -148,10 +158,7 @@ export default async function ChatPage({
           .eq("is_viral", true)
           .or("post_type.is.null,post_type.eq.regular")
           .is("accounts.archived_at", null)
-          .gte(
-            "posted_at",
-            new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString(),
-          )
+          .gte("posted_at", breakoutSince)
           .order("viral_score", { ascending: false })
           .limit(1)
           .maybeSingle()
@@ -164,10 +171,7 @@ export default async function ChatPage({
       .from("posts")
       .select("account_id, reactions, comments")
       .eq("account_id", breakoutPost.account_id)
-      .gte(
-        "posted_at",
-        new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString(),
-      )
+      .gte("posted_at", baselineSince)
       .limit(300);
     breakoutBaseline =
       creatorBaselinesFromRows(

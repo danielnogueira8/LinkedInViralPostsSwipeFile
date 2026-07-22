@@ -75,12 +75,20 @@ async function main() {
   const chatIds = (oldChats ?? []).map((c) => c.id as string);
   log(`agent chats to move: ${chatIds.length}`);
 
-  const move = async (table: string, filter: (q: any) => any) => {
-    const query = filter(sb.from(table).update({ workspace_id: NEW }));
+  const move = async (
+    table: string,
+    column: string,
+    value: string | string[],
+  ) => {
+    const update = sb.from(table).update({ workspace_id: NEW });
+    const query = Array.isArray(value)
+      ? update.in(column, value)
+      : update.eq(column, value);
     if (!APPLY) {
-      const { count, error } = await filter(
-        sb.from(table).select("id", { count: "exact", head: true }),
-      );
+      const select = sb.from(table).select("id", { count: "exact", head: true });
+      const { count, error } = await (Array.isArray(value)
+        ? select.in(column, value)
+        : select.eq(column, value));
       if (error) throw error;
       log(`would move ${count ?? 0} rows in ${table}`);
       return;
@@ -90,11 +98,11 @@ async function main() {
     log(`moved rows in ${table}`);
   };
 
-  await move("agent_opportunities", (q) => q.eq("workspace_id", OLD));
+  await move("agent_opportunities", "workspace_id", OLD);
   if (chatIds.length > 0) {
-    await move("chats", (q) => q.in("id", chatIds));
-    await move("chat_messages", (q) => q.in("chat_id", chatIds));
-    await move("chat_artifacts", (q) => q.in("chat_id", chatIds));
+    await move("chats", "id", chatIds);
+    await move("chat_messages", "chat_id", chatIds);
+    await move("chat_artifacts", "chat_id", chatIds);
   }
 
   // 3. Transient modeling sources: delete (pruned daily anyway).
