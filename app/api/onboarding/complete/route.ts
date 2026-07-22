@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { z } from "zod";
 import { errorResponse } from "@/lib/workspace";
+import { enqueueScrapeJob } from "@/lib/scrape-jobs";
 
 export const runtime = "nodejs";
 
@@ -19,6 +20,7 @@ export async function POST(req: Request) {
     const sb = await scopedSupabase();
 
     let tracked = 0;
+    let scrape: { runId: string; alreadyRunning: boolean } | null = null;
     if (category_ids.length > 0) {
       const { data: rows, error: selErr } = await sb.raw
         .from("accounts")
@@ -41,6 +43,11 @@ export async function POST(req: Request) {
           .upsert(upserts, { onConflict: "workspace_id,account_id" });
         if (trackErr) throw trackErr;
         tracked = accountIds.length;
+        // Tracking is only the ownership association. Queue the workspace
+        // scrape immediately so the same scoped Swipefile used by modeling and
+        // weekly planning receives posts without waiting for the daily cron.
+        const queued = await enqueueScrapeJob({ workspaceId: sb.workspaceId, sb: sb.raw });
+        scrape = { runId: queued.runId, alreadyRunning: queued.alreadyRunning };
       }
     }
 
@@ -49,7 +56,7 @@ export async function POST(req: Request) {
     });
     if (setErr) throw setErr;
 
-    return NextResponse.json({ ok: true, tracked });
+    return NextResponse.json({ ok: true, tracked, scrape });
   } catch (e) {
     return errorResponse(e);
   }
