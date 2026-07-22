@@ -1,0 +1,3 @@
+# Persisted chat state is canonical; live turns are owned overlays
+
+The persisted transcript, including its conversation Artifacts, is canonical chat state; saving an Artifact creates a separate Draft in the Posts workflow. While a Cowork Turn streams, the client renders an owned live-turn overlay containing its text, actions, plans, tools, and Artifacts. Completing the turn reconciles persisted state and retires that overlay atomically. Async work may mutate it only while it still owns that conversation, so navigation, retry, Stop, or a replacement turn cannot let stale callbacks overwrite newer state. This adds explicit ownership and reconciliation machinery in exchange for responsive streaming without making browser memory canonical.

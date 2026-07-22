@@ -13,7 +13,7 @@ A multi-tenant SaaS that helps LinkedIn creators, founders, and agencies go from
 
 ## Stack
 
-Next.js 16 (App Router) · Supabase (Postgres + RLS) · Clerk (auth, multi-tenant orgs) · OpenRouter (all LLM calls) · Apify (LinkedIn scraping) · Zernio (LinkedIn publishing) · Vercel (hosting + cron)
+Next.js 16 (App Router) · Supabase (Postgres + RLS) · Clerk (personal-workspace auth) · OpenRouter (all LLM calls) · Apify (LinkedIn scraping) · Zernio (LinkedIn publishing) · Vercel (hosting + cron)
 
 ## Setup
 

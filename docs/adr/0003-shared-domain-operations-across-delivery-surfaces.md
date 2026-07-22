@@ -1,0 +1,3 @@
+# Delivery surfaces share domain operations
+
+The web app, Cowork, REST API, background work, and MCP connector may present different request and response shapes, but equivalent reads and mutations call the same domain operation. Each adapter authenticates its caller and resolves an authorized Workspace, including any narrow sharing grant; the operation enforces that explicit scope in predicates and writes and owns limits, idempotency, and conflict handling. We reject surface-local implementations because their behavior drifts as surfaces multiply. The cost is maintaining transport-neutral operation contracts plus adapter-specific mapping, including intentionally narrower representations.
