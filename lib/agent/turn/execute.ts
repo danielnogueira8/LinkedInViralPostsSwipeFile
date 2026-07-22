@@ -18,6 +18,7 @@ import { safeFilename } from "@/lib/agent/untrusted";
 import { loadCitedSwipePostImage } from "@/lib/agent/turn/context";
 import type { TurnPlan } from "@/lib/agent/turn/compile";
 import type { TurnSetupResult } from "@/lib/agent/turn/setup";
+import { enforceTurnOutcome } from "@/lib/agent/turn/outcome-guard";
 import type { DraftFinalizerSpecialists } from "@/lib/agent/finalize/finalizer";
 import { splicePreservedBody } from "@/lib/hook-splice";
 import {
@@ -85,7 +86,11 @@ export function executeTurnPlan(
   deps: TurnExecuteDependencies,
 ): ExecuteTurnPlanResult {
   return {
-    run: (handlers) => runTurnPlan(plan, setup, chatId, deps, handlers),
+    run: (handlers) =>
+      enforceTurnOutcome(
+        plan,
+        runTurnPlan(plan, setup, chatId, deps, handlers),
+      ),
   };
 }
 
@@ -98,14 +103,6 @@ async function* runTurnPlan(
 ): AsyncGenerator<AgentEvent> {
   const {
     contract: turnContract,
-    useDirectWriter,
-    directWriterTask,
-    useDirectLeadMagnet,
-    useDirectCreatorStyle,
-    useActionOrchestrator,
-    actionOrchestratorRoute,
-    useReadOnlyOrchestrator,
-    readOnlyOrchestratorRoute,
     modeledBatchContinuation,
     modelSourceReference,
   } = plan;
@@ -212,56 +209,69 @@ async function* runTurnPlan(
 
   let rawStream: AsyncGenerator<AgentEvent>;
 
-  if (useDirectWriter) {
-    rawStream = deps.runWriterTurn({
-      ...writerInput,
-      sessionId: chatId,
-      history,
-      task: directWriterTask,
-      // No orchestrator narrates this lane — the writer shows its own steps.
-      narratePlan: true,
-      deadlineAtMs: turnStartedAtMs + WRITER_TURN_BUDGET_MS,
-      ...(useDirectLeadMagnet ? { leadMagnetBlock } : {}),
-      ...(useDirectCreatorStyle ? { creatorStyleBlock } : {}),
-    });
-  } else if (useActionOrchestrator && actionOrchestratorRoute) {
-    rawStream = deps.runAgentTurn({
-      workspaceId,
-      chatId,
-      turnMessageId: actionTurnMessageId ?? claimedUserMessageId!,
-      userInstruction: effectiveUserInstruction,
-      history,
-      task: { kind: "action", route: actionOrchestratorRoute },
-      confirmedActionTargetIds,
-      signal: handlers.signal,
-      cancellationProbe,
-      telemetry: coworkTelemetry,
-      onModelUsed: recordResponseModel,
-      writerInput,
-      deadlineAtMs: turnStartedAtMs + ACTION_ORCHESTRATOR_DEADLINE_MS,
-    });
-  } else if (useReadOnlyOrchestrator && readOnlyOrchestratorRoute) {
-    rawStream = deps.runAgentTurn({
-      workspaceId,
-      chatId,
-      turnMessageId: actionTurnMessageId ?? claimedUserMessageId!,
-      userInstruction: effectiveUserInstruction,
-      history,
-      task: { kind: "research", route: readOnlyOrchestratorRoute },
-      ...(modeledBatchContinuation ? { modeledBatchContinuation } : {}),
-      attachmentNames: attachments.map((attachment) =>
-        safeFilename(attachment.filename),
-      ),
-      attachmentBlocks: orchestratorAttachmentBlocks,
-      cancellationProbe,
-      writerInput,
-      signal: handlers.signal,
-      telemetry: coworkTelemetry,
-      onModelUsed: recordResponseModel,
-      deadlineAtMs: turnStartedAtMs + WRITER_TURN_BUDGET_MS,
-    });
-  } else {
-    rawStream = executeAnswerTurn(setup, chatId, handlers.signal, recordResponseModel);
+  switch (plan.kind) {
+    case "write":
+      rawStream = deps.runWriterTurn({
+        ...writerInput,
+        sessionId: chatId,
+        history,
+        task: plan.task,
+        // No orchestrator narrates this lane — the writer shows its own steps.
+        narratePlan: true,
+        deadlineAtMs: turnStartedAtMs + WRITER_TURN_BUDGET_MS,
+        ...(plan.usesLeadMagnet ? { leadMagnetBlock } : {}),
+        ...(plan.usesCreatorStyle ? { creatorStyleBlock } : {}),
+      });
+      break;
+    case "action":
+      rawStream = deps.runAgentTurn({
+        workspaceId,
+        chatId,
+        turnMessageId: actionTurnMessageId ?? claimedUserMessageId!,
+        userInstruction: effectiveUserInstruction,
+        history,
+        task: { kind: "action", route: plan.actionRoute },
+        confirmedActionTargetIds,
+        signal: handlers.signal,
+        cancellationProbe,
+        telemetry: coworkTelemetry,
+        onModelUsed: recordResponseModel,
+        writerInput,
+        deadlineAtMs: turnStartedAtMs + ACTION_ORCHESTRATOR_DEADLINE_MS,
+      });
+      break;
+    case "research":
+      rawStream = deps.runAgentTurn({
+        workspaceId,
+        chatId,
+        turnMessageId: actionTurnMessageId ?? claimedUserMessageId!,
+        userInstruction: effectiveUserInstruction,
+        history,
+        task: { kind: "research", route: plan.researchRoute },
+        ...(modeledBatchContinuation ? { modeledBatchContinuation } : {}),
+        attachmentNames: attachments.map((attachment) =>
+          safeFilename(attachment.filename),
+        ),
+        attachmentBlocks: orchestratorAttachmentBlocks,
+        cancellationProbe,
+        writerInput,
+        signal: handlers.signal,
+        telemetry: coworkTelemetry,
+        onModelUsed: recordResponseModel,
+        deadlineAtMs: turnStartedAtMs + WRITER_TURN_BUDGET_MS,
+      });
+      break;
+    case "clarify":
+      rawStream = executeClarificationTurn(plan.ask);
+      break;
+    case "answer":
+      rawStream = executeAnswerTurn(
+        setup,
+        chatId,
+        handlers.signal,
+        recordResponseModel,
+      );
+      break;
   }
 
   const observedStream = observeCoworkTurn({
@@ -603,7 +613,7 @@ function createTransformDraftCandidate(
     const legacyHookOnlyAllowed =
       !setup.refineInstruction || isExclusiveHookRefine(setup.refineInstruction);
     if (
-      !plan.useDirectRefine &&
+      !(plan.kind === "write" && plan.isDirectRefine) &&
       setup.hookOnly &&
       setup.hookOnlyOriginalBody &&
       legacyHookOnlyAllowed
@@ -617,6 +627,43 @@ function createTransformDraftCandidate(
   };
 }
 
+async function* executeClarificationTurn(
+  ask: import("@/lib/agent/contracts").AskQuestion,
+): AsyncGenerator<AgentEvent> {
+  const askId = crypto.randomUUID();
+  const args = JSON.stringify({
+    question: ask.question,
+    options: ask.options,
+    allowOther: ask.allowOther,
+  });
+  const call = {
+    id: askId,
+    type: "function" as const,
+    function: { name: "ask_user", arguments: args },
+  };
+  yield { type: "tool_start", id: askId, name: "ask_user", args };
+  yield { type: "ask", ask };
+  yield { type: "tool_end", id: askId, name: "ask_user", ok: true };
+  yield {
+    type: "done",
+    terminalReason: "ask",
+    message: {
+      content: ask.question,
+      tool_calls: [call],
+      artifacts: [],
+      toolMessages: [
+        {
+          role: "tool",
+          tool_call_id: askId,
+          content: JSON.stringify({ ok: true, answer_pending: true }),
+        },
+      ],
+      inputTokens: 0,
+      outputTokens: 0,
+    },
+  };
+}
+
 async function* executeAnswerTurn(
   setup: TurnSetupResult,
   chatId: string,
@@ -625,20 +672,16 @@ async function* executeAnswerTurn(
 ): AsyncGenerator<AgentEvent> {
   const telemetry: CoworkTurnTelemetry = setup.coworkTelemetry;
   const startedAt = Date.now();
-  // This lane is the deterministic router's fallback: it runs when no writer /
-  // orchestrator lane claimed the turn. The transcript may carry a "CURRENT
-  // DRAFT" block (the post this chat is working on). Two failure modes to guard:
-  //   • a plain question about the post → answer it (don't rewrite),
-  //   • an EDIT of the post the writer lanes couldn't route (e.g. a compound or
-  //     removal instruction) → the old prompt said "don't write a draft", so the
-  //     model free-associated a brand-new, unrelated post. Instead: return the
-  //     current draft revised as asked. Never invent a NEW, unrelated post.
+  // The answer executor has zero artifact authority. Edits are compiled into a
+  // write plan (or a typed clarification) before execution; this prompt must
+  // never compensate for a routing miss by returning draft-shaped text.
   const systemMessage: ChatMessage = {
     role: "system",
     content: [
       "You are Cowork, a LinkedIn content assistant. Answer the user's question or brainstorming request helpfully and concisely.",
-      "If the transcript includes a CURRENT DRAFT and the user is asking to change, edit, refine, shorten, or fix it, return the FULL current draft revised exactly as asked — preserve everything they did not ask to change, and change only what they asked. Do not restart from a blank page and never write a different, unrelated post.",
-      "Otherwise, just answer — do not write a LinkedIn post draft unless the user explicitly asks for a new one.",
+      setup.currentTurnOperation?.kind === "review_artifact"
+        ? "The authoritative typed operation is REVIEW. Give critique or feedback only. Do not rewrite the draft, even if the message itself sounds like an edit command."
+        : "This answer operation is not authorized to create or edit an artifact. Answer or brainstorm only; never return a replacement LinkedIn post draft.",
     ].join("\n\n"),
   };
   const messages: ChatMessage[] = [systemMessage, ...setup.history];

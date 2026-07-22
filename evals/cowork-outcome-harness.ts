@@ -168,8 +168,7 @@ export type CoworkOutcomeScenario = {
       meta?: Record<string, unknown>;
       mediaAttachments?: Artifact["media_attachments"];
     }>;
-    // Pre-seed the chat's pinned Cowork lane. Use this to assert that a turn
-    // stays in a pinned lane even when its wording would normally route elsewhere.
+    // Pre-seed the retired legacy column to prove it has no routing authority.
     pinnedCoworkRoute?: CoworkRoute | null;
   };
   negativeControl?: {

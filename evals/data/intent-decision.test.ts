@@ -44,7 +44,7 @@ describe("coerceIntentDecision", () => {
     }
   });
 
-  test("an unknown intent → null (fall open)", () => {
+  test("an unknown intent returns uncertainty for the caller to clarify", () => {
     expect(coerceIntentDecision({ intent: "delete_everything" })).toBeNull();
     expect(coerceIntentDecision({})).toBeNull();
     expect(coerceIntentDecision("edit_current_draft")).toBeNull();
@@ -89,7 +89,7 @@ describe("coerceIntentDecision", () => {
 });
 
 // ---------------------------------------------------------------------------
-// decideFallthroughIntent — the model call, always fail-open.
+// decideFallthroughIntent — null means uncertainty; setup fails closed to ask.
 // ---------------------------------------------------------------------------
 describe("decideFallthroughIntent", () => {
   beforeEach(() => {
@@ -118,12 +118,12 @@ describe("decideFallthroughIntent", () => {
     expect(completeChat).not.toHaveBeenCalled();
   });
 
-  test("FAILS OPEN: a thrown model error → null", async () => {
+  test("a thrown model error returns uncertainty", async () => {
     completeChat.mockRejectedValue(new Error("luna down"));
     expect(await decideFallthroughIntent(BASE)).toBeNull();
   });
 
-  test("FAILS OPEN: malformed / non-JSON output → null", async () => {
+  test("malformed / non-JSON output returns uncertainty", async () => {
     completeChat.mockResolvedValue({
       text: "sure! it looks like you want to edit it",
       model: "openai/gpt-5.6-luna",
@@ -132,7 +132,7 @@ describe("decideFallthroughIntent", () => {
     expect(await decideFallthroughIntent(BASE)).toBeNull();
   });
 
-  test("FAILS OPEN: an ambiguous verdict with no usable options → null", async () => {
+  test("an ambiguous verdict with no usable options returns uncertainty", async () => {
     completeChat.mockResolvedValue(reply({ intent: "ambiguous" }));
     expect(await decideFallthroughIntent(BASE)).toBeNull();
   });

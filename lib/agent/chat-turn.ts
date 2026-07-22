@@ -31,10 +31,7 @@ import {
   type ModeledDraftBatchContinuation,
 } from "@/lib/agent/modeled-draft-continuation";
 import { requestedDirectPostCount } from "@/lib/agent/direct-deliverable-policy";
-import {
-  type CoworkRoute,
-  type CoworkTelemetrySink,
-} from "@/lib/agent/cowork-telemetry";
+import { type CoworkTelemetrySink } from "@/lib/agent/cowork-telemetry";
 
 import { setupChatTurn } from "@/lib/agent/turn/setup";
 
@@ -274,10 +271,54 @@ const attachmentSchema: z.ZodType<AttachmentInput> = z
     if (message) ctx.addIssue({ code: z.ZodIssueCode.custom, message });
   });
 
+const chatContextKindSchema = z.enum([
+  "skills",
+  "creator_style",
+  "post_format",
+]);
+const chatContextPolicySchema = z
+  .object({
+    inherit: z.array(chatContextKindSchema).max(3).optional(),
+    clear: z.array(chatContextKindSchema).max(3).optional(),
+  })
+  .strict()
+  .superRefine((policy, ctx) => {
+    const inherited = new Set(policy.inherit ?? []);
+    for (const kind of policy.clear ?? []) {
+      if (inherited.has(kind)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `context ${kind} cannot be inherited and cleared in the same turn`,
+          path: ["clear"],
+        });
+      }
+    }
+  });
+const chatTurnOperationSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("create_post") }).strict(),
+  z
+    .object({
+      kind: z.literal("edit_artifact"),
+      artifactId: z.string().min(1).max(200),
+      instruction: z.string().trim().min(1).max(4_000),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("review_artifact"),
+      artifactId: z.string().min(1).max(200).optional(),
+    })
+    .strict(),
+]);
+
 export const chatTurnRequestSchema = z.object({
   // Empty/overlong/junk user text is handled by preflightUserPrompt below so
   // the user gets a friendly, specific rejection and no turn is claimed.
   message: z.string(),
+  // Immutable current-turn intent supplied by clients that already know the
+  // operation (card Edit/Review buttons and typed composer starters). Legacy
+  // refine fields remain accepted during migration, but this object wins.
+  operation: chatTurnOperationSchema.optional(),
   clientTurnId: z.string().uuid().optional(),
   retryOfUserMessageId: z.string().min(1).max(200).optional(),
   actionSelectionIds: z.array(z.string().uuid()).min(1).max(5).optional(),
@@ -316,6 +357,10 @@ export const chatTurnRequestSchema = z.object({
   // mechanics-only block. Ignored when a model source is attached (the source
   // controls structure). Composes with a post format.
   creatorStyleId: z.string().uuid().optional(),
+  // Context is current-turn-only by default. A client must explicitly opt in
+  // to chat inheritance, and can persist a tombstone that prevents a later
+  // opt-in from reviving context selected before the clear.
+  contextPolicy: chatContextPolicySchema.optional(),
   // Optional UI-selected lead magnet. Honored only for lead-magnet/giveaway
   // turns; otherwise ignored so it cannot leak into regular posts.
   leadMagnetId: z.string().uuid().optional(),
@@ -346,6 +391,7 @@ export const chatTurnRequestSchema = z.object({
 });
 
 export type ChatTurnRequest = z.infer<typeof chatTurnRequestSchema>;
+export type ChatTurnOperation = NonNullable<ChatTurnRequest["operation"]>;
 
 /**
  * Return only a quantity explicitly attached to the requested post output.
@@ -409,23 +455,6 @@ export function isRecentUnansweredUserMessage(
   }
   const ageMs = now - new Date(message.created_at).getTime();
   return ageMs >= 0 && ageMs < 30_000;
-}
-
-const PINNED_COWORK_ROUTE_VALUES = new Set<CoworkRoute>([
-  "direct_writer",
-  "action_orchestrator",
-  "read_only_orchestrator",
-  "answer",
-]);
-
-export function normalizePinnedCoworkRoute(value: unknown): CoworkRoute | null {
-  if (
-    typeof value === "string" &&
-    PINNED_COWORK_ROUTE_VALUES.has(value as CoworkRoute)
-  ) {
-    return value as CoworkRoute;
-  }
-  return null;
 }
 
 const CUSTOM_SKILLS_TOOL_NAME = "_custom_skills_applied";
@@ -948,7 +977,6 @@ export async function executeChatTurn(
       logChatReject,
       persistChatSetupFailure,
       isRecentUnansweredUserMessage,
-      normalizePinnedCoworkRoute,
       isServerRecoverableToolCall,
       customSkillSelectionMarkerFromToolCalls,
       creatorStyleSelectionMarkerFromToolCalls,
@@ -960,16 +988,9 @@ export async function executeChatTurn(
   );
   if (setupResult instanceof Response) return setupResult;
 
-  const {
-    workspaceId,
-    sbRaw,
-    pinnedCoworkRoute,
-  } = setupResult;
-
   const plan = await compileTurnPlan(
     setupResult,
     chatId,
-    body.retryOfUserMessageId,
     {
       actionOrchestratorEnabledForWorkspace:
         deps.actionOrchestratorEnabledForWorkspace,
@@ -980,28 +1001,6 @@ export async function executeChatTurn(
     },
   );
   if (plan instanceof Response) return plan;
-
-  const {
-    route: coworkRoute,
-  } = plan;
-
-  // Persist the first non-answer lane selection so the next ambiguous turn
-  // stays in the same drafting workflow. Answer turns are not part of a
-  // multi-turn drafting workflow and never pin a lane.
-  if (!pinnedCoworkRoute && coworkRoute !== "answer") {
-    try {
-      await sbRaw
-        .from("chats")
-        .update({
-          pinned_cowork_route: coworkRoute,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", chatId)
-        .eq("workspace_id", workspaceId);
-    } catch {
-      // Best-effort: a failed pin write does not abort the turn.
-    }
-  }
 
   const executeResult = executeTurnPlan(plan, setupResult, chatId, deps);
 

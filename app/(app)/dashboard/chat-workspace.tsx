@@ -2546,15 +2546,19 @@ export function ChatWorkspace({
               : {}),
             ...(attached ? { modelSourceId: attached.id } : {}),
             ...(filePayload.length ? { attachments: filePayload } : {}),
-            ...(refineThisTurn ? { skipDecision: true } : {}),
             ...(refineThisTurn &&
             refineTargetIdThisTurn &&
             refineInstructionThisTurn
               ? {
-                  refineTargetId: refineTargetIdThisTurn,
-                  refineInstruction: refineInstructionThisTurn,
+                  operation: {
+                    kind: "edit_artifact",
+                    artifactId: refineTargetIdThisTurn,
+                    instruction: refineInstructionThisTurn,
+                  },
                 }
-              : {}),
+              : refineThisTurn
+                ? { skipDecision: true }
+                : {}),
             // Hook-only refine: the server splices the model's new opener onto
             // this original body byte-for-byte before persisting the artifact,
             // so a hook-only refine can never let the body drift.
@@ -2588,6 +2592,22 @@ export function ChatWorkspace({
               : {}),
             ...(turnCreatorStyle && turnCreatorStyleApplies
               ? { creatorStyleId: turnCreatorStyle.id }
+              : {}),
+            // Context is scoped to this turn. Stamp explicit clears for every
+            // unselected binding so a later opt-in cannot revive a stale skill,
+            // creator style, or format from behind this turn.
+            ...(appliesComposerControls
+              ? {
+                  contextPolicy: {
+                    clear: [
+                      ...(turnSkillIds.length ? [] : ["skills"]),
+                      ...(turnCreatorStyle && turnCreatorStyleApplies
+                        ? []
+                        : ["creator_style"]),
+                      ...(turnPostFormat ? [] : ["post_format"]),
+                    ],
+                  },
+                }
               : {}),
             ...(turnGenerationConfig
               ? { generationConfig: turnGenerationConfig }

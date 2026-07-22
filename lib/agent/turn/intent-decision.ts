@@ -18,16 +18,16 @@ import { parseJsonObject } from "@/lib/claude";
 // what the user actually wants so the turn can route to a real lane — or, when
 // genuinely ambiguous, ask the user with concrete options instead of guessing.
 //
-// FAILS OPEN: any error / timeout / malformed output returns null, and the
-// caller keeps today's exact `answer`-lane behavior. It can only improve a
-// turn, never break one. Behind the INTENT_DECISION flag; ships dark.
+// Any error / timeout / malformed output returns null. The caller treats null
+// as uncertainty and fails closed to a typed clarification; it never grants an
+// executor authority based on a missing classifier result.
 // ---------------------------------------------------------------------------
 
 // GPT-Luna is this app's most stable model; env-tunable for rollback / testing.
 export const INTENT_DECISION_MODEL =
   process.env.OPENROUTER_INTENT_MODEL?.trim() || "openai/gpt-5.6-luna";
 export const INTENT_DECISION_ENABLED =
-  process.env.INTENT_DECISION === "1";
+  process.env.INTENT_DECISION !== "0";
 
 const INTENT_DECISION_TIMEOUT_MS = 8_000;
 const INTENT_DECISION_MAX_TOKENS = 320;
@@ -66,10 +66,10 @@ function isFallthroughIntent(value: unknown): value is FallthroughIntent {
 }
 
 // Validate + normalize the model's raw output. Pure + exported for tests.
-// Returns null when the shape is unusable (→ caller falls open). An "ambiguous"
+// Returns null when the shape is unusable (→ caller asks). An "ambiguous"
 // verdict without at least two real options is downgraded to null too: an ask
-// with fewer than two choices is not a usable ask, so we'd rather fall open than
-// render a broken card.
+// with fewer than two choices is not usable, so the caller substitutes its
+// deterministic clarification instead of rendering a broken card.
 export function coerceIntentDecision(input: unknown): IntentDecision | null {
   const parsed = IntentDecisionSchema.safeParse(input);
   if (!parsed.success) return null;
@@ -119,7 +119,7 @@ function buildSystemPrompt(input: IntentDecisionInput): string {
 
 /**
  * Decide what an otherwise-unroutable turn wants. Returns null on any failure
- * (fail-open → caller keeps the plain answer lane). Only call this on the
+ * (the caller fails closed to clarification). Only call this on the
  * router's fallthrough — never on turns a deterministic lane already claimed.
  */
 export async function decideFallthroughIntent(
@@ -152,7 +152,7 @@ export async function decideFallthroughIntent(
     if (!raw) return null;
     return coerceIntentDecision(parseJsonObject(raw));
   } catch (error) {
-    // Fail-open: the answer lane still handles the turn.
+    // The caller converts classifier failure into a typed clarification.
     console.warn("decideFallthroughIntent failed:", (error as Error).message);
     return null;
   }

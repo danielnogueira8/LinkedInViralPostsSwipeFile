@@ -1953,6 +1953,17 @@ describe("direct writer eligibility predicates", () => {
       }
     });
 
+    test("catches imperative feedback requests ABOUT the draft", () => {
+      for (const request of [
+        "Review this post and give me feedback.",
+        "Critique this draft.",
+        "Assess whether this hook works.",
+        "Tell me what you would change and why.",
+      ]) {
+        expect(isOpinionOrQuestionAboutContent(request)).toBe(true);
+      }
+    });
+
     test("NEVER catches a write / edit / generative request (they must still route to the writer)", () => {
       for (const req of [
         "write an original post about ai slop",
@@ -1964,8 +1975,8 @@ describe("direct writer eligibility predicates", () => {
         "draft a variation on a different topic",
         "can you rewrite this?", // a question, but a command-position write verb
         "can you make the hook stronger?", // command-position "make the"
-        // Terse generative follow-ups (question-shaped but NO opinion cue) — the
-        // sticky drafting pin must keep these in the writer lane.
+        // Terse generative follow-ups are not feedback. The current-turn router
+        // may clarify them, but this predicate must not relabel them as review.
         "Another angle?",
         "different hook?",
         "a shorter version?",
@@ -2308,15 +2319,25 @@ describe("direct writer eligibility predicates", () => {
       ["rollout disabled", { enabled: false }],
       ["not marked refine", { isRefine: false }],
       ["unresolved target", { targetResolved: false }],
-      ["hook-card target", { targetKind: "hook" as const }],
-      ["target lead magnet", { targetHasLeadMagnet: true }],
       ["model source", { hasModelSource: true }],
       ["attachment", { hasAttachments: true }],
-      ["selected lead magnet", { hasLeadMagnet: true }],
-      ["creator style", { hasCreatorStyle: true }],
       ["missing voice", { voiceResolved: false }],
     ])("keeps %s on the baseline", (_label, override) => {
       expect(isDirectRefineEligible({ ...REFINE, ...override })).toBe(false);
+    });
+
+    test("accepts a resolved hook-card edit", () => {
+      expect(
+        isDirectRefineEligible({ ...REFINE, targetKind: "hook" }),
+      ).toBe(true);
+    });
+
+    test.each([
+      ["target lead magnet", { targetHasLeadMagnet: true }],
+      ["selected lead magnet", { hasLeadMagnet: true }],
+      ["creator style", { hasCreatorStyle: true }],
+    ])("keeps supported %s context on the in-place writer", (_label, override) => {
+      expect(isDirectRefineEligible({ ...REFINE, ...override })).toBe(true);
     });
 
     test("keeps research, source discovery, actions, and multiple versions on the orchestrated path", () => {
@@ -2437,12 +2458,8 @@ describe("direct writer eligibility predicates", () => {
       ["not marked refine", { isRefine: false }],
       ["empty instruction", { refineInstruction: "   " }],
       ["unresolved target", { targetResolved: false }],
-      ["hook-card target", { targetKind: "hook" as const }],
-      ["target lead magnet", { targetHasLeadMagnet: true }],
       ["model source", { hasModelSource: true }],
       ["attachment", { hasAttachments: true }],
-      ["selected lead magnet", { hasLeadMagnet: true }],
-      ["creator style", { hasCreatorStyle: true }],
       ["missing voice", { voiceResolved: false }],
     ])(
       "still rejects Tier-1-blocked case: %s (these genuinely can't use the simple writer)",
@@ -2450,6 +2467,12 @@ describe("direct writer eligibility predicates", () => {
         expect(isGeneralRefineEligible({ ...REFINE, ...override })).toBe(false);
       },
     );
+
+    test("accepts a resolved hook-card edit on the general fallback", () => {
+      expect(
+        isGeneralRefineEligible({ ...REFINE, targetKind: "hook" }),
+      ).toBe(true);
+    });
 
     test("a clean single-focus refine that the strict lane already accepts also passes the fallback (superset)", () => {
       // The fallback is a superset of the strict lane's Tier-1: anything the
