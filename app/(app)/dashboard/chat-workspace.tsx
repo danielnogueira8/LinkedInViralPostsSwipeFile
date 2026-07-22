@@ -3740,6 +3740,7 @@ export function ChatWorkspace({
               count={agentCounts.drafts + agentCounts.opportunities}
               onOpen={() => {
                 setAgentViewOpen(true);
+                setMobileDraftsOpen(false);
                 setSidebarOpen(false);
               }}
             />
@@ -5316,7 +5317,7 @@ export function ChatWorkspace({
       {/* Mobile: a floating "Drafts (N)" pill above the composer that opens the
           drafts as a bottom sheet. The desktop panel is hidden below lg, so this
           is the ONLY way to reach generated drafts on a phone. */}
-      {hasDraftPanel && !mobileDraftsOpen && (
+      {hasDraftPanel && !mobileDraftsOpen && !agentViewOpen && (
         <button
           type="button"
           onClick={() => setMobileDraftsOpen(true)}
@@ -5327,7 +5328,7 @@ export function ChatWorkspace({
           {ARTIFACT_PANEL_TITLE} ({artifacts.length})
         </button>
       )}
-      {mobileDraftsOpen && hasDraftPanel && (
+      {mobileDraftsOpen && hasDraftPanel && !agentViewOpen && (
         <div className="lg:hidden absolute inset-0 z-40 flex flex-col justify-end" role="dialog" aria-modal="true">
           <div
             className="absolute inset-0 bg-black/40"
