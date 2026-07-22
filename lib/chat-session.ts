@@ -14,15 +14,12 @@ export type ChatSessionRun = {
   turnStartedAt?: string;
 };
 
-export type ChatSessionSnapshot<Message, Artifact, Run extends ChatSessionRun> = {
+export type ChatSessionSnapshot = {
   revision: number;
   activeId: string | null;
   loadingChatId: string | null;
   reattachingChatId: string | null;
   reattachPlan: readonly unknown[];
-  baseByChat: ReadonlyMap<string, Message[]>;
-  artifactsByChat: ReadonlyMap<string, Artifact[]>;
-  runsByChat: ReadonlyMap<string, Run>;
 };
 
 export type LoadedConversation<Message, Artifact> = {
@@ -134,7 +131,7 @@ export class ChatSession<
   private readonly listeners = new Set<() => void>();
   private readonly inFlight = new Set<string>();
   private readonly lastSend = new Map<string, { text: string; at: number }>();
-  private snapshotValue: ChatSessionSnapshot<Message, Artifact, Run>;
+  private snapshotValue: ChatSessionSnapshot;
 
   constructor(options: {
     activeId?: string | null;
@@ -154,12 +151,30 @@ export class ChatSession<
     return () => this.listeners.delete(listener);
   };
 
-  snapshot = (): ChatSessionSnapshot<Message, Artifact, Run> =>
-    this.snapshotValue;
+  snapshot = (): ChatSessionSnapshot => this.snapshotValue;
 
-  /** Notify subscribers after a run object or cached list was mutated in place. */
-  changed(): void {
-    this.publish();
+  baseMessages(id: string | null): readonly Message[] {
+    return id ? (this.base.get(id) ?? []) : [];
+  }
+
+  artifactsFor(id: string | null): readonly Artifact[] {
+    return id ? (this.artifacts.get(id) ?? []) : [];
+  }
+
+  runFor(id: string | null): Readonly<Run> | undefined {
+    return id ? this.runs.get(id) : undefined;
+  }
+
+  hasRun(id: string): boolean {
+    return this.runs.has(id);
+  }
+
+  streamingRunIds(): ReadonlySet<string> {
+    const ids = new Set<string>();
+    for (const [id, run] of this.runs) {
+      if (run.streaming) ids.add(id);
+    }
+    return ids;
   }
 
   selectLocal(id: string | null): void {
@@ -243,11 +258,11 @@ export class ChatSession<
     this.publish();
   }
 
-  ownsRun(id: string, run: Run): boolean {
+  ownsRun(id: string, run: Readonly<Run>): boolean {
     return this.runs.get(id) === run;
   }
 
-  retireRun(id: string, run?: Run): boolean {
+  retireRun(id: string, run?: Readonly<Run>): boolean {
     if (run && this.runs.get(id) !== run) return false;
     const deleted = this.runs.delete(id);
     if (deleted) this.publish();
@@ -311,7 +326,7 @@ export class ChatSession<
 
   reconcileOwned(
     id: string,
-    run: Run,
+    run: Readonly<Run>,
     messages: Message[],
     artifacts: Artifact[],
   ): boolean {
@@ -324,7 +339,7 @@ export class ChatSession<
 
   completeRun(
     id: string,
-    run: Run,
+    run: Readonly<Run>,
     messages: Message[],
     artifacts: Artifact[],
   ): boolean {
@@ -341,14 +356,19 @@ export class ChatSession<
     this.publish();
   }
 
-  setArtifacts(id: string, artifacts: Artifact[]): void {
-    this.artifacts.set(id, artifacts);
+  setArtifacts(id: string, artifacts: readonly Artifact[]): void {
+    this.artifacts.set(id, [...artifacts]);
     this.publish();
   }
 
-  updateRun(id: string, run: Run, update: (ownedRun: Run) => void): boolean {
-    if (!this.ownsRun(id, run)) return false;
-    update(run);
+  updateRun(
+    id: string,
+    run: Readonly<Run>,
+    update: (ownedRun: Run) => void,
+  ): boolean {
+    const ownedRun = this.runs.get(id);
+    if (!ownedRun || ownedRun !== run) return false;
+    update(ownedRun);
     this.publish();
     return true;
   }
@@ -361,7 +381,9 @@ export class ChatSession<
     signal: AbortSignal = run.ctrl.signal,
   ): Promise<void> {
     await consumeChatSSE(body, (event, data) => {
-      if (this.ownsRun(id, run)) reduce(run, event, data);
+      if (!this.ownsRun(id, run)) return;
+      reduce(run, event, data);
+      this.publish();
     }, signal);
   }
 
@@ -398,7 +420,7 @@ export class ChatSession<
   }
   clearLastSend(key: string): void { this.lastSend.delete(key); }
 
-  private hasVisibleContent(id: string): boolean {
+  hasVisibleContent(id: string): boolean {
     return (this.base.get(id)?.length ?? 0) > 0 || this.runs.has(id);
   }
 
@@ -418,16 +440,13 @@ export class ChatSession<
     for (const listener of this.listeners) listener();
   }
 
-  private createSnapshot(): ChatSessionSnapshot<Message, Artifact, Run> {
+  private createSnapshot(): ChatSessionSnapshot {
     return {
       revision: this.revision,
       activeId: this.activeId,
       loadingChatId: this.loadingChatId,
       reattachingChatId: this.reattachingChatId,
       reattachPlan: this.reattachPlan,
-      baseByChat: this.base,
-      artifactsByChat: this.artifacts,
-      runsByChat: this.runs,
     };
   }
 }
