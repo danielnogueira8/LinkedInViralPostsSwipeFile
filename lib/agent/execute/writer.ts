@@ -10,6 +10,8 @@ import {
   type Usage,
 } from "@/lib/openrouter";
 import type { AgentEvent, Artifact, PlanStep } from "@/lib/agent/contracts";
+import type { GroundedSource } from "@/lib/agent/evidence";
+export type { GroundedSource } from "@/lib/agent/evidence";
 import {
   createDraftFinalizer,
   type DraftCandidateTransform,
@@ -190,15 +192,6 @@ type FeedbackInput = Pick<
 export type Source = {
   id: string;
   text: string;
-};
-
-export type GroundedSource = {
-  id: string;
-  kind: "news" | "web" | "workspace_post" | "attachment";
-  text: string;
-  title?: string;
-  url?: string;
-  publishedAt?: string;
 };
 
 export type PartialTextSpec = DirectPartialTextSpec;

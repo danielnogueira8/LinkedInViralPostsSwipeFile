@@ -458,6 +458,22 @@ That makes the lesson practical and repeatable for the reader.`,
 });
 
 describe("search_viral_posts — query shape", () => {
+  test("filters post bodies by a full-text topic without treating it as an account niche", async () => {
+    dbRef.current = makeFakeSupabase({ posts: { rows: [] } });
+    await runTool(
+      "search_viral_posts",
+      { query: "AI agents", strict_ranking: true },
+      "ws-1",
+    );
+
+    expect(filterArgs(dbRef.current, "posts", "textSearch")).toEqual([
+      "text",
+      "AI agents",
+      { type: "websearch", config: "english" },
+    ]);
+    expect(filterArgs(dbRef.current, "posts", "ilike")).toBeUndefined();
+  });
+
   test("matches an exact niche case-insensitively without wildcard broadening", async () => {
     dbRef.current = makeFakeSupabase({ posts: { rows: [] } });
     await runTool("search_viral_posts", { niche: "AI & SaaS" }, "ws-1");
@@ -1009,6 +1025,7 @@ describe("isMimicSearch — which search_viral_posts calls get rotated", () => {
   });
 
   test("explicit sort / dir / threshold / date → analytical (strict order)", () => {
+    expect(isMimicSearch({ query: "AI agents" })).toBe(false);
     expect(isMimicSearch({ sort: "reactions" })).toBe(false);
     expect(isMimicSearch({ sort: "posted" })).toBe(false);
     expect(isMimicSearch({ dir: "asc" })).toBe(false);

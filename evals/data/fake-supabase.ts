@@ -97,6 +97,7 @@ export function makeFakeSupabase(
       "neq",
       "or",
       "ilike",
+      "textSearch",
       "range",
       "abortSignal",
       // Write builders (chainable, same as filters): a mutation like

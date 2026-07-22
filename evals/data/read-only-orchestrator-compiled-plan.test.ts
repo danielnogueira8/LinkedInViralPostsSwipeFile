@@ -87,6 +87,35 @@ describe("compileServerReadOnlyPlan — every draft route compiles a validator-p
   );
 });
 
+describe("compileServerReadOnlyPlan — grounded answers keep verified evidence and text separate", () => {
+  test.each([
+    [
+      "Research the latest OpenAI news and summarize what it means for founders.",
+      false,
+    ],
+    ["Research current pricing methods and give me the findings.", false],
+    [
+      "Find one top-performing regular post in my swipe file about AI agents and summarize why it worked. Do not draft or rewrite.",
+      false,
+    ],
+    ["Summarize the attached interview.", true],
+  ] as const)(
+    "compiles and validates an answer_from_evidence terminal: %s",
+    (userInstruction, hasAttachments) => {
+      const route = compileReadOnlyOrchestratorRoute({
+        ...routingBase,
+        hasAttachments,
+        userInstruction,
+      });
+      expect(route?.outcome?.kind).toBe("grounded_answer");
+      if (!route) return;
+      const plan = compileServerReadOnlyPlan(route, userInstruction);
+      expect(plan?.actions.at(-1)?.type).toBe("answer_from_evidence");
+      expect(() => parseReadOnlyPlan(route, plan!)).not.toThrow();
+    },
+  );
+});
+
 describe("compileServerReadOnlyPlan — per-route shapes", () => {
   test("news_research → one search_news then draft_post", () => {
     const route: ReadOnlyOrchestratorRoute = {
@@ -142,6 +171,38 @@ describe("compileServerReadOnlyPlan — per-route shapes", () => {
       search?.type === "search_viral_posts" ? search.limit : 0,
     ).toBeGreaterThanOrEqual(3);
     expect(() => parseReadOnlyPlan(route, plan!)).not.toThrow();
+  });
+
+  test("workspace grounded answer → verified search then answer_from_evidence", () => {
+    const route: ReadOnlyOrchestratorRoute = {
+      kind: "workspace_research",
+      expectsDraft: false,
+      minimumSources: 1,
+      workspaceSearchMode: "strict_top",
+      workspacePostType: "regular",
+      outcome: {
+        kind: "grounded_answer",
+        format: "summary",
+        resultCount: 1,
+      },
+    };
+    const instruction =
+      "Find one top-performing regular post in my swipe file about AI agents and summarize why it worked. Do not draft or rewrite.";
+    const plan = compileServerReadOnlyPlan(route, instruction);
+
+    expect(plan?.actions.map((action) => action.type)).toEqual([
+      "search_viral_posts",
+      "answer_from_evidence",
+    ]);
+    expect(
+      plan?.actions.find((action) => action.type === "search_viral_posts"),
+    ).toMatchObject({
+      type: "search_viral_posts",
+      query: "AI agents",
+      post_type: "regular",
+    });
+    expect(() => parseReadOnlyPlan(route, plan!)).not.toThrow();
+    expect(planSearchQueriesMatchInstruction(plan!, instruction)).toBe(true);
   });
 
   test("compiles regular posts as a post type rather than an account niche", () => {

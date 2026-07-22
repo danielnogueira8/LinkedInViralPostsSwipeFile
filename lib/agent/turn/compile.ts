@@ -136,8 +136,14 @@ function actionTurnContract(route: ActionOrchestratorRoute): TurnContract {
 }
 
 function readOnlyTurnContract(route: ReadOnlyOrchestratorRoute): TurnContract {
-  return route.expectsDraft
-    ? { kind: "post", expectedCount: route.expectedDrafts ?? 1 }
+  return route.outcome?.kind === "draft" || route.expectsDraft === true
+    ? {
+        kind: "post",
+        expectedCount:
+          route.outcome?.kind === "draft"
+            ? route.outcome.expectedDrafts
+            : (route.expectedDrafts ?? 1),
+      }
     : { kind: "research", expectedCount: 1 };
 }
 
@@ -866,14 +872,25 @@ export type ReadOnlyOrchestratorRouteKind =
 
 export type ReadOnlyOrchestratorRoute = {
   kind: ReadOnlyOrchestratorRouteKind;
-  expectsDraft: boolean;
+  /** @deprecated Accepted only while persisted/test fixtures migrate; ignored by production routing. */
+  expectsDraft?: boolean;
+  /** @deprecated Use outcome.expectedDrafts. */
   expectedDrafts?: number;
+  outcome?:
+    | { kind: "draft"; expectedDrafts: number }
+    | {
+        kind: "grounded_answer";
+        format: "summary" | "takeaways" | "comparison" | "report";
+        resultCount?: number;
+      };
   allowExternalSearch?: boolean;
   allowedSearchKinds?: Array<"news" | "web" | "workspace">;
   minimumSources?: number;
   workspaceSearchMode?: "diverse" | "strict_top";
   workspaceSince?: "1d" | "7d" | "30d";
   workspacePostType?: PostType;
+  /** Full-text topic constraint for workspace post bodies (not an account niche). */
+  workspaceQuery?: string;
   // Genuine explicit user choice for the saved draft's post type (UI / starter
   // contract), distinct from workspacePostType which is used for source
   // filtering. Carried through to the artifact meta so the client does not
@@ -918,6 +935,7 @@ function composerResearchRoute(
       kind: "workspace_research",
       expectsDraft: true,
       expectedDrafts: context.expectedDraftCount,
+      outcome: { kind: "draft", expectedDrafts: context.expectedDraftCount },
       minimumSources: requirement.minimumSources,
       workspaceSearchMode: requirement.searchMode,
       ...(requirement.since ? { workspaceSince: requirement.since } : {}),
@@ -933,6 +951,7 @@ function composerResearchRoute(
     kind: requirement.lane === "news" ? "news_research" : "web_research",
     expectsDraft: true,
     expectedDrafts: context.expectedDraftCount,
+    outcome: { kind: "draft", expectedDrafts: context.expectedDraftCount },
   };
 }
 
@@ -954,9 +973,11 @@ const FILE_INSPECTION_RE =
 const COMPLEX_READ_RE =
   /\b(?:research|investigate|fact[ -]?check|verify|compare|synthesi[sz]e|inspect|analy[sz]e|review|read|search|find)\b/i;
 const EXPLICIT_NON_POST_OUTCOME_RE =
-  /\b(?:summari[sz]e|compare|analy[sz]e|explain|tell\s+me|show\s+me|list|report|recommend|answer|give\s+me\s+(?:the\s+)?(?:findings|takeaways|results|lessons))\b/i;
+  /\b(?:summari[sz]e|summary|compare|analy[sz]e|explain|tell\s+me|show\s+me|list|report|recommend|answer|give\s+me\s+(?:the\s+)?(?:findings|takeaways|results|lessons))\b/i;
 const NEGATED_POST_OUTCOME_RE =
   /\b(?:do\s+not|don(?:'|’)?t|dont|never)\s+(?:write|draft|create|generate|make|produce|prepare|model|mimic|adapt|rewrite|rework|remix|replicate|turn)\b/i;
+const WORKSPACE_RESEARCH_CONTEXT_RE =
+  /\b(?:my|our)\s+(?:swipe\s+file|bookmarks?|saved\s+posts?)\b/i;
 const HISTORY_DEPENDENT_RESEARCH_RE =
   /\b(?:this|that|it|these|those|their|his|her|its|above|previous|earlier)\b/i;
 const STRICT_TOP_SOURCE_RE =
@@ -1015,6 +1036,34 @@ function requestedWorkspacePostType(
   }
   if (/\bregular\s+posts?\b/i.test(researchClause)) return "regular";
   return undefined;
+}
+
+function requestedGroundedAnswer(
+  instruction: string,
+): Extract<
+  NonNullable<ReadOnlyOrchestratorRoute["outcome"]>,
+  { kind: "grounded_answer" }
+> | null {
+  if (!EXPLICIT_NON_POST_OUTCOME_RE.test(instruction)) return null;
+  if (
+    FULL_POST_REQUEST_RE.test(instruction) &&
+    !NEGATED_POST_OUTCOME_RE.test(instruction)
+  ) {
+    return null;
+  }
+  const format = /\bcompar(?:e|ison)\b/i.test(instruction)
+    ? "comparison"
+    : /\b(?:takeaways?|lessons?|list)\b/i.test(instruction)
+      ? "takeaways"
+      : /\breport\b/i.test(instruction)
+        ? "report"
+        : "summary";
+  const explicitCount = requestedExplicitSourceCount(instruction);
+  return {
+    kind: "grounded_answer",
+    format,
+    ...(explicitCount ? { resultCount: Math.min(explicitCount, 10) } : {}),
+  };
 }
 
 function sourceResearchClause(instruction: string): string {
@@ -1414,6 +1463,12 @@ export function compileReadOnlyOrchestratorRoute(
       resolvedInstruction = `${followup.original}\n\nWrite ${
         clarifiedPostCount === 1 ? "a" : clarifiedPostCount
       } LinkedIn ${clarifiedPostCount === 1 ? "post" : "posts"}.`;
+    } else if (originalRoute?.clarificationReason === "outcome") {
+      if (/^A short list of takeaways$/i.test(followup.answer)) {
+        resolvedInstruction = `${followup.original}\n\nGive me a short list of takeaways. Do not draft or rewrite.`;
+      } else if (/^A detailed research summary$/i.test(followup.answer)) {
+        resolvedInstruction = `${followup.original}\n\nSummarize the research in detail. Do not draft or rewrite.`;
+      }
     } else if (originalRoute?.clarificationReason === "research_topic") {
       const researchTopic = canonicalResearchTopicAnswer(followup.answer);
       if (researchTopic) {
@@ -1460,8 +1515,11 @@ export function compileReadOnlyOrchestratorRoute(
     return null;
   }
   const instruction = input.userInstruction.trim();
+  const groundedAnswer = requestedGroundedAnswer(instruction);
   const forbidsDiscovery = explicitlyForbidsSourceDiscovery(instruction);
-  const modeledIntent = forbidsDiscovery
+  const modeledIntent =
+    forbidsDiscovery ||
+    (groundedAnswer !== null && NEGATED_POST_OUTCOME_RE.test(instruction))
     ? ({ kind: "none" } as const)
     : compileModeledPostIntent(instruction, {
         draftCountOverride: input.draftCountOverride,
@@ -1499,13 +1557,6 @@ export function compileReadOnlyOrchestratorRoute(
   ) {
     return null;
   }
-  if (
-    NEGATED_POST_OUTCOME_RE.test(instruction) &&
-    EXPLICIT_NON_POST_OUTCOME_RE.test(instruction)
-  ) {
-    return null;
-  }
-
   if (modeledIntent.kind === "ambiguous") {
     return {
       kind: "ambiguous_read_only",
@@ -1542,13 +1593,15 @@ export function compileReadOnlyOrchestratorRoute(
   );
   const unresolvedPluralDraftTarget =
     !sourceModelingRequest &&
+    groundedAnswer === null &&
     FULL_POST_REQUEST_RE.test(instruction) &&
     hasPluralPostTarget &&
     explicitDraftCount === null;
   const expectsDraft =
-    sourceModelingRequest ||
-    (FULL_POST_REQUEST_RE.test(instruction) &&
-      (!hasPluralPostTarget || explicitDraftCount !== null));
+    groundedAnswer === null &&
+    (sourceModelingRequest ||
+      (FULL_POST_REQUEST_RE.test(instruction) &&
+        (!hasPluralPostTarget || explicitDraftCount !== null)));
   const expectedDrafts = explicitDraftCount ?? 1;
   const workspaceDraftSourceMode =
     sourceModelingRequest &&
@@ -1570,8 +1623,10 @@ export function compileReadOnlyOrchestratorRoute(
     sourceModelingRequest ||
     ((explicitlyRequestsSourceDiscovery(instruction) ||
       OUTPUT_FIRST_SOURCE_DISCOVERY_RE.test(instruction)) &&
-    (MULTI_SOURCE_RE.test(researchClause) ||
-      workspaceDraftSourceMode === "one_to_one"));
+      (groundedAnswer !== null
+        ? WORKSPACE_RESEARCH_CONTEXT_RE.test(researchClause)
+        : MULTI_SOURCE_RE.test(researchClause) ||
+          workspaceDraftSourceMode === "one_to_one"));
   const complexRead =
     needsFileInspection ||
     needsNews ||
@@ -1588,6 +1643,7 @@ export function compileReadOnlyOrchestratorRoute(
 
   if (
     !needsFileInspection &&
+    groundedAnswer === null &&
     (RESEARCH_RE.test(researchClause) || needsNews) &&
     HISTORY_DEPENDENT_RESEARCH_RE.test(researchClause)
   ) {
@@ -1595,6 +1651,72 @@ export function compileReadOnlyOrchestratorRoute(
   }
 
   if (!expectsDraft) {
+    if (groundedAnswer && needsFileInspection) {
+      const allowedSearchKinds: Array<"news" | "web" | "workspace"> = [];
+      if (!forbidsDiscovery) {
+        if (needsNews) allowedSearchKinds.push("news");
+        if (needsWorkspaceResearch) allowedSearchKinds.push("workspace");
+        if (
+          RESEARCH_RE.test(researchClause) &&
+          !needsNews &&
+          !needsWorkspaceResearch
+        ) {
+          allowedSearchKinds.push("web");
+        }
+      }
+      return {
+        kind: "file_inspection",
+        outcome: groundedAnswer,
+        allowExternalSearch: allowedSearchKinds.length > 0,
+        allowedSearchKinds,
+        ...(needsWorkspaceResearch
+          ? {
+              minimumSources: Math.max(1, groundedAnswer.resultCount ?? 1),
+              workspaceSearchMode: STRICT_TOP_SOURCE_RE.test(researchClause)
+                ? ("strict_top" as const)
+                : ("diverse" as const),
+              ...(requestedWorkspaceWindow(researchClause)
+                ? { workspaceSince: requestedWorkspaceWindow(researchClause) }
+                : {}),
+              ...(workspacePostType ? { workspacePostType } : {}),
+            }
+          : {}),
+      };
+    }
+    if (groundedAnswer && needsNews) {
+      if (!hasConcreteResearchTopic(researchClause)) {
+        return {
+          kind: "ambiguous_read_only",
+          expectsDraft: false,
+          clarificationReason: "research_topic",
+        };
+      }
+      return { kind: "news_research", outcome: groundedAnswer };
+    }
+    if (groundedAnswer && needsWorkspaceResearch) {
+      return {
+        kind: "workspace_research",
+        outcome: groundedAnswer,
+        minimumSources: Math.max(1, groundedAnswer.resultCount ?? 1),
+        workspaceSearchMode: STRICT_TOP_SOURCE_RE.test(researchClause)
+          ? "strict_top"
+          : "diverse",
+        ...(requestedWorkspaceWindow(researchClause)
+          ? { workspaceSince: requestedWorkspaceWindow(researchClause) }
+          : {}),
+        ...(workspacePostType ? { workspacePostType } : {}),
+      };
+    }
+    if (groundedAnswer && RESEARCH_RE.test(researchClause)) {
+      if (!hasConcreteResearchTopic(researchClause)) {
+        return {
+          kind: "ambiguous_read_only",
+          expectsDraft: false,
+          clarificationReason: "research_topic",
+        };
+      }
+      return { kind: "web_research", outcome: groundedAnswer };
+    }
     return unresolvedPluralDraftTarget ||
       (complexRead && !EXPLICIT_NON_POST_OUTCOME_RE.test(instruction))
       ? {
@@ -1621,6 +1743,7 @@ export function compileReadOnlyOrchestratorRoute(
       kind: "file_inspection",
       expectsDraft: true,
       expectedDrafts,
+      outcome: { kind: "draft", expectedDrafts },
       allowExternalSearch: allowedSearchKinds.length > 0,
       allowedSearchKinds,
       ...(input.explicitPostType ? { explicitPostType: input.explicitPostType } : {}),
@@ -1650,6 +1773,7 @@ export function compileReadOnlyOrchestratorRoute(
       kind: "news_research",
       expectsDraft: true,
       expectedDrafts,
+      outcome: { kind: "draft", expectedDrafts },
       ...(input.explicitPostType ? { explicitPostType: input.explicitPostType } : {}),
     };
   }
@@ -1658,6 +1782,7 @@ export function compileReadOnlyOrchestratorRoute(
       kind: "workspace_research",
       expectsDraft: true,
       expectedDrafts,
+      outcome: { kind: "draft", expectedDrafts },
       minimumSources: workspaceMinimumSources,
       workspaceSearchMode: STRICT_TOP_SOURCE_RE.test(researchClause)
         ? "strict_top"
@@ -1682,6 +1807,7 @@ export function compileReadOnlyOrchestratorRoute(
       kind: "web_research",
       expectsDraft: true,
       expectedDrafts,
+      outcome: { kind: "draft", expectedDrafts },
       ...(input.explicitPostType ? { explicitPostType: input.explicitPostType } : {}),
     };
   }
@@ -2284,7 +2410,8 @@ export async function compileTurnPlan(
 
   const useReadOnlyOrchestrator = Boolean(
     readOnlyOrchestratorRoute &&
-      preloadedVoiceResult?.ok === true &&
+      (readOnlyOrchestratorRoute.outcome?.kind !== "draft" ||
+        preloadedVoiceResult?.ok === true) &&
       (Boolean(modeledBatchRouteContract) ||
         deterministicModeledRoute ||
         deps.readOnlyOrchestratorEnabledForWorkspace()),

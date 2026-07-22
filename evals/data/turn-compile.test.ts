@@ -1531,12 +1531,21 @@ describe("compileReadOnlyOrchestratorRoute", () => {
   });
 
   test.each([
-    "Find 4 top posts in my swipe file, but don't rewrite them; just compare them.",
-    "Find 4 top posts in my swipe file. Do not adapt them. Give me the findings.",
-  ])("honors a negated post command and explicit non-post outcome: %s", (userInstruction) => {
+    [
+      "Find 4 top posts in my swipe file, but don't rewrite them; just compare them.",
+      "comparison",
+    ],
+    [
+      "Find 4 top posts in my swipe file. Do not adapt them. Give me the findings.",
+      "summary",
+    ],
+  ] as const)("honors a negated post command and explicit non-post outcome: %s", (userInstruction, format) => {
     expect(
       compileReadOnlyOrchestratorRoute({ ...readOnlyBase, userInstruction }),
-    ).toBeNull();
+    ).toMatchObject({
+      kind: "workspace_research",
+      outcome: { kind: "grounded_answer", format, resultCount: 4 },
+    });
   });
 
   test.each([
@@ -1736,8 +1745,25 @@ describe("compileReadOnlyOrchestratorRoute", () => {
   });
 
   test.each([
+    ["A short list of takeaways", "takeaways"],
+    ["A detailed research summary", "summary"],
+  ] as const)(
+    "recompiles a grounded-answer clarification into the original evidence lane: %s",
+    (answer, format) => {
+      expect(
+        compileReadOnlyOrchestratorRoute({
+          ...readOnlyBase,
+          userInstruction: `Research the latest OpenAI news.\n\nClarification answer: ${answer}`,
+        }),
+      ).toMatchObject({
+        kind: "news_research",
+        outcome: { kind: "grounded_answer", format },
+      });
+    },
+  );
+
+  test.each([
     "A Twitter post",
-    "Not a LinkedIn post; give takeaways",
     "Seven LinkedIn posts",
   ])("does not rewrite an unsupported outcome answer: %s", (answer) => {
     expect(
@@ -1860,17 +1886,69 @@ describe("compileReadOnlyOrchestratorRoute", () => {
   });
 
   test.each([
-    "Compare the attached files and tell me what I should do next.",
-    "Summarize the attached interview.",
-    "Research current pricing methods and give me the findings.",
-  ])("keeps a clear non-post read-only deliverable on the baseline: %s", (userInstruction) => {
+    [
+      "Research the latest OpenAI news and summarize what it means for founders.",
+      false,
+      "news_research",
+    ],
+    [
+      "Research current pricing methods and give me the findings.",
+      false,
+      "web_research",
+    ],
+    ["Summarize the attached interview.", true, "file_inspection"],
+    [
+      "Find three top posts in my swipe file and give me a detailed research summary. Do not draft.",
+      false,
+      "workspace_research",
+    ],
+  ] as const)(
+    "routes an explicit grounded answer through its verified evidence lane: %s",
+    (userInstruction, hasAttachments, kind) => {
+      expect(
+        compileReadOnlyOrchestratorRoute({
+          ...readOnlyBase,
+          hasAttachments,
+          userInstruction,
+        }),
+      ).toMatchObject({
+        kind,
+        outcome: { kind: "grounded_answer", format: "summary" },
+      });
+    },
+  );
+
+  test("routes an attached-file comparison to a grounded answer", () => {
     expect(
       compileReadOnlyOrchestratorRoute({
         ...readOnlyBase,
-        hasAttachments: userInstruction.includes("attached"),
-        userInstruction,
+        hasAttachments: true,
+        userInstruction:
+          "Compare the attached files and tell me what I should do next.",
       }),
-    ).toBeNull();
+    ).toMatchObject({
+      kind: "file_inspection",
+      outcome: { kind: "grounded_answer", format: "comparison" },
+    });
+  });
+
+  test("routes an explicit swipe-file summary to grounded workspace research without draft authority", () => {
+    const route = compileReadOnlyOrchestratorRoute({
+      ...readOnlyBase,
+      userInstruction:
+        "Find one top-performing regular post in my swipe file about AI agents and summarize why it worked. Do not draft or rewrite.",
+    });
+    expect(route).toMatchObject({
+      kind: "workspace_research",
+      workspacePostType: "regular",
+      workspaceSearchMode: "strict_top",
+      outcome: {
+        kind: "grounded_answer",
+        format: "summary",
+        resultCount: 1,
+      },
+    });
+    expect(route).not.toHaveProperty("expectsDraft");
   });
 
   test.each([
