@@ -136,6 +136,10 @@ export type CoworkOutcomeScenario = {
     };
     messageArtifact?: Artifact;
     messageArtifacts?: Artifact[];
+    messageSequence?: Array<
+      | { artifact: Artifact }
+      | { turn: { user: string; assistant: string } }
+    >;
     // A completed earlier user→assistant exchange, seeded before the scenario
     // request so the turn's history window has a prior conversation.
     priorTurn?: {
@@ -247,6 +251,7 @@ export type CoworkOutcomeReport = {
   observed: {
     actions: CoworkObservedAction[];
     agentProviderRounds: number;
+    agentProviderRequests: Array<{ messages: import("@/lib/openrouter").ChatMessage[] }>;
     directWriterRequests: DraftWriterRequest[];
     savedPostReads: number;
     readOnlyPlannerRequests: ReadOnlyPlannerRequest[];
@@ -635,6 +640,13 @@ async function runCoworkOutcomeScenarioWithStore(
   }
   if (scenario.seed?.messageArtifact) {
     store.seedMessageArtifact(scenario.seed.messageArtifact);
+  }
+  for (const item of scenario.seed?.messageSequence ?? []) {
+    if ("artifact" in item) {
+      store.seedMessageArtifact(item.artifact);
+    } else {
+      store.seedConversationTurn(item.turn.user, item.turn.assistant);
+    }
   }
   for (const artifact of scenario.seed?.messageArtifacts ?? []) {
     store.seedMessageArtifact(artifact);
@@ -1248,6 +1260,7 @@ async function runCoworkOutcomeScenarioWithStore(
     observed: {
       actions,
       agentProviderRounds: providerSession.roundCount(),
+      agentProviderRequests: providerSession.requests(),
       directWriterRequests: directWriter?.requests ?? [],
       savedPostReads: store.readCount("saved_posts"),
       readOnlyPlannerRequests: readOnlyPlannerAdapters.flatMap(

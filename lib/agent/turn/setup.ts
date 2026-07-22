@@ -1106,7 +1106,11 @@ export async function setupChatTurn(
     // Every edit surface converges here after its operation is known. The
     // server validates identity against the complete transcript and inherits
     // the target's Custom Skills unless this turn explicitly selected others.
-    if (refineTargetId || currentTurnOperation?.kind === "create_post") {
+    if (
+      refineTargetId ||
+      currentTurnOperation?.kind === "create_post" ||
+      currentTurnOperation?.kind === "ask"
+    ) {
       await ensureCanonicalConversationArtifacts();
     }
     const editOperation =

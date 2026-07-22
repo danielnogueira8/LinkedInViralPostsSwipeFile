@@ -4952,6 +4952,185 @@ describe("production-shaped Cowork outcome harness", () => {
     });
   });
 
+  test("an Ask turn can see every Post generated in the chat", async () => {
+    const postBodies = [
+      "POST ONE — deterministic systems expose every boundary.",
+      "POST TWO — retries must preserve the original operation.",
+      "POST THREE — explicit targets prevent accidental rewrites.",
+      "POST FOUR — safe defaults turn uncertainty into clarification.",
+    ];
+    const report = await runCoworkOutcomeScenario({
+      id: "ask-sees-all-chat-posts",
+      request: {
+        message: "Compare all four posts and tell me which one is strongest.",
+        command: { kind: "ask" },
+      },
+      seed: {
+        messageArtifacts: postBodies.map((body, index) => ({
+          id: `00000000-0000-4000-8000-00000000071${index}`,
+          kind: "post" as const,
+          title: `Post ${index + 1}`,
+          body,
+        })),
+      },
+      model: {
+        provider: textProvider("Post four is strongest because its outcome is clearest."),
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [],
+        actionNames: [],
+        route: "answer",
+      },
+    });
+
+    expect(report.pass, JSON.stringify(report.safe)).toBe(true);
+    const providerInput = JSON.stringify(
+      report.observed.agentProviderRequests.at(-1)?.messages ?? [],
+    );
+    for (const body of postBodies) expect(providerInput).toContain(body);
+  });
+
+  test("a large Post history stays bounded while representing every Post", async () => {
+    const postBodies = Array.from({ length: 30 }, (_, index) =>
+      `UNIQUE-POST-${index + 1}\n${"x".repeat(3_480)}`,
+    );
+    const report = await runCoworkOutcomeScenario({
+      id: "ask-sees-bounded-large-chat-post-history",
+      request: {
+        message: "Compare every Post in this chat.",
+        command: { kind: "ask" },
+      },
+      seed: {
+        messageArtifacts: postBodies.map((body, index) => ({
+          id: `10000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+          kind: "post" as const,
+          title: `Post ${index + 1}`,
+          body,
+        })),
+      },
+      model: { provider: textProvider("I compared every Post.") },
+      expected: {
+        terminal: "done",
+        artifactBodies: [],
+        actionNames: [],
+        route: "answer",
+      },
+    });
+
+    expect(report.pass, JSON.stringify(report.safe)).toBe(true);
+    const providerInput = JSON.stringify(
+      report.observed.agentProviderRequests.at(-1)?.messages ?? [],
+    );
+    for (let index = 1; index <= postBodies.length; index += 1) {
+      expect(providerInput).toContain(`UNIQUE-POST-${index}`);
+    }
+    expect(providerInput).toContain("[truncated]");
+    expect(providerInput.length).toBeLessThan(90_000);
+  });
+
+  test("a card-scoped Ask never receives another Post through variation wording", async () => {
+    const selectedId = "20000000-0000-4000-8000-000000000001";
+    const report = await runCoworkOutcomeScenario({
+      id: "scoped-ask-variation-stays-on-target",
+      request: {
+        message: "Could you create another variation and explain the tradeoffs?",
+        command: { kind: "ask", contextPostId: selectedId },
+      },
+      seed: {
+        messageArtifacts: [
+          {
+            id: selectedId,
+            kind: "post",
+            title: "Selected Post",
+            body: "SELECTED POST BODY — discuss only this one.",
+          },
+          {
+            id: "20000000-0000-4000-8000-000000000002",
+            kind: "post",
+            title: "Newer Post",
+            body: "NEWER POST BODY — must stay outside scoped context.",
+          },
+        ],
+      },
+      model: { provider: textProvider("Here are the tradeoffs.") },
+      expected: {
+        terminal: "done",
+        artifactBodies: [],
+        actionNames: [],
+        route: "answer",
+      },
+    });
+
+    expect(report.pass, JSON.stringify(report.safe)).toBe(true);
+    const providerInput = JSON.stringify(
+      report.observed.agentProviderRequests.at(-1)?.messages ?? [],
+    );
+    expect(providerInput).toContain("SELECTED POST BODY");
+    expect(providerInput).not.toContain("NEWER POST BODY");
+  });
+
+  test("Ask loads Posts beyond the recent window and keeps only the latest version of each ID", async () => {
+    const revisedId = "30000000-0000-4000-8000-000000000001";
+    const fillerTurns = Array.from({ length: 35 }, (_, index) => ({
+      turn: {
+        user: `Earlier question ${index + 1}`,
+        assistant: `Earlier answer ${index + 1}`,
+      },
+    }));
+    const report = await runCoworkOutcomeScenario({
+      id: "ask-loads-complete-deduplicated-post-history",
+      request: {
+        message: "Compare every Post this chat has made.",
+        command: { kind: "ask" },
+      },
+      seed: {
+        messageSequence: [
+          {
+            artifact: {
+              id: "30000000-0000-4000-8000-000000000000",
+              kind: "post",
+              title: "Oldest Post",
+              body: "OLDEST POST OUTSIDE THE RECENT WINDOW",
+            },
+          },
+          {
+            artifact: {
+              id: revisedId,
+              kind: "post",
+              title: "Original version",
+              body: "STALE VERSION MUST NOT REACH THE MODEL",
+            },
+          },
+          ...fillerTurns,
+          {
+            artifact: {
+              id: revisedId,
+              kind: "post",
+              title: "Revised version",
+              body: "LATEST VERSION MUST REACH THE MODEL",
+            },
+          },
+        ],
+      },
+      model: { provider: textProvider("I compared the complete current set.") },
+      expected: {
+        terminal: "done",
+        artifactBodies: [],
+        actionNames: [],
+        route: "answer",
+      },
+    });
+
+    expect(report.pass, JSON.stringify(report.safe)).toBe(true);
+    const providerInput = JSON.stringify(
+      report.observed.agentProviderRequests.at(-1)?.messages ?? [],
+    );
+    expect(providerInput).toContain("OLDEST POST OUTSIDE THE RECENT WINDOW");
+    expect(providerInput).toContain("LATEST VERSION MUST REACH THE MODEL");
+    expect(providerInput).not.toContain("STALE VERSION MUST NOT REACH THE MODEL");
+  });
+
   test("a review request without a post asks for the missing post, not a research outcome", async () => {
     const report = await runCoworkOutcomeScenario({
       id: "targetless-post-review",

@@ -110,6 +110,10 @@ import {
   findBestStructureMatch,
   type StructureMatchResult,
 } from "@/lib/structure-match";
+import {
+  buildArtifactIndex,
+  type ArtifactIndexEntry,
+} from "@/lib/chat-artifact-policy";
 
 /**
  * The ONE turn-context builder (PLAN-cowork-unification Phase 1, step 2
@@ -143,6 +147,63 @@ export const CREATOR_STYLE_CONTEXT_PERSISTENCE_ERROR =
 export const CUSTOM_SKILL_RETRY_CONTEXT_VERSION = 1;
 export const CREATOR_STYLE_RETRY_CONTEXT_VERSION = 1;
 export const MAX_CREATOR_STYLE_RETRY_BLOCK_CHARS = 50_000;
+export const MAX_CHAT_POST_CONTEXT_CHARS = 80_000;
+
+function boundedPostBody(body: string, maxChars: number): string {
+  if (body.length <= maxChars) return body;
+  const marker = "\n… [truncated] …\n";
+  if (maxChars <= marker.length) return body.slice(0, maxChars);
+  const available = maxChars - marker.length;
+  const headChars = Math.ceil((available * 2) / 3);
+  return `${body.slice(0, headChars)}${marker}${body.slice(-(available - headChars))}`;
+}
+
+function renderBoundedChatPosts(entries: readonly ArtifactIndexEntry[]): {
+  text: string;
+  truncated: boolean;
+} {
+  if (entries.length === 0) return { text: "", truncated: false };
+  const headers = entries.map((entry) => `${entry.label}:\n`);
+  const separatorChars = Math.max(0, entries.length - 1) * 2;
+  const fixedChars = headers.reduce((sum, header) => sum + header.length, 0) +
+    separatorChars;
+  if (fixedChars >= MAX_CHAT_POST_CONTEXT_CHARS) {
+    return {
+      text: `This chat contains ${entries.length} Posts and Hooks, which exceeds the safe context budget. Ask about a smaller selected set.`,
+      truncated: true,
+    };
+  }
+
+  const budgets = new Array<number>(entries.length).fill(0);
+  let remaining = MAX_CHAT_POST_CONTEXT_CHARS - fixedChars;
+  let pending = entries.map((_, index) => index);
+  while (pending.length > 0) {
+    const share = Math.floor(remaining / pending.length);
+    const complete = pending.filter(
+      (index) => entries[index].artifact.body.length <= share,
+    );
+    if (complete.length === 0) {
+      for (const index of pending) budgets[index] = share;
+      break;
+    }
+    for (const index of complete) {
+      budgets[index] = entries[index].artifact.body.length;
+      remaining -= budgets[index];
+    }
+    const completeSet = new Set(complete);
+    pending = pending.filter((index) => !completeSet.has(index));
+  }
+
+  let truncated = false;
+  const text = entries
+    .map((entry, index) => {
+      const body = boundedPostBody(entry.artifact.body, budgets[index]);
+      if (body.length < entry.artifact.body.length) truncated = true;
+      return `${headers[index]}${body}`;
+    })
+    .join("\n\n");
+  return { text, truncated };
+}
 
 export type DbMessage = {
   role: "user" | "assistant" | "tool";
@@ -1413,7 +1474,9 @@ export async function buildTurnContext(
   // transcript never shows the raw delimiter blob.
   const blocks: ContentBlock[] = [{ type: "text", text: userText }];
 
-  const variationSource = latestDraftForVariation(dbRows, userText);
+  const variationSource = refineTargetId
+    ? null
+    : latestDraftForVariation(dbRows, userText);
   if (variationSource) {
     blocks.push({
       type: "text",
@@ -1427,39 +1490,47 @@ export async function buildTurnContext(
     });
   }
 
-  // Draft continuity: show the model the draft this chat already produced so a
-  // follow-up ("make it punchier", "change the hook") edits THAT draft instead
-  // of hallucinating a new one. The generated draft body is otherwise absent
-  // from the model's context — history drops artifacts and the reply text is
-  // fenced. We inject whenever a draft exists (except the variation flow, which
-  // pushes its own structure-anchored block above). Deliberately NOT gated on
-  // the refine routing: the direct-refine writer lane also injects the target
-  // via currentPostBlock, but only for kind:"post" refines that clear a narrow
-  // eligibility bar — a hook edit, or a refine with a lead magnet / attachment /
-  // creator style, falls outside it, and skipping here on those would leave the
-  // model blind to the draft. A harmless second consistent copy in the direct
-  // case is the safe trade vs. omitting the body in every other case.
-  // Skipped when a fresh source is attached this turn (modelSourceId): that's a
-  // new modeling turn working from the attached source, not an edit of the prior
-  // draft, so the old body would only be noise.
-  // Explicit edit/review identity wins over recency. If the requested id is
-  // absent, inject no fallback draft: reviewing the wrong artifact is worse
-  // than asking the user to choose again.
-  const currentDraft = modelSourceId
-    ? null
-    : refineTargetId
-      ? trustedRefineTarget
-      : latestChatDraft(dbRows);
-  if (currentDraft && currentDraft.id !== variationSource?.id) {
+  // Post continuity: artifacts are intentionally absent from ordinary message
+  // history, so inject the canonical current version of every Post/Hook this
+  // chat has produced. This lets an unscoped Ask compare or discuss the full set
+  // without asking the user to paste content already visible in the UI. A typed
+  // target remains narrow: Edit and targeted Ask receive only that exact item.
+  // The command still owns authority; this block is content context only.
+  //
+  // We inject whenever chat deliverables exist (except the variation flow,
+  // which pushes its own structure-anchored block above). Deliberately NOT gated
+  // on refine routing: the direct-refine writer lane also injects the target via
+  // currentPostBlock, but hook edits and richer edit paths still need it here.
+  // Explicit identity wins. If the requested id is absent, inject no fallback:
+  // discussing or editing the wrong Post is worse than asking the user to choose.
+  const visibleChatPosts = buildArtifactIndex(canonicalArtifacts).entries;
+  const contextualPosts = refineTargetId
+    ? trustedRefineTarget
+      ? visibleChatPosts.filter(
+          (entry) => entry.artifactId === trustedRefineTarget.id,
+        )
+      : []
+    : visibleChatPosts;
+  const postsOutsideVariation = contextualPosts.filter(
+    (entry) => entry.artifactId !== variationSource?.id,
+  );
+  if (postsOutsideVariation.length > 0) {
+    const renderedPosts = renderBoundedChatPosts(postsOutsideVariation);
     blocks.push({
       type: "text",
       text:
         wrapUntrustedDelimited({
-          label: "CURRENT DRAFT (the post this chat is working on)",
-          endLabel: "END CURRENT DRAFT",
-          text: currentDraft.body,
+          label:
+            postsOutsideVariation.length === 1
+              ? "POST IN THIS CHAT"
+              : "ALL POSTS IN THIS CHAT",
+          endLabel:
+            postsOutsideVariation.length === 1
+              ? "END POST IN THIS CHAT"
+              : "END ALL POSTS IN THIS CHAT",
+          text: renderedPosts.text,
         }) +
-        "\nThis is the draft already shown in this chat. If the user is asking to change, refine, or iterate on it, edit THIS draft rather than writing a new one. Only write a fresh post if they clearly ask for a different or additional post.",
+        `\nThese are the current Posts already shown in this chat. Use all of them when the user asks to compare, rank, review, combine, or reference the chat's Posts.${renderedPosts.truncated ? " Long Posts were excerpted evenly to stay within the safe context budget; every Post is still represented." : ""} They are context only: follow the typed Cowork command for whether to Ask, Create, or Edit.`,
     });
   }
 

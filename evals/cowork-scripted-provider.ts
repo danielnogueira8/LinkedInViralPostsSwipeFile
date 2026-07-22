@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { StreamDelta, Usage } from "@/lib/openrouter";
+import type { ChatMessage, StreamDelta, Usage } from "@/lib/openrouter";
 
 export type ScriptedProviderResponseRound = {
   kind: "response";
@@ -33,6 +33,7 @@ type ScriptedProviderState = {
   round: number;
   abortRequest: (() => void) | null;
   toolCalls: ScriptedToolCallRecord[];
+  requests: Array<{ messages: ChatMessage[] }>;
 };
 
 const scriptedProviderContext = new AsyncLocalStorage<ScriptedProviderState>();
@@ -49,6 +50,7 @@ export class ScriptedProviderSession {
       round: 0,
       abortRequest: abortRequest ?? null,
       toolCalls: [],
+      requests: [],
     };
   }
 
@@ -63,6 +65,10 @@ export class ScriptedProviderSession {
   roundCount(): number {
     return this.state.round;
   }
+
+  requests(): Array<{ messages: ChatMessage[] }> {
+    return this.state.requests.slice();
+  }
 }
 
 function activeState(): ScriptedProviderState {
@@ -74,8 +80,11 @@ function activeState(): ScriptedProviderState {
 }
 
 /** OpenRouter transport adapter used by the production-shaped harness. */
-export async function* scriptedStreamChat(): AsyncGenerator<StreamDelta> {
+export async function* scriptedStreamChat(opts: {
+  messages: ChatMessage[];
+}): AsyncGenerator<StreamDelta> {
   const state = activeState();
+  state.requests.push({ messages: opts.messages });
   const round = state.scenario.rounds[state.round] ?? {
     kind: "response" as const,
     finishReason: "stop" as const,
