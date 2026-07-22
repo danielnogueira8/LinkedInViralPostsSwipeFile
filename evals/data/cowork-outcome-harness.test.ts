@@ -5028,6 +5028,101 @@ describe("production-shaped Cowork outcome harness", () => {
     expect(report.persisted.artifacts).toHaveLength(0);
   });
 
+  test("Retry restores the original typed artifact target after a newer artifact appears", async () => {
+    const originalTargetId = "00000000-0000-4000-8000-000000000621";
+    const newerTargetId = "00000000-0000-4000-8000-000000000622";
+    const instruction = "Make Draft 1 punchier.";
+    const failed: CoworkOutcomeScenario = {
+      id: "typed-edit-target-retry-failed",
+      request: {
+        message: instruction,
+        operation: {
+          kind: "edit_artifact",
+          artifactId: originalTargetId,
+          instruction,
+        },
+      },
+      seed: {
+        messageArtifacts: [
+          {
+            id: originalTargetId,
+            kind: "post",
+            title: "Original target",
+            body: COMPLETE_POST,
+          },
+          {
+            id: newerTargetId,
+            kind: "post",
+            title: "Newer artifact",
+            body: SECOND_POST,
+          },
+        ],
+      },
+      model: {
+        provider: { rounds: [] },
+        directWriter: Array.from({ length: 4 }, () => ({
+          text: "",
+          finishReason: "stop" as const,
+          usage: usage(100, 0, 0.0001),
+        })),
+      },
+      expected: {
+        terminal: "failure",
+        artifactBodies: [],
+        actionNames: [],
+      },
+    };
+    const revised = COMPLETE_POST.replace(
+      "Building a personal brand",
+      "A personal brand",
+    );
+    const recovered: CoworkOutcomeScenario = {
+      id: "typed-edit-target-retry-recovered",
+      retryLatestUser: true,
+      request: {
+        message: instruction,
+        // Simulate a client heuristic now pointing at the newer visible card.
+        // Retry must still replay the server-persisted original operation.
+        operation: {
+          kind: "edit_artifact",
+          artifactId: newerTargetId,
+          instruction,
+        },
+      },
+      model: {
+        provider: { rounds: [] },
+        directWriter: [
+          {
+            text: revised,
+            finishReason: "stop",
+            usage: usage(180, 82, 0.00016),
+          },
+        ],
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [revised],
+        actionNames: [],
+        route: "direct_writer",
+      },
+    };
+
+    const sequence = await runCoworkOutcomeSequence([failed, recovered]);
+
+    expect(
+      sequence.pass,
+      JSON.stringify(
+        sequence.attempts.map((attempt) => ({
+          safe: attempt.safe,
+          failures: attempt.failureCodes,
+        })),
+      ),
+    ).toBe(true);
+    expect(sequence.attempts[1]?.persisted.artifacts[0]?.id).toBe(
+      originalTargetId,
+    );
+  });
+
   test("a typed create operation overrides conflicting legacy edit fields", async () => {
     const legacyTargetId = "00000000-0000-4000-8000-000000000630";
     const report = await runCoworkOutcomeScenario({

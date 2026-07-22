@@ -111,6 +111,7 @@ import type {
   generationConfigSelectionMarkerFromToolCalls,
   modeledDraftBatchContinuationMarkerFromToolCalls,
   retryRootMarkerFromToolCalls,
+  turnOperationMarkerFromToolCalls,
   isServerRecoverableToolCall,
   isRecentUnansweredUserMessage,
   explicitMessageDraftCount,
@@ -161,6 +162,7 @@ export type TurnSetupDependencies = ChatTurnDependencies & {
   generationConfigSelectionMarkerFromToolCalls: typeof generationConfigSelectionMarkerFromToolCalls;
   modeledDraftBatchContinuationMarkerFromToolCalls: typeof modeledDraftBatchContinuationMarkerFromToolCalls;
   retryRootMarkerFromToolCalls: typeof retryRootMarkerFromToolCalls;
+  turnOperationMarkerFromToolCalls: typeof turnOperationMarkerFromToolCalls;
   explicitMessageDraftCount: typeof explicitMessageDraftCount;
 };
 
@@ -338,6 +340,17 @@ export async function setupChatTurn(
     postClarificationPostCount !== null
       ? "post"
       : preclaimContractPlaceholder.kind;
+  const applyTurnOperation = (operation: ChatTurnOperation | null) => {
+    currentTurnOperation = operation;
+    if (!operation) return;
+    skipDecision = operation.kind === "edit_artifact";
+    refineTargetId =
+      operation.kind === "edit_artifact" || operation.kind === "review_artifact"
+        ? operation.artifactId
+        : undefined;
+    refineInstruction =
+      operation.kind === "edit_artifact" ? operation.instruction : undefined;
+  };
   let coworkTelemetry!: CoworkTurnTelemetry;
   const disarmSetupGuards = () => {
     setupDeadline?.stop();
@@ -372,18 +385,7 @@ export async function setupChatTurn(
     refineInstruction = body.refineInstruction;
     // A typed operation is authoritative. Legacy refine fields remain accepted
     // only when no typed operation is present; they can never alter its meaning.
-    if (currentTurnOperation) {
-      skipDecision = currentTurnOperation.kind === "edit_artifact";
-      refineTargetId =
-        currentTurnOperation.kind === "edit_artifact" ||
-        currentTurnOperation.kind === "review_artifact"
-          ? currentTurnOperation.artifactId
-          : undefined;
-      refineInstruction =
-        currentTurnOperation.kind === "edit_artifact"
-          ? currentTurnOperation.instruction
-          : undefined;
-    }
+    if (currentTurnOperation) applyTurnOperation(currentTurnOperation);
     skillIds = body.skillIds ?? [];
     forcedNoModelFormatId = body.forcedNoModelFormatId;
     creatorStyleId = body.creatorStyleId;
@@ -519,6 +521,19 @@ export async function setupChatTurn(
       );
       const retryUser =
         retryUserIndex >= 0 ? recentMessageWindow[retryUserIndex] : undefined;
+      const pairedTurnOperation =
+        deps.turnOperationMarkerFromToolCalls(retryUser);
+      if (pairedTurnOperation.kind === "invalid") {
+        return turnError(
+          "The saved turn operation failed its integrity check. Send the request again as a new message.",
+          409,
+        );
+      }
+      if (pairedTurnOperation.kind === "valid") {
+        // Retry means exact replay. Restore the server-persisted operation even
+        // if a newer client heuristic now points at another visible Artifact.
+        applyTurnOperation(pairedTurnOperation.operation);
+      }
       const pairedCustomSkillMarker =
         deps.customSkillSelectionMarkerFromToolCalls(retryUser);
       if (pairedCustomSkillMarker.kind === "invalid") {

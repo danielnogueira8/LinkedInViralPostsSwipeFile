@@ -46,6 +46,10 @@ const DURABLE_OR_ACTION_RE =
   /\b(?:always|never|from\s+now\s+on|remember\s+(?:that|this)|save|schedule|queue|publish|post\s+it|delete|remove)\b|\b(?:plan|put|place|add|slot)\s+(?:it|this|that|(?:this|that|the)\s+(?:post|draft|one))?\s*(?:for|on|into|to)\s+(?:the\s+)?(?:calendar|queue|board|today|tomorrow|(?:mon|tues|wednes|thurs|fri|satur|sun)day)\b|\b(?:set|mark|move)\s+(?:it|this|that|(?:this|that|the)\s+(?:post|draft|one))?\s*(?:to|as|into)?\s*(?:idea|drafting|ready|posted)\b/i;
 const WRITING_OPTOUT_RE =
   /\b(?:do\s+not|don(?:'|’)?t|dont|never|no\s+need\s+to)\s+(?:(?:please|just|actually|go\s+ahead\s+and)\s+|(?:want|need|ask)\s+(?:me|you|us|them)\s+to\s+){0,3}(?:write|draft|create|generate|give|make|produce|prepare|model|mimic|adapt|rewrite|rework|remix|turn|change|edit|refine|tighten|shorten|strengthen)\b|\bwithout\s+(?:writing|drafting|creating|generating|giving|modeling|modelling|adapting|rewriting|changing|editing|refining|tightening|shortening|strengthening)\b/i;
+const COORDINATED_WRITING_OPTOUT_RE =
+  /\b(?:do\s+not|don(?:'|’)?t|dont|never)\s+(?:search|browse|look\s+up|pull|fetch)\b[^.!?\n]{0,80}?\b(?:and|or)\s+(?:also\s+)?(?:write|draft|create|generate|give|make|produce|prepare|model|mimic|adapt|rewrite|rework|remix|turn|change|edit|refine|tighten|shorten|strengthen)\b/i;
+const AFFIRMATIVE_FULL_POST_AFTER_OPTOUT_RE =
+  /\b(?:write|draft|create|generate|give\s+me|make|produce|prepare|rewrite|rework|remix|adapt)\b[\s\S]{0,100}?\b(?:linkedin\s+)?posts?\b/i;
 
 /** True when the turn also asks Cowork to remember or mutate durable state. */
 export function requestsDurableOrAction(text: string): boolean {
@@ -76,7 +80,28 @@ export function withoutSourceDiscoveryOptOut(text: string): string {
 
 /** True when the current instruction explicitly rejects a writing mutation. */
 export function explicitlyForbidsWriting(text: string): boolean {
-  return WRITING_OPTOUT_RE.test(withoutSourceDiscoveryOptOut(text));
+  const withoutSourceOptOut = withoutSourceDiscoveryOptOut(text);
+  const hasWritingOptOut =
+    WRITING_OPTOUT_RE.test(withoutSourceOptOut) ||
+    COORDINATED_WRITING_OPTOUT_RE.test(text);
+  if (!hasWritingOptOut) return false;
+
+  // A prohibition can be scoped to an existing Artifact while the same turn
+  // explicitly asks for a new post. Remove only the negated writing clauses and
+  // see whether an independent full-post instruction remains; a global boolean
+  // must not let "do not rewrite Draft 1" cancel "write a new post".
+  const affirmativeRemainder = withoutSourceDiscoveryOptOut(
+    text.replace(
+      new RegExp(COORDINATED_WRITING_OPTOUT_RE.source, "gi"),
+      " ",
+    ),
+  )
+    .replace(new RegExp(WRITING_OPTOUT_RE.source, "gi"), " ")
+    .replace(
+      /\b(?:and|or)\s+(?:also\s+)?(?:write|draft|create|generate|give|make|produce|prepare|model|mimic|adapt|rewrite|rework|remix|turn|change|edit|refine|tighten|shorten|strengthen)\b/gi,
+      " ",
+    );
+  return !AFFIRMATIVE_FULL_POST_AFTER_OPTOUT_RE.test(affirmativeRemainder);
 }
 
 /**

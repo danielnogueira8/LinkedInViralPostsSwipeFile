@@ -8,8 +8,7 @@ describe("modeled draft batch continuation", () => {
   test("round-trips only the frozen one-to-one route contract", () => {
     const continuation = continuationForModeledDraftRoute({
       kind: "workspace_research",
-      expectsDraft: true,
-      expectedDrafts: 4,
+      outcome: { kind: "draft", expectedDrafts: 4 },
       minimumSources: 4,
       workspaceSearchMode: "strict_top",
       workspaceSince: "30d",
@@ -22,9 +21,9 @@ describe("modeled draft batch continuation", () => {
     );
     expect(continuation).toMatchObject({
       kind: "modeled_draft_batch",
-      version: 1,
+      version: 2,
       route: {
-        expectedDrafts: 4,
+        outcome: { kind: "draft", expectedDrafts: 4 },
         minimumSources: 4,
         workspaceDraftSourceMode: "one_to_one",
       },
@@ -35,14 +34,36 @@ describe("modeled draft batch continuation", () => {
     expect(
       continuationForModeledDraftRoute({
         kind: "workspace_research",
-        expectsDraft: true,
-        expectedDrafts: 2,
+        outcome: { kind: "draft", expectedDrafts: 2 },
         minimumSources: 4,
         workspaceSearchMode: "strict_top",
         workspaceDraftSourceMode: "one_to_one",
       }),
     ).toMatchObject({
-      route: { expectedDrafts: 2, minimumSources: 4 },
+      route: {
+        outcome: { kind: "draft", expectedDrafts: 2 },
+        minimumSources: 4,
+      },
+    });
+  });
+
+  test("migrates a persisted version-one marker to the typed outcome contract", () => {
+    expect(
+      parseModeledDraftBatchContinuation({
+        kind: "modeled_draft_batch",
+        version: 1,
+        route: {
+          kind: "workspace_research",
+          expectsDraft: true,
+          expectedDrafts: 3,
+          minimumSources: 3,
+          workspaceSearchMode: "diverse",
+          workspaceDraftSourceMode: "one_to_one",
+        },
+      }),
+    ).toMatchObject({
+      version: 2,
+      route: { outcome: { kind: "draft", expectedDrafts: 3 } },
     });
   });
 
@@ -78,8 +99,7 @@ describe("modeled draft batch continuation", () => {
   test("rejects marker extensions and malformed route values", () => {
     const valid = continuationForModeledDraftRoute({
       kind: "workspace_research",
-      expectsDraft: true,
-      expectedDrafts: 3,
+      outcome: { kind: "draft", expectedDrafts: 3 },
       minimumSources: 3,
       workspaceSearchMode: "diverse",
       workspaceDraftSourceMode: "one_to_one",

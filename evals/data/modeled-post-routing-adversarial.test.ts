@@ -42,7 +42,6 @@ describe("modeled-post routing adversaries", () => {
   ])("clarifies unsupported multiplicative source mappings: %s", (text) => {
     expect(route(text)).toMatchObject({
       kind: "ambiguous_read_only",
-      expectsDraft: false,
       clarificationReason: "modeled_mapping",
       modeledAmbiguityReason: "mapping",
     });
@@ -56,8 +55,7 @@ describe("modeled-post routing adversaries", () => {
   ])("routes an exact selected subset one-to-one: %s", (text) => {
     expect(route(text)).toMatchObject({
       kind: "workspace_research",
-      expectsDraft: true,
-      expectedDrafts: 3,
+      outcome: { kind: "draft", expectedDrafts: 3 },
       minimumSources: 5,
       workspaceDraftSourceMode: "one_to_one",
     });
@@ -70,8 +68,7 @@ describe("modeled-post routing adversaries", () => {
   ])("preserves the source count through format constraints: %s", (text) => {
     expect(route(text)).toMatchObject({
       kind: "workspace_research",
-      expectsDraft: true,
-      expectedDrafts: 4,
+      outcome: { kind: "draft", expectedDrafts: 4 },
       minimumSources: 4,
       workspaceDraftSourceMode: "one_to_one",
     });
@@ -85,7 +82,6 @@ describe("modeled-post routing adversaries", () => {
   ])("fails closed for a non-exact source cardinality: %s", (text) => {
     expect(route(text)).toMatchObject({
       kind: "ambiguous_read_only",
-      expectsDraft: false,
       clarificationReason: "modeled_mapping",
     });
   });
@@ -95,8 +91,7 @@ describe("modeled-post routing adversaries", () => {
       route("Write 3 posts inspired by 5 top sources you find in my swipe file."),
     ).toMatchObject({
       kind: "workspace_research",
-      expectsDraft: true,
-      expectedDrafts: 3,
+      outcome: { kind: "draft", expectedDrafts: 3 },
       minimumSources: 5,
     });
   });
@@ -109,8 +104,7 @@ describe("modeled-post routing adversaries", () => {
     const expectedDrafts = text.includes("4") ? 4 : 3;
     expect(route(text)).toMatchObject({
       kind: "workspace_research",
-      expectsDraft: true,
-      expectedDrafts,
+      outcome: { kind: "draft", expectedDrafts },
       minimumSources: expectedDrafts,
       workspaceDraftSourceMode: "one_to_one",
     });
@@ -119,7 +113,6 @@ describe("modeled-post routing adversaries", () => {
   test("keeps a malformed modeled skeleton on clarification instead of legacy", () => {
     expect(route('Find 4 top posts in my swipe file and rewrite "each one.')).toMatchObject({
       kind: "ambiguous_read_only",
-      expectsDraft: false,
       clarificationReason: "modeled_mapping",
     });
   });

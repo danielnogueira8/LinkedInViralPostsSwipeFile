@@ -110,7 +110,7 @@ function input(
           "Research the latest OpenAI announcement and write a LinkedIn post about what it means for founders.",
       },
     ],
-    route: { kind: "news_research", expectsDraft: true },
+    route: { kind: "news_research", outcome: { kind: "draft", expectedDrafts: 1 } },
     attachmentNames: [],
     attachmentBlocks: [],
     writerInput: {
@@ -308,6 +308,90 @@ describe("read-only orchestrator plan contract", () => {
         text: "Model Context Protocol is an open standard for connecting AI applications to external systems.",
       },
     ]);
+  });
+
+  test("web research never attributes one combined review to multiple excerptless sources", async () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "test-key");
+    const requestBodies: Array<Record<string, unknown>> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        requestBodies.push(JSON.parse(String(init?.body)));
+        return Response.json({
+          choices: [
+            {
+              message: {
+                content:
+                  "Source A supports one claim. Source B supports another claim.",
+                annotations: [
+                  {
+                    type: "url_citation",
+                    url_citation: {
+                      url: "https://example.com/source-a",
+                      title: "Source A",
+                    },
+                  },
+                  {
+                    type: "url_citation",
+                    url_citation: {
+                      url: "https://example.com/source-b",
+                      title: "Source B",
+                    },
+                  },
+                ],
+              },
+              finish_reason: "stop",
+            },
+          ],
+          usage: { prompt_tokens: 30, completion_tokens: 12 },
+        });
+      }),
+    );
+
+    const result = await runGroundedWebResearch({
+      query: "compare the evidence from source A and source B",
+    });
+
+    expect(requestBodies).toHaveLength(2);
+    expect(result.sources).toEqual([]);
+  });
+
+  test("web research tells the search model to ignore instructions in source pages", async () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "test-key");
+    let systemPrompt = "";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body));
+        systemPrompt = String(body.messages?.[0]?.content ?? "");
+        return Response.json({
+          choices: [
+            {
+              message: {
+                content: "Verified evidence.",
+                annotations: [
+                  {
+                    type: "url_citation",
+                    url_citation: {
+                      url: "https://example.com/source",
+                      title: "Source",
+                      content: "Verified evidence.",
+                    },
+                  },
+                ],
+              },
+              finish_reason: "stop",
+            },
+          ],
+          usage: { prompt_tokens: 30, completion_tokens: 12 },
+        });
+      }),
+    );
+
+    await runGroundedWebResearch({ query: "safe research" });
+
+    expect(systemPrompt).toMatch(/untrusted (?:content|data)/i);
+    expect(systemPrompt).toMatch(/ignore (?:any )?(?:instructions|directives)/i);
   });
 
   test("text attachment inspection stays deterministic and preserves its source name", async () => {
@@ -626,7 +710,7 @@ describe("read-only orchestrator plan contract", () => {
     const plan = parseReadOnlyPlan(
       {
         kind: "file_inspection",
-        expectsDraft: true,
+        outcome: { kind: "draft", expectedDrafts: 1 },
         allowExternalSearch: false,
       },
       {
@@ -648,7 +732,7 @@ describe("read-only orchestrator plan contract", () => {
       parseReadOnlyPlan(
         {
           kind: "file_inspection",
-          expectsDraft: true,
+          outcome: { kind: "draft", expectedDrafts: 1 },
           allowExternalSearch: false,
         },
         {
@@ -671,7 +755,7 @@ describe("read-only orchestrator plan contract", () => {
       parseReadOnlyPlan(
         {
           kind: "file_inspection",
-          expectsDraft: true,
+          outcome: { kind: "draft", expectedDrafts: 1 },
           allowExternalSearch: false,
         },
         {
@@ -696,7 +780,7 @@ describe("read-only orchestrator plan contract", () => {
         parseReadOnlyPlan(
           {
             kind: "file_inspection",
-            expectsDraft: true,
+            outcome: { kind: "draft", expectedDrafts: 1 },
             allowExternalSearch: true,
             allowedSearchKinds: [searchType === "search_news" ? "news" : "web"],
           },
@@ -722,7 +806,7 @@ describe("read-only orchestrator plan contract", () => {
       parseReadOnlyPlan(
         {
           kind: "file_inspection",
-          expectsDraft: true,
+          outcome: { kind: "draft", expectedDrafts: 1 },
           allowedSearchKinds: [],
         },
         {
@@ -743,7 +827,7 @@ describe("read-only orchestrator plan contract", () => {
       parseReadOnlyPlan(
         {
           kind: "file_inspection",
-          expectsDraft: true,
+          outcome: { kind: "draft", expectedDrafts: 1 },
           allowedSearchKinds: ["news"],
         },
         {
@@ -765,7 +849,7 @@ describe("read-only orchestrator plan contract", () => {
       parseReadOnlyPlan(
         {
           kind: "file_inspection",
-          expectsDraft: true,
+          outcome: { kind: "draft", expectedDrafts: 1 },
           allowedSearchKinds: ["workspace"],
           minimumSources: 5,
           workspaceSearchMode: "strict_top",
@@ -827,7 +911,7 @@ describe("read-only orchestrator plan contract", () => {
       parseReadOnlyPlan(
         {
           kind: "workspace_research",
-          expectsDraft: true,
+          outcome: { kind: "draft", expectedDrafts: 1 },
           minimumSources: 3,
         },
         {
@@ -854,7 +938,7 @@ describe("read-only orchestrator plan contract", () => {
       parseReadOnlyPlan(
         {
           kind: "workspace_research",
-          expectsDraft: true,
+          outcome: { kind: "draft", expectedDrafts: 1 },
           minimumSources: 3,
         },
         {
@@ -880,7 +964,7 @@ describe("read-only orchestrator plan contract", () => {
   test("rejects an action sequence that does not match the deterministic route", () => {
     expect(() =>
       parseReadOnlyPlan(
-        { kind: "news_research", expectsDraft: true },
+        { kind: "news_research", outcome: { kind: "draft", expectedDrafts: 1 } },
         {
           actions: [
             { id: "search", type: "search_viral_posts", limit: 3 },
@@ -897,7 +981,7 @@ describe("read-only orchestrator plan contract", () => {
 
   test("rejects search queries that drift away from the authoritative request", () => {
     const plan = parseReadOnlyPlan(
-      { kind: "news_research", expectsDraft: true },
+      { kind: "news_research", outcome: { kind: "draft", expectedDrafts: 1 } },
       {
         actions: [
           { id: "news", type: "search_news", query: "cryptocurrency prices" },
@@ -921,7 +1005,7 @@ describe("read-only orchestrator plan contract", () => {
     const plan = parseReadOnlyPlan(
       {
         kind: "workspace_research",
-        expectsDraft: true,
+        outcome: { kind: "draft", expectedDrafts: 1 },
         minimumSources: 3,
       },
       {
@@ -952,7 +1036,7 @@ describe("read-only orchestrator plan contract", () => {
     const plan = parseReadOnlyPlan(
       {
         kind: "workspace_research",
-        expectsDraft: true,
+        outcome: { kind: "draft", expectedDrafts: 1 },
         minimumSources: 3,
       },
       {
@@ -985,7 +1069,7 @@ describe("read-only orchestrator plan contract", () => {
     const valid = parseReadOnlyPlan(
       {
         kind: "workspace_research",
-        expectsDraft: true,
+        outcome: { kind: "draft", expectedDrafts: 1 },
         minimumSources: 3,
       },
       {
@@ -1007,7 +1091,7 @@ describe("read-only orchestrator plan contract", () => {
     const writingTopicAsNiche = parseReadOnlyPlan(
       {
         kind: "workspace_research",
-        expectsDraft: true,
+        outcome: { kind: "draft", expectedDrafts: 1 },
         minimumSources: 3,
       },
       {
@@ -1037,7 +1121,7 @@ describe("read-only orchestrator plan contract", () => {
     const plan = parseReadOnlyPlan(
       {
         kind: "workspace_research",
-        expectsDraft: true,
+        outcome: { kind: "draft", expectedDrafts: 1 },
         minimumSources: 3,
       },
       {
@@ -1067,7 +1151,7 @@ describe("read-only orchestrator plan contract", () => {
       parseReadOnlyPlan(
         {
           kind: "workspace_research",
-          expectsDraft: true,
+          outcome: { kind: "draft", expectedDrafts: 1 },
           minimumSources: 3,
         },
         {
@@ -1099,7 +1183,7 @@ describe("read-only orchestrator plan contract", () => {
     const plan = parseReadOnlyPlan(
       {
         kind: "workspace_research",
-        expectsDraft: true,
+        outcome: { kind: "draft", expectedDrafts: 1 },
         minimumSources: 3,
       },
       {
@@ -1133,7 +1217,7 @@ describe("read-only orchestrator plan contract", () => {
     const plan = parseReadOnlyPlan(
       {
         kind: "workspace_research",
-        expectsDraft: true,
+        outcome: { kind: "draft", expectedDrafts: 1 },
         minimumSources: 3,
       },
       {
@@ -1158,7 +1242,7 @@ describe("read-only orchestrator plan contract", () => {
       parseReadOnlyPlan(
         {
           kind: "workspace_research",
-          expectsDraft: true,
+          outcome: { kind: "draft", expectedDrafts: 1 },
           minimumSources: 3,
         },
         {
@@ -1191,7 +1275,7 @@ describe("read-only orchestrator plan contract", () => {
       parseReadOnlyPlan(
         {
           kind: "workspace_research",
-          expectsDraft: true,
+          outcome: { kind: "draft", expectedDrafts: 1 },
           minimumSources: 3,
         },
         {
@@ -1223,7 +1307,7 @@ describe("read-only orchestrator plan contract", () => {
     const plan = parseReadOnlyPlan(
       {
         kind: "workspace_research",
-        expectsDraft: true,
+        outcome: { kind: "draft", expectedDrafts: 1 },
         minimumSources: 3,
       },
       {
@@ -1311,7 +1395,7 @@ describe("read-only orchestrator execution", () => {
       new Error("the server-compiled route must not invoke a planner"),
     ]);
     const result = await collect(
-      input({ route: { kind: "web_research", expectsDraft: true } }),
+      input({ route: { kind: "web_research", outcome: { kind: "draft", expectedDrafts: 1 } } }),
       [planner],
       vi.fn(async () => ({ ok: false })),
       {
@@ -1360,7 +1444,7 @@ describe("read-only orchestrator execution", () => {
         history: [{ role: "user", content: instruction }],
         route: {
           kind: "workspace_research",
-          expectsDraft: true,
+          outcome: { kind: "draft", expectedDrafts: 1 },
           minimumSources: 2,
           workspaceSearchMode: "strict_top",
         },
@@ -1416,7 +1500,7 @@ describe("read-only orchestrator execution", () => {
       input({
         route: {
           kind: "workspace_research",
-          expectsDraft: true,
+          outcome: { kind: "draft", expectedDrafts: 1 },
           minimumSources: 2,
           workspaceSearchMode: "strict_top",
         },
@@ -1476,7 +1560,6 @@ describe("read-only orchestrator execution", () => {
         history: [{ role: "user", content: instruction }],
         route: {
           kind: "workspace_research",
-          expectsDraft: false,
           minimumSources: 1,
           workspaceSearchMode: "strict_top",
           workspacePostType: "regular",
@@ -1649,7 +1732,7 @@ describe("read-only orchestrator execution", () => {
       input({
         route: {
           kind: "workspace_research",
-          expectsDraft: true,
+          outcome: { kind: "draft", expectedDrafts: 1 },
           minimumSources: 1,
           workspaceSearchMode: "strict_top",
         },
@@ -1811,7 +1894,7 @@ describe("read-only orchestrator execution", () => {
     await expect(
       collect(
         input({
-          route: { kind: "web_research", expectsDraft: true },
+          route: { kind: "web_research", outcome: { kind: "draft", expectedDrafts: 1 } },
           userInstruction:
             "Research B2B pricing and write a LinkedIn post about it.",
         }),
@@ -1937,7 +2020,7 @@ describe("read-only orchestrator execution", () => {
       input({
         route: {
           kind: "file_inspection",
-          expectsDraft: true,
+          outcome: { kind: "draft", expectedDrafts: 1 },
           allowExternalSearch: false,
         },
         userInstruction: "Inspect the attached file and write a post. Do not search.",
@@ -1978,7 +2061,7 @@ describe("read-only orchestrator execution", () => {
       input({
         route: {
           kind: "file_inspection",
-          expectsDraft: true,
+          outcome: { kind: "draft", expectedDrafts: 1 },
           allowExternalSearch: true,
           allowedSearchKinds: ["web"],
         },
@@ -2271,7 +2354,7 @@ describe("read-only orchestrator execution", () => {
       input({
         route: {
           kind: "workspace_research",
-          expectsDraft: true,
+          outcome: { kind: "draft", expectedDrafts: 1 },
           minimumSources: 3,
         },
         userInstruction:
@@ -2321,7 +2404,7 @@ describe("read-only orchestrator execution", () => {
       input({
         route: {
           kind: "workspace_research",
-          expectsDraft: true,
+          outcome: { kind: "draft", expectedDrafts: 1 },
           minimumSources: 3,
         },
         userInstruction:
@@ -2388,7 +2471,7 @@ describe("read-only orchestrator execution", () => {
       input({
         route: {
           kind: "workspace_research",
-          expectsDraft: true,
+          outcome: { kind: "draft", expectedDrafts: 1 },
           minimumSources: 2,
           explicitPostType: "regular",
         },
@@ -2440,7 +2523,7 @@ describe("read-only orchestrator execution", () => {
       input({
         route: {
           kind: "workspace_research",
-          expectsDraft: true,
+          outcome: { kind: "draft", expectedDrafts: 1 },
           minimumSources: 2,
         },
         userInstruction:
@@ -2481,7 +2564,7 @@ describe("read-only orchestrator execution", () => {
       hasCreatorStyle: false,
     });
     expect(route).toMatchObject({
-      expectedDrafts: 1,
+      outcome: { kind: "draft", expectedDrafts: 1 },
       minimumSources: 4,
       workspaceDraftSourceMode: "one_to_one",
     });
@@ -2737,8 +2820,7 @@ describe("read-only orchestrator execution", () => {
       "Find 3 top-performing regular posts in my swipe file and rewrite it in my voice on a topic that fits me. Keep its structure and hook style, but make the content original";
     const route = {
       kind: "workspace_research" as const,
-      expectsDraft: true,
-      expectedDrafts: 3,
+      outcome: { kind: "draft" as const, expectedDrafts: 3 },
       minimumSources: 3,
       workspacePostType: "regular" as const,
       workspaceDraftSourceMode: "one_to_one" as const,
@@ -2836,8 +2918,7 @@ describe("read-only orchestrator execution", () => {
       "Find 3 top-performing regular posts in my swipe file and rewrite it in my voice on a topic that fits me. Keep its structure and hook style, but make the content original";
     const route = {
       kind: "workspace_research" as const,
-      expectsDraft: true,
-      expectedDrafts: 3,
+      outcome: { kind: "draft" as const, expectedDrafts: 3 },
       minimumSources: 3,
       workspacePostType: "regular" as const,
       workspaceDraftSourceMode: "one_to_one" as const,
@@ -2926,8 +3007,7 @@ describe("read-only orchestrator execution", () => {
       "Find 3 top-performing regular posts in my swipe file and rewrite it in my voice on a topic that fits me. Keep its structure and hook style, but make the content original";
     const route = {
       kind: "workspace_research" as const,
-      expectsDraft: true,
-      expectedDrafts: 3,
+      outcome: { kind: "draft" as const, expectedDrafts: 3 },
       minimumSources: 3,
       workspacePostType: "regular" as const,
       workspaceDraftSourceMode: "one_to_one" as const,
@@ -3343,8 +3423,7 @@ describe("read-only orchestrator execution", () => {
       input({
         route: {
           kind: "workspace_research",
-          expectsDraft: true,
-          expectedDrafts: 4,
+          outcome: { kind: "draft", expectedDrafts: 4 },
           minimumSources: 4,
           workspacePostType: "regular",
         },
@@ -3428,7 +3507,7 @@ describe("read-only orchestrator execution", () => {
     ]);
     const result = await collect(
       input({
-        route: { kind: "web_research", expectsDraft: true },
+        route: { kind: "web_research", outcome: { kind: "draft", expectedDrafts: 1 } },
         userInstruction:
           "Research B2B pricing strategies and write one LinkedIn post about pricing discipline.",
       }),
@@ -3490,7 +3569,7 @@ describe("read-only orchestrator execution", () => {
     const writer = vi.fn(successfulDraft);
     for await (const event of runReadOnlyOrchestrator(
       input({
-        route: { kind: "ambiguous_read_only", expectsDraft: false },
+        route: { kind: "ambiguous_read_only" },
         userInstruction: "Research the latest OpenAI news.",
       }),
       {
@@ -3527,7 +3606,6 @@ describe("read-only orchestrator execution", () => {
       input({
         route: {
           kind: "ambiguous_read_only",
-          expectsDraft: false,
           clarificationReason: "modeled_mapping",
           modeledAmbiguityReason: "source_count",
         },

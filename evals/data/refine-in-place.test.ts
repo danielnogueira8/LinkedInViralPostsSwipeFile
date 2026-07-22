@@ -11,6 +11,7 @@ import {
   hasAssistantAfterPersistedUserMessage,
   reinsertArtifact,
   reviewArtifactIdForComposer,
+  writableArtifactIdForComposer,
 } from "@/lib/chat-ui-policy";
 import type { Artifact } from "@/lib/agent/contracts";
 import type { ChatRun } from "@/lib/chat-hydration";
@@ -20,6 +21,7 @@ import {
   splitHookLines,
   splicePreservedBody,
 } from "@/lib/hook-splice";
+import { turnOperationMarkerFromToolCalls } from "@/lib/agent/chat-turn";
 
 describe("persisted turn completion identity", () => {
   const repeatedPrompt = "Write one original post";
@@ -123,6 +125,37 @@ describe("persisted turn completion identity", () => {
         current,
       ),
     ).toMatchObject({ terminalReason: "error" });
+  });
+});
+
+describe("persisted typed operation identity", () => {
+  test("restores the exact artifact operation from a persisted user turn", () => {
+    expect(
+      turnOperationMarkerFromToolCalls({
+        tool_calls: [
+          {
+            id: "_turn_operation",
+            type: "function",
+            function: {
+              name: "_turn_operation",
+              arguments: JSON.stringify({
+                version: 1,
+                kind: "edit_artifact",
+                artifactId: "artifact-1",
+                instruction: "Make Draft 1 punchier.",
+              }),
+            },
+          },
+        ],
+      }),
+    ).toEqual({
+      kind: "valid",
+      operation: {
+        kind: "edit_artifact",
+        artifactId: "artifact-1",
+        instruction: "Make Draft 1 punchier.",
+      },
+    });
   });
 });
 
@@ -670,6 +703,59 @@ describe("looksLikeComposerRefine — chat-typed refine detection", () => {
     expect(
       reviewArtifactIdForComposer("Make it punchier.", drafts, "draft-1"),
     ).toBeUndefined();
+  });
+
+  test("an explicit artifact ordinal wins over the expanded artifact", () => {
+    const artifacts = [
+      { id: "artifact-1", kind: "post" },
+      { id: "artifact-2", kind: "post" },
+    ];
+
+    expect(
+      reviewArtifactIdForComposer(
+        "Review Draft 1 and give me feedback.",
+        artifacts,
+        "artifact-2",
+      ),
+    ).toBe("artifact-1");
+  });
+
+  test("an explicit latest-artifact review wins over an older expanded artifact", () => {
+    const artifacts = [
+      { id: "artifact-1", kind: "post" },
+      { id: "artifact-2", kind: "post" },
+    ];
+
+    expect(
+      reviewArtifactIdForComposer(
+        "Review the latest draft.",
+        artifacts,
+        "artifact-1",
+      ),
+    ).toBe("artifact-2");
+  });
+
+  test("a compound review and rewrite is an edit, not a read-only review", () => {
+    const instruction =
+      "Review this draft, then rewrite it to make the hook punchier.";
+
+    expect(looksLikeArtifactReviewRequest(instruction)).toBe(false);
+    expect(looksLikeComposerRefine(instruction)).toBe(true);
+  });
+
+  test("an explicit artifact ordinal also controls composer edits", () => {
+    const artifacts = [
+      { id: "artifact-1", kind: "post" },
+      { id: "artifact-2", kind: "post" },
+    ];
+
+    expect(
+      writableArtifactIdForComposer(
+        "Rewrite Draft 1 with a stronger hook.",
+        artifacts,
+        "artifact-2",
+      ),
+    ).toBe("artifact-1");
   });
 
   test("a read-only command about some other object does not bind the open draft", () => {

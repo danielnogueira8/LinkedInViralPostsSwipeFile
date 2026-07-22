@@ -125,6 +125,24 @@ export function stripPlaceholders(text: string): string {
 export function looksLikeArtifactReviewRequest(message: string): boolean {
   const t = message.trim();
   if (!t) return false;
+  const compoundContinuation =
+    /\b(?:review|critique|analy[sz]e|assess|evaluate)\b[\s\S]{0,160}?\b(?:then|and|plus)\b([\s\S]{0,120})/i.exec(
+      t,
+    )?.[1];
+  if (compoundContinuation) {
+    const edit =
+      /\b(?:rewrite|edit|change|update|refine|revise|modify|shorten|tighten|strengthen)\b/i.exec(
+        compoundContinuation,
+      );
+    if (edit) {
+      const prefix = compoundContinuation.slice(0, edit.index);
+      const negated =
+        /\b(?:do\s+not|don(?:'|’)?t|dont|never|without)\b[^.!?\n]{0,60}$/i.test(
+          prefix,
+        );
+      if (!negated) return false;
+    }
+  }
   const hasArtifactReferent =
     /\b(?:this|that|the|current|selected|latest)\s+(?:post|draft|hook|one)\b|\bdraft\s+\d+\b|\bit\b/i.test(
       t,
@@ -150,12 +168,28 @@ export function reviewArtifactIdForComposer(
   expandedArtifactId: string | null,
 ): string | undefined {
   if (!looksLikeArtifactReviewRequest(message)) return undefined;
-  const drafts = artifacts.filter(
+  return writableArtifactIdForComposer(message, artifacts, expandedArtifactId);
+}
+
+export function writableArtifactIdForComposer(
+  message: string,
+  artifacts: readonly { id: string; kind: string }[],
+  expandedArtifactId: string | null,
+): string | undefined {
+  const writableArtifacts = artifacts.filter(
     (artifact) => artifact.kind === "post" || artifact.kind === "hook",
   );
+  const explicitOrdinal = /\bdraft\s+#?\s*(\d+)\b/i.exec(message);
+  if (explicitOrdinal) {
+    const index = Number(explicitOrdinal[1]) - 1;
+    return writableArtifacts[index]?.id;
+  }
+  if (/\b(?:latest|newest|most\s+recent)\s+(?:post|draft|hook|one)\b/i.test(message)) {
+    return writableArtifacts[writableArtifacts.length - 1]?.id;
+  }
   return (
-    drafts.find((draft) => draft.id === expandedArtifactId)?.id ??
-    drafts[drafts.length - 1]?.id
+    writableArtifacts.find((artifact) => artifact.id === expandedArtifactId)?.id ??
+    writableArtifacts[writableArtifacts.length - 1]?.id
   );
 }
 

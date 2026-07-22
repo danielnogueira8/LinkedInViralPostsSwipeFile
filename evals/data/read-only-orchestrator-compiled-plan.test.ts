@@ -65,7 +65,7 @@ describe("compileServerReadOnlyPlan — every draft route compiles a validator-p
       // lanes; if routing itself drops one, that's a routing regression worth
       // catching here too.
       expect(route, `expected a route for: ${userInstruction}`).not.toBeNull();
-      if (!route || !route.expectsDraft) return;
+      if (!route || route.outcome?.kind !== "draft") return;
 
       const authoritative = route.authoritativeInstruction ?? userInstruction;
       const plan = compileServerReadOnlyPlan(route, authoritative);
@@ -120,8 +120,7 @@ describe("compileServerReadOnlyPlan — per-route shapes", () => {
   test("news_research → one search_news then draft_post", () => {
     const route: ReadOnlyOrchestratorRoute = {
       kind: "news_research",
-      expectsDraft: true,
-      expectedDrafts: 3,
+      outcome: { kind: "draft", expectedDrafts: 3 },
     };
     const plan = compileServerReadOnlyPlan(
       route,
@@ -141,7 +140,7 @@ describe("compileServerReadOnlyPlan — per-route shapes", () => {
   test("web_research → one search_web then draft_post", () => {
     const route: ReadOnlyOrchestratorRoute = {
       kind: "web_research",
-      expectsDraft: true,
+      outcome: { kind: "draft", expectedDrafts: 1 },
     };
     const plan = compileServerReadOnlyPlan(
       route,
@@ -156,7 +155,7 @@ describe("compileServerReadOnlyPlan — per-route shapes", () => {
   test("workspace_research → search_viral_posts covering the minimum sources", () => {
     const route: ReadOnlyOrchestratorRoute = {
       kind: "workspace_research",
-      expectsDraft: true,
+      outcome: { kind: "draft", expectedDrafts: 1 },
       minimumSources: 3,
     };
     const plan = compileServerReadOnlyPlan(
@@ -176,7 +175,6 @@ describe("compileServerReadOnlyPlan — per-route shapes", () => {
   test("workspace grounded answer → verified search then answer_from_evidence", () => {
     const route: ReadOnlyOrchestratorRoute = {
       kind: "workspace_research",
-      expectsDraft: false,
       minimumSources: 1,
       workspaceSearchMode: "strict_top",
       workspacePostType: "regular",
@@ -214,7 +212,7 @@ describe("compileServerReadOnlyPlan — per-route shapes", () => {
     });
     expect(route).toMatchObject({
       kind: "workspace_research",
-      expectedDrafts: 4,
+      outcome: { kind: "draft", expectedDrafts: 4 },
       minimumSources: 4,
       workspacePostType: "regular",
     });
@@ -242,7 +240,7 @@ describe("compileServerReadOnlyPlan — per-route shapes", () => {
     });
     expect(route).toMatchObject({
       kind: "workspace_research",
-      expectedDrafts: 4,
+      outcome: { kind: "draft", expectedDrafts: 4 },
       minimumSources: 4,
       workspacePostType: "lead_magnet",
     });
@@ -262,7 +260,7 @@ describe("compileServerReadOnlyPlan — per-route shapes", () => {
   test("file_inspection with an allowed workspace search compiles both actions", () => {
     const route: ReadOnlyOrchestratorRoute = {
       kind: "file_inspection",
-      expectsDraft: true,
+      outcome: { kind: "draft", expectedDrafts: 1 },
       allowExternalSearch: true,
       allowedSearchKinds: ["workspace"],
       minimumSources: 2,
@@ -281,7 +279,7 @@ describe("compileServerReadOnlyPlan — per-route shapes", () => {
   test("file_inspection with no allowed search compiles inspect + draft only", () => {
     const route: ReadOnlyOrchestratorRoute = {
       kind: "file_inspection",
-      expectsDraft: true,
+      outcome: { kind: "draft", expectedDrafts: 1 },
       allowExternalSearch: false,
       allowedSearchKinds: [],
     };
@@ -299,7 +297,6 @@ describe("compileServerReadOnlyPlan — per-route shapes", () => {
   test("ambiguous_read_only is not compiled here (caller emits the clarify)", () => {
     const route: ReadOnlyOrchestratorRoute = {
       kind: "ambiguous_read_only",
-      expectsDraft: false,
       clarificationReason: "outcome",
     };
     expect(

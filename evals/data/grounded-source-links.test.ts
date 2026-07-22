@@ -53,6 +53,27 @@ describe("GroundedSourceLinks", () => {
     expect(html).toContain('href="https://linkedin.com/posts/rehydrated"');
   });
 
+  test("renders every verified source returned by the grounded-answer contract", () => {
+    const artifacts = Array.from({ length: 10 }, (_, index) => {
+      const sequence = String(index + 1).padStart(12, "0");
+      const postId = `10000000-0000-4000-8000-${sequence}`;
+      return {
+        ...cite({ sourceUrl: `https://www.linkedin.com/posts/source-${index + 1}` }),
+        id: `grounded-source:${postId}`,
+        meta: {
+          postId,
+          presentation: "grounded_answer_source",
+          sourceUrl: `https://www.linkedin.com/posts/source-${index + 1}`,
+        },
+      } satisfies Artifact;
+    });
+
+    const html = render(artifacts);
+
+    expect(html).toContain('href="https://www.linkedin.com/posts/source-10"');
+    expect(html.match(/<a /g)).toHaveLength(10);
+  });
+
   test("drops arbitrary URLs, mismatched cards, and ordinary cite artifacts", () => {
     const postId = "10000000-0000-4000-8000-000000000001";
     const html = render([
