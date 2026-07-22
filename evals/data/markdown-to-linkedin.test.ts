@@ -103,6 +103,17 @@ describe("markdownToLinkedIn — links and code", () => {
     );
   });
 
+  test("a link nested inside bold never leaks an internal URL placeholder", () => {
+    const result = markdownToLinkedIn(
+      "**[View the original LinkedIn post](https://www.linkedin.com/posts/example)**",
+    );
+
+    expect(result).toBe(
+      `${toUnicodeStyle("View the original LinkedIn post", "bold")} (https://www.linkedin.com/posts/example)`,
+    );
+    expect(result).not.toMatch(/[\uE000-\uF8FF]url\d+/u);
+  });
+
   test("inline code drops the backticks, keeps content", () => {
     expect(markdownToLinkedIn("run `npm test` first")).toBe(
       "run npm test first",

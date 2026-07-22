@@ -19,6 +19,7 @@ import { contentFormatForModel } from "@/lib/markdown/mode";
 import { CHAT_MODEL, type ToolCall } from "@/lib/openrouter";
 import type { ModeledDraftBatchContinuation } from "@/lib/agent/modeled-draft-continuation";
 import { TurnOutcomeInvariantError } from "@/lib/agent/turn/outcome-guard";
+import { persistedCiteMeta } from "@/lib/agent/grounded-source-citations";
 
 const CHAT_SSE_HEARTBEAT_MS = configuredSseHeartbeatInterval(
   Number(process.env.CHAT_SSE_HEARTBEAT_MS || 15_000),
@@ -219,7 +220,7 @@ export function finalizeTurn(
           if (a.kind === "cite") {
             return {
               ...a,
-              meta: { postId: (a.meta as { postId?: string })?.postId },
+              meta: persistedCiteMeta(a.meta),
             };
           }
           return a;
