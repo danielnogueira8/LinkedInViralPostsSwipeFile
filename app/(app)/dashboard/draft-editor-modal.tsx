@@ -347,6 +347,32 @@ export function DraftEditorModal({
     }
   };
 
+  const createAndSchedule = async (input: ScheduleInput) => {
+    if (busy) return;
+    setSaving(true);
+    const id = await persistBody();
+    if (!id) {
+      setSaving(false);
+      return;
+    }
+    try {
+      const data = await scheduleDraft(id, input);
+      onMeta(id, {
+        scheduledAt: data.scheduledAt ?? input.scheduledAt,
+        scheduleStatus: "scheduled",
+        planToPostOn: data.planToPostOn ?? input.planToPostOn,
+        firstComment: data.firstComment ?? null,
+        publishError: null,
+      });
+      toast.success("Post created and scheduled on LinkedIn.");
+      onOpenChange(false);
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   // A property change (title / status / date) on an EXISTING post. Optimistic via
   // onMeta; PATCH in the background. New posts can't have properties yet (no id),
   // so these controls are disabled until the body is created.
@@ -920,7 +946,13 @@ export function DraftEditorModal({
                   </div>
                 </section>
 
-                {!isNew && draft && <ScheduleRow draft={draft} onMeta={onMeta} />}
+                <ScheduleRow
+                  draft={draft}
+                  onMeta={onMeta}
+                  onCreateAndSchedule={isNew ? createAndSchedule : undefined}
+                  previewBody={isNew ? body : undefined}
+                  previewMedia={isNew ? newMedia : undefined}
+                />
 
                 {!isNew && draft && draft.kind === "lead_magnet" && (
                   <LeadSharkPanel draft={draft} />
@@ -1908,17 +1940,48 @@ function localInputToIso(v: string): string | null {
 // or cancels one. Gates on the workspace's LinkedIn connection: with none, it
 // shows a "Connect in Settings" prompt instead of the picker (belt to the
 // endpoint's own 409). Optimistic — updates the draft via onMeta.
+type ScheduleInput = {
+  scheduledAt: string;
+  planToPostOn: string;
+  firstComment: string | null;
+};
+
+type ScheduleResponse = {
+  scheduledAt?: string;
+  planToPostOn?: string;
+  firstComment?: string | null;
+};
+
+async function scheduleDraft(id: string, input: ScheduleInput): Promise<ScheduleResponse> {
+  const data = await fetchJson<{ ok: boolean; error?: string } & ScheduleResponse>(
+    `/api/drafts/${id}/schedule`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    },
+  );
+  if (!data.ok) throw new Error(data.error || "Couldn't schedule.");
+  return data;
+}
+
 function ScheduleRow({
   draft,
   onMeta,
+  onCreateAndSchedule,
+  previewBody,
+  previewMedia,
 }: {
-  draft: Draft;
+  draft: Draft | null;
   onMeta: (id: string, patch: Partial<Draft>) => void;
+  onCreateAndSchedule?: (input: ScheduleInput) => Promise<void>;
+  previewBody?: string;
+  previewMedia?: PostMediaAttachment[];
 }) {
   const router = useRouter();
   const [connected, setConnected] = useState<boolean | null>(null);
-  const [when, setWhen] = useState(isoToLocalInput(draft.scheduledAt));
-  const [firstComment, setFirstComment] = useState(draft.firstComment ?? "");
+  const [when, setWhen] = useState(isoToLocalInput(draft?.scheduledAt));
+  const [firstComment, setFirstComment] = useState(draft?.firstComment ?? "");
   const [busy, setBusy] = useState(false);
 
   // Re-seed the picker when the draft's COMMITTED schedule changes underneath
@@ -1930,8 +1993,8 @@ function ScheduleRow({
   // seedKey), and only overwrite a local field that still matches the PREVIOUS
   // committed value — so an in-progress unsaved pick the user is typing is
   // never clobbered. React runs the render again with the new state; no effect.
-  const committedWhen = isoToLocalInput(draft.scheduledAt);
-  const committedComment = draft.firstComment ?? "";
+  const committedWhen = isoToLocalInput(draft?.scheduledAt);
+  const committedComment = draft?.firstComment ?? "";
   const [seededWhen, setSeededWhen] = useState(committedWhen);
   const [seededComment, setSeededComment] = useState(committedComment);
   if (seededWhen !== committedWhen) {
@@ -1947,15 +2010,16 @@ function ScheduleRow({
 
   // Is a real schedule already committed? (scheduled/publishing) vs. planning.
   const scheduled =
-    draft.scheduleStatus === "scheduled" || draft.scheduleStatus === "publishing";
-  const failed = draft.scheduleStatus === "failed";
+    draft?.scheduleStatus === "scheduled" || draft?.scheduleStatus === "publishing";
+  const failed = draft?.scheduleStatus === "failed";
   // Successfully published — the cron flipped schedule_status='published' and
   // stamped published_at. The card should show WHEN, not the picker/connect prompt.
-  const published = draft.scheduleStatus === "published";
-  const publishBody = draftEgressBody(draft.body, draft.meta);
+  const published = draft?.scheduleStatus === "published";
+  const publishBody = draftEgressBody(draft?.body ?? previewBody ?? "", draft?.meta);
   const overLimit = publishBody.length > LINKEDIN_MAX_CHARS;
-  const hasMedia = (draft.mediaAttachments?.length ?? 0) > 0;
-  const mediaExpiry = mediaExpiryMs(draft.mediaAttachments ?? []);
+  const attachments = draft?.mediaAttachments ?? previewMedia ?? [];
+  const hasMedia = attachments.length > 0;
+  const mediaExpiry = mediaExpiryMs(attachments);
   const mediaTooLate =
     hasMedia && when
       ? (new Date(when).getTime() || 0) > mediaExpiry
@@ -1988,23 +2052,12 @@ function ScheduleRow({
     }
     setBusy(true);
     try {
-      const data = await fetchJson<{
-        ok: boolean;
-        error?: string;
-        scheduledAt?: string;
-        scheduleStatus?: string;
-        planToPostOn?: string;
-        firstComment?: string | null;
-      }>(`/api/drafts/${draft.id}/schedule`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          scheduledAt: iso,
-          planToPostOn,
-          firstComment: firstComment.trim() || null,
-        }),
-      });
-      if (!data.ok) throw new Error(data.error || "Couldn't schedule.");
+      const input = { scheduledAt: iso, planToPostOn, firstComment: firstComment.trim() || null };
+      if (!draft) {
+        await onCreateAndSchedule?.(input);
+        return;
+      }
+      const data = await scheduleDraft(draft.id, input);
       onMeta(draft.id, {
         scheduledAt: data.scheduledAt ?? iso,
         scheduleStatus: "scheduled",
@@ -2021,6 +2074,7 @@ function ScheduleRow({
   };
 
   const cancel = async () => {
+    if (!draft) return;
     setBusy(true);
     try {
       const data = await fetchJson<{ ok: boolean; error?: string }>(
@@ -2085,7 +2139,7 @@ function ScheduleRow({
       <div className="flex items-center gap-2 rounded-lg border border-primary/30 bg-primary/[0.04] px-3 py-2.5 text-sm">
         <CalendarClock className="h-4 w-4 shrink-0 text-primary" />
         <span className="flex-1">
-          {draft.scheduleStatus === "publishing" ? "Publishing…" : "Scheduled for"}{" "}
+          {draft?.scheduleStatus === "publishing" ? "Publishing…" : "Scheduled for"}{" "}
           <span className="font-medium">
             {draft.scheduledAt
               ? new Date(draft.scheduledAt).toLocaleString(undefined, {
@@ -2098,7 +2152,7 @@ function ScheduleRow({
               : ""}
           </span>
         </span>
-        {draft.scheduleStatus === "scheduled" && (
+        {draft?.scheduleStatus === "scheduled" && (
           <Button size="sm" variant="ghost" onClick={cancel} disabled={busy}>
             {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <X className="h-3.5 w-3.5" />}
             Cancel
@@ -2161,7 +2215,7 @@ function ScheduleRow({
             title="Schedule this post to publish on LinkedIn at the selected time."
           >
             {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CalendarClock className="h-3.5 w-3.5" />}
-            {failed ? "Reschedule" : "Schedule on LinkedIn"}
+            {failed ? "Reschedule" : draft ? "Schedule on LinkedIn" : "Create & schedule on LinkedIn"}
           </Button>
         </div>
       </div>
