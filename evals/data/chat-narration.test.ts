@@ -10,6 +10,7 @@ import {
   activityTailLabel,
   refineSuggestions,
   visibleActivityTools,
+  resolveArtifactEditTarget,
   resolveArtifactReference,
 } from "@/lib/chat-ui-policy";
 import type { Artifact } from "@/lib/agent/contracts";
@@ -123,6 +124,26 @@ describe("shared Artifact index", () => {
         artifact: second,
       }),
     ]);
+  });
+
+  test("Edit fills a missing target but never retargets a stale explicit selection", () => {
+    const entries = buildArtifactIndex([
+      { ...art("post", "first post"), id: "post-1" },
+      { ...art("post", "second post"), id: "post-2" },
+    ]).entries;
+
+    expect(
+      resolveArtifactEditTarget(entries, { expandedArtifactId: "post-1" }),
+    ).toMatchObject({ artifactId: "post-1" });
+    expect(resolveArtifactEditTarget(entries, {})).toMatchObject({
+      artifactId: "post-2",
+    });
+    expect(
+      resolveArtifactEditTarget(entries, {
+        targetArtifactId: "deleted-post",
+        expandedArtifactId: "post-1",
+      }),
+    ).toBeUndefined();
   });
 
   test("resolves UI labels, selected context, and missing explicit references", () => {

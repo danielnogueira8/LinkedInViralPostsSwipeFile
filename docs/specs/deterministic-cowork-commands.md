@@ -16,7 +16,7 @@ The command is scoped to one turn. Create and Edit reset to safe Ask after submi
 
 ## User interface
 
-The composer shows its current command. Ask is the safe default. Create exposes an exact Post count. Edit is entered from a Post card and visibly names the target. Starter cards set their known command from stable starter metadata rather than prompt wording.
+The composer always shows Ask, Create, and Edit. Ask is the safe default. Create exposes an exact Post count. Edit exposes a canonical Post picker and an explicit Whole Post or Hook only scope; Send is disabled until a valid Post is selected. With one Post, Edit selects it automatically. With multiple Posts, the current expanded Post is preselected and the picker can change it. With no Posts, Edit explains that there is nothing to edit and cannot send. A Post card's Edit action enters this same composer mode with that Post preselected. Starter cards set their known command from stable starter metadata rather than prompt wording.
 
 If text appears to request another operation, Cowork may offer a non-authoritative suggestion. Nothing executes until the user selects that command.
 

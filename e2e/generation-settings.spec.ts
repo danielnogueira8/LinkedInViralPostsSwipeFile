@@ -32,7 +32,7 @@ test.describe("composer generation settings", () => {
     if (failures.length) throw new Error(failures.join("\n"));
   });
 
-  test("sends explicit Ask/Create commands and resets every completed turn to Ask", async ({
+  test("sends explicit Ask/Create/Edit commands and resets every completed turn to Ask", async ({
     page,
   }) => {
     await page.goto("/dashboard");
@@ -40,12 +40,104 @@ test.describe("composer generation settings", () => {
     chatsToDelete.push(chatId);
 
     const streamBodies: Array<Record<string, unknown>> = [];
+    const postId = "e2e-visible-edit-post";
+    const selectedPostId = "e2e-visible-edit-post-1";
+    const replacementPostId = "e2e-visible-edit-post-2";
+    const originalPost = {
+      id: postId,
+      kind: "post",
+      title: "Deterministic Cowork",
+      body: "A deterministic interface makes the next safe action obvious to every user.",
+      meta: {},
+    };
+    const editedPost = {
+      ...originalPost,
+      id: replacementPostId,
+      body: "A deterministic interface makes the next safe edit obvious to every user.",
+    };
+    const createdPosts = [
+      {
+        ...originalPost,
+        id: selectedPostId,
+        body: "Explicit Ask boundaries keep feedback from becoming an accidental new draft.",
+      },
+      {
+        ...originalPost,
+        id: replacementPostId,
+        body: "Exact Create counts make generated Post sets predictable and testable.",
+      },
+      originalPost,
+    ];
+    let persistedArtifacts: Array<typeof originalPost> = [];
+    let releaseCreateStream: (() => void) | undefined;
+    const createStreamGate = new Promise<void>((resolve) => {
+      releaseCreateStream = resolve;
+    });
     await page.route(`**/api/chats/${chatId}/stream`, async (route) => {
       streamBodies.push(route.request().postDataJSON() as Record<string, unknown>);
+      if (streamBodies.length === 2) await createStreamGate;
+      const artifacts =
+        streamBodies.length === 2
+          ? createdPosts
+          : streamBodies.length === 3
+            ? [editedPost]
+            : [];
+      if (streamBodies.length === 2) {
+        persistedArtifacts = createdPosts;
+      } else if (streamBodies.length === 3) {
+        persistedArtifacts = persistedArtifacts.map((artifact) =>
+          artifact.id === editedPost.id ? editedPost : artifact,
+        );
+      }
       await route.fulfill({
         status: 200,
         contentType: "text/event-stream",
-        body: sse("done", { artifacts: [] }),
+        body: artifacts.length
+          ? artifacts.map((artifact) => sse("artifact", artifact)).join("") +
+            sse("done", { artifacts })
+          : sse("done", { artifacts: [] }),
+      });
+    });
+    await page.route(`**/api/chats/${chatId}`, async (route) => {
+      if (route.request().method() !== "GET") {
+        await route.continue();
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ok: true,
+          chat: { id: chatId, title: "Visible Edit E2E", running: false },
+          messages: persistedArtifacts.length
+            ? [
+                {
+                  id: "e2e-visible-edit-assistant",
+                  role: "assistant",
+                  content: "Here are the Posts.",
+                  tool_calls: null,
+                  tool_call_id: null,
+                  artifacts: persistedArtifacts,
+                  created_at: new Date().toISOString(),
+                },
+              ]
+            : [],
+        }),
+      });
+    });
+    await page.route(`**/api/chats/${chatId}/artifacts`, async (route) => {
+      if (route.request().method() !== "DELETE") {
+        await route.continue();
+        return;
+      }
+      const payload = route.request().postDataJSON() as { artifactId: string };
+      persistedArtifacts = persistedArtifacts.filter(
+        (artifact) => artifact.id !== payload.artifactId,
+      );
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ok: true }),
       });
     });
 
@@ -56,7 +148,18 @@ test.describe("composer generation settings", () => {
     const commandGroup = page.getByRole("group", { name: "Cowork command" });
     const askButton = commandGroup.getByRole("button", { name: "Ask", exact: true });
     const createButton = commandGroup.getByRole("button", { name: "Create", exact: true });
+    const editButton = commandGroup.getByRole("button", { name: "Edit", exact: true });
     await expect(askButton).toHaveAttribute("aria-pressed", "true");
+
+    await editButton.click();
+    await expect(editButton).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByText("No Posts in this chat to edit.")).toBeVisible();
+    const unavailableEditComposer = page.getByPlaceholder(
+      "Select a Post before describing the change…",
+    );
+    await unavailableEditComposer.fill("Make the hook sharper.");
+    await expect(page.getByRole("button", { name: "Send message" })).toBeDisabled();
+    await askButton.click();
 
     await composer.fill("Write three posts even though this turn is Ask.");
     await page.getByRole("button", { name: "Send message" }).click();
@@ -110,13 +213,41 @@ test.describe("composer generation settings", () => {
     await createComposer.fill("Review my current post and give feedback only.");
     await page.getByRole("button", { name: "Send message" }).click();
     await expect.poll(() => streamBodies.length).toBe(2);
+    await editButton.click();
+    await expect(page.getByText("No Posts in this chat to edit.")).toBeVisible();
+    releaseCreateStream?.();
     expect(streamBodies[1]).toMatchObject({
       message: "Review my current post and give feedback only.",
       command: { kind: "create", count: 3 },
       generationConfig: { version: 1, draftCount: 3 },
     });
+    const postPicker = page.getByLabel("Post to edit");
+    await expect(postPicker).toHaveValue(postId);
+    await postPicker.selectOption(selectedPostId);
+    page.once("dialog", (dialog) => dialog.accept());
+    await page.getByRole("button", { name: "Delete draft" }).last().click();
+    await expect(postPicker).toHaveValue("");
+    await expect(page.getByRole("button", { name: "Send message" })).toBeDisabled();
+    await postPicker.selectOption(replacementPostId);
+    const targetedEditButton = commandGroup.getByRole("button", {
+      name: "Edit · Post 1",
+      exact: true,
+    });
+    await expect(targetedEditButton).toHaveAttribute("aria-pressed", "true");
+    await expect(postPicker).toHaveValue(replacementPostId);
+    const editScope = page.getByRole("group", { name: "Edit scope" });
+    await editScope.getByRole("button", { name: "Hook only" }).click();
+    const editComposer = page.getByPlaceholder("What should change in Post 1?");
+    await editComposer.fill("Make the hook punchier.");
+    await page.getByRole("button", { name: "Send message" }).click();
+    await expect.poll(() => streamBodies.length).toBe(3);
+    expect(streamBodies[2]).toMatchObject({
+      message: "Make the hook punchier.",
+      command: { kind: "edit", targetPostId: replacementPostId, scope: "hook" },
+    });
+    expect(streamBodies[2]).not.toHaveProperty("generationConfig");
+    await expect(page.getByText(editedPost.body)).toBeVisible();
     await expect(askButton).toHaveAttribute("aria-pressed", "true");
-    await expect(page.getByPlaceholder("Ask Cowork anything…")).toBeVisible();
   });
 });
 

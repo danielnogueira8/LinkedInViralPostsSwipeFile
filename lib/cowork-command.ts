@@ -25,10 +25,15 @@ export const coworkCommandSchema = z.discriminatedUnion("kind", [
 ]);
 
 export type CoworkCommand = z.infer<typeof coworkCommandSchema>;
-export type CoworkComposerCommandKind = "ask" | "create";
+export type CoworkComposerCommandKind = "ask" | "create" | "edit";
 export type CoworkComposerState =
   | { kind: "ask"; contextPostId?: string }
-  | { kind: "create" };
+  | { kind: "create" }
+  | {
+      kind: "edit";
+      targetPostId?: string;
+      scope: "full_post" | "hook";
+    };
 
 export function resumesPersistedCoworkOperation(input: {
   retryOfUserMessageId?: string;
@@ -46,6 +51,8 @@ export function commandForComposer(input: {
   kind: CoworkComposerCommandKind;
   count: z.infer<typeof draftCountSchema>;
   contextPostId?: string;
+  targetPostId?: string;
+  scope?: "full_post" | "hook";
 }): CoworkCommand {
   if (input.kind === "ask") {
     return {
@@ -53,7 +60,17 @@ export function commandForComposer(input: {
       ...(input.contextPostId ? { contextPostId: input.contextPostId } : {}),
     };
   }
-  return { kind: "create", count: input.count };
+  if (input.kind === "create") {
+    return { kind: "create", count: input.count };
+  }
+  if (!input.targetPostId) {
+    throw new Error("Edit requires a selected Post");
+  }
+  return {
+    kind: "edit",
+    targetPostId: input.targetPostId,
+    scope: input.scope ?? "full_post",
+  };
 }
 
 /**

@@ -98,7 +98,6 @@ import {
   splicePreservedBody,
   buildHookOnlyRefineMessage,
 } from "@/lib/hook-splice";
-import { isExclusiveHookRefine } from "@/lib/agent/direct-refine-policy";
 import { copyToClipboard } from "@/lib/clipboard";
 import {
   contentBodyForFormat,
@@ -209,8 +208,8 @@ import {
   kindNoun,
   planProgressTitle,
   prettyBytes,
-  refineSuggestions,
   reinsertArtifact,
+  resolveArtifactEditTarget,
   shouldShowActivityRail,
   stripPlaceholders,
   suggestedLeadMagnetPromptForPost,
@@ -458,8 +457,9 @@ export function ChatWorkspace({
   // rendered it disabled, which React reports as a hydration mismatch.
   const [input, setInput] = useState("");
   // Operation authority is visible and scoped to one turn. Ask is always the
-  // safe default; Create must be selected explicitly, while Edit is launched
-  // from a specific Post card.
+  // safe default; Create and Edit must be selected explicitly. Edit also owns
+  // one visible Post target and scope, so wording never has to identify what
+  // may change.
   const [coworkComposer, setCoworkComposer] = useState<CoworkComposerState>({
     kind: "ask",
   });
@@ -760,9 +760,37 @@ export function ChatWorkspace({
       a.body.trim().length >= MIN_PANEL_DRAFT_LENGTH &&
       !looksCorruptedDraft(a.body),
   );
-  const askContextPost = buildArtifactIndex(artifacts).entries.find(
+  const artifactIndex = buildArtifactIndex(artifacts);
+  const askContextPost = artifactIndex.entries.find(
     (entry) => entry.artifactId === askContextPostId,
   );
+  const editTargetPostId =
+    coworkComposer.kind === "edit" ? coworkComposer.targetPostId : undefined;
+  const editTargetPost =
+    coworkComposer.kind === "edit"
+      ? resolveArtifactEditTarget(artifactIndex.entries, {
+          targetArtifactId: editTargetPostId,
+          expandedArtifactId,
+        })
+      : undefined;
+  const enterEditCommand = (requestedTargetPostId?: string) => {
+    const requestedTarget = artifactIndex.entries.find(
+      (entry) => entry.artifactId === requestedTargetPostId,
+    );
+    const expandedTarget = artifactIndex.entries.find(
+      (entry) => entry.artifactId === expandedArtifactId,
+    );
+    const fallbackTarget = artifactIndex.entries.at(-1);
+    setCoworkComposer({
+      kind: "edit",
+      targetPostId:
+        requestedTarget?.artifactId ??
+        expandedTarget?.artifactId ??
+        fallbackTarget?.artifactId,
+      scope:
+        coworkComposer.kind === "edit" ? coworkComposer.scope : "full_post",
+    });
+  };
   const hasDraftPanel = artifacts.length > 0;
   const sending = !!activeRun && activeRun.streaming;
   // Chats with a live background run, for the sidebar spinner.
@@ -2203,6 +2231,15 @@ export function ChatWorkspace({
     let text = (overrideText ?? input).trim();
     if (!text) return;
 
+    if (
+      overrideText === undefined &&
+      composerCommandKind === "edit" &&
+      !editTargetPost
+    ) {
+      toast.error("Select a Post before editing.");
+      return;
+    }
+
     if (!overrideText && !initialVoiceReady && !voiceWarningShownRef.current) {
       voiceWarningShownRef.current = true;
       toast.info("Cowork works better after voice setup.", {
@@ -2359,6 +2396,12 @@ export function ChatWorkspace({
                 draftCountSelection === "auto" ? 1 : draftCountSelection,
               ...(composerCommandKind === "ask" && askContextPost
                 ? { contextPostId: askContextPost.artifactId }
+                : {}),
+              ...(composerCommandKind === "edit" && editTargetPost
+                ? {
+                    targetPostId: editTargetPost.artifactId,
+                    scope: coworkComposer.scope,
+                  }
                 : {}),
             });
       const turnStarterOwnerId = targetChatId;
@@ -2950,6 +2993,12 @@ export function ChatWorkspace({
               });
             } else if (turnCommand?.kind === "create") {
               enterCreateCommand(turnCommand.count);
+            } else if (turnCommand?.kind === "edit") {
+              setCoworkComposer({
+                kind: "edit",
+                targetPostId: turnCommand.targetPostId,
+                scope: turnCommand.scope,
+              });
             }
           }
           return;
@@ -3187,6 +3236,8 @@ export function ChatWorkspace({
     pendingCreatorStyle,
     composerCommandKind,
     askContextPost,
+    editTargetPost,
+    coworkComposer,
     draftCountSelection,
     postTypeSelection,
     initialVoiceReady,
@@ -3274,63 +3325,6 @@ export function ChatWorkspace({
     if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
     setUserScrolledAway(false);
   }, []);
-
-  // "Refine with AI" on a draft card: feed the draft back into THIS chat as a
-  // real turn with the user's instruction. The direct lane resolves the target
-  // server-side and replaces the same artifact id; the baseline fallback keeps
-  // the older agent/render_post flow. pendingRefineRef bridges both behaviors.
-  const refineDraft = useCallback(
-    (
-      artifactId: string,
-      draftBody: string,
-      kind: "post" | "hook",
-      instruction: string,
-    ) => {
-      // Block a refine while this chat's turn is still streaming. send() would
-      // silently no-op it (its in-flight guard), leaving the user with no
-      // feedback — so reject early with a toast. The UI also disables the
-      // refine controls (refineDisabled), this is the belt-and-braces guard.
-      const aid = activeIdRef.current;
-      if (aid && chatSession.runFor(aid)?.streaming) {
-        toast.info("Hang on — let the current draft finish before refining again.");
-        return;
-      }
-      // A hook-focused refine of a POST should change ONLY the opener and leave
-      // the rest of the post untouched. We both (a) instruct the agent sharply
-      // and (b) preserve the body verbatim client-side (splicePreservedBody in
-      // the artifact handler), since GLM tends to rewrite the whole post and drop
-      // the paragraph formatting. (Hook CARDS are openers already — no body to
-      // preserve — so this only applies to post cards.)
-      const hookOnly = kind === "post" && isExclusiveHookRefine(instruction);
-      // Stash the source body so the artifact handler can (a) graft the new
-      // hook onto it for hook-only refines and (b) run the collapse guard's
-      // before/after ratio check.
-      if (aid) {
-        pendingRefineRef.current.set(aid, {
-          artifactId,
-          originalBody: draftBody,
-          ...(hookOnly ? { hookOnly: true } : {}),
-        });
-      }
-      const noun = kind === "hook" ? "hook" : "post";
-      const message = hookOnly
-        ? buildHookOnlyRefineMessage(instruction, draftBody)
-        : `Refine this ${noun}: ${instruction}\n\n` +
-          `Keep it in my voice. Here's the current ${noun}:\n` +
-          `"""\n${draftBody}\n"""`;
-      // The Refine control is an explicit UI action, so it sends one typed Edit
-      // command. The server validates the canonical target, inherits its
-      // Custom Skills, and preserves everything after the opener in hook mode.
-      void send(message, {
-        command: {
-          kind: "edit",
-          targetPostId: artifactId,
-          scope: hookOnly ? "hook" : "full_post",
-        },
-      });
-    },
-    [send, chatSession],
-  );
 
   // Reflect a Done-edit's PATCH into the parent's caches so the saved body
   // sticks across re-renders (the stale prop would otherwise seed-reset the
@@ -3617,20 +3611,23 @@ export function ChatWorkspace({
               ? refiningByChat[activeId] ?? null
               : null
           }
-          onRefine={(instruction) =>
-            refineDraft(a.id, a.body, a.kind === "hook" ? "hook" : "post", instruction)
-          }
+          onEdit={() => {
+            setExpandedArtifactId(a.id);
+            enterEditCommand(a.id);
+            setMobileDraftsOpen(false);
+            requestAnimationFrame(() => inputRef.current?.focus());
+          }}
           onAsk={() => {
             setCoworkComposer({ kind: "ask", contextPostId: a.id });
+            setMobileDraftsOpen(false);
             requestAnimationFrame(() => inputRef.current?.focus());
           }}
           onBodyChange={(newBody) => updateArtifactBody(a.id, newBody)}
           onMetaChange={(metaPatch) => updateArtifactMeta(a.id, metaPatch)}
           leadMagnetHref={leadMagnetHref}
-          // While a turn is streaming in THIS chat, block refining — a second
-          // refine mid-turn is silently dropped by send()'s in-flight guard, so
-          // disable the controls + show why instead of a dead click.
-          refineDisabled={sending}
+          // While a turn is streaming in THIS chat, block Edit — a second turn
+          // would be rejected by the in-flight guard, so explain it up front.
+          editDisabled={sending}
           onDelete={() => deleteArtifact(a.id)}
         />
       ) : (
@@ -4878,6 +4875,10 @@ export function ChatWorkspace({
                     ? "Type your next message…"
                     : composerCommandKind === "create"
                       ? "What should the new post be about?"
+                      : composerCommandKind === "edit"
+                        ? editTargetPost
+                          ? `What should change in ${editTargetPost.label}?`
+                          : "Select a Post before describing the change…"
                       : askContextPost
                         ? `Ask about ${askContextPost.label}…`
                         : "Ask Cowork anything…"
@@ -4923,7 +4924,92 @@ export function ChatWorkspace({
                   <PenLine className="h-3.5 w-3.5" aria-hidden />
                   Create
                 </button>
+                <button
+                  type="button"
+                  aria-pressed={composerCommandKind === "edit"}
+                  onClick={() => enterEditCommand()}
+                  className={cn(
+                    "inline-flex h-8 items-center gap-1.5 rounded-[0.6rem] px-2.5 text-xs font-medium transition-colors",
+                    composerCommandKind === "edit"
+                      ? "bg-primary text-primary-foreground shadow-sm"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                  )}
+                >
+                  <Pencil className="h-3.5 w-3.5" aria-hidden />
+                  {editTargetPost ? `Edit · ${editTargetPost.label}` : "Edit"}
+                </button>
               </div>
+              {composerCommandKind === "edit" && (
+                <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                  {artifactIndex.entries.length > 0 ? (
+                    <select
+                      value={editTargetPost?.artifactId ?? ""}
+                      onChange={(event) =>
+                        setCoworkComposer({
+                          kind: "edit",
+                          targetPostId: event.target.value,
+                          scope: coworkComposer.scope,
+                        })
+                      }
+                      aria-label="Post to edit"
+                      className="h-9 max-w-56 rounded-xl border border-border bg-card px-2.5 text-xs font-medium text-foreground outline-none focus:border-primary"
+                    >
+                      {!editTargetPost && (
+                        <option value="" disabled>
+                          Select a Post
+                        </option>
+                      )}
+                      {artifactIndex.entries.map((entry) => (
+                        <option key={entry.artifactId} value={entry.artifactId}>
+                          {entry.label} — {entry.artifact.body.replace(/\s+/g, " ").slice(0, 48)}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <span className="inline-flex h-9 items-center rounded-xl border border-border bg-muted px-2.5 text-xs text-muted-foreground">
+                      No Posts in this chat to edit.
+                    </span>
+                  )}
+                  {artifactIndex.entries.length > 0 && (
+                    <div
+                      className="inline-flex h-9 items-center rounded-xl border border-border bg-card p-0.5"
+                      role="group"
+                      aria-label="Edit scope"
+                    >
+                      <button
+                        type="button"
+                        aria-pressed={coworkComposer.scope === "full_post"}
+                        onClick={() =>
+                          setCoworkComposer({ ...coworkComposer, scope: "full_post" })
+                        }
+                        className={cn(
+                          "h-8 rounded-[0.6rem] px-2.5 text-xs font-medium transition-colors",
+                          coworkComposer.scope === "full_post"
+                            ? "bg-muted text-foreground"
+                            : "text-muted-foreground hover:text-foreground",
+                        )}
+                      >
+                        Whole Post
+                      </button>
+                      <button
+                        type="button"
+                        aria-pressed={coworkComposer.scope === "hook"}
+                        onClick={() =>
+                          setCoworkComposer({ ...coworkComposer, scope: "hook" })
+                        }
+                        className={cn(
+                          "h-8 rounded-[0.6rem] px-2.5 text-xs font-medium transition-colors",
+                          coworkComposer.scope === "hook"
+                            ? "bg-muted text-foreground"
+                            : "text-muted-foreground hover:text-foreground",
+                        )}
+                      >
+                        Hook only
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
               {composerCommandKind === "create" && (
               <Button
                 ref={generationSettingsButtonRef}
@@ -5040,7 +5126,11 @@ export function ChatWorkspace({
                 <Button
                   type="submit"
                   size="icon"
-                  disabled={!input.trim() || overLimit}
+                  disabled={
+                    !input.trim() ||
+                    overLimit ||
+                    (composerCommandKind === "edit" && !editTargetPost)
+                  }
                   className="h-10 w-10 shrink-0 rounded-full shadow-sm"
                   aria-label="Send message"
                 >
@@ -6298,12 +6388,12 @@ function ArtifactCard({
   author,
   label,
   refiningDraftId,
-  onRefine,
+  onEdit,
   onAsk,
   onBodyChange,
   onMetaChange,
   leadMagnetHref,
-  refineDisabled,
+  editDisabled,
   onDelete,
 }: {
   artifact: Artifact;
@@ -6314,9 +6404,8 @@ function ArtifactCard({
   // When set, this chat is refining an existing Posts-board post (this id). The
   // primary save action UPDATES that row instead of creating a new draft.
   refiningDraftId?: string | null;
-  // Send this draft back to the agent with an instruction. The result UPDATES
-  // this card in place (with version history), not a separate new draft.
-  onRefine: (instruction: string) => void;
+  // Select this exact Post as the visible composer's Edit target.
+  onEdit: () => void;
   // Bind the next Ask turn to this exact Post without authorizing an edit.
   onAsk: () => void;
   // The Done-edit PATCH succeeded — the parent updates its session cache
@@ -6325,9 +6414,9 @@ function ArtifactCard({
   onBodyChange?: (newBody: string) => void;
   onMetaChange?: (metaPatch: Record<string, unknown>) => Promise<void>;
   leadMagnetHref?: (leadMagnet: AppliedLeadMagnet | null) => string | null;
-  // True while a turn is streaming in this chat — refine controls are disabled
-  // (a refine mid-turn would be silently dropped by the send() in-flight guard).
-  refineDisabled?: boolean;
+  // True while a turn is streaming in this chat — Edit is disabled because a
+  // second turn would be rejected by the send() in-flight guard.
+  editDisabled?: boolean;
   // Remove this draft from the chat. Confirmed before firing. Absent → no
   // delete affordance (e.g. a context where deletion doesn't apply).
   onDelete?: () => void;
@@ -6339,9 +6428,6 @@ function ArtifactCard({
   // Whether the primary save/schedule should UPDATE an existing Posts-board row.
   // Only for post artifacts in a chat that was opened to refine that specific post.
   const canUpdateOriginal = !!refiningDraftId && artifact.kind === "post";
-  // The refine quick-action row toggles open below the action bar.
-  const [refineOpen, setRefineOpen] = useState(false);
-  const [refineText, setRefineText] = useState("");
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const scheduleMeta = scheduleMetaFromArtifact(artifact);
   const [saved, setSaved] = useState(
@@ -7105,33 +7191,30 @@ function ArtifactCard({
           variant="outline"
           className="gap-1.5 h-8 rounded-full border-border"
           onClick={onAsk}
-          disabled={refineDisabled}
+          disabled={editDisabled}
+          aria-label="Ask about this Post"
           title="Ask for feedback or discuss this post without changing it"
         >
           <MessageSquare className="h-3.5 w-3.5" />
           Ask
         </Button>
-        {/* Refine with AI — sends this draft back to the agent. Toggles the
-            quick-action row below; the original card stays, the refined version
-            arrives as a new card. Disabled while a turn is streaming in this
-            chat (a refine mid-turn would be silently dropped). */}
+        {/* Edit selects this exact Post in the shared composer. Target and scope
+            stay visible there, so there is only one place to describe changes. */}
         <Button
           size="sm"
           variant="outline"
           className="gap-1.5 h-8 rounded-full border-border"
-          onClick={() => {
-            setRefineOpen((v) => !v);
-            setScheduleOpen(false);
-          }}
-          disabled={refineDisabled}
+          onClick={onEdit}
+          disabled={editDisabled}
+          aria-label="Edit this Post"
           title={
-            refineDisabled
-              ? "Wait for the current draft to finish before refining again"
-              : undefined
+            editDisabled
+              ? "Wait for the current turn to finish before editing"
+              : "Edit this Post in place"
           }
         >
           <PenLine className="h-3.5 w-3.5" />
-          {refineDisabled ? "Refining…" : "Refine"}
+          {editDisabled ? "Editing…" : "Edit"}
         </Button>
         <Button
           size="sm"
@@ -7142,7 +7225,6 @@ function ArtifactCard({
               setLoadingNextOpenDay(true);
             }
             setScheduleOpen((v) => !v);
-            setRefineOpen(false);
           }}
           disabled={scheduling || artifact.kind === "hook"}
           title={
@@ -7293,48 +7375,6 @@ function ArtifactCard({
         </div>
       )}
 
-      {/* Refine quick actions — one-tap chips + a free-text instruction. Hidden
-          while a stream is in flight so the panel can't be used mid-turn. */}
-      {refineOpen && !refineDisabled && (
-        <div className="flex flex-col gap-2 px-3 pb-2.5 bg-card shrink-0">
-          <div className="flex flex-wrap gap-1.5">
-            {refineSuggestions(artifact.kind).map((s) => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => {
-                  onRefine(s);
-                  setRefineOpen(false);
-                }}
-                className="rounded-full border border-border bg-white px-2.5 py-1 text-xs text-foreground transition-colors hover:bg-muted"
-              >
-                {s}
-              </button>
-            ))}
-          </div>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              const t = refineText.trim();
-              if (!t) return;
-              onRefine(t);
-              setRefineText("");
-              setRefineOpen(false);
-            }}
-            className="flex items-center gap-1.5"
-          >
-            <input
-              value={refineText}
-              onChange={(e) => setRefineText(e.target.value)}
-              placeholder="Or describe a change…"
-              className="flex-1 rounded-full border border-border bg-white px-3 py-1.5 text-xs text-foreground outline-none focus:ring-2 focus:ring-primary/15"
-            />
-            <Button type="submit" size="sm" className="h-8" disabled={!refineText.trim()}>
-              Refine
-            </Button>
-          </form>
-        </div>
-      )}
     </div>
   );
 }
@@ -7747,7 +7787,7 @@ type StarterGroup = "explore" | "create" | "borrow-attention";
 type Starter = {
   id: ComposerStarterId;
   group: StarterGroup;
-  command: CoworkComposerCommandKind;
+  command: Exclude<CoworkComposerCommandKind, "edit">;
   icon: LucideIcon;
   label: string;
   prompt: string;
@@ -8070,7 +8110,7 @@ export { splitHookLines, HOOK_LINE_COUNT } from "@/lib/hook-splice";
 // instead of stacking a duplicate card. Conservative — only matches clear
 // refine signals AND rules out explicit "give me another" requests. Without
 // this, typing "make it punchier" in the composer (rather than using the
-// per-card Refine button) produced a second card.
+// per-card Edit button) produced a second card.
 
 // Render a live run as the two bubbles it contributes to the active chat: the
 // user's message and the streaming assistant message.

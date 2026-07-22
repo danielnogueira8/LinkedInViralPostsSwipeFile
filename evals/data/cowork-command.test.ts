@@ -119,6 +119,20 @@ describe("Cowork command interface", () => {
     expect(
       commandForComposer({ kind: "create", count: 2, contextPostId: "post-2" }),
     ).toEqual({ kind: "create", count: 2 });
+    expect(
+      commandForComposer({
+        kind: "edit",
+        count: 6,
+        targetPostId: "post-2",
+        scope: "hook",
+      }),
+    ).toEqual({ kind: "edit", targetPostId: "post-2", scope: "hook" });
+  });
+
+  test("composer Edit fails closed without a selected Post", () => {
+    expect(() =>
+      commandForComposer({ kind: "edit", count: 1, scope: "full_post" }),
+    ).toThrow("Edit requires a selected Post");
   });
 
   test("an empty pending-answer selection resumes persisted authority", () => {
