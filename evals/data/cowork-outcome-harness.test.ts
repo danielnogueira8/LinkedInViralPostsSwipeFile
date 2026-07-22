@@ -4552,4 +4552,55 @@ describe("production-shaped Cowork outcome harness", () => {
     expect(sequence.attempts[0]?.safe.route).toBe("direct_writer");
     expect(sequence.attempts[1]?.safe.route).toBe("direct_writer");
   });
+
+  test("an OPINION question after a post draft is answered, not written into a new post (pin does not hijack it)", async () => {
+    // The reported bug: turn 1 writes a post (pins the chat to direct_writer),
+    // then "why do you think this post is good or bad?" produced ANOTHER post
+    // instead of an answer. The opinion guard must send it to the answer lane
+    // despite the sticky direct_writer pin.
+    const opinion = "This post opens strong but the middle drags a little.";
+    const sequence = await runCoworkOutcomeSequence([
+      {
+        id: "opinion-after-draft-turn-1",
+        request: {
+          message:
+            "Write an original post in my voice about why a personal brand is career leverage.",
+        },
+        model: {
+          provider: { rounds: [] },
+          directWriter: [
+            {
+              text: COMPLETE_POST,
+              finishReason: "stop",
+              usage: usage(210, 95, 0.0001888),
+            },
+          ],
+        },
+        expected: {
+          terminal: "done",
+          artifactBodies: [COMPLETE_POST],
+          actionNames: [],
+          route: "direct_writer",
+        },
+      },
+      {
+        id: "opinion-after-draft-turn-2",
+        request: { message: "why do you think this post is good or bad?" },
+        model: { provider: textProvider(opinion) },
+        expected: {
+          terminal: "done",
+          artifactBodies: [], // NO new post
+          actionNames: [],
+          assistantContents: [opinion],
+          route: "answer",
+        },
+      },
+    ]);
+
+    expect(sequence.pass, JSON.stringify(sequence.attempts)).toBe(true);
+    expect(sequence.attempts[0]?.safe.route).toBe("direct_writer");
+    // The question is answered on the answer lane — not written into a new post.
+    expect(sequence.attempts[1]?.safe.route).toBe("answer");
+    expect(sequence.attempts[1]?.safe.artifactCount).toBe(0);
+  });
 });
