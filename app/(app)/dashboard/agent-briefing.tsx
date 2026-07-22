@@ -340,8 +340,10 @@ export function AgentBriefing({
   // lone section spans the full width instead of leaving a dead column.
   const twoColumns = drafts.length > 0 && opportunities.length > 0;
 
+  // `overflow-x-hidden` also makes vertical overflow compute to `auto`. Clip
+  // over-wide rows without turning the briefing card into its own scroller.
   return (
-    <section className="rounded-2xl border border-border bg-card/60 p-4 sm:p-5 overflow-x-hidden">
+    <section className="rounded-2xl border border-border bg-card/60 p-4 sm:p-5 overflow-x-clip">
       <div className="flex items-center gap-2">
         {/* Coral = the agent's identity color everywhere it surfaces. */}
         <span className="grid size-7 place-items-center rounded-lg bg-accent-brand/10 text-accent-brand">
