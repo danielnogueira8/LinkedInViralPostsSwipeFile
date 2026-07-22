@@ -3,7 +3,11 @@ import { describe, expect, test, vi } from "vitest";
 const getToken = vi.fn(async () => "supabase-clerk-token");
 const requestClient = { kind: "rls-request-client" };
 const supabaseForWorkspaceRequest = vi.fn(
-  (_getAccessToken: () => Promise<string | null>, _workspaceId: string) => requestClient,
+  (getAccessToken: () => Promise<string | null>, workspaceId: string) => {
+    void getAccessToken;
+    void workspaceId;
+    return requestClient;
+  },
 );
 const supabaseAdmin = vi.fn(() => {
   throw new Error("authenticated requests must not use the service role");
@@ -33,6 +37,6 @@ describe("scopedSupabase request authentication", () => {
 
     const accessToken = supabaseForWorkspaceRequest.mock.calls[0]?.[0];
     await expect(accessToken?.()).resolves.toBe("supabase-clerk-token");
-    expect(getToken).toHaveBeenCalledWith({ template: "supabase" });
+    expect(getToken).toHaveBeenCalledWith();
   });
 });
