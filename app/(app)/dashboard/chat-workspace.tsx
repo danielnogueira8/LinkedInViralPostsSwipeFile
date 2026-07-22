@@ -6147,6 +6147,7 @@ function ArtifactCard({
   // delete affordance (e.g. a context where deletion doesn't apply).
   onDelete?: () => void;
 }) {
+  const router = useRouter();
   const [copied, markCopied] = useCopiedFlag();
   const [saving, setSaving] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -6320,12 +6321,20 @@ function ArtifactCard({
       // the first save already succeeded.
       setBoardDraftId(savedDraftId);
       setSaved(true);
+      const openSavedPost = {
+        action: {
+          label: "Open post",
+          onClick: () =>
+            router.push(`/dashboard/posts?open=${encodeURIComponent(savedDraftId)}`),
+        },
+      };
       try {
         await onMetaChange?.({ board_draft_id: savedDraftId });
-        toast.success(`${kindNoun(artifact.kind)} saved`);
+        toast.success(`${kindNoun(artifact.kind)} saved`, openSavedPost);
       } catch {
         toast.success(`${kindNoun(artifact.kind)} saved to Posts`, {
           description: "The chat link did not sync. Reload before making more changes.",
+          ...openSavedPost,
         });
       }
     } catch (e) {
