@@ -206,10 +206,10 @@ export function finalizeTurn(
       ): Promise<boolean> => {
         if (persisted) return true;
         persisted = true;
-        // Persist cite artifacts as a bare postId reference — drop the resolved
-        // meta.card snapshot. Engagement counts drift and LinkedIn media URLs
-        // expire (~weekly), so the card is RE-RESOLVED fresh on chat load
-        // rather than stored stale.
+        // Persist cite artifacts without the resolved meta.card snapshot.
+        // Engagement counts and media URLs drift, so the card is RE-RESOLVED
+        // fresh on chat load. A server-validated LinkedIn post URL may remain
+        // as the immediate-render fallback while that rehydration settles.
         //
         // post/hook drafts: stamp meta.markdown when the writer model emits
         // markdown (GPT-5.6 Luna), so every downstream egress (render, publish,

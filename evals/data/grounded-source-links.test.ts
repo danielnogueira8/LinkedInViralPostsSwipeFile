@@ -73,13 +73,27 @@ describe("GroundedSourceLinks", () => {
     expect(html).toBe("");
   });
 
-  test("persistence keeps the server presentation marker but drops live URL data", () => {
+  test("persistence keeps only the validated live URL fallback and presentation marker", () => {
     expect(
       persistedCiteMeta({
         postId: "10000000-0000-4000-8000-000000000001",
         presentation: "grounded_answer_source",
         sourceUrl: "https://www.linkedin.com/posts/live-only",
         card: { postUrl: "https://www.linkedin.com/posts/stale" },
+      }),
+    ).toEqual({
+      postId: "10000000-0000-4000-8000-000000000001",
+      presentation: "grounded_answer_source",
+      sourceUrl: "https://www.linkedin.com/posts/live-only",
+    });
+  });
+
+  test("persistence rejects a forged fallback URL", () => {
+    expect(
+      persistedCiteMeta({
+        postId: "10000000-0000-4000-8000-000000000001",
+        presentation: "grounded_answer_source",
+        sourceUrl: "https://attacker.example/phish",
       }),
     ).toEqual({
       postId: "10000000-0000-4000-8000-000000000001",

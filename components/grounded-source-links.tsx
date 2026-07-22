@@ -1,25 +1,11 @@
 import { ExternalLink } from "lucide-react";
 import type { Artifact } from "@/lib/agent/contracts";
-import { GROUNDED_SOURCE_PRESENTATION } from "@/lib/agent/grounded-source-citations";
+import {
+  GROUNDED_SOURCE_PRESENTATION,
+  verifiedLinkedInSourceUrl,
+} from "@/lib/agent/grounded-source-citations";
 
 type RehydratedCard = { id?: unknown; postUrl?: unknown };
-
-function safeLinkedInHref(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  try {
-    const url = new URL(value);
-    const hostname = url.hostname.toLowerCase();
-    if (
-      url.protocol !== "https:" ||
-      (hostname !== "linkedin.com" && !hostname.endsWith(".linkedin.com"))
-    ) {
-      return null;
-    }
-    return url.toString();
-  } catch {
-    return null;
-  }
-}
 
 function groundedSourceHrefs(artifacts: Artifact[]): string[] {
   const seen = new Set<string>();
@@ -34,8 +20,11 @@ function groundedSourceHrefs(artifacts: Artifact[]): string[] {
     const postId = artifact.meta.postId;
     const card = artifact.meta.card as RehydratedCard | undefined;
     const rehydratedUrl =
-      card && card.id === postId ? safeLinkedInHref(card.postUrl) : null;
-    const href = rehydratedUrl ?? safeLinkedInHref(artifact.meta.sourceUrl);
+      card && card.id === postId
+        ? verifiedLinkedInSourceUrl(card.postUrl)
+        : undefined;
+    const href =
+      rehydratedUrl ?? verifiedLinkedInSourceUrl(artifact.meta.sourceUrl);
     if (!href || seen.has(href)) continue;
     seen.add(href);
     hrefs.push(href);

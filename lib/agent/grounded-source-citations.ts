@@ -6,8 +6,8 @@ export const GROUNDED_SOURCE_PRESENTATION = "grounded_answer_source";
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-function safeLinkedInUrl(value: string | undefined): string | undefined {
-  if (!value) return undefined;
+export function verifiedLinkedInSourceUrl(value: unknown): string | undefined {
+  if (typeof value !== "string" || !value) return undefined;
   try {
     const url = new URL(value);
     const hostname = url.hostname.toLowerCase();
@@ -36,7 +36,7 @@ export function groundedWorkspaceSourceArtifacts(
       return [];
     }
     seen.add(source.id);
-    const sourceUrl = safeLinkedInUrl(source.url);
+    const sourceUrl = verifiedLinkedInSourceUrl(source.url);
     return [
       {
         id: `grounded-source:${source.id}`,
@@ -56,10 +56,20 @@ export function groundedWorkspaceSourceArtifacts(
 export function persistedCiteMeta(
   meta: Record<string, unknown> | undefined,
 ): Record<string, unknown> {
+  const presentation =
+    meta?.presentation === GROUNDED_SOURCE_PRESENTATION
+      ? GROUNDED_SOURCE_PRESENTATION
+      : undefined;
+  const sourceUrl = presentation
+    ? verifiedLinkedInSourceUrl(meta?.sourceUrl)
+    : undefined;
   return {
     postId: typeof meta?.postId === "string" ? meta.postId : undefined,
-    ...(meta?.presentation === GROUNDED_SOURCE_PRESENTATION
-      ? { presentation: GROUNDED_SOURCE_PRESENTATION }
-      : {}),
+    ...(presentation ? { presentation } : {}),
+    // Keep the validated URL as an immediate-render fallback. The workspace-
+    // scoped rehydrated card still wins whenever it is available, so a changed
+    // canonical URL is picked up on reload without leaving the just-finished
+    // turn linkless during the stream-to-canonical handoff.
+    ...(sourceUrl ? { sourceUrl } : {}),
   };
 }
