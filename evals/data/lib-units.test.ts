@@ -318,8 +318,39 @@ describe("post-type: classifyPost", () => {
     expect(classifyPost("Here's what I learned shipping 10 features this quarter.").post_type).toBe("regular");
   });
 
+  test("quoted self-reference is not a lead-magnet CTA", () => {
+    const post = `In 11 months, I've made $480K from LinkedIn. This is where I say 'it's not about the money,' right? Except I'm not full of sh*t:
+
+I'm autistic + ADHD. Whatever I can make easy, I will:
+
+- I fly business cause economy is SENSORY HELL
+- I book adult-only hotels cause toddlers wreck me
+- I pay pricey coaches cause bad advice costs more
+- I take spa days when my nervous system hits 404
+- I love getting validation for my work (sue me)
+
+I'm so sick of these "I don't need much" coaches on here. Bruh, you charge $15K for a call. 😂
+
+If you're premium, be f*cking proud of it, y'all.
+
+What's the weirdest anti-flex you've seen on here?`;
+
+    expect(classifyPost(post)).toEqual({ post_type: "regular", detected_via: null });
+  });
+
+  test("narrated quoted speech is not a lead-magnet CTA", () => {
+    expect(classifyPost("I say 'it's not about the money'")).toEqual({
+      post_type: "regular",
+      detected_via: null,
+    });
+  });
+
   test("quoted-keyword CTA → lead_magnet", () => {
     expect(classifyPost("Want my playbook? Comment 'SCALE' below and I'll send it.").post_type).toBe("lead_magnet");
+    expect(classifyPost("Say 'GUIDE' and I'll send it.").post_type).toBe("lead_magnet");
+    expect(classifyPost("Say 'GUIDE' below to get my checklist.").post_type).toBe("lead_magnet");
+    expect(classifyPost("Say GUIDE below to get my checklist.").post_type).toBe("lead_magnet");
+    expect(classifyPost("Comment GUIDE below.").post_type).toBe("lead_magnet");
   });
 
   test("I'll DM it → lead_magnet", () => {

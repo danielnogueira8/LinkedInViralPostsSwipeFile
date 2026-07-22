@@ -28,6 +28,12 @@ const KEYWORD = `${Q}?[A-Za-z0-9][A-Za-z0-9 \\-_!?]{1,29}${Q}?`;
 // QUOTED_KEYWORD requires quotes on both sides — used by Pattern A so that
 // "Drop the act" doesn't get flagged but "Drop 'SCALE'" does.
 const QUOTED_KEYWORD = `${Q_OPEN}[A-Za-z0-9][A-Za-z0-9 \\-_!?]{0,29}${Q_CLOSE}`;
+const RESPONSE_CTA_VERB = "(?:[Cc]omment|[Dd]rop|[Tt]ype|[Rr]eply\\s+with)";
+// "Say" is a valid CTA only when it is an imperative followed by a concrete
+// delivery cue. This intentionally excludes narration such as
+// "I say 'it's not about the money'".
+const IMPERATIVE_SAY_DELIVERY =
+  "(?:\\s+below)?\\s+(?:to\\s+get\\b|and\\s+i['’]?ll\\s+(?:dm|send|share)\\b)";
 
 // Common English emphasis words that show up in ALL CAPS but aren't lead-magnet
 // keywords. Without this, "Drop ONE thing you'd change" gets flagged. YES/NO
@@ -45,10 +51,15 @@ const ALLCAPS_STOPLIST = new Set([
 // match. Keyword group is strictly all-caps (no /i flag) so lowercase prose
 // can't slip through. Stop-listed keywords are filtered out before returning.
 const ALLCAPS_CTA =
-  /(?:^|[.!?\n]\s*)(?:[Cc]omment|[Dd]rop|[Tt]ype|[Rr]eply with|[Ss]ay)\s+([A-Z][A-Z0-9\-]{2,29})\b/;
+  new RegExp(
+    `(?:^|[.!?\\n]\\s*)${RESPONSE_CTA_VERB}\\s+([A-Z][A-Z0-9\\-]{2,29})\\b`,
+  );
+const IMPERATIVE_SAY_ALLCAPS_CTA = new RegExp(
+  `(?:^|[.!?\\n]\\s*)[Ss]ay\\s+([A-Z][A-Z0-9\\-]{2,29})\\b${IMPERATIVE_SAY_DELIVERY}`,
+);
 
 function matchesAllCapsLeadMagnet(text: string): boolean {
-  const m = text.match(ALLCAPS_CTA);
+  const m = text.match(ALLCAPS_CTA) ?? text.match(IMPERATIVE_SAY_ALLCAPS_CTA);
   if (!m) return false;
   return !ALLCAPS_STOPLIST.has(m[1]);
 }
@@ -58,7 +69,11 @@ const LEAD_MAGNET_PATTERNS: RegExp[] = [
   // "comment 'PLAYBOOK'", "drop 'SCALE' below", "comment '10'"
   // Quotes are REQUIRED here — the unquoted all-caps form is handled by
   // matchesAllCapsLeadMagnet() so prose like "Drop the act" doesn't match.
-  new RegExp(`\\b(?:comment|drop|type|reply\\s+with|say)\\s+${QUOTED_KEYWORD}`, "i"),
+  new RegExp(`\\b${RESPONSE_CTA_VERB}\\s+${QUOTED_KEYWORD}`, "i"),
+  new RegExp(
+    `(?:^|[.!?\\n]\\s*)say\\s+${QUOTED_KEYWORD}${IMPERATIVE_SAY_DELIVERY}`,
+    "i",
+  ),
   // "I'll DM it", "I'll send you the link"
   /\bi['’]?ll\s+(?:dm|send|share)\s+(?:it|you|them|the\s+link)/i,
   // "DM me 'X'", "send me 'X' in DMs"
@@ -72,7 +87,7 @@ const LEAD_MAGNET_PATTERNS: RegExp[] = [
   /\bwant\s+(?:the|my|this|a\s+copy)\b[^.?!]{0,80}\?\s*(?:comment|drop|reply|dm)\b/i,
 ];
 
-// Cap input length before running the 7-regex sweep. LinkedIn posts max out
+// Cap input length before running the regex sweep. LinkedIn posts max out
 // around 3000 chars, so anything longer is either an outlier or a scraper
 // quirk (concatenated paragraphs, hidden HTML). Patterns include bounded
 // `{0,80}` quantifiers so the regexes themselves aren't catastrophic, but
