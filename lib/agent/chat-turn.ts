@@ -301,6 +301,7 @@ const chatTurnOperationSchema = z.discriminatedUnion("kind", [
       kind: z.literal("edit_artifact"),
       artifactId: z.string().min(1).max(200),
       instruction: z.string().trim().min(1).max(4_000),
+      editMode: z.enum(["general", "hook_only"]).optional(),
     })
     .strict(),
   z

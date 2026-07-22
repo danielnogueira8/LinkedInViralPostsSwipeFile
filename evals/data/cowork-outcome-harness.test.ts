@@ -5164,6 +5164,187 @@ describe("production-shaped Cowork outcome harness", () => {
     expect(report.persisted.artifacts[0]?.id).not.toBe(legacyTargetId);
   });
 
+  test("an explicit general edit mode overrides conflicting legacy hook-only fields", async () => {
+    const targetId = "00000000-0000-4000-8000-000000000634";
+    const report = await runCoworkOutcomeScenario({
+      id: "typed-general-edit-authoritative",
+      request: {
+        message: "Make this stronger.",
+        operation: {
+          kind: "edit_artifact",
+          artifactId: targetId,
+          instruction: "Make this stronger.",
+          editMode: "general",
+        },
+        hookOnly: true,
+        hookOnlyOriginalBody: COMPLETE_POST,
+      },
+      seed: {
+        messageArtifact: {
+          id: targetId,
+          kind: "post",
+          title: "Original target",
+          body: COMPLETE_POST,
+        },
+      },
+      model: {
+        provider: { rounds: [] },
+        directWriter: [
+          {
+            text: SECOND_POST,
+            finishReason: "stop",
+            usage: usage(180, 82, 0.00016),
+          },
+        ],
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [SECOND_POST],
+        actionNames: [],
+        route: "direct_writer",
+      },
+    });
+
+    expect(report.pass, JSON.stringify(report.safe)).toBe(true);
+    expect(report.persisted.artifacts[0]?.id).toBe(targetId);
+  });
+
+  test("fails closed before generation when typed operation persistence fails", async () => {
+    const targetId = "00000000-0000-4000-8000-000000000631";
+    const report = await runCoworkOutcomeScenario({
+      id: "typed-operation-marker-write-failure",
+      request: {
+        message: "Make Draft 1 punchier.",
+        operation: {
+          kind: "edit_artifact",
+          artifactId: targetId,
+          instruction: "Make Draft 1 punchier.",
+        },
+      },
+      seed: {
+        messageArtifact: {
+          id: targetId,
+          kind: "post",
+          title: "Original target",
+          body: COMPLETE_POST,
+        },
+      },
+      model: {
+        provider: { rounds: [] },
+        turnOperationMarkerPersistenceFails: true,
+        directWriter: [
+          {
+            text: SECOND_POST,
+            finishReason: "stop",
+            usage: usage(180, 82, 0.00016),
+          },
+        ],
+      },
+      expected: {
+        terminal: "failure",
+        httpStatus: 503,
+        artifactBodies: [],
+        actionNames: [],
+        assistantContents: [
+          "I couldn’t save the turn operation safely, so the request was not executed. Send it again as a new message.",
+        ],
+      },
+    });
+
+    expect(
+      report.pass,
+      JSON.stringify({
+        safe: report.safe,
+        failures: report.failureCodes,
+        assistant: report.persisted.messages
+          .filter((message) => message.role === "assistant")
+          .map((message) => message.content),
+      }),
+    ).toBe(true);
+    expect(report.observed.directWriterRequests).toEqual([]);
+  });
+
+  test("Retry preserves hook-only edit mode and the original target atomically", async () => {
+    const originalTargetId = "00000000-0000-4000-8000-000000000632";
+    const newerTargetId = "00000000-0000-4000-8000-000000000633";
+    const instruction = "Make this stronger.";
+    const failed: CoworkOutcomeScenario = {
+      id: "typed-hook-only-retry-failed",
+      request: {
+        message: instruction,
+        operation: {
+          kind: "edit_artifact",
+          artifactId: originalTargetId,
+          instruction,
+          editMode: "hook_only",
+        },
+      },
+      seed: {
+        messageArtifacts: [
+          {
+            id: originalTargetId,
+            kind: "post",
+            title: "Original target",
+            body: COMPLETE_POST,
+          },
+          {
+            id: newerTargetId,
+            kind: "post",
+            title: "Newer target",
+            body: THIRD_POST,
+          },
+        ],
+      },
+      model: {
+        provider: { rounds: [] },
+        directWriter: Array.from({ length: 4 }, () => ({
+          text: "",
+          finishReason: "stop" as const,
+          usage: usage(100, 0, 0.0001),
+        })),
+      },
+      expected: {
+        terminal: "failure",
+        artifactBodies: [],
+        actionNames: [],
+      },
+    };
+    const expectedBody = splicePreservedBody(COMPLETE_POST, SECOND_POST);
+    const recovered: CoworkOutcomeScenario = {
+      id: "typed-hook-only-retry-recovered",
+      retryLatestUser: true,
+      request: {
+        message: instruction,
+        operation: {
+          kind: "edit_artifact",
+          artifactId: newerTargetId,
+          instruction,
+        },
+      },
+      model: {
+        provider: { rounds: [] },
+        directWriter: [
+          {
+            text: SECOND_POST,
+            finishReason: "stop",
+            usage: usage(180, 82, 0.00016),
+          },
+        ],
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [expectedBody],
+        actionNames: [],
+        route: "direct_writer",
+      },
+    };
+
+    const sequence = await runCoworkOutcomeSequence([failed, recovered]);
+
+    expect(sequence.pass, JSON.stringify(sequence.attempts.map((a) => a.safe))).toBe(true);
+    expect(sequence.attempts[1]?.persisted.artifacts[0]?.id).toBe(originalTargetId);
+  });
+
   test("an unavailable fallthrough classifier fails closed to clarification", async () => {
     const report = await runCoworkOutcomeScenario({
       id: "fallthrough-classifier-failure",

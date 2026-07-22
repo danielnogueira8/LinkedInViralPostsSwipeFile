@@ -11,6 +11,7 @@ import {
   hasAssistantAfterPersistedUserMessage,
   reinsertArtifact,
   reviewArtifactIdForComposer,
+  writableArtifactSelectionForComposer,
   writableArtifactIdForComposer,
 } from "@/lib/chat-ui-policy";
 import type { Artifact } from "@/lib/agent/contracts";
@@ -154,6 +155,37 @@ describe("persisted typed operation identity", () => {
         kind: "edit_artifact",
         artifactId: "artifact-1",
         instruction: "Make Draft 1 punchier.",
+      },
+    });
+  });
+
+  test("freezes hook-only edit semantics in the typed operation marker", () => {
+    expect(
+      turnOperationMarkerFromToolCalls({
+        tool_calls: [
+          {
+            id: "_turn_operation",
+            type: "function",
+            function: {
+              name: "_turn_operation",
+              arguments: JSON.stringify({
+                version: 1,
+                kind: "edit_artifact",
+                artifactId: "artifact-1",
+                instruction: "Tighten the hook.",
+                editMode: "hook_only",
+              }),
+            },
+          },
+        ],
+      }),
+    ).toEqual({
+      kind: "valid",
+      operation: {
+        kind: "edit_artifact",
+        artifactId: "artifact-1",
+        instruction: "Tighten the hook.",
+        editMode: "hook_only",
       },
     });
   });
@@ -743,6 +775,24 @@ describe("looksLikeComposerRefine — chat-typed refine detection", () => {
     expect(looksLikeComposerRefine(instruction)).toBe(true);
   });
 
+  test.each([
+    "Review this draft and improve it.",
+    "Review this draft, but improve it.",
+    "Review Draft 1 and make it stronger.",
+    "Review it and don't rewrite the body, but tighten the hook.",
+    "Review Draft 1, then rewrite Draft 1 with a clearer argument.",
+  ])("a compound affirmative mutation is an edit: %s", (instruction) => {
+    expect(looksLikeArtifactReviewRequest(instruction)).toBe(false);
+    expect(looksLikeComposerRefine(instruction)).toBe(true);
+  });
+
+  test("one negation governs coordinated edit verbs until a contrasting clause", () => {
+    const instruction = "Review it and do not edit and rewrite it.";
+
+    expect(looksLikeArtifactReviewRequest(instruction)).toBe(true);
+    expect(looksLikeComposerRefine(instruction)).toBe(false);
+  });
+
   test("an explicit artifact ordinal also controls composer edits", () => {
     const artifacts = [
       { id: "artifact-1", kind: "post" },
@@ -756,6 +806,48 @@ describe("looksLikeComposerRefine — chat-typed refine detection", () => {
         "artifact-2",
       ),
     ).toBe("artifact-1");
+  });
+
+  test("Draft and Hook ordinals are numbered independently like the UI", () => {
+    const artifacts = [
+      { id: "hook-1", kind: "hook" },
+      { id: "draft-1", kind: "post" },
+      { id: "draft-2", kind: "post" },
+      { id: "hook-2", kind: "hook" },
+    ];
+
+    expect(
+      writableArtifactIdForComposer("Rewrite Draft 1.", artifacts, null),
+    ).toBe("draft-1");
+    expect(
+      writableArtifactIdForComposer("Rewrite Hook 2.", artifacts, null),
+    ).toBe("hook-2");
+    expect(
+      writableArtifactIdForComposer("Rewrite the latest draft.", artifacts, null),
+    ).toBe("draft-2");
+    expect(
+      writableArtifactIdForComposer("Rewrite the latest hook.", artifacts, null),
+    ).toBe("hook-2");
+  });
+
+  test("an unresolved explicit ordinal never degrades to the latest Artifact", () => {
+    expect(
+      writableArtifactSelectionForComposer(
+        "Rewrite Draft 9.",
+        [
+          { id: "draft-1", kind: "post" },
+          { id: "draft-2", kind: "post" },
+        ],
+        "draft-2",
+      ),
+    ).toEqual({ kind: "unresolved_explicit", reference: "Draft 9" });
+    expect(
+      writableArtifactIdForComposer(
+        "Rewrite Draft 9.",
+        [{ id: "draft-2", kind: "post" }],
+        "draft-2",
+      ),
+    ).toBeUndefined();
   });
 
   test("a read-only command about some other object does not bind the open draft", () => {

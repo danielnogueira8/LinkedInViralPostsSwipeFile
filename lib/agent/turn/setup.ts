@@ -132,6 +132,8 @@ const CUSTOM_SKILL_CONTEXT_PERSISTENCE_ERROR =
   "I couldn’t save the selected custom-skill context safely, so no draft was created. Send the request again to retry.";
 const GENERATION_CONFIG_CONTEXT_PERSISTENCE_ERROR =
   "I couldn’t save the draft-count setting safely, so no draft was created. Send the request again to retry.";
+const TURN_OPERATION_CONTEXT_PERSISTENCE_ERROR =
+  "I couldn’t save the turn operation safely, so the request was not executed. Send it again as a new message.";
 
 type RecoverableMarker = {
   code: string | number;
@@ -342,6 +344,8 @@ export async function setupChatTurn(
       : preclaimContractPlaceholder.kind;
   const applyTurnOperation = (operation: ChatTurnOperation | null) => {
     currentTurnOperation = operation;
+    hookOnly = false;
+    hookOnlyOriginalBody = undefined;
     if (!operation) return;
     skipDecision = operation.kind === "edit_artifact";
     refineTargetId =
@@ -350,6 +354,8 @@ export async function setupChatTurn(
         : undefined;
     refineInstruction =
       operation.kind === "edit_artifact" ? operation.instruction : undefined;
+    hookOnly =
+      operation.kind === "edit_artifact" && operation.editMode === "hook_only";
   };
   let coworkTelemetry!: CoworkTurnTelemetry;
   const disarmSetupGuards = () => {
@@ -377,7 +383,12 @@ export async function setupChatTurn(
     workspaceId = sb.workspaceId;
     sbRaw = sb.raw;
     userText = body.message;
-    currentTurnOperation = body.operation ?? null;
+    currentTurnOperation =
+      body.operation?.kind === "edit_artifact" &&
+      body.operation.editMode === undefined &&
+      body.hookOnly
+        ? { ...body.operation, editMode: "hook_only" }
+        : (body.operation ?? null);
     attachments = body.attachments ?? [];
     modelSourceId = body.modelSourceId;
     skipDecision = body.skipDecision ?? false;
@@ -394,8 +405,7 @@ export async function setupChatTurn(
     requestedGenerationConfig = body.generationConfig ?? null;
     composerStarterId = body.starterId;
     if (
-      (!currentTurnOperation ||
-        currentTurnOperation.kind === "edit_artifact") &&
+      !currentTurnOperation &&
       body.hookOnly &&
       body.hookOnlyOriginalBody
     ) {
@@ -1309,6 +1319,16 @@ export async function setupChatTurn(
     effectiveUserInstruction = turnContext.effectiveUserInstruction;
     orchestratorAttachmentBlocks.push(...turnContext.attachmentBlocks);
     trustedRefineTarget = turnContext.trustedRefineTarget;
+    if (
+      currentTurnOperation?.kind === "edit_artifact" &&
+      currentTurnOperation.editMode === "hook_only" &&
+      trustedRefineTarget?.kind === "post"
+    ) {
+      // The operation freezes only the edit mode and target identity. Re-read
+      // the canonical body from this chat so retries never trust or replay a
+      // stale client-provided body snapshot.
+      hookOnlyOriginalBody = trustedRefineTarget.body;
+    }
     currentModelSource = turnContext.currentModelSource;
     const currentModelEnvelope = turnContext.currentModelEnvelope;
     modelSourceReference = turnContext.modelSourceReference;
@@ -1416,6 +1436,12 @@ export async function setupChatTurn(
       }
     }
     if (
+      currentTurnOperation &&
+      (!claimedUserMessageId || userStateWriteFailed)
+    ) {
+      throw new Error(TURN_OPERATION_CONTEXT_PERSISTENCE_ERROR);
+    }
+    if (
       appliedCreatorStyle &&
       (!claimedUserMessageId || userStateWriteFailed)
     ) {
@@ -1434,7 +1460,6 @@ export async function setupChatTurn(
     ) {
       throw new Error(GENERATION_CONFIG_CONTEXT_PERSISTENCE_ERROR);
     }
-
     if (turnContext.attachmentBlocks.length > 0 && claimedUserMessageId) {
       try {
         await waitForChatSetup(
@@ -1472,7 +1497,8 @@ export async function setupChatTurn(
       setupError === CREATOR_STYLE_SELECTION_REQUIRED_ERROR ||
       setupError === CREATOR_STYLE_CONTEXT_PERSISTENCE_ERROR ||
       setupError === CUSTOM_SKILL_CONTEXT_PERSISTENCE_ERROR ||
-      setupError === GENERATION_CONFIG_CONTEXT_PERSISTENCE_ERROR
+      setupError === GENERATION_CONFIG_CONTEXT_PERSISTENCE_ERROR ||
+      setupError === TURN_OPERATION_CONTEXT_PERSISTENCE_ERROR
         ? setupError
         : "⚠️ Something went wrong starting this turn. Please try again.";
     await deps.persistChatSetupFailure({
@@ -1516,7 +1542,8 @@ export async function setupChatTurn(
             ? 409
             : setupError === CREATOR_STYLE_CONTEXT_PERSISTENCE_ERROR ||
                 setupError === CUSTOM_SKILL_CONTEXT_PERSISTENCE_ERROR ||
-                setupError === GENERATION_CONFIG_CONTEXT_PERSISTENCE_ERROR
+                setupError === GENERATION_CONFIG_CONTEXT_PERSISTENCE_ERROR ||
+                setupError === TURN_OPERATION_CONTEXT_PERSISTENCE_ERROR
               ? 503
               : 500,
     );

@@ -40,6 +40,8 @@ test.each([
 test.each([
   "Research the official definition of Model Context Protocol and summarize it in 3 bullets. Do not draft or rewrite a LinkedIn post.",
   "Do not search or draft a LinkedIn post; just explain Model Context Protocol.",
+  "No search or draft a LinkedIn post; just explain Model Context Protocol.",
+  "Do not search and create a new LinkedIn post; summarize Model Context Protocol.",
   "Research Model Context Protocol and report the findings; no need to draft a LinkedIn post.",
 ])("a negative drafting clause is never a full-post deliverable request: %s", (instruction) => {
   expect(requestsFullPostDeliverable(instruction)).toBe(false);
@@ -49,6 +51,8 @@ test.each([
 test.each([
   "Research Model Context Protocol, then write a LinkedIn post. Do not rewrite my existing draft.",
   "Do not edit the current post; write a new LinkedIn post about Model Context Protocol.",
+  "Do not edit Draft 1 and write a new LinkedIn post about Model Context Protocol.",
+  "Do not edit Draft 1 and write a LinkedIn post about Model Context Protocol.",
 ])("a scoped edit prohibition does not suppress an explicit new post: %s", (instruction) => {
   expect(requestsFullPostDeliverable(instruction)).toBe(true);
 });

@@ -71,6 +71,7 @@ export type CoworkOutcomeScenario = {
   retryLatestUser?: boolean;
   model: {
     provider: ScriptedProviderScenario;
+    turnOperationMarkerPersistenceFails?: boolean;
     creatorStyleMarkerPersistenceFails?: boolean;
     creatorStyleMarkerTargetMissing?: boolean;
     sourceFidelity?: SourceFidelityVerdict[];
@@ -605,6 +606,8 @@ async function runCoworkOutcomeScenarioWithStore(
   const requestController = new AbortController();
   store.failCreatorStyleMarkerUpdate =
     scenario.model.creatorStyleMarkerPersistenceFails === true;
+  store.failTurnOperationMarkerUpdate =
+    scenario.model.turnOperationMarkerPersistenceFails === true;
   store.missCreatorStyleMarkerUpdateTarget =
     scenario.model.creatorStyleMarkerTargetMissing === true;
   if (scenario.seed?.bookmarkModelSource) {

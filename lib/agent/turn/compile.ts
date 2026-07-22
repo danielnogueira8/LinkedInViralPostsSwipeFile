@@ -2486,7 +2486,11 @@ export async function compileTurnPlan(
     ? {
         kind: "refine",
         instruction: refineInstruction!,
-        focus: classifyDirectRefineFocus(refineInstruction!),
+        focus:
+          currentTurnOperation?.kind === "edit_artifact" &&
+          currentTurnOperation.editMode === "hook_only"
+            ? "hook"
+            : classifyDirectRefineFocus(refineInstruction!),
         target: trustedRefineTarget as Artifact & { kind: "post" | "hook" },
       }
     : useGeneralRefine

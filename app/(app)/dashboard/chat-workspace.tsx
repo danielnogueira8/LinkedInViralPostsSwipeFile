@@ -199,14 +199,14 @@ import {
   hasAssistantAfterPersistedUserMessage,
   kindNoun,
   labelArtifacts,
+  looksLikeArtifactReviewRequest,
   looksLikeComposerRefine,
   panelTitle,
   planProgressTitle,
   prettyBytes,
   refineSuggestions,
   reinsertArtifact,
-  reviewArtifactIdForComposer,
-  writableArtifactIdForComposer,
+  writableArtifactSelectionForComposer,
   shouldShowActivityRail,
   skillNamesToIds,
   stripPlaceholders,
@@ -2406,26 +2406,46 @@ export function ChatWorkspace({
       const writableArtifacts = combined.filter(
         (artifact) => artifact.kind === "post" || artifact.kind === "hook",
       );
-      const reviewTargetIdThisTurn = !refineThisTurn
-        ? reviewArtifactIdForComposer(text, writableArtifacts, expandedArtifactId)
-        : undefined;
+      const artifactSelection = writableArtifactSelectionForComposer(
+        text,
+        writableArtifacts,
+        expandedArtifactId,
+      );
+      const isReviewRequest = looksLikeArtifactReviewRequest(text);
+      const isRefineRequest =
+        Boolean(sendOpts?.forceRefine) || looksLikeComposerRefine(text);
+      if (
+        artifactSelection.kind === "unresolved_explicit" &&
+        (isReviewRequest || isRefineRequest)
+      ) {
+        if (attached) setModelSource(attached);
+        if (files.length) setAttachments(files);
+        chatSession.clearLastSend(lockKey);
+        if (chatId !== lockKey) chatSession.clearLastSend(chatId);
+        sendLease.release();
+        toast.error(
+          `${artifactSelection.reference} isn’t available in this chat. Choose an existing Draft or Hook and try again.`,
+        );
+        return;
+      }
+      const selectedArtifactId =
+        artifactSelection.kind === "selected"
+          ? artifactSelection.artifactId
+          : undefined;
+      const reviewTargetIdThisTurn =
+        !refineThisTurn && isReviewRequest ? selectedArtifactId : undefined;
       if (
         !reviewTargetIdThisTurn &&
         !pendingRefineRef.current.get(chatId) &&
-        (sendOpts?.forceRefine || looksLikeComposerRefine(text))
+        isRefineRequest
       ) {
         // Search BOTH the persisted set AND the live run's artifacts for the
         // source draft. A draft made earlier THIS turn-chain may still be only
         // in the live run (not yet folded into the session cache by a post-stream
         // reload); include it so hook-only preservation still works for a
         // refine right after the first draft renders.
-        const targetId = writableArtifactIdForComposer(
-          text,
-          writableArtifacts,
-          expandedArtifactId,
-        );
         const target = writableArtifacts.find(
-          (artifact) => artifact.id === targetId,
+          (artifact) => artifact.id === selectedArtifactId,
         );
         if (target) {
           pendingRefineRef.current.set(chatId, {
@@ -2574,6 +2594,10 @@ export function ChatWorkspace({
                     kind: "edit_artifact",
                     artifactId: refineTargetIdThisTurn,
                     instruction: refineInstructionThisTurn,
+                    ...((sendOpts?.hookOnly ||
+                      (pendingRefineRef.current.get(chatId)?.hookOnly ?? false))
+                      ? { editMode: "hook_only" as const }
+                      : {}),
                   },
                 }
               : reviewTargetIdThisTurn
