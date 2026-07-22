@@ -1,0 +1,3 @@
+# Personal workspaces are the tenancy boundary
+
+SwipeIn uses one personal Workspace per signed-in user, rather than Clerk organizations or switchable teams. Adapters resolve that Workspace from the authenticated identity, and every service-role path must apply it explicitly to predicates and writes; RLS is aligned defense for token-scoped clients, not enforcement for service-role calls. An accepted Bookmark Share is the narrow exception: it grants the recipient attributed access to the owner's Bookmark library without transferring ownership. This trades future team membership flexibility for an auditable default boundary while keeping deliberate sharing explicit.
