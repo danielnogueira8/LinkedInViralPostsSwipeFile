@@ -25,6 +25,7 @@ import {
   isOpinionOrQuestionAboutContent,
 } from "@/lib/agent/direct-writer-policy";
 import {
+  freeTextLayersOpenChoice,
   requestsDurableOrAction,
   requestsFullPostDeliverable,
 } from "@/lib/agent/source-policy";
@@ -55,6 +56,16 @@ test.each([
   "Do not edit Draft 1 and write a LinkedIn post about Model Context Protocol.",
 ])("a scoped edit prohibition does not suppress an explicit new post: %s", (instruction) => {
   expect(requestsFullPostDeliverable(instruction)).toBe(true);
+});
+
+test.each([
+  ["", false],
+  ["Give me three different versions.", true],
+  ["Use another draft.", true],
+  ["But actually, scrap this and start over.", true],
+  ["Make the current draft punchier.", false],
+] as const)("detects whether free text opens a multi-choice branch: %s", (instruction, expected) => {
+  expect(freeTextLayersOpenChoice(instruction)).toBe(expected);
 });
 
 test("a research report with a writing opt-out compiles as a grounded answer", () => {

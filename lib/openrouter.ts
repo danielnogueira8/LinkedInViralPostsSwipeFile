@@ -22,8 +22,7 @@ export { providerModelAttribution } from "./agent/cowork-adapter-attempt";
 // synthesis — anything that reasons, drafts, or matches a creator's voice. We
 // trialled Claude Sonnet 5 here for stronger instruction-following, but at
 // ~5-8x GLM's output cost it was not worth it for the chat tier. Turn routing
-// is now deterministic (lib/agent/turn/compile.ts), with a cheap GPT-Luna
-// intent-decision (lib/agent/turn/intent-decision.ts) only on the fallthrough.
+// and Artifact intent compilation are deterministic server-owned modules.
 // The $15/user monthly budget cap still applies (see rate-limit.ts).
 //
 // BACKGROUND (GLM-5.1): the mechanical/categorizing tasks — templatize a post

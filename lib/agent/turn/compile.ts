@@ -2445,11 +2445,10 @@ export async function compileTurnPlan(
   // tool can guess whether to create, edit, research, or mutate board state.
   const clarificationAsk =
     currentTurnOperation?.kind === "review_artifact" &&
-    currentTurnOperation.artifactId &&
-    !trustedRefineTarget
+    (!currentTurnOperation.artifactId || !trustedRefineTarget)
       ? {
-          question: "Which draft should I review?",
-          options: ["Review the latest chat draft", "Choose a saved draft"],
+          question: "Which Artifact should I review?",
+          options: ["Review the latest post Artifact", "Choose a post or Hook"],
           allowOther: true,
         }
       : currentTurnOperation?.kind === "create_post" && !useDirectWriter

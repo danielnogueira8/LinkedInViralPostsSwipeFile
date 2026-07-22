@@ -4754,6 +4754,266 @@ describe("production-shaped Cowork outcome harness", () => {
 
     expect(sequence.pass, JSON.stringify(sequence.attempts)).toBe(true);
     expect(sequence.attempts[1]?.safe.artifactCount).toBe(0);
+    const persistedReview = sequence.attempts[1]?.persisted.messages
+      .find((message) => message.role === "user")
+      ?.tool_calls?.find((call) => call.id === "_turn_operation");
+    expect(JSON.parse(persistedReview?.function.arguments ?? "null")).toMatchObject({
+      version: 1,
+      kind: "review_artifact",
+    });
+  });
+
+  test("free text resolves a numbered Artifact once and edits that exact id", async () => {
+    const firstId = "00000000-0000-4000-8000-000000000601";
+    const secondId = "00000000-0000-4000-8000-000000000602";
+    const revised = COMPLETE_POST.replace(
+      "Building a personal brand",
+      "Your personal brand",
+    );
+    const report = await runCoworkOutcomeScenario({
+      id: "server-free-text-numbered-edit",
+      request: {
+        message: "Review Draft 1 and make it punchier.",
+        selectedArtifactId: secondId,
+      },
+      seed: {
+        messageArtifacts: [
+          { id: firstId, kind: "post", title: "First", body: COMPLETE_POST },
+          { id: secondId, kind: "post", title: "Second", body: SECOND_POST },
+        ],
+      },
+      model: {
+        provider: { rounds: [] },
+        directWriter: [{
+          text: revised,
+          finishReason: "stop",
+          usage: usage(180, 82, 0.00016),
+        }],
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [revised],
+        actionNames: [],
+        route: "direct_writer",
+      },
+    });
+
+    expect(report.pass, JSON.stringify(report.safe)).toBe(true);
+    expect(report.persisted.artifacts[0]?.id).toBe(firstId);
+    const operation = report.persisted.messages
+      .find((message) => message.role === "user")
+      ?.tool_calls?.find((call) => call.id === "_turn_operation");
+    expect(JSON.parse(operation?.function.arguments ?? "null")).toMatchObject({
+      version: 1,
+      kind: "edit_artifact",
+      artifactId: firstId,
+    });
+  });
+
+  test("numbered free text resolves from canonical history beyond the routing and context windows", async () => {
+    const artifacts = Array.from({ length: 310 }, (_, index) => ({
+      id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+      kind: "post" as const,
+      title: `Artifact ${index + 1}`,
+      body: index === 1 ? COMPLETE_POST : SECOND_POST,
+    }));
+    const report = await runCoworkOutcomeScenario({
+      id: "server-free-text-full-history-numbered-edit",
+      request: {
+        message: "Rewrite Draft 2.",
+        selectedArtifactId: artifacts.at(-1)?.id,
+      },
+      seed: { messageArtifacts: artifacts },
+      model: {
+        provider: { rounds: [] },
+        directWriter: [{
+          text: THIRD_POST,
+          finishReason: "stop",
+          usage: usage(180, 82, 0.00016),
+        }],
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [THIRD_POST],
+        actionNames: [],
+        route: "direct_writer",
+      },
+    });
+
+    expect(report.pass, JSON.stringify(report.safe)).toBe(true);
+    expect(report.persisted.artifacts[0]?.id).toBe(artifacts[1]?.id);
+  });
+
+  test("a typed edit inherits the target Artifact's custom skill", async () => {
+    const targetId = "00000000-0000-4000-8000-000000000606";
+    const report = await runCoworkOutcomeScenario({
+      id: "typed-edit-inherited-skill",
+      request: {
+        message: "Make this punchier.",
+        operation: {
+          kind: "edit_artifact",
+          artifactId: targetId,
+          instruction: "Make this punchier.",
+        },
+      },
+      seed: {
+        customSkill: CUSTOM_SKILL,
+        messageArtifact: {
+          id: targetId,
+          kind: "post",
+          title: "Skilled draft",
+          body: COMPLETE_POST,
+          meta: { skills: [CUSTOM_SKILL.name] },
+        },
+      },
+      model: {
+        provider: { rounds: [] },
+        directWriter: [{
+          text: SECOND_POST,
+          finishReason: "stop",
+          usage: usage(180, 82, 0.00016),
+        }],
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [SECOND_POST],
+        actionNames: [],
+        route: "direct_writer",
+      },
+    });
+
+    expect(report.pass, JSON.stringify(report.safe)).toBe(true);
+    expect(
+      JSON.stringify(report.observed.directWriterRequests[0]?.messages ?? []),
+    ).toContain("CUSTOM_SKILL_RETRY_SENTINEL");
+  });
+
+  test("a complete legacy refine request converges on the typed edit path", async () => {
+    const targetId = "00000000-0000-4000-8000-000000000607";
+    const report = await runCoworkOutcomeScenario({
+      id: "legacy-edit-normalized-to-operation",
+      request: {
+        message: "Make this punchier.",
+        skipDecision: true,
+        refineTargetId: targetId,
+        refineInstruction: "Make this punchier.",
+      },
+      seed: {
+        customSkill: CUSTOM_SKILL,
+        messageArtifact: {
+          id: targetId,
+          kind: "post",
+          title: "Legacy target",
+          body: COMPLETE_POST,
+          meta: { skills: [CUSTOM_SKILL.name] },
+        },
+      },
+      model: {
+        provider: { rounds: [] },
+        directWriter: [{
+          text: SECOND_POST,
+          finishReason: "stop",
+          usage: usage(180, 82, 0.00016),
+        }],
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [SECOND_POST],
+        actionNames: [],
+        route: "direct_writer",
+      },
+    });
+
+    expect(report.pass, JSON.stringify(report.safe)).toBe(true);
+    expect(
+      JSON.stringify(report.observed.directWriterRequests[0]?.messages ?? []),
+    ).toContain("CUSTOM_SKILL_RETRY_SENTINEL");
+    const operation = report.persisted.messages
+      .find((message) => message.role === "user")
+      ?.tool_calls?.find((call) => call.id === "_turn_operation");
+    expect(JSON.parse(operation?.function.arguments ?? "null")).toMatchObject({
+      version: 1,
+      kind: "edit_artifact",
+      artifactId: targetId,
+    });
+  });
+
+  test("an incomplete legacy refine request fails before generation", async () => {
+    const report = await runCoworkOutcomeScenario({
+      id: "legacy-edit-incomplete",
+      request: {
+        message: "Make this punchier.",
+        skipDecision: true,
+      },
+      model: { provider: { rounds: [] } },
+      expected: {
+        terminal: "failure",
+        httpStatus: 400,
+        artifactBodies: [],
+        actionNames: [],
+      },
+    });
+
+    expect(report.pass, JSON.stringify(report.safe)).toBe(true);
+    expect(report.observed.directWriterRequests).toHaveLength(0);
+    expect(report.observed.agentProviderRounds).toBe(0);
+  });
+
+  test("legacy hook-only fragments fail before generation", async () => {
+    const report = await runCoworkOutcomeScenario({
+      id: "legacy-hook-only-incomplete",
+      request: {
+        message: "Make this hook stronger.",
+        hookOnly: true,
+        hookOnlyOriginalBody: COMPLETE_POST,
+      },
+      model: { provider: { rounds: [] } },
+      expected: {
+        terminal: "failure",
+        httpStatus: 400,
+        artifactBodies: [],
+        actionNames: [],
+      },
+    });
+
+    expect(report.pass, JSON.stringify(report.safe)).toBe(true);
+    expect(report.observed.directWriterRequests).toHaveLength(0);
+    expect(report.observed.agentProviderRounds).toBe(0);
+  });
+
+  test("stale selected-card context clarifies instead of editing another Artifact", async () => {
+    const report = await runCoworkOutcomeScenario({
+      id: "server-free-text-stale-selected-edit",
+      request: {
+        message: "Make this punchier.",
+        selectedArtifactId: "deleted-draft",
+      },
+      seed: {
+        messageArtifact: {
+          id: "00000000-0000-4000-8000-000000000605",
+          kind: "post",
+          title: "Current",
+          body: COMPLETE_POST,
+        },
+      },
+      model: {
+        provider: { rounds: [] },
+        directWriter: [{
+          text: SECOND_POST,
+          finishReason: "stop",
+          usage: usage(180, 82, 0.00016),
+        }],
+      },
+      expected: {
+        terminal: "ask",
+        artifactBodies: [],
+        actionNames: ["ask_user"],
+        route: "answer",
+      },
+    });
+
+    expect(report.pass, JSON.stringify(report.safe)).toBe(true);
+    expect(report.observed.directWriterRequests).toHaveLength(0);
   });
 
   test("a server-resolved typed edit updates the newest draft, never an older draft", async () => {
@@ -5028,6 +5288,42 @@ describe("production-shaped Cowork outcome harness", () => {
     expect(report.persisted.artifacts).toHaveLength(0);
   });
 
+  test("a targetless typed review clarifies instead of guessing an Artifact", async () => {
+    const report = await runCoworkOutcomeScenario({
+      id: "typed-review-missing-target",
+      request: {
+        message: "Review the post.",
+        operation: { kind: "review_artifact" },
+      },
+      seed: {
+        messageArtifact: {
+          id: "00000000-0000-4000-8000-000000000623",
+          kind: "post",
+          title: "Current Artifact",
+          body: COMPLETE_POST,
+        },
+      },
+      model: {
+        provider: textProvider("This response must not be generated."),
+        directWriter: [{
+          text: SECOND_POST,
+          finishReason: "stop",
+          usage: usage(180, 82, 0.00016),
+        }],
+      },
+      expected: {
+        terminal: "ask",
+        artifactBodies: [],
+        actionNames: ["ask_user"],
+        route: "answer",
+      },
+    });
+
+    expect(report.pass, JSON.stringify(report.safe)).toBe(true);
+    expect(report.observed.directWriterRequests).toHaveLength(0);
+    expect(report.observed.agentProviderRounds).toBe(0);
+  });
+
   test("Retry restores the original typed artifact target after a newer artifact appears", async () => {
     const originalTargetId = "00000000-0000-4000-8000-000000000621";
     const newerTargetId = "00000000-0000-4000-8000-000000000622";
@@ -5209,6 +5505,48 @@ describe("production-shaped Cowork outcome harness", () => {
     expect(report.persisted.artifacts[0]?.id).toBe(targetId);
   });
 
+  test("a typed edit without an edit mode ignores conflicting legacy hook fields", async () => {
+    const targetId = "00000000-0000-4000-8000-000000000635";
+    const report = await runCoworkOutcomeScenario({
+      id: "typed-edit-ignores-legacy-hook-mode",
+      request: {
+        message: "Make this stronger.",
+        operation: {
+          kind: "edit_artifact",
+          artifactId: targetId,
+          instruction: "Make this stronger.",
+        },
+        hookOnly: true,
+        hookOnlyOriginalBody: COMPLETE_POST,
+      },
+      seed: {
+        messageArtifact: {
+          id: targetId,
+          kind: "post",
+          title: "Original target",
+          body: COMPLETE_POST,
+        },
+      },
+      model: {
+        provider: { rounds: [] },
+        directWriter: [{
+          text: SECOND_POST,
+          finishReason: "stop",
+          usage: usage(180, 82, 0.00016),
+        }],
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [SECOND_POST],
+        actionNames: [],
+        route: "direct_writer",
+      },
+    });
+
+    expect(report.pass, JSON.stringify(report.safe)).toBe(true);
+    expect(report.persisted.artifacts[0]?.id).toBe(targetId);
+  });
+
   test("fails closed before generation when typed operation persistence fails", async () => {
     const targetId = "00000000-0000-4000-8000-000000000631";
     const report = await runCoworkOutcomeScenario({
@@ -5345,28 +5683,4 @@ describe("production-shaped Cowork outcome harness", () => {
     expect(sequence.attempts[1]?.persisted.artifacts[0]?.id).toBe(originalTargetId);
   });
 
-  test("an unavailable fallthrough classifier fails closed to clarification", async () => {
-    const report = await runCoworkOutcomeScenario({
-      id: "fallthrough-classifier-failure",
-      request: { message: "Take the next step with this." },
-      seed: {
-        messageArtifact: {
-          id: "00000000-0000-4000-8000-000000000640",
-          kind: "post",
-          title: "Current draft",
-          body: COMPLETE_POST,
-        },
-      },
-      model: { provider: { rounds: [] } },
-      expected: {
-        terminal: "ask",
-        artifactBodies: [],
-        actionNames: ["ask_user"],
-        route: "answer",
-      },
-    });
-
-    expect(report.pass, JSON.stringify(report.safe)).toBe(true);
-    expect(report.observed.directWriterRequests).toHaveLength(0);
-  });
 });

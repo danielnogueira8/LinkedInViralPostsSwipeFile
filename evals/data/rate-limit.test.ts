@@ -8,7 +8,6 @@ import {
   isOverCostCap,
   hasCostAllowanceForEstimate,
   costEquivalentCredits,
-  INTENT_DECISION_COST_USD,
 } from "@/lib/agent/rate-limit";
 
 // ---------------------------------------------------------------------------
@@ -16,8 +15,8 @@ import {
 // directly (the existing suites MOCK the DB-touching entry points).
 //   • projectMonthlyUsage — the credits pill (+ whether cost binds first).
 //   • mapClaimVerdict — the atomic claim_chat_turn RPC result → route verdict.
-//   • turnCostEstimate — the in-flight cost RESERVATION per turn (base +
-//     intent-decision surcharge) that bounds concurrent overshoot.
+//   • turnCostEstimate — the in-flight cost RESERVATION per turn that bounds
+//     concurrent overshoot.
 //   • sumUsageCost / isOverCostCap — the accrued-spend sum + the hard monthly
 //     ceiling test, shared by the pill and the fail-closed pre-check.
 // A bug in any of these is directly lost margin, so they're pinned here.
@@ -180,51 +179,28 @@ describe("mapClaimVerdict — RPC result → RateLimitResult", () => {
 });
 
 describe("turnCostEstimate — per-turn cost reservation", () => {
-  test("adds the intent-decision surcharge when the pre-pass is ON", () => {
-    // Base GLM turn estimate + the Sonnet intent-decision add-on. The layer is
-    // ON by default now, so the reservation must include it or concurrent turns
-    // could collectively overshoot the budget.
-    expect(turnCostEstimate(0.05, true)).toBeCloseTo(0.05 + INTENT_DECISION_COST_USD, 10);
+  test("reserves the configured base for one draft", () => {
+    expect(turnCostEstimate(0.05)).toBeCloseTo(0.05, 10);
   });
 
-  test("no surcharge when the intent-decision is OFF (kill-switch)", () => {
-    expect(turnCostEstimate(0.05, false)).toBeCloseTo(0.05, 10);
-  });
-
-  test("the surcharge is a fixed add, independent of the base", () => {
-    expect(turnCostEstimate(0.2, true) - turnCostEstimate(0.2, false)).toBeCloseTo(
-      INTENT_DECISION_COST_USD,
-      10,
-    );
-    expect(turnCostEstimate(0, true)).toBeCloseTo(INTENT_DECISION_COST_USD, 10);
-  });
-
-  test("scales the base reservation for a compiled multi-draft turn but charges one intent-decision surcharge", () => {
-    expect(turnCostEstimate(0.05, true, 3)).toBeCloseTo(
-      0.15 + INTENT_DECISION_COST_USD,
-      10,
-    );
+  test("scales the base reservation for a compiled multi-draft turn", () => {
+    expect(turnCostEstimate(0.05, 3)).toBeCloseTo(0.15, 10);
     expect(
       turnCostEstimateForContent(
         0.05,
-        true,
         "Using the attached post as a reference, draft 3 original variations.",
       ),
-    ).toBeCloseTo(0.15 + INTENT_DECISION_COST_USD, 10);
+    ).toBeCloseTo(0.15, 10);
   });
 
   test("ambiguous and out-of-range counts retain the conservative one-turn reservation", () => {
     expect(
       turnCostEstimateForContent(
         0.05,
-        true,
         "Write several posts about pricing.",
       ),
-    ).toBeCloseTo(0.05 + INTENT_DECISION_COST_USD, 10);
-    expect(turnCostEstimate(0.05, true, 99)).toBeCloseTo(
-      0.3 + INTENT_DECISION_COST_USD,
-      10,
-    );
+    ).toBeCloseTo(0.05, 10);
+    expect(turnCostEstimate(0.05, 99)).toBeCloseTo(0.3, 10);
   });
 });
 

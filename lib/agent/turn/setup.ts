@@ -39,7 +39,6 @@ import {
   CREATOR_STYLE_SELECTION_REQUIRED_ERROR,
   CUSTOM_SKILL_RETRY_CONTEXT_VERSION,
   LEAD_MAGNET_SELECTION_REQUIRED_ERROR,
-  latestChatDraft,
   requestedBasePostCount,
   requestedExplicitBasePostCount,
   type CreatorStyleRetryContext,
@@ -75,13 +74,16 @@ import {
   type ComposerTaskSelection,
 } from "@/lib/composer-task-context";
 import { leadMagnetGenerateSchema } from "@/lib/lead-magnets";
-import { looksLikeComposerRefine } from "@/lib/chat-composer-policy";
-import { isOpinionOrQuestionAboutContent } from "@/lib/agent/direct-writer-policy";
 import { requestsDurableOrAction } from "@/lib/agent/source-policy";
 import {
-  decideFallthroughIntent,
-  INTENT_DECISION_ENABLED,
-} from "@/lib/agent/turn/intent-decision";
+  artifactSkillNames,
+  buildArtifactIndex,
+} from "@/lib/chat-artifact-policy";
+import { resolveFreeTextArtifactIntent } from "@/lib/agent/turn/resolve-artifact-intent";
+import { turnOperationToolCall } from "@/lib/agent/turn/operation-marker";
+import { getSkillsByNames } from "@/lib/content-resource-operations";
+import { SKILLS_PER_TURN_MAX } from "@/lib/custom-skills";
+import { selectAllRows } from "@/lib/db-paginate";
 import {
   chatContextPolicyToolCall,
   recoverLatestForcedNoModelFormatId,
@@ -291,6 +293,7 @@ export async function setupChatTurn(
   let refineTargetId: string | undefined;
   let refineInstruction: string | undefined;
   let trustedRefineTarget: Artifact | null = null;
+  let canonicalConversationArtifacts: Artifact[] = [];
   let skillIds: string[] = [];
   let customSkillRetryContext: CustomSkillRetryContext | null = null;
   let resolvedCustomSkills: FrozenCustomSkill[] = [];
@@ -383,20 +386,38 @@ export async function setupChatTurn(
     workspaceId = sb.workspaceId;
     sbRaw = sb.raw;
     userText = body.message;
-    currentTurnOperation =
-      body.operation?.kind === "edit_artifact" &&
-      body.operation.editMode === undefined &&
-      body.hookOnly
-        ? { ...body.operation, editMode: "hook_only" }
-        : (body.operation ?? null);
+    currentTurnOperation = body.operation ?? null;
     attachments = body.attachments ?? [];
     modelSourceId = body.modelSourceId;
     skipDecision = body.skipDecision ?? false;
     refineTargetId = body.refineTargetId;
     refineInstruction = body.refineInstruction;
     // A typed operation is authoritative. Legacy refine fields remain accepted
-    // only when no typed operation is present; they can never alter its meaning.
-    if (currentTurnOperation) applyTurnOperation(currentTurnOperation);
+    // only when no typed operation is present; normalize their complete shape
+    // into the same persisted operation so every client surface gets identical
+    // target validation, skill inheritance, execution, and retry semantics.
+    if (currentTurnOperation) {
+      applyTurnOperation(currentTurnOperation);
+    } else if (
+      body.skipDecision === true &&
+      body.refineTargetId &&
+      body.refineInstruction
+    ) {
+      applyTurnOperation({
+        kind: "edit_artifact",
+        artifactId: body.refineTargetId,
+        instruction: body.refineInstruction,
+        ...(body.hookOnly ? { editMode: "hook_only" } : {}),
+      });
+    } else if (
+      body.skipDecision === true ||
+      body.refineTargetId ||
+      body.refineInstruction ||
+      body.hookOnly !== undefined ||
+      body.hookOnlyOriginalBody !== undefined
+    ) {
+      return turnError("The legacy refine request is incomplete.", 400);
+    }
     skillIds = body.skillIds ?? [];
     forcedNoModelFormatId = body.forcedNoModelFormatId;
     creatorStyleId = body.creatorStyleId;
@@ -404,15 +425,6 @@ export async function setupChatTurn(
     createLeadMagnet = body.createLeadMagnet;
     requestedGenerationConfig = body.generationConfig ?? null;
     composerStarterId = body.starterId;
-    if (
-      !currentTurnOperation &&
-      body.hookOnly &&
-      body.hookOnlyOriginalBody
-    ) {
-      hookOnly = true;
-      hookOnlyOriginalBody = body.hookOnlyOriginalBody;
-    }
-
     const { data: chat, error } = await sbRaw
       .from("chats")
       .select("id, title")
@@ -452,7 +464,7 @@ export async function setupChatTurn(
       : "";
     const turnContent = userText + fileNote;
 
-    const { data: recentMessages } = await sbRaw
+    const { data: recentMessages, error: recentMessagesError } = await sbRaw
       .from("chat_messages")
       .select(
         "id, role, content, created_at, tool_calls, artifacts, terminal_reason, user_stop_requested_at, applied_skills, no_model_format_id, creator_style_context, lead_magnet_id, composer_starter_id, generation_config, recoverable_error",
@@ -461,6 +473,7 @@ export async function setupChatTurn(
       .eq("workspace_id", workspaceId)
       .order("created_at", { ascending: false })
       .limit(64);
+    if (recentMessagesError) throw recentMessagesError;
     const lastMsg = recentMessages?.[0];
     if (lastMsg?.role === "user") {
       if (deps.isRecentUnansweredUserMessage(lastMsg)) {
@@ -502,6 +515,28 @@ export async function setupChatTurn(
     // selection in the window. Keep both orderings named at this boundary so a
     // caller cannot silently invert "latest" again.
     const chronologicalRecentMessageWindow = [...recentMessageWindow].reverse();
+    canonicalConversationArtifacts = chronologicalRecentMessageWindow.flatMap(
+      (message) => message.artifacts ?? [],
+    );
+    let canonicalArtifactHistoryLoaded = recentMessageWindow.length < 64;
+    const ensureCanonicalConversationArtifacts = async (): Promise<Artifact[]> => {
+      if (canonicalArtifactHistoryLoaded) return canonicalConversationArtifacts;
+      const rows = await selectAllRows<{ artifacts: Artifact[] | null }>(() =>
+        sbRaw
+          .from("chat_messages")
+          .select("artifacts")
+          .eq("chat_id", chatId)
+          .eq("workspace_id", workspaceId)
+          .eq("role", "assistant")
+          .order("created_at", { ascending: true })
+          .abortSignal(setupSignal),
+      );
+      canonicalConversationArtifacts = rows.flatMap(
+        (message) => message.artifacts ?? [],
+      );
+      canonicalArtifactHistoryLoaded = true;
+      return canonicalConversationArtifacts;
+    };
     pendingAskOnly = hasPendingAskOnly(recentMessageWindow);
     pendingActionAsk = hasPendingActionAsk(recentMessageWindow);
     const actionAnswer = validatePendingActionAnswer(
@@ -863,23 +898,13 @@ export async function setupChatTurn(
         clarificationForAmbiguousContinuation(userText);
     }
 
-    // Implicit refine target (draft continuity): when the user types a plain
-    // edit like "make it punchier" without clicking a card's Refine button, the
-    // client sends no refineTargetId, so the server used to regenerate a NEW
-    // draft instead of editing the one on screen. Resolve the chat's latest
-    // draft as the refine target here — this reuses the exact client-driven
-    // refine pipeline (resolveTrustedRefineTarget → direct-refine lane →
-    // same-artifact-id in-place update + version stepper). Guards:
-    //   • only when the client sent no explicit target (client always wins),
-    //   • not when a fresh source is attached this turn (modelSourceId) — that's
-    //     a new modeling turn, not an edit of the prior draft,
-    //   • not on retry / action-continuation turns (those own their routing),
-    //   • only when the wording reads like an edit — looksLikeComposerRefine
-    //     already rejects "another / new / variation / version N / give me N",
-    //   • only when a post/hook draft actually exists in this chat.
-    // The full draft body is ALSO injected into the model's context in
-    // buildTurnContext (latestChatDraft) so the model can see it even when a
-    // refine falls outside the narrow direct-refine lane (e.g. a hook edit).
+    // Free-text Artifact intent has one owner: the server. The browser may
+    // identify the visibly selected card as context, but only this compiler can
+    // turn ordinary language into edit/review authority. It resolves labels
+    // and identity through the same Artifact index the UI uses, persists the
+    // resulting typed operation, and fails closed when the target is missing.
+    // Explicit UI operations, retries, modeled turns, and actions already have
+    // stronger contracts and therefore bypass this compiler.
     const implicitRefineGuardsPass =
       !refineTargetId &&
       !currentTurnOperation &&
@@ -889,59 +914,49 @@ export async function setupChatTurn(
       !pendingActionAsk &&
       !normalizedActionRoute &&
       !fallthroughClarification;
-    if (implicitRefineGuardsPass && looksLikeComposerRefine(userText)) {
-      const implicitTarget = latestChatDraft(chronologicalRecentMessageWindow);
-      if (implicitTarget) {
-        refineTargetId = implicitTarget.id;
-        refineInstruction = userText;
-        skipDecision = true;
+    if (implicitRefineGuardsPass) {
+      const conversationArtifacts = await ensureCanonicalConversationArtifacts();
+      const artifactIntent = resolveFreeTextArtifactIntent({
+        message: userText,
+        artifacts: conversationArtifacts,
+        selectedArtifactId: body.selectedArtifactId ?? null,
+      });
+      if (artifactIntent.kind === "operation") {
+        applyTurnOperation(artifactIntent.operation);
+      } else if (artifactIntent.kind === "clarification") {
+        fallthroughClarification = artifactIntent.clarification;
       }
-    } else if (
-      // Fallthrough intent-decision (Piece 1): the deterministic
-      // looksLikeComposerRefine heuristic did NOT recognize this as an edit,
-      // but a draft exists and nothing else claims the turn — exactly the case
-      // that otherwise drops into the tool-less answer lane and hallucinates a
-      // new post. Ask GPT-Luna whether the user actually means to edit the
-      // current draft; if so, set the same implicit refine target the heuristic
-      // would have, and the general-refine lane edits it in place. A missing or
-      // malformed verdict fails closed to a typed clarification.
-      // (This is the `else` of the heuristic branch, so looksLikeComposerRefine
-      // is already false here.)
-      INTENT_DECISION_ENABLED &&
-      implicitRefineGuardsPass &&
-      !isOpinionOrQuestionAboutContent(userText)
-    ) {
-      const implicitTarget = latestChatDraft(chronologicalRecentMessageWindow);
-      if (implicitTarget) {
-        const decision = await decideFallthroughIntent({
-          userText,
+    }
+
+    // Every edit surface converges here after its operation is known. The
+    // server validates identity against the complete transcript and inherits
+    // the target's Custom Skills unless this turn explicitly selected others.
+    if (refineTargetId) {
+      await ensureCanonicalConversationArtifacts();
+    }
+    const editOperation =
+      currentTurnOperation?.kind === "edit_artifact"
+        ? currentTurnOperation
+        : null;
+    if (editOperation && skillIds.length === 0 && !customSkillRetryContext) {
+      const target = buildArtifactIndex(canonicalConversationArtifacts).entries.find(
+        (entry) => entry.artifactId === editOperation.artifactId,
+      )?.artifact;
+      const inheritedNames = target
+        ? artifactSkillNames(target).slice(0, SKILLS_PER_TURN_MAX)
+        : [];
+      if (inheritedNames.length > 0) {
+        const inheritedSkills = await getSkillsByNames({
+          db: sbRaw,
           workspaceId,
-          hasCurrentDraft: true,
-          hasModelSource: false,
-          signal: setupSignal,
+          names: inheritedNames,
         });
-        if (decision?.intent === "edit_current_draft") {
-          refineTargetId = implicitTarget.id;
-          refineInstruction = userText;
-          skipDecision = true;
-        } else if (decision?.intent === "ambiguous" && decision.clarify) {
-          fallthroughClarification = {
-            question: decision.clarify.question,
-            options: decision.clarify.options,
-            allowOther: true,
-          };
-        } else if (!decision) {
-          fallthroughClarification = {
-            question:
-              "I couldn’t safely determine what you want to do with the current draft. What should I do?",
-            options: [
-              "Edit the current draft",
-              "Create a new draft",
-              "Give feedback without editing",
-            ],
-            allowOther: true,
-          };
-        }
+        const idsByName = new Map(
+          inheritedSkills.map((skill) => [skill.name, skill.id]),
+        );
+        skillIds = inheritedNames
+          .map((name) => idsByName.get(name))
+          .filter((id): id is string => Boolean(id));
       }
     }
 
@@ -1291,6 +1306,7 @@ export async function setupChatTurn(
       skipDecision,
       refineTargetId,
       refineInstruction,
+      canonicalArtifacts: canonicalConversationArtifacts,
       leadMagnetId,
       createLeadMagnet,
       forcedNoModelFormatId,
@@ -1361,14 +1377,7 @@ export async function setupChatTurn(
     const userColumnPatch: Record<string, unknown> = {};
     const currentTurnMarkers: ToolCall[] = [];
     if (currentTurnOperation) {
-      currentTurnMarkers.push({
-        id: "_turn_operation",
-        type: "function",
-        function: {
-          name: "_turn_operation",
-          arguments: JSON.stringify({ version: 1, ...currentTurnOperation }),
-        },
-      });
+      currentTurnMarkers.push(turnOperationToolCall(currentTurnOperation));
     }
     if (body.contextPolicy) {
       currentTurnMarkers.push(chatContextPolicyToolCall(body.contextPolicy));

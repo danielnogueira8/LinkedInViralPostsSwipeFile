@@ -118,6 +118,7 @@ import type {
   AskQuestion,
   PlanStep,
 } from "@/lib/agent/contracts";
+import type { ChatTurnOperation } from "@/lib/agent/chat-turn";
 import {
   isAskSelectionComplete,
   resolveAskSubmission,
@@ -183,8 +184,6 @@ import {
   agentStatus,
   artifactLeadMagnet,
   artifactMediaAttachments,
-  artifactSkillNames,
-  askAnswerShouldRefineLatestDraft,
   classifyFile,
   clientShouldApplyLeadMagnet,
   clientShouldApplyPostFormat,
@@ -197,18 +196,14 @@ import {
   guardRefineCollapse,
   assistantAfterPersistedUserMessage,
   hasAssistantAfterPersistedUserMessage,
+  ARTIFACT_PANEL_TITLE,
+  buildArtifactIndex,
   kindNoun,
-  labelArtifacts,
-  looksLikeArtifactReviewRequest,
-  looksLikeComposerRefine,
-  panelTitle,
   planProgressTitle,
   prettyBytes,
   refineSuggestions,
   reinsertArtifact,
-  writableArtifactSelectionForComposer,
   shouldShowActivityRail,
-  skillNamesToIds,
   stripPlaceholders,
   suggestedLeadMagnetPromptForPost,
   toolDetail,
@@ -2131,17 +2126,7 @@ export function ChatWorkspace({
   const send = useCallback(async (
     overrideText?: string,
     sendOpts?: {
-      skipDecision?: boolean;
-      refineTargetId?: string;
-      refineInstruction?: string;
-      skillIds?: string[];
-      forceRefine?: boolean;
-      // Hook-only refine: the server will splice the model's new opener onto
-      // this source body byte-for-byte before persisting, so the body cannot
-      // drift. Set by the ask-card "Tighten the hook" click and by
-      // refineDraft() when the instruction is hook-focused.
-      hookOnly?: boolean;
-      hookOnlyOriginalBody?: string;
+      operation?: ChatTurnOperation;
       retryOfUserMessageId?: string;
       actionSelectionIds?: string[];
     },
@@ -2149,11 +2134,8 @@ export function ChatWorkspace({
     // Caller passes overrideText to send a specific message without going
     // through the composer input — used by the "Continue" recovery button on
     // a cut-off/truncated assistant turn. Default path reads `input`.
-    // sendOpts.skipDecision is set for an AI refine so the server skips the
-    // clarify pre-pass (the refine already targets one draft).
-    // sendOpts.skillIds lets a refine INHERIT the skill(s) the source draft was
-    // produced under (pendingSkills is empty by then — it's consumed each
-    // send), so the refine stays guided by the skill AND keeps the badge.
+    // sendOpts.operation is set only by explicit UI actions whose target and
+    // verb are already known; ordinary composer language is server-compiled.
     let text = (overrideText ?? input).trim();
     if (!text) return;
 
@@ -2283,9 +2265,7 @@ export function ChatWorkspace({
       const appliesComposerControls =
         overrideText === undefined &&
         !sendOpts?.retryOfUserMessageId &&
-        !sendOpts?.skipDecision &&
-        !sendOpts?.forceRefine &&
-        !sendOpts?.refineTargetId &&
+        !sendOpts?.operation &&
         !sendOpts?.actionSelectionIds?.length;
       const turnStarterOwnerId = targetChatId;
       const turnStarterId = appliesComposerControls
@@ -2294,17 +2274,9 @@ export function ChatWorkspace({
       let turnGenerationConfig = appliesComposerControls
         ? generationConfigForSelection(draftCountSelection, postTypeSelection)
         : undefined;
-      // The skill ids sent to the server: explicit (a refine inheriting the
-      // source draft's skills) OR the composer chips. The bubble badge still
-      // comes from turnSkills (composer chips only) — an inherited refine skill
-      // shouldn't render as if the user re-applied it this turn; it rides
-      // silently so the skill keeps guiding the rewrite + re-tags the artifact.
-      // `let` so the composer-refine auto-detect below can inherit the target
-      // draft's skills when the user typed a refine (no chips, no explicit ids).
-      let turnSkillIds =
-        sendOpts?.skillIds && sendOpts.skillIds.length > 0
-          ? sendOpts.skillIds
-          : turnSkills.map((s) => s.id);
+      // These are only the skills explicitly selected for this turn. Target
+      // skill inheritance is a server-owned operation rule.
+      const turnSkillIds = turnSkills.map((skill) => skill.id);
       setSkillPickerOpen(false);
       setPostFormatPickerOpen(false);
       setCreatorStylePickerOpen(false);
@@ -2378,24 +2350,15 @@ export function ChatWorkspace({
         chatSession.recordLastSend(chatId, text);
       }
 
-      // Auto-detect "the user is refining the most recent draft via the
-      // composer" (vs clicking the per-card Refine button). This is what tells
-      // the server to skip the clarify pre-pass and cap draft renders at 1, so
-      // a composer-typed refine behaves the same as the Refine button. Also
-      // stashes the source draft's body so the artifact handler's hook-only
-      // preservation + collapse guard work for composer-typed refines too.
-      // Conservative: skips when an explicit Refine-button click already set
-      // pendingRefineRef (don't clobber the user's explicit choice).
-      // True when THIS turn is a refine — either an explicit Refine-button send
-      // (sendOpts.skipDecision) or a composer-detected one (set just below).
-      // Sent to the server as skipDecision, which it also uses as the isRefine
-      // signal (caps drafts at 1 → a "make it shorter" can't explode into 6).
-      let refineThisTurn = !!sendOpts?.skipDecision;
-      let refineTargetIdThisTurn = sendOpts?.refineTargetId;
-      let refineInstructionThisTurn = sendOpts?.refineInstruction;
-      // Resolve the visible accordion selection once for this turn. Read-only
-      // review/summary requests carry this exact id to the server, so selecting
-      // Draft 1 cannot silently review or overwrite a newer Draft 2.
+      // The browser creates operations only for explicit UI actions. Ordinary
+      // composer text carries the selected card as non-authoritative context;
+      // the server owns all language interpretation and target validation.
+      const explicitEditOperation =
+        sendOpts?.operation?.kind === "edit_artifact"
+          ? sendOpts.operation
+          : null;
+      const refineThisTurn = Boolean(explicitEditOperation);
+      const refineTargetIdThisTurn = explicitEditOperation?.artifactId;
       const persistedArtifacts = chatSession.artifactsFor(chatId);
       const liveArtifacts = chatSession.runFor(chatId)?.artifacts ?? [];
       const seenIds = new Set(persistedArtifacts.map((artifact) => artifact.id));
@@ -2406,67 +2369,23 @@ export function ChatWorkspace({
       const writableArtifacts = combined.filter(
         (artifact) => artifact.kind === "post" || artifact.kind === "hook",
       );
-      const artifactSelection = writableArtifactSelectionForComposer(
-        text,
-        writableArtifacts,
-        expandedArtifactId,
-      );
-      const isReviewRequest = looksLikeArtifactReviewRequest(text);
-      const isRefineRequest =
-        Boolean(sendOpts?.forceRefine) || looksLikeComposerRefine(text);
-      if (
-        artifactSelection.kind === "unresolved_explicit" &&
-        (isReviewRequest || isRefineRequest)
-      ) {
-        if (attached) setModelSource(attached);
-        if (files.length) setAttachments(files);
-        chatSession.clearLastSend(lockKey);
-        if (chatId !== lockKey) chatSession.clearLastSend(chatId);
-        sendLease.release();
-        toast.error(
-          `${artifactSelection.reference} isn’t available in this chat. Choose an existing Draft or Hook and try again.`,
-        );
-        return;
-      }
-      const selectedArtifactId =
-        artifactSelection.kind === "selected"
-          ? artifactSelection.artifactId
-          : undefined;
-      const reviewTargetIdThisTurn =
-        !refineThisTurn && isReviewRequest ? selectedArtifactId : undefined;
-      if (
-        !reviewTargetIdThisTurn &&
-        !pendingRefineRef.current.get(chatId) &&
-        isRefineRequest
-      ) {
-        // Search BOTH the persisted set AND the live run's artifacts for the
-        // source draft. A draft made earlier THIS turn-chain may still be only
-        // in the live run (not yet folded into the session cache by a post-stream
-        // reload); include it so hook-only preservation still works for a
-        // refine right after the first draft renders.
+      const selectedArtifactIdThisTurn = writableArtifacts.some(
+        (artifact) => artifact.id === expandedArtifactId,
+      )
+        ? (expandedArtifactId ?? undefined)
+        : undefined;
+      if (refineThisTurn && refineTargetIdThisTurn) {
         const target = writableArtifacts.find(
-          (artifact) => artifact.id === selectedArtifactId,
+          (artifact) => artifact.id === refineTargetIdThisTurn,
         );
-        if (target) {
+        if (target && !pendingRefineRef.current.get(chatId)) {
           pendingRefineRef.current.set(chatId, {
             artifactId: target.id,
             originalBody: target.body,
-            ...(target.kind === "post" && isExclusiveHookRefine(text)
+            ...(explicitEditOperation?.editMode === "hook_only"
               ? { hookOnly: true }
               : {}),
           });
-          // A composer-typed refine IS a refine: skip the clarify pre-pass +
-          // cap drafts at 1 server-side, same as the Refine button.
-          refineThisTurn = true;
-          refineTargetIdThisTurn ??= target.id;
-          refineInstructionThisTurn ??= text;
-          // Inherit the target draft's skill(s) so a composer-typed refine
-          // (no chips applied) stays guided by the same skill and keeps the
-          // /skill badge — but only when the user didn't explicitly apply
-          // skills this turn (those win).
-          if (turnSkillIds.length === 0) {
-            turnSkillIds = skillNamesToIds(artifactSkillNames(target), customSkills);
-          }
         }
       }
       if (refineThisTurn) turnGenerationConfig = undefined;
@@ -2586,39 +2505,10 @@ export function ChatWorkspace({
               : {}),
             ...(attached ? { modelSourceId: attached.id } : {}),
             ...(filePayload.length ? { attachments: filePayload } : {}),
-            ...(refineThisTurn &&
-            refineTargetIdThisTurn &&
-            refineInstructionThisTurn
-              ? {
-                  operation: {
-                    kind: "edit_artifact",
-                    artifactId: refineTargetIdThisTurn,
-                    instruction: refineInstructionThisTurn,
-                    ...((sendOpts?.hookOnly ||
-                      (pendingRefineRef.current.get(chatId)?.hookOnly ?? false))
-                      ? { editMode: "hook_only" as const }
-                      : {}),
-                  },
-                }
-              : reviewTargetIdThisTurn
-                ? {
-                    operation: {
-                      kind: "review_artifact",
-                      artifactId: reviewTargetIdThisTurn,
-                    },
-                  }
-              : refineThisTurn
-                ? { skipDecision: true }
-                : {}),
-            // Hook-only refine: the server splices the model's new opener onto
-            // this original body byte-for-byte before persisting the artifact,
-            // so a hook-only refine can never let the body drift.
-            ...(sendOpts?.hookOnly && sendOpts.hookOnlyOriginalBody
-              ? {
-                  hookOnly: true,
-                  hookOnlyOriginalBody: sendOpts.hookOnlyOriginalBody,
-                }
+            ...(!sendOpts?.operation && selectedArtifactIdThisTurn
+              ? { selectedArtifactId: selectedArtifactIdThisTurn }
               : {}),
+            ...(sendOpts?.operation ? { operation: sendOpts.operation } : {}),
             ...(turnSkillIds.length ? { skillIds: turnSkillIds } : {}),
             ...(turnPostFormat ? { forcedNoModelFormatId: turnPostFormat } : {}),
             ...(turnLeadMagnet &&
@@ -3175,7 +3065,6 @@ export function ChatWorkspace({
     pendingCreatorStyle,
     draftCountSelection,
     postTypeSelection,
-    customSkills,
     initialVoiceReady,
     router,
     maybeAutoTitle,
@@ -3305,34 +3194,19 @@ export function ChatWorkspace({
         : `Refine this ${noun}: ${instruction}\n\n` +
           `Keep it in my voice. Here's the current ${noun}:\n` +
           `"""\n${draftBody}\n"""`;
-      // Inherit the skill(s) the SOURCE draft was produced under, so the refine
-      // stays guided by that skill AND the new card keeps its /skill badge.
-      // The draft's meta.skills holds the slugs; map them to ids via the loaded
-      // workspace skills. (pendingSkills is empty by now — it's consumed each
-      // send — so without this the refine would silently drop the skill.)
-      const target =
-        (aid && chatSession.artifactsFor(aid).find((a) => a.id === artifactId)) ||
-        null;
-      const inheritedIds = target
-        ? skillNamesToIds(artifactSkillNames(target), customSkills)
-        : [];
-      // skipDecision: a refine has an unambiguous source draft, so the clarify
-      // pre-pass must not intercept it with a "which draft?" question (that
-      // would swallow the refine → no re-render).
-      // hookOnly + hookOnlyOriginalBody: when this refine is hook-focused, the
-      // server splices the model's new opener onto draftBody byte-for-byte
-      // before persisting the artifact, so the body cannot drift.
+      // The Refine control is an explicit UI action, so it sends one typed edit
+      // operation. The server validates the canonical target, inherits its
+      // Custom Skills, and preserves everything after the opener in hook mode.
       void send(message, {
-        skipDecision: true,
-        refineTargetId: artifactId,
-        refineInstruction: instruction,
-        ...(inheritedIds.length ? { skillIds: inheritedIds } : {}),
-        ...(hookOnly
-          ? { hookOnly: true, hookOnlyOriginalBody: draftBody }
-          : {}),
+        operation: {
+          kind: "edit_artifact",
+          artifactId,
+          instruction,
+          ...(hookOnly ? { editMode: "hook_only" as const } : {}),
+        },
       });
     },
-    [send, chatSession, customSkills],
+    [send, chatSession],
   );
 
   // Reflect a Done-edit's PATCH into the parent's caches so the saved body
@@ -3605,9 +3479,9 @@ export function ChatWorkspace({
   // The rendered drafts list (expanded card for the active draft, collapsed rows
   // for the rest). Shared by the desktop side panel and the mobile bottom sheet
   // so the two never drift.
-  const draftsList = labelArtifacts(artifacts)
+  const artifactsList = buildArtifactIndex(artifacts).entries
     .reverse() // newest first
-    .map(({ a, label }) =>
+    .map(({ artifact: a, label }) =>
       a.id === expandedArtifactId ? (
         <ArtifactCard
           key={a.id}
@@ -3635,7 +3509,7 @@ export function ChatWorkspace({
       ) : (
         <CollapsedDraftRow
           key={a.id}
-          label={label ?? (a.kind === "hook" ? "Hook" : "Draft")}
+          label={label ?? kindNoun(a.kind)}
           artifact={a}
           onExpand={() => setExpandedArtifactId(a.id)}
           onDelete={() => deleteArtifact(a.id)}
@@ -3792,10 +3666,10 @@ export function ChatWorkspace({
           <button
             onClick={() => setPanelOpen(true)}
             className="hidden lg:inline-flex absolute top-4 right-4 z-10 items-center gap-1.5 rounded-full border border-border bg-card/90 px-3 py-1.5 text-xs font-medium shadow-sm backdrop-blur hover:bg-card transition-colors"
-            aria-label={`Show ${panelTitle(artifacts).toLowerCase()}`}
+            aria-label={`Show ${ARTIFACT_PANEL_TITLE.toLowerCase()}`}
           >
             <PanelLeftOpen className="h-3.5 w-3.5" />
-            {panelTitle(artifacts)} ({artifacts.length})
+            {ARTIFACT_PANEL_TITLE} ({artifacts.length})
           </button>
         )}
         {/* Open the context rail. Shown when the chat has context to show and the
@@ -3934,58 +3808,10 @@ export function ChatWorkspace({
                       );
                     }
                   }}
-                  onAnswer={(text, ask, actionSelectionIds) => {
-                    const shouldRefine = askAnswerShouldRefineLatestDraft(ask, text);
-                    if (!shouldRefine) {
-                      void send(text, { actionSelectionIds });
-                      return;
-                    }
-                    // Hook-only refine: when the ask-card answer is hook-
-                    // focused (e.g. "Tighten the hook"), enrich the message
-                    // with the same "Rewrite ONLY the hook" prompt the
-                    // per-card Refine button uses, AND pass hookOnly +
-                    // originalBody so the SERVER splices the model's new
-                    // opener onto the source body byte-for-byte before
-                    // persisting. Without this the raw "Tighten the hook"
-                    // string went to the server, the model rewrote the
-                    // whole post, and the post-stream reload swapped the
-                    // clobbered body into the DB.
-                    const aid = activeIdRef.current;
-                    const persistedArtifacts = chatSession.artifactsFor(aid);
-                    const liveArtifacts = aid
-                      ? chatSession.runFor(aid)?.artifacts ?? []
-                      : [];
-                    const seenIds = new Set(
-                      persistedArtifacts.map((artifact) => artifact.id),
-                    );
-                    const combined = [
-                      ...persistedArtifacts,
-                      ...liveArtifacts.filter(
-                        (artifact) => !seenIds.has(artifact.id),
-                      ),
-                    ];
-                    const writableArtifacts = combined.filter(
-                      (artifact) =>
-                        artifact.kind === "post" || artifact.kind === "hook",
-                    );
-                    const target =
-                      writableArtifacts[writableArtifacts.length - 1];
-                    if (
-                      target &&
-                      target.kind === "post" &&
-                      isExclusiveHookRefine(text)
-                    ) {
-                      const enriched = buildHookOnlyRefineMessage(text, target.body);
-                      void send(enriched, {
-                        forceRefine: true,
-                        refineTargetId: target.id,
-                        refineInstruction: text,
-                        hookOnly: true,
-                        hookOnlyOriginalBody: target.body,
-                      });
-                      return;
-                    }
-                    void send(text, { forceRefine: true });
+                  onAnswer={(text, _ask, actionSelectionIds) => {
+                    // Ask-card answers are free text, not explicit card actions:
+                    // only the server may interpret them as Artifact operations.
+                    void send(text, { actionSelectionIds });
                   }}
                 />
               ))}
@@ -5100,7 +4926,7 @@ export function ChatWorkspace({
           </div>
           <div className="flex items-center justify-between px-4 h-14 border-b border-border bg-card/70">
             <span className="text-sm font-semibold tracking-[-0.01em]">
-              {panelTitle(artifacts)} ({artifacts.length})
+              {ARTIFACT_PANEL_TITLE} ({artifacts.length})
             </span>
             <button
               onClick={() => setPanelOpen(false)}
@@ -5111,7 +4937,7 @@ export function ChatWorkspace({
             </button>
           </div>
           <div className="flex-1 min-h-0 overflow-y-scroll [scrollbar-gutter:stable] p-3.5 flex flex-col gap-3">
-            {draftsList}
+            {artifactsList}
           </div>
         </aside>
       )}
@@ -5195,10 +5021,10 @@ export function ChatWorkspace({
           type="button"
           onClick={() => setMobileDraftsOpen(true)}
           className="lg:hidden absolute bottom-32 left-1/2 -translate-x-1/2 z-20 inline-flex items-center gap-1.5 rounded-full border border-border bg-card/90 px-3.5 py-2 text-xs font-medium shadow-md backdrop-blur hover:bg-card transition-colors"
-          aria-label={`Show ${panelTitle(artifacts).toLowerCase()}`}
+          aria-label={`Show ${ARTIFACT_PANEL_TITLE.toLowerCase()}`}
         >
           <FileText className="h-3.5 w-3.5" />
-          {panelTitle(artifacts)} ({artifacts.length})
+          {ARTIFACT_PANEL_TITLE} ({artifacts.length})
         </button>
       )}
       {mobileDraftsOpen && hasDraftPanel && (
@@ -5211,7 +5037,7 @@ export function ChatWorkspace({
           <div className="relative max-h-[80%] flex flex-col rounded-t-[1.35rem] border-t border-border bg-card shadow-xl animate-in slide-in-from-bottom duration-200">
             <div className="flex items-center justify-between px-4 h-14 border-b border-border shrink-0">
               <span className="text-sm font-semibold">
-                {panelTitle(artifacts)} ({artifacts.length})
+                {ARTIFACT_PANEL_TITLE} ({artifacts.length})
               </span>
               <button
                 type="button"
@@ -5223,7 +5049,7 @@ export function ChatWorkspace({
               </button>
             </div>
             <div className="flex-1 min-h-0 overflow-y-auto p-3.5 flex flex-col gap-3 pb-[env(safe-area-inset-bottom)]">
-              {draftsList}
+              {artifactsList}
             </div>
           </div>
         </div>

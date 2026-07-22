@@ -239,6 +239,21 @@ export async function getSkillsByIds(input: {
   return (data ?? []) as CustomSkill[];
 }
 
+export async function getSkillsByNames(input: {
+  db: SupabaseClient;
+  workspaceId: string;
+  names: readonly string[];
+}): Promise<CustomSkill[]> {
+  if (input.names.length === 0) return [];
+  const { data, error } = await input.db
+    .from("custom_skills")
+    .select(SKILL_COLS)
+    .eq("workspace_id", input.workspaceId)
+    .in("name", [...input.names]);
+  if (error) throw error;
+  return (data ?? []) as CustomSkill[];
+}
+
 export async function listPreferenceResources(input: {
   db: SupabaseClient;
   workspaceId: string;

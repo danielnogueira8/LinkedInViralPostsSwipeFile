@@ -113,23 +113,11 @@ export function isTurnRunning(
 // cheaper frees its share the moment it's released. Kept in sync with the DB
 // default (p_turn_cost_estimate).
 //
-// The base $0.05 covers a heavy multi-tool turn on CHAT_MODEL. The optional
-// intent-decision surcharge below reserves headroom for the fallthrough
-// GPT-Luna classifier (lib/agent/turn/intent-decision.ts) — a single cheap call
-// that fires only on the small slice of turns the deterministic router can't
-// classify, and only when INTENT_DECISION is enabled. (This replaces the old
-// Sonnet decision pre-pass, which was removed; the surcharge is repointed at
-// its successor rather than deleted so the reservation stays accurate.)
+// The base $0.05 covers a heavy multi-tool turn on CHAT_MODEL. Artifact intent
+// compilation is deterministic and adds no model-call surcharge.
 const BASE_TURN_COST_ESTIMATE_USD = numEnv("CHAT_TURN_COST_ESTIMATE_USD", 0.05);
-const INTENT_DECISION_ON = process.env.INTENT_DECISION === "1";
-// Per-turn reservation = base turn estimate + an intent-decision surcharge when
-// that classifier is enabled (~$0.006-0.01/call). Pure so the money-critical
-// arithmetic is unit-tested; a plain add (not max) — the classifier call and the
-// turn both happen, so their estimates sum.
-export const INTENT_DECISION_COST_USD = 0.01;
 export function turnCostEstimate(
   baseUsd: number,
-  intentDecisionOn: boolean,
   requestedDraftCount: number = 1,
 ): number {
   // The multi-draft multiplier goes through the ONE turn count rule (1-6
@@ -138,20 +126,15 @@ export function turnCostEstimate(
   const boundedDraftCount = resolveTurnCount({
     messageCount: requestedDraftCount,
   }).count;
-  return (
-    baseUsd * boundedDraftCount +
-    (intentDecisionOn ? INTENT_DECISION_COST_USD : 0)
-  );
+  return baseUsd * boundedDraftCount;
 }
 
 export function turnCostEstimateForContent(
   baseUsd: number,
-  intentDecisionOn: boolean,
   content: string,
 ): number {
   return turnCostEstimate(
     baseUsd,
-    intentDecisionOn,
     requestedDirectPostCount(content) ?? 1,
   );
 }
@@ -239,13 +222,11 @@ export async function claimChatTurn(
           READ_ONLY_ORCHESTRATOR_COST_RESERVE_USD,
           turnCostEstimateForContent(
             BASE_TURN_COST_ESTIMATE_USD,
-            INTENT_DECISION_ON,
             content,
           ),
         )
       : turnCostEstimateForContent(
           BASE_TURN_COST_ESTIMATE_USD,
-          INTENT_DECISION_ON,
           content,
         ),
   });

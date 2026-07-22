@@ -31,10 +31,7 @@ describe("cost reserves for non-chat LLM paths — sanity", () => {
   test("the configured chat model has an explicit rate and fits the representative turn reserve", () => {
     expect(hasOpenRouterPricing(CHAT_MODEL)).toBe(true);
     const mainTurn = openRouterCost(CHAT_MODEL, 15_000, 1_500, 14_000);
-    const decision = openRouterCost(CHAT_MODEL, 800, 120);
-    expect(mainTurn + decision).toBeLessThanOrEqual(
-      turnCostEstimate(0.05, true),
-    );
+    expect(mainTurn).toBeLessThanOrEqual(turnCostEstimate(0.05));
   });
   test.each([
     ["VOICE_JOB_COST_RESERVE_USD", VOICE_JOB_COST_RESERVE_USD],

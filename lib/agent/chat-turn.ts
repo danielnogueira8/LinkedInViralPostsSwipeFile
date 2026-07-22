@@ -34,6 +34,13 @@ import { requestedDirectPostCount } from "@/lib/agent/direct-deliverable-policy"
 import { type CoworkTelemetrySink } from "@/lib/agent/cowork-telemetry";
 
 import { setupChatTurn } from "@/lib/agent/turn/setup";
+import {
+  chatTurnOperationSchema,
+  TURN_OPERATION_TOOL_NAME,
+  TURN_OPERATION_VERSION,
+  type ChatTurnOperation,
+} from "@/lib/agent/turn/operation-marker";
+export type { ChatTurnOperation } from "@/lib/agent/turn/operation-marker";
 
 import {
   CREATOR_STYLE_RETRY_CONTEXT_VERSION,
@@ -294,26 +301,6 @@ const chatContextPolicySchema = z
       }
     }
   });
-const chatTurnOperationSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("create_post") }).strict(),
-  z
-    .object({
-      kind: z.literal("edit_artifact"),
-      artifactId: z.string().min(1).max(200),
-      instruction: z.string().trim().min(1).max(4_000),
-      editMode: z.enum(["general", "hook_only"]).optional(),
-    })
-    .strict(),
-  z
-    .object({
-      kind: z.literal("review_artifact"),
-      artifactId: z.string().min(1).max(200).optional(),
-    })
-    .strict(),
-]);
-
-const TURN_OPERATION_TOOL_NAME = "_turn_operation";
-
 export type TurnOperationMarker =
   | { kind: "none" }
   | { kind: "invalid" }
@@ -335,7 +322,7 @@ export function turnOperationMarkerFromToolCalls(input: {
       return { kind: "invalid" };
     }
     const { version, ...operationValue } = value as Record<string, unknown>;
-    if (version !== 1) return { kind: "invalid" };
+    if (version !== TURN_OPERATION_VERSION) return { kind: "invalid" };
     const operation = chatTurnOperationSchema.safeParse(operationValue);
     return operation.success
       ? { kind: "valid", operation: operation.data }
@@ -349,10 +336,15 @@ export const chatTurnRequestSchema = z.object({
   // Empty/overlong/junk user text is handled by preflightUserPrompt below so
   // the user gets a friendly, specific rejection and no turn is claimed.
   message: z.string(),
-  // Immutable current-turn intent supplied by clients that already know the
-  // operation (card Edit/Review buttons and typed composer starters). Legacy
-  // refine fields remain accepted during migration, but this object wins.
+  // Immutable current-turn intent supplied by explicit UI controls that
+  // already know the operation. Ordinary composer language is compiled by the
+  // server. Legacy refine fields remain accepted during migration, but this
+  // object wins.
   operation: chatTurnOperationSchema.optional(),
+  // Non-authoritative browser context for free-text references such as
+  // "improve this". The server re-resolves this id against canonical chat
+  // Artifacts before compiling an operation; explicit UI actions use operation.
+  selectedArtifactId: z.string().min(1).max(200).optional(),
   clientTurnId: z.string().uuid().optional(),
   retryOfUserMessageId: z.string().min(1).max(200).optional(),
   actionSelectionIds: z.array(z.string().uuid()).min(1).max(5).optional(),
@@ -360,22 +352,17 @@ export const chatTurnRequestSchema = z.object({
   // "Model this post": the stashed source id (chat_modeling_sources). The server
   // fetches + weaves the post text, so a long post never hits the message cap.
   modelSourceId: z.string().uuid().optional(),
-  // True for an AI-refine turn (the user clicked "Refine" on a specific draft).
-  // A refine already targets ONE unambiguous card client-side, so the routing
-  // layer treats it as a trusted refine task rather than a from-scratch post.
+  // Rolling-compatibility refine fields. Setup accepts only the complete trio
+  // and immediately normalizes it to an edit_artifact operation.
   skipDecision: z.boolean().optional(),
-  // Trusted refine identity. New clients send the selected artifact id and the
-  // concise user instruction separately from the legacy body-embedded message.
-  // The server re-reads the artifact from this chat; it never trusts a client
-  // body as the direct writer's source of truth.
   refineTargetId: z.string().min(1).max(200).optional(),
   refineInstruction: z.string().trim().min(1).max(4_000).optional(),
   // Hook-only refine: server-side splice guarantee. When true, the server
   // takes ONLY the model's new opener from the render_post output and glues
   // it onto hookOnlyOriginalBody byte-for-byte before persisting the artifact.
   // The body cannot drift no matter what the model returned. Set by the
-  // per-card Refine button and by the ask-card "Tighten the hook" click.
-  // Both fields must be present together; either alone is ignored.
+  // Legacy body snapshots remain accepted by the transport during rolling
+  // deploys but are never trusted; setup re-reads the canonical Artifact body.
   hookOnly: z.boolean().optional(),
   hookOnlyOriginalBody: z.string().max(20000).optional(),
   // Custom skills the user invoked this turn (via /name or the ⚡ picker). The
@@ -425,7 +412,6 @@ export const chatTurnRequestSchema = z.object({
 });
 
 export type ChatTurnRequest = z.infer<typeof chatTurnRequestSchema>;
-export type ChatTurnOperation = NonNullable<ChatTurnRequest["operation"]>;
 
 /**
  * Return only a quantity explicitly attached to the requested post output.

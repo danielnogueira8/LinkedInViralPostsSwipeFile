@@ -202,14 +202,20 @@ export function resolveTrustedRefineTarget(input: {
   targetId: string | undefined;
   rows: DbMessage[];
 }): Artifact | null {
-  if (!input.targetId) return null;
-  for (let rowIndex = input.rows.length - 1; rowIndex >= 0; rowIndex -= 1) {
-    const artifacts = input.rows[rowIndex].artifacts ?? [];
-    for (let index = artifacts.length - 1; index >= 0; index -= 1) {
-      const artifact = artifacts[index];
-      if (artifact.id !== input.targetId) continue;
-      return validatedRefineTarget(artifact);
-    }
+  return resolveTrustedRefineTargetFromArtifacts(
+    input.targetId,
+    input.rows.flatMap((row) => row.artifacts ?? []),
+  );
+}
+
+function resolveTrustedRefineTargetFromArtifacts(
+  targetId: string | undefined,
+  artifacts: readonly Artifact[],
+): Artifact | null {
+  if (!targetId) return null;
+  for (let index = artifacts.length - 1; index >= 0; index -= 1) {
+    const artifact = artifacts[index];
+    if (artifact.id === targetId) return validatedRefineTarget(artifact);
   }
   return null;
 }
@@ -1081,6 +1087,8 @@ export type BuildTurnContextInput = {
   skipDecision: boolean;
   refineTargetId: string | undefined;
   refineInstruction: string | undefined;
+  /** Complete, chronological Artifact history for canonical target validation. */
+  canonicalArtifacts: readonly Artifact[];
   leadMagnetId: string | undefined;
   createLeadMagnet: z.infer<typeof leadMagnetGenerateSchema> | undefined;
   forcedNoModelFormatId: NoModelFormatId | undefined;
@@ -1126,6 +1134,7 @@ export async function buildTurnContext(
     skipDecision,
     refineTargetId,
     refineInstruction,
+    canonicalArtifacts,
     leadMagnetId,
     createLeadMagnet,
     forcedNoModelFormatId,
@@ -1333,10 +1342,10 @@ export async function buildTurnContext(
   const rows = (rowsDesc ?? []).slice().reverse();
 
   const dbRows = (rows ?? []) as DbMessage[];
-  trustedRefineTarget = resolveTrustedRefineTarget({
-    targetId: refineTargetId,
-    rows: dbRows,
-  });
+  trustedRefineTarget = resolveTrustedRefineTargetFromArtifacts(
+    refineTargetId,
+    canonicalArtifacts,
+  );
   const modelSourceIds = Array.from(
     new Set([
       ...dbRows
@@ -1438,7 +1447,9 @@ export async function buildTurnContext(
   // than asking the user to choose again.
   const currentDraft = modelSourceId
     ? null
-    : draftForCurrentTurn(dbRows, refineTargetId);
+    : refineTargetId
+      ? trustedRefineTarget
+      : latestChatDraft(dbRows);
   if (currentDraft && currentDraft.id !== variationSource?.id) {
     blocks.push({
       type: "text",

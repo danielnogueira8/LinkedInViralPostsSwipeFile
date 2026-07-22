@@ -3,38 +3,231 @@ import type { AppliedLeadMagnet } from "@/lib/chat-hydration";
 import type { PostMediaAttachment } from "@/lib/post-media";
 
 export function kindNoun(kind: Artifact["kind"]): string {
-  return kind === "hook" ? "Hook" : "Draft";
+  if (kind === "post") return "Post Artifact";
+  if (kind === "hook") return "Hook Artifact";
+  return "Artifact";
 }
 
-// Assign each artifact a display label numbered WITHIN its kind ("Hook 1",
-// "Hook 2", "Draft 1"…), in creation order. The number is omitted when there's
-// only one of that kind (a lone draft is just "Draft", matching the old single-
-// draft behavior). Returns artifacts in creation order; caller reverses for
-// newest-first display.
-export function labelArtifacts(
-  artifacts: Artifact[],
-): { a: Artifact; label: string | undefined }[] {
-  const totals = artifacts.reduce<Record<string, number>>((acc, a) => {
-    acc[a.kind] = (acc[a.kind] ?? 0) + 1;
-    return acc;
-  }, {});
-  const seq: Record<string, number> = {};
-  return artifacts.map((a) => {
-    seq[a.kind] = (seq[a.kind] ?? 0) + 1;
-    const noun = kindNoun(a.kind);
-    const label = totals[a.kind] > 1 ? `${noun} ${seq[a.kind]}` : noun;
-    return { a, label };
+export type WritableArtifactKind = "post" | "hook";
+
+export type ArtifactIndexEntry = {
+  artifactId: string;
+  artifact: Artifact;
+  kind: WritableArtifactKind;
+  ordinal: number;
+  label: string;
+};
+
+export type ArtifactReferenceResolution =
+  | { kind: "selected"; artifactId: string }
+  | { kind: "unresolved_explicit"; reference: string }
+  | { kind: "none" };
+
+/**
+ * Canonical writable-Artifact ordering shared by presentation and intent
+ * resolution. A re-emitted Artifact keeps its first creation position while
+ * its latest value wins, so source backfills and streamed replacements cannot
+ * renumber Post or Hook Artifacts.
+ */
+export function buildArtifactIndex(
+  artifacts: readonly Artifact[],
+): { entries: ArtifactIndexEntry[] } {
+  const orderedIds: string[] = [];
+  const latestById = new Map<string, Artifact>();
+  for (const artifact of artifacts) {
+    if (artifact.kind !== "post" && artifact.kind !== "hook") continue;
+    if (!latestById.has(artifact.id)) orderedIds.push(artifact.id);
+    latestById.set(artifact.id, artifact);
+  }
+  const writable = orderedIds.flatMap((id) => {
+    const artifact = latestById.get(id);
+    return artifact ? [artifact] : [];
   });
+  const totals = writable.reduce<Record<WritableArtifactKind, number>>(
+    (counts, artifact) => {
+      counts[artifact.kind as WritableArtifactKind] += 1;
+      return counts;
+    },
+    { post: 0, hook: 0 },
+  );
+  const ordinals: Record<WritableArtifactKind, number> = { post: 0, hook: 0 };
+  const entries = writable.map((artifact): ArtifactIndexEntry => {
+    const kind = artifact.kind as WritableArtifactKind;
+    const ordinal = ++ordinals[kind];
+    const noun = kindNoun(kind);
+    return {
+      artifactId: artifact.id,
+      artifact,
+      kind,
+      ordinal,
+      label: totals[kind] > 1 ? `${noun} ${ordinal}` : noun,
+    };
+  });
+  return { entries };
 }
 
-// Panel header noun: "Drafts", "Hooks", or "Drafts & Hooks" depending on the mix.
-export function panelTitle(artifacts: Artifact[]): string {
-  const hasPost = artifacts.some((a) => a.kind === "post");
-  const hasHook = artifacts.some((a) => a.kind === "hook");
-  if (hasPost && hasHook) return "Drafts & Hooks";
-  if (hasHook) return "Hooks";
-  return "Drafts";
+const CARDINAL_NUMBER_WORDS: Readonly<Record<string, number>> = {
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+  six: 6,
+  seven: 7,
+  eight: 8,
+  nine: 9,
+  ten: 10,
+  eleven: 11,
+  twelve: 12,
+  thirteen: 13,
+  fourteen: 14,
+  fifteen: 15,
+  sixteen: 16,
+  seventeen: 17,
+  eighteen: 18,
+  nineteen: 19,
+  twenty: 20,
+  thirty: 30,
+  forty: 40,
+  fifty: 50,
+  sixty: 60,
+  seventy: 70,
+  eighty: 80,
+  ninety: 90,
+};
+const ORDINAL_NUMBER_WORDS: Readonly<Record<string, number>> = {
+  first: 1,
+  second: 2,
+  third: 3,
+  fourth: 4,
+  fifth: 5,
+  sixth: 6,
+  seventh: 7,
+  eighth: 8,
+  ninth: 9,
+  tenth: 10,
+  eleventh: 11,
+  twelfth: 12,
+  thirteenth: 13,
+  fourteenth: 14,
+  fifteenth: 15,
+  sixteenth: 16,
+  seventeenth: 17,
+  eighteenth: 18,
+  nineteenth: 19,
+  twentieth: 20,
+  thirtieth: 30,
+  fortieth: 40,
+  fiftieth: 50,
+  sixtieth: 60,
+  seventieth: 70,
+  eightieth: 80,
+  ninetieth: 90,
+};
+const ARTIFACT_REFERENCE_NOUN_PATTERN =
+  String.raw`(?:post\s+artifact|hook\s+artifact|draft|post|hook)`;
+const CARDINAL_NUMBER_WORD_PATTERN = Object.keys(CARDINAL_NUMBER_WORDS).join(
+  "|",
+);
+const ORDINAL_NUMBER_WORD_PATTERN = Object.keys(ORDINAL_NUMBER_WORDS).join(
+  "|",
+);
+const ARTIFACT_ORDINAL_PATTERN =
+  String.raw`(?:\d+(?:st|nd|rd|th)?|(?:(?:${CARDINAL_NUMBER_WORD_PATTERN}|hundred|and)[\s-]+)*(?:${ORDINAL_NUMBER_WORD_PATTERN}|hundredth))`;
+
+function artifactOrdinal(value: string): number {
+  const numeric = /^\d+/.exec(value)?.[0];
+  if (numeric) return Number(numeric);
+  let total = 0;
+  for (const token of value.toLowerCase().split(/[\s-]+/)) {
+    if (!token || token === "and") continue;
+    if (token === "hundred" || token === "hundredth") {
+      total = Math.max(total, 1) * 100;
+      continue;
+    }
+    total += CARDINAL_NUMBER_WORDS[token] ?? ORDINAL_NUMBER_WORDS[token] ?? 0;
+  }
+  return total;
 }
+
+function artifactKindForNoun(noun: string): WritableArtifactKind {
+  return noun.toLowerCase().startsWith("hook") ? "hook" : "post";
+}
+
+function explicitArtifactOrdinal(message: string): {
+  noun: string;
+  ordinal: number;
+} | null {
+  const nounFirst = new RegExp(
+    String.raw`\b(${ARTIFACT_REFERENCE_NOUN_PATTERN})\s+#?\s*(${ARTIFACT_ORDINAL_PATTERN})\b`,
+    "i",
+  ).exec(message);
+  if (nounFirst) {
+    return { noun: nounFirst[1], ordinal: artifactOrdinal(nounFirst[2]) };
+  }
+  const ordinalFirst = new RegExp(
+    String.raw`(?<![\w-])(?:the\s+)?(${ARTIFACT_ORDINAL_PATTERN})\s+(${ARTIFACT_REFERENCE_NOUN_PATTERN})\b`,
+    "i",
+  ).exec(message);
+  return ordinalFirst
+    ? { noun: ordinalFirst[2], ordinal: artifactOrdinal(ordinalFirst[1]) }
+    : null;
+}
+
+export function hasExplicitArtifactReference(message: string): boolean {
+  return explicitArtifactOrdinal(message) !== null;
+}
+
+/** Resolve a textual Artifact reference without inferring the turn operation. */
+export function resolveArtifactReference(
+  message: string,
+  artifacts: readonly Artifact[],
+  selectedArtifactId: string | null,
+): ArtifactReferenceResolution {
+  const { entries } = buildArtifactIndex(artifacts);
+  const explicitOrdinal = explicitArtifactOrdinal(message);
+  if (explicitOrdinal) {
+    const kind = artifactKindForNoun(explicitOrdinal.noun);
+    const ordinal = explicitOrdinal.ordinal;
+    const artifactId = entries.find(
+      (entry) => entry.kind === kind && entry.ordinal === ordinal,
+    )?.artifactId;
+    return artifactId
+      ? { kind: "selected", artifactId }
+      : {
+          kind: "unresolved_explicit",
+          reference: `${kindNoun(kind)} ${ordinal}`,
+        };
+  }
+  const latest =
+    /\b(?:latest|newest|most\s+recent)\s+(post(?:\s+artifact)?|draft|hook(?:\s+artifact)?|artifact|one)\b/i.exec(
+      message,
+    );
+  if (latest) {
+    const noun = latest[1].toLowerCase();
+    const matching =
+      noun === "draft" || noun.startsWith("post")
+        ? entries.filter((entry) => entry.kind === "post")
+        : noun.startsWith("hook")
+          ? entries.filter((entry) => entry.kind === "hook")
+          : entries;
+    const artifactId = matching.at(-1)?.artifactId;
+    return artifactId ? { kind: "selected", artifactId } : { kind: "none" };
+  }
+  const selected = entries.find(
+    (entry) => entry.artifactId === selectedArtifactId,
+  )?.artifactId;
+  if (selectedArtifactId && !selected) {
+    return {
+      kind: "unresolved_explicit",
+      reference: "the selected Artifact",
+    };
+  }
+  const artifactId = selected ?? entries.at(-1)?.artifactId;
+  return artifactId ? { kind: "selected", artifactId } : { kind: "none" };
+}
+
+export const ARTIFACT_PANEL_TITLE = "Artifacts";
 
 export function refineSuggestions(kind: Artifact["kind"]): string[] {
   if (kind === "hook") {
@@ -122,17 +315,6 @@ export function generatedLeadMagnetImageStatus(artifact: {
     status,
     ...(typeof reason === "string" && reason.trim() ? { reason: reason.trim() } : {}),
   };
-}
-
-// Map skill slugs → their ids using the workspace's loaded skills. A slug that
-// no longer resolves (skill deleted/renamed since the draft was made) is
-// dropped, so a refine never sends a stale id. Pure + exported for tests.
-export function skillNamesToIds(
-  names: string[],
-  skills: { id: string; name: string }[],
-): string[] {
-  const byName = new Map(skills.map((s) => [s.name, s.id]));
-  return names.map((n) => byName.get(n)).filter((id): id is string => !!id);
 }
 
 // The consistent character budget for the author headline shown in a draft

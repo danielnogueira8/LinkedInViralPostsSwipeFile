@@ -296,15 +296,21 @@ test.describe("Cowork draft lifecycle", () => {
     await page.route(`**/api/chats/${chat.id}/stream`, async (route) => {
       streamCount += 1;
       const payload = route.request().postDataJSON() as {
-        refineTargetId?: string;
-        refineInstruction?: string;
+        operation?: {
+          kind: string;
+          artifactId?: string;
+          instruction?: string;
+          editMode?: string;
+        };
       };
       if (streamCount === 1) {
-        expect(payload.refineTargetId).toBeUndefined();
+        expect(payload.operation).toBeUndefined();
       } else {
-        expect(payload).toMatchObject({
-          refineTargetId: artifactId,
-          refineInstruction: "Make the hook punchier",
+        expect(payload.operation).toMatchObject({
+          kind: "edit_artifact",
+          artifactId,
+          instruction: "Make the hook punchier",
+          editMode: "hook_only",
         });
         currentArtifact = { ...currentArtifact, body: refinedBody };
       }

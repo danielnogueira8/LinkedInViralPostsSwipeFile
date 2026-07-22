@@ -1,18 +1,12 @@
 import { describe, test, expect } from "vitest";
 import {
   assistantAfterPersistedUserMessage,
-  looksLikeArtifactReviewRequest,
-  looksLikeComposerRefine,
-  askAnswerShouldRefineLatestDraft,
   artifactSkillNames,
-  skillNamesToIds,
   splitHook,
   guardRefineCollapse,
   hasAssistantAfterPersistedUserMessage,
   reinsertArtifact,
-  reviewArtifactIdForComposer,
-  writableArtifactSelectionForComposer,
-  writableArtifactIdForComposer,
+  resolveArtifactReference,
 } from "@/lib/chat-ui-policy";
 import type { Artifact } from "@/lib/agent/contracts";
 import type { ChatRun } from "@/lib/chat-hydration";
@@ -23,6 +17,11 @@ import {
   splicePreservedBody,
 } from "@/lib/hook-splice";
 import { turnOperationMarkerFromToolCalls } from "@/lib/agent/chat-turn";
+import { turnOperationToolCall } from "@/lib/agent/turn/operation-marker";
+import {
+  looksLikeArtifactReviewRequest,
+  looksLikeComposerRefine,
+} from "@/lib/agent/turn/resolve-artifact-intent";
 
 describe("persisted turn completion identity", () => {
   const repeatedPrompt = "Write one original post";
@@ -133,21 +132,11 @@ describe("persisted typed operation identity", () => {
   test("restores the exact artifact operation from a persisted user turn", () => {
     expect(
       turnOperationMarkerFromToolCalls({
-        tool_calls: [
-          {
-            id: "_turn_operation",
-            type: "function",
-            function: {
-              name: "_turn_operation",
-              arguments: JSON.stringify({
-                version: 1,
-                kind: "edit_artifact",
-                artifactId: "artifact-1",
-                instruction: "Make Draft 1 punchier.",
-              }),
-            },
-          },
-        ],
+        tool_calls: [turnOperationToolCall({
+          kind: "edit_artifact",
+          artifactId: "artifact-1",
+          instruction: "Make Draft 1 punchier.",
+        })],
       }),
     ).toEqual({
       kind: "valid",
@@ -192,12 +181,11 @@ describe("persisted typed operation identity", () => {
 });
 
 // ---------------------------------------------------------------------------
-// A refine produces a NEW draft card alongside the source — no in-place swap,
-// no version history. The client-side glue (pendingRefineRef → collapse guard,
-// hook-only body preservation) is exercised by the guards below and by the
-// agent-loop tests in refine-no-explosion.test.ts. This file locks in the
-// PURE helpers: refine-instruction detection, skill inheritance, and the
-// body-preservation math.
+// A refine rewrites the target Artifact in place. The client-side glue
+// (pendingRefineRef → collapse guard, hook-only body preservation) is exercised
+// by the guards below and by the agent-loop tests in refine-no-explosion.test.ts.
+// This file locks in the pure helpers: intent detection, skill inheritance,
+// durable operation identity, and body-preservation math.
 // ---------------------------------------------------------------------------
 
 const mk = (id: string, body: string, meta?: Record<string, unknown>): Artifact => ({
@@ -210,8 +198,8 @@ const mk = (id: string, body: string, meta?: Record<string, unknown>): Artifact 
 
 // ---------------------------------------------------------------------------
 // Refine inherits the source draft's skill (the badge + the guidance). The
-// draft stores skill SLUGS on meta.skills; a refine needs the skill IDS to send
-// to the server. artifactSkillNames reads the slugs; skillNamesToIds maps them.
+// draft stores skill SLUGS on meta.skills; the server reads those slugs when it
+// resolves the edit target.
 // ---------------------------------------------------------------------------
 describe("artifactSkillNames — read a draft's applied skill slugs", () => {
   test("reads string entries from meta.skills", () => {
@@ -223,22 +211,6 @@ describe("artifactSkillNames — read a draft's applied skill slugs", () => {
   test("non-array / non-string entries are dropped", () => {
     expect(artifactSkillNames(mk("a", "b", { skills: "cta" }))).toEqual([]);
     expect(artifactSkillNames(mk("a", "b", { skills: [1, "ok", null] }))).toEqual(["ok"]);
-  });
-});
-
-describe("skillNamesToIds — map slugs to ids for a refine send", () => {
-  const skills = [
-    { id: "id-cta", name: "cta" },
-    { id: "id-story", name: "storytelling" },
-  ];
-  test("maps known slugs in order", () => {
-    expect(skillNamesToIds(["storytelling", "cta"], skills)).toEqual(["id-story", "id-cta"]);
-  });
-  test("drops a slug that no longer resolves (deleted/renamed skill)", () => {
-    expect(skillNamesToIds(["cta", "gone"], skills)).toEqual(["id-cta"]);
-  });
-  test("empty names → empty ids", () => {
-    expect(skillNamesToIds([], skills)).toEqual([]);
   });
 });
 
@@ -719,54 +691,6 @@ describe("looksLikeComposerRefine — chat-typed refine detection", () => {
     expect(looksLikeComposerRefine(msg)).toBe(false);
   });
 
-  test("a review operation targets the expanded non-newest draft", () => {
-    const drafts = [
-      { id: "draft-1", kind: "post" },
-      { id: "draft-2", kind: "post" },
-    ];
-
-    expect(
-      reviewArtifactIdForComposer(
-        "Review the selected Draft 1 and give feedback only.",
-        drafts,
-        "draft-1",
-      ),
-    ).toBe("draft-1");
-    expect(
-      reviewArtifactIdForComposer("Make it punchier.", drafts, "draft-1"),
-    ).toBeUndefined();
-  });
-
-  test("an explicit artifact ordinal wins over the expanded artifact", () => {
-    const artifacts = [
-      { id: "artifact-1", kind: "post" },
-      { id: "artifact-2", kind: "post" },
-    ];
-
-    expect(
-      reviewArtifactIdForComposer(
-        "Review Draft 1 and give me feedback.",
-        artifacts,
-        "artifact-2",
-      ),
-    ).toBe("artifact-1");
-  });
-
-  test("an explicit latest-artifact review wins over an older expanded artifact", () => {
-    const artifacts = [
-      { id: "artifact-1", kind: "post" },
-      { id: "artifact-2", kind: "post" },
-    ];
-
-    expect(
-      reviewArtifactIdForComposer(
-        "Review the latest draft.",
-        artifacts,
-        "artifact-1",
-      ),
-    ).toBe("artifact-2");
-  });
-
   test("a compound review and rewrite is an edit, not a read-only review", () => {
     const instruction =
       "Review this draft, then rewrite it to make the hook punchier.";
@@ -795,117 +719,66 @@ describe("looksLikeComposerRefine — chat-typed refine detection", () => {
 
   test("an explicit artifact ordinal also controls composer edits", () => {
     const artifacts = [
-      { id: "artifact-1", kind: "post" },
-      { id: "artifact-2", kind: "post" },
+      mk("artifact-1", "one"),
+      mk("artifact-2", "two"),
     ];
 
     expect(
-      writableArtifactIdForComposer(
+      resolveArtifactReference(
         "Rewrite Draft 1 with a stronger hook.",
         artifacts,
         "artifact-2",
       ),
-    ).toBe("artifact-1");
+    ).toEqual({ kind: "selected", artifactId: "artifact-1" });
   });
 
   test("Draft and Hook ordinals are numbered independently like the UI", () => {
     const artifacts = [
-      { id: "hook-1", kind: "hook" },
-      { id: "draft-1", kind: "post" },
-      { id: "draft-2", kind: "post" },
-      { id: "hook-2", kind: "hook" },
+      { ...mk("hook-1", "hook one"), kind: "hook" as const },
+      mk("draft-1", "draft one"),
+      mk("draft-2", "draft two"),
+      { ...mk("hook-2", "hook two"), kind: "hook" as const },
     ];
 
     expect(
-      writableArtifactIdForComposer("Rewrite Draft 1.", artifacts, null),
-    ).toBe("draft-1");
+      resolveArtifactReference("Rewrite Draft 1.", artifacts, null),
+    ).toEqual({ kind: "selected", artifactId: "draft-1" });
     expect(
-      writableArtifactIdForComposer("Rewrite Hook 2.", artifacts, null),
-    ).toBe("hook-2");
+      resolveArtifactReference("Rewrite Hook 2.", artifacts, null),
+    ).toEqual({ kind: "selected", artifactId: "hook-2" });
     expect(
-      writableArtifactIdForComposer("Rewrite the latest draft.", artifacts, null),
-    ).toBe("draft-2");
+      resolveArtifactReference("Rewrite the latest draft.", artifacts, null),
+    ).toEqual({ kind: "selected", artifactId: "draft-2" });
     expect(
-      writableArtifactIdForComposer("Rewrite the latest hook.", artifacts, null),
-    ).toBe("hook-2");
+      resolveArtifactReference("Rewrite the latest hook.", artifacts, null),
+    ).toEqual({ kind: "selected", artifactId: "hook-2" });
   });
 
   test("an unresolved explicit ordinal never degrades to the latest Artifact", () => {
     expect(
-      writableArtifactSelectionForComposer(
+      resolveArtifactReference(
         "Rewrite Draft 9.",
         [
-          { id: "draft-1", kind: "post" },
-          { id: "draft-2", kind: "post" },
+          mk("draft-1", "draft one"),
+          mk("draft-2", "draft two"),
         ],
         "draft-2",
       ),
-    ).toEqual({ kind: "unresolved_explicit", reference: "Draft 9" });
-    expect(
-      writableArtifactIdForComposer(
-        "Rewrite Draft 9.",
-        [{ id: "draft-2", kind: "post" }],
-        "draft-2",
-      ),
-    ).toBeUndefined();
+    ).toEqual({
+      kind: "unresolved_explicit",
+      reference: "Post Artifact 9",
+    });
   });
 
   test("a read-only command about some other object does not bind the open draft", () => {
     expect(looksLikeArtifactReviewRequest("Review my weekly content strategy."))
       .toBe(false);
-    expect(
-      reviewArtifactIdForComposer(
-        "Summarize the attached research file.",
-        [{ id: "draft-1", kind: "post" }],
-        "draft-1",
-      ),
-    ).toBeUndefined();
-  });
-});
-
-describe("askAnswerShouldRefineLatestDraft — post-draft ask answers", () => {
-  const postDraftAsk = {
-    question: "Anything else on this one?",
-    options: ["Tighten the hook", "Make it shorter", "Add a CTA", "They're good — done"],
-  };
-
-  test.each([
-    "Tighten the hook",
-    "Make it shorter",
-    "Add a CTA",
-    "Make it a list-format variation",
-    "Turn it into a listicle",
-  ])("'%s' refines the latest draft from a post-draft ask", (answer) => {
-    expect(askAnswerShouldRefineLatestDraft(postDraftAsk, answer)).toBe(true);
-  });
-
-  test("done answer does not start another model turn", () => {
-    expect(askAnswerShouldRefineLatestDraft(postDraftAsk, "They're good — done")).toBe(false);
-  });
-
-  test("the same variation wording from the raw composer still means a new draft", () => {
-    expect(looksLikeComposerRefine("Make it a list-format variation")).toBe(false);
-  });
-
-  test("ordinary clarifying-question answers do not force an in-place refine", () => {
-    expect(
-      askAnswerShouldRefineLatestDraft(
-        {
-          question: "Which angle should I use?",
-          options: ["Customer win", "Contrarian", "Founder story"],
-        },
-        "Customer win",
-      ),
-    ).toBe(false);
   });
 });
 
 // ---------------------------------------------------------------------------
 // buildHookOnlyRefineMessage — the enriched message the client sends to the
-// agent for a hook-only refine. Same shape used by BOTH the per-card Refine
-// button AND the ask-card "Tighten the hook" click, so the model always
-// sees the "rewrite ONLY the hook" instruction. Pure + shared with the
-// server via lib/hook-splice.
+// agent for an explicit per-card hook-only refine.
 // ---------------------------------------------------------------------------
 describe("buildHookOnlyRefineMessage — enriched refine prompt", () => {
   test("wraps the instruction with the 'Rewrite ONLY the hook' clause + quotes the source body", () => {
