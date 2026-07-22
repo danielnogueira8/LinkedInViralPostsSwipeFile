@@ -188,3 +188,14 @@ export function toZernioMediaItems(attachments: PostMediaAttachment[]): Array<{ 
     return { url: a.url, type: a.type };
   });
 }
+
+// `previewUrl` is a browser-only convenience (often a blob: URL). It makes an
+// upload feel immediate, but must never be persisted or sent to another client.
+export function mediaAttachmentsForPersistence(
+  attachments: PostMediaAttachment[],
+): PostMediaAttachment[] {
+  return attachments.map(({ previewUrl, ...attachment }) => {
+    void previewUrl;
+    return attachment;
+  });
+}

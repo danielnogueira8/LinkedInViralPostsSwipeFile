@@ -5,6 +5,7 @@ import {
   validatePostMediaFile,
   validatePostMediaSet,
   toZernioMediaItems,
+  mediaAttachmentsForPersistence,
   type PostMediaAttachment,
 } from "@/lib/post-media";
 import {
@@ -55,6 +56,16 @@ describe("post media validation", () => {
 
   test("rejects arbitrary public URLs that were not uploaded through Zernio", () => {
     expect(validatePostMediaSet([media({ url: "https://example.com/photo.jpg" })])).toMatch(/Zernio/i);
+  });
+
+  test("does not include a browser-only preview URL in a persistence payload", () => {
+    const payload = mediaAttachmentsForPersistence([
+      media({ previewUrl: "blob:https://app.example/temporary-preview" }),
+    ]);
+    expect(payload).toEqual([
+      expect.objectContaining({ id: "m1", url: "https://media.zernio.com/temp/photo.jpg" }),
+    ]);
+    expect(payload[0]).not.toHaveProperty("previewUrl");
   });
 
   test("allows image carousels but rejects mixed media", () => {

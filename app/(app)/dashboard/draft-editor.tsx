@@ -10,6 +10,7 @@ import {
   ArrowUp,
 } from "lucide-react";
 import { AiIcon } from "@/components/ai-icon";
+import { clipboardHasText, clipboardImageFiles } from "@/lib/clipboard-images";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import {
@@ -34,6 +35,7 @@ export function DraftEditor({
   className,
   textareaClassName,
   onMediaFiles,
+  allowImagePaste = false,
 }: {
   value: string;
   onChange: (next: string) => void;
@@ -41,6 +43,9 @@ export function DraftEditor({
   className?: string;
   textareaClassName?: string;
   onMediaFiles?: (files: File[]) => void;
+  // Image paste belongs to the New Post flow. Drag/drop and the Attach control
+  // remain available wherever this editor is used.
+  allowImagePaste?: boolean;
 }) {
   const taRef = useRef<HTMLTextAreaElement>(null);
   // Emoji picker (the always-visible bar above the textarea). Emoji needs a
@@ -344,10 +349,17 @@ export function DraftEditor({
         onSelect={refreshFloat}
         onBlur={() => setFloatPos(null)}
         onPaste={(event) => {
-          const files = Array.from(event.clipboardData.files);
+          // Keep this on the editor rather than the document: image pastes are
+          // only meaningful while this post editor is mounted, and a nested
+          // image-aware control can opt out with preventDefault().
+          if (event.defaultPrevented || !allowImagePaste || !onMediaFiles) return;
+          const files = clipboardImageFiles(event.clipboardData);
           if (files.length === 0) return;
-          event.preventDefault();
-          onMediaFiles?.(files);
+          // Image-only paste has no useful textarea default. If text arrived
+          // alongside the image, preserve the user's normal text paste while
+          // the same upload flow starts in the background.
+          if (!clipboardHasText(event.clipboardData)) event.preventDefault();
+          onMediaFiles(files);
         }}
         onDragEnter={(event) => {
           if (!Array.from(event.dataTransfer.types).includes("Files")) return;
