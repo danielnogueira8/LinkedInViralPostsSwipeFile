@@ -12,7 +12,10 @@ const enqueue = vi.fn(async (...args: unknown[]) => {
 });
 
 vi.mock("@/lib/supabase", () => ({ supabaseAdmin: () => dbRef.current.client }));
-vi.mock("@/lib/supabase-scoped", () => ({ trackedAccountIds: async () => [] }));
+vi.mock("@/lib/supabase-scoped", () => ({
+  trackedAccountIdsForService: async () => [],
+  latestRelevantScrapeForService: async () => null,
+}));
 vi.mock("@/lib/ai-operation-claims", () => ({
   claimAiOperation: async () => claimRef.current,
   releaseAiOperation: async () => undefined,

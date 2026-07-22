@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
+import { downloadWorkspaceMedia, MEDIA_LIBRARY_BUCKET } from "@/lib/media-library";
 
 export const runtime = "nodejs";
 
@@ -22,10 +23,14 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     if (asset.media_type !== "image") {
       return NextResponse.json({ ok: false, error: "Preview is only available for images." }, { status: 400 });
     }
+    if (asset.storage_bucket !== MEDIA_LIBRARY_BUCKET) {
+      throw new Error("Unsupported media storage bucket");
+    }
 
-    const download = await sb.raw.storage
-      .from(String(asset.storage_bucket))
-      .download(String(asset.storage_path));
+    const download = await downloadWorkspaceMedia(
+      sb.workspaceId,
+      String(asset.storage_path),
+    );
     if (download.error || !download.data) throw download.error ?? new Error("Could not load preview.");
 
     return new NextResponse(download.data, {

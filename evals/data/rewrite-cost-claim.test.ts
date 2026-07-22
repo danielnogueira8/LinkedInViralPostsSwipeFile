@@ -14,7 +14,6 @@ import { describe, test, expect, vi, beforeEach } from "vitest";
 
 vi.mock("@/lib/workspace", async (orig) => ({
   ...(await orig<typeof import("@/lib/workspace")>()),
-  requireWorkspaceId: async () => "ws-1",
 }));
 
 const capRef: { current: { ok: boolean; message?: string; retryAfterSec?: number } } = {
@@ -46,6 +45,21 @@ vi.mock("@/lib/supabase", () => ({
         }),
       }),
     }),
+  }),
+}));
+
+vi.mock("@/lib/supabase-scoped", () => ({
+  scopedSupabase: async () => ({
+    workspaceId: "ws-1",
+    raw: {
+      from: () => ({
+        select: () => ({
+          eq: () => ({
+            maybeSingle: async () => ({ data: null, error: null }),
+          }),
+        }),
+      }),
+    },
   }),
 }));
 

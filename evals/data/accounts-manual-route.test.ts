@@ -46,6 +46,8 @@ const fakeRaw = {
 
 const trackAccount = vi.fn(async () => ({ error: null }));
 
+vi.mock("@/lib/supabase", () => ({ supabaseAdmin: () => fakeRaw }));
+
 vi.mock("@/lib/supabase-scoped", () => ({
   scopedSupabase: async () => ({
     workspaceId: "ws_1",

@@ -23,13 +23,16 @@ const deleteAccount = vi.fn(async () => true);
 const markDisconnected = vi.fn(async () => {});
 
 vi.mock("@/lib/workspace", () => ({
-  requireWorkspaceId: () => requireWorkspaceId(),
   // Mirror the real errorResponse envelope so a thrown error is observable.
   errorResponse: (e: unknown) =>
     Response.json(
       { ok: false, error: (e as Error)?.message ?? "Unexpected error" },
       { status: 500 },
     ),
+}));
+
+vi.mock("@/lib/supabase-scoped", () => ({
+  scopedSupabase: async () => ({ workspaceId: await requireWorkspaceId(), raw: {} }),
 }));
 
 vi.mock("@/lib/publishing", () => ({

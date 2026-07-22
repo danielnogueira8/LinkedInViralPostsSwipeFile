@@ -31,7 +31,7 @@ export default async function AnalyticsPage() {
       .eq("workspace_id", sb.workspaceId)
       .order("snapshot_date", { ascending: true })
       .limit(5000),
-    getConnection(sb.workspaceId),
+    getConnection(sb.workspaceId, sb.raw),
     sb.raw
       .from("chat_artifacts")
       .select("id", { count: "exact", head: true })

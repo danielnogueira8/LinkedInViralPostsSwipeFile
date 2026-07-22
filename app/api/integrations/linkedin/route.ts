@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { requireWorkspaceId, errorResponse } from "@/lib/workspace";
+import { errorResponse } from "@/lib/workspace";
+import { scopedSupabase } from "@/lib/supabase-scoped";
 import {
   getConnection,
   ensureProfile,
@@ -21,8 +22,8 @@ export const runtime = "nodejs";
 
 export async function GET() {
   try {
-    const workspaceId = await requireWorkspaceId();
-    const conn = await getConnection(workspaceId);
+    const { raw: db, workspaceId } = await scopedSupabase();
+    const conn = await getConnection(workspaceId, db);
     return NextResponse.json({
       ok: true,
       connection: conn
@@ -51,13 +52,13 @@ function originFrom(req: Request): string {
 
 export async function POST(req: Request) {
   try {
-    const workspaceId = await requireWorkspaceId();
+    const { raw: db, workspaceId } = await scopedSupabase();
     // Already connected? Don't re-initiate. Zernio's /connect rejects starting a
     // new OAuth flow on a profile that already has an active LinkedIn account
     // (a 400 that used to surface as a nonsensical "Publishing failed" toast on
     // the CONNECT screen). Short-circuit with a clear signal the client can act
     // on (e.g. skip the onboarding step / show "Connected").
-    const existing = await getConnection(workspaceId);
+    const existing = await getConnection(workspaceId, db);
     if (canPublish(existing)) {
       return NextResponse.json({
         ok: true,
@@ -86,8 +87,8 @@ export async function POST(req: Request) {
 
 export async function DELETE() {
   try {
-    const workspaceId = await requireWorkspaceId();
-    const conn = await getConnection(workspaceId);
+    const { raw: db, workspaceId } = await scopedSupabase();
+    const conn = await getConnection(workspaceId, db);
     // Best-effort disconnect on Zernio's side; we mark our row regardless so the
     // Settings card reflects the user's intent even if the remote call fails.
     if (conn?.zernio_account_id) await deleteAccount(conn.zernio_account_id);

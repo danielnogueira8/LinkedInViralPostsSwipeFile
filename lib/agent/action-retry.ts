@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ActionOrchestratorRoute } from "@/lib/agent/turn/compile";
+import { supabaseAdmin } from "@/lib/supabase";
 
 type RetryUser = { id: string; content: string };
 type RetryTerminalReason =
@@ -166,6 +167,7 @@ export async function resolveActionRetryRoot(
 
 export function createSupabaseActionRetryRepository(
   client: SupabaseClient,
+  internalClient: () => SupabaseClient = supabaseAdmin,
 ): ActionRetryRepository {
   return {
     async latestUser(input) {
@@ -202,7 +204,7 @@ export function createSupabaseActionRetryRepository(
         : null;
     },
     async contextForUser(input) {
-      let query = client
+      let query = internalClient()
         .from("chat_action_retry_contexts")
         .select(
           "root_turn_message_id, effective_instruction, route, confirmed_target_ids, cancelled_at",
@@ -223,7 +225,7 @@ export function createSupabaseActionRetryRepository(
       return retryContextFromRow(row);
     },
     async latestContext(input) {
-      let query = client
+      let query = internalClient()
         .from("chat_action_retry_contexts")
         .select(
           "root_turn_message_id, effective_instruction, route, confirmed_target_ids, cancelled_at",

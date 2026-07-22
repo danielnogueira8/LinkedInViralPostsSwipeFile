@@ -1,35 +1,40 @@
 import { cache } from "react";
-import { supabaseAdmin } from "./supabase";
-import { requireWorkspaceId } from "./workspace";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { supabaseAdmin, supabaseForWorkspaceRequest } from "./supabase";
+import { requireWorkspaceSession } from "./workspace";
 import { retryRead } from "./retry-read";
 import { encodePostgrestValue } from "./postgrest";
 
 /**
  * Workspace-scoped Supabase client.
  *
- * Uses the service-role key under the hood (bypasses RLS) but enforces
- * workspace isolation at the app layer — every query/insert is filtered or
- * stamped with workspace_id. Belt-and-suspenders alongside RLS in
- * migration 011.
+ * Uses the current Clerk session token with the anon key, so ordinary queries
+ * are checked by Postgres RLS against the same user id that the app treats as
+ * workspace_id. A fixed capability allowlist preserves only service-only RPCs;
+ * service-only tables and storage stay behind operation-specific adapters.
+ * Queries still filter or stamp workspace_id explicitly: app-layer scoping and
+ * RLS are independent defenses.
  *
  * For workspace-scoped tables (clients, image_prompts, settings,
  * workspace_accounts, runs): use the helpers below.
  *
- * For global tables (accounts, posts, templates): drop to `.raw` and filter
- * by `workspace_accounts.account_id` via `trackedAccountIds()`.
+ * `.raw` is the request capability client retained as the compatibility name
+ * used by domain repositories. For global tables
+ * (accounts, posts, templates), filter by `workspace_accounts.account_id` via
+ * `trackedAccountIds()`; their RLS policies enforce the same relationship.
  *
  * Cron + background pipelines should use supabaseAdmin() directly.
  */
 
 // Note: we intentionally type column-string args as `string` and let the
 // underlying Supabase chain be typed loosely. Threading generic literal types
-// through Supabase's typegen blew up type-checking (recursive depth). The
-// belt-and-suspenders is the .eq("workspace_id", ...) on every chain, not
-// type-level enforcement.
+// through Supabase's typegen blew up type-checking (recursive depth). Runtime
+// isolation comes from both the explicit .eq("workspace_id", ...) predicates
+// and the authenticated client's RLS policies, not from these helper types.
 
 export const scopedSupabase = cache(async function scopedSupabase() {
-  const workspaceId = await requireWorkspaceId();
-  const sb = supabaseAdmin();
+  const { workspaceId, getSupabaseToken } = await requireWorkspaceSession();
+  const sb = supabaseForWorkspaceRequest(getSupabaseToken, workspaceId);
 
   return {
     workspaceId,
@@ -125,25 +130,49 @@ export const scopedSupabase = cache(async function scopedSupabase() {
  */
 export const trackedAccountIds = cache(
   async (workspaceId: string): Promise<string[]> => {
-    const sb = supabaseAdmin();
-    const { data, error } = await retryRead<{ account_id: string }[]>(() =>
-      sb.from("workspace_accounts").select("account_id").eq("workspace_id", workspaceId),
-    );
-    if (error) throw error;
-    const rows = data ?? [];
-    // No .range() pagination here on purpose — MANUAL_ACCOUNT_LIMIT (50,
-    // lib/account-tracking.ts) keeps every workspace far under PostgREST's
-    // silent 1000-row cap, so paginating would be unreachable complexity.
-    // This warns loudly instead if that ever stops being true (a raised cap,
-    // a bug bypassing it) rather than silently truncating the roster.
-    if (rows.length >= 1000) {
-      console.error(
-        `trackedAccountIds(${workspaceId}) returned ${rows.length} rows — hit PostgREST's 1000-row cap. MANUAL_ACCOUNT_LIMIT no longer bounds this; needs selectAllRows pagination.`,
-      );
+    const session = await requireWorkspaceSession();
+    if (session.workspaceId !== workspaceId) {
+      throw new Error("Workspace identity mismatch");
     }
-    return rows.map((r) => r.account_id as string);
+    return trackedAccountIdsWithClient(
+      supabaseForWorkspaceRequest(session.getSupabaseToken, workspaceId),
+      workspaceId,
+    );
   },
 );
+
+async function trackedAccountIdsWithClient(
+  sb: SupabaseClient,
+  workspaceId: string,
+): Promise<string[]> {
+  const { data, error } = await retryRead<{ account_id: string }[]>(() =>
+    sb
+      .from("workspace_accounts")
+      .select("account_id")
+      .eq("workspace_id", workspaceId),
+  );
+  if (error) throw error;
+  const rows = data ?? [];
+  // No .range() pagination here on purpose — MANUAL_ACCOUNT_LIMIT (50,
+  // lib/account-tracking.ts) keeps every workspace far under PostgREST's
+  // silent 1000-row cap, so paginating would be unreachable complexity.
+  // This warns loudly instead if that ever stops being true (a raised cap,
+  // a bug bypassing it) rather than silently truncating the roster.
+  if (rows.length >= 1000) {
+    console.error(
+      `trackedAccountIds(${workspaceId}) returned ${rows.length} rows — hit PostgREST's 1000-row cap. MANUAL_ACCOUNT_LIMIT no longer bounds this; needs selectAllRows pagination.`,
+    );
+  }
+  return rows.map((r) => r.account_id as string);
+}
+
+/** Service-authenticated equivalent for MCP requests, which authenticate with
+ * their own bearer-token layer rather than a Clerk browser session. */
+export function trackedAccountIdsForService(
+  workspaceId: string,
+): Promise<string[]> {
+  return trackedAccountIdsWithClient(supabaseAdmin(), workspaceId);
+}
 
 /**
  * The most recent successful scrape run "relevant" to a workspace: either a
@@ -163,7 +192,20 @@ export const trackedAccountIds = cache(
 export async function latestRelevantScrape(
   workspaceId: string,
 ): Promise<{ started_at: string; finished_at: string | null } | null> {
-  const sb = supabaseAdmin();
+  const session = await requireWorkspaceSession();
+  if (session.workspaceId !== workspaceId) {
+    throw new Error("Workspace identity mismatch");
+  }
+  return latestRelevantScrapeWithClient(
+    supabaseForWorkspaceRequest(session.getSupabaseToken, workspaceId),
+    workspaceId,
+  );
+}
+
+async function latestRelevantScrapeWithClient(
+  sb: SupabaseClient,
+  workspaceId: string,
+): Promise<{ started_at: string; finished_at: string | null } | null> {
   const { data, error } = await retryRead<
     { started_at: string; finished_at: string | null }[]
   >(() =>
@@ -177,4 +219,10 @@ export async function latestRelevantScrape(
   );
   if (error) throw error;
   return data?.[0] ?? null;
+}
+
+export function latestRelevantScrapeForService(
+  workspaceId: string,
+): Promise<{ started_at: string; finished_at: string | null } | null> {
+  return latestRelevantScrapeWithClient(supabaseAdmin(), workspaceId);
 }

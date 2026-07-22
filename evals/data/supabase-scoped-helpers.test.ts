@@ -17,9 +17,16 @@ import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 let capturedOr: string | null = null;
 let rows: Array<{ started_at: string; finished_at: string | null }> = [];
 let workspaceAccountsRows: Array<{ account_id: string }> = [];
+let sessionWorkspaceId = "ws-a";
 
-vi.mock("@/lib/supabase", () => ({
-  supabaseAdmin: () => ({
+vi.mock("@/lib/workspace", () => ({
+  requireWorkspaceSession: async () => ({
+    workspaceId: sessionWorkspaceId,
+    getSupabaseToken: async () => "token",
+  }),
+}));
+
+const databaseClient = {
     from: (table: string) => {
       if (table === "workspace_accounts") {
         const chain: Record<string, unknown> = {};
@@ -45,7 +52,11 @@ vi.mock("@/lib/supabase", () => ({
         resolve({ data: rows, error: null });
       return chain;
     },
-  }),
+  };
+
+vi.mock("@/lib/supabase", () => ({
+  supabaseAdmin: () => databaseClient,
+  supabaseForWorkspaceRequest: () => databaseClient,
 }));
 
 const { latestRelevantScrape, trackedAccountIds } = await import("@/lib/supabase-scoped");
@@ -58,6 +69,7 @@ beforeEach(() => {
 
 describe("latestRelevantScrape", () => {
   test("scopes the lookup to the caller's workspace OR a global run", async () => {
+    sessionWorkspaceId = "ws-a";
     rows = [{ started_at: "2026-07-10T00:00:00.000Z", finished_at: "2026-07-10T00:05:00.000Z" }];
 
     const out = await latestRelevantScrape("ws-a");
@@ -70,6 +82,7 @@ describe("latestRelevantScrape", () => {
   });
 
   test("safely encodes a workspace id with PostgREST-reserved characters", async () => {
+    sessionWorkspaceId = "ws,with(reserved)chars";
     rows = [];
     await latestRelevantScrape("ws,with(reserved)chars");
     expect(capturedOr).toBe(
@@ -78,6 +91,7 @@ describe("latestRelevantScrape", () => {
   });
 
   test("no matching run → null (not an empty object)", async () => {
+    sessionWorkspaceId = "ws-a";
     rows = [];
     expect(await latestRelevantScrape("ws-a")).toBeNull();
   });
@@ -88,6 +102,7 @@ describe("trackedAccountIds", () => {
   afterEach(() => consoleError.mockClear());
 
   test("returns account ids from workspace_accounts", async () => {
+    sessionWorkspaceId = "ws-tracked-1";
     workspaceAccountsRows = [{ account_id: "a1" }, { account_id: "a2" }];
     // Distinct workspace id per test — trackedAccountIds is wrapped in React
     // cache(), which memoizes by argument for the module's lifetime outside a
@@ -98,6 +113,7 @@ describe("trackedAccountIds", () => {
   });
 
   test("stays silent well under the 1000-row PostgREST cap (normal MANUAL_ACCOUNT_LIMIT scale)", async () => {
+    sessionWorkspaceId = "ws-tracked-2";
     workspaceAccountsRows = Array.from({ length: 50 }, (_, i) => ({ account_id: `a${i}` }));
     const ids = await trackedAccountIds("ws-tracked-2");
     expect(ids).toHaveLength(50);
@@ -105,6 +121,7 @@ describe("trackedAccountIds", () => {
   });
 
   test("logs loudly instead of silently truncating if the 1000-row cap is ever hit", async () => {
+    sessionWorkspaceId = "ws-tracked-3";
     workspaceAccountsRows = Array.from({ length: 1000 }, (_, i) => ({ account_id: `a${i}` }));
     const ids = await trackedAccountIds("ws-tracked-3");
     expect(ids).toHaveLength(1000);

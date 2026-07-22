@@ -8,6 +8,11 @@ export class NoWorkspaceError extends Error {
   }
 }
 
+export type WorkspaceSession = {
+  workspaceId: string;
+  getSupabaseToken: () => Promise<string | null>;
+};
+
 /**
  * Map a thrown error to a JSON `{ ok: false, error }` response for API routes.
  *
@@ -42,9 +47,21 @@ export function errorResponse(e: unknown): NextResponse {
  * Throws if the request has no Clerk session. Server-side only.
  */
 export async function requireWorkspaceId(): Promise<string> {
-  const { userId } = await auth();
+  return (await requireWorkspaceSession()).workspaceId;
+}
+
+/**
+ * Resolve the workspace and the Clerk JWT used by Supabase's RLS policies.
+ * Keeping both values from one auth() result prevents identity drift between
+ * the app-layer workspace predicate and the database-layer `sub` claim.
+ */
+export async function requireWorkspaceSession(): Promise<WorkspaceSession> {
+  const { userId, getToken } = await auth();
   if (!userId) throw new NoWorkspaceError();
-  return userId;
+  return {
+    workspaceId: userId,
+    getSupabaseToken: () => getToken({ template: "supabase" }),
+  };
 }
 
 /**
