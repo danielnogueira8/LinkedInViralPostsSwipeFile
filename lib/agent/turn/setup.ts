@@ -80,6 +80,7 @@ import {
   buildArtifactIndex,
 } from "@/lib/chat-artifact-policy";
 import { resolveFreeTextArtifactIntent } from "@/lib/agent/turn/resolve-artifact-intent";
+import { turnOperationToolCall } from "@/lib/agent/turn/operation-marker";
 import { getSkillsByNames } from "@/lib/content-resource-operations";
 import { SKILLS_PER_TURN_MAX } from "@/lib/custom-skills";
 import { selectAllRows } from "@/lib/db-paginate";
@@ -385,12 +386,7 @@ export async function setupChatTurn(
     workspaceId = sb.workspaceId;
     sbRaw = sb.raw;
     userText = body.message;
-    currentTurnOperation =
-      body.operation?.kind === "edit_artifact" &&
-      body.operation.editMode === undefined &&
-      body.hookOnly
-        ? { ...body.operation, editMode: "hook_only" }
-        : (body.operation ?? null);
+    currentTurnOperation = body.operation ?? null;
     attachments = body.attachments ?? [];
     modelSourceId = body.modelSourceId;
     skipDecision = body.skipDecision ?? false;
@@ -416,7 +412,9 @@ export async function setupChatTurn(
     } else if (
       body.skipDecision === true ||
       body.refineTargetId ||
-      body.refineInstruction
+      body.refineInstruction ||
+      body.hookOnly !== undefined ||
+      body.hookOnlyOriginalBody !== undefined
     ) {
       return turnError("The legacy refine request is incomplete.", 400);
     }
@@ -1379,14 +1377,7 @@ export async function setupChatTurn(
     const userColumnPatch: Record<string, unknown> = {};
     const currentTurnMarkers: ToolCall[] = [];
     if (currentTurnOperation) {
-      currentTurnMarkers.push({
-        id: "_turn_operation",
-        type: "function",
-        function: {
-          name: "_turn_operation",
-          arguments: JSON.stringify({ version: 1, ...currentTurnOperation }),
-        },
-      });
+      currentTurnMarkers.push(turnOperationToolCall(currentTurnOperation));
     }
     if (body.contextPolicy) {
       currentTurnMarkers.push(chatContextPolicyToolCall(body.contextPolicy));

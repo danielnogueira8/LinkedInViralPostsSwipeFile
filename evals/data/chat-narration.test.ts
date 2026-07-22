@@ -2,7 +2,6 @@ import { describe, test, expect } from "vitest";
 import {
   buildArtifactIndex,
   kindNoun,
-  labelArtifacts,
   panelTitle,
   prettyToolName,
   planProgressTitle,
@@ -19,8 +18,8 @@ import type { Message } from "@/lib/chat-hydration";
 // ---------------------------------------------------------------------------
 // Chat-interaction rendering logic: how drafts are numbered/labeled, the panel
 // header, the activity-stream tool narration, and the live "Working/Planning"
-// status line. All pure — previously untested. labelArtifacts in particular
-// caused a real "Draft N" numbering bug, so it's pinned hard.
+// status line. All pure — previously untested. Artifact indexing in particular
+// caused a real numbering bug, so it's pinned hard.
 // ---------------------------------------------------------------------------
 
 const art = (kind: Artifact["kind"], body = "b"): Artifact => ({
@@ -31,53 +30,76 @@ const art = (kind: Artifact["kind"], body = "b"): Artifact => ({
 });
 
 describe("kindNoun", () => {
-  test("hook → Hook, post → Draft, cite → Draft", () => {
-    expect(kindNoun("hook")).toBe("Hook");
-    expect(kindNoun("post")).toBe("Draft");
-    expect(kindNoun("cite")).toBe("Draft");
+  test("uses canonical Artifact vocabulary for every conversation deliverable", () => {
+    expect(kindNoun("hook")).toBe("Hook Artifact");
+    expect(kindNoun("post")).toBe("Post Artifact");
+    expect(kindNoun("cite")).toBe("Artifact");
   });
 });
 
-describe("labelArtifacts — Draft/Hook numbering", () => {
-  test("a lone draft is just 'Draft' (no number)", () => {
-    const out = labelArtifacts([art("post", "x")]);
-    expect(out.map((o) => o.label)).toEqual(["Draft"]);
+describe("buildArtifactIndex — Post/Hook Artifact numbering", () => {
+  test("a lone post is just 'Post Artifact' (no number)", () => {
+    const out = buildArtifactIndex([art("post", "x")]).entries;
+    expect(out.map((o) => o.label)).toEqual(["Post Artifact"]);
   });
 
-  test("a lone hook is just 'Hook'", () => {
-    expect(labelArtifacts([art("hook", "x")]).map((o) => o.label)).toEqual(["Hook"]);
+  test("a lone hook is just 'Hook Artifact'", () => {
+    expect(
+      buildArtifactIndex([art("hook", "x")]).entries.map((o) => o.label),
+    ).toEqual(["Hook Artifact"]);
   });
 
-  test("multiple posts → Draft 1, Draft 2, Draft 3 in creation order", () => {
-    const out = labelArtifacts([art("post", "a"), art("post", "b"), art("post", "c")]);
-    expect(out.map((o) => o.label)).toEqual(["Draft 1", "Draft 2", "Draft 3"]);
+  test("multiple posts are numbered in creation order", () => {
+    const out = buildArtifactIndex([
+      art("post", "a"),
+      art("post", "b"),
+      art("post", "c"),
+    ]).entries;
+    expect(out.map((o) => o.label)).toEqual([
+      "Post Artifact 1",
+      "Post Artifact 2",
+      "Post Artifact 3",
+    ]);
   });
 
-  test("multiple hooks → Hook 1..N", () => {
-    const out = labelArtifacts([art("hook", "a"), art("hook", "b")]);
-    expect(out.map((o) => o.label)).toEqual(["Hook 1", "Hook 2"]);
+  test("multiple hooks are numbered in creation order", () => {
+    const out = buildArtifactIndex([art("hook", "a"), art("hook", "b")]).entries;
+    expect(out.map((o) => o.label)).toEqual([
+      "Hook Artifact 1",
+      "Hook Artifact 2",
+    ]);
   });
 
   test("mixed kinds number WITHIN each kind independently", () => {
     // 2 posts + 2 hooks interleaved → each numbered within its own kind.
-    const out = labelArtifacts([
+    const out = buildArtifactIndex([
       art("post", "p1"),
       art("hook", "h1"),
       art("post", "p2"),
       art("hook", "h2"),
+    ]).entries;
+    expect(out.map((o) => o.label)).toEqual([
+      "Post Artifact 1",
+      "Hook Artifact 1",
+      "Post Artifact 2",
+      "Hook Artifact 2",
     ]);
-    expect(out.map((o) => o.label)).toEqual(["Draft 1", "Hook 1", "Draft 2", "Hook 2"]);
   });
 
   test("a single post + a single hook each stay unnumbered", () => {
-    const out = labelArtifacts([art("post", "p"), art("hook", "h")]);
-    expect(out.map((o) => o.label)).toEqual(["Draft", "Hook"]);
+    const out = buildArtifactIndex([art("post", "p"), art("hook", "h")]).entries;
+    expect(out.map((o) => o.label)).toEqual([
+      "Post Artifact",
+      "Hook Artifact",
+    ]);
   });
 
   test("returns artifacts in creation order (caller reverses for display)", () => {
     const a = art("post", "first");
     const b = art("post", "second");
-    expect(labelArtifacts([a, b]).map((o) => o.a.body)).toEqual(["first", "second"]);
+    expect(
+      buildArtifactIndex([a, b]).entries.map((o) => o.artifact.body),
+    ).toEqual(["first", "second"]);
   });
 });
 
@@ -91,13 +113,13 @@ describe("shared Artifact index", () => {
       expect.objectContaining({
         artifactId: "artifact-1",
         ordinal: 1,
-        label: "Draft 1",
+        label: "Post Artifact 1",
         artifact: updated,
       }),
       expect.objectContaining({
         artifactId: "artifact-2",
         ordinal: 2,
-        label: "Draft 2",
+        label: "Post Artifact 2",
         artifact: second,
       }),
     ]);
@@ -115,7 +137,7 @@ describe("shared Artifact index", () => {
     expect(resolveArtifactReference("Improve this", artifacts, "post-1"))
       .toEqual({ kind: "selected", artifactId: "post-1" });
     expect(resolveArtifactReference("Review Draft 9", artifacts, null))
-      .toEqual({ kind: "unresolved_explicit", reference: "Draft 9" });
+      .toEqual({ kind: "unresolved_explicit", reference: "Post Artifact 9" });
   });
 
   test("does not silently replace a stale selected Artifact with the latest one", () => {
@@ -123,8 +145,8 @@ describe("shared Artifact index", () => {
       resolveArtifactReference(
         "Make this punchier",
         [
-          { id: "post-1", kind: "post" },
-          { id: "post-2", kind: "post" },
+          { ...art("post", "one"), id: "post-1" },
+          { ...art("post", "two"), id: "post-2" },
         ],
         "deleted-draft",
       ),
@@ -136,17 +158,17 @@ describe("shared Artifact index", () => {
 });
 
 describe("panelTitle", () => {
-  test("posts only → Drafts", () => {
-    expect(panelTitle([art("post"), art("post")])).toBe("Drafts");
+  test("posts only → Artifacts", () => {
+    expect(panelTitle([art("post"), art("post")])).toBe("Artifacts");
   });
-  test("hooks only → Hooks", () => {
-    expect(panelTitle([art("hook")])).toBe("Hooks");
+  test("hooks only → Artifacts", () => {
+    expect(panelTitle([art("hook")])).toBe("Artifacts");
   });
-  test("both → Drafts & Hooks", () => {
-    expect(panelTitle([art("post"), art("hook")])).toBe("Drafts & Hooks");
+  test("both → Artifacts", () => {
+    expect(panelTitle([art("post"), art("hook")])).toBe("Artifacts");
   });
-  test("empty → Drafts (default)", () => {
-    expect(panelTitle([])).toBe("Drafts");
+  test("empty → Artifacts (default)", () => {
+    expect(panelTitle([])).toBe("Artifacts");
   });
 });
 

@@ -34,6 +34,10 @@ import { requestedDirectPostCount } from "@/lib/agent/direct-deliverable-policy"
 import { type CoworkTelemetrySink } from "@/lib/agent/cowork-telemetry";
 
 import { setupChatTurn } from "@/lib/agent/turn/setup";
+import {
+  TURN_OPERATION_TOOL_NAME,
+  TURN_OPERATION_VERSION,
+} from "@/lib/agent/turn/operation-marker";
 
 import {
   CREATOR_STYLE_RETRY_CONTEXT_VERSION,
@@ -312,8 +316,6 @@ const chatTurnOperationSchema = z.discriminatedUnion("kind", [
     .strict(),
 ]);
 
-const TURN_OPERATION_TOOL_NAME = "_turn_operation";
-
 export type TurnOperationMarker =
   | { kind: "none" }
   | { kind: "invalid" }
@@ -335,7 +337,7 @@ export function turnOperationMarkerFromToolCalls(input: {
       return { kind: "invalid" };
     }
     const { version, ...operationValue } = value as Record<string, unknown>;
-    if (version !== 1) return { kind: "invalid" };
+    if (version !== TURN_OPERATION_VERSION) return { kind: "invalid" };
     const operation = chatTurnOperationSchema.safeParse(operationValue);
     return operation.success
       ? { kind: "valid", operation: operation.data }

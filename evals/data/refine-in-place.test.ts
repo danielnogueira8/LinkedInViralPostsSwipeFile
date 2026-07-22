@@ -17,6 +17,7 @@ import {
   splicePreservedBody,
 } from "@/lib/hook-splice";
 import { turnOperationMarkerFromToolCalls } from "@/lib/agent/chat-turn";
+import { turnOperationToolCall } from "@/lib/agent/turn/operation-marker";
 import {
   looksLikeArtifactReviewRequest,
   looksLikeComposerRefine,
@@ -131,21 +132,11 @@ describe("persisted typed operation identity", () => {
   test("restores the exact artifact operation from a persisted user turn", () => {
     expect(
       turnOperationMarkerFromToolCalls({
-        tool_calls: [
-          {
-            id: "_turn_operation",
-            type: "function",
-            function: {
-              name: "_turn_operation",
-              arguments: JSON.stringify({
-                version: 1,
-                kind: "edit_artifact",
-                artifactId: "artifact-1",
-                instruction: "Make Draft 1 punchier.",
-              }),
-            },
-          },
-        ],
+        tool_calls: [turnOperationToolCall({
+          kind: "edit_artifact",
+          artifactId: "artifact-1",
+          instruction: "Make Draft 1 punchier.",
+        })],
       }),
     ).toEqual({
       kind: "valid",
@@ -190,12 +181,11 @@ describe("persisted typed operation identity", () => {
 });
 
 // ---------------------------------------------------------------------------
-// A refine produces a NEW draft card alongside the source — no in-place swap,
-// no version history. The client-side glue (pendingRefineRef → collapse guard,
-// hook-only body preservation) is exercised by the guards below and by the
-// agent-loop tests in refine-no-explosion.test.ts. This file locks in the
-// PURE helpers: refine-instruction detection, skill inheritance, and the
-// body-preservation math.
+// A refine rewrites the target Artifact in place. The client-side glue
+// (pendingRefineRef → collapse guard, hook-only body preservation) is exercised
+// by the guards below and by the agent-loop tests in refine-no-explosion.test.ts.
+// This file locks in the pure helpers: intent detection, skill inheritance,
+// durable operation identity, and body-preservation math.
 // ---------------------------------------------------------------------------
 
 const mk = (id: string, body: string, meta?: Record<string, unknown>): Artifact => ({
@@ -729,8 +719,8 @@ describe("looksLikeComposerRefine — chat-typed refine detection", () => {
 
   test("an explicit artifact ordinal also controls composer edits", () => {
     const artifacts = [
-      { id: "artifact-1", kind: "post" },
-      { id: "artifact-2", kind: "post" },
+      mk("artifact-1", "one"),
+      mk("artifact-2", "two"),
     ];
 
     expect(
@@ -744,10 +734,10 @@ describe("looksLikeComposerRefine — chat-typed refine detection", () => {
 
   test("Draft and Hook ordinals are numbered independently like the UI", () => {
     const artifacts = [
-      { id: "hook-1", kind: "hook" },
-      { id: "draft-1", kind: "post" },
-      { id: "draft-2", kind: "post" },
-      { id: "hook-2", kind: "hook" },
+      { ...mk("hook-1", "hook one"), kind: "hook" as const },
+      mk("draft-1", "draft one"),
+      mk("draft-2", "draft two"),
+      { ...mk("hook-2", "hook two"), kind: "hook" as const },
     ];
 
     expect(
@@ -769,12 +759,15 @@ describe("looksLikeComposerRefine — chat-typed refine detection", () => {
       resolveArtifactReference(
         "Rewrite Draft 9.",
         [
-          { id: "draft-1", kind: "post" },
-          { id: "draft-2", kind: "post" },
+          mk("draft-1", "draft one"),
+          mk("draft-2", "draft two"),
         ],
         "draft-2",
       ),
-    ).toEqual({ kind: "unresolved_explicit", reference: "Draft 9" });
+    ).toEqual({
+      kind: "unresolved_explicit",
+      reference: "Post Artifact 9",
+    });
   });
 
   test("a read-only command about some other object does not bind the open draft", () => {

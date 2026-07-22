@@ -4959,6 +4959,28 @@ describe("production-shaped Cowork outcome harness", () => {
     expect(report.observed.agentProviderRounds).toBe(0);
   });
 
+  test("legacy hook-only fragments fail before generation", async () => {
+    const report = await runCoworkOutcomeScenario({
+      id: "legacy-hook-only-incomplete",
+      request: {
+        message: "Make this hook stronger.",
+        hookOnly: true,
+        hookOnlyOriginalBody: COMPLETE_POST,
+      },
+      model: { provider: { rounds: [] } },
+      expected: {
+        terminal: "failure",
+        httpStatus: 400,
+        artifactBodies: [],
+        actionNames: [],
+      },
+    });
+
+    expect(report.pass, JSON.stringify(report.safe)).toBe(true);
+    expect(report.observed.directWriterRequests).toHaveLength(0);
+    expect(report.observed.agentProviderRounds).toBe(0);
+  });
+
   test("stale selected-card context clarifies instead of editing another Artifact", async () => {
     const report = await runCoworkOutcomeScenario({
       id: "server-free-text-stale-selected-edit",
@@ -5470,6 +5492,48 @@ describe("production-shaped Cowork outcome harness", () => {
             usage: usage(180, 82, 0.00016),
           },
         ],
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [SECOND_POST],
+        actionNames: [],
+        route: "direct_writer",
+      },
+    });
+
+    expect(report.pass, JSON.stringify(report.safe)).toBe(true);
+    expect(report.persisted.artifacts[0]?.id).toBe(targetId);
+  });
+
+  test("a typed edit without an edit mode ignores conflicting legacy hook fields", async () => {
+    const targetId = "00000000-0000-4000-8000-000000000635";
+    const report = await runCoworkOutcomeScenario({
+      id: "typed-edit-ignores-legacy-hook-mode",
+      request: {
+        message: "Make this stronger.",
+        operation: {
+          kind: "edit_artifact",
+          artifactId: targetId,
+          instruction: "Make this stronger.",
+        },
+        hookOnly: true,
+        hookOnlyOriginalBody: COMPLETE_POST,
+      },
+      seed: {
+        messageArtifact: {
+          id: targetId,
+          kind: "post",
+          title: "Original target",
+          body: COMPLETE_POST,
+        },
+      },
+      model: {
+        provider: { rounds: [] },
+        directWriter: [{
+          text: SECOND_POST,
+          finishReason: "stop",
+          usage: usage(180, 82, 0.00016),
+        }],
       },
       expected: {
         terminal: "done",

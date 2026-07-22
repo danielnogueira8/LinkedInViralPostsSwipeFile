@@ -196,8 +196,8 @@ import {
   guardRefineCollapse,
   assistantAfterPersistedUserMessage,
   hasAssistantAfterPersistedUserMessage,
+  buildArtifactIndex,
   kindNoun,
-  labelArtifacts,
   panelTitle,
   planProgressTitle,
   prettyBytes,
@@ -3479,9 +3479,9 @@ export function ChatWorkspace({
   // The rendered drafts list (expanded card for the active draft, collapsed rows
   // for the rest). Shared by the desktop side panel and the mobile bottom sheet
   // so the two never drift.
-  const draftsList = labelArtifacts(artifacts)
+  const artifactsList = buildArtifactIndex(artifacts).entries
     .reverse() // newest first
-    .map(({ a, label }) =>
+    .map(({ artifact: a, label }) =>
       a.id === expandedArtifactId ? (
         <ArtifactCard
           key={a.id}
@@ -3509,7 +3509,7 @@ export function ChatWorkspace({
       ) : (
         <CollapsedDraftRow
           key={a.id}
-          label={label ?? (a.kind === "hook" ? "Hook" : "Draft")}
+          label={label ?? kindNoun(a.kind)}
           artifact={a}
           onExpand={() => setExpandedArtifactId(a.id)}
           onDelete={() => deleteArtifact(a.id)}
@@ -4937,7 +4937,7 @@ export function ChatWorkspace({
             </button>
           </div>
           <div className="flex-1 min-h-0 overflow-y-scroll [scrollbar-gutter:stable] p-3.5 flex flex-col gap-3">
-            {draftsList}
+            {artifactsList}
           </div>
         </aside>
       )}
@@ -5049,7 +5049,7 @@ export function ChatWorkspace({
               </button>
             </div>
             <div className="flex-1 min-h-0 overflow-y-auto p-3.5 flex flex-col gap-3 pb-[env(safe-area-inset-bottom)]">
-              {draftsList}
+              {artifactsList}
             </div>
           </div>
         </div>

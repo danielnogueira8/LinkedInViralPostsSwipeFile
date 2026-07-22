@@ -1,6 +1,9 @@
 import type { Artifact, AskQuestion } from "@/lib/agent/contracts";
 import { isExclusiveHookRefine } from "@/lib/agent/direct-refine-policy";
-import { resolveArtifactReference } from "@/lib/chat-artifact-policy";
+import {
+  hasExplicitArtifactReference,
+  resolveArtifactReference,
+} from "@/lib/chat-artifact-policy";
 
 const ARTIFACT_MUTATION_VERBS = String.raw`(?:rewrite|edit|change|update|refine|revise|modify|shorten|tighten|strengthen|improve|fix|polish|add|remove|cut|replace|reorder|restructure|make(?=\s+(?:it|this|the|draft|post|hook)\b)|turn(?=\s+(?:it|this|the|draft|post|hook)\b))`;
 const ARTIFACT_MUTATION_RE = new RegExp(
@@ -12,7 +15,7 @@ const COORDINATION_BOUNDARY_RE = /\b(?:then|and|but|plus)\b/gi;
 const MUTATION_NEGATION_RE =
   /\b(?:do\s+not|don(?:'|’)?t|dont|never|without)\b/i;
 const MUTATION_ADVICE_PREFIX_RE =
-  /\b(?:how\s+(?:(?:can|could|should|would|do|might)\s+(?:i|we|you)|(?:i|we|you)\s+(?:can|could|should|would|might)|to)|ways?\s+to|what\s+to)\s*$/i;
+  /\b(?:(?:how|what|why|whether)\s+(?:(?:can|could|should|would|do|might)\s+(?:i|we|you)|(?:i|we|you)\s+(?:can|could|should|would|might)|to)|ways?\s+to)\s*$/i;
 const EXPLICIT_NEW_ARTIFACT_RE =
   /\b(?:(?:another|new|fresh|different|other)\s+(?:draft|post|version|hook|one|variation|angle|take)|(?:write|create|draft|generate|produce|give(?:\s+me)?|show(?:\s+me)?)\s+(?:an?\s+)?(?:alternative|variation)(?:\s+(?:draft|post|version|hook|one))?|(?:an?\s+)?(?:alternative|variation)\s+(?:draft|post|version|hook|one)|make\s+it\s+(?:an?\s+)?(?:[a-z-]+\s+)?(?:alternative|variation)|version\s+(?!(?:history|control)\b)(?:#?\d+|[a-z][a-z-]*)|v\d+|(?:\d+(?:st|nd|rd|th)|[a-z]+(?:st|nd|rd|th))\s+version|a\s+second\s+(?:draft|post|version|hook|one)|one\s+more\s+(?:draft|post|version|hook|one)|give\s+me\s+\d+\s+(?:drafts?|posts?|versions?|hooks?)|draft\s+\d+\s+more)\b/gi;
 const REVIEW_IMPERATIVE_RE =
@@ -65,41 +68,48 @@ function affirmativeMutationAfterCoordination(message: string): string | null {
 }
 
 export function looksLikeArtifactReviewRequest(message: string): boolean {
-  const t = message.trim();
-  if (!t) return false;
+  const trimmedMessage = message.trim();
+  if (!trimmedMessage) return false;
   const hasArtifactReferent =
-    /\b(?:this|that|the|current|selected|latest)\s+(?:post|draft|hook|one)\b|\b(?:draft|hook)\s+#?\s*\d+\b|\bit\b/i.test(
-      t,
-    );
-  const imperative = REVIEW_IMPERATIVE_RE.test(t);
+    /\b(?:this|that|the|current|selected|latest)\s+(?:post(?:\s+artifact)?|draft|hook(?:\s+artifact)?|artifact|one)\b|\bit\b/i.test(
+      trimmedMessage,
+    ) || hasExplicitArtifactReference(trimmedMessage);
+  const imperative = REVIEW_IMPERATIVE_RE.test(trimmedMessage);
   const evaluativeQuestion =
-    /^\s*(?:what|why|how|is|are|does|do|would|should|can|could)\b/i.test(t) &&
+    /^\s*(?:what|why|how|is|are|does|do|would|should|can|could)\b/i.test(
+      trimmedMessage,
+    ) &&
     /\b(?:think|feedback|good|bad|strong|weak|work|effective|land|resonate|improve|issue|problem|summary|mean|argument|point)\b/i.test(
-      t,
+      trimmedMessage,
     );
   if (
     (imperative || evaluativeQuestion) &&
-    affirmativeMutationAfterCoordination(t)
+    affirmativeMutationAfterCoordination(trimmedMessage)
   ) {
     return false;
   }
-  if (DIRECT_MODAL_MUTATION_RE.test(t)) return false;
+  if (DIRECT_MODAL_MUTATION_RE.test(trimmedMessage)) return false;
   return hasArtifactReferent && (imperative || evaluativeQuestion);
 }
 
 export function looksLikeComposerRefine(message: string): boolean {
-  const t = message.toLowerCase().trim();
-  if (!t) return false;
+  const normalizedMessage = message.toLowerCase().trim();
+  if (!normalizedMessage) return false;
   if (looksLikeArtifactReviewRequest(message)) return false;
-  if (explicitlyRequestsNewArtifact(t)) {
+  if (explicitlyRequestsNewArtifact(normalizedMessage)) {
     return false;
   }
-  const hasMutationVerb = new RegExp(ARTIFACT_MUTATION_RE.source, "i").test(t);
-  const hasAffirmativeMutation = hasAffirmativeArtifactMutation(t);
+  const hasMutationVerb = new RegExp(ARTIFACT_MUTATION_RE.source, "i").test(
+    normalizedMessage,
+  );
+  const hasAffirmativeMutation =
+    hasAffirmativeArtifactMutation(normalizedMessage);
   if (hasMutationVerb && !hasAffirmativeMutation) return false;
   return (
     hasAffirmativeMutation ||
-    /\b(?:lengthen|punchier|simpler|stronger|sharper|crisper|tweak)\b/.test(t)
+    /\b(?:lengthen|punchier|simpler|stronger|sharper|crisper|tweak)\b/.test(
+      normalizedMessage,
+    )
   );
 }
 

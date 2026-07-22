@@ -169,6 +169,8 @@ describe("server-owned free-text Artifact intent", () => {
     "Could you tell me how to improve this draft?",
     "Can you give me feedback on how to improve this draft?",
     "Review Draft 1 and tell me how to improve it.",
+    "Tell me what works in Draft 1 and what I should improve.",
+    "Review this draft and explain why you would improve the hook.",
   ])("advice about improving remains a read-only review: %s", (message) => {
     expect(
       resolveFreeTextArtifactIntent({
@@ -219,6 +221,30 @@ describe("server-owned free-text Artifact intent", () => {
         selectedArtifactId: "deleted-draft",
       }).kind,
     ).toBe("clarification");
+  });
+
+  test("word ordinals resolve the explicitly named Artifact instead of selected context", () => {
+    expect(
+      resolveFreeTextArtifactIntent({
+        message: "Rewrite the first draft.",
+        artifacts: [artifact("post-1"), artifact("post-2")],
+        selectedArtifactId: "post-2",
+      }),
+    ).toMatchObject({
+      kind: "operation",
+      operation: { kind: "edit_artifact", artifactId: "post-1" },
+    });
+
+    expect(
+      resolveFreeTextArtifactIntent({
+        message: "Review the second hook.",
+        artifacts: [artifact("hook-1", "hook"), artifact("hook-2", "hook")],
+        selectedArtifactId: "hook-1",
+      }),
+    ).toEqual({
+      kind: "operation",
+      operation: { kind: "review_artifact", artifactId: "hook-2" },
+    });
   });
 
   test("an unavailable numbered reference asks for clarification", () => {
