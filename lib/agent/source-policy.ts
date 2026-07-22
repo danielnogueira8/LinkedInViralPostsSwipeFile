@@ -44,6 +44,8 @@ const WORKSPACE_CONTEXT_RE =
   /\b(?:in\s+my\s+voice|my\s+(?:voice|brand|profile|workspace|swipe\s+file|saved\s+posts?|tracked\s+accounts?|audience)|based\s+on\s+(?:my|the)\s+(?:voice|brand|profile|workspace|swipe\s+file|saved\s+posts?))\b/i;
 const DURABLE_OR_ACTION_RE =
   /\b(?:always|never|from\s+now\s+on|remember\s+(?:that|this)|save|schedule|queue|publish|post\s+it|delete|remove)\b|\b(?:plan|put|place|add|slot)\s+(?:it|this|that|(?:this|that|the)\s+(?:post|draft|one))?\s*(?:for|on|into|to)\s+(?:the\s+)?(?:calendar|queue|board|today|tomorrow|(?:mon|tues|wednes|thurs|fri|satur|sun)day)\b|\b(?:set|mark|move)\s+(?:it|this|that|(?:this|that|the)\s+(?:post|draft|one))?\s*(?:to|as|into)?\s*(?:idea|drafting|ready|posted)\b/i;
+const WRITING_OPTOUT_RE =
+  /\b(?:do\s+not|don(?:'|’)?t|dont|never|no\s+need\s+to)\s+(?:(?:please|just|actually|go\s+ahead\s+and)\s+|(?:want|need|ask)\s+(?:me|you|us|them)\s+to\s+){0,3}(?:write|draft|create|generate|give|make|produce|prepare|model|mimic|adapt|rewrite|rework|remix|turn|change|edit|refine|tighten|shorten|strengthen)\b|\bwithout\s+(?:writing|drafting|creating|generating|giving|modeling|modelling|adapting|rewriting|changing|editing|refining|tightening|shortening|strengthening)\b/i;
 
 /** True when the turn also asks Cowork to remember or mutate durable state. */
 export function requestsDurableOrAction(text: string): boolean {
@@ -72,6 +74,11 @@ export function withoutSourceDiscoveryOptOut(text: string): string {
   );
 }
 
+/** True when the current instruction explicitly rejects a writing mutation. */
+export function explicitlyForbidsWriting(text: string): boolean {
+  return WRITING_OPTOUT_RE.test(withoutSourceDiscoveryOptOut(text));
+}
+
 /**
  * Partial deliverables stay in normal chat text. They must never become a full
  * post card merely because the phrase "post ideas" contains the word "post".
@@ -90,6 +97,7 @@ export function requestsPartialTextDeliverable(text: string): boolean {
 /** True only when the user asks for complete post cards, not components. */
 export function requestsFullPostDeliverable(text: string): boolean {
   return (
+    !explicitlyForbidsWriting(text) &&
     DIRECT_FULL_POST_RE.test(text) &&
     !requestsPartialTextDeliverable(text)
   );

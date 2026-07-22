@@ -33,6 +33,7 @@ import {
   type NoModelFormat,
 } from "@/lib/agent/no-model-formats";
 import {
+  explicitlyForbidsWriting,
   explicitlyRequestsSourceDiscovery,
   requestsDurableOrAction,
   requestsDirectSourceModeling,
@@ -979,6 +980,7 @@ export function requestedBasePostCount(
   instruction: string,
   hasModelSource: boolean,
 ): number | null {
+  if (explicitlyForbidsWriting(instruction)) return null;
   return (
     deriveDeliverableContract(instruction)?.expectedCount ??
     requestedDirectPostCount(instruction) ??

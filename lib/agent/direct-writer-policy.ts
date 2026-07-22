@@ -12,6 +12,7 @@ import {
 import { isNoModelPostRequest } from "@/lib/agent/no-model-formats";
 import {
   explicitlyForbidsSourceDiscovery,
+  explicitlyForbidsWriting,
   explicitlyRequestsSourceDiscovery,
   freeTextLayersOpenChoice,
   requestsDurableOrAction,
@@ -60,8 +61,6 @@ const FULL_POST_REQUEST_RE =
   /\b(?:(?:write|draft|create|make|generate)\s+(?:me\s+)?|give\s+me\s+)(?:(?:a|an|one|another)\s+)?(?:(?:short|concise|brief|punchy|detailed|in-depth|long-form|long|original|complete|full)\s+){0,4}(?:linkedin\s+)?post\b/i;
 const CONTROLLED_PLURAL_POST_REQUEST_RE =
   /\b(?:(?:write|draft|create|make|generate)\s+(?:me\s+)?|give\s+me\s+)(?:(?:short|concise|brief|punchy|detailed|in-depth|long-form|long|original|complete|full|different|distinct)\s+){0,4}(?:linkedin\s+)?posts\b/i;
-const NEGATED_WRITING_RE =
-  /\b(?:do\s+not|don(?:'|’)?t|dont|never|no\s+need\s+to)\s+(?:(?:please|just|actually|go\s+ahead\s+and)\s+|(?:want|need|ask)\s+(?:me|you|us|them)\s+to\s+){0,3}(?:write|draft|create|generate|give|make|produce|prepare|model|mimic|adapt|rewrite|rework|remix|turn|change|edit|refine|tighten|shorten|strengthen)\b|\bwithout\s+(?:writing|drafting|creating|generating|giving|modeling|modelling|adapting|rewriting|changing|editing|refining|tightening|shortening|strengthening)\b/i;
 const META_WRITING_DISCUSSION_RE =
   /^\s*(?:why|how|what|when|where|who)\b[\s\S]{0,240}\b(?:write|draft|create|generate|give|make|model|adapt|rewrite)\b|^\s*(?:can|could|would|will)\s+you\s+(?:explain|describe|tell\s+me|show\s+me|walk\s+me\s+through)\b[\s\S]{0,160}\b(?:how|why|what|when|before|write|draft|create|generate|give|make|model|adapt|rewrite)\b|^\s*(?:is|are|was|were|do|does|did)\b[\s\S]{0,200}\b(?:write|draft|create|generate|give|make|model|adapt|rewrite)\b[\s\S]{0,120}\b(?:good|bad|clear|effective|specific|prompt|instruction|request)\b|\b(?:prompt|instruction|request|command|button|feature|workflow)\b[\s\S]{0,100}\b(?:says?|contains?|includes?|uses?|mentions?|write|draft|create|generate|give|make|model|adapt|rewrite)\b/i;
 const ADVICE_ABOUT_WRITING_RE =
@@ -116,7 +115,7 @@ function requestsActiveSourceDiscovery(instruction: string): boolean {
 }
 
 function hasNegatedWritingIntent(instruction: string): boolean {
-  return NEGATED_WRITING_RE.test(withoutSourceDiscoveryOptOut(instruction));
+  return explicitlyForbidsWriting(instruction);
 }
 
 function discussesWritingInsteadOfRequesting(instruction: string): boolean {
