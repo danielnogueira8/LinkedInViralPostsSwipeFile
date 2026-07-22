@@ -12,6 +12,12 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Local agent checkouts and generated test artifacts are not owned source.
+    ".claude/**",
+    ".worktrees/**",
+    "coverage/**",
+    "playwright-report/**",
+    "test-results/**",
   ]),
   // ---------------------------------------------------------------------------
   // Guardrail: cost-logging must always be AWAITED, never fire-and-forget.
