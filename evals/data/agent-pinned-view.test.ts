@@ -81,6 +81,31 @@ describe("the agent lives in a pinned Your Agent panel, not the empty state", ()
   });
 });
 
+describe("the agent view isolates mobile chat affordances", () => {
+  test("mobile drafts cannot appear over the Your Agent view", () => {
+    const file = source(WORKSPACE);
+
+    // The desktop drafts panel already disappears in the agent view. Keep the
+    // mobile drafts pill and its sheet on the same visibility boundary so a
+    // post affordance from a chat cannot leak into Your Agent.
+    expect(file).toContain(
+      "{hasDraftPanel && !mobileDraftsOpen && !agentViewOpen && (",
+    );
+    expect(file).toContain(
+      "{mobileDraftsOpen && hasDraftPanel && !agentViewOpen && (",
+    );
+  });
+
+  test("opening Your Agent closes an already-open mobile drafts sheet", () => {
+    const file = source(WORKSPACE);
+    expect(
+      /<AgentPinnedRow[\s\S]{0,500}onOpen=\{\(\) => \{[\s\S]{0,250}setMobileDraftsOpen\(false\)/.test(
+        file,
+      ),
+    ).toBe(true);
+  });
+});
+
 describe("the agent view uses the horizontal space (two columns, wider panel)", () => {
   const workspace = source(WORKSPACE);
   const briefing = source(BRIEFING_COMPONENT);
