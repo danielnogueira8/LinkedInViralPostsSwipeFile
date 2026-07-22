@@ -27,7 +27,7 @@ import {
   RotatingPhrases,
   SpotlightCard,
 } from "./landing-motion";
-import { LandingCmykPanel, LandingPaperTexture } from "./landing-print-treatments";
+import { LandingPaperPanel, LandingPaperTexture } from "./landing-print-treatments";
 
 const faqs = [
   [
@@ -294,7 +294,7 @@ export default function LandingClient({
             </div>
           </Reveal>
           <Reveal delay={100}>
-            <LandingCmykPanel />
+            <LandingPaperPanel />
           </Reveal>
         </div>
       </section>
