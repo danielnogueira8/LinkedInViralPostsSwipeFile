@@ -184,8 +184,6 @@ import {
   agentStatus,
   artifactLeadMagnet,
   artifactMediaAttachments,
-  artifactSkillNames,
-  askAnswerShouldRefineLatestDraft,
   classifyFile,
   clientShouldApplyLeadMagnet,
   clientShouldApplyPostFormat,
@@ -206,7 +204,6 @@ import {
   refineSuggestions,
   reinsertArtifact,
   shouldShowActivityRail,
-  skillNamesToIds,
   stripPlaceholders,
   suggestedLeadMagnetPromptForPost,
   toolDetail,
@@ -2130,7 +2127,6 @@ export function ChatWorkspace({
     overrideText?: string,
     sendOpts?: {
       operation?: ChatTurnOperation;
-      skillIds?: string[];
       retryOfUserMessageId?: string;
       actionSelectionIds?: string[];
     },
@@ -2140,9 +2136,6 @@ export function ChatWorkspace({
     // a cut-off/truncated assistant turn. Default path reads `input`.
     // sendOpts.operation is set only by explicit UI actions whose target and
     // verb are already known; ordinary composer language is server-compiled.
-    // sendOpts.skillIds lets a refine INHERIT the skill(s) the source draft was
-    // produced under (pendingSkills is empty by then — it's consumed each
-    // send), so the refine stays guided by the skill AND keeps the badge.
     let text = (overrideText ?? input).trim();
     if (!text) return;
 
@@ -2281,16 +2274,9 @@ export function ChatWorkspace({
       let turnGenerationConfig = appliesComposerControls
         ? generationConfigForSelection(draftCountSelection, postTypeSelection)
         : undefined;
-      // The skill ids sent to the server: explicit (a refine inheriting the
-      // source draft's skills) OR the composer chips. The bubble badge still
-      // comes from turnSkills (composer chips only) — an inherited refine skill
-      // shouldn't render as if the user re-applied it this turn; it rides
-      // silently so the skill keeps guiding the rewrite + re-tags the artifact.
-      // `let` so an explicit UI edit can inherit its target Artifact's skills.
-      let turnSkillIds =
-        sendOpts?.skillIds && sendOpts.skillIds.length > 0
-          ? sendOpts.skillIds
-          : turnSkills.map((s) => s.id);
+      // These are only the skills explicitly selected for this turn. Target
+      // skill inheritance is a server-owned operation rule.
+      const turnSkillIds = turnSkills.map((skill) => skill.id);
       setSkillPickerOpen(false);
       setPostFormatPickerOpen(false);
       setCreatorStylePickerOpen(false);
@@ -2400,11 +2386,6 @@ export function ChatWorkspace({
               ? { hookOnly: true }
               : {}),
           });
-        }
-        // Explicit card/Ask actions inherit their target's skills unless the
-        // user deliberately selected different skills for this turn.
-        if (target && turnSkillIds.length === 0) {
-          turnSkillIds = skillNamesToIds(artifactSkillNames(target), customSkills);
         }
       }
       if (refineThisTurn) turnGenerationConfig = undefined;
@@ -3084,7 +3065,6 @@ export function ChatWorkspace({
     pendingCreatorStyle,
     draftCountSelection,
     postTypeSelection,
-    customSkills,
     initialVoiceReady,
     router,
     maybeAutoTitle,
@@ -3214,20 +3194,9 @@ export function ChatWorkspace({
         : `Refine this ${noun}: ${instruction}\n\n` +
           `Keep it in my voice. Here's the current ${noun}:\n` +
           `"""\n${draftBody}\n"""`;
-      // Inherit the skill(s) the SOURCE draft was produced under, so the refine
-      // stays guided by that skill AND the new card keeps its /skill badge.
-      // The draft's meta.skills holds the slugs; map them to ids via the loaded
-      // workspace skills. (pendingSkills is empty by now — it's consumed each
-      // send — so without this the refine would silently drop the skill.)
-      const target =
-        (aid && chatSession.artifactsFor(aid).find((a) => a.id === artifactId)) ||
-        null;
-      const inheritedIds = target
-        ? skillNamesToIds(artifactSkillNames(target), customSkills)
-        : [];
       // The Refine control is an explicit UI action, so it sends one typed edit
-      // operation. Hook-only mode is part of that operation; the server re-reads
-      // the canonical body and preserves everything after the opener.
+      // operation. The server validates the canonical target, inherits its
+      // Custom Skills, and preserves everything after the opener in hook mode.
       void send(message, {
         operation: {
           kind: "edit_artifact",
@@ -3235,10 +3204,9 @@ export function ChatWorkspace({
           instruction,
           ...(hookOnly ? { editMode: "hook_only" as const } : {}),
         },
-        ...(inheritedIds.length ? { skillIds: inheritedIds } : {}),
       });
     },
-    [send, chatSession, customSkills],
+    [send, chatSession],
   );
 
   // Reflect a Done-edit's PATCH into the parent's caches so the saved body
@@ -3840,72 +3808,10 @@ export function ChatWorkspace({
                       );
                     }
                   }}
-                  onAnswer={(text, ask, actionSelectionIds) => {
-                    const shouldRefine = askAnswerShouldRefineLatestDraft(ask, text);
-                    if (!shouldRefine) {
-                      void send(text, { actionSelectionIds });
-                      return;
-                    }
-                    // Hook-only refine: when the ask-card answer is hook-
-                    // focused (e.g. "Tighten the hook"), enrich the message
-                    // with the same "Rewrite ONLY the hook" prompt the
-                    // per-card Refine button uses, AND pass hookOnly +
-                    // originalBody so the SERVER splices the model's new
-                    // opener onto the source body byte-for-byte before
-                    // persisting. Without this the raw "Tighten the hook"
-                    // string went to the server, the model rewrote the
-                    // whole post, and the post-stream reload swapped the
-                    // clobbered body into the DB.
-                    const aid = activeIdRef.current;
-                    const persistedArtifacts = chatSession.artifactsFor(aid);
-                    const liveArtifacts = aid
-                      ? chatSession.runFor(aid)?.artifacts ?? []
-                      : [];
-                    const seenIds = new Set(
-                      persistedArtifacts.map((artifact) => artifact.id),
-                    );
-                    const combined = [
-                      ...persistedArtifacts,
-                      ...liveArtifacts.filter(
-                        (artifact) => !seenIds.has(artifact.id),
-                      ),
-                    ];
-                    const writableArtifacts = combined.filter(
-                      (artifact) =>
-                        artifact.kind === "post" || artifact.kind === "hook",
-                    );
-                    const target =
-                      writableArtifacts[writableArtifacts.length - 1];
-                    if (
-                      target &&
-                      target.kind === "post" &&
-                      isExclusiveHookRefine(text)
-                    ) {
-                      const enriched = buildHookOnlyRefineMessage(text, target.body);
-                      void send(enriched, {
-                        operation: {
-                          kind: "edit_artifact",
-                          artifactId: target.id,
-                          instruction: text,
-                          editMode: "hook_only",
-                        },
-                      });
-                      return;
-                    }
-                    if (target) {
-                      void send(text, {
-                        operation: {
-                          kind: "edit_artifact",
-                          artifactId: target.id,
-                          instruction: text,
-                          editMode: "general",
-                        },
-                      });
-                      return;
-                    }
-                    // A stale Ask with no remaining Artifact cannot supply a
-                    // typed target. Send only text; the server will clarify.
-                    void send(text);
+                  onAnswer={(text, _ask, actionSelectionIds) => {
+                    // Ask-card answers are free text, not explicit card actions:
+                    // only the server may interpret them as Artifact operations.
+                    void send(text, { actionSelectionIds });
                   }}
                 />
               ))}

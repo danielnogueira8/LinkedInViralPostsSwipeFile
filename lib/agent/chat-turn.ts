@@ -365,22 +365,17 @@ export const chatTurnRequestSchema = z.object({
   // "Model this post": the stashed source id (chat_modeling_sources). The server
   // fetches + weaves the post text, so a long post never hits the message cap.
   modelSourceId: z.string().uuid().optional(),
-  // True for an AI-refine turn (the user clicked "Refine" on a specific draft).
-  // A refine already targets ONE unambiguous card client-side, so the routing
-  // layer treats it as a trusted refine task rather than a from-scratch post.
+  // Rolling-compatibility refine fields. Setup accepts only the complete trio
+  // and immediately normalizes it to an edit_artifact operation.
   skipDecision: z.boolean().optional(),
-  // Trusted refine identity. New clients send the selected artifact id and the
-  // concise user instruction separately from the legacy body-embedded message.
-  // The server re-reads the artifact from this chat; it never trusts a client
-  // body as the direct writer's source of truth.
   refineTargetId: z.string().min(1).max(200).optional(),
   refineInstruction: z.string().trim().min(1).max(4_000).optional(),
   // Hook-only refine: server-side splice guarantee. When true, the server
   // takes ONLY the model's new opener from the render_post output and glues
   // it onto hookOnlyOriginalBody byte-for-byte before persisting the artifact.
   // The body cannot drift no matter what the model returned. Set by the
-  // per-card Refine button and by the ask-card "Tighten the hook" click.
-  // Both fields must be present together; either alone is ignored.
+  // Legacy body snapshots remain accepted by the transport during rolling
+  // deploys but are never trusted; setup re-reads the canonical Artifact body.
   hookOnly: z.boolean().optional(),
   hookOnlyOriginalBody: z.string().max(20000).optional(),
   // Custom skills the user invoked this turn (via /name or the ⚡ picker). The

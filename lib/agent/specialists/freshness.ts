@@ -9,8 +9,8 @@
 // the crutch at all — which is cheaper (no rewrite call) and produces a more
 // coherent post (rewrites can leave seams). B narrows how often D has to fire.
 //
-// Design mirrors the other fail-open model helpers (sameness.ts, idea-brief.ts,
-// turn/intent-decision.ts):
+// Design mirrors the other fail-open model helpers (sameness.ts and
+// idea-brief.ts):
 //   • Model-inferred (no taxonomy) per the user's design pick.
 //   • Forced-tool structured output on a strong judgment model (Sonnet 5).
 //   • FAIL-OPEN: any error/timeout/empty → return an EMPTY block, so the

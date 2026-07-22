@@ -717,6 +717,7 @@ export class CoworkHarnessStore {
     let mutation: Mutation = null;
     let order: { column: string; ascending: boolean } | null = null;
     let limit: number | null = null;
+    let range: { from: number; to: number } | null = null;
     type QueryResult = {
       data: unknown;
       error: { message: string } | null;
@@ -752,6 +753,7 @@ export class CoworkHarnessStore {
           return order!.ascending ? comparison : -comparison;
         });
       }
+      if (range) rows = rows.slice(range.from, range.to + 1);
       if (limit !== null) rows = rows.slice(0, limit);
       return rows;
     };
@@ -839,6 +841,10 @@ export class CoworkHarnessStore {
     builder.limit = (value: number) => {
       limit = value;
       return builder;
+    };
+    builder.range = (from: number, to: number) => {
+      range = { from, to };
+      return execute();
     };
     builder.insert = (value: Row | Row[]) => {
       mutation = { kind: "insert", value };

@@ -74,23 +74,15 @@ import {
   type ComposerTaskSelection,
 } from "@/lib/composer-task-context";
 import { leadMagnetGenerateSchema } from "@/lib/lead-magnets";
-import { isOpinionOrQuestionAboutContent } from "@/lib/agent/direct-writer-policy";
 import { requestsDurableOrAction } from "@/lib/agent/source-policy";
 import {
   artifactSkillNames,
   buildArtifactIndex,
-  resolveArtifactReference,
 } from "@/lib/chat-artifact-policy";
-import {
-  explicitlyRequestsNewArtifact,
-  resolveFreeTextArtifactIntent,
-} from "@/lib/agent/turn/resolve-artifact-intent";
+import { resolveFreeTextArtifactIntent } from "@/lib/agent/turn/resolve-artifact-intent";
 import { getSkillsByNames } from "@/lib/content-resource-operations";
 import { SKILLS_PER_TURN_MAX } from "@/lib/custom-skills";
-import {
-  decideFallthroughIntent,
-  INTENT_DECISION_ENABLED,
-} from "@/lib/agent/turn/intent-decision";
+import { selectAllRows } from "@/lib/db-paginate";
 import {
   chatContextPolicyToolCall,
   recoverLatestForcedNoModelFormatId,
@@ -300,6 +292,7 @@ export async function setupChatTurn(
   let refineTargetId: string | undefined;
   let refineInstruction: string | undefined;
   let trustedRefineTarget: Artifact | null = null;
+  let canonicalConversationArtifacts: Artifact[] = [];
   let skillIds: string[] = [];
   let customSkillRetryContext: CustomSkillRetryContext | null = null;
   let resolvedCustomSkills: FrozenCustomSkill[] = [];
@@ -404,8 +397,29 @@ export async function setupChatTurn(
     refineTargetId = body.refineTargetId;
     refineInstruction = body.refineInstruction;
     // A typed operation is authoritative. Legacy refine fields remain accepted
-    // only when no typed operation is present; they can never alter its meaning.
-    if (currentTurnOperation) applyTurnOperation(currentTurnOperation);
+    // only when no typed operation is present; normalize their complete shape
+    // into the same persisted operation so every client surface gets identical
+    // target validation, skill inheritance, execution, and retry semantics.
+    if (currentTurnOperation) {
+      applyTurnOperation(currentTurnOperation);
+    } else if (
+      body.skipDecision === true &&
+      body.refineTargetId &&
+      body.refineInstruction
+    ) {
+      applyTurnOperation({
+        kind: "edit_artifact",
+        artifactId: body.refineTargetId,
+        instruction: body.refineInstruction,
+        ...(body.hookOnly ? { editMode: "hook_only" } : {}),
+      });
+    } else if (
+      body.skipDecision === true ||
+      body.refineTargetId ||
+      body.refineInstruction
+    ) {
+      return turnError("The legacy refine request is incomplete.", 400);
+    }
     skillIds = body.skillIds ?? [];
     forcedNoModelFormatId = body.forcedNoModelFormatId;
     creatorStyleId = body.creatorStyleId;
@@ -413,15 +427,6 @@ export async function setupChatTurn(
     createLeadMagnet = body.createLeadMagnet;
     requestedGenerationConfig = body.generationConfig ?? null;
     composerStarterId = body.starterId;
-    if (
-      !currentTurnOperation &&
-      body.hookOnly &&
-      body.hookOnlyOriginalBody
-    ) {
-      hookOnly = true;
-      hookOnlyOriginalBody = body.hookOnlyOriginalBody;
-    }
-
     const { data: chat, error } = await sbRaw
       .from("chats")
       .select("id, title")
@@ -461,7 +466,7 @@ export async function setupChatTurn(
       : "";
     const turnContent = userText + fileNote;
 
-    const { data: recentMessages } = await sbRaw
+    const { data: recentMessages, error: recentMessagesError } = await sbRaw
       .from("chat_messages")
       .select(
         "id, role, content, created_at, tool_calls, artifacts, terminal_reason, user_stop_requested_at, applied_skills, no_model_format_id, creator_style_context, lead_magnet_id, composer_starter_id, generation_config, recoverable_error",
@@ -470,6 +475,7 @@ export async function setupChatTurn(
       .eq("workspace_id", workspaceId)
       .order("created_at", { ascending: false })
       .limit(64);
+    if (recentMessagesError) throw recentMessagesError;
     const lastMsg = recentMessages?.[0];
     if (lastMsg?.role === "user") {
       if (deps.isRecentUnansweredUserMessage(lastMsg)) {
@@ -511,6 +517,28 @@ export async function setupChatTurn(
     // selection in the window. Keep both orderings named at this boundary so a
     // caller cannot silently invert "latest" again.
     const chronologicalRecentMessageWindow = [...recentMessageWindow].reverse();
+    canonicalConversationArtifacts = chronologicalRecentMessageWindow.flatMap(
+      (message) => message.artifacts ?? [],
+    );
+    let canonicalArtifactHistoryLoaded = recentMessageWindow.length < 64;
+    const ensureCanonicalConversationArtifacts = async (): Promise<Artifact[]> => {
+      if (canonicalArtifactHistoryLoaded) return canonicalConversationArtifacts;
+      const rows = await selectAllRows<{ artifacts: Artifact[] | null }>(() =>
+        sbRaw
+          .from("chat_messages")
+          .select("artifacts")
+          .eq("chat_id", chatId)
+          .eq("workspace_id", workspaceId)
+          .eq("role", "assistant")
+          .order("created_at", { ascending: true })
+          .abortSignal(setupSignal),
+      );
+      canonicalConversationArtifacts = rows.flatMap(
+        (message) => message.artifacts ?? [],
+      );
+      canonicalArtifactHistoryLoaded = true;
+      return canonicalConversationArtifacts;
+    };
     pendingAskOnly = hasPendingAskOnly(recentMessageWindow);
     pendingActionAsk = hasPendingActionAsk(recentMessageWindow);
     const actionAnswer = validatePendingActionAnswer(
@@ -889,9 +917,7 @@ export async function setupChatTurn(
       !normalizedActionRoute &&
       !fallthroughClarification;
     if (implicitRefineGuardsPass) {
-      const conversationArtifacts = chronologicalRecentMessageWindow.flatMap(
-        (message) => message.artifacts ?? [],
-      );
+      const conversationArtifacts = await ensureCanonicalConversationArtifacts();
       const artifactIntent = resolveFreeTextArtifactIntent({
         message: userText,
         artifacts: conversationArtifacts,
@@ -899,88 +925,40 @@ export async function setupChatTurn(
       });
       if (artifactIntent.kind === "operation") {
         applyTurnOperation(artifactIntent.operation);
-        if (
-          artifactIntent.operation.kind === "edit_artifact" &&
-          skillIds.length === 0 &&
-          !customSkillRetryContext
-        ) {
-          const target = buildArtifactIndex(conversationArtifacts).entries.find(
-            (entry) =>
-              entry.artifactId === artifactIntent.operation.artifactId,
-          )?.artifact;
-          const inheritedNames = target
-            ? artifactSkillNames(target).slice(0, SKILLS_PER_TURN_MAX)
-            : [];
-          if (inheritedNames.length > 0) {
-            const inheritedSkills = await getSkillsByNames({
-              db: sbRaw,
-              workspaceId,
-              names: inheritedNames,
-            });
-            const idsByName = new Map(
-              inheritedSkills.map((skill) => [skill.name, skill.id]),
-            );
-            skillIds = inheritedNames
-              .map((name) => idsByName.get(name))
-              .filter((id): id is string => Boolean(id));
-          }
-        }
       } else if (artifactIntent.kind === "clarification") {
         fallthroughClarification = artifactIntent.clarification;
-      } else if (
-        // Truly unclear fallthrough language still gets the bounded classifier
-        // used before this compiler existed. Its edit verdict is converted into
-        // the same persisted operation and its target is resolved by the shared
-        // Artifact module; it cannot introduce a second execution pathway.
-        INTENT_DECISION_ENABLED &&
-        !isOpinionOrQuestionAboutContent(userText) &&
-        !explicitlyRequestsNewArtifact(userText)
-      ) {
-        const fallbackTarget = resolveArtifactReference(
-          userText,
-          conversationArtifacts,
-          body.selectedArtifactId ?? null,
+      }
+    }
+
+    // Every edit surface converges here after its operation is known. The
+    // server validates identity against the complete transcript and inherits
+    // the target's Custom Skills unless this turn explicitly selected others.
+    if (refineTargetId) {
+      await ensureCanonicalConversationArtifacts();
+    }
+    const editOperation =
+      currentTurnOperation?.kind === "edit_artifact"
+        ? currentTurnOperation
+        : null;
+    if (editOperation && skillIds.length === 0 && !customSkillRetryContext) {
+      const target = buildArtifactIndex(canonicalConversationArtifacts).entries.find(
+        (entry) => entry.artifactId === editOperation.artifactId,
+      )?.artifact;
+      const inheritedNames = target
+        ? artifactSkillNames(target).slice(0, SKILLS_PER_TURN_MAX)
+        : [];
+      if (inheritedNames.length > 0) {
+        const inheritedSkills = await getSkillsByNames({
+          db: sbRaw,
+          workspaceId,
+          names: inheritedNames,
+        });
+        const idsByName = new Map(
+          inheritedSkills.map((skill) => [skill.name, skill.id]),
         );
-        if (fallbackTarget.kind === "selected") {
-          const decision = await decideFallthroughIntent({
-            userText,
-            workspaceId,
-            hasCurrentDraft: true,
-            hasModelSource: false,
-            signal: setupSignal,
-          });
-          if (decision?.intent === "edit_current_draft") {
-            applyTurnOperation({
-              kind: "edit_artifact",
-              artifactId: fallbackTarget.artifactId,
-              instruction: userText,
-              editMode: "general",
-            });
-          } else if (decision?.intent === "ambiguous" && decision.clarify) {
-            fallthroughClarification = {
-              question: decision.clarify.question,
-              options: decision.clarify.options,
-              allowOther: true,
-            };
-          } else if (!decision) {
-            fallthroughClarification = {
-              question:
-                "I couldn’t safely determine what you want to do with the current draft. What should I do?",
-              options: [
-                "Edit the current draft",
-                "Create a new draft",
-                "Give feedback without editing",
-              ],
-              allowOther: true,
-            };
-          }
-        } else if (fallbackTarget.kind === "unresolved_explicit") {
-          fallthroughClarification = {
-            question: `I couldn’t resolve ${fallbackTarget.reference} safely. Which Artifact should I use?`,
-            options: ["Use the latest Draft", "Choose a Draft or Hook"],
-            allowOther: true,
-          };
-        }
+        skillIds = inheritedNames
+          .map((name) => idsByName.get(name))
+          .filter((id): id is string => Boolean(id));
       }
     }
 
@@ -1330,6 +1308,7 @@ export async function setupChatTurn(
       skipDecision,
       refineTargetId,
       refineInstruction,
+      canonicalArtifacts: canonicalConversationArtifacts,
       leadMagnetId,
       createLeadMagnet,
       forcedNoModelFormatId,

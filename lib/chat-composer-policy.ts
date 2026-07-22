@@ -1,6 +1,4 @@
-import type { AskQuestion } from "@/lib/agent/contracts";
 import { isLeadMagnetNoModelFormat, type NoModelFormatId } from "@/lib/agent/no-model-format-catalog";
-import { isTerminalAskAnswer } from "@/lib/chat-ask";
 import type { Message } from "@/lib/chat-hydration";
 
 // ---------------------------------------------------------------------------
@@ -114,31 +112,6 @@ export function stripPlaceholders(text: string): string {
     .replace(/ {2,}/g, " ")
     .replace(/\s+([.,;:!?])/g, "$1")
     .trim();
-}
-
-// Ask-card answers need a slightly different heuristic from raw composer sends.
-// In free text, "make a variation" usually means "create another card". But
-// after the assistant asks
-// "Anything else on this one?", the same wording is an edit to the current card:
-// keep one draft and push the result into version history.
-export function askAnswerShouldRefineLatestDraft(
-  ask: Pick<AskQuestion, "question" | "options">,
-  answer: string,
-): boolean {
-  const context = `${ask.question} ${ask.options.join(" ")}`.toLowerCase();
-  const text = answer.toLowerCase().trim();
-  if (!text) return false;
-  const isPostDraftFollowUp =
-    /\b(anything else|on this one|this one|this draft|the draft|change|edit|refine|tighten|shorter|hook|cta|list|listicle|variation)\b/.test(
-      context,
-    );
-  if (!isPostDraftFollowUp) return false;
-  if (isTerminalAskAnswer(text)) {
-    return false;
-  }
-  return /\b(refine|tighten|shorten|shorter|lengthen|punchier|simpler|stronger|sharper|crisper|tweak|polish|improve|edit|rewrite|change|update|fix|make it|make this|make the|turn it into|turn this into|add|remove|cut|listicle|list-format|list format|numbered|variation|format|structure|hook|opener|cta|call to action)\b/.test(
-    text,
-  );
 }
 
 /**

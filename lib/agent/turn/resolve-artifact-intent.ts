@@ -2,16 +2,40 @@ import type { Artifact, AskQuestion } from "@/lib/agent/contracts";
 import { isExclusiveHookRefine } from "@/lib/agent/direct-refine-policy";
 import { resolveArtifactReference } from "@/lib/chat-artifact-policy";
 
-const ARTIFACT_MUTATION_RE =
-  /\b(?:rewrite|edit|change|update|refine|revise|modify|shorten|tighten|strengthen|improve|fix|polish|add|remove|cut|replace|reorder|restructure|make(?=\s+(?:it|this|the|draft|post|hook)\b)|turn(?=\s+(?:it|this|the|draft|post|hook)\b))\b/gi;
-const MUTATION_CLAUSE_BOUNDARY_RE = /[.!?;\n]|\b(?:but|then|plus)\b/gi;
+const ARTIFACT_MUTATION_VERBS = String.raw`(?:rewrite|edit|change|update|refine|revise|modify|shorten|tighten|strengthen|improve|fix|polish|add|remove|cut|replace|reorder|restructure|make(?=\s+(?:it|this|the|draft|post|hook)\b)|turn(?=\s+(?:it|this|the|draft|post|hook)\b))`;
+const ARTIFACT_MUTATION_RE = new RegExp(
+  String.raw`\b${ARTIFACT_MUTATION_VERBS}\b`,
+  "gi",
+);
+const MUTATION_CLAUSE_BOUNDARY_RE = /[,.!?;\n]|\b(?:but|then|plus)\b/gi;
+const COORDINATION_BOUNDARY_RE = /\b(?:then|and|but|plus)\b/gi;
 const MUTATION_NEGATION_RE =
   /\b(?:do\s+not|don(?:'|’)?t|dont|never|without)\b/i;
+const MUTATION_ADVICE_PREFIX_RE =
+  /\b(?:how\s+(?:(?:can|could|should|would|do|might)\s+(?:i|we|you)|(?:i|we|you)\s+(?:can|could|should|would|might)|to)|ways?\s+to|what\s+to)\s*$/i;
 const EXPLICIT_NEW_ARTIFACT_RE =
-  /\b(?:another|(?:new|fresh|different|other)\s+(?:draft|post|version)|another\s+version|alternative|variation|version\s+2|v2|a\s+second|one\s+more|give\s+me\s+\d+|draft\s+\d+\s+more)\b/i;
+  /\b(?:(?:another|new|fresh|different|other)\s+(?:draft|post|version|hook|one|variation|angle|take)|(?:write|create|draft|generate|produce|give(?:\s+me)?|show(?:\s+me)?)\s+(?:an?\s+)?(?:alternative|variation)(?:\s+(?:draft|post|version|hook|one))?|(?:an?\s+)?(?:alternative|variation)\s+(?:draft|post|version|hook|one)|make\s+it\s+(?:an?\s+)?(?:[a-z-]+\s+)?(?:alternative|variation)|version\s+(?!(?:history|control)\b)(?:#?\d+|[a-z][a-z-]*)|v\d+|(?:\d+(?:st|nd|rd|th)|[a-z]+(?:st|nd|rd|th))\s+version|a\s+second\s+(?:draft|post|version|hook|one)|one\s+more\s+(?:draft|post|version|hook|one)|give\s+me\s+\d+\s+(?:drafts?|posts?|versions?|hooks?)|draft\s+\d+\s+more)\b/gi;
+const REVIEW_IMPERATIVE_RE =
+  /^\s*(?:please\s+)?(?:(?:review|critique|analy[sz]e|assess|evaluate|grade|rate|summari[sz]e)\b|give(?:\s+me)?\b[\s\S]{0,100}\b(?:feedback|critique|review|summary|assessment|analysis|strengths?|weaknesses?|takeaways?)\b|(?:tell\s+me|explain|list)\b[\s\S]{0,100}\b(?:feedback|strengths?|weaknesses?|issues?|problems?|works?|working|effective|land|resonate|why|how)\b)/i;
+const DIRECT_MODAL_MUTATION_RE = new RegExp(
+  String.raw`^\s*(?:please\s+)?(?:can|could|would|will)\s+you\s+(?:please\s+)?${ARTIFACT_MUTATION_VERBS}\b`,
+  "i",
+);
 
 export function explicitlyRequestsNewArtifact(message: string): boolean {
-  return EXPLICIT_NEW_ARTIFACT_RE.test(message);
+  for (const match of message.matchAll(new RegExp(EXPLICIT_NEW_ARTIFACT_RE.source, "gi"))) {
+    const prefix = message.slice(0, match.index ?? 0);
+    const boundaries = [
+      ...prefix.matchAll(new RegExp(MUTATION_CLAUSE_BOUNDARY_RE.source, "gi")),
+    ];
+    const clauseStart = boundaries.at(-1);
+    const clausePrefix = prefix.slice(
+      clauseStart ? (clauseStart.index ?? 0) + clauseStart[0].length : 0,
+    );
+    if (MUTATION_ADVICE_PREFIX_RE.test(clausePrefix)) continue;
+    if (!MUTATION_NEGATION_RE.test(clausePrefix)) return true;
+  }
+  return false;
 }
 
 function hasAffirmativeArtifactMutation(message: string): boolean {
@@ -22,40 +46,44 @@ function hasAffirmativeArtifactMutation(message: string): boolean {
     const clausePrefix = prefix.slice(
       clauseStart ? (clauseStart.index ?? 0) + clauseStart[0].length : 0,
     );
+    if (MUTATION_ADVICE_PREFIX_RE.test(clausePrefix)) continue;
     if (!MUTATION_NEGATION_RE.test(clausePrefix)) return true;
   }
   return false;
 }
 
+function affirmativeMutationAfterCoordination(message: string): string | null {
+  const boundary = new RegExp(COORDINATION_BOUNDARY_RE.source, "i").exec(
+    message,
+  );
+  if (!boundary) return null;
+  // Keep the entire coordinated tail together. A later "and" can still be
+  // governed by an earlier negation ("do not edit and rewrite it"); slicing at
+  // every conjunction would discard that scope and turn a review into an edit.
+  const suffix = message.slice((boundary.index ?? 0) + boundary[0].length);
+  return hasAffirmativeArtifactMutation(suffix) ? suffix.trim() : null;
+}
+
 export function looksLikeArtifactReviewRequest(message: string): boolean {
   const t = message.trim();
   if (!t) return false;
-  const compoundContinuation =
-    /\b(?:review|critique|analy[sz]e|assess|evaluate)\b[\s\S]{0,160}?\b(?:then|and|but|plus)\b([\s\S]{0,120})/i.exec(
-      t,
-    )?.[1];
-  if (compoundContinuation && hasAffirmativeArtifactMutation(compoundContinuation)) {
-    return false;
-  }
   const hasArtifactReferent =
     /\b(?:this|that|the|current|selected|latest)\s+(?:post|draft|hook|one)\b|\b(?:draft|hook)\s+#?\s*\d+\b|\bit\b/i.test(
       t,
     );
-  const imperative =
-    /^\s*(?:please\s+)?(?:review|critique|analy[sz]e|assess|evaluate|grade|rate|summari[sz]e|explain)\b/i.test(
-      t,
-    ) ||
-    /^\s*(?:please\s+)?give(?:\s+me)?\b[\s\S]{0,100}\b(?:feedback|critique|review|summary|assessment|analysis|strengths?|weaknesses?|takeaways?)\b/i.test(
-      t,
-    ) ||
-    /^\s*(?:please\s+)?(?:tell\s+me|explain|list)\b[\s\S]{0,100}\b(?:feedback|strengths?|weaknesses?|issues?|problems?|works?|working|effective|land|resonate|why|how)\b/i.test(
-      t,
-    );
+  const imperative = REVIEW_IMPERATIVE_RE.test(t);
   const evaluativeQuestion =
     /^\s*(?:what|why|how|is|are|does|do|would|should|can|could)\b/i.test(t) &&
     /\b(?:think|feedback|good|bad|strong|weak|work|effective|land|resonate|improve|issue|problem|summary|mean|argument|point)\b/i.test(
       t,
     );
+  if (
+    (imperative || evaluativeQuestion) &&
+    affirmativeMutationAfterCoordination(t)
+  ) {
+    return false;
+  }
+  if (DIRECT_MODAL_MUTATION_RE.test(t)) return false;
   return hasArtifactReferent && (imperative || evaluativeQuestion);
 }
 
@@ -94,11 +122,7 @@ export type ResolvedFreeTextArtifactIntent =
   | { kind: "none" };
 
 function mutationClauseAfterReview(message: string): string {
-  return (
-    /\b(?:review|critique|analy[sz]e|assess|evaluate)\b[\s\S]{0,160}?\b(?:then|and|but|plus)\b([\s\S]{0,120})/i
-      .exec(message)?.[1]
-      ?.trim() || message
-  );
+  return affirmativeMutationAfterCoordination(message) ?? message;
 }
 
 /**
@@ -111,6 +135,7 @@ export function resolveFreeTextArtifactIntent(input: {
   artifacts: readonly Artifact[];
   selectedArtifactId: string | null;
 }): ResolvedFreeTextArtifactIntent {
+  if (explicitlyRequestsNewArtifact(input.message)) return { kind: "none" };
   const review = looksLikeArtifactReviewRequest(input.message);
   const edit = !review && looksLikeComposerRefine(input.message);
   if (!review && !edit) return { kind: "none" };
@@ -130,8 +155,8 @@ export function resolveFreeTextArtifactIntent(input: {
       clarification: {
         question: `I couldn’t resolve ${reference} safely. Which Artifact should I ${edit ? "edit" : "review"}?`,
         options: edit
-          ? ["Edit the latest Draft", "Choose a Draft or Hook"]
-          : ["Review the latest Draft", "Choose a Draft or Hook"],
+          ? ["Edit the latest post Artifact", "Choose a post or Hook Artifact"]
+          : ["Review the latest post Artifact", "Choose a post or Hook Artifact"],
         allowOther: true,
       },
     };

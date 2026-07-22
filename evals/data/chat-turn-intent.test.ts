@@ -122,6 +122,95 @@ describe("server-owned free-text Artifact intent", () => {
     },
   );
 
+  test("a Hook edit from an Ask answer keeps the exact Hook target and edit mode", () => {
+    expect(
+      resolveFreeTextArtifactIntent({
+        message: "Tighten this hook.",
+        artifacts: [artifact("draft-1"), artifact("hook-1", "hook")],
+        selectedArtifactId: "hook-1",
+      }),
+    ).toEqual({
+      kind: "operation",
+      operation: {
+        kind: "edit_artifact",
+        artifactId: "hook-1",
+        instruction: "Tighten this hook.",
+        editMode: "general",
+      },
+    });
+  });
+
+  test.each([
+    "Can you improve this draft?",
+    "Give me feedback on Draft 1 and then rewrite it.",
+    "Summarize Draft 1, then rewrite it.",
+    "Explain the weaknesses in Draft 1 and fix them.",
+    "Rate Draft 1, then improve it.",
+    "Tell me what works in Draft 1, then rewrite it.",
+  ])("a direct or compound mutation compiles to an edit: %s", (message) => {
+    expect(
+      resolveFreeTextArtifactIntent({
+        message,
+        artifacts: [artifact("draft-1")],
+        selectedArtifactId: "draft-1",
+      }),
+    ).toMatchObject({
+      kind: "operation",
+      operation: {
+        kind: "edit_artifact",
+        artifactId: "draft-1",
+      },
+    });
+  });
+
+  test.each([
+    "How can I improve this draft?",
+    "Can you explain how to improve this draft?",
+    "Could you tell me how to improve this draft?",
+    "Can you give me feedback on how to improve this draft?",
+    "Review Draft 1 and tell me how to improve it.",
+  ])("advice about improving remains a read-only review: %s", (message) => {
+    expect(
+      resolveFreeTextArtifactIntent({
+        message,
+        artifacts: [artifact("draft-1")],
+        selectedArtifactId: "draft-1",
+      }),
+    ).toEqual({
+      kind: "operation",
+      operation: { kind: "review_artifact", artifactId: "draft-1" },
+    });
+  });
+
+  test.each([
+    "Add another example to this draft.",
+    "Add another paragraph to the post.",
+  ])("\"another\" inside an Artifact edit does not create a new Artifact: %s", (message) => {
+    expect(
+      resolveFreeTextArtifactIntent({
+        message,
+        artifacts: [artifact("draft-1")],
+        selectedArtifactId: "draft-1",
+      }),
+    ).toMatchObject({
+      kind: "operation",
+      operation: { kind: "edit_artifact", artifactId: "draft-1" },
+    });
+  });
+
+  test("a negated new-draft phrase cannot override the affirmative edit clause", () => {
+    expect(
+      resolveFreeTextArtifactIntent({
+        message: "Do not make another draft; rewrite this one.",
+        artifacts: [artifact("draft-1")],
+        selectedArtifactId: "draft-1",
+      }),
+    ).toMatchObject({
+      kind: "operation",
+      operation: { kind: "edit_artifact", artifactId: "draft-1" },
+    });
+  });
+
   test("a stale selected Artifact fails closed instead of editing the latest one", () => {
     expect(
       resolveFreeTextArtifactIntent({
@@ -183,5 +272,35 @@ describe("server-owned free-text Artifact intent", () => {
         selectedArtifactId: "draft-1",
       }),
     ).toEqual({ kind: "none" });
+  });
+
+  test.each([
+    "Rewrite it as version 3.",
+    "Rewrite it as v12.",
+    "Rewrite it as the third version.",
+    "Rewrite it as the sixth version.",
+    "Rewrite it as version eleven.",
+    "Review Draft 1, then create another version.",
+    "Make it a list-format variation.",
+  ])("an explicit request for a separate version stays on normal creation routing: %s", (message) => {
+    expect(
+      resolveFreeTextArtifactIntent({
+        message,
+        artifacts: [artifact("draft-1")],
+        selectedArtifactId: "draft-1",
+      }),
+    ).toEqual({ kind: "none" });
+  });
+
+  test("clarification language uses the Artifact domain term", () => {
+    const result = resolveFreeTextArtifactIntent({
+      message: "Rewrite Draft 9.",
+      artifacts: [artifact("draft-1")],
+      selectedArtifactId: null,
+    });
+    expect(result.kind).toBe("clarification");
+    if (result.kind !== "clarification") return;
+    expect(result.clarification.question).toContain("Artifact");
+    expect(result.clarification.options.join(" ")).toContain("Artifact");
   });
 });

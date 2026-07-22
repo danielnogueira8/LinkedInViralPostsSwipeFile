@@ -117,29 +117,6 @@ export function resolveArtifactReference<T extends { id: string; kind: string }>
   return artifactId ? { kind: "selected", artifactId } : { kind: "none" };
 }
 
-/** Compatibility name retained while non-UI call sites migrate. */
-export function writableArtifactSelectionForComposer(
-  message: string,
-  artifacts: readonly { id: string; kind: string }[],
-  expandedArtifactId: string | null,
-): ArtifactReferenceResolution {
-  return resolveArtifactReference(message, artifacts, expandedArtifactId);
-}
-
-/** Compatibility name retained while non-UI call sites migrate. */
-export function writableArtifactIdForComposer(
-  message: string,
-  artifacts: readonly { id: string; kind: string }[],
-  expandedArtifactId: string | null,
-): string | undefined {
-  const selection = resolveArtifactReference(
-    message,
-    artifacts,
-    expandedArtifactId,
-  );
-  return selection.kind === "selected" ? selection.artifactId : undefined;
-}
-
 // Assign each artifact a display label numbered WITHIN its kind ("Hook 1",
 // "Hook 2", "Draft 1"…), in creation order. The number is omitted when there's
 // only one of that kind (a lone draft is just "Draft", matching the old single-
@@ -249,17 +226,6 @@ export function generatedLeadMagnetImageStatus(artifact: {
     status,
     ...(typeof reason === "string" && reason.trim() ? { reason: reason.trim() } : {}),
   };
-}
-
-// Map skill slugs → their ids using the workspace's loaded skills. A slug that
-// no longer resolves (skill deleted/renamed since the draft was made) is
-// dropped, so a refine never sends a stale id. Pure + exported for tests.
-export function skillNamesToIds(
-  names: string[],
-  skills: { id: string; name: string }[],
-): string[] {
-  const byName = new Map(skills.map((s) => [s.name, s.id]));
-  return names.map((n) => byName.get(n)).filter((id): id is string => !!id);
 }
 
 // The consistent character budget for the author headline shown in a draft
