@@ -18,6 +18,10 @@ jobs:
     name: Deterministic invariants + focused coverage
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    env:
+      # Deterministic tests need a valid non-production key when modules that
+      # enforce credential encryption are imported.
+      CREDENTIAL_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
 
     steps:
       - name: Checkout
