@@ -6,8 +6,10 @@ import {
   MEDIA_LIBRARY_QUOTA_BYTES,
   claimMediaQuota,
   mediaAssetToAttachment,
+  removeWorkspaceMedia,
   settleMediaQuotaClaim,
   storagePathForMedia,
+  uploadWorkspaceMedia,
   validateLibraryMediaFile,
   workspaceMediaUsage,
   type MediaAsset,
@@ -92,12 +94,12 @@ export async function POST(req: Request) {
     let uploaded = false;
     let data: unknown;
     try {
-      const upload = await sb.raw.storage
-        .from(MEDIA_LIBRARY_BUCKET)
-        .upload(storagePath, file, {
-          contentType: validation.normalizedContentType,
-          upsert: false,
-        });
+      const upload = await uploadWorkspaceMedia({
+        workspaceId: sb.workspaceId,
+        storagePath,
+        file,
+        contentType: validation.normalizedContentType,
+      });
       if (upload.error) throw upload.error;
       uploaded = true;
 
@@ -118,11 +120,11 @@ export async function POST(req: Request) {
       data = insert.data;
     } catch (error) {
       if (uploaded) {
-        const cleanup = await sb.raw.storage.from(MEDIA_LIBRARY_BUCKET).remove([storagePath]);
+        const cleanup = await removeWorkspaceMedia(sb.workspaceId, storagePath);
         if (cleanup.error) console.error("Failed to remove orphaned media upload", cleanup.error);
       }
       try {
-        await settleMediaQuotaClaim(sb.raw, quotaClaim.claimId, "released");
+        await settleMediaQuotaClaim(sb.workspaceId, quotaClaim.claimId, "released");
       } catch (releaseError) {
         console.error("Failed to release media quota claim", releaseError);
       }
@@ -130,7 +132,7 @@ export async function POST(req: Request) {
     }
 
     try {
-      await settleMediaQuotaClaim(sb.raw, quotaClaim.claimId, "completed");
+      await settleMediaQuotaClaim(sb.workspaceId, quotaClaim.claimId, "completed");
     } catch (completionError) {
       console.error("Failed to complete media quota claim", completionError);
     }

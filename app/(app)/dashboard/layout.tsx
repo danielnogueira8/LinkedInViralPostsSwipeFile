@@ -8,7 +8,7 @@ import { HydrationSafeUserButton } from "./hydration-safe-user-button";
 import Image from "next/image";
 import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
-import { supabaseAdmin } from "@/lib/supabase";
+import { scopedSupabase } from "@/lib/supabase-scoped";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   // workspace_id == the Clerk user id (1 user = 1 workspace). A signed-in user
@@ -20,7 +20,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
   // First-time onboarding gate. Welcome lives outside this layout (/welcome)
   // so we can redirect freely without re-entering. Existing users who already
   // have tracked creators are auto-marked so they never see the wizard.
-  const sb = supabaseAdmin();
+  const { raw: sb } = await scopedSupabase();
   const [onboardedRes] = await Promise.all([
     sb
       .from("settings")

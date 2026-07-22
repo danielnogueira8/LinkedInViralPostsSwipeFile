@@ -57,7 +57,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const lifecycle = new DraftLifecycle(
       createSupabaseDraftLifecycleRepository(sb.raw, sb.workspaceId),
       {
-        canPublish: async () => canPublish(await getConnection(sb.workspaceId)),
+        canPublish: async () =>
+          canPublish(await getConnection(sb.workspaceId, sb.raw)),
       },
     );
     const outcome = await lifecycle.schedule(id, {

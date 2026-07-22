@@ -4,6 +4,7 @@ const calls: Array<{ workspaceId: string; input: Record<string, unknown> }> =
   [];
 
 vi.mock("@/lib/tracked-creators-supabase", () => ({
+  createWorkspaceAccountWriter: () => ({}),
   createSupabaseTrackedCreatorsRepository: (
     _db: unknown,
     workspaceId: string,

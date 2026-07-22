@@ -49,6 +49,8 @@ const fakeRaw = {
   },
 };
 
+vi.mock("@/lib/supabase", () => ({ supabaseAdmin: () => fakeRaw }));
+
 vi.mock("@/lib/supabase-scoped", () => ({
   scopedSupabase: async () => ({
     workspaceId: "ws-current",

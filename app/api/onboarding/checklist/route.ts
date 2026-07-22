@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { requireWorkspaceId, errorResponse } from "@/lib/workspace";
-import { supabaseAdmin } from "@/lib/supabase";
+import { errorResponse } from "@/lib/workspace";
+import { scopedSupabase } from "@/lib/supabase-scoped";
 import { canPublish, getConnection } from "@/lib/publishing";
 
 export const runtime = "nodejs";
@@ -13,8 +13,7 @@ const DISMISSED_KEY = "checklist_dismissed";
 // for this workspace. Idempotent.
 export async function POST() {
   try {
-    const workspaceId = await requireWorkspaceId();
-    const sb = supabaseAdmin();
+    const { raw: sb, workspaceId } = await scopedSupabase();
     const { error } = await sb.from("settings").upsert(
       {
         workspace_id: workspaceId,
@@ -33,8 +32,7 @@ export async function POST() {
 
 export async function GET() {
   try {
-    const workspaceId = await requireWorkspaceId();
-    const sb = supabaseAdmin();
+    const { raw: sb, workspaceId } = await scopedSupabase();
 
     const [
       voiceRes,
@@ -71,7 +69,7 @@ export async function GET() {
         .select("id", { count: "exact", head: true })
         .eq("workspace_id", workspaceId)
         .or("schedule_status.in.(scheduled,publishing,published),status.eq.posted"),
-      getConnection(workspaceId),
+      getConnection(workspaceId, sb),
       sb
         .from("settings")
         .select("key", { count: "exact", head: true })

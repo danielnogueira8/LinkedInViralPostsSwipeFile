@@ -8,6 +8,7 @@
 // post-to-someone-else's-LinkedIn IDOR).
 
 import { supabaseAdmin } from "@/lib/supabase";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   createProfile,
   listAccounts,
@@ -56,8 +57,9 @@ function throwOnDbError(error: unknown): void {
 // Always workspace-scoped.
 export async function getConnection(
   workspaceId: string,
+  db: SupabaseClient = supabaseAdmin(),
 ): Promise<PublishingConnection | null> {
-  const { data, error } = await supabaseAdmin()
+  const { data, error } = await db
     .from("publishing_connections")
     .select(COLS)
     .eq("workspace_id", workspaceId)

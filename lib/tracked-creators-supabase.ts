@@ -7,6 +7,7 @@ import type {
   TrackedCreatorListRow,
   TrackedCreatorsRepository,
 } from "@/lib/tracked-creators";
+import { supabaseAdmin } from "@/lib/supabase";
 
 type AccountRow = {
   id: string;
@@ -95,6 +96,8 @@ export function createSupabaseTrackedCreatorsRepository(
     isTracked?: (accountId: string) => Promise<boolean>;
     track?: (accountId: string, niche: string | null) => Promise<void>;
     untrack?: (accountId: string) => Promise<boolean>;
+    createAccount?: TrackedCreatorsRepository["createAccount"];
+    updateAccount?: TrackedCreatorsRepository["updateAccount"];
   } = {},
 ): TrackedCreatorsRepository {
   if (!workspaceId.trim()) throw new Error("workspace identity required");
@@ -176,6 +179,7 @@ export function createSupabaseTrackedCreatorsRepository(
     },
 
     async createAccount(input) {
+      if (overrides.createAccount) return overrides.createAccount(input);
       const insert = {
         name: input.name,
         linkedin_handle: input.linkedinHandle,
@@ -209,6 +213,7 @@ export function createSupabaseTrackedCreatorsRepository(
     },
 
     async updateAccount(id, patch) {
+      if (overrides.updateAccount) return overrides.updateAccount(id, patch);
       // Defense-in-depth: an account is writable by this workspace only if
       // it's an unowned global-baseline row (manual_owner_workspace_id is
       // null — the shared scraped catalog every workspace may sync fields
@@ -363,6 +368,89 @@ export function createSupabaseTrackedCreatorsRepository(
       const { count, error } = await query;
       if (error) throw error;
       return count ?? 0;
+    },
+  };
+}
+
+/**
+ * Narrow service-role writer for the global accounts catalog.
+ *
+ * Authenticated users can read this catalog but its RLS intentionally denies
+ * direct writes. This adapter exposes only the two account mutations required
+ * by the manual-creator workflow and binds manual ownership to the caller's
+ * server-derived workspace id.
+ */
+export function createWorkspaceAccountWriter(
+  workspaceId: string,
+  serviceClient: SupabaseClient = supabaseAdmin(),
+): Pick<TrackedCreatorsRepository, "createAccount" | "updateAccount"> {
+  if (!workspaceId.trim()) throw new Error("workspace identity required");
+  const db = serviceClient;
+
+  return {
+    async createAccount(input) {
+      if (
+        input.source !== "manual" ||
+        input.manualOwnerWorkspaceId !== workspaceId
+      ) {
+        throw new Error("Manual account ownership mismatch");
+      }
+      const insert = {
+        name: input.name,
+        linkedin_handle: input.linkedinHandle,
+        profile_url: input.profileUrl,
+        niche: input.niche,
+        category_id: input.categoryId,
+        profile_pic_url: input.profilePicUrl,
+        source: "manual",
+        archived_at: input.archivedAt,
+        manual_owner_workspace_id: workspaceId,
+        synced_at: input.syncedAt,
+      };
+      const { data, error } = await db
+        .from("accounts")
+        .insert(insert)
+        .select(ACCOUNT_COLUMNS)
+        .single();
+      if (error?.code === "23505") {
+        const { data: winner, error: winnerError } = await db
+          .from("accounts")
+          .select(ACCOUNT_COLUMNS)
+          .eq("profile_url", input.profileUrl)
+          .maybeSingle();
+        if (winnerError || !winner) throw winnerError ?? error;
+        return {
+          account: accountFromRow(winner as unknown as AccountRow),
+          raced: true,
+        };
+      }
+      if (error || !data) throw error ?? new Error("insert failed");
+      return {
+        account: accountFromRow({
+          ...insert,
+          ...data,
+        } as unknown as AccountRow),
+        raced: false,
+      };
+    },
+
+    async updateAccount(id, patch) {
+      if (
+        patch.manualOwnerWorkspaceId !== undefined ||
+        patch.source !== undefined
+      ) {
+        throw new Error("Account ownership fields are immutable");
+      }
+      const { data, error } = await db
+        .from("accounts")
+        .update(accountPatch(patch))
+        .eq("id", id)
+        .eq("manual_owner_workspace_id", workspaceId)
+        .eq("source", "manual")
+        .select(ACCOUNT_COLUMNS)
+        .maybeSingle();
+      if (error) throw error;
+      return data ? accountFromRow(data as unknown as AccountRow) : null;
     },
   };
 }

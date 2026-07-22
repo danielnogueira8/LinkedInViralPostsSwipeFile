@@ -7,6 +7,7 @@ import {
   type PostMediaType,
 } from "@/lib/post-media";
 import { getMediaPresignedUrl, uploadToPresignedUrl } from "@/lib/zernio";
+import { supabaseAdmin } from "@/lib/supabase";
 
 export const MEDIA_LIBRARY_BUCKET = "media-assets";
 export const MEDIA_LIBRARY_QUOTA_BYTES = 1 * 1024 * 1024 * 1024;
@@ -90,6 +91,50 @@ export function storagePathForMedia(workspaceId: string, filename: string): stri
   return `${workspaceId}/${new Date().toISOString().slice(0, 10)}/${randomUUID()}-${safeName}`;
 }
 
+function assertWorkspaceMediaPath(workspaceId: string, storagePath: string): void {
+  if (!workspaceId.trim() || !storagePath.startsWith(`${workspaceId}/`)) {
+    throw new Error("Workspace media path mismatch");
+  }
+}
+
+export async function uploadWorkspaceMedia(input: {
+  workspaceId: string;
+  storagePath: string;
+  file: File;
+  contentType: string;
+  serviceClient?: SupabaseClient;
+}) {
+  assertWorkspaceMediaPath(input.workspaceId, input.storagePath);
+  return (input.serviceClient ?? supabaseAdmin()).storage
+    .from(MEDIA_LIBRARY_BUCKET)
+    .upload(input.storagePath, input.file, {
+      contentType: input.contentType,
+      upsert: false,
+    });
+}
+
+export async function removeWorkspaceMedia(
+  workspaceId: string,
+  storagePath: string,
+  serviceClient: SupabaseClient = supabaseAdmin(),
+) {
+  assertWorkspaceMediaPath(workspaceId, storagePath);
+  return serviceClient.storage
+    .from(MEDIA_LIBRARY_BUCKET)
+    .remove([storagePath]);
+}
+
+export async function downloadWorkspaceMedia(
+  workspaceId: string,
+  storagePath: string,
+  serviceClient: SupabaseClient = supabaseAdmin(),
+) {
+  assertWorkspaceMediaPath(workspaceId, storagePath);
+  return serviceClient.storage
+    .from(MEDIA_LIBRARY_BUCKET)
+    .download(storagePath);
+}
+
 export async function signedUrlForAsset(
   sb: SupabaseClient,
   asset: Pick<MediaAsset, "storage_bucket" | "storage_path">,
@@ -134,13 +179,15 @@ export async function claimMediaQuota(
 }
 
 export async function settleMediaQuotaClaim(
-  sb: SupabaseClient,
+  workspaceId: string,
   claimId: string,
   status: "completed" | "released",
+  serviceClient: SupabaseClient = supabaseAdmin(),
 ): Promise<void> {
-  const { error } = await sb
+  const { error } = await serviceClient
     .from("media_quota_claims")
     .update({ status, updated_at: new Date().toISOString() })
+    .eq("workspace_id", workspaceId)
     .eq("id", claimId)
     .eq("status", "reserved");
   if (error) throw error;

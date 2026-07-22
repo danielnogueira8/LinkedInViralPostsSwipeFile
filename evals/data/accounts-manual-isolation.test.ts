@@ -75,6 +75,17 @@ function builderFor(table: string) {
       return Promise.resolve({ data: [], error: null }).then(resolve);
     },
     maybeSingle: async () => {
+      if (table === "accounts" && operation === "update" && updatePayload) {
+        const matches =
+          filters.get("id") === state.account.id &&
+          filters.get("manual_owner_workspace_id") ===
+            state.account.manual_owner_workspace_id &&
+          filters.get("source") === state.account.source;
+        if (!matches) return { data: null, error: null };
+        state.accountUpdates.push(updatePayload);
+        state.account = { ...state.account, ...updatePayload } as Account;
+        return { data: state.account, error: null };
+      }
       if (table === "accounts") return { data: state.account, error: null };
       if (table === "categories") {
         return {
@@ -123,6 +134,10 @@ const untrackAccount = vi.fn(async () => {
   state.currentWorkspaceTracks = false;
   return { error: null };
 });
+
+vi.mock("@/lib/supabase", () => ({
+  supabaseAdmin: () => ({ from: builderFor }),
+}));
 
 vi.mock("@/lib/supabase-scoped", () => ({
   scopedSupabase: async () => ({

@@ -2,7 +2,10 @@ import { NextResponse } from "next/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { displayNameFromHandle, fetchProfileMeta } from "@/lib/linkedin-url";
 import { TrackedCreatorError, TrackedCreators } from "@/lib/tracked-creators";
-import { createSupabaseTrackedCreatorsRepository } from "@/lib/tracked-creators-supabase";
+import {
+  createSupabaseTrackedCreatorsRepository,
+  createWorkspaceAccountWriter,
+} from "@/lib/tracked-creators-supabase";
 
 export const runtime = "nodejs";
 
@@ -18,6 +21,7 @@ async function creators() {
     sb.raw,
     sb.workspaceId,
     {
+      ...createWorkspaceAccountWriter(sb.workspaceId),
       isTracked: async (accountId) => {
         const { data, error } = await sb
           .workspaceAccountsSelect("account_id")

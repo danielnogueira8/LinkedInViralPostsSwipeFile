@@ -11,7 +11,10 @@ import {
   TrackedCreators,
 } from "@/lib/tracked-creators";
 import { createSupabaseTrackedCreatorsRepository } from "@/lib/tracked-creators-supabase";
-import { trackedAccountIds, latestRelevantScrape } from "@/lib/supabase-scoped";
+import {
+  latestRelevantScrapeForService,
+  trackedAccountIdsForService,
+} from "@/lib/supabase-scoped";
 import { validateCategoryId } from "@/lib/categories";
 import { canPublish, getConnection } from "@/lib/publishing";
 import {
@@ -189,7 +192,7 @@ export function registerSwipeTools(server: McpServer) {
       try {
         const workspaceId = workspaceFromExtra(extra);
         if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
-        const accountIds = await trackedAccountIds(workspaceId);
+        const accountIds = await trackedAccountIdsForService(workspaceId);
         const sb = supabaseAdmin();
         const sortKey = args.sort ?? "viral";
         const sortCol = SORT_COLUMN[sortKey];
@@ -239,7 +242,7 @@ export function registerSwipeTools(server: McpServer) {
       try {
         const workspaceId = workspaceFromExtra(extra);
         if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
-        const accountIds = await trackedAccountIds(workspaceId);
+        const accountIds = await trackedAccountIdsForService(workspaceId);
         if (accountIds.length === 0) return notFoundContent("Post", id);
 
         const sb = supabaseAdmin();
@@ -270,7 +273,7 @@ export function registerSwipeTools(server: McpServer) {
       try {
         const workspaceId = workspaceFromExtra(extra);
         if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
-        const accountIds = await trackedAccountIds(workspaceId);
+        const accountIds = await trackedAccountIdsForService(workspaceId);
         if (accountIds.length === 0) return jsonContent({ ok: true, niches: [] });
 
         const sb = supabaseAdmin();
@@ -320,13 +323,13 @@ export function registerSwipeTools(server: McpServer) {
       try {
         const workspaceId = workspaceFromExtra(extra);
         if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
-        const accountIds = await trackedAccountIds(workspaceId);
+        const accountIds = await trackedAccountIdsForService(workspaceId);
         if (accountIds.length === 0) {
           return jsonContent({ ok: true, posts: [], note: "Workspace tracks no accounts." });
         }
 
         const sb = supabaseAdmin();
-        const lastRun = await latestRelevantScrape(workspaceId);
+        const lastRun = await latestRelevantScrapeForService(workspaceId);
         if (!lastRun?.started_at) {
           return jsonContent({ ok: true, posts: [], note: "No successful scrape run found yet." });
         }
