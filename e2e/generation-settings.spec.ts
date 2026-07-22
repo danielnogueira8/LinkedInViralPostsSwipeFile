@@ -150,16 +150,7 @@ test.describe("composer generation settings", () => {
     const createButton = commandGroup.getByRole("button", { name: "Create", exact: true });
     const editButton = commandGroup.getByRole("button", { name: "Edit", exact: true });
     await expect(askButton).toHaveAttribute("aria-pressed", "true");
-
-    await editButton.click();
-    await expect(editButton).toHaveAttribute("aria-pressed", "true");
-    await expect(page.getByText("No Posts in this chat to edit.")).toBeVisible();
-    const unavailableEditComposer = page.getByPlaceholder(
-      "Select a Post before describing the change…",
-    );
-    await unavailableEditComposer.fill("Make the hook sharper.");
-    await expect(page.getByRole("button", { name: "Send message" })).toBeDisabled();
-    await askButton.click();
+    await expect(editButton).toHaveCount(0);
 
     await composer.fill("Write three posts even though this turn is Ask.");
     await page.getByRole("button", { name: "Send message" }).click();
@@ -213,14 +204,15 @@ test.describe("composer generation settings", () => {
     await createComposer.fill("Review my current post and give feedback only.");
     await page.getByRole("button", { name: "Send message" }).click();
     await expect.poll(() => streamBodies.length).toBe(2);
-    await editButton.click();
-    await expect(page.getByText("No Posts in this chat to edit.")).toBeVisible();
+    await expect(editButton).toHaveCount(0);
     releaseCreateStream?.();
     expect(streamBodies[1]).toMatchObject({
       message: "Review my current post and give feedback only.",
       command: { kind: "create", count: 3 },
       generationConfig: { version: 1, draftCount: 3 },
     });
+    await expect(editButton).toBeVisible();
+    await editButton.click();
     const postPicker = page.getByLabel("Post to edit");
     await expect(postPicker).toHaveValue(postId);
     await postPicker.selectOption(selectedPostId);
@@ -247,6 +239,20 @@ test.describe("composer generation settings", () => {
     });
     expect(streamBodies[2]).not.toHaveProperty("generationConfig");
     await expect(page.getByText(editedPost.body)).toBeVisible();
+    await expect(askButton).toHaveAttribute("aria-pressed", "true");
+
+    await editButton.click();
+    await expect(
+      commandGroup.getByRole("button", { name: /^Edit · Post / }),
+    ).toHaveAttribute("aria-pressed", "true");
+    const deleteButtons = page.getByRole("button", { name: "Delete draft" });
+    await expect(deleteButtons).toHaveCount(2);
+    for (const remaining of [1, 0]) {
+      page.once("dialog", (dialog) => dialog.accept());
+      await deleteButtons.last().click();
+      await expect(deleteButtons).toHaveCount(remaining);
+    }
+    await expect(editButton).toHaveCount(0);
     await expect(askButton).toHaveAttribute("aria-pressed", "true");
   });
 });
