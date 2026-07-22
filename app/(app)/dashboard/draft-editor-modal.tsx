@@ -60,6 +60,7 @@ import type { Draft, DraftStatus, DraftKind } from "@/lib/draft-view";
 import { normalizeDraft } from "@/lib/draft-view";
 import {
   MAX_LINKEDIN_IMAGES,
+  mediaAttachmentsForPersistence,
   validatePostMediaFile,
   validatePostMediaSet,
   type PostMediaAttachment,
@@ -257,9 +258,15 @@ export function DraftEditorModal({
   }, [wantsLeadMagnets, leadMagnetOptions, leadMagnetsLoading]);
 
   const [newMedia, setNewMedia] = useState<PostMediaAttachment[]>([]);
+  // Temporary attachments render a local preview while the canonical upload is
+  // in flight. They never enter `newMedia` or a persistence payload.
+  const [pendingMedia, setPendingMedia] = useState<PostMediaAttachment[]>([]);
   const [uploadingMedia, setUploadingMedia] = useState(false);
   const uploadingMediaRef = useRef(false);
-  const handledUploadEvents = useRef(new Set<string>());
+  const inFlightUploadEvents = useRef(new Map<string, number>());
+  const cancelledPendingMedia = useRef(new Set<string>());
+  const uploadSessionRef = useRef(0);
+  const pendingPreviewUrls = useRef(new Map<string, string>());
   const [mediaLibraryOpen, setMediaLibraryOpen] = useState(false);
 
   // Re-seed on open / draft change (state-during-render, keyed on `open` so a
@@ -268,6 +275,8 @@ export function DraftEditorModal({
   const seedKey = open ? `open:${draft?.id ?? "__new__"}` : "__closed__";
   if (seed !== seedKey) {
     setSeed(seedKey);
+    setPendingMedia([]);
+    setUploadingMedia(false);
     if (open) {
       setBody(draft?.body ?? "");
       // Reset the new-post fields when the panel (re)opens onto a new post.
@@ -282,10 +291,25 @@ export function DraftEditorModal({
     }
   }
 
+  // A pending request may still finish after a close/reopen. Advancing the
+  // session prevents it from attaching media to a fresh editor instance. This
+  // runs after the open/draft transition commits, never while rendering.
+  useEffect(() => {
+    for (const previewUrl of pendingPreviewUrls.current.values()) {
+      URL.revokeObjectURL(previewUrl);
+    }
+    pendingPreviewUrls.current.clear();
+    uploadSessionRef.current += 1;
+    inFlightUploadEvents.current.clear();
+    cancelledPendingMedia.current.clear();
+    uploadingMediaRef.current = false;
+  }, [seedKey]);
+
   const trimmed = body.trim();
   const linkedInBody = draftEgressBody(body, draft?.meta);
   const dirty = trimmed !== (draft?.body ?? "").trim();
   const mediaAttachments = isNew ? newMedia : draft?.mediaAttachments ?? [];
+  const displayedMedia = [...mediaAttachments, ...pendingMedia];
   const busy = saving || handing;
   const paragraphCount = body.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean).length;
   const saveState = saving
@@ -327,7 +351,9 @@ export function DraftEditorModal({
             ...(newKind === "lead_magnet" && newLeadMagnetId
               ? { lead_magnet_id: newLeadMagnetId }
               : {}),
-            ...(newMedia.length ? { media_attachments: newMedia } : {}),
+            ...(newMedia.length
+              ? { media_attachments: mediaAttachmentsForPersistence(newMedia) }
+              : {}),
           }),
         });
         const data = await res.json();
@@ -353,6 +379,10 @@ export function DraftEditorModal({
 
   const save = async () => {
     if (busy) return;
+    if (uploadingMedia) {
+      toast.error("Wait for the media upload to finish before saving.");
+      return;
+    }
     setSaving(true);
     const id = await persistBody();
     setSaving(false);
@@ -366,6 +396,10 @@ export function DraftEditorModal({
 
   const createAndSchedule = async (input: ScheduleInput) => {
     if (busy) return;
+    if (uploadingMedia) {
+      toast.error("Wait for the media upload to finish before scheduling.");
+      return;
+    }
     setSaving(true);
     const id = await persistBody();
     if (!id) {
@@ -435,7 +469,7 @@ export function DraftEditorModal({
       const res = await fetch(`/api/drafts/${draft.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ media_attachments: next }),
+        body: JSON.stringify({ media_attachments: mediaAttachmentsForPersistence(next) }),
       });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || "Failed to update media");
@@ -461,8 +495,15 @@ export function DraftEditorModal({
       .map((file) => `${file.name}:${file.type}:${file.size}:${file.lastModified}`)
       .sort()
       .join("|");
-    if (selected.length === 0 || uploadingMediaRef.current || handledUploadEvents.current.has(eventKey)) return;
-    handledUploadEvents.current.add(eventKey);
+    if (
+      selected.length === 0 ||
+      uploadingMediaRef.current ||
+      inFlightUploadEvents.current.has(eventKey)
+    ) {
+      return;
+    }
+    const uploadSession = uploadSessionRef.current;
+    inFlightUploadEvents.current.set(eventKey, uploadSession);
     uploadingMediaRef.current = true;
     let next = [...mediaAttachments];
     setUploadingMedia(true);
@@ -487,6 +528,23 @@ export function DraftEditorModal({
           },
         ]);
         if (setError) throw new Error(setError);
+
+        const pendingId = crypto.randomUUID();
+        const previewUrl = validation.type === "image" ? URL.createObjectURL(file) : undefined;
+        const pendingAttachment: PostMediaAttachment = {
+          id: pendingId,
+          name: file.name,
+          mimeType: validation.normalizedContentType,
+          size: file.size,
+          type: validation.type,
+          url: null,
+          previewUrl,
+          uploadedAt: new Date().toISOString(),
+        };
+        if (previewUrl) pendingPreviewUrls.current.set(pendingId, previewUrl);
+        // Render a local object URL before asking the provider for a presign so
+        // a slow upload never leaves the post preview blank.
+        setPendingMedia((current) => [...current, pendingAttachment]);
 
         const presignRes = await fetchJson<{
           ok: boolean;
@@ -529,31 +587,70 @@ export function DraftEditorModal({
             key = fallback.key;
           }
         }
+        if (
+          uploadSession !== uploadSessionRef.current ||
+          cancelledPendingMedia.current.has(pendingId)
+        ) {
+          if (previewUrl) URL.revokeObjectURL(previewUrl);
+          pendingPreviewUrls.current.delete(pendingId);
+          continue;
+        }
+        pendingPreviewUrls.current.delete(pendingId);
+        if (previewUrl) URL.revokeObjectURL(previewUrl);
         next = [
           ...next,
           {
-            id: crypto.randomUUID(),
+            id: pendingId,
             name: file.name,
             mimeType: validation.normalizedContentType,
             size: file.size,
             type: validation.type,
             url: publicUrl,
             key,
-            // The publishing URL can take a moment to become readable after a
-            // successful upload. Keep a local browser preview so the editor
-            // renders the selected image immediately instead of a broken img.
-            previewUrl: validation.type === "image" ? URL.createObjectURL(file) : undefined,
             uploadedAt: new Date().toISOString(),
           },
         ];
+        // The temporary preview now gives way to the stable provider URL while
+        // the final canonical attachment is persisted below.
+        setPendingMedia((current) =>
+          current.map((attachment) =>
+            attachment.id === pendingId
+              ? { ...attachment, url: publicUrl, key, previewUrl: undefined }
+              : attachment,
+          ),
+        );
       }
-      if (await persistMedia(next)) toast.success(selected.length === 1 ? "Media attached" : "Media attached");
+      if (uploadSession === uploadSessionRef.current) {
+        const finalAttachments = next.filter(
+          (attachment) => !cancelledPendingMedia.current.has(attachment.id),
+        );
+        // `persistMedia` updates the canonical draft/new-post state
+        // optimistically. Drop the temporary display entries first so the
+        // successful image is never rendered twice during that update.
+        setPendingMedia([]);
+        if (await persistMedia(finalAttachments)) {
+          toast.success("Media attached");
+        }
+      }
     } catch (e) {
-      handledUploadEvents.current.delete(eventKey);
-      toast.error((e as Error).message);
+      // Never leave a broken temporary attachment behind after a failure. The
+      // user's draft text and already-uploaded attachments are left intact.
+      if (uploadSession === uploadSessionRef.current) {
+        for (const previewUrl of pendingPreviewUrls.current.values()) {
+          URL.revokeObjectURL(previewUrl);
+        }
+        pendingPreviewUrls.current.clear();
+        setPendingMedia([]);
+        toast.error((e as Error).message);
+      }
     } finally {
-      uploadingMediaRef.current = false;
-      setUploadingMedia(false);
+      if (inFlightUploadEvents.current.get(eventKey) === uploadSession) {
+        inFlightUploadEvents.current.delete(eventKey);
+      }
+      if (uploadSession === uploadSessionRef.current) {
+        uploadingMediaRef.current = false;
+        setUploadingMedia(false);
+      }
     }
   };
 
@@ -570,6 +667,17 @@ export function DraftEditorModal({
   };
 
   const removeMedia = (id: string) => {
+    const pending = pendingMedia.find((attachment) => attachment.id === id);
+    if (pending) {
+      // A presigned PUT may not be abortable, but its result must never return
+      // to the post after the user has removed the temporary preview.
+      cancelledPendingMedia.current.add(id);
+      const previewUrl = pendingPreviewUrls.current.get(id) ?? pending.previewUrl;
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      pendingPreviewUrls.current.delete(id);
+      setPendingMedia((current) => current.filter((attachment) => attachment.id !== id));
+      return;
+    }
     const next = mediaAttachments.filter((m) => m.id !== id);
     void persistMedia(next);
   };
@@ -597,6 +705,10 @@ export function DraftEditorModal({
   // the source chip above a clean composer instead of stuffing a refine blob in.
   const modelInChat = async () => {
     if (busy) return;
+    if (uploadingMedia) {
+      toast.error("Wait for the media upload to finish before continuing.");
+      return;
+    }
     setHanding(true);
     const id = await persistBody();
     if (!id) {
@@ -846,6 +958,7 @@ export function DraftEditorModal({
                       value={body}
                       onChange={setBody}
                       onMediaFiles={addMediaFiles}
+                      allowImagePaste={isNew}
                       rows={22}
                       textareaClassName="min-h-[52vh] rounded-xl border-transparent bg-transparent px-2 py-2 text-[15px] leading-8 shadow-none focus-visible:border-primary/20 focus-visible:ring-primary/10"
                     />
@@ -854,7 +967,7 @@ export function DraftEditorModal({
                   <LinkedInPostPreview
                     author={author}
                     body={linkedInBody}
-                    attachments={mediaAttachments}
+                    attachments={displayedMedia}
                   />
                 )}
               </div>
@@ -1039,7 +1152,8 @@ export function DraftEditorModal({
                   onMeta={onMeta}
                   onCreateAndSchedule={isNew ? createAndSchedule : undefined}
                   previewBody={isNew ? body : undefined}
-                  previewMedia={isNew ? newMedia : undefined}
+                  previewMedia={isNew ? displayedMedia : undefined}
+                  mediaUploading={uploadingMedia}
                 />
 
                 {!isNew && draft && draft.kind === "lead_magnet" && (
@@ -1047,8 +1161,9 @@ export function DraftEditorModal({
                 )}
 
                 <PostMediaSection
-                  attachments={mediaAttachments}
+                  attachments={displayedMedia}
                   uploading={uploadingMedia}
+                  pendingMediaIds={new Set(pendingMedia.map((attachment) => attachment.id))}
                   onAdd={addMediaFiles}
                   onOpenLibrary={() => setMediaLibraryOpen(true)}
                   onRemove={removeMedia}
@@ -1085,13 +1200,14 @@ export function DraftEditorModal({
               // Existing: needs body content + an actual change.
               disabled={
                 busy ||
+                uploadingMedia ||
                 (isNew
                   ? !trimmed && !titleDraft.trim()
                   : !trimmed || !dirty)
               }
             >
-              {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-              {saving ? "Saving..." : isNew ? "Create post" : "Save"}
+              {saving || uploadingMedia ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+              {saving ? "Saving..." : uploadingMedia ? "Uploading media..." : isNew ? "Create post" : "Save"}
             </Button>
           </div>
         </div>
@@ -1513,12 +1629,14 @@ function PostFeedbackMemory({ draft, body }: { draft: Draft; body: string }) {
 function PostMediaSection({
   attachments,
   uploading,
+  pendingMediaIds,
   onAdd,
   onOpenLibrary,
   onRemove,
 }: {
   attachments: PostMediaAttachment[];
   uploading: boolean;
+  pendingMediaIds: ReadonlySet<string>;
   onAdd: (files: FileList | File[]) => void;
   onOpenLibrary: () => void;
   onRemove: (id: string) => void;
@@ -1526,7 +1644,7 @@ function PostMediaSection({
   const fileInputId = "post-media-upload";
   const mediaHelp =
     attachments.length === 0
-      ? "Attach images, one video, or one PDF. Zernio media must publish within 7 days of upload."
+      ? "Drag, upload, or paste an image — or attach one video or PDF. Zernio media must publish within 7 days of upload."
       : mediaSummary(attachments);
   return (
     <div className="rounded-lg border border-border bg-card/70 p-3 shadow-soft">
@@ -1585,6 +1703,7 @@ function PostMediaSection({
                 <div className="truncate font-medium">{attachment.name}</div>
                 <div className="text-xs text-muted-foreground">
                   {mediaTypeLabel(attachment.type)} · {formatBytes(attachment.size)}
+                  {pendingMediaIds.has(attachment.id) ? " · Uploading…" : ""}
                   {attachment.source === "library" ? " · Library" : ""}
                 </div>
               </div>
@@ -2091,12 +2210,14 @@ function ScheduleRow({
   onCreateAndSchedule,
   previewBody,
   previewMedia,
+  mediaUploading = false,
 }: {
   draft: Draft | null;
   onMeta: (id: string, patch: Partial<Draft>) => void;
   onCreateAndSchedule?: (input: ScheduleInput) => Promise<void>;
   previewBody?: string;
   previewMedia?: PostMediaAttachment[];
+  mediaUploading?: boolean;
 }) {
   const router = useRouter();
   const [connected, setConnected] = useState<boolean | null>(null);
@@ -2331,7 +2452,7 @@ function ScheduleRow({
             size="sm"
             className="ml-auto gap-1.5"
             onClick={schedule}
-            disabled={busy || overLimit || mediaTooLate || !when}
+            disabled={busy || mediaUploading || overLimit || mediaTooLate || !when}
             title="Schedule this post to publish on LinkedIn at the selected time."
           >
             {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CalendarClock className="h-3.5 w-3.5" />}
