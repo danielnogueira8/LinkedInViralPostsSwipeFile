@@ -23,6 +23,14 @@ describe("expanded high-confidence AI-tell patterns", () => {
     ["Honestly? Most advice about hooks is wrong.", "rhetorical-opener"],
     ["That's the whole point.", "generic-closer"],
     ["And it's over. No trophy. No semifinal.", "rule-of-three"],
+    // High-signal patterns adopted from petergyang/no-ai-slop. These are
+    // intentionally narrow phrasing families, so they can safely target the
+    // optional repair pass without flattening a real writer's voice.
+    ["The part everyone misses: distribution is the moat.", "faux-insight-setup"],
+    ["What most people get wrong is the offer, not the hook.", "faux-insight-setup"],
+    ["The detail that makes it work: a saved reply template.", "colon-reveal"],
+    ["Think about it: your customer sees the same pitch every day.", "rhetorical-setup"],
+    ["What if I told you the calendar was never the bottleneck?", "rhetorical-setup"],
   ];
 
   test.each(cases)("detects %s", (body, expected) => {
@@ -48,6 +56,10 @@ describe("expanded high-confidence AI-tell patterns", () => {
     "We cut churn 40% by fixing onboarding. One boring change, three months of work.",
     // A concrete result, no tells.
     "Cold outreach still works. I booked 12 calls last month from 200 messages.",
+    // A concrete colon is ordinary prose, not the dramatic noun-phrase reveal.
+    "The dashboard shows three things: revenue, churn, and runway.",
+    // A genuine question must stay available to a real writer.
+    "What if the customer is right about the price?",
   ])("clean copy stays clean: %s", (body) => {
     expect(aiTellMetrics(body)).toEqual([]);
   });

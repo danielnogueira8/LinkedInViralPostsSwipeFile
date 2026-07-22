@@ -101,6 +101,11 @@ describe("AI-Tell Editor — deterministic (model off)", () => {
     const r = await editDraftBody("That's the whole point.");
     expect(r.notes.join(" ")).toContain("fake_polish");
   });
+
+  test("routes imported faux-insight setups through fake-polish repair", async () => {
+    const r = await editDraftBody("The part everyone misses: distribution is the moat.");
+    expect(r.notes.join(" ")).toContain("fake_polish");
+  });
 });
 
 describe("AI-Tell Editor — optional model rewrite", () => {
