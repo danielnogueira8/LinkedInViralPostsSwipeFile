@@ -243,6 +243,8 @@ export function DraftEditorModal({
 
   const [newMedia, setNewMedia] = useState<PostMediaAttachment[]>([]);
   const [uploadingMedia, setUploadingMedia] = useState(false);
+  const uploadingMediaRef = useRef(false);
+  const handledUploadEvents = useRef(new Set<string>());
   const [mediaLibraryOpen, setMediaLibraryOpen] = useState(false);
 
   // Re-seed on open / draft change (state-during-render, keyed on `open` so a
@@ -440,7 +442,13 @@ export function DraftEditorModal({
 
   const addMediaFiles = async (files: FileList | File[]) => {
     const selected = Array.from(files);
-    if (selected.length === 0 || uploadingMedia) return;
+    const eventKey = selected
+      .map((file) => `${file.name}:${file.type}:${file.size}:${file.lastModified}`)
+      .sort()
+      .join("|");
+    if (selected.length === 0 || uploadingMediaRef.current || handledUploadEvents.current.has(eventKey)) return;
+    handledUploadEvents.current.add(eventKey);
+    uploadingMediaRef.current = true;
     let next = [...mediaAttachments];
     setUploadingMedia(true);
     try {
@@ -515,8 +523,10 @@ export function DraftEditorModal({
       }
       if (await persistMedia(next)) toast.success(selected.length === 1 ? "Media attached" : "Media attached");
     } catch (e) {
+      handledUploadEvents.current.delete(eventKey);
       toast.error((e as Error).message);
     } finally {
+      uploadingMediaRef.current = false;
       setUploadingMedia(false);
     }
   };
@@ -758,6 +768,7 @@ export function DraftEditorModal({
                     <DraftEditor
                       value={body}
                       onChange={setBody}
+                      onMediaFiles={addMediaFiles}
                       rows={22}
                       textareaClassName="min-h-[52vh] rounded-xl border-transparent bg-transparent px-2 py-2 text-[15px] leading-8 shadow-none focus-visible:border-primary/20 focus-visible:ring-primary/10"
                     />

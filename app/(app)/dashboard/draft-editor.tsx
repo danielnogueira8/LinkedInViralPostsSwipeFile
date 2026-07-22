@@ -33,18 +33,21 @@ export function DraftEditor({
   rows = 10,
   className,
   textareaClassName,
+  onMediaFiles,
 }: {
   value: string;
   onChange: (next: string) => void;
   rows?: number;
   className?: string;
   textareaClassName?: string;
+  onMediaFiles?: (files: File[]) => void;
 }) {
   const taRef = useRef<HTMLTextAreaElement>(null);
   // Emoji picker (the always-visible bar above the textarea). Emoji needs a
   // cursor, not a selection, so it lives on its own bar rather than the
   // selection-only floating toolbar.
   const [emojiOpen, setEmojiOpen] = useState(false);
+  const [draggingMedia, setDraggingMedia] = useState(false);
   // Floating toolbar position (viewport coords), shown only while a non-empty
   // selection exists inside the textarea — the ChatGPT/Notion "highlight to
   // format" affordance.
@@ -340,14 +343,44 @@ export function DraftEditor({
         onChange={(e) => onChange(e.target.value)}
         onSelect={refreshFloat}
         onBlur={() => setFloatPos(null)}
+        onPaste={(event) => {
+          const files = Array.from(event.clipboardData.files);
+          if (files.length === 0) return;
+          event.preventDefault();
+          onMediaFiles?.(files);
+        }}
+        onDragEnter={(event) => {
+          if (!Array.from(event.dataTransfer.types).includes("Files")) return;
+          event.preventDefault();
+          setDraggingMedia(true);
+        }}
+        onDragOver={(event) => {
+          if (!Array.from(event.dataTransfer.types).includes("Files")) return;
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "copy";
+        }}
+        onDragLeave={(event) => {
+          if (event.currentTarget === event.target) setDraggingMedia(false);
+        }}
+        onDrop={(event) => {
+          setDraggingMedia(false);
+          const files = Array.from(event.dataTransfer.files);
+          if (files.length === 0) return;
+          event.preventDefault();
+          onMediaFiles?.(files);
+        }}
         rows={rows}
         aria-label="Post body"
         className={cn(
           "w-full resize-none rounded-lg border border-border bg-white px-3 py-2.5 text-[13px] leading-relaxed text-foreground outline-none focus-visible:border-border focus-visible:ring-2 focus-visible:ring-border",
+          draggingMedia && "border-primary bg-primary/[0.04] ring-2 ring-primary/25",
           textareaClassName,
         )}
         placeholder="Write your post…"
       />
+      {draggingMedia && (
+        <p className="-mt-1 text-xs font-medium text-primary">Drop image to attach it</p>
+      )}
 
       {/* Highlight-to-format: a floating toolbar over the current selection.
           Shown only while text is selected. Emoji is NOT here — it's on the bar
