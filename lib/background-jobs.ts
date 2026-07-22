@@ -2,7 +2,6 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabaseAdmin } from "@/lib/supabase";
 
 export const BACKGROUND_JOB_TYPES = [
-  "lead_magnet_resource",
   "lead_magnet_image",
   "creator_style_generation",
   "voice_generation",
@@ -13,6 +12,13 @@ export const BACKGROUND_JOB_TYPES = [
 ] as const;
 
 export type BackgroundJobType = (typeof BACKGROUND_JOB_TYPES)[number];
+export type StoredBackgroundJobType =
+  | BackgroundJobType
+  | "lead_magnet_resource";
+
+export function isBackgroundJobType(value: unknown): value is BackgroundJobType {
+  return BACKGROUND_JOB_TYPES.includes(value as BackgroundJobType);
+}
 
 export type BackgroundJobStatus =
   | "queued"
@@ -24,7 +30,7 @@ export type BackgroundJobStatus =
 export type BackgroundJob = {
   id: string;
   workspace_id: string;
-  type: BackgroundJobType;
+  type: StoredBackgroundJobType;
   status: BackgroundJobStatus;
   payload: Record<string, unknown>;
   progress: Record<string, unknown>;
@@ -77,6 +83,9 @@ export async function enqueueBackgroundJob(opts: {
   maxAttempts?: number;
   sb?: Db;
 }): Promise<BackgroundJob> {
+  if (!isBackgroundJobType(opts.type)) {
+    throw new Error(`Unsupported background job type '${String(opts.type)}'.`);
+  }
   const sb = opts.sb ?? supabaseAdmin();
   const { data, error } = await sb
     .from("background_jobs")
