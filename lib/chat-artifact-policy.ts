@@ -3,9 +3,9 @@ import type { AppliedLeadMagnet } from "@/lib/chat-hydration";
 import type { PostMediaAttachment } from "@/lib/post-media";
 
 export function kindNoun(kind: Artifact["kind"]): string {
-  if (kind === "post") return "Post Artifact";
-  if (kind === "hook") return "Hook Artifact";
-  return "Artifact";
+  if (kind === "post") return "Post";
+  if (kind === "hook") return "Hook";
+  return "Source";
 }
 
 export type WritableArtifactKind = "post" | "hook";
@@ -220,14 +220,14 @@ export function resolveArtifactReference(
   if (selectedArtifactId && !selected) {
     return {
       kind: "unresolved_explicit",
-      reference: "the selected Artifact",
+      reference: "the selected post",
     };
   }
   const artifactId = selected ?? entries.at(-1)?.artifactId;
   return artifactId ? { kind: "selected", artifactId } : { kind: "none" };
 }
 
-export const ARTIFACT_PANEL_TITLE = "Artifacts";
+export const ARTIFACT_PANEL_TITLE = "Posts";
 
 export function refineSuggestions(kind: Artifact["kind"]): string[] {
   if (kind === "hook") {

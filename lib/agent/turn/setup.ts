@@ -216,6 +216,7 @@ export type TurnSetupResult = {
   persistedActionContinuation: boolean;
   pendingActionAsk: boolean;
   pendingAskOnly: boolean;
+  artifactClarification: AskQuestion | null;
   fallthroughClarification: AskQuestion | null;
   modeledBatchContinuation: ModeledDraftBatchContinuation | null;
   modeledBatchContractRequested: boolean;
@@ -327,6 +328,7 @@ export async function setupChatTurn(
   let persistedActionContinuation = false;
   let pendingActionAsk = false;
   let pendingAskOnly = false;
+  let artifactClarification: AskQuestion | null = null;
   let fallthroughClarification: AskQuestion | null = null;
   let modeledBatchContinuation: ModeledDraftBatchContinuation | null = null;
   let modeledBatchContractRequested = false;
@@ -913,7 +915,9 @@ export async function setupChatTurn(
       !persistedActionContinuation &&
       !pendingActionAsk &&
       !normalizedActionRoute &&
-      !fallthroughClarification;
+      !fallthroughClarification &&
+      attachments.length === 0 &&
+      compileModeledPostIntent(userText).kind === "none";
     if (implicitRefineGuardsPass) {
       const conversationArtifacts = await ensureCanonicalConversationArtifacts();
       const artifactIntent = resolveFreeTextArtifactIntent({
@@ -924,7 +928,7 @@ export async function setupChatTurn(
       if (artifactIntent.kind === "operation") {
         applyTurnOperation(artifactIntent.operation);
       } else if (artifactIntent.kind === "clarification") {
-        fallthroughClarification = artifactIntent.clarification;
+        artifactClarification = artifactIntent.clarification;
       }
     }
 
@@ -1637,6 +1641,7 @@ export async function setupChatTurn(
     persistedActionContinuation,
     pendingActionAsk,
     pendingAskOnly,
+    artifactClarification,
     fallthroughClarification,
     modeledBatchContinuation,
     modeledBatchContractRequested,

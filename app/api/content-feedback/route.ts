@@ -79,7 +79,7 @@ async function validateFeedbackSubject(
     return {
       ok: false,
       response: NextResponse.json(
-        { ok: false, error: "Artifact feedback must reference a chat." },
+        { ok: false, error: "Post feedback must reference a chat." },
         { status: 400 },
       ),
     };
@@ -102,7 +102,7 @@ async function validateFeedbackSubject(
       return {
         ok: false,
         response: NextResponse.json(
-          { ok: false, error: "Artifact not found" },
+          { ok: false, error: "Post not found" },
           { status: 404 },
         ),
       };

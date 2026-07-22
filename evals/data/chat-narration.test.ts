@@ -30,23 +30,23 @@ const art = (kind: Artifact["kind"], body = "b"): Artifact => ({
 });
 
 describe("kindNoun", () => {
-  test("uses canonical Artifact vocabulary for every conversation deliverable", () => {
-    expect(kindNoun("hook")).toBe("Hook Artifact");
-    expect(kindNoun("post")).toBe("Post Artifact");
-    expect(kindNoun("cite")).toBe("Artifact");
+  test("uses plain-language vocabulary for every conversation deliverable", () => {
+    expect(kindNoun("hook")).toBe("Hook");
+    expect(kindNoun("post")).toBe("Post");
+    expect(kindNoun("cite")).toBe("Source");
   });
 });
 
-describe("buildArtifactIndex — Post/Hook Artifact numbering", () => {
-  test("a lone post is just 'Post Artifact' (no number)", () => {
+describe("buildArtifactIndex — Post/Hook numbering", () => {
+  test("a lone post is just 'Post' (no number)", () => {
     const out = buildArtifactIndex([art("post", "x")]).entries;
-    expect(out.map((o) => o.label)).toEqual(["Post Artifact"]);
+    expect(out.map((o) => o.label)).toEqual(["Post"]);
   });
 
-  test("a lone hook is just 'Hook Artifact'", () => {
+  test("a lone hook is just 'Hook'", () => {
     expect(
       buildArtifactIndex([art("hook", "x")]).entries.map((o) => o.label),
-    ).toEqual(["Hook Artifact"]);
+    ).toEqual(["Hook"]);
   });
 
   test("multiple posts are numbered in creation order", () => {
@@ -56,17 +56,17 @@ describe("buildArtifactIndex — Post/Hook Artifact numbering", () => {
       art("post", "c"),
     ]).entries;
     expect(out.map((o) => o.label)).toEqual([
-      "Post Artifact 1",
-      "Post Artifact 2",
-      "Post Artifact 3",
+      "Post 1",
+      "Post 2",
+      "Post 3",
     ]);
   });
 
   test("multiple hooks are numbered in creation order", () => {
     const out = buildArtifactIndex([art("hook", "a"), art("hook", "b")]).entries;
     expect(out.map((o) => o.label)).toEqual([
-      "Hook Artifact 1",
-      "Hook Artifact 2",
+      "Hook 1",
+      "Hook 2",
     ]);
   });
 
@@ -79,18 +79,18 @@ describe("buildArtifactIndex — Post/Hook Artifact numbering", () => {
       art("hook", "h2"),
     ]).entries;
     expect(out.map((o) => o.label)).toEqual([
-      "Post Artifact 1",
-      "Hook Artifact 1",
-      "Post Artifact 2",
-      "Hook Artifact 2",
+      "Post 1",
+      "Hook 1",
+      "Post 2",
+      "Hook 2",
     ]);
   });
 
   test("a single post + a single hook each stay unnumbered", () => {
     const out = buildArtifactIndex([art("post", "p"), art("hook", "h")]).entries;
     expect(out.map((o) => o.label)).toEqual([
-      "Post Artifact",
-      "Hook Artifact",
+      "Post",
+      "Hook",
     ]);
   });
 
@@ -113,13 +113,13 @@ describe("shared Artifact index", () => {
       expect.objectContaining({
         artifactId: "artifact-1",
         ordinal: 1,
-        label: "Post Artifact 1",
+        label: "Post 1",
         artifact: updated,
       }),
       expect.objectContaining({
         artifactId: "artifact-2",
         ordinal: 2,
-        label: "Post Artifact 2",
+        label: "Post 2",
         artifact: second,
       }),
     ]);
@@ -134,10 +134,12 @@ describe("shared Artifact index", () => {
 
     expect(resolveArtifactReference("Review Draft 1", artifacts, "post-2"))
       .toEqual({ kind: "selected", artifactId: "post-1" });
+    expect(resolveArtifactReference("Review Post 2", artifacts, null))
+      .toEqual({ kind: "selected", artifactId: "post-2" });
     expect(resolveArtifactReference("Improve this", artifacts, "post-1"))
       .toEqual({ kind: "selected", artifactId: "post-1" });
     expect(resolveArtifactReference("Review Draft 9", artifacts, null))
-      .toEqual({ kind: "unresolved_explicit", reference: "Post Artifact 9" });
+      .toEqual({ kind: "unresolved_explicit", reference: "Post 9" });
   });
 
   test("does not silently replace a stale selected Artifact with the latest one", () => {
@@ -152,14 +154,14 @@ describe("shared Artifact index", () => {
       ),
     ).toEqual({
       kind: "unresolved_explicit",
-      reference: "the selected Artifact",
+      reference: "the selected post",
     });
   });
 });
 
 describe("ARTIFACT_PANEL_TITLE", () => {
-  test("uses the canonical domain noun", () => {
-    expect(ARTIFACT_PANEL_TITLE).toBe("Artifacts");
+  test("uses the human-facing post noun", () => {
+    expect(ARTIFACT_PANEL_TITLE).toBe("Posts");
   });
 });
 

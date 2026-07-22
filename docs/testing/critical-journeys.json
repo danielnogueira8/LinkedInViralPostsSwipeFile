@@ -21,6 +21,19 @@
       "follow_up_issue": 999
     },
     {
+      "id": "cowork-chat-operation-authority",
+      "capability": "Cowork",
+      "invariant": "A server-compiled clarification is terminal for the turn: missing or unresolved post targets cannot be reinterpreted as permission to write, research, or mutate state, and feedback-only requests never create posts.",
+      "preferred_seam": "api-contract",
+      "existing_coverage": [
+        "evals/data/chat-turn-intent.test.ts",
+        "evals/data/turn-compile.test.ts",
+        "evals/data/cowork-outcome-harness.test.ts"
+      ],
+      "status": "protected",
+      "follow_up_issue": 999
+    },
+    {
       "id": "cowork-draft-output-integrity",
       "capability": "Cowork",
       "invariant": "Full posts with high-confidence evidence of emptiness, corruption, truncation, or contract violations are rejected before presentation without yielding the rejected artifact.",

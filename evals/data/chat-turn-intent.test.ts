@@ -331,7 +331,7 @@ describe("server-owned free-text Artifact intent", () => {
     ).toEqual({ kind: "none" });
   });
 
-  test("clarification language uses the Artifact domain term", () => {
+  test("clarification language uses the human-facing post term", () => {
     const result = resolveFreeTextArtifactIntent({
       message: "Rewrite Draft 9.",
       artifacts: [artifact("draft-1")],
@@ -339,7 +339,8 @@ describe("server-owned free-text Artifact intent", () => {
     });
     expect(result.kind).toBe("clarification");
     if (result.kind !== "clarification") return;
-    expect(result.clarification.question).toContain("Artifact");
-    expect(result.clarification.options.join(" ")).toContain("Artifact");
+    expect(result.clarification.question).toContain("post");
+    expect(result.clarification.question).not.toContain("Artifact");
+    expect(result.clarification.options.join(" ")).not.toContain("Artifact");
   });
 });
