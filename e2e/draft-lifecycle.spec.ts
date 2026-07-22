@@ -188,7 +188,7 @@ test.describe("Cowork draft lifecycle", () => {
         response.url().includes(`/api/chats/${chat.id}/artifacts`) &&
         response.request().method() === "POST",
     );
-    await page.getByRole("button", { name: "Save draft" }).click();
+    await page.getByRole("button", { name: "Save post" }).click();
     const saveResponse = await saveResponsePromise;
     expect(saveResponse.ok()).toBe(true);
     const savePayload = (await saveResponse.json()) as {
@@ -270,7 +270,7 @@ test.describe("Cowork draft lifecycle", () => {
     expect(externalPublishAttempted).toBe(false);
   });
 
-  test("generates, refines, copies, saves, schedules, and cancels one Cowork draft", async ({
+  test("generates, edits, copies, saves, schedules, and cancels one Cowork draft", async ({
     page,
     context,
   }) => {
@@ -296,21 +296,20 @@ test.describe("Cowork draft lifecycle", () => {
     await page.route(`**/api/chats/${chat.id}/stream`, async (route) => {
       streamCount += 1;
       const payload = route.request().postDataJSON() as {
-        operation?: {
+        command?: {
           kind: string;
-          artifactId?: string;
-          instruction?: string;
-          editMode?: string;
+          count?: number;
+          targetPostId?: string;
+          scope?: string;
         };
       };
       if (streamCount === 1) {
-        expect(payload.operation).toBeUndefined();
+        expect(payload.command).toEqual({ kind: "create", count: 1 });
       } else {
-        expect(payload.operation).toMatchObject({
-          kind: "edit_artifact",
-          artifactId,
-          instruction: "Make the hook punchier",
-          editMode: "hook_only",
+        expect(payload.command).toEqual({
+          kind: "edit",
+          targetPostId: artifactId,
+          scope: "hook",
         });
         currentArtifact = { ...currentArtifact, body: refinedBody };
       }
@@ -390,14 +389,21 @@ test.describe("Cowork draft lifecycle", () => {
     await page.route("**/*zernio*", failIfPublishing);
 
     await page.goto(`/dashboard?chat=${chat.id}`);
-    const composer = page.getByPlaceholder("What do you want to write?");
+    await page.getByRole("button", { name: "Create", exact: true }).click();
+    const composer = page.getByPlaceholder("What should the new post be about?");
     await composer.fill("Write one post about reliable content workflows.");
     await page.getByRole("button", { name: "Send message" }).click();
     await expect(page.getByText(originalBody.split("\n")[0])).toBeVisible();
 
-    await page.getByRole("button", { name: "Refine", exact: true }).click();
-    await page.getByPlaceholder("Or describe a change…").fill("Make the hook punchier");
-    await page.getByRole("button", { name: "Refine", exact: true }).last().click();
+    await page.getByRole("button", { name: "Edit this Post" }).click();
+    await page
+      .getByRole("group", { name: "Edit scope" })
+      .getByRole("button", { name: "Hook only" })
+      .click();
+    await page
+      .getByPlaceholder("What should change in Post?")
+      .fill("Make the hook punchier");
+    await page.getByRole("button", { name: "Send message" }).click();
     await expect(page.getByText(refinedBody.split("\n")[0])).toBeVisible();
     expect(streamCount).toBe(2);
 
@@ -412,7 +418,7 @@ test.describe("Cowork draft lifecycle", () => {
         response.url().includes(`/api/chats/${chat.id}/artifacts`) &&
         response.request().method() === "POST",
     );
-    await page.getByRole("button", { name: "Save draft" }).click();
+    await page.getByRole("button", { name: "Save post" }).click();
     const saveResponse = await saveResponsePromise;
     const savePayload = (await saveResponse.json()) as {
       ok: boolean;

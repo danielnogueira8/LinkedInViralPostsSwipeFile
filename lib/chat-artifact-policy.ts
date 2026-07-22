@@ -66,6 +66,24 @@ export function buildArtifactIndex(
   return { entries };
 }
 
+/**
+ * Resolve the visible Edit target without ever retargeting a stale explicit
+ * selection. A fallback is allowed only before the user has selected an id,
+ * such as when Posts arrive after the user entered Edit during a live Create.
+ */
+export function resolveArtifactEditTarget(
+  entries: readonly ArtifactIndexEntry[],
+  input: { targetArtifactId?: string; expandedArtifactId?: string | null },
+): ArtifactIndexEntry | undefined {
+  if (input.targetArtifactId) {
+    return entries.find((entry) => entry.artifactId === input.targetArtifactId);
+  }
+  return (
+    entries.find((entry) => entry.artifactId === input.expandedArtifactId) ??
+    entries.at(-1)
+  );
+}
+
 const CARDINAL_NUMBER_WORDS: Readonly<Record<string, number>> = {
   one: 1,
   two: 2,
