@@ -1,7 +1,7 @@
 {
   "generatedBy": "npm run migrations:metadata",
-  "highest": 122,
-  "count": 122,
+  "highest": 123,
+  "count": 123,
   "files": [
     "migration-001-progress.sql",
     "migration-002-usage.sql",
@@ -124,6 +124,7 @@
     "migration-119-agent-opportunities.sql",
     "migration-120-integration-credentials.sql",
     "migration-121-leadshark-automations.sql",
-    "migration-122-background-job-leadshark-types.sql"
+    "migration-122-background-job-leadshark-types.sql",
+    "migration-123-retire-lead-magnet-resource-job.sql"
   ]
 }
