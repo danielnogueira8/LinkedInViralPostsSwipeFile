@@ -6,16 +6,10 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { DraftLifecycle, draftRecordToApi } from "@/lib/draft-lifecycle";
 import { createSupabaseDraftLifecycleRepository } from "@/lib/draft-lifecycle-supabase";
 import { postMediaAttachmentsSchema } from "@/lib/post-media";
-import { BUILTIN_TEMPLATES } from "@/lib/templates-builtin";
 import { templateInputSchema } from "@/lib/templates";
 import { skillInputSchema } from "@/lib/custom-skills";
 import { loadVisibleCategories } from "@/lib/categories";
-import {
-  LEAD_MAGNET_COLS,
-  coerceLeadMagnet,
-  leadMagnetInputSchema,
-  type LeadMagnet,
-} from "@/lib/lead-magnets";
+import { leadMagnetInputSchema } from "@/lib/lead-magnets";
 import { creatorStyleCreateSchema } from "@/lib/creator-styles";
 import {
   CREATOR_STYLE_COLS,
@@ -29,9 +23,13 @@ import {
   createPreferenceResource,
   createSkillResource,
   createTemplateResource,
-  PREF_COLS,
-  SKILL_COLS,
-  TEMPLATE_COLS,
+  getLeadMagnetResource,
+  getSkillResource,
+  getTemplateResource,
+  listLeadMagnetResources,
+  listPreferenceResources,
+  listSkillResources,
+  listTemplateResources,
 } from "@/lib/content-resource-operations";
 import { dbErrorContent, errorContent, jsonContent, notFoundContent } from "./util";
 
@@ -54,16 +52,6 @@ function drafts(workspaceId: string) {
   const db = supabaseAdmin();
   return new DraftLifecycle(createSupabaseDraftLifecycleRepository(db, workspaceId));
 }
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-// list_lead_magnets' row shape: everything in LEAD_MAGNET_COLS except
-// markdown_body (up to LEAD_MAGNET_BODY_MAX = 60,000 chars/row), which is
-// what made an unpaginated list of a real workspace's lead magnets blow past
-// a client's response-size limit. get_lead_magnet still returns the full
-// body for one at a time.
-const LEAD_MAGNET_LIST_COLS =
-  "id, workspace_id, user_id, title, source_url, source_type, public_slug, is_public, metadata, created_at, updated_at";
 
 function exactlyOne(args: { id?: string; name?: string }) {
   return Number(Boolean(args.id)) + Number(Boolean(args.name)) === 1;
@@ -162,9 +150,10 @@ export function registerPublicResourceTools(
     try {
       const { workspaceId } = ids(extra, workspaceFromExtra);
       if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
-      const { data, error } = await supabaseAdmin().from("content_templates").select(TEMPLATE_COLS).eq("workspace_id", workspaceId).order("created_at", { ascending: false });
-      if (error) return dbErrorContent("list_templates", error);
-      const templates = [...BUILTIN_TEMPLATES, ...(data ?? [])];
+      const templates = await listTemplateResources({
+        db: supabaseAdmin(),
+        workspaceId,
+      });
       return jsonContent({ ok: true, count: templates.length, templates });
     } catch (e) { return dbErrorContent("mcp_resource_tool", e); }
   });
@@ -177,16 +166,14 @@ export function registerPublicResourceTools(
     try {
       const { workspaceId } = ids(extra, workspaceFromExtra);
       if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
-      const builtin = BUILTIN_TEMPLATES.find((template) => template.id === id);
-      if (builtin) return jsonContent({ ok: true, template: builtin });
-      // Workspace-created templates are the only ones stored in Postgres (id
-      // uuid); a builtin id like "builtin:client-win-story" would otherwise
-      // reach the query below and surface a raw "invalid input syntax for
-      // type uuid" driver error instead of a clean not-found.
-      if (!UUID_RE.test(id)) return notFoundContent("Template", id);
-      const { data, error } = await supabaseAdmin().from("content_templates").select(TEMPLATE_COLS).eq("id", id).eq("workspace_id", workspaceId).maybeSingle();
-      if (error) return notFoundContent("Template", id);
-      return data ? jsonContent({ ok: true, template: data }) : notFoundContent("Template", id);
+      const template = await getTemplateResource({
+        db: supabaseAdmin(),
+        workspaceId,
+        id,
+      });
+      return template
+        ? jsonContent({ ok: true, template })
+        : notFoundContent("Template", id);
     } catch (e) { return dbErrorContent("mcp_resource_tool", e); }
   });
 
@@ -219,9 +206,11 @@ export function registerPublicResourceTools(
     try {
       const { workspaceId } = ids(extra, workspaceFromExtra);
       if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
-      const { data, error } = await supabaseAdmin().from("custom_skills").select(SKILL_COLS).eq("workspace_id", workspaceId).order("created_at", { ascending: false });
-      if (error) return dbErrorContent("list_skills", error);
-      return jsonContent({ ok: true, count: data?.length ?? 0, skills: data ?? [] });
+      const skills = await listSkillResources({
+        db: supabaseAdmin(),
+        workspaceId,
+      });
+      return jsonContent({ ok: true, count: skills.length, skills });
     } catch (e) { return dbErrorContent("mcp_resource_tool", e); }
   });
 
@@ -234,12 +223,16 @@ export function registerPublicResourceTools(
       const { workspaceId } = ids(extra, workspaceFromExtra);
       if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
       if (!exactlyOne(args)) return errorContent("Provide exactly one of: id, name.");
-      let query = supabaseAdmin().from("custom_skills").select(SKILL_COLS).eq("workspace_id", workspaceId).limit(1);
       const lookup = args.id ?? args.name!;
-      query = args.id ? query.eq("id", args.id) : query.eq("name", args.name!);
-      const { data, error } = await query.maybeSingle();
-      if (error) return notFoundContent("Skill", lookup);
-      return data ? jsonContent({ ok: true, skill: data }) : notFoundContent("Skill", lookup);
+      const skill = await getSkillResource({
+        db: supabaseAdmin(),
+        workspaceId,
+        id: args.id,
+        name: args.name,
+      });
+      return skill
+        ? jsonContent({ ok: true, skill })
+        : notFoundContent("Skill", lookup);
     } catch (e) { return dbErrorContent("mcp_resource_tool", e); }
   });
 
@@ -277,19 +270,18 @@ export function registerPublicResourceTools(
       if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
       const limit = args.limit ?? 20;
       const offset = args.offset ?? 0;
-      const { data, error, count } = await supabaseAdmin()
-        .from("lead_magnets")
-        .select(LEAD_MAGNET_LIST_COLS, { count: "exact" })
-        .eq("workspace_id", workspaceId)
-        .order("updated_at", { ascending: false })
-        .range(offset, offset + limit - 1);
-      if (error) return dbErrorContent("list_lead_magnets", error);
+      const { rows, total } = await listLeadMagnetResources({
+        db: supabaseAdmin(),
+        workspaceId,
+        limit,
+        offset,
+      });
       return jsonContent({
         ok: true,
-        count: data?.length ?? 0,
-        total: count ?? 0,
+        count: rows.length,
+        total,
         offset,
-        lead_magnets: data ?? [],
+        lead_magnets: rows,
       });
     } catch (e) { return dbErrorContent("mcp_resource_tool", e); }
   });
@@ -302,9 +294,14 @@ export function registerPublicResourceTools(
     try {
       const { workspaceId } = ids(extra, workspaceFromExtra);
       if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
-      const { data, error } = await supabaseAdmin().from("lead_magnets").select(LEAD_MAGNET_COLS).eq("id", id).eq("workspace_id", workspaceId).maybeSingle();
-      if (error) return notFoundContent("Lead magnet", id);
-      return data ? jsonContent({ ok: true, lead_magnet: coerceLeadMagnet(data as LeadMagnet) }) : notFoundContent("Lead magnet", id);
+      const leadMagnet = await getLeadMagnetResource({
+        db: supabaseAdmin(),
+        workspaceId,
+        id,
+      });
+      return leadMagnet
+        ? jsonContent({ ok: true, lead_magnet: leadMagnet })
+        : notFoundContent("Lead magnet", id);
     } catch (e) { return dbErrorContent("mcp_resource_tool", e); }
   });
 
@@ -339,9 +336,11 @@ export function registerPublicResourceTools(
     try {
       const { workspaceId } = ids(extra, workspaceFromExtra);
       if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
-      const { data, error } = await supabaseAdmin().from("content_preferences").select(PREF_COLS).eq("workspace_id", workspaceId).order("created_at", { ascending: false });
-      if (error) return dbErrorContent("list_preferences", error);
-      return jsonContent({ ok: true, count: data?.length ?? 0, preferences: data ?? [] });
+      const preferences = await listPreferenceResources({
+        db: supabaseAdmin(),
+        workspaceId,
+      });
+      return jsonContent({ ok: true, count: preferences.length, preferences });
     } catch (e) { return dbErrorContent("mcp_resource_tool", e); }
   });
 

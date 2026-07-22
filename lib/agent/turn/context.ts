@@ -50,8 +50,6 @@ import {
   type NoModelFormatId,
 } from "@/lib/agent/no-model-format-catalog";
 import {
-  LEAD_MAGNET_COLS,
-  coerceLeadMagnet,
   leadMagnetGenerateSchema,
   selectLeadMagnetForPrompt,
   type LeadMagnet,
@@ -74,6 +72,12 @@ import {
   PREFS_PER_WORKSPACE_MAX,
   type ContentPreference,
 } from "@/lib/preferences";
+import {
+  getLeadMagnetResource,
+  getSkillsByIds,
+  listLeadMagnetResources,
+  listPreferenceResources,
+} from "@/lib/content-resource-operations";
 import { loadPostPerformanceBlock } from "@/lib/post-performance-learning";
 import { fetchRecentPostDrafts, type RecentDraft } from "@/lib/recent-drafts";
 import {
@@ -1217,15 +1221,15 @@ export async function buildTurnContext(
   })();
   const preferencesPromise = (async () => {
     try {
-      return await waitForChatSetup(
-        sbRaw
-          .from("content_preferences")
-          .select("id, workspace_id, rule, detail, source, created_at, updated_at")
-          .eq("workspace_id", workspaceId)
-          .order("created_at", { ascending: false })
-          .limit(PREFS_PER_WORKSPACE_MAX),
+      const data = await waitForChatSetup(
+        listPreferenceResources({
+          db: sbRaw,
+          workspaceId,
+          limit: PREFS_PER_WORKSPACE_MAX,
+        }),
         setupSignal,
       );
+      return { data };
     } catch {
       return { data: [] };
     }
@@ -1617,17 +1621,16 @@ export async function buildTurnContext(
   if (shouldAttachLeadMagnet && !appliedLeadMagnet) {
     let selectedLeadMagnet: LeadMagnet | null = null;
     if (manualLeadMagnetId) {
-      const { data: row } = await waitForChatSetup(
-        sbRaw
-          .from("lead_magnets")
-          .select(LEAD_MAGNET_COLS)
-          .eq("workspace_id", workspaceId)
-          .eq("id", manualLeadMagnetId)
-          .maybeSingle(),
+      const row = await waitForChatSetup(
+        getLeadMagnetResource({
+          db: sbRaw,
+          workspaceId,
+          id: manualLeadMagnetId,
+        }),
         setupSignal,
       );
       if (row) {
-        selectedLeadMagnet = coerceLeadMagnet(row as LeadMagnet);
+        selectedLeadMagnet = row;
       } else {
         throw new Error(LEAD_MAGNET_SELECTION_REQUIRED_ERROR);
       }
@@ -1677,18 +1680,16 @@ export async function buildTurnContext(
           selectedLeadMagnet = null;
         }
       } else {
-        const { data: leadMagnetRows } = await waitForChatSetup(
-          sbRaw
-            .from("lead_magnets")
-            .select(LEAD_MAGNET_COLS)
-            .eq("workspace_id", workspaceId)
-            .order("updated_at", { ascending: false })
-            .limit(30),
+        const { rows: leadMagnetRows } = await waitForChatSetup(
+          listLeadMagnetResources({
+            db: sbRaw,
+            workspaceId,
+            limit: 30,
+            includeBody: true,
+          }),
           setupSignal,
         );
-        const candidates = ((leadMagnetRows ?? []) as LeadMagnet[]).map(
-          coerceLeadMagnet,
-        );
+        const candidates = leadMagnetRows;
         selectedLeadMagnet = selectLeadMagnetForPrompt(
           leadMagnetSelectionPromptBeforeDraft({
             userText,
@@ -1869,17 +1870,13 @@ export async function buildTurnContext(
       ...skill,
     }));
   } else if (skillIds.length) {
-    const { data: skillRows } = await waitForChatSetup(
-      sbRaw
-        .from("custom_skills")
-        .select("id, name, body")
-        .eq("workspace_id", workspaceId)
-        .in("id", skillIds),
+    const skillRows = await waitForChatSetup(
+      getSkillsByIds({ db: sbRaw, workspaceId, ids: skillIds }),
       setupSignal,
     );
     type Row = { id: string; name: string; body: string };
     const byIdMap = new Map(
-      (skillRows ?? []).map((r) => [r.id as string, r as Row]),
+      skillRows.map((r) => [r.id, r as Row]),
     );
     const resolved = skillIds
       .map((id) => byIdMap.get(id))

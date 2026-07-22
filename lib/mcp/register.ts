@@ -49,6 +49,12 @@ import {
 } from "@/lib/schedule-local-date";
 import { sanitizeVoiceProfile } from "@/lib/claude";
 import { registerPublicResourceTools } from "./register-resources";
+import {
+  findBookmarkResource,
+  listBookmarkResources,
+  saveBookmarkResource,
+  summarizeBookmarkResource,
+} from "@/lib/content-resource-operations";
 
 const POST_TYPES = ["regular", "lead_magnet"] as const;
 const SORT_COLUMN = {
@@ -826,16 +832,17 @@ export function registerSwipeTools(server: McpServer) {
         const canonical = canonicalPostUrl(activityId);
         const handleFromUrl = authorHandleFromUrl(args.url);
 
-        const { data: existing } = await sb
-          .from("saved_posts")
-          .select(
-            "id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, note, category_id, saved_at",
-          )
-          .eq("workspace_id", workspaceId)
-          .eq("activity_id", activityId)
-          .maybeSingle();
+        const existing = await findBookmarkResource({
+          db: sb,
+          workspaceId,
+          activityId,
+        });
         if (existing) {
-          return jsonContent({ ok: true, alreadySaved: true, saved: existing });
+          return jsonContent({
+            ok: true,
+            alreadySaved: true,
+            saved: summarizeBookmarkResource(existing),
+          });
         }
 
         // Validate the optional category against the categories this workspace
@@ -872,11 +879,12 @@ export function registerSwipeTools(server: McpServer) {
         const authorName =
           oembed.authorName ?? (handle ? displayNameFromHandle(handle) : null);
 
-        const { data: inserted, error } = await sb
-          .from("saved_posts")
-          .insert({
-            workspace_id: workspaceId,
-            activity_id: activityId,
+        const result = await saveBookmarkResource({
+          db: sb,
+          workspaceId,
+          activityId,
+          knownAbsent: true,
+          values: {
             // Prefer a URL built from the verified embed URN (correct type,
             // known to resolve); else build from the parsed URN type. Avoids
             // the old activity-shaped guess that 404s for share/ugcPost posts.
@@ -893,30 +901,13 @@ export function registerSwipeTools(server: McpServer) {
             embed_urn: oembed.embedUrn ?? probedUrn ?? null,
             note: args.note ?? null,
             category_id: categoryId,
-          })
-          .select(
-            "id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, note, category_id, saved_at",
-          )
-          .single();
-        if (error || !inserted) {
-          if (error?.code === "23505") {
-            const { data: row } = await sb
-              .from("saved_posts")
-              .select(
-                "id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, note, category_id, saved_at",
-              )
-              .eq("workspace_id", workspaceId)
-              .eq("activity_id", activityId)
-              .maybeSingle();
-            if (row) return jsonContent({ ok: true, alreadySaved: true, saved: row });
-          }
-          return dbErrorContent("save_post", error ?? new Error("insert failed"));
-        }
+          },
+        });
 
         return jsonContent({
           ok: true,
-          alreadySaved: false,
-          saved: inserted,
+          alreadySaved: result.existed,
+          saved: summarizeBookmarkResource(result.saved),
           ...(categoryWarning ? { category_warning: categoryWarning } : {}),
         });
       } catch (e) {
@@ -941,16 +932,16 @@ export function registerSwipeTools(server: McpServer) {
         if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
         const sb = supabaseAdmin();
         const limit = args.limit ?? 20;
-        const { data, error } = await sb
-          .from("saved_posts")
-          .select(
-            "id, post_url, activity_id, embed_urn, author_name, author_handle, text_snippet, note, category_id, saved_at",
-          )
-          .eq("workspace_id", workspaceId)
-          .order("saved_at", { ascending: false })
-          .limit(limit);
-        if (error) return dbErrorContent("list_saved_posts", error);
-        return jsonContent({ ok: true, count: (data ?? []).length, saved: data ?? [] });
+        const saved = await listBookmarkResources({
+          db: sb,
+          workspaceId,
+          limit,
+        });
+        return jsonContent({
+          ok: true,
+          count: saved.length,
+          saved: saved.map(summarizeBookmarkResource),
+        });
       } catch (e) {
         return dbErrorContent("list_saved_posts", e);
       }
