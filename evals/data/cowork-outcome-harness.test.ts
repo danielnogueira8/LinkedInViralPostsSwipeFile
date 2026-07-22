@@ -3927,6 +3927,78 @@ describe("production-shaped Cowork outcome harness", () => {
     ]);
   });
 
+  test("a shape-rejected refine (compound/removal on the hook) still edits the draft in place via the general fallback, not a new post", async () => {
+    // The exact regression: "edit the draft, remove the … sentence on the hook"
+    // is rejected by the STRICT direct-refine lane (compound clause), which used
+    // to dump it into the tool-less answer lane → a fresh unrelated post. The
+    // general-refine fallback now routes it to the writer as a full-post rewrite
+    // that replaces the SAME artifact in place.
+    const targetId = "00000000-0000-4000-8000-000000000601";
+    const targetBody = COMPLETE_POST;
+    // The whole revised post the writer returns (a full rewrite, NOT a splice).
+    const rewritten = [
+      "Your reputation is the only career asset you truly own.",
+      "It is leverage you keep when your title, company, or market changes.",
+      "Do the work in public. Teach while it is fresh. Let proof accumulate.",
+    ].join("\n\n");
+    const report = await runCoworkOutcomeScenario({
+      id: "general-refine-fallback",
+      request: {
+        message:
+          "edit the draft, remove the serious question sentence on the hook",
+        skipDecision: true,
+        refineTargetId: targetId,
+        refineInstruction:
+          "edit the draft, remove the serious question sentence on the hook",
+      },
+      seed: {
+        messageArtifact: {
+          id: targetId,
+          kind: "post",
+          title: "Career leverage",
+          body: targetBody,
+        },
+        draft: {
+          id: targetId,
+          title: "Career leverage",
+          body: targetBody,
+        },
+      },
+      model: {
+        provider: { rounds: [] },
+        directWriter: [
+          {
+            text: rewritten,
+            finishReason: "stop",
+            usage: usage(220, 90, 0.00019),
+          },
+        ],
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [rewritten],
+        actionNames: [],
+      },
+    });
+
+    expect(
+      report.pass,
+      JSON.stringify({
+        failures: report.failureCodes,
+        requests: report.observed.directWriterRequests,
+        messages: report.persisted.messages,
+      }),
+    ).toBe(true);
+    // Routed to the tool-free direct WRITER (a full-post refine), not the
+    // answer lane / agent provider — so no fresh post, no extra card.
+    expect(report.observed.agentProviderRounds).toBe(0);
+    expect(report.observed.directWriterRequests).toHaveLength(1);
+    // The SAME artifact id is updated in place with the rewritten body.
+    expect(report.persisted.artifacts).toEqual([
+      expect.objectContaining({ id: targetId, body: rewritten }),
+    ]);
+  });
+
   test.each([
     {
       label: "CTA",

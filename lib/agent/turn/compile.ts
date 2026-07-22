@@ -18,6 +18,7 @@ import {
   isDirectOriginalPostEligible,
   isDirectPartialTextEligible,
   isDirectRefineEligible,
+  isGeneralRefineEligible,
 } from "@/lib/agent/direct-writer-policy";
 import { classifyDirectRefineFocus } from "@/lib/agent/direct-refine-policy";
 import {
@@ -1919,7 +1920,7 @@ export async function compileTurnPlan(
     voiceResolved: preloadedVoiceResult?.ok === true,
   };
 
-  const useDirectRefine = isDirectRefineEligible({
+  const refineEligibilityInput = {
     ...directWritingContext,
     isRefine: skipDecision,
     refineInstruction: refineInstruction ?? "",
@@ -1931,7 +1932,16 @@ export async function compileTurnPlan(
         : null,
     targetHasLeadMagnet: Boolean(trustedRefineTarget?.meta?.lead_magnet),
     hasModelSource: Boolean(modelSourceId),
-  });
+  };
+  const useDirectRefine = isDirectRefineEligible(refineEligibilityInput);
+  // Fallback: a resolved-post refine that the strict lane rejects only on an
+  // instruction-shape check (compound/removal/mixed-focus, e.g. "edit the draft,
+  // remove the sentence on the hook") still gets a real writer via a full-post
+  // general rewrite — instead of falling through to the tool-less answer lane,
+  // which regenerates a fresh post. Reuses the same eligibility input; the extra
+  // Tier-2 gate on the strict lane keeps the risky hook/CTA splice out of here.
+  const useGeneralRefine =
+    !useDirectRefine && isGeneralRefineEligible(refineEligibilityInput);
   const useDirectPartial = isDirectPartialTextEligible({
     ...directWritingContext,
     userInstruction: effectiveUserInstruction,
@@ -2036,6 +2046,7 @@ export async function compileTurnPlan(
   let useDirectWriter =
     !modeledBatchContractRequested &&
     (useDirectRefine ||
+      useGeneralRefine ||
       useDirectPartial ||
       useDirectMulti ||
       useDirectSource ||
@@ -2273,6 +2284,16 @@ export async function compileTurnPlan(
         focus: classifyDirectRefineFocus(refineInstruction!),
         target: trustedRefineTarget as Artifact & { kind: "post" },
       }
+    : useGeneralRefine
+      ? {
+          // Fallback refine: always a full-post rewrite (never a hook/CTA
+          // splice), so it safely handles compound/removal instructions while
+          // still editing the SAME artifact in place.
+          kind: "refine",
+          instruction: refineInstruction!,
+          focus: "general",
+          target: trustedRefineTarget as Artifact & { kind: "post" },
+        }
     : useDirectPartial
       ? {
           kind: "partial",

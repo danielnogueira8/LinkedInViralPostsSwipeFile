@@ -239,6 +239,46 @@ export type DirectRefineEligibility = {
 };
 
 /**
+ * Tier-1 hard checks shared by every direct-refine lane: a resolved complete
+ * POST target, a real instruction, resolved voice, and NO external context the
+ * simple tool-less writer can't carry (attachments, lead magnet, creator style,
+ * model source). These genuinely block any direct refine — unlike the Tier-2
+ * instruction-shape checks in isDirectRefineEligible, which only protect the
+ * hook/CTA SPLICE focuses (a general full-post rewrite doesn't need them).
+ */
+function passesDirectRefineHardChecks(input: DirectRefineEligibility): boolean {
+  return (
+    input.enabled &&
+    input.isRefine &&
+    input.refineInstruction.trim().length > 0 &&
+    input.targetResolved &&
+    input.targetKind === "post" &&
+    !input.targetHasLeadMagnet &&
+    !input.hasModelSource &&
+    !input.hasAttachments &&
+    !input.hasLeadMagnet &&
+    !input.hasCreatorStyle &&
+    input.voiceResolved
+  );
+}
+
+/**
+ * The general-refine FALLBACK lane. When the strict direct-refine lane rejects
+ * an instruction on a Tier-2 shape check (compound clause, removal, expansion,
+ * mixed focus, …), the request still owns a resolved post and must not fall
+ * through to the tool-less answer lane — which regenerates a fresh post instead
+ * of editing the target. Passing only the Tier-1 hard checks routes it to the
+ * writer's refine branch with focus:"general" (full-post rewrite, same artifact
+ * id → in-place update), which safely handles those instructions. The risky
+ * hook/CTA splice stays gated behind isDirectRefineEligible.
+ */
+export function isGeneralRefineEligible(
+  input: DirectRefineEligibility,
+): boolean {
+  return passesDirectRefineHardChecks(input);
+}
+
+/**
  * A direct refine owns one already-resolved complete post and needs no tools.
  * Any external context, action, research, or multi-version request stays on
  * the baseline path, which is also the immediate kill-switch fallback.
@@ -246,22 +286,10 @@ export type DirectRefineEligibility = {
 export function isDirectRefineEligible(
   input: DirectRefineEligibility,
 ): boolean {
-  const instruction = input.refineInstruction.trim();
-  if (
-    !input.enabled ||
-    !input.isRefine ||
-    !instruction ||
-    !input.targetResolved ||
-    input.targetKind !== "post" ||
-    input.targetHasLeadMagnet ||
-    input.hasModelSource ||
-    input.hasAttachments ||
-    input.hasLeadMagnet ||
-    input.hasCreatorStyle ||
-    !input.voiceResolved
-  ) {
+  if (!passesDirectRefineHardChecks(input)) {
     return false;
   }
+  const instruction = input.refineInstruction.trim();
   if (
     hasInvalidExplicitShortenPercentage(instruction) ||
     hasUnsupportedDirectShortenPercentage(instruction) ||

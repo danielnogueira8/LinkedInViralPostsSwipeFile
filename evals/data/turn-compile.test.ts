@@ -19,6 +19,7 @@ import {
   isDirectOriginalPostEligible,
   isDirectPartialTextEligible,
   isDirectRefineEligible,
+  isGeneralRefineEligible,
 } from "@/lib/agent/direct-writer-policy";
 
 describe("resolveTurnCount — the ONE turn count rule (1-6, UI > message > default)", () => {
@@ -2302,6 +2303,86 @@ describe("direct writer eligibility predicates", () => {
         expect(isDirectRefineEligible({ ...REFINE, refineInstruction })).toBe(
           false,
         );
+      }
+    });
+  });
+
+  describe("general refine fallback eligibility", () => {
+    // The fallback lane: a resolved-post refine that the STRICT lane rejects on
+    // an instruction-shape (Tier-2) check still gets a real writer via a
+    // full-post general rewrite — instead of the tool-less answer lane that
+    // regenerates. It passes ONLY the Tier-1 hard checks.
+    const REFINE = {
+      enabled: true,
+      isRefine: true,
+      refineInstruction: "Make it shorter and keep the core argument.",
+      targetResolved: true,
+      targetKind: "post" as const,
+      targetHasLeadMagnet: false,
+      hasModelSource: false,
+      hasAttachments: false,
+      hasLeadMagnet: false,
+      hasCreatorStyle: false,
+      voiceResolved: true,
+    };
+
+    test("accepts the exact regression string that the strict lane rejects", () => {
+      // "edit the draft, remove the serious question sentence on the hook":
+      // strict lane rejects it (compound clause) → it used to regenerate a
+      // fresh post. The fallback now accepts it → full-post rewrite in place.
+      const refineInstruction =
+        "edit the draft, remove the serious question sentence on the hook";
+      expect(isDirectRefineEligible({ ...REFINE, refineInstruction })).toBe(false);
+      expect(isGeneralRefineEligible({ ...REFINE, refineInstruction })).toBe(true);
+    });
+
+    test("catches the shape-rejected instructions the strict lane bounces (removal, expansion, mixed focus, compound)", () => {
+      for (const refineInstruction of [
+        "Remove the CTA.",
+        "Do not include a CTA.",
+        "Make it longer.",
+        "Expand it.",
+        "Add more detail.",
+        "Tighten the hook and strengthen the CTA.",
+        "Shorten the entire post and tighten the hook.",
+        "Make it 70% shorter.",
+        "remove the serious question sentence on the hook",
+      ]) {
+        // Strict lane rejects (Tier-2), fallback accepts (Tier-1 passes).
+        expect(isDirectRefineEligible({ ...REFINE, refineInstruction })).toBe(false);
+        expect(isGeneralRefineEligible({ ...REFINE, refineInstruction })).toBe(true);
+      }
+    });
+
+    test.each([
+      ["rollout disabled", { enabled: false }],
+      ["not marked refine", { isRefine: false }],
+      ["empty instruction", { refineInstruction: "   " }],
+      ["unresolved target", { targetResolved: false }],
+      ["hook-card target", { targetKind: "hook" as const }],
+      ["target lead magnet", { targetHasLeadMagnet: true }],
+      ["model source", { hasModelSource: true }],
+      ["attachment", { hasAttachments: true }],
+      ["selected lead magnet", { hasLeadMagnet: true }],
+      ["creator style", { hasCreatorStyle: true }],
+      ["missing voice", { voiceResolved: false }],
+    ])(
+      "still rejects Tier-1-blocked case: %s (these genuinely can't use the simple writer)",
+      (_label, override) => {
+        expect(isGeneralRefineEligible({ ...REFINE, ...override })).toBe(false);
+      },
+    );
+
+    test("a clean single-focus refine that the strict lane already accepts also passes the fallback (superset)", () => {
+      // The fallback is a superset of the strict lane's Tier-1: anything the
+      // strict lane accepts also passes here (compile prefers the strict lane
+      // first, so this never changes routing for those — just documents it).
+      for (const refineInstruction of [
+        "Make it 20% shorter.",
+        "Make it more story-driven.",
+      ]) {
+        expect(isDirectRefineEligible({ ...REFINE, refineInstruction })).toBe(true);
+        expect(isGeneralRefineEligible({ ...REFINE, refineInstruction })).toBe(true);
       }
     });
   });
