@@ -21,10 +21,10 @@ export { providerModelAttribution } from "./agent/cowork-adapter-attempt";
 // REASONING (GLM-5.2, $1.20/M in, $4.10/M out): the chat agent + voice
 // synthesis — anything that reasons, drafts, or matches a creator's voice. We
 // trialled Claude Sonnet 5 here for stronger instruction-following, but at
-// ~5-8x GLM's output cost it was not worth it for the chat tier; the
-// judgment-heavy part (whether to ASK vs proceed) already runs on Sonnet 5
-// in the decision pre-pass (see decide.ts), which is where reliability matters
-// most. The $15/user monthly budget cap still applies (see rate-limit.ts).
+// ~5-8x GLM's output cost it was not worth it for the chat tier. Turn routing
+// is now deterministic (lib/agent/turn/compile.ts), with a cheap GPT-Luna
+// intent-decision (lib/agent/turn/intent-decision.ts) only on the fallthrough.
+// The $15/user monthly budget cap still applies (see rate-limit.ts).
 //
 // BACKGROUND (GLM-5.1): the mechanical/categorizing tasks — templatize a post
 // (structure-preserving fill-in-the-blank) and extract a hook (excerpt + pick a

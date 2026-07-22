@@ -31,8 +31,8 @@ describe("openRouterCost — pricing-table correctness", () => {
   });
 
   test("the CHAT_MODEL slug is actually in the price table (no GLM-5.1 fallback)", () => {
-    // If decide.ts's model id ever drifts from a pricing key, the rate would
-    // silently revert to the GLM-5.1 fallback and under-count decision spend.
+    // If the CHAT_MODEL slug ever drifts from a pricing key, the rate would
+    // silently revert to the GLM-5.1 fallback and under-count spend.
     expect(hasOpenRouterPricing(CHAT_MODEL)).toBe(true);
   });
 
