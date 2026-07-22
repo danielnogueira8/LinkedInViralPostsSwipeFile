@@ -5,6 +5,7 @@ import { POST_INTENTS } from "@/lib/post-intents";
 import {
   advanceActionOrchestratorClarification,
   compileActionOrchestratorRoute,
+  canonicalizeReadOnlyOrchestratorRoute,
   compileReadOnlyOrchestratorRoute,
   compileReadOnlyOrchestratorReserveRoute,
   resolveTurnContract,
@@ -36,11 +37,82 @@ test.each([
   expect(requestsDurableOrAction(instruction)).toBe(true);
 });
 
-test("a negative drafting clause is never a full-post deliverable request", () => {
-  const instruction =
-    "Research the official definition of Model Context Protocol and summarize it in 3 bullets. Do not draft or rewrite a LinkedIn post.";
+test.each([
+  "Research the official definition of Model Context Protocol and summarize it in 3 bullets. Do not draft or rewrite a LinkedIn post.",
+  "Do not search or draft a LinkedIn post; just explain Model Context Protocol.",
+  "No search or draft a LinkedIn post; just explain Model Context Protocol.",
+  "Do not search and create a new LinkedIn post; summarize Model Context Protocol.",
+  "Research Model Context Protocol and report the findings; no need to draft a LinkedIn post.",
+])("a negative drafting clause is never a full-post deliverable request: %s", (instruction) => {
   expect(requestsFullPostDeliverable(instruction)).toBe(false);
   expect(requestedBasePostCount(instruction, false)).toBeNull();
+});
+
+test.each([
+  "Research Model Context Protocol, then write a LinkedIn post. Do not rewrite my existing draft.",
+  "Do not edit the current post; write a new LinkedIn post about Model Context Protocol.",
+  "Do not edit Draft 1 and write a new LinkedIn post about Model Context Protocol.",
+  "Do not edit Draft 1 and write a LinkedIn post about Model Context Protocol.",
+])("a scoped edit prohibition does not suppress an explicit new post: %s", (instruction) => {
+  expect(requestsFullPostDeliverable(instruction)).toBe(true);
+});
+
+test("a research report with a writing opt-out compiles as a grounded answer", () => {
+  expect(
+    compileReadOnlyOrchestratorRoute({
+      userInstruction:
+        "Research Model Context Protocol and report the findings; no need to draft a LinkedIn post.",
+      isRefine: false,
+      hasModelSource: false,
+      hasAttachments: false,
+      hasLeadMagnet: false,
+      hasCreatorStyle: false,
+    }),
+  ).toMatchObject({
+    kind: "web_research",
+    outcome: { kind: "grounded_answer", format: "report" },
+  });
+});
+
+test("compiled draft routes expose only the typed outcome authority", () => {
+  const route = compileReadOnlyOrchestratorRoute({
+    userInstruction:
+      "Research B2B pricing strategies and write two LinkedIn posts about pricing discipline.",
+    isRefine: false,
+    hasModelSource: false,
+    hasAttachments: false,
+    hasLeadMagnet: false,
+    hasCreatorStyle: false,
+  });
+
+  expect(route).toMatchObject({
+    kind: "web_research",
+    outcome: { kind: "draft", expectedDrafts: 2 },
+  });
+  expect(route).not.toHaveProperty("expectsDraft");
+  expect(route).not.toHaveProperty("expectedDrafts");
+});
+
+test("legacy read-only routes normalize once and contradictory authorities fail closed", () => {
+  expect(
+    canonicalizeReadOnlyOrchestratorRoute({
+      kind: "workspace_research",
+      outcome: { kind: "draft", expectedDrafts: 3 },
+      minimumSources: 3,
+    }),
+  ).toEqual({
+    kind: "workspace_research",
+    outcome: { kind: "draft", expectedDrafts: 3 },
+    minimumSources: 3,
+  });
+
+  expect(() =>
+    canonicalizeReadOnlyOrchestratorRoute({
+      kind: "web_research",
+      expectsDraft: false,
+      outcome: { kind: "draft", expectedDrafts: 1 },
+    }),
+  ).toThrow(/contradictory/i);
 });
 
 describe("resolveTurnCount — the ONE turn count rule (1-6, UI > message > default)", () => {
@@ -128,12 +200,10 @@ describe("resolveTurnContract — the ONE turn contract (computed once, post-cla
   };
   const draftRoute: ReadOnlyOrchestratorRoute = {
     kind: "news_research",
-    expectsDraft: true,
-    expectedDrafts: 5,
+    outcome: { kind: "draft", expectedDrafts: 5 },
   };
   const researchRoute: ReadOnlyOrchestratorRoute = {
     kind: "web_research",
-    expectsDraft: false,
   };
 
   test("the direct writer's task shapes the contract", () => {
@@ -890,8 +960,7 @@ describe("compileReadOnlyOrchestratorRoute", () => {
       }),
     ).toMatchObject({
       kind: "workspace_research",
-      expectsDraft: true,
-      expectedDrafts: 2,
+      outcome: { kind: "draft", expectedDrafts: 2 },
       minimumSources: 2,
       workspaceSearchMode: "strict_top",
       workspacePostType: "regular",
@@ -913,7 +982,7 @@ describe("compileReadOnlyOrchestratorRoute", () => {
       }),
     ).toMatchObject({
       kind: "workspace_research",
-      expectedDrafts: 1,
+      outcome: { kind: "draft", expectedDrafts: 1 },
       minimumSources: 1,
       workspaceDraftSourceMode: "one_to_one",
     });
@@ -975,7 +1044,7 @@ describe("compileReadOnlyOrchestratorRoute", () => {
           userInstruction: "A deliberately terse subject.",
           composerTaskContext,
         }),
-      ).toMatchObject({ kind, expectsDraft: true, expectedDrafts: 2 });
+      ).toMatchObject({ kind, outcome: { kind: "draft", expectedDrafts: 2  }});
     },
   );
 
@@ -995,7 +1064,7 @@ describe("compileReadOnlyOrchestratorRoute", () => {
   ] as const)("compiles %s only for a complex grounded writing turn", (kind, userInstruction) => {
     expect(
       compileReadOnlyOrchestratorRoute({ ...readOnlyBase, userInstruction }),
-    ).toMatchObject({ kind, expectsDraft: true });
+    ).toMatchObject({ kind, outcome: { kind: "draft", expectedDrafts: 1 } });
   });
 
   test("routes a writing turn that must inspect an attachment", () => {
@@ -1006,7 +1075,7 @@ describe("compileReadOnlyOrchestratorRoute", () => {
         userInstruction:
           "Inspect the attached customer interview and write a LinkedIn post from the verified lessons in it.",
       }),
-    ).toMatchObject({ kind: "file_inspection", expectsDraft: true });
+    ).toMatchObject({ kind: "file_inspection", outcome: { kind: "draft", expectedDrafts: 1 } });
   });
 
   test("preserves an exact plural output count on a complex research route", () => {
@@ -1018,8 +1087,7 @@ describe("compileReadOnlyOrchestratorRoute", () => {
       }),
     ).toMatchObject({
       kind: "news_research",
-      expectsDraft: true,
-      expectedDrafts: 2,
+      outcome: { kind: "draft", expectedDrafts: 2 },
     });
   });
 
@@ -1033,8 +1101,7 @@ describe("compileReadOnlyOrchestratorRoute", () => {
       }),
     ).toMatchObject({
       kind: "workspace_research",
-      expectsDraft: true,
-      expectedDrafts: 4,
+      outcome: { kind: "draft", expectedDrafts: 4 },
       minimumSources: 4,
       workspacePostType: "regular",
       workspaceDraftSourceMode: "one_to_one",
@@ -1050,8 +1117,7 @@ describe("compileReadOnlyOrchestratorRoute", () => {
     });
     expect(route).toMatchObject({
       kind: "workspace_research",
-      expectsDraft: true,
-      expectedDrafts: 3,
+      outcome: { kind: "draft", expectedDrafts: 3 },
       minimumSources: 10,
       workspacePostType: "regular",
     });
@@ -1068,8 +1134,7 @@ describe("compileReadOnlyOrchestratorRoute", () => {
       }),
     ).toMatchObject({
       kind: "news_research",
-      expectsDraft: true,
-      expectedDrafts: 4,
+      outcome: { kind: "draft", expectedDrafts: 4 },
     });
     expect(
       compileReadOnlyOrchestratorRoute({
@@ -1081,8 +1146,7 @@ describe("compileReadOnlyOrchestratorRoute", () => {
       }),
     ).toMatchObject({
       kind: "file_inspection",
-      expectsDraft: true,
-      expectedDrafts: 5,
+      outcome: { kind: "draft", expectedDrafts: 5 },
     });
   });
 
@@ -1094,7 +1158,7 @@ describe("compileReadOnlyOrchestratorRoute", () => {
     });
     expect(route).toMatchObject({
       kind: "workspace_research",
-      expectedDrafts: 2,
+      outcome: { kind: "draft", expectedDrafts: 2 },
       minimumSources: 3,
     });
     expect(route).not.toHaveProperty("workspaceDraftSourceMode");
@@ -1108,8 +1172,7 @@ describe("compileReadOnlyOrchestratorRoute", () => {
     });
     expect(route).toMatchObject({
       kind: "workspace_research",
-      expectsDraft: true,
-      expectedDrafts: 3,
+      outcome: { kind: "draft", expectedDrafts: 3 },
       minimumSources: 4,
     });
     expect(route).not.toHaveProperty("workspaceDraftSourceMode");
@@ -1123,7 +1186,7 @@ describe("compileReadOnlyOrchestratorRoute", () => {
     });
     expect(route).toMatchObject({
       kind: "workspace_research",
-      expectedDrafts: 4,
+      outcome: { kind: "draft", expectedDrafts: 4 },
       minimumSources: 2,
       workspacePostType: "regular",
     });
@@ -1139,7 +1202,7 @@ describe("compileReadOnlyOrchestratorRoute", () => {
       }),
     ).toMatchObject({
       kind: "workspace_research",
-      expectedDrafts: 1,
+      outcome: { kind: "draft", expectedDrafts: 1 },
       minimumSources: 4,
       workspaceDraftSourceMode: "one_to_one",
     });
@@ -1154,7 +1217,7 @@ describe("compileReadOnlyOrchestratorRoute", () => {
       }),
     ).toMatchObject({
       kind: "workspace_research",
-      expectedDrafts: 2,
+      outcome: { kind: "draft", expectedDrafts: 2 },
       minimumSources: 4,
       workspaceDraftSourceMode: "one_to_one",
     });
@@ -1169,8 +1232,7 @@ describe("compileReadOnlyOrchestratorRoute", () => {
       }),
     ).toMatchObject({
       kind: "workspace_research",
-      expectsDraft: true,
-      expectedDrafts: 1,
+      outcome: { kind: "draft", expectedDrafts: 1 },
       minimumSources: 3,
     });
   });
@@ -1218,8 +1280,7 @@ describe("compileReadOnlyOrchestratorRoute", () => {
         compileReadOnlyOrchestratorRoute({ ...readOnlyBase, userInstruction }),
       ).toMatchObject({
         kind: "workspace_research",
-        expectsDraft: true,
-        expectedDrafts,
+        outcome: { kind: "draft", expectedDrafts },
         minimumSources: expectedDrafts,
         workspacePostType,
         workspaceDraftSourceMode: "one_to_one",
@@ -1239,8 +1300,7 @@ describe("compileReadOnlyOrchestratorRoute", () => {
       }),
     ).toMatchObject({
       kind: "workspace_research",
-      expectsDraft: true,
-      expectedDrafts: 3,
+      outcome: { kind: "draft", expectedDrafts: 3 },
       workspacePostType: "regular",
     });
   });
@@ -1256,7 +1316,7 @@ describe("compileReadOnlyOrchestratorRoute", () => {
       }),
     ).toMatchObject({
       kind: "workspace_research",
-      expectedDrafts: 3,
+      outcome: { kind: "draft", expectedDrafts: 3 },
       workspacePostType: "lead_magnet",
     });
   });
@@ -1269,7 +1329,7 @@ describe("compileReadOnlyOrchestratorRoute", () => {
     });
     expect(route).toMatchObject({
       kind: "workspace_research",
-      expectedDrafts: 1,
+      outcome: { kind: "draft", expectedDrafts: 1 },
     });
     expect(route?.workspacePostType).toBeUndefined();
   });
@@ -1289,7 +1349,7 @@ describe("compileReadOnlyOrchestratorRoute", () => {
         }),
       ).toMatchObject({
         kind: "workspace_research",
-        expectedDrafts: 3,
+        outcome: { kind: "draft", expectedDrafts: 3 },
         minimumSources: 3,
         workspaceDraftSourceMode: "one_to_one",
       });
@@ -1308,7 +1368,7 @@ describe("compileReadOnlyOrchestratorRoute", () => {
       compileReadOnlyOrchestratorRoute({ ...readOnlyBase, userInstruction }),
     ).toMatchObject({
       kind: "workspace_research",
-      expectedDrafts: 4,
+      outcome: { kind: "draft", expectedDrafts: 4 },
       minimumSources: 4,
       workspaceDraftSourceMode: "one_to_one",
     });
@@ -1324,7 +1384,7 @@ describe("compileReadOnlyOrchestratorRoute", () => {
       compileReadOnlyOrchestratorRoute({ ...readOnlyBase, userInstruction }),
     ).toMatchObject({
       kind: "workspace_research",
-      expectedDrafts,
+      outcome: { kind: "draft", expectedDrafts },
       minimumSources: expectedDrafts,
       workspaceDraftSourceMode: "one_to_one",
     });
@@ -1343,7 +1403,6 @@ describe("compileReadOnlyOrchestratorRoute", () => {
       compileReadOnlyOrchestratorRoute({ ...readOnlyBase, userInstruction }),
     ).toMatchObject({
       kind: "ambiguous_read_only",
-      expectsDraft: false,
       clarificationReason: "modeled_mapping",
     });
   });
@@ -1371,8 +1430,7 @@ describe("compileReadOnlyOrchestratorRoute", () => {
       }),
     ).toMatchObject({
       kind: "workspace_research",
-      expectsDraft: true,
-      expectedDrafts: 4,
+      outcome: { kind: "draft", expectedDrafts: 4 },
       minimumSources: 4,
       workspaceDraftSourceMode: "one_to_one",
       authoritativeInstruction: expect.stringContaining(
@@ -1400,7 +1458,6 @@ describe("compileReadOnlyOrchestratorRoute", () => {
       }),
     ).toMatchObject({
       kind: "ambiguous_read_only",
-      expectsDraft: false,
       clarificationReason: "modeled_mapping",
       modeledAmbiguityReason: "source_count",
     });
@@ -1417,8 +1474,7 @@ describe("compileReadOnlyOrchestratorRoute", () => {
         }),
       ).toMatchObject({
         kind: "workspace_research",
-        expectsDraft: true,
-        expectedDrafts: 4,
+        outcome: { kind: "draft", expectedDrafts: 4 },
         minimumSources: 4,
         workspaceDraftSourceMode: "one_to_one",
       });
@@ -1434,8 +1490,7 @@ describe("compileReadOnlyOrchestratorRoute", () => {
 
     expect(route).toMatchObject({
       kind: "workspace_research",
-      expectsDraft: true,
-      expectedDrafts: 4,
+      outcome: { kind: "draft", expectedDrafts: 4 },
       minimumSources: 4,
       workspaceDraftSourceMode: "one_to_one",
       authoritativeInstruction: expect.stringContaining("create exactly 4"),
@@ -1447,7 +1502,7 @@ describe("compileReadOnlyOrchestratorRoute", () => {
       }),
     ).toMatchObject({
       kind: "workspace_research",
-      expectedDrafts: 4,
+      outcome: { kind: "draft", expectedDrafts: 4 },
       minimumSources: 4,
       workspaceDraftSourceMode: "one_to_one",
     });
@@ -1465,7 +1520,7 @@ describe("compileReadOnlyOrchestratorRoute", () => {
 
     expect(route).toMatchObject({
       kind: "workspace_research",
-      expectedDrafts: 4,
+      outcome: { kind: "draft", expectedDrafts: 4 },
       minimumSources: 4,
       workspaceDraftSourceMode: "one_to_one",
     });
@@ -1480,7 +1535,7 @@ describe("compileReadOnlyOrchestratorRoute", () => {
       }),
     ).toMatchObject({
       kind: "workspace_research",
-      expectedDrafts: 4,
+      outcome: { kind: "draft", expectedDrafts: 4 },
       minimumSources: 4,
       workspaceDraftSourceMode: "one_to_one",
     });
@@ -1495,7 +1550,6 @@ describe("compileReadOnlyOrchestratorRoute", () => {
 
     expect(route).toMatchObject({
       kind: "ambiguous_read_only",
-      expectsDraft: false,
       clarificationReason: "modeled_mapping",
     });
     expect(route).not.toHaveProperty("authoritativeInstruction");
@@ -1510,7 +1564,6 @@ describe("compileReadOnlyOrchestratorRoute", () => {
 
     expect(route).toMatchObject({
       kind: "ambiguous_read_only",
-      expectsDraft: false,
       clarificationReason: "modeled_mapping",
     });
     expect(route).not.toHaveProperty("authoritativeInstruction");
@@ -1535,7 +1588,7 @@ describe("compileReadOnlyOrchestratorRoute", () => {
       }),
     ).toMatchObject({
       kind: "workspace_research",
-      expectedDrafts: 4,
+      outcome: { kind: "draft", expectedDrafts: 4 },
       minimumSources: 4,
       workspaceDraftSourceMode: "one_to_one",
     });
@@ -1587,8 +1640,7 @@ describe("compileReadOnlyOrchestratorRoute", () => {
         compileReadOnlyOrchestratorRoute({ ...readOnlyBase, userInstruction }),
       ).toMatchObject({
         kind: "workspace_research",
-        expectsDraft: true,
-        expectedDrafts,
+        outcome: { kind: "draft", expectedDrafts },
         minimumSources: expectedDrafts,
         workspacePostType: "regular",
         workspaceDraftSourceMode: "one_to_one",
@@ -1603,7 +1655,7 @@ describe("compileReadOnlyOrchestratorRoute", () => {
         userInstruction:
           "Find viral posts from my swipe file, compare them, and write LinkedIn posts about pricing.",
       }),
-    ).toMatchObject({ kind: "ambiguous_read_only", expectsDraft: false });
+    ).toMatchObject({ kind: "ambiguous_read_only" });
   });
 
   test.each([
@@ -1614,7 +1666,7 @@ describe("compileReadOnlyOrchestratorRoute", () => {
     expect(
       compileReadOnlyOrchestratorRoute({ ...readOnlyBase, userInstruction }),
     ).not.toMatchObject({
-      expectsDraft: true,
+      outcome: { kind: "draft", expectedDrafts: 1 },
       workspaceDraftSourceMode: "one_to_one",
     });
   });
@@ -1638,7 +1690,7 @@ describe("compileReadOnlyOrchestratorRoute", () => {
       compileReadOnlyOrchestratorRoute({ ...readOnlyBase, userInstruction }),
     ).toMatchObject({
       kind: "workspace_research",
-      expectsDraft: true,
+      outcome: { kind: "draft", expectedDrafts: 1 },
       minimumSources,
     });
   });
@@ -1653,7 +1705,7 @@ describe("compileReadOnlyOrchestratorRoute", () => {
       }),
     ).toMatchObject({
       kind: "file_inspection",
-      expectsDraft: true,
+      outcome: { kind: "draft", expectedDrafts: 1 },
       allowExternalSearch: false,
       allowedSearchKinds: [],
     });
@@ -1701,7 +1753,7 @@ describe("compileReadOnlyOrchestratorRoute", () => {
   ])("uses the freshness-enforced news route for explicit news research: %s", (userInstruction) => {
     expect(
       compileReadOnlyOrchestratorRoute({ ...readOnlyBase, userInstruction }),
-    ).toMatchObject({ kind: "news_research", expectsDraft: true });
+    ).toMatchObject({ kind: "news_research", outcome: { kind: "draft", expectedDrafts: 1 } });
   });
 
   test.each([
@@ -1734,7 +1786,7 @@ describe("compileReadOnlyOrchestratorRoute", () => {
       }),
     ).toMatchObject({
       kind: "news_research",
-      expectsDraft: true,
+      outcome: { kind: "draft", expectedDrafts: 1 },
       authoritativeInstruction:
         "Research the latest OpenAI news.\n\nWrite a LinkedIn post.",
     });
@@ -1749,7 +1801,7 @@ describe("compileReadOnlyOrchestratorRoute", () => {
       }),
     ).toMatchObject({
       kind: "news_research",
-      expectedDrafts: 2,
+      outcome: { kind: "draft", expectedDrafts: 2 },
       authoritativeInstruction:
         "Research the latest OpenAI news.\n\nWrite 2 LinkedIn posts.",
     });
@@ -1807,7 +1859,7 @@ describe("compileReadOnlyOrchestratorRoute", () => {
         }),
       ).toMatchObject({
         kind: "news_research",
-        expectedDrafts,
+        outcome: { kind: "draft", expectedDrafts },
         authoritativeInstruction: `Research the latest OpenAI news.\n\nWrite ${expectedDrafts} LinkedIn posts.`,
       });
     },
@@ -1834,7 +1886,7 @@ describe("compileReadOnlyOrchestratorRoute", () => {
       }),
     ).toMatchObject({
       kind: "news_research",
-      expectsDraft: true,
+      outcome: { kind: "draft", expectedDrafts: 1 },
       authoritativeInstruction:
         "Research OpenAI news and write a LinkedIn post.",
     });
@@ -1893,7 +1945,7 @@ describe("compileReadOnlyOrchestratorRoute", () => {
         hasAttachments: userInstruction.includes("attached"),
         userInstruction,
       }),
-    ).toMatchObject({ kind: "ambiguous_read_only", expectsDraft: false });
+    ).toMatchObject({ kind: "ambiguous_read_only" });
   });
 
   test.each([
@@ -1986,7 +2038,7 @@ describe("compileReadOnlyOrchestratorRoute", () => {
       }),
     ).toMatchObject({
       kind: "workspace_research",
-      expectedDrafts: 1,
+      outcome: { kind: "draft", expectedDrafts: 1 },
       minimumSources: 1,
       workspaceDraftSourceMode: "one_to_one",
     });
@@ -2021,7 +2073,7 @@ describe("compileReadOnlyOrchestratorRoute", () => {
     expect(compileReadOnlyOrchestratorRoute(input)).toBeNull();
     expect(compileReadOnlyOrchestratorReserveRoute(input)).toMatchObject({
       kind: "news_research",
-      expectsDraft: true,
+      outcome: { kind: "draft", expectedDrafts: 1 },
     });
   });
 });

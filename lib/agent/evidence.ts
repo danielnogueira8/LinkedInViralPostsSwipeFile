@@ -1,3 +1,5 @@
+export const MAX_GROUNDED_ANSWER_RESULTS = 10;
+
 export type GroundedSource = {
   id: string;
   kind: "news" | "web" | "workspace_post" | "attachment";

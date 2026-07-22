@@ -118,6 +118,7 @@ export class CoworkHarnessStore {
   failActionRetryContextSave = false;
   failActionTurnCancelAttempts = 0;
   failCreatorStyleMarkerUpdate = false;
+  failTurnOperationMarkerUpdate = false;
   missCreatorStyleMarkerUpdateTarget = false;
   private readonly readCounts = new Map<TableName, number>();
   private readonly tables: Record<TableName, Row[]> = {
@@ -771,6 +772,19 @@ export class CoworkHarnessStore {
             const updatesCreatorStyleContext =
               table === "chat_messages" &&
               mutation.value.creator_style_context !== undefined;
+            const updatesTurnOperation =
+              table === "chat_messages" &&
+              Array.isArray(mutation.value.tool_calls) &&
+              mutation.value.tool_calls.some(
+                (call: { function?: { name?: unknown } }) =>
+                  call.function?.name === "_turn_operation",
+              );
+            if (updatesTurnOperation && this.failTurnOperationMarkerUpdate) {
+              return {
+                data: [],
+                error: { message: "turn operation marker write unavailable" },
+              };
+            }
             if (
               updatesCreatorStyleContext &&
               this.failCreatorStyleMarkerUpdate

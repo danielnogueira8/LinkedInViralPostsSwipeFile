@@ -71,6 +71,7 @@ export type CoworkOutcomeScenario = {
   retryLatestUser?: boolean;
   model: {
     provider: ScriptedProviderScenario;
+    turnOperationMarkerPersistenceFails?: boolean;
     creatorStyleMarkerPersistenceFails?: boolean;
     creatorStyleMarkerTargetMissing?: boolean;
     sourceFidelity?: SourceFidelityVerdict[];
@@ -134,6 +135,7 @@ export type CoworkOutcomeScenario = {
       status?: "ready" | "pending" | "failed";
     };
     messageArtifact?: Artifact;
+    messageArtifacts?: Artifact[];
     // A completed earlier user→assistant exchange, seeded before the scenario
     // request so the turn's history window has a prior conversation.
     priorTurn?: {
@@ -604,6 +606,8 @@ async function runCoworkOutcomeScenarioWithStore(
   const requestController = new AbortController();
   store.failCreatorStyleMarkerUpdate =
     scenario.model.creatorStyleMarkerPersistenceFails === true;
+  store.failTurnOperationMarkerUpdate =
+    scenario.model.turnOperationMarkerPersistenceFails === true;
   store.missCreatorStyleMarkerUpdateTarget =
     scenario.model.creatorStyleMarkerTargetMissing === true;
   if (scenario.seed?.bookmarkModelSource) {
@@ -631,6 +635,9 @@ async function runCoworkOutcomeScenarioWithStore(
   }
   if (scenario.seed?.messageArtifact) {
     store.seedMessageArtifact(scenario.seed.messageArtifact);
+  }
+  for (const artifact of scenario.seed?.messageArtifacts ?? []) {
+    store.seedMessageArtifact(artifact);
   }
   if (scenario.seed?.priorTurn) {
     store.seedConversationTurn(

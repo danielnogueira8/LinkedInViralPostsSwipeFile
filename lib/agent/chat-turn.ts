@@ -301,6 +301,7 @@ const chatTurnOperationSchema = z.discriminatedUnion("kind", [
       kind: z.literal("edit_artifact"),
       artifactId: z.string().min(1).max(200),
       instruction: z.string().trim().min(1).max(4_000),
+      editMode: z.enum(["general", "hook_only"]).optional(),
     })
     .strict(),
   z
@@ -310,6 +311,39 @@ const chatTurnOperationSchema = z.discriminatedUnion("kind", [
     })
     .strict(),
 ]);
+
+const TURN_OPERATION_TOOL_NAME = "_turn_operation";
+
+export type TurnOperationMarker =
+  | { kind: "none" }
+  | { kind: "invalid" }
+  | { kind: "valid"; operation: ChatTurnOperation };
+
+export function turnOperationMarkerFromToolCalls(input: {
+  tool_calls?: readonly ToolCall[] | null;
+} | null | undefined): TurnOperationMarker {
+  const markers = (input?.tool_calls ?? []).filter(
+    (call) =>
+      call.id === TURN_OPERATION_TOOL_NAME &&
+      call.function.name === TURN_OPERATION_TOOL_NAME,
+  );
+  if (markers.length === 0) return { kind: "none" };
+  if (markers.length !== 1) return { kind: "invalid" };
+  try {
+    const value = JSON.parse(markers[0].function.arguments) as unknown;
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return { kind: "invalid" };
+    }
+    const { version, ...operationValue } = value as Record<string, unknown>;
+    if (version !== 1) return { kind: "invalid" };
+    const operation = chatTurnOperationSchema.safeParse(operationValue);
+    return operation.success
+      ? { kind: "valid", operation: operation.data }
+      : { kind: "invalid" };
+  } catch {
+    return { kind: "invalid" };
+  }
+}
 
 export const chatTurnRequestSchema = z.object({
   // Empty/overlong/junk user text is handled by preflightUserPrompt below so
@@ -983,6 +1017,7 @@ export async function executeChatTurn(
       generationConfigSelectionMarkerFromToolCalls,
       modeledDraftBatchContinuationMarkerFromToolCalls,
       retryRootMarkerFromToolCalls,
+      turnOperationMarkerFromToolCalls,
       explicitMessageDraftCount,
     },
   );

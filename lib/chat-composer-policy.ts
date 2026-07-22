@@ -122,9 +122,35 @@ export function stripPlaceholders(text: string): string {
 // deterministic prevents phrases such as "do not edit" from accidentally
 // tripping the edit heuristic below, and lets a user review Draft 1 even when
 // Draft 2 is newer.
+const ARTIFACT_MUTATION_RE =
+  /\b(?:rewrite|edit|change|update|refine|revise|modify|shorten|tighten|strengthen|improve|fix|polish|make(?=\s+(?:it|this|the|draft|post|hook)\b))\b/gi;
+const MUTATION_CLAUSE_BOUNDARY_RE = /[.!?;\n]|\b(?:but|then|plus)\b/gi;
+const MUTATION_NEGATION_RE =
+  /\b(?:do\s+not|don(?:'|’)?t|dont|never|without)\b/i;
+
+function hasAffirmativeArtifactMutation(message: string): boolean {
+  for (const match of message.matchAll(new RegExp(ARTIFACT_MUTATION_RE.source, "gi"))) {
+    const prefix = message.slice(0, match.index ?? 0);
+    const boundaries = [...prefix.matchAll(new RegExp(MUTATION_CLAUSE_BOUNDARY_RE.source, "gi"))];
+    const clauseStart = boundaries.at(-1);
+    const clausePrefix = prefix.slice(
+      clauseStart ? (clauseStart.index ?? 0) + clauseStart[0].length : 0,
+    );
+    if (!MUTATION_NEGATION_RE.test(clausePrefix)) return true;
+  }
+  return false;
+}
+
 export function looksLikeArtifactReviewRequest(message: string): boolean {
   const t = message.trim();
   if (!t) return false;
+  const compoundContinuation =
+    /\b(?:review|critique|analy[sz]e|assess|evaluate)\b[\s\S]{0,160}?\b(?:then|and|but|plus)\b([\s\S]{0,120})/i.exec(
+      t,
+    )?.[1];
+  if (compoundContinuation) {
+    if (hasAffirmativeArtifactMutation(compoundContinuation)) return false;
+  }
   const hasArtifactReferent =
     /\b(?:this|that|the|current|selected|latest)\s+(?:post|draft|hook|one)\b|\bdraft\s+\d+\b|\bit\b/i.test(
       t,
@@ -150,13 +176,70 @@ export function reviewArtifactIdForComposer(
   expandedArtifactId: string | null,
 ): string | undefined {
   if (!looksLikeArtifactReviewRequest(message)) return undefined;
-  const drafts = artifacts.filter(
+  return writableArtifactIdForComposer(message, artifacts, expandedArtifactId);
+}
+
+export function writableArtifactIdForComposer(
+  message: string,
+  artifacts: readonly { id: string; kind: string }[],
+  expandedArtifactId: string | null,
+): string | undefined {
+  const selection = writableArtifactSelectionForComposer(
+    message,
+    artifacts,
+    expandedArtifactId,
+  );
+  return selection.kind === "selected" ? selection.artifactId : undefined;
+}
+
+export type WritableArtifactSelection =
+  | { kind: "selected"; artifactId: string }
+  | { kind: "unresolved_explicit"; reference: string }
+  | { kind: "none" };
+
+export function writableArtifactSelectionForComposer(
+  message: string,
+  artifacts: readonly { id: string; kind: string }[],
+  expandedArtifactId: string | null,
+): WritableArtifactSelection {
+  const writableArtifacts = artifacts.filter(
     (artifact) => artifact.kind === "post" || artifact.kind === "hook",
   );
-  return (
-    drafts.find((draft) => draft.id === expandedArtifactId)?.id ??
-    drafts[drafts.length - 1]?.id
-  );
+  const explicitOrdinal =
+    /\b(draft|hook)\s+#?\s*(\d+)\b(?!\s+(?:posts?|hooks?)\b)/i.exec(message);
+  if (explicitOrdinal) {
+    const noun = explicitOrdinal[1].toLowerCase();
+    const index = Number(explicitOrdinal[2]) - 1;
+    const matchingKind = noun === "draft" ? "post" : "hook";
+    const artifactId = writableArtifacts.filter(
+      (artifact) => artifact.kind === matchingKind,
+    )[index]?.id;
+    return artifactId
+      ? { kind: "selected", artifactId }
+      : {
+          kind: "unresolved_explicit",
+          reference: `${noun === "draft" ? "Draft" : "Hook"} ${index + 1}`,
+        };
+  }
+  const latest =
+    /\b(?:latest|newest|most\s+recent)\s+(post|draft|hook|one)\b/i.exec(
+      message,
+    );
+  if (latest) {
+    const noun = latest[1].toLowerCase();
+    const matching =
+      noun === "draft" || noun === "post"
+        ? writableArtifacts.filter((artifact) => artifact.kind === "post")
+        : noun === "hook"
+          ? writableArtifacts.filter((artifact) => artifact.kind === "hook")
+          : writableArtifacts;
+    const artifactId = matching[matching.length - 1]?.id;
+    return artifactId ? { kind: "selected", artifactId } : { kind: "none" };
+  }
+  const artifactId =
+    writableArtifacts.find((artifact) => artifact.id === expandedArtifactId)?.id ??
+    writableArtifacts[writableArtifacts.length - 1]?.id;
+  return artifactId ? { kind: "selected", artifactId } : { kind: "none" };
 }
 
 export function looksLikeComposerRefine(message: string): boolean {
@@ -166,13 +249,6 @@ export function looksLikeComposerRefine(message: string): boolean {
   // edit ("review it; do not rewrite or edit the draft"). A bag-of-words edit
   // matcher must never turn the word inside that prohibition into authority.
   if (looksLikeArtifactReviewRequest(message)) return false;
-  if (
-    /\b(?:do\s+not|don(?:'|’)?t|dont|never|without)\b[\s\S]{0,80}\b(?:rewrite|edit|change|update|refine|revise|modify)\b/.test(
-      t,
-    )
-  ) {
-    return false;
-  }
   // Explicit "make a new / another / different" requests are NOT refines.
   // These take priority over the refine signal — if both fire, treat as new.
   if (
@@ -185,8 +261,12 @@ export function looksLikeComposerRefine(message: string): boolean {
   // Refine signals — verbs + adjectives users naturally type when iterating
   // on the same draft. Anchored on word boundaries so substrings inside
   // unrelated words don't trip.
-  return /\b(refine|tighten|shorten|lengthen|punchier|simpler|stronger|sharper|crisper|tweak|polish|improve|edit (this|the|it)|rewrite (this|the|it)|change (the|this)|update (this|the|it)|fix (this|the|it)|make it|make this|make the)\b/.test(
-    t,
+  const hasMutationVerb = new RegExp(ARTIFACT_MUTATION_RE.source, "i").test(t);
+  const hasAffirmativeMutation = hasAffirmativeArtifactMutation(t);
+  if (hasMutationVerb && !hasAffirmativeMutation) return false;
+  return (
+    hasAffirmativeMutation ||
+    /\b(?:lengthen|punchier|simpler|stronger|sharper|crisper|tweak)\b/.test(t)
   );
 }
 

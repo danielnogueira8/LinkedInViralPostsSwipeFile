@@ -1,6 +1,9 @@
-import type { ReadOnlyOrchestratorRoute } from "@/lib/agent/turn/compile";
+import {
+  canonicalizeReadOnlyOrchestratorRoute,
+  type ReadOnlyOrchestratorRoute,
+} from "@/lib/agent/turn/compile";
 
-const MODELED_DRAFT_BATCH_CONTINUATION_VERSION = 1;
+const MODELED_DRAFT_BATCH_CONTINUATION_VERSION = 2;
 
 type ModeledDraftCount = 2 | 3 | 4 | 5 | 6;
 
@@ -9,8 +12,7 @@ export type ModeledDraftBatchContinuation = Readonly<{
   version: typeof MODELED_DRAFT_BATCH_CONTINUATION_VERSION;
   route: Readonly<{
     kind: "workspace_research";
-    expectsDraft: true;
-    expectedDrafts: ModeledDraftCount;
+    outcome: Readonly<{ kind: "draft"; expectedDrafts: ModeledDraftCount }>;
     minimumSources: number;
     workspaceSearchMode: "diverse" | "strict_top";
     workspaceDraftSourceMode: "one_to_one";
@@ -40,35 +42,38 @@ function modeledDraftCount(value: unknown): ModeledDraftCount | null {
 export function continuationForModeledDraftRoute(
   route: ReadOnlyOrchestratorRoute | null | undefined,
 ): ModeledDraftBatchContinuation | null {
-  const legacyDraftRoute =
-    route?.outcome === undefined && route?.expectsDraft === true;
+  if (!route) return null;
+  let canonicalRoute: ReadOnlyOrchestratorRoute;
+  try {
+    canonicalRoute = canonicalizeReadOnlyOrchestratorRoute(route);
+  } catch {
+    return null;
+  }
   const expectedDrafts = modeledDraftCount(
-    route?.outcome?.kind === "draft"
-      ? route.outcome.expectedDrafts
-      : legacyDraftRoute
-        ? route?.expectedDrafts
-        : undefined,
+    canonicalRoute.outcome?.kind === "draft"
+      ? canonicalRoute.outcome.expectedDrafts
+      : undefined,
   );
   if (
-    route?.kind !== "workspace_research" ||
-    (route.outcome?.kind !== "draft" && !legacyDraftRoute) ||
-    route.workspaceDraftSourceMode !== "one_to_one" ||
+    canonicalRoute.kind !== "workspace_research" ||
+    canonicalRoute.outcome?.kind !== "draft" ||
+    canonicalRoute.workspaceDraftSourceMode !== "one_to_one" ||
     !expectedDrafts ||
-    !Number.isInteger(route.minimumSources) ||
-    Number(route.minimumSources) < expectedDrafts ||
-    Number(route.minimumSources) > 10 ||
-    (route.workspaceSearchMode !== "diverse" &&
-      route.workspaceSearchMode !== "strict_top") ||
-    (route.workspaceSince !== undefined &&
-      route.workspaceSince !== "1d" &&
-      route.workspaceSince !== "7d" &&
-      route.workspaceSince !== "30d") ||
-    (route.workspacePostType !== undefined &&
-      route.workspacePostType !== "regular" &&
-      route.workspacePostType !== "lead_magnet") ||
-    (route.authoritativeInstruction !== undefined &&
-      (!route.authoritativeInstruction.trim() ||
-        route.authoritativeInstruction.length > 50_000))
+    !Number.isInteger(canonicalRoute.minimumSources) ||
+    Number(canonicalRoute.minimumSources) < expectedDrafts ||
+    Number(canonicalRoute.minimumSources) > 10 ||
+    (canonicalRoute.workspaceSearchMode !== "diverse" &&
+      canonicalRoute.workspaceSearchMode !== "strict_top") ||
+    (canonicalRoute.workspaceSince !== undefined &&
+      canonicalRoute.workspaceSince !== "1d" &&
+      canonicalRoute.workspaceSince !== "7d" &&
+      canonicalRoute.workspaceSince !== "30d") ||
+    (canonicalRoute.workspacePostType !== undefined &&
+      canonicalRoute.workspacePostType !== "regular" &&
+      canonicalRoute.workspacePostType !== "lead_magnet") ||
+    (canonicalRoute.authoritativeInstruction !== undefined &&
+      (!canonicalRoute.authoritativeInstruction.trim() ||
+        canonicalRoute.authoritativeInstruction.length > 50_000))
   ) {
     return null;
   }
@@ -77,17 +82,18 @@ export function continuationForModeledDraftRoute(
     version: MODELED_DRAFT_BATCH_CONTINUATION_VERSION,
     route: {
       kind: "workspace_research",
-      expectsDraft: true,
-      expectedDrafts,
-      minimumSources: Number(route.minimumSources),
-      workspaceSearchMode: route.workspaceSearchMode,
+      outcome: { kind: "draft", expectedDrafts },
+      minimumSources: Number(canonicalRoute.minimumSources),
+      workspaceSearchMode: canonicalRoute.workspaceSearchMode,
       workspaceDraftSourceMode: "one_to_one",
-      ...(route.workspaceSince ? { workspaceSince: route.workspaceSince } : {}),
-      ...(route.workspacePostType
-        ? { workspacePostType: route.workspacePostType }
+      ...(canonicalRoute.workspaceSince
+        ? { workspaceSince: canonicalRoute.workspaceSince }
         : {}),
-      ...(route.authoritativeInstruction
-        ? { authoritativeInstruction: route.authoritativeInstruction }
+      ...(canonicalRoute.workspacePostType
+        ? { workspacePostType: canonicalRoute.workspacePostType }
+        : {}),
+      ...(canonicalRoute.authoritativeInstruction
+        ? { authoritativeInstruction: canonicalRoute.authoritativeInstruction }
         : {}),
     },
   };
@@ -101,16 +107,17 @@ export function parseModeledDraftBatchContinuation(
   const rawRoute = recordOf(continuation?.route);
   if (
     continuation?.kind !== "modeled_draft_batch" ||
-    continuation.version !== MODELED_DRAFT_BATCH_CONTINUATION_VERSION ||
+    (continuation.version !== 1 &&
+      continuation.version !== MODELED_DRAFT_BATCH_CONTINUATION_VERSION) ||
     !rawRoute
   ) {
     return null;
   }
   const allowedContinuationKeys = new Set(["kind", "version", "route"]);
+  const legacy = continuation.version === 1;
   const allowedRouteKeys = new Set([
     "kind",
-    "expectsDraft",
-    "expectedDrafts",
+    ...(legacy ? ["expectsDraft", "expectedDrafts"] : ["outcome"]),
     "minimumSources",
     "workspaceSearchMode",
     "workspaceDraftSourceMode",
@@ -124,10 +131,22 @@ export function parseModeledDraftBatchContinuation(
   ) {
     return null;
   }
-  const expectedDrafts = modeledDraftCount(rawRoute.expectedDrafts);
+  const rawOutcome = recordOf(rawRoute.outcome);
+  if (
+    !legacy &&
+    (!rawOutcome ||
+      Object.keys(rawOutcome).some(
+        (key) => key !== "kind" && key !== "expectedDrafts",
+      ))
+  ) {
+    return null;
+  }
+  const expectedDrafts = modeledDraftCount(
+    legacy ? rawRoute.expectedDrafts : rawOutcome?.expectedDrafts,
+  );
   if (
     rawRoute.kind !== "workspace_research" ||
-    rawRoute.expectsDraft !== true ||
+    (legacy ? rawRoute.expectsDraft !== true : rawOutcome?.kind !== "draft") ||
     rawRoute.workspaceDraftSourceMode !== "one_to_one" ||
     !expectedDrafts
   ) {

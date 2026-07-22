@@ -199,13 +199,14 @@ import {
   hasAssistantAfterPersistedUserMessage,
   kindNoun,
   labelArtifacts,
+  looksLikeArtifactReviewRequest,
   looksLikeComposerRefine,
   panelTitle,
   planProgressTitle,
   prettyBytes,
   refineSuggestions,
   reinsertArtifact,
-  reviewArtifactIdForComposer,
+  writableArtifactSelectionForComposer,
   shouldShowActivityRail,
   skillNamesToIds,
   stripPlaceholders,
@@ -2395,30 +2396,57 @@ export function ChatWorkspace({
       // Resolve the visible accordion selection once for this turn. Read-only
       // review/summary requests carry this exact id to the server, so selecting
       // Draft 1 cannot silently review or overwrite a newer Draft 2.
-      const persisted = chatSession.artifactsFor(chatId);
-      const runArts = chatSession.runFor(chatId)?.artifacts ?? [];
-      const seenIds = new Set(persisted.map((a) => a.id));
+      const persistedArtifacts = chatSession.artifactsFor(chatId);
+      const liveArtifacts = chatSession.runFor(chatId)?.artifacts ?? [];
+      const seenIds = new Set(persistedArtifacts.map((artifact) => artifact.id));
       const combined = [
-        ...persisted,
-        ...runArts.filter((a) => !seenIds.has(a.id)),
+        ...persistedArtifacts,
+        ...liveArtifacts.filter((artifact) => !seenIds.has(artifact.id)),
       ];
-      const drafts = combined.filter(
-        (a) => a.kind === "post" || a.kind === "hook",
+      const writableArtifacts = combined.filter(
+        (artifact) => artifact.kind === "post" || artifact.kind === "hook",
       );
-      const reviewTargetIdThisTurn = !refineThisTurn
-        ? reviewArtifactIdForComposer(text, drafts, expandedArtifactId)
-        : undefined;
+      const artifactSelection = writableArtifactSelectionForComposer(
+        text,
+        writableArtifacts,
+        expandedArtifactId,
+      );
+      const isReviewRequest = looksLikeArtifactReviewRequest(text);
+      const isRefineRequest =
+        Boolean(sendOpts?.forceRefine) || looksLikeComposerRefine(text);
+      if (
+        artifactSelection.kind === "unresolved_explicit" &&
+        (isReviewRequest || isRefineRequest)
+      ) {
+        if (attached) setModelSource(attached);
+        if (files.length) setAttachments(files);
+        chatSession.clearLastSend(lockKey);
+        if (chatId !== lockKey) chatSession.clearLastSend(chatId);
+        sendLease.release();
+        toast.error(
+          `${artifactSelection.reference} isn’t available in this chat. Choose an existing Draft or Hook and try again.`,
+        );
+        return;
+      }
+      const selectedArtifactId =
+        artifactSelection.kind === "selected"
+          ? artifactSelection.artifactId
+          : undefined;
+      const reviewTargetIdThisTurn =
+        !refineThisTurn && isReviewRequest ? selectedArtifactId : undefined;
       if (
         !reviewTargetIdThisTurn &&
         !pendingRefineRef.current.get(chatId) &&
-        (sendOpts?.forceRefine || looksLikeComposerRefine(text))
+        isRefineRequest
       ) {
         // Search BOTH the persisted set AND the live run's artifacts for the
         // source draft. A draft made earlier THIS turn-chain may still be only
         // in the live run (not yet folded into the session cache by a post-stream
         // reload); include it so hook-only preservation still works for a
         // refine right after the first draft renders.
-        const target = drafts[drafts.length - 1]; // latest draft
+        const target = writableArtifacts.find(
+          (artifact) => artifact.id === selectedArtifactId,
+        );
         if (target) {
           pendingRefineRef.current.set(chatId, {
             artifactId: target.id,
@@ -2566,6 +2594,10 @@ export function ChatWorkspace({
                     kind: "edit_artifact",
                     artifactId: refineTargetIdThisTurn,
                     instruction: refineInstructionThisTurn,
+                    ...((sendOpts?.hookOnly ||
+                      (pendingRefineRef.current.get(chatId)?.hookOnly ?? false))
+                      ? { editMode: "hook_only" as const }
+                      : {}),
                   },
                 }
               : reviewTargetIdThisTurn
@@ -2717,13 +2749,16 @@ export function ChatWorkspace({
             });
           } else if (event === "artifact") {
             const incoming = data as unknown as Artifact;
-            const isDraft = incoming.kind === "post" || incoming.kind === "hook";
+            const isWritableArtifact =
+              incoming.kind === "post" || incoming.kind === "hook";
             // Re-sent artifact id (e.g. a cite backfilling its draft's
             // source_url after the draft already streamed) → REPLACE the card
             // already on screen, not a second copy of it.
             if (ownedRun.artifacts.some((a) => a.id === incoming.id)) {
               ownedRun.artifacts = replaceOrAppendArtifact(ownedRun.artifacts, incoming);
-              if (isDraft && chatId === activeIdRef.current) setPanelOpen(true);
+              if (isWritableArtifact && chatId === activeIdRef.current) {
+                setPanelOpen(true);
+              }
               return;
             }
             // Direct AI refine: the server reuses the target id, so this run
@@ -2735,7 +2770,7 @@ export function ChatWorkspace({
             //   (b) collapse guard: if GLM shrunk a real post into a fragment,
             //       we drop the fragment entirely rather than shipping garbage.
             const pending = pendingRefineRef.current.get(chatId);
-            if (pending && isDraft) {
+            if (pending && isWritableArtifact) {
               // The direct refine lane reuses the target id. Keep the streamed
               // result as one replacement and wait for canonical persistence
               // before the draft panel swaps the saved card.
@@ -2779,7 +2814,9 @@ export function ChatWorkspace({
             }
             // Drafts live in the right-hand panel — open it (only for the chat
             // on screen) so a freshly generated post is immediately visible.
-            if (isDraft && chatId === activeIdRef.current) setPanelOpen(true);
+            if (isWritableArtifact && chatId === activeIdRef.current) {
+              setPanelOpen(true);
+            }
           } else if (event === "done") {
             // A failed turn that delivered nothing shouldn't show a credit
             // line — "~1 credit" next to a dead-end error reads as "you were
@@ -3914,19 +3951,25 @@ export function ChatWorkspace({
                     // whole post, and the post-stream reload swapped the
                     // clobbered body into the DB.
                     const aid = activeIdRef.current;
-                    const persisted = chatSession.artifactsFor(aid);
-                    const runArts = aid
+                    const persistedArtifacts = chatSession.artifactsFor(aid);
+                    const liveArtifacts = aid
                       ? chatSession.runFor(aid)?.artifacts ?? []
                       : [];
-                    const seenIds = new Set(persisted.map((a) => a.id));
-                    const combined = [
-                      ...persisted,
-                      ...runArts.filter((a) => !seenIds.has(a.id)),
-                    ];
-                    const drafts = combined.filter(
-                      (a) => a.kind === "post" || a.kind === "hook",
+                    const seenIds = new Set(
+                      persistedArtifacts.map((artifact) => artifact.id),
                     );
-                    const target = drafts[drafts.length - 1];
+                    const combined = [
+                      ...persistedArtifacts,
+                      ...liveArtifacts.filter(
+                        (artifact) => !seenIds.has(artifact.id),
+                      ),
+                    ];
+                    const writableArtifacts = combined.filter(
+                      (artifact) =>
+                        artifact.kind === "post" || artifact.kind === "hook",
+                    );
+                    const target =
+                      writableArtifacts[writableArtifacts.length - 1];
                     if (
                       target &&
                       target.kind === "post" &&

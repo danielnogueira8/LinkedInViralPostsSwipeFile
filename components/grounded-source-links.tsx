@@ -1,5 +1,6 @@
 import { ExternalLink } from "lucide-react";
 import type { Artifact } from "@/lib/agent/contracts";
+import { MAX_GROUNDED_ANSWER_RESULTS } from "@/lib/agent/evidence";
 import {
   GROUNDED_SOURCE_PRESENTATION,
   verifiedLinkedInSourceUrl,
@@ -29,7 +30,7 @@ function groundedSourceHrefs(artifacts: Artifact[]): string[] {
     seen.add(href);
     hrefs.push(href);
   }
-  return hrefs.slice(0, 4);
+  return hrefs.slice(0, MAX_GROUNDED_ANSWER_RESULTS);
 }
 
 export function GroundedSourceLinks({ artifacts }: { artifacts?: Artifact[] }) {

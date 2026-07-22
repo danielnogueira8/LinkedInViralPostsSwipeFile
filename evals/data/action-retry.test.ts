@@ -101,8 +101,7 @@ describe("action retry lineage", () => {
   test("reads a typed modeled continuation only when it is bound to a server retry root", () => {
     const continuation = continuationForModeledDraftRoute({
       kind: "workspace_research",
-      expectsDraft: true,
-      expectedDrafts: 3,
+      outcome: { kind: "draft", expectedDrafts: 3 },
       minimumSources: 3,
       workspaceSearchMode: "diverse",
       workspaceDraftSourceMode: "one_to_one",
@@ -147,7 +146,7 @@ describe("action retry lineage", () => {
               code: "modeled_batch_resumable_reviewer_unavailable",
               retryRootUserMessageId:
                 "00000000-0000-4000-8000-000000000111",
-              continuation: { ...continuation, version: 2 },
+              continuation: { ...continuation, version: 99 },
             }),
           },
         },

@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   explicitlyForbidsSourceDiscovery,
+  explicitlyForbidsWriting,
   explicitlyRequestsSourceDiscovery,
   requestsDurableOrAction,
   requestsDirectSourceModeling,
@@ -39,6 +40,7 @@ import type { ComposerTaskContext } from "@/lib/composer-task-context";
 import type { Source, WriterTask } from "@/lib/agent/execute/writer";
 import type { CoworkRoute } from "@/lib/agent/cowork-telemetry";
 import type { ModelSourceReference } from "@/lib/agent/turn/context";
+import { MAX_GROUNDED_ANSWER_RESULTS } from "@/lib/agent/evidence";
 import type { TurnSetupResult } from "@/lib/agent/turn/setup";
 
 export {
@@ -136,13 +138,11 @@ function actionTurnContract(route: ActionOrchestratorRoute): TurnContract {
 }
 
 function readOnlyTurnContract(route: ReadOnlyOrchestratorRoute): TurnContract {
-  return route.outcome?.kind === "draft" || route.expectsDraft === true
+  const canonicalRoute = canonicalizeReadOnlyOrchestratorRoute(route);
+  return canonicalRoute.outcome?.kind === "draft"
     ? {
         kind: "post",
-        expectedCount:
-          route.outcome?.kind === "draft"
-            ? route.outcome.expectedDrafts
-            : (route.expectedDrafts ?? 1),
+        expectedCount: canonicalRoute.outcome.expectedDrafts,
       }
     : { kind: "research", expectedCount: 1 };
 }
@@ -905,6 +905,49 @@ export type ReadOnlyOrchestratorRoute = {
   authoritativeInstruction?: string;
 };
 
+/**
+ * Decode legacy persisted/test routes exactly once at the boundary. Production
+ * compilers emit only `outcome`; contradictory authorities are rejected rather
+ * than letting downstream consumers choose different fallbacks.
+ */
+export function canonicalizeReadOnlyOrchestratorRoute(
+  route: ReadOnlyOrchestratorRoute,
+): ReadOnlyOrchestratorRoute {
+  const { expectsDraft, expectedDrafts, ...canonical } = route;
+  if (canonical.outcome) {
+    const outcomeDrafts =
+      canonical.outcome.kind === "draft"
+        ? canonical.outcome.expectedDrafts
+        : undefined;
+    if (
+      (expectsDraft !== undefined &&
+        expectsDraft !== (canonical.outcome.kind === "draft")) ||
+      (expectedDrafts !== undefined && expectedDrafts !== outcomeDrafts)
+    ) {
+      throw new Error("Read-only route contains contradictory outcome authorities.");
+    }
+    return canonical;
+  }
+  if (expectsDraft === true) {
+    const legacyExpectedDrafts = expectedDrafts ?? 1;
+    if (
+      !Number.isInteger(legacyExpectedDrafts) ||
+      Number(legacyExpectedDrafts) < 1 ||
+      Number(legacyExpectedDrafts) > 6
+    ) {
+      throw new Error("Legacy draft route has an invalid expected draft count.");
+    }
+    return {
+      ...canonical,
+      outcome: { kind: "draft", expectedDrafts: Number(legacyExpectedDrafts) },
+    };
+  }
+  if (expectedDrafts !== undefined) {
+    throw new Error("Read-only route contains contradictory outcome authorities.");
+  }
+  return canonical;
+}
+
 export type ReadOnlyOrchestratorRoutingInput = {
   userInstruction: string;
   draftCountOverride?: number;
@@ -933,8 +976,6 @@ function composerResearchRoute(
   if (requirement.lane === "workspace") {
     return {
       kind: "workspace_research",
-      expectsDraft: true,
-      expectedDrafts: context.expectedDraftCount,
       outcome: { kind: "draft", expectedDrafts: context.expectedDraftCount },
       minimumSources: requirement.minimumSources,
       workspaceSearchMode: requirement.searchMode,
@@ -949,8 +990,6 @@ function composerResearchRoute(
   }
   return {
     kind: requirement.lane === "news" ? "news_research" : "web_research",
-    expectsDraft: true,
-    expectedDrafts: context.expectedDraftCount,
     outcome: { kind: "draft", expectedDrafts: context.expectedDraftCount },
   };
 }
@@ -974,8 +1013,6 @@ const COMPLEX_READ_RE =
   /\b(?:research|investigate|fact[ -]?check|verify|compare|synthesi[sz]e|inspect|analy[sz]e|review|read|search|find)\b/i;
 const EXPLICIT_NON_POST_OUTCOME_RE =
   /\b(?:summari[sz]e|summary|compare|analy[sz]e|explain|tell\s+me|show\s+me|list|report|recommend|answer|give\s+me\s+(?:the\s+)?(?:findings|takeaways|results|lessons))\b/i;
-const NEGATED_POST_OUTCOME_RE =
-  /\b(?:do\s+not|don(?:'|’)?t|dont|never)\s+(?:write|draft|create|generate|make|produce|prepare|model|mimic|adapt|rewrite|rework|remix|replicate|turn)\b/i;
 const WORKSPACE_RESEARCH_CONTEXT_RE =
   /\b(?:my|our)\s+(?:swipe\s+file|bookmarks?|saved\s+posts?)\b/i;
 const HISTORY_DEPENDENT_RESEARCH_RE =
@@ -1047,7 +1084,7 @@ function requestedGroundedAnswer(
   if (!EXPLICIT_NON_POST_OUTCOME_RE.test(instruction)) return null;
   if (
     FULL_POST_REQUEST_RE.test(instruction) &&
-    !NEGATED_POST_OUTCOME_RE.test(instruction)
+    !explicitlyForbidsWriting(instruction)
   ) {
     return null;
   }
@@ -1062,7 +1099,9 @@ function requestedGroundedAnswer(
   return {
     kind: "grounded_answer",
     format,
-    ...(explicitCount ? { resultCount: Math.min(explicitCount, 10) } : {}),
+    ...(explicitCount
+      ? { resultCount: Math.min(explicitCount, MAX_GROUNDED_ANSWER_RESULTS) }
+      : {}),
   };
 }
 
@@ -1519,7 +1558,7 @@ export function compileReadOnlyOrchestratorRoute(
   const forbidsDiscovery = explicitlyForbidsSourceDiscovery(instruction);
   const modeledIntent =
     forbidsDiscovery ||
-    (groundedAnswer !== null && NEGATED_POST_OUTCOME_RE.test(instruction))
+    (groundedAnswer !== null && explicitlyForbidsWriting(instruction))
     ? ({ kind: "none" } as const)
     : compileModeledPostIntent(instruction, {
         draftCountOverride: input.draftCountOverride,
@@ -1530,7 +1569,6 @@ export function compileReadOnlyOrchestratorRoute(
   ) {
     return {
       kind: "ambiguous_read_only",
-      expectsDraft: false,
       clarificationReason: "modeled_mapping",
       modeledAmbiguityReason:
         modeledIntent.kind === "ambiguous"
@@ -1560,7 +1598,6 @@ export function compileReadOnlyOrchestratorRoute(
   if (modeledIntent.kind === "ambiguous") {
     return {
       kind: "ambiguous_read_only",
-      expectsDraft: false,
       clarificationReason: "modeled_mapping",
       modeledAmbiguityReason: modeledIntent.reason,
     };
@@ -1687,7 +1724,6 @@ export function compileReadOnlyOrchestratorRoute(
       if (!hasConcreteResearchTopic(researchClause)) {
         return {
           kind: "ambiguous_read_only",
-          expectsDraft: false,
           clarificationReason: "research_topic",
         };
       }
@@ -1711,7 +1747,6 @@ export function compileReadOnlyOrchestratorRoute(
       if (!hasConcreteResearchTopic(researchClause)) {
         return {
           kind: "ambiguous_read_only",
-          expectsDraft: false,
           clarificationReason: "research_topic",
         };
       }
@@ -1721,7 +1756,6 @@ export function compileReadOnlyOrchestratorRoute(
       (complexRead && !EXPLICIT_NON_POST_OUTCOME_RE.test(instruction))
       ? {
           kind: "ambiguous_read_only",
-          expectsDraft: false,
           clarificationReason: "outcome",
         }
       : null;
@@ -1741,8 +1775,6 @@ export function compileReadOnlyOrchestratorRoute(
     }
     return {
       kind: "file_inspection",
-      expectsDraft: true,
-      expectedDrafts,
       outcome: { kind: "draft", expectedDrafts },
       allowExternalSearch: allowedSearchKinds.length > 0,
       allowedSearchKinds,
@@ -1765,14 +1797,11 @@ export function compileReadOnlyOrchestratorRoute(
     if (!hasConcreteResearchTopic(researchClause)) {
       return {
         kind: "ambiguous_read_only",
-        expectsDraft: false,
         clarificationReason: "research_topic",
       };
     }
     return {
       kind: "news_research",
-      expectsDraft: true,
-      expectedDrafts,
       outcome: { kind: "draft", expectedDrafts },
       ...(input.explicitPostType ? { explicitPostType: input.explicitPostType } : {}),
     };
@@ -1780,8 +1809,6 @@ export function compileReadOnlyOrchestratorRoute(
   if (needsWorkspaceResearch) {
     return {
       kind: "workspace_research",
-      expectsDraft: true,
-      expectedDrafts,
       outcome: { kind: "draft", expectedDrafts },
       minimumSources: workspaceMinimumSources,
       workspaceSearchMode: STRICT_TOP_SOURCE_RE.test(researchClause)
@@ -1799,14 +1826,11 @@ export function compileReadOnlyOrchestratorRoute(
     if (!hasConcreteResearchTopic(researchClause)) {
       return {
         kind: "ambiguous_read_only",
-        expectsDraft: false,
         clarificationReason: "research_topic",
       };
     }
     return {
       kind: "web_research",
-      expectsDraft: true,
-      expectedDrafts,
       outcome: { kind: "draft", expectedDrafts },
       ...(input.explicitPostType ? { explicitPostType: input.explicitPostType } : {}),
     };
@@ -2462,7 +2486,11 @@ export async function compileTurnPlan(
     ? {
         kind: "refine",
         instruction: refineInstruction!,
-        focus: classifyDirectRefineFocus(refineInstruction!),
+        focus:
+          currentTurnOperation?.kind === "edit_artifact" &&
+          currentTurnOperation.editMode === "hook_only"
+            ? "hook"
+            : classifyDirectRefineFocus(refineInstruction!),
         target: trustedRefineTarget as Artifact & { kind: "post" | "hook" },
       }
     : useGeneralRefine

@@ -44,8 +44,34 @@ const WORKSPACE_CONTEXT_RE =
   /\b(?:in\s+my\s+voice|my\s+(?:voice|brand|profile|workspace|swipe\s+file|saved\s+posts?|tracked\s+accounts?|audience)|based\s+on\s+(?:my|the)\s+(?:voice|brand|profile|workspace|swipe\s+file|saved\s+posts?))\b/i;
 const DURABLE_OR_ACTION_RE =
   /\b(?:always|never|from\s+now\s+on|remember\s+(?:that|this)|save|schedule|queue|publish|post\s+it|delete|remove)\b|\b(?:plan|put|place|add|slot)\s+(?:it|this|that|(?:this|that|the)\s+(?:post|draft|one))?\s*(?:for|on|into|to)\s+(?:the\s+)?(?:calendar|queue|board|today|tomorrow|(?:mon|tues|wednes|thurs|fri|satur|sun)day)\b|\b(?:set|mark|move)\s+(?:it|this|that|(?:this|that|the)\s+(?:post|draft|one))?\s*(?:to|as|into)?\s*(?:idea|drafting|ready|posted)\b/i;
-const WRITING_OPTOUT_RE =
-  /\b(?:do\s+not|don(?:'|’)?t|dont|never|no\s+need\s+to)\s+(?:(?:please|just|actually|go\s+ahead\s+and)\s+|(?:want|need|ask)\s+(?:me|you|us|them)\s+to\s+){0,3}(?:write|draft|create|generate|give|make|produce|prepare|model|mimic|adapt|rewrite|rework|remix|turn|change|edit|refine|tighten|shorten|strengthen)\b|\bwithout\s+(?:writing|drafting|creating|generating|giving|modeling|modelling|adapting|rewriting|changing|editing|refining|tightening|shortening|strengthening)\b/i;
+const WRITING_MUTATION_VERB_PATTERN =
+  "(?:write|draft|create|compose|generate|give|make|produce|prepare|model|mimic|adapt|replicate|rewrite|rework|remix|turn|change|edit|refine|tighten|shorten|strengthen)";
+const AFFIRMATIVE_POST_VERB_PATTERN =
+  "(?:write|draft|create|compose|generate|give|make|produce|prepare|adapt|replicate|rewrite|rework|remix)";
+const WRITING_OPTOUT_RE = new RegExp(
+  String.raw`\b(?:do\s+not|don(?:'|’)?t|dont|never|no\s+need\s+to)\s+(?:(?:please|just|actually|go\s+ahead\s+and)\s+|(?:want|need|ask)\s+(?:me|you|us|them)\s+to\s+){0,3}${WRITING_MUTATION_VERB_PATTERN}\b|\bwithout\s+(?:writing|drafting|creating|composing|generating|giving|modeling|modelling|adapting|replicating|rewriting|changing|editing|refining|tightening|shortening|strengthening)\b`,
+  "i",
+);
+const COORDINATED_WRITING_OPTOUT_RE = new RegExp(
+  String.raw`\b(?:do\s+not|don(?:'|’)?t|dont|never|no)\s+(?:search|browse|look\s+up|pull|fetch)\b[^.!?\n]{0,80}?\b(?:and|or)\s+(?:also\s+)?${WRITING_MUTATION_VERB_PATTERN}\b`,
+  "i",
+);
+const AFFIRMATIVE_FULL_POST_AFTER_OPTOUT_RE = new RegExp(
+  String.raw`\b${AFFIRMATIVE_POST_VERB_PATTERN}\b[\s\S]{0,100}?\b(?:linkedin\s+)?posts?\b`,
+  "i",
+);
+const ORPHANED_COORDINATED_WRITING_RE = new RegExp(
+  String.raw`\b(?:and|or)\s+(?:also\s+)?${WRITING_MUTATION_VERB_PATTERN}\b`,
+  "gi",
+);
+const INDEPENDENT_NEW_POST_RE = new RegExp(
+  String.raw`(?:[,;:]|\b(?:and|but|then|instead)\b)\s*${AFFIRMATIVE_POST_VERB_PATTERN}\b[\s\S]{0,50}?\b(?:a\s+)?(?:new|another|fresh|different)\s+(?:linkedin\s+)?post\b`,
+  "i",
+);
+const SCOPED_ARTIFACT_OPTOUT_WITH_POST_RE = new RegExp(
+  String.raw`\b(?:do\s+not|don(?:'|’)?t|dont|never)\s+(?:rewrite|edit|change|refine|tighten|shorten|strengthen)\s+(?:(?:this|that|the|current|existing|selected)\s+)?(?:draft|post|hook)(?:\s+#?\s*\d+)?\b[^.!?;\n]{0,80}?\band\s+${AFFIRMATIVE_POST_VERB_PATTERN}\b[\s\S]{0,80}?\b(?:linkedin\s+)?post\b`,
+  "i",
+);
 
 /** True when the turn also asks Cowork to remember or mutate durable state. */
 export function requestsDurableOrAction(text: string): boolean {
@@ -76,7 +102,37 @@ export function withoutSourceDiscoveryOptOut(text: string): string {
 
 /** True when the current instruction explicitly rejects a writing mutation. */
 export function explicitlyForbidsWriting(text: string): boolean {
-  return WRITING_OPTOUT_RE.test(withoutSourceDiscoveryOptOut(text));
+  const withoutSourceOptOut = withoutSourceDiscoveryOptOut(text);
+  const coordinatedOptOut = COORDINATED_WRITING_OPTOUT_RE.exec(text);
+  const hasWritingOptOut =
+    WRITING_OPTOUT_RE.test(withoutSourceOptOut) || Boolean(coordinatedOptOut);
+  if (!hasWritingOptOut) return false;
+  if (SCOPED_ARTIFACT_OPTOUT_WITH_POST_RE.test(text)) return false;
+  const independentNewPost = INDEPENDENT_NEW_POST_RE.exec(text);
+  const independentFallsUnderCoordinatedOptOut = Boolean(
+    coordinatedOptOut &&
+      independentNewPost &&
+      (independentNewPost.index ?? 0) >= (coordinatedOptOut.index ?? 0) &&
+      (independentNewPost.index ?? 0) <
+        (coordinatedOptOut.index ?? 0) + coordinatedOptOut[0].length,
+  );
+  if (independentNewPost && !independentFallsUnderCoordinatedOptOut) {
+    return false;
+  }
+
+  // A prohibition can be scoped to an existing Artifact while the same turn
+  // explicitly asks for a new post. Remove only the negated writing clauses and
+  // see whether an independent full-post instruction remains; a global boolean
+  // must not let "do not rewrite Draft 1" cancel "write a new post".
+  const affirmativeRemainder = withoutSourceDiscoveryOptOut(
+    text.replace(
+      new RegExp(COORDINATED_WRITING_OPTOUT_RE.source, "gi"),
+      " ",
+    ),
+  )
+    .replace(new RegExp(WRITING_OPTOUT_RE.source, "gi"), " ")
+    .replace(ORPHANED_COORDINATED_WRITING_RE, " ");
+  return !AFFIRMATIVE_FULL_POST_AFTER_OPTOUT_RE.test(affirmativeRemainder);
 }
 
 /**
