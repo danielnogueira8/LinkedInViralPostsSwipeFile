@@ -168,7 +168,7 @@ export function askAnswerShouldRefineLatestDraft(
  * is still waiting to be claimed.
  */
 export function assistantAfterPersistedUserMessage(
-  messages: Message[],
+  messages: readonly Message[],
   userMsg: Message,
 ): Message | undefined {
   const userIdx = messages.findIndex(
@@ -190,7 +190,7 @@ export function assistantAfterPersistedUserMessage(
 }
 
 export function hasAssistantAfterPersistedUserMessage(
-  messages: Message[],
+  messages: readonly Message[],
   userMsg: Message,
 ): boolean {
   return Boolean(assistantAfterPersistedUserMessage(messages, userMsg));

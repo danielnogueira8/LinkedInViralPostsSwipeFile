@@ -39,7 +39,11 @@ describe("ChatSession", () => {
     expect(snapshot.activeId).toBe("chat-1");
     expect(snapshot.loadingChatId).toBeNull();
     expect(snapshot.reattachingChatId).toBe("chat-1");
-    expect(snapshot.baseByChat.get("chat-1")).toEqual([{ id: "m1", text: "hello" }]);
+    expect(snapshot).not.toHaveProperty("baseByChat");
+    expect(snapshot).not.toHaveProperty("artifactsByChat");
+    expect(snapshot).not.toHaveProperty("runsByChat");
+    expect(session.baseMessages("chat-1")).toEqual([{ id: "m1", text: "hello" }]);
+    expect(session.artifactsFor("chat-1")).toEqual([{ id: "a1" }]);
     expect(revisions.length).toBeGreaterThanOrEqual(2);
   });
 
@@ -51,7 +55,8 @@ describe("ChatSession", () => {
     await session.select("chat-2", async () => ({ messages: [], artifacts: [] }));
 
     expect(session.snapshot().activeId).toBe("chat-2");
-    expect(session.snapshot().runsByChat.get("chat-1")).toBe(run);
+    expect(session.runFor("chat-1")).toBe(run);
+    expect(session.streamingRunIds()).toEqual(new Set(["chat-1"]));
     expect(run.ctrl.signal.aborted).toBe(false);
   });
 
@@ -159,8 +164,8 @@ describe("ChatSession", () => {
     expect(stopped).toBe(true);
     expect(run.ctrl.signal.aborted).toBe(true);
     expect(run.recoverable).toBeUndefined();
-    expect(session.snapshot().runsByChat.has("chat-1")).toBe(false);
-    expect(session.snapshot().baseByChat.get("chat-1")).toHaveLength(2);
+    expect(session.hasRun("chat-1")).toBe(false);
+    expect(session.baseMessages("chat-1")).toHaveLength(2);
     expect(serverStop).toHaveBeenCalledWith({
       clientTurnId: "00000000-0000-4000-8000-000000000701",
       turnStartedAt: "2026-07-13T10:00:00Z",
@@ -190,7 +195,7 @@ describe("ChatSession", () => {
     expect(run.ctrl.signal.aborted).toBe(true);
     expect(run.stopPending).toBe(false);
     expect(run.streaming).toBe(true);
-    expect(session.snapshot().runsByChat.get("chat-1")).toBe(run);
+    expect(session.runFor("chat-1")).toBe(run);
     expect(run.overlay).toEqual([{ id: "warning", text: "Stop not confirmed" }]);
   });
 
@@ -215,8 +220,8 @@ describe("ChatSession", () => {
     });
 
     expect(settled).toBe(true);
-    expect(session.snapshot().runsByChat.has("chat-1")).toBe(false);
-    expect(session.snapshot().baseByChat.get("chat-1")).toEqual(canonical);
+    expect(session.hasRun("chat-1")).toBe(false);
+    expect(session.baseMessages("chat-1")).toEqual(canonical);
   });
 
   it("rejects a stale canonical handoff after an immediate follow-up takes ownership", () => {
@@ -233,8 +238,25 @@ describe("ChatSession", () => {
       [],
     )).toBe(false);
     expect(session.retireRun("chat-1", first)).toBe(false);
-    expect(session.snapshot().runsByChat.get("chat-1")).toBe(followUp);
-    expect(session.snapshot().baseByChat.get("chat-1") ?? []).toEqual([]);
+    expect(session.runFor("chat-1")).toBe(followUp);
+    expect(session.baseMessages("chat-1")).toEqual([]);
+  });
+
+  it("rejects an artifact rollback when a replacement run took ownership", () => {
+    const session = new ChatSession<Message, Artifact, Run>({ activeId: "chat-1" });
+    const first = { streaming: true, ctrl: new AbortController(), overlay: [] };
+    const replacement = {
+      streaming: true,
+      ctrl: new AbortController(),
+      overlay: [{ id: "replacement", text: "new owner's artifact" }],
+    };
+    session.registerRun("chat-1", first);
+    session.registerRun("chat-1", replacement);
+
+    expect(session.updateRun("chat-1", first, (owned) => {
+      owned.overlay = [{ id: "deleted", text: "old artifact rollback" }];
+    })).toBe(false);
+    expect(session.runFor("chat-1")?.overlay).toEqual(replacement.overlay);
   });
 
   it("atomically hands an owned run to its canonical snapshot", () => {
@@ -243,8 +265,8 @@ describe("ChatSession", () => {
     session.registerRun("chat-1", run);
     const observed: Array<{ base: number; hasRun: boolean }> = [];
     session.subscribe(() => observed.push({
-      base: session.snapshot().baseByChat.get("chat-1")?.length ?? 0,
-      hasRun: session.snapshot().runsByChat.has("chat-1"),
+      base: session.baseMessages("chat-1").length,
+      hasRun: session.hasRun("chat-1"),
     }));
 
     expect(session.completeRun(
@@ -253,10 +275,10 @@ describe("ChatSession", () => {
       [{ id: "persisted", text: "canonical reply" }],
       [{ id: "draft" }],
     )).toBe(true);
-    expect(session.snapshot().baseByChat.get("chat-1")).toEqual([
+    expect(session.baseMessages("chat-1")).toEqual([
       { id: "persisted", text: "canonical reply" },
     ]);
-    expect(session.snapshot().artifactsByChat.get("chat-1")).toEqual([{ id: "draft" }]);
+    expect(session.artifactsFor("chat-1")).toEqual([{ id: "draft" }]);
     expect(observed).toEqual([{ base: 1, hasRun: false }]);
   });
 });

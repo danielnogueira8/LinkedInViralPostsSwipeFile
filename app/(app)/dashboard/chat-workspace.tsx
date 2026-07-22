@@ -607,13 +607,9 @@ export function ChatWorkspace({
   // --- per active chat from these maps; `tick` forces a re-render when a  ---
   // --- background stream updates. The maps are held in state (stable      ---
   // --- identity, seeded once) so reading them during render is valid; we  ---
-  // --- mutate their CONTENTS in place + bump() to re-render, which avoids  ---
-  // --- cloning the whole map on every streamed token.                      ---
+  // --- the session runtime owns cache/run publication, so streamed updates ---
+  // --- remain isolated even while another chat is active.                  ---
 
-  // DB-loaded transcript per chat (cached so switching doesn't refetch/lose it).
-  const baseByChat = sessionSnapshot.baseByChat;
-  // Persisted artifacts per chat.
-  const artifactsByChat = sessionSnapshot.artifactsByChat;
   // The chat whose transcript is currently being fetched (sidebar click →
   // setActiveId fires immediately, but the messages load over the network).
   // During that window `messages` is empty; without this signal the empty-state
@@ -654,14 +650,9 @@ export function ChatWorkspace({
     ),
     [chatSession],
   );
-  // Live in-flight stream per chat (independent of which chat is on screen).
-  const runsByChat = sessionSnapshot.runsByChat;
-  // Bumped on every run update to trigger a render.
-  const bump = useCallback(() => chatSession.changed(), [chatSession]);
-
   // Derived view for the active chat: base transcript + live run overlay.
-  const activeRun = activeId ? runsByChat.get(activeId) : undefined;
-  const activeBase = activeId ? (baseByChat.get(activeId) ?? []) : [];
+  const activeRun = chatSession.runFor(activeId);
+  const activeBase = chatSession.baseMessages(activeId);
   const messages: Message[] = activeId
     ? [...activeBase, ...(activeRun ? runOverlay(activeRun, activeBase) : [])]
     : [];
@@ -691,7 +682,7 @@ export function ChatWorkspace({
       initialChats.find((c) => c.id === activeId)
     : undefined;
   const activeArtifactsAll: Artifact[] = activeId
-    ? persistedDraftPanelArtifacts(artifactsByChat.get(activeId) ?? [])
+    ? persistedDraftPanelArtifacts(chatSession.artifactsFor(activeId))
     : [];
   const hasQueuedLeadMagnetImage = activeArtifactsAll.some((artifact) => {
     const status = generatedLeadMagnetImageStatus(artifact)?.status;
@@ -730,10 +721,7 @@ export function ChatWorkspace({
   const hasDraftPanel = artifacts.length > 0;
   const sending = !!activeRun && activeRun.streaming;
   // Chats with a live background run, for the sidebar spinner.
-  const streamingChatIds = new Set<string>();
-  for (const [cid, r] of runsByChat) {
-    if (r.streaming) streamingChatIds.add(cid);
-  }
+  const streamingChatIds = chatSession.streamingRunIds();
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -761,8 +749,7 @@ export function ChatWorkspace({
     const id = initialChatId;
     // Mark loading unless we already have this chat cached. Skips the empty-state
     // flash while the fetch is in flight.
-    const hasContent =
-      (baseByChat.get(id)?.length ?? 0) > 0 || !!runsByChat.get(id);
+    const hasContent = chatSession.hasVisibleContent(id);
     // Reacting to a server-driven prop change — the sanctioned setState-in-
     // effect use (parallel to loadChat's own setActiveId on click).
     setActiveId(id);
@@ -796,10 +783,6 @@ export function ChatWorkspace({
     };
   }, [
     initialChatId,
-    baseByChat,
-    artifactsByChat,
-    runsByChat,
-    bump,
     setActiveId,
     setLoadingChatId,
     chatSession,
@@ -1600,7 +1583,7 @@ export function ChatWorkspace({
         setInput("");
         setModelSource(null);
         if (previousActiveId) {
-          const previousRun = runsByChat.get(previousActiveId);
+          const previousRun = chatSession.runFor(previousActiveId);
           // A stopped/settled run should not keep the next contextual handoff
           // visually or logically tied to the paused chat. Leave genuinely live
           // background streams alone; this only sweeps stale local guard state.
@@ -1647,7 +1630,6 @@ export function ChatWorkspace({
         setForcedDraftByChat((prev) => ({ ...prev, [newChatId]: intent.prompt }));
         writeDraft(newChatId, intent.prompt);
         setActiveId(newChatId);
-        bump();
         setPendingPostFormat(null);
         setPostFormatPickerOpen(false);
         setPendingLeadMagnet(null);
@@ -1736,7 +1718,6 @@ export function ChatWorkspace({
       setContextMenuOpen(false);
       setPendingCreatorStyle(match);
       /* eslint-enable react-hooks/set-state-in-effect */
-      bump();
     }
     router.replace("/dashboard");
     // Re-run when the param or the loaded styles change (the styles fetch may
@@ -1845,7 +1826,7 @@ export function ChatWorkspace({
     // A local run supersedes the reattach path — the live overlay owns progress,
     // and the render guard already hides the indicator, so just don't poll. The
     // flag clears on the next loadChat/poll tick (avoids a set-state-in-effect).
-    if (runsByChat.get(reattachingChatId)) return;
+    if (chatSession.runFor(reattachingChatId)) return;
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
 
@@ -1861,9 +1842,9 @@ export function ChatWorkspace({
         };
         if (!stopped && data.ok && Array.isArray(data.messages)) {
           // Fold in any newly-persisted rows (the settled reply lands here).
-          if (!runsByChat.has(id)) {
+          if (!chatSession.hasRun(id)) {
             const nextBase = hydrate(data.messages);
-            const prevBase = baseByChat.get(id) ?? [];
+            const prevBase = chatSession.baseMessages(id);
             const prevLast = prevBase[prevBase.length - 1]?.id ?? null;
             const nextLast = nextBase[nextBase.length - 1]?.id ?? null;
             if (prevBase.length !== nextBase.length || prevLast !== nextLast) {
@@ -1876,7 +1857,7 @@ export function ChatWorkspace({
           }
           // Turn settled (or a local run took over) → stop reattaching + drop
           // the checklist so the persisted reply is what shows.
-          if (data.chat?.running !== true || runsByChat.has(id)) {
+          if (data.chat?.running !== true || chatSession.hasRun(id)) {
             setReattachingChatId((cur) => (cur === id ? null : cur));
             setReattachPlan([]);
             return;
@@ -1898,10 +1879,6 @@ export function ChatWorkspace({
   }, [
     reattachingChatId,
     activeId,
-    runsByChat,
-    baseByChat,
-    artifactsByChat,
-    bump,
     setReattachPlan,
     setReattachingChatId,
     chatSession,
@@ -1915,7 +1892,7 @@ export function ChatWorkspace({
   // when we have an initial chat and no live local run for it.
   useEffect(() => {
     if (!initialChatId) return;
-    if (runsByChat.get(initialChatId)) return;
+    if (chatSession.runFor(initialChatId)) return;
     let cancelled = false;
     (async () => {
       try {
@@ -1932,7 +1909,7 @@ export function ChatWorkspace({
         if (
           data.chat?.running === true &&
           initialChatId === activeIdRef.current &&
-          !runsByChat.get(initialChatId)
+          !chatSession.runFor(initialChatId)
         ) {
           setReattachingChatId(initialChatId);
           setReattachPlan(normalizeLivePlan(data.chat.live_plan));
@@ -1971,7 +1948,7 @@ export function ChatWorkspace({
           messages?: RawDbMessage[];
         };
         if (!data.ok || !Array.isArray(data.messages)) return;
-        if (runsByChat.has(id)) return;
+        if (chatSession.hasRun(id)) return;
         const nextBase = hydrate(data.messages);
         chatSession.reconcile(
           id,
@@ -1998,11 +1975,7 @@ export function ChatWorkspace({
   }, [
     activeId,
     hasQueuedLeadMagnetImage,
-    baseByChat,
-    artifactsByChat,
-    runsByChat,
     chatSession,
-    bump,
   ]);
 
   // Start a new chat: PERSIST the session on click (it shows in the history and
@@ -2083,7 +2056,6 @@ export function ChatWorkspace({
         setActiveId(null);
         return null;
       } finally {
-        bump();
       }
     })();
     pendingNewChatRef.current = request;
@@ -2094,7 +2066,7 @@ export function ChatWorkspace({
         pendingNewChatRef.current = null;
       }
     }
-  }, [bump, setActiveId, setAttachments, chatSession]);
+  }, [setActiveId, setAttachments, chatSession]);
 
   // Fire-and-forget AI titling for a chat whose title is still the default.
   // One cheap GLM-5.2 call (server-side, cost-logged); updates the local title
@@ -2136,7 +2108,6 @@ export function ChatWorkspace({
         chatSession.deleteConversation(id);
         setChats((c) => c.filter((x) => x.id !== id));
         if (id === activeId) setActiveId(null);
-        bump();
         // Invalidate the App Router's RSC cache so navigating away and back
         // (Posts → Chat) re-renders the page Server Component with fresh data.
         // Without this, the cached initialChats payload predates the delete and
@@ -2149,7 +2120,7 @@ export function ChatWorkspace({
         toast.error((e as Error).message);
       }
     },
-    [activeId, bump, router, setActiveId, chatSession],
+    [activeId, router, setActiveId, chatSession],
   );
 
   // ----- sending a message (SSE stream) -----
@@ -2284,7 +2255,7 @@ export function ChatWorkspace({
       // visible gap: for a brand-new chat there's an `await fetch("/api/chats")`
       // between, so the chip vanishes for a whole round-trip before the badge
       // appears. Instead we clear pendingSkills in the SAME synchronous batch
-      // as runsByChat.set() + bump() below, so the chip→badge handoff is one
+      // as run registration below, so the chip→badge handoff is one
       // frame with no flicker. (turnSkills is already captured, so the send
       // uses it regardless of when the state clears.)
       const turnSkills = pendingSkills;
@@ -2425,11 +2396,11 @@ export function ChatWorkspace({
       ) {
         // Search BOTH the persisted set AND the live run's artifacts for the
         // source draft. A draft made earlier THIS turn-chain may still be only
-        // in the live run (not yet folded into artifactsByChat by a post-stream
+        // in the live run (not yet folded into the session cache by a post-stream
         // reload); include it so hook-only preservation still works for a
         // refine right after the first draft renders.
-        const persisted = artifactsByChat.get(chatId) ?? [];
-        const runArts = runsByChat.get(chatId)?.artifacts ?? [];
+        const persisted = chatSession.artifactsFor(chatId);
+        const runArts = chatSession.runFor(chatId)?.artifacts ?? [];
         const seenIds = new Set(persisted.map((a) => a.id));
         const combined = [...persisted, ...runArts.filter((a) => !seenIds.has(a.id))];
         const drafts = combined.filter(
@@ -2507,7 +2478,7 @@ export function ChatWorkspace({
       // A recovery retry can race the server's final claim release after a
       // transport stall. Keep the settled recovery overlay so a transient 409
       // cannot replace it with a failed run and make the Retry action vanish.
-      const previousRun = runsByChat.get(chatId);
+      const previousRun = chatSession.runFor(chatId);
       const recoverableFallbackRun =
         previousRun && !previousRun.streaming && previousRun.recoverable
           ? previousRun
@@ -2530,7 +2501,7 @@ export function ChatWorkspace({
       };
       chatSession.registerRun(chatId, run);
       // Clear the composer's skill chip HERE — in the same batch as the run
-      // registration + bump that renders the user message (which shows the
+      // registration that renders the user message (which shows the
       // skill as a bubble badge). Same frame = the chip moves from composer to
       // bubble with no intermediate "skill gone" flash. (turnSkills was
       // captured above; clearing the state now doesn't affect this send.)
@@ -2539,7 +2510,6 @@ export function ChatWorkspace({
       if (turnLeadMagnet) setPendingLeadMagnet(null);
       if (turnCreatorStyle) setPendingCreatorStyle(null);
       if (turnStarterId) clearComposerStarter(turnStarterOwnerId);
-      bump();
 
       // Optimistically title an untitled chat from this first message, matching
       // the server's auto-title (first 60 chars).
@@ -2634,11 +2604,14 @@ export function ChatWorkspace({
             ),
           }).clientMs,
         });
-        run.turnStartedAt = res.headers.get("X-Turn-Started-At") ?? undefined;
-        applyPersistedUserMessageId(
-          run,
-          res.headers.get("X-User-Message-Id"),
-        );
+        chatSession.updateRun(chatId, run, (ownedRun) => {
+          ownedRun.turnStartedAt =
+            res.headers.get("X-Turn-Started-At") ?? undefined;
+          applyPersistedUserMessageId(
+            ownedRun,
+            res.headers.get("X-User-Message-Id"),
+          );
+        });
         if (!res.ok || !res.body) {
           const err = await res.json().catch(() => ({}));
           const e = new Error(err.error || `Stream failed (${res.status})`);
@@ -2652,24 +2625,22 @@ export function ChatWorkspace({
         // A send got through — clear any stale limit banner.
         setLimitNotice(null);
 
-        await chatSession.consumeRun(chatId, run, res.body, (_ownedRun, event, data) => {
+        await chatSession.consumeRun(chatId, run, res.body, (ownedRun, event, data) => {
           // Stop fired between frames — drop this one; the finally settles the UI.
           if (ctrl.signal.aborted) return;
           if (event === "text") {
-            run.rawText += data.delta as string;
-            bump();
+            ownedRun.rawText += data.delta as string;
           } else if (event === "tool_start") {
-            run.tools = [
-              ...run.tools,
+            ownedRun.tools = [
+              ...ownedRun.tools,
               {
                 id: data.id as string,
                 name: data.name as string,
                 args: data.args as string | undefined,
               },
             ];
-            bump();
           } else if (event === "tool_end") {
-            run.tools = run.tools.map((t) =>
+            ownedRun.tools = ownedRun.tools.map((t) =>
               t.id === data.id
                 ? {
                     ...t,
@@ -2680,18 +2651,15 @@ export function ChatWorkspace({
                   }
                 : t,
             );
-            bump();
           } else if (event === "plan" || event === "plan_update") {
             // The agent's live checklist. Both events carry the FULL ordered
             // step list — REPLACE, don't merge — so a re-plan can't leave a
             // stale step on screen and a finalize closes every step at once.
-            run.plan = (data.steps as PlanStep[]) ?? [];
-            bump();
+            ownedRun.plan = (data.steps as PlanStep[]) ?? [];
           } else if (event === "ask") {
             // The agent asked a clarifying question and is ending the turn. Store
             // it so the bubble renders the interactive AskCard.
-            run.ask = data as unknown as AskQuestion;
-            bump();
+            ownedRun.ask = data as unknown as AskQuestion;
           } else if (event === "preference_saved") {
             // The agent saved a durable writing preference. Surface it as a
             // lightweight toast with a one-click Undo (delete the just-saved
@@ -2713,10 +2681,9 @@ export function ChatWorkspace({
             // Re-sent artifact id (e.g. a cite backfilling its draft's
             // source_url after the draft already streamed) → REPLACE the card
             // already on screen, not a second copy of it.
-            if (run.artifacts.some((a) => a.id === incoming.id)) {
-              run.artifacts = replaceOrAppendArtifact(run.artifacts, incoming);
+            if (ownedRun.artifacts.some((a) => a.id === incoming.id)) {
+              ownedRun.artifacts = replaceOrAppendArtifact(ownedRun.artifacts, incoming);
               if (chatId === activeIdRef.current) setPanelOpen(true);
-              bump();
               return;
             }
             // Direct AI refine: the server reuses the target id, so this run
@@ -2734,10 +2701,12 @@ export function ChatWorkspace({
               // result as one replacement and wait for canonical persistence
               // before the draft panel swaps the saved card.
               if (pending.artifactId === incoming.id) {
-                run.artifacts = replaceOrAppendArtifact(run.artifacts, incoming);
+                ownedRun.artifacts = replaceOrAppendArtifact(
+                  ownedRun.artifacts,
+                  incoming,
+                );
                 pendingRefineRef.current.delete(chatId);
                 if (chatId === activeIdRef.current) setPanelOpen(true);
-                bump();
                 return;
               }
               const targetBody = pending.originalBody;
@@ -2761,18 +2730,17 @@ export function ChatWorkspace({
                         body: splicePreservedBody(pending.originalBody, incoming.body),
                       }
                     : incoming;
-                run.artifacts = [...run.artifacts, effective];
+                ownedRun.artifacts = [...ownedRun.artifacts, effective];
               }
               // A refine produces ONE draft — clear so the next incoming (if
               // any) is treated as a plain append.
               pendingRefineRef.current.delete(chatId);
             } else {
-              run.artifacts = [...run.artifacts, incoming];
+              ownedRun.artifacts = [...ownedRun.artifacts, incoming];
             }
             // Drafts live in the right-hand panel — open it (only for the chat
             // on screen) so a freshly generated post is immediately visible.
             if (chatId === activeIdRef.current) setPanelOpen(true);
-            bump();
           } else if (event === "done") {
             // A failed turn that delivered nothing shouldn't show a credit
             // line — "~1 credit" next to a dead-end error reads as "you were
@@ -2781,11 +2749,10 @@ export function ChatWorkspace({
             // run.recoverable is already set by the time this runs. Mirrors
             // the same suppression chat-turn.ts applies to the PERSISTED
             // usage marker, so live and post-reload rendering agree.
-            run.usage =
-              run.recoverable && run.artifacts.length === 0
+            ownedRun.usage =
+              ownedRun.recoverable && ownedRun.artifacts.length === 0
                 ? undefined
                 : (parseCoworkTurnUsage(data.usage) ?? undefined);
-            bump();
           } else if (event === "error") {
             const code = String(data.code ?? "");
             const message = (data.message as string) || "";
@@ -2795,8 +2762,7 @@ export function ChatWorkspace({
             // button — not a toast. Non-recoverable errors stay as toasts
             // with friendlier copy for known provider categories.
             if (recovery === "continue") {
-              run.recoverable = { code, message, recovery: "continue" };
-              bump();
+              ownedRun.recoverable = { code, message, recovery: "continue" };
             } else if (code === "429" || /rate.?limit/i.test(message)) {
               toast.error("The AI provider is rate-limiting us — try again in a moment.");
             } else if (code === "content_filter" || /content.?filter/i.test(message)) {
@@ -2804,12 +2770,11 @@ export function ChatWorkspace({
             } else if (code === "stream_stalled" || /stall/i.test(message)) {
               // The model connection went quiet mid-stream (vs. a hard timeout).
               // Offer a one-click Continue — picking up usually works.
-              run.recoverable = {
+              ownedRun.recoverable = {
                 code: "stream_stalled",
                 message: "The model went quiet mid-response.",
                 recovery: "continue",
               };
-              bump();
             } else if (/timeout/i.test(message)) {
               toast.error("The model timed out. Try a shorter request.");
             } else {
@@ -2822,14 +2787,15 @@ export function ChatWorkspace({
         const code = (e as Error & { code?: string }).code;
         if ((e as Error).name === "AbortError") {
           streamAborted = true;
-          if (
-            !run.stopPending &&
-            !run.rawText.trim() &&
-            run.artifacts.length === 0
-          ) {
-            run.rawText = STOPPED_EMPTY_MESSAGE;
-          }
-          bump();
+          chatSession.updateRun(chatId, run, (ownedRun) => {
+            if (
+              !ownedRun.stopPending &&
+              !ownedRun.rawText.trim() &&
+              ownedRun.artifacts.length === 0
+            ) {
+              ownedRun.rawText = STOPPED_EMPTY_MESSAGE;
+            }
+          });
         } else if (code === "stream_stalled" || code === "stream_ended_early") {
           // The browser has its own transport watchdog in addition to the
           // provider watchdog. This catches silence before response headers,
@@ -2838,18 +2804,20 @@ export function ChatWorkspace({
           // leaving an endless spinner or silently accepting truncated prose.
           recoverableTransportFailure = true;
           streamAborted = true;
-          run.plan = [];
-          run.tools = run.tools.map((tool) =>
-            tool.ok === undefined ? { ...tool, ok: false } : tool,
-          );
-          run.recoverable = {
-            code,
-            message:
-              code === "stream_ended_early"
-                ? "The response ended before it finished."
-                : "Cowork stopped receiving updates.",
-            recovery: "continue",
-          };
+          chatSession.updateRun(chatId, run, (ownedRun) => {
+            ownedRun.plan = [];
+            ownedRun.tools = ownedRun.tools.map((tool) =>
+              tool.ok === undefined ? { ...tool, ok: false } : tool,
+            );
+            ownedRun.recoverable = {
+              code,
+              message:
+                code === "stream_ended_early"
+                  ? "The response ended before it finished."
+                  : "Cowork stopped receiving updates.",
+              recovery: "continue",
+            };
+          });
           void requestServerTurnStop({
             chatId,
             identity: {
@@ -2858,7 +2826,6 @@ export function ChatWorkspace({
             },
             recoverable: true,
           }).catch(() => {});
-          bump();
         } else if (status === 429) {
           // Rate / usage limit: show a persistent banner (not a fleeting toast)
           // so it's clear chat is paused but the rest of the app still works.
@@ -2871,7 +2838,7 @@ export function ChatWorkspace({
         if (!streamStarted && !recoverableTransportFailure && !run.stopPending) {
           chatSession.retireRun(chatId, run);
           if (status === 409 && recoverableFallbackRun) {
-            chatSession.registerRun(chatId, recoverableFallbackRun);
+            chatSession.registerRun(chatId, { ...recoverableFallbackRun });
             toast.info("Cowork is still finishing the previous attempt. Retry again in a moment.");
           }
           const failedChatIsActive = activeIdRef.current === chatId;
@@ -2898,28 +2865,28 @@ export function ChatWorkspace({
               writeComposerDraft(chatId, { text, starterId: turnStarterId });
             }
           }
-          bump();
           return;
         }
       } finally {
-        if (ctrl.signal.aborted || run.stopped) {
-          streamAborted = true;
-          if (
-            !run.stopPending &&
-            !run.rawText.trim() &&
-            run.artifacts.length === 0
-          ) {
-            run.rawText = STOPPED_EMPTY_MESSAGE;
+        chatSession.updateRun(chatId, run, (ownedRun) => {
+          if (ctrl.signal.aborted || ownedRun.stopped) {
+            streamAborted = true;
+            if (
+              !ownedRun.stopPending &&
+              !ownedRun.rawText.trim() &&
+              ownedRun.artifacts.length === 0
+            ) {
+              ownedRun.rawText = STOPPED_EMPTY_MESSAGE;
+            }
           }
-        }
-        if (!run.stopPending) run.streaming = false;
+          if (!ownedRun.stopPending) ownedRun.streaming = false;
+        });
         // Clear any UNCONSUMED refine intent for this chat: if the turn ended
         // without producing a draft artifact (errored, aborted, or the agent
         // just replied in text), the pending target must not bleed into the next
         // refine. (A consumed refine already deleted its entry in the artifact
         // handler; refineSwapRef is handled in the post-stream block below.)
         pendingRefineRef.current.delete(chatId);
-        bump();
         // Bump this chat to the top of the list (it just got activity).
         setChats((c) => {
           const idx = c.findIndex((x) => x.id === chatId);
@@ -2949,7 +2916,7 @@ export function ChatWorkspace({
       // We do NOT keep the ask-run alive as the source of truth. That older
       // strategy dropped history: because base was never refreshed, the ask
       // turn's user message + question card lived ONLY in this run's overlay —
-      // so the instant the user answered (their send overwrites runsByChat for
+      // so the instant the user answered (their send replaces run ownership for
       // this chat, line ~1416), those two rows blinked out until the ANSWER
       // turn's own post-stream reload eventually ran. Folding into base now
       // means the question + card render from `base` (via hydrate) and survive
@@ -2959,7 +2926,6 @@ export function ChatWorkspace({
         // If the chat was deleted mid-turn, just drop the run.
         if (deletedRef.current.has(chatId)) {
           chatSession.retireRun(chatId, run);
-          bump();
           return;
         }
         try {
@@ -2971,7 +2937,7 @@ export function ChatWorkspace({
           // transcript to actually carry the ask (hydrate rebuilt it from the
           // persisted tool_call) — if for any reason it didn't land, fall
           // through and keep the live run so the card isn't lost.
-          const currentRun = runsByChat.get(chatId);
+          const currentRun = chatSession.runFor(chatId);
           const stillMine = currentRun === run;
           const reloaded =
             data.ok && !deletedRef.current.has(chatId)
@@ -2979,7 +2945,7 @@ export function ChatWorkspace({
               : null;
           const askInBase =
             !!reloaded && reloaded.some((m) => m.role === "assistant" && m.ask);
-          const currentBase = baseByChat.get(chatId) ?? [];
+          const currentBase = chatSession.baseMessages(chatId);
           const currentBaseHasAsk = currentBase.some(
             (m) => m.role === "assistant" && !!m.ask,
           );
@@ -3008,7 +2974,6 @@ export function ChatWorkspace({
           // question + card (its overlay still renders them) rather than losing
           // the AskCard entirely.
         }
-        bump();
         if (typeof window !== "undefined") {
           window.dispatchEvent(new Event("swipein:usage-changed"));
         }
@@ -3050,7 +3015,7 @@ export function ChatWorkspace({
 
       // Fold the canonical server-persisted turn into this chat's base cache
       // (fences→artifacts, the real assistant row), THEN drop the live run — in
-      // ONE synchronous swap with a single bump(). This kills the post-stream
+      // ONE synchronous session publication. This kills the post-stream
       // "reload flicker": previously we deleted the run + bumped BEFORE the
       // reload GET, so for the whole network round-trip the just-finished reply
       // lived in neither source (the run was gone; base didn't have it yet) and
@@ -3063,7 +3028,6 @@ export function ChatWorkspace({
       // If the chat was deleted mid-stream, just drop the run.
       if (deletedRef.current.has(chatId)) {
         chatSession.retireRun(chatId, run);
-        bump();
         return;
       }
       let completedCanonicalHandoff = false;
@@ -3103,7 +3067,6 @@ export function ChatWorkspace({
         // (it still holds the streamed text + artifacts) rather than dropping it
         // and showing nothing. The user can switch away and back to reload the
         // canonical persisted result.
-        bump();
         return;
       }
       // If another poll already folded this assistant into base, only retirement
@@ -3114,7 +3077,7 @@ export function ChatWorkspace({
         chatSession.ownsRun(chatId, run) &&
         (!streamAborted ||
           hasAssistantAfterPersistedUserMessage(
-            baseByChat.get(chatId) ?? [],
+            chatSession.baseMessages(chatId),
             userMsg,
           ))
       ) {
@@ -3139,10 +3102,6 @@ export function ChatWorkspace({
     customSkills,
     initialVoiceReady,
     router,
-    bump,
-    baseByChat,
-    artifactsByChat,
-    runsByChat,
     maybeAutoTitle,
     setAttachments,
     chatSession,
@@ -3159,7 +3118,7 @@ export function ChatWorkspace({
   // Both safe to call when nothing's running.
   const stopActiveRun = useCallback(() => {
     if (!activeId) return;
-    const run = runsByChat.get(activeId);
+    const run = chatSession.runFor(activeId);
     if (!run || run.stopPending) return;
     void chatSession.stop(activeId, {
       foldRun: (ownedRun, base) =>
@@ -3216,7 +3175,7 @@ export function ChatWorkspace({
         identity,
       }),
     });
-  }, [activeId, runsByChat, chatSession]);
+  }, [activeId, chatSession]);
 
   // Jump back to the live bottom of the stream. Clears the scrolled-away flag so
   // auto-scroll re-engages and the button hides.
@@ -3242,7 +3201,7 @@ export function ChatWorkspace({
       // feedback — so reject early with a toast. The UI also disables the
       // refine controls (refineDisabled), this is the belt-and-braces guard.
       const aid = activeIdRef.current;
-      if (aid && runsByChat.get(aid)?.streaming) {
+      if (aid && chatSession.runFor(aid)?.streaming) {
         toast.info("Hang on — let the current draft finish before refining again.");
         return;
       }
@@ -3274,7 +3233,9 @@ export function ChatWorkspace({
       // The draft's meta.skills holds the slugs; map them to ids via the loaded
       // workspace skills. (pendingSkills is empty by now — it's consumed each
       // send — so without this the refine would silently drop the skill.)
-      const target = (aid && artifactsByChat.get(aid)?.find((a) => a.id === artifactId)) || null;
+      const target =
+        (aid && chatSession.artifactsFor(aid).find((a) => a.id === artifactId)) ||
+        null;
       const inheritedIds = target
         ? skillNamesToIds(artifactSkillNames(target), customSkills)
         : [];
@@ -3294,42 +3255,43 @@ export function ChatWorkspace({
           : {}),
       });
     },
-    [send, runsByChat, artifactsByChat, customSkills],
+    [send, chatSession, customSkills],
   );
 
   // Reflect a Done-edit's PATCH into the parent's caches so the saved body
   // sticks across re-renders (the stale prop would otherwise seed-reset the
-  // ArtifactCard's local body on the next parent bump). Patches both
-  // artifactsByChat and the live run.
+  // ArtifactCard's local body on the next parent render). Patches both
+  // the session's persisted artifacts and the live run.
   const updateArtifactBody = useCallback(
     (artifactId: string, newBody: string) => {
       const aid = activeIdRef.current;
       if (!aid) return;
-      const apply = (list: Artifact[]): Artifact[] =>
+      const apply = (list: readonly Artifact[]): Artifact[] =>
         list.map((a) => (a.id === artifactId ? { ...a, body: newBody } : a));
-      const persisted = artifactsByChat.get(aid);
+      const persisted = chatSession.artifactsFor(aid);
       if (persisted?.some((a) => a.id === artifactId)) {
         chatSession.setArtifacts(aid, apply(persisted));
       }
-      const run = runsByChat.get(aid);
+      const run = chatSession.runFor(aid);
       if (run?.artifacts.some((a) => a.id === artifactId)) {
-        run.artifacts = apply(run.artifacts);
+        chatSession.updateRun(aid, run, (ownedRun) => {
+          ownedRun.artifacts = apply(ownedRun.artifacts);
+        });
       }
-      bump();
     },
-    [bump, artifactsByChat, runsByChat, chatSession],
+    [chatSession],
   );
 
   const updateArtifactMeta = useCallback(
     async (artifactId: string, metaPatch: Record<string, unknown>) => {
       const aid = activeIdRef.current;
       if (!aid) throw new Error("Couldn't find the chat for this draft.");
-      const apply = (list: Artifact[]): Artifact[] =>
+      const apply = (list: readonly Artifact[]): Artifact[] =>
         list.map((a) =>
           a.id === artifactId ? { ...a, meta: { ...(a.meta ?? {}), ...metaPatch } } : a,
         );
-      const persisted = artifactsByChat.get(aid);
-      const run = runsByChat.get(aid);
+      const persisted = chatSession.artifactsFor(aid);
+      const run = chatSession.runFor(aid);
       const current = [...(persisted ?? []), ...(run?.artifacts ?? [])].find(
         (a) => a.id === artifactId,
       );
@@ -3368,30 +3330,31 @@ export function ChatWorkspace({
         chatSession.setArtifacts(aid, apply(persisted));
       }
       if (run?.artifacts.some((a) => a.id === artifactId)) {
-        run.artifacts = apply(run.artifacts);
+        chatSession.updateRun(aid, run, (ownedRun) => {
+          ownedRun.artifacts = apply(ownedRun.artifacts);
+        });
       }
-      bump();
     },
-    [artifactsByChat, runsByChat, bump, chatSession],
+    [chatSession],
   );
 
   // Delete one draft/hook card from the chat panel. The card lives in the owning
   // assistant message's artifacts (persisted jsonb), so an in-memory-only
   // removal would reappear on reload — we hit the server, then prune both the
-  // persisted cache (artifactsByChat) and the live run's artifacts so it
+  // persisted session cache and the live run's artifacts so it
   // disappears immediately. Optimistic with rollback on failure.
   const deleteArtifact = useCallback(
     async (artifactId: string) => {
       const aid = activeIdRef.current;
       if (!aid) return;
-      const run = runsByChat.get(aid);
+      const run = chatSession.runFor(aid);
       // Capture the deleted artifact + its position from EACH source, so a
       // rollback can RE-INSERT it into the (possibly-changed) current array
       // rather than restoring a stale snapshot. The delete button isn't gated on
       // streaming (unlike refine), so the live run can append a new draft during
       // the await below — blindly restoring the pre-delete snapshot would erase
       // that streamed-in draft. We reconcile against current state instead.
-      const persistedBefore = artifactsByChat.get(aid);
+      const persistedBefore = chatSession.artifactsFor(aid);
       const persistedIdx = persistedBefore?.findIndex((a) => a.id === artifactId) ?? -1;
       const persistedDeleted = persistedIdx >= 0 ? persistedBefore![persistedIdx] : undefined;
       const runIdx = run?.artifacts.findIndex((a) => a.id === artifactId) ?? -1;
@@ -3404,9 +3367,12 @@ export function ChatWorkspace({
         );
       }
       if (run) {
-        run.artifacts = run.artifacts.filter((a) => a.id !== artifactId);
+        chatSession.updateRun(aid, run, (ownedRun) => {
+          ownedRun.artifacts = ownedRun.artifacts.filter(
+            (a) => a.id !== artifactId,
+          );
+        });
       }
-      bump();
       try {
         const res = await fetch(`/api/chats/${aid}/artifacts`, {
           method: "DELETE",
@@ -3425,18 +3391,23 @@ export function ChatWorkspace({
         if (persistedDeleted) {
           chatSession.setArtifacts(
             aid,
-            reinsertArtifact(artifactsByChat.get(aid) ?? [], persistedIdx, persistedDeleted),
+            reinsertArtifact(chatSession.artifactsFor(aid), persistedIdx, persistedDeleted),
           );
         }
-        const curRun = runsByChat.get(aid);
-        if (curRun && runDeleted) {
-          curRun.artifacts = reinsertArtifact(curRun.artifacts, runIdx, runDeleted);
+        if (run && runDeleted) {
+          // Use the identity captured before the request. A newer turn may have
+          // replaced this run while the delete was in flight; in that case the
+          // rollback belongs to the stale run and must be rejected.
+          chatSession.updateRun(aid, run, (ownedRun) => {
+            ownedRun.artifacts = [
+              ...reinsertArtifact(ownedRun.artifacts, runIdx, runDeleted),
+            ];
+          });
         }
-        bump();
         toast.error((e as Error).message || "Couldn't delete that draft");
       }
     },
-    [artifactsByChat, runsByChat, bump, chatSession],
+    [chatSession],
   );
 
   // Composer length feedback. The counter only shows as you approach the cap;
@@ -3808,7 +3779,7 @@ export function ChatWorkspace({
                       | Message["terminalReason"]
                       | undefined;
                     const ownedRun = activeId
-                      ? runsByChat.get(activeId)
+                      ? chatSession.runFor(activeId)
                       : undefined;
                     if (
                       originalTask &&
@@ -3903,9 +3874,9 @@ export function ChatWorkspace({
                     // whole post, and the post-stream reload swapped the
                     // clobbered body into the DB.
                     const aid = activeIdRef.current;
-                    const persisted = aid ? artifactsByChat.get(aid) ?? [] : [];
+                    const persisted = chatSession.artifactsFor(aid);
                     const runArts = aid
-                      ? runsByChat.get(aid)?.artifacts ?? []
+                      ? chatSession.runFor(aid)?.artifacts ?? []
                       : [];
                     const seenIds = new Set(persisted.map((a) => a.id));
                     const combined = [
@@ -3942,7 +3913,7 @@ export function ChatWorkspace({
                   settles. Suppressed once a local run exists (its overlay shows
                   real progress) or the turn finishes. */}
               {reattachingChatId === activeId &&
-                !(activeId && runsByChat.get(activeId)) && (
+                !chatSession.runFor(activeId) && (
                   <ReattachingIndicator steps={reattachPlan} />
                 )}
             </div>
@@ -4954,15 +4925,15 @@ export function ChatWorkspace({
                   size="icon"
                   variant="outline"
                   onClick={stopActiveRun}
-                  disabled={runsByChat.get(activeId ?? "")?.stopPending === true}
+                  disabled={chatSession.runFor(activeId)?.stopPending === true}
                   className="h-10 w-10 shrink-0 rounded-full border-border bg-card"
                   aria-label={
-                    runsByChat.get(activeId ?? "")?.stopPending
+                    chatSession.runFor(activeId)?.stopPending
                       ? "Stopping"
                       : "Stop generating"
                   }
                   title={
-                    runsByChat.get(activeId ?? "")?.stopPending
+                    chatSession.runFor(activeId)?.stopPending
                       ? "Stopping"
                       : "Stop generating"
                   }
@@ -6211,7 +6182,7 @@ function ArtifactCard({
   // Send this draft back to the agent with an instruction. The result UPDATES
   // this card in place (with version history), not a separate new draft.
   onRefine: (instruction: string) => void;
-  // The Done-edit PATCH succeeded — the parent updates its artifactsByChat
+  // The Done-edit PATCH succeeded — the parent updates its session cache
   // cache so the next render reflects the saved body (otherwise the parent's
   // stale prop would seed-reset the local body on a re-render).
   onBodyChange?: (newBody: string) => void;
@@ -6774,7 +6745,7 @@ function ArtifactCard({
               //      so the client thought it saved when it hadn't. Server
               //      now returns 404; we retry with backoff up to ~3s, which
               //      covers a normal turn finishing.
-              //  (b) Even on success, the parent's artifactsByChat still has
+              //  (b) Even on success, the parent's session cache still has
               //      the pre-edit body — a later parent re-render would seed
               //      the body back. onBodyChange tells the parent to reflect
               //      the saved body in its cache.
@@ -6812,7 +6783,7 @@ function ArtifactCard({
                       "Couldn't save the edit — try Done again in a moment.",
                     );
                   }
-                  // Tell the parent so artifactsByChat reflects the saved body.
+                  // Tell the parent so the session cache reflects the saved body.
                   onBodyChange?.(body);
                 } catch (e) {
                   toast.error((e as Error).message);

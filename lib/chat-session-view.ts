@@ -69,7 +69,7 @@ export function runOverlay<
     usage?: Usage;
     streaming: boolean;
   },
-  base: SessionViewMessage<Tool, Plan, Ask, Artifact, Recoverable, Usage>[] = [],
+  base: readonly SessionViewMessage<Tool, Plan, Ask, Artifact, Recoverable, Usage>[] = [],
 ): SessionViewMessage<Tool, Plan, Ask, Artifact, Recoverable, Usage>[] {
   const lastUser = [...base].reverse().find((message) => message.role === "user");
   const alreadyInBase =
@@ -98,8 +98,8 @@ export function runOverlay<
 export function shouldApplyAskTurnReload<
   M extends SessionViewMessage<unknown, unknown, unknown, unknown, unknown>,
 >(
-  currentBase: M[],
-  reloadedBase: M[],
+  currentBase: readonly M[],
+  reloadedBase: readonly M[],
 ): boolean {
   if (!reloadedBase.some((message) => message.role === "assistant" && Boolean(message.ask))) {
     return false;

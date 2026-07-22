@@ -250,10 +250,10 @@ export function guardRefineCollapse(
 // erased. No-ops if the artifact is somehow already present (avoid duplicates);
 // clamps the index to the current bounds. Pure + exported for unit tests.
 export function reinsertArtifact(
-  list: Artifact[],
+  list: readonly Artifact[],
   at: number,
   art: Artifact,
-): Artifact[] {
+): readonly Artifact[] {
   if (list.some((a) => a.id === art.id)) return list;
   const next = [...list];
   next.splice(Math.min(Math.max(at, 0), next.length), 0, art);
