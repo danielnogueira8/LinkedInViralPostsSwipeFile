@@ -86,7 +86,11 @@ export function VoiceInterviewCard({
   }
 
   return (
-    <Card className="overflow-hidden border-border/70 bg-card/90 shadow-soft">
+    <Card
+      aria-label="Context interview"
+      className="overflow-hidden border-border/70 bg-card/90 shadow-soft lg:max-h-[calc(100dvh-8rem)] lg:overflow-y-auto lg:overscroll-contain"
+      data-testid="context-interview-scroll"
+    >
       <CardHeader>
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-start gap-3">
@@ -139,12 +143,12 @@ export function VoiceInterviewCard({
 
         {expanded && (
           <div className="space-y-4">
-            {/* Keep the action bar reachable while long question sets scroll.
-                On mobile the page remains the only scroll surface; adding an
-                inner scroller there makes textareas difficult to use. */}
+            {/* The whole interview card scrolls as one surface on desktop,
+                including the saved context above the questions. Compact
+                layouts keep the page as their only scroll surface. */}
             <div
               aria-label="Interview questions"
-              className="space-y-4 lg:max-h-[min(42vh,34rem)] lg:overflow-y-auto lg:overscroll-contain lg:pr-2"
+              className="space-y-4"
               data-testid="interview-questions-scroll"
             >
               {INTERVIEW_QUESTIONS.map((q, i) => (

@@ -21,11 +21,13 @@ test.describe("voice interview questions", () => {
     await consoleGuard.assertNoErrors();
   });
 
-  test("long question lists scroll without moving the interview actions", async ({ page }) => {
+  test("long interviews scroll as one card, including saved context and actions", async ({ page }) => {
     const questions = page.getByTestId("interview-questions-scroll");
+    const interview = page.getByTestId("context-interview-scroll");
     await expect(questions).toBeVisible();
+    await expect(interview).toBeVisible();
 
-    const metrics = await questions.evaluate((element) => ({
+    const metrics = await interview.evaluate((element) => ({
       clientHeight: element.clientHeight,
       overflowY: getComputedStyle(element).overflowY,
       scrollHeight: element.scrollHeight,
@@ -33,11 +35,9 @@ test.describe("voice interview questions", () => {
     expect(metrics.overflowY).toBe("auto");
     expect(metrics.scrollHeight).toBeGreaterThan(metrics.clientHeight);
 
-    const submit = page.getByRole("button", { name: /build my context|rebuild from answers/i });
-    const before = await submit.boundingBox();
-    await questions.evaluate((element) => element.scrollTo({ top: element.scrollHeight }));
-    await expect.poll(() => questions.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
-    expect(await submit.boundingBox()).toEqual(before);
+    expect(await questions.evaluate((element) => getComputedStyle(element).overflowY)).toBe("visible");
+    await interview.evaluate((element) => element.scrollTo({ top: element.scrollHeight }));
+    await expect.poll(() => interview.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
   });
 
   test("uses page scrolling instead of a nested question scroller on small screens", async ({ page }) => {
@@ -47,9 +47,10 @@ test.describe("voice interview questions", () => {
     await openInterviewQuestions(page);
 
     const questions = page.getByTestId("interview-questions-scroll");
+    const interview = page.getByTestId("context-interview-scroll");
     await expect(questions).toBeVisible();
-    expect(await questions.evaluate((element) => getComputedStyle(element).overflowY)).toBe(
-      "visible",
+    expect(await interview.evaluate((element) => getComputedStyle(element).overflowY)).not.toBe(
+      "auto",
     );
   });
 });
