@@ -528,6 +528,10 @@ export function DraftEditorModal({
             type: validation.type,
             url: publicUrl,
             key,
+            // The publishing URL can take a moment to become readable after a
+            // successful upload. Keep a local browser preview so the editor
+            // renders the selected image immediately instead of a broken img.
+            previewUrl: validation.type === "image" ? URL.createObjectURL(file) : undefined,
             uploadedAt: new Date().toISOString(),
           },
         ];
