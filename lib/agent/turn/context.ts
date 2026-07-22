@@ -1161,8 +1161,8 @@ export async function buildTurnContext(
   let resolvedCustomSkills: FrozenCustomSkill[] = [];
   // Resolved bodies of the user's invoked custom skills (filled in below).
   let customSkillBodies: string[] = [];
-  // Parallel to customSkillBodies — the slugs, passed to the decide pre-pass so
-  // it never asks "which skill?" when one is already applied (see decide.ts).
+  // Parallel to customSkillBodies — the slugs, used for the applied-skill chips
+  // and persisted so an applied skill is recoverable on later turns.
   let customSkillNames: string[] = [];
   let postClarificationPostCount: number | null = null;
   let structureMatch: StructureMatchResult | null = null;

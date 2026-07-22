@@ -113,21 +113,23 @@ export function isTurnRunning(
 // cheaper frees its share the moment it's released. Kept in sync with the DB
 // default (p_turn_cost_estimate).
 //
-// The decision pre-pass and the main turn now both default to CHAT_MODEL. The
-// base $0.05 plus $0.01 pre-pass headroom covers the current Luna workload and
-// the retained Sonnet/Gemini A/B models; cost-reserves.test.ts pins representative
-// token volumes against the configured model's explicit price row.
+// The base $0.05 covers a heavy multi-tool turn on CHAT_MODEL. The optional
+// intent-decision surcharge below reserves headroom for the fallthrough
+// GPT-Luna classifier (lib/agent/turn/intent-decision.ts) — a single cheap call
+// that fires only on the small slice of turns the deterministic router can't
+// classify, and only when INTENT_DECISION is enabled. (This replaces the old
+// Sonnet decision pre-pass, which was removed; the surcharge is repointed at
+// its successor rather than deleted so the reservation stays accurate.)
 const BASE_TURN_COST_ESTIMATE_USD = numEnv("CHAT_TURN_COST_ESTIMATE_USD", 0.05);
-const DECISION_LAYER_ON = process.env.AGENT_DECISION_LAYER !== "0";
-// Per-turn cost reservation = base GLM turn estimate + a Sonnet decision-layer
-// surcharge when that pre-pass is on (it adds ~$0.006-0.008 per turn). Pure so
-// the money-critical arithmetic is unit-tested (the const below just applies it
-// to the resolved env at import). Kept a plain add (not max) — both calls happen
-// on a turn, so their estimates sum.
-export const DECISION_LAYER_COST_USD = 0.01;
+const INTENT_DECISION_ON = process.env.INTENT_DECISION === "1";
+// Per-turn reservation = base turn estimate + an intent-decision surcharge when
+// that classifier is enabled (~$0.006-0.01/call). Pure so the money-critical
+// arithmetic is unit-tested; a plain add (not max) — the classifier call and the
+// turn both happen, so their estimates sum.
+export const INTENT_DECISION_COST_USD = 0.01;
 export function turnCostEstimate(
   baseUsd: number,
-  decisionLayerOn: boolean,
+  intentDecisionOn: boolean,
   requestedDraftCount: number = 1,
 ): number {
   // The multi-draft multiplier goes through the ONE turn count rule (1-6
@@ -138,18 +140,18 @@ export function turnCostEstimate(
   }).count;
   return (
     baseUsd * boundedDraftCount +
-    (decisionLayerOn ? DECISION_LAYER_COST_USD : 0)
+    (intentDecisionOn ? INTENT_DECISION_COST_USD : 0)
   );
 }
 
 export function turnCostEstimateForContent(
   baseUsd: number,
-  decisionLayerOn: boolean,
+  intentDecisionOn: boolean,
   content: string,
 ): number {
   return turnCostEstimate(
     baseUsd,
-    decisionLayerOn,
+    intentDecisionOn,
     requestedDirectPostCount(content) ?? 1,
   );
 }
@@ -237,13 +239,13 @@ export async function claimChatTurn(
           READ_ONLY_ORCHESTRATOR_COST_RESERVE_USD,
           turnCostEstimateForContent(
             BASE_TURN_COST_ESTIMATE_USD,
-            DECISION_LAYER_ON,
+            INTENT_DECISION_ON,
             content,
           ),
         )
       : turnCostEstimateForContent(
           BASE_TURN_COST_ESTIMATE_USD,
-          DECISION_LAYER_ON,
+          INTENT_DECISION_ON,
           content,
         ),
   });
