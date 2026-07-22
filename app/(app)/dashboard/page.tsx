@@ -4,6 +4,8 @@ import { connection } from "next/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { rehydrateCites } from "@/lib/cite-resolve";
 import { rehydrateDraftLifecycle } from "@/lib/draft-lifecycle-rehydrate";
+import type { ModelSourceAttachment } from "@/lib/model-source-attachments";
+import { rehydrateModelSourceAttachments } from "@/lib/model-source-attachments";
 import type { CustomSkill } from "@/lib/custom-skills";
 import { CHAT_MODEL } from "@/lib/openrouter";
 import { contentFormatForModel } from "@/lib/markdown/mode";
@@ -43,6 +45,8 @@ type MessageRow = {
   content_format: "legacy" | "plain" | "markdown" | null;
   tool_calls: unknown;
   artifacts: unknown;
+  model_source_id?: string | null;
+  model_source_attachment?: ModelSourceAttachment | null;
   created_at: string;
 };
 
@@ -227,12 +231,13 @@ export default async function ChatPage({
       .from("chat_messages")
       // tool_calls included so hydrate() can reconstruct an AskCard from a
       // persisted ask_user tool call — survives a hard refresh (bug 1).
-      .select("id, role, content, content_format, tool_calls, artifacts, created_at")
+      .select("id, role, content, content_format, tool_calls, artifacts, created_at, model_source_id")
       .eq("chat_id", activeId)
       .eq("workspace_id", sb.workspaceId)
       .order("created_at", { ascending: true });
     messages = (msgs ?? []) as MessageRow[];
     // Re-resolve cited source-post cards (only the postId is persisted).
+    messages = await rehydrateModelSourceAttachments(messages, sb.workspaceId);
     messages = await rehydrateCites(messages, sb.workspaceId);
     messages = await rehydrateDraftLifecycle(messages, sb.workspaceId);
   }
@@ -282,6 +287,8 @@ export default async function ChatPage({
             // and only reappeared after a chat-switch (the GET route kept it).
             tool_calls: (m.tool_calls as never) ?? null,
             artifacts: (m.artifacts as never) ?? null,
+            model_source_id: m.model_source_id ?? null,
+            model_source_attachment: m.model_source_attachment ?? null,
           }))}
         />
       </Suspense>

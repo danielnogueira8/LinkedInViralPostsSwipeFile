@@ -8,6 +8,7 @@ import {
   parseCoworkTurnUsage,
   type CoworkTurnUsage,
 } from "@/lib/cowork-turn-usage";
+import type { ModelSourceAttachment } from "@/lib/model-source-attachments";
 
 export type AppliedLeadMagnet = {
   id?: string;
@@ -48,6 +49,7 @@ export type Message = {
   postFormat?: string;
   creatorStyle?: { name: string; creatorName: string | null };
   leadMagnet?: AppliedLeadMagnet;
+  modelSource?: ModelSourceAttachment;
   tools?: ToolChip[];
   plan?: PlanStep[];
   artifacts?: Artifact[];
@@ -91,6 +93,8 @@ export type RawDbMessage = {
   no_model_format_id?: string | null;
   creator_style_context?: unknown;
   lead_magnet_id?: string | null;
+  model_source_id?: string | null;
+  model_source_attachment?: ModelSourceAttachment | null;
   recoverable_error?: unknown;
   turn_usage?: unknown;
   tool_calls?: {
@@ -456,6 +460,9 @@ export function hydrate(rows: RawDbMessage[]): Message[] {
       ...(postFormat ? { postFormat } : {}),
       ...(creatorStyle ? { creatorStyle } : {}),
       ...(leadMagnet ? { leadMagnet } : {}),
+      ...(row.role === "user" && row.model_source_attachment
+        ? { modelSource: row.model_source_attachment }
+        : {}),
     };
   });
 }

@@ -4,6 +4,7 @@ import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
 import { rehydrateCites } from "@/lib/cite-resolve";
 import { rehydrateDraftLifecycle } from "@/lib/draft-lifecycle-rehydrate";
+import { rehydrateModelSourceAttachments } from "@/lib/model-source-attachments";
 import { isTurnRunning } from "@/lib/agent/rate-limit";
 
 export const runtime = "nodejs";
@@ -36,14 +37,15 @@ export async function GET(_req: Request, { params }: Ctx) {
 
     const { data: messages, error: msgErr } = await sb.raw
       .from("chat_messages")
-      .select("id, role, content, content_format, tool_calls, tool_call_id, artifacts, created_at, client_turn_id, transport_recovery_requested_at, user_stop_requested_at, terminal_reason")
+      .select("id, role, content, content_format, tool_calls, tool_call_id, artifacts, created_at, client_turn_id, transport_recovery_requested_at, user_stop_requested_at, terminal_reason, model_source_id")
       .eq("chat_id", id)
       .eq("workspace_id", sb.workspaceId)
       .order("created_at", { ascending: true });
     if (msgErr) throw msgErr;
 
     // Re-resolve cited source-post cards (we persist only the postId).
-    const citeHydrated = await rehydrateCites(messages ?? [], sb.workspaceId);
+    const sourceHydrated = await rehydrateModelSourceAttachments(messages ?? [], sb.workspaceId);
+    const citeHydrated = await rehydrateCites(sourceHydrated, sb.workspaceId);
     // The inline artifact blob is also frozen after Save/Schedule. Overlay the
     // linked board row's current lifecycle so changes made from Posts (or by the
     // publishing worker) cannot leave Cowork with a stale schedule badge.

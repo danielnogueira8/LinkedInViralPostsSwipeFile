@@ -15,6 +15,7 @@ import {
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
+const MODEL_SOURCE_PRUNE_BATCH_SIZE = 500;
 
 // Post a daily cost/health digest to a webhook (Slack/Discord) so cost pressure
 // is SEEN, not discovered at the cap. Best-effort: any failure is logged and
@@ -69,12 +70,46 @@ export async function GET(req: Request) {
     // return below). Best-effort; never throws.
     await postHealthDigest();
 
-    // Prune the "Model this post" handoff table — these are transient (one row
-    // per click, consumed seconds later by the chat). Delete anything older than
-    // a day so it doesn't grow unbounded. Best-effort; don't fail the cron on it.
+    // Prune only unused "Model this post" handoffs. A successfully sent model
+    // turn persists its model_source_id on chat_messages, so deleting that row
+    // would make the source attachment disappear from older conversation history.
+    // Keep referenced rows; they remain workspace-scoped when rehydrated.
     try {
       const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-      await sb.from("chat_modeling_sources").delete().lt("created_at", dayAgo);
+      const ids: string[] = [];
+      for (let from = 0; ; from += MODEL_SOURCE_PRUNE_BATCH_SIZE) {
+        const { data: expired, error: expiredError } = await sb
+          .from("chat_modeling_sources")
+          .select("id")
+          .lt("created_at", dayAgo)
+          .order("created_at", { ascending: true })
+          .range(from, from + MODEL_SOURCE_PRUNE_BATCH_SIZE - 1);
+        if (expiredError) throw expiredError;
+        const batch = (expired ?? []).map((row) => row.id as string);
+        ids.push(...batch);
+        if (batch.length < MODEL_SOURCE_PRUNE_BATCH_SIZE) break;
+      }
+      for (let from = 0; from < ids.length; from += MODEL_SOURCE_PRUNE_BATCH_SIZE) {
+        const batch = ids.slice(from, from + MODEL_SOURCE_PRUNE_BATCH_SIZE);
+        const { data: referenced, error: referencedError } = await sb
+          .from("chat_messages")
+          .select("model_source_id")
+          .in("model_source_id", batch);
+        if (referencedError) throw referencedError;
+        const referencedIds = new Set(
+          (referenced ?? [])
+            .map((row) => row.model_source_id as string | null)
+            .filter((id): id is string => Boolean(id)),
+        );
+        const disposable = batch.filter((id) => !referencedIds.has(id));
+        if (disposable.length > 0) {
+          const { error: deleteError } = await sb
+            .from("chat_modeling_sources")
+            .delete()
+            .in("id", disposable);
+          if (deleteError) throw deleteError;
+        }
+      }
     } catch (e) {
       console.error("model-source prune failed", (e as Error).message);
     }

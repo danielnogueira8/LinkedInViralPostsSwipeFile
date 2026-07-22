@@ -201,9 +201,9 @@ describe("clientShouldApplyLeadMagnet", () => {
 });
 
 describe("leadMagnetPickerDisabledForSource", () => {
-  test("keeps the picker available so users can create or select a giveaway intentionally", () => {
+  test("disables the picker for normal modeled posts only", () => {
     expect(leadMagnetPickerDisabledForSource("lead_magnet")).toBe(false);
-    expect(leadMagnetPickerDisabledForSource("regular")).toBe(false);
+    expect(leadMagnetPickerDisabledForSource("regular")).toBe(true);
     expect(leadMagnetPickerDisabledForSource(null)).toBe(false);
   });
 });
@@ -228,6 +228,44 @@ describe("suggestedLeadMagnetPromptForPost", () => {
     expect(suggestedLeadMagnetPromptForPost("", null)).toContain(
       "Create a practical lead magnet",
     );
+  });
+});
+
+describe("modeled-source message hydration", () => {
+  test("keeps a server-resolved source attachment on its user message", () => {
+    const [message] = hydrate([
+      {
+        id: "u1",
+        role: "user",
+        content: "Model this in my voice.",
+        artifacts: null,
+        model_source_id: "source-a",
+        model_source_attachment: {
+          id: "source-a",
+          kind: "swipe",
+          state: "available",
+          authorName: "Ada",
+          authorAvatar: null,
+          postText: "A source post that survives a refresh.",
+          partial: false,
+          postType: "regular",
+        },
+      },
+    ]);
+
+    expect(message.modelSource).toMatchObject({
+      id: "source-a",
+      kind: "swipe",
+      state: "available",
+      authorName: "Ada",
+    });
+  });
+
+  test("does not add a source attachment to non-modeling messages", () => {
+    const [message] = hydrate([
+      { id: "u1", role: "user", content: "Write a post.", artifacts: null },
+    ]);
+    expect(message.modelSource).toBeUndefined();
   });
 });
 
