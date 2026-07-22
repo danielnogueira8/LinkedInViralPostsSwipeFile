@@ -27,6 +27,7 @@ import {
   RotatingPhrases,
   SpotlightCard,
 } from "./landing-motion";
+import { LandingCmykPanel, LandingPaperTexture } from "./landing-print-treatments";
 
 const faqs = [
   [
@@ -116,8 +117,9 @@ export default function LandingClient({
 
           <div className="reveal-up relative mt-12 lg:mt-16" style={{ "--reveal-delay": "210ms" } as React.CSSProperties}>
             <div className="absolute inset-x-[10%] bottom-0 top-[20%] -z-0 bg-accent-brand/10 blur-3xl" />
-            <div className="gradient-hairline relative overflow-hidden rounded-[14px] bg-card p-2 shadow-[0_8px_24px_-18px_rgba(28,28,26,0.4)] sm:p-3">
-              <div className="flex h-9 items-center justify-between border-b border-border px-2 sm:px-3">
+            <div className="relative overflow-hidden rounded-[14px] bg-[#f8f4e9] p-2 shadow-[0_8px_24px_-18px_rgba(28,28,26,0.4)] sm:p-3">
+              <LandingPaperTexture />
+              <div className="relative flex h-9 items-center justify-between border-b border-[#292624]/10 px-2 sm:px-3">
                 <div className="flex w-10 items-center gap-1.5" aria-hidden="true">
                   <span className="live-dot size-1.5 rounded-full bg-accent-brand" />
                 </div>
@@ -130,7 +132,7 @@ export default function LandingClient({
                 width={2940}
                 height={1622}
                 priority
-                className="mt-2 h-auto w-full rounded-[8px] outline outline-1 -outline-offset-1 outline-black/10 dark:outline-white/10"
+                className="relative mt-2 h-auto w-full rounded-[8px] outline outline-1 -outline-offset-1 outline-black/10 dark:outline-white/10"
               />
             </div>
             <div className="relative z-10 mx-auto -mt-8 w-full max-w-[400px] text-left sm:-mt-14 sm:ml-6 sm:mr-auto lg:ml-10">
@@ -275,6 +277,25 @@ export default function LandingClient({
               ))}
             </div>
           </div>
+        </div>
+      </section>
+
+      <section className="px-4 py-20 sm:px-6 sm:py-28">
+        <div className="mx-auto grid max-w-[1000px] gap-10 lg:grid-cols-[0.8fr_1.2fr] lg:items-center lg:gap-20">
+          <Reveal>
+            <div>
+              <p className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">A trace, not a template</p>
+              <h2 className="mt-4 text-balance text-[clamp(2.1rem,3.5vw,3.4rem)] leading-[1.05] tracking-[-0.035em]">
+                Source material, not source copy.
+              </h2>
+              <p className="mt-5 max-w-md text-pretty leading-7 text-muted-foreground">
+                The best ideas leave a trail. SwipeIn keeps the original signal close while your point of view does the writing.
+              </p>
+            </div>
+          </Reveal>
+          <Reveal delay={100}>
+            <LandingCmykPanel />
+          </Reveal>
         </div>
       </section>
 
