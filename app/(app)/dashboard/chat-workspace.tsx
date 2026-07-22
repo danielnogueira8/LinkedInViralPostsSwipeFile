@@ -165,6 +165,7 @@ import {
   type PostTypeSelection,
 } from "@/lib/generation-config";
 import type { DraftKind } from "@/lib/post-type";
+import type { ModelSourceAttachment } from "@/lib/model-source-attachments";
 import type { ComposerStarterId } from "@/lib/composer-task-context";
 import { requestServerTurnStop } from "@/lib/chat-stop";
 import { safeJsonSchema } from "@/lib/api-fetch";
@@ -2239,9 +2240,10 @@ export function ChatWorkspace({
       // fetches the (already-neutralized) post text and weaves it into the agent
       // envelope. This keeps the visible/persisted user message clean (no giant
       // delimiter blob on reload) and avoids hitting the 8000-char message cap
-      // with a long modeled post. Consume the chip on send.
+      // with a long modeled post. Keep the chip selected until the stream
+      // starts: a pre-stream failure means no user message was created and the
+      // user should be able to retry without reattaching it.
       const attached = modelSource;
-      if (attached) setModelSource(null);
       const turnPostFormatApplies = clientShouldApplyPostFormat(text, !!attached);
 
       // Capture the pending custom skills for this turn. We do NOT clear the
@@ -2440,6 +2442,14 @@ export function ChatWorkspace({
                 },
               }
           : {}),
+        ...(attached
+          ? {
+              modelSource: {
+                ...attached,
+                state: "available" as const,
+              },
+            }
+          : {}),
       };
       const assistantId = `a_${Date.now()}`;
       const ctrl = new AbortController();
@@ -2593,6 +2603,11 @@ export function ChatWorkspace({
           throw e;
         }
         streamStarted = true;
+        if (attached) {
+          setModelSource((current) =>
+            current?.id === attached.id ? null : current,
+          );
+        }
         // A send got through — clear any stale limit banner.
         setLimitNotice(null);
 
@@ -2809,8 +2824,9 @@ export function ChatWorkspace({
         } else {
           toast.error((e as Error).message);
         }
-        // Pre-stream failure: nothing was saved server-side. Drop the run, give
-        // the text back, and re-attach the modeled post + files.
+        // Pre-stream failure: nothing was saved server-side. Drop the run and
+        // give the text/files back; the modeled source remains selected until
+        // a stream has actually opened.
         if (!streamStarted && !recoverableTransportFailure && !run.stopPending) {
           chatSession.retireRun(chatId, run);
           if (status === 409 && recoverableFallbackRun) {
@@ -2831,7 +2847,6 @@ export function ChatWorkspace({
           // Composer accessories are not keyed by chat, so restoring them while
           // another session is active would overwrite that session's choices.
           if (failedChatIsActive && activeComposerIsEmpty) {
-            if (attached) setModelSource(attached);
             if (files.length) setAttachments(files);
             if (turnSkills.length) setPendingSkills(turnSkills);
             if (turnPostFormat) setPendingPostFormat(turnPostFormat);
@@ -5080,9 +5095,17 @@ function SourcePostChip({
   source,
   onRemove,
 }: {
-  source: ModelSource;
-  onRemove: () => void;
+  source: ModelSource | ModelSourceAttachment;
+  onRemove?: () => void;
 }) {
+  if ("state" in source && source.state === "unavailable") {
+    return (
+      <div className="flex items-center gap-2.5 rounded-2xl border border-border bg-card px-3 py-2.5 text-xs text-muted-foreground">
+        <FileText className="h-4 w-4 shrink-0" aria-hidden />
+        <span>Source post no longer available</span>
+      </div>
+    );
+  }
   const preview = source.postText.replace(/\s+/g, " ").slice(0, 90).trim();
   return (
     <div className="flex items-start gap-2.5 rounded-2xl border border-border bg-card px-3 py-2.5">
@@ -5124,6 +5147,7 @@ function SourcePostChip({
         </p>
         <p className="text-xs text-muted-foreground truncate">{preview}…</p>
       </div>
+      {onRemove && (
       <button
         type="button"
         onClick={onRemove}
@@ -5132,6 +5156,7 @@ function SourcePostChip({
       >
         <X className="h-4 w-4" />
       </button>
+      )}
     </div>
   );
 }
@@ -5551,6 +5576,11 @@ function MessageBubble({
                 Giveaway: {message.leadMagnet.title}
               </span>
             </span>
+          </div>
+        )}
+        {message.modelSource && (
+          <div className="max-w-[85%]">
+            <SourcePostChip source={message.modelSource} />
           </div>
         )}
         <div className="max-w-[82%] rounded-2xl rounded-br-md border border-primary/15 bg-primary/[0.09] px-4 py-2.5 text-sm leading-relaxed text-foreground shadow-[0_1px_0_rgba(255,255,255,0.8)] whitespace-pre-wrap">
