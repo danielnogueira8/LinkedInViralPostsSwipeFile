@@ -30,7 +30,7 @@ export async function runVoiceGeneration(
   try {
     let posts;
     try {
-      posts = await runProfileHistory(handle, VOICE_POST_COUNT);
+      posts = await runProfileHistory(handle, VOICE_POST_COUNT, { includeMetadataOnly: true });
     } catch (e) {
       await markVoiceGenerationFailed(
         sb,
@@ -105,7 +105,7 @@ export async function runVoiceGeneration(
     // silently erase interview data saved mid-run.
     const { data: preWrite } = await sb.raw
       .from("voice_profiles")
-      .select("profile")
+      .select("profile, avatar_url")
       .eq("workspace_id", sb.workspaceId)
       .maybeSingle();
     const existingProfile = preWrite?.profile as
@@ -125,7 +125,7 @@ export async function runVoiceGeneration(
         linkedin_handle: handle,
         profile_url: profileUrl,
         display_name: meta.name,
-        avatar_url: meta.avatar_url,
+        avatar_url: validAvatarUrl(meta.avatar_url) ? meta.avatar_url : preWrite?.avatar_url ?? null,
         headline: meta.headline,
         profile,
         summary: profile.summary || null,
@@ -177,3 +177,14 @@ export async function markVoiceGenerationFailed(
 }
 
 export { sanitizeVoiceProfile };
+
+function validAvatarUrl(value: string | null): value is string {
+  if (!value) return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:";
+  } catch {
+    console.warn("voice: ignoring invalid provider avatar URL");
+    return false;
+  }
+}
