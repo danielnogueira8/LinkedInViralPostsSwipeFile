@@ -4,6 +4,7 @@ import {
   columnCollapse,
   mergeServerDrafts,
   boardColumnForDraft,
+  adjacentDraftIds,
   COLUMN_PREVIEW_COUNT,
   type Draft,
 } from "@/app/(app)/dashboard/posts/drafts-list";
@@ -59,6 +60,33 @@ describe("mergeServerDrafts — live board reconcile (batch drafts appear w/o re
     // 'a' already exists locally → kept as-is, server copy ignored.
     expect(out.find((d) => d.id === "a")?.title).toBe("my local edit");
     expect(out.find((d) => d.id === "a")?.status).toBe("ready");
+  });
+});
+
+describe("adjacentDraftIds — edit-dialog navigation", () => {
+  const drafts = [draft({ id: "first" }), draft({ id: "middle" }), draft({ id: "last" })];
+
+  test("returns the immediately adjacent posts in board order", () => {
+    expect(adjacentDraftIds(drafts, "middle")).toEqual({
+      previousId: "first",
+      nextId: "last",
+    });
+  });
+
+  test("has no previous/next post at the corresponding boundaries", () => {
+    expect(adjacentDraftIds(drafts, "first")).toEqual({
+      previousId: null,
+      nextId: "middle",
+    });
+    expect(adjacentDraftIds(drafts, "last")).toEqual({
+      previousId: "middle",
+      nextId: null,
+    });
+  });
+
+  test("does not navigate when there is no current board post", () => {
+    expect(adjacentDraftIds(drafts, null)).toEqual({ previousId: null, nextId: null });
+    expect(adjacentDraftIds(drafts, "removed")).toEqual({ previousId: null, nextId: null });
   });
 });
 

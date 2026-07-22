@@ -12,6 +12,8 @@ import { localDateFromDatetimeInput } from "@/lib/schedule-local-date";
 import {
   MessageSquare,
   Loader2,
+  ChevronLeft,
+  ChevronRight,
   Copy,
   Check,
   Trash2,
@@ -155,6 +157,8 @@ export function DraftEditorModal({
   onSaved,
   onMeta,
   onDelete,
+  onPrevious,
+  onNext,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -166,6 +170,10 @@ export function DraftEditorModal({
   // Optimistic property change on an existing post (title / status / date).
   onMeta: (id: string, patch: Partial<Draft>) => void;
   onDelete: (id: string) => void;
+  // Adjacent posts in the board's canonical ordering. They are omitted for a
+  // new post and at either end of that ordering.
+  onPrevious?: () => void;
+  onNext?: () => void;
 }) {
   const router = useRouter();
   const isNew = draft === null;
@@ -185,6 +193,9 @@ export function DraftEditorModal({
   // Gate closing WITH unsaved body changes behind a confirm — closing the drawer
   // (X / Escape / backdrop) used to discard a dirty body silently.
   const [confirmDiscardOpen, setConfirmDiscardOpen] = useState(false);
+  const [pendingNavigation, setPendingNavigation] = useState<"previous" | "next" | null>(
+    null,
+  );
 
   useEffect(() => {
     liveDraftRef.current = draft;
@@ -646,6 +657,35 @@ export function DraftEditorModal({
     onOpenChange(false);
   };
 
+  // Switching posts must be as safe as closing the editor: a title is flushed,
+  // while an unsaved body gets an explicit discard confirmation instead of
+  // silently being replaced by the adjacent post.
+  const requestNavigate = (direction: "previous" | "next") => {
+    const navigate = direction === "previous" ? onPrevious : onNext;
+    if (busy || !navigate) return;
+    if (titlePending) commitTitle();
+    if (dirty) {
+      setPendingNavigation(direction);
+      setConfirmDiscardOpen(true);
+      return;
+    }
+    navigate();
+  };
+
+  const discardAndContinue = () => {
+    const navigation = pendingNavigation;
+    setPendingNavigation(null);
+    setConfirmDiscardOpen(false);
+    if (navigation === "previous") onPrevious?.();
+    else if (navigation === "next") onNext?.();
+    else onOpenChange(false);
+  };
+
+  const setDiscardDialogOpen = (nextOpen: boolean) => {
+    setConfirmDiscardOpen(nextOpen);
+    if (!nextOpen) setPendingNavigation(null);
+  };
+
   return (
     <>
     <Dialog
@@ -694,6 +734,28 @@ export function DraftEditorModal({
             </div>
           </div>
           <div className="flex items-center gap-1">
+            {!isNew && (onPrevious || onNext) && (
+              <div className="mr-1 flex items-center gap-0.5 border-r border-border pr-2">
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => requestNavigate("previous")}
+                  disabled={!onPrevious || busy}
+                  aria-label="Previous post"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => requestNavigate("next")}
+                  disabled={!onNext || busy}
+                  aria-label="Next post"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+            )}
             <Button
               variant="ghost"
               size="sm"
@@ -1046,15 +1108,16 @@ export function DraftEditorModal({
     />
     <ConfirmDialog
       open={confirmDiscardOpen}
-      onOpenChange={setConfirmDiscardOpen}
+      onOpenChange={setDiscardDialogOpen}
       title="Discard unsaved changes?"
-      description="You've edited this post but haven't saved. Closing now will lose those changes."
+      description={
+        pendingNavigation
+          ? "You've edited this post but haven't saved. Moving to another post will lose those changes."
+          : "You've edited this post but haven't saved. Closing now will lose those changes."
+      }
       confirmLabel="Discard"
       variant="destructive"
-      onConfirm={() => {
-        setConfirmDiscardOpen(false);
-        onOpenChange(false);
-      }}
+      onConfirm={discardAndContinue}
     />
     <MediaLibraryDialog
       open={mediaLibraryOpen}
