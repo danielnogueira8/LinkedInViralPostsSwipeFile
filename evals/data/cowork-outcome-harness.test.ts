@@ -371,6 +371,51 @@ describe("production-shaped Cowork outcome harness", () => {
     expect(report.persisted.artifacts).toEqual([]);
   });
 
+  test("a negative LinkedIn-post phrase cannot turn a news summary into a draft", async () => {
+    const instruction =
+      "Research the latest official OpenAI product announcement and summarize what changed. Do not draft or rewrite a LinkedIn post.";
+    const answer = "OpenAI changed the verified product workflow.";
+    const report = await runCoworkOutcomeScenario({
+      id: "grounded-news-summary-negative-draft-phrase",
+      request: { message: instruction },
+      model: {
+        provider: { rounds: [] },
+        readOnlyOrchestrator: {
+          plans: [],
+          groundedAnswer: { content: answer, usage: usage(80, 35, 0.0002) },
+          toolResults: {
+            search_news: [
+              {
+                ok: true,
+                max_age_days: 14,
+                results: [
+                  {
+                    title: "OpenAI launches a verified product",
+                    url: "https://openai.com/news/product",
+                    source: "OpenAI",
+                    published_at: "2026-07-14",
+                    summary: "OpenAI announced a verified product update.",
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [],
+        actionNames: ["search_news"],
+        assistantContents: [answer],
+        route: "read_only_orchestrator",
+      },
+    });
+
+    expect(report.pass, JSON.stringify(report.failureCodes)).toBe(true);
+    expect(report.observed.directWriterRequests).toEqual([]);
+    expect(report.persisted.artifacts).toEqual([]);
+  });
+
   test("runs the real agent through the authenticated answer lane and canonical persistence", async () => {
     const answer = "Finished the requested deliverable.";
     const report = await runCoworkOutcomeScenario({

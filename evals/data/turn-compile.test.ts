@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { resolveComposerTaskContext } from "@/lib/composer-task-context";
+import { requestedBasePostCount } from "@/lib/agent/turn/context";
 import { POST_INTENTS } from "@/lib/post-intents";
 import {
   advanceActionOrchestratorClarification,
@@ -22,7 +23,10 @@ import {
   isGeneralRefineEligible,
   isOpinionOrQuestionAboutContent,
 } from "@/lib/agent/direct-writer-policy";
-import { requestsDurableOrAction } from "@/lib/agent/source-policy";
+import {
+  requestsDurableOrAction,
+  requestsFullPostDeliverable,
+} from "@/lib/agent/source-policy";
 
 test.each([
   "Move this draft to Ready on my Posts board.",
@@ -30,6 +34,13 @@ test.each([
   "Set this one to ready.",
 ])("recognizes an explicit board mutation before model fallthrough: %s", (instruction) => {
   expect(requestsDurableOrAction(instruction)).toBe(true);
+});
+
+test("a negative drafting clause is never a full-post deliverable request", () => {
+  const instruction =
+    "Research the official definition of Model Context Protocol and summarize it in 3 bullets. Do not draft or rewrite a LinkedIn post.";
+  expect(requestsFullPostDeliverable(instruction)).toBe(false);
+  expect(requestedBasePostCount(instruction, false)).toBeNull();
 });
 
 describe("resolveTurnCount — the ONE turn count rule (1-6, UI > message > default)", () => {
@@ -1896,6 +1907,11 @@ describe("compileReadOnlyOrchestratorRoute", () => {
       false,
       "web_research",
     ],
+    [
+      "Research the official definition of Model Context Protocol and summarize it in 3 bullets. Do not draft or rewrite a LinkedIn post.",
+      false,
+      "web_research",
+    ],
     ["Summarize the attached interview.", true, "file_inspection"],
     [
       "Find three top posts in my swipe file and give me a detailed research summary. Do not draft.",
@@ -2260,6 +2276,7 @@ describe("direct writer eligibility predicates", () => {
         "Write a post about pricing, then summarize the strategy. Do not search.",
         "Do not write a post about pricing. Do not search.",
         "I do not want you to write a post about pricing. Do not search.",
+        "Research the official definition of Model Context Protocol and summarize it in 3 bullets. Do not draft or rewrite a LinkedIn post.",
         "Why does the prompt write a post about pricing fail?",
         "Can you explain how to write a post about pricing?",
         "Is write a post about pricing a good prompt?",
