@@ -262,6 +262,54 @@ describe("read-only orchestrator plan contract", () => {
     expect(JSON.stringify(result.sources)).not.toContain("plausible answer");
   });
 
+  test("web research accepts grounded prose when URL annotations omit optional excerpts", async () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "test-key");
+    const requestedModels: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body));
+        requestedModels.push(body.model);
+        return Response.json({
+          choices: [
+            {
+              message: {
+                content:
+                  "Model Context Protocol is an open standard for connecting AI applications to external systems.",
+                annotations: [
+                  {
+                    type: "url_citation",
+                    url_citation: {
+                      url: "https://modelcontextprotocol.io/docs/getting-started/intro",
+                      title: "What is the Model Context Protocol?",
+                    },
+                  },
+                ],
+              },
+              finish_reason: "stop",
+            },
+          ],
+          usage: { prompt_tokens: 30, completion_tokens: 12 },
+        });
+      }),
+    );
+
+    const result = await runGroundedWebResearch({
+      query: "official definition of Model Context Protocol",
+    });
+
+    expect(requestedModels).toEqual([PRIMARY_WEB_RESEARCH_MODEL]);
+    expect(result.sources).toEqual([
+      {
+        id: "https://modelcontextprotocol.io/docs/getting-started/intro",
+        kind: "web",
+        title: "What is the Model Context Protocol?",
+        url: "https://modelcontextprotocol.io/docs/getting-started/intro",
+        text: "Model Context Protocol is an open standard for connecting AI applications to external systems.",
+      },
+    ]);
+  });
+
   test("text attachment inspection stays deterministic and preserves its source name", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);

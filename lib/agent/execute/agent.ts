@@ -3550,9 +3550,16 @@ export const runGroundedWebResearch: RunWebResearch = async (input) => {
           }),
         validate: (candidate) => {
           const seen = new Set<string>();
+          // URL annotations are the provider-owned grounding boundary. Some
+          // web-plugin providers omit the optional per-citation excerpt while
+          // still returning a grounded evidence review plus valid annotations
+          // (the news pipeline has the same provider shape). Preserve that
+          // review as the evidence text; prose without any URL annotation still
+          // produces zero sources and is rejected below.
+          const evidenceReview = candidate.text.trim();
           const sources = candidate.citations.flatMap((citation) => {
             const url = safeHttpUrl(citation.url.trim());
-            const text = citation.content.trim();
+            const text = citation.content.trim() || evidenceReview;
             if (!url || !text || seen.has(url)) return [];
             seen.add(url);
             return [
