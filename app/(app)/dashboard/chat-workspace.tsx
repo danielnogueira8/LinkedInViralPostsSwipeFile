@@ -13,6 +13,7 @@ import {
   type ReactNode,
 } from "react";
 import dynamic from "next/dynamic";
+import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { leadMagnetPickerDisabledForSource } from "@/lib/chat-composer-policy";
@@ -6486,7 +6487,6 @@ function ArtifactCard({
   // delete affordance (e.g. a context where deletion doesn't apply).
   onDelete?: () => void;
 }) {
-  const router = useRouter();
   const [copied, markCopied] = useCopiedFlag();
   const [saving, setSaving] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -6657,20 +6657,23 @@ function ArtifactCard({
       // the first save already succeeded.
       setBoardDraftId(savedDraftId);
       setSaved(true);
-      const openSavedPost = {
-        action: {
-          label: "Open post",
-          onClick: () =>
-            router.push(`/dashboard/posts?open=${encodeURIComponent(savedDraftId)}`),
-        },
-      };
+      const savedPostToast = (
+        <span>
+          Draft saved on your{" "}
+          <Link
+            href={`/dashboard/posts?open=${encodeURIComponent(savedDraftId)}`}
+            className="font-medium underline underline-offset-2"
+          >
+            Posts
+          </Link>
+        </span>
+      );
       try {
         await onMetaChange?.({ board_draft_id: savedDraftId });
-        toast.success(`${kindNoun(artifact.kind)} saved`, openSavedPost);
+        toast.success(savedPostToast);
       } catch {
-        toast.success(`${kindNoun(artifact.kind)} saved to Posts`, {
+        toast.success(savedPostToast, {
           description: "The chat link did not sync. Reload before making more changes.",
-          ...openSavedPost,
         });
       }
     } catch (e) {

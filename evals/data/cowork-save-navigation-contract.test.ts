@@ -25,9 +25,12 @@ describe("Cowork save navigation contract", () => {
     );
   });
 
-  test("a saved Cowork draft toast links directly to its Posts editor", () => {
-    expect(artifactCardSource).toContain('label: "Open post"');
-    expect(artifactCardSource).toContain("/dashboard/posts?open=${encodeURIComponent(savedDraftId)}");
+  test("a saved Cowork draft toast makes Posts a direct link to its editor", () => {
+    expect(artifactCardSource).toContain("Draft saved on your");
+    expect(artifactCardSource).toMatch(
+      /<Link\s+href=\{`\/dashboard\/posts\?open=\$\{encodeURIComponent\(savedDraftId\)\}`\}/,
+    );
+    expect(artifactCardSource).not.toContain('label: "Open post"');
   });
 
   test.each([
