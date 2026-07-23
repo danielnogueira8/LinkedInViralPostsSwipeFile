@@ -10,6 +10,8 @@ import {
   Lightbulb,
   CalendarDays,
   ChevronRight,
+  CheckCircle2,
+  RefreshCcw,
 } from "lucide-react";
 import { AiIcon } from "@/components/ai-icon";
 import { AvatarImg } from "@/components/avatar-img";
@@ -446,6 +448,30 @@ export function AgentBriefing() {
     }
   };
 
+  const rerollPlanItem = async (item: WeekPlanItem) => {
+    if (busyId) return;
+    setBusyId(item.id);
+    setPlanDraftError(null);
+    try {
+      const res = await fetch(
+        `/api/agent/week-plan/items/${item.id}/reroll`,
+        { method: "POST" },
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.ok) {
+        throw new Error(data?.error || "Couldn't find a different one — try again.");
+      }
+      await loadWeekPlan();
+    } catch (error) {
+      setPlanDraftError({
+        itemId: item.id,
+        message: (error as Error).message,
+      });
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const { drafts, opportunities } = briefing;
   const isEmpty = drafts.length === 0 && opportunities.length === 0;
   const planItems = weekPlan?.items ?? [];
@@ -563,8 +589,14 @@ export function AgentBriefing() {
                 >
                   <div className="flex items-start justify-between gap-1.5">
                     <div>
-                      <p className="text-xs font-semibold text-foreground">
+                      <p className="flex items-center gap-1 text-xs font-semibold text-foreground">
                         {item.day}
+                        {item.status === "drafted" ? (
+                          <CheckCircle2
+                            className="h-3.5 w-3.5 text-state-success"
+                            aria-label="Drafted"
+                          />
+                        ) : null}
                       </p>
                       <p className="text-[11px] text-muted-foreground">
                         {new Date(`${item.date}T00:00:00`).toLocaleDateString(
@@ -573,20 +605,50 @@ export function AgentBriefing() {
                         )}
                       </p>
                     </div>
-                    {item.kind === "generic" ? (
-                      <span
-                        role="img"
-                        aria-label="Needs your direction"
-                        className="grid size-6 shrink-0 place-items-center rounded-md bg-muted text-muted-foreground"
-                      >
-                        <Lightbulb className="h-3.5 w-3.5" aria-hidden />
-                      </span>
-                    ) : (
-                      <CreatorAvatar
-                        src={item.opportunity?.author_avatar}
-                        name={item.opportunity?.headline ?? "?"}
-                      />
-                    )}
+                    <div className="flex shrink-0 items-center gap-1">
+                      {item.status === "planned" ? (
+                        <button
+                          type="button"
+                          onClick={() => void rerollPlanItem(item)}
+                          disabled={busyId !== null}
+                          title={
+                            item.kind === "generic"
+                              ? "Get a different idea"
+                              : item.opportunity?.is_lead_magnet
+                                ? "Get a different lead magnet post"
+                                : "Get a different post"
+                          }
+                          aria-label={
+                            item.kind === "generic"
+                              ? "Get a different idea"
+                              : item.opportunity?.is_lead_magnet
+                                ? "Get a different lead magnet post"
+                                : "Get a different post"
+                          }
+                          className="grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {busy ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                          ) : (
+                            <RefreshCcw className="h-3.5 w-3.5" aria-hidden />
+                          )}
+                        </button>
+                      ) : null}
+                      {item.kind === "generic" ? (
+                        <span
+                          role="img"
+                          aria-label="Needs your direction"
+                          className="grid size-6 shrink-0 place-items-center rounded-md bg-muted text-muted-foreground"
+                        >
+                          <Lightbulb className="h-3.5 w-3.5" aria-hidden />
+                        </span>
+                      ) : (
+                        <CreatorAvatar
+                          src={item.opportunity?.author_avatar}
+                          name={item.opportunity?.headline ?? "?"}
+                        />
+                      )}
+                    </div>
                   </div>
                   <p className="mt-4 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                     {item.opportunity?.is_lead_magnet

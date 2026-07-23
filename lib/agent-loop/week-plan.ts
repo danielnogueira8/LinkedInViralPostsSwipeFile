@@ -206,6 +206,29 @@ export function composeWeekPlan(input: {
   return slots.slice(0, days);
 }
 
+/**
+ * A different idea prompt for the "refresh" action on a generic cadence
+ * card — the next one in the catalog (wrapping around) that isn't already
+ * showing on another day this week, so a reroll never just repeats itself
+ * or collides with a sibling card.
+ */
+export function pickNextGenericPrompt(input: {
+  current: string;
+  usedPrompts: readonly string[];
+  prompts?: readonly string[];
+}): string | null {
+  const catalog = input.prompts ?? GENERIC_WEEK_PROMPTS;
+  const used = new Set(input.usedPrompts);
+  const startIndex = Math.max(0, catalog.indexOf(input.current));
+  for (let offset = 1; offset <= catalog.length; offset += 1) {
+    const candidate = catalog[(startIndex + offset) % catalog.length];
+    if (candidate !== input.current && !used.has(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
 /** Whole days since an ISO timestamp; null when the input is missing/invalid. */
 export function daysSince(iso: string | null | undefined): number | null {
   if (!iso) return null;

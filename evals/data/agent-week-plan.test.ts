@@ -6,6 +6,7 @@ import {
   genericContextPlaceholder,
   GENERIC_WEEK_PROMPTS,
   nextDays,
+  pickNextGenericPrompt,
   postingGapNote,
   resolveWeekPlanLeadMagnetId,
   workWeekDays,
@@ -344,5 +345,46 @@ describe("postingGapNote", () => {
     expect(postingGapNote(1)).toBeNull();
     expect(postingGapNote(3)).toContain("3 days");
     expect(postingGapNote(9)).toContain("9 days");
+  });
+});
+
+describe("pickNextGenericPrompt", () => {
+  test("returns the next prompt in the catalog after the current one", () => {
+    const current = GENERIC_WEEK_PROMPTS[0];
+    const next = pickNextGenericPrompt({ current, usedPrompts: [] });
+    expect(next).toBe(GENERIC_WEEK_PROMPTS[1]);
+  });
+
+  test("wraps around at the end of the catalog", () => {
+    const current = GENERIC_WEEK_PROMPTS[GENERIC_WEEK_PROMPTS.length - 1];
+    const next = pickNextGenericPrompt({ current, usedPrompts: [] });
+    expect(next).toBe(GENERIC_WEEK_PROMPTS[0]);
+  });
+
+  test("skips prompts already used elsewhere in the plan", () => {
+    const current = GENERIC_WEEK_PROMPTS[0];
+    const next = pickNextGenericPrompt({
+      current,
+      usedPrompts: [GENERIC_WEEK_PROMPTS[1], GENERIC_WEEK_PROMPTS[2]],
+    });
+    expect(next).toBe(GENERIC_WEEK_PROMPTS[3]);
+  });
+
+  test("never returns the current prompt, even if every other prompt is used", () => {
+    const current = GENERIC_WEEK_PROMPTS[0];
+    const next = pickNextGenericPrompt({
+      current,
+      usedPrompts: GENERIC_WEEK_PROMPTS.slice(1),
+    });
+    expect(next).toBeNull();
+  });
+
+  test("current prompt not found in the catalog still finds a fresh one", () => {
+    const next = pickNextGenericPrompt({
+      current: "a prompt no longer in the catalog",
+      usedPrompts: [],
+    });
+    expect(next).not.toBeNull();
+    expect(GENERIC_WEEK_PROMPTS).toContain(next);
   });
 });
