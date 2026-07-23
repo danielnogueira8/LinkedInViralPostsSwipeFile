@@ -62,7 +62,7 @@ function requestWindows() {
 export default async function ChatPage({
   searchParams,
 }: {
-  searchParams: Promise<{ chat?: string; model?: string }>;
+  searchParams: Promise<{ chat?: string; model?: string; new?: string }>;
 }) {
   const sb = await scopedSupabase();
 
@@ -118,7 +118,7 @@ export default async function ChatPage({
     { count: pendingReviewCount },
     { count: readyUnscheduledCount },
     user,
-    { chat: wantChat, model: modelSourceId },
+    { chat: wantChat, model: modelSourceId, new: newSession },
   ] =
     await Promise.all([
       chatsPromise,
@@ -219,7 +219,7 @@ export default async function ChatPage({
   // navigates here after firing); otherwise the most recent chat. Model-source
   // handoffs intentionally start blank so Swipe File / Bookmark modeling never
   // flashes or reuses the last open conversation before the fresh chat is created.
-  const activeId = modelSourceId
+  const activeId = modelSourceId || newSession === "1"
     ? null
     : ((wantChat && chatList.some((c) => c.id === wantChat) ? wantChat : null) ??
       chatList[0]?.id ??

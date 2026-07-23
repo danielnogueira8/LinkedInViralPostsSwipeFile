@@ -5,8 +5,9 @@ import {
 } from "@/lib/mobile-navigation-policy";
 
 describe("mobile navigation lifecycle", () => {
-  test("keeps creation, inspiration, draft management, and saves one tap away", () => {
+  test("keeps the agent and existing primary destinations one tap away", () => {
     expect(MOBILE_PRIMARY_PATHS).toEqual([
+      "/dashboard/agent",
       "/dashboard",
       "/dashboard/swipe",
       "/dashboard/posts",
@@ -15,7 +16,7 @@ describe("mobile navigation lifecycle", () => {
     expect(MOBILE_PRIMARY_PATHS).not.toContain("/dashboard/templates");
   });
 
-  test("makes Content Sources and Templates the first overflow group", () => {
+  test("keeps research tools in the first overflow group", () => {
     expect(MOBILE_MORE_SECTIONS[0]).toEqual({
       label: "Inspiration",
       paths: ["/dashboard/accounts", "/dashboard/templates"],

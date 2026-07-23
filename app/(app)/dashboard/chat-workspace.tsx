@@ -138,7 +138,6 @@ import {
   shouldApplyAskTurnReload,
 } from "@/lib/chat-session-view";
 import { AGENT_CHAT_TITLE } from "@/lib/agent-loop/constants";
-import { AgentBriefing } from "./agent-briefing";
 import {
   clearComposerStarter,
   moveComposerDraft,
@@ -225,12 +224,6 @@ import {
   researchSourcesFromArtifact,
 } from "@/lib/cowork-turn-usage";
 import { modeledSourceAttribution } from "@/lib/model-source-attribution";
-import {
-  clearCoworkDestination,
-  readCoworkDestination,
-  shouldRestoreAgentDestination,
-  writeCoworkDestination,
-} from "@/lib/cowork-destination";
 import { ResearchSources, TaskUsageSummary } from "./cowork-trust-details";
 
 export type { Artifact } from "@/lib/agent/contracts";
@@ -499,13 +492,6 @@ export function ChatWorkspace({
   // Mobile only: the chat-history sidebar is an off-canvas drawer (it's a fixed
   // inline column on md+). Closed by default so the conversation has full width.
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  // "Your Agent" is a pinned destination, not a real chat: when open, the center
-  // panel shows the agent view (drafts to review + opportunities) instead of a
-  // conversation. Opening any chat / starting a new one closes it.
-  const [agentViewOpen, setAgentViewOpen] = useState(false);
-  // Live tallies from the agent briefing fetch, shown as a count on the pinned
-  // row so the user sees there's something to review without opening it.
-  const [agentCounts, setAgentCounts] = useState({ drafts: 0, opportunities: 0 });
   // Chat-history search query (filters the list by title, client-side).
   const [chatSearch, setChatSearch] = useState("");
   const [pendingModelSource, setModelSource] = useState<ModelSource | null>(null);
@@ -966,32 +952,6 @@ export function ChatWorkspace({
       document.removeEventListener("keydown", onKey);
     };
   }, [leadMagnetPickerOpen]);
-
-  // Seed the pinned "Your Agent" count badge on mount, so the sidebar shows
-  // there's something to review before the panel is ever opened. Once the panel
-  // is open, AgentBriefing keeps this in sync via onCountsChange. Fail-open:
-  // any error just leaves the badge at zero (hidden).
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const res = await fetch("/api/agent/briefing", { cache: "no-store" });
-        const data = await res.json().catch(() => ({}));
-        if (cancelled || !res.ok || !data?.ok) return;
-        setAgentCounts({
-          drafts: Array.isArray(data.drafts) ? data.drafts.length : 0,
-          opportunities: Array.isArray(data.opportunities)
-            ? data.opportunities.length
-            : 0,
-        });
-      } catch {
-        /* fail-open: badge stays hidden */
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   useEffect(() => {
     if (!generationSettingsOpen) return;
@@ -1837,38 +1797,6 @@ export function ChatWorkspace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [styleParam, creatorStyles]);
 
-  // A bare return to Cowork should reopen the last destination, including the
-  // pinned Your Agent view. Query-driven routes always win: a direct chat,
-  // model, or style handoff must never be hidden by the saved Agent view.
-  const hasExplicitCoworkDestination = Boolean(
-    searchParams.get("chat") ||
-      modelParam ||
-      intentParam ||
-      handoffParam ||
-      styleParam,
-  );
-  useEffect(() => {
-    if (hasExplicitCoworkDestination) {
-      clearCoworkDestination();
-      return;
-    }
-    if (
-      !shouldRestoreAgentDestination({
-        savedDestination: readCoworkDestination(),
-        hasExplicitDestination: hasExplicitCoworkDestination,
-      })
-    ) {
-      return;
-    }
-    // sessionStorage is browser-only, so this restoration intentionally happens
-    // after hydration rather than in the initial state (which would mismatch
-    // the server render).
-    /* eslint-disable react-hooks/set-state-in-effect */
-    setAgentViewOpen(true);
-    setMobileDraftsOpen(false);
-    /* eslint-enable react-hooks/set-state-in-effect */
-  }, [hasExplicitCoworkDestination]);
-
   // Prefill the composer from a starter chip. If the prompt has a [placeholder]
   // (e.g. a topic the user must fill), focus the input and select that span so
   // they can type straight over it; otherwise drop the cursor at the end.
@@ -1897,9 +1825,6 @@ export function ChatWorkspace({
 
   const loadChat = useCallback(
     async (id: string, options: { pushHistory?: boolean } = {}) => {
-      // Opening a real conversation leaves the "Your Agent" panel view.
-      setAgentViewOpen(false);
-      clearCoworkDestination();
       if (id === activeId) return;
       try {
         const url = new URL(window.location.href);
@@ -1907,6 +1832,7 @@ export function ChatWorkspace({
         url.searchParams.delete("model");
         url.searchParams.delete("intent");
         url.searchParams.delete("handoff");
+        url.searchParams.delete("new");
         if (options.pushHistory !== false) {
           localChatNavigationRef.current = id;
           window.history.pushState(window.history.state, "", url);
@@ -2138,9 +2064,6 @@ export function ChatWorkspace({
   // abort it.)
   const newChat = useCallback(async () => {
     setInput("");
-    // Starting a session leaves the "Your Agent" panel view.
-    setAgentViewOpen(false);
-    clearCoworkDestination();
     // Sever send ownership from the previous chat before the eager create's
     // first await. Users can start typing immediately; send() waits for the
     // pending destination below instead of leaking that turn into the old chat.
@@ -2195,6 +2118,7 @@ export function ChatWorkspace({
         try {
           const url = new URL(window.location.href);
           url.searchParams.set("chat", chat.id);
+          url.searchParams.delete("new");
           window.history.replaceState(window.history.state, "", url);
           localChatNavigationRef.current = chat.id;
         } catch {
@@ -2515,6 +2439,7 @@ export function ChatWorkspace({
           try {
             const url = new URL(window.location.href);
             url.searchParams.set("chat", resolvedId);
+            url.searchParams.delete("new");
             window.history.replaceState(window.history.state, "", url);
             localChatNavigationRef.current = resolvedId;
           } catch {
@@ -3772,21 +3697,6 @@ export function ChatWorkspace({
           </div>
         </div>
         <div className="flex-1 overflow-y-auto px-2.5 pb-3 flex flex-col gap-2">
-          {/* Pinned above everything: "Your Agent" is a fixed destination, not a
-              dated chat. Clicking it opens the agent view (drafts to review +
-              opportunities) in the center panel. */}
-          <div className="flex flex-col gap-px">
-            <AgentPinnedRow
-              active={agentViewOpen}
-              count={agentCounts.drafts + agentCounts.opportunities}
-              onOpen={() => {
-                setAgentViewOpen(true);
-                setMobileDraftsOpen(false);
-                writeCoworkDestination("agent");
-                setSidebarOpen(false);
-              }}
-            />
-          </div>
           {chats.length === 0 ? (
             <p className="px-3 py-4 text-xs text-muted-foreground">
               No chats yet. Start one below.
@@ -3850,7 +3760,7 @@ export function ChatWorkspace({
         {/* Re-open the drafts panel after it's been collapsed. Only shown when
             there are drafts to reopen and the panel is currently closed — this
             is the "get the draft back" affordance (Claude-style). */}
-        {!panelOpen && hasDraftPanel && !agentViewOpen && (
+        {!panelOpen && hasDraftPanel && (
           <button
             onClick={() => setPanelOpen(true)}
             className="hidden lg:inline-flex absolute top-4 right-4 z-10 items-center gap-1.5 rounded-full border border-border bg-card/90 px-3 py-1.5 text-xs font-medium shadow-sm backdrop-blur hover:bg-card transition-colors"
@@ -3864,7 +3774,7 @@ export function ChatWorkspace({
             rail is closed. Sits top-right; when the drafts reopen pill is also
             visible (drafts exist but its panel is collapsed) it drops a row so
             the two never overlap. */}
-        {hasContext && !contextPanelOpen && !agentViewOpen && (
+        {hasContext && !contextPanelOpen && (
           <button
             onClick={() => setContextPanelOpen(true)}
             className={cn(
@@ -3887,11 +3797,7 @@ export function ChatWorkspace({
             messages.length > 0 && "cowork-chat-canvas-active",
           )}
         >
-          {agentViewOpen ? (
-            // The pinned "Your Agent" destination: its own panel view, never a
-            // conversation. Wins over the empty state / any transcript.
-            <AgentView onCountsChange={setAgentCounts} onClose={newChat} />
-          ) : messages.length === 0 ? (
+          {messages.length === 0 ? (
             // While an existing chat's transcript is still fetching, show a
             // quiet loading state — NOT the starter-prompt empty state, which
             // would misleadingly flash as if this were a new/empty chat.
@@ -4040,15 +3946,9 @@ export function ChatWorkspace({
           </button>
         )}
 
-        {/* Composer — hidden in the "Your Agent" panel view (it's a
-            destination, not a conversation), but kept mounted so composer state
-            survives toggling back to a chat. */}
         <form
           onSubmit={onSubmit}
-          className={cn(
-            "border-t border-border bg-card/90 px-3 py-3 shadow-[0_-18px_45px_rgba(28,28,26,0.04)] backdrop-blur sm:px-6 sm:py-4",
-            agentViewOpen && "hidden",
-          )}
+          className="border-t border-border bg-card/90 px-3 py-3 shadow-[0_-18px_45px_rgba(28,28,26,0.04)] backdrop-blur sm:px-6 sm:py-4"
         >
           <div className="mx-auto flex max-w-4xl flex-col gap-2.5 relative">
             {/* Slash-command menu — anchored above the composer. Open while the
@@ -5225,7 +5125,7 @@ export function ChatWorkspace({
       </section>
 
       {/* Right: artifact panel — desktop inline column. */}
-      {panelOpen && hasDraftPanel && !agentViewOpen && (
+      {panelOpen && hasDraftPanel && (
         <aside
           className={cn(
             "relative hidden lg:flex shrink-0 flex-col border-l border-border bg-muted/80",
@@ -5289,7 +5189,7 @@ export function ChatWorkspace({
           view of what's shaping this chat. Fixed-width (compact card, no resize),
           sibling to the drafts panel so both can sit side by side on wide
           screens. */}
-      {contextPanelOpen && hasContext && !agentViewOpen && (
+      {contextPanelOpen && hasContext && (
         <aside className="relative hidden lg:flex w-80 shrink-0 flex-col border-l border-border bg-muted/80">
           <div className="flex items-center justify-between px-4 h-14 border-b border-border bg-card/70">
             <span className="flex items-center gap-2 text-sm font-semibold tracking-[-0.01em]">
@@ -5313,7 +5213,7 @@ export function ChatWorkspace({
       {/* Mobile: a floating "Context" pill that opens the context card as a
           bottom sheet (the desktop rail is hidden below lg). Sits above the
           drafts pill so the two don't stack on top of each other. */}
-      {hasContext && !mobileContextOpen && !agentViewOpen && (
+      {hasContext && !mobileContextOpen && (
         <button
           type="button"
           onClick={() => setMobileContextOpen(true)}
@@ -5359,7 +5259,7 @@ export function ChatWorkspace({
       {/* Mobile: a floating "Drafts (N)" pill above the composer that opens the
           drafts as a bottom sheet. The desktop panel is hidden below lg, so this
           is the ONLY way to reach generated drafts on a phone. */}
-      {hasDraftPanel && !mobileDraftsOpen && !agentViewOpen && (
+      {hasDraftPanel && !mobileDraftsOpen && (
         <button
           type="button"
           onClick={() => setMobileDraftsOpen(true)}
@@ -5370,7 +5270,7 @@ export function ChatWorkspace({
           {ARTIFACT_PANEL_TITLE} ({artifacts.length})
         </button>
       )}
-      {mobileDraftsOpen && hasDraftPanel && !agentViewOpen && (
+      {mobileDraftsOpen && hasDraftPanel && (
         <div className="lg:hidden absolute inset-0 z-40 flex flex-col justify-end" role="dialog" aria-modal="true">
           <div
             className="absolute inset-0 bg-black/40"
@@ -5641,86 +5541,6 @@ function WorkingLabel() {
         <span className="working-dot h-1 w-1 rounded-full bg-primary [animation-delay:0.4s]" />
       </span>
     </span>
-  );
-}
-
-// The pinned "Your Agent" row that sits above the dated chat groups. It is a
-// destination, not a chat: opening it swaps the center panel to the agent view.
-// Coral is the agent's identity color everywhere it appears. An optional count
-// badge (unreviewed drafts + live opportunities) hints there's something to do.
-function AgentPinnedRow({
-  active,
-  count,
-  onOpen,
-}: {
-  active: boolean;
-  count: number;
-  onOpen: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onOpen}
-      aria-pressed={active}
-      className={cn(
-        "group flex min-h-10 w-full items-center gap-2 rounded-xl py-1 pl-2.5 pr-2 text-left text-sm transition-[color,background-color,border-color] duration-150 ease-[cubic-bezier(0.25,1,0.5,1)]",
-        active
-          ? "bg-white text-foreground shadow-sm ring-1 ring-border"
-          : "text-accent-brand hover:bg-card/70",
-      )}
-    >
-      <AiIcon className="h-3.5 w-3.5 shrink-0 text-accent-brand" />
-      <span className="truncate flex-1 font-medium text-accent-brand">Your Agent</span>
-      {count > 0 && (
-        <span
-          className="grid h-5 min-w-5 shrink-0 place-items-center rounded-full bg-accent-brand px-1.5 text-[11px] font-semibold text-accent-brand-foreground"
-          aria-label={`${count} item${count === 1 ? "" : "s"} to review`}
-        >
-          {count}
-        </span>
-      )}
-    </button>
-  );
-}
-
-// The center-panel view shown when the pinned "Your Agent" row is open. A thin
-// header + the briefing body. The wider cap gives the persistent seven-day
-// weekly plan enough room to stay in one row without compressing each card.
-// "New session" closes it back to a chat.
-function AgentView({
-  onCountsChange,
-  onClose,
-}: {
-  onCountsChange: (counts: { drafts: number; opportunities: number }) => void;
-  onClose: () => void;
-}) {
-  // `overflow-x-hidden` makes the other axis compute to `auto`, creating a
-  // nested vertical scroll container. `clip` contains wide rows without taking
-  // vertical scrolling away from the chat canvas.
-  return (
-    <div className="mx-auto flex w-full min-w-0 max-w-[112rem] flex-col overflow-x-clip py-2">
-      <div className="mb-1 flex items-center justify-between gap-2">
-        <div>
-          <h2 className="text-lg font-semibold tracking-[-0.02em] text-foreground">
-            Your Agent
-          </h2>
-          <p className="text-sm text-muted-foreground">
-            Drafts to review and opportunities your agent found.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={onClose}
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
-        >
-          <Plus className="h-3.5 w-3.5" aria-hidden />
-          New session
-        </button>
-      </div>
-      <div className="mt-3">
-        <AgentBriefing onCountsChange={onCountsChange} />
-      </div>
-    </div>
   );
 }
 
@@ -8015,9 +7835,6 @@ function EmptyState({
         </div>
         <NextActionChip action={nextAction} />
       </div>
-
-      {/* The agent briefing moved to the pinned "Your Agent" panel view (opened
-          from the sidebar). The empty state stays focused on starting work. */}
 
       <div className="mt-7 grid gap-2 lg:grid-cols-3">
         <StarterCommand

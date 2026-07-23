@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { ClaudeIcon } from "@/components/claude-icon";
 import { SwipeInIcon } from "@/components/swipein-icon";
+import { AiIcon } from "@/components/ai-icon";
 
 export type NavDestination = {
   href: string;
@@ -37,6 +38,12 @@ export const NAV_SECTIONS: NavSection[] = [
   {
     label: "Create",
     items: [
+      {
+        href: "/dashboard/agent",
+        label: "Your Agent",
+        icon: AiIcon,
+        tooltip: "Review your weekly plan, agent drafts, and opportunities.",
+      },
       { href: "/dashboard", label: "Cowork", icon: Handshake, tooltip: "Chat with the writing agent." },
       { href: "/dashboard/posts", label: "Posts", icon: FileText, tooltip: "Review, edit, schedule, and track your draft posts." },
       { href: "/dashboard/lead-magnets", label: "Lead Magnets", icon: Magnet, tooltip: "Create and share markdown resources for lead-magnet posts." },
