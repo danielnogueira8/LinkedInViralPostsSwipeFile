@@ -7,6 +7,11 @@ import {
   draftFromPrompt,
   type AgentOpportunityRow,
 } from "@/lib/agent-loop/act";
+import { weekStart } from "@/lib/agent-loop/week-plan";
+import {
+  loadStoredWeekPlan,
+  mutateStoredWeekPlanItem,
+} from "@/lib/agent-loop/week-plan-store";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -14,147 +19,132 @@ export const maxDuration = 300;
 const draftSchema = z.object({
   itemId: z.string().uuid(),
   context: z.string().trim().max(2_000).optional(),
+  leadMagnetId: z.string().uuid().nullable().optional(),
 });
 
-type PlanItem = {
-  id: string;
-  kind: "opportunity" | "generic";
-  opportunity_id: string | null;
-  prompt: string | null;
-  user_context: string | null;
-  status: "planned" | "drafting" | "drafted" | "dismissed";
-};
-
-// POST /api/agent/week-plan/draft — claim a durable plan card and draft it.
-// Generic cards deliberately require the user's real context before writing;
-// opportunity cards remain one-click because their source post is the context.
 export async function POST(req: Request) {
   try {
-    const { itemId, context } = draftSchema.parse(await req.json());
+    const input = draftSchema.parse(await req.json());
     const sb = await scopedSupabase();
-    const { data: item, error: itemError } = await sb.raw
-      .from("agent_week_plan_items")
-      .select("id, kind, opportunity_id, prompt, user_context, status")
-      .eq("id", itemId)
-      .eq("workspace_id", sb.workspaceId)
-      .maybeSingle();
-    if (itemError) throw itemError;
+    const currentWeek = weekStart();
+    const plan = await loadStoredWeekPlan(
+      sb.raw,
+      sb.workspaceId,
+      currentWeek,
+    );
+    const item = plan?.items.find((candidate) => candidate.id === input.itemId);
     if (!item) {
-      return NextResponse.json({ ok: false, error: "Plan item not found." }, { status: 404 });
-    }
-    const planItem = item as PlanItem;
-    if (planItem.status !== "planned") {
       return NextResponse.json(
-        { ok: false, error: "This plan item is already being drafted or was completed." },
+        { ok: false, error: "Plan item not found." },
+        { status: 404 },
+      );
+    }
+    if (item.status !== "planned") {
+      return NextResponse.json(
+        { ok: false, error: "This plan item was already handled." },
         { status: 409 },
       );
     }
-    const userContext = context ?? planItem.user_context ?? "";
-    if (planItem.kind === "generic" && userContext.trim().length < 12) {
+    const context = (input.context ?? item.userContext ?? "").trim();
+    if (context.length < 12) {
       return NextResponse.json(
-        { ok: false, error: "Add a little real context before drafting this post." },
+        { ok: false, error: "Choose a direction before drafting this post." },
         { status: 400 },
       );
     }
-
-    // Conditional update prevents duplicate keyboard/click retries from
-    // running two costly model turns for the same planned card.
-    const { data: claimed, error: claimError } = await sb.raw
-      .from("agent_week_plan_items")
-      .update({
-        status: "drafting",
-        ...(planItem.kind === "generic" ? { user_context: userContext.trim() } : {}),
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", itemId)
-      .eq("workspace_id", sb.workspaceId)
-      .eq("status", "planned")
-      .select("id")
-      .maybeSingle();
-    if (claimError) throw claimError;
-    if (!claimed) {
+    const isLeadMagnet = item.opportunity?.is_lead_magnet === true;
+    const leadMagnetId =
+      input.leadMagnetId ?? item.selectedLeadMagnetId ?? null;
+    if (isLeadMagnet && !leadMagnetId) {
       return NextResponse.json(
-        { ok: false, error: "This plan item is already being drafted or was completed." },
+        { ok: false, error: "Choose the resource this post should promote." },
+        { status: 400 },
+      );
+    }
+    if (leadMagnetId) {
+      const { data, error } = await sb.raw
+        .from("lead_magnets")
+        .select("id")
+        .eq("workspace_id", sb.workspaceId)
+        .eq("id", leadMagnetId)
+        .maybeSingle();
+      if (error) throw error;
+      if (!data) {
+        return NextResponse.json(
+          { ok: false, error: "That lead magnet is not available." },
+          { status: 400 },
+        );
+      }
+    }
+
+    const updateStatus = async (
+      status: "planned" | "drafting" | "drafted",
+      expectedStatus: "planned" | "drafting",
+    ) =>
+      Boolean(
+        await mutateStoredWeekPlanItem(
+          sb.raw,
+          sb.workspaceId,
+          currentWeek,
+          item.id,
+          (current) =>
+            current.status === expectedStatus
+              ? {
+                  ...current,
+                  status,
+                  userContext: context,
+                  selectedLeadMagnetId: isLeadMagnet ? leadMagnetId : null,
+                }
+              : null,
+        ),
+      );
+    if (!(await updateStatus("drafting", "planned"))) {
+      return NextResponse.json(
+        { ok: false, error: "This plan item was already handled." },
         { status: 409 },
       );
     }
 
-    const restore = async () => {
-      await sb.raw
-        .from("agent_week_plan_items")
-        .update({ status: "planned", updated_at: new Date().toISOString() })
-        .eq("id", itemId)
-        .eq("workspace_id", sb.workspaceId);
-    };
-
     try {
-      if (planItem.kind === "generic") {
+      if (item.kind === "generic") {
         const result = await draftFromPrompt(
           sb.raw,
           sb.workspaceId,
-          planItem.prompt ?? "Share a real story from your work.",
-          userContext.trim(),
+          item.prompt ?? "Share a real story from your work.",
+          context,
         );
-        if (!result.ok) {
-          await restore();
-          return errorResponse(new Error(result.reason));
-        }
-        const { error: completeError } = await sb.raw
-          .from("agent_week_plan_items")
-          .update({
-            status: "drafted",
-            drafted_artifact_id: result.draftIds[0],
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", itemId)
-          .eq("workspace_id", sb.workspaceId);
-        if (completeError) throw completeError;
+        if (!result.ok) throw new Error(result.reason);
+        await updateStatus("drafted", "drafting");
         return NextResponse.json({ ok: true, draftIds: result.draftIds });
       }
 
-      if (!planItem.opportunity_id) {
-        await restore();
-        return NextResponse.json(
-          { ok: false, error: "This source is no longer available." },
-          { status: 409 },
-        );
+      if (!item.opportunity?.id) {
+        throw new Error("This source is no longer available.");
       }
       const { data: opportunity, error: opportunityError } = await sb.raw
         .from("agent_opportunities")
         .select("id, source_post_id, payload, status")
-        .eq("id", planItem.opportunity_id)
+        .eq("id", item.opportunity.id)
         .eq("workspace_id", sb.workspaceId)
         .maybeSingle();
       if (opportunityError) throw opportunityError;
       if (!opportunity || opportunity.status !== "proposed") {
-        await restore();
-        return NextResponse.json(
-          { ok: false, error: "This source was already handled." },
-          { status: 409 },
-        );
+        throw new Error("This source was already handled.");
       }
       const result = await actOnOpportunity(
         sb.raw,
         sb.workspaceId,
         opportunity as AgentOpportunityRow,
+        {
+          userContext: context,
+          ...(leadMagnetId ? { leadMagnetId } : {}),
+        },
       );
-      if (!result.ok) {
-        await restore();
-        return errorResponse(new Error(result.reason));
-      }
-      const { error: completeError } = await sb.raw
-        .from("agent_week_plan_items")
-        .update({
-          status: "drafted",
-          drafted_artifact_id: result.draftIds[0],
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", itemId)
-        .eq("workspace_id", sb.workspaceId);
-      if (completeError) throw completeError;
+      if (!result.ok) throw new Error(result.reason);
+      await updateStatus("drafted", "drafting");
       return NextResponse.json({ ok: true, draftIds: result.draftIds });
     } catch (error) {
-      await restore();
+      await updateStatus("planned", "drafting");
       return errorResponse(error);
     }
   } catch (error) {
