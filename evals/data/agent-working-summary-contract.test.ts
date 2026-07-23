@@ -17,6 +17,15 @@ describe("Your Agent working-summary wiring", () => {
     expect(summary).toContain("The topics earning attention");
     expect(summary).toContain("The formats carrying them");
     expect(summary).toContain("The hooks stopping the scroll");
+    expect(summary).toMatch(
+      /Topics:\s*\{[\s\S]*?icon: BookOpenCheck,[\s\S]*?\},/,
+    );
+    expect(summary).toMatch(
+      /Formats:\s*\{[\s\S]*?icon: LayoutTemplate,[\s\S]*?\},/,
+    );
+    expect(summary).toMatch(
+      /Hooks:\s*\{[\s\S]*?icon: FishingHook,[\s\S]*?\},/,
+    );
     expect(summary).toContain("Best-performing hook");
     expect(summary).toContain("Example hook");
     expect(summary).toContain("coerceStoredWorkingSummary(data.summary)");
