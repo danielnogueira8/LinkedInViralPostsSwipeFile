@@ -32,12 +32,14 @@ import {
   PanelLeftOpen,
   Layers,
   MessageSquare,
+  MessageCircleQuestionMark,
   Search,
   Lightbulb,
   Flame,
   Magnet,
   TrendingUp,
   PenLine,
+  SquarePen,
   ClipboardCheck,
   AlertCircle,
   X,
@@ -51,7 +53,6 @@ import {
   ArrowDown,
   ArrowRight,
   ExternalLink,
-  Pencil,
   AtSign,
   Building2,
   Zap,
@@ -245,6 +246,22 @@ const DraftEditor = dynamic(
     ),
   },
 );
+
+function CoworkCommandIcon({
+  kind,
+  className,
+}: {
+  kind: CoworkComposerCommandKind;
+  className?: string;
+}) {
+  const Icon =
+    kind === "ask"
+      ? MessageCircleQuestionMark
+      : kind === "create"
+        ? SquarePen
+        : PenLine;
+  return <Icon className={className} aria-hidden />;
+}
 
 // ---------------------------------------------------------------------------
 // Claude-Cowork-style chat workspace.
@@ -4879,7 +4896,7 @@ export function ChatWorkspace({
                       : "text-muted-foreground hover:bg-muted hover:text-foreground",
                   )}
                 >
-                  <MessageSquare className="h-3.5 w-3.5" aria-hidden />
+                  <CoworkCommandIcon kind="ask" className="h-3.5 w-3.5" />
                   {askContextPost ? `Ask · ${askContextPost.label}` : "Ask"}
                 </button>
                 <button
@@ -4895,7 +4912,7 @@ export function ChatWorkspace({
                       : "text-muted-foreground hover:bg-muted hover:text-foreground",
                   )}
                 >
-                  <PenLine className="h-3.5 w-3.5" aria-hidden />
+                  <CoworkCommandIcon kind="create" className="h-3.5 w-3.5" />
                   Create
                 </button>
                 {hasEditablePosts && (
@@ -4910,7 +4927,7 @@ export function ChatWorkspace({
                         : "text-muted-foreground hover:bg-muted hover:text-foreground",
                     )}
                   >
-                    <Pencil className="h-3.5 w-3.5" aria-hidden />
+                    <CoworkCommandIcon kind="edit" className="h-3.5 w-3.5" />
                     {editTargetPost ? `Edit · ${editTargetPost.label}` : "Edit"}
                   </button>
                 )}
@@ -6937,7 +6954,7 @@ function ArtifactCard({
               </>
             ) : (
               <>
-                <Pencil className="h-3.5 w-3.5" /> Edit
+                <CoworkCommandIcon kind="edit" className="h-3.5 w-3.5" /> Edit
               </>
             )}
           </button>
@@ -7093,7 +7110,7 @@ function ArtifactCard({
           aria-label="Ask about this Post"
           title="Ask for feedback or discuss this post without changing it"
         >
-          <MessageSquare className="h-3.5 w-3.5" />
+          <CoworkCommandIcon kind="ask" className="h-3.5 w-3.5" />
           Ask
         </Button>
         {/* Edit selects this exact Post in the shared composer. Target and scope
@@ -7111,7 +7128,7 @@ function ArtifactCard({
               : "Edit this Post in place"
           }
         >
-          <PenLine className="h-3.5 w-3.5" />
+          <CoworkCommandIcon kind="edit" className="h-3.5 w-3.5" />
           {editDisabled ? "Editing…" : "Edit"}
         </Button>
         <Button
@@ -7735,7 +7752,7 @@ const STARTERS: Starter[] = [
     id: "write-original",
     group: "create",
     command: "create",
-    icon: PenLine,
+    icon: SquarePen,
     label: "Write an original post",
     recommendedDescription: "Recommended · Start with a topic.",
     prompt:
