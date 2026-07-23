@@ -188,6 +188,31 @@ function itemDraftReadiness(item: WeekPlanItem) {
   });
 }
 
+/** The weekly-cadence CTA has one visual language across its four steps:
+ *  white for "needs input" (choose resource/direction, review source),
+ *  black for a finished draft, coral for "ready to draft now". */
+type CadenceCtaVariant = "white" | "black" | "coral";
+
+const CADENCE_CTA_CLASSNAMES: Record<CadenceCtaVariant, string> = {
+  white:
+    "border border-border bg-card text-foreground hover:border-accent-brand/40",
+  black: "bg-foreground text-background hover:bg-foreground/90",
+  coral: "bg-accent-brand text-accent-brand-foreground hover:bg-accent-brand/90",
+};
+
+function cadenceCtaVariant(
+  item: WeekPlanItem,
+  readiness: ReturnType<typeof itemDraftReadiness>,
+): CadenceCtaVariant {
+  if (item.status === "drafted") return "black";
+  if (item.status === "dismissed") return "white";
+  if (item.kind === "opportunity") {
+    if (!item.opportunity?.is_lead_magnet) return "white"; // Review source
+    return readiness.ready ? "coral" : "white"; // Draft this vs Choose resource
+  }
+  return readiness.ready ? "coral" : "white"; // Draft this vs Choose direction
+}
+
 function snippet(body: string, max = 110): string {
   const clean = body.replace(/\s+/g, " ").trim();
   return clean.length > max ? `${clean.slice(0, max)}…` : clean;
@@ -601,7 +626,10 @@ export function AgentBriefing() {
                     {draftedDraftAvailable && item.draftId ? (
                       <Link
                         href={`/dashboard/posts?open=${encodeURIComponent(item.draftId)}`}
-                        className="inline-flex w-full items-center justify-center gap-1 rounded-lg bg-accent-brand px-2 py-2 text-[11px] font-semibold text-accent-brand-foreground transition-colors hover:bg-accent-brand/90"
+                        className={cn(
+                          "inline-flex w-full items-center justify-center gap-1 rounded-lg px-2 py-2 text-[11px] font-semibold transition-colors",
+                          CADENCE_CTA_CLASSNAMES.black,
+                        )}
                       >
                         See Draft
                         <ChevronRight className="h-3 w-3" aria-hidden />
@@ -629,9 +657,7 @@ export function AgentBriefing() {
                         }}
                         className={cn(
                           "inline-flex w-full items-center justify-center gap-1 rounded-lg px-2 py-2 text-[11px] font-semibold transition-colors",
-                          readiness.ready
-                            ? "bg-accent-brand text-accent-brand-foreground hover:bg-accent-brand/90"
-                            : "border border-border bg-card text-foreground hover:border-accent-brand/40",
+                          CADENCE_CTA_CLASSNAMES[cadenceCtaVariant(item, readiness)],
                           "disabled:cursor-not-allowed disabled:opacity-50",
                         )}
                       >

@@ -167,4 +167,22 @@ describe("persistent weekly plan contract", () => {
       "Boolean(body.leadMagnetId || body.createLeadMagnet)",
     );
   });
+
+  test("the four weekly-cadence CTA steps use distinct white/black/coral colors", () => {
+    expect(briefing).toContain("type CadenceCtaVariant");
+    expect(briefing).toContain(
+      'white:\n    "border border-border bg-card text-foreground hover:border-accent-brand/40"',
+    );
+    expect(briefing).toContain(
+      'black: "bg-foreground text-background hover:bg-foreground/90"',
+    );
+    expect(briefing).toContain(
+      'coral: "bg-accent-brand text-accent-brand-foreground hover:bg-accent-brand/90"',
+    );
+    expect(briefing).toContain("function cadenceCtaVariant(");
+    expect(briefing).toContain(
+      "CADENCE_CTA_CLASSNAMES[cadenceCtaVariant(item, readiness)]",
+    );
+    expect(briefing).toContain("CADENCE_CTA_CLASSNAMES.black");
+  });
 });
