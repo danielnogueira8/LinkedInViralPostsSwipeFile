@@ -142,17 +142,25 @@ describe("get_top_from_batch — query shape", () => {
     expect(order.args[0]).toBe("reactions");
     expect((order.args[1] as { ascending: boolean }).ascending).toBe(false);
 
-    // Scoped to THIS workspace's per-workspace classification (backlog #153) —
-    // never the global posts.is_viral column, which two workspaces tracking
-    // the same creator would otherwise share.
+    // Resilient viral gate (PLAN item #3 / backlog #153): the DB query gates on
+    // the GLOBAL posts.is_viral=true — the exact set the Swipe File shows, so the
+    // agent can never starve while the dashboard is full — and LEFT-embeds THIS
+    // workspace's classification filtered by workspace_id (passesWorkspaceViral
+    // applies the per-workspace demotion in JS). It must NOT re-add the old
+    // .eq("workspace_post_classification.is_viral", true) inner filter, which
+    // dropped every post missing a classification row for this workspace.
+    const globalGate = postsQ.filters.find(
+      (f) => f.method === "eq" && f.args[0] === "is_viral",
+    );
+    expect(globalGate?.args[1]).toBe(true);
     const wsScope = postsQ.filters.find(
       (f) => f.method === "eq" && f.args[0] === "workspace_post_classification.workspace_id",
     );
     expect(wsScope?.args[1]).toBe("ws-1");
-    const viral = postsQ.filters.find(
+    const staleInner = postsQ.filters.find(
       (f) => f.method === "eq" && f.args[0] === "workspace_post_classification.is_viral",
     );
-    expect(viral?.args[1]).toBe(true);
+    expect(staleInner, "must NOT re-add the starving inner is_viral filter").toBeUndefined();
     // scoped to the tracked account ids
     const inAcc = postsQ.filters.find((f) => f.method === "in" && f.args[0] === "account_id");
     expect(inAcc?.args[1]).toEqual(TRACKED);
@@ -493,16 +501,21 @@ describe("search_viral_posts — query shape", () => {
     await runTool("search_viral_posts", {}, "ws-1");
 
     const q = queryFor(dbRef.current, "posts")!;
-    // Scoped to THIS workspace's per-workspace classification (backlog #153),
-    // never the global posts.is_viral column.
+    // Resilient viral gate (PLAN item #3): global posts.is_viral=true gate (the
+    // Swipe File's set) + LEFT embed of THIS workspace's classification filtered
+    // by workspace_id, and NO stale inner is_viral filter.
+    const globalGate = q.filters.find(
+      (f) => f.method === "eq" && f.args[0] === "is_viral",
+    );
+    expect(globalGate?.args[1]).toBe(true);
     const wsScope = q.filters.find(
       (f) => f.method === "eq" && f.args[0] === "workspace_post_classification.workspace_id",
     );
     expect(wsScope?.args[1]).toBe("ws-1");
-    const viral = q.filters.find(
+    const staleInner = q.filters.find(
       (f) => f.method === "eq" && f.args[0] === "workspace_post_classification.is_viral",
     );
-    expect(viral?.args[1]).toBe(true);
+    expect(staleInner, "must NOT re-add the starving inner is_viral filter").toBeUndefined();
     const order = q.filters.find((f) => f.method === "order")!;
     expect(order.args[0]).toBe("viral_score");
     expect((order.args[1] as { ascending: boolean }).ascending).toBe(false);

@@ -134,30 +134,65 @@ export function normalizeToolCallArguments(name: string, raw: string): string {
 //   scraped_at — per-post copy is unused; get_top_from_batch surfaces the real
 //     scrape date once at the top level (scrape.scraped_at).
 //   visual_kind — almost always null; the model never acts on it.
-//   is_viral — every query filters is_viral=true, so it's a constant → no signal.
+//   is_viral — the model never reasons over it; normalizeEmbed strips it before
+//     the row is returned. It IS selected (below) because it is the resilient
+//     viral gate: see passesWorkspaceViral.
 // Keeps text + engagement + author name/niche + post_url/id (for citing). This
 // is the same "stop shipping fields the model never consumes" cut as #437.
-// workspace_post_classification!inner(is_viral) is embedded (not filtered on
-// posts.is_viral, the GLOBAL column two workspaces tracking the same creator
-// would otherwise share — see backlog #153 / migration-075) and filtered in
-// each query via .eq("workspace_post_classification.workspace_id", workspaceId)
-// .eq("workspace_post_classification.is_viral", true). normalizeEmbed strips
-// the join wrapper before the row reaches the model.
+//
+// VIRAL ELIGIBILITY (backlog #153 / migration-075 / PLAN item #3): each query
+// gates on the GLOBAL posts.is_viral=true — the exact set the Swipe File shows,
+// so the agent can never starve to empty while the dashboard is full — and
+// LEFT-embeds THIS workspace's per-workspace classification (default embed, NOT
+// !inner: a post with no classification row for this workspace is still
+// returned). passesWorkspaceViral then drops only the posts this workspace has
+// EXPLICITLY reclassified as non-viral (its own stricter thresholds). A missing
+// row falls back to the global verdict. The embed is filtered per query via
+// .eq("workspace_post_classification.workspace_id", workspaceId) so it carries
+// only this workspace's row. This ends the read/write split: the agent and the
+// Swipe File now agree for the same workspace/window.
 const POST_COLS =
-  "id, text, post_url, posted_at, reactions, comments, reposts, media_type, post_type, accounts!inner(name, niche), workspace_post_classification!inner(is_viral)";
+  "id, text, post_url, posted_at, reactions, comments, reposts, media_type, post_type, is_viral, accounts!inner(name, niche), workspace_post_classification(is_viral)";
 
 
 // Sentinel UUID that matches no rows, used so an `.in("account_id", [])` never
 // degenerates into "no filter" (which would leak other workspaces' posts).
 const NO_ROWS_SENTINEL = "00000000-0000-0000-0000-000000000000";
 
-// Drops the workspace_post_classification join wrapper entirely (it's a query
-// filter, not a field the model needs) and unwraps the accounts embed.
+// Resilient per-workspace viral eligibility (see POST_COLS). The query already
+// gates on the GLOBAL posts.is_viral=true (the Swipe File's set), then LEFT-
+// embeds this workspace's classification. Keep the post UNLESS this workspace
+// has an explicit row demoting it to non-viral. A MISSING row (the creator was
+// added after these posts were scraped, or the dual-write failed — the cause of
+// the "no verified evidence" starvation) falls back to the global verdict, so
+// the agent never returns empty while the dashboard is full.
+type WpcEmbed = {
+  workspace_post_classification?:
+    | Array<{ is_viral: boolean }>
+    | { is_viral: boolean }
+    | null;
+};
+function passesWorkspaceViral<T extends WpcEmbed>(row: T): boolean {
+  const wpc = row.workspace_post_classification;
+  const first = Array.isArray(wpc) ? wpc[0] : wpc;
+  // Row present → honor the workspace's own verdict. No row → keep (the query
+  // already gated to the global is_viral=true set).
+  return first ? first.is_viral === true : true;
+}
+
+// Drops the workspace_post_classification join wrapper and the global is_viral
+// gate column (both query filters, not fields the model needs) and unwraps the
+// accounts embed.
 function normalizeEmbed<
-  T extends { accounts: unknown; workspace_post_classification?: unknown },
+  T extends {
+    accounts: unknown;
+    workspace_post_classification?: unknown;
+    is_viral?: unknown;
+  },
 >(p: T) {
-  const { workspace_post_classification, ...rest } = p;
+  const { workspace_post_classification, is_viral, ...rest } = p;
   void workspace_post_classification;
+  void is_viral;
   return {
     ...rest,
     accounts: Array.isArray(p.accounts) ? (p.accounts[0] ?? null) : p.accounts,
@@ -298,11 +333,11 @@ const searchViralPosts: ToolFn = async (args, workspaceId, signal, context) => {
       .from("posts")
       .select(POST_COLS)
       .in("account_id", accountIds.length ? accountIds : [NO_ROWS_SENTINEL])
+      .eq("is_viral", true)
       .eq("workspace_post_classification.workspace_id", workspaceId)
-      .eq("workspace_post_classification.is_viral", true)
       .is("accounts.archived_at", null)
       // Modeling selection ranks RECENCY-first: virality is already the
-      // eligibility gate (the is_viral join above), and a pure viral-score
+      // eligibility gate (the is_viral gate above), and a pure viral-score
       // ranking made every chat pick the same mega-viral posts. Analytical
       // queries keep their explicit sort untouched.
       .order(autoSelectModelingSources ? "posted_at" : sortCol, {
@@ -336,7 +371,12 @@ const searchViralPosts: ToolFn = async (args, workspaceId, signal, context) => {
 
     const { data, error } = await q;
     if (error) return err(error.message);
-    const normalizedCandidates = (data ?? []).map(normalizeEmbed);
+    // Resilient per-workspace viral gate: drop only posts THIS workspace has
+    // explicitly demoted; a missing classification row keeps the global verdict
+    // (never starve while the Swipe File is full). See passesWorkspaceViral.
+    const normalizedCandidates = (data ?? [])
+      .filter(passesWorkspaceViral)
+      .map(normalizeEmbed);
     const candidates = autoSelectModelingSources
       ? normalizedCandidates.map(withCanonicalModelingSourceUrl)
       : normalizedCandidates;
@@ -694,8 +734,8 @@ const getTopFromBatch: ToolFn = async (args, workspaceId, _signal, context) => {
       .from("posts")
       .select(POST_COLS)
       .in("account_id", accountIds)
+      .eq("is_viral", true)
       .eq("workspace_post_classification.workspace_id", workspaceId)
-      .eq("workspace_post_classification.is_viral", true)
       .is("accounts.archived_at", null)
       .gte("posted_at", sinceIso)
       .order("reactions", { ascending: false, nullsFirst: false })
@@ -706,7 +746,12 @@ const getTopFromBatch: ToolFn = async (args, workspaceId, _signal, context) => {
     if (args.post_type) q = q.eq("post_type", args.post_type as string);
     const { data, error } = await q;
     if (error) return err(error.message);
-    const normalizedCandidates = (data ?? []).map(normalizeEmbed);
+    // Resilient per-workspace viral gate: drop only posts THIS workspace has
+    // explicitly demoted; a missing classification row keeps the global verdict
+    // (never starve while the Swipe File is full). See passesWorkspaceViral.
+    const normalizedCandidates = (data ?? [])
+      .filter(passesWorkspaceViral)
+      .map(normalizeEmbed);
     const autoSelectModelingSources = context?.autoSelectModelingSources === true;
     const candidates = autoSelectModelingSources
       ? normalizedCandidates.map(withCanonicalModelingSourceUrl)
