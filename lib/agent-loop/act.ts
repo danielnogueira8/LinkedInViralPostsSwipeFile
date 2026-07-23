@@ -210,7 +210,14 @@ async function runTurnToDraftIds(
       {
         chatId,
         userId: workspaceId,
-        body,
+        // Weekly-plan cards are explicit creation controls, just like the
+        // Cowork composer in Create mode. Without this command the turn falls
+        // into the rolling-deploy commandless compatibility lane, where the
+        // answer router can clarify instead of producing the requested post.
+        body: {
+          ...body,
+          command: { kind: "create", count: 1 },
+        },
         signal: controller.signal,
       },
       {

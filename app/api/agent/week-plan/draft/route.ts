@@ -155,7 +155,27 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true, draftIds: result.draftIds });
     } catch (error) {
       await updateStatus("planned", "drafting");
-      return errorResponse(error);
+      const reason =
+        error instanceof Error &&
+        error.message.includes("no draft artifact")
+          ? "no_draft_artifact"
+          : error instanceof Error &&
+              error.message.includes("ended as")
+            ? "turn_not_completed"
+            : "draft_generation_failed";
+      console.error("[agent-week-plan:draft-failed]", {
+        itemId: item.id,
+        kind: item.kind,
+        reason,
+      });
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            "Cowork couldn't finish this draft. Your direction is saved—please try again.",
+        },
+        { status: 502 },
+      );
     }
   } catch (error) {
     return errorResponse(error);

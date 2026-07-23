@@ -7,6 +7,7 @@ const draftRoute = source("app/api/agent/week-plan/draft/route.ts");
 const itemRoute = source("app/api/agent/week-plan/items/[id]/route.ts");
 const opportunityRoute = source("app/api/agent/opportunities/[id]/route.ts");
 const briefing = source("app/(app)/dashboard/agent-briefing.tsx");
+const act = source("lib/agent-loop/act.ts");
 const migration = source("db/migration-124-persistent-week-plans.sql");
 const store = source("lib/agent-loop/week-plan-store.ts");
 
@@ -62,6 +63,10 @@ describe("persistent weekly plan contract", () => {
     expect(draftRoute).toContain('await updateStatus("planned", "drafting")');
     expect(draftRoute).toContain('updateStatus("drafting", "planned")');
     expect(draftRoute).toContain("leadMagnetId");
+    expect(act).toContain('command: { kind: "create", count: 1 }');
+    expect(draftRoute).toContain("Your direction is saved");
+    expect(draftRoute).toContain("{ status: 502 }");
+    expect(briefing).toContain('role="alert"');
   });
 
   test("normal opportunity actions update their matching persistent card", () => {
