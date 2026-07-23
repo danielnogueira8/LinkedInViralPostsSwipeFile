@@ -682,6 +682,7 @@ export function AgentBriefing() {
                 <PostCard
                   post={opportunity.source_post}
                   clients={[]}
+                  showDefaultActions={false}
                   footerActions={
                     <>
                       {opportunity.is_lead_magnet ? (

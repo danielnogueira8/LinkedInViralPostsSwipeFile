@@ -77,6 +77,8 @@ describe("Agent opportunity source-post cards", () => {
 
   it("keeps Agent actions in the reusable card without changing Swipe callers", () => {
     expect(POST_CARD).toContain("footerActions");
+    expect(POST_CARD).toContain("showDefaultActions = true");
+    expect(BRIEFING_UI).toContain("showDefaultActions={false}");
     expect(BRIEFING_UI).toContain("Draft it");
     expect(BRIEFING_UI).toContain('aria-label="Not relevant"');
   });

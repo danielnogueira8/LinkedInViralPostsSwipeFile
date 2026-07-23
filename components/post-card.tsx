@@ -93,6 +93,7 @@ export function PostCard({
   libraries,
   priority,
   footerActions,
+  showDefaultActions = true,
 }: {
   post: PostCardRow;
   clients: Client[];
@@ -103,6 +104,8 @@ export function PostCard({
   priority?: boolean;
   /** Page-specific actions appended to the standard Swipe File card footer. */
   footerActions?: ReactNode;
+  /** Keep Swipe/Bookmark actions by default; page-specific cards may opt out. */
+  showDefaultActions?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [lightboxOpen, setLightboxOpen] = useState(false);
@@ -353,13 +356,15 @@ export function PostCard({
           </div>
 
           <div className="flex flex-wrap gap-2 pt-3 border-t border-border/60 -mx-4 px-4 -mb-1 bg-background/28">
-            {post.text && (
+            {showDefaultActions && post.text && (
               <Button variant="outline" size="sm" onClick={copyText}>
                 <Copy className="h-3.5 w-3.5" /> Copy text
               </Button>
             )}
 
-            {post.text && <AskAiMenu source="swipe" postId={post.id} />}
+            {showDefaultActions && post.text && (
+              <AskAiMenu source="swipe" postId={post.id} />
+            )}
 
             {footerActions ? (
               <div className="ml-auto flex flex-wrap items-center gap-2">
