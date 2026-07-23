@@ -72,11 +72,13 @@ test("Agent opportunities show the complete Swipe File post card", async ({
       body: JSON.stringify({
         ok: true,
         summary: {
+          version: 2,
           source: "voice_profile",
           sourcePostCount: 24,
           analyzedPostCount: 3,
           publishedPostCount: 2,
           analyzedAt: "2026-07-20T12:00:00.000Z",
+          sourceRevision: "2026-07-20T11:00:00.000Z",
           insights: [
             {
               label: "Topics",
@@ -87,6 +89,11 @@ test("Agent opportunities show the complete Swipe File post card", async ({
               label: "Hooks",
               finding: "Concrete reversals make your openings recognizable.",
               evidence: "Your strongest source posts open with a changed belief.",
+            },
+            {
+              label: "Formats",
+              finding: "Short proof-led posts make your ideas easy to follow.",
+              evidence: "The source posts pair one claim with one example.",
             },
           ],
         },
@@ -125,6 +132,13 @@ test("Agent opportunities show the complete Swipe File post card", async ({
       "Founder-led systems are your strongest recurring theme.",
     ),
   ).toBeVisible();
+  await expect(summary.getByText("Topics", { exact: true })).toBeVisible();
+  await expect(summary.getByText("Formats", { exact: true })).toBeVisible();
+  await expect(summary.getByText("Hooks", { exact: true })).toBeVisible();
+  await expect(
+    summary.getByText("The topics earning attention"),
+  ).toBeVisible();
+  await expect(summary.getByText("Source signal").first()).toBeVisible();
 });
 
 test("Your Agent keeps a visible seven-day cadence", async ({ page }) => {

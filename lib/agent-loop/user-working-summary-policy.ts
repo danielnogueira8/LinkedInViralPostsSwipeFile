@@ -2,26 +2,25 @@ export const MIN_PUBLISHED_POSTS_FOR_WORKING_SUMMARY = 5;
 export const WORKING_SUMMARY_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
 export const USER_WORKING_SUMMARY_KEY = "user_working_summary_v1";
 
-const SUMMARY_INSIGHTS_MAX = 4;
 const SUMMARY_TEXT_CHARS_MAX = 220;
+export const WORKING_SUMMARY_CATEGORIES = [
+  "Topics",
+  "Formats",
+  "Hooks",
+] as const;
 
 export type UserWorkingSummarySource = "voice_profile" | "published_posts";
+export type UserWorkingSummaryCategory =
+  (typeof WORKING_SUMMARY_CATEGORIES)[number];
 
 export type UserWorkingSummaryInsight = {
-  label:
-    | "Topics"
-    | "Angles"
-    | "Hooks"
-    | "Formats"
-    | "Audience"
-    | "Audience response"
-    | "Signature moves";
+  label: UserWorkingSummaryCategory;
   finding: string;
   evidence: string;
 };
 
 export type UserWorkingSummary = {
-  version: 1;
+  version: 2;
   source: UserWorkingSummarySource;
   /** Total posts in the source corpus (Voice scrape or published history). */
   sourcePostCount: number;
@@ -35,15 +34,9 @@ export type UserWorkingSummary = {
   insights: UserWorkingSummaryInsight[];
 };
 
-const ALLOWED_INSIGHT_LABELS = new Set<UserWorkingSummaryInsight["label"]>([
-  "Topics",
-  "Angles",
-  "Hooks",
-  "Formats",
-  "Audience",
-  "Audience response",
-  "Signature moves",
-]);
+const ALLOWED_INSIGHT_LABELS = new Set<UserWorkingSummaryCategory>(
+  WORKING_SUMMARY_CATEGORIES,
+);
 
 function cleanText(value: unknown, max = SUMMARY_TEXT_CHARS_MAX): string {
   return typeof value === "string"
@@ -95,13 +88,15 @@ export function coerceWorkingSummaryInsights(
       : null;
   if (!Array.isArray(raw)) return [];
 
-  const insights: UserWorkingSummaryInsight[] = [];
-  const seen = new Set<string>();
+  const insights = new Map<
+    UserWorkingSummaryCategory,
+    UserWorkingSummaryInsight
+  >();
   for (const item of raw) {
     if (!item || typeof item !== "object" || Array.isArray(item)) continue;
     const candidate = item as Record<string, unknown>;
     const label = cleanText(candidate.label, 40) as
-      | UserWorkingSummaryInsight["label"]
+      | UserWorkingSummaryCategory
       | "";
     const finding = cleanText(candidate.finding);
     const evidence = cleanText(candidate.evidence);
@@ -113,13 +108,11 @@ export function coerceWorkingSummaryInsights(
     ) {
       continue;
     }
-    const key = `${label}:${finding}`.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    insights.push({ label, finding, evidence });
-    if (insights.length >= SUMMARY_INSIGHTS_MAX) break;
+    if (insights.has(label)) continue;
+    insights.set(label, { label, finding, evidence });
   }
-  return insights;
+  if (insights.size !== WORKING_SUMMARY_CATEGORIES.length) return [];
+  return WORKING_SUMMARY_CATEGORIES.map((label) => insights.get(label)!);
 }
 
 export function coerceStoredWorkingSummary(
@@ -135,7 +128,7 @@ export function coerceStoredWorkingSummary(
     insights: record.insights,
   });
   if (
-    record.version !== 1 ||
+    (record.version !== 1 && record.version !== 2) ||
     !source ||
     typeof record.sourcePostCount !== "number" ||
     typeof record.analyzedPostCount !== "number" ||
@@ -147,7 +140,7 @@ export function coerceStoredWorkingSummary(
     return null;
   }
   return {
-    version: 1,
+    version: 2,
     source,
     sourcePostCount: Math.max(0, Math.floor(record.sourcePostCount)),
     analyzedPostCount: Math.max(0, Math.floor(record.analyzedPostCount)),
