@@ -23,6 +23,7 @@ import {
   findLegacyGenericDraftId,
   loadStoredWeekPlan,
   mutateStoredWeekPlanItem,
+  restoreLegacyDismissedOpportunityItems,
   type StoredWeekPlan,
 } from "@/lib/agent-loop/week-plan-store";
 import { SWIPE_POST_COLS } from "@/lib/swipe-query";
@@ -373,6 +374,12 @@ export async function GET() {
       plan = await composeFreshPlan(sb.raw, sb.workspaceId, currentWeek);
       plan = await createStoredWeekPlan(sb.raw, sb.workspaceId, plan);
     }
+    plan = await restoreLegacyDismissedOpportunityItems(
+      sb.raw,
+      sb.workspaceId,
+      currentWeek,
+      plan,
+    );
     plan = await recoverLegacyDraftIds(
       sb.raw,
       sb.workspaceId,

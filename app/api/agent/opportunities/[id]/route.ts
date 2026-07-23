@@ -4,7 +4,7 @@ import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
 import { actOnOpportunity, type AgentOpportunityRow } from "@/lib/agent-loop/act";
 import { weekStart } from "@/lib/agent-loop/week-plan";
-import { syncStoredOpportunity } from "@/lib/agent-loop/week-plan-store";
+import { markStoredOpportunityDrafted } from "@/lib/agent-loop/week-plan-store";
 
 export const runtime = "nodejs";
 // "Draft it" runs a full chat turn (voice load + writer + save).
@@ -50,13 +50,6 @@ export async function POST(
         .eq("id", id)
         .eq("workspace_id", sb.workspaceId);
       if (dismissError) throw dismissError;
-      await syncStoredOpportunity(
-        sb.raw,
-        sb.workspaceId,
-        weekStart(),
-        id,
-        "dismissed",
-      );
       return NextResponse.json({ ok: true, status: "dismissed" });
     }
 
@@ -75,12 +68,11 @@ export async function POST(
     if (!result.ok) {
       return errorResponse(new Error(result.reason));
     }
-    await syncStoredOpportunity(
+    await markStoredOpportunityDrafted(
       sb.raw,
       sb.workspaceId,
       weekStart(),
       id,
-      "drafted",
       result.draftIds[0] ?? null,
     );
     return NextResponse.json({ ok: true, status: "drafted", draftIds: result.draftIds });

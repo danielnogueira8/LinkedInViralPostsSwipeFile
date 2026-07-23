@@ -205,12 +205,51 @@ export async function mutateStoredWeekPlanItem(
   return plan ? updatedItem : null;
 }
 
-export async function syncStoredOpportunity(
+export function reopenLegacyDismissedOpportunityItems(
+  plan: StoredWeekPlan,
+): StoredWeekPlan {
+  let changed = false;
+  const items = plan.items.map((item) => {
+    if (item.kind !== "opportunity" || item.status !== "dismissed") return item;
+    changed = true;
+    return { ...item, status: "planned" as const, draftId: null };
+  });
+  return changed ? { ...plan, items } : plan;
+}
+
+/**
+ * A previous Agent-feed dismissal incorrectly skipped the matching cadence
+ * slot. Cadence has no dismiss action of its own, so every dismissed
+ * opportunity item is legacy coupled state and can be safely reopened.
+ */
+export async function restoreLegacyDismissedOpportunityItems(
+  db: SupabaseClient,
+  workspaceId: string,
+  weekStart: string,
+  plan: StoredWeekPlan,
+): Promise<StoredWeekPlan> {
+  const restored = reopenLegacyDismissedOpportunityItems(plan);
+  if (restored === plan) return plan;
+  try {
+    return (
+      (await mutateStoredWeekPlan(db, workspaceId, weekStart, (current) =>
+        reopenLegacyDismissedOpportunityItems(current),
+      )) ?? restored
+    );
+  } catch (error) {
+    console.error("agent_week_plan_dismissal_recovery_failed", {
+      workspace_id: workspaceId,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return restored;
+  }
+}
+
+export async function markStoredOpportunityDrafted(
   db: SupabaseClient,
   workspaceId: string,
   weekStart: string,
   opportunityId: string,
-  status: "drafted" | "dismissed",
   draftId: string | null = null,
 ): Promise<void> {
   await mutateStoredWeekPlan(
@@ -223,8 +262,8 @@ export async function syncStoredOpportunity(
         item.opportunity?.id === opportunityId
           ? {
               ...item,
-              status,
-              draftId: status === "drafted" ? draftId : null,
+              status: "drafted",
+              draftId,
             }
           : item,
       ),

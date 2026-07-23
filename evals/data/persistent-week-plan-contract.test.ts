@@ -89,9 +89,26 @@ describe("persistent weekly plan contract", () => {
   });
 
   test("normal opportunity actions update their matching persistent card", () => {
-    expect(opportunityRoute).toContain("syncStoredOpportunity");
-    expect(opportunityRoute).toContain('"dismissed"');
+    expect(opportunityRoute).toContain("markStoredOpportunityDrafted");
     expect(opportunityRoute).toContain('"drafted"');
+    expect(store).toContain("markStoredOpportunityDrafted");
+    expect(store).toContain('status: "drafted"');
+  });
+
+  test("dismissing an agent-feed opportunity does not skip its weekly cadence card", () => {
+    const dismissBranch = opportunityRoute.slice(
+      opportunityRoute.indexOf('if (action === "dismiss")'),
+      opportunityRoute.indexOf('if (opportunity.status !== "proposed")'),
+    );
+    expect(dismissBranch).not.toContain("markStoredOpportunityDrafted");
+    expect(dismissBranch).toContain('status: "dismissed"');
+    expect(planRoute).toContain("restoreLegacyDismissedOpportunityItems");
+    expect(store).toContain("restoreLegacyDismissedOpportunityItems");
+    expect(draftRoute).toContain('opportunity.status === "dismissed"');
+    expect(draftRoute).toContain('"preserve" : "manage"');
+    expect(act).toContain("OpportunityStatusPolicy");
+    expect(act).toContain('if (policy === "preserve") return');
+    expect(act.match(/if \(policy === "preserve"\)/g)).toHaveLength(1);
   });
 
   test("direction opens in a right-side panel and lead magnets choose a resource", () => {
