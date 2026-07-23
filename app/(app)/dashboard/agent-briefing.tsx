@@ -29,6 +29,7 @@ import {
   getWeekPlanDraftReadiness,
 } from "@/lib/agent-loop/week-plan";
 import { cn } from "@/lib/utils";
+import { AgentWorkingSummary } from "./agent-working-summary";
 import { invalidateNavBadges } from "./nav-badges";
 
 // -----------------------------------------------------------------------------
@@ -727,6 +728,8 @@ export function AgentBriefing() {
       )}
       </div>
       )}
+
+      <AgentWorkingSummary />
 
       {actionError && (
         <p className="mt-3 text-xs text-destructive">{actionError}</p>
