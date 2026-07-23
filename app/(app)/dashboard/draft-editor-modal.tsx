@@ -10,7 +10,6 @@ import { draftEgressBody } from "@/lib/markdown/mode";
 import { LINKEDIN_MAX_CHARS } from "@/lib/linkedin-format";
 import { localDateFromDatetimeInput } from "@/lib/schedule-local-date";
 import {
-  MessageSquare,
   Loader2,
   ChevronUp,
   ChevronDown,
@@ -54,7 +53,6 @@ import {
 import { DraftEditor } from "./draft-editor";
 import { LeadSharkPanel } from "./leadshark-panel";
 import { cn } from "@/lib/utils";
-import { POST_INTENTS } from "@/lib/post-intents";
 import { AvatarImg } from "@/components/avatar-img";
 import type { Draft, DraftStatus, DraftKind } from "@/lib/draft-view";
 import { normalizeDraft } from "@/lib/draft-view";
@@ -176,7 +174,6 @@ export function DraftEditorModal({
   onPrevious?: () => void;
   onNext?: () => void;
 }) {
-  const router = useRouter();
   const isNew = draft === null;
   // Live mirror of the `draft` prop so async handlers (persistMedia's rollback)
   // read the CURRENT media, not a stale closure snapshot — the lead-magnet
@@ -185,7 +182,6 @@ export function DraftEditorModal({
   const liveDraftRef = useRef(draft);
   const [body, setBody] = useState(draft?.body ?? "");
   const [saving, setSaving] = useState(false);
-  const [handing, setHanding] = useState(false);
   const [copied, markCopied] = useCopiedFlag();
   const [mode, setMode] = useState<"edit" | "preview">("edit");
   // Gate the delete behind a confirm — deleting a draft is permanent (no undo /
@@ -310,7 +306,7 @@ export function DraftEditorModal({
   const dirty = trimmed !== (draft?.body ?? "").trim();
   const mediaAttachments = isNew ? newMedia : draft?.mediaAttachments ?? [];
   const displayedMedia = [...mediaAttachments, ...pendingMedia];
-  const busy = saving || handing;
+  const busy = saving;
   const paragraphCount = body.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean).length;
   const saveState = saving
     ? "Saving..."
@@ -697,39 +693,6 @@ export function DraftEditorModal({
     if (!draft) return;
     onDelete(draft.id);
     onOpenChange(false);
-  };
-
-  // "Model in Chat": save the post (need a draft id), stash it as a modeling
-  // source (source: 'draft'), then open the chat at ?model=<id>&intent=refine —
-  // the SAME flow as the swipe-file / bookmark "Model in Chat", so the chat shows
-  // the source chip above a clean composer instead of stuffing a refine blob in.
-  const modelInChat = async () => {
-    if (busy) return;
-    if (uploadingMedia) {
-      toast.error("Wait for the media upload to finish before continuing.");
-      return;
-    }
-    setHanding(true);
-    const id = await persistBody();
-    if (!id) {
-      setHanding(false);
-      return;
-    }
-    try {
-      const res = await fetch("/api/model-source", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ source: "draft", postId: id }),
-      });
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error || "Couldn't open this post in chat");
-      router.push(
-        `/dashboard?model=${encodeURIComponent(data.id)}&intent=${POST_INTENTS.refine.key}&handoff=${encodeURIComponent(data.id)}`,
-      );
-    } catch (e) {
-      toast.error((e as Error).message);
-      setHanding(false);
-    }
   };
 
   // Local title state mirrors the draft; commits on blur / Enter. Re-seeded
@@ -1177,22 +1140,7 @@ export function DraftEditorModal({
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border bg-card/90 px-4 py-3 backdrop-blur sm:px-5">
-          <Button
-            variant="outline"
-            size="sm"
-            className="gap-1.5"
-            onClick={modelInChat}
-            disabled={busy || !trimmed}
-            title="Open this post in the chat and refine it with AI"
-          >
-            {handing ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <MessageSquare className="h-3.5 w-3.5" />
-            )}
-            {handing ? "Opening…" : "Model with Cowork"}
-          </Button>
+        <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border bg-card/90 px-4 py-3 backdrop-blur sm:px-5">
           <div className="flex items-center gap-2">
             <Button
               size="sm"
