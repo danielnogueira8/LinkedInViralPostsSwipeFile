@@ -23,11 +23,10 @@ import {
 } from "@/components/ui/dialog";
 import { genericContextPlaceholder } from "@/lib/agent-loop/week-plan";
 import { cn } from "@/lib/utils";
+import { invalidateNavBadges } from "./nav-badges";
 
 // -----------------------------------------------------------------------------
-// "Your Agent" — the agent loop's home surface. Reached from the pinned "Your
-// Agent" row in the sidebar (it opens as a dedicated panel view, replacing the
-// oversized inline briefing that used to sit on the empty state).
+// "Your Agent" — the agent loop's standalone dashboard surface.
 //
 // Shows drafts the agent wrote since your last review (Review opens the post
 // ON the Posts board and marks it reviewed so it drops off this list for good)
@@ -191,13 +190,7 @@ function snippet(body: string, max = 110): string {
   return clean.length > max ? `${clean.slice(0, max)}…` : clean;
 }
 
-export function AgentBriefing({
-  onCountsChange,
-}: {
-  // Lets the sidebar's pinned "Your Agent" row show a live count badge without
-  // duplicating the fetch. Called every refresh with the current tallies.
-  onCountsChange?: (counts: { drafts: number; opportunities: number }) => void;
-} = {}) {
+export function AgentBriefing() {
   const router = useRouter();
   const [briefing, setBriefing] = useState<Briefing>(EMPTY_BRIEFING);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -225,15 +218,11 @@ export function AgentBriefing({
             : [],
         };
         setBriefing(next);
-        onCountsChange?.({
-          drafts: next.drafts.length,
-          opportunities: next.opportunities.length,
-        });
       }
     } catch {
       // Fail-open: no briefing, no section.
     }
-  }, [onCountsChange]);
+  }, []);
 
   useEffect(() => {
     // Initial + refetch-on-refresh sync with the server briefing (an external
@@ -255,9 +244,13 @@ export function AgentBriefing({
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ draftId }),
-    }).catch(() => {
-      /* non-fatal — navigation still happens */
-    });
+    })
+      .then((res) => {
+        if (res.ok) invalidateNavBadges();
+      })
+      .catch(() => {
+        /* non-fatal — navigation still happens */
+      });
     router.push(`/dashboard/posts?open=${encodeURIComponent(draftId)}`);
   };
 
@@ -303,6 +296,7 @@ export function AgentBriefing({
       if (!res.ok || !data?.ok) {
         throw new Error(data?.error || "Couldn't do that — try again.");
       }
+      invalidateNavBadges();
       await refresh();
       await loadWeekPlan();
     } catch (error) {
@@ -399,6 +393,7 @@ export function AgentBriefing({
       if (!res.ok || !data?.ok) {
         throw new Error(data?.error || "Couldn't draft that — try again.");
       }
+      invalidateNavBadges();
       await refresh();
       await loadWeekPlan();
     } catch (error) {
@@ -433,21 +428,7 @@ export function AgentBriefing({
   // over-wide rows without turning the briefing card into its own scroller.
   return (
     <section className="rounded-2xl border border-border bg-card/60 p-4 sm:p-5 overflow-x-clip">
-      <div className="flex items-center gap-2">
-        {/* Coral = the agent's identity color everywhere it surfaces. */}
-        <span className="grid size-7 place-items-center rounded-lg bg-accent-brand/10 text-accent-brand">
-          <AiIcon className="h-4 w-4" aria-hidden />
-        </span>
-        <div className="min-w-0 flex-1">
-          <h3 className="text-sm font-semibold text-foreground">Your agent</h3>
-          <p className="text-xs text-muted-foreground">
-            Watching your tracked creators for you.
-          </p>
-        </div>
-        {planLoading ? <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" aria-label="Loading your weekly plan" /> : null}
-      </div>
-
-      <div className="mt-4" data-testid="weekly-cadence">
+      <div data-testid="weekly-cadence">
         <div className="flex items-center gap-3 rounded-xl border border-border bg-background px-3 py-3 shadow-sm">
           <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-muted text-foreground">
             <CalendarDays className="h-4 w-4" aria-hidden />
@@ -476,6 +457,12 @@ export function AgentBriefing({
                 {directionReadyCount}/{activePlanItems.length}
               </span>
             </div>
+          ) : null}
+          {planLoading ? (
+            <Loader2
+              className="h-4 w-4 shrink-0 animate-spin text-muted-foreground"
+              aria-label="Loading your weekly plan"
+            />
           ) : null}
         </div>
 

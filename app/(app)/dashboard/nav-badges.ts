@@ -4,12 +4,10 @@ import { useEffect, useState } from "react";
 
 type NavBadges = Record<string, number>;
 
-// The pending-invite badge is fetched client-side once and memoized at module
-// scope so every nav instance (desktop + mobile) shares one request. But that
-// memoization used to be permanent: accepting/declining an invite left the
-// badge showing the stale count until a full page reload, because router.refresh
-// only re-runs server components — not this client fetch. invalidateNavBadges()
-// clears the cache AND signals mounted navs to refetch immediately.
+// Navigation badges are fetched client-side once and memoized at module scope
+// so desktop and mobile navigation share one request. Mutations can invalidate
+// that cache because router.refresh only re-runs server components, not this
+// client fetch.
 let pendingBadgesPromise: Promise<NavBadges> | null = null;
 
 // Window event mounted navs listen for, so an invalidation refreshes a badge
@@ -17,11 +15,26 @@ let pendingBadgesPromise: Promise<NavBadges> | null = null;
 const NAV_BADGES_INVALIDATE_EVENT = "swipein:nav-badges-invalidate";
 
 function fetchNavBadges(): Promise<NavBadges> {
-  return fetch("/api/shared-bookmarks/pending-count", { method: "POST" })
-    .then((res) => res.json())
-    .then((data): NavBadges => {
-      if (!data?.ok || typeof data.count !== "number") return {};
-      return data.count > 0 ? { "/dashboard/swipe": data.count as number } : {};
+  return Promise.all([
+    fetch("/api/shared-bookmarks/pending-count", { method: "POST" })
+      .then((res) => res.json())
+      .catch(() => ({})),
+    fetch("/api/agent/briefing", { cache: "no-store" })
+      .then((res) => res.json())
+      .catch(() => ({})),
+  ])
+    .then(([shared, agent]): NavBadges => {
+      const next: NavBadges = {};
+      if (shared?.ok && typeof shared.count === "number" && shared.count > 0) {
+        next["/dashboard/swipe"] = shared.count;
+      }
+      if (agent?.ok) {
+        const count =
+          (Array.isArray(agent.drafts) ? agent.drafts.length : 0) +
+          (Array.isArray(agent.opportunities) ? agent.opportunities.length : 0);
+        if (count > 0) next["/dashboard/agent"] = count;
+      }
+      return next;
     })
     .catch((): NavBadges => ({}));
 }
@@ -31,9 +44,8 @@ function loadNavBadges(): Promise<NavBadges> {
   return pendingBadgesPromise;
 }
 
-// Clear the memoized badge count and tell every mounted nav to refetch. Call
-// after a mutation that changes the pending-invite count (accept / decline /
-// revoke). Safe to call from any client component.
+// Clear the memoized badge counts and tell every mounted nav to refetch after a
+// mutation changes one of them. Safe to call from any client component.
 export function invalidateNavBadges(): void {
   pendingBadgesPromise = null;
   if (typeof window !== "undefined") {
@@ -50,7 +62,7 @@ export function useNavBadges(initialBadges?: NavBadges) {
       if (!cancelled) setBadges(next);
     });
 
-    // Re-fetch when something invalidates the count (invite accepted, etc.).
+    // Re-fetch when a mutation invalidates a count.
     // The invalidator already cleared the memo, so this load hits the network.
     const onInvalidate = () => {
       loadNavBadges().then((next) => {

@@ -9,6 +9,7 @@ const AI_SURFACES = new Set([
   "app/(app)/dashboard/draft-editor.tsx",
   "app/(app)/dashboard/first-run-checklist.tsx",
   "app/(app)/dashboard/lead-magnets/manager.tsx",
+  "app/(app)/dashboard/nav-destinations.ts",
   "app/(app)/dashboard/posts/drafts-list.tsx",
   "app/(app)/dashboard/voice/manager.tsx",
   "app/(app)/dashboard/voice/preferences.tsx",

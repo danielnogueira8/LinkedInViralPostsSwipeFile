@@ -14,10 +14,10 @@ import { NAV_BY_HREF } from "./nav-destinations";
 import { useNavBadges } from "./nav-badges";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 
-// The bottom bar follows the product lifecycle: create in Cowork, find proven
-// inspiration in Swipe, manage drafts in Posts, and return to saved references
-// in Bookmarks. System-building destinations stay grouped behind More. Items
-// resolve through the shared nav-destinations module (labels/icons/tooltips).
+// The bottom bar follows the product lifecycle: review Your Agent, create in
+// Cowork, find proven inspiration in Swipe, manage drafts in Posts, and return
+// to saved references in Bookmarks. System destinations stay grouped behind
+// More. Items resolve through the shared nav-destinations module.
 const PRIMARY = MOBILE_PRIMARY_PATHS.map((path) => NAV_BY_HREF[path]);
 const MORE = MOBILE_MORE_SECTIONS.flatMap((section) =>
   section.paths.map((path) => NAV_BY_HREF[path]),
@@ -151,7 +151,7 @@ export function MobileNav({ badges: initialBadges }: { badges?: Record<string, n
         className="lg:hidden fixed bottom-0 inset-x-0 z-40 bg-sidebar/95 backdrop-blur border-t border-border pb-[env(safe-area-inset-bottom)]"
         aria-label="Primary"
       >
-        <ul className="grid grid-cols-5">
+        <ul className="grid grid-cols-6">
           {PRIMARY.map((n) => {
             const active = isActive(n.href);
             const Icon = n.icon;

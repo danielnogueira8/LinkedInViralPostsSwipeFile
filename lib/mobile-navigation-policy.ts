@@ -3,6 +3,7 @@
  * lifecycle and overflow grouping remain an explicit product contract.
  */
 export const MOBILE_PRIMARY_PATHS = [
+  "/dashboard/agent",
   "/dashboard",
   "/dashboard/swipe",
   "/dashboard/posts",

@@ -358,7 +358,7 @@ export function DraftsList({
   );
 
   // Deep-link: /dashboard/posts?open=<draftId> opens that post's editor on
-  // arrival. The agent's "Your Agent" panel links here so Review lands the user
+  // arrival. The Your Agent page links here so Review lands the user
   // ON the post, not just the board. We open at most once per id (tracked in a
   // ref) and strip the param afterward so a refresh/close doesn't reopen it.
   const router = useRouter();
