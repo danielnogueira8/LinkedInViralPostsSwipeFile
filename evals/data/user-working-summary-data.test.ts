@@ -142,17 +142,19 @@ describe("getUserWorkingSummary", () => {
         insights: [
           {
             label: "Topics",
-            finding: "Founder systems are the clearest recurring subject.",
+            finding: "Founder systems are your clearest recurring subject.",
             evidence: "Both saved source posts use a practical system example.",
           },
           {
             label: "Hooks",
-            finding: "The posts open with a direct operating claim.",
+            finding: "You open with a direct operating claim.",
             evidence: "Each exemplar puts the practical lesson before context.",
+            example: "You do not need more content ideas.",
+            exampleKind: "representative",
           },
           {
             label: "Formats",
-            finding: "Short proof-led explanations anchor the Voice baseline.",
+            finding: "Your short proof-led explanations anchor the Voice baseline.",
             evidence: "The source posts pair one claim with one concrete lesson.",
           },
         ],
@@ -184,6 +186,10 @@ describe("getUserWorkingSummary", () => {
       analyzedPostCount: 2,
       publishedPostCount: 4,
     });
+    expect(summary?.insights.find((item) => item.label === "Hooks")).toMatchObject({
+      example: "Real post one.",
+      exampleKind: "representative",
+    });
     expect(completeChat).toHaveBeenCalledOnce();
     expect(JSON.stringify(completeChat.mock.calls[0]?.[0])).toContain(
       "Real post one.",
@@ -205,17 +211,17 @@ describe("getUserWorkingSummary", () => {
         insights: [
           {
             label: "Topics",
-            finding: "Founder-system examples are the strongest recurring topic.",
+            finding: "Founder-system examples are your strongest recurring topic.",
             evidence: "They appear in the highest-engagement posts in this sample.",
           },
           {
             label: "Hooks",
-            finding: "Specific reversals are prompting more discussion.",
+            finding: "Your specific reversals are prompting more discussion.",
             evidence: "The most-commented posts open by rejecting common advice.",
           },
           {
             label: "Formats",
-            finding: "Short proof-led posts are carrying the clearest signal.",
+            finding: "Your short proof-led posts carry the clearest signal.",
             evidence: "The strongest posts pair one claim with one concrete example.",
           },
         ],
@@ -237,6 +243,14 @@ describe("getUserWorkingSummary", () => {
             comments: 30,
             shares: 10,
           },
+          {
+            artifact_id: "post-2",
+            snapshot_date: "2026-07-22",
+            impressions: 5_000,
+            likes: 100,
+            comments: 12,
+            shares: 4,
+          },
         ],
       },
     });
@@ -257,6 +271,10 @@ describe("getUserWorkingSummary", () => {
     expect(JSON.stringify(completeChat.mock.calls[0]?.[0])).toContain(
       "format=image; attachment_count=1",
     );
+    expect(summary?.insights.find((item) => item.label === "Hooks")).toMatchObject({
+      example: "Published post 1 about founder systems.",
+      exampleKind: "best_performing",
+    });
     expect(
       db.queries.some((query) => query.table === "voice_profiles"),
     ).toBe(false);
@@ -267,7 +285,7 @@ describe("getUserWorkingSummary", () => {
 
   test("keeps the last published analysis when the weekly model refresh fails", async () => {
     const cached = {
-      version: 2,
+      version: 3,
       source: "published_posts",
       sourcePostCount: 5,
       analyzedPostCount: 5,
@@ -277,18 +295,24 @@ describe("getUserWorkingSummary", () => {
       insights: [
         {
           label: "Topics",
-          finding: "Founder-led systems remain the clearest topic signal.",
+          finding: "Founder-led systems remain your clearest topic signal.",
           evidence: "Three recent posts use concrete operating examples.",
+          example: null,
+          exampleKind: null,
         },
         {
           label: "Formats",
-          finding: "Proof-led posts remain the clearest format signal.",
+          finding: "Proof-led posts remain your clearest format signal.",
           evidence: "Three recent posts pair one claim with one example.",
+          example: null,
+          exampleKind: null,
         },
         {
           label: "Hooks",
-          finding: "Contrarian claims remain the clearest opening signal.",
+          finding: "Contrarian claims remain your clearest opening signal.",
           evidence: "Three recent posts reject familiar operating advice.",
+          example: "You do not need more content ideas.",
+          exampleKind: "best_performing",
         },
       ],
     };
@@ -318,7 +342,7 @@ describe("getUserWorkingSummary", () => {
           insights: [
             {
               label: "Topics",
-              finding: "Founder systems are the clearest recurring subject.",
+              finding: "Founder systems are your clearest recurring subject.",
               evidence: "Three posts use concrete operating examples.",
             },
           ],
@@ -331,18 +355,20 @@ describe("getUserWorkingSummary", () => {
           insights: [
             {
               label: "Topics",
-              finding: "Founder systems are the clearest recurring subject.",
+              finding: "Founder systems are your clearest recurring subject.",
               evidence: "Three posts use concrete operating examples.",
             },
             {
               label: "Formats",
-              finding: "Image-backed proof posts carry the strongest signal.",
+              finding: "Your image-backed proof posts carry the strongest signal.",
               evidence: "The leading post includes one image and one example.",
             },
             {
               label: "Hooks",
-              finding: "Contrarian claims earn the strongest response.",
+              finding: "Your contrarian claims earn the strongest response.",
               evidence: "The leading posts reject familiar operating advice.",
+              example: "I stopped measuring reach. Here is what I track instead.",
+              exampleKind: "representative",
             },
           ],
         }),

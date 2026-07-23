@@ -15,12 +15,18 @@ import {
   shouldRefreshWorkingSummary,
   USER_WORKING_SUMMARY_KEY,
   type UserWorkingSummary,
+  type UserWorkingSummaryExampleKind,
   type UserWorkingSummarySource,
 } from "./user-working-summary-policy";
 
 const PUBLISHED_POSTS_ANALYZED_MAX = 12;
 const PUBLISHED_POST_BODY_CHARS_MAX = 1_600;
 const SUMMARY_TIMEOUT_MS = 30_000;
+
+type WorkingSummaryHookExample = {
+  text: string;
+  kind: UserWorkingSummaryExampleKind;
+};
 
 type PublishedPostRow = {
   id: string;
@@ -213,19 +219,21 @@ async function attachLatestAnalytics(
 }
 
 const PUBLISHED_SUMMARY_SYSTEM = [
-  "You analyze one LinkedIn creator's OWN latest published posts and explain what is working for that creator.",
+  "You analyze the user's own latest published LinkedIn posts and explain what is working directly to them.",
+  'Address the user as "you" and "your." Never call them "the creator," "this creator," or use third-person language about them.',
   "Use engagement metrics when available. Compare posts before claiming something outperforms. If metrics are missing, describe a repeated recent pattern instead of claiming performance.",
-  'Return strict JSON only: {"insights":[{"label":"Topics","finding":"specific topic pattern","evidence":"short concrete reason from this sample"},{"label":"Formats","finding":"specific structure or post format pattern","evidence":"short concrete reason from this sample"},{"label":"Hooks","finding":"specific opening pattern","evidence":"short concrete reason from this sample"}]}.',
-  "Return exactly one Topics insight, one Formats insight, and one Hooks insight. Make every finding a concise, recognizable pattern specific enough that it would not apply to every creator. Evidence must say what in this sample supports the finding. Do not give generic advice and do not copy private post text verbatim.",
+  'Return strict JSON only: {"insights":[{"label":"Topics","finding":"specific topic pattern addressed as you/your","evidence":"short concrete reason from this sample","example":"short concrete topic or angle, or null","exampleKind":"representative or null"},{"label":"Formats","finding":"specific structure or post format pattern addressed as you/your","evidence":"short concrete reason from this sample","example":"compact example structure, or null","exampleKind":"representative or null"},{"label":"Hooks","finding":"specific opening pattern addressed as you/your","evidence":"short concrete reason from this sample","example":"exact opening supplied in the analysis input","exampleKind":"best_performing or representative as supplied"}]}.',
+  "Return exactly one Topics insight, one Formats insight, and one Hooks insight. The Hooks example is required and must be the exact opening (maximum 180 characters) from the strongest post supported by the available metrics. If metrics cannot distinguish a winner, use a representative opening and say that in the evidence. Topic and format examples are optional but should be concrete when the source supports them. Make every finding concise and specific. Evidence must say what in this sample supports the finding. Only the example may quote a short excerpt; do not copy other private post text verbatim.",
   INJECTION_GUARD,
 ].join("\n\n");
 
 const VOICE_SUMMARY_SYSTEM = [
-  "You analyze the saved source-post exemplars that were copied from a LinkedIn creator's Voice-generation scrape.",
+  "You analyze the user's saved source-post exemplars from their Voice-generation scrape.",
+  'Address the user as "you" and "your." Never call them "the creator," "this creator," or use third-person language about them.',
   "Explain repeatable writing signals visible in those source posts. The Voice profile is supporting context only: every finding and its evidence must be directly corroborated by the source exemplars.",
   "Do not claim a pattern performs better than another because engagement metrics are unavailable. Describe what the engagement-ranked Voice exemplars repeatedly do instead.",
-  'Return strict JSON only: {"insights":[{"label":"Topics","finding":"specific recurring topic","evidence":"short concrete reason visible in the source posts"},{"label":"Formats","finding":"specific recurring structure or post format","evidence":"short concrete reason visible in the source posts"},{"label":"Hooks","finding":"specific recurring opening pattern","evidence":"short concrete reason visible in the source posts"}]}.',
-  "Return exactly one Topics insight, one Formats insight, and one Hooks insight. Make every finding a concise, recognizable pattern specific enough that it would not apply to every creator. Evidence must say what in the exemplars supports the finding. Do not give generic advice and do not copy private post text verbatim.",
+  'Return strict JSON only: {"insights":[{"label":"Topics","finding":"specific recurring topic addressed as you/your","evidence":"short concrete reason visible in the source posts","example":"short concrete topic or angle, or null","exampleKind":"representative or null"},{"label":"Formats","finding":"specific recurring structure addressed as you/your","evidence":"short concrete reason visible in the source posts","example":"compact example structure, or null","exampleKind":"representative or null"},{"label":"Hooks","finding":"specific recurring opening pattern addressed as you/your","evidence":"short concrete reason visible in the source posts","example":"exact opening supplied in the analysis input","exampleKind":"representative"}]}.',
+  "Return exactly one Topics insight, one Formats insight, and one Hooks insight. The Hooks example is required and must be an exact opening (maximum 180 characters) from a representative engagement-ranked source exemplar. Do not claim it performed best because comparable metrics are unavailable. Topic and format examples are optional but should be concrete when the exemplars support them. Make every finding concise and specific. Evidence must say what in the exemplars supports the finding. Only the example may quote a short excerpt; do not copy other private post text verbatim.",
   INJECTION_GUARD,
 ].join("\n\n");
 
@@ -238,9 +246,14 @@ async function generateSummary(input: {
   analyzedPostCount: number;
   publishedPostCount: number;
   sourceRevision: string;
+  hookExample: WorkingSummaryHookExample | null;
   now: Date;
   signal?: AbortSignal;
 }): Promise<UserWorkingSummary | null> {
+  if (!input.hookExample || input.hookExample.text.length < 4) {
+    return null;
+  }
+  const hookExample = input.hookExample;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     const response = await completeChat({
       model: BACKGROUND_MODEL,
@@ -255,7 +268,7 @@ async function generateSummary(input: {
           content:
             attempt === 1
               ? input.userPrompt
-              : `${input.userPrompt}\n\nYour previous response was incomplete. Return exactly one valid Topics insight, one Formats insight, and one Hooks insight in the requested JSON shape.`,
+              : `${input.userPrompt}\n\nYour previous response was incomplete. Return exactly one valid Topics insight, one Formats insight, and one Hooks insight in the requested JSON shape. Address the user only as "you/your" and include the required Hooks example.`,
         },
       ],
     });
@@ -270,21 +283,77 @@ async function generateSummary(input: {
         attempt,
       },
     ).catch(() => {});
-    const insights = coerceWorkingSummaryInsights(response.text);
+    const insights = coerceWorkingSummaryInsights(response.text, {
+      requireHookExample: false,
+    });
     if (insights.length > 0) {
+      const groundedInsights = insights.map((insight) =>
+        insight.label === "Hooks"
+          ? {
+              ...insight,
+              example: hookExample.text,
+              exampleKind: hookExample.kind,
+            }
+          : insight,
+      );
       return {
-        version: 2,
+        version: 3,
         source: input.source,
         sourcePostCount: input.sourcePostCount,
         analyzedPostCount: input.analyzedPostCount,
         publishedPostCount: input.publishedPostCount,
         analyzedAt: input.now.toISOString(),
         sourceRevision: input.sourceRevision,
-        insights,
+        insights: groundedInsights,
       };
     }
   }
   return null;
+}
+
+function extractHookExample(body: string): string {
+  const opening = body
+    .trim()
+    .split(/\n\s*\n/, 1)[0]
+    ?.replace(/\s+/g, " ")
+    .trim();
+  return opening?.slice(0, 180).trim() ?? "";
+}
+
+function publishedHookExample(
+  posts: PublishedPostForAnalysis[],
+): WorkingSummaryHookExample | null {
+  const withImpressions = posts
+    .filter(
+      (post) =>
+        typeof post.metrics?.impressions === "number" &&
+        extractHookExample(post.body),
+    )
+    .sort(
+      (left, right) =>
+        (right.metrics?.impressions ?? 0) -
+        (left.metrics?.impressions ?? 0),
+    );
+  if (
+    withImpressions.length >= 2 &&
+    withImpressions[0]!.metrics!.impressions! >
+      withImpressions[1]!.metrics!.impressions!
+  ) {
+    return {
+      text: extractHookExample(withImpressions[0]!.body),
+      kind: "best_performing",
+    };
+  }
+
+  const representative = posts.find((post) =>
+    Boolean(extractHookExample(post.body)),
+  );
+  return representative
+    ? {
+        text: extractHookExample(representative.body),
+        kind: "representative",
+      }
+    : null;
 }
 
 async function generateVoiceSummary(
@@ -326,6 +395,10 @@ async function generateVoiceSummary(
     analyzedPostCount: exemplars.length,
     publishedPostCount,
     sourceRevision: voice.generated_at ?? "voice-profile",
+    hookExample: {
+      text: extractHookExample(exemplars[0]!),
+      kind: "representative",
+    },
     now,
     signal,
   });
@@ -365,6 +438,7 @@ async function generatePublishedSummary(
     analyzedPostCount: posts.length,
     publishedPostCount,
     sourceRevision: "published",
+    hookExample: publishedHookExample(posts),
     now,
     signal,
   });

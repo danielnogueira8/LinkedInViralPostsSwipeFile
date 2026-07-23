@@ -72,7 +72,7 @@ test("Agent opportunities show the complete Swipe File post card", async ({
       body: JSON.stringify({
         ok: true,
         summary: {
-          version: 2,
+          version: 3,
           source: "voice_profile",
           sourcePostCount: 24,
           analyzedPostCount: 3,
@@ -84,16 +84,22 @@ test("Agent opportunities show the complete Swipe File post card", async ({
               label: "Topics",
               finding: "Founder-led systems are your strongest recurring theme.",
               evidence: "This theme repeats across your Voice-source posts.",
+              example: "LinkedIn activity → buyer conversion",
+              exampleKind: "representative",
             },
             {
               label: "Hooks",
               finding: "Concrete reversals make your openings recognizable.",
               evidence: "Your strongest source posts open with a changed belief.",
+              example: "I stopped chasing reach. Here is what changed.",
+              exampleKind: "representative",
             },
             {
               label: "Formats",
               finding: "Short proof-led posts make your ideas easy to follow.",
               evidence: "The source posts pair one claim with one example.",
+              example: "Hook → numbered framework → practical takeaway",
+              exampleKind: "representative",
             },
           ],
         },
@@ -139,6 +145,12 @@ test("Agent opportunities show the complete Swipe File post card", async ({
     summary.getByText("The topics earning attention"),
   ).toBeVisible();
   await expect(summary.getByText("Source signal").first()).toBeVisible();
+  await expect(summary.getByText("Example hook")).toBeVisible();
+  await expect(summary.getByText("Example topic")).toBeVisible();
+  await expect(summary.getByText("Example structure")).toBeVisible();
+  await expect(
+    summary.getByText("“I stopped chasing reach. Here is what changed.”"),
+  ).toBeVisible();
 });
 
 test("Your Agent keeps a visible seven-day cadence", async ({ page }) => {
