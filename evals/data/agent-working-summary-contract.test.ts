@@ -37,7 +37,10 @@ describe("Your Agent working-summary wiring", () => {
   test("the authenticated endpoint uses the shared persisted weekly analysis", () => {
     const route = read("app/api/agent/working-summary/route.ts");
     expect(route).toContain("scopedSupabase");
-    expect(route).toContain("getUserWorkingSummary");
+    expect(route).toContain("readStoredUserWorkingSummary");
+    expect(route.indexOf("readStoredUserWorkingSummary(")).toBeLessThan(
+      route.indexOf("getUserWorkingSummary("),
+    );
   });
 
   test("a resumable daily sweep keeps each analysis on a weekly TTL", () => {

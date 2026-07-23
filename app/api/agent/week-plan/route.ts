@@ -386,10 +386,13 @@ export async function GET() {
       currentWeek,
       plan,
     );
-    const items = await attachSourcePosts(sb.raw, sb.workspaceId, plan);
+    const [items, gapNote] = await Promise.all([
+      attachSourcePosts(sb.raw, sb.workspaceId, plan),
+      postingGap(sb.raw, sb.workspaceId),
+    ]);
     return NextResponse.json({
       ok: true,
-      gapNote: await postingGap(sb.raw, sb.workspaceId),
+      gapNote,
       items,
     });
   } catch (error) {

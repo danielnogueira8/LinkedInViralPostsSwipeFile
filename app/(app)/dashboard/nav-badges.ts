@@ -1,6 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import {
+  invalidateAgentBriefingRequest,
+  loadAgentBriefing,
+} from "./agent-briefing-client";
 
 type NavBadges = Record<string, number>;
 
@@ -19,9 +23,7 @@ function fetchNavBadges(): Promise<NavBadges> {
     fetch("/api/shared-bookmarks/pending-count", { method: "POST" })
       .then((res) => res.json())
       .catch(() => ({})),
-    fetch("/api/agent/briefing", { cache: "no-store" })
-      .then((res) => res.json())
-      .catch(() => ({})),
+    loadAgentBriefing(),
   ])
     .then(([shared, agent]): NavBadges => {
       const next: NavBadges = {};
@@ -48,6 +50,7 @@ function loadNavBadges(): Promise<NavBadges> {
 // mutation changes one of them. Safe to call from any client component.
 export function invalidateNavBadges(): void {
   pendingBadgesPromise = null;
+  invalidateAgentBriefingRequest();
   if (typeof window !== "undefined") {
     window.dispatchEvent(new Event(NAV_BADGES_INVALIDATE_EVENT));
   }

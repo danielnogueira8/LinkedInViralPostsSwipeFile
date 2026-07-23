@@ -8,6 +8,8 @@ const database = vi.hoisted(() => ({
     posts: [] as unknown[],
   },
   selects: [] as Array<{ table: string; columns: string }>,
+  blockedTables: new Set<string>(),
+  releases: new Map<string, () => void>(),
 }));
 
 vi.mock("@/lib/supabase-scoped", () => ({
@@ -41,10 +43,16 @@ vi.mock("@/lib/supabase-scoped", () => ({
               | null,
             onrejected?: ((reason: unknown) => TResult2) | null,
           ) {
-            return Promise.resolve({
+            const result = {
               data: database.rows[table],
               error: null,
-            }).then(onfulfilled, onrejected);
+            };
+            const ready = database.blockedTables.has(table)
+              ? new Promise<typeof result>((resolve) => {
+                  database.releases.set(table, () => resolve(result));
+                })
+              : Promise.resolve(result);
+            return ready.then(onfulfilled, onrejected);
           },
         };
         return chain;
@@ -97,6 +105,8 @@ describe("GET /api/agent/briefing source-post contract", () => {
     database.rows.agent_opportunities = [opportunity];
     database.rows.posts = [sourcePost];
     database.selects = [];
+    database.blockedTables.clear();
+    database.releases.clear();
   });
 
   it("queries and serializes the complete Swipe File card shape", async () => {
@@ -135,5 +145,25 @@ describe("GET /api/agent/briefing source-post contract", () => {
 
     expect(response.status).toBe(200);
     expect(body.opportunities).toEqual([]);
+  });
+
+  it("starts independent draft and opportunity reads in parallel", async () => {
+    database.blockedTables.add("chat_artifacts");
+
+    const responsePromise = GET();
+    await vi.waitFor(() => {
+      expect(
+        database.selects.some(({ table }) => table === "chat_artifacts"),
+      ).toBe(true);
+    });
+    const startedTogether = database.selects.some(
+      ({ table }) => table === "agent_opportunities",
+    );
+
+    database.releases.get("chat_artifacts")?.();
+    const response = await responsePromise;
+
+    expect(response.status).toBe(200);
+    expect(startedTogether).toBe(true);
   });
 });
