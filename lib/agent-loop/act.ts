@@ -157,6 +157,7 @@ async function saveChatArtifactsToBoard(
   chatId: string,
   turnStartedAt: string,
   opportunityId?: string,
+  isLeadMagnet?: boolean,
 ): Promise<string[]> {
   // Only artifacts from THIS turn. The agent chat accumulates turns, so an
   // unscoped "latest assistant with artifacts" read could re-save a previous
@@ -191,7 +192,7 @@ async function saveChatArtifactsToBoard(
       chatId,
       body: artifact.body,
       title: artifact.title,
-      kind: "post",
+      kind: isLeadMagnet ? "lead_magnet" : "post",
       // Stamp agent provenance so the board can badge + filter these drafts
       // (Phase E3) without a new status column.
       meta: {
@@ -268,6 +269,7 @@ async function runTurnToDraftIds(
       chatId,
       turnStartedAt,
       opportunityId,
+      Boolean(body.leadMagnetId || body.createLeadMagnet),
     );
     if (draftIds.length === 0) {
       throw new Error("Chat turn produced no draft artifact.");

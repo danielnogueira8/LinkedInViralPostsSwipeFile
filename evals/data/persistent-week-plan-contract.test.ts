@@ -159,4 +159,12 @@ describe("persistent weekly plan contract", () => {
       'userContext: item.kind === "generic" ? context : null',
     );
   });
+
+  test("weekly-cadence lead magnets are saved as lead_magnet drafts, not regular posts", () => {
+    expect(act).toContain('kind: isLeadMagnet ? "lead_magnet" : "post"');
+    expect(act).not.toContain('kind: "post",');
+    expect(act).toContain(
+      "Boolean(body.leadMagnetId || body.createLeadMagnet)",
+    );
+  });
 });
