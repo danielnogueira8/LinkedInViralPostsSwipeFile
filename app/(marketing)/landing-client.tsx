@@ -27,7 +27,11 @@ import {
   RotatingPhrases,
   SpotlightCard,
 } from "./landing-motion";
-import { LandingPaperPanel, LandingPaperTexture } from "./landing-print-treatments";
+import {
+  LandingPaperPanel,
+  LandingPaperTexture,
+  LANDING_SOURCE_MATERIAL_IMAGE,
+} from "./landing-print-treatments";
 
 const faqs = [
   [
@@ -446,10 +450,11 @@ function SignalPanel() {
       </div>
       <div className="mt-4 overflow-hidden rounded-[8px] bg-background outline outline-1 -outline-offset-1 outline-black/10 dark:outline-white/10">
         <Image
-          src="/swipe-file-posts.png"
+          src={LANDING_SOURCE_MATERIAL_IMAGE.src}
           alt="SwipeIn Swipe File showing three high-performing LinkedIn posts with engagement metrics and modeling actions"
-          width={2762}
-          height={1644}
+          width={LANDING_SOURCE_MATERIAL_IMAGE.width}
+          height={LANDING_SOURCE_MATERIAL_IMAGE.height}
+          sizes="(max-width: 1023px) calc(100vw - 32px), 53vw"
           className="h-auto w-full"
         />
       </div>
