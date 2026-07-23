@@ -17,6 +17,7 @@ const itemSchema = z.object({
       headline: z.string(),
       is_lead_magnet: z.boolean(),
       author_avatar: z.string().nullable(),
+      source_post_id: z.string().nullable().optional(),
     })
     .optional(),
 });

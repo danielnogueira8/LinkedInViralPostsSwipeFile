@@ -7,6 +7,7 @@ const draftRoute = source("app/api/agent/week-plan/draft/route.ts");
 const itemRoute = source("app/api/agent/week-plan/items/[id]/route.ts");
 const opportunityRoute = source("app/api/agent/opportunities/[id]/route.ts");
 const briefing = source("app/(app)/dashboard/agent-briefing.tsx");
+const postCard = source("components/post-card.tsx");
 const act = source("lib/agent-loop/act.ts");
 const migration = source("db/migration-124-persistent-week-plans.sql");
 const store = source("lib/agent-loop/week-plan-store.ts");
@@ -101,6 +102,21 @@ describe("persistent weekly plan contract", () => {
     expect(briefing).toContain('"Choose resource"');
     expect(briefing).toContain('"Ready for draft"');
     expect(briefing).not.toContain('"Source ready"');
+  });
+
+  test("modeled cadence posts expose the complete source in the review drawer", () => {
+    expect(planRoute).toContain("normalizeAgentSourcePost");
+    expect(planRoute).toContain("SWIPE_POST_COLS");
+    expect(planRoute).toContain("source_post");
+    expect(briefing).toContain('"Review source"');
+    expect(briefing).toContain(
+      "post={requiredInputItem.opportunity.source_post}",
+    );
+    expect(briefing).toContain("showDefaultActions={false}");
+    expect(briefing).toContain("Draft this");
+    expect(postCard).toContain("textLong");
+    expect(postCard).toContain("clampClass");
+    expect(postCard).toContain("<ExpandTextButton");
   });
 
   test("input progress excludes skipped slots and uses one readiness rule", () => {

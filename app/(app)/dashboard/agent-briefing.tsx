@@ -156,6 +156,7 @@ type WeekPlanItem = {
     headline: string;
     is_lead_magnet?: boolean;
     author_avatar?: string | null;
+    source_post?: PostCardRow | null;
   };
   /** Generic "your story" day: the under-the-hood drafting prompt. */
   prompt: string | null;
@@ -440,6 +441,18 @@ export function AgentBriefing() {
     context: requiredInputContext,
     leadMagnetId: requiredInputLeadMagnetId,
   }).ready;
+  const requiredInputIsModeled = requiredInputItem?.kind === "opportunity";
+  const requiredInputIsLeadMagnet =
+    requiredInputItem?.opportunity?.is_lead_magnet === true;
+  const requiredInputResourceChanged =
+    requiredInputIsLeadMagnet &&
+    requiredInputLeadMagnetId !==
+      (requiredInputItem?.selectedLeadMagnetId ?? "");
+  const requiredInputCanDraft =
+    requiredInputIsModeled &&
+    (!requiredInputIsLeadMagnet ||
+      (Boolean(requiredInputItem?.selectedLeadMagnetId) &&
+        !requiredInputResourceChanged));
 
   // `overflow-x-hidden` also makes vertical overflow compute to `auto`. Clip
   // over-wide rows without turning the briefing card into its own scroller.
@@ -603,7 +616,9 @@ export function AgentBriefing() {
                             : undefined
                         }
                         onClick={() => {
-                          if (readiness.ready) void draftPlanItem(item);
+                          if (item.kind === "opportunity") {
+                            void openRequiredInput(item);
+                          } else if (readiness.ready) void draftPlanItem(item);
                           else void openRequiredInput(item);
                         }}
                         className={cn(
@@ -621,10 +636,12 @@ export function AgentBriefing() {
                           ? "See Draft"
                           : item.status === "dismissed"
                             ? "Skipped"
-                            : readiness.ready
-                              ? "Draft this"
-                              : readiness.needsLeadMagnet
+                            : item.kind === "opportunity"
+                              ? readiness.needsLeadMagnet
                                 ? "Choose resource"
+                                : "Review source"
+                              : readiness.ready
+                                ? "Draft this"
                                 : "Choose direction"}
                         {item.status === "planned" && !busy ? (
                           <ChevronRight className="h-3 w-3" aria-hidden />
@@ -790,33 +807,55 @@ export function AgentBriefing() {
             <DialogTitle>
               {requiredInputItem?.opportunity?.is_lead_magnet
                 ? "Choose resource"
+                : requiredInputItem?.kind === "opportunity"
+                  ? "Review source"
                 : "Choose direction"}
             </DialogTitle>
             <DialogDescription>
               {requiredInputItem?.opportunity?.is_lead_magnet
-                ? "The source already provides the post direction. Choose the lead magnet this modeled post should promote."
-                : "Give Cowork the real story behind this prompt so it does not make up personal context."}
+                ? "Read the original post, then choose the lead magnet this modeled post should promote."
+                : requiredInputItem?.kind === "opportunity"
+                  ? "Read the original post before asking Cowork to model it in your voice."
+                  : "Give Cowork the real story behind this prompt so it does not make up personal context."}
             </DialogDescription>
           </DialogHeader>
 
           {requiredInputItem ? (
             <>
-              <div className="rounded-xl border border-border bg-muted/40 p-3">
-                <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  <span>{requiredInputItem.day}</span>
-                  <span aria-hidden>·</span>
-                  <span>
-                    {requiredInputItem.opportunity?.is_lead_magnet
-                      ? "Lead magnet"
-                      : "Regular post"}
-                  </span>
+              {requiredInputItem.kind === "opportunity" ? (
+                <div className="min-w-0">
+                  <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    Original post
+                  </p>
+                  {requiredInputItem.opportunity?.source_post ? (
+                    <PostCard
+                      post={requiredInputItem.opportunity.source_post}
+                      clients={[]}
+                      showDefaultActions={false}
+                    />
+                  ) : (
+                    <div className="rounded-xl border border-border bg-muted/40 p-3">
+                      <p className="text-sm font-medium leading-5 text-foreground">
+                        {requiredInputItem.opportunity?.headline}
+                      </p>
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        The original post is temporarily unavailable.
+                      </p>
+                    </div>
+                  )}
                 </div>
-                <p className="mt-2 text-sm font-medium leading-5 text-foreground">
-                  {requiredInputItem.kind === "generic"
-                    ? requiredInputItem.prompt
-                    : requiredInputItem.opportunity?.headline}
-                </p>
-              </div>
+              ) : (
+                <div className="rounded-xl border border-border bg-muted/40 p-3">
+                  <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    <span>{requiredInputItem.day}</span>
+                    <span aria-hidden>·</span>
+                    <span>Regular post</span>
+                  </div>
+                  <p className="mt-2 text-sm font-medium leading-5 text-foreground">
+                    {requiredInputItem.prompt}
+                  </p>
+                </div>
+              )}
 
               {requiredInputItem.kind === "generic" ? (
                 <div>
@@ -907,16 +946,29 @@ export function AgentBriefing() {
             </button>
             <button
               type="button"
-              onClick={() => void saveRequiredInput()}
-              disabled={!requiredInputCanSave || requiredInputSaving}
+              onClick={() => {
+                if (requiredInputCanDraft && requiredInputItem) {
+                  setRequiredInputItemId(null);
+                  void draftPlanItem(requiredInputItem);
+                } else {
+                  void saveRequiredInput();
+                }
+              }}
+              disabled={
+                requiredInputCanDraft
+                  ? busyId !== null
+                  : !requiredInputCanSave || requiredInputSaving
+              }
               className="inline-flex items-center justify-center gap-1.5 rounded-full bg-accent-brand px-4 py-2 text-sm font-semibold text-accent-brand-foreground disabled:cursor-not-allowed disabled:opacity-50"
             >
               {requiredInputSaving ? (
                 <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
               ) : null}
-              {requiredInputItem?.opportunity?.is_lead_magnet
-                ? "Save resource"
-                : "Save direction"}
+              {requiredInputCanDraft
+                ? "Draft this"
+                : requiredInputItem?.opportunity?.is_lead_magnet
+                  ? "Save resource"
+                  : "Save direction"}
             </button>
           </DialogFooter>
         </DialogContent>
