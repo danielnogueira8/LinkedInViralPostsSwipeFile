@@ -1,7 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Hash, LayoutTemplate, TextCursorInput } from "lucide-react";
+import {
+  BookOpenCheck,
+  FishingHook,
+  LayoutTemplate,
+  type LucideIcon,
+} from "lucide-react";
 import {
   coerceStoredWorkingSummary,
   WORKING_SUMMARY_CATEGORIES,
@@ -14,13 +19,13 @@ const CATEGORY_DETAILS: Record<
   {
     description: string;
     exampleLabel: string;
-    icon: typeof Hash;
+    icon: LucideIcon;
   }
 > = {
   Topics: {
     description: "The topics earning attention",
     exampleLabel: "Example topic",
-    icon: Hash,
+    icon: BookOpenCheck,
   },
   Formats: {
     description: "The formats carrying them",
@@ -30,7 +35,7 @@ const CATEGORY_DETAILS: Record<
   Hooks: {
     description: "The hooks stopping the scroll",
     exampleLabel: "Example hook",
-    icon: TextCursorInput,
+    icon: FishingHook,
   },
 };
 
