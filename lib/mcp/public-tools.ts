@@ -6,8 +6,8 @@ export type PublicMcpTool = {
 };
 
 export const PUBLIC_MCP_TOOLS = [
-  { name: "search_viral_posts", description: "Search viral posts with niche, date, engagement, and format filters; one-post searches can include the original visual.", group: "Research", access: "Read" },
-  { name: "get_post", description: "Read one tracked viral post by its id, including its original visual when available.", group: "Research", access: "Read" },
+  { name: "search_viral_posts", description: "Search viral posts with niche, date, engagement, and format filters; focused searches can render original images.", group: "Research", access: "Read" },
+  { name: "get_post", description: "Read one tracked viral post by its id, including rendered original images when available.", group: "Research", access: "Read" },
   { name: "list_niches", description: "List the niches represented by tracked creators.", group: "Research", access: "Read" },
   { name: "get_top_from_batch", description: "Read the strongest recently published posts from the latest scrape.", group: "Research", access: "Read" },
   { name: "save_post", description: "Save a LinkedIn post to the workspace bookmark library.", group: "Research", access: "Create" },
