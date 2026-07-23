@@ -2110,6 +2110,33 @@ describe("DraftEngine — thin path (lean mode)", () => {
     expect(writer.requests[0].model).toBe(THIN_DRAFT_WRITER_MODEL);
   });
 
+  test("a modeled lead-magnet turn receives both the selected resource and the user's voice", async () => {
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(200, 120) },
+    ]);
+    await collect(writer, {
+      lean: true,
+      task: {
+        kind: "source",
+        source: {
+          id: "source-1",
+          text: "A source post whose structure should be modeled.",
+        },
+      },
+      voiceResult: {
+        ok: true,
+        voice: { summary: "VOICE_SENTINEL: concise, candid, and practical." },
+      },
+      leadMagnetBlock:
+        "LEAD_MAGNET_SENTINEL: promote the selected Weekly Content Playbook and ask readers to comment WEEKLY.",
+    });
+
+    const prompt = JSON.stringify(writer.requests[0].messages);
+    expect(prompt).toContain("VOICE_SENTINEL");
+    expect(prompt).toContain("LEAD_MAGNET_SENTINEL");
+    expect(prompt).toContain("Weekly Content Playbook");
+  });
+
   test("HARD CTA guard: a lead-magnet draft missing the resource is rejected, never shipped", async () => {
     // The comment-CTA is enforced by transformCandidate (the chat-turn wires
     // the real one; here we stand in a guard that rejects any body that doesn't
