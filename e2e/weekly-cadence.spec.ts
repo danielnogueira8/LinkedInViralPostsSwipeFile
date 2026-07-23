@@ -65,6 +65,34 @@ test("Agent opportunities show the complete Swipe File post card", async ({
       body: JSON.stringify({ ok: true, gapNote: null, items: [] }),
     });
   });
+  await page.route("**/api/agent/working-summary", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        summary: {
+          source: "voice_profile",
+          sourcePostCount: 24,
+          analyzedPostCount: 3,
+          publishedPostCount: 2,
+          analyzedAt: "2026-07-20T12:00:00.000Z",
+          insights: [
+            {
+              label: "Topics",
+              finding: "Founder-led systems are your strongest recurring theme.",
+              evidence: "This theme repeats across your Voice-source posts.",
+            },
+            {
+              label: "Hooks",
+              finding: "Concrete reversals make your openings recognizable.",
+              evidence: "Your strongest source posts open with a changed belief.",
+            },
+          ],
+        },
+      }),
+    });
+  });
 
   await page.goto("/dashboard/agent");
 
@@ -85,6 +113,18 @@ test("Agent opportunities show the complete Swipe File post card", async ({
   ).toHaveCount(0);
   await expect(card.getByRole("button", { name: "Draft it" })).toBeVisible();
   await expect(card.getByRole("button", { name: "Discard" })).toBeVisible();
+
+  const summary = page.getByTestId("agent-working-summary");
+  await expect(summary.getByText("What's working for you")).toBeVisible();
+  await expect(summary.getByText("Voice baseline")).toBeVisible();
+  await expect(
+    summary.getByText(/3 saved source posts from the 24 posts/i),
+  ).toBeVisible();
+  await expect(
+    summary.getByText(
+      "Founder-led systems are your strongest recurring theme.",
+    ),
+  ).toBeVisible();
 });
 
 test("Your Agent keeps a visible seven-day cadence", async ({ page }) => {
