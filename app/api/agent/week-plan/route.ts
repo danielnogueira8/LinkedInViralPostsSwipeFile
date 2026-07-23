@@ -5,6 +5,7 @@ import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
 import { AGENT_SUGGESTED_BY } from "@/lib/agent-loop/constants";
 import { readOpportunityHeadline } from "@/lib/agent-loop/headline";
+import { normalizeAgentSourcePost } from "@/lib/agent-loop/source-post-card";
 import {
   leadMagnetPostIds,
   opportunityIsLeadMagnet,
@@ -24,6 +25,7 @@ import {
   mutateStoredWeekPlanItem,
   type StoredWeekPlan,
 } from "@/lib/agent-loop/week-plan-store";
+import { SWIPE_POST_COLS } from "@/lib/swipe-query";
 
 export const runtime = "nodejs";
 
@@ -87,6 +89,7 @@ async function composeFreshPlan(
           authorAvatar: sourcePostId
             ? (avatarByPostId.get(sourcePostId) ?? null)
             : null,
+          sourcePostId,
         },
       ] as const;
     }),
@@ -133,6 +136,7 @@ async function composeFreshPlan(
           headline: opportunity?.headline ?? "New opportunity",
           is_lead_magnet: opportunity?.isLeadMagnet ?? false,
           author_avatar: opportunity?.authorAvatar ?? null,
+          source_post_id: opportunity?.sourcePostId ?? null,
         },
       };
     }),
@@ -267,6 +271,88 @@ async function recoverLegacyDraftIds(
   return hydrated;
 }
 
+async function attachSourcePosts(
+  db: SupabaseClient,
+  workspaceId: string,
+  plan: StoredWeekPlan,
+) {
+  const opportunityItems = plan.items.filter(
+    (item) => item.kind === "opportunity" && item.opportunity,
+  );
+  if (opportunityItems.length === 0) return plan.items;
+
+  const sourceIdByOpportunity = new Map<string, string>();
+  const unresolvedOpportunityIds: string[] = [];
+  for (const item of opportunityItems) {
+    const opportunityId = item.opportunity?.id;
+    const sourcePostId = item.opportunity?.source_post_id;
+    if (!opportunityId) continue;
+    if (sourcePostId) sourceIdByOpportunity.set(opportunityId, sourcePostId);
+    else unresolvedOpportunityIds.push(opportunityId);
+  }
+
+  if (unresolvedOpportunityIds.length > 0) {
+    const { data, error } = await db
+      .from("agent_opportunities")
+      .select("id, source_post_id")
+      .eq("workspace_id", workspaceId)
+      .in("id", unresolvedOpportunityIds);
+    if (error) {
+      console.error("agent_week_plan_source_lookup_failed", {
+        workspace_id: workspaceId,
+        message: error.message,
+      });
+    } else {
+      for (const row of data ?? []) {
+        if (
+          typeof row.id === "string" &&
+          typeof row.source_post_id === "string"
+        ) {
+          sourceIdByOpportunity.set(row.id, row.source_post_id);
+        }
+      }
+    }
+  }
+
+  const sourcePostIds = [...new Set(sourceIdByOpportunity.values())];
+  if (sourcePostIds.length === 0) return plan.items;
+  const { data: sourceRows, error: sourceError } = await db
+    .from("posts")
+    .select(SWIPE_POST_COLS)
+    .in("id", sourcePostIds);
+  if (sourceError) {
+    console.error("agent_week_plan_source_posts_failed", {
+      workspace_id: workspaceId,
+      message: sourceError.message,
+    });
+    return plan.items;
+  }
+  const sourceById = new Map(
+    (sourceRows ?? []).flatMap((row) => {
+      const sourcePost = normalizeAgentSourcePost(row);
+      return sourcePost ? [[sourcePost.id, sourcePost] as const] : [];
+    }),
+  );
+
+  return plan.items.map((item) => {
+    const opportunityId = item.opportunity?.id;
+    const sourcePostId = opportunityId
+      ? sourceIdByOpportunity.get(opportunityId)
+      : null;
+    return item.opportunity
+      ? {
+          ...item,
+          opportunity: {
+            ...item.opportunity,
+            source_post: sourcePostId
+              ? (sourceById.get(sourcePostId) ?? null)
+              : null,
+          },
+        }
+      : item;
+  });
+}
+
 // Uses the long-lived workspace settings store rather than a just-deployed
 // table/RPC. That keeps the cadence compatible with the repo's manual migration
 // process: the week remains visible and durable during rolling deployments.
@@ -293,10 +379,11 @@ export async function GET() {
       currentWeek,
       plan,
     );
+    const items = await attachSourcePosts(sb.raw, sb.workspaceId, plan);
     return NextResponse.json({
       ok: true,
       gapNote: await postingGap(sb.raw, sb.workspaceId),
-      items: plan.items,
+      items,
     });
   } catch (error) {
     return errorResponse(error);

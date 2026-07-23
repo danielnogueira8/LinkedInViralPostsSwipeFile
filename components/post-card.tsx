@@ -355,23 +355,25 @@ export function PostCard({
             </div>
           </div>
 
-          <div className="flex flex-wrap gap-2 pt-3 border-t border-border/60 -mx-4 px-4 -mb-1 bg-background/28">
-            {showDefaultActions && post.text && (
-              <Button variant="outline" size="sm" onClick={copyText}>
-                <Copy className="h-3.5 w-3.5" /> Copy text
-              </Button>
-            )}
+          {((showDefaultActions && post.text) || footerActions) && (
+            <div className="flex flex-wrap gap-2 pt-3 border-t border-border/60 -mx-4 px-4 -mb-1 bg-background/28">
+              {showDefaultActions && post.text && (
+                <Button variant="outline" size="sm" onClick={copyText}>
+                  <Copy className="h-3.5 w-3.5" /> Copy text
+                </Button>
+              )}
 
-            {showDefaultActions && post.text && (
-              <AskAiMenu source="swipe" postId={post.id} />
-            )}
+              {showDefaultActions && post.text && (
+                <AskAiMenu source="swipe" postId={post.id} />
+              )}
 
-            {footerActions ? (
-              <div className="ml-auto flex flex-wrap items-center gap-2">
-                {footerActions}
-              </div>
-            ) : null}
-          </div>
+              {footerActions ? (
+                <div className="ml-auto flex flex-wrap items-center gap-2">
+                  {footerActions}
+                </div>
+              ) : null}
+            </div>
+          )}
         </CardContent>
       </Card>
 
