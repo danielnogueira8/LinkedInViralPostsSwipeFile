@@ -1,5 +1,89 @@
 import { expect, test } from "@playwright/test";
 
+test("Agent opportunities show the complete Swipe File post card", async ({
+  page,
+}) => {
+  const originalPost = [
+    "Most teams do not have an idea problem.",
+    "",
+    "They have a distribution problem.",
+    "",
+    "Here is the complete framework I used with the last twelve founders:",
+    "1. Start from customer language.",
+    "2. Publish the proof before the advice.",
+    "3. Build one repeatable point of view.",
+    "",
+    "The original post stays visible so you can decide whether it is actually worth modeling.",
+  ].join("\n");
+
+  await page.route("**/api/agent/briefing", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        drafts: [],
+        opportunities: [
+          {
+            id: "opportunity-1",
+            kind: "viral_post",
+            score: 0.95,
+            payload: { headline: "A post worth modeling", author: "Ada Lovelace" },
+            created_at: "2026-07-22T12:00:00.000Z",
+            is_lead_magnet: false,
+            source_post: {
+              id: "source-post-1",
+              text: originalPost,
+              post_url: "https://www.linkedin.com/posts/source-post-1",
+              post_type: "regular",
+              posted_at: "2026-07-20T12:00:00.000Z",
+              reactions: 1247,
+              comments: 83,
+              reposts: 19,
+              media_type: "image",
+              media_urls: ["/icon.png"],
+              visual_kind: null,
+              viral_score: 2000,
+              viral_basis: "relative",
+              baseline_score: 1000,
+              accounts: {
+                name: "Ada Lovelace",
+                niche: "Technology",
+                linkedin_handle: "ada",
+                profile_pic_url: null,
+              },
+            },
+          },
+        ],
+      }),
+    });
+  });
+  await page.route("**/api/agent/week-plan", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true, gapNote: null, items: [] }),
+    });
+  });
+
+  await page.goto("/dashboard/agent");
+
+  const card = page.getByTestId("agent-model-post-card");
+  await expect(card).toHaveCount(1);
+  await expect(card.getByText("Ada Lovelace")).toBeVisible();
+  await expect(card.getByText(originalPost)).toBeVisible();
+  await expect(card.getByText("1,247")).toBeVisible();
+  await expect(card.getByText("83")).toBeVisible();
+  await expect(card.getByText("19")).toBeVisible();
+  await expect(
+    card.getByRole("button", { name: "Click to view full image" }),
+  ).toBeVisible();
+  await expect(card.getByRole("link", { name: "View on LinkedIn" })).toBeVisible();
+  await expect(card.getByRole("button", { name: "Copy text" })).toBeVisible();
+  await expect(card.getByRole("button", { name: "Draft it" })).toBeVisible();
+  await expect(card.getByRole("button", { name: "Not relevant" })).toBeVisible();
+});
+
 test("Your Agent keeps a visible seven-day cadence", async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 1080 });
   await page.goto("/dashboard/agent");

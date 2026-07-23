@@ -1,0 +1,139 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { SWIPE_POST_COLS } from "@/lib/swipe-query";
+
+const database = vi.hoisted(() => ({
+  rows: {
+    chat_artifacts: [] as unknown[],
+    agent_opportunities: [] as unknown[],
+    posts: [] as unknown[],
+  },
+  selects: [] as Array<{ table: string; columns: string }>,
+}));
+
+vi.mock("@/lib/supabase-scoped", () => ({
+  scopedSupabase: async () => ({
+    workspaceId: "workspace-1",
+    raw: {
+      from(table: keyof typeof database.rows) {
+        const chain = {
+          select(columns: string) {
+            database.selects.push({ table, columns });
+            return chain;
+          },
+          eq() {
+            return chain;
+          },
+          is() {
+            return chain;
+          },
+          in() {
+            return chain;
+          },
+          order() {
+            return chain;
+          },
+          limit() {
+            return chain;
+          },
+          then<TResult1 = unknown, TResult2 = never>(
+            onfulfilled?:
+              | ((value: { data: unknown[]; error: null }) => TResult1)
+              | null,
+            onrejected?: ((reason: unknown) => TResult2) | null,
+          ) {
+            return Promise.resolve({
+              data: database.rows[table],
+              error: null,
+            }).then(onfulfilled, onrejected);
+          },
+        };
+        return chain;
+      },
+    },
+  }),
+}));
+
+const { GET } = await import("@/app/api/agent/briefing/route");
+
+const opportunity = {
+  id: "opportunity-1",
+  kind: "viral_post",
+  score: 0.92,
+  payload: { headline: "Original headline", author: "Ada Lovelace" },
+  created_at: "2026-07-22T12:00:00.000Z",
+  source_post_id: "post-1",
+};
+
+const sourcePost = {
+  id: "post-1",
+  text: "The full original post",
+  post_url: "https://www.linkedin.com/posts/post-1",
+  post_type: "lead_magnet",
+  posted_at: "2026-07-20T12:00:00.000Z",
+  reactions: 1200,
+  comments: 42,
+  reposts: 9,
+  media_type: "image",
+  media_urls: ["https://example.com/post.jpg"],
+  visual_kind: "graphic",
+  viral_score: 2200,
+  viral_basis: "relative",
+  baseline_score: 1000,
+  accounts: [
+    {
+      name: "Ada Lovelace",
+      niche: "Technology",
+      linkedin_handle: "ada",
+      profile_pic_url: "https://example.com/ada.jpg",
+      viral_post_count: 4,
+      total_post_count: 12,
+    },
+  ],
+};
+
+describe("GET /api/agent/briefing source-post contract", () => {
+  beforeEach(() => {
+    database.rows.chat_artifacts = [];
+    database.rows.agent_opportunities = [opportunity];
+    database.rows.posts = [sourcePost];
+    database.selects = [];
+  });
+
+  it("queries and serializes the complete Swipe File card shape", async () => {
+    const response = await GET();
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(
+      database.selects.find(({ table }) => table === "posts")?.columns,
+    ).toBe(SWIPE_POST_COLS);
+    expect(body.opportunities).toHaveLength(1);
+    expect(body.opportunities[0]).toMatchObject({
+      id: "opportunity-1",
+      is_lead_magnet: true,
+      source_post: {
+        id: "post-1",
+        text: "The full original post",
+        media_type: "image",
+        media_urls: ["https://example.com/post.jpg"],
+        reactions: 1200,
+        comments: 42,
+        reposts: 9,
+        accounts: {
+          name: "Ada Lovelace",
+          linkedin_handle: "ada",
+        },
+      },
+    });
+  });
+
+  it("excludes an opportunity whose source was deleted or malformed", async () => {
+    database.rows.posts = [{ id: null, post_type: "regular" }];
+
+    const response = await GET();
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.opportunities).toEqual([]);
+  });
+});

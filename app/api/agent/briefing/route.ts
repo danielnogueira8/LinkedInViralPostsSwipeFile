@@ -12,6 +12,8 @@ import {
   composeWorkingNowMix,
   WORKING_NOW_POOL_LIMIT,
 } from "@/lib/agent-loop/working-now-mix";
+import { normalizeAgentSourcePost } from "@/lib/agent-loop/source-post-card";
+import { SWIPE_POST_COLS } from "@/lib/swipe-query";
 
 export const runtime = "nodejs";
 
@@ -54,24 +56,26 @@ export async function GET() {
     // authoritative flag (stamped at scrape time, also what act.ts reads), and
     // agent_opportunities only carries source_post_id — so resolve it here for
     // the whole pool (needed to compose the mix). One small IN query. The same
-    // read also grabs the creator's avatar for the Working now rows.
+    // read also grabs the complete source-post shape used by the Swipe File
+    // card, so users can inspect the original before asking the agent to model
+    // it. This remains one batched IN query for the entire opportunity pool.
     const sourcePostIds = opportunitySourcePostIds(opportunityPool);
     let leadMagnetIds = new Set<string>();
-    const avatarByPostId = new Map<string, string>();
+    const sourcePostById = new Map<
+      string,
+      NonNullable<ReturnType<typeof normalizeAgentSourcePost>>
+    >();
     if (sourcePostIds.length > 0) {
       const { data: sourcePosts, error: sourcePostsError } = await sb.raw
         .from("posts")
-        .select("id, post_type, accounts(profile_pic_url)")
+        .select(SWIPE_POST_COLS)
         .in("id", sourcePostIds);
       if (sourcePostsError) throw sourcePostsError;
       leadMagnetIds = leadMagnetPostIds(sourcePosts);
       for (const post of sourcePosts ?? []) {
-        const acc = Array.isArray(post.accounts)
-          ? post.accounts[0]
-          : post.accounts;
-        const url = acc?.profile_pic_url;
-        if (typeof post.id === "string" && typeof url === "string" && url) {
-          avatarByPostId.set(post.id, url);
+        const normalized = normalizeAgentSourcePost(post);
+        if (normalized) {
+          sourcePostById.set(normalized.id, normalized);
         }
       }
     }
@@ -89,11 +93,11 @@ export async function GET() {
         ...opportunity,
         payload: { ...payload, headline: readOpportunityHeadline(payload) },
         is_lead_magnet: opportunityIsLeadMagnet(opportunity, leadMagnetIds),
-        author_avatar: sourcePostId
-          ? (avatarByPostId.get(sourcePostId) ?? null)
+        source_post: sourcePostId
+          ? (sourcePostById.get(sourcePostId) ?? null)
           : null,
       };
-    });
+    }).filter((opportunity) => opportunity.source_post !== null);
 
     // Compose the visible slots as a healthy content mix (2 regular + 1 lead
     // magnet by default), backfilling from either type when the bank is thin.
