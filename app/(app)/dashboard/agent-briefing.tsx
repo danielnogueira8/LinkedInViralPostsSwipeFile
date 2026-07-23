@@ -14,6 +14,10 @@ import {
 import { AiIcon } from "@/components/ai-icon";
 import { AvatarImg } from "@/components/avatar-img";
 import {
+  PostCard,
+  type PostCardRow,
+} from "@/components/post-card";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -61,8 +65,8 @@ type BriefingOpportunity = {
   // post (see lib/agent-loop/opportunity-post-type.ts). Optional so a stale
   // client against an older payload just renders no badge.
   is_lead_magnet?: boolean;
-  /** Creator's profile pic, resolved server-side from the source post's account. */
-  author_avatar?: string | null;
+  /** Complete source, shaped exactly like the cards on the Swipe File. */
+  source_post: PostCardRow;
 };
 
 /** Tiny creator avatar for opportunity rows. LinkedIn CDN URLs expire, so this
@@ -407,9 +411,6 @@ export function AgentBriefing() {
 
   const { drafts, opportunities } = briefing;
   const isEmpty = drafts.length === 0 && opportunities.length === 0;
-  // Two columns only when there's something in BOTH sections — otherwise the
-  // lone section spans the full width instead of leaving a dead column.
-  const twoColumns = drafts.length > 0 && opportunities.length > 0;
   const planItems = weekPlan?.items ?? [];
   const activePlanItems = planItems.filter(
     (item) => item.status !== "dismissed",
@@ -622,14 +623,7 @@ export function AgentBriefing() {
       )}
 
       {!isEmpty && (
-      <div
-        className={cn(
-          "mt-4 grid min-w-0 gap-4",
-          // Side-by-side on wide screens when both sections have content; a
-          // single column otherwise (and always on narrow screens).
-          twoColumns && "lg:grid-cols-2",
-        )}
-      >
+      <div className="mt-4 flex min-w-0 flex-col gap-6">
       {drafts.length > 0 && (
         <div className="min-w-0">
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -674,50 +668,56 @@ export function AgentBriefing() {
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
             Model recently viral posts
           </p>
-          <ul className="mt-2 flex min-w-0 flex-col gap-2">
+          <p className="mt-1 text-xs text-muted-foreground">
+            Read the original post, inspect its media and performance, then
+            choose whether your agent should model it.
+          </p>
+          <ul className="mt-3 grid min-w-0 grid-cols-1 items-start gap-4 lg:grid-cols-2 xl:grid-cols-3">
             {opportunities.map((opportunity) => (
               <li
                 key={opportunity.id}
-                className="flex min-w-0 items-center gap-2.5 rounded-xl border border-border bg-background px-3 py-2.5"
+                data-testid="agent-model-post-card"
+                className="min-w-0"
               >
-                {opportunity.is_lead_magnet ? (
-                  <LeadMagnetBadge
-                    hintId={`agent-briefing-lead-magnet-${opportunity.id}`}
-                  />
-                ) : null}
-                <CreatorAvatar
-                  src={opportunity.author_avatar}
-                  name={opportunity.payload?.author ?? opportunity.payload?.headline ?? "?"}
+                <PostCard
+                  post={opportunity.source_post}
+                  clients={[]}
+                  footerActions={
+                    <>
+                      {opportunity.is_lead_magnet ? (
+                        <LeadMagnetBadge
+                          hintId={`agent-briefing-lead-magnet-${opportunity.id}`}
+                        />
+                      ) : null}
+                      <button
+                        type="button"
+                        disabled={busyId !== null}
+                        onClick={() => void act(opportunity.id, "draft")}
+                        className={cn(
+                          "inline-flex shrink-0 items-center gap-1 rounded-full bg-accent-brand px-3 py-1.5 text-xs font-medium text-accent-brand-foreground",
+                          "transition-opacity hover:opacity-90 disabled:opacity-50",
+                        )}
+                      >
+                        {busyId === opportunity.id ? (
+                          <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+                        ) : (
+                          <AiIcon className="h-3 w-3" aria-hidden />
+                        )}
+                        Draft it
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busyId !== null}
+                        onClick={() => void act(opportunity.id, "dismiss")}
+                        className="grid size-8 shrink-0 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+                        aria-label="Not relevant"
+                        title="Not relevant — show me less of this"
+                      >
+                        <X className="h-3.5 w-3.5" aria-hidden />
+                      </button>
+                    </>
+                  }
                 />
-                <p className="min-w-0 flex-1 truncate text-sm text-foreground">
-                  {opportunity.payload?.headline ?? "New opportunity"}
-                </p>
-                <button
-                  type="button"
-                  disabled={busyId !== null}
-                  onClick={() => void act(opportunity.id, "draft")}
-                  className={cn(
-                    "inline-flex shrink-0 items-center gap-1 rounded-full bg-accent-brand px-3 py-1.5 text-xs font-medium text-accent-brand-foreground",
-                    "transition-opacity hover:opacity-90 disabled:opacity-50",
-                  )}
-                >
-                  {busyId === opportunity.id ? (
-                    <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
-                  ) : (
-                    <AiIcon className="h-3 w-3" aria-hidden />
-                  )}
-                  Draft it
-                </button>
-                <button
-                  type="button"
-                  disabled={busyId !== null}
-                  onClick={() => void act(opportunity.id, "dismiss")}
-                  className="grid size-7 shrink-0 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
-                  aria-label="Not relevant"
-                  title="Not relevant — show me less of this"
-                >
-                  <X className="h-3.5 w-3.5" aria-hidden />
-                </button>
               </li>
             ))}
           </ul>

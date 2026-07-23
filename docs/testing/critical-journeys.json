@@ -91,6 +91,19 @@
       "follow_up_issue": 999
     },
     {
+      "id": "agent-opportunity-inspection",
+      "capability": "Your Agent",
+      "invariant": "Posts proposed for modeling preserve and display their original creator, body, media, engagement, and source actions before the user drafts or dismisses them.",
+      "preferred_seam": "browser",
+      "existing_coverage": [
+        "evals/data/agent-briefing-route.test.ts",
+        "evals/data/agent-opportunity-post-card.test.ts",
+        "e2e/weekly-cadence.spec.ts"
+      ],
+      "status": "protected",
+      "follow_up_issue": 999
+    },
+    {
       "id": "swipe-discovery-actions",
       "capability": "Swipe File",
       "invariant": "Filtering, sorting, media actions, bookmarking, and modeling preserve the selected post and its metadata.",

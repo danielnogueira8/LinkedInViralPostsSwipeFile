@@ -15,6 +15,7 @@ type Journey = {
 
 const requiredCapabilities = [
   "Cowork",
+  "Your Agent",
   "Swipe File",
   "Bookmarks",
   "Accounts and sources",

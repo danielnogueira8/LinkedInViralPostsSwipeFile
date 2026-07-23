@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -30,37 +30,8 @@ import Image from "next/image";
 import { cn } from "@/lib/utils";
 import { copyToClipboard } from "@/lib/clipboard";
 import { initialsForName, tintFor, timeAgo } from "@/lib/post-card-helpers";
-import type { PostType } from "@/lib/post-type";
-
-type PostRow = {
-  id: string;
-  text: string | null;
-  post_url: string | null;
-  posted_at: string | null;
-  reactions: number;
-  comments: number;
-  reposts: number;
-  media_type: string;
-  media_urls: string[];
-  visual_kind: "photo" | "graphic" | null;
-  // Relative-virality decision persisted by the pipeline (migration 028).
-  // Nullable: legacy rows scraped before the column exists have none, and the
-  // chip simply doesn't render for them.
-  viral_score?: number | null;
-  viral_basis?: "relative" | "flat_fallback" | "below_floor" | null;
-  baseline_score?: number | null;
-  post_type: PostType;
-  accounts: {
-    name: string;
-    niche: string | null;
-    linkedin_handle: string;
-    profile_pic_url?: string | null;
-    // Per-creator viral track record, denormalized by the pipeline
-    // (migration 029). Optional: legacy rows / pre-refresh accounts are 0.
-    viral_post_count?: number | null;
-    total_post_count?: number | null;
-  } | null;
-};
+import type { PostCardRow } from "@/lib/post-card-row";
+export type { PostCardRow } from "@/lib/post-card-row";
 
 type Client = {
   id: string;
@@ -121,14 +92,17 @@ export function PostCard({
   post,
   libraries,
   priority,
+  footerActions,
 }: {
-  post: PostRow;
+  post: PostCardRow;
   clients: Client[];
   // Libraries the user can bookmark into (own + accepted shares). When
   // omitted/empty we fall back to a single "My bookmarks" target so the
   // button still works.
   libraries?: WritableLibrary[];
   priority?: boolean;
+  /** Page-specific actions appended to the standard Swipe File card footer. */
+  footerActions?: ReactNode;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [lightboxOpen, setLightboxOpen] = useState(false);
@@ -386,6 +360,12 @@ export function PostCard({
             )}
 
             {post.text && <AskAiMenu source="swipe" postId={post.id} />}
+
+            {footerActions ? (
+              <div className="ml-auto flex flex-wrap items-center gap-2">
+                {footerActions}
+              </div>
+            ) : null}
           </div>
         </CardContent>
       </Card>

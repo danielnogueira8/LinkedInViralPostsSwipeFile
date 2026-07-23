@@ -93,9 +93,9 @@ describe("briefing route exposes the flag", () => {
 
   it("reads post_type from posts, not from a re-classification of the text", () => {
     expect(src).toContain('.from("posts")');
-    // post_type is read from the posts row (the avatar join may extend the
-    // select list); it is never re-derived from the post text.
-    expect(src).toMatch(/\.select\("id, post_type[",]/);
+    // The shared swipe-card selection contains persisted post_type; it is
+    // never re-derived from the post text.
+    expect(src).toContain("SWIPE_POST_COLS");
     expect(src).not.toContain("classifyPost");
   });
 
@@ -128,12 +128,9 @@ describe("working now card badge", () => {
     expect(src).toContain("`agent-briefing-lead-magnet-${opportunity.id}`");
   });
 
-  it("does not break the card's truncation or button layout", () => {
-    // The badge sits outside the truncating <p> and never shrinks the buttons.
+  it("does not break the card's action layout", () => {
     expect(src).toContain('<span className="relative shrink-0">');
-    expect(src).toContain(
-      '<p className="min-w-0 flex-1 truncate text-sm text-foreground">',
-    );
+    expect(src).toContain("footerActions={");
   });
 
   it("does not pull in a new tooltip dependency", () => {
