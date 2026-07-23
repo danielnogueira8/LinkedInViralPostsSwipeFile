@@ -72,21 +72,28 @@ const SORT_COLUMN = {
 // POST_COLS (lib/agent/tools.ts). Trimmed the fields the model never consumes
 // and that downstream code re-fetches on its own (account_id,
 // accounts.id/handle/profile_pic_url, scraped_at [top-level scrape date is
-// surfaced separately], is_viral [constant — every query filters
-// is_viral=true]). Keeps text + engagement + author name/niche + post_url/id.
-// workspace_post_classification!inner(is_viral) is embedded (not filtered on
-// the GLOBAL posts.is_viral column two workspaces tracking the same creator
-// would otherwise share — backlog #153 / migration-075) and filtered per-query
-// via .eq("workspace_post_classification.workspace_id", workspaceId)
-// .eq("workspace_post_classification.is_viral", true).
+// surfaced separately]). is_viral IS selected but stripped by normalizeEmbed
+// before the row reaches the model — it is the resilient viral gate, not a
+// model-facing field. Keeps text + engagement + author name/niche + post_url/id.
+//
+// VIRAL ELIGIBILITY (backlog #153 / migration-075 / PLAN item #3): each query
+// gates on the GLOBAL posts.is_viral=true — the exact set the Swipe File shows,
+// so the agent can never starve to empty while the dashboard is full — and
+// LEFT-embeds this workspace's per-workspace classification (default embed, NOT
+// !inner: a post with no classification row for this workspace is still
+// returned). passesWorkspaceViral then drops only the posts this workspace has
+// EXPLICITLY reclassified non-viral; a missing row falls back to the global
+// verdict. Filtered per query via
+// .eq("workspace_post_classification.workspace_id", workspaceId). Kept in sync
+// with the in-app agent's POST_COLS (lib/agent/tools.ts).
 const POST_COLS =
-  "id, text, post_url, posted_at, reactions, comments, reposts, media_type, post_type, accounts!inner(name, niche), workspace_post_classification!inner(is_viral)";
+  "id, text, post_url, posted_at, reactions, comments, reposts, media_type, post_type, is_viral, accounts!inner(name, niche), workspace_post_classification(is_viral)";
 
 // Visual URLs can be large and are rarely needed to answer a broad research
 // query. Fetch them only when the caller is looking at one post, or has
 // explicitly asked to see the post's visual asset.
 const POST_WITH_VISUAL_COLS =
-  "id, text, post_url, posted_at, reactions, comments, reposts, media_type, post_type, media_urls, visual_kind, accounts!inner(name, niche), workspace_post_classification!inner(is_viral)";
+  "id, text, post_url, posted_at, reactions, comments, reposts, media_type, post_type, media_urls, visual_kind, is_viral, accounts!inner(name, niche), workspace_post_classification(is_viral)";
 
 const NO_ROWS_SENTINEL = "00000000-0000-0000-0000-000000000000";
 
@@ -108,18 +115,38 @@ const SUPPORTED_IMAGE_MIME_TYPES = new Set([
   "image/webp",
 ]);
 
-// Drops the workspace_post_classification join wrapper (a query filter, not a
-// field the model needs) and unwraps the accounts embed.
+// Resilient per-workspace viral eligibility (see POST_COLS). The query gates on
+// the GLOBAL posts.is_viral=true (the Swipe File's set), then LEFT-embeds this
+// workspace's classification. Keep the post UNLESS this workspace explicitly
+// demoted it; a MISSING row falls back to the global verdict so the agent never
+// starves while the dashboard is full. Kept in sync with lib/agent/tools.ts.
+type WpcEmbed = {
+  workspace_post_classification?:
+    | Array<{ is_viral: boolean }>
+    | { is_viral: boolean }
+    | null;
+};
+function passesWorkspaceViral<T extends WpcEmbed>(row: T): boolean {
+  const wpc = row.workspace_post_classification;
+  const first = Array.isArray(wpc) ? wpc[0] : wpc;
+  return first ? first.is_viral === true : true;
+}
+
+// Drops the workspace_post_classification join wrapper and the is_viral gate
+// column (both query filters, not fields the model needs) and unwraps the
+// accounts embed.
 function normalizeEmbed<
   T extends { accounts: unknown; workspace_post_classification?: unknown },
 >(p: T, includeVisual = false) {
   const {
     workspace_post_classification: _wpc,
+    is_viral: _isViral,
     media_urls,
     visual_kind,
     ...rest
-  } = p as T & { media_urls?: unknown; visual_kind?: unknown };
+  } = p as T & { media_urls?: unknown; visual_kind?: unknown; is_viral?: unknown };
   void _wpc;
+  void _isViral;
   const post = {
     ...rest,
     accounts: Array.isArray(p.accounts) ? (p.accounts[0] ?? null) : p.accounts,
@@ -357,8 +384,8 @@ export function registerSwipeTools(server: McpServer) {
           .from("posts")
           .select(postColumns(includeVisual))
           .in("account_id", accountIds.length ? accountIds : [NO_ROWS_SENTINEL])
+          .eq("is_viral", true)
           .eq("workspace_post_classification.workspace_id", workspaceId)
-          .eq("workspace_post_classification.is_viral", true)
           .is("accounts.archived_at", null)
           .order(sortCol, { ascending, nullsFirst: false })
           .limit(limit);
@@ -376,7 +403,9 @@ export function registerSwipeTools(server: McpServer) {
 
         const { data, error } = await q;
         if (error) return dbErrorContent("search_viral_posts", error);
-        const posts = (data ?? []).map((post) => normalizeEmbed(post, includeVisual));
+        const posts = (data ?? [])
+          .filter(passesWorkspaceViral)
+          .map((post) => normalizeEmbed(post, includeVisual));
         return includeVisual
           ? await postContentWithRenderedImages({ ok: true, count: posts.length, posts }, posts)
           : jsonContent({ ok: true, count: posts.length, posts });
@@ -508,8 +537,8 @@ export function registerSwipeTools(server: McpServer) {
           .from("posts")
           .select(postColumns(includeVisual))
           .in("account_id", accountIds)
+          .eq("is_viral", true)
           .eq("workspace_post_classification.workspace_id", workspaceId)
-          .eq("workspace_post_classification.is_viral", true)
           .is("accounts.archived_at", null)
           .gte("posted_at", sinceIso)
           .order("reactions", { ascending: false, nullsFirst: false })
@@ -519,7 +548,9 @@ export function registerSwipeTools(server: McpServer) {
         if (post_type) q = q.eq("post_type", post_type);
         const { data, error } = await q;
         if (error) return dbErrorContent("get_top_from_batch", error);
-        const posts = (data ?? []).map((post) => normalizeEmbed(post, includeVisual));
+        const posts = (data ?? [])
+          .filter(passesWorkspaceViral)
+          .map((post) => normalizeEmbed(post, includeVisual));
         const payload = {
           ok: true,
           scrape: {
@@ -527,7 +558,7 @@ export function registerSwipeTools(server: McpServer) {
             posts_published_since: sinceIso,
             window_days: TOP_BATCH_WINDOW_DAYS,
           },
-          count: data?.length ?? 0,
+          count: posts.length,
           posts,
         };
         return includeVisual

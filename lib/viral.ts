@@ -56,9 +56,19 @@ export async function classifyPostForAllWorkspaces(
       .upsert(rows, { onConflict: "workspace_id,post_id" });
     if (upsertErr) throw upsertErr;
   } catch (e) {
-    console.warn(
-      `workspace_post_classification write failed for post ${postId}: ${(e as Error).message}`,
-    );
+    // Observable, NOT swallowed. This still never throws (a scrape must not
+    // fail because a per-workspace classification write hiccuped), but the old
+    // console.warn left dual-write failures invisible: a recent post could get
+    // NO classification row while posts.is_viral was still stamped, and the
+    // agent read (which now falls back to the global column on a missing row)
+    // would quietly diverge from the dashboard. Emit a structured console.error
+    // with a stable event key so log-based alerting can catch a rising failure
+    // rate instead of it hiding until a user reports "no verified evidence".
+    console.error("workspace_post_classification_write_failed", {
+      post_id: postId,
+      account_id: accountId,
+      message: (e as Error).message,
+    });
   }
 }
 
