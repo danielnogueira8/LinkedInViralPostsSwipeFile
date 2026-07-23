@@ -79,6 +79,46 @@ export function genericContextPlaceholder(prompt: string): string {
   return "What happened, what did you learn, and what should your audience take away?";
 }
 
+/**
+ * One shared readiness rule for the weekly cadence:
+ * - source-less story prompts need real user context;
+ * - source-modeled regular posts already have enough direction;
+ * - source-modeled lead magnets need only the resource they should promote.
+ */
+export function getWeekPlanDraftReadiness(input: {
+  kind: "opportunity" | "generic";
+  isLeadMagnet: boolean;
+  context: string | null | undefined;
+  leadMagnetId: string | null | undefined;
+}): {
+  ready: boolean;
+  needsContext: boolean;
+  needsLeadMagnet: boolean;
+} {
+  const needsContext =
+    input.kind === "generic" &&
+    (!input.context || input.context.trim().length < 12);
+  const needsLeadMagnet =
+    input.kind === "opportunity" &&
+    input.isLeadMagnet &&
+    !input.leadMagnetId;
+  return {
+    ready: !needsContext && !needsLeadMagnet,
+    needsContext,
+    needsLeadMagnet,
+  };
+}
+
+/** Resource state is meaningful only for modeled lead-magnet posts. */
+export function resolveWeekPlanLeadMagnetId(input: {
+  isLeadMagnet: boolean;
+  requestedLeadMagnetId: string | null | undefined;
+  storedLeadMagnetId: string | null | undefined;
+}): string | null {
+  if (!input.isLeadMagnet) return null;
+  return input.requestedLeadMagnetId ?? input.storedLeadMagnetId ?? null;
+}
+
 export type WeekPlanSlot =
   | { kind: "opportunity"; id: string }
   | { kind: "generic"; prompt: string };

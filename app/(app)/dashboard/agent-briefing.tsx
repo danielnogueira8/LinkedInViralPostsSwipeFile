@@ -21,7 +21,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { genericContextPlaceholder } from "@/lib/agent-loop/week-plan";
+import {
+  genericContextPlaceholder,
+  getWeekPlanDraftReadiness,
+} from "@/lib/agent-loop/week-plan";
 import { cn } from "@/lib/utils";
 import { invalidateNavBadges } from "./nav-badges";
 
@@ -32,8 +35,9 @@ import { invalidateNavBadges } from "./nav-badges";
 // ON the Posts board and marks it reviewed so it drops off this list for good)
 // and the currently proposed opportunities with one-click Draft it / dismiss.
 //
-// The weekly plan is a durable Monday–Sunday workspace record. Every card waits
-// for user direction before drafting; lead-magnet cards also choose a resource.
+// The weekly plan is a durable Monday–Sunday workspace record. Modeled posts
+// draft from their source; source-less story days need context, and modeled
+// lead-magnet posts need the resource they should promote.
 // -----------------------------------------------------------------------------
 
 type BriefingDraft = {
@@ -166,23 +170,13 @@ type LeadMagnetOption = {
 
 const EMPTY_BRIEFING: Briefing = { drafts: [], opportunities: [] };
 
-function directionFieldsReady(
-  context: string | null | undefined,
-  isLeadMagnet: boolean,
-  leadMagnetId: string | null | undefined,
-): boolean {
-  return (
-    Boolean(context && context.trim().length >= 12) &&
-    (!isLeadMagnet || Boolean(leadMagnetId))
-  );
-}
-
-function itemHasDirection(item: WeekPlanItem): boolean {
-  return directionFieldsReady(
-    item.userContext,
-    item.opportunity?.is_lead_magnet === true,
-    item.selectedLeadMagnetId,
-  );
+function itemDraftReadiness(item: WeekPlanItem) {
+  return getWeekPlanDraftReadiness({
+    kind: item.kind,
+    isLeadMagnet: item.opportunity?.is_lead_magnet === true,
+    context: item.userContext,
+    leadMagnetId: item.selectedLeadMagnetId,
+  });
 }
 
 function snippet(body: string, max = 110): string {
@@ -199,12 +193,12 @@ export function AgentBriefing() {
   const [weekPlan, setWeekPlan] = useState<WeekPlan | null>(null);
   const [planLoading, setPlanLoading] = useState(false);
   const [weekPlanError, setWeekPlanError] = useState<string | null>(null);
-  const [directionItemId, setDirectionItemId] = useState<string | null>(null);
-  const [directionContext, setDirectionContext] = useState("");
-  const [directionLeadMagnetId, setDirectionLeadMagnetId] = useState("");
+  const [requiredInputItemId, setRequiredInputItemId] = useState<string | null>(null);
+  const [requiredInputContext, setRequiredInputContext] = useState("");
+  const [requiredInputLeadMagnetId, setRequiredInputLeadMagnetId] = useState("");
   const [leadMagnetOptions, setLeadMagnetOptions] = useState<LeadMagnetOption[]>([]);
   const [leadMagnetsLoading, setLeadMagnetsLoading] = useState(false);
-  const [directionSaving, setDirectionSaving] = useState(false);
+  const [requiredInputSaving, setRequiredInputSaving] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -306,13 +300,13 @@ export function AgentBriefing() {
     }
   };
 
-  const directionItem =
-    weekPlan?.items.find((item) => item.id === directionItemId) ?? null;
+  const requiredInputItem =
+    weekPlan?.items.find((item) => item.id === requiredInputItemId) ?? null;
 
-  const openDirection = async (item: WeekPlanItem) => {
-    setDirectionItemId(item.id);
-    setDirectionContext(item.userContext ?? "");
-    setDirectionLeadMagnetId(item.selectedLeadMagnetId ?? "");
+  const openRequiredInput = async (item: WeekPlanItem) => {
+    setRequiredInputItemId(item.id);
+    setRequiredInputContext(item.userContext ?? "");
+    setRequiredInputLeadMagnetId(item.selectedLeadMagnetId ?? "");
     setActionError(null);
     if (!item.opportunity?.is_lead_magnet || leadMagnetOptions.length > 0) {
       return;
@@ -342,39 +336,45 @@ export function AgentBriefing() {
     }
   };
 
-  const saveDirection = async () => {
-    if (!directionItem || directionSaving) return;
-    setDirectionSaving(true);
+  const saveRequiredInput = async () => {
+    if (!requiredInputItem || requiredInputSaving) return;
+    setRequiredInputSaving(true);
     setActionError(null);
     try {
-      const res = await fetch(`/api/agent/week-plan/items/${directionItem.id}`, {
+      const res = await fetch(`/api/agent/week-plan/items/${requiredInputItem.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          context: directionContext,
-          leadMagnetId: directionItem.opportunity?.is_lead_magnet
-            ? directionLeadMagnetId || null
+          context:
+            requiredInputItem.kind === "generic" ? requiredInputContext : "",
+          leadMagnetId: requiredInputItem.opportunity?.is_lead_magnet
+            ? requiredInputLeadMagnetId || null
             : null,
         }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data?.ok) {
-        throw new Error(data?.error || "Couldn't save this direction.");
+        throw new Error(
+          data?.error ||
+            (requiredInputItem.opportunity?.is_lead_magnet
+              ? "Couldn't save this resource."
+              : "Couldn't save this direction."),
+        );
       }
       await loadWeekPlan();
-      setDirectionItemId(null);
+      setRequiredInputItemId(null);
     } catch (error) {
       setActionError((error as Error).message);
     } finally {
-      setDirectionSaving(false);
+      setRequiredInputSaving(false);
     }
   };
 
   const draftPlanItem = async (item: WeekPlanItem) => {
     if (busyId) return;
     const context = item.userContext ?? "";
-    if (!itemHasDirection(item)) {
-      await openDirection(item);
+    if (!itemDraftReadiness(item).ready) {
+      await openRequiredInput(item);
       return;
     }
     setBusyId(item.id);
@@ -385,8 +385,10 @@ export function AgentBriefing() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           itemId: item.id,
-          context,
-          leadMagnetId: item.selectedLeadMagnetId,
+          ...(item.kind === "generic" ? { context } : {}),
+          ...(item.opportunity?.is_lead_magnet
+            ? { leadMagnetId: item.selectedLeadMagnetId }
+            : {}),
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -412,17 +414,20 @@ export function AgentBriefing() {
   const activePlanItems = planItems.filter(
     (item) => item.status !== "dismissed",
   );
-  const directionReadyCount = activePlanItems.filter(
-    (item) => item.status === "drafted" || itemHasDirection(item),
+  const readyCount = activePlanItems.filter(
+    (item) => item.status === "drafted" || itemDraftReadiness(item).ready,
   ).length;
-  const directionNeededCount = activePlanItems.filter(
-    (item) => item.status === "planned" && !itemHasDirection(item),
+  const inputNeededCount = activePlanItems.filter(
+    (item) =>
+      item.status === "planned" && !itemDraftReadiness(item).ready,
   ).length;
-  const directionCanSave = directionFieldsReady(
-    directionContext,
-    directionItem?.opportunity?.is_lead_magnet === true,
-    directionLeadMagnetId,
-  );
+  const requiredInputCanSave = getWeekPlanDraftReadiness({
+    kind: requiredInputItem?.kind === "generic" ? "generic" : "opportunity",
+    isLeadMagnet:
+      requiredInputItem?.opportunity?.is_lead_magnet === true,
+    context: requiredInputContext,
+    leadMagnetId: requiredInputLeadMagnetId,
+  }).ready;
 
   // `overflow-x-hidden` also makes vertical overflow compute to `auto`. Clip
   // over-wide rows without turning the briefing card into its own scroller.
@@ -440,7 +445,7 @@ export function AgentBriefing() {
             <p className="text-xs text-muted-foreground">
               {planLoading && planItems.length === 0
                 ? "Loading Monday through Sunday…"
-                : `${directionNeededCount} slots need a direction`}
+                : `${inputNeededCount} slots need your input`}
             </p>
           </div>
           {planItems.length > 0 ? (
@@ -449,12 +454,12 @@ export function AgentBriefing() {
                 <div
                   className="h-full rounded-full bg-accent-brand transition-[width]"
                   style={{
-                    width: `${Math.round((directionReadyCount / Math.max(1, activePlanItems.length)) * 100)}%`,
+                    width: `${Math.round((readyCount / Math.max(1, activePlanItems.length)) * 100)}%`,
                   }}
                 />
               </div>
               <span className="text-xs font-semibold tabular-nums text-foreground">
-                {directionReadyCount}/{activePlanItems.length}
+                {readyCount}/{activePlanItems.length}
               </span>
             </div>
           ) : null}
@@ -490,7 +495,10 @@ export function AgentBriefing() {
           <ul className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-7">
             {planItems.map((item) => {
               const busy = busyId === item.id;
-              const directionReady = itemHasDirection(item);
+              const readiness = itemDraftReadiness(item);
+              const hasEditableInput =
+                item.kind === "generic" ||
+                item.opportunity?.is_lead_magnet === true;
               const title =
                 item.kind === "generic"
                   ? item.prompt
@@ -539,31 +547,39 @@ export function AgentBriefing() {
                     </span>
                   </p>
                   <p className="mt-2 text-[10px] text-muted-foreground">
-                    {item.opportunity?.is_lead_magnet
-                      ? "Direction + resource"
-                      : "Direction"}
+                    {item.kind === "generic"
+                      ? "Needs your story"
+                      : item.opportunity?.is_lead_magnet
+                        ? readiness.ready
+                          ? "Resource selected"
+                          : "Choose resource"
+                        : "Source ready"}
                   </p>
                   <div className="mt-auto pt-3">
-                    {directionReady && item.status === "planned" ? (
+                    {readiness.ready &&
+                    hasEditableInput &&
+                    item.status === "planned" ? (
                       <button
                         type="button"
-                        onClick={() => void openDirection(item)}
+                        onClick={() => void openRequiredInput(item)}
                         className="mb-1.5 w-full text-center text-[10px] font-medium text-muted-foreground hover:text-foreground"
                       >
-                        Edit direction
+                        {item.kind === "generic"
+                          ? "Edit direction"
+                          : "Edit resource"}
                       </button>
                     ) : null}
                     <button
                       type="button"
                       disabled={busyId !== null || item.status !== "planned"}
                       onClick={() =>
-                        directionReady
+                        readiness.ready
                           ? void draftPlanItem(item)
-                          : void openDirection(item)
+                          : void openRequiredInput(item)
                       }
                       className={cn(
                         "inline-flex w-full items-center justify-center gap-1 rounded-lg px-2 py-2 text-[11px] font-semibold transition-colors",
-                        directionReady
+                        readiness.ready
                           ? "bg-accent-brand text-accent-brand-foreground hover:bg-accent-brand/90"
                           : "border border-border bg-card text-foreground hover:border-accent-brand/40",
                         "disabled:cursor-not-allowed disabled:opacity-50",
@@ -576,9 +592,11 @@ export function AgentBriefing() {
                         ? "Draft saved"
                         : item.status === "dismissed"
                           ? "Skipped"
-                          : directionReady
+                          : readiness.ready
                             ? "Draft this"
-                            : "Choose direction"}
+                            : readiness.needsLeadMagnet
+                              ? "Choose resource"
+                              : "Choose direction"}
                       {item.status === "planned" && !busy ? (
                         <ChevronRight className="h-3 w-3" aria-hidden />
                       ) : null}
@@ -720,67 +738,74 @@ export function AgentBriefing() {
       )}
 
       <Dialog
-        open={Boolean(directionItem)}
+        open={Boolean(requiredInputItem)}
         onOpenChange={(open) => {
-          if (!open) setDirectionItemId(null);
+          if (!open) setRequiredInputItemId(null);
         }}
       >
         <DialogContent
           className="!bottom-0 !left-auto !right-0 !top-0 !flex !h-dvh !max-h-none !w-[min(460px,100vw)] !max-w-none !translate-x-0 !translate-y-0 flex-col overflow-y-auto rounded-none border-l border-border !bg-card p-5 shadow-2xl sm:rounded-l-2xl"
         >
           <DialogHeader className="pr-8">
-            <DialogTitle>Choose direction</DialogTitle>
+            <DialogTitle>
+              {requiredInputItem?.opportunity?.is_lead_magnet
+                ? "Choose resource"
+                : "Choose direction"}
+            </DialogTitle>
             <DialogDescription>
-              Give Cowork the facts and angle for this post. It will use this
-              direction instead of making up personal context.
+              {requiredInputItem?.opportunity?.is_lead_magnet
+                ? "The source already provides the post direction. Choose the lead magnet this modeled post should promote."
+                : "Give Cowork the real story behind this prompt so it does not make up personal context."}
             </DialogDescription>
           </DialogHeader>
 
-          {directionItem ? (
+          {requiredInputItem ? (
             <>
               <div className="rounded-xl border border-border bg-muted/40 p-3">
                 <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  <span>{directionItem.day}</span>
+                  <span>{requiredInputItem.day}</span>
                   <span aria-hidden>·</span>
                   <span>
-                    {directionItem.opportunity?.is_lead_magnet
+                    {requiredInputItem.opportunity?.is_lead_magnet
                       ? "Lead magnet"
                       : "Regular post"}
                   </span>
                 </div>
                 <p className="mt-2 text-sm font-medium leading-5 text-foreground">
-                  {directionItem.kind === "generic"
-                    ? directionItem.prompt
-                    : directionItem.opportunity?.headline}
+                  {requiredInputItem.kind === "generic"
+                    ? requiredInputItem.prompt
+                    : requiredInputItem.opportunity?.headline}
                 </p>
               </div>
 
-              <div>
-                <label
-                  htmlFor="weekly-direction-context"
-                  className="text-sm font-medium text-foreground"
-                >
-                  What should this post say?
-                </label>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Add the real example, opinion, result, or lesson Cowork should
-                  build around.
-                </p>
-                <textarea
-                  id="weekly-direction-context"
-                  autoFocus
-                  value={directionContext}
-                  onChange={(event) => setDirectionContext(event.target.value)}
-                  placeholder={
-                    directionItem.kind === "generic"
-                      ? genericContextPlaceholder(directionItem.prompt ?? "")
-                      : "What angle should Cowork take? Add any facts or examples it must include."
-                  }
-                  className="mt-2 min-h-40 w-full resize-y rounded-xl border border-border bg-card px-3 py-2.5 text-sm leading-5 text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-                />
-              </div>
+              {requiredInputItem.kind === "generic" ? (
+                <div>
+                  <label
+                    htmlFor="weekly-direction-context"
+                    className="text-sm font-medium text-foreground"
+                  >
+                    What should this post say?
+                  </label>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Add the real example, opinion, result, or lesson Cowork
+                    should build around.
+                  </p>
+                  <textarea
+                    id="weekly-direction-context"
+                    autoFocus
+                    value={requiredInputContext}
+                    onChange={(event) =>
+                      setRequiredInputContext(event.target.value)
+                    }
+                    placeholder={genericContextPlaceholder(
+                      requiredInputItem.prompt ?? "",
+                    )}
+                    className="mt-2 min-h-40 w-full resize-y rounded-xl border border-border bg-card px-3 py-2.5 text-sm leading-5 text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                  />
+                </div>
+              ) : null}
 
-              {directionItem.opportunity?.is_lead_magnet ? (
+              {requiredInputItem.opportunity?.is_lead_magnet ? (
                 <div>
                   <label
                     htmlFor="weekly-direction-resource"
@@ -793,9 +818,10 @@ export function AgentBriefing() {
                   </p>
                   <select
                     id="weekly-direction-resource"
-                    value={directionLeadMagnetId}
+                    autoFocus
+                    value={requiredInputLeadMagnetId}
                     onChange={(event) =>
-                      setDirectionLeadMagnetId(event.target.value)
+                      setRequiredInputLeadMagnetId(event.target.value)
                     }
                     disabled={leadMagnetsLoading}
                     className="mt-2 h-10 w-full rounded-xl border border-border bg-card px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:opacity-60"
@@ -834,21 +860,23 @@ export function AgentBriefing() {
           <DialogFooter className="-mx-5 -mb-5 mt-auto rounded-none bg-card">
             <button
               type="button"
-              onClick={() => setDirectionItemId(null)}
+              onClick={() => setRequiredInputItemId(null)}
               className="rounded-full border border-border bg-card px-4 py-2 text-sm font-medium text-foreground"
             >
               Cancel
             </button>
             <button
               type="button"
-              onClick={() => void saveDirection()}
-              disabled={!directionCanSave || directionSaving}
+              onClick={() => void saveRequiredInput()}
+              disabled={!requiredInputCanSave || requiredInputSaving}
               className="inline-flex items-center justify-center gap-1.5 rounded-full bg-accent-brand px-4 py-2 text-sm font-semibold text-accent-brand-foreground disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {directionSaving ? (
+              {requiredInputSaving ? (
                 <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
               ) : null}
-              Save direction
+              {requiredInputItem?.opportunity?.is_lead_magnet
+                ? "Save resource"
+                : "Save direction"}
             </button>
           </DialogFooter>
         </DialogContent>
