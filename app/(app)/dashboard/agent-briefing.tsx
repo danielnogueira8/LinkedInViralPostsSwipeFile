@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  X,
   Loader2,
   Magnet,
   ArrowRight,
@@ -710,11 +709,10 @@ export function AgentBriefing() {
                         type="button"
                         disabled={busyId !== null}
                         onClick={() => void act(opportunity.id, "dismiss")}
-                        className="grid size-8 shrink-0 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
-                        aria-label="Not relevant"
-                        title="Not relevant — show me less of this"
+                        className="inline-flex shrink-0 items-center rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:border-destructive/30 hover:text-destructive disabled:opacity-50"
+                        title="Discard this suggestion"
                       >
-                        <X className="h-3.5 w-3.5" aria-hidden />
+                        Discard
                       </button>
                     </>
                   }

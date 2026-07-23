@@ -80,6 +80,7 @@ describe("Agent opportunity source-post cards", () => {
     expect(POST_CARD).toContain("showDefaultActions = true");
     expect(BRIEFING_UI).toContain("showDefaultActions={false}");
     expect(BRIEFING_UI).toContain("Draft it");
-    expect(BRIEFING_UI).toContain('aria-label="Not relevant"');
+    expect(BRIEFING_UI).toContain("Discard");
+    expect(BRIEFING_UI).not.toContain('aria-label="Not relevant"');
   });
 });

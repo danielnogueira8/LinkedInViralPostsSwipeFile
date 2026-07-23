@@ -84,7 +84,7 @@ test("Agent opportunities show the complete Swipe File post card", async ({
     card.getByRole("button", { name: "Model with Cowork" }),
   ).toHaveCount(0);
   await expect(card.getByRole("button", { name: "Draft it" })).toBeVisible();
-  await expect(card.getByRole("button", { name: "Not relevant" })).toBeVisible();
+  await expect(card.getByRole("button", { name: "Discard" })).toBeVisible();
 });
 
 test("Your Agent keeps a visible seven-day cadence", async ({ page }) => {
