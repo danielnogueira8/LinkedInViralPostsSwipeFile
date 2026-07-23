@@ -37,6 +37,23 @@ export type AgentOpportunityRow = {
   } | null;
 };
 
+type OpportunityStatusPolicy = "manage" | "preserve";
+
+async function updateOpportunityStatus(
+  sb: SupabaseClient,
+  workspaceId: string,
+  opportunityId: string,
+  policy: OpportunityStatusPolicy,
+  values: Record<string, unknown>,
+): Promise<void> {
+  if (policy === "preserve") return;
+  await sb
+    .from("agent_opportunities")
+    .update(values)
+    .eq("id", opportunityId)
+    .eq("workspace_id", workspaceId);
+}
+
 async function getOrCreateSystemChat(
   sb: SupabaseClient,
   workspaceId: string,
@@ -269,16 +286,22 @@ export async function actOnOpportunity(
     userContext?: string;
     leadMagnetId?: string;
   },
+  options?: {
+    statusPolicy?: OpportunityStatusPolicy;
+  },
 ): Promise<{ ok: true; draftIds: string[] } | { ok: false; reason: string }> {
   if (!opportunity.source_post_id) {
     return { ok: false, reason: "missing_source" };
   }
 
-  await sb
-    .from("agent_opportunities")
-    .update({ status: "drafting" })
-    .eq("id", opportunity.id)
-    .eq("workspace_id", workspaceId);
+  const statusPolicy = options?.statusPolicy ?? "manage";
+  await updateOpportunityStatus(
+    sb,
+    workspaceId,
+    opportunity.id,
+    statusPolicy,
+    { status: "drafting" },
+  );
 
   try {
     const source = await createModelingSource(
@@ -321,24 +344,28 @@ export async function actOnOpportunity(
       },
       opportunity.id,
     );
-    await sb
-      .from("agent_opportunities")
-      .update({
+    await updateOpportunityStatus(
+      sb,
+      workspaceId,
+      opportunity.id,
+      statusPolicy,
+      {
         status: "drafted",
         drafted_artifact_id: draftIds[0],
         acted_at: new Date().toISOString(),
-      })
-      .eq("id", opportunity.id)
-      .eq("workspace_id", workspaceId);
+      },
+    );
     return { ok: true, draftIds };
   } catch (error) {
-    // Leave the opportunity proposed so the next run retries it once; the
-    // scanner's 5-day expiry eventually cleans it up.
-    await sb
-      .from("agent_opportunities")
-      .update({ status: "proposed" })
-      .eq("id", opportunity.id)
-      .eq("workspace_id", workspaceId);
+    // Managed feed work returns to proposed so it can retry. Cadence work
+    // preserves a prior feed dismissal, keeping the two surfaces independent.
+    await updateOpportunityStatus(
+      sb,
+      workspaceId,
+      opportunity.id,
+      statusPolicy,
+      { status: "proposed" },
+    );
     return {
       ok: false,
       reason: error instanceof Error ? error.message : String(error),

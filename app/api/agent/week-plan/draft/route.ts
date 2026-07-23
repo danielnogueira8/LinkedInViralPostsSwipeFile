@@ -143,14 +143,21 @@ export async function POST(req: Request) {
         .eq("workspace_id", sb.workspaceId)
         .maybeSingle();
       if (opportunityError) throw opportunityError;
-      if (!opportunity || opportunity.status !== "proposed") {
+      if (
+        !opportunity ||
+        (opportunity.status !== "proposed" &&
+          opportunity.status !== "dismissed")
+      ) {
         throw new Error("This source was already handled.");
       }
+      const statusPolicy =
+        opportunity.status === "dismissed" ? "preserve" : "manage";
       const result = await actOnOpportunity(
         sb.raw,
         sb.workspaceId,
         opportunity as AgentOpportunityRow,
         leadMagnetId ? { leadMagnetId } : undefined,
+        { statusPolicy },
       );
       if (!result.ok) throw new Error(result.reason);
       await updateStatus("drafted", "drafting", result.draftIds[0]);

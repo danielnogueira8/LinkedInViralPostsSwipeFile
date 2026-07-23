@@ -10,7 +10,11 @@ import {
   resolveWeekPlanLeadMagnetId,
   workWeekDays,
 } from "@/lib/agent-loop/week-plan";
-import { findLegacyGenericDraftId } from "@/lib/agent-loop/week-plan-store";
+import {
+  findLegacyGenericDraftId,
+  reopenLegacyDismissedOpportunityItems,
+  type StoredWeekPlan,
+} from "@/lib/agent-loop/week-plan-store";
 
 describe("nextDays", () => {
   test("starts tomorrow and includes weekends", () => {
@@ -117,6 +121,46 @@ describe("composeWeekPlan", () => {
 });
 
 describe("persistent weekly-plan helpers", () => {
+  test("reopens opportunity cards skipped by the legacy Agent-feed coupling", () => {
+    const plan: StoredWeekPlan = {
+      version: 1,
+      weekStart: "2026-07-20",
+      items: Array.from({ length: 7 }, (_, index) => ({
+        id: `item-${index}`,
+        day: `day-${index}`,
+        date: `2026-07-${String(20 + index).padStart(2, "0")}`,
+        kind: index === 1 ? ("generic" as const) : ("opportunity" as const),
+        prompt: index === 1 ? "Tell a real story" : null,
+        userContext: null,
+        selectedLeadMagnetId: null,
+        status:
+          index === 0 || index === 1
+            ? ("dismissed" as const)
+            : index === 2
+              ? ("drafted" as const)
+              : ("planned" as const),
+        draftId: null,
+        ...(index === 1
+          ? {}
+          : {
+              opportunity: {
+                id: `opportunity-${index}`,
+                headline: `Source ${index}`,
+                is_lead_magnet: false,
+                author_avatar: null,
+                source_post_id: `post-${index}`,
+              },
+            }),
+      })),
+    };
+
+    const restored = reopenLegacyDismissedOpportunityItems(plan);
+
+    expect(restored.items[0].status).toBe("planned");
+    expect(restored.items[1].status).toBe("dismissed");
+    expect(restored.items[2].status).toBe("drafted");
+  });
+
   test("includes Monday through Sunday", () => {
     const days = workWeekDays(new Date("2026-07-20T12:00:00Z"));
     expect(days).toEqual([
