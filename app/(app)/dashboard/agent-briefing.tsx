@@ -2,9 +2,25 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { X, Loader2, Magnet, ArrowRight, Lightbulb } from "lucide-react";
+import {
+  X,
+  Loader2,
+  Magnet,
+  ArrowRight,
+  Lightbulb,
+  CalendarDays,
+  ChevronRight,
+} from "lucide-react";
 import { AiIcon } from "@/components/ai-icon";
 import { AvatarImg } from "@/components/avatar-img";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { genericContextPlaceholder } from "@/lib/agent-loop/week-plan";
 import { cn } from "@/lib/utils";
 
@@ -17,8 +33,8 @@ import { cn } from "@/lib/utils";
 // ON the Posts board and marks it reviewed so it drops off this list for good)
 // and the currently proposed opportunities with one-click Draft it / dismiss.
 //
-// The weekly plan is a durable Monday–Sunday workspace record. Generic cards
-// wait for real user context before they can draft; source-backed cards do not.
+// The weekly plan is a durable Monday–Sunday workspace record. Every card waits
+// for user direction before drafting; lead-magnet cards also choose a resource.
 // -----------------------------------------------------------------------------
 
 type BriefingDraft = {
@@ -127,7 +143,7 @@ type WeekPlanItem = {
   date: string;
   kind: "opportunity" | "generic";
   opportunity?: {
-    id: string;
+    id: string | null;
     headline: string;
     is_lead_magnet?: boolean;
     author_avatar?: string | null;
@@ -135,6 +151,7 @@ type WeekPlanItem = {
   /** Generic "your story" day: the under-the-hood drafting prompt. */
   prompt: string | null;
   userContext: string | null;
+  selectedLeadMagnetId: string | null;
   status: "planned" | "drafting" | "drafted" | "dismissed";
 };
 
@@ -142,6 +159,32 @@ type WeekPlan = {
   gapNote: string | null;
   items: WeekPlanItem[];
 };
+
+type LeadMagnetOption = {
+  id: string;
+  title: string;
+};
+
+const EMPTY_BRIEFING: Briefing = { drafts: [], opportunities: [] };
+
+function directionFieldsReady(
+  context: string | null | undefined,
+  isLeadMagnet: boolean,
+  leadMagnetId: string | null | undefined,
+): boolean {
+  return (
+    Boolean(context && context.trim().length >= 12) &&
+    (!isLeadMagnet || Boolean(leadMagnetId))
+  );
+}
+
+function itemHasDirection(item: WeekPlanItem): boolean {
+  return directionFieldsReady(
+    item.userContext,
+    item.opportunity?.is_lead_magnet === true,
+    item.selectedLeadMagnetId,
+  );
+}
 
 function snippet(body: string, max = 110): string {
   const clean = body.replace(/\s+/g, " ").trim();
@@ -156,13 +199,19 @@ export function AgentBriefing({
   onCountsChange?: (counts: { drafts: number; opportunities: number }) => void;
 } = {}) {
   const router = useRouter();
-  const [briefing, setBriefing] = useState<Briefing | null>(null);
+  const [briefing, setBriefing] = useState<Briefing>(EMPTY_BRIEFING);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   // One durable Monday–Sunday plan is loaded automatically for this workspace.
   const [weekPlan, setWeekPlan] = useState<WeekPlan | null>(null);
   const [planLoading, setPlanLoading] = useState(false);
-  const [contextByItem, setContextByItem] = useState<Record<string, string>>({});
+  const [weekPlanError, setWeekPlanError] = useState<string | null>(null);
+  const [directionItemId, setDirectionItemId] = useState<string | null>(null);
+  const [directionContext, setDirectionContext] = useState("");
+  const [directionLeadMagnetId, setDirectionLeadMagnetId] = useState("");
+  const [leadMagnetOptions, setLeadMagnetOptions] = useState<LeadMagnetOption[]>([]);
+  const [leadMagnetsLoading, setLeadMagnetsLoading] = useState(false);
+  const [directionSaving, setDirectionSaving] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -198,9 +247,10 @@ export function AgentBriefing({
   // The mark is best-effort: even if it fails we still navigate, because the
   // deep-linked modal is what the user asked for.
   const review = (draftId: string) => {
-    setBriefing((cur) =>
-      cur ? { ...cur, drafts: cur.drafts.filter((d) => d.id !== draftId) } : cur,
-    );
+    setBriefing((cur) => ({
+      ...cur,
+      drafts: cur.drafts.filter((d) => d.id !== draftId),
+    }));
     void fetch("/api/agent/briefing/reviewed", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -213,6 +263,7 @@ export function AgentBriefing({
 
   const loadWeekPlan = useCallback(async () => {
     setPlanLoading(true);
+    setWeekPlanError(null);
     try {
       const res = await fetch("/api/agent/week-plan", { cache: "no-store" });
       const data = await res.json().catch(() => ({}));
@@ -221,9 +272,11 @@ export function AgentBriefing({
           gapNote: typeof data.gapNote === "string" ? data.gapNote : null,
           items: Array.isArray(data.items) ? data.items : [],
         });
+      } else {
+        setWeekPlanError(data?.error || "Your weekly cadence couldn't load.");
       }
     } catch {
-      // Fail-open: the plan just doesn't open.
+      setWeekPlanError("Your weekly cadence couldn't load.");
     } finally {
       setPlanLoading(false);
     }
@@ -251,6 +304,7 @@ export function AgentBriefing({
         throw new Error(data?.error || "Couldn't do that — try again.");
       }
       await refresh();
+      await loadWeekPlan();
     } catch (error) {
       setActionError((error as Error).message);
     } finally {
@@ -258,24 +312,75 @@ export function AgentBriefing({
     }
   };
 
-  const saveContext = async (itemId: string, context: string) => {
-    const res = await fetch(`/api/agent/week-plan/items/${itemId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ context }),
-    });
-    // A Draft click claims the card concurrently with its textarea blur. The
-    // draft request persists the same context, so a late "no longer editable"
-    // response is expected and must not turn a successful draft into an error.
-    if (res.status === 409) return;
-    if (!res.ok) throw new Error("Couldn't save your context — try again.");
+  const directionItem =
+    weekPlan?.items.find((item) => item.id === directionItemId) ?? null;
+
+  const openDirection = async (item: WeekPlanItem) => {
+    setDirectionItemId(item.id);
+    setDirectionContext(item.userContext ?? "");
+    setDirectionLeadMagnetId(item.selectedLeadMagnetId ?? "");
+    setActionError(null);
+    if (!item.opportunity?.is_lead_magnet || leadMagnetOptions.length > 0) {
+      return;
+    }
+    setLeadMagnetsLoading(true);
+    try {
+      const res = await fetch("/api/lead-magnets", { cache: "no-store" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.ok) throw new Error("Couldn't load your resources.");
+      setLeadMagnetOptions(
+        (Array.isArray(data.leadMagnets) ? data.leadMagnets : [])
+          .filter(
+            (item: unknown): item is LeadMagnetOption =>
+              Boolean(
+                item &&
+                  typeof item === "object" &&
+                  typeof (item as LeadMagnetOption).id === "string" &&
+                  typeof (item as LeadMagnetOption).title === "string",
+              ),
+          )
+          .map(({ id, title }: LeadMagnetOption) => ({ id, title })),
+      );
+    } catch (error) {
+      setActionError((error as Error).message);
+    } finally {
+      setLeadMagnetsLoading(false);
+    }
+  };
+
+  const saveDirection = async () => {
+    if (!directionItem || directionSaving) return;
+    setDirectionSaving(true);
+    setActionError(null);
+    try {
+      const res = await fetch(`/api/agent/week-plan/items/${directionItem.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          context: directionContext,
+          leadMagnetId: directionItem.opportunity?.is_lead_magnet
+            ? directionLeadMagnetId || null
+            : null,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.ok) {
+        throw new Error(data?.error || "Couldn't save this direction.");
+      }
+      await loadWeekPlan();
+      setDirectionItemId(null);
+    } catch (error) {
+      setActionError((error as Error).message);
+    } finally {
+      setDirectionSaving(false);
+    }
   };
 
   const draftPlanItem = async (item: WeekPlanItem) => {
     if (busyId) return;
-    const context = contextByItem[item.id] ?? item.userContext ?? "";
-    if (item.kind === "generic" && context.trim().length < 12) {
-      setActionError("Add a little real context before drafting this post.");
+    const context = item.userContext ?? "";
+    if (!itemHasDirection(item)) {
+      await openDirection(item);
       return;
     }
     setBusyId(item.id);
@@ -286,7 +391,8 @@ export function AgentBriefing({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           itemId: item.id,
-          ...(item.kind === "generic" ? { context } : {}),
+          context,
+          leadMagnetId: item.selectedLeadMagnetId,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -302,15 +408,26 @@ export function AgentBriefing({
     }
   };
 
-  // Until the first fetch lands, render nothing (avoids a flash of the empty
-  // state). After it lands we always render the panel — even when empty — so the
-  // pinned "Your Agent" destination is never a dead click.
-  if (!briefing) return null;
   const { drafts, opportunities } = briefing;
   const isEmpty = drafts.length === 0 && opportunities.length === 0;
   // Two columns only when there's something in BOTH sections — otherwise the
   // lone section spans the full width instead of leaving a dead column.
   const twoColumns = drafts.length > 0 && opportunities.length > 0;
+  const planItems = weekPlan?.items ?? [];
+  const activePlanItems = planItems.filter(
+    (item) => item.status !== "dismissed",
+  );
+  const directionReadyCount = activePlanItems.filter(
+    (item) => item.status === "drafted" || itemHasDirection(item),
+  ).length;
+  const directionNeededCount = activePlanItems.filter(
+    (item) => item.status === "planned" && !itemHasDirection(item),
+  ).length;
+  const directionCanSave = directionFieldsReady(
+    directionContext,
+    directionItem?.opportunity?.is_lead_magnet === true,
+    directionLeadMagnetId,
+  );
 
   // `overflow-x-hidden` also makes vertical overflow compute to `auto`. Clip
   // over-wide rows without turning the briefing card into its own scroller.
@@ -330,105 +447,139 @@ export function AgentBriefing({
         {planLoading ? <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" aria-label="Loading your weekly plan" /> : null}
       </div>
 
-      {weekPlan && (
-        <div className="mt-4 rounded-xl border border-accent-brand/20 bg-accent-brand/[0.04] p-3">
-          <div className="flex items-center justify-between gap-2">
+      <div className="mt-4" data-testid="weekly-cadence">
+        <div className="flex items-center gap-3 rounded-xl border border-border bg-background px-3 py-3 shadow-sm">
+          <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-muted text-foreground">
+            <CalendarDays className="h-4 w-4" aria-hidden />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold text-foreground">
+              This week&apos;s cadence
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {planLoading && planItems.length === 0
+                ? "Loading Monday through Sunday…"
+                : `${directionNeededCount} slots need a direction`}
+            </p>
+          </div>
+          {planItems.length > 0 ? (
+            <div className="flex shrink-0 items-center gap-2">
+              <div className="hidden h-1.5 w-28 overflow-hidden rounded-full bg-muted sm:block">
+                <div
+                  className="h-full rounded-full bg-accent-brand transition-[width]"
+                  style={{
+                    width: `${Math.round((directionReadyCount / Math.max(1, activePlanItems.length)) * 100)}%`,
+                  }}
+                />
+              </div>
+              <span className="text-xs font-semibold tabular-nums text-foreground">
+                {directionReadyCount}/{activePlanItems.length}
+              </span>
+            </div>
+          ) : null}
+        </div>
+
+        {weekPlanError && planItems.length === 0 ? (
+          <div className="mt-2 flex min-h-44 items-center justify-center rounded-xl border border-dashed border-border bg-background/70 px-4 text-center">
             <div>
-              <p className="text-xs font-medium uppercase tracking-wide text-accent-brand">
-                Your week
+              <p className="text-sm font-medium text-foreground">
+                Your week is temporarily unavailable.
               </p>
-              <p className="mt-0.5 text-[11px] text-muted-foreground">
-                Your plan stays here all week. Add the real context behind any idea card before drafting.
+              <p className="mt-1 text-xs text-muted-foreground">
+                The cadence stays here while we reconnect to its saved plan.
               </p>
+              <button
+                type="button"
+                onClick={() => void loadWeekPlan()}
+                className="mt-3 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground hover:border-accent-brand/40"
+              >
+                Retry
+              </button>
             </div>
           </div>
-          {weekPlan.gapNote && (
-            <p className="mt-1 text-xs text-muted-foreground">{weekPlan.gapNote}</p>
-          )}
-          {weekPlan.items.length === 0 ? (
-            <p className="mt-2 text-xs text-muted-foreground">
-              No fresh signals to plan around yet — check back after the next
-              scrape of your tracked creators.
-            </p>
-          ) : (
-            <ul className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-7">
-              {weekPlan.items.map((item) => {
-                const busy = busyId === item.id;
-                const context = contextByItem[item.id] ?? item.userContext ?? "";
-                const needsContext = item.kind === "generic";
-                return (
-                  <li
-                    key={item.id}
-                    className="flex min-w-0 flex-col rounded-lg border border-border/70 bg-background/70 p-2.5"
-                  >
-                    <span className="text-xs font-semibold text-accent-brand">
-                      {item.day}
-                    </span>
-                    <div className="mt-1 flex min-w-0 items-start gap-1.5">
-                      {item.kind === "generic" ? (
-                        <span
-                          role="img"
-                          className="mt-0.5 grid size-5 shrink-0 place-items-center rounded-md bg-muted text-muted-foreground"
-                          aria-label="Needs your context before drafting"
-                        >
-                          <Lightbulb className="h-3 w-3" aria-hidden />
-                        </span>
-                      ) : (
-                        <>
-                        {item.opportunity?.is_lead_magnet ? (
-                          <LeadMagnetBadge
-                            hintId={`week-plan-lead-magnet-${item.id}`}
-                          />
-                        ) : null}
-                        <CreatorAvatar
-                          src={item.opportunity?.author_avatar}
-                          name={item.opportunity?.headline ?? "?"}
-                        />
-                        </>
-                      )}
-                      <p className="min-w-0 text-xs leading-4 text-foreground">
-                        {item.kind === "generic" ? (
-                          <span className="capitalize">{item.prompt}</span>
-                        ) : item.opportunity?.headline}
+        ) : null}
+
+        {planItems.length > 0 ? (
+          <ul className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-7">
+            {planItems.map((item) => {
+              const busy = busyId === item.id;
+              const directionReady = itemHasDirection(item);
+              const title =
+                item.kind === "generic"
+                  ? item.prompt
+                  : item.opportunity?.headline;
+              return (
+                <li
+                  key={item.id}
+                  data-testid="weekly-cadence-card"
+                  className="flex min-h-56 min-w-0 flex-col rounded-xl border border-border bg-background p-3 shadow-sm"
+                >
+                  <div className="flex items-start justify-between gap-1.5">
+                    <div>
+                      <p className="text-xs font-semibold text-foreground">
+                        {item.day}
+                      </p>
+                      <p className="text-[11px] text-muted-foreground">
+                        {new Date(`${item.date}T00:00:00`).toLocaleDateString(
+                          "en-US",
+                          { month: "short", day: "numeric" },
+                        )}
                       </p>
                     </div>
-                    {needsContext ? (
-                      <div className="mt-2">
-                        <label className="sr-only" htmlFor={`week-plan-context-${item.id}`}>
-                          Your context for {item.prompt}
-                        </label>
-                        <textarea
-                          id={`week-plan-context-${item.id}`}
-                          value={context}
-                          onChange={(event) =>
-                            setContextByItem((current) => ({
-                              ...current,
-                              [item.id]: event.target.value,
-                            }))
-                          }
-                          onBlur={() => {
-                            void saveContext(item.id, context).catch((error: Error) =>
-                              setActionError(error.message),
-                            );
-                          }}
-                          disabled={item.status !== "planned" || busyId !== null}
-                          placeholder={genericContextPlaceholder(item.prompt ?? "")}
-                          className="min-h-20 w-full resize-y rounded-md border border-border bg-card px-2 py-1.5 text-xs leading-4 text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:opacity-60"
-                        />
-                        <p className="mt-1 text-[10px] leading-3 text-muted-foreground">
-                          {item.prompt?.toLowerCase().includes("changed your mind")
-                            ? "What you believed before, what changed it, and what you believe now."
-                            : "The event, example, or belief Cowork should use — never make it up."}
-                        </p>
-                      </div>
+                    {item.kind === "generic" ? (
+                      <span
+                        role="img"
+                        aria-label="Needs your direction"
+                        className="grid size-6 shrink-0 place-items-center rounded-md bg-muted text-muted-foreground"
+                      >
+                        <Lightbulb className="h-3.5 w-3.5" aria-hidden />
+                      </span>
+                    ) : (
+                      <CreatorAvatar
+                        src={item.opportunity?.author_avatar}
+                        name={item.opportunity?.headline ?? "?"}
+                      />
+                    )}
+                  </div>
+                  <p className="mt-4 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    {item.opportunity?.is_lead_magnet
+                      ? "Lead magnet"
+                      : "Regular post"}
+                  </p>
+                  <p className="mt-1 line-clamp-5 text-xs font-medium leading-4 text-foreground">
+                    <span className={cn(item.kind === "generic" && "capitalize")}>
+                      {title}
+                    </span>
+                  </p>
+                  <p className="mt-2 text-[10px] text-muted-foreground">
+                    {item.opportunity?.is_lead_magnet
+                      ? "Direction + resource"
+                      : "Direction"}
+                  </p>
+                  <div className="mt-auto pt-3">
+                    {directionReady && item.status === "planned" ? (
+                      <button
+                        type="button"
+                        onClick={() => void openDirection(item)}
+                        className="mb-1.5 w-full text-center text-[10px] font-medium text-muted-foreground hover:text-foreground"
+                      >
+                        Edit direction
+                      </button>
                     ) : null}
                     <button
                       type="button"
-                      disabled={busyId !== null || item.status !== "planned" || (needsContext && context.trim().length < 12)}
-                      onClick={() => void draftPlanItem(item)}
+                      disabled={busyId !== null || item.status !== "planned"}
+                      onClick={() =>
+                        directionReady
+                          ? void draftPlanItem(item)
+                          : void openDirection(item)
+                      }
                       className={cn(
-                        "mt-2 inline-flex w-full items-center justify-center gap-1 rounded-full bg-accent-brand px-2 py-1.5 text-[11px] font-medium text-accent-brand-foreground",
-                        "transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50",
+                        "inline-flex w-full items-center justify-center gap-1 rounded-lg px-2 py-2 text-[11px] font-semibold transition-colors",
+                        directionReady
+                          ? "bg-accent-brand text-accent-brand-foreground hover:bg-accent-brand/90"
+                          : "border border-border bg-card text-foreground hover:border-accent-brand/40",
+                        "disabled:cursor-not-allowed disabled:opacity-50",
                       )}
                     >
                       {busy ? (
@@ -438,15 +589,25 @@ export function AgentBriefing({
                         ? "Draft saved"
                         : item.status === "dismissed"
                           ? "Skipped"
-                          : "Draft this"}
+                          : directionReady
+                            ? "Draft this"
+                            : "Choose direction"}
+                      {item.status === "planned" && !busy ? (
+                        <ChevronRight className="h-3 w-3" aria-hidden />
+                      ) : null}
                     </button>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </div>
-      )}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        ) : null}
+        {weekPlan?.gapNote ? (
+          <p className="mt-2 text-xs text-muted-foreground">
+            {weekPlan.gapNote}
+          </p>
+        ) : null}
+      </div>
 
       {isEmpty && (
         <p className="mt-4 rounded-xl border border-dashed border-border bg-background/60 px-3 py-4 text-center text-xs text-muted-foreground">
@@ -570,6 +731,141 @@ export function AgentBriefing({
           publish it from there.
         </p>
       )}
+
+      <Dialog
+        open={Boolean(directionItem)}
+        onOpenChange={(open) => {
+          if (!open) setDirectionItemId(null);
+        }}
+      >
+        <DialogContent
+          className="!bottom-0 !left-auto !right-0 !top-0 !flex !h-dvh !max-h-none !w-[min(460px,100vw)] !max-w-none !translate-x-0 !translate-y-0 flex-col overflow-y-auto rounded-none border-l border-border !bg-card p-5 shadow-2xl sm:rounded-l-2xl"
+        >
+          <DialogHeader className="pr-8">
+            <DialogTitle>Choose direction</DialogTitle>
+            <DialogDescription>
+              Give Cowork the facts and angle for this post. It will use this
+              direction instead of making up personal context.
+            </DialogDescription>
+          </DialogHeader>
+
+          {directionItem ? (
+            <>
+              <div className="rounded-xl border border-border bg-muted/40 p-3">
+                <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  <span>{directionItem.day}</span>
+                  <span aria-hidden>·</span>
+                  <span>
+                    {directionItem.opportunity?.is_lead_magnet
+                      ? "Lead magnet"
+                      : "Regular post"}
+                  </span>
+                </div>
+                <p className="mt-2 text-sm font-medium leading-5 text-foreground">
+                  {directionItem.kind === "generic"
+                    ? directionItem.prompt
+                    : directionItem.opportunity?.headline}
+                </p>
+              </div>
+
+              <div>
+                <label
+                  htmlFor="weekly-direction-context"
+                  className="text-sm font-medium text-foreground"
+                >
+                  What should this post say?
+                </label>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Add the real example, opinion, result, or lesson Cowork should
+                  build around.
+                </p>
+                <textarea
+                  id="weekly-direction-context"
+                  autoFocus
+                  value={directionContext}
+                  onChange={(event) => setDirectionContext(event.target.value)}
+                  placeholder={
+                    directionItem.kind === "generic"
+                      ? genericContextPlaceholder(directionItem.prompt ?? "")
+                      : "What angle should Cowork take? Add any facts or examples it must include."
+                  }
+                  className="mt-2 min-h-40 w-full resize-y rounded-xl border border-border bg-card px-3 py-2.5 text-sm leading-5 text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                />
+              </div>
+
+              {directionItem.opportunity?.is_lead_magnet ? (
+                <div>
+                  <label
+                    htmlFor="weekly-direction-resource"
+                    className="text-sm font-medium text-foreground"
+                  >
+                    Resource to promote
+                  </label>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Choose the lead magnet this post should offer.
+                  </p>
+                  <select
+                    id="weekly-direction-resource"
+                    value={directionLeadMagnetId}
+                    onChange={(event) =>
+                      setDirectionLeadMagnetId(event.target.value)
+                    }
+                    disabled={leadMagnetsLoading}
+                    className="mt-2 h-10 w-full rounded-xl border border-border bg-card px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:opacity-60"
+                  >
+                    <option value="">
+                      {leadMagnetsLoading
+                        ? "Loading resources…"
+                        : "Choose a lead magnet"}
+                    </option>
+                    {leadMagnetOptions.map((leadMagnet) => (
+                      <option key={leadMagnet.id} value={leadMagnet.id}>
+                        {leadMagnet.title}
+                      </option>
+                    ))}
+                  </select>
+                  {!leadMagnetsLoading && leadMagnetOptions.length === 0 ? (
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      No resources yet.{" "}
+                      <a
+                        href="/dashboard/lead-magnets"
+                        className="font-medium text-foreground underline underline-offset-2"
+                      >
+                        Create a lead magnet
+                      </a>
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {actionError ? (
+                <p className="text-xs text-destructive">{actionError}</p>
+              ) : null}
+            </>
+          ) : null}
+
+          <DialogFooter className="-mx-5 -mb-5 mt-auto rounded-none bg-card">
+            <button
+              type="button"
+              onClick={() => setDirectionItemId(null)}
+              className="rounded-full border border-border bg-card px-4 py-2 text-sm font-medium text-foreground"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => void saveDirection()}
+              disabled={!directionCanSave || directionSaving}
+              className="inline-flex items-center justify-center gap-1.5 rounded-full bg-accent-brand px-4 py-2 text-sm font-semibold text-accent-brand-foreground disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {directionSaving ? (
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+              ) : null}
+              Save direction
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </section>
   );
 }

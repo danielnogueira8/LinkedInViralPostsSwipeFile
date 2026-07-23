@@ -3,6 +3,8 @@ import { z } from "zod";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
 import { actOnOpportunity, type AgentOpportunityRow } from "@/lib/agent-loop/act";
+import { weekStart } from "@/lib/agent-loop/week-plan";
+import { syncStoredOpportunity } from "@/lib/agent-loop/week-plan-store";
 
 export const runtime = "nodejs";
 // "Draft it" runs a full chat turn (voice load + writer + save).
@@ -48,13 +50,13 @@ export async function POST(
         .eq("id", id)
         .eq("workspace_id", sb.workspaceId);
       if (dismissError) throw dismissError;
-      const { error: planError } = await sb.raw
-        .from("agent_week_plan_items")
-        .update({ status: "dismissed", updated_at: new Date().toISOString() })
-        .eq("workspace_id", sb.workspaceId)
-        .eq("opportunity_id", id)
-        .eq("status", "planned");
-      if (planError) throw planError;
+      await syncStoredOpportunity(
+        sb.raw,
+        sb.workspaceId,
+        weekStart(),
+        id,
+        "dismissed",
+      );
       return NextResponse.json({ ok: true, status: "dismissed" });
     }
 
@@ -73,17 +75,13 @@ export async function POST(
     if (!result.ok) {
       return errorResponse(new Error(result.reason));
     }
-    const { error: planError } = await sb.raw
-      .from("agent_week_plan_items")
-      .update({
-        status: "drafted",
-        drafted_artifact_id: result.draftIds[0],
-        updated_at: new Date().toISOString(),
-      })
-      .eq("workspace_id", sb.workspaceId)
-      .eq("opportunity_id", id)
-      .eq("status", "planned");
-    if (planError) throw planError;
+    await syncStoredOpportunity(
+      sb.raw,
+      sb.workspaceId,
+      weekStart(),
+      id,
+      "drafted",
+    );
     return NextResponse.json({ ok: true, status: "drafted", draftIds: result.draftIds });
   } catch (e) {
     return errorResponse(e);

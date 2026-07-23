@@ -258,6 +258,10 @@ export async function actOnOpportunity(
   sb: SupabaseClient,
   workspaceId: string,
   opportunity: AgentOpportunityRow,
+  direction?: {
+    userContext?: string;
+    leadMagnetId?: string;
+  },
 ): Promise<{ ok: true; draftIds: string[] } | { ok: false; reason: string }> {
   if (!opportunity.source_post_id) {
     return { ok: false, reason: "missing_source" };
@@ -291,13 +295,20 @@ export async function actOnOpportunity(
     // turn failed closed with "Select or create a lead magnet").
     const leadMagnetContext =
       source.postType === "lead_magnet"
-        ? await leadMagnetForTurn(sb, workspaceId, headline, source.postText)
+        ? direction?.leadMagnetId
+          ? { leadMagnetId: direction.leadMagnetId }
+          : await leadMagnetForTurn(sb, workspaceId, headline, source.postText)
         : null;
+    const userDirection = direction?.userContext?.trim();
     const draftIds = await runTurnToDraftIds(
       sb,
       workspaceId,
       {
-        message: `${headline}\n\nWrite one post in my voice modeled on the attached source.`,
+        message:
+          `${headline}\n\nWrite one post in my voice modeled on the attached source.` +
+          (userDirection
+            ? `\n\nFollow this direction from the user:\n${userDirection}`
+            : ""),
         modelSourceId: source.id,
         ...(leadMagnetContext ?? {}),
       },
