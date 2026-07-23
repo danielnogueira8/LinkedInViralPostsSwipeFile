@@ -1,6 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type {
+  ImageContent,
   ServerRequest,
   ServerNotification,
 } from "@modelcontextprotocol/sdk/types.js";
@@ -95,6 +96,17 @@ const NO_ROWS_SENTINEL = "00000000-0000-0000-0000-000000000000";
 // tool also accepts a window_days override; this external MCP surface keeps the
 // fixed 7-day window for simplicity.)
 const TOP_BATCH_WINDOW_DAYS = 7;
+// Two 1 MiB images stay below common serverless response-body limits even
+// after base64 expansion, while the JSON result still exposes every source URL.
+const MAX_RENDERED_POST_IMAGES = 2;
+const MAX_RENDERED_IMAGE_BYTES = 1 * 1024 * 1024;
+const IMAGE_FETCH_TIMEOUT_MS = 6_000;
+const SUPPORTED_IMAGE_MIME_TYPES = new Set([
+  "image/gif",
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+]);
 
 // Drops the workspace_post_classification join wrapper (a query filter, not a
 // field the model needs) and unwraps the accounts embed.
@@ -135,6 +147,102 @@ function shouldIncludePostVisual(
   includeVisual: boolean | undefined,
 ) {
   return limit === 1 || includeVisual === true;
+}
+
+function linkedInMediaUrl(value: unknown): string | null {
+  if (typeof value !== "string" || value.length > 4_096) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.hostname === "media.licdn.com"
+      ? url.toString()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function visualUrlsFromPosts(posts: unknown[]) {
+  const urls = new Set<string>();
+  for (const post of posts) {
+    if (!post || typeof post !== "object") continue;
+    const mediaUrls = (post as { media_urls?: unknown }).media_urls;
+    if (!Array.isArray(mediaUrls)) continue;
+    for (const mediaUrl of mediaUrls) {
+      const url = linkedInMediaUrl(mediaUrl);
+      if (url) urls.add(url);
+      if (urls.size === MAX_RENDERED_POST_IMAGES) return [...urls];
+    }
+  }
+  return [...urls];
+}
+
+async function readImageBytes(response: Response): Promise<Uint8Array | null> {
+  const contentLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(contentLength) && contentLength > MAX_RENDERED_IMAGE_BYTES) {
+    return null;
+  }
+  const reader = response.body?.getReader();
+  if (!reader) return null;
+
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_RENDERED_IMAGE_BYTES) {
+      void reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
+async function renderPostImage(url: string): Promise<ImageContent | null> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), IMAGE_FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, {
+      cache: "no-store",
+      headers: { Accept: "image/*" },
+      redirect: "error",
+      signal: controller.signal,
+    });
+    const mimeType = response.headers.get("content-type")?.split(";", 1)[0]?.toLowerCase();
+    if (!response.ok || !mimeType || !SUPPORTED_IMAGE_MIME_TYPES.has(mimeType)) {
+      return null;
+    }
+    const bytes = await readImageBytes(response);
+    if (!bytes) return null;
+    return {
+      type: "image",
+      data: Buffer.from(bytes).toString("base64"),
+      mimeType,
+    };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function postContentWithRenderedImages(payload: unknown, posts: unknown[]) {
+  const urls = visualUrlsFromPosts(posts);
+  if (urls.length === 0) return jsonContent(payload);
+  const images = (await Promise.all(urls.map(renderPostImage))).filter(
+    (image): image is ImageContent => image !== null,
+  );
+  return {
+    content: [...jsonContent(payload).content, ...images],
+  };
 }
 
 /**
@@ -209,7 +317,7 @@ export function registerSwipeTools(server: McpServer) {
     {
       title: "Search viral posts",
       description:
-        "Search the viral swipe file. Filter by niche, date range, engagement thresholds, and post type. Returns top matching posts from accounts your workspace tracks. A one-post search includes its original visual URLs when available; set include_visual to true for visuals in a larger result set.",
+        "Search the viral swipe file. Filter by niche, date range, engagement thresholds, and post type. Returns top matching posts from accounts your workspace tracks. A one-post search includes rendered original images when available; set include_visual to true for images in a larger result set.",
       inputSchema: {
         niche: z.string().optional().describe("Exact account niche, e.g. 'AI', 'SaaS'."),
         since: z
@@ -230,7 +338,7 @@ export function registerSwipeTools(server: McpServer) {
         include_visual: z
           .boolean()
           .optional()
-          .describe("Include original visual asset URLs and visual metadata. Use when the user asks to see a post's image or visual asset. Always included when limit is 1."),
+          .describe("Include rendered original images, visual asset URLs, and visual metadata. Use when the user asks to see a post's image or visual asset. Always included when limit is 1."),
       },
     },
     async (args, extra) => {
@@ -269,7 +377,9 @@ export function registerSwipeTools(server: McpServer) {
         const { data, error } = await q;
         if (error) return dbErrorContent("search_viral_posts", error);
         const posts = (data ?? []).map((post) => normalizeEmbed(post, includeVisual));
-        return jsonContent({ ok: true, count: posts.length, posts });
+        return includeVisual
+          ? await postContentWithRenderedImages({ ok: true, count: posts.length, posts }, posts)
+          : jsonContent({ ok: true, count: posts.length, posts });
       } catch (e) {
         return errorContent((e as Error).message);
       }
@@ -281,7 +391,7 @@ export function registerSwipeTools(server: McpServer) {
     {
       title: "Get post by id",
       description:
-        "Fetch a single post by id, including its original visual URLs and visual metadata when available. Only returns posts from accounts your workspace tracks.",
+        "Fetch a single post by id, including rendered original images, visual URLs, and visual metadata when available. Only returns posts from accounts your workspace tracks.",
       inputSchema: { id: z.string().uuid().describe("Post UUID.") },
     },
     async ({ id }, extra) => {
@@ -300,7 +410,8 @@ export function registerSwipeTools(server: McpServer) {
           .maybeSingle();
         if (error) return notFoundContent("Post", id);
         if (!data) return notFoundContent("Post", id);
-        return jsonContent({ ok: true, post: normalizeEmbed(data, true) });
+        const post = normalizeEmbed(data, true);
+        return postContentWithRenderedImages({ ok: true, post }, [post]);
       } catch (e) {
         return errorContent((e as Error).message);
       }
@@ -356,7 +467,7 @@ export function registerSwipeTools(server: McpServer) {
     {
       title: "Get top recently-published posts as of the most recent scrape",
       description:
-        "Returns the highest-engagement RECENTLY-PUBLISHED posts (last 7 days before the most recent scrape — 'this week' / what's working now) from your workspace's tracked accounts. Filtered by publish date, not scrape date — a scrape re-ingests old posts too, so ranking by scrape date would surface stale posts. The result's `scrape.scraped_at` is the real scrape date and `scrape.window_days` the window used; each post carries its own `posted_at`. Pass `post_type` to restrict to 'regular' or 'lead_magnet' posts; omit to include both. A one-post request includes its original visual URLs when available; set include_visual to true for visuals in a larger result set.",
+        "Returns the highest-engagement RECENTLY-PUBLISHED posts (last 7 days before the most recent scrape — 'this week' / what's working now) from your workspace's tracked accounts. Filtered by publish date, not scrape date — a scrape re-ingests old posts too, so ranking by scrape date would surface stale posts. The result's `scrape.scraped_at` is the real scrape date and `scrape.window_days` the window used; each post carries its own `posted_at`. Pass `post_type` to restrict to 'regular' or 'lead_magnet' posts; omit to include both. A one-post request includes rendered original images when available; set include_visual to true for images in a larger result set.",
       inputSchema: {
         limit: z.number().int().min(1).max(20).optional().describe("Default 5, max 20."),
         post_type: z
@@ -366,7 +477,7 @@ export function registerSwipeTools(server: McpServer) {
         include_visual: z
           .boolean()
           .optional()
-          .describe("Include original visual asset URLs and visual metadata. Use when the user asks to see a post's image or visual asset. Always included when limit is 1."),
+          .describe("Include rendered original images, visual asset URLs, and visual metadata. Use when the user asks to see a post's image or visual asset. Always included when limit is 1."),
       },
     },
     async ({ limit, post_type, include_visual }, extra) => {
@@ -408,7 +519,8 @@ export function registerSwipeTools(server: McpServer) {
         if (post_type) q = q.eq("post_type", post_type);
         const { data, error } = await q;
         if (error) return dbErrorContent("get_top_from_batch", error);
-        return jsonContent({
+        const posts = (data ?? []).map((post) => normalizeEmbed(post, includeVisual));
+        const payload = {
           ok: true,
           scrape: {
             scraped_at: lastRun.finished_at ?? lastRun.started_at,
@@ -416,8 +528,11 @@ export function registerSwipeTools(server: McpServer) {
             window_days: TOP_BATCH_WINDOW_DAYS,
           },
           count: data?.length ?? 0,
-          posts: (data ?? []).map((post) => normalizeEmbed(post, includeVisual)),
-        });
+          posts,
+        };
+        return includeVisual
+          ? await postContentWithRenderedImages(payload, posts)
+          : jsonContent(payload);
       } catch (e) {
         return errorContent((e as Error).message);
       }

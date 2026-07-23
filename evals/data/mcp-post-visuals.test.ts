@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { makeFakeSupabase, queryFor, type FakeDb } from "./fake-supabase";
 
 const dbRef: { current: FakeDb } = { current: makeFakeSupabase({}) };
@@ -47,33 +47,65 @@ const POST = {
   comments: 25,
   reposts: 10,
   media_type: "image",
-  media_urls: ["https://cdn.example.com/post-image.jpg"],
+  media_urls: ["https://media.licdn.com/dms/image/post-image.jpg"],
   visual_kind: "screenshot",
   post_type: "regular",
   accounts: [{ name: "Example Creator", niche: "Marketing" }],
   workspace_post_classification: [{ is_viral: true }],
 };
 
+const IMAGE_BYTES = Uint8Array.from([137, 80, 78, 71]);
+
+function stubImageFetch() {
+  const fetchImage = vi.fn(async () =>
+    new Response(IMAGE_BYTES, {
+      headers: { "content-type": "image/png" },
+    }),
+  );
+  vi.stubGlobal("fetch", fetchImage);
+  return fetchImage;
+}
+
+function expectRenderedImage(result: unknown) {
+  const content = (result as {
+    content: Array<{ type: string; data?: string; mimeType?: string }>;
+  }).content;
+  expect(content).toContainEqual({
+    type: "image",
+    data: Buffer.from(IMAGE_BYTES).toString("base64"),
+    mimeType: "image/png",
+  });
+}
+
 beforeEach(() => {
   dbRef.current = makeFakeSupabase({});
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
 });
 
 describe("MCP post visual assets", () => {
   test("keeps broad searches lean unless the caller explicitly requests visuals", async () => {
     dbRef.current = makeFakeSupabase({ posts: { rows: [POST] } });
+    const fetchImage = stubImageFetch();
 
-    const result = json(await tools().search_viral_posts({ limit: 2 }, extra()));
+    const rawResult = await tools().search_viral_posts({ limit: 2 }, extra());
+    const result = json(rawResult);
     const returnedPost = (result.posts as Array<Record<string, unknown>>)[0];
 
     expect(queryFor(dbRef.current, "posts")?.selectArg).not.toContain("media_urls");
     expect(returnedPost).not.toHaveProperty("media_urls");
     expect(returnedPost).not.toHaveProperty("visual_kind");
+    expect(fetchImage).not.toHaveBeenCalled();
   });
 
-  test("returns the visual URLs automatically when a search asks for one post", async () => {
+  test("renders the original image automatically when a search asks for one post", async () => {
     dbRef.current = makeFakeSupabase({ posts: { rows: [POST] } });
+    const fetchImage = stubImageFetch();
 
-    const result = json(await tools().search_viral_posts({ limit: 1 }, extra()));
+    const rawResult = await tools().search_viral_posts({ limit: 1 }, extra());
+    const result = json(rawResult);
 
     expect(queryFor(dbRef.current, "posts")?.selectArg).toContain("media_urls");
     expect(result.posts).toEqual([
@@ -82,25 +114,37 @@ describe("MCP post visual assets", () => {
         visual_kind: POST.visual_kind,
       }),
     ]);
+    expect(fetchImage).toHaveBeenCalledWith(
+      POST.media_urls[0],
+      expect.objectContaining({ cache: "no-store" }),
+    );
+    expectRenderedImage(rawResult);
   });
 
-  test("returns the visual URLs for a multi-post search when include_visual is set", async () => {
+  test("renders the original image for a multi-post search when include_visual is set", async () => {
     dbRef.current = makeFakeSupabase({ posts: { rows: [POST] } });
+    const fetchImage = stubImageFetch();
 
-    const result = json(
-      await tools().search_viral_posts({ limit: 2, include_visual: true }, extra()),
+    const rawResult = await tools().search_viral_posts(
+      { limit: 2, include_visual: true },
+      extra(),
     );
+    const result = json(rawResult);
 
     expect(queryFor(dbRef.current, "posts")?.selectArg).toContain("media_urls");
     expect(result.posts).toEqual([
       expect.objectContaining({ media_urls: POST.media_urls }),
     ]);
+    expect(fetchImage).toHaveBeenCalledTimes(1);
+    expectRenderedImage(rawResult);
   });
 
-  test("returns visual URLs from a direct post lookup", async () => {
+  test("renders the original image from a direct post lookup", async () => {
     dbRef.current = makeFakeSupabase({ posts: { single: POST } });
+    const fetchImage = stubImageFetch();
 
-    const result = json(await tools().get_post({ id: POST.id }, extra()));
+    const rawResult = await tools().get_post({ id: POST.id }, extra());
+    const result = json(rawResult);
 
     expect(queryFor(dbRef.current, "posts")?.selectArg).toContain("media_urls");
     expect(result.post).toEqual(
@@ -109,16 +153,25 @@ describe("MCP post visual assets", () => {
         visual_kind: POST.visual_kind,
       }),
     );
+    expect(fetchImage).toHaveBeenCalledWith(
+      POST.media_urls[0],
+      expect.objectContaining({ cache: "no-store" }),
+    );
+    expectRenderedImage(rawResult);
   });
 
-  test("returns visual URLs when the latest-batch request asks for one post", async () => {
+  test("renders the original image when the latest-batch request asks for one post", async () => {
     dbRef.current = makeFakeSupabase({ posts: { rows: [POST] } });
+    const fetchImage = stubImageFetch();
 
-    const result = json(await tools().get_top_from_batch({ limit: 1 }, extra()));
+    const rawResult = await tools().get_top_from_batch({ limit: 1 }, extra());
+    const result = json(rawResult);
 
     expect(queryFor(dbRef.current, "posts")?.selectArg).toContain("media_urls");
     expect(result.posts).toEqual([
       expect.objectContaining({ media_urls: POST.media_urls }),
     ]);
+    expect(fetchImage).toHaveBeenCalledTimes(1);
+    expectRenderedImage(rawResult);
   });
 });
