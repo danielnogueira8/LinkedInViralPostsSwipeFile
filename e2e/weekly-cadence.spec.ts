@@ -174,7 +174,10 @@ test("modeled cadence posts use their source and lead magnets ask only for a res
             date: `2026-07-${22 + index}`,
             kind: "generic",
             prompt: `Share a real story ${index + 1}`,
-            userContext: null,
+            userContext:
+              index === 0
+                ? "I learned to ask customers for their exact words before writing."
+                : null,
             selectedLeadMagnetId: null,
             status: "planned",
           })),
@@ -187,13 +190,26 @@ test("modeled cadence posts use their source and lead magnets ask only for a res
   const regularCard = page
     .getByTestId("weekly-cadence-card")
     .filter({ hasText: "Source-modeled regular post" });
-  await expect(regularCard.getByText("Source ready")).toBeVisible();
+  await expect(regularCard.getByText("Ready for draft")).toBeVisible();
   await expect(
     regularCard.getByRole("button", { name: "Draft this" }),
   ).toBeVisible();
   await expect(
     regularCard.getByRole("button", { name: /direction/i }),
   ).toHaveCount(0);
+
+  const directedStoryCard = page
+    .getByTestId("weekly-cadence-card")
+    .filter({ hasText: "Share a real story 1" });
+  await expect(directedStoryCard.getByText("Ready for draft")).toBeVisible();
+  await expect(
+    directedStoryCard.getByRole("button", { name: "Edit direction" }),
+  ).toBeVisible();
+
+  const undirectedStoryCard = page
+    .getByTestId("weekly-cadence-card")
+    .filter({ hasText: "Share a real story 2" });
+  await expect(undirectedStoryCard.getByText("Needs your story")).toBeVisible();
 
   const leadMagnetCard = page
     .getByTestId("weekly-cadence-card")
