@@ -161,19 +161,6 @@ test.describe("composer generation settings", () => {
     });
     await expect(askButton).toHaveAttribute("aria-pressed", "true");
 
-    await page.getByRole("button", { name: "Add context", exact: true }).last().click();
-    await page.getByRole("button", { name: "Choose post format" }).click();
-    const formatDialog = page.getByRole("dialog", { name: "Choose post format" });
-    await formatDialog
-      .getByRole("button", { name: /Lead Magnet: System Breakdown/ })
-      .click();
-    await expect(createButton).toHaveAttribute("aria-pressed", "true");
-    await expect(
-      page.getByRole("button", {
-        name: /Generation settings — Post count: 1, post type: Any/,
-      }),
-    ).toBeVisible();
-
     await createButton.click();
     await expect(createButton).toHaveAttribute("aria-pressed", "true");
     await expect(

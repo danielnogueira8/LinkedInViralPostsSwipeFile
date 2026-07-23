@@ -21,7 +21,6 @@ export const MOBILE_MORE_SECTIONS = [
       "/dashboard/lead-magnets",
       "/dashboard/voice",
       "/dashboard/creator-styles",
-      "/dashboard/skills",
       "/dashboard/claude",
     ],
   },
