@@ -29,18 +29,19 @@ describe("Your Agent is a top-level dashboard page", () => {
     expect(page).toContain("<AgentBriefing");
   });
 
-  test("the moved surface preserves a direct new-session action", () => {
+  test("the Agent page keeps Cowork's new-session action out of its header", () => {
     const page = source(PAGE);
     const coworkPage = source(COWORK_PAGE);
-    expect(page).toContain('href="/dashboard?new=1"');
-    expect(page).toContain("New session");
+    expect(page).not.toContain('href="/dashboard?new=1"');
+    expect(page).not.toContain("New session");
     expect(coworkPage).toContain('newSession === "1"');
     expect(source(WORKSPACE)).toContain('url.searchParams.delete("new")');
   });
 
   test("the top-level navigation preserves the Agent attention badge", () => {
     const badges = source(NAV_BADGES);
-    expect(badges).toContain('fetch("/api/agent/briefing"');
+    expect(badges).toContain("loadAgentBriefing()");
+    expect(source(BRIEFING)).toContain("loadAgentBriefing()");
     expect(badges).toContain('next["/dashboard/agent"] = count');
     expect(source(BRIEFING)).toContain("invalidateNavBadges()");
   });

@@ -55,7 +55,7 @@ type VoiceProfileRow = {
   generated_at: string | null;
 };
 
-async function readStoredSummary(
+export async function readStoredUserWorkingSummary(
   db: SupabaseClient,
   workspaceId: string,
 ): Promise<UserWorkingSummary | null> {
@@ -470,7 +470,7 @@ export async function getUserWorkingSummary(
       source === "voice_profile"
         ? voice?.generated_at ?? "voice-profile"
         : "published";
-    const cached = await readStoredSummary(db, workspaceId);
+    const cached = await readStoredUserWorkingSummary(db, workspaceId);
     if (
       !opts.forceRefresh &&
       !shouldRefreshWorkingSummary(cached, source, sourceRevision, now)

@@ -31,6 +31,7 @@ import {
 } from "@/lib/agent-loop/week-plan";
 import { cn } from "@/lib/utils";
 import { AgentWorkingSummary } from "./agent-working-summary";
+import { loadAgentBriefing } from "./agent-briefing-client";
 import { invalidateNavBadges } from "./nav-badges";
 
 // -----------------------------------------------------------------------------
@@ -214,9 +215,8 @@ export function AgentBriefing() {
 
   const refresh = useCallback(async () => {
     try {
-      const res = await fetch("/api/agent/briefing", { cache: "no-store" });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok && data?.ok) {
+      const data = await loadAgentBriefing();
+      if (data?.ok) {
         const next: Briefing = {
           drafts: Array.isArray(data.drafts) ? data.drafts : [],
           opportunities: Array.isArray(data.opportunities)

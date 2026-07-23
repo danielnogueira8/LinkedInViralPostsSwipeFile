@@ -27,29 +27,32 @@ export async function GET() {
   try {
     const sb = await scopedSupabase();
 
-    const { data: drafts, error: draftsError } = await sb.raw
-      .from("chat_artifacts")
-      .select("id, title, body, kind, status, created_at, meta")
-      .eq("workspace_id", sb.workspaceId)
-      .eq("meta->>suggested_by", AGENT_SUGGESTED_BY)
-      // Reviewed drafts stay off the list across reloads (POST
-      // /api/agent/briefing/reviewed stamps meta.reviewed_at on Review click).
-      .is("meta->>reviewed_at", null)
-      .in("status", ["idea", "drafting"])
-      .order("created_at", { ascending: false })
-      .limit(5);
+    const [draftResult, opportunityResult] = await Promise.all([
+      sb.raw
+        .from("chat_artifacts")
+        .select("id, title, body, kind, status, created_at, meta")
+        .eq("workspace_id", sb.workspaceId)
+        .eq("meta->>suggested_by", AGENT_SUGGESTED_BY)
+        // Reviewed drafts stay off the list across reloads (POST
+        // /api/agent/briefing/reviewed stamps meta.reviewed_at on Review click).
+        .is("meta->>reviewed_at", null)
+        .in("status", ["idea", "drafting"])
+        .order("created_at", { ascending: false })
+        .limit(5),
+      // Fetch a scored POOL (not just the final slots) so we can compose a
+      // healthy content mix from the top candidates.
+      sb.raw
+        .from("agent_opportunities")
+        .select("id, kind, score, payload, created_at, source_post_id")
+        .eq("workspace_id", sb.workspaceId)
+        .eq("status", "proposed")
+        .order("score", { ascending: false })
+        .limit(WORKING_NOW_POOL_LIMIT),
+    ]);
+    const { data: drafts, error: draftsError } = draftResult;
     if (draftsError) throw draftsError;
 
-    // Fetch a scored POOL (not just the final slots) so we can compose a healthy
-    // content mix — 2 regular posts + 1 lead magnet by default — from the top
-    // candidates rather than whatever the raw top-3 by score happens to be.
-    const { data: opportunityPool, error: oppError } = await sb.raw
-      .from("agent_opportunities")
-      .select("id, kind, score, payload, created_at, source_post_id")
-      .eq("workspace_id", sb.workspaceId)
-      .eq("status", "proposed")
-      .order("score", { ascending: false })
-      .limit(WORKING_NOW_POOL_LIMIT);
+    const { data: opportunityPool, error: oppError } = opportunityResult;
     if (oppError) throw oppError;
 
     // Which of these model a LEAD MAGNET post? `posts.post_type` is the
