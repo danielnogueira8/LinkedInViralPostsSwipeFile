@@ -6,6 +6,7 @@ import {
   logOpenRouterUsage,
 } from "@/lib/openrouter";
 import { INJECTION_GUARD, wrapUntrustedXml } from "@/lib/agent/untrusted";
+import type { PostMediaAttachment } from "@/lib/post-media";
 import {
   chooseWorkingSummarySource,
   coerceStoredWorkingSummary,
@@ -26,6 +27,7 @@ type PublishedPostRow = {
   body: string;
   published_at: string | null;
   created_at: string;
+  media_attachments: PostMediaAttachment[] | null;
 };
 
 type AnalyticsRow = {
@@ -86,7 +88,8 @@ async function loadPublishedPosts(
   posts: PublishedPostRow[];
 }> {
   const publishedFilter = "status.eq.posted,schedule_status.eq.published";
-  const postColumns = "id, body, published_at, created_at";
+  const postColumns =
+    "id, body, published_at, created_at, media_attachments";
   const [countResult, scheduledResult, postedResult] = await Promise.all([
     db
       .from("chat_artifacts")
@@ -212,8 +215,8 @@ async function attachLatestAnalytics(
 const PUBLISHED_SUMMARY_SYSTEM = [
   "You analyze one LinkedIn creator's OWN latest published posts and explain what is working for that creator.",
   "Use engagement metrics when available. Compare posts before claiming something outperforms. If metrics are missing, describe a repeated recent pattern instead of claiming performance.",
-  'Return strict JSON only: {"insights":[{"label":"Topics|Angles|Hooks|Formats|Audience response","finding":"specific useful conclusion","evidence":"short concrete reason from this sample"}]}.',
-  "Return 3-4 non-overlapping insights. Make every finding specific enough that it would not apply to every creator. Do not give generic advice and do not copy private post text verbatim.",
+  'Return strict JSON only: {"insights":[{"label":"Topics","finding":"specific topic pattern","evidence":"short concrete reason from this sample"},{"label":"Formats","finding":"specific structure or post format pattern","evidence":"short concrete reason from this sample"},{"label":"Hooks","finding":"specific opening pattern","evidence":"short concrete reason from this sample"}]}.',
+  "Return exactly one Topics insight, one Formats insight, and one Hooks insight. Make every finding a concise, recognizable pattern specific enough that it would not apply to every creator. Evidence must say what in this sample supports the finding. Do not give generic advice and do not copy private post text verbatim.",
   INJECTION_GUARD,
 ].join("\n\n");
 
@@ -221,8 +224,8 @@ const VOICE_SUMMARY_SYSTEM = [
   "You analyze the saved source-post exemplars that were copied from a LinkedIn creator's Voice-generation scrape.",
   "Explain repeatable writing signals visible in those source posts. The Voice profile is supporting context only: every finding and its evidence must be directly corroborated by the source exemplars.",
   "Do not claim a pattern performs better than another because engagement metrics are unavailable. Describe what the engagement-ranked Voice exemplars repeatedly do instead.",
-  'Return strict JSON only: {"insights":[{"label":"Topics|Angles|Hooks|Formats|Audience","finding":"specific useful conclusion","evidence":"short concrete reason visible in the source posts"}]}.',
-  "Return 3-4 non-overlapping insights. Make every finding specific enough that it would not apply to every creator. Do not give generic advice and do not copy private post text verbatim.",
+  'Return strict JSON only: {"insights":[{"label":"Topics","finding":"specific recurring topic","evidence":"short concrete reason visible in the source posts"},{"label":"Formats","finding":"specific recurring structure or post format","evidence":"short concrete reason visible in the source posts"},{"label":"Hooks","finding":"specific recurring opening pattern","evidence":"short concrete reason visible in the source posts"}]}.',
+  "Return exactly one Topics insight, one Formats insight, and one Hooks insight. Make every finding a concise, recognizable pattern specific enough that it would not apply to every creator. Evidence must say what in the exemplars supports the finding. Do not give generic advice and do not copy private post text verbatim.",
   INJECTION_GUARD,
 ].join("\n\n");
 
@@ -238,39 +241,50 @@ async function generateSummary(input: {
   now: Date;
   signal?: AbortSignal;
 }): Promise<UserWorkingSummary | null> {
-  const response = await completeChat({
-    model: BACKGROUND_MODEL,
-    maxTokens: 900,
-    glmReasoning: "none",
-    timeoutMs: SUMMARY_TIMEOUT_MS,
-    signal: input.signal,
-    messages: [
-      { role: "system", content: input.systemPrompt },
-      { role: "user", content: input.userPrompt },
-    ],
-  });
-  await logOpenRouterUsage(
-    "user_working_summary",
-    response.model,
-    response.usage,
-    input.workspaceId,
-    {
-      source: input.source,
-      sample_size: input.analyzedPostCount,
-    },
-  ).catch(() => {});
-  const insights = coerceWorkingSummaryInsights(response.text);
-  if (insights.length === 0) return null;
-  return {
-    version: 1,
-    source: input.source,
-    sourcePostCount: input.sourcePostCount,
-    analyzedPostCount: input.analyzedPostCount,
-    publishedPostCount: input.publishedPostCount,
-    analyzedAt: input.now.toISOString(),
-    sourceRevision: input.sourceRevision,
-    insights,
-  };
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const response = await completeChat({
+      model: BACKGROUND_MODEL,
+      maxTokens: 900,
+      glmReasoning: "none",
+      timeoutMs: SUMMARY_TIMEOUT_MS,
+      signal: input.signal,
+      messages: [
+        { role: "system", content: input.systemPrompt },
+        {
+          role: "user",
+          content:
+            attempt === 1
+              ? input.userPrompt
+              : `${input.userPrompt}\n\nYour previous response was incomplete. Return exactly one valid Topics insight, one Formats insight, and one Hooks insight in the requested JSON shape.`,
+        },
+      ],
+    });
+    await logOpenRouterUsage(
+      "user_working_summary",
+      response.model,
+      response.usage,
+      input.workspaceId,
+      {
+        source: input.source,
+        sample_size: input.analyzedPostCount,
+        attempt,
+      },
+    ).catch(() => {});
+    const insights = coerceWorkingSummaryInsights(response.text);
+    if (insights.length > 0) {
+      return {
+        version: 2,
+        source: input.source,
+        sourcePostCount: input.sourcePostCount,
+        analyzedPostCount: input.analyzedPostCount,
+        publishedPostCount: input.publishedPostCount,
+        analyzedAt: input.now.toISOString(),
+        sourceRevision: input.sourceRevision,
+        insights,
+      };
+    }
+  }
+  return null;
 }
 
 async function generateVoiceSummary(
@@ -329,9 +343,16 @@ async function generatePublishedSummary(
       const metrics = post.metrics
         ? `snapshot=${post.metrics.snapshot_date}; impressions=${post.metrics.impressions ?? "n/a"}; likes=${post.metrics.likes ?? "n/a"}; comments=${post.metrics.comments ?? "n/a"}; shares=${post.metrics.shares ?? "n/a"}`
         : "metrics unavailable";
+      const attachments = Array.isArray(post.media_attachments)
+        ? post.media_attachments
+        : [];
+      const format =
+        attachments.length === 0
+          ? "format=text-only"
+          : `format=${attachments[0]?.type ?? "media"}; attachment_count=${attachments.length}`;
       return wrapUntrustedXml(
         `published_post_${index + 1}`,
-        `published_at=${post.published_at ?? post.created_at}\n${metrics}\n${post.body.slice(0, PUBLISHED_POST_BODY_CHARS_MAX)}`,
+        `published_at=${post.published_at ?? post.created_at}\n${metrics}\n${format}\n${post.body.slice(0, PUBLISHED_POST_BODY_CHARS_MAX)}`,
       );
     })
     .join("\n\n");

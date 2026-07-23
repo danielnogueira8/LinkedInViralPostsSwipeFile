@@ -114,6 +114,19 @@ function publishedPosts(count: number) {
     body: `Published post ${index + 1} about founder systems.`,
     published_at: `2026-07-${String(20 - index).padStart(2, "0")}T10:00:00.000Z`,
     created_at: `2026-07-${String(20 - index).padStart(2, "0")}T09:00:00.000Z`,
+    media_attachments:
+      index === 0
+        ? [
+            {
+              id: "image-1",
+              name: "proof.png",
+              mimeType: "image/png",
+              size: 1024,
+              type: "image",
+              uploadedAt: "2026-07-20T09:00:00.000Z",
+            },
+          ]
+        : [],
   }));
 }
 
@@ -241,6 +254,9 @@ describe("getUserWorkingSummary", () => {
       publishedPostCount: 5,
     });
     expect(completeChat).toHaveBeenCalledOnce();
+    expect(JSON.stringify(completeChat.mock.calls[0]?.[0])).toContain(
+      "format=image; attachment_count=1",
+    );
     expect(
       db.queries.some((query) => query.table === "voice_profiles"),
     ).toBe(false);
@@ -251,7 +267,7 @@ describe("getUserWorkingSummary", () => {
 
   test("keeps the last published analysis when the weekly model refresh fails", async () => {
     const cached = {
-      version: 1,
+      version: 2,
       source: "published_posts",
       sourcePostCount: 5,
       analyzedPostCount: 5,
@@ -263,6 +279,16 @@ describe("getUserWorkingSummary", () => {
           label: "Topics",
           finding: "Founder-led systems remain the clearest topic signal.",
           evidence: "Three recent posts use concrete operating examples.",
+        },
+        {
+          label: "Formats",
+          finding: "Proof-led posts remain the clearest format signal.",
+          evidence: "Three recent posts pair one claim with one example.",
+        },
+        {
+          label: "Hooks",
+          finding: "Contrarian claims remain the clearest opening signal.",
+          evidence: "Three recent posts reject familiar operating advice.",
         },
       ],
     };
@@ -283,5 +309,66 @@ describe("getUserWorkingSummary", () => {
     );
 
     expect(summary).toEqual(cached);
+  });
+
+  test("repairs an incomplete category response once", async () => {
+    completeChat
+      .mockResolvedValueOnce({
+        text: JSON.stringify({
+          insights: [
+            {
+              label: "Topics",
+              finding: "Founder systems are the clearest recurring subject.",
+              evidence: "Three posts use concrete operating examples.",
+            },
+          ],
+        }),
+        model: "test/background",
+        usage: {},
+      })
+      .mockResolvedValueOnce({
+        text: JSON.stringify({
+          insights: [
+            {
+              label: "Topics",
+              finding: "Founder systems are the clearest recurring subject.",
+              evidence: "Three posts use concrete operating examples.",
+            },
+            {
+              label: "Formats",
+              finding: "Image-backed proof posts carry the strongest signal.",
+              evidence: "The leading post includes one image and one example.",
+            },
+            {
+              label: "Hooks",
+              finding: "Contrarian claims earn the strongest response.",
+              evidence: "The leading posts reject familiar operating advice.",
+            },
+          ],
+        }),
+        model: "test/background",
+        usage: {},
+      });
+    const db = database({
+      chat_artifacts: { rows: publishedPosts(5), count: 5 },
+      settings: { single: null },
+      post_analytics: { rows: [] },
+    });
+
+    const summary = await getUserWorkingSummary(
+      db.client as never,
+      "workspace-1",
+      { now: new Date("2026-07-23T10:00:00.000Z") },
+    );
+
+    expect(summary?.insights.map((insight) => insight.label)).toEqual([
+      "Topics",
+      "Formats",
+      "Hooks",
+    ]);
+    expect(completeChat).toHaveBeenCalledTimes(2);
+    expect(completeChat.mock.calls[1]?.[0].messages[1].content).toContain(
+      "previous response was incomplete",
+    );
   });
 });

@@ -1,7 +1,34 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import type { UserWorkingSummary } from "@/lib/agent-loop/user-working-summary-policy";
+import { Hash, LayoutTemplate, TextCursorInput } from "lucide-react";
+import {
+  coerceStoredWorkingSummary,
+  WORKING_SUMMARY_CATEGORIES,
+  type UserWorkingSummary,
+  type UserWorkingSummaryCategory,
+} from "@/lib/agent-loop/user-working-summary-policy";
+
+const CATEGORY_DETAILS: Record<
+  UserWorkingSummaryCategory,
+  {
+    description: string;
+    icon: typeof Hash;
+  }
+> = {
+  Topics: {
+    description: "The topics earning attention",
+    icon: Hash,
+  },
+  Formats: {
+    description: "The formats carrying them",
+    icon: LayoutTemplate,
+  },
+  Hooks: {
+    description: "The hooks stopping the scroll",
+    icon: TextCursorInput,
+  },
+};
 
 export function AgentWorkingSummary() {
   const [summary, setSummary] = useState<UserWorkingSummary | null>(null);
@@ -15,7 +42,7 @@ export function AgentWorkingSummary() {
       });
       const data = await response.json().catch(() => ({}));
       if (response.ok && data?.ok && data.summary) {
-        setSummary(data.summary as UserWorkingSummary);
+        setSummary(coerceStoredWorkingSummary(data.summary));
       }
     } catch {
       // The panel is additive; the rest of Your Agent stays usable.
@@ -37,11 +64,11 @@ export function AgentWorkingSummary() {
         className="mt-6 rounded-2xl border border-border bg-background p-4"
       >
         <div className="h-4 w-44 animate-pulse rounded bg-muted" />
-        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {Array.from({ length: 4 }).map((_, index) => (
+        <div className="mt-3 grid gap-3 md:grid-cols-3">
+          {WORKING_SUMMARY_CATEGORIES.map((category) => (
             <div
-              key={index}
-              className="h-28 animate-pulse rounded-xl bg-muted/70"
+              key={category}
+              className="h-40 animate-pulse rounded-xl bg-muted/70"
             />
           ))}
         </div>
@@ -85,23 +112,42 @@ export function AgentWorkingSummary() {
           })}
         </p>
       </div>
-      <ul className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        {summary.insights.map((insight, index) => (
-          <li
-            key={`${insight.label}-${index}`}
-            className="rounded-xl border border-border bg-card p-3"
-          >
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-              {insight.label}
-            </p>
-            <p className="mt-1.5 text-sm font-medium leading-5 text-foreground">
-              {insight.finding}
-            </p>
-            <p className="mt-2 text-[11px] leading-4 text-muted-foreground">
-              {insight.evidence}
-            </p>
-          </li>
-        ))}
+      <ul className="mt-4 grid gap-3 md:grid-cols-3">
+        {summary.insights.map((insight) => {
+          const details = CATEGORY_DETAILS[insight.label];
+          const Icon = details.icon;
+          return (
+            <li
+              key={insight.label}
+              className="flex min-h-44 flex-col rounded-xl border border-border bg-card p-4"
+            >
+              <div className="flex items-center gap-2.5">
+                <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-foreground">
+                  <Icon aria-hidden="true" className="size-4" />
+                </span>
+                <div>
+                  <h3 className="text-sm font-semibold text-foreground">
+                    {insight.label}
+                  </h3>
+                  <p className="text-[11px] text-muted-foreground">
+                    {details.description}
+                  </p>
+                </div>
+              </div>
+              <p className="mt-4 text-base font-semibold leading-6 text-foreground">
+                {insight.finding}
+              </p>
+              <div className="mt-auto border-t border-border pt-3">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  {isVoiceBaseline ? "Source signal" : "Performance signal"}
+                </p>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                  {insight.evidence}
+                </p>
+              </div>
+            </li>
+          );
+        })}
       </ul>
     </section>
   );
