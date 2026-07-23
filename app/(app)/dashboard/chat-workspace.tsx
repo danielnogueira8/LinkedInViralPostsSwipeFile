@@ -121,6 +121,8 @@ import type {
 } from "@/lib/agent/contracts";
 import {
   commandForComposer,
+  initialCoworkComposerState,
+  preservesCoworkCommandOnSessionChange,
   resumesPersistedCoworkOperation,
   type CoworkCommand,
   type CoworkComposerCommandKind,
@@ -456,13 +458,13 @@ export function ChatWorkspace({
   // initializer makes the client render an enabled send button while the server
   // rendered it disabled, which React reports as a hydration mismatch.
   const [input, setInput] = useState("");
-  // Operation authority is visible and scoped to one turn. Ask is always the
-  // safe default; Create and Edit must be selected explicitly. Edit also owns
+  // Operation authority is visible and scoped to one turn. A new session starts
+  // in Create; existing sessions and completed turns return to Ask. Edit owns
   // one visible Post target and scope, so wording never has to identify what
   // may change.
-  const [coworkComposer, setCoworkComposer] = useState<CoworkComposerState>({
-    kind: "ask",
-  });
+  const [coworkComposer, setCoworkComposer] = useState<CoworkComposerState>(() =>
+    initialCoworkComposerState(initialChatId),
+  );
   const askContextPostId =
     coworkComposer.kind === "ask" ? coworkComposer.contextPostId : undefined;
   // Generated drafts/hooks live in the right-hand panel (not inline in the
@@ -589,7 +591,7 @@ export function ChatWorkspace({
   );
   const preserveCommandOnNextChatChangeRef = useRef<
     string | null | undefined
-  >(undefined);
+  >(initialChatId ? undefined : null);
   // Explicit post-type pick for a plain composer send with no starter (a
   // starter like "model a lead magnet" already carries its own post type via
   // composerTaskContext — this only matters for free-text requests, which
@@ -611,10 +613,12 @@ export function ChatWorkspace({
       setLeadMagnetPickerOpen(false);
       setGenerationSettingsOpen(false);
       setContextMenuOpen(false);
-      if (preserveCommandOnNextChatChangeRef.current === activeId) {
-        preserveCommandOnNextChatChangeRef.current = undefined;
-      } else {
-        preserveCommandOnNextChatChangeRef.current = undefined;
+      const preserveCommand = preservesCoworkCommandOnSessionChange(
+        preserveCommandOnNextChatChangeRef.current,
+        activeId,
+      );
+      preserveCommandOnNextChatChangeRef.current = undefined;
+      if (!preserveCommand) {
         setCoworkComposer({ kind: "ask" });
       }
     });
@@ -2064,6 +2068,11 @@ export function ChatWorkspace({
   // abort it.)
   const newChat = useCallback(async () => {
     setInput("");
+    enterCreateCommand();
+    // Starting a session transitions through the temporary null owner and then
+    // the persisted chat id. Preserve Create across both transitions; ordinary
+    // sidebar switches still reset to Ask in the activeId effect above.
+    preserveCommandOnNextChatChangeRef.current = null;
     // Sever send ownership from the previous chat before the eager create's
     // first await. Users can start typing immediately; send() waits for the
     // pending destination below instead of leaking that turn into the old chat.
@@ -2112,6 +2121,7 @@ export function ChatWorkspace({
           delete next[chat.id];
           return next;
         });
+        preserveCommandOnNextChatChangeRef.current = chat.id;
         setActiveId(chat.id);
         // Reflect the session in the URL (same replaceState pattern as send()'s
         // lazy create) so navigating away and back deterministically re-opens it.
@@ -2140,7 +2150,7 @@ export function ChatWorkspace({
         pendingNewChatRef.current = null;
       }
     }
-  }, [setActiveId, setAttachments, chatSession]);
+  }, [enterCreateCommand, setActiveId, setAttachments, chatSession]);
 
   // Fire-and-forget AI titling for a chat whose title is still the default.
   // One cheap GLM-5.2 call (server-side, cost-logged); updates the local title

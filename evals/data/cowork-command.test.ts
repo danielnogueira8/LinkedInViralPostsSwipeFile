@@ -3,12 +3,32 @@ import {
   commandForComposer,
   commandToTurnOperation,
   coworkCommandSchema,
+  initialCoworkComposerState,
+  preservesCoworkCommandOnSessionChange,
   resumesPersistedCoworkOperation,
   type CoworkCommand,
 } from "@/lib/cowork-command";
 import { chatTurnRequestSchema } from "@/lib/agent/chat-turn";
 
 describe("Cowork command interface", () => {
+  test("new sessions default to Create while existing sessions reopen in Ask", () => {
+    expect(initialCoworkComposerState(null)).toEqual({ kind: "create" });
+    expect(initialCoworkComposerState("chat-1")).toEqual({ kind: "ask" });
+  });
+
+  test("Create survives both ownership changes while a new session is persisted", () => {
+    expect(preservesCoworkCommandOnSessionChange(null, null)).toBe(true);
+    expect(
+      preservesCoworkCommandOnSessionChange("new-chat", "new-chat"),
+    ).toBe(true);
+    expect(
+      preservesCoworkCommandOnSessionChange(undefined, "existing-chat"),
+    ).toBe(false);
+    expect(
+      preservesCoworkCommandOnSessionChange("new-chat", "another-chat"),
+    ).toBe(false);
+  });
+
   test("accepts the three explicit per-turn commands", () => {
     expect(coworkCommandSchema.parse({ kind: "ask" })).toEqual({ kind: "ask" });
     expect(
