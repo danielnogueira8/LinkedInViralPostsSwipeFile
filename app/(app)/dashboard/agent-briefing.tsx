@@ -616,7 +616,13 @@ export function AgentBriefing() {
                             : undefined
                         }
                         onClick={() => {
-                          if (item.kind === "opportunity") {
+                          if (
+                            item.kind === "opportunity" &&
+                            item.opportunity?.is_lead_magnet &&
+                            readiness.ready
+                          ) {
+                            void draftPlanItem(item);
+                          } else if (item.kind === "opportunity") {
                             void openRequiredInput(item);
                           } else if (readiness.ready) void draftPlanItem(item);
                           else void openRequiredInput(item);
@@ -637,8 +643,10 @@ export function AgentBriefing() {
                           : item.status === "dismissed"
                             ? "Skipped"
                             : item.kind === "opportunity"
-                              ? readiness.needsLeadMagnet
-                                ? "Choose resource"
+                              ? item.opportunity?.is_lead_magnet
+                                ? readiness.ready
+                                  ? "Draft this"
+                                  : "Choose resource"
                                 : "Review source"
                               : readiness.ready
                                 ? "Draft this"
