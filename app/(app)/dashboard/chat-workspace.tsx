@@ -4177,55 +4177,6 @@ export function ChatWorkspace({
                       {attachments.length}/{MAX_ATTACHMENTS}
                     </span>
                   </button>
-                  {customSkills.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setContextMenuOpen(false);
-                        setSkillPickerOpen(true);
-                      }}
-                      className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm transition-colors hover:bg-muted"
-                    >
-                      <Zap
-                        className={cn(
-                          "h-4 w-4 shrink-0",
-                          pendingSkills.length > 0
-                            ? "text-state-warning"
-                            : "text-muted-foreground",
-                        )}
-                        aria-hidden
-                      />
-                      <span className="flex-1 text-foreground">Apply a skill</span>
-                      {pendingSkills.length > 0 && (
-                        <span className="text-xs text-state-warning">
-                          {pendingSkills.length}
-                        </span>
-                      )}
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setContextMenuOpen(false);
-                      setPostFormatPickerOpen(true);
-                    }}
-                    disabled={!!modelSource}
-                    className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <FileText
-                      className={cn(
-                        "h-4 w-4 shrink-0",
-                        pendingPostFormat
-                          ? "text-primary"
-                          : "text-muted-foreground",
-                      )}
-                      aria-hidden
-                    />
-                    <span className="flex-1 text-foreground">Choose post format</span>
-                    {pendingPostFormat && (
-                      <Check className="ml-auto h-3.5 w-3.5 text-primary" />
-                    )}
-                  </button>
                   <button
                     type="button"
                     onClick={() => {

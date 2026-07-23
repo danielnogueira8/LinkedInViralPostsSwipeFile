@@ -7,7 +7,6 @@ import {
   Settings,
   Bookmark,
   AudioLines,
-  Zap,
   Fingerprint,
   ChartNoAxesColumn,
   LayoutTemplate,
@@ -62,7 +61,6 @@ export const NAV_SECTIONS: NavSection[] = [
       { href: "/dashboard/voice", label: "Voice", icon: AudioLines, tooltip: "Your writing profile and voice preferences." },
       { href: "/dashboard/creator-styles", label: "Creator Styles", icon: Fingerprint, tooltip: "Reusable writing-style profiles from creators you track." },
       { href: "/dashboard/templates", label: "Templates", icon: LayoutTemplate, tooltip: "Reusable content templates for posts and hooks." },
-      { href: "/dashboard/skills", label: "Custom Skills", icon: Zap, tooltip: "Instructions and examples that shape how drafts are written." },
     ],
   },
   {
