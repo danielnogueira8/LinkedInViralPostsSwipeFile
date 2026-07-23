@@ -12,8 +12,8 @@ import { localDateFromDatetimeInput } from "@/lib/schedule-local-date";
 import {
   MessageSquare,
   Loader2,
-  ChevronLeft,
-  ChevronRight,
+  ChevronUp,
+  ChevronDown,
   Copy,
   Check,
   Trash2,
@@ -846,25 +846,27 @@ export function DraftEditorModal({
             </div>
           </div>
           <div className="flex items-center gap-1">
-            {!isNew && (onPrevious || onNext) && (
+            {!isNew && (
               <div className="mr-1 flex items-center gap-0.5 border-r border-border pr-2">
                 <Button
                   variant="ghost"
                   size="icon-sm"
+                  className="text-foreground disabled:text-muted-foreground/30 disabled:opacity-100"
                   onClick={() => requestNavigate("previous")}
                   disabled={!onPrevious || busy}
                   aria-label="Previous post"
                 >
-                  <ChevronLeft className="h-4 w-4" />
+                  <ChevronUp className="h-4 w-4" />
                 </Button>
                 <Button
                   variant="ghost"
                   size="icon-sm"
+                  className="text-foreground disabled:text-muted-foreground/30 disabled:opacity-100"
                   onClick={() => requestNavigate("next")}
                   disabled={!onNext || busy}
                   aria-label="Next post"
                 >
-                  <ChevronRight className="h-4 w-4" />
+                  <ChevronDown className="h-4 w-4" />
                 </Button>
               </div>
             )}
