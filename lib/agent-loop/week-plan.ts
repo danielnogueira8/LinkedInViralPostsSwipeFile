@@ -1,11 +1,35 @@
 // ---------------------------------------------------------------------------
 // Plan-my-week helpers (PLAN-agent-loop Phase F).
 //
-// The plan is EPHEMERAL: generated fresh on every click from that moment's
-// signals (proposed opportunities + posting gap), never persisted, no cron.
-// These are the pure pieces — day assignment and gap math — kept separate so
-// they're unit-testable without a database.
+// The route persists one plan per workspace and calendar week. These are the
+// pure pieces — week assignment, day labels, prompt context, and gap math —
+// kept separate so they're unit-testable without a database.
 // ---------------------------------------------------------------------------
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+function isoDate(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+/** Monday (UTC) for the week that contains `from`. Stored with each plan. */
+export function weekStart(from: Date = new Date()): string {
+  const date = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate()));
+  const offset = (date.getUTCDay() + 6) % 7;
+  date.setUTCDate(date.getUTCDate() - offset);
+  return isoDate(date);
+}
+
+/** The full Monday–Sunday plan week. Weekend slots deliberately remain part of
+ * the plan; the client lays the seven cards out in a five-column grid. */
+export function workWeekDays(from: Date = new Date()): Array<{ date: string; day: string }> {
+  const start = new Date(`${weekStart(from)}T00:00:00.000Z`);
+  return Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(start.getTime() + index * DAY_MS);
+    return { date: isoDate(date), day: WEEKDAY_LABELS[date.getUTCDay()] };
+  });
+}
 
 /** Day labels for the next `count` calendar days (weekends included), starting TOMORROW. */
 export function nextDays(count: number, from: Date = new Date()): string[] {
@@ -38,6 +62,22 @@ export const GENERIC_WEEK_PROMPTS: readonly string[] = [
   "talk about a lesson you learned the hard way",
   "share what you would tell yourself three years ago",
 ];
+
+/** A concrete prompt that asks for the user's source material, not a made-up
+ * personal story. Kept here so the persisted plan and client agree. */
+export function genericContextPlaceholder(prompt: string): string {
+  const normalized = prompt.toLowerCase();
+  if (normalized.includes("changed your mind")) {
+    return "What did you believe before, what changed your mind, and what do you believe now?";
+  }
+  if (normalized.includes("client win")) {
+    return "Which client, what changed, and what did you do that made it happen?";
+  }
+  if (normalized.includes("failure") || normalized.includes("mistake")) {
+    return "What happened, what did it cost or teach you, and what would you do differently?";
+  }
+  return "What happened, what did you learn, and what should your audience take away?";
+}
 
 export type WeekPlanSlot =
   | { kind: "opportunity"; id: string }

@@ -2,9 +2,10 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { X, Loader2, Magnet, ArrowRight, CalendarDays, Lightbulb } from "lucide-react";
+import { X, Loader2, Magnet, ArrowRight, Lightbulb } from "lucide-react";
 import { AiIcon } from "@/components/ai-icon";
 import { AvatarImg } from "@/components/avatar-img";
+import { genericContextPlaceholder } from "@/lib/agent-loop/week-plan";
 import { cn } from "@/lib/utils";
 
 // -----------------------------------------------------------------------------
@@ -16,8 +17,8 @@ import { cn } from "@/lib/utils";
 // ON the Posts board and marks it reviewed so it drops off this list for good)
 // and the currently proposed opportunities with one-click Draft it / dismiss.
 //
-// Phase F adds "Plan my week": an ephemeral, regenerate-on-click weekly plan
-// built from the same live signals, each day actionable via "Draft this".
+// The weekly plan is a durable Monday–Sunday workspace record. Generic cards
+// wait for real user context before they can draft; source-backed cards do not.
 // -----------------------------------------------------------------------------
 
 type BriefingDraft = {
@@ -121,7 +122,9 @@ type Briefing = {
 };
 
 type WeekPlanItem = {
+  id: string;
   day: string;
+  date: string;
   kind: "opportunity" | "generic";
   opportunity?: {
     id: string;
@@ -130,7 +133,9 @@ type WeekPlanItem = {
     author_avatar?: string | null;
   };
   /** Generic "your story" day: the under-the-hood drafting prompt. */
-  prompt?: string;
+  prompt: string | null;
+  userContext: string | null;
+  status: "planned" | "drafting" | "drafted" | "dismissed";
 };
 
 type WeekPlan = {
@@ -141,45 +146,6 @@ type WeekPlan = {
 function snippet(body: string, max = 110): string {
   const clean = body.replace(/\s+/g, " ").trim();
   return clean.length > max ? `${clean.slice(0, max)}…` : clean;
-}
-
-// The week's plan stays visible until it would actually change — the next
-// day, when the day-seeded composition differs — instead of disappearing on
-// every reload or navigation. Persisted per day in localStorage.
-const PLAN_STORAGE_KEY = "swipein:agent-week-plan";
-
-function todayKey(): string {
-  return new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD, local
-}
-
-function readPlanStorage(): { generatedFor: string; dismissed: boolean } | null {
-  try {
-    const raw = window.localStorage.getItem(PLAN_STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as {
-      generatedFor?: unknown;
-      dismissed?: unknown;
-    };
-    return typeof parsed.generatedFor === "string"
-      ? {
-          generatedFor: parsed.generatedFor,
-          dismissed: parsed.dismissed === true,
-        }
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-function writePlanStorage(dismissed: boolean) {
-  try {
-    window.localStorage.setItem(
-      PLAN_STORAGE_KEY,
-      JSON.stringify({ generatedFor: todayKey(), dismissed }),
-    );
-  } catch {
-    /* private mode — the plan just won't persist */
-  }
 }
 
 export function AgentBriefing({
@@ -193,10 +159,10 @@ export function AgentBriefing({
   const [briefing, setBriefing] = useState<Briefing | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  // Plan-my-week (Phase F): ephemeral plan, rebuilt from live signals per click.
+  // One durable Monday–Sunday plan is loaded automatically for this workspace.
   const [weekPlan, setWeekPlan] = useState<WeekPlan | null>(null);
   const [planLoading, setPlanLoading] = useState(false);
-  const [planOpen, setPlanOpen] = useState(false);
+  const [contextByItem, setContextByItem] = useState<Record<string, string>>({});
 
   const refresh = useCallback(async () => {
     try {
@@ -255,8 +221,6 @@ export function AgentBriefing({
           gapNote: typeof data.gapNote === "string" ? data.gapNote : null,
           items: Array.isArray(data.items) ? data.items : [],
         });
-        setPlanOpen(true);
-        writePlanStorage(false);
       }
     } catch {
       // Fail-open: the plan just doesn't open.
@@ -265,20 +229,11 @@ export function AgentBriefing({
     }
   }, []);
 
-  const closePlan = useCallback(() => {
-    setPlanOpen(false);
-    writePlanStorage(true);
-  }, []);
-
-  // Re-open today's plan on mount/navigation until it goes stale (next day).
   useEffect(() => {
-    const stored = readPlanStorage();
-    if (stored && stored.generatedFor === todayKey() && !stored.dismissed) {
-      const loadTimer = window.setTimeout(() => {
-        void loadWeekPlan();
-      }, 0);
-      return () => window.clearTimeout(loadTimer);
-    }
+    // Defer the external sync one tick so the effect itself does not enqueue a
+    // state change during React's commit phase.
+    const timer = window.setTimeout(() => void loadWeekPlan(), 0);
+    return () => window.clearTimeout(timer);
   }, [loadWeekPlan]);
 
   const act = async (id: string, action: "draft" | "dismiss") => {
@@ -296,9 +251,6 @@ export function AgentBriefing({
         throw new Error(data?.error || "Couldn't do that — try again.");
       }
       await refresh();
-      // A drafted/dismissed opportunity leaves the plan too — regenerate it so
-      // the week view always reflects the current signal pool.
-      if (planOpen) void loadWeekPlan();
     } catch (error) {
       setActionError((error as Error).message);
     } finally {
@@ -306,23 +258,43 @@ export function AgentBriefing({
     }
   };
 
-  // "Draft this" on a generic plan day — the prompt rides under the hood; the
-  // user just sees the story suggestion.
-  const draftGeneric = async (prompt: string) => {
+  const saveContext = async (itemId: string, context: string) => {
+    const res = await fetch(`/api/agent/week-plan/items/${itemId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ context }),
+    });
+    // A Draft click claims the card concurrently with its textarea blur. The
+    // draft request persists the same context, so a late "no longer editable"
+    // response is expected and must not turn a successful draft into an error.
+    if (res.status === 409) return;
+    if (!res.ok) throw new Error("Couldn't save your context — try again.");
+  };
+
+  const draftPlanItem = async (item: WeekPlanItem) => {
     if (busyId) return;
-    setBusyId(prompt);
+    const context = contextByItem[item.id] ?? item.userContext ?? "";
+    if (item.kind === "generic" && context.trim().length < 12) {
+      setActionError("Add a little real context before drafting this post.");
+      return;
+    }
+    setBusyId(item.id);
     setActionError(null);
     try {
       const res = await fetch("/api/agent/week-plan/draft", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt }),
+        body: JSON.stringify({
+          itemId: item.id,
+          ...(item.kind === "generic" ? { context } : {}),
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data?.ok) {
         throw new Error(data?.error || "Couldn't draft that — try again.");
       }
       await refresh();
+      await loadWeekPlan();
     } catch (error) {
       setActionError((error as Error).message);
     } finally {
@@ -355,42 +327,20 @@ export function AgentBriefing({
             Watching your tracked creators for you.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => (planOpen ? closePlan() : void loadWeekPlan())}
-          disabled={planLoading}
-          className={cn(
-            "inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
-            planOpen
-              ? "border-accent-brand/30 bg-accent-brand/[0.08] text-accent-brand"
-              : "border-border bg-card text-foreground hover:border-accent-brand/30 hover:text-accent-brand",
-            "disabled:opacity-50",
-          )}
-          title="Generate a fresh weekly plan from what your agent sees right now"
-        >
-          {planLoading ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-          ) : (
-            <CalendarDays className="h-3.5 w-3.5" aria-hidden />
-          )}
-          Plan my week
-        </button>
+        {planLoading ? <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" aria-label="Loading your weekly plan" /> : null}
       </div>
 
-      {planOpen && weekPlan && (
+      {weekPlan && (
         <div className="mt-4 rounded-xl border border-accent-brand/20 bg-accent-brand/[0.04] p-3">
           <div className="flex items-center justify-between gap-2">
-            <p className="text-xs font-medium uppercase tracking-wide text-accent-brand">
-              Your week
-            </p>
-            <button
-              type="button"
-              onClick={closePlan}
-              className="grid size-6 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-black/[0.04] hover:text-foreground"
-              aria-label="Close plan"
-            >
-              <X className="h-3.5 w-3.5" aria-hidden />
-            </button>
+            <div>
+              <p className="text-xs font-medium uppercase tracking-wide text-accent-brand">
+                Your week
+              </p>
+              <p className="mt-0.5 text-[11px] text-muted-foreground">
+                Your plan stays here all week. Add the real context behind any idea card before drafting.
+              </p>
+            </div>
           </div>
           {weekPlan.gapNote && (
             <p className="mt-1 text-xs text-muted-foreground">{weekPlan.gapNote}</p>
@@ -401,69 +351,94 @@ export function AgentBriefing({
               scrape of your tracked creators.
             </p>
           ) : (
-            <ul className="mt-2 flex flex-col gap-1.5">
-              {weekPlan.items.map((item, index) => {
-                const key =
-                  item.kind === "generic"
-                    ? `generic-${item.prompt}`
-                    : (item.opportunity?.id ?? `opp-${index}`);
-                const busy =
-                  item.kind === "generic"
-                    ? busyId === item.prompt
-                    : busyId === item.opportunity?.id;
+            <ul className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-7">
+              {weekPlan.items.map((item) => {
+                const busy = busyId === item.id;
+                const context = contextByItem[item.id] ?? item.userContext ?? "";
+                const needsContext = item.kind === "generic";
                 return (
                   <li
-                    key={key}
-                    className="flex items-center gap-2.5 rounded-lg bg-background/70 px-2.5 py-2"
+                    key={item.id}
+                    className="flex min-w-0 flex-col rounded-lg border border-border/70 bg-background/70 p-2.5"
                   >
-                    <span className="w-9 shrink-0 text-xs font-semibold text-accent-brand">
+                    <span className="text-xs font-semibold text-accent-brand">
                       {item.day}
                     </span>
-                    {item.kind === "generic" ? (
-                      <>
+                    <div className="mt-1 flex min-w-0 items-start gap-1.5">
+                      {item.kind === "generic" ? (
                         <span
-                          className="grid size-5 shrink-0 place-items-center rounded-md bg-muted text-muted-foreground"
-                          title="A post from your own stories — no source needed"
+                          role="img"
+                          className="mt-0.5 grid size-5 shrink-0 place-items-center rounded-md bg-muted text-muted-foreground"
+                          aria-label="Needs your context before drafting"
                         >
                           <Lightbulb className="h-3 w-3" aria-hidden />
                         </span>
-                        <p className="min-w-0 flex-1 truncate text-sm text-foreground">
-                          <span className="capitalize">{item.prompt}</span>
-                        </p>
-                      </>
-                    ) : (
-                      <>
+                      ) : (
+                        <>
                         {item.opportunity?.is_lead_magnet ? (
                           <LeadMagnetBadge
-                            hintId={`week-plan-lead-magnet-${item.opportunity.id}`}
+                            hintId={`week-plan-lead-magnet-${item.id}`}
                           />
                         ) : null}
                         <CreatorAvatar
                           src={item.opportunity?.author_avatar}
                           name={item.opportunity?.headline ?? "?"}
                         />
-                        <p className="min-w-0 flex-1 truncate text-sm text-foreground">
-                          {item.opportunity?.headline}
+                        </>
+                      )}
+                      <p className="min-w-0 text-xs leading-4 text-foreground">
+                        {item.kind === "generic" ? (
+                          <span className="capitalize">{item.prompt}</span>
+                        ) : item.opportunity?.headline}
+                      </p>
+                    </div>
+                    {needsContext ? (
+                      <div className="mt-2">
+                        <label className="sr-only" htmlFor={`week-plan-context-${item.id}`}>
+                          Your context for {item.prompt}
+                        </label>
+                        <textarea
+                          id={`week-plan-context-${item.id}`}
+                          value={context}
+                          onChange={(event) =>
+                            setContextByItem((current) => ({
+                              ...current,
+                              [item.id]: event.target.value,
+                            }))
+                          }
+                          onBlur={() => {
+                            void saveContext(item.id, context).catch((error: Error) =>
+                              setActionError(error.message),
+                            );
+                          }}
+                          disabled={item.status !== "planned" || busyId !== null}
+                          placeholder={genericContextPlaceholder(item.prompt ?? "")}
+                          className="min-h-20 w-full resize-y rounded-md border border-border bg-card px-2 py-1.5 text-xs leading-4 text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:opacity-60"
+                        />
+                        <p className="mt-1 text-[10px] leading-3 text-muted-foreground">
+                          {item.prompt?.toLowerCase().includes("changed your mind")
+                            ? "What you believed before, what changed it, and what you believe now."
+                            : "The event, example, or belief Cowork should use — never make it up."}
                         </p>
-                      </>
-                    )}
+                      </div>
+                    ) : null}
                     <button
                       type="button"
-                      disabled={busyId !== null}
-                      onClick={() =>
-                        item.kind === "generic"
-                          ? void draftGeneric(item.prompt ?? "")
-                          : void act(item.opportunity?.id ?? "", "draft")
-                      }
+                      disabled={busyId !== null || item.status !== "planned" || (needsContext && context.trim().length < 12)}
+                      onClick={() => void draftPlanItem(item)}
                       className={cn(
-                        "inline-flex shrink-0 items-center gap-1 rounded-full bg-accent-brand px-2.5 py-1 text-[11px] font-medium text-accent-brand-foreground",
-                        "transition-opacity hover:opacity-90 disabled:opacity-50",
+                        "mt-2 inline-flex w-full items-center justify-center gap-1 rounded-full bg-accent-brand px-2 py-1.5 text-[11px] font-medium text-accent-brand-foreground",
+                        "transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50",
                       )}
                     >
                       {busy ? (
                         <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
                       ) : null}
-                      Draft this
+                      {item.status === "drafted"
+                        ? "Draft saved"
+                        : item.status === "dismissed"
+                          ? "Skipped"
+                          : "Draft this"}
                     </button>
                   </li>
                 );

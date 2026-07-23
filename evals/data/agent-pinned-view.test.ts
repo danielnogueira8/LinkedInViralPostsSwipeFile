@@ -124,11 +124,11 @@ describe("the agent view uses the horizontal space (two columns, wider panel)", 
     // over-wide row content. `clip` contains horizontal paint without turning
     // either wrapper into a vertical scroll container.
     expect(workspace).toContain(
-      "max-w-5xl flex-col overflow-x-clip py-2",
+      "max-w-[112rem] flex-col overflow-x-clip py-2",
     );
     expect(briefing).toContain("sm:p-5 overflow-x-clip");
     expect(workspace).not.toContain(
-      "max-w-5xl flex-col overflow-x-hidden py-2",
+      "max-w-[112rem] flex-col overflow-x-hidden py-2",
     );
     expect(briefing).not.toContain("sm:p-5 overflow-x-hidden");
   });
@@ -136,7 +136,7 @@ describe("the agent view uses the horizontal space (two columns, wider panel)", 
   test("the panel is widened past the old narrow max-w-2xl", () => {
     // AgentView was max-w-2xl (~672px) and left most of a wide screen empty.
     expect(workspace).toContain("function AgentView");
-    expect(workspace).toContain("max-w-5xl");
+    expect(workspace).toContain("max-w-[112rem]");
     expect(workspace).not.toContain(
       'mx-auto flex w-full max-w-2xl flex-col py-2',
     );
