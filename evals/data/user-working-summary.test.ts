@@ -44,17 +44,19 @@ describe("Working-summary output safety", () => {
       insights: [
         {
           label: "Hooks",
-          finding: "A concrete reversal earns more conversation.",
+          finding: "Your concrete reversals earn more conversation.",
           evidence: "The highest-comment post opens with what changed.",
+          example: "I stopped measuring reach. Here’s what I track instead.",
+          exampleKind: "best_performing",
         },
         {
           label: "Topics",
-          finding: "Posts about founder-led systems outperform generic AI news.",
+          finding: "Your founder-system posts outperform generic AI news.",
           evidence: "The two strongest posts both used client workflow examples.",
         },
         {
           label: "Formats",
-          finding: "Short proof-led posts carry the clearest signal.",
+          finding: "Your short proof-led posts carry the clearest signal.",
           evidence: "The strongest posts pair one claim with one example.",
         },
         {
@@ -78,20 +80,22 @@ describe("Working-summary output safety", () => {
         insights: [
           {
             label: "Topics",
-            finding: "Founder systems are the clearest recurring subject.",
+            finding: "Founder systems are your clearest recurring subject.",
             evidence: "Both saved posts use a practical system example.",
           },
           {
             label: "Hooks",
-            finding: "Direct claims create recognizable openings.",
+            finding: "Your direct claims create recognizable openings.",
             evidence: "Both saved posts lead with the lesson.",
+            example: "Your content problem is not a lack of ideas.",
+            exampleKind: "representative",
           },
         ],
       }),
     ).toEqual([]);
   });
 
-  test("migrates a complete v1 cache but rejects a legacy mixed-label cache", () => {
+  test("preserves clean v2 fallback data while requiring v3 examples", () => {
     const base = {
       source: "published_posts",
       sourcePostCount: 6,
@@ -103,44 +107,82 @@ describe("Working-summary output safety", () => {
     const categories = [
       {
         label: "Topics",
-        finding: "Founder systems are the clearest recurring subject.",
+        finding: "Founder systems are your clearest recurring subject.",
         evidence: "Three top posts use concrete operating examples.",
       },
       {
         label: "Formats",
-        finding: "Short proof-led posts are the strongest format.",
+        finding: "Your short proof-led posts are the strongest format.",
         evidence: "Three top posts pair one claim with one example.",
       },
       {
         label: "Hooks",
-        finding: "Contrarian claims are the strongest opening.",
+        finding: "Contrarian claims are your strongest opening.",
         evidence: "Three top posts reject familiar operating advice.",
+        example: "You do not need more content ideas.",
+        exampleKind: "best_performing",
       },
     ];
 
     expect(
       coerceStoredWorkingSummary({
         ...base,
-        version: 1,
+        version: 3,
+        insights: categories,
+      })?.version,
+    ).toBe(3);
+    expect(
+      coerceStoredWorkingSummary({
+        ...base,
+        version: 2,
         insights: categories,
       })?.version,
     ).toBe(2);
     expect(
       coerceStoredWorkingSummary({
         ...base,
-        version: 1,
+        version: 2,
         insights: [
-          ...categories.slice(0, 2),
-          { ...categories[2], label: "Angles" },
+          {
+            ...categories[0],
+            finding: "The creator repeatedly writes about founder systems.",
+          },
+          ...categories.slice(1),
         ],
       }),
     ).toBeNull();
+  });
+
+  test('rejects third-person "the creator" findings', () => {
+    expect(
+      coerceWorkingSummaryInsights({
+        insights: [
+          {
+            label: "Topics",
+            finding: "The creator repeatedly writes about founder systems.",
+            evidence: "Three posts focus on founder operating habits.",
+          },
+          {
+            label: "Formats",
+            finding: "You favor short proof-led posts.",
+            evidence: "Three posts pair one claim with one example.",
+          },
+          {
+            label: "Hooks",
+            finding: "You open with a concrete reversal.",
+            evidence: "The leading posts reject familiar advice.",
+            example: "You do not need more content ideas.",
+            exampleKind: "representative",
+          },
+        ],
+      }),
+    ).toEqual([]);
   });
 });
 
 describe("Weekly refresh policy", () => {
   const cached: UserWorkingSummary = {
-    version: 2,
+    version: 3,
     source: "published_posts",
     sourcePostCount: 6,
     analyzedPostCount: 6,
@@ -150,18 +192,24 @@ describe("Weekly refresh policy", () => {
     insights: [
       {
         label: "Topics",
-        finding: "Systems posts lead.",
+        finding: "Your systems posts lead.",
         evidence: "Three of the top posts cover systems.",
+        example: null,
+        exampleKind: null,
       },
       {
         label: "Formats",
-        finding: "Short proof-led posts lead.",
+        finding: "Your short proof-led posts lead.",
         evidence: "Three top posts pair a claim with proof.",
+        example: null,
+        exampleKind: null,
       },
       {
         label: "Hooks",
-        finding: "Reversals start the strongest posts.",
+        finding: "Reversals start your strongest posts.",
         evidence: "The top posts reject a familiar assumption.",
+        example: "You do not need more content ideas.",
+        exampleKind: "best_performing",
       },
     ],
   };
@@ -191,6 +239,14 @@ describe("Weekly refresh policy", () => {
         cached,
         "voice_profile",
         "voice-2",
+        new Date("2026-07-21T10:00:00.000Z"),
+      ),
+    ).toBe(true);
+    expect(
+      shouldRefreshWorkingSummary(
+        { ...cached, version: 2 },
+        "published_posts",
+        "published",
         new Date("2026-07-21T10:00:00.000Z"),
       ),
     ).toBe(true);

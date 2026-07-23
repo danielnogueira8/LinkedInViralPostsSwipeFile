@@ -17,6 +17,8 @@ describe("Your Agent working-summary wiring", () => {
     expect(summary).toContain("The topics earning attention");
     expect(summary).toContain("The formats carrying them");
     expect(summary).toContain("The hooks stopping the scroll");
+    expect(summary).toContain("Best-performing hook");
+    expect(summary).toContain("Example hook");
     expect(summary).toContain("coerceStoredWorkingSummary(data.summary)");
     expect(briefing.lastIndexOf("<AgentWorkingSummary")).toBeGreaterThan(
       briefing.indexOf("Model recently viral posts"),

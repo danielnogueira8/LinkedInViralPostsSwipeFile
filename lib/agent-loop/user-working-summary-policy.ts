@@ -3,6 +3,7 @@ export const WORKING_SUMMARY_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
 export const USER_WORKING_SUMMARY_KEY = "user_working_summary_v1";
 
 const SUMMARY_TEXT_CHARS_MAX = 220;
+const SUMMARY_EXAMPLE_CHARS_MAX = 180;
 export const WORKING_SUMMARY_CATEGORIES = [
   "Topics",
   "Formats",
@@ -12,15 +13,20 @@ export const WORKING_SUMMARY_CATEGORIES = [
 export type UserWorkingSummarySource = "voice_profile" | "published_posts";
 export type UserWorkingSummaryCategory =
   (typeof WORKING_SUMMARY_CATEGORIES)[number];
+export type UserWorkingSummaryExampleKind =
+  | "best_performing"
+  | "representative";
 
 export type UserWorkingSummaryInsight = {
   label: UserWorkingSummaryCategory;
   finding: string;
   evidence: string;
+  example: string | null;
+  exampleKind: UserWorkingSummaryExampleKind | null;
 };
 
 export type UserWorkingSummary = {
-  version: 2;
+  version: 2 | 3;
   source: UserWorkingSummarySource;
   /** Total posts in the source corpus (Voice scrape or published history). */
   sourcePostCount: number;
@@ -79,7 +85,13 @@ function parseJsonObject(text: string): unknown {
 
 export function coerceWorkingSummaryInsights(
   value: unknown,
+  options: {
+    requireDirectAddress?: boolean;
+    requireHookExample?: boolean;
+  } = {},
 ): UserWorkingSummaryInsight[] {
+  const requireDirectAddress = options.requireDirectAddress ?? true;
+  const requireHookExample = options.requireHookExample ?? true;
   const parsed =
     typeof value === "string" ? parseJsonObject(value) : value;
   const raw =
@@ -100,16 +112,40 @@ export function coerceWorkingSummaryInsights(
       | "";
     const finding = cleanText(candidate.finding);
     const evidence = cleanText(candidate.evidence);
+    const example = cleanText(
+      candidate.example,
+      SUMMARY_EXAMPLE_CHARS_MAX,
+    );
+    const exampleKind =
+      candidate.exampleKind === "best_performing" ||
+      candidate.exampleKind === "representative"
+        ? candidate.exampleKind
+        : null;
     if (
       !label ||
       !ALLOWED_INSIGHT_LABELS.has(label) ||
       finding.length < 12 ||
-      evidence.length < 12
+      evidence.length < 12 ||
+      /\b(?:the|this) creator\b|\bthe user\b/i.test(
+        `${finding} ${evidence}`,
+      ) ||
+      (requireDirectAddress && !/\b(?:you|your)\b/i.test(finding)) ||
+      (requireHookExample &&
+        label === "Hooks" &&
+        (example.length < 4 || !exampleKind))
     ) {
       continue;
     }
     if (insights.has(label)) continue;
-    insights.set(label, { label, finding, evidence });
+    insights.set(label, {
+      label,
+      finding,
+      evidence,
+      example: example || null,
+      exampleKind: example
+        ? exampleKind ?? "representative"
+        : null,
+    });
   }
   if (insights.size !== WORKING_SUMMARY_CATEGORIES.length) return [];
   return WORKING_SUMMARY_CATEGORIES.map((label) => insights.get(label)!);
@@ -124,11 +160,16 @@ export function coerceStoredWorkingSummary(
     record.source === "voice_profile" || record.source === "published_posts"
       ? record.source
       : null;
-  const insights = coerceWorkingSummaryInsights({
-    insights: record.insights,
-  });
+  const isCurrent = record.version === 3;
+  const insights = coerceWorkingSummaryInsights(
+    { insights: record.insights },
+    {
+      requireDirectAddress: isCurrent,
+      requireHookExample: isCurrent,
+    },
+  );
   if (
-    (record.version !== 1 && record.version !== 2) ||
+    (record.version !== 2 && record.version !== 3) ||
     !source ||
     typeof record.sourcePostCount !== "number" ||
     typeof record.analyzedPostCount !== "number" ||
@@ -140,7 +181,7 @@ export function coerceStoredWorkingSummary(
     return null;
   }
   return {
-    version: 2,
+    version: record.version,
     source,
     sourcePostCount: Math.max(0, Math.floor(record.sourcePostCount)),
     analyzedPostCount: Math.max(0, Math.floor(record.analyzedPostCount)),
@@ -158,6 +199,7 @@ export function shouldRefreshWorkingSummary(
   now: Date,
 ): boolean {
   if (!cached || cached.source !== desiredSource) return true;
+  if (cached.version !== 3) return true;
   if (
     desiredSource === "voice_profile" &&
     cached.sourceRevision !== sourceRevision

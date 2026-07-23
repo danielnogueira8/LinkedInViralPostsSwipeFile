@@ -13,19 +13,23 @@ const CATEGORY_DETAILS: Record<
   UserWorkingSummaryCategory,
   {
     description: string;
+    exampleLabel: string;
     icon: typeof Hash;
   }
 > = {
   Topics: {
     description: "The topics earning attention",
+    exampleLabel: "Example topic",
     icon: Hash,
   },
   Formats: {
     description: "The formats carrying them",
+    exampleLabel: "Example structure",
     icon: LayoutTemplate,
   },
   Hooks: {
     description: "The hooks stopping the scroll",
+    exampleLabel: "Example hook",
     icon: TextCursorInput,
   },
 };
@@ -137,6 +141,19 @@ export function AgentWorkingSummary() {
               <p className="mt-4 text-base font-semibold leading-6 text-foreground">
                 {insight.finding}
               </p>
+              {insight.example ? (
+                <div className="mt-4 rounded-lg bg-muted/70 px-3 py-2.5">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    {insight.label === "Hooks" &&
+                    insight.exampleKind === "best_performing"
+                      ? "Best-performing hook"
+                      : details.exampleLabel}
+                  </p>
+                  <p className="mt-1 text-xs font-medium leading-5 text-foreground">
+                    “{insight.example}”
+                  </p>
+                </div>
+              ) : null}
               <div className="mt-auto border-t border-border pt-3">
                 <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                   {isVoiceBaseline ? "Source signal" : "Performance signal"}
