@@ -35,6 +35,21 @@ export type CoworkComposerState =
       scope: "full_post" | "hook";
     };
 
+export function initialCoworkComposerState(
+  activeSessionId: string | null,
+): CoworkComposerState {
+  return activeSessionId ? { kind: "ask" } : { kind: "create" };
+}
+
+export function preservesCoworkCommandOnSessionChange(
+  expectedSessionId: string | null | undefined,
+  activeSessionId: string | null,
+): boolean {
+  return (
+    expectedSessionId !== undefined && expectedSessionId === activeSessionId
+  );
+}
+
 export function resumesPersistedCoworkOperation(input: {
   retryOfUserMessageId?: string;
   actionSelectionIds?: readonly string[];
