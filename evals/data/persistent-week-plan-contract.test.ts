@@ -5,6 +5,9 @@ const source = (path: string) => readFileSync(path, "utf8");
 const planRoute = source("app/api/agent/week-plan/route.ts");
 const draftRoute = source("app/api/agent/week-plan/draft/route.ts");
 const itemRoute = source("app/api/agent/week-plan/items/[id]/route.ts");
+const rerollRoute = source(
+  "app/api/agent/week-plan/items/[id]/reroll/route.ts",
+);
 const opportunityRoute = source("app/api/agent/opportunities/[id]/route.ts");
 const briefing = source("app/(app)/dashboard/agent-briefing.tsx");
 const postCard = source("components/post-card.tsx");
@@ -184,5 +187,33 @@ describe("persistent weekly plan contract", () => {
       "CADENCE_CTA_CLASSNAMES[cadenceCtaVariant(item, readiness)]",
     );
     expect(briefing).toContain("CADENCE_CTA_CLASSNAMES.black");
+  });
+
+  test("a drafted cadence card shows a green check next to its day", () => {
+    expect(briefing).toContain("CheckCircle2");
+    expect(briefing).toContain('item.status === "drafted" ? (');
+    expect(briefing).toContain("text-state-success");
+  });
+
+  test("planned cadence cards can be refreshed for a different post or idea", () => {
+    expect(briefing).toContain("RefreshCcw");
+    expect(briefing).toContain("rerollPlanItem");
+    expect(briefing).toContain(
+      '/api/agent/week-plan/items/${item.id}/reroll',
+    );
+    expect(briefing).toContain('item.status === "planned" ? (');
+
+    expect(rerollRoute).toContain("export async function POST(");
+    expect(rerollRoute).toContain('status !== "planned"');
+    // Same kind of opportunity (lead magnet vs. regular) as the slot it replaces.
+    expect(rerollRoute).toContain(
+      "current.opportunity?.is_lead_magnet === true",
+    );
+    expect(rerollRoute).toContain("opportunityIsLeadMagnet(row, leadMagnetPostIdSet) === wantLeadMagnet");
+    // Never re-picks an opportunity already showing elsewhere on the plan.
+    expect(rerollRoute).toContain("usedOpportunityIds(plan!.items)");
+    // Generic ("idea") slots swap prompts instead of opportunities.
+    expect(rerollRoute).toContain("pickNextGenericPrompt(");
+    expect(rerollRoute).toContain('item.status !== "planned"');
   });
 });
