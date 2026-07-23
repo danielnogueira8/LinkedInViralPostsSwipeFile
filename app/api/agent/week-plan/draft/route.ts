@@ -93,6 +93,7 @@ export async function POST(req: Request) {
     const updateStatus = async (
       status: "planned" | "drafting" | "drafted",
       expectedStatus: "planned" | "drafting",
+      draftId: string | null = null,
     ) =>
       Boolean(
         await mutateStoredWeekPlanItem(
@@ -107,6 +108,7 @@ export async function POST(req: Request) {
                   status,
                   userContext: item.kind === "generic" ? context : null,
                   selectedLeadMagnetId: isLeadMagnet ? leadMagnetId : null,
+                  draftId: status === "drafted" ? draftId : null,
                 }
               : null,
         ),
@@ -127,7 +129,7 @@ export async function POST(req: Request) {
           context,
         );
         if (!result.ok) throw new Error(result.reason);
-        await updateStatus("drafted", "drafting");
+        await updateStatus("drafted", "drafting", result.draftIds[0]);
         return NextResponse.json({ ok: true, draftIds: result.draftIds });
       }
 
@@ -151,7 +153,7 @@ export async function POST(req: Request) {
         leadMagnetId ? { leadMagnetId } : undefined,
       );
       if (!result.ok) throw new Error(result.reason);
-      await updateStatus("drafted", "drafting");
+      await updateStatus("drafted", "drafting", result.draftIds[0]);
       return NextResponse.json({ ok: true, draftIds: result.draftIds });
     } catch (error) {
       await updateStatus("planned", "drafting");

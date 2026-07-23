@@ -63,10 +63,28 @@ describe("persistent weekly plan contract", () => {
     expect(draftRoute).toContain('await updateStatus("planned", "drafting")');
     expect(draftRoute).toContain('updateStatus("drafting", "planned")');
     expect(draftRoute).toContain("leadMagnetId");
+    expect(draftRoute).toContain(
+      'updateStatus("drafted", "drafting", result.draftIds[0])',
+    );
+    expect(store).toContain("draftId: z.string().uuid().nullable().optional()");
     expect(act).toContain('command: { kind: "create", count: 1 }');
     expect(draftRoute).toContain("Your direction is saved");
     expect(draftRoute).toContain("{ status: 502 }");
     expect(briefing).toContain('role="alert"');
+  });
+
+  test("a completed cadence card opens its exact saved draft on the Posts board", () => {
+    expect(briefing).toContain('"See Draft"');
+    expect(briefing).not.toContain('"Draft saved"');
+    expect(briefing).toContain(
+      "`/dashboard/posts?open=${encodeURIComponent(item.draftId)}`",
+    );
+    expect(briefing).toContain(
+      'item.status === "drafted" && Boolean(item.draftId)',
+    );
+    expect(planRoute).toContain("recoverLegacyDraftIds");
+    expect(planRoute).toContain("drafted_artifact_id");
+    expect(planRoute).toContain("findLegacyGenericDraftId");
   });
 
   test("normal opportunity actions update their matching persistent card", () => {

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   Loader2,
@@ -161,6 +162,7 @@ type WeekPlanItem = {
   userContext: string | null;
   selectedLeadMagnetId: string | null;
   status: "planned" | "drafting" | "drafted" | "dismissed";
+  draftId?: string | null;
 };
 
 type WeekPlan = {
@@ -506,6 +508,8 @@ export function AgentBriefing() {
             {planItems.map((item) => {
               const busy = busyId === item.id;
               const readiness = itemDraftReadiness(item);
+              const draftedDraftAvailable =
+                item.status === "drafted" && Boolean(item.draftId);
               const hasEditableInput =
                 item.kind === "generic" ||
                 item.opportunity?.is_lead_magnet === true;
@@ -581,43 +585,52 @@ export function AgentBriefing() {
                           : "Edit resource"}
                       </button>
                     ) : null}
-                    <button
-                      type="button"
-                      disabled={busyId !== null || item.status !== "planned"}
-                      aria-describedby={
-                        planDraftError?.itemId === item.id
-                          ? `week-plan-draft-error-${item.id}`
-                          : undefined
-                      }
-                      onClick={() =>
-                        readiness.ready
-                          ? void draftPlanItem(item)
-                          : void openRequiredInput(item)
-                      }
-                      className={cn(
-                        "inline-flex w-full items-center justify-center gap-1 rounded-lg px-2 py-2 text-[11px] font-semibold transition-colors",
-                        readiness.ready
-                          ? "bg-accent-brand text-accent-brand-foreground hover:bg-accent-brand/90"
-                          : "border border-border bg-card text-foreground hover:border-accent-brand/40",
-                        "disabled:cursor-not-allowed disabled:opacity-50",
-                      )}
-                    >
-                      {busy ? (
-                        <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
-                      ) : null}
-                      {item.status === "drafted"
-                        ? "Draft saved"
-                        : item.status === "dismissed"
-                          ? "Skipped"
-                          : readiness.ready
-                            ? "Draft this"
-                            : readiness.needsLeadMagnet
-                              ? "Choose resource"
-                              : "Choose direction"}
-                      {item.status === "planned" && !busy ? (
+                    {draftedDraftAvailable && item.draftId ? (
+                      <Link
+                        href={`/dashboard/posts?open=${encodeURIComponent(item.draftId)}`}
+                        className="inline-flex w-full items-center justify-center gap-1 rounded-lg bg-accent-brand px-2 py-2 text-[11px] font-semibold text-accent-brand-foreground transition-colors hover:bg-accent-brand/90"
+                      >
+                        See Draft
                         <ChevronRight className="h-3 w-3" aria-hidden />
-                      ) : null}
-                    </button>
+                      </Link>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={busyId !== null || item.status !== "planned"}
+                        aria-describedby={
+                          planDraftError?.itemId === item.id
+                            ? `week-plan-draft-error-${item.id}`
+                            : undefined
+                        }
+                        onClick={() => {
+                          if (readiness.ready) void draftPlanItem(item);
+                          else void openRequiredInput(item);
+                        }}
+                        className={cn(
+                          "inline-flex w-full items-center justify-center gap-1 rounded-lg px-2 py-2 text-[11px] font-semibold transition-colors",
+                          readiness.ready
+                            ? "bg-accent-brand text-accent-brand-foreground hover:bg-accent-brand/90"
+                            : "border border-border bg-card text-foreground hover:border-accent-brand/40",
+                          "disabled:cursor-not-allowed disabled:opacity-50",
+                        )}
+                      >
+                        {busy ? (
+                          <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+                        ) : null}
+                        {item.status === "drafted"
+                          ? "See Draft"
+                          : item.status === "dismissed"
+                            ? "Skipped"
+                            : readiness.ready
+                              ? "Draft this"
+                              : readiness.needsLeadMagnet
+                                ? "Choose resource"
+                                : "Choose direction"}
+                        {item.status === "planned" && !busy ? (
+                          <ChevronRight className="h-3 w-3" aria-hidden />
+                        ) : null}
+                      </button>
+                    )}
                     {planDraftError?.itemId === item.id ? (
                       <p
                         id={`week-plan-draft-error-${item.id}`}
