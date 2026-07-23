@@ -797,6 +797,7 @@ function compileMessages(
           OUTPUT_LANGUAGE_RULE,
           writingSkill,
           skills,
+          leadMagnet,
           creatorStyle,
           preferences,
           feedback,
