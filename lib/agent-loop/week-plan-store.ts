@@ -9,6 +9,8 @@ const itemSchema = z.object({
   userContext: z.string().nullable(),
   selectedLeadMagnetId: z.string().nullable(),
   status: z.enum(["planned", "drafting", "drafted", "dismissed"]),
+  // Optional keeps plans saved before this field was introduced readable.
+  draftId: z.string().uuid().nullable().optional(),
   opportunity: z
     .object({
       id: z.string().nullable(),
@@ -27,6 +29,65 @@ const planSchema = z.object({
 
 export type StoredWeekPlanItem = z.infer<typeof itemSchema>;
 export type StoredWeekPlan = z.infer<typeof planSchema>;
+
+type LegacyWeekPlanMessage = {
+  chat_id: string;
+  content: string;
+  created_at: string;
+};
+
+type LegacyWeekPlanDraft = {
+  id: string;
+  chat_id: string | null;
+  created_at: string;
+  meta: Record<string, unknown> | null;
+};
+
+/**
+ * Plans saved before draftId was introduced can recover a generic cadence
+ * draft from the exact chat turn that created it. The system user message
+ * includes both the plan prompt and the user's context; the first agent draft
+ * saved after that message (and before the next user turn) is its board draft.
+ */
+export function findLegacyGenericDraftId(
+  item: Pick<StoredWeekPlanItem, "prompt" | "userContext">,
+  messages: LegacyWeekPlanMessage[],
+  drafts: LegacyWeekPlanDraft[],
+): string | null {
+  const prompt = item.prompt?.trim();
+  if (!prompt) return null;
+  const promptMarker = `Topic direction: ${prompt}.`;
+  const contextMarker = item.userContext?.trim() ?? "";
+  const matchingMessages = messages
+    .filter(
+      (message) =>
+        message.content.includes(promptMarker) &&
+        (!contextMarker || message.content.includes(contextMarker)),
+    )
+    .sort((a, b) => b.created_at.localeCompare(a.created_at));
+
+  for (const message of matchingMessages) {
+    const nextUserAt = messages
+      .filter(
+        (candidate) =>
+          candidate.chat_id === message.chat_id &&
+          candidate.created_at > message.created_at,
+      )
+      .map((candidate) => candidate.created_at)
+      .sort()[0];
+    const match = drafts
+      .filter(
+        (draft) =>
+          draft.chat_id === message.chat_id &&
+          draft.created_at >= message.created_at &&
+          (!nextUserAt || draft.created_at < nextUserAt) &&
+          !draft.meta?.agent_opportunity_id,
+      )
+      .sort((a, b) => a.created_at.localeCompare(b.created_at))[0];
+    if (match) return match.id;
+  }
+  return null;
+}
 
 type StoredWeekPlanSnapshot = {
   plan: StoredWeekPlan;
@@ -149,6 +210,7 @@ export async function syncStoredOpportunity(
   weekStart: string,
   opportunityId: string,
   status: "drafted" | "dismissed",
+  draftId: string | null = null,
 ): Promise<void> {
   await mutateStoredWeekPlan(
     db,
@@ -157,7 +219,13 @@ export async function syncStoredOpportunity(
     (plan) => ({
       ...plan,
       items: plan.items.map((item) =>
-        item.opportunity?.id === opportunityId ? { ...item, status } : item,
+        item.opportunity?.id === opportunityId
+          ? {
+              ...item,
+              status,
+              draftId: status === "drafted" ? draftId : null,
+            }
+          : item,
       ),
     }),
   );

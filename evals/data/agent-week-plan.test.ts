@@ -10,6 +10,7 @@ import {
   resolveWeekPlanLeadMagnetId,
   workWeekDays,
 } from "@/lib/agent-loop/week-plan";
+import { findLegacyGenericDraftId } from "@/lib/agent-loop/week-plan-store";
 
 describe("nextDays", () => {
   test("starts tomorrow and includes weekends", () => {
@@ -218,6 +219,68 @@ describe("persistent weekly-plan helpers", () => {
       needsContext: false,
       needsLeadMagnet: false,
     });
+  });
+
+  test("recovers a legacy generic card from the exact chat turn that created its draft", () => {
+    const prompt = "Share the best piece of advice you received";
+    const context = "My old manager taught me to solve the smallest useful problem first.";
+    expect(
+      findLegacyGenericDraftId(
+        { prompt, userContext: context },
+        [
+          {
+            chat_id: "agent-chat",
+            content: `Write one post. Topic direction: ${prompt}.\n${context}`,
+            created_at: "2026-07-23T10:00:00.000Z",
+          },
+          {
+            chat_id: "agent-chat",
+            content: "Write another post.",
+            created_at: "2026-07-23T10:05:00.000Z",
+          },
+        ],
+        [
+          {
+            id: "exact-draft",
+            chat_id: "agent-chat",
+            created_at: "2026-07-23T10:01:00.000Z",
+            meta: { suggested_by: "agent_loop" },
+          },
+          {
+            id: "later-draft",
+            chat_id: "agent-chat",
+            created_at: "2026-07-23T10:06:00.000Z",
+            meta: { suggested_by: "agent_loop" },
+          },
+        ],
+      ),
+    ).toBe("exact-draft");
+  });
+
+  test("does not guess when a legacy generic card has no matching chat turn", () => {
+    expect(
+      findLegacyGenericDraftId(
+        {
+          prompt: "Share a client lesson",
+          userContext: "A specific client lesson with enough context.",
+        },
+        [
+          {
+            chat_id: "agent-chat",
+            content: "Write one post about a different topic.",
+            created_at: "2026-07-23T10:00:00.000Z",
+          },
+        ],
+        [
+          {
+            id: "unrelated-draft",
+            chat_id: "agent-chat",
+            created_at: "2026-07-23T10:01:00.000Z",
+            meta: { suggested_by: "agent_loop" },
+          },
+        ],
+      ),
+    ).toBeNull();
   });
 });
 

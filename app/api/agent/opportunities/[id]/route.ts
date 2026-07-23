@@ -81,6 +81,7 @@ export async function POST(
       weekStart(),
       id,
       "drafted",
+      result.draftIds[0] ?? null,
     );
     return NextResponse.json({ ok: true, status: "drafted", draftIds: result.draftIds });
   } catch (e) {
