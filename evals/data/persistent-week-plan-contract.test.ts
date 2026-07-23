@@ -76,7 +76,8 @@ describe("persistent weekly plan contract", () => {
     expect(briefing).toContain("/api/lead-magnets");
     expect(briefing).toContain("requiredInputLeadMagnetId");
     expect(briefing).toContain('"Choose resource"');
-    expect(briefing).toContain('"Source ready"');
+    expect(briefing).toContain('"Ready for draft"');
+    expect(briefing).not.toContain('"Source ready"');
   });
 
   test("input progress excludes skipped slots and uses one readiness rule", () => {

@@ -94,6 +94,7 @@ function CreatorAvatar({
 
 const LEAD_MAGNET_HINT =
   "Lead magnet post — the source gives away a resource for a comment or DM. Drafting from it produces a comment-gated CTA post.";
+const READY_FOR_DRAFT_LABEL = "Ready for draft";
 
 // Accessible hint badge. No tooltip primitive exists in this codebase and we
 // are not adding a dependency for one icon, so this is the established
@@ -548,12 +549,14 @@ export function AgentBriefing() {
                   </p>
                   <p className="mt-2 text-[10px] text-muted-foreground">
                     {item.kind === "generic"
-                      ? "Needs your story"
+                      ? readiness.ready
+                        ? READY_FOR_DRAFT_LABEL
+                        : "Needs your story"
                       : item.opportunity?.is_lead_magnet
                         ? readiness.ready
                           ? "Resource selected"
                           : "Choose resource"
-                        : "Source ready"}
+                        : READY_FOR_DRAFT_LABEL}
                   </p>
                   <div className="mt-auto pt-3">
                     {readiness.ready &&
