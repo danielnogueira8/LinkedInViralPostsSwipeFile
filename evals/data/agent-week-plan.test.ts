@@ -2,10 +2,12 @@ import { describe, expect, test } from "vitest";
 import {
   composeWeekPlan,
   daysSince,
+  getWeekPlanDraftReadiness,
   genericContextPlaceholder,
   GENERIC_WEEK_PROMPTS,
   nextDays,
   postingGapNote,
+  resolveWeekPlanLeadMagnetId,
   workWeekDays,
 } from "@/lib/agent-loop/week-plan";
 
@@ -133,6 +135,89 @@ describe("persistent weekly-plan helpers", () => {
         "talk about something you changed your mind about this year",
       ),
     ).toContain("What did you believe before");
+  });
+
+  test("source-modeled regular posts are ready without extra direction", () => {
+    expect(
+      getWeekPlanDraftReadiness({
+        kind: "opportunity",
+        isLeadMagnet: false,
+        context: null,
+        leadMagnetId: null,
+      }),
+    ).toEqual({
+      ready: true,
+      needsContext: false,
+      needsLeadMagnet: false,
+    });
+    expect(
+      resolveWeekPlanLeadMagnetId({
+        isLeadMagnet: false,
+        requestedLeadMagnetId: "deleted-resource",
+        storedLeadMagnetId: "stale-resource",
+      }),
+    ).toBeNull();
+  });
+
+  test("source-modeled lead magnets need only a resource", () => {
+    expect(
+      getWeekPlanDraftReadiness({
+        kind: "opportunity",
+        isLeadMagnet: true,
+        context: null,
+        leadMagnetId: null,
+      }),
+    ).toEqual({
+      ready: false,
+      needsContext: false,
+      needsLeadMagnet: true,
+    });
+    expect(
+      getWeekPlanDraftReadiness({
+        kind: "opportunity",
+        isLeadMagnet: true,
+        context: null,
+        leadMagnetId: "lead-magnet-1",
+      }),
+    ).toEqual({
+      ready: true,
+      needsContext: false,
+      needsLeadMagnet: false,
+    });
+    expect(
+      resolveWeekPlanLeadMagnetId({
+        isLeadMagnet: true,
+        requestedLeadMagnetId: null,
+        storedLeadMagnetId: "lead-magnet-1",
+      }),
+    ).toBe("lead-magnet-1");
+  });
+
+  test("source-less story prompts still require real user context", () => {
+    expect(
+      getWeekPlanDraftReadiness({
+        kind: "generic",
+        isLeadMagnet: false,
+        context: "too short",
+        leadMagnetId: null,
+      }),
+    ).toEqual({
+      ready: false,
+      needsContext: true,
+      needsLeadMagnet: false,
+    });
+    expect(
+      getWeekPlanDraftReadiness({
+        kind: "generic",
+        isLeadMagnet: false,
+        context: "A concrete story with enough detail.",
+        leadMagnetId: null,
+      }),
+    ).toEqual({
+      ready: true,
+      needsContext: false,
+      needsLeadMagnet: false,
+    });
   });
 });
 

@@ -7,7 +7,11 @@ import {
   draftFromPrompt,
   type AgentOpportunityRow,
 } from "@/lib/agent-loop/act";
-import { weekStart } from "@/lib/agent-loop/week-plan";
+import {
+  getWeekPlanDraftReadiness,
+  resolveWeekPlanLeadMagnetId,
+  weekStart,
+} from "@/lib/agent-loop/week-plan";
 import {
   loadStoredWeekPlan,
   mutateStoredWeekPlanItem,
@@ -46,16 +50,25 @@ export async function POST(req: Request) {
       );
     }
     const context = (input.context ?? item.userContext ?? "").trim();
-    if (context.length < 12) {
+    const isLeadMagnet = item.opportunity?.is_lead_magnet === true;
+    const leadMagnetId = resolveWeekPlanLeadMagnetId({
+      isLeadMagnet,
+      requestedLeadMagnetId: input.leadMagnetId,
+      storedLeadMagnetId: item.selectedLeadMagnetId,
+    });
+    const readiness = getWeekPlanDraftReadiness({
+      kind: item.kind,
+      isLeadMagnet,
+      context,
+      leadMagnetId,
+    });
+    if (readiness.needsContext) {
       return NextResponse.json(
         { ok: false, error: "Choose a direction before drafting this post." },
         { status: 400 },
       );
     }
-    const isLeadMagnet = item.opportunity?.is_lead_magnet === true;
-    const leadMagnetId =
-      input.leadMagnetId ?? item.selectedLeadMagnetId ?? null;
-    if (isLeadMagnet && !leadMagnetId) {
+    if (readiness.needsLeadMagnet) {
       return NextResponse.json(
         { ok: false, error: "Choose the resource this post should promote." },
         { status: 400 },
@@ -92,7 +105,7 @@ export async function POST(req: Request) {
               ? {
                   ...current,
                   status,
-                  userContext: context,
+                  userContext: item.kind === "generic" ? context : null,
                   selectedLeadMagnetId: isLeadMagnet ? leadMagnetId : null,
                 }
               : null,
@@ -135,10 +148,7 @@ export async function POST(req: Request) {
         sb.raw,
         sb.workspaceId,
         opportunity as AgentOpportunityRow,
-        {
-          userContext: context,
-          ...(leadMagnetId ? { leadMagnetId } : {}),
-        },
+        leadMagnetId ? { leadMagnetId } : undefined,
       );
       if (!result.ok) throw new Error(result.reason);
       await updateStatus("drafted", "drafting");

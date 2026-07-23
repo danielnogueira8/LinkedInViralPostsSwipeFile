@@ -43,10 +43,10 @@ describe("persistent weekly plan contract", () => {
   });
 
   test("generic cards need and persist real user context", () => {
-    expect(briefing).toContain("context.trim().length >= 12");
+    expect(briefing).toContain("getWeekPlanDraftReadiness");
     expect(briefing).toContain("genericContextPlaceholder");
     expect(briefing).toContain(
-      "/api/agent/week-plan/items/${directionItem.id}",
+      "/api/agent/week-plan/items/${requiredInputItem.id}",
     );
     expect(briefing).toContain("Choose direction");
     expect(itemRoute).toContain("mutateStoredWeekPlanItem");
@@ -56,7 +56,7 @@ describe("persistent weekly plan contract", () => {
   test("the drafting endpoint claims a card once and keeps generic facts grounded", () => {
     expect(draftRoute).toContain("itemId");
     expect(draftRoute).toContain('item.status !== "planned"');
-    expect(draftRoute).toContain("context.length < 12");
+    expect(draftRoute).toContain("readiness.needsContext");
     expect(draftRoute).toContain("draftFromPrompt");
     expect(draftRoute).toContain("actOnOpportunity");
     expect(draftRoute).toContain('await updateStatus("planned", "drafting")');
@@ -74,13 +74,32 @@ describe("persistent weekly plan contract", () => {
     expect(briefing).toContain("!right-0");
     expect(briefing).toContain("Resource to promote");
     expect(briefing).toContain("/api/lead-magnets");
-    expect(briefing).toContain("directionLeadMagnetId");
+    expect(briefing).toContain("requiredInputLeadMagnetId");
+    expect(briefing).toContain('"Choose resource"');
+    expect(briefing).toContain('"Source ready"');
   });
 
-  test("direction progress excludes skipped slots and uses one readiness rule", () => {
-    expect(briefing).toContain("function directionFieldsReady(");
-    expect(briefing).toContain("function itemHasDirection(");
+  test("input progress excludes skipped slots and uses one readiness rule", () => {
+    expect(briefing).not.toContain("function directionFieldsReady(");
+    expect(briefing).not.toContain("function itemHasDirection(");
+    expect(briefing).toContain("getWeekPlanDraftReadiness");
     expect(briefing).toContain('item.status !== "dismissed"');
-    expect(briefing).toContain('item.status === "planned" && !itemHasDirection(item)');
+    expect(briefing).toContain("!itemDraftReadiness(item).ready");
+  });
+
+  test("modeled posts skip direction while lead magnets require only a resource", () => {
+    expect(draftRoute).toContain("getWeekPlanDraftReadiness");
+    expect(draftRoute).toContain("resolveWeekPlanLeadMagnetId");
+    expect(draftRoute).toContain("readiness.needsLeadMagnet");
+    expect(draftRoute).not.toContain("context.length < 12");
+    expect(briefing).toContain("requiredInputItem?.kind === \"generic\"");
+    expect(briefing).toContain("requiredInputItem?.opportunity?.is_lead_magnet");
+    expect(briefing).toContain(
+      '...(item.kind === "generic" ? { context } : {})',
+    );
+    expect(briefing).toContain("item.opportunity?.is_lead_magnet");
+    expect(draftRoute).toContain(
+      'userContext: item.kind === "generic" ? context : null',
+    );
   });
 });
