@@ -5684,9 +5684,9 @@ function AgentPinnedRow({
 }
 
 // The center-panel view shown when the pinned "Your Agent" row is open. A thin
-// header + the (redesigned) briefing body, capped to a comfortable reading
-// width so it doesn't sprawl across a wide screen the way the old inline
-// briefing did. "New session" closes it back to a chat.
+// header + the briefing body. The wider cap gives the persistent seven-day
+// weekly plan enough room to stay in one row without compressing each card.
+// "New session" closes it back to a chat.
 function AgentView({
   onCountsChange,
   onClose,
@@ -5698,7 +5698,7 @@ function AgentView({
   // nested vertical scroll container. `clip` contains wide rows without taking
   // vertical scrolling away from the chat canvas.
   return (
-    <div className="mx-auto flex w-full min-w-0 max-w-5xl flex-col overflow-x-clip py-2">
+    <div className="mx-auto flex w-full min-w-0 max-w-[112rem] flex-col overflow-x-clip py-2">
       <div className="mb-1 flex items-center justify-between gap-2">
         <div>
           <h2 className="text-lg font-semibold tracking-[-0.02em] text-foreground">

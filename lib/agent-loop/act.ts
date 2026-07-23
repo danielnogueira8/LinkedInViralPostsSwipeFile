@@ -338,10 +338,14 @@ export async function draftFromPrompt(
   sb: SupabaseClient,
   workspaceId: string,
   prompt: string,
+  userContext: string,
 ): Promise<{ ok: true; draftIds: string[] } | { ok: false; reason: string }> {
   try {
     const draftIds = await runTurnToDraftIds(sb, workspaceId, {
-      message: `Write one post in my voice: ${prompt}.`,
+      message:
+        `Write one post in my voice. Topic direction: ${prompt}.\n\n` +
+        `Use only this real context supplied by the user for personal facts, examples, outcomes, and beliefs:\n${userContext}\n\n` +
+        "Do not invent a personal experience, client result, belief, or timeline beyond that context.",
     });
     return { ok: true, draftIds };
   } catch (error) {

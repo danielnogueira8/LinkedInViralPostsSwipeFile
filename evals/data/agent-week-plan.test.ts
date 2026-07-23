@@ -2,9 +2,11 @@ import { describe, expect, test } from "vitest";
 import {
   composeWeekPlan,
   daysSince,
+  genericContextPlaceholder,
   GENERIC_WEEK_PROMPTS,
   nextDays,
   postingGapNote,
+  workWeekDays,
 } from "@/lib/agent-loop/week-plan";
 
 describe("nextDays", () => {
@@ -31,7 +33,7 @@ describe("composeWeekPlan", () => {
     { id: "o6", isLeadMagnet: false },
   ];
 
-  test("caps lead magnets at 2 and fills to 7 days with generic prompts", () => {
+  test("caps lead magnets at 2 and fills seven weekly slots with generic prompts", () => {
     const slots = composeWeekPlan({ opportunities, seed: 0 });
     expect(slots).toHaveLength(7);
     const lm = slots.filter(
@@ -108,6 +110,29 @@ describe("composeWeekPlan", () => {
         : [],
     );
     expect(lmIndexes[1] - lmIndexes[0]).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe("persistent weekly-plan helpers", () => {
+  test("includes Monday through Sunday", () => {
+    const days = workWeekDays(new Date("2026-07-20T12:00:00Z"));
+    expect(days).toEqual([
+      { date: "2026-07-20", day: "Mon" },
+      { date: "2026-07-21", day: "Tue" },
+      { date: "2026-07-22", day: "Wed" },
+      { date: "2026-07-23", day: "Thu" },
+      { date: "2026-07-24", day: "Fri" },
+      { date: "2026-07-25", day: "Sat" },
+      { date: "2026-07-26", day: "Sun" },
+    ]);
+  });
+
+  test("asks for the real before/after context behind a changed-mind prompt", () => {
+    expect(
+      genericContextPlaceholder(
+        "talk about something you changed your mind about this year",
+      ),
+    ).toContain("What did you believe before");
   });
 });
 
