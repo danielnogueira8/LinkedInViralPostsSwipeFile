@@ -204,6 +204,10 @@ export function AgentBriefing() {
   const [leadMagnetOptions, setLeadMagnetOptions] = useState<LeadMagnetOption[]>([]);
   const [leadMagnetsLoading, setLeadMagnetsLoading] = useState(false);
   const [requiredInputSaving, setRequiredInputSaving] = useState(false);
+  const [planDraftError, setPlanDraftError] = useState<{
+    itemId: string;
+    message: string;
+  } | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -384,6 +388,7 @@ export function AgentBriefing() {
     }
     setBusyId(item.id);
     setActionError(null);
+    setPlanDraftError(null);
     try {
       const res = await fetch("/api/agent/week-plan/draft", {
         method: "POST",
@@ -404,7 +409,10 @@ export function AgentBriefing() {
       await refresh();
       await loadWeekPlan();
     } catch (error) {
-      setActionError((error as Error).message);
+      setPlanDraftError({
+        itemId: item.id,
+        message: (error as Error).message,
+      });
     } finally {
       setBusyId(null);
     }
@@ -576,6 +584,11 @@ export function AgentBriefing() {
                     <button
                       type="button"
                       disabled={busyId !== null || item.status !== "planned"}
+                      aria-describedby={
+                        planDraftError?.itemId === item.id
+                          ? `week-plan-draft-error-${item.id}`
+                          : undefined
+                      }
                       onClick={() =>
                         readiness.ready
                           ? void draftPlanItem(item)
@@ -605,6 +618,15 @@ export function AgentBriefing() {
                         <ChevronRight className="h-3 w-3" aria-hidden />
                       ) : null}
                     </button>
+                    {planDraftError?.itemId === item.id ? (
+                      <p
+                        id={`week-plan-draft-error-${item.id}`}
+                        role="alert"
+                        className="mt-2 text-[10px] leading-4 text-destructive"
+                      >
+                        {planDraftError.message}
+                      </p>
+                    ) : null}
                   </div>
                 </li>
               );

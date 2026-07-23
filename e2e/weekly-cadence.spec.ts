@@ -168,6 +168,19 @@ test("Your Agent keeps a visible seven-day cadence", async ({ page }) => {
 test("modeled cadence posts use their source and lead magnets ask only for a resource", async ({
   page,
 }) => {
+  let draftRequests = 0;
+  await page.route("**/api/agent/week-plan/draft", async (route) => {
+    draftRequests += 1;
+    await route.fulfill({
+      status: 502,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: false,
+        error:
+          "Cowork couldn't finish this draft. Your direction is saved—please try again.",
+      }),
+    });
+  });
   await page.route("**/api/agent/week-plan", async (route) => {
     await route.fulfill({
       status: 200,
@@ -245,6 +258,15 @@ test("modeled cadence posts use their source and lead magnets ask only for a res
   await expect(
     directedStoryCard.getByRole("button", { name: "Edit direction" }),
   ).toBeVisible();
+  const draftStory = directedStoryCard.getByRole("button", {
+    name: "Draft this",
+  });
+  await draftStory.click();
+  expect(draftRequests).toBe(1);
+  await expect(directedStoryCard.getByRole("alert")).toContainText(
+    "Your direction is saved",
+  );
+  await expect(draftStory).toBeEnabled();
 
   const undirectedStoryCard = page
     .getByTestId("weekly-cadence-card")
