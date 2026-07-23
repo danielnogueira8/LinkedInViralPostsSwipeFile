@@ -3,9 +3,6 @@ import {
   type Artifact,
 } from "@/lib/agent/contracts";
 import type { DeliverableContract } from "@/lib/agent/deliverable-contract";
-import {
-  evaluateDeliverableArtifact,
-} from "@/lib/agent/deliverable-contract";
 import { redactHighConfidenceLeaks } from "@/lib/agent/output-guard";
 import type { DraftOutputPolicy } from "@/lib/agent/draft-output-policy";
 import { editDraftBodySync } from "@/lib/agent/specialists/editor";
@@ -13,17 +10,24 @@ import { repairAiTells } from "@/lib/agent/specialists/ai-tell-repair";
 import { checkSameness } from "@/lib/agent/specialists/sameness";
 import {
   aiTellMetrics,
-  looksCorruptedDraft,
   normalizeDraftKey,
 } from "@/lib/agent/specialists/nets";
-import {
-  reviewModeledDraft,
-  sourceFidelityRejection,
-} from "@/lib/agent/specialists/source-fidelity";
+import { reviewModeledDraft } from "@/lib/agent/specialists/source-fidelity";
 import { RENDER_POST_MAX_CHARS } from "@/lib/agent/tools";
 import type { RecentDraft } from "@/lib/recent-drafts";
 import type { AdapterHealthRegistry } from "@/lib/agent/adapter-health";
 import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
+import {
+  aiTellRepairStage,
+  contractStage,
+  editStage,
+  finalTransformStage,
+  provenanceStage,
+  sanityStage,
+  sourceFidelityStage,
+  type StageContext,
+  type StageState,
+} from "./finalizer-stages";
 
 export const DRAFT_FINALIZER_REJECTION_CODES = [
   "cancelled",
@@ -266,65 +270,6 @@ function validateFinalArtifact(
   return artifact;
 }
 
-function resolveSource(
-  provenance: DraftProvenance | undefined,
-  origin: DraftCandidateOrigin,
-):
-  | { ok: true; source: DraftSource | null }
-  | { ok: false; code: DraftFinalizerRejectionCode; message: string } {
-  if (!provenance) return { ok: true, source: null };
-  const sourceById = new Map(
-    provenance.discoveredSources.map((source) => [source.id, source]),
-  );
-  const effectiveId =
-    provenance.requestedSourceId ??
-    (sourceById.size === 1 ? [...sourceById.keys()][0] : null);
-  // "Sources were discovered this turn" only auto-REQUIRES a match for the
-  // render_tool origin — the only one built from a real render_post tool
-  // call, where sourcePostId is an actual argument the model could have
-  // filled. Every other origin (legacy_fence, forced_final_fence,
-  // forced_final_leak, refine_leak) is extracted from plain generated text
-  // that structurally has no field to carry a sourcePostId in; treating a
-  // multi-source turn as "required" for those origins is an unwinnable trap
-  // — retrying produces the same shape and fails identically (confirmed:
-  // brandjack/namejack/newsjack turns, which research multiple reference
-  // posts but are correctly NOT single-source-modeling turns, hit this).
-  // provenance.required — the explicit "this IS a strict one-post modeling
-  // turn" signal computed upstream from the user's actual request — still
-  // applies to every origin unconditionally; only the size>0 SAFETY-NET
-  // fallback is origin-scoped.
-  const sourceRequired =
-    provenance.required || (origin === "render_tool" && sourceById.size > 0);
-  if (!effectiveId) {
-    return sourceRequired
-      ? {
-          ok: false,
-          code: "provenance_missing",
-          message:
-            "This modeled draft is missing the verified source id. Re-render it with the exact sourcePostId returned by the source search.",
-        }
-      : { ok: true, source: null };
-  }
-  const source = sourceById.get(effectiveId);
-  if (!source) {
-    return {
-      ok: false,
-      code: "provenance_unverified",
-      message:
-        "sourcePostId was not returned by this turn's verified source search. Re-render using the exact source that was selected.",
-    };
-  }
-  if (!source.text.trim()) {
-    return {
-      ok: false,
-      code: "source_unavailable",
-      message:
-        "The selected source could not be re-read for verification. Re-search it before rendering the draft again.",
-    };
-  }
-  return { ok: true, source };
-}
-
 export function createDraftFinalizer(
   options: DraftFinalizerOptions,
 ): DraftFinalizer {
@@ -402,121 +347,94 @@ export function createDraftFinalizer(
       );
     }
 
+    // Gates 1-4 run as an ordered stage sequence (see finalizer-stages.ts).
+    // Each stage assumes every earlier one already passed, so the runner
+    // stops at the first rejection.
+    const ctx: StageContext = {
+      workspaceId: options.workspaceId,
+      candidate,
+      contract: options.contract,
+      acceptedCount,
+      isDuplicateOfRejected: (c) => {
+        const identity = candidateIdentity(c);
+        return identity !== null && rejectedCandidateKeys.has(identity);
+      },
+      transformCandidate: options.transformCandidate,
+      finalTransformCandidate: options.finalTransformCandidate,
+      maxPostChars,
+      specialists,
+      editOptions: options.editOptions,
+      characterRangeMax: options.policy?.characterRange?.max,
+      signal: options.signal,
+      adapterHealth: options.adapterHealth,
+      telemetry: options.telemetry,
+      aborted,
+    };
+    let state: StageState = {
+      origin: candidate.origin,
+      finishReason: candidate.finishReason,
+      envelopeComplete: candidate.envelopeComplete,
+      body: candidate.body,
+      sourceVerified: false,
+      edited: false,
+      repaired: false,
+    };
+    const editsSoFar = () => ({
+      edited: state.edited,
+      repaired: state.repaired,
+      samenessRewrote: false,
+    });
+
     // -------------------------------------------------------------------------
     // Gate 1: Sanity — empty / corrupt / truncated / malformed in one pass.
     // -------------------------------------------------------------------------
-    if (candidate.envelopeComplete === false) {
+    const sanityResult = sanityStage(ctx, state);
+    if (!sanityResult.ok) {
       return emit(
         candidate,
         reject(
           candidate.origin,
-          "truncated",
-          "The draft delivery fence was not closed, so the incomplete candidate was discarded. Write a complete replacement.",
+          sanityResult.rejection.code,
+          sanityResult.rejection.message,
+          sanityResult.rejection.repairInstruction,
         ),
       );
     }
-
-    const inputBody = candidate.body;
-    if (!inputBody.trim()) {
-      return emit(
-        candidate,
-        reject(candidate.origin, "empty", "The draft body is empty."),
-      );
-    }
-    const transformed = options.transformCandidate?.(inputBody) ?? {
-      ok: true as const,
-      body: inputBody,
-    };
-    if (!transformed.ok) {
-      return emit(
-        candidate,
-        reject(
-          candidate.origin,
-          "domain_constraint",
-          transformed.message,
-        ),
-      );
-    }
-    const rawBody = transformed.body;
-    if (!rawBody.trim()) {
-      return emit(
-        candidate,
-        reject(
-          candidate.origin,
-          "empty",
-          "The trusted draft transform produced an empty body.",
-        ),
-      );
-    }
-    const identity = candidateIdentity(candidate);
-    if (identity && rejectedCandidateKeys.has(identity)) {
-      return emit(
-        candidate,
-        reject(
-          candidate.origin,
-          "duplicate",
-          "This exact candidate was already rejected by the finalizer. Produce a corrected candidate instead of replaying it.",
-        ),
-      );
-    }
-    if (candidate.finishReason === "length") {
-      return emit(
-        candidate,
-        reject(
-          candidate.origin,
-          "truncated",
-          "The provider stopped at its length limit, so this candidate cannot be delivered. Write a complete tighter replacement.",
-        ),
-      );
-    }
-    const rawCorruption = looksCorruptedDraft(rawBody);
-    if (rawCorruption) {
-      return emit(
-        candidate,
-        reject(
-          candidate.origin,
-          "corrupted",
-          `The draft contained corrupted markup (${rawCorruption}). Re-render clean plain text.`,
-        ),
-      );
-    }
+    state = sanityResult.state;
 
     // -------------------------------------------------------------------------
-    // Gate 2: Contract — enforce deliverable count and the single hard char cap.
+    // Gate 2: Contract — enforce the exact deliverable count.
     // -------------------------------------------------------------------------
-    if (options.contract) {
-      const contractDecision = evaluateDeliverableArtifact(
-        options.contract,
-        acceptedCount,
-        "post",
+    const contractResult = contractStage(ctx, state);
+    if (!contractResult.ok) {
+      return emit(
+        candidate,
+        reject(
+          candidate.origin,
+          contractResult.rejection.code,
+          contractResult.rejection.message,
+        ),
       );
-      if (!contractDecision.accept) {
-        return emit(
-          candidate,
-          reject(
-            candidate.origin,
-            "count_complete",
-            `The exact ${options.contract.expectedCount}-post contract is already complete. Do not render another draft.`,
-          ),
-        );
-      }
     }
+    state = contractResult.state;
 
     // -------------------------------------------------------------------------
     // Gate 3: Provenance — resolve the verified source (if any).
     // -------------------------------------------------------------------------
-    const resolvedSource = resolveSource(candidate.provenance, candidate.origin);
-    if (!resolvedSource.ok) {
+    const provenanceResult = provenanceStage(ctx, state);
+    if (!provenanceResult.ok) {
       return emit(
         candidate,
         reject(
           candidate.origin,
-          resolvedSource.code,
-          resolvedSource.message,
+          provenanceResult.rejection.code,
+          provenanceResult.rejection.message,
         ),
       );
     }
-    const sourceVerified = resolvedSource.source !== null;
+    state = provenanceResult.state;
+    const resolvedSourceRow = provenanceResult.source;
+    const sourceVerified = state.sourceVerified;
 
     // -------------------------------------------------------------------------
     // Gate 4: Quality — deterministic edit, then ONE model specialist chosen by
@@ -525,126 +443,57 @@ export function createDraftFinalizer(
     // else runs AI-tell repair. Cross-slot sameness rewriting is intentionally
     // off the blocking path.
     // -------------------------------------------------------------------------
-    const edited = specialists.edit(rawBody, "post", options.editOptions);
-    let body = edited.body;
-    let repaired = false;
+    const editResult = editStage(ctx, state);
+    // editStage never rejects (a pure body transform) but is typed as a
+    // StageResult for symmetry with the rest of the sequence.
+    state = editResult.ok ? editResult.state : state;
 
-    if (resolvedSource.source && candidate.provenance) {
-      // Source-fidelity review is now telemetry-only. The writer is responsible
-      // for producing an original adaptation; the finalizer no longer rejects
-      // modeled drafts for being too similar to the source.
-      const fidelity = await specialists.reviewSourceFidelity({
-        sourceText: resolvedSource.source.text,
-        draftBody: body,
-        userRequest: candidate.provenance.userRequest,
-        verifiedContext: candidate.provenance.verifiedContext,
-        workspaceId: options.workspaceId,
-        signal: options.signal,
-        adapterHealth: options.adapterHealth,
-        telemetry: options.telemetry,
-      });
-      if (aborted()) {
+    if (resolvedSourceRow && candidate.provenance) {
+      const fidelityResult = await sourceFidelityStage(ctx, state, resolvedSourceRow);
+      if (!fidelityResult.ok) {
         return emit(
           candidate,
-          reject(candidate.origin, "cancelled", "Draft finalization was cancelled."),
+          reject(candidate.origin, fidelityResult.rejection.code, fidelityResult.rejection.message),
           sourceVerified,
-          { edited: edited.changed, repaired, samenessRewrote: false },
+          editsSoFar(),
         );
       }
-      // Record the model fidelity verdict for telemetry, but accept the draft
-      // regardless.
-      const fidelityRejection = sourceFidelityRejection(fidelity);
-      options.telemetry?.recordAttempt({
-        stage: "finalizer_source_fidelity_verdict",
-        attempt: 1,
-        provider: "server",
-        outcome: fidelityRejection ? "rejected" : "accepted",
-        reasonCode: fidelityRejection?.code,
-        latencyMs: 0,
-      });
+      state = fidelityResult.state;
     } else {
-      const repair = await specialists.repairAiTells({
-        body,
-        workspaceId: options.workspaceId,
-        signal: options.signal,
-        maxChars: options.policy?.characterRange?.max ?? maxPostChars,
-        adapterHealth: options.adapterHealth,
-        telemetry: options.telemetry,
-        keepEmDashes: options.editOptions?.keepEmDashes,
-      });
-      body = repair.body;
-      repaired = repair.repaired;
-      if (aborted()) {
+      const repairResult = await aiTellRepairStage(ctx, state);
+      if (!repairResult.ok) {
         return emit(
           candidate,
-          reject(candidate.origin, "cancelled", "Draft finalization was cancelled."),
+          reject(candidate.origin, repairResult.rejection.code, repairResult.rejection.message),
           sourceVerified,
-          { edited: edited.changed, repaired, samenessRewrote: false },
+          editsSoFar(),
         );
       }
+      state = repairResult.state;
     }
 
-    const finalTransformed = options.finalTransformCandidate?.(body) ?? {
-      ok: true as const,
-      body,
-    };
-    if (!finalTransformed.ok) {
+    const finalTransformResult = finalTransformStage(ctx, state);
+    if (!finalTransformResult.ok) {
       return emit(
         candidate,
         reject(
           candidate.origin,
-          "domain_constraint",
-          finalTransformed.message,
+          finalTransformResult.rejection.code,
+          finalTransformResult.rejection.message,
         ),
         sourceVerified,
-        { edited: edited.changed, repaired, samenessRewrote: false },
+        editsSoFar(),
       );
     }
-    body = finalTransformed.body;
-    if (!body.trim()) {
-      return emit(
-        candidate,
-        reject(
-          candidate.origin,
-          "empty",
-          "The trusted final draft transform produced an empty body.",
-        ),
-        sourceVerified,
-        { edited: edited.changed, repaired, samenessRewrote: false },
-      );
-    }
-    const finalCorruption = looksCorruptedDraft(body);
-    if (finalCorruption) {
-      return emit(
-        candidate,
-        reject(
-          candidate.origin,
-          "corrupted",
-          `A finalization rewrite introduced corrupted markup (${finalCorruption}). The candidate was discarded.`,
-        ),
-        sourceVerified,
-        { edited: edited.changed, repaired, samenessRewrote: false },
-      );
-    }
+    state = finalTransformResult.state;
 
-    // Single hard server character cap — enforced after all mutations.
-    if (body.length > maxPostChars) {
-      return emit(
-        candidate,
-        reject(
-          candidate.origin,
-          "character_range",
-          `The finalized draft was ${body.length} characters, over the ${maxPostChars}-character server limit. Tighten it and re-render the complete post.`,
-        ),
-        sourceVerified,
-        { edited: edited.changed, repaired, samenessRewrote: false },
-      );
-    }
+    const edited = { changed: state.edited };
+    const repaired = state.repaired;
 
     // Security redaction is itself a body mutation. It must happen before the
     // artifact build so a prompt leak cannot be persisted as a broken
     // placeholder-only artifact.
-    body = redactHighConfidenceLeaks(body).text;
+    const body = redactHighConfidenceLeaks(state.body).text;
 
     // -------------------------------------------------------------------------
     // Gate 5: Artifact build — dedupe, validate, emit.
@@ -692,7 +541,7 @@ export function createDraftFinalizer(
     const result: DraftFinalizationResult = {
       ok: true,
       artifact,
-      sourcePostId: resolvedSource.source?.id ?? null,
+      sourcePostId: resolvedSourceRow?.id ?? null,
       origin: candidate.origin,
       aiTells: aiTellMetrics(body),
       ...edits,
