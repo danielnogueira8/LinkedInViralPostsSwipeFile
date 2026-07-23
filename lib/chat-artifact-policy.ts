@@ -66,6 +66,10 @@ export function buildArtifactIndex(
   return { entries };
 }
 
+export function numberedArtifactLabel(entry: ArtifactIndexEntry): string {
+  return `${kindNoun(entry.kind)} ${entry.ordinal}`;
+}
+
 /**
  * Resolve the visible Edit target without ever retargeting a stale explicit
  * selection. A fallback is allowed only before the user has selected an id,

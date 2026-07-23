@@ -209,6 +209,7 @@ import {
   ARTIFACT_PANEL_TITLE,
   buildArtifactIndex,
   kindNoun,
+  numberedArtifactLabel,
   planProgressTitle,
   prettyBytes,
   reinsertArtifact,
@@ -808,6 +809,9 @@ export function ChatWorkspace({
           expandedArtifactId,
         })
       : undefined;
+  const editTargetLabel = editTargetPost
+    ? numberedArtifactLabel(editTargetPost)
+    : null;
   const enterEditCommand = (requestedTargetPostId?: string) => {
     const requestedTarget = artifactIndex.entries.find(
       (entry) => entry.artifactId === requestedTargetPostId,
@@ -4867,8 +4871,8 @@ export function ChatWorkspace({
                     : composerCommandKind === "create"
                       ? "What should the new post be about?"
                       : composerCommandKind === "edit"
-                        ? editTargetPost
-                          ? `What should change in ${editTargetPost.label}?`
+                        ? editTargetLabel
+                          ? `What should change in ${editTargetLabel}?`
                           : "Select a Post before describing the change…"
                       : askContextPost
                         ? `Ask about ${askContextPost.label}…`
@@ -4928,7 +4932,7 @@ export function ChatWorkspace({
                     )}
                   >
                     <CoworkCommandIcon kind="edit" className="h-3.5 w-3.5" />
-                    {editTargetPost ? `Edit · ${editTargetPost.label}` : "Edit"}
+                    {editTargetLabel ? `Edit · ${editTargetLabel}` : "Edit"}
                   </button>
                 )}
               </div>
@@ -4953,7 +4957,7 @@ export function ChatWorkspace({
                     )}
                     {artifactIndex.entries.map((entry) => (
                       <option key={entry.artifactId} value={entry.artifactId}>
-                        {entry.label} — {entry.artifact.body.replace(/\s+/g, " ").slice(0, 48)}
+                        {numberedArtifactLabel(entry)}
                       </option>
                     ))}
                   </select>

@@ -3,6 +3,7 @@ import {
   ARTIFACT_PANEL_TITLE,
   buildArtifactIndex,
   kindNoun,
+  numberedArtifactLabel,
   prettyToolName,
   planProgressTitle,
   toolDetail,
@@ -48,6 +49,14 @@ describe("buildArtifactIndex — Post/Hook numbering", () => {
     expect(
       buildArtifactIndex([art("hook", "x")]).entries.map((o) => o.label),
     ).toEqual(["Hook"]);
+  });
+
+  test("Edit targets are always numbered, even for a lone artifact", () => {
+    const [post] = buildArtifactIndex([art("post", "first line")]).entries;
+    const [hook] = buildArtifactIndex([art("hook", "opening")]).entries;
+
+    expect(numberedArtifactLabel(post)).toBe("Post 1");
+    expect(numberedArtifactLabel(hook)).toBe("Hook 1");
   });
 
   test("multiple posts are numbered in creation order", () => {
