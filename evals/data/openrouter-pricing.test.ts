@@ -113,6 +113,28 @@ describe("openRouterCost — Anthropic (bare) slug pricing", () => {
     expect(outputTokens).toBe(M);
     expect(costUsd).toBeCloseTo(12, 6);
   });
+
+  test("bare Claude ids without their OWN row resolve to the anthropic/ prefixed row", () => {
+    // The adapter returns bare ids for ALL Claude models (claude-haiku-4.5,
+    // claude-sonnet-4.6), but the table only has the prefixed rows for those.
+    // pricingKey maps bare → anthropic/<id> so they price correctly instead of
+    // falling back to the GLM-5.1 rate. Haiku is $1 in / $5 out.
+    expect(openRouterCost("claude-haiku-4.5", M, M)).toBeCloseTo(6, 6);
+    expect(openRouterCost("claude-haiku-4.5", M, 0)).toBeCloseTo(1, 6);
+    expect(openRouterCost("claude-haiku-4.5", 0, M)).toBeCloseTo(5, 6);
+    // Sonnet 4.6 ($3/$15) also resolves via the prefixed row.
+    expect(openRouterCost("claude-sonnet-4.6", M, M)).toBeCloseTo(18, 6);
+    // And they report as priced (not a GLM fallback).
+    expect(hasOpenRouterPricing("claude-haiku-4.5")).toBe(true);
+    expect(hasOpenRouterPricing("claude-sonnet-4.6")).toBe(true);
+  });
+
+  test("an unknown bare claude-* id still falls back (no prefixed row) rather than throwing", () => {
+    // A future Claude id with no row anywhere: pricingKey tries anthropic/<id>,
+    // misses, and openRouterCost lands on the GLM-5.1 fallback — no throw.
+    expect(openRouterCost("claude-nonexistent-9", M, 0)).toBeCloseTo(1.4, 6);
+    expect(hasOpenRouterPricing("claude-nonexistent-9")).toBe(false);
+  });
 });
 
 describe("openRouterCost — GPT-5.6 Luna pricing", () => {

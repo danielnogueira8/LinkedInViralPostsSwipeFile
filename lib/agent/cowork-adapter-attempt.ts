@@ -6,6 +6,15 @@ import {
 } from "@/lib/agent/adapter-health";
 import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
 import type { Usage } from "@/lib/openrouter";
+import { shouldUseAnthropic } from "@/lib/anthropic";
+
+// Attribute a per-attempt telemetry record to whoever actually served the model,
+// matching the authoritative usage_events.provider label (logOpenRouterUsage).
+// shouldUseAnthropic encodes the flag + model check, so a claude-* attempt run
+// while AI_PROVIDER=anthropic is "anthropic"; everything else is "openrouter".
+function providerFor(model: string): "anthropic" | "openrouter" {
+  return shouldUseAnthropic(model) ? "anthropic" : "openrouter";
+}
 
 export function providerModelAttribution(
   requestedModel: string,
@@ -112,7 +121,7 @@ export async function runCoworkAdapterAttempt<TResponse, TValue>(
       attempt: input.attempt,
       model: observedModel(),
       requestedModel: input.model,
-      provider: "openrouter",
+      provider: providerFor(observedModel()),
       outcome: response
         ? "rejected"
         : error instanceof AdapterCircuitOpenError
@@ -146,7 +155,7 @@ export async function runCoworkAdapterAttempt<TResponse, TValue>(
     attempt: input.attempt,
     model: observedModel(),
     requestedModel: input.model,
-    provider: "openrouter",
+    provider: providerFor(observedModel()),
     outcome: "accepted",
     ...(input.fallbackReason ? { fallbackReason: input.fallbackReason } : {}),
     latencyMs: result.latencyMs,

@@ -109,6 +109,61 @@ describe("Cowork adapter attempt boundary", () => {
     });
   });
 
+  test("attributes a claude attempt to anthropic under the flag, openrouter otherwise", async () => {
+    const prev = process.env.AI_PROVIDER;
+    const recordFor = async (model: string) => {
+      const sink = vi.fn();
+      const telemetry = createCoworkTurnTelemetry(
+        {
+          traceId: `attempt-provider-${model}`,
+          workspaceId: "ws-1",
+          route: "direct_writer",
+          requestedContract: { kind: "post", expectedCount: 1 },
+        },
+        sink,
+      );
+      await runCoworkAdapterAttempt({
+        registry: health(),
+        adapterKey: "writer:model",
+        call: async () => ({
+          text: "complete",
+          model,
+          usage: { prompt_tokens: 2, completion_tokens: 1 },
+        }),
+        validate: (response) => response.text,
+        persistUsage: async () => undefined,
+        usage: (response) => response.usage,
+        responseModel: (response) => response.model,
+        telemetry,
+        stage: "writer_primary",
+        attempt: 1,
+        model,
+        rejectedReasonCode: "empty_output",
+      });
+      await telemetry.finish({
+        deliveredContract: { kind: "post", deliveredCount: 1 },
+        provenanceStatus: "not_required",
+        terminalOutcome: "delivered",
+      });
+      return sink.mock.calls[0][0].stage_attempts[0].provider;
+    };
+
+    try {
+      process.env.AI_PROVIDER = "anthropic";
+      // A claude model served while the flag is on → anthropic.
+      expect(await recordFor("claude-sonnet-5")).toBe("anthropic");
+      expect(await recordFor("anthropic/claude-sonnet-5")).toBe("anthropic");
+      // A non-claude model is still openrouter even with the flag on.
+      expect(await recordFor("z-ai/glm-5.2")).toBe("openrouter");
+      // Flag off → even a claude model is openrouter (it genuinely ran there).
+      delete process.env.AI_PROVIDER;
+      expect(await recordFor("claude-sonnet-5")).toBe("openrouter");
+    } finally {
+      if (prev === undefined) delete process.env.AI_PROVIDER;
+      else process.env.AI_PROVIDER = prev;
+    }
+  });
+
   test("charges a rejected response once and opens the invalid adapter circuit", async () => {
     const registry = health();
     const persistUsage = vi.fn(async () => undefined);
