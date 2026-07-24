@@ -201,5 +201,95 @@ describe("resolveTurnDecision", () => {
       );
       expect(decision.conflicts).toEqual([]);
     });
+
+    test("the leadMagnet conflict on a plain post uses drop_setting, not switch_mode", async () => {
+      const decision = await resolveTurnDecision(
+        body({
+          message: "Write a post about founder-led sales.",
+          command: { kind: "create", count: 1 },
+          leadMagnetId: "22222222-2222-2222-2222-222222222222",
+        }),
+        "ws-1",
+        deps(),
+      );
+      const flag = decision.conflicts.find((c) => c.field === "leadMagnet");
+      expect(flag?.fix).toBe("drop_setting");
+    });
+
+    test("the postType conflict uses drop_setting", async () => {
+      const decision = await resolveTurnDecision(
+        body({
+          message: "Model this post in my voice.",
+          command: { kind: "create", count: 1 },
+          modelSourceId: "11111111-1111-1111-1111-111111111111",
+          generationConfig: { version: 1, draftCount: 1, postType: "regular" },
+        }),
+        "ws-1",
+        deps(),
+      );
+      expect(
+        decision.conflicts.find((c) => c.field === "postType")?.fix,
+      ).toBe("drop_setting");
+    });
+
+    test("no lead-magnet conflict when the lead magnet actually applies", async () => {
+      const decision = await resolveTurnDecision(
+        body({
+          message: "Write a lead magnet post about a pricing checklist.",
+          command: { kind: "create", count: 1 },
+          leadMagnetId: "22222222-2222-2222-2222-222222222222",
+          forcedNoModelFormatId: "lead_magnet_resource_inventory",
+        }),
+        "ws-1",
+        deps(),
+      );
+      expect(decision.conflicts.some((c) => c.field === "leadMagnet")).toBe(
+        false,
+      );
+    });
+  });
+
+  describe("decision fields", () => {
+    test("reports postCount for a counted create", async () => {
+      const decision = await resolveTurnDecision(
+        body({
+          message: "Write 3 posts about onboarding.",
+          command: { kind: "create", count: 3 },
+        }),
+        "ws-1",
+        deps(),
+      );
+      expect(decision.postCount).toBe(3);
+    });
+
+    test("carries the resolved task kind and a route contract kind", async () => {
+      const decision = await resolveTurnDecision(
+        body({
+          message: "Write an original post about pricing.",
+          command: { kind: "create", count: 1 },
+        }),
+        "ws-1",
+        deps(),
+      );
+      expect(typeof decision.taskKind).toBe("string");
+      expect(typeof decision.route.contractKind).toBe("string");
+    });
+
+    test("honors a typed operation when no command is present (legacy path)", async () => {
+      const decision = await resolveTurnDecision(
+        body({
+          message: "Rework the hook.",
+          command: undefined,
+          operation: {
+            kind: "edit_artifact",
+            artifactId: "artifact-1",
+            instruction: "Rework the hook.",
+          },
+        }),
+        "ws-1",
+        deps(),
+      );
+      expect(decision.mode).toBe("edit");
+    });
   });
 });

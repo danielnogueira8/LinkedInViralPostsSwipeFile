@@ -106,4 +106,63 @@ describe("POST /api/chats/[id]/resolve", () => {
     expect(json.decision.mode).toBe("ask");
     expect(json.decision.niche).toBeNull();
   });
+
+  test("surfaces an auth failure via errorResponse instead of crashing", async () => {
+    const handler = createChatResolvePost({
+      authenticate: async () => {
+        throw new Error("auth backend down");
+      },
+      resolveWorkspaceId: async () => "ws-1",
+      resolve: async () => okDecision,
+      resolveDeps: { listWorkspaceNiches: async () => [], now: () => new Date(0) },
+    });
+    const res = await handler(request({ message: "hi" }));
+    // errorResponse maps a thrown error to a non-2xx response, not a throw.
+    expect(res.status).toBeGreaterThanOrEqual(400);
+  });
+
+  test("surfaces a workspace-resolution failure via errorResponse", async () => {
+    const handler = createChatResolvePost({
+      authenticate: async () => ({ userId: "user_1" }),
+      resolveWorkspaceId: async () => {
+        throw new Error("no workspace");
+      },
+      resolve: async () => okDecision,
+      resolveDeps: { listWorkspaceNiches: async () => [], now: () => new Date(0) },
+    });
+    const res = await handler(request({ message: "hi" }));
+    expect(res.status).toBeGreaterThanOrEqual(400);
+  });
+
+  test("surfaces a resolver failure via errorResponse", async () => {
+    const handler = createChatResolvePost({
+      authenticate: async () => ({ userId: "user_1" }),
+      resolveWorkspaceId: async () => "ws-1",
+      resolve: async () => {
+        throw new Error("resolver blew up");
+      },
+      resolveDeps: { listWorkspaceNiches: async () => [], now: () => new Date(0) },
+    });
+    const res = await handler(
+      request({ message: "hi", command: { kind: "ask" } }),
+    );
+    expect(res.status).toBeGreaterThanOrEqual(400);
+  });
+
+  test("rejects a non-JSON body without crashing", async () => {
+    const handler = createChatResolvePost({
+      authenticate: async () => ({ userId: "user_1" }),
+      resolveWorkspaceId: async () => "ws-1",
+      resolve: async () => okDecision,
+      resolveDeps: { listWorkspaceNiches: async () => [], now: () => new Date(0) },
+    });
+    const res = await handler(
+      new Request("http://test.local/api/chats/chat_1/resolve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{ not json",
+      }),
+    );
+    expect(res.status).toBeGreaterThanOrEqual(400);
+  });
 });
