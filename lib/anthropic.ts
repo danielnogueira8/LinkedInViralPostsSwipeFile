@@ -357,10 +357,14 @@ export async function* streamChatAnthropic(opts: {
 
   // Idle watchdog: reset a timer on every event; if nothing arrives within the
   // window, abort the stream and surface a typed error like streamChat does.
+  // `stalled` records that WE fired, so the catch can re-throw the coded error
+  // even if the SDK surfaces a generic AbortError for the aborted read.
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
+  let stalled = false;
   const armIdle = () => {
     if (idleTimer) clearTimeout(idleTimer);
     idleTimer = setTimeout(() => {
+      stalled = true;
       controller.abort(
         Object.assign(new Error("The model stream stalled (no data)."), {
           code: "stream_stalled",
@@ -395,6 +399,13 @@ export async function* streamChatAnthropic(opts: {
       model: final.model,
     };
   } catch (e) {
+    // If the idle watchdog fired, surface the stall regardless of how the SDK
+    // reported the aborted read.
+    if (stalled) {
+      throw Object.assign(new Error("The model stream stalled (no data)."), {
+        code: "stream_stalled",
+      });
+    }
     // A safety refusal or in-band error should surface with a code so the agent
     // loop reports it rather than ending silently (empty-turn class of bugs).
     if (e instanceof Error && !(e as { code?: string }).code) {
