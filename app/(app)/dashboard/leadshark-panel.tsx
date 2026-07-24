@@ -17,7 +17,6 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { fetchJson } from "@/lib/api-fetch";
-import type { Draft } from "@/lib/draft-view";
 import {
   validateAutomationConfig,
   containsUrl,
@@ -220,10 +219,14 @@ function StatusBanner({ status, error }: { status: AutomationStatus; error: stri
   return <div className={cn("rounded-md border px-3 py-2 text-xs", cls)}>{text}</div>;
 }
 
-// The LeadShark automation panel — lives beside the schedule controls in the
-// draft editor, only for lead-magnet drafts. Configures the comment→DM
-// automation and shows its binding status once the post publishes.
-export function LeadSharkPanel({ draft }: { draft: Draft }) {
+// The LeadShark automation panel — beside the schedule controls in the Posts
+// draft editor AND inline on the Cowork chat draft card, for lead-magnet drafts.
+// Configures the comment→DM automation and shows its binding status once the
+// post publishes. Takes just the persisted draft id (== chat_artifacts.id / board draft id) —
+// all its data comes from /api/drafts/:id/automation, so it needs nothing else.
+// This lets it mount from the Cowork chat draft card as well as the Posts-board
+// draft editor.
+export function LeadSharkPanel({ draftId }: { draftId: string }) {
   const [loaded, setLoaded] = useState(false);
   const [data, setData] = useState<GetResponse | null>(null);
   const [enabled, setEnabled] = useState(false);
@@ -237,7 +240,7 @@ export function LeadSharkPanel({ draft }: { draft: Draft }) {
   const load = useCallback(async () => {
     try {
       const res = await fetchJson<GetResponse>(
-        `/api/drafts/${draft.id}/automation`,
+        `/api/drafts/${draftId}/automation`,
         { cache: "no-store" },
       );
       if (!res.ok) return;
@@ -260,7 +263,7 @@ export function LeadSharkPanel({ draft }: { draft: Draft }) {
     } finally {
       setLoaded(true);
     }
-  }, [draft.id]);
+  }, [draftId]);
 
   useEffect(() => {
     // Mount fetch of the automation config from the API (an external system).
@@ -282,7 +285,7 @@ export function LeadSharkPanel({ draft }: { draft: Draft }) {
     setBusy(true);
     try {
       const res = await fetchJson<{ ok: boolean; error?: string; automation?: ServerAutomation }>(
-        `/api/drafts/${draft.id}/automation`,
+        `/api/drafts/${draftId}/automation`,
         {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
@@ -306,7 +309,7 @@ export function LeadSharkPanel({ draft }: { draft: Draft }) {
     setBusy(true);
     try {
       const res = await fetchJson<{ ok: boolean; error?: string }>(
-        `/api/drafts/${draft.id}/automation`,
+        `/api/drafts/${draftId}/automation`,
         { method: "DELETE" },
       );
       if (!res.ok) throw new Error(res.error || "Couldn't remove the automation.");

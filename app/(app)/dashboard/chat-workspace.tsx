@@ -69,6 +69,7 @@ import { renderRichText } from "@/components/chat-rich-text";
 import { GroundedSourceLinks } from "@/components/grounded-source-links";
 import { cn } from "@/lib/utils";
 import { ChatContextPanel } from "./chat-context-panel";
+import { LeadSharkPanel } from "./leadshark-panel";
 import {
   summarizeChatContext,
   isContextSummaryEmpty,
@@ -6304,6 +6305,16 @@ function ArtifactCard({
   // Only for post artifacts in a chat that was opened to refine that specific post.
   const canUpdateOriginal = !!refiningDraftId && artifact.kind === "post";
   const [scheduleOpen, setScheduleOpen] = useState(false);
+  // Lead-magnet automation (LeadShark comment→DM) configured inline from the
+  // chat draft card. The panel needs a PERSISTED draft id (== chat_artifacts.id),
+  // so opening it first runs ensureSchedulableDraft() — the same save the
+  // schedule flow uses — then mounts LeadSharkPanel against that id. Configuring
+  // on that id means the `configured` automation row exists before the draft is
+  // scheduled/published, which is exactly what the publish→bind hook requires.
+  const [automationOpen, setAutomationOpen] = useState(false);
+  const [automationDraftId, setAutomationDraftId] = useState<string | null>(null);
+  const [automationOpening, setAutomationOpening] = useState(false);
+  const [automationError, setAutomationError] = useState<string | null>(null);
   const scheduleMeta = scheduleMetaFromArtifact(artifact);
   const [saved, setSaved] = useState(
     !!(canUpdateOriginal ? refiningDraftId : scheduleMeta.boardDraftId),
@@ -6583,6 +6594,35 @@ function ArtifactCard({
     setSaved(true);
     await onMetaChange?.({ board_draft_id: data.artifact.id });
     return data.artifact.id;
+  };
+
+  // Toggle the inline automation config. Opening it first persists the draft
+  // (reusing ensureSchedulableDraft, the schedule flow's save) so LeadSharkPanel
+  // has a real chat_artifacts.id to configure against. If the save fails we keep
+  // the panel closed and surface why rather than mounting a panel that would
+  // 404 on its own fetch.
+  const toggleAutomation = async () => {
+    if (automationOpen) {
+      setAutomationOpen(false);
+      return;
+    }
+    setAutomationError(null);
+    if (automationDraftId) {
+      setAutomationOpen(true);
+      return;
+    }
+    setAutomationOpening(true);
+    try {
+      const id = await ensureSchedulableDraft();
+      setAutomationDraftId(id);
+      setAutomationOpen(true);
+    } catch (e) {
+      setAutomationError(
+        e instanceof Error ? e.message : "Couldn't prepare this draft for automation.",
+      );
+    } finally {
+      setAutomationOpening(false);
+    }
   };
 
   const addScheduleImage = async (file: File | undefined) => {
@@ -7118,7 +7158,38 @@ function ArtifactCard({
           )}
           {scheduleStatus === "scheduled" && scheduledAt ? "Scheduled" : "Schedule"}
         </Button>
+        {/* Automation config, lead-magnet drafts only. Mirrors the Schedule
+            toggle: a button that flips an inline panel below the toolbar. */}
+        {draftLeadMagnet && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-1.5 h-8 rounded-full border-border"
+            onClick={() => void toggleAutomation()}
+            disabled={automationOpening}
+            title="Set up the comment-to-DM automation for this lead magnet"
+          >
+            {automationOpening ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Zap className="h-3.5 w-3.5" />
+            )}
+            Automation
+          </Button>
+        )}
       </div>
+
+      {automationError && draftLeadMagnet && (
+        <div className="border-t border-border bg-card px-3 pt-2 text-[11px] text-destructive shrink-0">
+          {automationError}
+        </div>
+      )}
+
+      {automationOpen && draftLeadMagnet && automationDraftId && (
+        <div className="border-t border-border bg-card px-3 pb-3 pt-2.5 shrink-0">
+          <LeadSharkPanel draftId={automationDraftId} />
+        </div>
+      )}
 
       {scheduleOpen && artifact.kind !== "hook" && (
         <div className="flex flex-col gap-2 border-t border-border bg-card px-3 pb-2.5 pt-2.5 shrink-0">

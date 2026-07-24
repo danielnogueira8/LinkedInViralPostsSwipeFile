@@ -1122,7 +1122,7 @@ export function DraftEditorModal({
                 />
 
                 {!isNew && draft && draft.kind === "lead_magnet" && (
-                  <LeadSharkPanel draft={draft} />
+                  <LeadSharkPanel draftId={draft.id} />
                 )}
 
                 <PostMediaSection
