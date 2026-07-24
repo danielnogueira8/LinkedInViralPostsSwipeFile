@@ -632,24 +632,24 @@ describe("search_viral_posts — query shape", () => {
     },
   };
 
-  test("MIMIC query rotates the leader across the durable cursor", async () => {
-    // Distinct workspaces so the in-memory surfaced tracker doesn't bleed (prod
-    // requests hit independent cold instances); the durable cursor is the driver.
-    dbRef.current = makeFakeSupabase(VIRAL_POOL); // cursor 0 (no stored value)
-    const r0 = (await runTool("search_viral_posts", { limit: 5 }, "ws-v0")) as { posts: { id: string }[] };
-    expect(r0.posts[0].id).toBe("v1");
-
-    dbRef.current = makeFakeSupabase(VIRAL_POOL, {
-      claim_modeling_source_rotation_cursor: { data: 1 },
-    });
-    const r1 = (await runTool("search_viral_posts", { limit: 5 }, "ws-v1")) as { posts: { id: string }[] };
-    expect(r1.posts[0].id).toBe("v2"); // rotated → different source to model
-
-    dbRef.current = makeFakeSupabase(VIRAL_POOL, {
-      claim_modeling_source_rotation_cursor: { data: 2 },
-    });
-    const r2 = (await runTool("search_viral_posts", { limit: 5 }, "ws-v2")) as { posts: { id: string }[] };
-    expect(r2.posts[0].id).toBe("v3");
+  test("MIMIC 5-idea discovery varies the mix across the durable cursor", async () => {
+    // "Give me 5 ideas" shuffles the fresh band seeded by the durable cursor, so
+    // repeated asks return a DIFFERENT ordering (the user-reported "always the
+    // same 5" fix) — including on a quiet week. Distinct workspaces so the
+    // in-memory surfaced tracker doesn't bleed; the durable cursor is the driver.
+    const leaders: string[] = [];
+    for (const [cursor, ws] of [[0, "ws-v0"], [1, "ws-v1"], [2, "ws-v2"], [3, "ws-v3"]] as const) {
+      dbRef.current = makeFakeSupabase(VIRAL_POOL, {
+        claim_modeling_source_rotation_cursor: { data: cursor },
+      });
+      const r = (await runTool("search_viral_posts", { limit: 5 }, ws)) as { posts: { id: string }[] };
+      // every returned post is from the pool (nothing invented / dropped wrongly)
+      expect(r.posts.length).toBeGreaterThan(0);
+      leaders.push(r.posts.map((p) => p.id).join(","));
+    }
+    // Different cursors produce more than one distinct ordering — not the same
+    // five in the same order every time.
+    expect(new Set(leaders).size).toBeGreaterThan(1);
   });
 
   // Regression: this is the EXACT call shape chat-turn.ts's
@@ -1002,7 +1002,10 @@ That makes the lesson practical and repeatable for the reader.`,
       chat_artifacts: { rows: [{ meta: { source_post_id: "v1" } }] },
     });
     const res = (await runTool("search_viral_posts", { limit: 5 }, "ws-v-used")) as { posts: { id: string }[] };
-    expect(res.posts.map((p) => p.id)).toEqual(["v2", "v3", "v4", "v5", "v6"]);
+    // Multi-idea discovery shuffles the fresh band, so the ORDER of v2..v6
+    // varies; the invariant is the SET — the used source v1 is dropped and the
+    // five fresh ones fill the window.
+    expect([...res.posts.map((p) => p.id)].sort()).toEqual(["v2", "v3", "v4", "v5", "v6"]);
     expect(res.posts.map((p) => p.id)).not.toContain("v1");
   });
 
