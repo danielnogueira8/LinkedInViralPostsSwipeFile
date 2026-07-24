@@ -6350,12 +6350,15 @@ function ArtifactCard({
   // Only for post artifacts in a chat that was opened to refine that specific post.
   const canUpdateOriginal = !!refiningDraftId && artifact.kind === "post";
   const [scheduleOpen, setScheduleOpen] = useState(false);
-  // Lead-magnet automation (LeadShark comment→DM) configured inline from the
-  // chat draft card. The panel needs a PERSISTED draft id (== chat_artifacts.id),
-  // so opening it first runs ensureSchedulableDraft() — the same save the
-  // schedule flow uses — then mounts LeadSharkPanel against that id. Configuring
-  // on that id means the `configured` automation row exists before the draft is
-  // scheduled/published, which is exactly what the publish→bind hook requires.
+  // Lead-magnet automation (LeadShark comment→DM), configured as a section
+  // INSIDE the schedule panel — when a lead magnet goes out and what happens
+  // when people comment on it are one decision, so they're one flow.
+  //
+  // The panel needs a PERSISTED draft id (== chat_artifacts.id), so expanding
+  // the section runs ensureSchedulableDraft() — the same save scheduling uses —
+  // then mounts LeadSharkPanel against that id. Configuring on that id means the
+  // `configured` automation row exists before the draft is scheduled/published,
+  // which is exactly what the publish→bind hook requires.
   const [automationOpen, setAutomationOpen] = useState(false);
   const [automationDraftId, setAutomationDraftId] = useState<string | null>(null);
   const [automationOpening, setAutomationOpening] = useState(false);
@@ -7241,38 +7244,7 @@ function ArtifactCard({
           )}
           {scheduleStatus === "scheduled" && scheduledAt ? "Scheduled" : "Schedule"}
         </Button>
-        {/* Automation config, lead-magnet drafts only. Mirrors the Schedule
-            toggle: a button that flips an inline panel below the toolbar. */}
-        {draftLeadMagnet && (
-          <Button
-            size="sm"
-            variant="outline"
-            className="gap-1.5 h-8 rounded-full border-border"
-            onClick={() => void toggleAutomation()}
-            disabled={automationOpening}
-            title="Set up the comment-to-DM automation for this lead magnet"
-          >
-            {automationOpening ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Zap className="h-3.5 w-3.5" />
-            )}
-            Automation
-          </Button>
-        )}
       </div>
-
-      {automationError && draftLeadMagnet && (
-        <div className="border-t border-border bg-card px-3 pt-2 text-[11px] text-destructive shrink-0">
-          {automationError}
-        </div>
-      )}
-
-      {automationOpen && draftLeadMagnet && automationDraftId && (
-        <div className="border-t border-border bg-card px-3 pb-3 pt-2.5 shrink-0">
-          <LeadSharkPanel draftId={automationDraftId} />
-        </div>
-      )}
 
       {scheduleOpen && artifact.kind !== "hook" && (
         <div className="flex flex-col gap-2 border-t border-border bg-card px-3 pb-2.5 pt-2.5 shrink-0">
@@ -7404,6 +7376,55 @@ function ArtifactCard({
                   ` — trim ${body.length - LINKEDIN_MAX_CHARS} characters first`}
               </div>
             </>
+          )}
+
+          {/* Comment-to-DM automation lives INSIDE the schedule flow: deciding
+              when a lead magnet goes out and deciding what happens when people
+              comment on it are the same decision, made at the same moment.
+              Sits outside the scheduled/unscheduled branches above so it's
+              reachable either way — including adding an automation to a post
+              that's already scheduled.
+
+              Collapsed by default, and expanding is what persists the draft
+              (via ensureSchedulableDraft) — so merely opening Schedule never
+              writes a row, and LeadSharkPanel always gets a real id. */}
+          {draftLeadMagnet && (
+            <div className="flex flex-col gap-2 border-t border-border pt-2.5">
+              <button
+                type="button"
+                onClick={() => void toggleAutomation()}
+                disabled={automationOpening}
+                className="flex items-center gap-2 text-left text-xs font-medium text-foreground transition-colors hover:text-primary disabled:opacity-60"
+                aria-expanded={automationOpen}
+              >
+                {automationOpening ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
+                ) : (
+                  <Zap className="h-3.5 w-3.5 shrink-0 text-primary" />
+                )}
+                <span className="min-w-0 flex-1">
+                  Comment-to-DM automation
+                  <span className="ml-1.5 font-normal text-muted-foreground">
+                    — auto-DM the resource to everyone who comments
+                  </span>
+                </span>
+                <ChevronDown
+                  className={cn(
+                    "h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform",
+                    automationOpen && "rotate-180",
+                  )}
+                  aria-hidden
+                />
+              </button>
+
+              {automationError && (
+                <p className="text-[11px] text-destructive">{automationError}</p>
+              )}
+
+              {automationOpen && automationDraftId && (
+                <LeadSharkPanel draftId={automationDraftId} />
+              )}
+            </div>
           )}
         </div>
       )}
