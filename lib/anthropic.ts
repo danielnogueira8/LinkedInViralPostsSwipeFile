@@ -245,6 +245,38 @@ export function mapUsage(u: Anthropic.Usage | undefined): Usage | undefined {
   };
 }
 
+// Map Anthropic stop reasons to the OpenAI finishReason vocabulary the whole app
+// switches on. This is load-bearing: the direct writer derives
+// `envelopeComplete` from `finishReason === null || === "stop"` (writer.ts), and
+// the finalizer flags `finishReason === "length"` as truncated. Anthropic
+// returns "end_turn" / "max_tokens" / "tool_use", which match NONE of those — so
+// without this map every completed Sonnet draft looked truncated and the writer
+// retried forever (the "couldn't complete a reliable post" loop).
+//   end_turn / stop_sequence → "stop"   (complete)
+//   max_tokens               → "length" (genuinely truncated)
+//   tool_use                 → "tool_calls"
+//   refusal / pause_turn     → passthrough (handled elsewhere / rare)
+export function mapStopReason(
+  stop: Anthropic.Message["stop_reason"],
+): string | null {
+  switch (stop) {
+    case "end_turn":
+    case "stop_sequence":
+      return "stop";
+    case "max_tokens":
+      return "length";
+    case "tool_use":
+      return "tool_calls";
+    case null:
+    case undefined:
+      return null;
+    default:
+      // refusal, pause_turn, or any future reason — surface verbatim so callers
+      // that special-case them still can; it just won't read as "complete".
+      return stop;
+  }
+}
+
 function combineSignals(
   signal: AbortSignal | undefined,
   timeoutMs: number | undefined,
@@ -321,7 +353,7 @@ export async function completeChatAnthropic(opts: {
   return {
     text,
     toolArgs,
-    finishReason: response.stop_reason ?? null,
+    finishReason: mapStopReason(response.stop_reason),
     usage: mapUsage(response.usage),
     model: response.model || model,
     citations: [],
@@ -411,7 +443,7 @@ export async function* streamChatAnthropic(opts: {
     }
     const final = await stream.finalMessage();
     yield {
-      finishReason: final.stop_reason ?? null,
+      finishReason: mapStopReason(final.stop_reason),
       usage: mapUsage(final.usage),
       model: final.model,
     };
