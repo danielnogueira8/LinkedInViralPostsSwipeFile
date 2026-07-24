@@ -37,6 +37,7 @@ import {
   logOpenRouterUsage,
   type Usage,
 } from "@/lib/openrouter";
+import { shouldUseAnthropic } from "@/lib/anthropic";
 import {
   runWriterTurn,
   type GroundedSource,
@@ -1204,14 +1205,13 @@ async function runCoworkOutcomeScenarioWithStore(
       !scenario.model.actionOrchestrator?.allowNoModel &&
       !scenario.model.readOnlyOrchestrator?.allowNoModel) ||
     usage.some(
-      // Each usage row's provider is attributed from ITS OWN model slug
-      // (bare claude-* → anthropic, everything else incl. the anthropic/-prefixed
-      // OpenRouter fallback → openrouter), matching logOpenRouterUsage. Checking
-      // per-row keeps mixed primary/fallback turns valid under AI_PROVIDER while
-      // still catching a genuinely mis-attributed row.
+      // Each usage row's provider is attributed from ITS OWN model slug via the
+      // SAME predicate the runtime uses (shouldUseAnthropic): a Claude model — bare or
+      // anthropic/-prefixed — is "anthropic" only when the flag routes it there,
+      // else "openrouter". Per-row keeps mixed primary/fallback turns valid and
+      // matches logOpenRouterUsage exactly.
       (row) =>
-        row.provider !==
-          (row.model.startsWith("claude-") ? "anthropic" : "openrouter") ||
+        row.provider !== (shouldUseAnthropic(row.model) ? "anthropic" : "openrouter") ||
         row.workspace_id !== store.workspaceId,
     ) ||
     assistantInputTokens !== inputTokens ||

@@ -607,11 +607,13 @@ export async function completeChat(opts: {
   sessionId?: string;
 }): Promise<CompleteResult> {
   const model = opts.model || BACKGROUND_MODEL;
-  // Provider seam: Anthropic serves claude-* models when the flag is on. Dynamic
-  // import keeps the module graph acyclic (anthropic.ts imports our types).
-  if (process.env.AI_PROVIDER === "anthropic" && model.startsWith("claude-")) {
-    const { completeChatAnthropic } = await import("./anthropic");
-    return completeChatAnthropic({ ...opts, model });
+  // Provider seam: Anthropic serves Claude models when the flag is on — in
+  // BOTH the bare (`claude-sonnet-5`) and OpenRouter-prefixed
+  // (`anthropic/claude-sonnet-5`) forms, since the app's writer/fallback/vision
+  // defaults use the prefixed slug. Dynamic import keeps the graph acyclic.
+  {
+    const { shouldUseAnthropic, completeChatAnthropic } = await import("./anthropic");
+    if (shouldUseAnthropic(model)) return completeChatAnthropic({ ...opts, model });
   }
   const body: Record<string, unknown> = {
     model,
@@ -852,11 +854,14 @@ export async function* streamChat(opts: {
   sessionId?: string;
 }): AsyncGenerator<StreamDelta> {
   const model = opts.model || CHAT_MODEL;
-  // Provider seam (streaming): text-only Anthropic path for claude-* models.
-  if (process.env.AI_PROVIDER === "anthropic" && model.startsWith("claude-")) {
-    const { streamChatAnthropic } = await import("./anthropic");
-    yield* streamChatAnthropic({ ...opts, model });
-    return;
+  // Provider seam (streaming): text-only Anthropic path for Claude models
+  // (bare or anthropic/-prefixed) when the flag is on.
+  {
+    const { shouldUseAnthropic, streamChatAnthropic } = await import("./anthropic");
+    if (shouldUseAnthropic(model)) {
+      yield* streamChatAnthropic({ ...opts, model });
+      return;
+    }
   }
   const body: Record<string, unknown> = {
     model,
@@ -1204,12 +1209,16 @@ export async function logOpenRouterUsage(
     cacheWriteTokens: cacheWrite,
     costUsd,
   } = openRouterUsageCost(model, usage);
+  // Attribute spend to whoever actually served it. A Claude model (bare or
+  // anthropic/-prefixed) is served by Anthropic ONLY when the flag routes it
+  // there — with the flag off, anthropic/claude-* genuinely runs on OpenRouter,
+  // so it must stay labeled openrouter. shouldUseAnthropic encodes exactly that.
+  const { shouldUseAnthropic } = await import("./anthropic");
+  const provider = shouldUseAnthropic(model) ? "anthropic" : "openrouter";
   try {
     const sb = supabaseAdmin();
     const { error } = await sb.from("usage_events").insert({
-      // Attribute claude-* spend to Anthropic (AI_PROVIDER=anthropic serves
-      // those). Everything else — GLM, embeddings, image gen — stays OpenRouter.
-      provider: model.startsWith("claude-") ? "anthropic" : "openrouter",
+      provider,
       kind,
       model,
       input_tokens: inputTokens,
