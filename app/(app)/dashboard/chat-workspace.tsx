@@ -129,6 +129,8 @@ import {
   type CoworkComposerCommandKind,
   type CoworkComposerState,
 } from "@/lib/cowork-command";
+import type { TurnDecision } from "@/lib/agent/turn/resolve-decision";
+import { ConfirmReadback } from "./confirm-readback";
 import {
   isAskSelectionComplete,
   resolveAskSubmission,
@@ -617,6 +619,16 @@ export function ChatWorkspace({
   // fallback). Same Auto/explicit shape and lifecycle as draftCountSelection.
   const [postTypeSelection, setPostTypeSelection] =
     useState<PostTypeSelection>("auto");
+  // "Confirm before generating": a Create/Edit send resolves its decision on the
+  // server first and parks it here so the read-back can show what will happen.
+  // Confirming re-enters send() with confirmed:true (skips the gate); editing
+  // clears it. Holds the text to resend so the composer input can change freely
+  // underneath without altering what was confirmed.
+  const [pendingConfirm, setPendingConfirm] = useState<{
+    text: string;
+    decision: TurnDecision;
+  } | null>(null);
+  const [confirmResolving, setConfirmResolving] = useState(false);
   // Close every composer picker when the active chat changes (switch OR the
   // active chat being deleted, which sets activeId to null). The pickers are
   // anchored to the always-mounted composer, so without this a picker opened in
@@ -2238,6 +2250,9 @@ export function ChatWorkspace({
       actionSelectionIds?: string[];
       clarificationChoiceIndex?: number;
       clarificationAssistantMessageId?: string;
+      // Set by the confirm read-back's Generate button — the decision has
+      // already been shown and accepted, so skip the confirm gate this time.
+      confirmed?: boolean;
     },
   ) => {
     // Caller passes overrideText to send a specific message without going
@@ -2316,6 +2331,84 @@ export function ChatWorkspace({
       );
       return;
     }
+
+    // Confirm before generating. A real Create/Edit composer send resolves its
+    // decision on the server and shows the read-back first, so a silent
+    // override (wrong niche, ignored lead magnet, wrong mode) never reaches the
+    // user as an unwanted result. Programmatic sends (overrideText), replayed
+    // operations (retry / clarification / actionSelection), and the confirm
+    // sheet's own Generate (confirmed) all bypass the gate. Ask turns are cheap
+    // and low-risk, so they send straight through.
+    const shouldConfirm =
+      overrideText === undefined &&
+      !sendOpts?.confirmed &&
+      !sendOpts?.command &&
+      !sendOpts?.retryOfUserMessageId &&
+      sendOpts?.actionSelectionIds === undefined &&
+      sendOpts?.clarificationChoiceIndex === undefined &&
+      (composerCommandKind === "create" || composerCommandKind === "edit");
+    if (shouldConfirm) {
+      setConfirmResolving(true);
+      try {
+        const resolveCommand = commandForComposer({
+          kind: composerCommandKind,
+          count: draftCountSelection === "auto" ? 1 : draftCountSelection,
+          ...(effectiveCoworkComposer.kind === "edit" && editTargetPost
+            ? {
+                targetPostId: editTargetPost.artifactId,
+                scope: effectiveCoworkComposer.scope,
+              }
+            : {}),
+        });
+        const resolveGenerationConfig = generationConfigForSelection(
+          draftCountSelection,
+          postTypeSelection,
+        );
+        const resolveLeadMagnet = leadMagnetPickerDisabled
+          ? null
+          : pendingLeadMagnet;
+        const res = await fetch(
+          `/api/chats/${activeIdRef.current ?? "new"}/resolve`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              message: text,
+              ...(resolveCommand ? { command: resolveCommand } : {}),
+              ...(modelSource ? { modelSourceId: modelSource.id } : {}),
+              ...(pendingCreatorStyle && !modelSource
+                ? { creatorStyleId: pendingCreatorStyle.id }
+                : {}),
+              ...(resolveLeadMagnet
+                ? { leadMagnetId: resolveLeadMagnet.id }
+                : {}),
+              ...(resolveGenerationConfig
+                ? { generationConfig: resolveGenerationConfig }
+                : {}),
+              ...(pendingPostFormat
+                ? { forcedNoModelFormatId: pendingPostFormat }
+                : {}),
+            }),
+          },
+        );
+        if (res.ok) {
+          const json = (await res.json()) as {
+            ok: boolean;
+            decision: TurnDecision;
+          };
+          if (json.ok) {
+            setPendingConfirm({ text, decision: json.decision });
+            setConfirmResolving(false);
+            return;
+          }
+        }
+        // Resolve failed — don't block the user; fall through and send as usual.
+      } catch {
+        // Network/parse error resolving the read-back: never trap the send.
+      }
+      setConfirmResolving(false);
+    }
+
     // Synchronous in-flight guard. Claim a lock keyed by the target chat (or the
     // "__new__" sentinel for a first message that hasn't created a chat yet)
     // BEFORE any await, so a second rapid send can't slip through and create a
@@ -3267,6 +3360,38 @@ export function ChatWorkspace({
     writerContentFormat,
     enterCreateCommand,
   ]);
+
+  // Confirm read-back actions. Generate resends the confirmed text (bypassing
+  // the gate); Keep editing dismisses; a conflict's Fix mutates the composer so
+  // the setting either drops or the mode switches, then the user re-sends (which
+  // re-resolves against the corrected state).
+  const confirmGenerate = useCallback(() => {
+    const pending = pendingConfirm;
+    if (!pending) return;
+    setPendingConfirm(null);
+    void send(pending.text, { confirmed: true });
+  }, [pendingConfirm, send]);
+
+  const confirmDismiss = useCallback(() => {
+    setPendingConfirm(null);
+  }, []);
+
+  const confirmFix = useCallback(
+    (conflict: TurnDecision["conflicts"][number]) => {
+      // Apply the remedy, then dismiss so the user re-sends against the fix and
+      // gets a fresh, now-clean read-back.
+      if (conflict.fix === "drop_setting") {
+        if (conflict.field === "leadMagnet") setPendingLeadMagnet(null);
+        else if (conflict.field === "creatorStyle") setPendingCreatorStyle(null);
+        else if (conflict.field === "postType") setPostTypeSelection("auto");
+      } else if (conflict.fix === "switch_mode") {
+        // A lead magnet only lives on a post turn — switch to Create.
+        enterCreateCommand();
+      }
+      setPendingConfirm(null);
+    },
+    [enterCreateCommand],
+  );
 
   // Stop the active chat's in-flight run — really stop it, not just cancel
   // the client's response read. We do TWO things:
@@ -4792,6 +4917,14 @@ export function ChatWorkspace({
             )}
             </div>
             <div className="flex flex-col gap-2 px-3 pb-3 pt-2">
+              {pendingConfirm && (
+                <ConfirmReadback
+                  decision={pendingConfirm.decision}
+                  onGenerate={confirmGenerate}
+                  onDismiss={confirmDismiss}
+                  onFix={confirmFix}
+                />
+              )}
               <input
                 ref={fileInputRef}
                 type="file"
@@ -5077,12 +5210,17 @@ export function ChatWorkspace({
                   disabled={
                     !input.trim() ||
                     overLimit ||
+                    confirmResolving ||
                     (composerCommandKind === "edit" && !editTargetPost)
                   }
                   className="h-10 w-10 shrink-0 rounded-full shadow-sm"
-                  aria-label="Send message"
+                  aria-label={confirmResolving ? "Checking…" : "Send message"}
                 >
-                  <Send className="h-4 w-4" />
+                  {confirmResolving ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Send className="h-4 w-4" />
+                  )}
                 </Button>
               )}
               </div>
