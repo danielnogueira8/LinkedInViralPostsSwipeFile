@@ -1091,6 +1091,17 @@ const OPENROUTER_PRICING: Record<
   // under-count spend, so the monthly cost cap would be wrong. Sonnet 5 is
   // currently $2 in / $10 out; cache-read is 0.1x input = $0.20.
   "anthropic/claude-sonnet-5": { input: 2.0, output: 10.0, cachedInput: 0.2 },
+  // Bare slug is what the Anthropic adapter sends (AI_PROVIDER=anthropic). The
+  // adapter leaves usage.cost unset, so this table computes cost from tokens.
+  // Sonnet 5 intro pricing: $2/M in, $10/M out; cache-read 0.1x input = $0.20,
+  // cache-write 1.25x input = $2.50. (Standard rates after the intro window are
+  // $3/$15 — bump these two lines when the intro ends 2026-08-31.)
+  "claude-sonnet-5": {
+    input: 2.0,
+    output: 10.0,
+    cachedInput: 0.2,
+    cacheWrite: 2.5,
+  },
   // Cross-provider fallback for the read-only Cowork orchestrator. OpenRouter's
   // model catalog lists $1.50/M input, $9/M output, and $0.15/M cache reads.
   // Keep the local fallback accurate for rare responses without usage.cost.
@@ -1196,7 +1207,9 @@ export async function logOpenRouterUsage(
   try {
     const sb = supabaseAdmin();
     const { error } = await sb.from("usage_events").insert({
-      provider: "openrouter",
+      // Attribute claude-* spend to Anthropic (AI_PROVIDER=anthropic serves
+      // those). Everything else — GLM, embeddings, image gen — stays OpenRouter.
+      provider: model.startsWith("claude-") ? "anthropic" : "openrouter",
       kind,
       model,
       input_tokens: inputTokens,
