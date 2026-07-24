@@ -42,7 +42,7 @@ export type CoworkTelemetryAttempt = {
   attempt: number;
   model?: string;
   requestedModel?: string;
-  provider?: "openrouter" | "database" | "server";
+  provider?: "openrouter" | "anthropic" | "database" | "server";
   outcome: CoworkAttemptOutcome;
   reasonCode?: string;
   fallbackReason?: string;
@@ -55,7 +55,7 @@ type SafeAttempt = {
   attempt: number;
   model?: string;
   requested_model?: string;
-  provider?: "openrouter" | "database" | "server";
+  provider?: "openrouter" | "anthropic" | "database" | "server";
   outcome: CoworkAttemptOutcome;
   reason_code?: string;
   fallback_reason?: string;

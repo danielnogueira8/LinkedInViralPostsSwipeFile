@@ -1125,8 +1125,25 @@ const OPENROUTER_PRICING: Record<
   "openai/text-embedding-3-small": { input: 0.02, output: 0.02, cachedInput: 0.02 },
 };
 
+// The pricing table is keyed by OpenRouter slugs (`anthropic/claude-...`), but
+// under AI_PROVIDER=anthropic the adapter returns Anthropic's BARE id
+// (`claude-haiku-4.5`), which then flows into cost lookup via the served model.
+// Map a bare Claude id back to its `anthropic/`-prefixed pricing key so every
+// bare Claude model (current and future) prices correctly instead of silently
+// falling back to the GLM-5.1 rate and mis-counting the monthly cost cap. Bare
+// `claude-sonnet-5` keeps its own explicit row; this only kicks in when the
+// exact key is absent.
+function pricingKey(model: string): string {
+  if (Object.hasOwn(OPENROUTER_PRICING, model)) return model;
+  if (/^claude-/i.test(model)) {
+    const prefixed = `anthropic/${model}`;
+    if (Object.hasOwn(OPENROUTER_PRICING, prefixed)) return prefixed;
+  }
+  return model;
+}
+
 export function hasOpenRouterPricing(model: string): boolean {
-  return Object.hasOwn(OPENROUTER_PRICING, model);
+  return Object.hasOwn(OPENROUTER_PRICING, pricingKey(model));
 }
 
 export function openRouterCost(
@@ -1136,7 +1153,8 @@ export function openRouterCost(
   cachedInputTokens = 0,
   cacheWriteTokens = 0,
 ): number {
-  const p = OPENROUTER_PRICING[model] ?? OPENROUTER_PRICING["z-ai/glm-5.1"];
+  const p =
+    OPENROUTER_PRICING[pricingKey(model)] ?? OPENROUTER_PRICING["z-ai/glm-5.1"];
   const boundedCached = Math.min(Math.max(0, cachedInputTokens), inputTokens);
   const boundedCacheWrite = Math.min(
     Math.max(0, cacheWriteTokens),

@@ -40,6 +40,7 @@ import {
   type ChatMessage,
   type Usage,
 } from "@/lib/openrouter";
+import { shouldUseAnthropic } from "@/lib/anthropic";
 import { stampDraftFormat } from "@/lib/markdown/mode";
 import {
   applyCiteSourceToDraftArtifacts,
@@ -715,7 +716,7 @@ async function* executeAnswerTurn(
       stage: "answer",
       attempt: 1,
       model,
-      provider: "openrouter",
+      provider: shouldUseAnthropic(model) ? "anthropic" : "openrouter",
       outcome: "failed",
       reasonCode:
         error instanceof Error
@@ -734,7 +735,7 @@ async function* executeAnswerTurn(
     stage: "answer",
     attempt: 1,
     model,
-    provider: "openrouter",
+    provider: shouldUseAnthropic(model) ? "anthropic" : "openrouter",
     outcome: "accepted",
     latencyMs,
     usage,
