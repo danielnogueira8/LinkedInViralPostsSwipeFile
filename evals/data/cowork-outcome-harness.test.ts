@@ -428,6 +428,56 @@ describe("production-shaped Cowork outcome harness", () => {
     );
   });
 
+  // Same guarantee through the free-text send (no explicit command) — the other
+  // entry into the pipeline. A swipe-file search must reach the search, not the
+  // tool-less answer lane, regardless of how the composer submits it.
+  test("a free-text swipe-file search (no command) also runs a real search", async () => {
+    const answer =
+      "Posts from your swipe file:\n\nSources:\n- [A post](https://www.linkedin.com/posts/sf-1)";
+    const report = await runCoworkOutcomeScenario({
+      id: "free-text-swipe-file-search",
+      request: {
+        message:
+          "Can you find REAL posts from the swipe file that I could adapt?",
+      },
+      model: {
+        provider: { rounds: [] },
+        readOnlyOrchestrator: {
+          plans: [],
+          groundedAnswer: { content: answer, usage: usage(80, 35, 0.0002) },
+          toolResults: {
+            search_viral_posts: [
+              {
+                ok: true,
+                count: 1,
+                posts: [
+                  {
+                    id: "sf-1",
+                    text: "A swipe-file post worth adapting.",
+                    post_url: "https://www.linkedin.com/posts/sf-1",
+                    reactions: 620,
+                    comments: 55,
+                    post_type: "regular",
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [],
+        actionNames: ["search_viral_posts"],
+        assistantContents: [answer],
+        route: "read_only_orchestrator",
+      },
+    });
+
+    expect(report.pass, JSON.stringify(report.failureCodes)).toBe(true);
+    expect(report.safe.route).toBe("read_only_orchestrator");
+  });
+
   test("a negative LinkedIn-post phrase cannot turn a news summary into a draft", async () => {
     const instruction =
       "Research the latest official OpenAI product announcement and summarize what changed. Do not draft or rewrite a LinkedIn post.";
