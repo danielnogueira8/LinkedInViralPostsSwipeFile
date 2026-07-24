@@ -134,6 +134,31 @@ describe("GroundedSourceLinks", () => {
     expect(html).not.toContain('aria-label="Next source"');
   });
 
+  test("sources are centered and width-capped (~a Swipe File card), not full width", () => {
+    const id = "10000000-0000-4000-8000-000000000001";
+    const html = render([citeWithCard(id, fullCard(id))]);
+    // centered + max-width constrained container (editorial, not full-bleed)
+    expect(html).toContain("mx-auto");
+    expect(html).toContain("max-w-[360px]");
+  });
+
+  test("the carousel card renders compact (smaller media box)", () => {
+    const ids = [
+      "10000000-0000-4000-8000-000000000001",
+      "10000000-0000-4000-8000-000000000002",
+    ];
+    const html = render(
+      ids.map((id) =>
+        // A card WITH media so the compact media box is in the markup.
+        citeWithCard(id, fullCard(id, { mediaType: "image", mediaUrls: ["https://media.example/x.jpg"] })),
+      ),
+    );
+    // compact media box (aspect-[16/9] + capped height), not the full aspect-[16/10]
+    expect(html).toContain("aspect-[16/9]");
+    expect(html).toContain("max-h-40");
+    expect(html).not.toContain("aspect-[16/10]");
+  });
+
   test("multiple full cards render a carousel: one card + prev/next + a dot per source", () => {
     const ids = [
       "10000000-0000-4000-8000-000000000001",

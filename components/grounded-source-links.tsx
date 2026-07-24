@@ -87,8 +87,8 @@ function SourceCarousel({ cards }: { cards: CitedPost[] }) {
     setIndex((i) => (((i + delta) % count) + count) % count);
 
   return (
-    <div className="flex flex-col gap-2" aria-label="Verified sources">
-      <InlineSourceCard post={cards[index]} />
+    <div className="flex flex-col gap-2.5" aria-label="Verified sources">
+      <InlineSourceCard post={cards[index]} compact />
       <div className="flex items-center justify-between gap-3">
         <button
           type="button"
@@ -141,11 +141,15 @@ export function GroundedSourceLinks({ artifacts }: { artifacts?: Artifact[] }) {
   const chipOnly = sources.filter((s) => s.card === null);
 
   return (
-    <div className="flex flex-col gap-2">
+    // Center the sources and cap their width to roughly a Swipe File card, so
+    // the carousel reads as an editorial preview rather than a full-width block.
+    // Comfortable vertical spacing above/below (my-1.5) keeps it from crowding
+    // the answer text.
+    <div className="my-1.5 flex w-full max-w-[360px] flex-col gap-2.5 mx-auto">
       {cards.length > 1 ? (
         <SourceCarousel cards={cards} />
       ) : cards.length === 1 ? (
-        <InlineSourceCard post={cards[0]} />
+        <InlineSourceCard post={cards[0]} compact />
       ) : null}
       {chipOnly.length > 0 && (
         <div className="flex flex-wrap gap-2" aria-label="Verified sources">

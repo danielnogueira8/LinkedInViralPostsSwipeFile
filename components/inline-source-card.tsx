@@ -15,7 +15,17 @@ import type { CitedPost } from "@/lib/cite-resolve";
 //   • next/image loading="lazy", never priority, quality 70
 //   • video / PDF render a poster only; the media area links to the post
 //   • avatar onError swaps to a same-size initials tile (never reflows)
-export function InlineSourceCard({ post }: { post: CitedPost }) {
+// `compact` shrinks the card for the centered Cowork source carousel: a smaller
+// media box (and matching `sizes` hint so the optimizer fetches a smaller image)
+// and a shorter text clamp, giving the more editorial, less full-bleed look the
+// chat wants. Defaults false so the card is unchanged everywhere else.
+export function InlineSourceCard({
+  post,
+  compact = false,
+}: {
+  post: CitedPost;
+  compact?: boolean;
+}) {
   const [expanded, setExpanded] = useState(false);
   const name = post.authorName || "Unknown";
   const initials = name
@@ -26,8 +36,12 @@ export function InlineSourceCard({ post }: { post: CitedPost }) {
     .toUpperCase();
   const ago = timeAgo(post.postedAt);
   const text = post.text ?? "";
-  // Clamp long bodies; a cited card is a preview, not the full read.
-  const textLong = text.length > 360 || text.split("\n").length > 10;
+  // Clamp long bodies; a cited card is a preview, not the full read. The compact
+  // card clamps sooner so it stays short in the carousel.
+  const clampLines = compact ? 6 : 10;
+  const textLong =
+    text.length > (compact ? 220 : 360) ||
+    text.split("\n").length > clampLines;
 
   const thumb = post.mediaUrls[0] ?? null;
   const hasThumb =
@@ -95,7 +109,7 @@ export function InlineSourceCard({ post }: { post: CitedPost }) {
           <div
             className={cn(
               "text-[13px] whitespace-pre-wrap leading-relaxed text-foreground/90",
-              !expanded && textLong && "line-clamp-[10]",
+              !expanded && textLong && (compact ? "line-clamp-6" : "line-clamp-[10]"),
             )}
           >
             {text}
@@ -120,7 +134,12 @@ export function InlineSourceCard({ post }: { post: CitedPost }) {
           href={post.postUrl ?? "#"}
           target="_blank"
           rel="noreferrer"
-          className="block mx-3.5 mb-3 mt-1 overflow-hidden rounded-lg border border-border/60 relative aspect-[16/10] bg-muted group/media"
+          className={cn(
+            "block mx-3.5 mb-3 mt-1 overflow-hidden rounded-lg border border-border/60 relative bg-muted group/media",
+            // Compact: a shorter media box, capped so the image stays small and
+            // editorial in the centered carousel rather than filling the card.
+            compact ? "aspect-[16/9] max-h-40" : "aspect-[16/10]",
+          )}
           title={
             post.mediaType === "video"
               ? "Watch on LinkedIn"
@@ -131,7 +150,7 @@ export function InlineSourceCard({ post }: { post: CitedPost }) {
             src={thumb}
             alt=""
             fill
-            sizes="(min-width: 1024px) 360px, 100vw"
+            sizes={compact ? "340px" : "(min-width: 1024px) 360px, 100vw"}
             className="object-cover"
             referrerPolicy="no-referrer"
             loading="lazy"
