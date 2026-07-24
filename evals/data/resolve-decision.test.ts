@@ -127,4 +127,79 @@ describe("resolveTurnDecision", () => {
     const b = await resolveTurnDecision(req, "ws-1", deps());
     expect(a).toEqual(b);
   });
+
+  describe("conflict detection (amber flags)", () => {
+    test("flags a lead magnet picked on an ideas request — it won't be used", async () => {
+      const decision = await resolveTurnDecision(
+        body({
+          message: "Give me 5 post ideas. Pull from ALL niches.",
+          command: { kind: "ask" },
+          leadMagnetId: "22222222-2222-2222-2222-222222222222",
+        }),
+        "ws-1",
+        deps(),
+      );
+      const flag = decision.conflicts.find((c) => c.field === "leadMagnet");
+      expect(flag).toBeTruthy();
+      // An ideas turn can't honor a lead magnet at all → switch mode to fix.
+      expect(flag?.fix).toBe("switch_mode");
+    });
+
+    test("flags a lead magnet picked on a plain regular-post request", async () => {
+      const decision = await resolveTurnDecision(
+        body({
+          message: "Write a post about founder-led sales.",
+          command: { kind: "create", count: 1 },
+          leadMagnetId: "22222222-2222-2222-2222-222222222222",
+        }),
+        "ws-1",
+        deps(),
+      );
+      expect(
+        decision.conflicts.some((c) => c.field === "leadMagnet"),
+      ).toBe(true);
+    });
+
+    test("flags an explicit post type that a model source will override", async () => {
+      const decision = await resolveTurnDecision(
+        body({
+          message: "Model this post in my voice.",
+          command: { kind: "create", count: 1 },
+          modelSourceId: "11111111-1111-1111-1111-111111111111",
+          generationConfig: { version: 1, draftCount: 1, postType: "lead_magnet" },
+        }),
+        "ws-1",
+        deps(),
+      );
+      expect(decision.conflicts.some((c) => c.field === "postType")).toBe(true);
+    });
+
+    test("flags a creator style that a model source will override", async () => {
+      const decision = await resolveTurnDecision(
+        body({
+          message: "Model this post in my voice.",
+          command: { kind: "create", count: 1 },
+          modelSourceId: "11111111-1111-1111-1111-111111111111",
+          creatorStyleId: "33333333-3333-3333-3333-333333333333",
+        }),
+        "ws-1",
+        deps(),
+      );
+      expect(decision.conflicts.some((c) => c.field === "creatorStyle")).toBe(
+        true,
+      );
+    });
+
+    test("no conflicts on a clean create with no overridden settings", async () => {
+      const decision = await resolveTurnDecision(
+        body({
+          message: "Write an original post about pricing.",
+          command: { kind: "create", count: 1 },
+        }),
+        "ws-1",
+        deps(),
+      );
+      expect(decision.conflicts).toEqual([]);
+    });
+  });
 });
