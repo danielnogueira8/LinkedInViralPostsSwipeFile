@@ -221,6 +221,66 @@ function toAnthropicTools(tools: ToolDef[]): Anthropic.ToolUnion[] {
   return mapped;
 }
 
+// The OpenRouter callers request live web search via `plugins: [{id:"web", ...}]`
+// (news-search.ts, grounded web research in agent.ts). Anthropic does web search
+// via a server tool instead, so detect the plugin and translate it.
+export function webSearchMaxUses(
+  plugins: Array<Record<string, unknown>> | undefined,
+): number | undefined {
+  const web = plugins?.find((p) => p.id === "web");
+  if (!web) return undefined;
+  const n = web.max_results;
+  return typeof n === "number" && n > 0 ? n : 5;
+}
+
+// Extract grounded sources from a completed message into the app's citation
+// shape ({url, title, content}). Anthropic returns web-search hits two ways: the
+// `web_search_tool_result` blocks carry url/title but NO readable excerpt
+// (encrypted_content is opaque), while the model's `text` blocks carry
+// `citations` of type `web_search_result_location` with the actual `cited_text`.
+// The excerpt is what grounded research REQUIRES (it fails closed on empty
+// content), so we read citations from the text blocks and dedupe by url. Result
+// blocks with no matching text citation are added url/title-only as a fallback.
+export function extractCitations(
+  content: Anthropic.ContentBlock[],
+): Array<{ url: string; title: string; content: string }> {
+  const byUrl = new Map<string, { url: string; title: string; content: string }>();
+  for (const block of content) {
+    if (block.type !== "text" || !block.citations) continue;
+    for (const c of block.citations) {
+      if (c.type !== "web_search_result_location") continue;
+      const url = typeof c.url === "string" ? c.url : "";
+      if (!url) continue;
+      const existing = byUrl.get(url);
+      const cited = typeof c.cited_text === "string" ? c.cited_text : "";
+      if (existing) {
+        // Accumulate additional cited spans for the same source.
+        if (cited && !existing.content.includes(cited)) {
+          existing.content = `${existing.content}\n${cited}`.trim();
+        }
+      } else {
+        byUrl.set(url, {
+          url,
+          title: typeof c.title === "string" && c.title ? c.title : url,
+          content: cited,
+        });
+      }
+    }
+  }
+  // Fallback: surface any searched result that the model didn't cite in text,
+  // url/title-only (callers that need an excerpt will skip these).
+  for (const block of content) {
+    if (block.type !== "web_search_tool_result") continue;
+    const results = block.content;
+    if (!Array.isArray(results)) continue;
+    for (const r of results) {
+      if (r.type !== "web_search_result" || !r.url || byUrl.has(r.url)) continue;
+      byUrl.set(r.url, { url: r.url, title: r.title || r.url, content: "" });
+    }
+  }
+  return [...byUrl.values()];
+}
+
 // Wrap the hoisted system string as a single cached text block. The app's system
 // prompt is large and stable per workspace + skill set (writer ~13k tokens: the
 // skill/policy/voice stack), and it was NEVER cached — the adapter hoisted it to
@@ -352,6 +412,19 @@ export async function completeChatAnthropic(opts: {
       ? { type: "tool", name: opts.forceTool }
       : { type: "auto" };
   }
+  // Translate the OpenRouter web-search plugin into Anthropic's web_search
+  // server tool so news + grounded research keep working under the flag. The
+  // server runs the search and returns grounded results; we harvest citations
+  // from the response below. (Server tools run alongside any user tools.)
+  const maxUses = webSearchMaxUses(opts.plugins);
+  if (maxUses !== undefined) {
+    const webTool: Anthropic.WebSearchTool20260209 = {
+      type: "web_search_20260209",
+      name: "web_search",
+      max_uses: maxUses,
+    };
+    body.tools = [...(body.tools ?? []), webTool];
+  }
 
   const signal = combineSignals(opts.signal, opts.timeoutMs);
   // Stream internally for large budgets so we never hit an HTTP timeout, then
@@ -378,7 +451,7 @@ export async function completeChatAnthropic(opts: {
     finishReason: mapStopReason(response.stop_reason),
     usage: mapUsage(response.usage),
     model: response.model || model,
-    citations: [],
+    citations: maxUses !== undefined ? extractCitations(response.content) : [],
   };
 }
 
