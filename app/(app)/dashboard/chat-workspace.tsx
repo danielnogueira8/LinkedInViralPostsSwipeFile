@@ -29,6 +29,8 @@ import {
   CheckCircle2,
   Circle,
   PanelRightClose,
+  Maximize2,
+  Minimize2,
   PanelLeftOpen,
   Layers,
   MessageSquare,
@@ -109,6 +111,10 @@ import {
   type ContentFormat,
 } from "@/lib/markdown/mode";
 import { localDateFromDatetimeInput } from "@/lib/schedule-local-date";
+import {
+  LINKEDIN_MAX_CHARS,
+  LINKEDIN_WARN_CHARS,
+} from "@/lib/linkedin-format";
 import { suggestedScheduleLocalInput } from "@/lib/next-open-schedule-day";
 import { useCopiedFlag } from "@/lib/use-copied-flag";
 import { resolveIntent } from "@/lib/post-intents";
@@ -277,8 +283,15 @@ function CoworkCommandIcon({
  const DRAFT_PANEL_WIDTH_KEY = "swipein:cowork-draft-panel-width";
 const VOICE_WARNING_DISMISSED_KEY = "swipein:cowork-voice-warning-dismissed";
 const DRAFT_PANEL_MIN_WIDTH = 320;
-const DRAFT_PANEL_MAX_WIDTH = 640;
+// The drafts rail is a writing surface, not a sidebar: at 640px a 3,000-char
+// post is a narrow ribbon of text. Allow it to open out to roughly half a
+// laptop screen so the draft can be read at a comfortable measure.
+const DRAFT_PANEL_MAX_WIDTH = 1040;
 const DRAFT_PANEL_DEFAULT_WIDTH = 384;
+// One-click "give me room to write" width, used by the expand toggle in the
+// panel header. Sits well inside DRAFT_PANEL_MAX_WIDTH so the drag handle can
+// still go wider.
+const DRAFT_PANEL_FOCUS_WIDTH = 760;
 
 function clampDraftPanelWidth(width: number): number {
   return Math.min(DRAFT_PANEL_MAX_WIDTH, Math.max(DRAFT_PANEL_MIN_WIDTH, width));
@@ -5162,13 +5175,45 @@ export function ChatWorkspace({
             <span className="text-sm font-semibold tracking-[-0.01em]">
               {ARTIFACT_PANEL_TITLE} ({artifacts.length})
             </span>
-            <button
-              onClick={() => setPanelOpen(false)}
-              className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-card hover:text-foreground"
-              aria-label="Close panel"
-            >
-              <PanelRightClose className="h-4 w-4" />
-            </button>
+            <div className="flex items-center gap-0.5">
+              {/* Writing room in one click, without hunting for the drag handle.
+                  Toggles between the default rail width and a wide writing
+                  measure, and persists like a manual resize. */}
+              <button
+                onClick={() => {
+                  const next =
+                    draftPanelWidth >= DRAFT_PANEL_FOCUS_WIDTH
+                      ? DRAFT_PANEL_DEFAULT_WIDTH
+                      : DRAFT_PANEL_FOCUS_WIDTH;
+                  setDraftPanelWidth(next);
+                  writeDraftPanelWidth(next);
+                }}
+                className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-card hover:text-foreground"
+                aria-label={
+                  draftPanelWidth >= DRAFT_PANEL_FOCUS_WIDTH
+                    ? "Narrow drafts panel"
+                    : "Widen drafts panel for writing"
+                }
+                title={
+                  draftPanelWidth >= DRAFT_PANEL_FOCUS_WIDTH
+                    ? "Narrow the panel"
+                    : "Widen for writing"
+                }
+              >
+                {draftPanelWidth >= DRAFT_PANEL_FOCUS_WIDTH ? (
+                  <Minimize2 className="h-4 w-4" />
+                ) : (
+                  <Maximize2 className="h-4 w-4" />
+                )}
+              </button>
+              <button
+                onClick={() => setPanelOpen(false)}
+                className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-card hover:text-foreground"
+                aria-label="Close panel"
+              >
+                <PanelRightClose className="h-4 w-4" />
+              </button>
+            </div>
           </div>
           <div className="flex-1 min-h-0 overflow-y-scroll [scrollbar-gutter:stable] p-3.5 flex flex-col gap-3">
             {artifactsList}
@@ -6971,7 +7016,12 @@ function ArtifactCard({
           local body so formatting shows and edits are reflected live. */}
       {editing ? (
         <div className="px-3 py-2.5">
-          <DraftEditor value={body} onChange={setBody} />
+          <DraftEditor
+            value={body}
+            onChange={setBody}
+            toolbar="full"
+            rows={16}
+          />
         </div>
       ) : (
         // wrapperClassName override: the card is content-sized (no fixed
@@ -7035,6 +7085,39 @@ function ArtifactCard({
           never overflows the card: when Copy / Save / Save-as-new / Refine don't
           fit the panel width (e.g. when "Save as new" is present), they wrap to a
           second line instead of clipping off the right edge. */}
+      {/* Persistent draft status. Length against LinkedIn's cap is a writing
+          decision, so it belongs in front of the user the whole time — not
+          hidden inside the schedule panel where it only surfaced at publish
+          time. Sits outside the body's scroll container, so it stays put while
+          a long draft scrolls. */}
+      {artifact.kind !== "hook" && (
+        <div className="flex items-center justify-between gap-3 border-t border-border bg-card px-3 py-1.5 text-[11px] shrink-0">
+          <span
+            className={cn(
+              "tabular-nums",
+              body.length > LINKEDIN_MAX_CHARS
+                ? "font-medium text-destructive"
+                : body.length >= LINKEDIN_WARN_CHARS
+                  ? "text-state-warning"
+                  : "text-muted-foreground",
+            )}
+          >
+            {body.length.toLocaleString()} /{" "}
+            {LINKEDIN_MAX_CHARS.toLocaleString()}
+            {body.length > LINKEDIN_MAX_CHARS &&
+              ` — trim ${(body.length - LINKEDIN_MAX_CHARS).toLocaleString()}`}
+          </span>
+          <span className="text-muted-foreground">
+            {saving
+              ? "Saving…"
+              : dirty
+                ? "Unsaved changes"
+                : saved
+                  ? "Saved"
+                  : "Not saved yet"}
+          </span>
+        </div>
+      )}
       <div className="flex flex-wrap items-center gap-2 px-3 py-2.5 bg-card shrink-0">
         {!canUpdateOriginal && (
           <p className="basis-full px-1 text-[11px] font-medium text-muted-foreground">
@@ -7291,7 +7374,7 @@ function ArtifactCard({
                     scheduling ||
                     uploadingScheduleImage ||
                     !scheduleWhen ||
-                    body.length > 3000
+                    body.length > LINKEDIN_MAX_CHARS
                   }
                 >
                   {scheduling ? (
@@ -7313,11 +7396,12 @@ function ArtifactCard({
               <div
                 className={cn(
                   "text-[11px]",
-                  body.length > 3000 ? "text-destructive" : "text-muted-foreground",
+                  body.length > LINKEDIN_MAX_CHARS ? "text-destructive" : "text-muted-foreground",
                 )}
               >
-                {body.length}/3000
-                {body.length > 3000 && ` — trim ${body.length - 3000} characters first`}
+                {body.length}/{LINKEDIN_MAX_CHARS}
+                {body.length > LINKEDIN_MAX_CHARS &&
+                  ` — trim ${body.length - LINKEDIN_MAX_CHARS} characters first`}
               </div>
             </>
           )}

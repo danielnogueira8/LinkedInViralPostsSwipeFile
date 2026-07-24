@@ -3,11 +3,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Bold,
+  Italic,
+  Strikethrough,
   List,
   ListOrdered,
   Smile,
   Loader2,
   ArrowUp,
+  Undo2,
+  Redo2,
+  RemoveFormatting,
 } from "lucide-react";
 import { AiIcon } from "@/components/ai-icon";
 import { clipboardHasText, clipboardImageFiles } from "@/lib/clipboard-images";
@@ -17,6 +22,9 @@ import {
   toggleStyle,
   toggleBulletList,
   toggleNumberedList,
+  toggleStrikethrough,
+  clearFormatting,
+  SPECIAL_CHARS,
   applyRewriteBoundary,
   EMOJI_GROUPS,
   LINKEDIN_MAX_CHARS,
@@ -24,6 +32,13 @@ import {
   type FormatStyle,
 } from "@/lib/linkedin-format";
 import { getSelectionAnchor } from "@/lib/textarea-caret";
+import {
+  emptyHistory,
+  pushHistory,
+  undo as undoHistory,
+  redo as redoHistory,
+  snapshot as snapshotHistory,
+} from "@/lib/edit-history";
 
 // In-card editor for a draft post. Operates on a plain-text value and emits
 // changes upward — the formatting is Unicode-based (see lib/linkedin-format)
@@ -36,6 +51,7 @@ export function DraftEditor({
   textareaClassName,
   onMediaFiles,
   allowImagePaste = false,
+  toolbar = "floating",
 }: {
   value: string;
   onChange: (next: string) => void;
@@ -46,6 +62,12 @@ export function DraftEditor({
   // Image paste belongs to the New Post flow. Drag/drop and the Attach control
   // remain available wherever this editor is used.
   allowImagePaste?: boolean;
+  // "floating" (default) keeps the original minimal bar — a selection pops the
+  // format toolbar. "full" adds a persistent toolbar for the Cowork draft
+  // workspace, where the editor is the primary surface rather than a card
+  // detail and the controls should be visible without hunting for them.
+  // Defaulted so every existing caller is untouched.
+  toolbar?: "floating" | "full";
 }) {
   const taRef = useRef<HTMLTextAreaElement>(null);
   // Emoji picker (the always-visible bar above the textarea). Emoji needs a
@@ -53,6 +75,23 @@ export function DraftEditor({
   // selection-only floating toolbar.
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [draggingMedia, setDraggingMedia] = useState(false);
+  // Undo/redo stack. A ref (not state) because it must be read and written
+  // synchronously inside the same event as the edit it records — going through
+  // a state update would race the next keystroke.
+  const historyRef = useRef(emptyHistory());
+  // Availability lives in STATE, not derived from the ref at render time:
+  // reading a ref during render is neither safe nor allowed, and the toolbar
+  // needs to re-render when the stack changes.
+  const [{ canUndo, canRedo }, setHistoryAvail] = useState({
+    canUndo: false,
+    canRedo: false,
+  });
+  const syncHistoryAvail = useCallback(() => {
+    setHistoryAvail({
+      canUndo: historyRef.current.past.length > 0,
+      canRedo: historyRef.current.future.length > 0,
+    });
+  }, []);
   // Floating toolbar position (viewport coords), shown only while a non-empty
   // selection exists inside the textarea — the ChatGPT/Notion "highlight to
   // format" affordance.
@@ -143,6 +182,7 @@ export function DraftEditor({
     return () => ta.removeEventListener("keydown", onKey);
   }, [openAsk]);
 
+
   async function submitAsk(instruction: string) {
     if (!askState || askBusy) return;
     setAskBusy(true);
@@ -162,6 +202,11 @@ export function DraftEditor({
     // request resolves (covers the latency before the first streamed token).
     setAskBusyPos({ top: askState.top, left: askState.left });
     setAskState(null);
+    // One undo point for the whole rewrite. The stream below calls onChange
+    // directly (dozens of times) rather than commit(), so the undo stack holds
+    // the pre-rewrite draft instead of every intermediate token.
+    historyRef.current = snapshotHistory(historyRef.current, value);
+    syncHistoryAvail();
     let rewritten = "";
     let errored: string | null = null;
     try {
@@ -263,7 +308,7 @@ export function DraftEditor({
     const selected = value.slice(start, end);
     const replaced = transform(selected);
     const next = value.slice(0, start) + replaced + value.slice(end);
-    onChange(next);
+    commit(next);
 
     // Restore selection over the transformed text on the next tick (after the
     // controlled re-render), then re-anchor the floating toolbar since the text
@@ -281,13 +326,13 @@ export function DraftEditor({
   function insertAtCursor(text: string) {
     const ta = taRef.current;
     if (!ta) {
-      onChange(value + text);
+      commit(value + text);
       return;
     }
     const start = ta.selectionStart;
     const end = ta.selectionEnd;
     const next = value.slice(0, start) + text + value.slice(end);
-    onChange(next);
+    commit(next);
     requestAnimationFrame(() => {
       ta.focus();
       const caret = start + text.length;
@@ -298,14 +343,194 @@ export function DraftEditor({
   const onStyle = (style: FormatStyle) =>
     applyToSelection((s) => toggleStyle(s, style));
 
+  // Every edit routes through here so it lands on the undo stack — including
+  // formatting and AI rewrites, which is precisely what the browser's native
+  // undo loses once a controlled value is set programmatically.
+  function commit(next: string) {
+    historyRef.current = pushHistory(historyRef.current, value, next);
+    syncHistoryAvail();
+    onChange(next);
+  }
+
+  // Restore a history state and put the caret at the end of it — the textarea's
+  // own selection is meaningless against text it never held.
+  function restore(next: string) {
+    onChange(next);
+    syncHistoryAvail();
+    requestAnimationFrame(() => {
+      const ta = taRef.current;
+      if (!ta) return;
+      ta.focus();
+      ta.setSelectionRange(next.length, next.length);
+      setFloatPos(null);
+    });
+  }
+
+  function doUndo() {
+    const step = undoHistory(historyRef.current, value);
+    if (!step) return;
+    historyRef.current = step.history;
+    restore(step.value);
+  }
+
+  function doRedo() {
+    const step = redoHistory(historyRef.current, value);
+    if (!step) return;
+    historyRef.current = step.history;
+    restore(step.value);
+  }
+
+
   const count = value.length;
   const over = count > LINKEDIN_MAX_CHARS;
+
+  // Editor shortcuts. Undo/redo must be intercepted: the browser's native stack
+  // is meaningless here (every toolbar action replaces the controlled value
+  // programmatically), so ⌘Z would otherwise restore stale text or nothing.
+  // Bound to the textarea, so they never hijack the key outside the editor.
+  useEffect(() => {
+    const ta = taRef.current;
+    if (!ta) return;
+    const onKey = (ev: globalThis.KeyboardEvent) => {
+      if (!(ev.metaKey || ev.ctrlKey)) return;
+      const key = ev.key.toLowerCase();
+      if (key === "z") {
+        ev.preventDefault();
+        if (ev.shiftKey) doRedo();
+        else doUndo();
+        return;
+      }
+      if (key === "y") {
+        // Windows/Linux redo.
+        ev.preventDefault();
+        doRedo();
+        return;
+      }
+      if (key === "b") {
+        ev.preventDefault();
+        applyToSelection((s) => toggleStyle(s, "bold"), { wholeLineWhenEmpty: true });
+        return;
+      }
+      if (key === "i") {
+        ev.preventDefault();
+        applyToSelection((s) => toggleStyle(s, "italic"), { wholeLineWhenEmpty: true });
+      }
+    };
+    ta.addEventListener("keydown", onKey);
+    return () => ta.removeEventListener("keydown", onKey);
+    // Re-bound on value change so the handlers close over current text.
+  }, [value]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     // Bold/lists/Ask-AI live in the floating toolbar that pops over a
     // selection. Emoji needs a cursor (not a selection), so it sits on a small
     // always-visible bar above the textarea.
     <div className={cn("flex flex-col gap-2", className)}>
+      {/* Persistent toolbar (Cowork draft workspace). Every transform acts on
+          the selection, or on the CURRENT LINE when nothing is selected — so no
+          button is ever a no-op, and undo makes that safe to explore. */}
+      {toolbar === "full" && (
+        <div className="relative flex flex-wrap items-center gap-0.5 rounded-lg border border-border bg-card px-1 py-1">
+          <ToolbarButton
+            label="Undo"
+            shortcut="⌘Z"
+            disabled={!canUndo}
+            onClick={doUndo}
+          >
+            <Undo2 className="h-3.5 w-3.5" />
+          </ToolbarButton>
+          <ToolbarButton
+            label="Redo"
+            shortcut="⇧⌘Z"
+            disabled={!canRedo}
+            onClick={doRedo}
+          >
+            <Redo2 className="h-3.5 w-3.5" />
+          </ToolbarButton>
+
+          <ToolbarDivider />
+
+          <ToolbarButton
+            label="Bold"
+            shortcut="⌘B"
+            onClick={() => applyToSelection((s) => toggleStyle(s, "bold"), { wholeLineWhenEmpty: true })}
+          >
+            <Bold className="h-3.5 w-3.5" />
+          </ToolbarButton>
+          <ToolbarButton
+            label="Italic"
+            shortcut="⌘I"
+            onClick={() =>
+              applyToSelection((s) => toggleStyle(s, "italic"), { wholeLineWhenEmpty: true })
+            }
+          >
+            <Italic className="h-3.5 w-3.5" />
+          </ToolbarButton>
+          <ToolbarButton
+            label="Strikethrough"
+            onClick={() => applyToSelection(toggleStrikethrough, { wholeLineWhenEmpty: true })}
+          >
+            <Strikethrough className="h-3.5 w-3.5" />
+          </ToolbarButton>
+
+          <ToolbarDivider />
+
+          <ToolbarButton
+            label="Bulleted list"
+            onClick={() => applyToSelection(toggleBulletList, { wholeLineWhenEmpty: true })}
+          >
+            <List className="h-3.5 w-3.5" />
+          </ToolbarButton>
+          <ToolbarButton
+            label="Numbered list"
+            onClick={() => applyToSelection(toggleNumberedList, { wholeLineWhenEmpty: true })}
+          >
+            <ListOrdered className="h-3.5 w-3.5" />
+          </ToolbarButton>
+
+          <ToolbarDivider />
+
+          {/* The glyphs people actually paste into LinkedIn posts. */}
+          {SPECIAL_CHARS.map(({ char, label }) => (
+            <ToolbarButton
+              key={char}
+              label={label}
+              onClick={() => insertAtCursor(char)}
+            >
+              <span aria-hidden className="text-[13px] leading-none">
+                {char}
+              </span>
+            </ToolbarButton>
+          ))}
+
+          <ToolbarDivider />
+
+          <ToolbarButton
+            label="Emoji"
+            onClick={() => setEmojiOpen((o) => !o)}
+            active={emojiOpen}
+          >
+            <Smile className="h-3.5 w-3.5" />
+          </ToolbarButton>
+          <ToolbarButton
+            label="Clear formatting"
+            onClick={() => applyToSelection(clearFormatting, { wholeLineWhenEmpty: true })}
+          >
+            <RemoveFormatting className="h-3.5 w-3.5" />
+          </ToolbarButton>
+
+          {emojiOpen && (
+            <EmojiPicker
+              onPick={(e) => {
+                insertAtCursor(e);
+                setEmojiOpen(false);
+              }}
+              onClose={() => setEmojiOpen(false)}
+            />
+          )}
+        </div>
+      )}
+      {toolbar === "floating" && (
       <div className="relative flex items-center">
         <button
           type="button"
@@ -341,11 +566,12 @@ export function DraftEditor({
           Select any text to edit it with AI
         </span>
       </div>
+      )}
 
       <textarea
         ref={taRef}
         value={value}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e) => commit(e.target.value)}
         onSelect={refreshFloat}
         onBlur={() => setFloatPos(null)}
         onPaste={(event) => {
@@ -462,6 +688,52 @@ export function DraftEditor({
 // sits just above the highlighted line. Every button uses onMouseDown +
 // preventDefault so the textarea keeps focus and the selection survives the
 // click (a plain onClick would blur first and collapse the selection).
+// A compact icon button for the persistent toolbar. onMouseDown+preventDefault
+// keeps the textarea focused and the caret/selection intact — without it,
+// clicking a format button would blur the textarea and collapse the very
+// selection the button is meant to transform.
+function ToolbarButton({
+  label,
+  shortcut,
+  onClick,
+  disabled,
+  active,
+  children,
+}: {
+  label: string;
+  shortcut?: string;
+  onClick: () => void;
+  disabled?: boolean;
+  active?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      title={shortcut ? `${label} (${shortcut})` : label}
+      aria-label={label}
+      aria-pressed={active}
+      disabled={disabled}
+      onMouseDown={(e) => {
+        e.preventDefault();
+        if (!disabled) onClick();
+      }}
+      className={cn(
+        "inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors",
+        "hover:bg-muted hover:text-foreground",
+        active && "bg-muted text-foreground",
+        disabled && "cursor-not-allowed opacity-40 hover:bg-transparent hover:text-muted-foreground",
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+function ToolbarDivider() {
+  return <span aria-hidden className="mx-1 h-4 w-px shrink-0 bg-border" />;
+}
+
 function FloatingToolbar({
   top,
   left,
