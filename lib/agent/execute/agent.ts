@@ -2776,6 +2776,15 @@ const WORKSPACE_NICHE_GENERIC_TERMS = new Set([
   "five",
   "four",
   "from",
+  // Imperative openers ("Give me 5 post ideas...", "Show me...", "Find me...")
+  // are the same output-signal phrase authoritativeResearchClause already
+  // recognizes (see "give me" at lines ~3011/3017/3024) — without these, the
+  // niche walk-back in authoritativeWorkspaceNicheCandidate has no boundary
+  // before "post" and consumes into the imperative clause, misreading e.g.
+  // "Give me" as the niche name (root cause of the empty search_viral_posts
+  // delivery this set exists to prevent).
+  "get",
+  "give",
   "high-performing",
   "high",
   "highest",
@@ -2786,6 +2795,7 @@ const WORKSPACE_NICHE_GENERIC_TERMS = new Set([
   "inspecting",
   "latest",
   "linkedin",
+  "me",
   "most",
   "multiple",
   "my",
@@ -2808,6 +2818,7 @@ const WORKSPACE_NICHE_GENERIC_TERMS = new Set([
   "searching",
   "several",
   "seven",
+  "show",
   "six",
   "source",
   "sources",
@@ -2845,9 +2856,24 @@ type WorkspaceNicheCandidate = {
   terms: Set<string>;
 };
 
-/** Parse only a topic attached to the source noun, never the writing topic. */
-function authoritativeWorkspaceNicheCandidate(
+/**
+ * Parse only a topic attached to the source noun, never the writing topic.
+ *
+ * With `knownNiches` supplied (the workspace's real tracked-account niches),
+ * the walk-back result is additionally required to semantically match one of
+ * them — real data, not a stop-word list, decides what counts as a niche.
+ * This closes the whole class of false positives a stop-word list can only
+ * patch one instance at a time: any unlisted filler word before "post(s)"
+ * ("Give me...", "Please share...", "I'd like...") walks back with no
+ * boundary and gets misread as a niche name (root cause of a live
+ * search_viral_posts zero-delivery: "Give me 5 post ideas..." → niche:"Give
+ * me" → zero real accounts match, so the workspace search legitimately
+ * starves). Without `knownNiches` (tests, or callers with no workspace
+ * context), falls back to the original stop-word walk unchanged.
+ */
+export function authoritativeWorkspaceNicheCandidate(
   userInstruction: string,
+  knownNiches?: readonly string[],
 ): WorkspaceNicheCandidate | null {
   const clause = authoritativeResearchClause(userInstruction);
   const tokens = [...clause.matchAll(/[\p{L}\p{N}][\p{L}\p{N}-]+/gu)];
@@ -2855,6 +2881,15 @@ function authoritativeWorkspaceNicheCandidate(
     /^(?:post|posts)$/i.test(match[0]),
   );
   if (postIndex < 0) return null;
+
+  const knownNicheTerms = knownNiches?.length
+    ? knownNiches
+        .map((niche) => semanticWorkspaceNicheTerms(niche))
+        .filter((terms) => terms.size > 0)
+    : null;
+  const matchesKnownNiche = (terms: Set<string>) =>
+    !knownNicheTerms || knownNicheTerms.some((known) => sameTerms(known, terms));
+
   let startIndex = postIndex;
   for (let index = postIndex - 1; index >= 0; index -= 1) {
     const token = tokens[index];
@@ -2886,7 +2921,9 @@ function authoritativeWorkspaceNicheCandidate(
     .slice(first.index, (last.index ?? 0) + last[0].length)
     .trim();
   const terms = semanticWorkspaceNicheTerms(raw);
-  return terms.size > 0 ? { raw: raw.slice(0, 100), terms } : null;
+  if (terms.size === 0) return null;
+  if (!matchesKnownNiche(terms)) return null;
+  return { raw: raw.slice(0, 100), terms };
 }
 
 /** Parse a topic attached after the source-post noun as a body query. */
@@ -2918,8 +2955,12 @@ function sameTerms(left: Set<string>, right: Set<string>): boolean {
 function authorizedWorkspaceNiche(
   userInstruction: string,
   plannedNiche: string | undefined,
+  knownNiches?: readonly string[],
 ): string | null | undefined {
-  const authoritative = authoritativeWorkspaceNicheCandidate(userInstruction);
+  const authoritative = authoritativeWorkspaceNicheCandidate(
+    userInstruction,
+    knownNiches,
+  );
   if (!authoritative) return plannedNiche ? undefined : null;
   if (!plannedNiche) return undefined;
   const plannedTerms = semanticWorkspaceNicheTerms(plannedNiche);
@@ -2953,6 +2994,7 @@ function authorizedWorkspaceQuery(
 export function planSearchQueriesMatchInstruction(
   plan: ReadOnlyPlan,
   userInstruction: string,
+  knownNiches?: readonly string[],
 ): boolean {
   const queryActions = plan.actions.filter(
     (action) =>
@@ -2981,7 +3023,7 @@ export function planSearchQueriesMatchInstruction(
         })();
       return (
         (legacyTopicAsNiche ||
-          authorizedWorkspaceNiche(userInstruction, action.niche) !==
+          authorizedWorkspaceNiche(userInstruction, action.niche, knownNiches) !==
             undefined) &&
         (legacyTopicAsNiche ||
           authorizedWorkspaceQuery(userInstruction, action.query) !==
@@ -3066,9 +3108,11 @@ export function authoritativeResearchQuery(userInstruction: string): string {
 // invented one.
 function compiledWorkspaceNiche(
   authoritativeInstruction: string,
+  knownNiches?: readonly string[],
 ): string | undefined {
   const candidate = authoritativeWorkspaceNicheCandidate(
     authoritativeInstruction,
+    knownNiches,
   );
   if (!candidate) return undefined;
   // Validate the niche we're about to emit is one the validator accepts —
@@ -3077,6 +3121,7 @@ function compiledWorkspaceNiche(
   const authorized = authorizedWorkspaceNiche(
     authoritativeInstruction,
     candidate.raw,
+    knownNiches,
   );
   return typeof authorized === "string" ? authorized : undefined;
 }
@@ -3105,9 +3150,10 @@ function compiledWorkspaceSearchAction(
   authoritativeInstruction: string,
   id: string,
   postType?: "regular" | "lead_magnet",
+  knownNiches?: readonly string[],
 ): z.infer<typeof SearchViralPostsActionSchema> {
   const minimumSources = Math.max(2, minimumSourcesRaw ?? 2);
-  const niche = compiledWorkspaceNiche(authoritativeInstruction);
+  const niche = compiledWorkspaceNiche(authoritativeInstruction, knownNiches);
   const query = compiledWorkspaceQuery(authoritativeInstruction);
   return {
     id,
@@ -3153,6 +3199,7 @@ function compiledResearchTerminal(
 export function compileServerReadOnlyPlan(
   route: ReadOnlyOrchestratorRoute,
   authoritativeInstruction: string,
+  knownNiches?: readonly string[],
 ): ReadOnlyPlan | null {
   route = canonicalizeReadOnlyOrchestratorRoute(route);
   if (route.kind === "news_research") {
@@ -3185,6 +3232,7 @@ export function compileServerReadOnlyPlan(
       authoritativeInstruction,
       "swipe",
       route.workspacePostType,
+      knownNiches,
     );
     return {
       actions: [
@@ -3223,6 +3271,7 @@ export function compileServerReadOnlyPlan(
           authoritativeInstruction,
           "swipe",
           route.workspacePostType,
+          knownNiches,
         ),
       );
     }
@@ -3935,7 +3984,47 @@ export type ReadOnlyOrchestratorDependencies = {
   cancelProbeTimeoutMs: number;
   turnDeadlineMs: number;
   adapterHealth: AdapterHealthRegistry;
+  // The workspace's real tracked-account niche names, used to ground niche
+  // extraction in actual data instead of a stop-word list (see
+  // authoritativeWorkspaceNicheCandidate's knownNiches param). Deliberately
+  // separate from `runTool`: dozens of existing tests provide a single
+  // non-discriminating `runTool` mock (`async () => ({...})`, same canned
+  // response for every tool name) — routing this through `deps.runTool`
+  // would have silently fed that unrelated canned response into niche
+  // matching for every one of those tests. A dedicated hook can't collide.
+  listWorkspaceNiches: (workspaceId: string) => Promise<string[]>;
 };
+
+// Real query, but intentionally NOT `deps.runTool` — see the field comment
+// above. Fails open to [] (no known niches → authoritativeWorkspaceNiche-
+// Candidate falls back to its original stop-word behavior) rather than
+// letting a lookup error block evidence gathering over a non-essential
+// refinement.
+async function listWorkspaceNichesProduction(
+  workspaceId: string,
+): Promise<string[]> {
+  try {
+    const result = await runTool("list_niches", {}, workspaceId);
+    if (
+      !result ||
+      typeof result !== "object" ||
+      (result as { ok?: unknown }).ok !== true
+    ) {
+      return [];
+    }
+    const niches = (result as { niches?: unknown }).niches;
+    if (!Array.isArray(niches)) return [];
+    return niches
+      .map((entry) =>
+        entry && typeof entry === "object"
+          ? (entry as { niche?: unknown }).niche
+          : undefined,
+      )
+      .filter((niche): niche is string => typeof niche === "string" && niche.length > 0);
+  } catch {
+    return [];
+  }
+}
 
 const readOnlyProductionDependencies: Omit<
   ReadOnlyOrchestratorDependencies,
@@ -3953,6 +4042,7 @@ const readOnlyProductionDependencies: Omit<
   cancelProbeTimeoutMs: 2_000,
   turnDeadlineMs: WRITER_TURN_BUDGET_MS,
   adapterHealth: coworkAdapterHealth,
+  listWorkspaceNiches: listWorkspaceNichesProduction,
 };
 
 async function observeReadOnlyToolStage<T extends Record<string, unknown>>(input: {
@@ -4407,6 +4497,14 @@ async function* runReadOnlyOrchestratorCore(
   // research plan." The plan below always passes parseReadOnlyPlan +
   // planSearchQueriesMatchInstruction by construction (asserted by
   // read-only-orchestrator-compiled-plan.test.ts).
+  // Only routes that can compile a search_viral_posts action need the
+  // workspace's real niches — news_research/web_research/ambiguous never
+  // touch niche extraction, so skip the lookup entirely for them.
+  const knownNiches =
+    input.route.kind === "workspace_research" ||
+    input.route.kind === "file_inspection"
+      ? await deps.listWorkspaceNiches(input.workspaceId)
+      : [];
   let plan: ReadOnlyPlan | null =
     input.route.kind === "ambiguous_read_only"
       ? {
@@ -4434,7 +4532,11 @@ async function* runReadOnlyOrchestratorCore(
             },
           ],
         }
-      : compileServerReadOnlyPlan(input.route, authoritativeInstruction);
+      : compileServerReadOnlyPlan(
+          input.route,
+          authoritativeInstruction,
+          knownNiches,
+        );
   // Belt-and-suspenders: run the compiled plan through the SAME validators the
   // executor trusts. On the (only-if-a-future-route-is-added) chance the
   // compiler produced something invalid, drop back to null so the fail-open
@@ -4443,7 +4545,11 @@ async function* runReadOnlyOrchestratorCore(
     try {
       const validated = parseReadOnlyPlan(input.route, plan);
       if (
-        !planSearchQueriesMatchInstruction(validated, authoritativeInstruction)
+        !planSearchQueriesMatchInstruction(
+          validated,
+          authoritativeInstruction,
+          knownNiches,
+        )
       ) {
         plan = null;
       }
@@ -4622,7 +4728,11 @@ async function* runReadOnlyOrchestratorCore(
         : null;
     const dispatchedWorkspaceNiche =
       action.type === "search_viral_posts"
-        ? authorizedWorkspaceNiche(authoritativeInstruction, action.niche)
+        ? authorizedWorkspaceNiche(
+            authoritativeInstruction,
+            action.niche,
+            knownNiches,
+          )
         : null;
     const dispatchedWorkspaceQuery =
       action.type === "search_viral_posts"
