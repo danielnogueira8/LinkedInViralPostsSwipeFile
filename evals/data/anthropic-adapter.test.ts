@@ -278,11 +278,13 @@ describe("isAnthropicModel / toAnthropicModelId", () => {
 
 const finalMessage = vi.fn();
 const streamIterator = vi.fn();
+const lastBody: { current: Record<string, unknown> | null } = { current: null };
 
 vi.mock("@anthropic-ai/sdk", () => {
   class FakeAnthropic {
     messages = {
-      stream: () => {
+      stream: (body: Record<string, unknown>) => {
+        lastBody.current = body;
         const iter = streamIterator();
         return {
           async *[Symbol.asyncIterator]() {
@@ -323,6 +325,55 @@ describe("completeChatAnthropic (mocked SDK)", () => {
     expect(res.model).toBe("claude-sonnet-5");
     expect(res.usage?.prompt_tokens).toBe(10);
     expect(res.citations).toEqual([]);
+  });
+
+  test("caches the system prefix as a text block and marks the last tool", async () => {
+    lastBody.current = null;
+    finalMessage.mockResolvedValue({
+      content: [{ type: "text", text: "ok" }],
+      stop_reason: "end_turn",
+      model: "claude-sonnet-5",
+      usage: { input_tokens: 5, output_tokens: 1 },
+    });
+    const { completeChatAnthropic } = await import("@/lib/anthropic");
+    await completeChatAnthropic({
+      messages: [
+        { role: "system", content: "big stable system prompt" },
+        { role: "user", content: "go" },
+      ],
+      tools: [
+        { type: "function", function: { name: "a", description: "d", parameters: {} } },
+        { type: "function", function: { name: "b", description: "d", parameters: {} } },
+      ] as ToolDef[],
+    });
+    const body = lastBody.current!;
+    // system is the array-of-one-cached-block form (a plain string cannot carry
+    // cache_control), carrying the whole hoisted prefix.
+    expect(body.system).toEqual([
+      {
+        type: "text",
+        text: "big stable system prompt",
+        cache_control: { type: "ephemeral" },
+      },
+    ]);
+    // the LAST tool carries the cache breakpoint (caches the full tool block);
+    // earlier tools do not.
+    const tools = body.tools as Array<{ name: string; cache_control?: unknown }>;
+    expect(tools[0].cache_control).toBeUndefined();
+    expect(tools[1].cache_control).toEqual({ type: "ephemeral" });
+  });
+
+  test("no system message → no system field (nothing to cache)", async () => {
+    lastBody.current = null;
+    finalMessage.mockResolvedValue({
+      content: [{ type: "text", text: "ok" }],
+      stop_reason: "end_turn",
+      model: "claude-sonnet-5",
+      usage: { input_tokens: 1, output_tokens: 1 },
+    });
+    const { completeChatAnthropic } = await import("@/lib/anthropic");
+    await completeChatAnthropic({ messages: [{ role: "user", content: "go" }] });
+    expect(lastBody.current!.system).toBeUndefined();
   });
 
   test("a text response returns text and null toolArgs", async () => {

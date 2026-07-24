@@ -207,11 +207,33 @@ export function translateMessages(messages: ChatMessage[]): {
 }
 
 function toAnthropicTools(tools: ToolDef[]): Anthropic.ToolUnion[] {
-  return tools.map((t) => ({
+  const mapped: Anthropic.Tool[] = tools.map((t) => ({
     name: t.function.name,
     description: t.function.description,
     input_schema: t.function.parameters as Anthropic.Tool.InputSchema,
   }));
+  // Cache the tool definitions. Anthropic caches in render order tools → system
+  // → messages, so a breakpoint on the LAST tool caches the whole tool block
+  // (and lets the system breakpoint below extend the cached prefix). Tool
+  // schemas are stable across turns, so this is a safe, free win.
+  const last = mapped[mapped.length - 1];
+  if (last) last.cache_control = { type: "ephemeral" };
+  return mapped;
+}
+
+// Wrap the hoisted system string as a single cached text block. The app's system
+// prompt is large and stable per workspace + skill set (writer ~13k tokens: the
+// skill/policy/voice stack), and it was NEVER cached — the adapter hoisted it to
+// a plain string, which cannot carry cache_control. Emitting the array form with
+// one ephemeral breakpoint caches the ENTIRE system prefix for every Anthropic
+// call (writer, planner, specialists) in one place. On repeat turns the prefix
+// bills at ~0.1x instead of full price.
+//
+// Per-variation lines (v1/v2/v3) that some writer branches interpolate into the
+// system string just make each variation its own cache entry — no partial-prefix
+// breakage, since the whole system is one block. Non-variation turns still hit.
+function cachedSystem(system: string): Anthropic.TextBlockParam[] {
+  return [{ type: "text", text: system, cache_control: { type: "ephemeral" } }];
 }
 
 // The app's reasoning knobs -> Anthropic effort. Sonnet has adaptive thinking on
@@ -323,7 +345,7 @@ export async function completeChatAnthropic(opts: {
       : { type: "adaptive" },
     output_config: { effort },
   };
-  if (system) body.system = system;
+  if (system) body.system = cachedSystem(system);
   if (opts.tools?.length) {
     body.tools = toAnthropicTools(opts.tools);
     body.tool_choice = opts.forceTool
@@ -388,7 +410,7 @@ export async function* streamChatAnthropic(opts: {
     thinking: { type: "adaptive" },
     output_config: { effort: "high" },
   };
-  if (system) body.system = system;
+  if (system) body.system = cachedSystem(system);
   if (opts.tools?.length && opts.toolChoice !== "none") {
     body.tools = toAnthropicTools(opts.tools);
   }
