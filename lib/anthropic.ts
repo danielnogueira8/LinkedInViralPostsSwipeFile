@@ -50,13 +50,29 @@ const STREAM_DEADLINE_MS = Number(
   process.env.OPENROUTER_STREAM_DEADLINE_MS || 290_000,
 );
 
-// True when the resolved model should be served by Anthropic. The flag gates
-// the whole thing; the claude-* check is a guard so a stray non-Claude model
-// override never gets sent to the Anthropic endpoint.
-export function useAnthropic(model: string): boolean {
-  return (
-    process.env.AI_PROVIDER === "anthropic" && model.startsWith("claude-")
-  );
+// A Claude model, in either the bare Anthropic form (`claude-sonnet-5`) or the
+// OpenRouter-prefixed form the app uses everywhere as its "Claude" slug
+// (`anthropic/claude-sonnet-5`). Both must route to Anthropic under the flag —
+// the app's writer primary, every fallback chain, vision, and the specialists
+// all default to the PREFIXED form, so matching only the bare form (as the
+// original seam did) sent all of that back through OpenRouter.
+export function isAnthropicModel(model: string): boolean {
+  const m = model.trim().toLowerCase();
+  return m.startsWith("claude-") || m.startsWith("anthropic/claude-");
+}
+
+// The bare model id Anthropic's API expects. Strips the `anthropic/` provider
+// prefix that OpenRouter slugs carry. `anthropic/claude-sonnet-5` →
+// `claude-sonnet-5`; a bare id is returned unchanged.
+export function toAnthropicModelId(model: string): string {
+  return model.replace(/^anthropic\//i, "");
+}
+
+// True when the resolved model should be served by Anthropic. The flag gates the
+// whole thing; the Claude check is a guard so a stray non-Claude override never
+// reaches the Anthropic endpoint.
+export function shouldUseAnthropic(model: string): boolean {
+  return process.env.AI_PROVIDER === "anthropic" && isAnthropicModel(model);
 }
 
 // The resolved default text model when the flag is on. openrouter.ts consults
@@ -258,7 +274,8 @@ export async function completeChatAnthropic(opts: {
   timeoutMs?: number;
   sessionId?: string;
 }): Promise<CompleteResult> {
-  const model = opts.model || anthropicChatModel();
+  const requested = opts.model || anthropicChatModel();
+  const model = toAnthropicModelId(requested);
   const { system, messages } = translateMessages(opts.messages);
   const { effort, thinkingOff } = effortFor(opts);
   // Give Sonnet headroom: heavier tokenizer + thinking. Floor at 2048 even when
@@ -327,7 +344,7 @@ export async function* streamChatAnthropic(opts: {
   toolChoice?: "auto" | "required" | "none";
   sessionId?: string;
 }): AsyncGenerator<StreamDelta> {
-  const model = opts.model || anthropicChatModel();
+  const model = toAnthropicModelId(opts.model || anthropicChatModel());
   const { system, messages } = translateMessages(opts.messages);
   const maxTokens = Math.max(opts.maxTokens ?? 4096, 2048);
 

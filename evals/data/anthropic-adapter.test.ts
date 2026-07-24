@@ -4,7 +4,9 @@ import {
   effortFor,
   mapUsage,
   toOpenAiToolCall,
-  useAnthropic,
+  shouldUseAnthropic,
+  isAnthropicModel,
+  toAnthropicModelId,
   anthropicChatModel,
 } from "@/lib/anthropic";
 import type { ChatMessage, ToolDef } from "@/lib/openrouter";
@@ -192,27 +194,52 @@ describe("toOpenAiToolCall", () => {
   });
 });
 
-describe("useAnthropic / anthropicChatModel (flag gating)", () => {
+describe("shouldUseAnthropic / anthropicChatModel (flag gating)", () => {
   const prev = process.env.AI_PROVIDER;
   afterEach(() => {
     if (prev === undefined) delete process.env.AI_PROVIDER;
     else process.env.AI_PROVIDER = prev;
   });
 
-  test("useAnthropic is false when the flag is off", () => {
+  test("shouldUseAnthropic is false when the flag is off", () => {
     delete process.env.AI_PROVIDER;
-    expect(useAnthropic("claude-sonnet-5")).toBe(false);
+    expect(shouldUseAnthropic("claude-sonnet-5")).toBe(false);
   });
-  test("useAnthropic is false for a non-claude model even with the flag on", () => {
+  test("shouldUseAnthropic is false for a non-claude model even with the flag on", () => {
     process.env.AI_PROVIDER = "anthropic";
-    expect(useAnthropic("z-ai/glm-5.2")).toBe(false);
+    expect(shouldUseAnthropic("z-ai/glm-5.2")).toBe(false);
+    expect(shouldUseAnthropic("google/gemini-3.5-flash")).toBe(false);
   });
-  test("useAnthropic is true only for claude-* with the flag on", () => {
+  test("shouldUseAnthropic is true for BOTH bare and anthropic/-prefixed Claude with the flag on", () => {
     process.env.AI_PROVIDER = "anthropic";
-    expect(useAnthropic("claude-sonnet-5")).toBe(true);
+    expect(shouldUseAnthropic("claude-sonnet-5")).toBe(true);
+    // The form the app actually uses everywhere (writer primary + fallbacks +
+    // vision). This is the case the original narrow seam missed.
+    expect(shouldUseAnthropic("anthropic/claude-sonnet-5")).toBe(true);
+    expect(shouldUseAnthropic("anthropic/claude-haiku-4.5")).toBe(true);
+  });
+  test("prefixed Claude does NOT route to Anthropic with the flag off", () => {
+    delete process.env.AI_PROVIDER;
+    // With the flag off, anthropic/claude-* genuinely runs on OpenRouter.
+    expect(shouldUseAnthropic("anthropic/claude-sonnet-5")).toBe(false);
   });
   test("anthropicChatModel defaults to claude-sonnet-5", () => {
     expect(anthropicChatModel()).toBe("claude-sonnet-5");
+  });
+});
+
+describe("isAnthropicModel / toAnthropicModelId", () => {
+  test("isAnthropicModel matches bare and prefixed Claude, rejects others", () => {
+    expect(isAnthropicModel("claude-sonnet-5")).toBe(true);
+    expect(isAnthropicModel("anthropic/claude-sonnet-5")).toBe(true);
+    expect(isAnthropicModel("ANTHROPIC/Claude-Opus-4-8")).toBe(true);
+    expect(isAnthropicModel("z-ai/glm-5.2")).toBe(false);
+    expect(isAnthropicModel("openai/gpt-5.6-luna")).toBe(false);
+  });
+  test("toAnthropicModelId strips the anthropic/ prefix, leaves bare ids alone", () => {
+    expect(toAnthropicModelId("anthropic/claude-sonnet-5")).toBe("claude-sonnet-5");
+    expect(toAnthropicModelId("claude-sonnet-5")).toBe("claude-sonnet-5");
+    expect(toAnthropicModelId("anthropic/claude-haiku-4.5")).toBe("claude-haiku-4.5");
   });
 });
 
