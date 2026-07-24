@@ -1023,6 +1023,16 @@ const EXPLICIT_NON_POST_OUTCOME_RE =
   /\b(?:summari[sz]e|summary|compare|analy[sz]e|explain|tell\s+me|show\s+me|list|report|recommend|answer|give\s+me\s+(?:the\s+)?(?:findings|takeaways|results|lessons))\b/i;
 const WORKSPACE_RESEARCH_CONTEXT_RE =
   /\b(?:my|our)\s+(?:swipe\s+file|bookmarks?|saved\s+posts?)\b/i;
+// A direct request to search the workspace's OWN collection — the swipe file
+// (scraped viral posts), bookmarks/saved posts, or tracked accounts. The swipe
+// file IS the product's data, so "find posts from the swipe file" must always
+// run a real search, not answer conversationally. Unlike
+// WORKSPACE_RESEARCH_CONTEXT_RE this does NOT require a possessive ("my/our"):
+// "the swipe file", "swipe file", "swipe-in", "bookmarks" all count. It pairs a
+// discovery verb with a workspace-collection noun so an incidental mention
+// ("I love my swipe file") never triggers a search.
+const WORKSPACE_SEARCH_INTENT_RE =
+  /\b(?:find|search|show|pull|browse|get|surface|look\s+(?:for|through)|dig\s+(?:up|through)|grab|give\s+me)\b[\s\S]{0,80}?\b(?:swipe[\s-]?file|swipe[\s-]?in|bookmarks?|saved\s+posts?|tracked\s+accounts?)\b/i;
 const HISTORY_DEPENDENT_RESEARCH_RE =
   /\b(?:this|that|it|these|those|their|his|her|its|above|previous|earlier)\b/i;
 const STRICT_TOP_SOURCE_RE =
@@ -1664,6 +1674,12 @@ export function compileReadOnlyOrchestratorRoute(
     !FIRST_PARTY_NEWS_CONTEXT_RE.test(instruction) &&
     (EXPLICIT_NEWS_TOPIC_RE.test(instruction) ||
       (NEWS_RE.test(instruction) && RESEARCH_RE.test(instruction)));
+  // True when the message is an explicit search of the workspace's own
+  // collection (discovery verb + swipe-file/bookmark/tracked-accounts noun).
+  // Consumed by workspaceAnswerSearch below — deliberately NOT folded into
+  // needsWorkspaceResearch, so it can't disturb the draft path's
+  // count-clarification.
+  const explicitWorkspaceSearch = WORKSPACE_SEARCH_INTENT_RE.test(instruction);
   const needsWorkspaceResearch =
     sourceModelingRequest ||
     ((explicitlyRequestsSourceDiscovery(instruction) ||
@@ -1693,6 +1709,72 @@ export function compileReadOnlyOrchestratorRoute(
     HISTORY_DEPENDENT_RESEARCH_RE.test(researchClause)
   ) {
     return null;
+  }
+
+  // The swipe file is the product's data — a bare search of it ("find/show me
+  // posts from the swipe file") must ALWAYS return real posts, never a
+  // conversational "I don't have access." Force a workspace answer-search
+  // whenever the request is an explicit swipe-file/bookmark search that ISN'T a
+  // draft or modeled request. Gated on !expectsDraft so it can never override
+  // the draft path's count-clarification. When the message has no explicit
+  // outcome verb, synthesize a list (takeaways) grounded answer so the answer
+  // branch below emits instead of dropping to null/clarify.
+  // A CONCRETE draft request — a counted write ("...and write 3 posts") or a
+  // resolved modeled transformation — keeps the draft path. Everything else
+  // that is an explicit swipe-file search (including a soft "posts I could
+  // adapt", where the transform word trips expectsDraft but there's no count or
+  // resolved mapping) lists the found posts instead of dropping to a null /
+  // conversational no-op. The swipe file is the product's data: searching it
+  // always returns real posts.
+  const concreteDraftRequest =
+    expectsDraft && (explicitDraftCount !== null || sourceModelingRequest);
+  const workspaceAnswerSearch =
+    explicitWorkspaceSearch &&
+    !concreteDraftRequest &&
+    // A genuine but uncounted "...and write posts" request keeps its
+    // count-clarification (the user is asking to write, just didn't say how
+    // many) — don't pre-empt that with a bare listing.
+    !unresolvedPluralDraftTarget &&
+    !needsFileInspection &&
+    !needsNews &&
+    !forbidsDiscovery;
+  const effectiveGroundedAnswer =
+    groundedAnswer ??
+    (workspaceAnswerSearch
+      ? ({
+          kind: "grounded_answer" as const,
+          format: "takeaways" as const,
+          ...(explicitSourceCount
+            ? {
+                resultCount: Math.min(
+                  explicitSourceCount,
+                  MAX_GROUNDED_ANSWER_RESULTS,
+                ),
+              }
+            : {}),
+        })
+      : null);
+
+  // Swipe-file / bookmark search wins over the draft/answer split: the
+  // product's own data is always searched and listed (real posts), never
+  // answered conversationally or sent to clarification. Placed before the
+  // expectsDraft branch so a soft transform word ("posts I could adapt") that
+  // trips expectsDraft — but carries no count or resolved mapping — still lists
+  // the found posts. A concrete counted/modeled draft is excluded via
+  // concreteDraftRequest in workspaceAnswerSearch above.
+  if (workspaceAnswerSearch && effectiveGroundedAnswer && !needsFileInspection) {
+    return {
+      kind: "workspace_research",
+      outcome: effectiveGroundedAnswer,
+      minimumSources: Math.max(1, effectiveGroundedAnswer.resultCount ?? 1),
+      workspaceSearchMode: STRICT_TOP_SOURCE_RE.test(researchClause)
+        ? "strict_top"
+        : "diverse",
+      ...(requestedWorkspaceWindow(researchClause)
+        ? { workspaceSince: requestedWorkspaceWindow(researchClause) }
+        : {}),
+      ...(workspacePostType ? { workspacePostType } : {}),
+    };
   }
 
   if (!expectsDraft) {

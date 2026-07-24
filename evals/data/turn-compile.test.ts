@@ -1957,7 +1957,6 @@ describe("compileReadOnlyOrchestratorRoute", () => {
 
   test.each([
     "Research the latest OpenAI news.",
-    "Find the best examples in my swipe file.",
   ])("routes an unresolved complex read-only turn to clarification: %s", (userInstruction) => {
     expect(
       compileReadOnlyOrchestratorRoute({
@@ -1966,6 +1965,19 @@ describe("compileReadOnlyOrchestratorRoute", () => {
         userInstruction,
       }),
     ).toMatchObject({ kind: "ambiguous_read_only" });
+  });
+
+  // The swipe file is the product's data — a bare search of it is NEVER a
+  // clarification: it searches and lists. (Previously this asked "what do you
+  // want?" instead of just showing the posts — the routing bug that made the
+  // agent reply "I don't have access to a swipe file database.")
+  test("a bare swipe-file search routes to a real workspace search, not clarification", () => {
+    expect(
+      compileReadOnlyOrchestratorRoute({
+        ...readOnlyBase,
+        userInstruction: "Find the best examples in my swipe file.",
+      }),
+    ).toMatchObject({ kind: "workspace_research" });
   });
 
   test.each([
