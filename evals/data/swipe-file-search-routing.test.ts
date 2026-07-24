@@ -38,11 +38,32 @@ describe("swipe-file search always routes to a workspace search", () => {
     expect(route(msg)).toMatchObject({ kind: "workspace_research" });
   });
 
+  // Real production false-negatives: the discovery verb and the collection noun
+  // are far apart (a long qualifying clause between them), or the phrasing is a
+  // natural variant. The old regex required the verb within 80 chars of the noun
+  // and missed all of these — they fell to the conversational lane. They MUST
+  // route to a workspace search.
+  test.each([
+    "Find 5 lead magnet posts on the swipe file that could be adapted for a resource about AI workflows for content creation",
+    "Find 5 lead magnet posts inside swipein that could be adapted for a resource about AI workflows for content creation",
+    "Find me a handful of really strong hook-driven posts from the swipe file about B2B onboarding that I could turn into a carousel",
+    "Look through the swipe file and find posts about pricing objections",
+    "Can you dig up some posts in my saved posts that talk about founder-led sales for a B2B SaaS audience",
+    "Grab a few of the best-performing posts from the swipe file on cold outreach",
+    "Pull together some examples from swipe-in of lead magnet posts I could model",
+  ])("routes a long/varied swipe-file search to workspace_research: %s", (msg) => {
+    expect(route(msg)).toMatchObject({ kind: "workspace_research" });
+  });
+
   // An incidental mention with no discovery verb must NOT trigger a search.
   test.each([
     "I love my swipe file, it's so useful.",
     "What is a swipe file?",
     "Thanks for adding that to my bookmarks.",
+    // A guard against over-loosening: mentioning the swipe file while asking a
+    // conceptual question is NOT a search.
+    "How does the swipe file work and where do the posts come from?",
+    "Is my swipe file still syncing?",
   ])("does not trigger a search on an incidental mention: %s", (msg) => {
     const r = route(msg);
     expect(r?.kind).not.toBe("workspace_research");
