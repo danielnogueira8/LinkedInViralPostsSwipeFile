@@ -203,6 +203,145 @@ describe("compileServerReadOnlyPlan — per-route shapes", () => {
     expect(planSearchQueriesMatchInstruction(plan!, instruction)).toBe(true);
   });
 
+  // Regression: a live production turn for the "Brainstorm new post ideas"
+  // starter (chat-workspace.tsx's STARTERS.brainstorm) delivered zero
+  // sources — search_viral_posts_candidates_dropped logged
+  // dispatched_niche:"Give me". The niche walk-back in
+  // authoritativeWorkspaceNicheCandidate had no boundary before "post", so it
+  // consumed backward past "5" (not tokenized — single digits fail the
+  // 2-char token regex) into the imperative "Give me", misreading it as a
+  // workspace niche and searching for zero real posts.
+  //
+  // Fixed at two layers, deliberately not just a stop-word patch (a
+  // stop-word list can only ever cover the SPECIFIC filler words someone
+  // thought to list — "Please share", "I'd like", "Can I get" would each
+  // need their own entry):
+  //  1. WORKSPACE_NICHE_GENERIC_TERMS gained "give"/"me" (and siblings) as a
+  //     baseline boundary — still useful when no workspace niche data is
+  //     available (e.g. these route objects below omit it).
+  //  2. authoritativeWorkspaceNicheCandidate now accepts a `knownNiches`
+  //     param (threaded from compileServerReadOnlyPlan /
+  //     planSearchQueriesMatchInstruction / authorizedWorkspaceNiche): when
+  //     supplied, a candidate must semantically match a REAL workspace
+  //     niche or it's rejected outright — closing the whole class of
+  //     unlisted-filler-word false positives, not just this instance. See
+  //     the "knownNiches grounds extraction in real data" block below for
+  //     the layer-2 coverage.
+  test("an imperative 'Give me N post ideas' opener never leaks into niche", () => {
+    const route: ReadOnlyOrchestratorRoute = {
+      kind: "workspace_research",
+      minimumSources: 5,
+      workspaceSearchMode: "strict_top",
+      workspaceSince: "30d",
+      outcome: {
+        kind: "grounded_answer",
+        format: "takeaways",
+        resultCount: 5,
+      },
+    };
+    const instruction =
+      "Give me 5 post ideas based on what's been going viral across my tracked accounts over the last 30 days. Pull from ALL niches — don't ask me which niche, and don't limit it to mine. Adapt every idea to my voice and my niche. For each, give a one-line angle and the hook style it would use.";
+    const plan = compileServerReadOnlyPlan(route, instruction);
+
+    const search = plan?.actions.find(
+      (action) => action.type === "search_viral_posts",
+    );
+    expect(search).not.toHaveProperty("niche");
+    expect(search).not.toHaveProperty("query");
+    expect(() => parseReadOnlyPlan(route, plan!)).not.toThrow();
+    expect(planSearchQueriesMatchInstruction(plan!, instruction)).toBe(true);
+  });
+
+  test.each([
+    "Show me 3 post ideas from my swipe file.",
+    "Find me the top post ideas from the last month.",
+    "Get me 5 post examples from my tracked accounts.",
+  ])(
+    "other imperative openers before 'post(s)' also compile with no niche: %s",
+    (instruction) => {
+      const route: ReadOnlyOrchestratorRoute = {
+        kind: "workspace_research",
+        minimumSources: 3,
+        workspaceSearchMode: "strict_top",
+        outcome: { kind: "grounded_answer", format: "takeaways", resultCount: 3 },
+      };
+      const plan = compileServerReadOnlyPlan(route, instruction);
+      const search = plan?.actions.find(
+        (action) => action.type === "search_viral_posts",
+      );
+      expect(search).not.toHaveProperty("niche");
+    },
+  );
+
+  // Layer 2 of the "Give me" fix (see the regression comment above): when the
+  // workspace's real niches are known, extraction is grounded in that data
+  // instead of the stop-word list — the structural fix, not the patch.
+  describe("knownNiches grounds extraction in real data", () => {
+    const WORKSPACE_NICHES = ["SaaS", "Founder Stories", "AI Agents"];
+
+    test("a real workspace niche still compiles even with an imperative opener", () => {
+      const route: ReadOnlyOrchestratorRoute = {
+        kind: "workspace_research",
+        minimumSources: 2,
+        workspaceSearchMode: "strict_top",
+        outcome: { kind: "grounded_answer", format: "takeaways", resultCount: 2 },
+      };
+      const instruction = "Give me 2 SaaS post ideas from my swipe file.";
+      const plan = compileServerReadOnlyPlan(route, instruction, WORKSPACE_NICHES);
+
+      expect(
+        plan?.actions.find((action) => action.type === "search_viral_posts"),
+      ).toMatchObject({ type: "search_viral_posts", niche: "SaaS" });
+      expect(() => parseReadOnlyPlan(route, plan!)).not.toThrow();
+      expect(
+        planSearchQueriesMatchInstruction(plan!, instruction, WORKSPACE_NICHES),
+      ).toBe(true);
+    });
+
+    // The whole point of layer 2: an UNLISTED filler word (not in
+    // WORKSPACE_NICHE_GENERIC_TERMS, so layer 1 alone would still misparse
+    // it) is rejected once real niche data is available, because it matches
+    // none of the workspace's actual niches.
+    test("an unlisted filler word before 'post(s)' is rejected once real niches are known", () => {
+      const route: ReadOnlyOrchestratorRoute = {
+        kind: "workspace_research",
+        minimumSources: 3,
+        workspaceSearchMode: "strict_top",
+        outcome: { kind: "grounded_answer", format: "takeaways", resultCount: 3 },
+      };
+      const instruction =
+        "Please share 3 post ideas based on what's been going viral.";
+      const plan = compileServerReadOnlyPlan(route, instruction, WORKSPACE_NICHES);
+
+      const search = plan?.actions.find(
+        (action) => action.type === "search_viral_posts",
+      );
+      expect(search).not.toHaveProperty("niche");
+      expect(() => parseReadOnlyPlan(route, plan!)).not.toThrow();
+      expect(
+        planSearchQueriesMatchInstruction(plan!, instruction, WORKSPACE_NICHES),
+      ).toBe(true);
+    });
+
+    test("a niche-shaped phrase that matches no real workspace niche is dropped, not invented", () => {
+      const route: ReadOnlyOrchestratorRoute = {
+        kind: "workspace_research",
+        minimumSources: 2,
+        workspaceSearchMode: "strict_top",
+        outcome: { kind: "grounded_answer", format: "takeaways", resultCount: 2 },
+      };
+      // "Crypto" reads exactly like a real niche name, but isn't one of this
+      // workspace's tracked niches — must be omitted, never hallucinated.
+      const instruction = "Find 2 Crypto post ideas from my swipe file.";
+      const plan = compileServerReadOnlyPlan(route, instruction, WORKSPACE_NICHES);
+
+      const search = plan?.actions.find(
+        (action) => action.type === "search_viral_posts",
+      );
+      expect(search).not.toHaveProperty("niche");
+    });
+  });
+
   test("compiles regular posts as a post type rather than an account niche", () => {
     const userInstruction =
       "Find 4 top-performing regular posts in my swipe file and rewrite it in my voice on a topic that fits me. Keep its structure and hook style, but make the content original";
