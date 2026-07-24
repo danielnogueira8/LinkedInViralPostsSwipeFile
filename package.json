@@ -22,6 +22,7 @@
     "migrations:readiness": "node scripts/migration-readiness.mjs"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.114.0",
     "@base-ui/react": "^1.4.1",
     "@clerk/mcp-tools": "^0.5.0",
     "@clerk/nextjs": "^7.3.7",
