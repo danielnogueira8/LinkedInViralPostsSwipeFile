@@ -371,6 +371,63 @@ describe("production-shaped Cowork outcome harness", () => {
     expect(report.persisted.artifacts).toEqual([]);
   });
 
+  // Regression: an explicit Ask command (what the composer sends) + a bare
+  // swipe-file search must run a real search, NOT fall to the tool-less answer
+  // lane where the model hallucinates "I don't have access to a swipe file
+  // database." The Ask branch only compiled a research route when a starter
+  // supplied a researchRequirement; a free-typed "Find 5 lead magnet posts on
+  // the swipe file..." had none, so it dead-ended in the answer lane.
+  test("an explicit Ask + swipe-file search runs a real search, never the tool-less answer lane", async () => {
+    const answer =
+      "Here are lead-magnet posts from your swipe file you could adapt:\n\nSources:\n- [A post](https://www.linkedin.com/posts/lm-1)";
+    const report = await runCoworkOutcomeScenario({
+      id: "ask-swipe-file-search-not-answer-lane",
+      request: {
+        message:
+          "Find 5 lead magnet posts on the swipe file that could be adapted for a resource about AI workflows for content creation",
+        command: { kind: "ask" },
+      },
+      model: {
+        provider: { rounds: [] },
+        readOnlyOrchestrator: {
+          plans: [],
+          groundedAnswer: { content: answer, usage: usage(80, 35, 0.0002) },
+          toolResults: {
+            search_viral_posts: [
+              {
+                ok: true,
+                count: 1,
+                posts: [
+                  {
+                    id: "lm-1",
+                    text: "A lead magnet post about AI workflows.",
+                    post_url: "https://www.linkedin.com/posts/lm-1",
+                    reactions: 500,
+                    comments: 40,
+                    post_type: "lead_magnet",
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [],
+        actionNames: ["search_viral_posts"],
+        assistantContents: [answer],
+        route: "read_only_orchestrator",
+      },
+    });
+
+    expect(report.pass, JSON.stringify(report.failureCodes)).toBe(true);
+    expect(report.safe.route).toBe("read_only_orchestrator");
+    expect(report.observed.readOnlyTools.map((t) => t.name)).toContain(
+      "search_viral_posts",
+    );
+  });
+
   test("a negative LinkedIn-post phrase cannot turn a news summary into a draft", async () => {
     const instruction =
       "Research the latest official OpenAI product announcement and summarize what changed. Do not draft or rewrite a LinkedIn post.";
