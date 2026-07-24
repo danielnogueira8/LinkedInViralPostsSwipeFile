@@ -19,6 +19,27 @@ function cite(meta: Record<string, unknown>): Artifact {
   };
 }
 
+// A full CitedPost as rehydrateCites fills it (the fields InlineSourceCard
+// renders). A cite whose meta.card is this shape renders a rich card, not a chip.
+function fullCard(id: string, overrides: Record<string, unknown> = {}) {
+  return {
+    id,
+    text: "A viral post body about founder-led sales.",
+    postUrl: `https://www.linkedin.com/posts/full-${id}`,
+    postedAt: "2026-06-20T00:00:00Z",
+    reactions: 512,
+    comments: 44,
+    reposts: 3,
+    mediaType: "none",
+    mediaUrls: [],
+    visualKind: null,
+    authorName: "Dana Founder",
+    authorNiche: "B2B SaaS",
+    authorAvatar: null,
+    ...overrides,
+  };
+}
+
 function render(artifacts: Artifact[]): string {
   return renderToStaticMarkup(
     createElement(GroundedSourceLinks, { artifacts }),
@@ -92,6 +113,71 @@ describe("GroundedSourceLinks", () => {
     ]);
 
     expect(html).toBe("");
+  });
+
+  // The rich-card path: a rehydrated full CitedPost renders as an InlineSourceCard,
+  // not a chip. (rehydrateCites fills meta.card on chat load.)
+  function citeWithCard(id: string, card: Record<string, unknown>): Artifact {
+    return {
+      ...cite({ card }),
+      id: `grounded-source:${id}`,
+      meta: { postId: id, presentation: "grounded_answer_source", card },
+    } satisfies Artifact;
+  }
+
+  test("a single rehydrated full card renders as a rich card (author + body), not a chip", () => {
+    const id = "10000000-0000-4000-8000-000000000001";
+    const html = render([citeWithCard(id, fullCard(id))]);
+    expect(html).toContain("Dana Founder"); // author from the card
+    expect(html).toContain("founder-led sales"); // body from the card
+    // no carousel controls for a single card
+    expect(html).not.toContain('aria-label="Next source"');
+  });
+
+  test("multiple full cards render a carousel: one card + prev/next + a dot per source", () => {
+    const ids = [
+      "10000000-0000-4000-8000-000000000001",
+      "10000000-0000-4000-8000-000000000002",
+      "10000000-0000-4000-8000-000000000003",
+    ];
+    const html = render(
+      ids.map((id, i) =>
+        citeWithCard(id, fullCard(id, { authorName: `Author ${i + 1}` })),
+      ),
+    );
+    // carousel controls present
+    expect(html).toContain('aria-label="Previous source"');
+    expect(html).toContain('aria-label="Next source"');
+    // one dot per source (3)
+    expect(html.match(/aria-label="Go to source \d+"/g)).toHaveLength(3);
+    // "Source 1 of 3" position label + only the FIRST card is rendered at a time
+    expect(html).toContain("Source 1 of 3");
+    expect(html).toContain("Author 1");
+    expect(html).not.toContain("Author 2"); // one at a time
+  });
+
+  test("mixes: a resolvable full card carousels, an unresolved source keeps its chip", () => {
+    const id1 = "10000000-0000-4000-8000-000000000001";
+    const id2 = "10000000-0000-4000-8000-000000000002";
+    const html = render([
+      citeWithCard(id1, fullCard(id1)),
+      // second source has only a live URL, no full card → chip fallback
+      {
+        ...cite({ sourceUrl: "https://www.linkedin.com/posts/chip-only" }),
+        id: `grounded-source:${id2}`,
+        meta: {
+          postId: id2,
+          presentation: "grounded_answer_source",
+          sourceUrl: "https://www.linkedin.com/posts/chip-only",
+        },
+      },
+    ]);
+    // one full card renders (single, not carousel — only 1 resolvable card)...
+    expect(html).toContain("Dana Founder");
+    expect(html).not.toContain('aria-label="Next source"');
+    // ...and the unresolved source still shows a chip (nothing dropped).
+    expect(html).toContain('href="https://www.linkedin.com/posts/chip-only"');
+    expect(html).toContain("on LinkedIn");
   });
 
   test("persistence keeps only the validated live URL fallback and presentation marker", () => {
