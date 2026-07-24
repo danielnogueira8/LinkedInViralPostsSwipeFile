@@ -1204,8 +1204,14 @@ async function runCoworkOutcomeScenarioWithStore(
       !scenario.model.actionOrchestrator?.allowNoModel &&
       !scenario.model.readOnlyOrchestrator?.allowNoModel) ||
     usage.some(
+      // Each usage row's provider is attributed from ITS OWN model slug
+      // (bare claude-* → anthropic, everything else incl. the anthropic/-prefixed
+      // OpenRouter fallback → openrouter), matching logOpenRouterUsage. Checking
+      // per-row keeps mixed primary/fallback turns valid under AI_PROVIDER while
+      // still catching a genuinely mis-attributed row.
       (row) =>
-        row.provider !== "openrouter" ||
+        row.provider !==
+          (row.model.startsWith("claude-") ? "anthropic" : "openrouter") ||
         row.workspace_id !== store.workspaceId,
     ) ||
     assistantInputTokens !== inputTokens ||
