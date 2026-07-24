@@ -652,6 +652,45 @@ describe("search_viral_posts — query shape", () => {
     expect(new Set(leaders).size).toBeGreaterThan(1);
   });
 
+  // REGRESSION (user-reported): the real prompt says "based on what's been going
+  // viral ... over the last 30 days", so the model passes a `since`. A date
+  // SCOPE is not a ranking instruction — it must not drop the request out of
+  // idea-discovery into strict analytical ranking, which returned the identical
+  // five posts on every single run.
+  test("idea discovery scoped to 'last 30 days' still varies (date scope != strict ranking)", async () => {
+    const orders: string[] = [];
+    for (const [cursor, ws] of [[0, "ws-d0"], [1, "ws-d1"], [2, "ws-d2"], [3, "ws-d3"]] as const) {
+      dbRef.current = makeFakeSupabase(VIRAL_POOL, {
+        claim_modeling_source_rotation_cursor: { data: cursor },
+      });
+      const r = (await runTool(
+        "search_viral_posts",
+        { since: "30d", limit: 5 },
+        ws,
+      )) as { posts: { id: string }[] };
+      expect(r.posts.length).toBeGreaterThan(0);
+      orders.push(r.posts.map((p) => p.id).join(","));
+    }
+    expect(new Set(orders).size).toBeGreaterThan(1);
+  });
+
+  // Variety is a property of swipe-file DISCOVERY, not of one prompt shape:
+  // a single-post ask scoped to a date window must rotate too.
+  test("a date-scoped limit:1 ask rotates as well", async () => {
+    const args = { since: "30d", limit: 1 };
+    const leaders: string[] = [];
+    for (const [cursor, ws] of [[0, "ws-d1-0"], [1, "ws-d1-1"], [5, "ws-d1-5"]] as const) {
+      dbRef.current = makeFakeSupabase(VIRAL_POOL, {
+        claim_modeling_source_rotation_cursor: { data: cursor },
+      });
+      const r = (await runTool("search_viral_posts", args, ws)) as {
+        posts: { id: string }[];
+      };
+      leaders.push(r.posts[0].id);
+    }
+    expect(new Set(leaders).size).toBeGreaterThan(1);
+  });
+
   // Regression: this is the EXACT call shape chat-turn.ts's
   // resolveFindAndModelSource / run.ts's directSourceModelingTurn prefetch
   // issue for "model a top post" ({ post_type, sort: "viral", dir: "desc",
@@ -1040,16 +1079,29 @@ describe("isMimicSearch — which search_viral_posts calls get rotated", () => {
     ).toBe(false);
   });
 
-  test("explicit sort / dir / threshold / date → analytical (strict order)", () => {
-    expect(isMimicSearch({ query: "AI agents" })).toBe(false);
+  // An ORDERING instruction is analytical — it must keep the exact order.
+  test("explicit sort / dir / threshold → analytical (strict order)", () => {
     expect(isMimicSearch({ sort: "reactions" })).toBe(false);
     expect(isMimicSearch({ sort: "posted" })).toBe(false);
     expect(isMimicSearch({ dir: "asc" })).toBe(false);
     expect(isMimicSearch({ min_reactions: 100 })).toBe(false);
     expect(isMimicSearch({ min_comments: 5 })).toBe(false);
-    expect(isMimicSearch({ since: "7d" })).toBe(false);
-    expect(isMimicSearch({ from: "2026-06-01" })).toBe(false);
-    expect(isMimicSearch({ to: "2026-06-30" })).toBe(false);
+    expect(isMimicSearch({ strict_ranking: true })).toBe(false);
+  });
+
+  // A FILTER only narrows which posts are eligible — it says nothing about
+  // order, so those searches still get varied. A date window disqualifying
+  // discovery was the "always the same 5 ideas" bug: the natural prompt
+  // ("what's gone viral over the last 30 days") always carries one.
+  test("date scope / topic filter stay DISCOVERY (varied)", () => {
+    expect(isMimicSearch({ since: "30d" })).toBe(true);
+    expect(isMimicSearch({ since: "7d", limit: 5 })).toBe(true);
+    expect(isMimicSearch({ from: "2026-06-01" })).toBe(true);
+    expect(isMimicSearch({ to: "2026-06-30" })).toBe(true);
+    expect(isMimicSearch({ query: "AI agents" })).toBe(true);
+    // A filter combined with a real ordering instruction is still analytical.
+    expect(isMimicSearch({ since: "30d", sort: "reactions" })).toBe(false);
+    expect(isMimicSearch({ query: "AI agents", dir: "asc" })).toBe(false);
   });
 });
 

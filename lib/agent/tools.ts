@@ -286,12 +286,26 @@ async function trackedAccountIdsForTool(
 // Tool implementations
 // ---------------------------------------------------------------------------
 
-// Does this search_viral_posts call look like a "find ONE proven post to model"
-// request (the default mimic use) rather than an INTENTIONAL analytical query
-// the user wants strictly ranked ("show me the top 10 by reactions", "the
-// least-engaged posts", "posts over 5k reactions")? Only the mimic case gets the
-// used-dedup + rotation treatment; an explicit sort/dir/threshold/date filter is
-// a deliberate ranking we must not reshuffle. Pure + exported for tests.
+// Does this search_viral_posts call want IDEA DISCOVERY (varied, deduped
+// results the user can keep pulling from) rather than an INTENTIONAL analytical
+// query they want strictly ranked ("show me the top 10 by reactions", "the
+// least-engaged posts", "posts over 5k reactions")? Only discovery gets the
+// used-dedup + rotation/shuffle treatment. Pure + exported for tests.
+//
+// The rule: an ORDERING instruction disables variety; a mere FILTER does not.
+//   • ordering  → strict_ranking, a non-default sort, dir:"asc", and numeric
+//     engagement thresholds (in practice "over 5k reactions" IS the analytical
+//     ask). These keep the exact retrieval order.
+//   • filtering → niche, post_type, a topic query, and a DATE RANGE. These only
+//     narrow WHICH posts are eligible; they say nothing about the order, so the
+//     results still get varied.
+//
+// Date range used to disqualify, which was the "always the same 5 ideas" bug:
+// the natural prompt is "ideas based on what's gone viral over the LAST 30
+// DAYS", so the model passes `since` — and that one word silently dropped the
+// request into strict analytical ranking, returning an identical top-N (and a
+// pool capped at the requested count, so there was nothing to vary) on every
+// single run. A time window is scope, not a ranking. Same for a topic query.
 export function isMimicSearch(args: Record<string, unknown>): boolean {
   const strictRanking = args.strict_ranking === true;
   const sort = args.sort;
@@ -299,19 +313,7 @@ export function isMimicSearch(args: Record<string, unknown>): boolean {
   const explicitDir = args.dir === "asc"; // desc is the default; asc is deliberate
   const hasThreshold =
     typeof args.min_reactions === "number" || typeof args.min_comments === "number";
-  const hasDateRange =
-    typeof args.since === "string" ||
-    typeof args.from === "string" ||
-    typeof args.to === "string";
-  const hasTopicQuery = typeof args.query === "string" && args.query.trim().length > 0;
-  return (
-    !strictRanking &&
-    !hasTopicQuery &&
-    !explicitSort &&
-    !explicitDir &&
-    !hasThreshold &&
-    !hasDateRange
-  );
+  return !strictRanking && !explicitSort && !explicitDir && !hasThreshold;
 }
 
 const searchViralPosts: ToolFn = async (args, workspaceId, signal, context) => {
