@@ -2197,17 +2197,28 @@ export async function compileTurnPlan(
     const missingContext = Boolean(
       currentTurnOperation.artifactId && !trustedRefineTarget,
     );
-    const askResearchRoute = composerTaskContext?.researchRequirement
-      ? compileReadOnlyOrchestratorRoute({
-          userInstruction: effectiveUserInstruction,
-          isRefine: false,
-          hasModelSource: Boolean(modelSourceId),
-          hasAttachments: attachments.length > 0,
-          hasLeadMagnet: false,
-          hasCreatorStyle: false,
-          composerTaskContext,
-        })
-      : null;
+    // The swipe file is the product's data: an explicit swipe-file / bookmark
+    // search must ALWAYS run a real search, even on an Ask turn with no
+    // starter-supplied researchRequirement. Without this the turn falls to the
+    // tool-less answer lane below and the model hallucinates "I don't have
+    // access to a swipe file database." Compile the research route whenever the
+    // request either carries a research requirement OR is an explicit
+    // workspace-collection search.
+    const askWantsWorkspaceSearch = WORKSPACE_SEARCH_INTENT_RE.test(
+      effectiveUserInstruction,
+    );
+    const askResearchRoute =
+      composerTaskContext?.researchRequirement || askWantsWorkspaceSearch
+        ? compileReadOnlyOrchestratorRoute({
+            userInstruction: effectiveUserInstruction,
+            isRefine: false,
+            hasModelSource: Boolean(modelSourceId),
+            hasAttachments: attachments.length > 0,
+            hasLeadMagnet: false,
+            hasCreatorStyle: false,
+            composerTaskContext: composerTaskContext ?? undefined,
+          })
+        : null;
     const servesResearch = Boolean(
       !missingContext &&
         askResearchRoute?.outcome?.kind === "grounded_answer" &&
