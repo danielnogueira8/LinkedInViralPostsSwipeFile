@@ -3,6 +3,7 @@ import {
   translateMessages,
   effortFor,
   mapUsage,
+  mapStopReason,
   toOpenAiToolCall,
   shouldUseAnthropic,
   isAnthropicModel,
@@ -181,6 +182,32 @@ describe("mapUsage", () => {
   });
 });
 
+describe("mapStopReason (Anthropic → OpenAI finishReason vocabulary)", () => {
+  // Load-bearing: the writer derives envelopeComplete from
+  // `finishReason === null || === "stop"`, and the finalizer flags "length" as
+  // truncated. Anthropic's raw stop_reason matches neither → every completed
+  // draft looked truncated and retried forever. These lock the mapping.
+  test("end_turn and stop_sequence map to 'stop' (complete)", () => {
+    expect(mapStopReason("end_turn")).toBe("stop");
+    expect(mapStopReason("stop_sequence")).toBe("stop");
+  });
+  test("max_tokens maps to 'length' (genuinely truncated)", () => {
+    expect(mapStopReason("max_tokens")).toBe("length");
+  });
+  test("tool_use maps to 'tool_calls'", () => {
+    expect(mapStopReason("tool_use")).toBe("tool_calls");
+  });
+  test("null passes through as null", () => {
+    expect(mapStopReason(null)).toBeNull();
+  });
+  test("a non-completion reason (refusal) is surfaced verbatim, not as complete", () => {
+    // Must NOT read as "stop" — the writer would treat a refusal as a finished
+    // draft otherwise.
+    expect(mapStopReason("refusal" as never)).toBe("refusal");
+    expect(mapStopReason("refusal" as never)).not.toBe("stop");
+  });
+});
+
 describe("toOpenAiToolCall", () => {
   test("produces the OpenAI ToolCall shape the DB/hydration expect", () => {
     expect(toOpenAiToolCall("id1", "render_post", { body: "x" })).toEqual({
@@ -314,7 +341,9 @@ describe("completeChatAnthropic (mocked SDK)", () => {
     });
     expect(res.text).toBe("hello world");
     expect(res.toolArgs).toBeNull();
-    expect(res.finishReason).toBe("end_turn");
+    // Mapped from Anthropic "end_turn" → OpenAI "stop" so the writer's
+    // envelopeComplete check passes (finishReason === "stop").
+    expect(res.finishReason).toBe("stop");
   });
 });
 
@@ -346,7 +375,7 @@ describe("streamChatAnthropic (mocked SDK)", () => {
     expect(text).toBe("Hello");
     expect(deltas.some((d) => d.model === "claude-sonnet-5")).toBe(true);
     const last = deltas[deltas.length - 1];
-    expect(last.finishReason).toBe("end_turn");
+    expect(last.finishReason).toBe("stop");
     expect(last.usage?.completion_tokens).toBe(1);
   });
 });
