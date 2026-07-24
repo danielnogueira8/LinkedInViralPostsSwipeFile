@@ -31,8 +31,17 @@ export { providerModelAttribution } from "./agent/cowork-adapter-attempt";
 // GLM tier (see BACKGROUND_MODEL below).
 //
 // Each is env-overridable for A/B or pinning (OPENROUTER_CHAT_MODEL etc.).
+//
+// Provider switch: when AI_PROVIDER=anthropic, the whole text surface defaults
+// to the Anthropic model (claude-sonnet-5) so one flag moves chat + writers +
+// gates + background onto one bill. An explicit OPENROUTER_CHAT_MODEL still wins
+// (for pinning/A-B). completeChat/streamChat delegate to lib/anthropic.ts when
+// the resolved model is claude-*. Embeddings + image gen never move.
 export const CHAT_MODEL =
-  process.env.OPENROUTER_CHAT_MODEL || "z-ai/glm-5.2";
+  process.env.OPENROUTER_CHAT_MODEL ||
+  (process.env.AI_PROVIDER === "anthropic"
+    ? process.env.ANTHROPIC_CHAT_MODEL || "claude-sonnet-5"
+    : "z-ai/glm-5.2");
 
 // Embedding model for the viral-learning retrieval loop. OpenRouter serves
 // OpenAI's embedding models via its GA /api/v1/embeddings endpoint, so we reuse
@@ -598,6 +607,12 @@ export async function completeChat(opts: {
   sessionId?: string;
 }): Promise<CompleteResult> {
   const model = opts.model || BACKGROUND_MODEL;
+  // Provider seam: Anthropic serves claude-* models when the flag is on. Dynamic
+  // import keeps the module graph acyclic (anthropic.ts imports our types).
+  if (process.env.AI_PROVIDER === "anthropic" && model.startsWith("claude-")) {
+    const { completeChatAnthropic } = await import("./anthropic");
+    return completeChatAnthropic({ ...opts, model });
+  }
   const body: Record<string, unknown> = {
     model,
     messages: opts.messages,
@@ -837,6 +852,12 @@ export async function* streamChat(opts: {
   sessionId?: string;
 }): AsyncGenerator<StreamDelta> {
   const model = opts.model || CHAT_MODEL;
+  // Provider seam (streaming): text-only Anthropic path for claude-* models.
+  if (process.env.AI_PROVIDER === "anthropic" && model.startsWith("claude-")) {
+    const { streamChatAnthropic } = await import("./anthropic");
+    yield* streamChatAnthropic({ ...opts, model });
+    return;
+  }
   const body: Record<string, unknown> = {
     model,
     messages: opts.messages,
@@ -1070,6 +1091,17 @@ const OPENROUTER_PRICING: Record<
   // under-count spend, so the monthly cost cap would be wrong. Sonnet 5 is
   // currently $2 in / $10 out; cache-read is 0.1x input = $0.20.
   "anthropic/claude-sonnet-5": { input: 2.0, output: 10.0, cachedInput: 0.2 },
+  // Bare slug is what the Anthropic adapter sends (AI_PROVIDER=anthropic). The
+  // adapter leaves usage.cost unset, so this table computes cost from tokens.
+  // Sonnet 5 intro pricing: $2/M in, $10/M out; cache-read 0.1x input = $0.20,
+  // cache-write 1.25x input = $2.50. (Standard rates after the intro window are
+  // $3/$15 — bump these two lines when the intro ends 2026-08-31.)
+  "claude-sonnet-5": {
+    input: 2.0,
+    output: 10.0,
+    cachedInput: 0.2,
+    cacheWrite: 2.5,
+  },
   // Cross-provider fallback for the read-only Cowork orchestrator. OpenRouter's
   // model catalog lists $1.50/M input, $9/M output, and $0.15/M cache reads.
   // Keep the local fallback accurate for rare responses without usage.cost.
@@ -1175,7 +1207,9 @@ export async function logOpenRouterUsage(
   try {
     const sb = supabaseAdmin();
     const { error } = await sb.from("usage_events").insert({
-      provider: "openrouter",
+      // Attribute claude-* spend to Anthropic (AI_PROVIDER=anthropic serves
+      // those). Everything else — GLM, embeddings, image gen — stays OpenRouter.
+      provider: model.startsWith("claude-") ? "anthropic" : "openrouter",
       kind,
       model,
       input_tokens: inputTokens,

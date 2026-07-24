@@ -78,6 +78,43 @@ describe("openRouterCost — chat-model pricing", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// AI_PROVIDER=anthropic sends the BARE `claude-sonnet-5` slug (not the
+// `anthropic/`-prefixed OpenRouter variant), and the adapter leaves usage.cost
+// unset — so this table, not the provider, computes cost. If the bare slug ever
+// drifts from a pricing key it would silently revert to the GLM-5.1 fallback and
+// under-count the monthly cost cap. These pin the Sonnet rate on the bare slug.
+// ---------------------------------------------------------------------------
+describe("openRouterCost — Anthropic (bare) slug pricing", () => {
+  test("prices claude-sonnet-5 at $2 in / $10 out", () => {
+    expect(openRouterCost("claude-sonnet-5", M, M)).toBeCloseTo(12, 6);
+    expect(openRouterCost("claude-sonnet-5", M, 0)).toBeCloseTo(2, 6);
+    expect(openRouterCost("claude-sonnet-5", 0, M)).toBeCloseTo(10, 6);
+  });
+
+  test("cache-read tokens bill at $0.20/M, cache-write at $2.50/M", () => {
+    // 1M input all cache reads → $0.20 (not $2).
+    expect(openRouterCost("claude-sonnet-5", M, 0, M)).toBeCloseTo(0.2, 6);
+    // 1M input all cache writes (0 reads) → $2.50.
+    expect(openRouterCost("claude-sonnet-5", M, 0, 0, M)).toBeCloseTo(2.5, 6);
+  });
+
+  test("the bare Anthropic slug is priced by its own row (no GLM-5.1 fallback)", () => {
+    expect(hasOpenRouterPricing("claude-sonnet-5")).toBe(true);
+  });
+
+  test("openRouterUsageCost computes from tokens when usage.cost is absent (adapter path)", () => {
+    // The adapter never sets usage.cost, so the table drives the number.
+    const { costUsd, inputTokens, outputTokens } = openRouterUsageCost(
+      "claude-sonnet-5",
+      { prompt_tokens: M, completion_tokens: M },
+    );
+    expect(inputTokens).toBe(M);
+    expect(outputTokens).toBe(M);
+    expect(costUsd).toBeCloseTo(12, 6);
+  });
+});
+
 describe("openRouterCost — GPT-5.6 Luna pricing", () => {
   test("prices Luna at $1 input / $6 output / $0.10 cache read", () => {
     expect(openRouterCost("openai/gpt-5.6-luna", M, M)).toBeCloseTo(7, 6);
