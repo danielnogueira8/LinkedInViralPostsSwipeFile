@@ -1,7 +1,6 @@
 import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
-  resolveGenerationConfig,
   type GenerationConfigV1,
   type ResolvedGenerationConfig,
 } from "@/lib/generation-config";
@@ -12,7 +11,6 @@ import {
 import {
   advanceActionOrchestratorClarification,
   compileActionOrchestratorRoute,
-  compileReadOnlyOrchestratorReserveRoute,
   clarificationForAmbiguousContinuation,
   type ActionOrchestratorRoute,
 } from "@/lib/agent/turn/compile";
@@ -39,8 +37,6 @@ import {
   CREATOR_STYLE_SELECTION_REQUIRED_ERROR,
   CUSTOM_SKILL_RETRY_CONTEXT_VERSION,
   LEAD_MAGNET_SELECTION_REQUIRED_ERROR,
-  requestedBasePostCount,
-  requestedExplicitBasePostCount,
   type CreatorStyleRetryContext,
   type CustomSkillRetryContext,
   type FrozenCustomSkill,
@@ -52,8 +48,6 @@ import {
   type CoworkTurnTelemetry,
 } from "@/lib/agent/cowork-telemetry";
 import {
-  resolveTurnContract,
-  resolveTurnCount,
   type TurnContract,
 } from "@/lib/agent/turn/compile";
 import {
@@ -63,12 +57,9 @@ import {
   type ChatSetupDeadline,
 } from "@/lib/chat-stream-policy";
 import { compileModeledPostIntent } from "@/lib/agent/modeled-post-intent";
-import {
-  compileDirectPartialTextSpec,
-} from "@/lib/agent/direct-deliverable-policy";
+import { resolvePreclaimRouting } from "@/lib/agent/turn/preclaim-routing";
 import {
   composerStarterMarkerFromToolCalls,
-  resolveComposerTaskContext,
   type ComposerStarterId,
   type ComposerTaskContext,
   type ComposerTaskSelection,
@@ -1139,131 +1130,47 @@ export async function setupChatTurn(
       }
     }
 
-    if (!resolvedGenerationConfig) {
-      resolvedGenerationConfig = resolveGenerationConfig({
-        selected: requestedGenerationConfig,
-        explicitMessageDraftCount:
-          deps.explicitMessageDraftCount(preclaimInstruction),
-      });
-    }
-    const preclaimPartialSpec = compileDirectPartialTextSpec(
+    // Routing decision (mode, count, action/read-only route, contract),
+    // computed BEFORE the claim below. Extracted into resolvePreclaimRouting so
+    // the dry-run "confirm before generating" resolver runs the exact same code
+    // — see lib/agent/turn/preclaim-routing.ts.
+    const preclaim = resolvePreclaimRouting({
       preclaimInstruction,
-    );
-    const fallbackPreclaimPostCount = requestedBasePostCount(
-      preclaimInstruction,
-      Boolean(modelSourceId),
-    );
-    hasAuthoritativeDraftCount =
-      resolvedGenerationConfig.draftCountSource === "ui" ||
-      generationConfigRestoredFromRetry;
-    composerTaskSelection = {
-      ...(currentTurnOperation?.kind === "create_post"
-        ? { commandKind: "create" as const }
-        : currentTurnOperation?.kind === "ask"
-          ? { commandKind: "ask" as const }
-          : currentTurnOperation?.kind === "edit_artifact"
-            ? { commandKind: "edit" as const }
-            : {}),
-      ...(composerStarterId ? { starterId: composerStarterId } : {}),
-      ...(hasAuthoritativeDraftCount
-        ? { selectedDraftCount: resolvedGenerationConfig.draftCount }
-        : {}),
-      ...(modelSourceId ? { selectedSourceId: modelSourceId } : {}),
-    };
-    composerTaskContext = resolveComposerTaskContext({
-      ...composerTaskSelection,
-      fallbackPostCount: fallbackPreclaimPostCount,
-      explicitMessagePostCount: requestedExplicitBasePostCount(
-        preclaimInstruction,
-      ),
-    });
-    const preclaimBasePostCount =
-      composerTaskContext.kind === "post"
-        ? composerTaskContext.expectedDraftCount
-        : null;
-    activeDraftCountOverride =
-      hasAuthoritativeDraftCount && preclaimBasePostCount !== null
-        ? resolvedGenerationConfig.draftCount
-        : undefined;
-    const preclaimRoutingInput = {
-      userInstruction: preclaimInstruction,
-      ...(activeDraftCountOverride
-        ? { draftCountOverride: activeDraftCountOverride }
-        : {}),
-      isRefine: skipDecision,
-      hasModelSource: Boolean(modelSourceId),
-      hasAttachments: attachments.length > 0,
-      hasLeadMagnet: Boolean(leadMagnetId || createLeadMagnet),
+      resolvedGenerationConfig,
+      requestedGenerationConfig,
+      generationConfigRestoredFromRetry,
+      currentTurnOperation,
+      composerStarterId,
+      modelSourceId,
+      attachmentCount: attachments.length,
+      hasLeadMagnetSelection: Boolean(leadMagnetId || createLeadMagnet),
       hasCreatorStyle: Boolean(creatorStyleId),
-      composerTaskContext,
+      skipDecision,
       hasUnsavedDraftReferent:
         hasUnsavedAssistantDraftReferent(recentMessageWindow),
+      normalizedActionRoute,
+      modeledBatchContinuation,
+      pendingAskOnly,
       clientTimezone: body.clientTimezone,
-    };
-    const preclaimActionRoute = modeledBatchContinuation
-      ? null
-      : normalizedActionRoute ??
-        compileActionOrchestratorRoute(preclaimRoutingInput, deps.now());
-    normalizedActionRoute = preclaimActionRoute;
-    const preclaimReadOnlyRoute =
-      modeledBatchContinuation?.route ??
-      compileReadOnlyOrchestratorReserveRoute(preclaimRoutingInput);
-    const preclaimModeledContinuation =
-      continuationForModeledDraftRoute(preclaimReadOnlyRoute);
-    const preclaimModeledRoute = Boolean(
-      modeledBatchContinuation ||
-        preclaimModeledContinuation ||
-        (preclaimReadOnlyRoute &&
-          compileModeledPostIntent(preclaimInstruction, {
-            draftCountOverride: activeDraftCountOverride,
-          }).kind !== "none"),
-    );
-    // Historical source recovery is reserved for an actual ask→answer
-    // continuation. A completed writing turn cannot pin its source (or writer
-    // lane) onto an unrelated later review, action, or question.
-    currentTurnModelSourceOwnership =
-      pendingAskOnly && !currentTurnOperation && !skipDecision
-        ? "historical_continuation"
-        : "server_selected";
-    modeledBatchContractRequested = Boolean(preclaimModeledContinuation);
-    preclaimContractPlaceholder = resolveTurnContract({
-      actionRoute: preclaimActionRoute,
-      useActionOrchestrator: true,
-      readOnlyRoute: preclaimReadOnlyRoute,
-      useReadOnlyOrchestrator: true,
-      hasPartialSpec: preclaimPartialSpec !== null,
-      fallbackPostCount:
-        preclaimBasePostCount !== null || skipDecision
-          ? (activeDraftCountOverride ?? preclaimBasePostCount ?? 1)
-          : null,
+      now: deps.now,
+      explicitMessageDraftCount: deps.explicitMessageDraftCount,
     });
-    preclaimPostDraftEstimate =
-      preclaimContractPlaceholder.kind === "post"
-        ? preclaimContractPlaceholder.expectedCount
-        : null;
-    if (
-      preclaimPostDraftEstimate !== null &&
-      preclaimPostDraftEstimate >= 1 &&
-      !generationConfigRestoredFromRetry &&
-      resolvedGenerationConfig.draftCountSource !== "ui"
-    ) {
-      const contractCount = resolveTurnCount({
-        messageCount: preclaimPostDraftEstimate,
-      });
-      resolvedGenerationConfig = {
-        ...resolvedGenerationConfig,
-        draftCount: contractCount.count,
-        draftCountSource:
-          deps.explicitMessageDraftCount(preclaimInstruction) !== null ||
-          preclaimPostDraftEstimate !== 1
-            ? "message"
-            : "default",
-      };
-    }
+    resolvedGenerationConfig = preclaim.resolvedGenerationConfig;
+    hasAuthoritativeDraftCount = preclaim.hasAuthoritativeDraftCount;
+    composerTaskSelection = preclaim.composerTaskSelection;
+    composerTaskContext = preclaim.composerTaskContext;
+    activeDraftCountOverride = preclaim.activeDraftCountOverride;
+    normalizedActionRoute = preclaim.normalizedActionRoute;
+    const preclaimReadOnlyRoute = preclaim.preclaimReadOnlyRoute;
+    const preclaimModeledRoute = preclaim.preclaimModeledRoute;
+    currentTurnModelSourceOwnership = preclaim.currentTurnModelSourceOwnership;
+    modeledBatchContractRequested = preclaim.modeledBatchContractRequested;
+    preclaimContractPlaceholder = preclaim.preclaimContractPlaceholder;
+    preclaimPostDraftEstimate = preclaim.preclaimPostDraftEstimate;
     const claim = await deps.claimChatTurn(workspaceId, chatId, turnContent, {
       clientTurnId: body.clientTurnId,
       readOnlyOrchestrator: Boolean(
-        (preclaimActionRoute?.kind === "action_management" &&
+        (normalizedActionRoute?.kind === "action_management" &&
           (actionLaneEnabled || persistedActionContinuation)) ||
           (pendingActionAsk && persistedActionContinuation) ||
           ((preclaimReadOnlyRoute || (pendingAskOnly && !pendingActionAsk)) &&
