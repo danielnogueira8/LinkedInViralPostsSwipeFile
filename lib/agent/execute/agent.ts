@@ -4845,22 +4845,34 @@ async function* runReadOnlyOrchestratorCore(
         // drops any row that fails normalizeModelingSourceCandidate (empty
         // id/text after canonicalScrapedPostText) via flatMap, so a non-empty
         // raw result can still yield sources.length === 0 with no visibility
-        // into why. Only logs when the drop is non-trivial, so this stays
-        // silent on the normal path.
-        if (result.ok) {
-          const rawCount = Array.isArray(result.posts) ? result.posts.length : 0;
-          if (rawCount > 0 && sources.length < rawCount) {
-            console.warn(
-              JSON.stringify({
-                search_viral_posts_candidates_dropped: {
-                  workspace_id: input.workspaceId,
-                  raw_count: rawCount,
-                  usable_count: sources.length,
-                  dropped_count: rawCount - sources.length,
-                },
-              }),
-            );
-          }
+        // into why. Also covers the raw query itself returning zero rows
+        // (result.ok is always true here — observeReadOnlyToolStage throws
+        // otherwise — so posts:[] is the only other empty case). A live
+        // occurrence of "I couldn't retrieve enough verified evidence"
+        // reproduced 0 usable sources from a fast (330ms), error-free DB
+        // call, and a same-args replay minutes later returned 5 real rows —
+        // the cause is intermittent, so this is the only way to catch the
+        // actual dispatched filters + row count the next time it happens.
+        // Only logs when delivery is non-ideal (some drop OR zero usable),
+        // so this stays silent on the normal path.
+        const rawCount = Array.isArray(result.posts) ? result.posts.length : 0;
+        if (sources.length === 0 || sources.length < rawCount) {
+          console.warn(
+            JSON.stringify({
+              search_viral_posts_candidates_dropped: {
+                workspace_id: input.workspaceId,
+                raw_count: rawCount,
+                usable_count: sources.length,
+                dropped_count: rawCount - sources.length,
+                dispatched_niche: dispatchedWorkspaceNiche ?? null,
+                dispatched_query: dispatchedWorkspaceQuery ?? null,
+                since: input.route.workspaceSince ?? null,
+                post_type: input.route.workspacePostType ?? null,
+                search_mode: input.route.workspaceSearchMode ?? null,
+                limit: action.limit,
+              },
+            }),
+          );
         }
         if (input.route.workspaceDraftSourceMode === "one_to_one") {
           modeledSourcePoolByAction.set(
