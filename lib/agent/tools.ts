@@ -26,7 +26,11 @@ import { retryRead } from "@/lib/retry-read";
 import {
   selectModelingSourcePool,
 } from "@/lib/modeling-source-selection";
-import { rankIdeaPosts, rotateFreshBand } from "@/lib/idea-ranking";
+import {
+  rankIdeaPosts,
+  rotateFreshBand,
+  shuffleFreshBand,
+} from "@/lib/idea-ranking";
 
 // ---------------------------------------------------------------------------
 // Agent tools — read-only swipe-file / voice / brand access for the chat agent.
@@ -419,11 +423,19 @@ const searchViralPosts: ToolFn = async (args, workspaceId, signal, context) => {
           excludeIds: cooldownIds,
         })
       : null;
-    const selected = modeledPool?.primaries ?? rotateFreshBand(
-          rankIdeaPosts(candidates, usedIds, surfacedIds),
-          cursor,
-          finalLimit,
-        ).slice(0, finalLimit);
+    // Multi-result IDEA DISCOVERY ("give me 5 ideas") shuffles the fresh band
+    // (seeded by the durable cursor) so repeated runs get a genuinely varied mix
+    // — including on a quiet week where the fresh band is small and
+    // rotateFreshBand's band<=keep guard returned the identical top N every
+    // time. Single-post modeling (limit:1, "model a top post") keeps the proven
+    // rotateFreshBand cursor-rotation so its "not always the same post"
+    // guarantee is unchanged. The confirmed-modeling branch uses its own policy.
+    const ranked = rankIdeaPosts(candidates, usedIds, surfacedIds);
+    const selected =
+      modeledPool?.primaries ??
+      (finalLimit > 1
+        ? shuffleFreshBand(ranked, cursor).slice(0, finalLimit)
+        : rotateFreshBand(ranked, cursor, finalLimit).slice(0, finalLimit));
     recordSurfaced(workspaceId, selected.map((post) => post.id));
     const posts = selected.map(wrapScrapedPostText);
     return {

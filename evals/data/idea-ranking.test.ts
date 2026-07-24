@@ -1,5 +1,9 @@
 import { describe, test, expect } from "vitest";
-import { rankIdeaPosts, rotateFreshBand } from "@/lib/idea-ranking";
+import {
+  rankIdeaPosts,
+  rotateFreshBand,
+  shuffleFreshBand,
+} from "@/lib/idea-ranking";
 
 // rankIdeaPosts keeps the query's (recency-windowed, reactions-desc) order but
 // partitions un-used posts ahead of already-drafted ones, and tags each with
@@ -118,5 +122,72 @@ describe("rotateFreshBand — deterministic rotation of the fresh band", () => {
     const ranked = [fresh("a"), fresh("b"), fresh("c"), fresh("d")];
     expect(rotateFreshBand(ranked, -1, 1).map((p) => p.id)).toEqual(["d", "a", "b", "c"]);
     expect(rotateFreshBand(ranked, 4, 1).map((p) => p.id)).toEqual(["a", "b", "c", "d"]);
+  });
+});
+
+// shuffleFreshBand: the fix for "give me N ideas returns the same N every time".
+// Seeded by the durable per-workspace cursor, it shuffles the fresh leading band
+// so repeated asks vary — INCLUDING on a quiet week where the band is small (the
+// case rotateFreshBand no-op'd on, band <= keep). used/surfaced posts stay in the
+// tail and never lead. Deterministic per seed so tests can assert exact output.
+describe("shuffleFreshBand — seeded shuffle of the fresh band", () => {
+  const fresh = (id: string) => ({ id, already_used: false, recently_surfaced: false });
+  const used = (id: string) => ({ id, already_used: true, recently_surfaced: false });
+  const surfaced = (id: string) => ({ id, already_used: false, recently_surfaced: true });
+
+  test("same seed → same order (deterministic)", () => {
+    const ranked = [fresh("a"), fresh("b"), fresh("c"), fresh("d"), fresh("e")];
+    const first = shuffleFreshBand(ranked, 7).map((p) => p.id);
+    const again = shuffleFreshBand(ranked, 7).map((p) => p.id);
+    expect(first).toEqual(again);
+    // it IS a permutation of the whole band (no drops/dupes)
+    expect([...first].sort()).toEqual(["a", "b", "c", "d", "e"]);
+  });
+
+  test("different seeds → different orders (variety across repeat calls)", () => {
+    const ranked = [fresh("a"), fresh("b"), fresh("c"), fresh("d"), fresh("e")];
+    const orders = new Set(
+      [0, 1, 2, 3, 4, 5].map((s) => shuffleFreshBand(ranked, s).map((p) => p.id).join("")),
+    );
+    // at least a few distinct orderings across cursors (not the same 5 every time)
+    expect(orders.size).toBeGreaterThan(1);
+  });
+
+  test("varies even a SMALL fresh band (the quiet-week case rotateFreshBand no-op'd)", () => {
+    // Only 2 fresh posts and the caller wants ~5 — rotateFreshBand returns them
+    // unchanged for every cursor; shuffle still swaps them for some seeds.
+    const ranked = [fresh("a"), fresh("b")];
+    const orders = new Set(
+      [0, 1, 2, 3, 4, 5, 6, 7].map((s) => shuffleFreshBand(ranked, s).map((p) => p.id).join("")),
+    );
+    expect(orders.has("ab")).toBe(true);
+    expect(orders.has("ba")).toBe(true); // proves it actually reorders a 2-item band
+  });
+
+  test("NEVER shuffles a used/surfaced post into the fresh band; they stay in the tail", () => {
+    const ranked = [fresh("a"), fresh("b"), fresh("c"), used("d"), surfaced("e")];
+    for (const seed of [0, 1, 2, 3, 9, 42]) {
+      const out = shuffleFreshBand(ranked, seed).map((p) => p.id);
+      // d + e are the last two, in original order, for every seed
+      expect(out.slice(-2)).toEqual(["d", "e"]);
+      // the first three are a permutation of the fresh band
+      expect([...out.slice(0, 3)].sort()).toEqual(["a", "b", "c"]);
+    }
+  });
+
+  test("no-op for a 0- or 1-item fresh band; non-finite seed is safe", () => {
+    expect(shuffleFreshBand([], 5)).toEqual([]);
+    expect(shuffleFreshBand([fresh("a")], 5).map((p) => p.id)).toEqual(["a"]);
+    // all used → band is 0, nothing to shuffle
+    expect(shuffleFreshBand([used("a"), used("b")], 5).map((p) => p.id)).toEqual(["a", "b"]);
+    // NaN seed doesn't throw
+    expect(() => shuffleFreshBand([fresh("a"), fresh("b")], NaN)).not.toThrow();
+  });
+
+  test("does not mutate the input array", () => {
+    const ranked = [fresh("a"), fresh("b"), fresh("c")];
+    const snapshot = ranked.map((p) => p.id);
+    shuffleFreshBand(ranked, 3);
+    expect(ranked.map((p) => p.id)).toEqual(snapshot);
   });
 });
