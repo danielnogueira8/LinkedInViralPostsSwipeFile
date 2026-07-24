@@ -9,6 +9,8 @@ import {
   isAnthropicModel,
   toAnthropicModelId,
   anthropicChatModel,
+  webSearchMaxUses,
+  extractCitations,
 } from "@/lib/anthropic";
 import type { ChatMessage, ToolDef } from "@/lib/openrouter";
 
@@ -270,6 +272,73 @@ describe("isAnthropicModel / toAnthropicModelId", () => {
   });
 });
 
+describe("web search — plugins → Anthropic web_search server tool", () => {
+  test("webSearchMaxUses reads max_results from the web plugin", () => {
+    expect(webSearchMaxUses([{ id: "web", max_results: 6 }])).toBe(6);
+    expect(webSearchMaxUses([{ id: "web" }])).toBe(5); // default
+    expect(webSearchMaxUses([{ id: "other" }])).toBeUndefined();
+    expect(webSearchMaxUses(undefined)).toBeUndefined();
+  });
+});
+
+describe("extractCitations", () => {
+  test("reads {url,title,content} from text-block web_search citations", () => {
+    const content = [
+      {
+        type: "text",
+        text: "The launch happened Tuesday.",
+        citations: [
+          {
+            type: "web_search_result_location",
+            url: "https://ex.com/a",
+            title: "Launch news",
+            cited_text: "shipped on Tuesday",
+            encrypted_index: "x",
+          },
+        ],
+      },
+    ] as never;
+    expect(extractCitations(content)).toEqual([
+      { url: "https://ex.com/a", title: "Launch news", content: "shipped on Tuesday" },
+    ]);
+  });
+
+  test("dedupes by url and accumulates multiple cited spans", () => {
+    const content = [
+      {
+        type: "text",
+        text: "…",
+        citations: [
+          { type: "web_search_result_location", url: "https://ex.com/a", title: "T", cited_text: "span one", encrypted_index: "1" },
+          { type: "web_search_result_location", url: "https://ex.com/a", title: "T", cited_text: "span two", encrypted_index: "2" },
+        ],
+      },
+    ] as never;
+    const out = extractCitations(content);
+    expect(out).toHaveLength(1);
+    expect(out[0].content).toBe("span one\nspan two");
+  });
+
+  test("falls back to url/title-only for searched results the model didn't cite", () => {
+    const content = [
+      {
+        type: "web_search_tool_result",
+        tool_use_id: "t",
+        content: [
+          { type: "web_search_result", url: "https://ex.com/b", title: "Uncited", encrypted_content: "z", page_age: null },
+        ],
+      },
+    ] as never;
+    expect(extractCitations(content)).toEqual([
+      { url: "https://ex.com/b", title: "Uncited", content: "" },
+    ]);
+  });
+
+  test("returns empty when there is no web-search activity", () => {
+    expect(extractCitations([{ type: "text", text: "hi", citations: null }] as never)).toEqual([]);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Entry-point behavior with the SDK mocked. We stub @anthropic-ai/sdk so the
 // non-streaming path assembles CompleteResult from a tool_use response, and the
@@ -361,6 +430,58 @@ describe("completeChatAnthropic (mocked SDK)", () => {
     const tools = body.tools as Array<{ name: string; cache_control?: unknown }>;
     expect(tools[0].cache_control).toBeUndefined();
     expect(tools[1].cache_control).toEqual({ type: "ephemeral" });
+  });
+
+  test("plugins:[{id:web}] adds the web_search tool and returns citations", async () => {
+    lastBody.current = null;
+    finalMessage.mockResolvedValue({
+      content: [
+        {
+          type: "text",
+          text: "Per the announcement, it shipped Tuesday.",
+          citations: [
+            {
+              type: "web_search_result_location",
+              url: "https://ex.com/news",
+              title: "The announcement",
+              cited_text: "shipped Tuesday",
+              encrypted_index: "i",
+            },
+          ],
+        },
+      ],
+      stop_reason: "end_turn",
+      model: "claude-haiku-4.5",
+      usage: { input_tokens: 20, output_tokens: 10 },
+    });
+    const { completeChatAnthropic } = await import("@/lib/anthropic");
+    const res = await completeChatAnthropic({
+      messages: [{ role: "user", content: "any news on X?" }],
+      plugins: [{ id: "web", max_results: 6 }],
+    });
+    // web_search server tool present with max_uses from max_results
+    const tools = (lastBody.current!.tools ?? []) as Array<Record<string, unknown>>;
+    const web = tools.find((t) => t.type === "web_search_20260209");
+    expect(web).toMatchObject({ name: "web_search", max_uses: 6 });
+    // citations harvested from the response
+    expect(res.citations).toEqual([
+      { url: "https://ex.com/news", title: "The announcement", content: "shipped Tuesday" },
+    ]);
+  });
+
+  test("no plugins → no web_search tool, citations empty", async () => {
+    lastBody.current = null;
+    finalMessage.mockResolvedValue({
+      content: [{ type: "text", text: "hi" }],
+      stop_reason: "end_turn",
+      model: "claude-sonnet-5",
+      usage: { input_tokens: 1, output_tokens: 1 },
+    });
+    const { completeChatAnthropic } = await import("@/lib/anthropic");
+    const res = await completeChatAnthropic({ messages: [{ role: "user", content: "hi" }] });
+    const tools = (lastBody.current!.tools ?? []) as Array<Record<string, unknown>>;
+    expect(tools.find((t) => t.type === "web_search_20260209")).toBeUndefined();
+    expect(res.citations).toEqual([]);
   });
 
   test("no system message → no system field (nothing to cache)", async () => {
