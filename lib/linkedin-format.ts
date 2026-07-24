@@ -142,11 +142,88 @@ export function toggleNumberedList(selection: string): string {
     .join("\n");
 }
 
+// Strikethrough can't use the Mathematical Alphanumeric ranges above — there is
+// no struck-through alphabet in Unicode. LinkedIn tools do it the only way that
+// survives a paste: COMBINING LONG STROKE OVERLAY (U+0336) after every visible
+// character, which the renderer draws as a line through the glyph.
+//
+// Two consequences worth knowing, both intentional:
+//   • it roughly DOUBLES the string's length, and LinkedIn counts those
+//     combining marks against the 3,000 cap — so the counter moving faster than
+//     the visible text is correct, not a bug.
+//   • it composes with bold/italic (the mark attaches to the styled glyph), so
+//     the toggles stay independent of each other.
+// Written as an escape on purpose: as a literal it is an invisible zero-width
+// combining mark in the source, which reads like a typo and invites deletion.
+const STRIKE = "\u0336";
+
+// Don't attach a mark to whitespace: a combining mark on a space renders as a
+// floating dash and, at the end of a selection, leaves a stray stroke behind.
+function isStruck(text: string): boolean {
+  const visible = [...text].filter((ch) => ch !== STRIKE && ch.trim() !== "");
+  if (visible.length === 0) return false;
+  // Struck when every visible character is immediately followed by the mark.
+  const chars = [...text];
+  for (let i = 0; i < chars.length; i += 1) {
+    const ch = chars[i];
+    if (ch === STRIKE || ch.trim() === "") continue;
+    if (chars[i + 1] !== STRIKE) return false;
+  }
+  return true;
+}
+
+/** Toggle Unicode strikethrough across a selection (U+0336 combining mark). */
+export function toggleStrikethrough(selection: string): string {
+  if (!selection) return selection;
+  if (isStruck(selection)) return selection.split(STRIKE).join("");
+  return [...selection]
+    .map((ch) => (ch.trim() === "" ? ch : ch + STRIKE))
+    .join("");
+}
+
+/**
+ * Strip every LinkedIn formatting affordance back to plain ASCII: Unicode
+ * bold/italic, strikethrough marks, and bullet/number list prefixes. This is the
+ * "clear formatting" escape hatch — the styles are real characters, so once a
+ * body has been through a few toggles the only reliable way back is to undo all
+ * of them at once.
+ */
+export function clearFormatting(selection: string): string {
+  if (!selection) return selection;
+  let out = selection.split(STRIKE).join("");
+  for (const style of Object.keys(MAPS) as FormatStyle[]) {
+    out = fromStyle(out, style);
+  }
+  return out
+    .split("\n")
+    .map((line) =>
+      line.startsWith(BULLET)
+        ? line.slice(BULLET.length)
+        : line.replace(NUMBER_RE, ""),
+    )
+    .join("\n");
+}
+
+// The glyphs that actually earn their place in a LinkedIn post: an arrow for
+// consequence, a bullet for a list item, a turn-arrow for a nested beat, and a
+// ballot box for a checklist. Kept as literal characters because that is what
+// LinkedIn stores — there is no markup to convert.
+export const SPECIAL_CHARS: { char: string; label: string }[] = [
+  { char: "→", label: "Arrow" },
+  { char: "•", label: "Bullet" },
+  { char: "↳", label: "Nested arrow" },
+  { char: "☑", label: "Checkbox" },
+];
+
 // LinkedIn's composer truncates the visible preview at ~210 characters ("…see
 // more") and caps a post at 3,000 characters. Surface both so the user knows
 // where their hook gets cut and how close they are to the limit.
 export const LINKEDIN_MAX_CHARS = 3000;
 export const LINKEDIN_SEE_MORE_CHARS = 210;
+
+// Warn before the wall, not at it: past this share of the cap the counter turns
+// amber so a long draft is a decision, not a surprise at publish time.
+export const LINKEDIN_WARN_CHARS = Math.round(LINKEDIN_MAX_CHARS * 0.9);
 
 // A small, opinionated emoji palette — the ones that actually show up in
 // high-performing LinkedIn posts. Grouped so the picker reads sensibly. Kept
