@@ -12,7 +12,6 @@
     { "path": "lib/agent/turn/compile.ts", "statements": 90, "branches": 80, "functions": 100, "lines": 90 },
     { "path": "lib/agent/direct-writer-policy.ts", "statements": 95, "branches": 90, "functions": 100, "lines": 95 },
     { "path": "lib/agent/source-policy.ts", "statements": 95, "branches": 90, "functions": 100, "lines": 95 },
-    { "path": "lib/agent/turn/preclaim-routing.ts", "statements": 100, "branches": 100, "functions": 100, "lines": 100 },
-    { "path": "lib/agent/turn/resolve-decision.ts", "statements": 98, "branches": 88, "functions": 80, "lines": 98 }
+    { "path": "lib/agent/turn/preclaim-routing.ts", "statements": 100, "branches": 100, "functions": 100, "lines": 100 }
   ]
 }
