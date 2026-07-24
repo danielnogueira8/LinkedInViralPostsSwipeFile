@@ -15,6 +15,7 @@ const okDecision: TurnDecision = {
   hasCreatorStyle: false,
   hasLeadMagnetSelection: false,
   taskKind: "post",
+  conflicts: [],
   route: { readOnly: null, contractKind: "post" },
 };
 

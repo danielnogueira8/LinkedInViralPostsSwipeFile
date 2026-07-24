@@ -22,8 +22,23 @@ import {
 import { compileServerReadOnlyPlan } from "@/lib/agent/execute/agent";
 import type { ReadOnlyOrchestratorRoute } from "@/lib/agent/turn/compile";
 import { runTool } from "@/lib/agent/tools";
+import { shouldApplyLeadMagnetContext } from "@/lib/agent/turn/context";
 
 export type TurnDecisionMode = "ask" | "create" | "edit";
+
+/**
+ * A setting the user chose that WON'T take effect as they might expect — the
+ * amber-flag cases the confirm read-back surfaces so a silent override never
+ * reaches the user as an unwanted result. `field` names the composer control
+ * to highlight; `fix` says what one click should do.
+ */
+export type TurnDecisionConflict = {
+  field: "postType" | "leadMagnet" | "creatorStyle";
+  /** One-line, user-facing explanation of what will actually happen. */
+  message: string;
+  /** The remedy a single "fix" click applies. */
+  fix: "drop_setting" | "switch_mode";
+};
 
 export type TurnDecision = {
   /** The composer mode the turn resolves to. */
@@ -45,7 +60,9 @@ export type TurnDecision = {
   hasLeadMagnetSelection: boolean;
   /** The high-level task kind (post / ideas / answer / …) from the composer. */
   taskKind: string;
-  /** Raw resolved route + contract, for conflict detection and debugging. */
+  /** Settings that were chosen but won't take effect — the amber flags. */
+  conflicts: TurnDecisionConflict[];
+  /** Raw resolved route + contract, for debugging. */
   route: {
     readOnly: ReadOnlyOrchestratorRoute | null;
     contractKind: string;
@@ -123,6 +140,74 @@ function resolvedNicheFromPlan(
 }
 
 /**
+ * Detect the settings a user chose that WON'T take effect — the amber flags.
+ * Each is computed from the SAME authoritative server logic the turn uses
+ * (shouldApplyLeadMagnetContext, the source-controls-structure rule), so a
+ * flag fires exactly when the real turn would silently override the choice.
+ */
+function detectConflicts(
+  body: ChatTurnRequest,
+  taskKind: string,
+): TurnDecisionConflict[] {
+  const conflicts: TurnDecisionConflict[] = [];
+  const hasModelSource = Boolean(body.modelSourceId);
+  const hasLeadMagnetSelection = Boolean(
+    body.leadMagnetId || body.createLeadMagnet,
+  );
+
+  // A picked lead magnet that the turn won't actually apply. Uses the exact
+  // server gate; when it returns false the lead magnet is a no-op for this turn
+  // (e.g. an ideas/ask turn, or a plain "write a post about X" with no
+  // lead-magnet intent). Only a post turn can honor a lead magnet at all.
+  if (hasLeadMagnetSelection) {
+    const willApply =
+      taskKind === "post" &&
+      shouldApplyLeadMagnetContext({
+        userText: body.message,
+        refineInstruction: body.refineInstruction,
+        hasModelSource,
+        modelSourcePostType: null,
+        noModelFormatId: body.forcedNoModelFormatId ?? null,
+        hasSelectedLeadMagnet: true,
+      });
+    if (!willApply) {
+      conflicts.push({
+        field: "leadMagnet",
+        message:
+          taskKind === "post"
+            ? "Lead magnet selected, but this reads as a regular post — it won't be used"
+            : `Lead magnet selected, but this is ${taskKind === "ideas" ? "an ideas" : "not a post"} request — it won't be used`,
+        fix: taskKind === "post" ? "drop_setting" : "switch_mode",
+      });
+    }
+  }
+
+  // An explicit post-type choice is ignored when a model source is attached —
+  // the source controls the post's type.
+  if (hasModelSource && body.generationConfig?.postType) {
+    conflicts.push({
+      field: "postType",
+      message:
+        "Post type is set, but the model source controls the type — your choice won't apply",
+      fix: "drop_setting",
+    });
+  }
+
+  // Creator style is ignored when a model source is attached — the source
+  // controls structure (server rule: creator style applies only with no source).
+  if (hasModelSource && body.creatorStyleId) {
+    conflicts.push({
+      field: "creatorStyle",
+      message:
+        "Creator style is set, but the model source controls structure — it won't apply",
+      fix: "drop_setting",
+    });
+  }
+
+  return conflicts;
+}
+
+/**
  * Resolve the truthful decision for a chat-turn request. Pure except for the
  * single injected list_niches read (only performed when the resolved route can
  * filter by niche).
@@ -184,6 +269,7 @@ export async function resolveTurnDecision(
   const postType =
     readOnlyRoute?.explicitPostType ?? readOnlyRoute?.workspacePostType ?? null;
 
+  const taskKind = preclaim.composerTaskContext.kind;
   return {
     mode: decisionMode(currentTurnOperation?.kind),
     postCount,
@@ -192,7 +278,8 @@ export async function resolveTurnDecision(
     hasModelSource: Boolean(body.modelSourceId),
     hasCreatorStyle: Boolean(body.creatorStyleId),
     hasLeadMagnetSelection: Boolean(body.leadMagnetId || body.createLeadMagnet),
-    taskKind: preclaim.composerTaskContext.kind,
+    taskKind,
+    conflicts: detectConflicts(body, taskKind),
     route: {
       readOnly: readOnlyRoute,
       contractKind: preclaim.preclaimContractPlaceholder.kind,
