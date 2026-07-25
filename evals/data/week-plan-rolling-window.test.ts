@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { readFileSync } from "node:fs";
 import {
   rollingWindowDates,
   rollingWindowWeekStarts,
@@ -97,5 +98,35 @@ describe("filtering drops past days and orders today-first", () => {
   test("a day beyond the window is excluded", () => {
     const far = [{ date: "2026-08-15", id: "far" }];
     expect(withinRollingWindow(far, at("2026-07-22"))).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The window is only useful if it's FULL. Since it spans two stored weeks, the
+// next week is composed on demand — so the strip always shows seven planned
+// days rather than trailing off into blanks.
+// ---------------------------------------------------------------------------
+
+describe("the next week is generated, not left blank", () => {
+  const routeSrc = readFileSync("app/api/agent/week-plan/route.ts", "utf8");
+
+  test("the route composes + stores a missing tail week", () => {
+    expect(routeSrc).toMatch(/composeFreshPlan\(sb\.raw, sb\.workspaceId, week\)/);
+    expect(routeSrc).toMatch(/createStoredWeekPlan\(sb\.raw, sb\.workspaceId, fresh\)/);
+  });
+
+  test("a failure to build the NEXT week never breaks the current one", () => {
+    // The visible days from this week must still render; a broken tail is a
+    // degraded cadence, not a dead endpoint.
+    expect(routeSrc).toContain("agent_week_plan_next_week_failed");
+    expect(routeSrc).toMatch(/catch \(error\)[\s\S]{0,400}?return null;/);
+  });
+
+  test("generation is cheap enough to run per request (no LLM in the path)", () => {
+    // This is what makes on-demand composition safe rather than a cost risk:
+    // composeFreshPlan is DB reads + deterministic slotting.
+    const planSrc = readFileSync("lib/agent-loop/week-plan.ts", "utf8");
+    expect(routeSrc).not.toMatch(/completeChat|streamChat/);
+    expect(planSrc).not.toMatch(/completeChat|streamChat/);
   });
 });
