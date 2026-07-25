@@ -70,7 +70,10 @@ export async function safeJson<T>(
   }
 }
 
-export async function parseJsonResponse<T>(res: Response): Promise<T> {
+export async function parseJsonResponse<T>(
+  res: Response,
+  fallbackError?: string,
+): Promise<T> {
   const text = await res.text();
   let parsed: unknown = undefined;
   if (text) {
@@ -102,7 +105,7 @@ export async function parseJsonResponse<T>(res: Response): Promise<T> {
       "error" in parsed &&
       typeof (parsed as { error: unknown }).error === "string"
         ? (parsed as { error: string }).error
-        : `Request failed (${res.status})`;
+        : fallbackError ?? `Request failed (${res.status})`;
     throw new Error(serverMsg);
   }
 

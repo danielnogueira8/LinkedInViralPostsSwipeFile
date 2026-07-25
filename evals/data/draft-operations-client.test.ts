@@ -214,4 +214,29 @@ describe("Draft operations client", () => {
     ).resolves.toMatchObject({ id: "draft-1", body: "Updated" });
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
+
+  it("does not retry an unschedule whose first response may have been lost", async () => {
+    const fetcher = vi.fn().mockRejectedValue(new TypeError("network unavailable"));
+    const client = createDraftOperationsClient(fetcher);
+
+    await expect(client.unschedule("draft-1")).rejects.toThrow(
+      "network unavailable",
+    );
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the operation-specific fallback for an error envelope without a message", async () => {
+    const fetcher = vi.fn(async () =>
+      jsonResponse({ ok: false }, { status: 500 }),
+    );
+    const client = createDraftOperationsClient(fetcher);
+
+    await expect(
+      client.update(
+        "draft-1",
+        { body: "Updated" },
+        { fallbackError: "Failed to update post" },
+      ),
+    ).rejects.toThrow("Failed to update post");
+  });
 });

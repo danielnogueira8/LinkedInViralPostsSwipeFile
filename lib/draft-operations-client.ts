@@ -127,7 +127,7 @@ async function readDraftOperationResponse<T extends z.ZodTypeAny>(
   schema: T,
   fallbackError: string,
 ): Promise<Extract<z.infer<T>, { ok: true }>> {
-  const value = await parseJsonResponse<unknown>(response);
+  const value = await parseJsonResponse<unknown>(response, fallbackError);
   const parsed = schema.safeParse(value);
   if (!parsed.success) throw new Error("Invalid response from server");
   const data = parsed.data as z.infer<T> & { ok: boolean; error?: string };
@@ -247,11 +247,12 @@ export function createDraftOperationsClient(
     },
 
     async unschedule(draftId: string): Promise<UnscheduledDraftState> {
-      const response = await fetchDraftOperation(
-        fetcher,
-        `/api/drafts/${draftId}/schedule`,
-        { method: "DELETE" },
-      );
+      // Cancellation is not idempotent at the Draft lifecycle seam: if the
+      // first response is lost after commit, retrying produces a misleading
+      // "not scheduled" conflict even though the command succeeded.
+      const response = await fetcher(`/api/drafts/${draftId}/schedule`, {
+        method: "DELETE",
+      });
       await readDraftOperationResponse(
         response,
         unscheduleResponseSchema,
