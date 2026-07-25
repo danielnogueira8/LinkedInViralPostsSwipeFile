@@ -17,6 +17,8 @@ import {
   postingGapNote,
   weekStart,
   workWeekDays,
+  rollingWindowWeekStarts,
+  withinRollingWindow,
 } from "@/lib/agent-loop/week-plan";
 import {
   createStoredWeekPlan,
@@ -386,8 +388,46 @@ export async function GET() {
       currentWeek,
       plan,
     );
+    // The cadence strip shows a ROLLING window (today + the next 6 days), while
+    // plans are still STORED per calendar week. Six days out of seven that
+    // window crosses a Monday boundary, so the tail lives in the NEXT week's
+    // plan — which is COMPOSED ON DEMAND here if it doesn't exist yet, exactly
+    // as the current week already is. Without that the last cards would simply
+    // be missing, and a cadence with holes in it isn't a plan.
+    //
+    // This is cheap and safe to do per request: composeFreshPlan is pure DB
+    // reads plus deterministic slotting — no LLM call — and createStoredWeekPlan
+    // is a no-op when a plan already exists, so concurrent requests converge on
+    // one row rather than racing to overwrite each other.
+    const laterWeeks = rollingWindowWeekStarts().filter((w) => w !== currentWeek);
+    const laterPlans = await Promise.all(
+      laterWeeks.map(async (week) => {
+        try {
+          const existing = await loadStoredWeekPlan(sb.raw, sb.workspaceId, week);
+          if (existing) return existing;
+          const fresh = await composeFreshPlan(sb.raw, sb.workspaceId, week);
+          return await createStoredWeekPlan(sb.raw, sb.workspaceId, fresh);
+        } catch (error) {
+          // Never fail the whole cadence because the NEXT week couldn't be
+          // built — the visible days from this week still render.
+          console.error("agent_week_plan_next_week_failed", {
+            workspace_id: sb.workspaceId,
+            week,
+            message: error instanceof Error ? error.message : String(error),
+          });
+          return null;
+        }
+      }),
+    );
+    const windowPlan: StoredWeekPlan = {
+      ...plan,
+      items: withinRollingWindow([
+        ...plan.items,
+        ...laterPlans.flatMap((p) => p?.items ?? []),
+      ]),
+    };
     const [items, gapNote] = await Promise.all([
-      attachSourcePosts(sb.raw, sb.workspaceId, plan),
+      attachSourcePosts(sb.raw, sb.workspaceId, windowPlan),
       postingGap(sb.raw, sb.workspaceId),
     ]);
     return NextResponse.json({

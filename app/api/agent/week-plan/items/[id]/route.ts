@@ -2,8 +2,8 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
-import { weekStart } from "@/lib/agent-loop/week-plan";
-import { mutateStoredWeekPlanItem } from "@/lib/agent-loop/week-plan-store";
+import { rollingWindowWeekStarts } from "@/lib/agent-loop/week-plan";
+import { mutateStoredWeekPlanItemAcross } from "@/lib/agent-loop/week-plan-store";
 
 const directionSchema = z.object({
   context: z.string().trim().max(2_000),
@@ -33,10 +33,10 @@ export async function PATCH(
         );
       }
     }
-    const item = await mutateStoredWeekPlanItem(
+    const item = await mutateStoredWeekPlanItemAcross(
       sb.raw,
       sb.workspaceId,
-      weekStart(),
+      rollingWindowWeekStarts(),
       id,
       (current) =>
         current.status === "planned"
