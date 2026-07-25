@@ -75,6 +75,44 @@ export function validateEnv(source: Record<string, string | undefined> = process
     }
   }
 
+  // AI provider selection. AI_PROVIDER switches the app's single text seam
+  // (chat, writers, gates, specialists, and the vision model — everything that
+  // resolves to a claude-* model) onto the Anthropic Messages API. The runtime
+  // gate is an EXACT string check, `AI_PROVIDER === "anthropic"`
+  // (lib/anthropic.ts `shouldUseAnthropic`), and under that flag numerous
+  // surfaces default to hardcoded `anthropic/claude-*` models regardless of any
+  // OPENROUTER_CHAT_MODEL pin — so whenever the flag is exactly "anthropic" the
+  // Anthropic key is genuinely required or the app boots and then throws an
+  // opaque 500 on the first Claude call (the SDK client is built with
+  // apiKey: undefined). We validate against that exact semantics:
+  //   - Only when AI_PROVIDER === "anthropic" do we require an Anthropic key
+  //     (SWIPE_ANTHROPIC_KEY || ANTHROPIC_API_KEY — the exact pair the adapter
+  //     reads). Unset, empty, or any other value keeps text on OpenRouter/GLM
+  //     and needs no Anthropic key, so a fresh checkout / default deploy still
+  //     boots untouched.
+  //   - A set-but-unrecognized value (e.g. a "Anthropic"/"claude" typo) silently
+  //     ran on OpenRouter while the operator believed they were on Anthropic;
+  //     reject it so the misconfiguration surfaces at boot.
+  // OPENROUTER_API_KEY stays required unconditionally above regardless of this
+  // flag — embeddings and image generation ALWAYS route through OpenRouter.
+  const aiProvider = source.AI_PROVIDER;
+  if (aiProvider) {
+    const allowedProviders = ["anthropic", "openrouter"];
+    if (!allowedProviders.includes(aiProvider)) {
+      problems.push(
+        `  - AI_PROVIDER: must be one of ${allowedProviders.join(", ")} when set (leave unset to default to OpenRouter)`,
+      );
+    } else if (aiProvider === "anthropic") {
+      const anthropicKey =
+        source.SWIPE_ANTHROPIC_KEY || source.ANTHROPIC_API_KEY;
+      if (!anthropicKey) {
+        problems.push(
+          "  - SWIPE_ANTHROPIC_KEY (or ANTHROPIC_API_KEY): is required when AI_PROVIDER=anthropic",
+        );
+      }
+    }
+  }
+
   if (result.success && problems.length === 0) return result.data;
   problems.sort();
 

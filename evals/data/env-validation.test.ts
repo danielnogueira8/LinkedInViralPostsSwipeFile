@@ -120,4 +120,61 @@ describe("validateEnv", () => {
       }),
     ).not.toThrow();
   });
+
+  // -------------------------------------------------------------------------
+  // AI_PROVIDER selection (boot-time validation of the active text provider).
+  // The runtime gate is an exact `AI_PROVIDER === "anthropic"` check, so the
+  // validation only demands an Anthropic key in exactly that configuration and
+  // leaves every currently-booting configuration (unset / openrouter / other)
+  // untouched.
+  // -------------------------------------------------------------------------
+
+  test("boots with AI_PROVIDER unset (default OpenRouter path) — no Anthropic key required", () => {
+    // The fresh-checkout / default deploy: unset flag runs GLM/OpenRouter.
+    expect(() => validateEnv(VALID)).not.toThrow();
+  });
+
+  test("boots with AI_PROVIDER=openrouter and no Anthropic key", () => {
+    expect(() => validateEnv({ ...VALID, AI_PROVIDER: "openrouter" })).not.toThrow();
+  });
+
+  test("boots with an empty-string AI_PROVIDER (treated as unset → OpenRouter)", () => {
+    expect(() => validateEnv({ ...VALID, AI_PROVIDER: "" })).not.toThrow();
+  });
+
+  test("requires an Anthropic key when AI_PROVIDER=anthropic", () => {
+    expect(() => validateEnv({ ...VALID, AI_PROVIDER: "anthropic" })).toThrowError(
+      /SWIPE_ANTHROPIC_KEY \(or ANTHROPIC_API_KEY\): is required when AI_PROVIDER=anthropic/,
+    );
+  });
+
+  test("boots with AI_PROVIDER=anthropic when SWIPE_ANTHROPIC_KEY is present", () => {
+    expect(() =>
+      validateEnv({ ...VALID, AI_PROVIDER: "anthropic", SWIPE_ANTHROPIC_KEY: "sk-ant-1" }),
+    ).not.toThrow();
+  });
+
+  test("boots with AI_PROVIDER=anthropic when the fallback ANTHROPIC_API_KEY is present", () => {
+    expect(() =>
+      validateEnv({ ...VALID, AI_PROVIDER: "anthropic", ANTHROPIC_API_KEY: "sk-ant-2" }),
+    ).not.toThrow();
+  });
+
+  test("rejects an anthropic flag with a blank key value (present but empty)", () => {
+    expect(() =>
+      validateEnv({ ...VALID, AI_PROVIDER: "anthropic", SWIPE_ANTHROPIC_KEY: "" }),
+    ).toThrowError(/SWIPE_ANTHROPIC_KEY \(or ANTHROPIC_API_KEY\): is required when AI_PROVIDER=anthropic/);
+  });
+
+  test("rejects a typo'd / unrecognized AI_PROVIDER value", () => {
+    expect(() => validateEnv({ ...VALID, AI_PROVIDER: "Anthropic" })).toThrowError(
+      /AI_PROVIDER: must be one of anthropic, openrouter/,
+    );
+  });
+
+  test("still requires OPENROUTER_API_KEY even when AI_PROVIDER=anthropic (embeddings/images)", () => {
+    const rest = { ...VALID, AI_PROVIDER: "anthropic", SWIPE_ANTHROPIC_KEY: "sk-ant-1" };
+    delete (rest as Partial<typeof rest>).OPENROUTER_API_KEY;
+    expect(() => validateEnv(rest)).toThrowError(/OPENROUTER_API_KEY: is required but not set/);
+  });
 });
