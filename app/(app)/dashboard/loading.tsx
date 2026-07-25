@@ -6,7 +6,7 @@
 export default function ChatLoading() {
   return (
     <div className="-mt-2 animate-pulse">
-      <div className="flex h-[calc(100vh-9rem)] min-h-[520px] rounded-xl border border-border/60 overflow-hidden bg-background">
+      <div className="flex h-[calc(100dvh-9rem)] min-h-[520px] rounded-xl border border-border/60 overflow-hidden bg-background">
         {/* Left: chat history */}
         <aside className="hidden md:flex w-60 shrink-0 flex-col border-r border-border/60 bg-sidebar/40">
           <div className="p-3">

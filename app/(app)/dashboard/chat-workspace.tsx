@@ -3685,7 +3685,7 @@ export function ChatWorkspace({
     );
 
   return (
-    <div className="relative flex h-[calc(100vh-7.5rem)] min-h-[520px] gap-0 overflow-hidden bg-card lg:h-screen">
+    <div className="relative flex h-[calc(100dvh-7.5rem)] min-h-[520px] gap-0 overflow-hidden bg-card lg:h-screen">
       {/* Mobile backdrop for the history drawer. */}
       {sidebarOpen && (
         <div
