@@ -6,7 +6,7 @@ import {
 } from "@/lib/agent/chat-turn-lifecycle";
 import { resolveTurnOutcome } from "@/lib/agent/turn/outcome";
 import type { TurnPlan } from "@/lib/agent/turn/compile";
-import type { TurnSetupResult } from "@/lib/agent/turn/setup";
+import type { TurnFinalizeContext } from "@/lib/agent/turn/state";
 import type { ExecuteTurnPlanResult } from "@/lib/agent/turn/execute";
 import { persistChatAssistantTurn } from "@/lib/chat-message-persistence";
 import type { CoworkTurnUsageWire } from "@/lib/cowork-turn-usage";
@@ -83,7 +83,7 @@ export function persistedFailureContent(
  */
 export function finalizeTurn(
   plan: TurnPlan,
-  setup: TurnSetupResult,
+  setup: TurnFinalizeContext,
   executeResult: ExecuteTurnPlanResult,
   deps: TurnFinalizeDependencies,
 ): FinalizeTurnResult {

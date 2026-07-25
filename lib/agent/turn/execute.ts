@@ -17,7 +17,7 @@ import { isExclusiveHookRefine } from "@/lib/agent/direct-refine-policy";
 import { safeFilename } from "@/lib/agent/untrusted";
 import { loadCitedSwipePostImage } from "@/lib/agent/turn/context";
 import type { TurnPlan } from "@/lib/agent/turn/compile";
-import type { TurnSetupResult } from "@/lib/agent/turn/setup";
+import type { TurnExecuteContext } from "@/lib/agent/turn/state";
 import { enforceTurnOutcome } from "@/lib/agent/turn/outcome-guard";
 import type { DraftFinalizerSpecialists } from "@/lib/agent/finalize/finalizer";
 import { splicePreservedBody } from "@/lib/hook-splice";
@@ -82,7 +82,7 @@ export type ExecuteTurnPlanResult = {
  */
 export function executeTurnPlan(
   plan: TurnPlan,
-  setup: TurnSetupResult,
+  setup: TurnExecuteContext,
   chatId: string,
   deps: TurnExecuteDependencies,
 ): ExecuteTurnPlanResult {
@@ -97,7 +97,7 @@ export function executeTurnPlan(
 
 async function* runTurnPlan(
   plan: TurnPlan,
-  setup: TurnSetupResult,
+  setup: TurnExecuteContext,
   chatId: string,
   deps: TurnExecuteDependencies,
   handlers: ExecuteTurnHandlers,
@@ -518,7 +518,7 @@ async function attemptLeadMagnetImageEvents(
   sourceImageForLeadMagnet: SourcePostImage | null,
   sourceImageSourcePostId: string | null,
   imageLeadMagnetTitle: string,
-  setup: TurnSetupResult,
+  setup: TurnExecuteContext,
   chatId: string,
 ): Promise<{
   artifact: Artifact;
@@ -596,7 +596,7 @@ async function attemptLeadMagnetImageEvents(
 }
 
 function createTransformDraftCandidate(
-  setup: TurnSetupResult,
+  setup: TurnExecuteContext,
   plan: TurnPlan,
 ): (
   body: string,
@@ -668,7 +668,7 @@ async function* executeClarificationTurn(
 }
 
 async function* executeAnswerTurn(
-  setup: TurnSetupResult,
+  setup: TurnExecuteContext,
   chatId: string,
   signal: AbortSignal,
   onModelUsed: (model: string) => void,
