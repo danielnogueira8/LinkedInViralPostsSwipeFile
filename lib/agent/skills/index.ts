@@ -68,17 +68,65 @@ const LEAD_MAGNET: Skill = {
     "comment and i'll send",
     "dm magnet",
   ],
-  body: `# Lead-magnet / giveaway posts
-Goal: qualified inbound (comments/DMs), not vanity likes. If the user's voice profile has a lead_magnet_style block, it overrides the general voice here.
+  body: `# Lead-magnet posts (comment-to-DM giveaways)
+Goal is qualified inbound — comments and DMs — not likes. The comment counts below are from real posts in the swipe file. If the user's voice profile has a lead_magnet_style block, or a creator-style skill is loaded, that overrides the voice rules here.
 
-Structure that converts:
-1. Hook — name the specific outcome or pain the resource solves.
-2. Stakes/proof — why it matters now, or proof it works (a result, a number, a mini-story).
-3. What they get — describe the resource concretely; bullet the contents if it's a set of assets.
-4. The ask — ONE low-friction CTA, usually "comment <keyword>" (+ optionally follow so you can DM). Short, on-theme keyword.
-5. Remove friction — "no link, just comment X" beats sending people off-platform.
+## Truth constraint — read before writing
+Only promise a resource that can actually be produced as TEXT: prompt libraries, frameworks, scoring rubrics, checklists, audits, playbooks, swipe files, message templates, comparison matrices, cheat sheets, agent configs (prompt + tool schema written out), workflow blueprints, email sequences, content calendars.
 
-Rules: one CTA only (two halve conversion); the resource must sound specific and finished, not "a guide"; match the keyword to the topic. Avoid burying the ask under a wall of text, over-hyping, or competing links.`,
+Cannot be produced here: working software, live automations needing credentials, hosted GPTs, video courses, screen recordings, live dashboards, designed PDFs. If the user names one, ASK whether they already have it. If they do, it is their proof and the post can promise it. If they don't, propose a text substitute and say so plainly.
+
+NEVER invent client wins, dollar figures, metrics, timelines or testimonials. Every specific claim comes from the user. With no proof available, use a proof-free framework (1, 6, 8, 10, 11, 13, 15, 17). A weaker honest hook beats a fabricated strong one.
+
+## Before writing
+Call search_viral_posts with post_type "lead_magnet" and sort "comments" to see what is landing right now. Model the winning structures; never copy their wording.
+
+Then reposition the asset: try relabelling it (checklist → audit framework, prompts → agents, guide → operating system, tips → field notes). Only relabel where it's honest, and skip it entirely if their label is already sharp.
+
+Offer 3 hooks from 2-3 different frameworks and let the user pick before writing the full post.
+
+## Hook frameworks
+Proof-free (safe when the user has given you no numbers):
+1. NEVER Again — promise permanent removal of a pain.
+6. Negation Buildup — "No X. No Y. No Z. Just…"
+8. Builder's Giveaway — "I built X. Giving it away free." The thing must exist.
+10. Eulogy — "R.I.P. [role/tool/line item]." Kill something real and NAME the replacement in the next breath.
+11. Audience Callout — name the segment in line one ("Marketing people, this one's for you"). Highest comment count in the file (3,356) and costs nothing to use.
+13. Launch Jack — "[Vendor] just shipped X, so I turned it into something usable" (2,091).
+15. One-Click — friction removal is the hook: "No API keys. No code." (1,179)
+17. Open Source Drop — "Free repo, open-sourced" (1,190). Institutional generosity beats personal flex.
+
+Proof required (only with a real user-supplied number):
+3. Credibility Snap — lead with a personal metric.
+4. Investment Hook — "I spent $X / Y hours on this."
+5. Cost Replacement — "replaces a $Y/yr line item."
+7. Collection — "500+ prompts. 150+ skills." (1,931) The count must be accurate.
+9. Case Study Receipts — a verifiable client win plus the constraints.
+12. Ultimate Resource — superlative + arrow list of categories (2,366). Only when the stack really is broad.
+14. Specialist Team — reframe a set as an org chart: "I run GTM with 7 agents. No SDR team." (1,874) Name and number every role.
+16. Skeptic's Test — "I tested it to prove it couldn't be that good." Requires a real test.
+18. The Manual — role-specific guide + page count (1,504).
+2. BREAKING — hijack a real, current news event. Verify it with a tool; never from memory.
+
+## Structure (~80% of posts)
+Hook (1 line) → Re-hook (1 line) → Bridge (1 line) → 5-7 arrow deliverables → payoff line → CTA (2-3 lines) → P.S.
+
+Variations: drop re-hook and bridge when the deliverable explains itself; for frameworks 12 and 14 group deliverables under bold sub-headers (this is the only case that may exceed 7 items); open on the client metric when the metric IS the story.
+
+## Hard rules
+- Hook is one line. Re-hook is one line. Needing more means the line isn't sharp.
+- 5-7 arrow (→) bullets, each an OUTCOME or asset, never a feature. Only the roster variation goes longer.
+- Every deliverable listed must exist in the resource actually being produced.
+- Bridge is one line: "I packaged it" / "Here's what's inside" / "So I built X".
+- CTA ladder in performance order: comment KEYWORD (ALL CAPS, 5-10 chars, on-topic), then connect or like, then repost for priority access. Two steps minimum. Adding "(we need to be connected for me to DM you)" lifts deliverability.
+- Always end with a P.S. It is the second hook for skimmers.
+- Keep them on-platform: "no link, just comment X" beats sending people away.
+
+## QA before delivering
+Hook is one line. Bridge present. 5-7 deliverables, each scannable in two seconds. Every number, name and dollar figure came from the user. Keyword in ALL CAPS. P.S. present. No em dashes. No hedging preamble. None of: leverage, unlock, supercharge, elevate, game-changer. Reads like a person.
+
+## Failure modes
+Vague deliverables. Missing bridge. More than 7 bullets with no sub-grouping. Soft CTA ("let me know if interested"). No P.S. Invented proof. An Eulogy hook that kills something without naming the replacement.`,
 };
 
 const VOICE_MATCH: Skill = {
