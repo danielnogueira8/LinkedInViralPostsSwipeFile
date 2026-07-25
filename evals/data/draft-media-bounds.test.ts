@@ -40,7 +40,7 @@ describe("draft image is bounded inside the card", () => {
   test("every flex ancestor of the image can shrink (min-w-0)", () => {
     // The card root...
     expect(source).toMatch(
-      /flex w-full min-w-0 flex-col overflow-hidden rounded-xl/,
+      /flex w-full min-w-0 flex-col overflow-hidden/,
     );
     // ...and the editor column that holds the preview.
     expect(source).toMatch(/flex w-full min-w-0 flex-col gap-2/);
@@ -53,7 +53,7 @@ describe("draft image is bounded inside the card", () => {
     // lead-magnet resource card) get squeezed into a short, overflow-hidden
     // column and spill over the pinned toolbar/heading.
     expect(source).toMatch(
-      /overflow-hidden rounded-xl border border-border bg-white[^"]*lg:min-h-0 lg:flex-1/,
+      /overflow-hidden bg-card[^"]*lg:min-h-0 lg:flex-1/,
     );
     expect(source).toMatch(/flex w-full min-w-0 flex-col gap-2 px-3 py-2\.5[^"]*lg:min-h-0 lg:flex-1/);
   });
@@ -63,7 +63,7 @@ describe("draft image is bounded inside the card", () => {
     // so below lg it would be shrunk to fit the sheet and clipped with nothing
     // to scroll. max-lg:shrink-0 keeps it at full content height so the sheet
     // body's overflow-y-auto scrolls it.
-    expect(source).toMatch(/overflow-hidden rounded-xl[^"]*max-lg:shrink-0/);
+    expect(source).toMatch(/overflow-hidden bg-card[^"]*max-lg:shrink-0/);
     // The sheet body is the single bounded scroll container on mobile.
     expect(source).toMatch(/flex-1 min-h-0 overflow-y-auto p-3\.5 flex flex-col gap-3/);
     expect(source).toMatch(/\{artifactsList\}/);
@@ -73,7 +73,10 @@ describe("draft image is bounded inside the card", () => {
     expect(editorSource).not.toMatch(/footer \? "overflow-y-auto" : ""/);
   });
 
-  test("the card clips its own children, so nothing escapes the rounded border", () => {
-    expect(source).toMatch(/overflow-hidden rounded-xl border border-border bg-white/);
+  test("the card clips its own children, so a wide image can't escape it", () => {
+    // overflow-hidden is the load-bearing part. The border/radius that used to
+    // be asserted here is gone on desktop by design — the panel is the surface
+    // (see draft-panel-flat.test.ts) — but the clipping must remain.
+    expect(source).toMatch(/flex w-full min-w-0 flex-col overflow-hidden bg-card/);
   });
 });

@@ -649,7 +649,15 @@ export function DraftEditor({
           this box is what scrolls, so text + image read as a single surface. */}
       <div
         className={cn(
-          "relative flex min-h-0 w-full min-w-0 flex-1 flex-col rounded-lg border border-border bg-white",
+          "relative flex min-h-0 w-full min-w-0 flex-1 flex-col bg-white",
+          // The border/radius only earns its place when this box floats inside
+          // something else. In the Cowork layout (toolbar="full") the panel is
+          // already the surface, so a bordered box here is a third nested
+          // outline around the same draft. Everywhere else (the Posts-board
+          // editor) it still needs its own edge.
+          toolbar === "full"
+            ? "max-lg:rounded-lg max-lg:border max-lg:border-border"
+            : "rounded-lg border border-border",
           // Desktop: the editor box owns the scroll. Below lg the whole draft
           // card scrolls in the mobile bottom sheet, so this box must not be a
           // second (touch-capturing) scroll container — keep overflow visible.

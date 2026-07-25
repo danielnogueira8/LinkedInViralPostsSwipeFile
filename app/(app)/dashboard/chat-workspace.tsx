@@ -6943,7 +6943,7 @@ function ArtifactCard({
     // It is safe now for a concrete reason: the body is a textarea with its own
     // `min-h-[220px]`, so it has intrinsic height and cannot collapse even if
     // the flex chain gives it nothing.
-    <div className="flex w-full min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-white text-foreground shadow-[0_16px_45px_rgba(28,28,26,0.10)] max-lg:shrink-0 lg:min-h-0 lg:flex-1">
+    <div className="flex w-full min-w-0 flex-col overflow-hidden bg-card text-foreground max-lg:rounded-xl max-lg:border max-lg:border-border max-lg:shadow-sm max-lg:shrink-0 lg:min-h-0 lg:flex-1">
       {/* "Draft N" badge + applied-skill chip(s). Skills come from the server
           stamping meta.skills onto the artifact when one was active for the
           turn that produced it (see route's artifact case). Renders even when
