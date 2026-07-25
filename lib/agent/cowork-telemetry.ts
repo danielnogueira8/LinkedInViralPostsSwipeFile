@@ -64,6 +64,11 @@ type SafeAttempt = {
   output_tokens: number;
   reasoning_tokens: number;
   cached_input_tokens: number;
+  // Cache WRITES (the ~1.25x cold-start premium). Without this you cannot
+  // tell a cold write from "never attempted to cache" — both show zero
+  // reads — which is exactly the signal needed to prove a caching change
+  // actually landed.
+  cache_write_tokens: number;
   charged_cost_usd: number;
 };
 
@@ -82,6 +87,7 @@ export type CoworkTurnTelemetryRecord = {
   output_tokens: number;
   reasoning_tokens: number;
   cached_input_tokens: number;
+  cache_write_tokens: number;
   charged_cost_usd: number;
   provenance_status: CoworkProvenanceStatus;
   terminal_outcome: CoworkTerminalOutcome;
@@ -171,6 +177,7 @@ export function createCoworkTurnTelemetry(
   let outputTokens = 0;
   let reasoningTokens = 0;
   let cachedInputTokens = 0;
+  let cacheWriteTokens = 0;
   let chargedCostUsd = 0;
   const usageByStage = new Map<
     CoworkUsageStageKind,
@@ -206,6 +213,7 @@ export function createCoworkTurnTelemetry(
       outputTokens += usage.outputTokens;
       reasoningTokens += usage.reasoningTokens;
       cachedInputTokens += usage.cachedInputTokens;
+      cacheWriteTokens += usage.cacheWriteTokens;
       chargedCostUsd += usage.costUsd;
       if (usage.costUsd > 0) {
         const kind = usageStageKind(safeCode(attempt.stage) ?? "unknown");
@@ -241,6 +249,7 @@ export function createCoworkTurnTelemetry(
         output_tokens: usage.outputTokens,
         reasoning_tokens: usage.reasoningTokens,
         cached_input_tokens: usage.cachedInputTokens,
+        cache_write_tokens: usage.cacheWriteTokens,
         charged_cost_usd: usage.costUsd,
       });
     },
@@ -369,6 +378,7 @@ export function createCoworkTurnTelemetry(
         output_tokens: boundedInteger(outputTokens),
         reasoning_tokens: boundedInteger(reasoningTokens),
         cached_input_tokens: boundedInteger(cachedInputTokens),
+        cache_write_tokens: boundedInteger(cacheWriteTokens),
         charged_cost_usd: Number(chargedCostUsd.toFixed(8)),
         provenance_status: input.provenanceStatus,
         terminal_outcome: input.terminalOutcome,

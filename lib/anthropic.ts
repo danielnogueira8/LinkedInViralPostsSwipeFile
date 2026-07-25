@@ -207,18 +207,39 @@ export function translateMessages(messages: ChatMessage[]): {
 }
 
 function toAnthropicTools(tools: ToolDef[]): Anthropic.ToolUnion[] {
-  const mapped: Anthropic.Tool[] = tools.map((t) => ({
+  return tools.map((t) => ({
     name: t.function.name,
     description: t.function.description,
     input_schema: t.function.parameters as Anthropic.Tool.InputSchema,
   }));
-  // Cache the tool definitions. Anthropic caches in render order tools → system
-  // → messages, so a breakpoint on the LAST tool caches the whole tool block
-  // (and lets the system breakpoint below extend the cached prefix). Tool
-  // schemas are stable across turns, so this is a safe, free win.
-  const last = mapped[mapped.length - 1];
-  if (last) last.cache_control = { type: "ephemeral" };
-  return mapped;
+}
+
+/**
+ * Put the tool-block cache breakpoint on the genuinely LAST tool.
+ *
+ * Anthropic renders tools → system → messages and caches a prefix, so a
+ * breakpoint on the final tool caches the whole tool block. This must run
+ * AFTER every tool is assembled: the web_search server tool is appended later
+ * for grounded calls, and marking before that left the breakpoint mid-list, so
+ * grounded requests paid a cache write for a prefix that stopped short of the
+ * full tool set. Tool schemas are stable across turns, so this is otherwise a
+ * free win.
+ *
+ * Exported for tests — the ordering is invisible at runtime and only shows up
+ * as a silently worse hit rate.
+ */
+export function markLastToolCached(
+  tools: Anthropic.ToolUnion[] | undefined,
+): void {
+  if (!tools?.length) return;
+  // Clear any earlier marker so we never emit two tool-block breakpoints (they
+  // are a limited resource — 4 per request).
+  for (const tool of tools) {
+    delete (tool as { cache_control?: unknown }).cache_control;
+  }
+  (
+    tools[tools.length - 1] as { cache_control?: { type: "ephemeral" } }
+  ).cache_control = { type: "ephemeral" };
 }
 
 // The OpenRouter callers request live web search via `plugins: [{id:"web", ...}]`
@@ -425,6 +446,9 @@ export async function completeChatAnthropic(opts: {
     };
     body.tools = [...(body.tools ?? []), webTool];
   }
+  // Every tool is now assembled (user tools + any web_search server tool), so
+  // the breakpoint can land on the real last one.
+  markLastToolCached(body.tools);
 
   const signal = combineSignals(opts.signal, opts.timeoutMs);
   // Stream internally for large budgets so we never hit an HTTP timeout, then
@@ -486,6 +510,9 @@ export async function* streamChatAnthropic(opts: {
   if (system) body.system = cachedSystem(system);
   if (opts.tools?.length && opts.toolChoice !== "none") {
     body.tools = toAnthropicTools(opts.tools);
+    // No server tools are appended on the streaming path, so the last user tool
+    // is the last tool.
+    markLastToolCached(body.tools);
   }
 
   // Overall connection deadline + caller signal, aborting either fires. The
