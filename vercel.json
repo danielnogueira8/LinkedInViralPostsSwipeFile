@@ -1,13 +1,40 @@
 {
   "crons": [
-    { "path": "/api/cron/daily", "schedule": "0 0 * * *" },
-    { "path": "/api/cron/daily-recovery", "schedule": "0 1 * * *" },
-    { "path": "/api/cron/jobs", "schedule": "* * * * *" },
-    { "path": "/api/cron/publish-scheduled", "schedule": "*/5 * * * *" },
-    { "path": "/api/cron/sweep-media", "schedule": "0 3 * * *" },
-    { "path": "/api/cron/pattern-briefs", "schedule": "0 4 * * 1" },
-    { "path": "/api/cron/user-working-summaries", "schedule": "30 4 * * *" },
-    { "path": "/api/cron/edit-delta-distill", "schedule": "0 5 * * *" },
-    { "path": "/api/cron/agent-loop", "schedule": "0 6 * * *" }
+    {
+      "path": "/api/cron/daily",
+      "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/api/cron/daily-recovery",
+      "schedule": "0 1 * * *"
+    },
+    {
+      "path": "/api/cron/jobs",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/publish-scheduled",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/sweep-media",
+      "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/cron/pattern-briefs",
+      "schedule": "0 4 * * 1"
+    },
+    {
+      "path": "/api/cron/user-working-summaries",
+      "schedule": "30 4 * * *"
+    },
+    {
+      "path": "/api/cron/edit-delta-distill",
+      "schedule": "0 5 * * *"
+    },
+    {
+      "path": "/api/cron/agent-loop",
+      "schedule": "0 * * * *"
+    }
   ]
 }

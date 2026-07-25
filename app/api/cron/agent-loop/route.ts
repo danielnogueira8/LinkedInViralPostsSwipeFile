@@ -2,6 +2,11 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { postCronAlert } from "@/lib/cron-alert";
 import { scanAgentOpportunities } from "@/lib/agent-loop/scan";
+import { latestRelevantScrape } from "@/lib/supabase-scoped";
+import {
+  scanFreshness,
+  freshnessMessage,
+} from "@/lib/agent-loop/scan-freshness";
 import { actOnOpportunity, type AgentOpportunityRow } from "@/lib/agent-loop/act";
 import { errorResponse } from "@/lib/workspace";
 
@@ -72,11 +77,36 @@ export async function GET(req: Request) {
       expired?: number;
       draftedToday?: number;
       acted?: Array<{ id: string; ok: boolean; reason?: string }>;
+      skipped?: string;
       error?: string;
     }> = [];
 
     for (const workspaceId of workspaceIds) {
       try {
+        // Only scan once today's scrape has actually COMPLETED. The scan used
+        // to run purely on the 06:00 timer, six hours after /api/cron/daily
+        // merely ENQUEUED the scrape — so a slow, retried or failed fetch left
+        // it rebuilding "Model recently viral posts" from yesterday's pool with
+        // no error anywhere. Skipping is the safe direction: the existing
+        // opportunities stay visible, and the next run picks them up once the
+        // posts land. A forced manual trigger (?workspace=) bypasses the gate.
+        if (!workspaceParam) {
+          const run = await latestRelevantScrape(workspaceId).catch(() => null);
+          const freshness = scanFreshness(run, new Date());
+          if (!freshness.fresh) {
+            console.warn(
+              JSON.stringify({
+                agent_loop_scan_skipped: {
+                  workspace_id: workspaceId,
+                  reason: freshness.reason,
+                  message: freshnessMessage(freshness),
+                },
+              }),
+            );
+            results.push({ workspaceId, skipped: freshness.reason });
+            continue;
+          }
+        }
         const scan = await scanAgentOpportunities(sb, workspaceId);
 
         // Hard daily cap: count drafts already completed today (UTC) so manual
