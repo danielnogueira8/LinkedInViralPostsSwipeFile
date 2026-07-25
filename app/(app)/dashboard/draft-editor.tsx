@@ -32,7 +32,8 @@ import {
   LINKEDIN_SEE_MORE_CHARS,
   type FormatStyle,
 } from "@/lib/linkedin-format";
-import { getSelectionAnchor } from "@/lib/textarea-caret";
+import { getSelectionAnchor, getCaretCoordinates } from "@/lib/textarea-caret";
+import { hookCutoff, type HookViewport } from "@/lib/hook-cutoff";
 import {
   emptyHistory,
   pushHistory,
@@ -55,6 +56,7 @@ export function DraftEditor({
   toolbar = "floating",
   onBlur,
   showCounter = true,
+  hookCutoffViewport = null,
 }: {
   value: string;
   onChange: (next: string) => void;
@@ -77,6 +79,9 @@ export function DraftEditor({
   // Hide the editor's own counter when the surrounding surface already shows
   // one — otherwise the same "1,661 / 3,000" renders twice, one line apart.
   showCounter?: boolean;
+  // Draw a dotted rule where LinkedIn hides the rest behind "…see more".
+  // Off by default; the Cowork draft turns it on.
+  hookCutoffViewport?: HookViewport | null;
 }) {
   const taRef = useRef<HTMLTextAreaElement>(null);
   // Hidden picker behind the toolbar's image button (LinkedIn-style). Uses
@@ -111,6 +116,50 @@ export function DraftEditor({
   const [floatPos, setFloatPos] = useState<{ top: number; left: number } | null>(
     null,
   );
+  // Pixel offset of the "…see more" cut inside the textarea. null = the post
+  // is short enough that nothing is hidden, so no rule is drawn.
+  const [cutTop, setCutTop] = useState<number | null>(null);
+
+  // Measure where the hook cut falls, in pixels. Depends on WRAPPING, so it is
+  // re-measured on every text change and on resize — a narrower panel wraps
+  // sooner and moves the line.
+  //
+  // The measurement is deferred to an animation frame rather than run inline:
+  // it reads layout (via a mirror div), so it must happen after paint, and
+  // setting state synchronously inside an effect would cascade a second render
+  // on every keystroke. The setter also bails when the position is unchanged,
+  // which is the common case while typing mid-line.
+  useEffect(() => {
+    // No early setState here: when the marker is disabled the effect simply
+    // does nothing, and the render below ignores cutTop anyway (it is gated on
+    // hookCutoffViewport), so there is no stale line to clear.
+    if (!hookCutoffViewport) return;
+    const ta = taRef.current;
+    if (!ta) return;
+    let frame = 0;
+    const measure = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const el = taRef.current;
+        if (!el) return;
+        const { index, reason } = hookCutoff(value, hookCutoffViewport);
+        if (reason === "none") {
+          setCutTop((prev) => (prev === null ? prev : null));
+          return;
+        }
+        const { top, height } = getCaretCoordinates(el, index);
+        const next = top + height;
+        setCutTop((prev) => (prev === next ? prev : next));
+      });
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(ta);
+    return () => {
+      cancelAnimationFrame(frame);
+      ro.disconnect();
+    };
+  }, [value, hookCutoffViewport]);
 
   // Recompute the floating toolbar position from the current selection. Hidden
   // when the selection is collapsed (nothing highlighted).
@@ -611,6 +660,9 @@ export function DraftEditor({
       </div>
       )}
 
+      {/* The textarea is wrapped so the hook-cutoff rule can be absolutely
+          positioned over it. relative + min-h-0 so it still flexes. */}
+      <div className={cn("relative flex min-h-0 flex-1 flex-col")}>
       <textarea
         ref={taRef}
         value={value}
@@ -662,6 +714,22 @@ export function DraftEditor({
         )}
         placeholder="Write your post…"
       />
+      {/* "…see more" boundary. Dotted and muted: a writing aid, not a warning.
+          pointer-events-none so it never blocks a click into the text. */}
+      {hookCutoffViewport && cutTop !== null && (
+        <div
+          className="pointer-events-none absolute inset-x-3 z-10 flex items-center gap-2"
+          style={{ top: cutTop }}
+          aria-hidden
+        >
+          <span className="h-px flex-1 border-t border-dashed border-muted-foreground/40" />
+          <span className="whitespace-nowrap rounded-full bg-white px-1.5 text-[9px] font-medium uppercase tracking-[0.08em] text-muted-foreground/70">
+            …see more
+          </span>
+          <span className="h-px flex-1 border-t border-dashed border-muted-foreground/40" />
+        </div>
+      )}
+      </div>
       {draggingMedia && (
         <p className="-mt-1 text-xs font-medium text-primary">Drop image to attach it</p>
       )}
