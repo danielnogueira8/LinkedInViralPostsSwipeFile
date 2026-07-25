@@ -2,13 +2,18 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 
 const createClient = vi.fn(
   (
-    _url: string,
-    _key: string,
-    _options: {
+    url: string,
+    key: string,
+    options: {
       auth: { persistSession: boolean; autoRefreshToken: boolean };
       accessToken: () => Promise<string | null>;
     },
-  ) => ({ kind: "request-client" }),
+  ) => {
+    void url;
+    void key;
+    void options;
+    return { kind: "request-client" };
+  },
 );
 
 vi.mock("@supabase/supabase-js", () => ({ createClient }));

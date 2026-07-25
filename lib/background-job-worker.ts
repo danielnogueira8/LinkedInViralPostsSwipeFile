@@ -29,7 +29,6 @@ import { runVoiceGeneration } from "@/lib/voice-generation";
 import { runLeadSharkBindJob } from "@/lib/leadshark-bind-job";
 import { runLeadSharkStatsSyncJob } from "@/lib/leadshark-stats-job";
 import { supabaseAdmin } from "@/lib/supabase";
-import { revalidatePath } from "next/cache";
 import { UsagePersistenceError } from "@/lib/openrouter";
 import {
   claimWorkspaceCost,

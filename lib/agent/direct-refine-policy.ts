@@ -1,8 +1,4 @@
-import { guardRefineCollapse } from "@/lib/chat-artifact-policy";
-import {
-  splicePreservedBody,
-  splitHookLines,
-} from "@/lib/hook-splice";
+import { splicePreservedBody } from "@/lib/hook-splice";
 import type { RequestedCharacterRange } from "@/lib/agent/draft-output-policy";
 
 export type DirectRefineFocus = "hook" | "cta" | "shorten" | "general";
@@ -198,40 +194,6 @@ function replaceFinalParagraph(
       candidate.body +
       originalBody.slice(original.end),
   };
-}
-
-function segmentWithinRange(
-  segment: string,
-  range: RequestedCharacterRange | null | undefined,
-  label: "hook" | "CTA",
-): { ok: true } | { ok: false; message: string } {
-  if (range?.max !== undefined && segment.length > range.max) {
-    return {
-      ok: false,
-      message: `The revised ${label} was ${segment.length} characters, over the requested ${range.max}-character limit. Return a shorter replacement.`,
-    };
-  }
-  if (range?.min !== undefined && segment.length < range.min) {
-    return {
-      ok: false,
-      message: `The revised ${label} was ${segment.length} characters, under the requested ${range.min}-character minimum. Return a complete replacement in range.`,
-    };
-  }
-  return { ok: true };
-}
-
-function requireActualRevision(
-  originalBody: string,
-  body: string,
-): { ok: true; body: string } | { ok: false; message: string } {
-  if (body.trim() === originalBody.trim()) {
-    return {
-      ok: false,
-      message:
-        "The candidate did not change the post. Return one complete replacement that applies the requested revision.",
-    };
-  }
-  return { ok: true, body };
 }
 
 export function transformDirectRefineCandidate(input: {

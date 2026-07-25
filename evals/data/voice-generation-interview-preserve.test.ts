@@ -19,6 +19,7 @@ const updates: Array<Record<string, unknown>> = [];
 function fakeSupabase() {
   return {
     from(table: string) {
+      void table;
       const builder: Record<string, unknown> = {};
       const chain = () => builder;
       Object.assign(builder, {
