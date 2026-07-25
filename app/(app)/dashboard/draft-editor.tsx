@@ -13,6 +13,7 @@ import {
   Undo2,
   Redo2,
   RemoveFormatting,
+  ImageIcon,
 } from "lucide-react";
 import { AiIcon } from "@/components/ai-icon";
 import { clipboardHasText, clipboardImageFiles } from "@/lib/clipboard-images";
@@ -52,6 +53,7 @@ export function DraftEditor({
   onMediaFiles,
   allowImagePaste = false,
   toolbar = "floating",
+  onBlur,
 }: {
   value: string;
   onChange: (next: string) => void;
@@ -68,8 +70,15 @@ export function DraftEditor({
   // detail and the controls should be visible without hunting for them.
   // Defaulted so every existing caller is untouched.
   toolbar?: "floating" | "full";
+  // Fired when the textarea loses focus. The Cowork draft uses this to
+  // persist the body, now that there is no "Done" button to save on.
+  onBlur?: () => void;
 }) {
   const taRef = useRef<HTMLTextAreaElement>(null);
+  // Hidden picker behind the toolbar's image button (LinkedIn-style). Uses
+  // the same onMediaFiles channel as drag/drop and paste, so every route to
+  // attaching an image lands on one upload path.
+  const fileRef = useRef<HTMLInputElement>(null);
   // Emoji picker (the always-visible bar above the textarea). Emoji needs a
   // cursor, not a selection, so it lives on its own bar rather than the
   // selection-only floating toolbar.
@@ -425,7 +434,15 @@ export function DraftEditor({
     // Bold/lists/Ask-AI live in the floating toolbar that pops over a
     // selection. Emoji needs a cursor (not a selection), so it sits on a small
     // always-visible bar above the textarea.
-    <div className={cn("flex flex-col gap-2", className)}>
+    <div
+      className={cn(
+        "flex flex-col gap-2",
+        // In the full-toolbar (Cowork) layout the editor owns the column, so
+        // it flexes to fill it; elsewhere it stays content-sized as before.
+        toolbar === "full" && "min-h-0 flex-1",
+        className,
+      )}
+    >
       {/* Persistent toolbar (Cowork draft workspace). Every transform acts on
           the selection, or on the CURRENT LINE when nothing is selected — so no
           button is ever a no-op, and undo makes that safe to explore. */}
@@ -505,6 +522,14 @@ export function DraftEditor({
 
           <ToolbarDivider />
 
+          {onMediaFiles && (
+            <ToolbarButton
+              label="Add image"
+              onClick={() => fileRef.current?.click()}
+            >
+              <ImageIcon className="h-3.5 w-3.5" />
+            </ToolbarButton>
+          )}
           <ToolbarButton
             label="Emoji"
             onClick={() => setEmojiOpen((o) => !o)}
@@ -518,6 +543,20 @@ export function DraftEditor({
           >
             <RemoveFormatting className="h-3.5 w-3.5" />
           </ToolbarButton>
+
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/jpeg,image/png,image/gif,image/webp"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              const files = Array.from(e.target.files ?? []);
+              if (files.length) onMediaFiles?.(files);
+              // Reset so picking the SAME file again still fires onChange.
+              e.target.value = "";
+            }}
+          />
 
           {emojiOpen && (
             <EmojiPicker
@@ -573,7 +612,10 @@ export function DraftEditor({
         value={value}
         onChange={(e) => commit(e.target.value)}
         onSelect={refreshFloat}
-        onBlur={() => setFloatPos(null)}
+        onBlur={() => {
+          setFloatPos(null);
+          onBlur?.();
+        }}
         onPaste={(event) => {
           // Keep this on the editor rather than the document: image pastes are
           // only meaningful while this post editor is mounted, and a nested
@@ -631,6 +673,7 @@ export function DraftEditor({
           onBold={() => onStyle("bold")}
           onBullet={() => applyToSelection(toggleBulletList)}
           onNumber={() => applyToSelection(toggleNumberedList)}
+          showFormatting={toolbar !== "full"}
         />
       )}
 
@@ -741,6 +784,7 @@ function FloatingToolbar({
   onBold,
   onBullet,
   onNumber,
+  showFormatting = true,
 }: {
   top: number;
   left: number;
@@ -748,6 +792,11 @@ function FloatingToolbar({
   onBold: () => void;
   onBullet: () => void;
   onNumber: () => void;
+  // When a persistent toolbar is already on screen (toolbar="full"), the
+  // selection popover would be duplicating controls the user can already see.
+  // Ask AI is the exception: it is the only action that NEEDS a selection, so
+  // it has nowhere else to live.
+  showFormatting?: boolean;
 }) {
   const press = (fn: () => void) => (e: React.MouseEvent) => {
     e.preventDefault(); // keep textarea focus + selection
@@ -774,17 +823,21 @@ function FloatingToolbar({
           <AiIcon className="h-3.5 w-3.5" />
           Ask AI
         </button>
-        <div className="mx-0.5 h-4 w-px bg-muted" />
-        <FloatButton label="Bold" onMouseDown={press(onBold)}>
-          <Bold className="h-3.5 w-3.5" />
-        </FloatButton>
-        <div className="mx-0.5 h-4 w-px bg-muted" />
-        <FloatButton label="Bulleted list" onMouseDown={press(onBullet)}>
-          <List className="h-3.5 w-3.5" />
-        </FloatButton>
-        <FloatButton label="Numbered list" onMouseDown={press(onNumber)}>
-          <ListOrdered className="h-3.5 w-3.5" />
-        </FloatButton>
+        {showFormatting && (
+          <>
+            <div className="mx-0.5 h-4 w-px bg-muted" />
+            <FloatButton label="Bold" onMouseDown={press(onBold)}>
+              <Bold className="h-3.5 w-3.5" />
+            </FloatButton>
+            <div className="mx-0.5 h-4 w-px bg-muted" />
+            <FloatButton label="Bulleted list" onMouseDown={press(onBullet)}>
+              <List className="h-3.5 w-3.5" />
+            </FloatButton>
+            <FloatButton label="Numbered list" onMouseDown={press(onNumber)}>
+              <ListOrdered className="h-3.5 w-3.5" />
+            </FloatButton>
+          </>
+        )}
       </div>
     </div>
   );
