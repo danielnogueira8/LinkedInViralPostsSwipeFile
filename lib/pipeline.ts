@@ -87,10 +87,26 @@ export async function runDailyPipeline(
     // Testing seam: override the wall-clock start the deadline check measures
     // against. Defaults to now.
     startedAt?: number;
+    // Testing seam: override the wall-clock reader the deadline check uses, so a
+    // test can cross the budget MID-run (e.g. advance it during the scrape) and
+    // deterministically exercise the templating/hook self-stops. Defaults to
+    // Date.now, so production behaviour is unchanged.
+    now?: () => number;
   },
 ): Promise<{ runId: string; postsCount: number; viralCount: number }> {
   const sb = supabaseAdmin();
-  const pipelineStartedAt = opts?.startedAt ?? Date.now();
+  // Wall-clock reader (a testing seam; defaults to Date.now). Named `readNow` to
+  // avoid shadowing the block-scoped `now` used further down for progress
+  // timestamps.
+  const readNow = opts?.now ?? Date.now;
+  const pipelineStartedAt = opts?.startedAt ?? readNow();
+  // Wall-clock budget guard shared by every phase that can run long — the scrape
+  // pool, the templating loop, and the hook loop. Returns true once we're close
+  // enough to the route's 300s maxDuration that we must stop STARTING new work
+  // and fall through to the terminal persist (which marks the run done/error),
+  // rather than be hard-killed mid-loop and leave the run stuck 'running'.
+  const deadlineHit = () =>
+    readNow() - pipelineStartedAt > CRON_BUDGET_MS - CRON_DEADLINE_MARGIN_MS;
   let runId: string;
   if (opts?.runId) {
     runId = opts.runId;
@@ -491,7 +507,7 @@ export async function runDailyPipeline(
         dirty = true;
       }
       },
-      () => Date.now() - pipelineStartedAt > CRON_BUDGET_MS - CRON_DEADLINE_MARGIN_MS,
+      deadlineHit,
     );
     if (stoppedEarly) {
       console.warn(
@@ -591,6 +607,25 @@ export async function runDailyPipeline(
     // cap. Fail-open per post: a model or insert failure logs and continues —
     // templates are a bonus, never a scrape blocker.
     for (let i = 0; i < templateOutliers.length; i++) {
+      // Self-stop mirroring the scrape pool: stop STARTING new paid templatize
+      // work once we're near the platform deadline. Templates already written
+      // persist (each slot-claim is atomic + idempotent on
+      // (workspace_id, origin_post_id)); the un-processed outliers are simply
+      // re-derived and templatized on a later scrape. Breaking here (instead of
+      // being hard-killed mid-loop) lets the terminal persist below mark the run
+      // done, so it never gets stuck 'running'.
+      if (deadlineHit()) {
+        console.warn(
+          JSON.stringify({
+            templating_pipeline_deadline_hit: {
+              runId,
+              done: i,
+              remaining: templateOutliers.length - i,
+            },
+          }),
+        );
+        break;
+      }
       const candidate = templateOutliers[i];
       await persist({
         phase: "templating",
@@ -688,6 +723,24 @@ export async function runDailyPipeline(
     );
 
     for (let i = 0; i < hookTodo.length; i++) {
+      // Same self-stop as the templating loop above. Every extracted hook is
+      // inserted atomically and de-duped against the existing library, so
+      // breaking here only DEFERS the not-yet-processed candidates — the next
+      // run re-selects them from the global viral corpus (they still lack a
+      // hooks row). This keeps us from blowing past maxDuration and skipping the
+      // terminal persist that finalizes the run.
+      if (deadlineHit()) {
+        console.warn(
+          JSON.stringify({
+            hook_pipeline_deadline_hit: {
+              runId,
+              done: i,
+              remaining: hookTodo.length - i,
+            },
+          }),
+        );
+        break;
+      }
       const p = hookTodo[i];
       const name = (p.accounts as unknown as { name?: string })?.name ?? "?";
       await persist({ phase: "hooks", phase_msg: `Hook ${i + 1}/${hookTodo.length} — ${name}` });
