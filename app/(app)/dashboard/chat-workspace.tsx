@@ -5135,7 +5135,11 @@ export function ChatWorkspace({
       {panelOpen && hasDraftPanel && (
         <aside
           className={cn(
-            "relative hidden lg:flex shrink-0 flex-col border-l border-border bg-muted/80",
+            // White, not tinted: the panel holds ONE full-height draft, so a
+            // grey backdrop just added a third nested surface behind a card
+            // that already has its own border. The left border is enough to
+            // separate it from the chat column.
+            "relative hidden lg:flex shrink-0 flex-col border-l border-border bg-card",
             resizingDraftPanel && "select-none",
           )}
           style={{
@@ -5218,7 +5222,7 @@ export function ChatWorkspace({
               </button>
             </div>
           </div>
-          <div className="flex-1 min-h-0 overflow-y-scroll [scrollbar-gutter:stable] p-3.5 flex flex-col gap-3">
+          <div className="flex-1 min-h-0 overflow-y-scroll [scrollbar-gutter:stable] flex flex-col gap-2">
             {artifactsList}
           </div>
         </aside>
@@ -5442,7 +5446,7 @@ function CollapsedDraftRow({
   // A row (not a <button>) so the delete control isn't a button-in-button. The
   // expand area is the button; delete sits beside it.
   return (
-    <div className="group flex w-full items-center gap-2 rounded-2xl border border-border bg-card/90 px-3 py-2.5 shadow-sm transition-colors hover:bg-card">
+    <div className="group mx-3 flex w-auto items-center gap-2 rounded-xl border border-border bg-muted/60 px-3 py-2.5 transition-colors hover:bg-muted">
       <button
         type="button"
         onClick={onExpand}
