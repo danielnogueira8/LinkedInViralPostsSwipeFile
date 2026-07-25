@@ -432,6 +432,44 @@ describe("completeChatAnthropic (mocked SDK)", () => {
     expect(tools[1].cache_control).toEqual({ type: "ephemeral" });
   });
 
+  // REGRESSION: the web_search server tool is appended AFTER the user tools, so
+  // marking "the last tool" at map time left the breakpoint mid-list on every
+  // grounded call — the cached tool prefix stopped short of the real tool set.
+  // Nothing surfaces this at runtime; it just quietly lowers the hit rate.
+  test("on a grounded call the cache breakpoint is on the LAST tool, web_search included", async () => {
+    lastBody.current = null;
+    finalMessage.mockResolvedValue({
+      content: [{ type: "text", text: "ok" }],
+      stop_reason: "end_turn",
+      model: "claude-sonnet-5",
+      usage: { input_tokens: 10, output_tokens: 5 },
+    });
+    const { completeChatAnthropic } = await import("@/lib/anthropic");
+    await completeChatAnthropic({
+      model: "claude-sonnet-5",
+      messages: [
+        { role: "system", content: "big stable system prompt" },
+        { role: "user", content: "go" },
+      ],
+      tools: [
+        { type: "function", function: { name: "a", description: "d", parameters: {} } },
+        { type: "function", function: { name: "b", description: "d", parameters: {} } },
+      ] as ToolDef[],
+      plugins: [{ id: "web", max_results: 3 }],
+    });
+    const tools = lastBody.current!.tools as Array<{
+      name?: string;
+      type?: string;
+      cache_control?: unknown;
+    }>;
+    // web_search really is last...
+    expect(tools[tools.length - 1].type).toBe("web_search_20260209");
+    // ...and it carries the one and only breakpoint.
+    expect(tools[tools.length - 1].cache_control).toEqual({ type: "ephemeral" });
+    const marked = tools.filter((t) => t.cache_control !== undefined);
+    expect(marked).toHaveLength(1);
+  });
+
   test("plugins:[{id:web}] adds the web_search tool and returns citations", async () => {
     lastBody.current = null;
     finalMessage.mockResolvedValue({
