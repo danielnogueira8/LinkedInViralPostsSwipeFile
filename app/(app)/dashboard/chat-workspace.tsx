@@ -114,6 +114,7 @@ import { localDateFromDatetimeInput } from "@/lib/schedule-local-date";
 import {
   LINKEDIN_MAX_CHARS,
   LINKEDIN_WARN_CHARS,
+  LINKEDIN_SEE_MORE_CHARS,
 } from "@/lib/linkedin-format";
 import { suggestedScheduleLocalInput } from "@/lib/next-open-schedule-day";
 import { useCopiedFlag } from "@/lib/use-copied-flag";
@@ -7098,6 +7099,7 @@ function ArtifactCard({
             setUserEdited(true);
           }}
           toolbar="full"
+          showCounter={false}
           rows={14}
           textareaClassName="min-h-[220px] flex-1"
           onBlur={() => void persistBody()}
@@ -7161,9 +7163,17 @@ function ArtifactCard({
           a long draft scrolls. */}
       {artifact.kind !== "hook" && (
         <div className="flex items-center justify-between gap-3 border-t border-border bg-card px-3 py-1.5 text-[11px] shrink-0">
+          {/* Where LinkedIn cuts the hook — folded in here so the draft has ONE
+              status line rather than the editor and the card each rendering
+              their own. */}
+          <span className="text-muted-foreground">
+            {body.length <= LINKEDIN_SEE_MORE_CHARS
+              ? `${LINKEDIN_SEE_MORE_CHARS - body.length} chars before “…see more”`
+              : `hook cut at ${LINKEDIN_SEE_MORE_CHARS} chars`}
+          </span>
           <span
             className={cn(
-              "tabular-nums",
+              "ml-auto mr-3 tabular-nums",
               body.length > LINKEDIN_MAX_CHARS
                 ? "font-medium text-destructive"
                 : body.length >= LINKEDIN_WARN_CHARS
@@ -7188,11 +7198,6 @@ function ArtifactCard({
         </div>
       )}
       <div className="flex flex-wrap items-center gap-2 px-3 py-2.5 bg-card shrink-0">
-        {!canUpdateOriginal && (
-          <p className="basis-full px-1 text-[11px] font-medium text-muted-foreground">
-            Save adds this draft to your Posts board, ready to schedule.
-          </p>
-        )}
         <Button
           size="sm"
           variant="outline"

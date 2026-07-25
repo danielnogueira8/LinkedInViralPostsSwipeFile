@@ -54,6 +54,7 @@ export function DraftEditor({
   allowImagePaste = false,
   toolbar = "floating",
   onBlur,
+  showCounter = true,
 }: {
   value: string;
   onChange: (next: string) => void;
@@ -73,6 +74,9 @@ export function DraftEditor({
   // Fired when the textarea loses focus. The Cowork draft uses this to
   // persist the body, now that there is no "Done" button to save on.
   onBlur?: () => void;
+  // Hide the editor's own counter when the surrounding surface already shows
+  // one — otherwise the same "1,661 / 3,000" renders twice, one line apart.
+  showCounter?: boolean;
 }) {
   const taRef = useRef<HTMLTextAreaElement>(null);
   // Hidden picker behind the toolbar's image button (LinkedIn-style). Uses
@@ -705,8 +709,12 @@ export function DraftEditor({
       )}
 
       {/* Character counter — LinkedIn truncates the preview at ~210 and caps at
-          3,000. Show both so the user knows where the hook gets cut. */}
-      <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+          3,000. Show both so the user knows where the hook gets cut. Suppressed
+          when the host renders its own counter (see showCounter). */}
+      <div className={cn(
+        "flex items-center justify-between text-[11px] text-muted-foreground",
+        !showCounter && "hidden",
+      )}>
         <span>
           {count <= LINKEDIN_SEE_MORE_CHARS ? (
             <span className="text-muted-foreground">
