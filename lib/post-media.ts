@@ -18,7 +18,28 @@ export type PostMediaAttachment = {
   uploadedAt: string;
 };
 
-const IMAGE_MIME = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
+// Every still-image type LinkedIn's publish API accepts. JPEG/PNG/GIF/WebP were
+// the original four; the rest are formats phones and design tools emit by
+// default, so rejecting them here just made the picker refuse ordinary files:
+//   • image/jpg   — a non-standard but extremely common label for JPEG
+//   • image/heic/heif — the iPhone camera default
+//   • image/avif  — increasingly common export format
+//   • image/bmp / image/tiff — occasional exports from design tools
+// SVG is deliberately NOT here: it is an executable document (scripts, external
+// refs), LinkedIn does not accept it for posts, and accepting user-supplied SVG
+// into a media library is a stored-XSS surface.
+const IMAGE_MIME = new Set([
+  "image/jpeg",
+  "image/jpg",
+  "image/png",
+  "image/gif",
+  "image/webp",
+  "image/heic",
+  "image/heif",
+  "image/avif",
+  "image/bmp",
+  "image/tiff",
+]);
 // AVI (video/x-msvideo) is deliberately excluded — LinkedIn's publish API
 // doesn't support it, so accepting it here only let a file pass this gate
 // and then fail (or get silently rejected) downstream, wasting a publish
@@ -35,6 +56,13 @@ export const POST_MEDIA_MAX_BYTES: Record<PostMediaType, number> = {
 };
 
 export const MAX_LINKEDIN_IMAGES = 20;
+
+// The `accept` attribute for image pickers, derived from IMAGE_MIME so the
+// file dialog and the validator can never drift apart (they had: the picker
+// listed four types while the validator accepted the same four, and widening
+// one without the other silently does nothing).
+export const IMAGE_ACCEPT_ATTR = [...IMAGE_MIME].join(",");
+
 
 const filenameSchema = z.string().trim().min(1).max(240);
 const contentTypeSchema = z.string().trim().toLowerCase().min(3).max(120);

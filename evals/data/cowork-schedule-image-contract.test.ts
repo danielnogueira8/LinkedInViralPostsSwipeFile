@@ -9,7 +9,11 @@ const source = readFileSync(
 describe("Cowork schedule image flow", () => {
   test("offers an image picker inside the schedule panel", () => {
     expect(source).toContain('aria-label="Add image to scheduled post"');
-    expect(source).toContain('accept="image/jpeg,image/png,image/gif,image/webp"');
+    // The accept list is no longer hardcoded here: it's derived from
+    // IMAGE_MIME (lib/post-media) so the file dialog and the validator can't
+    // drift apart. Widening one while the other stayed at four types would
+    // silently do nothing — the picker simply wouldn't show the file.
+    expect(source).toContain("accept={IMAGE_ACCEPT_ATTR}");
   });
 
   test("persists the selected image before scheduling", () => {
