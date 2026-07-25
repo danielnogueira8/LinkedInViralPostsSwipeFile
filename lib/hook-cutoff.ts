@@ -1,33 +1,48 @@
 // Where LinkedIn cuts a post's hook with "…see more".
 //
-// Two limits apply and the cut happens at whichever comes FIRST:
+// LinkedIn shows roughly the first 140 characters on mobile and 210 on desktop,
+// but the real cutoff is reported anywhere between ~120 and 210 depending on how
+// the opening is broken up. The reason is that the snippet is a fixed number of
+// RENDERED LINES: a hard return early in the post leaves the rest of that line
+// unused, so less text fits. A blank line costs a whole rendered line for no
+// text at all.
 //
-//   1. a character budget — ~140 on mobile, ~210 on desktop
-//   2. a line budget — ~2 visible lines on mobile, ~3 on desktop
+// So this models a character budget where a line break is charged a PENALTY
+// rather than a hard stop, then backs the cut up to a word boundary — LinkedIn
+// truncates mid-sentence with an ellipsis, it does not stop tidily at a
+// paragraph edge.
 //
-// The line budget is the one people get wrong. A hook-first draft written as
-// three short lines is cut long before it reaches 140 characters, because each
-// hard return consumes a line of the allowance. Counting characters alone would
-// draw the marker in the wrong place on exactly the drafts that care most about
-// it, so both budgets are modelled here.
-//
-// These are approximations of a renderer we don't control: LinkedIn wraps on
-// pixel width, not character count, so a line of wide characters wraps sooner
-// than a narrow one. Treat the result as "about here", which is all a writing
-// aid needs to be — it exists to stop someone burying the hook, not to promise
-// the exact glyph.
+// It is an approximation of a renderer we don't control: LinkedIn wraps on pixel
+// width, not character count, so the true cut depends on the glyphs and the
+// device. Treat it as "about here", which is all a writing aid needs to be — it
+// exists to stop someone burying their hook, not to promise an exact character.
+// This is also why the marker belongs on a fixed-width POST PREVIEW rather than
+// inside a resizable editor, where a line model cannot know the width.
 
 export type HookViewport = "mobile" | "desktop";
 
 export const HOOK_LIMITS: Record<
   HookViewport,
-  { chars: number; lines: number; label: string }
+  { chars: number; label: string }
 > = {
   // Optimise for mobile first: most of the feed is read on a phone, and it is
   // the tighter of the two limits.
-  mobile: { chars: 140, lines: 2, label: "Mobile" },
-  desktop: { chars: 210, lines: 3, label: "Desktop" },
+  mobile: { chars: 140, label: "Mobile" },
+  desktop: { chars: 210, label: "Desktop" },
 };
+
+// A hard return costs more than its one character, because LinkedIn's snippet
+// is a fixed number of RENDERED lines: breaking early leaves the rest of that
+// line unused, so the visible text shrinks. Reported cutoffs land anywhere
+// between ~120 and 210 characters depending on how the opening is broken up,
+// and this penalty is what models that spread. A blank line (paragraph break)
+// costs double, since it burns a whole rendered line for no text.
+//
+// It is an approximation of a renderer we don't control — LinkedIn wraps on
+// pixel width, not characters — but it captures the behaviour that actually
+// changes a writer's decision: front-load the hook, don't break early.
+const NEWLINE_PENALTY = 30;
+const BLANK_LINE_PENALTY = 60;
 
 export type HookCutoff = {
   /** The text LinkedIn shows before "…see more". */
@@ -36,60 +51,61 @@ export type HookCutoff = {
   hidden: string;
   /** Index in `body` where the cut falls. */
   index: number;
-  /** Which budget ran out first — drives the explanation we show. */
-  reason: "chars" | "lines" | "none";
+  /** Why it was cut — drives the explanation shown to the writer. */
+  reason: "chars" | "breaks" | "none";
 };
 
 /**
- * Split `body` at LinkedIn's "…see more" boundary for a viewport.
+ * Split `body` at LinkedIn's "…see more" boundary.
  *
- * Line accounting: a paragraph break renders as a blank line, so "a\n\nb" uses
- * up two of the allowance before "b" is reached — which is why drafts with
- * generous spacing get truncated so early.
+ * Walks the text spending a character budget, charging extra for line breaks,
+ * then backs up to the nearest word boundary so the cut reads like the real
+ * thing — mid-sentence, never mid-word.
  */
 export function hookCutoff(
   body: string,
   viewport: HookViewport = "mobile",
 ): HookCutoff {
-  const { chars, lines } = HOOK_LIMITS[viewport];
   if (!body) return { visible: "", hidden: "", index: 0, reason: "none" };
+  const budget = HOOK_LIMITS[viewport].chars;
 
-  // --- line budget --------------------------------------------------------
-  // Walk the raw lines (including empty ones, which occupy a rendered line)
-  // and find the offset at which the allowance is used up.
-  let lineIndex: number | null = null;
-  let consumed = 0;
-  let offset = 0;
-  const parts = body.split("\n");
-  for (let i = 0; i < parts.length; i += 1) {
-    consumed += 1;
-    if (consumed > lines) {
-      // The cut lands at the END of the previous line, i.e. just before this
-      // line's leading newline.
-      lineIndex = Math.max(0, offset - 1);
+  let spent = 0;
+  let cut = -1;
+  let sawBreak = false;
+  for (let i = 0; i < body.length; i += 1) {
+    const ch = body[i];
+    if (ch === "\n") {
+      sawBreak = true;
+      // A newline immediately followed by another is a paragraph break.
+      const blank = body[i + 1] === "\n";
+      spent += blank ? BLANK_LINE_PENALTY : NEWLINE_PENALTY;
+    } else {
+      spent += 1;
+    }
+    if (spent >= budget) {
+      cut = i + 1;
       break;
     }
-    offset += parts[i].length + 1; // +1 for the newline itself
   }
-
-  // --- character budget ---------------------------------------------------
-  const charIndex = body.length > chars ? chars : null;
-
-  // Whichever runs out first wins.
-  const candidates = [
-    { index: charIndex, reason: "chars" as const },
-    { index: lineIndex, reason: "lines" as const },
-  ].filter((c): c is { index: number; reason: "chars" | "lines" } => c.index !== null);
-
-  if (candidates.length === 0) {
+  if (cut === -1 || cut >= body.length) {
     return { visible: body, hidden: "", index: body.length, reason: "none" };
   }
-  const cut = candidates.reduce((a, b) => (a.index <= b.index ? a : b));
+
+  // Back up to a word boundary — LinkedIn cuts mid-sentence, not mid-word.
+  // Only search a short way back so a very long token can still be split.
+  let boundary = cut;
+  const floor = Math.max(0, cut - 15);
+  while (boundary > floor && !/\s/.test(body[boundary - 1])) boundary -= 1;
+  if (boundary <= floor) boundary = cut; // no boundary nearby; hard cut
+
+  const visible = body.slice(0, boundary).replace(/\s+$/, "");
   return {
-    visible: body.slice(0, cut.index),
-    hidden: body.slice(cut.index),
-    index: cut.index,
-    reason: cut.reason,
+    visible,
+    hidden: body.slice(boundary),
+    index: boundary,
+    // Attribute to line breaks only when they actually shortened the snippet,
+    // i.e. the raw text up to the cut is well under the plain character budget.
+    reason: sawBreak && boundary < budget ? "breaks" : "chars",
   };
 }
 
@@ -107,9 +123,9 @@ export function hookCutoffHint(
   viewport: HookViewport = "mobile",
 ): string | null {
   const { reason } = hookCutoff(body, viewport);
-  const { chars, lines, label } = HOOK_LIMITS[viewport];
+  const { chars, label } = HOOK_LIMITS[viewport];
   if (reason === "none") return null;
-  return reason === "lines"
-    ? `${label}: cut after ${lines} lines — line breaks count toward the limit`
-    : `${label}: cut at ${chars} characters`;
+  return reason === "breaks"
+    ? `${label}: cut early — line breaks in the opening shorten the preview`
+    : `${label}: cut at ~${chars} characters`;
 }

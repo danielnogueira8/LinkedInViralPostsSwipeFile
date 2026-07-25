@@ -3,41 +3,17 @@
 import { hookCutoff, HOOK_LIMITS, type HookViewport } from "@/lib/hook-cutoff";
 import { cn } from "@/lib/utils";
 
-// A soft dotted rule showing where LinkedIn hides the rest of a post behind
-// "…see more", drawn over a draft's text.
+// Shows where LinkedIn hides the rest of a post behind "…see more".
 //
-// Deliberately quiet: dotted, muted, and it disappears entirely when the post
-// is short enough not to be cut. It's a writing aid, not a warning — nothing
-// here is an error state.
-
-export function HookCutoffMarker({
-  viewport = "mobile",
-  className,
-}: {
-  viewport?: HookViewport;
-  className?: string;
-}) {
-  const { lines, chars, label } = HOOK_LIMITS[viewport];
-  return (
-    <div
-      className={cn("pointer-events-none flex items-center gap-2", className)}
-      aria-hidden
-    >
-      <span className="h-px flex-1 border-t border-dashed border-border" />
-      <span className="whitespace-nowrap text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
-        {label} · “…see more”
-      </span>
-      <span className="h-px flex-1 border-t border-dashed border-border" />
-      <span className="sr-only">
-        {`LinkedIn hides the rest of this post behind "see more" on ${label.toLowerCase()} — about ${chars} characters or ${lines} lines.`}
-      </span>
-    </div>
-  );
-}
+// This lives on POST PREVIEWS, not inside the editor. The cut depends on
+// rendered line width, so in a resizable editor the model can't know where the
+// line actually falls — and a rule floating over live text reads as noise. On a
+// fixed-width preview the position is meaningful and the layout is stable.
 
 /**
- * The read-only preview: renders the body with the cutoff rule drawn in place
- * and everything past it dimmed, so the hook is visible at a glance.
+ * Renders the body the way the feed does: the visible snippet, then the real
+ * "…see more" affordance, then the remainder dimmed so the writer can still
+ * read it.
  */
 export function HookCutoffPreview({
   body,
@@ -49,16 +25,52 @@ export function HookCutoffPreview({
   className?: string;
 }) {
   const { visible, hidden, reason } = hookCutoff(body, viewport);
+
+  if (reason === "none") {
+    return (
+      <div className={cn("whitespace-pre-wrap text-foreground", className)}>
+        {body}
+      </div>
+    );
+  }
+
   return (
-    <div className={cn("whitespace-pre-wrap text-[13px] leading-relaxed", className)}>
-      <span className="text-foreground">{visible}</span>
-      {reason !== "none" && (
-        <>
-          <HookCutoffMarker viewport={viewport} className="my-2" />
-          {/* Dimmed, not hidden — the writer still needs to read the rest. */}
-          <span className="text-muted-foreground/70">{hidden}</span>
-        </>
-      )}
+    <div className={cn("text-foreground", className)}>
+      {/* The snippet, ending exactly where the feed ends it — mid-sentence,
+          with the ellipsis and link inline, as LinkedIn renders it. */}
+      <span className="whitespace-pre-wrap">{visible}</span>
+      <span className="text-muted-foreground">… </span>
+      <span className="font-medium text-muted-foreground">see more</span>
+
+      {/* Everything past the fold, dimmed rather than hidden: the writer still
+          needs to read their own post. */}
+      <div className="mt-1 whitespace-pre-wrap text-muted-foreground/60">
+        {hidden.replace(/^\s+/, "")}
+      </div>
     </div>
+  );
+}
+
+/**
+ * A one-line summary of the cut for a status bar: how much of the hook is
+ * visible, and what happens past it. Null when nothing is truncated.
+ */
+export function HookCutoffSummary({
+  body,
+  viewport = "mobile",
+  className,
+}: {
+  body: string;
+  viewport?: HookViewport;
+  className?: string;
+}) {
+  const { visible, reason } = hookCutoff(body, viewport);
+  const { label, chars } = HOOK_LIMITS[viewport];
+  if (reason === "none") return null;
+  return (
+    <span className={cn("text-muted-foreground", className)}>
+      {label}: ~{visible.length} of {chars} chars shown before “…see more”
+      {reason === "breaks" ? " — line breaks shorten it" : ""}
+    </span>
   );
 }

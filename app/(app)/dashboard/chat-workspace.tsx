@@ -7039,7 +7039,6 @@ function ArtifactCard({
           }}
           toolbar="full"
           showCounter={false}
-          hookCutoffViewport="mobile"
           rows={14}
           textareaClassName="min-h-[220px] flex-1"
           onBlur={() => void persistBody()}
