@@ -100,7 +100,6 @@ vi.mock("@/lib/workspace-cost-claims", () => ({
 }));
 
 const { drainBackgroundJobs } = await import("@/lib/background-job-worker");
-const { BackgroundJobLeaseLostError } = await import("@/lib/background-jobs");
 
 function baseJob(overrides: Record<string, unknown> = {}) {
   return {

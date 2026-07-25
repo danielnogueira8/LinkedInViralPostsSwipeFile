@@ -193,7 +193,6 @@ export type TurnExecuteContext = Pick<
   | "history"
   | "effectiveUserInstruction"
   | "orchestratorAttachmentBlocks"
-  | "currentModelSource"
   | "modelSourceImage"
   | "modelSourceImageSkipReason"
   | "modelSourceImageSourcePostId"

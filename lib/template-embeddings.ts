@@ -1,4 +1,3 @@
-import { supabaseAdmin } from "./supabase";
 import { embedText, EMBEDDING_MODEL } from "./openrouter";
 import { toVectorLiteral } from "./post-embeddings";
 import { selectAllRows } from "./db-paginate";

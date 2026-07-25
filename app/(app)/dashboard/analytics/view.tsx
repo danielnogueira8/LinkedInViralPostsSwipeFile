@@ -6,7 +6,6 @@ import Link from "next/link";
 import { RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
-  sortPostsByRecency,
   impressionAxisTicks,
   type PostMetricsRow,
   type TrendPoint,

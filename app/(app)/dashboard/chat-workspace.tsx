@@ -43,7 +43,6 @@ import {
   PenLine,
   SquarePen,
   ClipboardCheck,
-  AlertCircle,
   X,
   FileText,
   Clock,
@@ -187,7 +186,6 @@ import type { DraftKind } from "@/lib/post-type";
 import type { ModelSourceAttachment } from "@/lib/model-source-attachments";
 import type { ComposerStarterId } from "@/lib/composer-task-context";
 import { requestServerTurnStop } from "@/lib/chat-stop";
-import { safeJsonSchema } from "@/lib/api-fetch";
 import {
   applyPersistedUserMessageId,
   hydrate,
@@ -748,13 +746,6 @@ export function ChatWorkspace({
       : null,
   });
   const hasContext = !isContextSummaryEmpty(contextSummary);
-  // The active chat's sidebar row. Prefer local state, but also consult fresh
-  // server props because a soft navigation can update initialChats without
-  // remounting this client component.
-  const activeChat = activeId
-    ? chats.find((c) => c.id === activeId) ??
-      initialChats.find((c) => c.id === activeId)
-    : undefined;
   const activeArtifactsAll: Artifact[] = activeId
     ? persistedDraftPanelArtifacts(chatSession.artifactsFor(activeId))
     : [];

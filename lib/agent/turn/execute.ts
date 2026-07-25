@@ -115,7 +115,6 @@ async function* runTurnPlan(
     history,
     effectiveUserInstruction,
     orchestratorAttachmentBlocks,
-    currentModelSource,
     modelSourceImage,
     modelSourceImageSkipReason,
     modelSourceImageSourcePostId,

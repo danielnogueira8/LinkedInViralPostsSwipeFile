@@ -2259,21 +2259,6 @@ describe("read-only orchestrator execution", () => {
     // The buffered artifact came through the engine's artifact channel, which
     // only carries finalizer-accepted drafts — dropping it would lose accepted
     // work and leave the chat text claiming nothing exists. Present it instead.
-    const planner = new ScriptedPlanner(PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL, [
-      {
-        toolArgs: {
-          actions: [
-            { id: "news", type: "search_news", query: "OpenAI announcement" },
-            {
-              id: "write",
-              type: "draft_post",
-              evidenceActionIds: ["news"],
-            },
-          ],
-        },
-        usage: usage(70, 15),
-      },
-    ]);
     const events: AgentEvent[] = [];
     for await (const event of runReadOnlyOrchestrator(input(), {
       runTool: async () => ({
