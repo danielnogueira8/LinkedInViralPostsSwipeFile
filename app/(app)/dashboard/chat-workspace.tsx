@@ -118,6 +118,7 @@ import {
   LINKEDIN_SEE_MORE_CHARS,
 } from "@/lib/linkedin-format";
 import { uploadMediaAsset } from "@/lib/upload-media-asset";
+import { draftOperations } from "@/lib/draft-operations-client";
 import { suggestedScheduleLocalInput } from "@/lib/next-open-schedule-day";
 import { useCopiedFlag } from "@/lib/use-copied-flag";
 import { resolveIntent } from "@/lib/post-intents";
@@ -6575,18 +6576,12 @@ function ArtifactCard({
     if (!refiningDraftId || saving) return;
     setSaving(true);
     try {
-      const res = await fetch(`/api/drafts/${refiningDraftId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          body,
-          content_format: draftMarkdownEnabled(artifact.meta)
-            ? "markdown"
-            : "plain",
-        }),
+      await draftOperations.update(refiningDraftId, {
+        body,
+        content_format: draftMarkdownEnabled(artifact.meta)
+          ? "markdown"
+          : "plain",
       });
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error || "Failed to update post");
       setSaved(true);
       toast.success("Post updated");
     } catch (e) {
@@ -6600,29 +6595,23 @@ function ArtifactCard({
   // otherwise save a new draft.
   const save = canUpdateOriginal ? updateOriginal : saveAsNew;
 
-  const persistScheduleChanges = async (draftId: string, errorMessage: string) => {
+  const persistScheduleChanges = async (draftId: string) => {
     // A refine artifact is newer than the Posts row even when the user has not
     // edited it locally (`dirty` compares against the artifact, not the row).
     // Always carry its body + format back to the original before scheduling.
     const shouldPersistBody = dirty || canUpdateOriginal;
     if (!shouldPersistBody && !scheduleMediaChanged) return;
-    const res = await fetch(`/api/drafts/${draftId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        ...(shouldPersistBody ? { body } : {}),
-        ...(shouldPersistBody && canUpdateOriginal
-          ? {
-              content_format: draftMarkdownEnabled(artifact.meta)
-                ? "markdown"
-                : "plain",
-            }
-          : {}),
-        media_attachments: scheduleMediaAttachments,
-      }),
+    await draftOperations.update(draftId, {
+      ...(shouldPersistBody ? { body } : {}),
+      ...(shouldPersistBody && canUpdateOriginal
+        ? {
+            content_format: draftMarkdownEnabled(artifact.meta)
+              ? "markdown"
+              : "plain",
+          }
+        : {}),
+      media_attachments: scheduleMediaAttachments,
     });
-    const data = await res.json();
-    if (!data.ok) throw new Error(data.error || errorMessage);
     if (shouldPersistBody) onBodyChange?.(body);
     setSaved(true);
   };
@@ -6630,12 +6619,12 @@ function ArtifactCard({
   const ensureSchedulableDraft = async (): Promise<string> => {
     if (canUpdateOriginal) {
       if (!refiningDraftId) throw new Error("Couldn't find the original post.");
-      await persistScheduleChanges(refiningDraftId, "Failed to update post");
+      await persistScheduleChanges(refiningDraftId);
       return refiningDraftId;
     }
 
     if (boardDraftId) {
-      await persistScheduleChanges(boardDraftId, "Failed to update draft");
+      await persistScheduleChanges(boardDraftId);
       return boardDraftId;
     }
 
@@ -6849,23 +6838,17 @@ function ArtifactCard({
     setScheduling(true);
     try {
       const draftId = await ensureSchedulableDraft();
-      const res = await fetch(`/api/drafts/${draftId}/schedule`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          scheduledAt: iso,
-          planToPostOn,
-          firstComment: firstComment.trim() || null,
-        }),
+      const data = await draftOperations.schedule(draftId, {
+        scheduledAt: iso,
+        planToPostOn,
+        firstComment: firstComment.trim() || null,
       });
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error || "Couldn't schedule.");
       const next = {
         board_draft_id: draftId,
-        scheduled_at: data.scheduledAt ?? iso,
+        scheduled_at: data.scheduledAt,
         schedule_status: "scheduled",
-        first_comment: data.firstComment ?? null,
-        plan_to_post_on: data.planToPostOn ?? planToPostOn,
+        first_comment: data.firstComment,
+        plan_to_post_on: data.planToPostOn,
         media_attachments: scheduleMediaAttachments,
       };
       await onMetaChange?.(next);
@@ -6887,13 +6870,11 @@ function ArtifactCard({
     if (!draftId) return;
     setScheduling(true);
     try {
-      const res = await fetch(`/api/drafts/${draftId}/schedule`, { method: "DELETE" });
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error || "Couldn't unschedule.");
+      const next = await draftOperations.unschedule(draftId);
       await onMetaChange?.({
-        scheduled_at: null,
-        schedule_status: null,
-        first_comment: null,
+        scheduled_at: next.scheduledAt,
+        schedule_status: next.scheduleStatus,
+        first_comment: next.firstComment,
       });
       setScheduledAt(null);
       setScheduleStatus(null);
