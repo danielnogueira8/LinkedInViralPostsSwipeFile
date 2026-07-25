@@ -6926,6 +6926,12 @@ function ArtifactCard({
     // squeezed below their content and spill over the pinned toolbar/heading —
     // the exact overlap this responsive gating removes.
     //
+    // `max-lg:shrink-0` is load-bearing: this card is `overflow-hidden`, which
+    // makes its automatic flex min-height resolve to 0, so without it the sheet
+    // body would SHRINK the tall card to fit and clip the overflow with no way
+    // to scroll (the scroll-lock bug). shrink-0 keeps the card at full content
+    // height so the sheet body's overflow-y-auto actually scrolls it.
+    //
     // Historical note, because this bit has bitten before: a previous attempt at
     // `flex flex-col` + `max-h-*` collapsed the body to zero height (the card
     // rendered as just a header). That happened because the body was a
@@ -6933,7 +6939,7 @@ function ArtifactCard({
     // It is safe now for a concrete reason: the body is a textarea with its own
     // `min-h-[220px]`, so it has intrinsic height and cannot collapse even if
     // the flex chain gives it nothing.
-    <div className="flex w-full min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-white text-foreground shadow-[0_16px_45px_rgba(28,28,26,0.10)] lg:min-h-0 lg:flex-1">
+    <div className="flex w-full min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-white text-foreground shadow-[0_16px_45px_rgba(28,28,26,0.10)] max-lg:shrink-0 lg:min-h-0 lg:flex-1">
       {/* "Draft N" badge + applied-skill chip(s). Skills come from the server
           stamping meta.skills onto the artifact when one was active for the
           turn that produced it (see route's artifact case). Renders even when
