@@ -941,14 +941,31 @@ function AskPrompt({
 }) {
   const [text, setText] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     inputRef.current?.focus();
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
+    // Dismiss on a click anywhere outside the prompt. Escape alone left the box
+    // stranded over the draft when the user simply clicked away — the usual way
+    // people abandon a popover.
+    //
+    // Bound on MOUSEDOWN, not click: the box already stops propagation of
+    // mousedown (so clicking inside can't blur the textarea), which means a
+    // mousedown listener is dismissed correctly by that same guard. A click
+    // listener would also fire after a text selection drag that ENDS outside
+    // the box, closing the prompt mid-gesture.
+    const onDown = (e: MouseEvent) => {
+      if (!boxRef.current?.contains(e.target as Node)) onClose();
+    };
     document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
+    document.addEventListener("mousedown", onDown);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("mousedown", onDown);
+    };
   }, [onClose]);
 
   const submit = () => {
@@ -958,6 +975,7 @@ function AskPrompt({
 
   return (
     <div
+      ref={boxRef}
       className="fixed z-30 -translate-x-1/2 -translate-y-full"
       style={{ top: top - 8, left }}
       // Don't let a click inside the box blur/collapse anything unexpectedly.
