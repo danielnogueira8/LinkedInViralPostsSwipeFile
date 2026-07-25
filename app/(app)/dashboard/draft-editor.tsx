@@ -640,8 +640,6 @@ export function DraftEditor({
       </div>
       )}
 
-      {/* The textarea is wrapped so the hook-cutoff rule can be absolutely
-          positioned over it. relative + min-h-0 so it still flexes. */}
       {/* One bordered, scrolling card holding the textarea AND any footer
           (attached media). The textarea itself is borderless and auto-sized;
           this box is what scrolls, so text + image read as a single surface. */}
