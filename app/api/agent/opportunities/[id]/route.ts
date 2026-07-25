@@ -7,7 +7,7 @@ import { weekStart } from "@/lib/agent-loop/week-plan";
 import { markStoredOpportunityDrafted } from "@/lib/agent-loop/week-plan-store";
 
 export const runtime = "nodejs";
-// "Draft it" runs a full chat turn (voice load + writer + save).
+// Opportunity modeling runs a full chat turn (voice load + writer + save).
 export const maxDuration = 300;
 
 // -----------------------------------------------------------------------------

@@ -41,7 +41,7 @@ import { invalidateNavBadges } from "./nav-badges";
 //
 // Shows drafts the agent wrote since your last review (Review opens the post
 // ON the Posts board and marks it reviewed so it drops off this list for good)
-// and the currently proposed opportunities with one-click Draft it / dismiss.
+// and the currently proposed opportunities with one-click modeling / dismiss.
 //
 // The weekly plan is a durable Monday–Sunday workspace record. Modeled posts
 // draft from their source; source-less story days need context, and modeled
@@ -855,7 +855,7 @@ export function AgentBriefing() {
                         ) : (
                           <AiIcon className="h-3 w-3" aria-hidden />
                         )}
-                        Draft it
+                        Model this post
                       </button>
                       <button
                         type="button"

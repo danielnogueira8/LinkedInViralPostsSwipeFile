@@ -124,7 +124,10 @@ test("Agent opportunities show the complete Swipe File post card", async ({
   await expect(
     card.getByRole("button", { name: "Model with Cowork" }),
   ).toHaveCount(0);
-  await expect(card.getByRole("button", { name: "Draft it" })).toBeVisible();
+  await expect(
+    card.getByRole("button", { name: "Model this post" }),
+  ).toBeVisible();
+  await expect(card.getByRole("button", { name: "Draft it" })).toHaveCount(0);
   await expect(card.getByRole("button", { name: "Discard" })).toBeVisible();
 
   const summary = page.getByTestId("agent-working-summary");
