@@ -432,6 +432,62 @@ describe("completeChatAnthropic (mocked SDK)", () => {
     expect(tools[1].cache_control).toEqual({ type: "ephemeral" });
   });
 
+  // A cache WRITE costs ~1.25x input, so paths that structurally cannot read
+  // one back (one-shot jobs, parallel reviewer fan-outs that then idle past the
+  // 5-minute TTL) must be able to opt out. Measured: source_fidelity paid ~57k
+  // token-equivalents in write premium to save ~12.5k.
+  test("cachePrompt:false sends a plain system string and marks no tool", async () => {
+    lastBody.current = null;
+    finalMessage.mockResolvedValue({
+      content: [{ type: "text", text: "ok" }],
+      stop_reason: "end_turn",
+      model: "claude-sonnet-5",
+      usage: { input_tokens: 10, output_tokens: 5 },
+    });
+    const { completeChatAnthropic } = await import("@/lib/anthropic");
+    await completeChatAnthropic({
+      model: "claude-sonnet-5",
+      cachePrompt: false,
+      messages: [
+        { role: "system", content: "big stable system prompt" },
+        { role: "user", content: "go" },
+      ],
+      tools: [
+        { type: "function", function: { name: "a", description: "d", parameters: {} } },
+      ] as ToolDef[],
+    });
+    const body = lastBody.current!;
+    // A plain string cannot carry cache_control — that IS the opt-out.
+    expect(body.system).toBe("big stable system prompt");
+    const tools = body.tools as Array<{ cache_control?: unknown }>;
+    expect(tools.every((t) => t.cache_control === undefined)).toBe(true);
+  });
+
+  test("caching stays ON by default (every existing caller is unchanged)", async () => {
+    lastBody.current = null;
+    finalMessage.mockResolvedValue({
+      content: [{ type: "text", text: "ok" }],
+      stop_reason: "end_turn",
+      model: "claude-sonnet-5",
+      usage: { input_tokens: 10, output_tokens: 5 },
+    });
+    const { completeChatAnthropic } = await import("@/lib/anthropic");
+    await completeChatAnthropic({
+      model: "claude-sonnet-5",
+      messages: [
+        { role: "system", content: "big stable system prompt" },
+        { role: "user", content: "go" },
+      ],
+      tools: [
+        { type: "function", function: { name: "a", description: "d", parameters: {} } },
+      ] as ToolDef[],
+    });
+    const body = lastBody.current!;
+    expect(Array.isArray(body.system)).toBe(true);
+    const tools = body.tools as Array<{ cache_control?: unknown }>;
+    expect(tools[tools.length - 1].cache_control).toEqual({ type: "ephemeral" });
+  });
+
   // REGRESSION: the web_search server tool is appended AFTER the user tools, so
   // marking "the last tool" at map time left the breakpoint mid-list on every
   // grounded call — the cached tool prefix stopped short of the real tool set.

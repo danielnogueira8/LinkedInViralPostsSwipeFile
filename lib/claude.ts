@@ -643,6 +643,8 @@ export async function synthesizeVoice(
   // Truncation (finish_reason === "length") is detected explicitly and retried.
   async function attempt(): Promise<VoiceProfile> {
     const res = await completeChat({
+      // No prompt caching: one-shot per user — nothing follows to read the entry.
+      cachePrompt: false,
       model: REASONING_MODEL, // voice synthesis reasons over the corpus → GLM-5.2
       maxTokens: 8000,
       messages: [
