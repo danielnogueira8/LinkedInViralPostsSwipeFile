@@ -256,6 +256,8 @@ async function generateSummary(input: {
   const hookExample = input.hookExample;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     const response = await completeChat({
+      // No prompt caching: measured 0 reads across the window.
+      cachePrompt: false,
       model: BACKGROUND_MODEL,
       maxTokens: 900,
       glmReasoning: "none",

@@ -183,6 +183,8 @@ export async function synthesizeInterviewContext(opts: {
 
   const attempt = async (): Promise<string[]> => {
     const res = await completeChat({
+      // No prompt caching: one-shot per user — nothing follows to read the entry.
+      cachePrompt: false,
       model: VOICE_MODEL,
       maxTokens: 2000,
       tools: [INTERVIEW_TOOL],

@@ -238,6 +238,10 @@ async function runSourceFidelityAttempt(
       signal: opts.signal,
       call: () =>
         completeChat({
+          // No prompt caching: measured net-negative: ~1,881 tokens written per call, ~6% ever read.
+          // Reviewers fan out in PARALLEL (concurrent calls cannot read each other's
+          // entry) and batches idle far past the 5-minute TTL.
+          cachePrompt: false,
           model,
           maxTokens: 500,
           tools: [VERDICT_TOOL],

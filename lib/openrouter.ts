@@ -598,6 +598,18 @@ export async function completeChat(opts: {
   forceTool?: string;
   // OpenRouter plugins (e.g. [{ id: "web", max_results: 5 }] for web search).
   plugins?: Array<Record<string, unknown>>;
+  // Opt OUT of Anthropic prompt caching for this call.
+  //
+  // Caching is not free: a cache WRITE costs ~1.25x the input price, and only
+  // pays for itself if a later request reads the entry back before the 5-minute
+  // TTL. Some paths structurally cannot read — one-shot jobs that run once per
+  // user, and reviewer fan-outs whose calls all run concurrently (a cache entry
+  // is only readable once the first response starts streaming) and are then
+  // idle for hours. Those paid the write premium on every call and collected
+  // nothing, which is strictly worse than not caching.
+  //
+  // Defaults to caching ON, so every existing caller is unchanged.
+  cachePrompt?: boolean;
   signal?: AbortSignal;
   // One-shot completions must never inherit the route's full 300s ceiling.
   // Callers with tighter UX budgets (for example image preprocessing) can
@@ -849,6 +861,18 @@ export async function* streamChat(opts: {
   // forced-final-answer path). Default behavior is unchanged ("auto" when
   // tools are present, undefined when not).
   toolChoice?: "auto" | "required" | "none";
+  // Opt OUT of Anthropic prompt caching for this call.
+  //
+  // Caching is not free: a cache WRITE costs ~1.25x the input price, and only
+  // pays for itself if a later request reads the entry back before the 5-minute
+  // TTL. Some paths structurally cannot read — one-shot jobs that run once per
+  // user, and reviewer fan-outs whose calls all run concurrently (a cache entry
+  // is only readable once the first response starts streaming) and are then
+  // idle for hours. Those paid the write premium on every call and collected
+  // nothing, which is strictly worse than not caching.
+  //
+  // Defaults to caching ON, so every existing caller is unchanged.
+  cachePrompt?: boolean;
   // Stable chat identifier keeps consecutive turns on one provider cache
   // without globally pinning every OpenRouter model.
   sessionId?: string;

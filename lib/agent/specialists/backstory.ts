@@ -169,6 +169,8 @@ async function runBackstoryExtraction(
       signal: opts.signal,
       call: () =>
         completeChat({
+          // No prompt caching: measured 0 reads across the window.
+          cachePrompt: false,
           model: BACKSTORY_MODEL,
           maxTokens: 400,
           timeoutMs: BACKSTORY_TIMEOUT_MS,

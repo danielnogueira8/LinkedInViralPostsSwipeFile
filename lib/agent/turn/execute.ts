@@ -691,6 +691,10 @@ async function* executeAnswerTurn(
   };
   const messages: ChatMessage[] = [systemMessage, ...setup.history];
   const stream = streamChat({
+    // No prompt caching: measured 0 reads: the system prompt here is two sentences (below the
+    // cacheable minimum) while the real bulk — the chat history — is not
+    // cached at all, so every call wrote an entry nobody could use.
+    cachePrompt: false,
     model: CHAT_MODEL,
     messages,
     signal,

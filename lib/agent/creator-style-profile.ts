@@ -261,6 +261,8 @@ export async function generateCreatorStyleProfile(opts: {
 
   const attempt = async (): Promise<CreatorStyleProfile> => {
     const res = await completeChat({
+      // No prompt caching: one-shot per creator — nothing follows to read the entry.
+      cachePrompt: false,
       model: REASONING_MODEL,
       maxTokens: MAX_TOKENS,
       messages: [

@@ -408,6 +408,8 @@ export async function completeChatAnthropic(opts: {
   signal?: AbortSignal;
   timeoutMs?: number;
   sessionId?: string;
+  // See the option doc in openrouter.ts. Defaults to caching ON.
+  cachePrompt?: boolean;
 }): Promise<CompleteResult> {
   const requested = opts.model || anthropicChatModel();
   const model = toAnthropicModelId(requested);
@@ -426,7 +428,11 @@ export async function completeChatAnthropic(opts: {
       : { type: "adaptive" },
     output_config: { effort },
   };
-  if (system) body.system = cachedSystem(system);
+  // cachePrompt:false sends the system prompt as a plain string (a string
+  // cannot carry cache_control) and skips the tool breakpoint, so the call
+  // pays no cache-write premium. See the option's doc in openrouter.ts.
+  const cache = opts.cachePrompt !== false;
+  if (system) body.system = cache ? cachedSystem(system) : system;
   if (opts.tools?.length) {
     body.tools = toAnthropicTools(opts.tools);
     body.tool_choice = opts.forceTool
@@ -448,7 +454,7 @@ export async function completeChatAnthropic(opts: {
   }
   // Every tool is now assembled (user tools + any web_search server tool), so
   // the breakpoint can land on the real last one.
-  markLastToolCached(body.tools);
+  if (cache) markLastToolCached(body.tools);
 
   const signal = combineSignals(opts.signal, opts.timeoutMs);
   // Stream internally for large budgets so we never hit an HTTP timeout, then
@@ -494,6 +500,8 @@ export async function* streamChatAnthropic(opts: {
   signal?: AbortSignal;
   toolChoice?: "auto" | "required" | "none";
   sessionId?: string;
+  // See the option doc in openrouter.ts. Defaults to caching ON.
+  cachePrompt?: boolean;
 }): AsyncGenerator<StreamDelta> {
   const model = toAnthropicModelId(opts.model || anthropicChatModel());
   const { system, messages } = translateMessages(opts.messages);
@@ -507,12 +515,13 @@ export async function* streamChatAnthropic(opts: {
     thinking: { type: "adaptive" },
     output_config: { effort: "high" },
   };
-  if (system) body.system = cachedSystem(system);
+  const cache = opts.cachePrompt !== false;
+  if (system) body.system = cache ? cachedSystem(system) : system;
   if (opts.tools?.length && opts.toolChoice !== "none") {
     body.tools = toAnthropicTools(opts.tools);
     // No server tools are appended on the streaming path, so the last user tool
     // is the last tool.
-    markLastToolCached(body.tools);
+    if (cache) markLastToolCached(body.tools);
   }
 
   // Overall connection deadline + caller signal, aborting either fires. The
