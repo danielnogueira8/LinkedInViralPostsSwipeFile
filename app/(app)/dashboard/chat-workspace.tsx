@@ -6521,22 +6521,15 @@ function ArtifactCard({
     if (!chatId || saving) return;
     setSaving(true);
     try {
-      const res = await fetch(`/api/chats/${chatId}/artifacts`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: artifact.title,
-          // edited local body (from the inline editor), not artifact.body
-          body,
-          ...(kindForSave() ? { kind: kindForSave() } : {}),
-          ...(artifact.meta ? { meta: artifact.meta } : {}),
-          ...(mediaAttachments.length ? { media_attachments: mediaAttachments } : {}),
-        }),
+      const data = await draftOperations.saveFromChat(chatId, {
+        title: artifact.title,
+        // edited local body (from the inline editor), not artifact.body
+        body,
+        ...(kindForSave() ? { kind: kindForSave() } : {}),
+        ...(artifact.meta ? { meta: artifact.meta } : {}),
+        ...(mediaAttachments.length ? { media_attachments: mediaAttachments } : {}),
       });
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error || "Failed to save");
-      const savedDraftId = data.artifact?.id;
-      if (!savedDraftId) throw new Error("Saved draft response was missing its id.");
+      const savedDraftId = data.draft.id;
 
       // The POST is the authoritative save. Record that success before the
       // follow-up chat metadata PATCH: if linking the board id back to the chat
@@ -6576,12 +6569,16 @@ function ArtifactCard({
     if (!refiningDraftId || saving) return;
     setSaving(true);
     try {
-      await draftOperations.update(refiningDraftId, {
-        body,
-        content_format: draftMarkdownEnabled(artifact.meta)
-          ? "markdown"
-          : "plain",
-      });
+      await draftOperations.update(
+        refiningDraftId,
+        {
+          body,
+          content_format: draftMarkdownEnabled(artifact.meta)
+            ? "markdown"
+            : "plain",
+        },
+        { fallbackError: "Failed to update post" },
+      );
       setSaved(true);
       toast.success("Post updated");
     } catch (e) {
@@ -6595,23 +6592,27 @@ function ArtifactCard({
   // otherwise save a new draft.
   const save = canUpdateOriginal ? updateOriginal : saveAsNew;
 
-  const persistScheduleChanges = async (draftId: string) => {
+  const persistScheduleChanges = async (draftId: string, errorMessage: string) => {
     // A refine artifact is newer than the Posts row even when the user has not
     // edited it locally (`dirty` compares against the artifact, not the row).
     // Always carry its body + format back to the original before scheduling.
     const shouldPersistBody = dirty || canUpdateOriginal;
     if (!shouldPersistBody && !scheduleMediaChanged) return;
-    await draftOperations.update(draftId, {
-      ...(shouldPersistBody ? { body } : {}),
-      ...(shouldPersistBody && canUpdateOriginal
-        ? {
-            content_format: draftMarkdownEnabled(artifact.meta)
-              ? "markdown"
-              : "plain",
-          }
-        : {}),
-      media_attachments: scheduleMediaAttachments,
-    });
+    await draftOperations.update(
+      draftId,
+      {
+        ...(shouldPersistBody ? { body } : {}),
+        ...(shouldPersistBody && canUpdateOriginal
+          ? {
+              content_format: draftMarkdownEnabled(artifact.meta)
+                ? "markdown"
+                : "plain",
+            }
+          : {}),
+        media_attachments: scheduleMediaAttachments,
+      },
+      { fallbackError: errorMessage },
+    );
     if (shouldPersistBody) onBodyChange?.(body);
     setSaved(true);
   };
@@ -6619,35 +6620,31 @@ function ArtifactCard({
   const ensureSchedulableDraft = async (): Promise<string> => {
     if (canUpdateOriginal) {
       if (!refiningDraftId) throw new Error("Couldn't find the original post.");
-      await persistScheduleChanges(refiningDraftId);
+      await persistScheduleChanges(refiningDraftId, "Failed to update post");
       return refiningDraftId;
     }
 
     if (boardDraftId) {
-      await persistScheduleChanges(boardDraftId);
+      await persistScheduleChanges(boardDraftId, "Failed to update draft");
       return boardDraftId;
     }
 
     if (!chatId) throw new Error("Save the chat before scheduling this draft.");
-    const res = await fetch(`/api/chats/${chatId}/artifacts`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    const data = await draftOperations.saveFromChat(
+      chatId,
+      {
         title: artifact.title,
         body,
         ...(kindForSave() ? { kind: kindForSave() } : {}),
         ...(artifact.meta ? { meta: artifact.meta } : {}),
         media_attachments: scheduleMediaAttachments,
-      }),
-    });
-    const data = await res.json();
-    if (!data.ok || !data.artifact?.id) {
-      throw new Error(data.error || "Failed to save draft before scheduling");
-    }
-    setBoardDraftId(data.artifact.id);
+      },
+      { fallbackError: "Failed to save draft before scheduling" },
+    );
+    setBoardDraftId(data.draft.id);
     setSaved(true);
-    await onMetaChange?.({ board_draft_id: data.artifact.id });
-    return data.artifact.id;
+    await onMetaChange?.({ board_draft_id: data.draft.id });
+    return data.draft.id;
   };
 
   // Toggle the inline automation config. Opening it first persists the draft

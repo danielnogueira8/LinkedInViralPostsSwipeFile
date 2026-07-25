@@ -1,6 +1,13 @@
+import { z } from "zod";
+import { parseJsonResponse } from "@/lib/api-fetch";
 import type { ContentFormat } from "@/lib/markdown/mode";
 import type { PostMediaAttachment } from "@/lib/post-media";
-import type { DraftKind, DraftStatus } from "@/lib/draft-lifecycle";
+import type {
+  BoardDraftStatus,
+  DraftKind,
+  DraftStatus,
+} from "@/lib/draft-lifecycle";
+import type { DraftViewRow } from "@/lib/draft-view";
 
 type FetchDraftOperation = (
   input: RequestInfo | URL,
@@ -15,6 +22,24 @@ export type DraftUpdateCommand = {
   plan_to_post_on?: string | null;
   media_attachments?: PostMediaAttachment[];
   content_format?: ContentFormat;
+};
+
+export type DraftCreateCommand = {
+  body: string;
+  title?: string;
+  kind?: DraftKind;
+  lead_magnet_id?: string | null;
+  status?: BoardDraftStatus;
+  plan_to_post_on?: string | null;
+  media_attachments?: PostMediaAttachment[];
+};
+
+export type SaveArtifactAsDraftCommand = {
+  body: string;
+  title?: string;
+  kind?: DraftKind;
+  meta?: Record<string, unknown>;
+  media_attachments?: PostMediaAttachment[];
 };
 
 export type DraftScheduleCommand = {
@@ -36,86 +61,202 @@ export type UnscheduledDraftState = {
   firstComment: null;
 };
 
-type DraftApiRecord = {
-  id: string;
-  [key: string]: unknown;
-};
+const errorSchema = z.object({
+  ok: z.literal(false),
+  error: z.string().optional(),
+});
+const draftApiRecordSchema = z
+  .object({
+    id: z.string(),
+    title: z.string().nullable(),
+    body: z.string(),
+    kind: z.string(),
+    status: z.string(),
+    plan_to_post_on: z.string().nullable(),
+    chat_id: z.string().nullable(),
+    created_at: z.string(),
+    meta: z.unknown().optional(),
+    media_attachments: z.unknown().optional(),
+    scheduled_at: z.string().nullable().optional(),
+    schedule_status: z.string().nullable().optional(),
+    first_comment: z.string().nullable().optional(),
+    published_at: z.string().nullable().optional(),
+    publish_error: z.string().nullable().optional(),
+  })
+  .passthrough();
+const createResponseSchema = z.discriminatedUnion("ok", [
+  errorSchema,
+  z.object({
+    ok: z.literal(true),
+    deduped: z.boolean().optional(),
+    draft: draftApiRecordSchema,
+  }),
+]);
+const saveFromChatResponseSchema = z.discriminatedUnion("ok", [
+  errorSchema,
+  z.object({
+    ok: z.literal(true),
+    deduped: z.boolean().optional(),
+    artifact: draftApiRecordSchema,
+  }),
+]);
+const updateResponseSchema = z.discriminatedUnion("ok", [
+  errorSchema,
+  z.object({
+    ok: z.literal(true),
+    draft: draftApiRecordSchema,
+  }),
+]);
+const scheduleResponseSchema = z.discriminatedUnion("ok", [
+  errorSchema,
+  z.object({
+    ok: z.literal(true),
+    scheduledAt: z.string(),
+    scheduleStatus: z.literal("scheduled"),
+    planToPostOn: z.string(),
+    firstComment: z.string().nullable(),
+  }),
+]);
+const unscheduleResponseSchema = z.discriminatedUnion("ok", [
+  errorSchema,
+  z.object({ ok: z.literal(true) }),
+]);
 
-type ApiEnvelope = {
-  ok?: boolean;
-  error?: string;
-  draft?: DraftApiRecord;
-  scheduledAt?: string | null;
-  scheduleStatus?: string | null;
-  planToPostOn?: string | null;
-  firstComment?: string | null;
-};
-
-async function readDraftOperationResponse(
+async function readDraftOperationResponse<T extends z.ZodTypeAny>(
   response: Response,
+  schema: T,
   fallbackError: string,
-): Promise<ApiEnvelope> {
-  const text = await response.text();
-  let value: ApiEnvelope | null = null;
+): Promise<Extract<z.infer<T>, { ok: true }>> {
+  const value = await parseJsonResponse<unknown>(response);
+  const parsed = schema.safeParse(value);
+  if (!parsed.success) throw new Error("Invalid response from server");
+  const data = parsed.data as z.infer<T> & { ok: boolean; error?: string };
+  if (!data.ok) throw new Error(data.error || fallbackError);
+  return data as Extract<z.infer<T>, { ok: true }>;
+}
+
+async function fetchDraftOperation(
+  fetcher: FetchDraftOperation,
+  input: RequestInfo | URL,
+  init: RequestInit,
+): Promise<Response> {
   try {
-    value = text ? (JSON.parse(text) as ApiEnvelope) : null;
+    return await fetcher(input, init);
   } catch {
-    if (!response.ok) throw new Error(`Request failed (${response.status})`);
-    throw new Error("Invalid response from server");
+    // Draft create/save routes are idempotent and Draft mutations use guarded
+    // lifecycle commands, so one transport-only retry is safe. HTTP failures
+    // are returned and parsed without retrying.
+    return fetcher(input, init);
   }
-  if (!response.ok || !value?.ok) {
-    throw new Error(value?.error || fallbackError);
-  }
-  return value;
 }
 
 export function createDraftOperationsClient(
   fetcher: FetchDraftOperation = fetch,
 ) {
   return {
-    async update(
-      draftId: string,
-      command: DraftUpdateCommand,
-    ): Promise<DraftApiRecord> {
-      const response = await fetcher(`/api/drafts/${draftId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(command),
-      });
-      const value = await readDraftOperationResponse(
-        response,
-        "Failed to update draft",
-      );
-      if (!value.draft) throw new Error("Draft response was missing its Draft.");
-      return value.draft;
-    },
-
-    async schedule(
-      draftId: string,
-      command: DraftScheduleCommand,
-    ): Promise<ScheduledDraftState> {
-      const response = await fetcher(`/api/drafts/${draftId}/schedule`, {
+    async create(
+      command: DraftCreateCommand,
+    ): Promise<{ draft: DraftViewRow; deduped: boolean }> {
+      const response = await fetchDraftOperation(fetcher, "/api/drafts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(command),
       });
       const value = await readDraftOperationResponse(
         response,
+        createResponseSchema,
+        "Failed to create post",
+      );
+      return {
+        draft: value.draft as DraftViewRow,
+        deduped: value.deduped === true,
+      };
+    },
+
+    async saveFromChat(
+      chatId: string,
+      command: SaveArtifactAsDraftCommand,
+      options: { fallbackError?: string } = {},
+    ): Promise<{ draft: DraftViewRow; deduped: boolean }> {
+      const response = await fetchDraftOperation(
+        fetcher,
+        `/api/chats/${chatId}/artifacts`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(command),
+        },
+      );
+      const value = await readDraftOperationResponse(
+        response,
+        saveFromChatResponseSchema,
+        options.fallbackError ?? "Failed to save",
+      );
+      return {
+        draft: value.artifact as DraftViewRow,
+        deduped: value.deduped === true,
+      };
+    },
+
+    async update(
+      draftId: string,
+      command: DraftUpdateCommand,
+      options: { fallbackError?: string } = {},
+    ): Promise<DraftViewRow> {
+      const response = await fetchDraftOperation(
+        fetcher,
+        `/api/drafts/${draftId}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(command),
+        },
+      );
+      const value = await readDraftOperationResponse(
+        response,
+        updateResponseSchema,
+        options.fallbackError ?? "Failed to update draft",
+      );
+      return value.draft as DraftViewRow;
+    },
+
+    async schedule(
+      draftId: string,
+      command: DraftScheduleCommand,
+    ): Promise<ScheduledDraftState> {
+      const response = await fetchDraftOperation(
+        fetcher,
+        `/api/drafts/${draftId}/schedule`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(command),
+        },
+      );
+      const value = await readDraftOperationResponse(
+        response,
+        scheduleResponseSchema,
         "Couldn't schedule.",
       );
       return {
-        scheduledAt: value.scheduledAt ?? command.scheduledAt,
+        scheduledAt: value.scheduledAt,
         scheduleStatus: "scheduled",
-        planToPostOn: value.planToPostOn ?? command.planToPostOn,
-        firstComment: value.firstComment ?? command.firstComment,
+        planToPostOn: value.planToPostOn,
+        firstComment: value.firstComment,
       };
     },
 
     async unschedule(draftId: string): Promise<UnscheduledDraftState> {
-      const response = await fetcher(`/api/drafts/${draftId}/schedule`, {
-        method: "DELETE",
-      });
-      await readDraftOperationResponse(response, "Couldn't unschedule.");
+      const response = await fetchDraftOperation(
+        fetcher,
+        `/api/drafts/${draftId}/schedule`,
+        { method: "DELETE" },
+      );
+      await readDraftOperationResponse(
+        response,
+        unscheduleResponseSchema,
+        "Couldn't unschedule.",
+      );
       return {
         scheduledAt: null,
         scheduleStatus: null,

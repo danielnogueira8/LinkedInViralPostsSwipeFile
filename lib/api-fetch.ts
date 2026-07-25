@@ -70,12 +70,7 @@ export async function safeJson<T>(
   }
 }
 
-export async function fetchJson<T>(
-  input: RequestInfo | URL,
-  init?: RequestInit,
-): Promise<T> {
-  const res = await fetch(input, init);
-
+export async function parseJsonResponse<T>(res: Response): Promise<T> {
   const text = await res.text();
   let parsed: unknown = undefined;
   if (text) {
@@ -112,6 +107,13 @@ export async function fetchJson<T>(
   }
 
   return parsed as T;
+}
+
+export async function fetchJson<T>(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<T> {
+  return parseJsonResponse<T>(await fetch(input, init));
 }
 
 export async function fetchJsonSchema<T extends z.ZodTypeAny>(

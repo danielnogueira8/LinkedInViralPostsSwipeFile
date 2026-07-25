@@ -9,10 +9,69 @@ function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
   });
 }
 
+const draftRow = {
+  id: "draft-1",
+  title: "Draft",
+  body: "Draft body",
+  kind: "post",
+  status: "drafting",
+  plan_to_post_on: null,
+  chat_id: null,
+  created_at: "2026-08-01T10:00:00.000Z",
+};
+
 describe("Draft operations client", () => {
+  it("creates a board Draft through the typed operation path", async () => {
+    const fetcher = vi.fn(async () =>
+      jsonResponse({ ok: true, deduped: false, draft: draftRow }),
+    );
+    const client = createDraftOperationsClient(fetcher);
+
+    const created = await client.create({
+      body: "Draft body",
+      title: "Draft",
+      status: "drafting",
+    });
+
+    expect(fetcher).toHaveBeenCalledWith("/api/drafts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        body: "Draft body",
+        title: "Draft",
+        status: "drafting",
+      }),
+    });
+    expect(created).toEqual({ draft: draftRow, deduped: false });
+  });
+
+  it("saves a Cowork Artifact as a Draft through the typed operation path", async () => {
+    const fetcher = vi.fn(async () =>
+      jsonResponse({ ok: true, artifact: { ...draftRow, chat_id: "chat-1" } }),
+    );
+    const client = createDraftOperationsClient(fetcher);
+
+    const saved = await client.saveFromChat("chat-1", {
+      body: "Draft body",
+      title: "Draft",
+      kind: "post",
+    });
+
+    expect(fetcher).toHaveBeenCalledWith("/api/chats/chat-1/artifacts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        body: "Draft body",
+        title: "Draft",
+        kind: "post",
+      }),
+    });
+    expect(saved.draft).toMatchObject({ id: "draft-1", chat_id: "chat-1" });
+  });
+
   it("updates a Draft through the canonical Draft endpoint", async () => {
     const fetcher = vi.fn(async () =>
-      jsonResponse({ ok: true, draft: { id: "draft-1", body: "Updated" } }),
+      jsonResponse({ ok: true, draft: { ...draftRow, body: "Updated" } }),
     );
     const client = createDraftOperationsClient(fetcher);
 
@@ -53,7 +112,7 @@ describe("Draft operations client", () => {
         ],
       }),
     });
-    expect(draft).toEqual({ id: "draft-1", body: "Updated" });
+    expect(draft).toMatchObject({ id: "draft-1", body: "Updated" });
   });
 
   it("normalizes a scheduled Draft from the accepted command", async () => {
@@ -62,6 +121,8 @@ describe("Draft operations client", () => {
         ok: true,
         scheduledAt: "2026-08-03T09:30:00.000Z",
         scheduleStatus: "scheduled",
+        planToPostOn: "2026-08-03",
+        firstComment: "Source link",
       }),
     );
     const client = createDraftOperationsClient(fetcher);
@@ -119,5 +180,38 @@ describe("Draft operations client", () => {
         firstComment: null,
       }),
     ).rejects.toThrow("This post cannot be scheduled.");
+  });
+
+  it("rejects an incomplete successful schedule response", async () => {
+    const fetcher = vi.fn(async () =>
+      jsonResponse({
+        ok: true,
+        scheduledAt: "2026-08-03T09:30:00.000Z",
+      }),
+    );
+    const client = createDraftOperationsClient(fetcher);
+
+    await expect(
+      client.schedule("draft-1", {
+        scheduledAt: "2026-08-03T09:30:00.000Z",
+        planToPostOn: "2026-08-03",
+        firstComment: null,
+      }),
+    ).rejects.toThrow("Invalid response from server");
+  });
+
+  it("retries one transient transport failure without hiding server errors", async () => {
+    const fetcher = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("network unavailable"))
+      .mockResolvedValueOnce(
+        jsonResponse({ ok: true, draft: { ...draftRow, body: "Updated" } }),
+      );
+    const client = createDraftOperationsClient(fetcher);
+
+    await expect(
+      client.update("draft-1", { body: "Updated" }),
+    ).resolves.toMatchObject({ id: "draft-1", body: "Updated" });
+    expect(fetcher).toHaveBeenCalledTimes(2);
   });
 });

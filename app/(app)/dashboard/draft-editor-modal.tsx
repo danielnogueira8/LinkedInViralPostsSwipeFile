@@ -336,34 +336,32 @@ export function DraftEditorModal({
     }
     try {
       if (isNew) {
-        const res = await fetch("/api/drafts", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            body: trimmed,
-            ...(newName ? { title: newName } : {}),
-            status: newStatus,
-            plan_to_post_on: newDate || null,
-            // Only send an explicit kind when the user picked one; otherwise the
-            // server auto-classifies (regular vs lead-magnet) from the body.
-            ...(newKind ? { kind: newKind } : {}),
-            // The chosen giveaway — only meaningful (and only sent) for a
-            // lead-magnet post. The server ignores it for other kinds.
-            ...(newKind === "lead_magnet" && newLeadMagnetId
-              ? { lead_magnet_id: newLeadMagnetId }
-              : {}),
-            ...(newMedia.length
-              ? { media_attachments: mediaAttachmentsForPersistence(newMedia) }
-              : {}),
-          }),
+        const data = await draftOperations.create({
+          body: trimmed,
+          ...(newName ? { title: newName } : {}),
+          status: newStatus,
+          plan_to_post_on: newDate || null,
+          // Only send an explicit kind when the user picked one; otherwise the
+          // server auto-classifies (regular vs lead-magnet) from the body.
+          ...(newKind ? { kind: newKind } : {}),
+          // The chosen giveaway — only meaningful (and only sent) for a
+          // lead-magnet post. The server ignores it for other kinds.
+          ...(newKind === "lead_magnet" && newLeadMagnetId
+            ? { lead_magnet_id: newLeadMagnetId }
+            : {}),
+          ...(newMedia.length
+            ? { media_attachments: mediaAttachmentsForPersistence(newMedia) }
+            : {}),
         });
-        const data = await res.json();
-        if (!data.ok) throw new Error(data.error || "Failed to create post");
         onCreated(normalizeDraft(data.draft));
-        return data.draft.id as string;
+        return data.draft.id;
       }
       if (!dirty) return draft!.id;
-      await draftOperations.update(draft!.id, { body: trimmed });
+      await draftOperations.update(
+        draft!.id,
+        { body: trimmed },
+        { fallbackError: "Failed to save" },
+      );
       onSaved(draft!.id, trimmed);
       return draft!.id;
     } catch (e) {
@@ -426,7 +424,9 @@ export function DraftEditorModal({
     if (isNew || !draft) return;
     onMeta(draft.id, patch); // optimistic
     try {
-      await draftOperations.update(draft.id, body);
+      await draftOperations.update(draft.id, body, {
+        fallbackError: "Failed to update",
+      });
     } catch (e) {
       toast.error((e as Error).message);
     }
@@ -455,9 +455,11 @@ export function DraftEditorModal({
     const previous = mediaAttachments;
     onMeta(draft.id, { mediaAttachments: next });
     try {
-      await draftOperations.update(draft.id, {
-        media_attachments: mediaAttachmentsForPersistence(next),
-      });
+      await draftOperations.update(
+        draft.id,
+        { media_attachments: mediaAttachmentsForPersistence(next) },
+        { fallbackError: "Failed to update media" },
+      );
       return true;
     } catch (e) {
       // Reconcile, don't restore: only revert to `previous` if the CURRENT
