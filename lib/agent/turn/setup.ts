@@ -12,7 +12,6 @@ import {
   advanceActionOrchestratorClarification,
   compileActionOrchestratorRoute,
   clarificationForAmbiguousContinuation,
-  type ActionOrchestratorRoute,
 } from "@/lib/agent/turn/compile";
 import {
   resolveActionRetryRoot,
@@ -47,9 +46,12 @@ import {
   createCoworkTurnTelemetry,
   type CoworkTurnTelemetry,
 } from "@/lib/agent/cowork-telemetry";
-import {
-  type TurnContract,
-} from "@/lib/agent/turn/compile";
+import type {
+  ActionOrchestratorRoute,
+  ChatTurnAttachment,
+  TurnContract,
+} from "@/lib/agent/turn/protocol";
+import type { TurnSetupState } from "@/lib/agent/turn/state";
 import {
   chatSetupDeadlines,
   createChatSetupDeadline,
@@ -162,107 +164,6 @@ export type TurnSetupDependencies = ChatTurnDependencies & {
   explicitMessageDraftCount: typeof explicitMessageDraftCount;
 };
 
-type Attachment = NonNullable<ChatTurnRequest["attachments"]>[number];
-
-export type TurnSetupResult = {
-  workspaceId: string;
-  sbRaw: SupabaseClient;
-  userText: string;
-  currentTurnOperation: ChatTurnOperation | null;
-  attachments: Attachment[];
-  modelSourceId: string | undefined;
-  skipDecision: boolean;
-  refineTargetId: string | undefined;
-  refineInstruction: string | undefined;
-  trustedRefineTarget: Artifact | null;
-  existingArtifactIds: string[];
-  skillIds: string[];
-  customSkillRetryContext: CustomSkillRetryContext | null;
-  resolvedCustomSkills: FrozenCustomSkill[];
-  forcedNoModelFormatId: NoModelFormatId | undefined;
-  creatorStyleId: string | undefined;
-  creatorStyleRetryContext: CreatorStyleRetryContext | null;
-  leadMagnetId: string | undefined;
-  createLeadMagnet: z.infer<typeof leadMagnetGenerateSchema> | undefined;
-  requestedGenerationConfig: GenerationConfigV1 | null;
-  resolvedGenerationConfig: ResolvedGenerationConfig | null;
-  generationConfigRestoredFromRetry: boolean;
-  activeDraftCountOverride: number | undefined;
-  composerStarterId: ComposerStarterId | undefined;
-  composerTaskContext: ComposerTaskContext | null;
-  composerTaskSelection: ComposerTaskSelection;
-  hasAuthoritativeDraftCount: boolean;
-  hookOnly: boolean;
-  hookOnlyOriginalBody: string | undefined;
-  hasModelSource: boolean;
-  customSkillBodies: string[];
-  customSkillNames: string[];
-  turnClaimed: boolean;
-  turnCostOperationKey: string | null;
-  claimedTurnStartedAt: string | null;
-  claimedUserMessageId: string | null;
-  actionTurnMessageId: string | null;
-  resolvedActionInstruction: string | null;
-  normalizedActionRoute: ActionOrchestratorRoute | null;
-  confirmedActionTargetIds: string[];
-  actionRetryRepository: ActionRetryRepository | null;
-  persistedActionContinuation: boolean;
-  pendingActionAsk: boolean;
-  pendingAskOnly: boolean;
-  artifactClarification: AskQuestion | null;
-  fallthroughClarification: AskQuestion | null;
-  modeledBatchContinuation: ModeledDraftBatchContinuation | null;
-  modeledBatchContractRequested: boolean;
-  currentTurnModelSourceOwnership: "historical_continuation" | "server_selected";
-  setupDeadline: ChatSetupDeadline | null;
-  setupSignal: AbortSignal;
-  preclaimContractPlaceholder: TurnContract;
-  preclaimPostDraftEstimate: number | null;
-  postClarificationPostCount: number | null;
-  coworkTelemetry: CoworkTurnTelemetry;
-  history: ChatMessage[];
-  effectiveUserInstruction: string;
-  orchestratorAttachmentBlocks: ContentBlock[];
-  currentModelSource: ModelSourceRow | null;
-  modelSourceReference: ModelSourceReference | null;
-  modelSourceImage: SourcePostImage | null;
-  modelSourceImageSkipReason: string | null;
-  modelSourceImageSourcePostId: string | null;
-  citedSourceImage: SourcePostImage | null;
-  citedSourceImageSkipReason: string | null;
-  citedSourceImageSourcePostId: string | null;
-  appliedNoModelFormat: {
-    id: NoModelFormatId;
-    label: string;
-    forced: boolean;
-  } | null;
-  selectedNoModelFormat: NoModelFormat | null;
-  leadMagnetBlock: string;
-  appliedLeadMagnet: (AppliedLeadMagnet & { id: string }) | null;
-  shouldAttachLeadMagnet: boolean;
-  activeLeadMagnetCampaign: ReturnType<typeof buildLeadMagnetCampaign> | null;
-  imageGenerationAuthor: { name: string | null } | null;
-  creatorStyleBlock: string;
-  appliedCreatorStyle: {
-    id: string;
-    name: string;
-    creatorName: string;
-  } | null;
-  feedbackMemory: ContentFeedback[];
-  postPerformanceBlock: string;
-  preferences: ContentPreference[];
-  priorPostDrafts: RecentDraft[];
-  preloadedVoiceResult: ToolResult | null;
-  structureMatch: import("@/lib/structure-match").StructureMatchResult | null;
-  estimatedContractKind: () => TurnContract["kind"];
-  turnError: (
-    message: string,
-    status: number,
-    extraHeaders?: Record<string, string>,
-  ) => Response;
-  disarmSetupGuards: () => void;
-};
-
 export async function setupChatTurn(
   input: {
     chatId: string;
@@ -271,7 +172,7 @@ export async function setupChatTurn(
     signal: AbortSignal;
   },
   deps: TurnSetupDependencies,
-): Promise<TurnSetupResult | Response> {
+): Promise<TurnSetupState | Response> {
   const { chatId, userId, body, signal } = input;
 
   // Resolve workspace + validate the chat up front (outside the stream) so auth
@@ -280,7 +181,7 @@ export async function setupChatTurn(
   let sbRaw: SupabaseClient;
   let userText: string;
   let currentTurnOperation: ChatTurnOperation | null = null;
-  let attachments: Attachment[] = [];
+  let attachments: ChatTurnAttachment[] = [];
   let modelSourceId: string | undefined;
   let currentModelSource: ModelSourceRow | null = null;
   let skipDecision = false;

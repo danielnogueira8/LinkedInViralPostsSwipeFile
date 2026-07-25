@@ -41,6 +41,7 @@ import {
   TURN_OPERATION_VERSION,
   type ChatTurnOperation,
 } from "@/lib/agent/turn/operation-marker";
+import type { ChatTurnAttachment } from "@/lib/agent/turn/protocol";
 export type { ChatTurnOperation } from "@/lib/agent/turn/operation-marker";
 
 import {
@@ -166,13 +167,6 @@ const IMAGE_ATTACHMENT_MIME_TO_EXTENSIONS: Record<string, string[]> = {
   "image/webp": ["webp"],
 };
 
-type AttachmentInput = {
-  kind: "text" | "file" | "image";
-  filename: string;
-  text?: string;
-  dataUrl?: string;
-};
-
 function extensionForFilename(filename: string): string {
   const clean = safeFilename(filename).toLowerCase();
   const idx = clean.lastIndexOf(".");
@@ -231,7 +225,7 @@ function hasExpectedMagicBytes(mime: string, body: string): boolean {
   return false;
 }
 
-export function validateChatAttachment(input: AttachmentInput): string | null {
+export function validateChatAttachment(input: ChatTurnAttachment): string | null {
   const ext = extensionForFilename(input.filename);
   if (input.kind === "text") {
     if (!input.text?.trim()) return "Text attachments must include text.";
@@ -265,7 +259,7 @@ export function validateChatAttachment(input: AttachmentInput): string | null {
   return null;
 }
 
-const attachmentSchema: z.ZodType<AttachmentInput> = z
+const attachmentSchema: z.ZodType<ChatTurnAttachment> = z
   .object({
     kind: z.enum(["text", "file", "image"]),
     filename: z.string().min(1).max(255),

@@ -41,7 +41,24 @@ import type { Source, WriterTask } from "@/lib/agent/execute/writer";
 import type { CoworkRoute } from "@/lib/agent/cowork-telemetry";
 import type { ModelSourceReference } from "@/lib/agent/turn/context";
 import { MAX_GROUNDED_ANSWER_RESULTS } from "@/lib/agent/evidence";
-import type { TurnSetupResult } from "@/lib/agent/turn/setup";
+import type { TurnCompileContext } from "@/lib/agent/turn/state";
+import type {
+  ActionOrchestratorRoute,
+  ActionOrchestratorRoutingInput,
+  ActionRequirement,
+  BoardMoveStatus,
+  TurnContract,
+  TurnContractDirectTask,
+} from "@/lib/agent/turn/protocol";
+export type {
+  ActionOrchestratorRoute,
+  ActionOrchestratorRoutingInput,
+  ActionRequirement,
+  BoardMoveStatus,
+  TurnContract,
+  TurnContractDirectTask,
+  TurnContractKind,
+} from "@/lib/agent/turn/protocol";
 
 export {
   resolveTurnCount,
@@ -60,72 +77,10 @@ export {
  * count-only estimate for the generation-config stamp and cost-reservation
  * headroom.
  */
-export type TurnContractKind =
-  | "post"
-  | "partial"
-  | "research"
-  | "saved_draft_action"
-  | "answer";
-
-export type TurnContract = {
-  kind: TurnContractKind;
-  expectedCount: number;
-};
-
-/**
- * Structural view of the direct-writer task: the contract only reads the task
- * kind and, for multi-draft tasks, the slot count. Kept structural (instead
- * of importing DraftEngineTask) so the compile module stays free of executor
- * dependencies while the full TurnPlan type lands in later steps.
- */
-export type TurnContractDirectTask = {
-  kind: string;
-  expectedCount?: number;
-};
-
-export type BoardMoveStatus = "idea" | "drafting" | "ready";
-
 /** Action orchestrator is part of the unified path; no rollout gating remains. */
 export function actionOrchestratorEnabledForWorkspace(): boolean {
   return true;
 }
-
-export type ActionRequirement =
-  | { type: "move_on_board"; status: BoardMoveStatus }
-  | { type: "schedule_post"; date: string | null; timeZone?: string };
-
-export type ActionOrchestratorRoute =
-  | {
-      kind: "action_management";
-      targetCount: number;
-      requirements: ActionRequirement[];
-    }
-  | {
-      kind: "clarify_action";
-      clarificationReason: "date" | "target_count" | "action";
-      remainingClarifications?: Array<"date" | "target_count" | "action">;
-      partialRequirements?: ActionRequirement[];
-      partialTargetCount?: number | null;
-    }
-  | {
-      kind: "no_action";
-      noActionReason: "negated" | "informational" | "cancelled" | "mixed_count";
-    }
-  | {
-      kind: "disallowed_action";
-      disallowedReason: "publish" | "save" | "delete" | "posted";
-    };
-
-export type ActionOrchestratorRoutingInput = {
-  userInstruction: string;
-  isRefine: boolean;
-  hasModelSource: boolean;
-  hasAttachments: boolean;
-  hasLeadMagnet: boolean;
-  hasCreatorStyle: boolean;
-  hasUnsavedDraftReferent?: boolean;
-  clientTimezone?: string;
-};
 
 function actionTurnContract(route: ActionOrchestratorRoute): TurnContract {
   return {
@@ -2096,7 +2051,7 @@ export type TurnCompileDependencies = {
 };
 
 export async function compileTurnPlan(
-  setup: TurnSetupResult,
+  setup: TurnCompileContext,
   chatId: string,
   deps: TurnCompileDependencies,
 ): Promise<TurnPlan | Response> {
