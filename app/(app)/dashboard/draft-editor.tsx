@@ -32,8 +32,7 @@ import {
   LINKEDIN_SEE_MORE_CHARS,
   type FormatStyle,
 } from "@/lib/linkedin-format";
-import { getSelectionAnchor, getCaretCoordinates } from "@/lib/textarea-caret";
-import { hookCutoff, type HookViewport } from "@/lib/hook-cutoff";
+import { getSelectionAnchor } from "@/lib/textarea-caret";
 import { IMAGE_ACCEPT_ATTR } from "@/lib/post-media";
 import {
   emptyHistory,
@@ -57,7 +56,6 @@ export function DraftEditor({
   toolbar = "floating",
   onBlur,
   showCounter = true,
-  hookCutoffViewport = null,
 }: {
   value: string;
   onChange: (next: string) => void;
@@ -80,9 +78,6 @@ export function DraftEditor({
   // Hide the editor's own counter when the surrounding surface already shows
   // one — otherwise the same "1,661 / 3,000" renders twice, one line apart.
   showCounter?: boolean;
-  // Draw a dotted rule where LinkedIn hides the rest behind "…see more".
-  // Off by default; the Cowork draft turns it on.
-  hookCutoffViewport?: HookViewport | null;
 }) {
   const taRef = useRef<HTMLTextAreaElement>(null);
   // Hidden picker behind the toolbar's image button (LinkedIn-style). Uses
@@ -117,64 +112,7 @@ export function DraftEditor({
   const [floatPos, setFloatPos] = useState<{ top: number; left: number } | null>(
     null,
   );
-  // Offset of the "…see more" cut, in the textarea's CONTENT space (i.e. as if
-  // it were not scrolled). Keeping it scroll-independent is what stops the rule
-  // drifting away from its line: the live scroll position is subtracted at
-  // render time instead of being baked into the measurement.
-  // null = the post is short enough that nothing is hidden.
-  const [cutTop, setCutTop] = useState<number | null>(null);
-  const [cutScroll, setCutScroll] = useState(0);
 
-  // Measure where the hook cut falls, in pixels. Depends on WRAPPING, so it is
-  // re-measured on every text change and on resize — a narrower panel wraps
-  // sooner and moves the line.
-  //
-  // The measurement is deferred to an animation frame rather than run inline:
-  // it reads layout (via a mirror div), so it must happen after paint, and
-  // setting state synchronously inside an effect would cascade a second render
-  // on every keystroke. The setter also bails when the position is unchanged,
-  // which is the common case while typing mid-line.
-  useEffect(() => {
-    // No early setState here: when the marker is disabled the effect simply
-    // does nothing, and the render below ignores cutTop anyway (it is gated on
-    // hookCutoffViewport), so there is no stale line to clear.
-    if (!hookCutoffViewport) return;
-    const ta = taRef.current;
-    if (!ta) return;
-    let frame = 0;
-    const measure = () => {
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() => {
-        const el = taRef.current;
-        if (!el) return;
-        const { index, reason } = hookCutoff(value, hookCutoffViewport);
-        if (reason === "none") {
-          setCutTop((prev) => (prev === null ? prev : null));
-          return;
-        }
-        // getCaretCoordinates returns a VIEWPORT-relative top (it subtracts
-        // scrollTop). Add it back so what we store is the position within the
-        // content, which does not change as the user scrolls.
-        const { top, height } = getCaretCoordinates(el, index);
-        const next = top + el.scrollTop + height;
-        setCutTop((prev) => (prev === next ? prev : next));
-      });
-    };
-    const onScroll = () => {
-      const el = taRef.current;
-      if (el) setCutScroll(el.scrollTop);
-    };
-    measure();
-    onScroll();
-    const ro = new ResizeObserver(measure);
-    ro.observe(ta);
-    ta.addEventListener("scroll", onScroll, { passive: true });
-    return () => {
-      cancelAnimationFrame(frame);
-      ro.disconnect();
-      ta.removeEventListener("scroll", onScroll);
-    };
-  }, [value, hookCutoffViewport]);
 
   // Recompute the floating toolbar position from the current selection. Hidden
   // when the selection is collapsed (nothing highlighted).
@@ -729,32 +667,6 @@ export function DraftEditor({
         )}
         placeholder="Write your post…"
       />
-      {/* "…see more" boundary. Dotted and muted: a writing aid, not a warning.
-          pointer-events-none so it never blocks a click into the text. */}
-      {/* "…see more" boundary.
-          • Positioned in CONTENT space minus live scrollTop, so it stays glued
-            to its line while the textarea scrolls.
-          • Drawn ON the line break between two lines (translate -50%), not over
-            a line of text, and the label sits to the RIGHT of the rule rather
-            than centred through it — so it can never overlap a glyph.
-          • The wrapper clips it, so it disappears cleanly when scrolled out of
-            view instead of floating over the toolbar. */}
-      {hookCutoffViewport && cutTop !== null && (
-        <div
-          className="pointer-events-none absolute inset-x-0 top-0 bottom-0 z-10 overflow-hidden"
-          aria-hidden
-        >
-          <div
-            className="absolute inset-x-3 flex -translate-y-1/2 items-center gap-2"
-            style={{ top: cutTop - cutScroll }}
-          >
-            <span className="h-px flex-1 border-t border-dashed border-muted-foreground/35" />
-            <span className="whitespace-nowrap text-[9px] font-medium uppercase tracking-[0.08em] text-muted-foreground/60">
-              see more
-            </span>
-          </div>
-        </div>
-      )}
       </div>
       {draggingMedia && (
         <p className="-mt-1 text-xs font-medium text-primary">Drop image to attach it</p>
