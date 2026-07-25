@@ -471,8 +471,12 @@ export function DraftEditor({
       className={cn(
         "flex flex-col gap-2",
         // In the full-toolbar (Cowork) layout the editor owns the column, so
-        // it flexes to fill it; elsewhere it stays content-sized as before.
-        toolbar === "full" && "min-h-0 flex-1",
+        // on desktop (lg+) it flexes to fill it and scrolls internally. Below lg
+        // the whole draft card scrolls in the mobile bottom sheet, so the editor
+        // stays content-sized — otherwise a fixed-height editor + appended blocks
+        // (e.g. the lead-magnet resource card) would fight for a short column and
+        // spill over the pinned toolbar. Elsewhere it stays content-sized as before.
+        toolbar === "full" && "lg:min-h-0 lg:flex-1",
         className,
       )}
     >
