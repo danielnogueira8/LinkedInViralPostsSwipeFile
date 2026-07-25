@@ -95,10 +95,14 @@ describe("selectSkills — cap and ordering invariants", () => {
 });
 
 describe("selectSkills — registry integrity", () => {
-  test("exactly the four post-type skills are flagged specialized", () => {
+  test("exactly the high-intent skills are flagged specialized", () => {
+    // anti-ai joins the post-type skills as specialized: when the user names it
+    // they are asking for that rewrite specifically, so it must never be the
+    // one silently dropped by the selection cap. It is additionally gated by
+    // explicitOnly (see skills-anti-ai-gate.test.ts).
     const specialized = SKILLS.filter((s) => s.specialized).map((s) => s.id).sort();
     expect(specialized).toEqual(
-      ["brandjacking", "lead-magnet", "namejacking", "newsjacking"].sort(),
+      ["anti-ai", "brandjacking", "lead-magnet", "namejacking", "newsjacking"].sort(),
     );
   });
 

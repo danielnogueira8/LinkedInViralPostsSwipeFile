@@ -47,11 +47,17 @@ describe("prompts are usable instructions, not headlines", () => {
 });
 
 describe("rotation still works over the bigger pool", () => {
-  test("consecutive picks differ", () => {
-    const seen = new Set<string>();
-    for (let i = 0; i < 20; i += 1) {
-      seen.add(pickNextGenericPrompt({ usedPrompts: [...seen], seed: i }) ?? "");
+  test("it keeps handing back unused prompts as the week fills up", () => {
+    // Walk a plan forward: each pick must avoid everything already used.
+    const used: string[] = [];
+    let current = GENERIC_WEEK_PROMPTS[0];
+    for (let i = 0; i < 25; i += 1) {
+      const next = pickNextGenericPrompt({ current, usedPrompts: used });
+      expect(next).not.toBeNull();
+      expect(used).not.toContain(next);
+      used.push(next as string);
+      current = next as string;
     }
-    expect(seen.size).toBeGreaterThan(10);
+    expect(new Set(used).size).toBe(used.length);
   });
 });

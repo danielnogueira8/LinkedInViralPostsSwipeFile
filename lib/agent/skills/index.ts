@@ -27,6 +27,13 @@ export type Skill = {
   // specialized skills are the whole point of the request, so they must never be
   // the one silently dropped. Undefined ⇒ generic.
   specialized?: boolean;
+  // A skill that must ONLY fire when the user names it — "/anti-ai", or the
+  // literal word. Our selector is substring matching over the message, which is
+  // exactly the paraphrase-triggering some skills forbid: anti-ai rewrites a
+  // draft AGGRESSIVELY (it licenses restructuring and cutting), so firing it on
+  // "make this sound less AI" would mangle a draft the user only wanted tidied.
+  // Undefined ⇒ ordinary trigger matching.
+  explicitOnly?: boolean;
 };
 
 const HOOKS: Skill = {
@@ -114,7 +121,13 @@ Structure (5 moves): 1) Anchor — open with the name (it stops the scroll). 2) 
 
 Pick ONE lane: Agree & Extend ("X is right about Y — here's what people get wrong trying it"); Respectful Contrarian ("everyone copies X; it quietly fails for [segment] — do this instead" — highest engagement, must be fair); Decode ("I studied X's [thing] — here's the system underneath"); Apply/Translate ("X does this in [field] — steal it for [reader's field]").
 
-Rules: add value, don't leech. NEVER fabricate quotes/stats/positions and attribute them to a real person — describe their position generally if unsure (fake words = trust + legal risk). Punch up or sideways, never down. Relevance over fame — the name your ICP cares about beats a bigger name they don't. Have a real point; worshipful "X is a genius 🙏" adds nothing.`,
+Rules: add value, don't leech. NEVER fabricate quotes/stats/positions and attribute them to a real person — describe their position generally if unsure (fake words = trust + legal risk). Punch up or sideways, never down. Relevance over fame — the name your ICP cares about beats a bigger name they don't. Have a real point; worshipful "X is a genius 🙏" adds nothing.
+
+Worked patterns:
+- Agree & extend: "[Person] is right about X. Here's what people get wrong trying it." → their position stated fairly, then the failure mode you've seen.
+- Respectful contrarian: "Everyone copies [Person]'s approach. It quietly fails for [segment]." → highest engagement, and the one most easily done badly — critique the method, never the person.
+- Decode: "I studied how [Person] does X. Here's the system underneath." → the mechanism they never spell out.
+- Apply/translate: "[Person] does this in [their field]. Steal it for [reader's field]." → the transfer, made concrete.`,
 };
 
 const BRANDJACKING: Skill = {
@@ -136,7 +149,65 @@ Structure (5 moves): 1) Anchor — open with the brand. 2) Locate — what it do
 
 Pick ONE lane: Teardown ("I analyzed [Brand]'s onboarding — 3 they nail, 1 they botch"); Steal-this ("[Brand] spends millions on this — copy 80% free as a 2-person team"); Contrarian ("don't copy [Brand] — it backfires for [segment]"); Versus ("[A] vs [B] — who should copy which"); Commentary/Prediction ("why [Brand]'s move is smarter than it looks"); Underdog/Reframe ("you don't need their $X tool — here's the lean version").
 
-Rules: be factual — don't invent a brand's metrics, decisions, or statements (speculation only when labeled as your read). Criticism must be fair and defensible — critique the work, not invented scandals (false claims = defamation). Pick brands the audience knows. Add genuine analysis, not a shoutout. Punch up or sideways.`,
+Rules: be factual — don't invent a brand's metrics, decisions, or statements (speculation only when labeled as your read). Criticism must be fair and defensible — critique the work, not invented scandals (false claims = defamation). Pick brands the audience knows. Add genuine analysis, not a shoutout. Punch up or sideways.
+
+Worked patterns:
+- Teardown: "I analyzed [Brand]'s onboarding. Three things they nail, one they botch." → walk the flow, name what transfers to a smaller team.
+- Steal-this: "[Brand] spends millions on this. You can copy 80% of it free." → the mechanism, then the lean version.
+- Contrarian: "Don't copy [Brand]. It quietly backfires if you're [segment]." → why the context differs, what to do instead. Must be fair, never invented.
+- Versus: "[A] vs [B] — who should copy which." → the real trade-off, matched to reader type.
+- Underdog: "You don't need their $X tool." → what the tool actually does, the cheap substitute.`,
+};
+
+// Ported from the Claude `anti-ai` skill. Condensed to the field-tested rules;
+// the source carries a longer appendix of A/B transcripts.
+//
+// explicitOnly because the source skill demands it: it must fire on "/anti-ai",
+// never on "make this sound less AI". It licenses heavy rewriting, so a
+// paraphrase trigger would let it restructure a draft the user wanted lightly
+// edited.
+//
+// NOTE this overlaps our always-on anti-slop nets (stripEmDashes,
+// GLOBAL_WRITING_SKILL). Those enforce house style on EVERY draft; this is a
+// deliberate, user-invoked rewrite for beating statistical detectors. Different
+// jobs — do not merge them.
+const ANTI_AI: Skill = {
+  id: "anti-ai",
+  specialized: true,
+  explicitOnly: true,
+  triggers: ["anti-ai", "anti ai"],
+  body: `# Anti-AI rewrite (make text read as genuinely human)
+You have full license to modify heavily — restructure, cut, reorder, roughen. Preserve only: the core message and facts, the author's intent and audience, and the format (a LinkedIn post stays a LinkedIn post).
+
+The target is not "sounds nicer". Statistical detectors don't read style — they detect PLANNED text, where every sentence advances a known arc. Clean, punchy, typo-ridden and rambling rewrites all failed testing equally. Surface mess is not the lever.
+
+## If the user has their own rough draft (the reliable path)
+Interleave: keep THEIR sentences verbatim — never fix their grammar, typos or run-ons, those fractures are the human signal. Add your sentences BETWEEN theirs, never two of yours in a row, staying under ~40% added words. Keep their opening sentence exactly as written; first tokens set the frame. Tell them which lines are theirs so later edits don't paraphrase the signal away.
+
+## If only AI text exists — discourse fracture
+Write ONE meandering incident, not an argument. If each sentence advances a distinct point, it fails however it's dressed. Outline test: if it can be tidied into bullets, rewrite it.
+- interrupt yourself and abandon the plan mid-piece
+- leave a self-correction visible ("this was february, or march. february.")
+- repeat words because the writer is still annoyed, don't vary them
+- emotional punctuation at feeling spikes; lowercase in casual registers
+- leave domain/local vocabulary raw — prices, times, jargon as that world says them
+- report dialogue unquoted, with a name
+- end on a contradiction the writer notices and leaves; never a synthesis or recap
+
+## The constraints that override all of the above
+These are where careful rewrites still fail:
+- NO punchlines. If a line would get a laugh read aloud, it's crafted — make it duller. Rants vent, they don't perform.
+- NO essay skeleton in disguise: no "week one… week two…", no "you know what actually worked?" pivot, no thesis sentence, no elegant callback ending.
+- Keep it SHORT (~160 words). Longer gives the classifier more evidence and lets structure creep back.
+- DROP most of the original's points — keep 2–3 and abandon the rest. Covering every argument IS the planning fingerprint.
+- At most ~4 named specifics, and re-hit them. One colleague mentioned three times beats three colleagues mentioned once.
+- NEVER write a sentence whose only job is to say what a moment MEANS. Banned: "that's the part that got me", "here's the thing", "which is exactly the problem", "let that sink in", "that's the [x] part honestly". This single pattern flipped a verified test from Human to 100% AI. If a moment matters, hit the detail again — never label it.
+- No soft framing adverbs stacked on: quietly, genuinely, truly, honestly-as-a-tag, literally-as-intensifier, actually-as-pivot, basically. At most one, inside a sentence doing real work.
+
+Invent fresh names, days and numbers every time — never reuse the examples' specifics.
+
+## Before delivering, verify
+Is it ONE incident that can't be outlined? Is there a visible self-interruption and self-correction? Is it under the word cap? Are there ≤4 specifics, re-hit rather than accumulated? Is there ZERO significance-marking commentary? If the piece is formal (client docs, white papers) say plainly that this rewrite style doesn't fit, and offer a style-only pass instead.`,
 };
 
 const NEWSJACKING: Skill = {
@@ -167,7 +238,16 @@ Structure (5 moves): 1) The news — what happened, briefly + accurately, drawn 
 
 Speed tiers: real-time (hours) for big obvious stories — a sharp 4-line take beats a polished essay tomorrow; same-day for a considered angle; this-week for slower trends/reports.
 
-Rules: relevance over reach (forced bridges get ratioed). Facts come from the search result only — no embellishing numbers, quotes, or details it doesn't contain. In your reply (not the post body), tell the user which story you anchored to with its source and date so they can verify before posting. Add expertise, not just emotion. Have an opinion held in good faith. Stay in your lane.`,
+Rules: relevance over reach (forced bridges get ratioed). Facts come from the search result only — no embellishing numbers, quotes, or details it doesn't contain. In your reply (not the post body), tell the user which story you anchored to with its source and date so they can verify before posting. Add expertise, not just emotion. Have an opinion held in good faith. Stay in your lane.
+
+Worked patterns (swap the event for whatever is actually breaking — confirm it is real and current from supplied input or a live tool, never from memory):
+- Launch: "X just shipped. Everyone's posting benchmarks. Here's what it changes for your team Monday." → state it, pivot to workflow impact, 3 concrete tasks it makes viable.
+- Acquisition: "A bought B. The price isn't the story. The reason is." → the deal, the strategic motive, what it signals for the category.
+- Funding: "A competitor raised $50M. If you're smaller this is good news." → reframe (big raises validate the category and create slow incumbents), 3 ways a lean player wins.
+- Layoffs: lead with empathy, never call it an opportunity, never gloat — acknowledge seriously, then something practically useful.
+- Regulation: "Most teams are reading the headline, not the clause that bites." → name the overlooked clause, what to do before the deadline.
+- Earnings: "They beat earnings and the stock dropped." → the buried signal (guidance, churn, margin), the lesson for the reader's business.
+- Outage: "Half the internet went down. The lesson isn't multi-cloud — it's smaller and cheaper."`,
 };
 
 export const SKILLS: Skill[] = [
@@ -177,6 +257,7 @@ export const SKILLS: Skill[] = [
   NAMEJACKING,
   BRANDJACKING,
   NEWSJACKING,
+  ANTI_AI,
 ];
 
 // ---------------------------------------------------------------------------
@@ -340,9 +421,22 @@ Apply this silently — pick the structure, don't announce it or label the post'
 // always survives the cap. Ordering is stable within each tier (registry
 // order), so results stay deterministic. Deliberately keyword-only (no fuzzy
 // intent matching) — that stays predictable and testable.
+// Did the user actually NAME this skill? Matches "/anti-ai", "anti-ai", and
+// "the anti-ai skill" — but not a paraphrase that merely means the same thing.
+function namesSkill(lowerText: string, id: string): boolean {
+  return new RegExp(`(^|[^a-z0-9-])/?${id}([^a-z0-9-]|$)`).test(lowerText);
+}
+
 export function selectSkills(userMessage: string, max = 3): Skill[] {
   const text = userMessage.toLowerCase();
-  const hits = SKILLS.filter((s) => s.triggers.some((t) => text.includes(t)));
+  const hits = SKILLS.filter((s) => {
+    if (!s.triggers.some((t) => text.includes(t))) return false;
+    // explicitOnly skills additionally require being NAMED — a slash command or
+    // the bare id. Their triggers stay descriptive for discovery, but a
+    // paraphrase alone must never load them.
+    if (s.explicitOnly) return namesSkill(text, s.id);
+    return true;
+  });
   // Stable partition: specialized skills first, generic after, each in registry
   // order. Array.prototype.sort is stable in modern JS/Node, so a boolean key is
   // enough — no need to thread the original index.
