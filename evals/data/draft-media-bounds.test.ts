@@ -16,6 +16,7 @@ import { readFileSync } from "node:fs";
 // ---------------------------------------------------------------------------
 
 const source = readFileSync("app/(app)/dashboard/chat-workspace.tsx", "utf8");
+const editorSource = readFileSync("app/(app)/dashboard/draft-editor.tsx", "utf8");
 
 describe("draft image is bounded inside the card", () => {
   test("the media preview is width-capped and centred", () => {
@@ -54,7 +55,22 @@ describe("draft image is bounded inside the card", () => {
     expect(source).toMatch(
       /overflow-hidden rounded-xl border border-border bg-white[^"]*lg:min-h-0 lg:flex-1/,
     );
-    expect(source).toMatch(/flex w-full min-w-0 flex-col gap-2 px-3 py-2\.5 lg:min-h-0 lg:flex-1/);
+    expect(source).toMatch(/flex w-full min-w-0 flex-col gap-2 px-3 py-2\.5[^"]*lg:min-h-0 lg:flex-1/);
+  });
+
+  test("the mobile bottom sheet can actually scroll the whole card (no scroll-lock)", () => {
+    // The card is overflow-hidden, which makes its automatic flex min-height 0 —
+    // so below lg it would be shrunk to fit the sheet and clipped with nothing
+    // to scroll. max-lg:shrink-0 keeps it at full content height so the sheet
+    // body's overflow-y-auto scrolls it.
+    expect(source).toMatch(/overflow-hidden rounded-xl[^"]*max-lg:shrink-0/);
+    // The sheet body is the single bounded scroll container on mobile.
+    expect(source).toMatch(/flex-1 min-h-0 overflow-y-auto p-3\.5 flex flex-col gap-3/);
+    expect(source).toMatch(/\{artifactsList\}/);
+    // The editor box must not be a second, touch-capturing scroll container
+    // below lg — it only owns the scroll on desktop.
+    expect(editorSource).toMatch(/footer \? "lg:overflow-y-auto" : ""/);
+    expect(editorSource).not.toMatch(/footer \? "overflow-y-auto" : ""/);
   });
 
   test("the card clips its own children, so nothing escapes the rounded border", () => {

@@ -650,7 +650,10 @@ export function DraftEditor({
       <div
         className={cn(
           "relative flex min-h-0 w-full min-w-0 flex-1 flex-col rounded-lg border border-border bg-white",
-          footer ? "overflow-y-auto" : "",
+          // Desktop: the editor box owns the scroll. Below lg the whole draft
+          // card scrolls in the mobile bottom sheet, so this box must not be a
+          // second (touch-capturing) scroll container — keep overflow visible.
+          footer ? "lg:overflow-y-auto" : "",
         )}
       >
       <textarea
