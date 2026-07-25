@@ -1694,7 +1694,7 @@ export function ChatWorkspace({
           // visually or logically tied to the paused chat. Leave genuinely live
           // background streams alone; this only sweeps stale local guard state.
           if (previousRun && (previousRun.stopped || !previousRun.streaming)) {
-            chatSession.retireRun(previousActiveId, previousRun);
+            chatSession.turnFor(previousActiveId)?.retire();
           }
           chatSession.releaseSend(previousActiveId);
           chatSession.clearLastSend(previousActiveId);
@@ -2223,7 +2223,7 @@ export function ChatWorkspace({
       // moment it returns from an await and won't resurrect the chat's caches.
       deletedRef.current.add(id);
       // Abort + drop any live run up front (don't wait on the network).
-      chatSession.retireRun(id);
+      chatSession.turnFor(id)?.retire();
       try {
         const res = await fetch(`/api/chats/${id}`, { method: "DELETE" });
         const data = await res.json();
@@ -2642,7 +2642,7 @@ export function ChatWorkspace({
         ctrl,
         clientTurnId,
       };
-      chatSession.registerRun(chatId, run);
+      const turn = chatSession.beginTurn(chatId, run);
       // Clear the composer's skill chip HERE — in the same batch as the run
       // registration that renders the user message (which shows the
       // skill as a bubble badge). Same frame = the chip moves from composer to
@@ -2758,7 +2758,7 @@ export function ChatWorkspace({
             ),
           }).clientMs,
         });
-        chatSession.updateRun(chatId, run, (ownedRun) => {
+        turn?.update((ownedRun) => {
           ownedRun.turnStartedAt =
             res.headers.get("X-Turn-Started-At") ?? undefined;
           applyPersistedUserMessageId(
@@ -2784,7 +2784,7 @@ export function ChatWorkspace({
         // A send got through — clear any stale limit banner.
         setLimitNotice(null);
 
-        await chatSession.consumeRun(chatId, run, res.body, (ownedRun, event, data) => {
+        await turn.consume(res.body, (ownedRun, event, data) => {
           // Stop fired between frames — drop this one; the finally settles the UI.
           if (ctrl.signal.aborted) return;
           if (event === "text") {
@@ -2951,7 +2951,7 @@ export function ChatWorkspace({
         const code = (e as Error & { code?: string }).code;
         if ((e as Error).name === "AbortError") {
           streamAborted = true;
-          chatSession.updateRun(chatId, run, (ownedRun) => {
+          turn.update((ownedRun) => {
             if (
               !ownedRun.stopPending &&
               !ownedRun.rawText.trim() &&
@@ -2968,7 +2968,7 @@ export function ChatWorkspace({
           // leaving an endless spinner or silently accepting truncated prose.
           recoverableTransportFailure = true;
           streamAborted = true;
-          chatSession.updateRun(chatId, run, (ownedRun) => {
+          turn.update((ownedRun) => {
             ownedRun.plan = [];
             ownedRun.tools = ownedRun.tools.map((tool) =>
               tool.ok === undefined ? { ...tool, ok: false } : tool,
@@ -3001,9 +3001,9 @@ export function ChatWorkspace({
         // give the text/files back; the modeled source remains selected until
         // a stream has actually opened.
         if (!streamStarted && !recoverableTransportFailure && !run.stopPending) {
-          chatSession.retireRun(chatId, run);
+          turn.retire();
           if (status === 409 && recoverableFallbackRun) {
-            chatSession.registerRun(chatId, { ...recoverableFallbackRun });
+            chatSession.beginTurn(chatId, { ...recoverableFallbackRun });
             toast.info("Cowork is still finishing the previous attempt. Retry again in a moment.");
           }
           const failedChatIsActive = activeIdRef.current === chatId;
@@ -3048,7 +3048,7 @@ export function ChatWorkspace({
           return;
         }
       } finally {
-        chatSession.updateRun(chatId, run, (ownedRun) => {
+        turn?.update((ownedRun) => {
           if (ctrl.signal.aborted || ownedRun.stopped) {
             streamAborted = true;
             if (
@@ -3105,7 +3105,7 @@ export function ChatWorkspace({
         void maybeAutoTitle(chatId);
         // If the chat was deleted mid-turn, just drop the run.
         if (deletedRef.current.has(chatId)) {
-          chatSession.retireRun(chatId, run);
+          turn.retire();
           return;
         }
         try {
@@ -3147,7 +3147,7 @@ export function ChatWorkspace({
             stillMine &&
             (shouldApplyReload || (currentBaseHasAsk && askInBase))
           ) {
-            chatSession.retireRun(chatId, run);
+            turn.retire();
           }
         } catch {
           // Reload failed — keep the live ask-run as the fallback source of the
@@ -3207,7 +3207,7 @@ export function ChatWorkspace({
       // since runOverlay only dedupes the USER message, not the assistant).
       // If the chat was deleted mid-stream, just drop the run.
       if (deletedRef.current.has(chatId)) {
-        chatSession.retireRun(chatId, run);
+        turn.retire();
         return;
       }
       let completedCanonicalHandoff = false;
@@ -3231,13 +3231,11 @@ export function ChatWorkspace({
         if (
           data.ok &&
           hydrated &&
-          chatSession.ownsRun(chatId, run) &&
+          turn.isCurrent() &&
           !deletedRef.current.has(chatId) &&
           (!streamAborted || hasAssistantForThisTurn)
         ) {
-          completedCanonicalHandoff = chatSession.completeRun(
-            chatId,
-            run,
+          completedCanonicalHandoff = turn.complete(
             hydrated,
             (data.messages as RawDbMessage[]).flatMap((m) => m.artifacts ?? []),
           );
@@ -3254,14 +3252,14 @@ export function ChatWorkspace({
       // command/publication, so no duplicate base+overlay frame can render.
       if (
         !completedCanonicalHandoff &&
-        chatSession.ownsRun(chatId, run) &&
+        turn.isCurrent() &&
         (!streamAborted ||
           hasAssistantAfterPersistedUserMessage(
             chatSession.baseMessages(chatId),
             userMsg,
           ))
       ) {
-        chatSession.retireRun(chatId, run);
+        turn.retire();
       }
     } finally {
       // Belt-and-braces: the lock is normally released above (right after the
@@ -3331,14 +3329,15 @@ export function ChatWorkspace({
                 ownedRun.userMsg,
               )
             ) {
-              chatSession.completeRun(
-                activeId,
-                ownedRun,
-                canonical,
-                (data.messages as RawDbMessage[]).flatMap(
-                  (message) => message.artifacts ?? [],
-                ),
-              );
+              const turn = chatSession.turnFor(activeId);
+              if (turn?.run === ownedRun) {
+                turn.complete(
+                  canonical,
+                  (data.messages as RawDbMessage[]).flatMap(
+                    (message) => message.artifacts ?? [],
+                  ),
+                );
+              }
               return;
             }
           }
@@ -3384,9 +3383,10 @@ export function ChatWorkspace({
       if (persisted?.some((a) => a.id === artifactId)) {
         chatSession.setArtifacts(aid, apply(persisted));
       }
-      const run = chatSession.runFor(aid);
+      const turn = chatSession.turnFor(aid);
+      const run = turn?.run;
       if (run?.artifacts.some((a) => a.id === artifactId)) {
-        chatSession.updateRun(aid, run, (ownedRun) => {
+        turn?.update((ownedRun) => {
           ownedRun.artifacts = apply(ownedRun.artifacts);
         });
       }
@@ -3403,7 +3403,8 @@ export function ChatWorkspace({
           a.id === artifactId ? { ...a, meta: { ...(a.meta ?? {}), ...metaPatch } } : a,
         );
       const persisted = chatSession.artifactsFor(aid);
-      const run = chatSession.runFor(aid);
+      const turn = chatSession.turnFor(aid);
+      const run = turn?.run;
       const current = [...(persisted ?? []), ...(run?.artifacts ?? [])].find(
         (a) => a.id === artifactId,
       );
@@ -3442,7 +3443,7 @@ export function ChatWorkspace({
         chatSession.setArtifacts(aid, apply(persisted));
       }
       if (run?.artifacts.some((a) => a.id === artifactId)) {
-        chatSession.updateRun(aid, run, (ownedRun) => {
+        turn?.update((ownedRun) => {
           ownedRun.artifacts = apply(ownedRun.artifacts);
         });
       }
@@ -3459,7 +3460,8 @@ export function ChatWorkspace({
     async (artifactId: string) => {
       const aid = activeIdRef.current;
       if (!aid) return;
-      const run = chatSession.runFor(aid);
+      const turn = chatSession.turnFor(aid);
+      const run = turn?.run;
       // Capture the deleted artifact + its position from EACH source, so a
       // rollback can RE-INSERT it into the (possibly-changed) current array
       // rather than restoring a stale snapshot. The delete button isn't gated on
@@ -3479,7 +3481,7 @@ export function ChatWorkspace({
         );
       }
       if (run) {
-        chatSession.updateRun(aid, run, (ownedRun) => {
+        turn.update((ownedRun) => {
           ownedRun.artifacts = ownedRun.artifacts.filter(
             (a) => a.id !== artifactId,
           );
@@ -3510,7 +3512,7 @@ export function ChatWorkspace({
           // Use the identity captured before the request. A newer turn may have
           // replaced this run while the delete was in flight; in that case the
           // rollback belongs to the stale run and must be rejected.
-          chatSession.updateRun(aid, run, (ownedRun) => {
+          turn.update((ownedRun) => {
             ownedRun.artifacts = [
               ...reinsertArtifact(ownedRun.artifacts, runIdx, runDeleted),
             ];
@@ -3914,12 +3916,10 @@ export function ChatWorkspace({
                           if (canonicalTerminal) {
                             canonicalTerminalReason =
                               canonicalTerminal.terminalReason;
-                            chatSession.completeRun(
-                              activeId,
-                              ownedRun,
-                              canonical,
-                              canonicalArtifacts,
-                            );
+                            const turn = chatSession.turnFor(activeId);
+                            if (turn?.run === ownedRun) {
+                              turn.complete(canonical, canonicalArtifacts);
+                            }
                             canonicalSettledWithoutRetry = !originalTask;
                           } else {
                             chatSession.reconcile(

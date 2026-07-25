@@ -50,7 +50,7 @@ describe("ChatSession", () => {
   it("keeps background runs alive when another conversation is selected", async () => {
     const session = new ChatSession<Message, Artifact, Run>();
     const run = { streaming: true, ctrl: new AbortController(), overlay: [] };
-    session.registerRun("chat-1", run);
+    session.beginTurn("chat-1", run);
 
     await session.select("chat-2", async () => ({ messages: [], artifacts: [] }));
 
@@ -123,7 +123,7 @@ describe("ChatSession", () => {
     expect(retry).toBeDefined();
     retry?.release();
 
-    session.registerRun("chat-1", {
+    session.beginTurn("chat-1", {
       streaming: true,
       ctrl: new AbortController(),
       overlay: [],
@@ -151,7 +151,7 @@ describe("ChatSession", () => {
       overlay: [{ id: "live", text: "partial" }],
     };
     const serverStop = vi.fn(async () => undefined);
-    session.registerRun("chat-1", run);
+    session.beginTurn("chat-1", run);
 
     const stopped = await session.stop("chat-1", {
       onStopConfirmed: (ownedRun) => {
@@ -180,7 +180,7 @@ describe("ChatSession", () => {
       clientTurnId: "00000000-0000-4000-8000-000000000701",
       overlay: [{ id: "live", text: "partial" }],
     };
-    session.registerRun("chat-1", run);
+    session.beginTurn("chat-1", run);
 
     const stopped = await session.stop("chat-1", {
       serverStop: async () => {
@@ -207,7 +207,7 @@ describe("ChatSession", () => {
       clientTurnId: "00000000-0000-4000-8000-000000000701",
       overlay: [{ id: "live", text: "partial" }],
     };
-    session.registerRun("chat-1", run);
+    const turn = session.beginTurn("chat-1", run);
     const canonical = [{ id: "done", text: "Completed before Stop" }];
 
     const settled = await session.stop("chat-1", {
@@ -215,7 +215,8 @@ describe("ChatSession", () => {
         throw new Error("no active turn");
       },
       onStopFailure: async (ownedRun) => {
-        session.completeRun("chat-1", ownedRun, canonical, []);
+        expect(ownedRun).toBe(run);
+        turn.complete(canonical, []);
       },
     });
 
@@ -228,16 +229,14 @@ describe("ChatSession", () => {
     const session = new ChatSession<Message, Artifact, Run>({ activeId: "chat-1" });
     const first = { streaming: false, ctrl: new AbortController(), overlay: [] };
     const followUp = { streaming: true, ctrl: new AbortController(), overlay: [] };
-    session.registerRun("chat-1", first);
-    session.registerRun("chat-1", followUp);
+    const firstTurn = session.beginTurn("chat-1", first);
+    session.beginTurn("chat-1", followUp);
 
-    expect(session.reconcileOwned(
-      "chat-1",
-      first,
+    expect(firstTurn.reconcile(
       [{ id: "stale", text: "old canonical reply" }],
       [],
     )).toBe(false);
-    expect(session.retireRun("chat-1", first)).toBe(false);
+    expect(firstTurn.retire()).toBe(false);
     expect(session.runFor("chat-1")).toBe(followUp);
     expect(session.baseMessages("chat-1")).toEqual([]);
   });
@@ -250,10 +249,10 @@ describe("ChatSession", () => {
       ctrl: new AbortController(),
       overlay: [{ id: "replacement", text: "new owner's artifact" }],
     };
-    session.registerRun("chat-1", first);
-    session.registerRun("chat-1", replacement);
+    const firstTurn = session.beginTurn("chat-1", first);
+    session.beginTurn("chat-1", replacement);
 
-    expect(session.updateRun("chat-1", first, (owned) => {
+    expect(firstTurn.update((owned) => {
       owned.overlay = [{ id: "deleted", text: "old artifact rollback" }];
     })).toBe(false);
     expect(session.runFor("chat-1")?.overlay).toEqual(replacement.overlay);
@@ -262,16 +261,14 @@ describe("ChatSession", () => {
   it("atomically hands an owned run to its canonical snapshot", () => {
     const session = new ChatSession<Message, Artifact, Run>({ activeId: "chat-1" });
     const run = { streaming: false, ctrl: new AbortController(), overlay: [] };
-    session.registerRun("chat-1", run);
+    const turn = session.beginTurn("chat-1", run);
     const observed: Array<{ base: number; hasRun: boolean }> = [];
     session.subscribe(() => observed.push({
       base: session.baseMessages("chat-1").length,
       hasRun: session.hasRun("chat-1"),
     }));
 
-    expect(session.completeRun(
-      "chat-1",
-      run,
+    expect(turn.complete(
       [{ id: "persisted", text: "canonical reply" }],
       [{ id: "draft" }],
     )).toBe(true);
@@ -280,6 +277,44 @@ describe("ChatSession", () => {
     ]);
     expect(session.artifactsFor("chat-1")).toEqual([{ id: "draft" }]);
     expect(observed).toEqual([{ base: 1, hasRun: false }]);
+  });
+
+  it("encapsulates one turn's ownership through a stale-safe transaction", async () => {
+    const session = new ChatSession<Message, Artifact, Run>({ activeId: "chat-1" });
+    const firstRun = { streaming: true, ctrl: new AbortController(), overlay: [] };
+    const firstTurn = session.beginTurn("chat-1", firstRun);
+
+    expect(firstTurn.isCurrent()).toBe(true);
+    expect(firstTurn.update((run) => {
+      run.overlay = [{ id: "live", text: "first response" }];
+    })).toBe(true);
+
+    const replacementRun = {
+      streaming: true,
+      ctrl: new AbortController(),
+      overlay: [{ id: "replacement", text: "new response" }],
+    };
+    const replacementTurn = session.beginTurn("chat-1", replacementRun);
+
+    expect(firstTurn.isCurrent()).toBe(false);
+    expect(firstTurn.update((run) => {
+      run.overlay = [{ id: "stale", text: "must not land" }];
+    })).toBe(false);
+    expect(firstTurn.complete(
+      [{ id: "stale", text: "old canonical response" }],
+      [],
+    )).toBe(false);
+    expect(firstTurn.retire()).toBe(false);
+
+    expect(replacementTurn.complete(
+      [{ id: "canonical", text: "new canonical response" }],
+      [{ id: "draft" }],
+    )).toBe(true);
+    expect(session.baseMessages("chat-1")).toEqual([
+      { id: "canonical", text: "new canonical response" },
+    ]);
+    expect(session.artifactsFor("chat-1")).toEqual([{ id: "draft" }]);
+    expect(session.hasRun("chat-1")).toBe(false);
   });
 });
 
