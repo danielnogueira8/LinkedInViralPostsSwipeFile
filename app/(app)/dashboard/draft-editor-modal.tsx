@@ -10,6 +10,11 @@ import { draftEgressBody } from "@/lib/markdown/mode";
 import { LINKEDIN_MAX_CHARS } from "@/lib/linkedin-format";
 import { localDateFromDatetimeInput } from "@/lib/schedule-local-date";
 import {
+  draftOperations,
+  type DraftScheduleCommand,
+  type DraftUpdateCommand,
+} from "@/lib/draft-operations-client";
+import {
   Loader2,
   ChevronUp,
   ChevronDown,
@@ -331,40 +336,32 @@ export function DraftEditorModal({
     }
     try {
       if (isNew) {
-        const res = await fetch("/api/drafts", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            body: trimmed,
-            ...(newName ? { title: newName } : {}),
-            status: newStatus,
-            plan_to_post_on: newDate || null,
-            // Only send an explicit kind when the user picked one; otherwise the
-            // server auto-classifies (regular vs lead-magnet) from the body.
-            ...(newKind ? { kind: newKind } : {}),
-            // The chosen giveaway — only meaningful (and only sent) for a
-            // lead-magnet post. The server ignores it for other kinds.
-            ...(newKind === "lead_magnet" && newLeadMagnetId
-              ? { lead_magnet_id: newLeadMagnetId }
-              : {}),
-            ...(newMedia.length
-              ? { media_attachments: mediaAttachmentsForPersistence(newMedia) }
-              : {}),
-          }),
+        const data = await draftOperations.create({
+          body: trimmed,
+          ...(newName ? { title: newName } : {}),
+          status: newStatus,
+          plan_to_post_on: newDate || null,
+          // Only send an explicit kind when the user picked one; otherwise the
+          // server auto-classifies (regular vs lead-magnet) from the body.
+          ...(newKind ? { kind: newKind } : {}),
+          // The chosen giveaway — only meaningful (and only sent) for a
+          // lead-magnet post. The server ignores it for other kinds.
+          ...(newKind === "lead_magnet" && newLeadMagnetId
+            ? { lead_magnet_id: newLeadMagnetId }
+            : {}),
+          ...(newMedia.length
+            ? { media_attachments: mediaAttachmentsForPersistence(newMedia) }
+            : {}),
         });
-        const data = await res.json();
-        if (!data.ok) throw new Error(data.error || "Failed to create post");
         onCreated(normalizeDraft(data.draft));
-        return data.draft.id as string;
+        return data.draft.id;
       }
       if (!dirty) return draft!.id;
-      const res = await fetch(`/api/drafts/${draft!.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ body: trimmed }),
-      });
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error || "Failed to save");
+      await draftOperations.update(
+        draft!.id,
+        { body: trimmed },
+        { fallbackError: "Failed to save" },
+      );
       onSaved(draft!.id, trimmed);
       return draft!.id;
     } catch (e) {
@@ -403,12 +400,12 @@ export function DraftEditorModal({
       return;
     }
     try {
-      const data = await scheduleDraft(id, input);
+      const data = await draftOperations.schedule(id, input);
       onMeta(id, {
-        scheduledAt: data.scheduledAt ?? input.scheduledAt,
+        scheduledAt: data.scheduledAt,
         scheduleStatus: "scheduled",
-        planToPostOn: data.planToPostOn ?? input.planToPostOn,
-        firstComment: data.firstComment ?? null,
+        planToPostOn: data.planToPostOn,
+        firstComment: data.firstComment,
         publishError: null,
       });
       toast.success("Post created and scheduled on LinkedIn.");
@@ -423,17 +420,13 @@ export function DraftEditorModal({
   // A property change (title / status / date) on an EXISTING post. Optimistic via
   // onMeta; PATCH in the background. New posts can't have properties yet (no id),
   // so these controls are disabled until the body is created.
-  const patchMeta = async (patch: Partial<Draft>, body: Record<string, unknown>) => {
+  const patchMeta = async (patch: Partial<Draft>, body: DraftUpdateCommand) => {
     if (isNew || !draft) return;
     onMeta(draft.id, patch); // optimistic
     try {
-      const res = await fetch(`/api/drafts/${draft.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+      await draftOperations.update(draft.id, body, {
+        fallbackError: "Failed to update",
       });
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error || "Failed to update");
     } catch (e) {
       toast.error((e as Error).message);
     }
@@ -462,13 +455,11 @@ export function DraftEditorModal({
     const previous = mediaAttachments;
     onMeta(draft.id, { mediaAttachments: next });
     try {
-      const res = await fetch(`/api/drafts/${draft.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ media_attachments: mediaAttachmentsForPersistence(next) }),
-      });
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error || "Failed to update media");
+      await draftOperations.update(
+        draft.id,
+        { media_attachments: mediaAttachmentsForPersistence(next) },
+        { fallbackError: "Failed to update media" },
+      );
       return true;
     } catch (e) {
       // Reconcile, don't restore: only revert to `previous` if the CURRENT
@@ -2129,30 +2120,7 @@ function localInputToIso(v: string): string | null {
 // or cancels one. Gates on the workspace's LinkedIn connection: with none, it
 // shows a "Connect in Settings" prompt instead of the picker (belt to the
 // endpoint's own 409). Optimistic — updates the draft via onMeta.
-type ScheduleInput = {
-  scheduledAt: string;
-  planToPostOn: string;
-  firstComment: string | null;
-};
-
-type ScheduleResponse = {
-  scheduledAt?: string;
-  planToPostOn?: string;
-  firstComment?: string | null;
-};
-
-async function scheduleDraft(id: string, input: ScheduleInput): Promise<ScheduleResponse> {
-  const data = await fetchJson<{ ok: boolean; error?: string } & ScheduleResponse>(
-    `/api/drafts/${id}/schedule`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(input),
-    },
-  );
-  if (!data.ok) throw new Error(data.error || "Couldn't schedule.");
-  return data;
-}
+type ScheduleInput = DraftScheduleCommand;
 
 function ScheduleRow({
   draft,
@@ -2248,12 +2216,12 @@ function ScheduleRow({
         await onCreateAndSchedule?.(input);
         return;
       }
-      const data = await scheduleDraft(draft.id, input);
+      const data = await draftOperations.schedule(draft.id, input);
       onMeta(draft.id, {
-        scheduledAt: data.scheduledAt ?? iso,
+        scheduledAt: data.scheduledAt,
         scheduleStatus: "scheduled",
-        planToPostOn: data.planToPostOn ?? planToPostOn,
-        firstComment: data.firstComment ?? null,
+        planToPostOn: data.planToPostOn,
+        firstComment: data.firstComment,
         publishError: null,
       });
       toast.success("Scheduled to publish on LinkedIn.");
@@ -2268,12 +2236,8 @@ function ScheduleRow({
     if (!draft) return;
     setBusy(true);
     try {
-      const data = await fetchJson<{ ok: boolean; error?: string }>(
-        `/api/drafts/${draft.id}/schedule`,
-        { method: "DELETE" },
-      );
-      if (!data.ok) throw new Error(data.error || "Couldn't unschedule.");
-      onMeta(draft.id, { scheduledAt: null, scheduleStatus: null, firstComment: null });
+      const next = await draftOperations.unschedule(draft.id);
+      onMeta(draft.id, next);
       toast.success("Unscheduled.");
     } catch (e) {
       toast.error((e as Error).message);

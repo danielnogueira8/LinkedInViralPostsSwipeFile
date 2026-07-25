@@ -118,6 +118,7 @@ import {
   LINKEDIN_SEE_MORE_CHARS,
 } from "@/lib/linkedin-format";
 import { uploadMediaAsset } from "@/lib/upload-media-asset";
+import { draftOperations } from "@/lib/draft-operations-client";
 import { suggestedScheduleLocalInput } from "@/lib/next-open-schedule-day";
 import { useCopiedFlag } from "@/lib/use-copied-flag";
 import { resolveIntent } from "@/lib/post-intents";
@@ -6520,22 +6521,15 @@ function ArtifactCard({
     if (!chatId || saving) return;
     setSaving(true);
     try {
-      const res = await fetch(`/api/chats/${chatId}/artifacts`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: artifact.title,
-          // edited local body (from the inline editor), not artifact.body
-          body,
-          ...(kindForSave() ? { kind: kindForSave() } : {}),
-          ...(artifact.meta ? { meta: artifact.meta } : {}),
-          ...(mediaAttachments.length ? { media_attachments: mediaAttachments } : {}),
-        }),
+      const data = await draftOperations.saveFromChat(chatId, {
+        title: artifact.title,
+        // edited local body (from the inline editor), not artifact.body
+        body,
+        ...(kindForSave() ? { kind: kindForSave() } : {}),
+        ...(artifact.meta ? { meta: artifact.meta } : {}),
+        ...(mediaAttachments.length ? { media_attachments: mediaAttachments } : {}),
       });
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error || "Failed to save");
-      const savedDraftId = data.artifact?.id;
-      if (!savedDraftId) throw new Error("Saved draft response was missing its id.");
+      const savedDraftId = data.draft.id;
 
       // The POST is the authoritative save. Record that success before the
       // follow-up chat metadata PATCH: if linking the board id back to the chat
@@ -6575,18 +6569,16 @@ function ArtifactCard({
     if (!refiningDraftId || saving) return;
     setSaving(true);
     try {
-      const res = await fetch(`/api/drafts/${refiningDraftId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      await draftOperations.update(
+        refiningDraftId,
+        {
           body,
           content_format: draftMarkdownEnabled(artifact.meta)
             ? "markdown"
             : "plain",
-        }),
-      });
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error || "Failed to update post");
+        },
+        { fallbackError: "Failed to update post" },
+      );
       setSaved(true);
       toast.success("Post updated");
     } catch (e) {
@@ -6606,10 +6598,9 @@ function ArtifactCard({
     // Always carry its body + format back to the original before scheduling.
     const shouldPersistBody = dirty || canUpdateOriginal;
     if (!shouldPersistBody && !scheduleMediaChanged) return;
-    const res = await fetch(`/api/drafts/${draftId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    await draftOperations.update(
+      draftId,
+      {
         ...(shouldPersistBody ? { body } : {}),
         ...(shouldPersistBody && canUpdateOriginal
           ? {
@@ -6619,10 +6610,9 @@ function ArtifactCard({
             }
           : {}),
         media_attachments: scheduleMediaAttachments,
-      }),
-    });
-    const data = await res.json();
-    if (!data.ok) throw new Error(data.error || errorMessage);
+      },
+      { fallbackError: errorMessage },
+    );
     if (shouldPersistBody) onBodyChange?.(body);
     setSaved(true);
   };
@@ -6640,25 +6630,21 @@ function ArtifactCard({
     }
 
     if (!chatId) throw new Error("Save the chat before scheduling this draft.");
-    const res = await fetch(`/api/chats/${chatId}/artifacts`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    const data = await draftOperations.saveFromChat(
+      chatId,
+      {
         title: artifact.title,
         body,
         ...(kindForSave() ? { kind: kindForSave() } : {}),
         ...(artifact.meta ? { meta: artifact.meta } : {}),
         media_attachments: scheduleMediaAttachments,
-      }),
-    });
-    const data = await res.json();
-    if (!data.ok || !data.artifact?.id) {
-      throw new Error(data.error || "Failed to save draft before scheduling");
-    }
-    setBoardDraftId(data.artifact.id);
+      },
+      { fallbackError: "Failed to save draft before scheduling" },
+    );
+    setBoardDraftId(data.draft.id);
     setSaved(true);
-    await onMetaChange?.({ board_draft_id: data.artifact.id });
-    return data.artifact.id;
+    await onMetaChange?.({ board_draft_id: data.draft.id });
+    return data.draft.id;
   };
 
   // Toggle the inline automation config. Opening it first persists the draft
@@ -6849,23 +6835,17 @@ function ArtifactCard({
     setScheduling(true);
     try {
       const draftId = await ensureSchedulableDraft();
-      const res = await fetch(`/api/drafts/${draftId}/schedule`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          scheduledAt: iso,
-          planToPostOn,
-          firstComment: firstComment.trim() || null,
-        }),
+      const data = await draftOperations.schedule(draftId, {
+        scheduledAt: iso,
+        planToPostOn,
+        firstComment: firstComment.trim() || null,
       });
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error || "Couldn't schedule.");
       const next = {
         board_draft_id: draftId,
-        scheduled_at: data.scheduledAt ?? iso,
+        scheduled_at: data.scheduledAt,
         schedule_status: "scheduled",
-        first_comment: data.firstComment ?? null,
-        plan_to_post_on: data.planToPostOn ?? planToPostOn,
+        first_comment: data.firstComment,
+        plan_to_post_on: data.planToPostOn,
         media_attachments: scheduleMediaAttachments,
       };
       await onMetaChange?.(next);
@@ -6887,13 +6867,11 @@ function ArtifactCard({
     if (!draftId) return;
     setScheduling(true);
     try {
-      const res = await fetch(`/api/drafts/${draftId}/schedule`, { method: "DELETE" });
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error || "Couldn't unschedule.");
+      const next = await draftOperations.unschedule(draftId);
       await onMetaChange?.({
-        scheduled_at: null,
-        schedule_status: null,
-        first_comment: null,
+        scheduled_at: next.scheduledAt,
+        schedule_status: next.scheduleStatus,
+        first_comment: next.firstComment,
       });
       setScheduledAt(null);
       setScheduleStatus(null);
