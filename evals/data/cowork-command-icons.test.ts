@@ -24,7 +24,10 @@ describe("Cowork command icons", () => {
   test("covers the composer and every expanded draft-card command", () => {
     expect(usageCount("ask")).toBe(2);
     expect(usageCount("create")).toBe(1);
-    expect(usageCount("edit")).toBe(3);
+    // Was 3. The draft card's header Edit/Done toggle is gone: the Cowork
+    // editor is now always open, so there is no mode to switch into. The two
+    // remaining "edit" icons are the composer's edit-target affordances.
+    expect(usageCount("edit")).toBe(2);
   });
 
   test("uses the Create icon for the original-post starter too", () => {

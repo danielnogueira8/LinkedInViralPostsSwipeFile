@@ -6345,7 +6345,13 @@ function ArtifactCard({
 }) {
   const [copied, markCopied] = useCopiedFlag();
   const [saving, setSaving] = useState(false);
-  const [editing, setEditing] = useState(false);
+  // The editor is always open, so "are we editing?" is no longer a mode.
+  // What the re-seed guard below actually needs is whether the USER has typed
+  // since we last seeded from the artifact: if they haven't, an AI refine that
+  // rewrites this same draft should flow in; if they have, their text wins.
+  // (`dirty` can't answer this — a refine changes artifactBody, which would
+  // make dirty true without the user touching anything.)
+  const [userEdited, setUserEdited] = useState(false);
   // Whether the primary save/schedule should UPDATE an existing Posts-board row.
   // Only for post artifacts in a chat that was opened to refine that specific post.
   const canUpdateOriginal = !!refiningDraftId && artifact.kind === "post";
@@ -6363,6 +6369,10 @@ function ArtifactCard({
   const [automationDraftId, setAutomationDraftId] = useState<string | null>(null);
   const [automationOpening, setAutomationOpening] = useState(false);
   const [automationError, setAutomationError] = useState<string | null>(null);
+  // Body autosave (on blur). The ref guards against overlapping saves; the
+  // state drives the "Saving…" label in the status bar.
+  const savingBodyRef = useRef(false);
+  const [savingBody, setSavingBody] = useState(false);
   const scheduleMeta = scheduleMetaFromArtifact(artifact);
   const [saved, setSaved] = useState(
     !!(canUpdateOriginal ? refiningDraftId : scheduleMeta.boardDraftId),
@@ -6396,11 +6406,11 @@ function ArtifactCard({
   // draft" flow), so the card shows the refined text instead of the stale one.
   const [seededId, setSeededId] = useState(artifact.id);
   const [seededBody, setSeededBody] = useState(artifactBody);
-  if (seededId !== artifact.id || (!editing && seededBody !== artifactBody)) {
+  if (seededId !== artifact.id || (!userEdited && seededBody !== artifactBody)) {
     setSeededId(artifact.id);
     setSeededBody(artifactBody);
     setBody(artifactBody);
-    setEditing(false);
+    setUserEdited(false);
     const seededBoardDraftId = canUpdateOriginal ? refiningDraftId : scheduleMeta.boardDraftId;
     // A board row already exists for THIS exact content (persisted on the
     // artifact via meta.board_draft_id) → it's already saved, not merely
@@ -6673,6 +6683,143 @@ function ArtifactCard({
     }
   };
 
+  // Persist the chat artifact's body. Previously this only ran when the user
+  // clicked "Done"; the editor is now always open, so it runs on blur instead
+  // (and before Save/Schedule, which need the saved text).
+  //
+  // Two failure modes preserved verbatim from the old Done handler:
+  //  (a) Streaming race — a PATCH issued before the assistant row exists
+  //      matches 0 rows. The server returns 404 and we retry with backoff up
+  //      to ~3.5s, which covers a normal turn finishing.
+  //  (b) The parent's session cache still holds the pre-edit body, so a later
+  //      re-render would seed it back. onBodyChange tells the parent to
+  //      reflect what we saved.
+  // Returns true when the body is persisted (or there was nothing to persist).
+  const persistBody = async (): Promise<boolean> => {
+    if (!dirty || !chatId) return true;
+    if (savingBodyRef.current) return true; // a save is already in flight
+    savingBodyRef.current = true;
+    setSavingBody(true);
+    const snapshot = body;
+    const payload = JSON.stringify({
+      targetId: artifact.id,
+      body: snapshot,
+      title: artifact.title,
+      ...(artifact.meta ? { meta: artifact.meta } : {}),
+    });
+    const trySave = async (): Promise<boolean> => {
+      const res = await fetch(`/api/chats/${chatId}/artifacts`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: payload,
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.ok && data?.updated) return true;
+      }
+      return false;
+    };
+    try {
+      let ok = await trySave();
+      for (const delay of [300, 700, 1500, 1000]) {
+        if (ok) break;
+        await new Promise((r) => setTimeout(r, delay));
+        ok = await trySave();
+      }
+      if (!ok) throw new Error("Couldn't save your edit — it will retry when you click away again.");
+      onBodyChange?.(snapshot);
+      setUserEdited(false);
+      return true;
+    } catch (e) {
+      toast.error((e as Error).message);
+      return false;
+    } finally {
+      savingBodyRef.current = false;
+      setSavingBody(false);
+    }
+  };
+
+  // Upload image(s) onto THIS draft, from the toolbar button, drag/drop or
+  // paste. Images go to our own media library (POST /api/media-assets); Zernio
+  // only receives them later, at publish time, via toZernioMediaItems.
+  // Persisted onto the artifact's meta so they survive a reload, and mirrored
+  // into scheduleMediaAttachments so scheduling picks them up unchanged.
+  const addDraftImages = async (files: File[]) => {
+    if (!files.length || uploadingScheduleImage) return;
+    setUploadingScheduleImage(true);
+    try {
+      const uploaded: PostMediaAttachment[] = [];
+      for (const file of files) {
+        const check = validatePostMediaFile({
+          name: file.name,
+          contentType: file.type,
+          size: file.size,
+        });
+        if (!check.ok || check.type !== "image") {
+          throw new Error(
+            check.ok ? "Choose a JPG, PNG, GIF, or WebP image." : check.error,
+          );
+        }
+        const form = new FormData();
+        form.append("file", file, file.name);
+        const res = await fetch("/api/media-assets", { method: "POST", body: form });
+        const data = (await res.json()) as {
+          ok?: boolean;
+          error?: string;
+          asset?: {
+            id: string;
+            filename: string;
+            mimeType: string;
+            size: number;
+            type: "image" | "video" | "document";
+            signedUrl?: string | null;
+            storageBucket?: string | null;
+            storagePath?: string | null;
+            createdAt: string;
+          };
+        };
+        if (!data.ok || !data.asset || data.asset.type !== "image") {
+          throw new Error(data.error || "Couldn't upload that image.");
+        }
+        uploaded.push({
+          id: `asset:${data.asset.id}`,
+          source: "library",
+          assetId: data.asset.id,
+          name: data.asset.filename,
+          mimeType: data.asset.mimeType,
+          size: data.asset.size,
+          type: "image",
+          storageBucket: data.asset.storageBucket,
+          storagePath: data.asset.storagePath,
+          previewUrl: data.asset.signedUrl,
+          uploadedAt: data.asset.createdAt,
+        });
+      }
+      const next = [...mediaAttachments, ...uploaded];
+      // LinkedIn's own limits (max 20 images, no mixing types) — checked on the
+      // COMBINED set, not per file, so adding a second batch can't slip past.
+      const setError = validatePostMediaSet(next);
+      if (setError) throw new Error(setError);
+      setScheduleMediaAttachments(next);
+      await onMetaChange?.({ media_attachments: next });
+      toast.success(uploaded.length > 1 ? "Images attached" : "Image attached");
+    } catch (error) {
+      toast.error((error as Error).message);
+    } finally {
+      setUploadingScheduleImage(false);
+    }
+  };
+
+  const removeDraftImage = async (id: string) => {
+    const next = mediaAttachments.filter((m) => m.id !== id);
+    setScheduleMediaAttachments(next);
+    try {
+      await onMetaChange?.({ media_attachments: next });
+    } catch {
+      toast.error("Couldn't remove that image.");
+    }
+  };
+
   const addScheduleImage = async (file: File | undefined) => {
     if (!file || uploadingScheduleImage) return;
     try {
@@ -6825,18 +6972,19 @@ function ArtifactCard({
     .toUpperCase();
 
   return (
-    // Bounded card: header pinned at top, action bar pinned at bottom, and the
-    // POST BODY is the only scrolling region. Without this, a long post pushed
-    // the Copy/Save bar off-screen and there was no way to scroll to it. Cap the
-    // card at most of the panel height so it never grows unbounded.
-    // NOTE: no `flex flex-col` + `max-h-...` here — that combo collapses the
-    // ScrollableBody's `flex-1 min-h-0` to zero when the parent scroll panel is
-    // content-sized (which the drafts panel IS). Symptom: only the "Draft N"
-    // chip and the LinkedIn-style header would render; the body + action bar
-    // sat at zero height below and the card looked mysteriously empty. Just
-    // let the card size to its content — the outer drafts panel is already
-    // `overflow-y-scroll` so a tall card scrolls with the panel, not itself.
-    <div className="rounded-xl border border-border bg-white text-foreground shadow-[0_16px_45px_rgba(28,28,26,0.10)]">
+    // The expanded draft FILLS the panel column (#4): `flex-1 min-h-0` inside
+    // the panel's flex list, with the editor body flexing to absorb the slack —
+    // so there is no dead space under a short draft, and the toolbar + status
+    // bar stay pinned to the bottom.
+    //
+    // Historical note, because this bit has bitten before: a previous attempt at
+    // `flex flex-col` + `max-h-*` collapsed the body to zero height (the card
+    // rendered as just a header). That happened because the body was a
+    // ScrollableBody relying on `flex-1 min-h-0` inside a CONTENT-sized parent.
+    // It is safe now for a concrete reason: the body is a textarea with its own
+    // `min-h-[220px]`, so it has intrinsic height and cannot collapse even if
+    // the flex chain gives it nothing.
+    <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-border bg-white text-foreground shadow-[0_16px_45px_rgba(28,28,26,0.10)]">
       {/* "Draft N" badge + applied-skill chip(s). Skills come from the server
           stamping meta.skills onto the artifact when one was active for the
           turn that produced it (see route's artifact case). Renders even when
@@ -6912,7 +7060,7 @@ function ArtifactCard({
         </div>
         <div className="shrink-0 flex items-center gap-1">
           {/* Delete this draft from the chat. Confirmed; hidden when no handler. */}
-          {onDelete && !editing && (
+          {onDelete && (
             <button
               type="button"
               onClick={() => {
@@ -6929,86 +7077,6 @@ function ArtifactCard({
               <Trash2 className="h-3.5 w-3.5" />
             </button>
           )}
-          {/* Edit toggle — flips the body between the LinkedIn-style preview and
-              the inline editor. */}
-          <button
-            type="button"
-            onClick={async () => {
-              // Clicking "Done" while editing: if the body changed, PATCH the
-              // artifact so the edit survives a reload. Two failure modes the
-              // PR #418 fix didn't cover and this round addresses:
-              //  (a) Streaming race — user clicks Done before the agent's
-              //      assistant row has been inserted. The PATCH then iterates
-              //      0 matching rows and used to silently return ok:true,
-              //      so the client thought it saved when it hadn't. Server
-              //      now returns 404; we retry with backoff up to ~3s, which
-              //      covers a normal turn finishing.
-              //  (b) Even on success, the parent's session cache still has
-              //      the pre-edit body — a later parent re-render would seed
-              //      the body back. onBodyChange tells the parent to reflect
-              //      the saved body in its cache.
-              if (editing && dirty && chatId) {
-                const payload = JSON.stringify({
-                  targetId: artifact.id,
-                  body,
-                  title: artifact.title,
-                  ...(artifact.meta ? { meta: artifact.meta } : {}),
-                });
-                const trySave = async (): Promise<boolean> => {
-                  const res = await fetch(`/api/chats/${chatId}/artifacts`, {
-                    method: "PATCH",
-                    headers: { "Content-Type": "application/json" },
-                    body: payload,
-                  });
-                  if (res.ok) {
-                    const data = await res.json();
-                    if (data?.ok && data?.updated) return true;
-                  }
-                  return false;
-                };
-                try {
-                  // Up to ~3.5s of retries with backoff (300ms / 700ms / 1500ms
-                  // / 1000ms). Covers a typical turn that's still mid-stream
-                  // when the user clicks Done.
-                  let ok = await trySave();
-                  for (const delay of [300, 700, 1500, 1000]) {
-                    if (ok) break;
-                    await new Promise((r) => setTimeout(r, delay));
-                    ok = await trySave();
-                  }
-                  if (!ok) {
-                    throw new Error(
-                      "Couldn't save the edit — try Done again in a moment.",
-                    );
-                  }
-                  // Tell the parent so the session cache reflects the saved body.
-                  onBodyChange?.(body);
-                } catch (e) {
-                  toast.error((e as Error).message);
-                  // Leave editing mode OPEN on failure so the user doesn't
-                  // think the save succeeded — they can click Done to retry.
-                  return;
-                }
-              }
-              setEditing((e) => !e);
-            }}
-            className={cn(
-              "inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors",
-              editing
-                ? "bg-foreground text-white hover:bg-foreground"
-                : "text-muted-foreground hover:bg-muted hover:text-foreground",
-            )}
-          >
-            {editing ? (
-              <>
-                <Check className="h-3.5 w-3.5" /> Done
-              </>
-            ) : (
-              <>
-                <CoworkCommandIcon kind="edit" className="h-3.5 w-3.5" /> Edit
-              </>
-            )}
-          </button>
         </div>
       </div>
 
@@ -7017,35 +7085,33 @@ function ArtifactCard({
           put; the fade + "Scroll for more" hint signal content below. The
           preview renders rich text (bold/italic/blockquotes) off the edited
           local body so formatting shows and edits are reflected live. */}
-      {editing ? (
-        <div className="px-3 py-2.5">
-          <DraftEditor
-            value={body}
-            onChange={setBody}
-            toolbar="full"
-            rows={16}
-          />
-        </div>
-      ) : (
-        // wrapperClassName override: the card is content-sized (no fixed
-        // parent height), so the default `flex-1 min-h-0` would collapse the
-        // body to zero. `max-h-[60vh]` grows with content up to a sane cap —
-        // a truly long post still gets an internal scroll region, everything
-        // else just renders in full.
-        <ScrollableBody
-          contentKey={`${body}:${mediaAttachments.map((m) => m.id).join(",")}`}
-          wrapperClassName="max-h-[60vh]"
-        >
-          <DraftMediaPreview
-            attachments={mediaAttachments}
-            generatedImageStatus={generatedImageStatus}
-          />
-          {/* markdown=true only when this draft was written by a markdown model
-              (meta.markdown, stamped at creation for GPT-5.6 Luna) → the body is
-              normalized to LinkedIn plain text before render, matching publish. */}
-          {renderRichText(body, "draft", false, Boolean(artifact.meta?.markdown))}
-        </ScrollableBody>
-      )}
+      {/* The editor is ALWAYS open — no Edit/Done round-trip. This works
+          because LinkedIn formatting is Unicode characters rather than markup,
+          so the textarea already shows exactly what will be posted; there is no
+          separate "rendered" view worth switching to. Edits persist on blur via
+          persistBody(), and the status bar below reports the result. */}
+      <div className="flex min-h-0 flex-1 flex-col gap-2 px-3 py-2.5">
+        <DraftEditor
+          value={body}
+          onChange={(next) => {
+            setBody(next);
+            setUserEdited(true);
+          }}
+          toolbar="full"
+          rows={14}
+          textareaClassName="min-h-[220px] flex-1"
+          onBlur={() => void persistBody()}
+          onMediaFiles={(files) => void addDraftImages(files)}
+          allowImagePaste
+        />
+        {/* Attached / generated media, shown under the text exactly as LinkedIn
+            stacks it. Removable here so the draft owns its own media. */}
+        <DraftMediaPreview
+          attachments={mediaAttachments}
+          generatedImageStatus={generatedImageStatus}
+          onRemove={(id) => void removeDraftImage(id)}
+        />
+      </div>
 
       {/* "Why I wrote it this way" — the collaborator note. Stamped onto
           meta.rationale by the interactive render_post tool, and only when it
@@ -7111,7 +7177,7 @@ function ArtifactCard({
               ` — trim ${(body.length - LINKEDIN_MAX_CHARS).toLocaleString()}`}
           </span>
           <span className="text-muted-foreground">
-            {saving
+            {saving || savingBody
               ? "Saving…"
               : dirty
                 ? "Unsaved changes"
@@ -7444,9 +7510,13 @@ function mediaPreviewUrl(attachment: PostMediaAttachment): string | null {
 function DraftMediaPreview({
   attachments,
   generatedImageStatus,
+  onRemove,
 }: {
   attachments: PostMediaAttachment[];
   generatedImageStatus: { status: string; reason?: string } | null;
+  // When provided, each image gets a hover remove control. Omitted in
+  // read-only contexts.
+  onRemove?: (id: string) => void;
 }) {
   const images = attachments.filter((a) => a.type === "image");
   if (images.length === 0) {
@@ -7489,16 +7559,29 @@ function DraftMediaPreview({
       <div className="overflow-hidden rounded-xl border border-border bg-muted">
         {images.map((attachment) => {
           const src = mediaPreviewUrl(attachment);
-          return src ? (
-            // eslint-disable-next-line @next/next/no-img-element -- Signed media preview URLs are dynamic API routes, so next/image cannot optimize them reliably here.
-            <img
-              key={attachment.id}
-              src={src}
-              alt={attachment.name}
-              className="max-h-72 w-full object-contain bg-foreground"
-              loading="lazy"
-            />
-          ) : null;
+          if (!src) return null;
+          return (
+            <div key={attachment.id} className="group/img relative">
+              {/* eslint-disable-next-line @next/next/no-img-element -- Signed media preview URLs are dynamic API routes, so next/image cannot optimize them reliably here. */}
+              <img
+                src={src}
+                alt={attachment.name}
+                className="max-h-72 w-full object-contain bg-foreground"
+                loading="lazy"
+              />
+              {onRemove && (
+                <button
+                  type="button"
+                  onClick={() => onRemove(attachment.id)}
+                  aria-label={`Remove ${attachment.name}`}
+                  title="Remove image"
+                  className="absolute right-2 top-2 grid h-7 w-7 place-items-center rounded-full bg-black/60 text-white opacity-0 transition-opacity hover:bg-black/80 focus-visible:opacity-100 group-hover/img:opacity-100"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+          );
         })}
       </div>
       {generatedImageStatus?.status === "ready" && (
