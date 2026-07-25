@@ -6924,7 +6924,7 @@ function ArtifactCard({
     // It is safe now for a concrete reason: the body is a textarea with its own
     // `min-h-[220px]`, so it has intrinsic height and cannot collapse even if
     // the flex chain gives it nothing.
-    <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-border bg-white text-foreground shadow-[0_16px_45px_rgba(28,28,26,0.10)]">
+    <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-white text-foreground shadow-[0_16px_45px_rgba(28,28,26,0.10)]">
       {/* "Draft N" badge + applied-skill chip(s). Skills come from the server
           stamping meta.skills onto the artifact when one was active for the
           turn that produced it (see route's artifact case). Renders even when
@@ -7030,7 +7030,10 @@ function ArtifactCard({
           so the textarea already shows exactly what will be posted; there is no
           separate "rendered" view worth switching to. Edits persist on blur via
           persistBody(), and the status bar below reports the result. */}
-      <div className="flex min-h-0 flex-1 flex-col gap-2 px-3 py-2.5">
+      {/* min-w-0: a flex item defaults to min-width:auto, i.e. "never shrink
+          below my content". Without it a wide image widens this column past
+          the card and breaks out over the rounded border. */}
+      <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col gap-2 px-3 py-2.5">
         <DraftEditor
           value={body}
           onChange={(next) => {
@@ -7502,8 +7505,11 @@ function DraftMediaPreview({
   }
 
   return (
-    <div className="mb-3 space-y-2">
-      <div className="overflow-hidden rounded-xl border border-border bg-muted">
+    <div className="mb-3 w-full min-w-0 space-y-2">
+      {/* Bounded preview: the draft is a writing surface, so the image is a
+          reference thumbnail, not the main event. max-w keeps a tall or very
+          wide image from dominating; object-contain preserves aspect ratio. */}
+      <div className="mx-auto w-full min-w-0 max-w-[320px] overflow-hidden rounded-xl border border-border bg-muted">
         {images.map((attachment) => {
           const src = mediaPreviewUrl(attachment);
           if (!src) return null;
@@ -7513,7 +7519,7 @@ function DraftMediaPreview({
               <img
                 src={src}
                 alt={attachment.name}
-                className="max-h-72 w-full object-contain bg-foreground"
+                className="block max-h-56 w-full object-contain bg-foreground"
                 loading="lazy"
               />
               {onRemove && (
