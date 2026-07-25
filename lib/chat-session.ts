@@ -38,6 +38,28 @@ type SendCommand<Result> = {
 };
 
 export type ChatSendLease = { release: () => void };
+export type ChatTurnTransaction<
+  Message,
+  Artifact,
+  Run extends ChatSessionRun,
+> = {
+  readonly id: string;
+  readonly run: Readonly<Run>;
+  isCurrent: () => boolean;
+  update: (update: (ownedRun: Run) => void) => boolean;
+  consume: (
+    body: ReadableStream<Uint8Array>,
+    reduce: (
+      ownedRun: Run,
+      event: string,
+      data: Record<string, unknown>,
+    ) => void,
+    signal?: AbortSignal,
+  ) => Promise<void>;
+  reconcile: (messages: Message[], artifacts: Artifact[]) => boolean;
+  complete: (messages: Message[], artifacts: Artifact[]) => boolean;
+  retire: () => boolean;
+};
 export const CHAT_SEND_DEDUPE_WINDOW_MS = 10_000;
 export const CHAT_STREAM_IDLE_TIMEOUT_MS = 55_000;
 
@@ -253,16 +275,52 @@ export class ChatSession<
     this.lastSend.set(key, { text, at: Date.now() });
   }
 
-  registerRun(id: string, run: Run): void {
+  /**
+   * Starts one live turn and returns its ownership capability.
+   *
+   * The caller no longer needs to carry a chat id + mutable run pair through
+   * asynchronous work. Every mutation made through this capability is rejected
+   * after a replacement turn takes ownership of the same conversation.
+   */
+  beginTurn(
+    id: string,
+    run: Run,
+  ): ChatTurnTransaction<Message, Artifact, Run> {
     this.runs.set(id, run);
     this.publish();
+    return this.turnTransaction(id, run);
   }
 
-  ownsRun(id: string, run: Readonly<Run>): boolean {
+  turnFor(id: string | null): ChatTurnTransaction<Message, Artifact, Run> | undefined {
+    if (!id) return undefined;
+    const run = this.runs.get(id);
+    return run ? this.turnTransaction(id, run) : undefined;
+  }
+
+  private turnTransaction(
+    id: string,
+    run: Run,
+  ): ChatTurnTransaction<Message, Artifact, Run> {
+    return {
+      id,
+      run,
+      isCurrent: () => this.runs.get(id) === run,
+      update: (update) => this.updateRun(id, run, update),
+      consume: (body, reduce, signal = run.ctrl.signal) =>
+        this.consumeRun(id, run, body, reduce, signal),
+      reconcile: (messages, artifacts) =>
+        this.reconcileOwned(id, run, messages, artifacts),
+      complete: (messages, artifacts) =>
+        this.completeRun(id, run, messages, artifacts),
+      retire: () => this.retireRun(id, run),
+    };
+  }
+
+  private ownsRun(id: string, run: Readonly<Run>): boolean {
     return this.runs.get(id) === run;
   }
 
-  retireRun(id: string, run?: Readonly<Run>): boolean {
+  private retireRun(id: string, run?: Readonly<Run>): boolean {
     if (run && this.runs.get(id) !== run) return false;
     const deleted = this.runs.delete(id);
     if (deleted) this.publish();
@@ -324,7 +382,7 @@ export class ChatSession<
     this.publish();
   }
 
-  reconcileOwned(
+  private reconcileOwned(
     id: string,
     run: Readonly<Run>,
     messages: Message[],
@@ -337,7 +395,7 @@ export class ChatSession<
     return true;
   }
 
-  completeRun(
+  private completeRun(
     id: string,
     run: Readonly<Run>,
     messages: Message[],
@@ -361,7 +419,7 @@ export class ChatSession<
     this.publish();
   }
 
-  updateRun(
+  private updateRun(
     id: string,
     run: Readonly<Run>,
     update: (ownedRun: Run) => void,
@@ -373,7 +431,7 @@ export class ChatSession<
     return true;
   }
 
-  async consumeRun(
+  private async consumeRun(
     id: string,
     run: Run,
     body: ReadableStream<Uint8Array>,

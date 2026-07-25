@@ -29,7 +29,7 @@ describe("ChatSession.send", () => {
 
   test("rejects a conversation that already has a streaming run", async () => {
     const session = createSession();
-    session.registerRun("chat-1", { streaming: true, ctrl: new AbortController() });
+    session.beginTurn("chat-1", { streaming: true, ctrl: new AbortController() });
     expect(await session.send({ lockKey: "chat-1", text: "hello" })).toBeUndefined();
   });
 
