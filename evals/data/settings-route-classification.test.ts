@@ -2,12 +2,13 @@ import { describe, test, expect, vi, beforeEach } from "vitest";
 import { makeFakeSupabase, type FakeDb } from "./fake-supabase";
 
 // ---------------------------------------------------------------------------
-// POST /api/settings — saving viral thresholds. Alongside the existing GLOBAL
-// posts.is_viral bulk reclassify (the cross-workspace-clobber bug this table
-// exists to eventually replace), it now ALSO reclassifies
-// workspace_post_classification for THIS workspace's own tracked posts only —
-// foundation for per-workspace classification (db/migration-075). Reads still
-// come from posts.is_viral until a follow-up PR flips them.
+// POST /api/settings — saving viral thresholds. Finding #9 fix: a per-workspace
+// threshold change must NOT touch the SHARED, GLOBAL posts.is_viral column
+// (that bulk UPDATE clobbered every other workspace tracking the same creator,
+// and the Swipe File). The route now writes ONLY workspace_post_classification
+// for THIS workspace's own tracked posts; the resilient #1447 readers honor it
+// as a per-workspace override. Ingest still stamps the global column, so the
+// Swipe File's global-gate contract is untouched.
 // ---------------------------------------------------------------------------
 
 const dbRef: { current: FakeDb } = { current: makeFakeSupabase({}) };
@@ -93,12 +94,28 @@ describe("POST /api/settings — per-workspace classification dual-write", () =>
     expect(body.ok).toBe(true);
   });
 
-  test("still performs the EXISTING global posts.is_viral bulk update unchanged", async () => {
-    dbRef.current = makeFakeSupabase({ posts: { rows: [] } });
+  test("NEVER bulk-updates the global posts.is_viral column (Finding #9 — no cross-workspace clobber)", async () => {
+    // This is the regression guard for the contamination bug: a per-workspace
+    // threshold change must not issue ANY UPDATE against the shared posts table.
+    // The posts table may only be SELECTed (to read this workspace's own posts
+    // for the per-workspace reclassify) — never mutated.
+    dbRef.current = makeFakeSupabase({
+      posts: {
+        rows: [
+          { id: "post-1", reactions: 100, comments: 5 },
+          { id: "post-2", reactions: 10, comments: 5 },
+        ],
+      },
+      workspace_post_classification: { rows: [] },
+    });
     await POST(request(VALID_BODY));
     const postsUpdates = dbRef.current.queries.filter(
       (q) => q.table === "posts" && q.filters.some((f) => f.method === "update"),
     );
-    expect(postsUpdates).toHaveLength(2); // the true-slice + false-slice bulk updates
+    expect(postsUpdates).toHaveLength(0);
+    // And the per-workspace override table IS written (the correct scope).
+    expect(
+      dbRef.current.queries.some((q) => q.table === "workspace_post_classification"),
+    ).toBe(true);
   });
 });

@@ -51,57 +51,35 @@ export async function POST(req: Request) {
       return errorResponse(r1.error || r2.error);
     }
 
-    // Re-evaluate is_viral for posts from accounts THIS workspace tracks.
-    // `is_viral` is global today; this still works for the single-workspace
-    // case and remains the right behavior since each scrape is global anyway.
-    // (Future: per-workspace is_viral as a derived view rather than a column.)
+    // Finding #9 fix — DO NOT bulk-UPDATE the global posts.is_viral here.
     //
-    // Two bulk updates rather than a per-row loop — the old loop issued N
-    // sequential UPDATEs and would time out for workspaces with thousands of
-    // posts. PostgREST's filter set lets us flip `is_viral` for the matching
-    // and non-matching slices in two round-trips, atomically per-slice.
+    // posts.is_viral is a SHARED, GLOBAL column: it is stamped once at ingest
+    // by the pipeline classifier (lib/viral.ts / lib/pipeline.ts) and is the
+    // Swipe File's contract (#1447 — the Swipe File is DEFINED by the global
+    // gate). Two workspaces commonly track the same creator, so a per-workspace
+    // threshold change that wrote the global column would overwrite the is_viral
+    // flag every OTHER workspace (and the Swipe File) reads for those posts —
+    // the cross-workspace contamination. Worse, a stricter workspace flipping
+    // global is_viral=false starved the resilient agent/MCP readers of another
+    // workspace (they gate on global is_viral=true first).
+    //
+    // The correct scope for a per-workspace threshold decision is this
+    // workspace's own rows in workspace_post_classification (written below),
+    // which the resilient #1447 readers (lib/agent/tools.ts, lib/mcp/register.ts,
+    // lib/insights-query.ts) honor as an override: global base, minus the posts
+    // THIS workspace demoted. Ingest keeps stamping the global column as before,
+    // so the Swipe File's global-gate contract is untouched.
     const accountIds = await trackedAccountIds(sb.workspaceId);
     if (accountIds.length > 0) {
       const { min_reactions, min_comments } = parsed.data.viral;
-      // A post is viral when EITHER metric meets its threshold. The two updates
-      // below must be exact complements so every tracked post is reclassified —
-      // otherwise a post left out of both slices keeps a stale `is_viral`.
-      //
-      // The trap is NULL: a failed scrape leaves reactions/comments null, and in
-      // SQL/PostgREST `null >= X` and `null < X` are BOTH unknown (never true).
-      // The old `.lt(reactions).lt(comments)` "false" slice therefore skipped
-      // every null-metric post, so demoted posts stayed flagged viral forever.
-      //
-      // Fix: treat null as "below threshold" explicitly.
-      //   viral  = reactions >= min  OR  comments >= min
-      //   !viral = (reactions < min OR reactions is null)
-      //            AND (comments < min OR comments is null)
-      const viralFilter = `reactions.gte.${min_reactions},comments.gte.${min_comments}`;
-      const [upTrue, upFalse] = await Promise.all([
-        sb.raw
-          .from("posts")
-          .update({ is_viral: true })
-          .in("account_id", accountIds)
-          .or(viralFilter),
-        sb.raw
-          .from("posts")
-          .update({ is_viral: false })
-          .in("account_id", accountIds)
-          // Grouped AND-of-ORs: each metric is "below threshold or missing".
-          .or(`reactions.lt.${min_reactions},reactions.is.null`)
-          .or(`comments.lt.${min_comments},comments.is.null`),
-      ]);
-      if (upTrue.error || upFalse.error) {
-        return errorResponse(upTrue.error || upFalse.error);
-      }
 
-      // Foundation for per-workspace classification (migration-075): also
-      // reclassify workspace_post_classification for THIS workspace's own
-      // tracked posts. Scoped strictly to sb.workspaceId — unlike the global
-      // updates above, this can NEVER affect another workspace's rows, which
-      // is the entire point (the global updates above are the bug this table
-      // exists to eventually replace). Best-effort: nothing here should block
-      // the settings save the user is actually waiting on.
+      // Reclassify workspace_post_classification for THIS workspace's own
+      // tracked posts. Scoped strictly to sb.workspaceId, so it can NEVER
+      // affect another workspace's rows — that isolation is the entire point
+      // of this table, and now the ONLY thing a threshold change writes (the
+      // global posts.is_viral bulk update that used to sit above this block was
+      // the contamination and has been removed). Best-effort: nothing here
+      // should block the settings save the user is actually waiting on.
       // Paginated: a workspace with more than 1000 tracked posts would
       // otherwise only get the first 1000 reclassified on a threshold change
       // (the silent 1000-row cap). accountIds is a single workspace's ~50
