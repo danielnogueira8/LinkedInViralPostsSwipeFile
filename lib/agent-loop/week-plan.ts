@@ -50,17 +50,148 @@ export function nextDays(count: number, from: Date = new Date()): string[] {
  * enough that a 7-day plan never repeats one; the daily seed rotates where the
  * fill starts so consecutive days don't produce identical plans.
  */
+// ---------------------------------------------------------------------------
+// Generic plan-day prompts.
+//
+// The catalogue is deliberately LARGE. Slots rotate through it by seed, so a
+// small pool repeats within a couple of weeks — the previous ten cycled fully
+// in about a week and a half.
+//
+// Themes were reverse-engineered from this workspace's own tracked viral
+// posts (241 non-lead-magnet viral hooks, ranked by reactions), not invented:
+//
+//     AI tooling / agents        46%   <- the dominant theme by far
+//     LinkedIn & audience meta   10%
+//     contrarian / rule-breaking 10%
+//     listicle / how-to           6%
+//     milestones                  5%
+//     money / pricing             4%
+//     failure / lesson            3%
+//     hiring, career              3% each
+//
+// The old ten prompts were all generic career reflection and covered NONE of
+// the AI-tooling theme that dominates what actually performs here, so the
+// weighting below follows the data rather than spreading evenly.
+//
+// Kept as plain instruction strings (the writer expands them) so adding one is
+// a one-line change with no new plumbing.
+// ---------------------------------------------------------------------------
 export const GENERIC_WEEK_PROMPTS: readonly string[] = [
-  "talk about a recent client win",
+  // --- AI tooling & agents — the dominant theme (46% of tracked viral hooks)
+  "talk about a task you fully handed over to AI and what broke the first time",
+  "share the prompt or setup that finally made an AI tool useful for you",
+  "talk about where AI still fails badly in your day-to-day work",
+  "share what you stopped doing manually this year and what it freed up",
+  "talk about a workflow you rebuilt around AI and what it cost you to learn",
+  "share the difference you see between people who use AI well and badly",
+  "talk about the AI advice you think is confidently wrong",
+  "share what you tried with AI that did not work and why",
+  "talk about the first thing you would automate in your role today",
+  "share how your job has changed in the last twelve months because of AI",
+  "talk about something AI cannot do in your field, and why that matters",
+  "share the unglamorous AI use case that saves you the most time",
+  "talk about what you had to unlearn to work well with AI tools",
+  "share how you decide when a task is worth automating at all",
+  "talk about the moment you realised a tool was actually going to stick",
+  // --- Contrarian / rule-breaking (10%)
+  "share one piece of standard advice in your industry you think is wrong",
+  "talk about a rule you broke that turned out to be fine",
+  "share what everyone in your field agrees on that you quietly doubt",
+  "talk about the popular metric you think people over-index on",
+  "share a common practice you have deliberately stopped doing",
+  "talk about advice you used to give that you no longer believe",
+  "share why the obvious answer in your field is often the wrong one",
+  "talk about a trend your peers are chasing that you are ignoring",
+  "share the shortcut people take that quietly costs them later",
+  "talk about something that worked for you that you would not recommend",
+  // --- Craft & lessons
   "talk about a failure and the lesson it taught you",
-  "talk about the turning point in your career",
-  "share one unpopular opinion you hold in your industry",
+  "talk about a lesson you learned the hard way",
   "talk about a mistake you see your peers making over and over",
   "share the best piece of advice you ever received",
   "talk about something you changed your mind about this year",
   "share a small habit that made you better at your craft",
-  "talk about a lesson you learned the hard way",
   "share what you would tell yourself three years ago",
+  "talk about the skill that compounded most in your career",
+  "share the feedback that stung but turned out to be right",
+  "talk about what you got wrong early and how you corrected it",
+  "share the hardest thing you had to learn on the job",
+  "talk about a decision you would make differently now",
+  "share what competence actually looks like in your field",
+  "talk about the gap between how your work looks and how it feels",
+  // --- Client & customer stories
+  "talk about a recent client win",
+  "share a client problem that turned out to be a different problem",
+  "talk about the objection you hear most and how you answer it",
+  "share what your best clients have in common",
+  "talk about a project that went sideways and what you salvaged",
+  "share the question you now ask every prospect early",
+  "talk about a client you turned down and why",
+  "share the moment a client's trust actually got earned",
+  "talk about what customers say they want versus what they buy",
+  "share a small change that made a measurable difference for a client",
+  // --- Money, pricing & business reality
+  "talk about how you set your prices and what you got wrong first",
+  "share what your revenue actually looks like behind the headline number",
+  "talk about a cost you cut that you regret",
+  "share what you spend money on that most peers do not",
+  "talk about the month things nearly did not work out",
+  "share how you decide what is worth your time now",
+  "talk about the difference between busy and profitable in your work",
+  "share what you wish you had known about running a business",
+  // --- Career & transition
+  "talk about the turning point in your career",
+  "share why you left something that looked good on paper",
+  "talk about the job that taught you the most, even though it was hard",
+  "share how you actually got your current role or clients",
+  "talk about the career advice that did not apply to you",
+  "share what you would look for if you were starting over",
+  "talk about a role you were bad at and what it revealed",
+  // --- Hiring & team
+  "share what you actually look for when hiring",
+  "talk about a hire that changed how your team works",
+  "share the interview question that tells you the most",
+  "talk about a role you stopped hiring for and why",
+  "share what you get wrong about managing people",
+  "talk about how you give feedback now versus how you used to",
+  // --- Milestones & anniversaries (5%)
+  "talk about a milestone you just hit and what it actually took",
+  "share what has changed since you started posting",
+  "talk about the anniversary of a decision that reshaped your work",
+  "share the numbers behind a result people only saw the outcome of",
+  "talk about how long the thing that looked sudden actually took",
+  // --- LinkedIn & audience meta (10%)
+  "share what you have learned about what actually resonates here",
+  "talk about a post that flopped and what you took from it",
+  "share how your writing has changed since you started",
+  "talk about why you post at all, honestly",
+  "share the kind of comment that tells you a post landed",
+  // --- Process & how-to (6%)
+  "share the exact steps you take for something people ask you about",
+  "talk through how you make a decision you make often",
+  "share a checklist you actually use",
+  "talk about your process for the part of the job nobody sees",
+  "share how you start a project versus how you finish one",
+  "talk about the tool stack you would rebuild from scratch today",
+  // --- Point of view & industry
+  "share where you think your industry is heading and why",
+  "talk about what is quietly changing that people have not noticed",
+  "share what you think will look obvious in five years",
+  "talk about the problem in your field nobody wants to own",
+  "share what outsiders consistently misunderstand about your work",
+  // --- Personal, place & perspective (rare in the data, but high-reaction when used)
+  "talk about where you are from and how it shaped how you work",
+  "share something outside work that made you better at it",
+  "talk about a person who changed the direction of your career",
+  "share what a good week actually looks like for you now",
+  "talk about the part of your job you would do for free",
+  "talk about a risk that did not pay off and what you kept from it",
+  "share the thing you are still bad at and working on",
+  "talk about what success looked like to you then versus now",
+  "share a moment recently that reminded you why you do this",
+  "talk about the advice you give that people ignore most often",
+  "share what you have said no to lately and why",
+  "talk about a constraint that made your work better",
 ];
 
 /** A concrete prompt that asks for the user's source material, not a made-up
