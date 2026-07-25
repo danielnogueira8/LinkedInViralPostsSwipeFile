@@ -180,6 +180,37 @@ async function mutateStoredWeekPlan(
   throw new Error("Weekly plan changed too quickly. Please try again.");
 }
 
+/**
+ * Mutate an item that may live in EITHER week the rolling window spans.
+ *
+ * The cadence strip shows today + 6 days, which crosses a Monday boundary on
+ * six days out of seven — so a visible card can belong to next week's stored
+ * plan. Resolving mutations against the current week alone made those cards
+ * silently no-op: the click succeeded, nothing changed, no error.
+ *
+ * Tries each candidate week in order and returns the first hit. Item ids are
+ * UUIDs, so there is no chance of matching the wrong plan's item.
+ */
+export async function mutateStoredWeekPlanItemAcross(
+  db: SupabaseClient,
+  workspaceId: string,
+  weekStarts: readonly string[],
+  itemId: string,
+  mutate: (item: StoredWeekPlanItem) => StoredWeekPlanItem | null,
+): Promise<StoredWeekPlanItem | null> {
+  for (const week of weekStarts) {
+    const updated = await mutateStoredWeekPlanItem(
+      db,
+      workspaceId,
+      week,
+      itemId,
+      mutate,
+    );
+    if (updated) return updated;
+  }
+  return null;
+}
+
 export async function mutateStoredWeekPlanItem(
   db: SupabaseClient,
   workspaceId: string,

@@ -7,10 +7,14 @@ import {
   leadMagnetPostIds,
   opportunityIsLeadMagnet,
 } from "@/lib/agent-loop/opportunity-post-type";
-import { pickNextGenericPrompt, weekStart } from "@/lib/agent-loop/week-plan";
+import {
+  pickNextGenericPrompt,
+  weekStart,
+  rollingWindowWeekStarts,
+} from "@/lib/agent-loop/week-plan";
 import {
   loadStoredWeekPlan,
-  mutateStoredWeekPlanItem,
+  mutateStoredWeekPlanItemAcross,
   type StoredWeekPlanItem,
 } from "@/lib/agent-loop/week-plan-store";
 
@@ -166,10 +170,13 @@ export async function POST(
       }
     }
 
-    const updated = await mutateStoredWeekPlanItem(
+    // Search every week the rolling window spans: a visible card can belong to
+    // next week's stored plan, and resolving against currentWeek alone made
+    // those reroll clicks silently no-op.
+    const updated = await mutateStoredWeekPlanItemAcross(
       sb.raw,
       sb.workspaceId,
-      currentWeek,
+      rollingWindowWeekStarts(),
       id,
       (item) => {
         if (item.status !== "planned") return null;

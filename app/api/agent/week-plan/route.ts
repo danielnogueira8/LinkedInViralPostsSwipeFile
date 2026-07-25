@@ -17,6 +17,8 @@ import {
   postingGapNote,
   weekStart,
   workWeekDays,
+  rollingWindowWeekStarts,
+  withinRollingWindow,
 } from "@/lib/agent-loop/week-plan";
 import {
   createStoredWeekPlan,
@@ -386,8 +388,27 @@ export async function GET() {
       currentWeek,
       plan,
     );
+    // The cadence strip shows a ROLLING window (today + the next 6 days), while
+    // plans are still STORED per calendar week. Six days out of seven that
+    // window crosses a Monday boundary, so the tail lives in the NEXT week's
+    // plan — read it too when it already exists, or the last cards silently
+    // blank. The next week is never created here: that stays the planner's job,
+    // so this endpoint remains a read of what has been planned.
+    const laterWeeks = rollingWindowWeekStarts().filter((w) => w !== currentWeek);
+    const laterPlans = await Promise.all(
+      laterWeeks.map((week) =>
+        loadStoredWeekPlan(sb.raw, sb.workspaceId, week).catch(() => null),
+      ),
+    );
+    const windowPlan: StoredWeekPlan = {
+      ...plan,
+      items: withinRollingWindow([
+        ...plan.items,
+        ...laterPlans.flatMap((p) => p?.items ?? []),
+      ]),
+    };
     const [items, gapNote] = await Promise.all([
-      attachSourcePosts(sb.raw, sb.workspaceId, plan),
+      attachSourcePosts(sb.raw, sb.workspaceId, windowPlan),
       postingGap(sb.raw, sb.workspaceId),
     ]);
     return NextResponse.json({

@@ -244,3 +244,56 @@ export function postingGapNote(days: number | null): string | null {
   if (days >= 3) return `${days} days since your last post.`;
   return null;
 }
+
+// ---------------------------------------------------------------------------
+// Rolling window (today + the next 6 days).
+//
+// The plan is STORED per calendar week, anchored to Monday — that stays, because
+// it's the persistence key. But the cadence strip should never show a day that
+// has already passed: mid-week, a Monday-anchored view spends its leftmost cards
+// on dates the user can no longer act on.
+//
+// So storage stays weekly and the VIEW rolls. Because a today+6 window can span
+// two stored weeks, callers merge the current plan with the next one before
+// filtering — see rollingWindowWeekStarts.
+// ---------------------------------------------------------------------------
+
+/** The seven dates to display: today first, then the next six. */
+export function rollingWindowDates(from: Date = new Date()): string[] {
+  const start = new Date(
+    Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate()),
+  );
+  return Array.from({ length: 7 }, (_, i) => isoDate(new Date(start.getTime() + i * DAY_MS)));
+}
+
+/**
+ * Which stored plans the window touches. A today+6 span crosses a Monday
+ * boundary on every day except Monday itself, so this usually returns two keys
+ * — reading only the current week is what would silently blank the tail.
+ */
+export function rollingWindowWeekStarts(from: Date = new Date()): string[] {
+  const dates = rollingWindowDates(from);
+  const starts = new Set(
+    dates.map((d) => weekStart(new Date(`${d}T00:00:00.000Z`))),
+  );
+  return [...starts].sort();
+}
+
+/**
+ * Keep only items inside the rolling window, ordered today-first.
+ *
+ * Past days are DROPPED regardless of state: an undrafted slot for a day that
+ * has gone is not actionable, and showing it as a to-do is the bug being fixed.
+ * Items are matched on their stored `date`, so a merged multi-week list filters
+ * correctly without any re-dating.
+ */
+export function withinRollingWindow<T extends { date: string }>(
+  items: readonly T[],
+  from: Date = new Date(),
+): T[] {
+  const window = rollingWindowDates(from);
+  const rank = new Map(window.map((d, i) => [d, i]));
+  return items
+    .filter((item) => rank.has(item.date))
+    .sort((a, b) => (rank.get(a.date) ?? 0) - (rank.get(b.date) ?? 0));
+}
