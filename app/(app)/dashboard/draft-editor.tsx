@@ -56,6 +56,7 @@ export function DraftEditor({
   toolbar = "floating",
   onBlur,
   showCounter = true,
+  footer,
 }: {
   value: string;
   onChange: (next: string) => void;
@@ -78,6 +79,13 @@ export function DraftEditor({
   // Hide the editor's own counter when the surrounding surface already shows
   // one — otherwise the same "1,661 / 3,000" renders twice, one line apart.
   showCounter?: boolean;
+  // Rendered INSIDE the editor's bordered box, below the textarea, and
+  // scrolling with it. A textarea cannot contain elements, so attached media
+  // can't literally live in the text — but putting it in the same scroll
+  // container is what makes the draft read as one card: the text keeps its
+  // full height and you scroll down to the image, instead of the image
+  // stealing height from the text box as a sibling.
+  footer?: React.ReactNode;
 }) {
   const taRef = useRef<HTMLTextAreaElement>(null);
   // Hidden picker behind the toolbar's image button (LinkedIn-style). Uses
@@ -113,6 +121,25 @@ export function DraftEditor({
     null,
   );
 
+
+  // Auto-size the textarea to its content when it lives inside a scrolling card
+  // (footer mode). The card owns the scroll, so a fixed-height textarea with
+  // overflow-hidden would CLIP long drafts invisibly — the user would type past
+  // the bottom and simply not see it. Writing the height directly to the DOM
+  // (rather than into state) keeps this out of the render cycle entirely.
+  useEffect(() => {
+    if (!footer) return;
+    const ta = taRef.current;
+    if (!ta) return;
+    const fit = () => {
+      ta.style.height = "auto";
+      ta.style.height = `${ta.scrollHeight}px`;
+    };
+    fit();
+    const ro = new ResizeObserver(fit);
+    ro.observe(ta);
+    return () => ro.disconnect();
+  }, [value, footer]);
 
   // Recompute the floating toolbar position from the current selection. Hidden
   // when the selection is collapsed (nothing highlighted).
@@ -615,7 +642,15 @@ export function DraftEditor({
 
       {/* The textarea is wrapped so the hook-cutoff rule can be absolutely
           positioned over it. relative + min-h-0 so it still flexes. */}
-      <div className={cn("relative flex min-h-0 flex-1 flex-col")}>
+      {/* One bordered, scrolling card holding the textarea AND any footer
+          (attached media). The textarea itself is borderless and auto-sized;
+          this box is what scrolls, so text + image read as a single surface. */}
+      <div
+        className={cn(
+          "relative flex min-h-0 w-full min-w-0 flex-1 flex-col rounded-lg border border-border bg-white",
+          footer ? "overflow-y-auto" : "",
+        )}
+      >
       <textarea
         ref={taRef}
         value={value}
@@ -661,12 +696,18 @@ export function DraftEditor({
         rows={rows}
         aria-label="Post body"
         className={cn(
-          "w-full resize-none rounded-lg border border-border bg-white px-3 py-2.5 text-[13px] leading-relaxed text-foreground outline-none focus-visible:border-border focus-visible:ring-2 focus-visible:ring-border",
-          draggingMedia && "border-primary bg-primary/[0.04] ring-2 ring-primary/25",
+          "w-full resize-none bg-transparent px-3 py-2.5 text-[13px] leading-relaxed text-foreground outline-none",
+          // With a footer the card owns the border and the scroll, so the
+          // textarea is a plain transparent surface that grows to its content.
+          footer
+            ? "flex-none overflow-hidden"
+            : "rounded-lg border border-border bg-white focus-visible:border-border focus-visible:ring-2 focus-visible:ring-border",
+          draggingMedia && "bg-primary/[0.04]",
           textareaClassName,
         )}
         placeholder="Write your post…"
       />
+        {footer ? <div className="px-3 pb-3">{footer}</div> : null}
       </div>
       {draggingMedia && (
         <p className="-mt-1 text-xs font-medium text-primary">Drop image to attach it</p>

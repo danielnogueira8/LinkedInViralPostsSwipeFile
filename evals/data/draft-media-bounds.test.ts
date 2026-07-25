@@ -29,6 +29,13 @@ describe("draft image is bounded inside the card", () => {
     expect(source).toContain("max-h-56 w-full object-contain");
   });
 
+  test("media renders INSIDE the editor's scroll box, not beside it", () => {
+    // As a sibling the image took its own space in the column and squeezed the
+    // text box. In the editor's footer the text keeps its full height and the
+    // image is simply further down the same scrolling card.
+    expect(source).toMatch(/footer=\{\s*<DraftMediaPreview/);
+  });
+
   test("every flex ancestor of the image can shrink (min-w-0)", () => {
     // The card root...
     expect(source).toMatch(
