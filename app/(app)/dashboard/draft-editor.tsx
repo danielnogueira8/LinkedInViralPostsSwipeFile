@@ -34,6 +34,7 @@ import {
 } from "@/lib/linkedin-format";
 import { getSelectionAnchor, getCaretCoordinates } from "@/lib/textarea-caret";
 import { hookCutoff, type HookViewport } from "@/lib/hook-cutoff";
+import { IMAGE_ACCEPT_ATTR } from "@/lib/post-media";
 import {
   emptyHistory,
   pushHistory,
@@ -614,7 +615,7 @@ export function DraftEditor({
           <input
             ref={fileRef}
             type="file"
-            accept="image/jpeg,image/png,image/gif,image/webp"
+            accept={IMAGE_ACCEPT_ATTR}
             multiple
             className="hidden"
             onChange={(e) => {

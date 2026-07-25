@@ -97,6 +97,7 @@ import {
   validatePostMediaFile,
   validatePostMediaSet,
   type PostMediaAttachment,
+  IMAGE_ACCEPT_ATTR,
 } from "@/lib/post-media";
 import {
   isHookFocusedRefine,
@@ -116,6 +117,7 @@ import {
   LINKEDIN_WARN_CHARS,
 } from "@/lib/linkedin-format";
 import { hookCutoffHint, HOOK_LIMITS } from "@/lib/hook-cutoff";
+import { uploadMediaAsset } from "@/lib/upload-media-asset";
 import { suggestedScheduleLocalInput } from "@/lib/next-open-schedule-day";
 import { useCopiedFlag } from "@/lib/use-copied-flag";
 import { resolveIntent } from "@/lib/post-intents";
@@ -6751,50 +6753,15 @@ function ArtifactCard({
     try {
       const uploaded: PostMediaAttachment[] = [];
       for (const file of files) {
-        const check = validatePostMediaFile({
-          name: file.name,
-          contentType: file.type,
-          size: file.size,
-        });
-        if (!check.ok || check.type !== "image") {
-          throw new Error(
-            check.ok ? "Choose a JPG, PNG, GIF, or WebP image." : check.error,
-          );
+        // uploadMediaAsset validates, pre-flights the platform body limit, and
+        // never parses a non-JSON error body — which is what turned a 413 into
+        // "Unexpected token 'R', \"Request En\"... is not valid JSON".
+        const result = await uploadMediaAsset(file);
+        if (!result.ok) throw new Error(result.error);
+        if (result.attachment.type !== "image") {
+          throw new Error("Choose an image file.");
         }
-        const form = new FormData();
-        form.append("file", file, file.name);
-        const res = await fetch("/api/media-assets", { method: "POST", body: form });
-        const data = (await res.json()) as {
-          ok?: boolean;
-          error?: string;
-          asset?: {
-            id: string;
-            filename: string;
-            mimeType: string;
-            size: number;
-            type: "image" | "video" | "document";
-            signedUrl?: string | null;
-            storageBucket?: string | null;
-            storagePath?: string | null;
-            createdAt: string;
-          };
-        };
-        if (!data.ok || !data.asset || data.asset.type !== "image") {
-          throw new Error(data.error || "Couldn't upload that image.");
-        }
-        uploaded.push({
-          id: `asset:${data.asset.id}`,
-          source: "library",
-          assetId: data.asset.id,
-          name: data.asset.filename,
-          mimeType: data.asset.mimeType,
-          size: data.asset.size,
-          type: "image",
-          storageBucket: data.asset.storageBucket,
-          storagePath: data.asset.storagePath,
-          previewUrl: data.asset.signedUrl,
-          uploadedAt: data.asset.createdAt,
-        });
+        uploaded.push(result.attachment);
       }
       const next = [...mediaAttachments, ...uploaded];
       // LinkedIn's own limits (max 20 images, no mixing types) — checked on the
@@ -6850,40 +6817,12 @@ function ArtifactCard({
       if (preflightError) throw new Error(preflightError);
 
       setUploadingScheduleImage(true);
-      const form = new FormData();
-      form.append("file", file, file.name);
-      const res = await fetch("/api/media-assets", { method: "POST", body: form });
-      const data = (await res.json()) as {
-        ok?: boolean;
-        error?: string;
-        asset?: {
-          id: string;
-          filename: string;
-          mimeType: string;
-          size: number;
-          type: "image" | "video" | "document";
-          signedUrl?: string | null;
-          storageBucket?: string | null;
-          storagePath?: string | null;
-          createdAt: string;
-        };
-      };
-      if (!data.ok || !data.asset || data.asset.type !== "image") {
-        throw new Error(data.error || "Couldn't upload that image.");
+      const result = await uploadMediaAsset(file);
+      if (!result.ok) throw new Error(result.error);
+      if (result.attachment.type !== "image") {
+        throw new Error("Choose an image file.");
       }
-      const attachment: PostMediaAttachment = {
-        id: `asset:${data.asset.id}`,
-        source: "library",
-        assetId: data.asset.id,
-        name: data.asset.filename,
-        mimeType: data.asset.mimeType,
-        size: data.asset.size,
-        type: "image",
-        storageBucket: data.asset.storageBucket,
-        storagePath: data.asset.storagePath,
-        previewUrl: data.asset.signedUrl,
-        uploadedAt: data.asset.createdAt,
-      };
+      const attachment = result.attachment;
       const next = [...scheduleMediaAttachments, attachment];
       const mediaError = validatePostMediaSet(next);
       if (mediaError) throw new Error(mediaError);
@@ -7375,7 +7314,7 @@ function ArtifactCard({
                   {uploadingScheduleImage ? "Uploading…" : "Add image"}
                   <input
                     type="file"
-                    accept="image/jpeg,image/png,image/gif,image/webp"
+                    accept={IMAGE_ACCEPT_ATTR}
                     aria-label="Add image to scheduled post"
                     className="sr-only"
                     disabled={uploadingScheduleImage}
