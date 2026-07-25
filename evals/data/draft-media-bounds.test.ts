@@ -39,10 +39,22 @@ describe("draft image is bounded inside the card", () => {
   test("every flex ancestor of the image can shrink (min-w-0)", () => {
     // The card root...
     expect(source).toMatch(
-      /flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden rounded-xl/,
+      /flex w-full min-w-0 flex-col overflow-hidden rounded-xl/,
     );
     // ...and the editor column that holds the preview.
-    expect(source).toMatch(/flex min-h-0 w-full min-w-0 flex-1 flex-col gap-2/);
+    expect(source).toMatch(/flex w-full min-w-0 flex-col gap-2/);
+  });
+
+  test("the fill/height behaviour is desktop-only so mobile scrolls the whole card", () => {
+    // On desktop (lg+) the card and its editor column flex to fill the panel and
+    // scroll internally. Below lg they are content-sized and the mobile bottom
+    // sheet scrolls the whole card — otherwise appended blocks (e.g. the
+    // lead-magnet resource card) get squeezed into a short, overflow-hidden
+    // column and spill over the pinned toolbar/heading.
+    expect(source).toMatch(
+      /overflow-hidden rounded-xl border border-border bg-white[^"]*lg:min-h-0 lg:flex-1/,
+    );
+    expect(source).toMatch(/flex w-full min-w-0 flex-col gap-2 px-3 py-2\.5 lg:min-h-0 lg:flex-1/);
   });
 
   test("the card clips its own children, so nothing escapes the rounded border", () => {

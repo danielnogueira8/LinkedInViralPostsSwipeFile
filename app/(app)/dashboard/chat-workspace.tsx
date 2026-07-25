@@ -6912,10 +6912,19 @@ function ArtifactCard({
     .toUpperCase();
 
   return (
-    // The expanded draft FILLS the panel column (#4): `flex-1 min-h-0` inside
-    // the panel's flex list, with the editor body flexing to absorb the slack —
-    // so there is no dead space under a short draft, and the toolbar + status
-    // bar stay pinned to the bottom.
+    // The expanded draft FILLS the panel column on DESKTOP (#4): `lg:flex-1
+    // lg:min-h-0` inside the panel's flex list, with the editor body flexing to
+    // absorb the slack — so there is no dead space under a short draft, and the
+    // toolbar + status bar stay pinned to the bottom.
+    //
+    // Below lg the card is CONTENT-SIZED and the mobile bottom sheet's own
+    // scroll region (see mobileDraftsOpen) scrolls the whole card. The fill
+    // behaviour is desktop-only on purpose: filling a short, overflow-hidden
+    // column on a phone forces the appended blocks below the editor (rationale,
+    // the lead-magnet resource card, research sources, feedback) to compete for
+    // height with the editor. When a lead magnet is present those blocks get
+    // squeezed below their content and spill over the pinned toolbar/heading —
+    // the exact overlap this responsive gating removes.
     //
     // Historical note, because this bit has bitten before: a previous attempt at
     // `flex flex-col` + `max-h-*` collapsed the body to zero height (the card
@@ -6924,7 +6933,7 @@ function ArtifactCard({
     // It is safe now for a concrete reason: the body is a textarea with its own
     // `min-h-[220px]`, so it has intrinsic height and cannot collapse even if
     // the flex chain gives it nothing.
-    <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-white text-foreground shadow-[0_16px_45px_rgba(28,28,26,0.10)]">
+    <div className="flex w-full min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-white text-foreground shadow-[0_16px_45px_rgba(28,28,26,0.10)] lg:min-h-0 lg:flex-1">
       {/* "Draft N" badge + applied-skill chip(s). Skills come from the server
           stamping meta.skills onto the artifact when one was active for the
           turn that produced it (see route's artifact case). Renders even when
@@ -7033,7 +7042,7 @@ function ArtifactCard({
       {/* min-w-0: a flex item defaults to min-width:auto, i.e. "never shrink
           below my content". Without it a wide image widens this column past
           the card and breaks out over the rounded border. */}
-      <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col gap-2 px-3 py-2.5">
+      <div className="flex w-full min-w-0 flex-col gap-2 px-3 py-2.5 lg:min-h-0 lg:flex-1">
         <DraftEditor
           value={body}
           onChange={(next) => {
