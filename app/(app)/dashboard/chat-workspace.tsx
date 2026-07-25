@@ -115,8 +115,8 @@ import { localDateFromDatetimeInput } from "@/lib/schedule-local-date";
 import {
   LINKEDIN_MAX_CHARS,
   LINKEDIN_WARN_CHARS,
+  LINKEDIN_SEE_MORE_CHARS,
 } from "@/lib/linkedin-format";
-import { hookCutoffHint, HOOK_LIMITS } from "@/lib/hook-cutoff";
 import { uploadMediaAsset } from "@/lib/upload-media-asset";
 import { suggestedScheduleLocalInput } from "@/lib/next-open-schedule-day";
 import { useCopiedFlag } from "@/lib/use-copied-flag";
@@ -7111,13 +7111,10 @@ function ArtifactCard({
           {/* Where LinkedIn cuts the hook — folded in here so the draft has ONE
               status line rather than the editor and the card each rendering
               their own. */}
-          {/* Hook cutoff, MOBILE-first: most of the feed is read on a phone and
-              it is the tighter limit. Reports the real cause — a hook split
-              across lines is cut by the LINE budget long before it reaches 140
-              characters, which a character count alone would miss. */}
           <span className="text-muted-foreground">
-            {hookCutoffHint(body, "mobile") ??
-              `${HOOK_LIMITS.mobile.chars - body.length} chars before “…see more”`}
+            {body.length <= LINKEDIN_SEE_MORE_CHARS
+              ? `${LINKEDIN_SEE_MORE_CHARS - body.length} chars before “…see more”`
+              : `hook cut at ${LINKEDIN_SEE_MORE_CHARS} chars`}
           </span>
           <span
             className={cn(

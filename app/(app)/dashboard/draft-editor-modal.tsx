@@ -52,7 +52,6 @@ import {
 } from "@/components/ui/select";
 import { DraftEditor } from "./draft-editor";
 import { LeadSharkPanel } from "./leadshark-panel";
-import { HookCutoffPreview } from "@/components/hook-cutoff-marker";
 import { cn } from "@/lib/utils";
 import { AvatarImg } from "@/components/avatar-img";
 import type { Draft, DraftStatus, DraftKind } from "@/lib/draft-view";
@@ -1257,22 +1256,13 @@ function LinkedInPostPreview({
           <div className="text-xs text-muted-foreground">now · LinkedIn preview</div>
         </div>
       </div>
-      {text ? (
-        // Renders the body with LinkedIn's "…see more" boundary drawn in place
-        // and the hidden remainder dimmed, so the hook is obvious at a glance.
-        // Mobile-first: it is the tighter cut and where most of the feed is read.
-        <HookCutoffPreview
-          body={text}
-          viewport="mobile"
-          className="text-[15px] leading-8"
-        />
-      ) : (
-        <div className="whitespace-pre-wrap text-[15px] leading-8 text-foreground">
+      <div className="whitespace-pre-wrap text-[15px] leading-8 text-foreground">
+        {text || (
           <span className="text-muted-foreground">
             Start writing in Edit mode to preview the post here.
           </span>
-        </div>
-      )}
+        )}
+      </div>
       {attachments.length > 0 && (
         <div className="mt-5 grid gap-2">
           {attachments[0]?.type === "image" && attachments.some((a) => a.previewUrl || a.url) && (
