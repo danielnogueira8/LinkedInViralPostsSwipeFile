@@ -7043,17 +7043,20 @@ function ArtifactCard({
           toolbar="full"
           showCounter={false}
           rows={14}
-          textareaClassName="min-h-[220px] flex-1"
+          textareaClassName="min-h-[220px]"
           onBlur={() => void persistBody()}
           onMediaFiles={(files) => void addDraftImages(files)}
           allowImagePaste
-        />
-        {/* Attached / generated media, shown under the text exactly as LinkedIn
-            stacks it. Removable here so the draft owns its own media. */}
-        <DraftMediaPreview
-          attachments={mediaAttachments}
-          generatedImageStatus={generatedImageStatus}
-          onRemove={(id) => void removeDraftImage(id)}
+          // Media renders INSIDE the editor's scroll box rather than beside it.
+          // As a sibling it stole height from the text area; in the footer the
+          // text keeps its full height and the image is simply further down.
+          footer={
+            <DraftMediaPreview
+              attachments={mediaAttachments}
+              generatedImageStatus={generatedImageStatus}
+              onRemove={(id) => void removeDraftImage(id)}
+            />
+          }
         />
       </div>
 
