@@ -116,9 +116,13 @@ export function DraftEditor({
   const [floatPos, setFloatPos] = useState<{ top: number; left: number } | null>(
     null,
   );
-  // Pixel offset of the "…see more" cut inside the textarea. null = the post
-  // is short enough that nothing is hidden, so no rule is drawn.
+  // Offset of the "…see more" cut, in the textarea's CONTENT space (i.e. as if
+  // it were not scrolled). Keeping it scroll-independent is what stops the rule
+  // drifting away from its line: the live scroll position is subtracted at
+  // render time instead of being baked into the measurement.
+  // null = the post is short enough that nothing is hidden.
   const [cutTop, setCutTop] = useState<number | null>(null);
+  const [cutScroll, setCutScroll] = useState(0);
 
   // Measure where the hook cut falls, in pixels. Depends on WRAPPING, so it is
   // re-measured on every text change and on resize — a narrower panel wraps
@@ -147,17 +151,27 @@ export function DraftEditor({
           setCutTop((prev) => (prev === null ? prev : null));
           return;
         }
+        // getCaretCoordinates returns a VIEWPORT-relative top (it subtracts
+        // scrollTop). Add it back so what we store is the position within the
+        // content, which does not change as the user scrolls.
         const { top, height } = getCaretCoordinates(el, index);
-        const next = top + height;
+        const next = top + el.scrollTop + height;
         setCutTop((prev) => (prev === next ? prev : next));
       });
     };
+    const onScroll = () => {
+      const el = taRef.current;
+      if (el) setCutScroll(el.scrollTop);
+    };
     measure();
+    onScroll();
     const ro = new ResizeObserver(measure);
     ro.observe(ta);
+    ta.addEventListener("scroll", onScroll, { passive: true });
     return () => {
       cancelAnimationFrame(frame);
       ro.disconnect();
+      ta.removeEventListener("scroll", onScroll);
     };
   }, [value, hookCutoffViewport]);
 
@@ -716,17 +730,28 @@ export function DraftEditor({
       />
       {/* "…see more" boundary. Dotted and muted: a writing aid, not a warning.
           pointer-events-none so it never blocks a click into the text. */}
+      {/* "…see more" boundary.
+          • Positioned in CONTENT space minus live scrollTop, so it stays glued
+            to its line while the textarea scrolls.
+          • Drawn ON the line break between two lines (translate -50%), not over
+            a line of text, and the label sits to the RIGHT of the rule rather
+            than centred through it — so it can never overlap a glyph.
+          • The wrapper clips it, so it disappears cleanly when scrolled out of
+            view instead of floating over the toolbar. */}
       {hookCutoffViewport && cutTop !== null && (
         <div
-          className="pointer-events-none absolute inset-x-3 z-10 flex items-center gap-2"
-          style={{ top: cutTop }}
+          className="pointer-events-none absolute inset-x-0 top-0 bottom-0 z-10 overflow-hidden"
           aria-hidden
         >
-          <span className="h-px flex-1 border-t border-dashed border-muted-foreground/40" />
-          <span className="whitespace-nowrap rounded-full bg-white px-1.5 text-[9px] font-medium uppercase tracking-[0.08em] text-muted-foreground/70">
-            …see more
-          </span>
-          <span className="h-px flex-1 border-t border-dashed border-muted-foreground/40" />
+          <div
+            className="absolute inset-x-3 flex -translate-y-1/2 items-center gap-2"
+            style={{ top: cutTop - cutScroll }}
+          >
+            <span className="h-px flex-1 border-t border-dashed border-muted-foreground/35" />
+            <span className="whitespace-nowrap text-[9px] font-medium uppercase tracking-[0.08em] text-muted-foreground/60">
+              see more
+            </span>
+          </div>
         </div>
       )}
       </div>
