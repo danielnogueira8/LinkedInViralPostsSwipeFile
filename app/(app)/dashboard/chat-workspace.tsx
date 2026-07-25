@@ -7142,24 +7142,25 @@ function ArtifactCard({
           </span>
         </div>
       )}
-      <div className="flex flex-wrap items-center gap-2 px-3 py-2.5 bg-card shrink-0">
+      {/* Action bar with a deliberate hierarchy rather than five identical
+          pills: Schedule is the destination (primary, filled), Save is the
+          commit (secondary, outlined), and Copy/Ask/Edit are utilities (ghost).
+          Utilities sit left, the two that change state sit right, so the row
+          reads as one grouped control instead of five isolated objects. */}
+      <div className="flex flex-wrap items-center gap-1 px-3 py-2 bg-card shrink-0">
         <Button
           size="sm"
-          variant="outline"
-          className="gap-1.5 h-8 rounded-full border-border"
+          variant="ghost"
+          className="h-8 rounded-full px-2.5 text-xs font-medium text-muted-foreground hover:text-foreground"
           onClick={copy}
+          title="Copy the post text, ready to paste into LinkedIn"
         >
-          {copied ? (
-            <Check className="h-3.5 w-3.5" />
-          ) : (
-            <Copy className="h-3.5 w-3.5" />
-          )}
           {copied ? "Copied" : "Copy"}
         </Button>
         <Button
           size="sm"
           variant="outline"
-          className="gap-1.5 h-8 rounded-full border-border"
+          className="h-8 gap-1.5 rounded-full border-border px-3 text-xs font-medium"
           onClick={save}
           // Re-enable once the draft has been edited since the last save, so an
           // edited-then-saved draft can be saved again after further edits.
@@ -7197,33 +7198,31 @@ function ArtifactCard({
           <Button
             size="sm"
             variant="ghost"
-            className="gap-1.5 h-8 rounded-full text-muted-foreground"
+            className="h-8 rounded-full px-2.5 text-xs font-medium text-muted-foreground hover:text-foreground"
             onClick={saveAsNew}
             disabled={saving || !chatId}
             title="Keep the original and save this as a separate new draft"
           >
-            <FileText className="h-3.5 w-3.5" />
             Save as new
           </Button>
         )}
         <Button
           size="sm"
-          variant="outline"
-          className="gap-1.5 h-8 rounded-full border-border"
+          variant="ghost"
+          className="h-8 rounded-full px-2.5 text-xs font-medium text-muted-foreground hover:text-foreground"
           onClick={onAsk}
           disabled={editDisabled}
           aria-label="Ask about this Post"
           title="Ask for feedback or discuss this post without changing it"
         >
-          <CoworkCommandIcon kind="ask" className="h-3.5 w-3.5" />
           Ask
         </Button>
         {/* Edit selects this exact Post in the shared composer. Target and scope
             stay visible there, so there is only one place to describe changes. */}
         <Button
           size="sm"
-          variant="outline"
-          className="gap-1.5 h-8 rounded-full border-border"
+          variant="ghost"
+          className="h-8 rounded-full px-2.5 text-xs font-medium text-muted-foreground hover:text-foreground"
           onClick={onEdit}
           disabled={editDisabled}
           aria-label="Edit this Post"
@@ -7233,13 +7232,24 @@ function ArtifactCard({
               : "Edit this Post in place"
           }
         >
-          <CoworkCommandIcon kind="edit" className="h-3.5 w-3.5" />
           {editDisabled ? "Editing…" : "Edit"}
         </Button>
+        {/* Push the two state-changing actions to the right, away from the
+            utilities — the visual break is what makes the grouping read. */}
+        <span className="ml-auto" />
+        {/* PRIMARY: scheduling is what a finished draft is for, so it's the one
+            filled button and the only one that keeps an icon — a single visual
+            anchor in an otherwise quiet row. When already scheduled it drops
+            back to outlined, since the action is then "change it", not "do it". */}
         <Button
           size="sm"
-          variant="outline"
-          className="gap-1.5 h-8 rounded-full border-border"
+          variant={
+            scheduleStatus === "scheduled" && scheduledAt ? "outline" : "default"
+          }
+          className={cn(
+            "h-8 gap-1.5 rounded-full px-3 text-xs font-medium",
+            scheduleStatus === "scheduled" && scheduledAt && "border-border",
+          )}
           onClick={() => {
             if (!scheduleOpen && scheduleStatus !== "scheduled") {
               setLoadingNextOpenDay(true);
