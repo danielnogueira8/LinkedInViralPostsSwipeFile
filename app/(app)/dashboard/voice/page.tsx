@@ -7,6 +7,7 @@ import {
   PREFS_PER_WORKSPACE_MAX,
   type ContentPreference,
 } from "@/lib/preferences";
+import { listReviewablePreferences } from "@/lib/preference-evidence";
 import type { ContentFeedback } from "@/lib/content-feedback";
 import { PageHeader, PageShell } from "@/components/app-surface";
 
@@ -66,7 +67,11 @@ export default async function VoicePage() {
     : recoveredRow;
   const cooldown = regenCooldown(row?.generated_at ?? null);
 
-  const preferences = (prefData ?? []) as ContentPreference[];
+  const preferences = await listReviewablePreferences({
+    db: sb.raw,
+    workspaceId: sb.workspaceId,
+    preferences: (prefData ?? []) as ContentPreference[],
+  });
   const feedback = (feedbackData ?? []) as ContentFeedback[];
 
   return (

@@ -3,12 +3,14 @@ import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
 import {
   preferenceInputSchema,
+  PREFS_PER_WORKSPACE_MAX,
   type ContentPreference,
 } from "@/lib/preferences";
 import {
   createPreferenceResource,
   PREF_COLS,
 } from "@/lib/content-resource-operations";
+import { listReviewablePreferences } from "@/lib/preference-evidence";
 
 export const runtime = "nodejs";
 
@@ -26,11 +28,17 @@ export async function GET() {
       .from("content_preferences")
       .select(PREF_COLS)
       .eq("workspace_id", sb.workspaceId)
-      .order("created_at", { ascending: false });
+      .order("created_at", { ascending: false })
+      .limit(PREFS_PER_WORKSPACE_MAX);
     if (error) throw error;
+    const preferences = await listReviewablePreferences({
+      db: sb.raw,
+      workspaceId: sb.workspaceId,
+      preferences: (data ?? []) as ContentPreference[],
+    });
     return NextResponse.json({
       ok: true,
-      preferences: (data ?? []) as ContentPreference[],
+      preferences,
     });
   } catch (e) {
     return errorResponse(e);

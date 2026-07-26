@@ -31,6 +31,16 @@ create table public.artifact_lineage (
   artifact_id uuid not null unique
 );
 
+create table public.content_preferences (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id text not null,
+  rule text not null,
+  detail text,
+  source text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table public.draft_edit_events (
   id uuid primary key default gen_random_uuid(),
   workspace_id text not null,

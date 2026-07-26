@@ -4,6 +4,7 @@ import {
   getSkillsByIds,
   getTemplateResource,
   listPreferenceResources,
+  createPreferenceResource,
   saveBookmarkResource,
   summarizeBookmarkResource,
 } from "@/lib/content-resource-operations";
@@ -171,6 +172,27 @@ describe("bookmark resource persistence", () => {
           activity_id: "activity-1",
         },
       ],
+    });
+  });
+});
+
+describe("preference resource persistence", () => {
+  it("returns a duplicate conflict when the database wins a concurrent race", async () => {
+    const { db } = queuedDb([
+      { data: [], error: null },
+      { data: null, error: { code: "23505", message: "duplicate key" } },
+    ]);
+
+    await expect(
+      createPreferenceResource({
+        db,
+        workspaceId: "workspace-1",
+        data: { rule: "Never use hashtags", detail: "" },
+      }),
+    ).resolves.toEqual({
+      ok: false,
+      status: 409,
+      error: "You already have that preference.",
     });
   });
 });

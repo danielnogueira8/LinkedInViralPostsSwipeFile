@@ -31,8 +31,11 @@ import {
   PREF_RULE_MAX,
   PREF_DETAIL_MAX,
   PREFS_PER_WORKSPACE_MAX,
-  type ContentPreference,
 } from "@/lib/preferences";
+import type {
+  PreferenceEvidence,
+  ReviewableContentPreference,
+} from "@/lib/preference-evidence";
 
 // -----------------------------------------------------------------------------
 // PreferencesManager — CRUD for the workspace's standing writing rules.
@@ -48,7 +51,7 @@ import {
 export function PreferencesManager({
   initial,
 }: {
-  initial: ContentPreference[];
+  initial: ReviewableContentPreference[];
 }) {
   const [prefs, setPrefs] = useState(initial);
   const [adding, setAdding] = useState("");
@@ -57,7 +60,7 @@ export function PreferencesManager({
   const [busy, setBusy] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] =
-    useState<ContentPreference | null>(null);
+    useState<ReviewableContentPreference | null>(null);
 
   const atCap = prefs.length >= PREFS_PER_WORKSPACE_MAX;
 
@@ -69,7 +72,7 @@ export function PreferencesManager({
       const data = await fetchJson<{
         ok: boolean;
         error?: string;
-        preference?: ContentPreference;
+        preference?: Omit<ReviewableContentPreference, "evidence">;
       }>("/api/preferences", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -77,7 +80,10 @@ export function PreferencesManager({
       });
       if (!data?.ok || !data.preference)
         throw new Error(data?.error || "Failed to add");
-      setPrefs((cur) => [data.preference as ContentPreference, ...cur]);
+      setPrefs((cur) => [
+        { ...data.preference!, evidence: [] },
+        ...cur,
+      ]);
       setAdding("");
       setAddingDetail("");
       setShowAddDetail(false);
@@ -112,7 +118,7 @@ export function PreferencesManager({
       const data = await fetchJson<{
         ok: boolean;
         error?: string;
-        preference?: ContentPreference;
+        preference?: Omit<ReviewableContentPreference, "evidence">;
       }>(`/api/preferences/${id}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
@@ -121,7 +127,11 @@ export function PreferencesManager({
       if (!data?.ok || !data.preference)
         throw new Error(data?.error || "Failed to save");
       setPrefs((cur) =>
-        cur.map((p) => (p.id === id ? (data.preference as ContentPreference) : p)),
+        cur.map((p) =>
+          p.id === id
+            ? { ...data.preference!, evidence: p.evidence }
+            : p,
+        ),
       );
       setEditingId(null);
       toast.success("Preference updated");
@@ -254,7 +264,7 @@ function PreferenceRow({
   onSaveEdit,
   onDelete,
 }: {
-  pref: ContentPreference;
+  pref: ReviewableContentPreference;
   editing: boolean;
   onStartEdit: () => void;
   onCancelEdit: () => void;
@@ -319,6 +329,28 @@ function PreferenceRow({
             {pref.detail}
           </span>
         )}
+        {pref.source === "edit_delta" && pref.evidence.length > 0 && (
+          <details className="group/evidence pt-1">
+            <summary className="cursor-pointer select-none text-xs font-medium text-muted-foreground hover:text-foreground">
+              Why Cowork learned this
+            </summary>
+            <div className="mt-2 space-y-2">
+              {pref.evidence.map((evidence, index) => (
+                <PreferenceEvidenceCard
+                  key={evidence.id}
+                  evidence={evidence}
+                  index={index}
+                  currentRule={pref.rule}
+                />
+              ))}
+            </div>
+          </details>
+        )}
+        {pref.source === "edit_delta" && pref.evidence.length === 0 && (
+          <p className="pt-1 text-xs text-muted-foreground">
+            Supporting edits are unavailable for this earlier learned rule.
+          </p>
+        )}
       </div>
       {pref.source === "learned" && (
         <StatusPill tone="brand" className="h-5 shrink-0 px-2 text-[10px]">
@@ -351,5 +383,76 @@ function PreferenceRow({
         <Trash2 className="h-3.5 w-3.5" />
       </Button>
     </li>
+  );
+}
+
+function PreferenceEvidenceCard({
+  evidence,
+  index,
+  currentRule,
+}: {
+  evidence: PreferenceEvidence;
+  index: number;
+  currentRule: string;
+}) {
+  const origin =
+    evidence.editOrigin === "posts_editor"
+      ? "Posts editor"
+      : evidence.editOrigin === "cowork_artifact"
+        ? "Cowork draft"
+        : "Draft edit";
+  const signedDelta =
+    evidence.changeSummary.deltaChars > 0
+      ? `+${evidence.changeSummary.deltaChars}`
+      : String(evidence.changeSummary.deltaChars);
+
+  return (
+    <div className="rounded-md border border-border/60 bg-card/70 p-2.5">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
+        <span>
+          Supporting edit {index + 1} · {origin}
+        </span>
+        <span>{signedDelta} characters</span>
+      </div>
+      {evidence.ruleSnapshot !== currentRule && (
+        <p className="mb-2 text-xs text-muted-foreground">
+          This evidence originally produced: “{evidence.ruleSnapshot}”
+        </p>
+      )}
+      <div className="grid gap-2 sm:grid-cols-2">
+        <EvidenceExcerpt
+          label="Before"
+          body={evidence.beforeExcerpt}
+          truncated={evidence.beforeTruncated}
+        />
+        <EvidenceExcerpt
+          label="After"
+          body={evidence.afterExcerpt}
+          truncated={evidence.afterTruncated}
+        />
+      </div>
+    </div>
+  );
+}
+
+function EvidenceExcerpt({
+  label,
+  body,
+  truncated,
+}: {
+  label: string;
+  body: string;
+  truncated: boolean;
+}) {
+  return (
+    <div className="min-w-0 rounded border border-border/50 bg-background/70 p-2">
+      <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+        {label}
+      </div>
+      <div className="max-h-36 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-5 text-foreground/85">
+        {body}
+        {truncated ? "…" : ""}
+      </div>
+    </div>
   );
 }

@@ -9,8 +9,8 @@ import {
 import { INJECTION_GUARD, wrapUntrustedXml } from "@/lib/agent/untrusted";
 import { parseJsonObject } from "@/lib/claude";
 import {
-  isDuplicatePreference,
   normalizePreferenceRule,
+  preferenceDedupKey,
   PREFS_PER_WORKSPACE_MAX,
   type ContentPreference,
 } from "@/lib/preferences";
@@ -39,8 +39,29 @@ const MAX_CANDIDATE_RULES = 3;
 const RULE_MAX_CHARS = 120;
 const MAX_BODY_CHARS_PER_EDIT = 6_000;
 
-const DistillerSchema = z.object({
-  rules: z.array(z.string().trim().min(1)).max(MAX_CANDIDATE_RULES),
+const ModelDistillerSchema = z.object({
+  rules: z
+    .array(
+      z.object({
+        rule: z.string().trim().min(1),
+        evidenceEditNumbers: z
+          .array(z.number().int().min(1).max(MAX_EDIT_EVENTS))
+          .min(1)
+          .max(MAX_EDIT_EVENTS),
+      }),
+    )
+    .max(MAX_CANDIDATE_RULES),
+});
+
+const SavedDistillerSchema = z.object({
+  rules: z
+    .array(
+      z.object({
+        rule: z.string().trim().min(1).max(RULE_MAX_CHARS),
+        evidenceEventIds: z.array(z.string().uuid()).min(1).max(MAX_EDIT_EVENTS),
+      }),
+    )
+    .max(MAX_CANDIDATE_RULES),
 });
 
 function buildDistillerPrompt(events: RevisionEvent[]): string {
@@ -64,7 +85,10 @@ function buildDistillerPrompt(events: RevisionEvent[]): string {
     "- about style, tone, structure, or phrasing (not about the topic),",
     "- general enough to apply to future drafts.",
     "",
-    "Return strict JSON only, no prose: {\"rules\": [\"...\", \"...\"]}.",
+    "For every rule, cite the numbered edits that directly support that rule.",
+    "Do not cite an edit unless its before/after change demonstrates the rule.",
+    "Return strict JSON only, no prose:",
+    '{"rules":[{"rule":"...","evidenceEditNumbers":[1,3]}]}.',
     "If the edits show no consistent preference, return an empty list.",
     INJECTION_GUARD,
     "",
@@ -95,8 +119,8 @@ export async function distillEditDeltaRules(
     if (prefsError) throw prefsError;
     const existingPrefs = (existing ?? []) as ContentPreference[];
 
-    let candidates: string[] = [];
-    const savedResult = DistillerSchema.safeParse(claim.savedResult);
+    let candidates: Array<{ rule: string; evidenceEventIds: string[] }> = [];
+    const savedResult = SavedDistillerSchema.safeParse(claim.savedResult);
     if (claim.savedResult !== null && !savedResult.success) {
       throw new Error("Saved revision distillation result is invalid");
     }
@@ -134,13 +158,58 @@ export async function distillEditDeltaRules(
             error: error instanceof Error ? error.message : String(error),
           });
         }
-        const parsed = DistillerSchema.safeParse(parseJsonObject(res.text.trim()));
+        const parsed = ModelDistillerSchema.safeParse(
+          parseJsonObject(res.text.trim()),
+        );
         if (!parsed.success) {
           throw new Error("Revision distiller returned an invalid response");
         }
         candidates = parsed.data.rules
-          .map((rule) => normalizePreferenceRule(rule).slice(0, RULE_MAX_CHARS))
-          .filter(Boolean);
+          .flatMap((candidate) => {
+            const rule = normalizePreferenceRule(candidate.rule).slice(
+              0,
+              RULE_MAX_CHARS,
+            );
+            if (
+              candidate.evidenceEditNumbers.some(
+                (editNumber) => !claim.events[editNumber - 1],
+              )
+            ) {
+              return [];
+            }
+            const evidenceEventIds = [
+              ...new Set(
+                candidate.evidenceEditNumbers.flatMap((editNumber) => {
+                  const event = claim.events[editNumber - 1];
+                  return event ? [event.id] : [];
+                }),
+              ),
+            ];
+            return rule && evidenceEventIds.length > 0
+              ? [{ rule, evidenceEventIds }]
+              : [];
+          })
+          .reduce<Array<{ rule: string; evidenceEventIds: string[] }>>(
+            (unique, candidate) => {
+              const duplicate = unique.find(
+                (current) =>
+                  preferenceDedupKey(current.rule) ===
+                  preferenceDedupKey(candidate.rule),
+              );
+              if (duplicate) {
+                duplicate.evidenceEventIds = [
+                  ...new Set([
+                    ...duplicate.evidenceEventIds,
+                    ...candidate.evidenceEventIds,
+                  ]),
+                ];
+              } else {
+                unique.push(candidate);
+              }
+              return unique;
+            },
+            [],
+          );
         const persisted = await persistRevisionEventClaimResult(
           sb,
           workspaceId,
@@ -161,31 +230,42 @@ export async function distillEditDeltaRules(
 
     let inserted = 0;
     let skippedDuplicates = 0;
-    for (const rule of candidates) {
-      if (isDuplicatePreference(rule, existingPrefs)) {
-        skippedDuplicates += 1;
-        continue;
-      }
-      const { error: insertError } = await sb.from("content_preferences").insert({
-        workspace_id: workspaceId,
-        rule,
-        source: "edit_delta",
-      });
-      if (insertError) {
+    for (const [candidateIndex, candidate] of candidates.entries()) {
+      const rule = candidate.rule;
+      const duplicate = existingPrefs.find(
+        (preference) =>
+          preferenceDedupKey(preference.rule) === preferenceDedupKey(rule),
+      );
+      const { data: outcomeRows, error: evidenceError } = await sb.rpc(
+        "persist_content_preference_candidate",
+        {
+          p_workspace_id: workspaceId,
+          p_batch_id: claim.batchId,
+          p_candidate_index: candidateIndex,
+          p_rule_snapshot: rule,
+          p_revision_event_ids: candidate.evidenceEventIds,
+          p_matching_preference_id: duplicate?.id ?? null,
+        },
+      );
+      if (evidenceError) {
         throw new Error(
-          `Revision preference could not be persisted: ${insertError.message}`,
+          `Revision preference evidence could not be persisted: ${evidenceError.message}`,
         );
       }
-      existingPrefs.unshift({
-        id: crypto.randomUUID(),
-        workspace_id: workspaceId,
-        rule,
-        detail: null,
-        source: "edit_delta",
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      });
-      inserted += 1;
+      const outcome = Array.isArray(outcomeRows) ? outcomeRows[0] : outcomeRows;
+      if (!outcome || typeof outcome !== "object") {
+        throw new Error("Revision preference outcome was not returned");
+      }
+      const result = outcome as {
+        preference_id: string | null;
+        outcome_kind: string;
+        inserted_preference: boolean;
+      };
+      if (result.inserted_preference) {
+        inserted += 1;
+      } else {
+        skippedDuplicates += 1;
+      }
     }
 
     completed = await completeRevisionEventClaim(sb, workspaceId, claim);

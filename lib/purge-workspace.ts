@@ -102,6 +102,15 @@ export async function purgeWorkspaceData(
       workspaceId,
     ),
   );
+  await wipe("content_preference_evidence", () =>
+    del("content_preference_evidence").eq("workspace_id", workspaceId),
+  );
+  await wipe("content_preference_learning_outcomes", () =>
+    del("content_preference_learning_outcomes").eq(
+      "workspace_id",
+      workspaceId,
+    ),
+  );
   await wipe("draft_edit_events", () =>
     del("draft_edit_events").eq("workspace_id", workspaceId),
   );

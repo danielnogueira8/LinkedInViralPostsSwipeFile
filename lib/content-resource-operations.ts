@@ -497,6 +497,13 @@ export async function createPreferenceResource(input: {
     })
     .select(PREF_COLS)
     .single();
+  if (error?.code === "23505") {
+    return {
+      ok: false,
+      status: 409,
+      error: "You already have that preference.",
+    };
+  }
   if (error) throw error;
   return { ok: true, value: data as ContentPreference };
 }

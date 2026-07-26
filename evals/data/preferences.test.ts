@@ -31,6 +31,15 @@ describe("normalizePreferenceRule", () => {
     expect(normalizePreferenceRule(long).length).toBe(PREF_RULE_MAX);
   });
 
+  test("clamps by Unicode code point without splitting emoji", () => {
+    const normalized = normalizePreferenceRule(
+      `${"a".repeat(PREF_RULE_MAX - 1)}😀z`,
+    );
+    expect([...normalized]).toHaveLength(PREF_RULE_MAX);
+    expect(normalized.endsWith("😀")).toBe(true);
+    expect(normalized.endsWith("\ud83d")).toBe(false);
+  });
+
   test("empty / whitespace-only → empty string", () => {
     expect(normalizePreferenceRule("   \n  ")).toBe("");
     expect(normalizePreferenceRule("")).toBe("");
@@ -83,6 +92,59 @@ describe("preferenceDedupKey / isDuplicatePreference", () => {
   test("empty rule never matches (no false dedup)", () => {
     expect(isDuplicatePreference("", [{ rule: "Never use hashtags" }])).toBe(
       false,
+    );
+  });
+
+  test("non-Latin rules receive a stable non-empty duplicate key", () => {
+    expect(preferenceDedupKey("不要使用破折号")).toBe("u:不要使用破折号");
+    expect(
+      isDuplicatePreference("不要使用破折号", [
+        { rule: "不要使用破折号" },
+      ]),
+    ).toBe(true);
+  });
+
+  test("mixed-script rules do not collapse to the same ASCII fragment", () => {
+    expect(preferenceDedupKey("不要使用 ChatGPT")).not.toBe(
+      preferenceDedupKey("推荐使用 ChatGPT"),
+    );
+  });
+
+  test("mixed-script keys remain punctuation-insensitive", () => {
+    expect(preferenceDedupKey("不要使用 ChatGPT!")).toBe(
+      preferenceDedupKey("不要使用 ChatGPT。"),
+    );
+    expect(preferenceDedupKey("لا تستخدم ChatGPT؟")).toBe(
+      preferenceDedupKey("لا تستخدم ChatGPT．"),
+    );
+  });
+
+  test("Unicode marks and symbols remain meaningful", () => {
+    expect(preferenceDedupKey("दिन")).not.toBe(preferenceDedupKey("दान"));
+    expect(preferenceDedupKey("Use ✅")).not.toBe(
+      preferenceDedupKey("Use ❌"),
+    );
+  });
+
+  test("Unicode case and whitespace normalize consistently", () => {
+    expect(preferenceDedupKey("ÉCOLE")).toBe(preferenceDedupKey("école"));
+    expect(preferenceDedupKey("avoid\u00a0hashtags")).toBe(
+      preferenceDedupKey("avoid hashtags"),
+    );
+    expect(preferenceDedupKey("one\u0085two")).not.toBe(
+      preferenceDedupKey("one two"),
+    );
+    expect(preferenceDedupKey("one\u0007two")).toBe(
+      preferenceDedupKey("one two"),
+    );
+  });
+
+  test("common typographic punctuation matches its ASCII equivalent", () => {
+    expect(preferenceDedupKey("Don’t use hashtags")).toBe(
+      preferenceDedupKey("Don't use hashtags"),
+    );
+    expect(preferenceDedupKey("Avoid em–dashes")).toBe(
+      preferenceDedupKey("Avoid em-dashes"),
     );
   });
 });

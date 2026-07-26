@@ -119,4 +119,21 @@ describe("persistLearnedPreference", () => {
     expect(out.ok).toBe(false);
     if (!out.ok) expect(out.error).toMatch(/could not save/i);
   });
+
+  test("treats a database dedup race as a duplicate no-op", async () => {
+    dbRef.current = makeFakeSupabase({
+      content_preferences: {
+        error: { code: "23505", message: "duplicate key" } as never,
+      },
+    });
+
+    await expect(
+      persistLearnedPreference(WS, "Never use hashtags", []),
+    ).resolves.toEqual({
+      ok: true,
+      saved: false,
+      reason: "duplicate",
+      rule: "Never use hashtags",
+    });
+  });
 });
