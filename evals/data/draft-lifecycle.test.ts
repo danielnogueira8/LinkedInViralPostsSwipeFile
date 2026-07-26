@@ -374,6 +374,41 @@ describe("DraftLifecycle command outcomes", () => {
     expect(attempts).toBe(2);
   });
 
+  test("returns the exact previous row from the successful CAS attempt", async () => {
+    repository.rows.set(
+      "draft-1",
+      draft({ body: "Initial body", lifecycleVersion: 2 }),
+    );
+    const originalMutate = repository.mutate.bind(repository);
+    let attempts = 0;
+    repository.mutate = async (id, patch, expectedVersion) => {
+      attempts += 1;
+      if (attempts === 1) {
+        const current = repository.rows.get(id)!;
+        repository.rows.set(id, {
+          ...current,
+          body: "Concurrent body",
+          lifecycleVersion: expectedVersion + 1,
+        });
+        return "stale" as const;
+      }
+      return originalMutate(id, patch, expectedVersion);
+    };
+
+    const outcome = await lifecycle.mutateWithPrevious("draft-1", {
+      body: "User body",
+    });
+
+    expect(outcome).toMatchObject({
+      ok: true,
+      value: {
+        previous: { body: "Concurrent body", lifecycleVersion: 3 },
+        draft: { body: "User body", lifecycleVersion: 4 },
+      },
+    });
+    expect(attempts).toBe(2);
+  });
+
   test("background enrichment is versioned and limited to pending review", async () => {
     repository.rows.set(
       "draft-1",

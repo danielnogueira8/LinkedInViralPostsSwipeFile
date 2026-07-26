@@ -168,29 +168,22 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       .eq("chat_id", chatId)
       .eq("workspace_id", sb.workspaceId)
       .eq("role", "assistant")
-      .not("artifacts", "is", null);
+      .not("artifacts", "is", null)
+      .order("created_at", { ascending: false });
     if (rowsErr) throw rowsErr;
 
-    // Phase C1: capture the before body so a manual body edit can be distilled
-    // into voice rules later.
+    let updated = false;
+    let found = false;
     let beforeBody: string | null = null;
     for (const m of rows ?? []) {
       const arts = m.artifacts as StoredArtifact[];
       if (!Array.isArray(arts)) continue;
       const target = arts.find((a) => a?.id === input.targetId);
-      if (target && typeof target.body === "string") {
-        beforeBody = target.body;
-        break;
-      }
-    }
-
-    let updated = false;
-    let conflict = false;
-    for (const m of rows ?? []) {
-      const arts = m.artifacts as StoredArtifact[];
-      if (!Array.isArray(arts)) continue;
+      if (!target) continue;
+      found = true;
+      beforeBody = typeof target.body === "string" ? target.body : null;
       const res = rewriteArtifactInPlace(arts, input);
-      if (!res.changed) continue;
+      if (!res.changed) break;
       // CAS: same guard as DELETE — a 0-row result means another write (a
       // concurrent delete of a sibling card, or another edit) landed on this
       // message between our read and write. Surface it as a conflict rather
@@ -208,10 +201,16 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         .maybeSingle();
       if (updErr) throw updErr;
       if (!written) {
-        conflict = true;
-        continue;
+        return NextResponse.json(
+          { ok: false, error: "This card changed elsewhere — reload and try again." },
+          { status: 409 },
+        );
       }
       updated = true;
+      // A refined Artifact ID can exist in historical assistant messages. The
+      // newest row is authoritative; editing older copies causes stale history
+      // to overwrite the next revision's before-body.
+      break;
     }
 
     if (updated && beforeBody) {
@@ -221,21 +220,19 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         artifactId: input.targetId,
         beforeBody,
         afterBody: input.body,
+        editOrigin: "cowork_artifact",
       });
     }
 
-    if (conflict && !updated) {
-      return NextResponse.json(
-        { ok: false, error: "This card changed elsewhere — reload and try again." },
-        { status: 409 },
-      );
-    }
     // If no row matched, surface it as not-found instead of silently
     // succeeding. The streaming race — user clicks Done before the assistant
     // row has been inserted — was returning `ok:true, updated:false` here and
     // the client treated that as success, so the edit silently never reached
     // the DB.
     if (!updated) {
+      if (found) {
+        return NextResponse.json({ ok: true, updated: false });
+      }
       return NextResponse.json(
         { ok: false, error: "Draft not found yet — try again in a moment.", updated: false },
         { status: 404 },

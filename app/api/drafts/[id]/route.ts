@@ -97,10 +97,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     const lifecycle = new DraftLifecycle(
       createSupabaseDraftLifecycleRepository(sb.raw, sb.workspaceId),
     );
-    // Phase C1: capture the before body so a manual body edit can be distilled
-    // into voice rules later.
-    const beforeDraft = input.body !== undefined ? await lifecycle.find(id) : null;
-    const outcome = await lifecycle.mutate(id, {
+    // Capture the exact row whose lifecycle version won the CAS write. A
+    // separate pre-read can become stale when mutate retries a concurrent edit.
+    const mutation = await lifecycle.mutateWithPrevious(id, {
       body: input.body,
       title: input.title,
       status: input.status,
@@ -109,18 +108,19 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       mediaAttachments: input.media_attachments,
       contentFormat: input.content_format,
     });
-    if (!outcome.ok) return outcomeResponse(outcome);
-    if (beforeDraft && input.body !== undefined) {
+    if (!mutation.ok) return outcomeResponse(mutation);
+    if (input.body !== undefined) {
       await recordDraftEditEvent({
         sb: sb.raw,
         workspaceId: sb.workspaceId,
         artifactId: id,
-        beforeBody: beforeDraft.body,
-        afterBody: outcome.value.body,
+        beforeBody: mutation.value.previous.body,
+        afterBody: mutation.value.draft.body,
+        editOrigin: "posts_editor",
       });
     }
     revalidatePath("/dashboard/posts");
-    return outcomeResponse(outcome);
+    return outcomeResponse({ ok: true, value: mutation.value.draft });
   } catch (e) {
     return errorResponse(e);
   }

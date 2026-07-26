@@ -87,6 +87,8 @@ describe("purgeWorkspaceData — coverage + scoping", () => {
       "modeled_draft_batches",
       "chat_artifacts",
       "artifact_lineage",
+      "draft_edit_events",
+      "content_learning_processing_cursors",
       "chat_modeling_sources",
       "saved_posts",
       "lead_magnets",

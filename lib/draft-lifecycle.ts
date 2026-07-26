@@ -292,6 +292,24 @@ export class DraftLifecycle {
       contentFormat?: ContentFormat;
     },
   ): Promise<DraftCommandOutcome<DraftRecord>> {
+    const outcome = await this.mutateWithPrevious(id, input);
+    return outcome.ok ? accepted(outcome.value.draft) : outcome;
+  }
+
+  async mutateWithPrevious(
+    id: string,
+    input: {
+      body?: string;
+      title?: string | null;
+      status?: DraftStatus;
+      kind?: DraftKind;
+      planToPostOn?: string | null;
+      mediaAttachments?: PostMediaAttachment[];
+      contentFormat?: ContentFormat;
+    },
+  ): Promise<
+    DraftCommandOutcome<{ draft: DraftRecord; previous: DraftRecord }>
+  > {
     // The public PATCH command does not accept a client lifecycle version. Its
     // read-then-CAS write is an internal safety boundary, so a one-off CAS miss
     // means the command raced another valid server command—not that the user's
@@ -367,7 +385,9 @@ export class DraftLifecycle {
         patch,
         current.lifecycleVersion,
       );
-      if (result !== "stale") return accepted(result);
+      if (result !== "stale") {
+        return accepted({ draft: result, previous: current });
+      }
     }
 
     return rejected(

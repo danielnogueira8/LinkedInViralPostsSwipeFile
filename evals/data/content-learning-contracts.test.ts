@@ -4,6 +4,7 @@ import {
   contentOutcomeCorrectionSchema,
   contentOutcomeSchema,
   knowledgeReviewInputSchema,
+  revisionEventSchema,
   workspaceKnowledgeItemSchema,
   workspaceLearningModelSchema,
 } from "@/lib/content-learning/contracts";
@@ -11,6 +12,35 @@ import {
 const timestamp = "2026-07-26T08:00:00.000Z";
 
 describe("content-learning contracts", () => {
+  test("accepts a lineage-linked, enriched revision event", () => {
+    const event = revisionEventSchema.parse({
+      schemaVersion: 1,
+      id: "revision-1",
+      workspaceId: "user_workspace",
+      artifactId: "artifact-1",
+      savedDraftId: "saved-draft-1",
+      lineageId: "lineage-1",
+      beforeBody: "A longer opening.\n\nThen the point.",
+      afterBody: "A sharper opening.\n\nThen the point.",
+      editOrigin: "posts_editor",
+      beforeHash: "a".repeat(64),
+      afterHash: "b".repeat(64),
+      changeSummary: {
+        beforeChars: 34,
+        afterChars: 35,
+        deltaChars: 1,
+        beforeLines: 3,
+        afterLines: 3,
+        deltaLines: 0,
+      },
+      createdAt: timestamp,
+    });
+
+    expect(event.lineageId).toBe("lineage-1");
+    expect(event.savedDraftId).toBe("saved-draft-1");
+    expect(event.changeSummary.deltaChars).toBe(1);
+  });
+
   test("represents unavailable historical Cowork commands explicitly", () => {
     expect(
       artifactLineageInputSchema.parse({
