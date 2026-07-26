@@ -17,6 +17,9 @@ import {
   claimWorkspaceCost,
   releaseWorkspaceCost,
 } from "@/lib/workspace-cost-claims";
+import { createWorkspaceKnowledgeStore } from "@/lib/content-learning/workspace-knowledge";
+import { syncInterviewKnowledge } from "@/lib/content-learning/interview-knowledge";
+import type { WorkspaceKnowledgeItem } from "@/lib/content-learning/contracts";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -161,8 +164,34 @@ export async function POST(req: Request) {
       saved = data;
     }
 
+    // Raw interview answers are user-authored, but turning them into durable
+    // factual context still requires an explicit review. Reconcile the prior
+    // interview revision and create reviewable proposals after the Voice save.
+    // This rollout is fail-open: Knowledge storage must never make an otherwise
+    // successful interview save fail.
+    let knowledge: WorkspaceKnowledgeItem[] | undefined;
+    try {
+      knowledge = await syncInterviewKnowledge({
+        store: createWorkspaceKnowledgeStore(sb.raw),
+        workspaceId: sb.workspaceId,
+        voiceProfileId: String(saved.id),
+        interviewUpdatedAt,
+        answers,
+      });
+    } catch (error) {
+      console.warn("[workspace-knowledge] interview sync failed", {
+        error:
+          error instanceof Error ? error.message : "Unknown synchronization error",
+      });
+    }
+
     succeeded = true;
-    return NextResponse.json({ ok: true, voice: saved, context });
+    return NextResponse.json({
+      ok: true,
+      voice: saved,
+      context,
+      ...(knowledge ? { knowledge } : {}),
+    });
   } catch (e) {
     return errorResponse(e);
   } finally {

@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 
 const synthesizeInterviewContext = vi.fn();
 const checkChatCostAllowance = vi.fn();
+const syncInterviewKnowledge = vi.fn();
 
 vi.mock("@/lib/voice-interview", async (importOriginal) => {
   const orig = await importOriginal<typeof import("@/lib/voice-interview")>();
@@ -17,6 +18,12 @@ vi.mock("@/lib/agent/rate-limit", async (importOriginal) => {
   const orig = await importOriginal<typeof import("@/lib/agent/rate-limit")>();
   return { ...orig, checkChatCostAllowance };
 });
+vi.mock("@/lib/content-learning/interview-knowledge", () => ({
+  syncInterviewKnowledge,
+}));
+vi.mock("@/lib/content-learning/workspace-knowledge", () => ({
+  createWorkspaceKnowledgeStore: () => ({ kind: "knowledge-store" }),
+}));
 
 // In-memory stand-in for the atomic claim_ai_operation RPC: the check-and-set
 // is synchronous inside the mock, mirroring the DB's atomicity. The route
@@ -98,6 +105,8 @@ beforeEach(() => {
   checkChatCostAllowance.mockReset();
   checkChatCostAllowance.mockResolvedValue({ ok: true });
   claimHeld.current = false;
+  syncInterviewKnowledge.mockReset();
+  syncInterviewKnowledge.mockResolvedValue([]);
 });
 
 describe("POST /api/voice/interview", () => {
@@ -117,6 +126,13 @@ describe("POST /api/voice/interview", () => {
     expect(profile.interview_context).toEqual(["I cut a client's churn 40%."]);
     expect(profile.interview_answers).toEqual(ANSWERS);
     expect(state.insertPayload).toBeNull();
+    expect(syncInterviewKnowledge).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: "ws1",
+        voiceProfileId: "row1",
+        answers: ANSWERS,
+      }),
+    );
   });
 
   test("no profile → INSERT a minimal ready row carrying the interview (standalone)", async () => {
@@ -133,6 +149,16 @@ describe("POST /api/voice/interview", () => {
     // A standalone row still gets a non-empty summary.
     expect(typeof row.summary).toBe("string");
     expect((row.summary as string).length).toBeGreaterThan(0);
+  });
+
+  test("keeps a successful interview save successful when knowledge sync fails", async () => {
+    syncInterviewKnowledge.mockRejectedValue(new Error("knowledge unavailable"));
+
+    const res = await POST(req({ answers: ANSWERS }));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    expect(body).not.toHaveProperty("knowledge");
   });
 
   // ---------------------------------------------------------------------------

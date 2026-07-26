@@ -73,6 +73,89 @@ describe("Workspace Knowledge row validation", () => {
     expect(query.limit).toHaveBeenCalledWith(50);
   });
 
+  test("scopes review items to active knowledge from one source revision family", async () => {
+    const filters: Array<[string, unknown]> = [];
+    const patterns: Array<[string, string]> = [];
+    const query = {
+      select: vi.fn(() => query),
+      eq: vi.fn((field: string, value: unknown) => {
+        filters.push([field, value]);
+        return query;
+      }),
+      like: vi.fn((field: string, value: string) => {
+        patterns.push([field, value]);
+        return query;
+      }),
+      order: vi.fn(() => query),
+      limit: vi.fn(async () => ({ data: [row], error: null })),
+    };
+    const db = {
+      from: vi.fn(() => query),
+    } as unknown as SupabaseClient;
+
+    await expect(
+      createWorkspaceKnowledgeStore(db).listActiveBySource(
+        "workspace-1",
+        "interview",
+        "voice-1:interview:",
+      ),
+    ).resolves.toHaveLength(1);
+    expect(filters).toEqual([
+      ["workspace_id", "workspace-1"],
+      ["source", "interview"],
+      ["active", true],
+    ]);
+    expect(patterns).toEqual([
+      ["source_ref", "voice-1:interview:%"],
+    ]);
+    expect(query.limit).toHaveBeenCalledWith(50);
+  });
+
+  test("replaces an interview revision through one transactional RPC", async () => {
+    const proposedRow = {
+      ...row,
+      verification: "proposed" as const,
+      last_verified_at: null,
+      source_ref:
+        "voice-1:interview:contrarian_belief:2026-07-26T14:00:00.000Z",
+    };
+    const rpc = vi.fn(async () => ({ data: [proposedRow], error: null }));
+    const db = { rpc } as unknown as SupabaseClient;
+    const proposal = {
+      schemaVersion: 1 as const,
+      workspaceId: "workspace-1",
+      kind: "belief" as const,
+      title: "A belief",
+      content: { statement: "Consistency compounds.", rationale: null },
+      source: "interview" as const,
+      sourceRef: proposedRow.source_ref,
+      confidence: 1,
+    };
+
+    await expect(
+      createWorkspaceKnowledgeStore(db).replaceInterviewProposals(
+        "workspace-1",
+        "voice-1:interview:",
+        [proposal],
+      ),
+    ).resolves.toHaveLength(1);
+    expect(rpc).toHaveBeenCalledWith(
+      "replace_interview_workspace_knowledge",
+      {
+        p_workspace_id: "workspace-1",
+        p_source_ref_prefix: "voice-1:interview:",
+        p_proposals: [
+          expect.objectContaining({
+            schema_version: 1,
+            kind: "belief",
+            identity_ref: "voice-1:interview:contrarian_belief",
+            source_ref: proposedRow.source_ref,
+          }),
+        ],
+      },
+    );
+  });
+
   test("passes the review version and Workspace to the atomic operation", async () => {
     const rpc = vi.fn(async () => ({ data: row, error: null }));
     const db = { rpc } as unknown as SupabaseClient;

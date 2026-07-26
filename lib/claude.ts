@@ -484,11 +484,16 @@ function hasCompleteWritingPatterns(profile: VoiceProfile): boolean {
 // can't balloon the profile. Exported for the interview route + tests.
 export function sanitizeInterviewAnswers(input: unknown): InterviewAnswer[] {
   if (!Array.isArray(input)) return [];
-  return input
+  const sanitized = input
     .filter((x): x is Record<string, unknown> => !!x && typeof x === "object")
     .map((x) => ({ question: str(x.question).slice(0, 300), answer: str(x.answer).slice(0, 2000) }))
-    .filter((x) => x.question && x.answer)
-    .slice(0, 15);
+    .filter((x) => x.question && x.answer);
+  // One canonical interview field can produce only one fact source. Keep the
+  // last submitted value so a duplicate browser payload cannot persist two
+  // contradictory answers for the same question.
+  return Array.from(
+    new Map(sanitized.map((answer) => [answer.question, answer])).values(),
+  ).slice(0, 15);
 }
 
 // Coerce an unknown into a LeadMagnetStyle, or null when there's nothing

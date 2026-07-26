@@ -7,6 +7,7 @@ import {
   type WorkspaceKnowledge,
   type WorkspaceKnowledgeItem,
   type WorkspaceKnowledgeProposal,
+  type KnowledgeItemSource,
 } from "@/lib/content-learning/contracts";
 
 type KnowledgeRow = {
@@ -27,7 +28,14 @@ type KnowledgeRow = {
 };
 
 export type WorkspaceKnowledgeFailure = {
-  operation: "propose" | "review" | "archive" | "listActive";
+  operation:
+    | "propose"
+    | "replaceInterviewProposals"
+    | "review"
+    | "archive"
+    | "listProposed"
+    | "listActiveBySource"
+    | "listActive";
   error: unknown;
 };
 
@@ -127,6 +135,34 @@ export function createWorkspaceKnowledgeStore(
     return item;
   }
 
+  async function parseRows(
+    operation: WorkspaceKnowledgeFailure["operation"],
+    rows: unknown[],
+    itemLimit: number,
+    charLimit: number,
+  ): Promise<WorkspaceKnowledgeItem[]> {
+    const items: WorkspaceKnowledgeItem[] = [];
+    let usedChars = 0;
+    for (const row of rows) {
+      const item = workspaceKnowledgeFromRow(row as KnowledgeRow);
+      if (!item) {
+        report({
+          operation,
+          error: new Error("Stored Workspace Knowledge item is invalid"),
+        });
+        continue;
+      }
+      const itemChars =
+        item.title.length + JSON.stringify(item.content).length;
+      if (items.length >= itemLimit || usedChars + itemChars > charLimit) {
+        break;
+      }
+      items.push(item);
+      usedChars += itemChars;
+    }
+    return items;
+  }
+
   return {
     async propose(proposal) {
       const parsed = workspaceKnowledgeProposalSchema.safeParse(proposal);
@@ -146,6 +182,86 @@ export function createWorkspaceKnowledgeStore(
         return await findByProposal(parsed.data.workspaceId, key);
       } catch (error) {
         report({ operation: "propose", error });
+        return null;
+      }
+    },
+
+    async replaceInterviewProposals(
+      workspaceId,
+      sourceRefPrefix,
+      proposals,
+    ) {
+      const parsed = proposals.map((proposal) =>
+        workspaceKnowledgeProposalSchema.safeParse(proposal),
+      );
+      const invalid = parsed.find((result) => !result.success);
+      if (invalid && !invalid.success) {
+        report({
+          operation: "replaceInterviewProposals",
+          error: invalid.error,
+        });
+        return null;
+      }
+      const validated = parsed.map((result) => {
+        if (!result.success) {
+          throw new Error("Workspace Knowledge proposal validation drift");
+        }
+        return result.data;
+      });
+      if (
+        validated.some(
+          (proposal) =>
+            proposal.workspaceId !== workspaceId ||
+            proposal.source !== "interview" ||
+            !proposal.sourceRef?.startsWith(sourceRefPrefix),
+        )
+      ) {
+        report({
+          operation: "replaceInterviewProposals",
+          error: new Error("Interview proposal scope does not match"),
+        });
+        return null;
+      }
+
+      try {
+        const rows = validated.map((proposal) => ({
+          schema_version: proposal.schemaVersion,
+          proposal_key: proposalKey(proposal),
+          kind: proposal.kind,
+          title: proposal.title,
+          content: proposal.content,
+          identity_ref: `${sourceRefPrefix}${
+            proposal.sourceRef
+              ?.slice(sourceRefPrefix.length)
+              .split(":", 1)[0] ?? ""
+          }`,
+          source_ref: proposal.sourceRef,
+          confidence: proposal.confidence,
+        }));
+        const { data, error } = await db.rpc(
+          "replace_interview_workspace_knowledge",
+          {
+            p_workspace_id: workspaceId,
+            p_source_ref_prefix: sourceRefPrefix,
+            p_proposals: rows,
+          },
+        );
+        if (error) throw error;
+        const returnedRows = Array.isArray(data) ? data : data ? [data] : [];
+        const items = await parseRows(
+          "replaceInterviewProposals",
+          returnedRows,
+          WORKSPACE_KNOWLEDGE_SCAN_LIMIT,
+          WORKSPACE_KNOWLEDGE_CONTEXT_CHAR_LIMIT * 2,
+        );
+        if (items.length !== validated.length) {
+          throw new Error(
+            "Interview knowledge reconciliation returned an incomplete revision",
+          );
+        }
+        return items;
+      } catch (error) {
+        report({ operation: "replaceInterviewProposals", error });
         return null;
       }
     },
@@ -203,6 +319,57 @@ export function createWorkspaceKnowledgeStore(
       }
     },
 
+    async listProposed(workspaceId) {
+      try {
+        const { data, error } = await db
+          .from("workspace_knowledge_items")
+          .select("*")
+          .eq("workspace_id", workspaceId)
+          .eq("verification", "proposed")
+          .eq("active", true)
+          .order("created_at", { ascending: false })
+          .limit(WORKSPACE_KNOWLEDGE_SCAN_LIMIT);
+        if (error) throw error;
+        return parseRows(
+          "listProposed",
+          data ?? [],
+          WORKSPACE_KNOWLEDGE_CONTEXT_ITEM_LIMIT,
+          WORKSPACE_KNOWLEDGE_CONTEXT_CHAR_LIMIT,
+        );
+      } catch (error) {
+        report({ operation: "listProposed", error });
+        return [];
+      }
+    },
+
+    async listActiveBySource(
+      workspaceId: string,
+      source: KnowledgeItemSource,
+      sourceRefPrefix: string,
+    ) {
+      try {
+        const { data, error } = await db
+          .from("workspace_knowledge_items")
+          .select("*")
+          .eq("workspace_id", workspaceId)
+          .eq("source", source)
+          .eq("active", true)
+          .like("source_ref", `${sourceRefPrefix}%`)
+          .order("updated_at", { ascending: false })
+          .limit(WORKSPACE_KNOWLEDGE_SCAN_LIMIT);
+        if (error) throw error;
+        return parseRows(
+          "listActiveBySource",
+          data ?? [],
+          WORKSPACE_KNOWLEDGE_SCAN_LIMIT,
+          WORKSPACE_KNOWLEDGE_CONTEXT_CHAR_LIMIT * 2,
+        );
+      } catch (error) {
+        report({ operation: "listActiveBySource", error });
+        return [];
+      }
+    },
+
     async listActive(workspaceId) {
       try {
         const { data, error } = await db
@@ -214,29 +381,12 @@ export function createWorkspaceKnowledgeStore(
           .order("updated_at", { ascending: false })
           .limit(WORKSPACE_KNOWLEDGE_SCAN_LIMIT);
         if (error) throw error;
-        const items: WorkspaceKnowledgeItem[] = [];
-        let usedChars = 0;
-        for (const row of data ?? []) {
-          const item = workspaceKnowledgeFromRow(row as KnowledgeRow);
-          if (!item) {
-            report({
-              operation: "listActive",
-              error: new Error("Stored Workspace Knowledge item is invalid"),
-            });
-            continue;
-          }
-          const itemChars =
-            item.title.length + JSON.stringify(item.content).length;
-          if (
-            items.length >= WORKSPACE_KNOWLEDGE_CONTEXT_ITEM_LIMIT ||
-            usedChars + itemChars > WORKSPACE_KNOWLEDGE_CONTEXT_CHAR_LIMIT
-          ) {
-            break;
-          }
-          items.push(item);
-          usedChars += itemChars;
-        }
-        return items;
+        return parseRows(
+          "listActive",
+          data ?? [],
+          WORKSPACE_KNOWLEDGE_CONTEXT_ITEM_LIMIT,
+          WORKSPACE_KNOWLEDGE_CONTEXT_CHAR_LIMIT,
+        );
       } catch (error) {
         report({ operation: "listActive", error });
         return [];
