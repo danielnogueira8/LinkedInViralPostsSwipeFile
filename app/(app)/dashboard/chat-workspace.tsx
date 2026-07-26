@@ -294,6 +294,8 @@ const DRAFT_PANEL_DEFAULT_WIDTH = 384;
 // panel header. Sits well inside DRAFT_PANEL_MAX_WIDTH so the drag handle can
 // still go wider.
 const DRAFT_PANEL_FOCUS_WIDTH = 760;
+const CORAL_CONTEXT_CHIP_CLASSNAME =
+  "border-accent-brand/25 bg-accent-brand/[0.08] text-accent-brand";
 
 function clampDraftPanelWidth(width: number): number {
   return Math.min(DRAFT_PANEL_MAX_WIDTH, Math.max(DRAFT_PANEL_MIN_WIDTH, width));
@@ -4771,7 +4773,12 @@ export function ChatWorkspace({
             )}
             {pendingLeadMagnet && (
               <div className="flex flex-wrap gap-1.5">
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-state-danger-border bg-state-danger-bg pl-2.5 pr-1.5 py-1 text-xs text-primary">
+                <span
+                  className={cn(
+                    "inline-flex items-center gap-1.5 rounded-full border pl-2.5 pr-1.5 py-1 text-xs",
+                    CORAL_CONTEXT_CHIP_CLASSNAME,
+                  )}
+                >
                   <Magnet className="h-3 w-3" aria-hidden />
                   <span className="max-w-[220px] truncate">
                     Giveaway: {pendingLeadMagnet.title}
@@ -4779,7 +4786,7 @@ export function ChatWorkspace({
                   <button
                     type="button"
                     onClick={() => setPendingLeadMagnet(null)}
-                    className="text-primary/70 hover:text-primary"
+                    className="text-accent-brand/70 hover:text-accent-brand"
                     aria-label={`Remove ${pendingLeadMagnet.title}`}
                   >
                     <X className="h-3 w-3" />
@@ -4789,7 +4796,12 @@ export function ChatWorkspace({
             )}
             {pendingCreatorStyle && (
               <div className="flex flex-wrap gap-1.5">
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-state-danger-border bg-state-danger-bg pl-2.5 pr-1.5 py-1 text-xs text-primary">
+                <span
+                  className={cn(
+                    "inline-flex items-center gap-1.5 rounded-full border pl-2.5 pr-1.5 py-1 text-xs",
+                    CORAL_CONTEXT_CHIP_CLASSNAME,
+                  )}
+                >
                   <Fingerprint className="h-3 w-3" aria-hidden />
                   <span className="max-w-[220px] truncate">
                     {pendingCreatorStyle.creatorName
@@ -4799,7 +4811,7 @@ export function ChatWorkspace({
                   <button
                     type="button"
                     onClick={() => setPendingCreatorStyle(null)}
-                    className="text-primary/70 hover:text-primary"
+                    className="text-accent-brand/70 hover:text-accent-brand"
                     aria-label={`Remove ${pendingCreatorStyle.name}`}
                   >
                     <X className="h-3 w-3" />
@@ -5730,7 +5742,10 @@ function MessageBubble({
         {message.creatorStyle && (
           <div className="flex flex-wrap justify-end gap-1.5 max-w-[85%]">
             <span
-              className="inline-flex items-center gap-1.5 rounded-full border border-state-danger-border bg-state-danger-bg px-2.5 py-0.5 text-[11px] text-primary"
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px]",
+                CORAL_CONTEXT_CHIP_CLASSNAME,
+              )}
               title={`Creator style: ${message.creatorStyle.creatorName ?? message.creatorStyle.name}`}
             >
               <Fingerprint className="h-3 w-3" aria-hidden />
@@ -5745,7 +5760,10 @@ function MessageBubble({
         {message.leadMagnet && (
           <div className="flex flex-wrap justify-end gap-1.5 max-w-[85%]">
             <span
-              className="inline-flex items-center gap-1.5 rounded-full border border-state-danger-border bg-state-danger-bg px-2.5 py-0.5 text-[11px] text-primary"
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px]",
+                CORAL_CONTEXT_CHIP_CLASSNAME,
+              )}
               title={`Lead magnet ${message.leadMagnet.selection === "auto" ? "auto-selected" : "selected"}: ${message.leadMagnet.title}`}
             >
               <Magnet className="h-3 w-3" aria-hidden />
