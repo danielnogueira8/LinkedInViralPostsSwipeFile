@@ -304,17 +304,3 @@ export async function markBindError(
     }
   }
 }
-
-/** Overwrite stats + stamp sync time (stats job). Counts only — no PII. */
-export async function updateStats(
-  workspaceId: string,
-  id: string,
-  stats: Record<string, number>,
-): Promise<void> {
-  const { error } = await supabaseAdmin()
-    .from("leadshark_automations")
-    .update({ stats, stats_synced_at: new Date().toISOString() })
-    .eq("workspace_id", workspaceId)
-    .eq("id", id);
-  throwOnDbError(error);
-}

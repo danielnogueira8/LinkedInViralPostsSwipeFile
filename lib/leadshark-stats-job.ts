@@ -6,17 +6,19 @@
 // stats onto our active rows by leadshark_automation_id. Stats are COUNTS ONLY —
 // no commenter PII is ever stored.
 //
-// Payload: { workspaceId?: string } (defaults to the job's workspace_id).
+// The job row is the only Workspace authority. A legacy payload Workspace may
+// be present, but it can never redirect this service-role operation.
 
 import {
   type BackgroundJob,
+  acquireProviderLock,
   markJobDone,
   markJobFailed,
 } from "@/lib/background-jobs";
 import { supabaseAdmin } from "@/lib/supabase";
 import { getDecryptedKey } from "@/lib/leadshark-credentials";
 import { listAutomations } from "@/lib/leadshark";
-import { updateStats } from "@/lib/leadshark-automations";
+import { ingestLeadSharkStatsOutcome } from "@/lib/content-learning/leadshark-outcomes";
 
 type JobResult = {
   completed: number;
@@ -27,8 +29,26 @@ type JobResult = {
 
 export async function runLeadSharkStatsSyncJob(job: BackgroundJob): Promise<JobResult> {
   const sb = supabaseAdmin();
-  const workspaceId =
-    String((job.payload as { workspaceId?: unknown })?.workspaceId ?? "") || job.workspace_id;
+  const workspaceId = job.workspace_id;
+  const payloadWorkspaceId = String(
+    (job.payload as { workspaceId?: unknown })?.workspaceId ?? "",
+  ).trim();
+  if (payloadWorkspaceId && payloadWorkspaceId !== workspaceId) {
+    await markJobFailed(job, "LeadShark stats Workspace mismatch", sb);
+    return { completed: 0, failed: 1, requeued: 0, unsupported: 0 };
+  }
+  const locked = await acquireProviderLock({
+    provider: `leadshark:${workspaceId}`,
+    workType: "stats",
+    jobId: job.id,
+    workspaceId,
+    limit: 1,
+    sb,
+  });
+  if (!locked) {
+    await markJobDone(job, { skipped: "stats_sync_in_progress" }, sb);
+    return { completed: 1, failed: 0, requeued: 0, unsupported: 0 };
+  }
 
   const apiKey = await getDecryptedKey(workspaceId);
   if (!apiKey) {
@@ -48,13 +68,18 @@ export async function runLeadSharkStatsSyncJob(job: BackgroundJob): Promise<JobR
     await markJobFailed(job, error.message, sb);
     return { completed: 0, failed: 1, requeued: 0, unsupported: 0 };
   }
-  const rows = (data ?? []) as Array<{ id: string; leadshark_automation_id: string }>;
+  const rows = (data ?? []) as Array<{
+    id: string;
+    leadshark_automation_id: string;
+  }>;
   if (rows.length === 0) {
     await markJobDone(job, { synced: 0 }, sb);
     return { completed: 1, failed: 0, requeued: 0, unsupported: 0 };
   }
 
-  const byLeadSharkId = new Map(rows.map((r) => [r.leadshark_automation_id, r.id]));
+  const byLeadSharkId = new Map(
+    rows.map((row) => [row.leadshark_automation_id, row]),
+  );
 
   // One page is enough for the expected per-workspace volume; paginate if a
   // workspace ever exceeds the page size.
@@ -64,11 +89,19 @@ export async function runLeadSharkStatsSyncJob(job: BackgroundJob): Promise<JobR
     throw new Error(`LeadShark stats fetch failed: ${listed.error.message}`);
   }
 
+  const observedAt = new Date().toISOString();
   let synced = 0;
   for (const a of listed.automations) {
-    const localId = byLeadSharkId.get(a.id);
-    if (!localId) continue;
-    await updateStats(workspaceId, localId, a.stats);
+    const local = byLeadSharkId.get(a.id);
+    if (!local) continue;
+    await ingestLeadSharkStatsOutcome({
+      db: sb,
+      workspaceId,
+      automationId: local.id,
+      leadSharkAutomationId: a.id,
+      stats: a.stats,
+      observedAt,
+    });
     synced += 1;
   }
 
