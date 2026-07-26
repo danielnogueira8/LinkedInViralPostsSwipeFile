@@ -64,6 +64,10 @@ import { POST_INTENTS } from "@/lib/post-intents";
 import { AdapterHealthRegistry } from "@/lib/agent/adapter-health";
 import { editDraftBodySync } from "@/lib/agent/specialists/editor";
 import {
+  buildLeadMagnetCampaign,
+  transformLeadMagnetCampaignDraft,
+} from "@/lib/lead-magnet-campaign";
+import {
   createCoworkTurnTelemetry,
   observeCoworkTurn,
   type CoworkTurnTelemetryRecord,
@@ -2108,6 +2112,67 @@ describe("DraftEngine — thin path (lean mode)", () => {
     expect(prompt).toContain("comment PLAYBOOK");
     // Still the strong thin model.
     expect(writer.requests[0].model).toBe(THIN_DRAFT_WRITER_MODEL);
+  });
+
+  test("a selected giveaway cannot replace a named topic in the authoritative request", async () => {
+    const opusPost = [
+      "Opus 5 changed how I turn a rough idea into useful content.",
+      "",
+      "The model is strongest when the prompt gives it a real point of view instead of asking for generic polish.",
+      "",
+      "I put the five reusable content prompts I use into one practical resource.",
+    ].join("\n");
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(200, 120) },
+      { text: opusPost, finishReason: "stop", usage: usage(200, 120) },
+    ]);
+    const campaign = buildLeadMagnetCampaign({
+      id: "lm-prompts",
+      title: "5 Prompts to Create Better Content",
+      markdown_body: "Five prompts for planning and improving content.",
+      metadata: {
+        summary: "A practical set of five content prompts.",
+        deliverables: ["Five reusable content prompts"],
+      },
+      public_slug: "five-content-prompts",
+    });
+
+    const result = await collect(writer, {
+      lean: true,
+      userInstruction: "Write a lead magnet about Opus 5 for content",
+      leadMagnetBlock: campaign.promptBlock,
+      transformCandidate: (body) =>
+        transformLeadMagnetCampaignDraft(
+          body,
+          campaign,
+          "Write a lead magnet about Opus 5 for content",
+        ),
+      finalTransformCandidate: (body) =>
+        transformLeadMagnetCampaignDraft(
+          body,
+          campaign,
+          "Write a lead magnet about Opus 5 for content",
+        ),
+    });
+
+    const system = writer.requests[0].messages.find(
+      (message) => message.role === "system",
+    )?.content;
+    const user = writer.requests[0].messages.find(
+      (message) => message.role === "user",
+    )?.content;
+    expect(system).toContain(
+      "The CURRENT REQUEST owns the post topic, thesis, and angle",
+    );
+    expect(system).toContain(
+      "The selected resource owns only the giveaway details and CTA",
+    );
+    expect(user).toContain("CURRENT REQUEST (authoritative)");
+    expect(user).toContain("Write a lead magnet about Opus 5 for content");
+    expect(writer.requests).toHaveLength(2);
+    expect(artifacts(result.events).map((artifact) => artifact.body)).toEqual([
+      expect.stringContaining("Opus 5"),
+    ]);
   });
 
   test("a modeled lead-magnet turn receives both the selected resource and the user's voice", async () => {
