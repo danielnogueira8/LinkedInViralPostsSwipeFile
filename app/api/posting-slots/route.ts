@@ -13,6 +13,12 @@ const createSchema = z.object({
 });
 
 const patchSchema = z.object({ collapsed: z.boolean() });
+const postingSlotRowSchema = z.object({
+  id: z.string().uuid(),
+  day_of_week: z.number().int().min(0).max(6),
+  local_time: z.string(),
+  timezone: timeZoneSchema,
+});
 
 export async function GET(req: Request) {
   try {
@@ -88,14 +94,12 @@ export async function POST(req: Request) {
     const sb = await scopedSupabase();
     const input = createSchema.parse(await req.json());
     const { data, error } = await sb.raw
-      .from("posting_slots")
-      .insert({
-        workspace_id: sb.workspaceId,
-        day_of_week: input.dayOfWeek,
-        local_time: input.localTime,
-        timezone: input.timezone,
+      .rpc("create_posting_slot", {
+        p_workspace_id: sb.workspaceId,
+        p_day_of_week: input.dayOfWeek,
+        p_local_time: input.localTime,
+        p_timezone: input.timezone,
       })
-      .select("id, day_of_week, local_time, timezone")
       .single();
     if (error?.code === "23505") {
       return NextResponse.json(
@@ -110,13 +114,14 @@ export async function POST(req: Request) {
       );
     }
     if (error) throw error;
+    const slot = postingSlotRowSchema.parse(data);
     return NextResponse.json({
       ok: true,
       slot: {
-        id: data.id,
-        dayOfWeek: data.day_of_week,
-        localTime: data.local_time,
-        timezone: data.timezone,
+        id: slot.id,
+        dayOfWeek: slot.day_of_week,
+        localTime: slot.local_time,
+        timezone: slot.timezone,
       },
     });
   } catch (error) {
