@@ -316,6 +316,32 @@ export type WorkspaceKnowledgeProposal = DistributiveOmit<
   | "updatedAt"
 >;
 
+const workspaceKnowledgeProposalSchemas = KNOWLEDGE_ITEM_KINDS.map((kind) =>
+  z
+    .object({
+      schemaVersion: z.literal(CONTENT_LEARNING_SCHEMA_VERSION),
+      workspaceId: workspaceIdSchema,
+      kind: z.literal(kind),
+      title: shortTextSchema,
+      content: knowledgeContentSchemas[kind],
+      source: knowledgeItemSourceSchema,
+      sourceRef: nullableIdSchema,
+      confidence: z.number().min(0).max(1),
+    })
+    .strict(),
+);
+export const workspaceKnowledgeProposalSchema = z
+  .union(asNonEmptySchemaTuple(workspaceKnowledgeProposalSchemas))
+  .superRefine((proposal, context) => {
+    if (proposal.source !== "manual" && proposal.sourceRef === null) {
+      context.addIssue({
+        code: "custom",
+        message: "Extracted knowledge requires a source reference",
+        path: ["sourceRef"],
+      });
+    }
+  });
+
 export const contentOutcomeKindSchema = z.enum([
   "qualified_conversation",
   "qualified_dm",
@@ -551,6 +577,7 @@ export interface WorkspaceKnowledge {
   archive(
     workspaceId: string,
     itemId: string,
+    expectedUpdatedAt: string,
   ): Promise<WorkspaceKnowledgeItem | null>;
   listActive(workspaceId: string): Promise<WorkspaceKnowledgeItem[]>;
 }
