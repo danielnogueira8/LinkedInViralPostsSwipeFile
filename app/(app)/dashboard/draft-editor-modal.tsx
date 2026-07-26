@@ -423,6 +423,51 @@ export function DraftEditorModal({
     }
   };
 
+  const createAndQueue = async (input: {
+    firstComment: string | null;
+    timezone: string;
+  }) => {
+    if (busy) return;
+    if (uploadingMedia) {
+      toast.error("Wait for the media upload to finish before scheduling.");
+      return;
+    }
+    setSaving(true);
+    const id = await persistBody();
+    if (!id) {
+      setSaving(false);
+      return;
+    }
+    try {
+      const data = await draftOperations.queue(id, input);
+      onMeta(id, {
+        scheduledAt: data.scheduledAt,
+        scheduleStatus: "scheduled",
+        planToPostOn: data.planToPostOn,
+        firstComment: data.firstComment,
+        postingSlotId: data.postingSlotId,
+        postingSlotOccurrenceDate: data.postingSlotOccurrenceDate,
+        publishError: null,
+      });
+      window.dispatchEvent(new Event("posting-queue-updated"));
+      const browserTimezone =
+        Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+      toast.success(
+        formatScheduleToast({
+          scheduledAt: data.scheduledAt,
+          accountTimezone: data.timezone,
+          browserTimezone,
+          action: "scheduled",
+        }),
+      );
+      onOpenChange(false);
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   // Existing drafts schedule through the child rail, but body state lives here.
   // Return false on save failure so both exact and queue scheduling stop before
   // issuing their scheduling request. A successful save updates the parent
@@ -1131,6 +1176,7 @@ export function DraftEditorModal({
                   draft={draft}
                   onMeta={onMeta}
                   onCreateAndSchedule={isNew ? createAndSchedule : undefined}
+                  onCreateAndQueue={isNew ? createAndQueue : undefined}
                   onSaveBeforeSchedule={!isNew ? saveBeforeScheduling : undefined}
                   previewBody={body}
                   previewMedia={isNew ? displayedMedia : undefined}
@@ -2158,6 +2204,7 @@ function ScheduleRow({
   draft,
   onMeta,
   onCreateAndSchedule,
+  onCreateAndQueue,
   onSaveBeforeSchedule,
   previewBody,
   previewMedia,
@@ -2166,6 +2213,10 @@ function ScheduleRow({
   draft: Draft | null;
   onMeta: (id: string, patch: Partial<Draft>) => void;
   onCreateAndSchedule?: (input: ScheduleInput) => Promise<void>;
+  onCreateAndQueue?: (input: {
+    firstComment: string | null;
+    timezone: string;
+  }) => Promise<void>;
   onSaveBeforeSchedule?: () => Promise<boolean>;
   previewBody?: string;
   previewMedia?: PostMediaAttachment[];
@@ -2310,39 +2361,21 @@ function ScheduleRow({
   };
 
   const addToQueue = async () => {
-    if (!draft) return;
     setBusy(true);
     try {
+      const timezone =
+        Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+      const queueInput = {
+        firstComment: firstComment.trim() || null,
+        timezone,
+      };
+      if (!draft) {
+        await onCreateAndQueue?.(queueInput);
+        return;
+      }
       const result = await saveThenSchedule({
         save: onSaveBeforeSchedule ?? (async () => true),
-        schedule: async () => {
-          const response = await fetch(`/api/drafts/${draft.id}/queue`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              firstComment: firstComment.trim() || null,
-              timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
-            }),
-          });
-          const data = (await response.json()) as {
-            ok: boolean;
-            error?: string;
-            scheduledAt?: string;
-            planToPostOn?: string;
-            firstComment?: string | null;
-            timezone?: string;
-            postingSlotId?: string;
-            postingSlotOccurrenceDate?: string;
-          };
-          if (!response.ok || !data.ok || !data.scheduledAt || !data.planToPostOn) {
-            throw new Error(data.error || "Couldn't add this post to the queue.");
-          }
-          return {
-            ...data,
-            scheduledAt: data.scheduledAt,
-            planToPostOn: data.planToPostOn,
-          };
-        },
+        schedule: () => draftOperations.queue(draft.id, queueInput),
       });
       if (!result.ok) {
         if (result.stage === "schedule") toast.error((result.error as Error).message);
@@ -2515,11 +2548,15 @@ function ScheduleRow({
             variant="outline"
             className="ml-auto gap-1.5"
             onClick={addToQueue}
-            disabled={busy || mediaUploading || overLimit || !draft || queueAvailable !== true}
+            disabled={
+              busy ||
+              mediaUploading ||
+              overLimit ||
+              (!draft && !onCreateAndQueue) ||
+              queueAvailable !== true
+            }
             title={
-              !draft
-                ? "Save this post before adding it to the queue."
-                : queueAvailable === false
+              queueAvailable === false
                   ? "Add a recurring posting slot above the Posts filters first."
                   : "Schedule in the earliest open recurring slot."
             }

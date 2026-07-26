@@ -52,6 +52,19 @@ describe("draft editor scheduling wiring", () => {
     expect(source).toContain("onSaveBeforeSchedule={!isNew ? saveBeforeScheduling");
   });
 
+  test("a new post saves before using the recurring queue", () => {
+    expect(source).toContain(
+      "onCreateAndQueue={isNew ? createAndQueue : undefined}",
+    );
+    expect(source).toMatch(
+      /const createAndQueue[\s\S]*persistBody\(\)[\s\S]*draftOperations\.queue\(id, input\)/,
+    );
+    expect(source).toContain("(!draft && !onCreateAndQueue)");
+    expect(source).not.toContain(
+      "Save this post before adding it to the queue.",
+    );
+  });
+
   test("the schedule validation sees the live editor body", () => {
     expect(source).toContain("previewBody={body}");
     expect(source).toContain("previewBody ?? draft?.body");

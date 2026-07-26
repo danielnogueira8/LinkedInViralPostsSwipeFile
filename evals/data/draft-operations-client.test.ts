@@ -150,6 +150,45 @@ describe("Draft operations client", () => {
     });
   });
 
+  it("adds a Draft to the recurring queue through the typed operation path", async () => {
+    const fetcher = vi.fn(async () =>
+      jsonResponse({
+        ok: true,
+        scheduledAt: "2026-08-03T09:30:00.000Z",
+        scheduleStatus: "scheduled",
+        planToPostOn: "2026-08-03",
+        firstComment: null,
+        timezone: "Europe/Lisbon",
+        postingSlotId: "slot-1",
+        postingSlotOccurrenceDate: "2026-08-03",
+      }),
+    );
+    const client = createDraftOperationsClient(fetcher);
+
+    await expect(
+      client.queue("draft-1", {
+        firstComment: null,
+        timezone: "Europe/Lisbon",
+      }),
+    ).resolves.toEqual({
+      scheduledAt: "2026-08-03T09:30:00.000Z",
+      scheduleStatus: "scheduled",
+      planToPostOn: "2026-08-03",
+      firstComment: null,
+      timezone: "Europe/Lisbon",
+      postingSlotId: "slot-1",
+      postingSlotOccurrenceDate: "2026-08-03",
+    });
+    expect(fetcher).toHaveBeenCalledWith("/api/drafts/draft-1/queue", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        firstComment: null,
+        timezone: "Europe/Lisbon",
+      }),
+    });
+  });
+
   it("returns the canonical empty schedule after unscheduling", async () => {
     const fetcher = vi.fn(async () => jsonResponse({ ok: true }));
     const client = createDraftOperationsClient(fetcher);
