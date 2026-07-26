@@ -1,5 +1,9 @@
 import { scopedSupabase, trackedAccountIds } from "./supabase-scoped";
 import { retryRead } from "./retry-read";
+import {
+  discoveryThresholdFilter,
+  getDiscoveryThresholds,
+} from "./discovery-thresholds";
 
 // One page of the swipe feed, shaped exactly like PostCard/SwipeDeck expect.
 // The server component fetches page 0; the infinite-scroll client fetches
@@ -210,6 +214,7 @@ export async function fetchSwipePage(opts: SwipeAccountScope & {
     filters.type && POST_TYPES.has(filters.type) ? filters.type : null;
 
   const sb = await scopedSupabase();
+  const discoveryThresholds = await getDiscoveryThresholds(sb.workspaceId, sb.raw);
   // Built inside a factory so retryRead can re-run a fresh query on a
   // transient blip — PostgREST builders are single-shot thenables.
   const buildQuery = () => {
@@ -217,6 +222,7 @@ export async function fetchSwipePage(opts: SwipeAccountScope & {
       .from("posts")
       .select(workspaceId ? SWIPE_POST_COLS_WORKSPACE : SWIPE_POST_COLS)
       .eq("is_viral", true)
+      .or(discoveryThresholdFilter(discoveryThresholds))
       .order(sortCol, { ascending, nullsFirst: false })
       .range(offset, offset + limit); // inclusive → limit+1 rows
     if (workspaceId) {
@@ -301,6 +307,7 @@ export async function countSwipePosts(opts: SwipeAccountScope & {
     filters.type && POST_TYPES.has(filters.type) ? filters.type : null;
 
   const sb = await scopedSupabase();
+  const discoveryThresholds = await getDiscoveryThresholds(sb.workspaceId, sb.raw);
   // Factory so retryRead can re-run on a transient blip (see fetchSwipePage).
   const buildQuery = () => {
     let q = sb.raw
@@ -311,7 +318,8 @@ export async function countSwipePosts(opts: SwipeAccountScope & {
           : "id",
         { count: "exact", head: true },
       )
-      .eq("is_viral", true);
+      .eq("is_viral", true)
+      .or(discoveryThresholdFilter(discoveryThresholds));
     if (workspaceId) {
       q = q
         .eq("accounts.category_id", filters.category!)

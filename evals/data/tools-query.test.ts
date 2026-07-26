@@ -749,6 +749,10 @@ describe("search_viral_posts — query shape", () => {
     expect(result.posts[0].id).toBe("v4");
     expect(dbRef.current.rpcs).toEqual([
       {
+        name: "get_discovery_thresholds",
+        args: { p_workspace_id: "ws-atomic-cursor" },
+      },
+      {
         name: "claim_modeling_source_rotation_cursor",
         args: { p_workspace_id: "ws-atomic-cursor" },
       },

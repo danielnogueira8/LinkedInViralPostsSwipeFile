@@ -9,6 +9,7 @@ import { StatusPill, Toolbar } from "@/components/app-surface";
 import { Gauge, Loader2, Save } from "lucide-react";
 import { toast } from "sonner";
 import { fetchJson } from "@/lib/api-fetch";
+import type { DiscoveryThresholds } from "@/lib/discovery-thresholds";
 
 type Pair = { min_reactions: number; min_comments: number };
 
@@ -24,18 +25,47 @@ function toNonNegInt(raw: string): number {
   return n;
 }
 
-export function SettingsForm({ initial }: { initial: { viral: Pair; template: Pair } }) {
-  const [vR, setVR] = useState(String(initial.viral.min_reactions));
-  const [vC, setVC] = useState(String(initial.viral.min_comments));
+export function SettingsForm({
+  initial,
+}: {
+  initial: { viral: Pair; template: Pair; discovery: DiscoveryThresholds };
+}) {
+  const [regularEnabled, setRegularEnabled] = useState(initial.discovery.regular.enabled);
+  const [regularLikes, setRegularLikes] = useState(
+    String(initial.discovery.regular.minLikes),
+  );
+  const [leadMagnetEnabled, setLeadMagnetEnabled] = useState(
+    initial.discovery.leadMagnet.enabled,
+  );
+  const [leadMagnetComments, setLeadMagnetComments] = useState(
+    String(initial.discovery.leadMagnet.minComments),
+  );
   const [busy, setBusy] = useState(false);
+  const viral = initial.viral;
   const template = initial.template;
 
   async function save() {
     // Coerce on save so the raw (possibly empty) editing state can't send a
     // NaN to the server (where it would serialize to null and break threshold
     // comparisons).
-    const viral = { min_reactions: toNonNegInt(vR), min_comments: toNonNegInt(vC) };
-    const fields = [viral.min_reactions, viral.min_comments, template.min_reactions, template.min_comments];
+    const discovery = {
+      regular: {
+        enabled: regularEnabled,
+        minLikes: toNonNegInt(regularLikes),
+      },
+      leadMagnet: {
+        enabled: leadMagnetEnabled,
+        minComments: toNonNegInt(leadMagnetComments),
+      },
+    };
+    const fields = [
+      discovery.regular.minLikes,
+      discovery.leadMagnet.minComments,
+      viral.min_reactions,
+      viral.min_comments,
+      template.min_reactions,
+      template.min_comments,
+    ];
     if (fields.some((n) => !Number.isFinite(n) || n < 0)) {
       toast.error("Thresholds must be whole numbers of 0 or more.");
       return;
@@ -50,11 +80,12 @@ export function SettingsForm({ initial }: { initial: { viral: Pair; template: Pa
           body: JSON.stringify({
             viral,
             template,
+            discovery,
           }),
         },
       );
       if (!data.ok) throw new Error(data.error);
-      toast.success("Saved — re-evaluated all stored posts");
+      toast.success("Minimum engagement settings saved");
     } catch (e) { toast.error((e as Error).message); }
     setBusy(false);
   }
@@ -80,26 +111,88 @@ export function SettingsForm({ initial }: { initial: { viral: Pair; template: Pa
               <Gauge className="h-4 w-4" />
             </div>
             <div className="min-w-0 space-y-1">
-              <CardTitle className="text-base">Swipe file threshold</CardTitle>
+              <CardTitle className="text-base">Minimum engagement</CardTitle>
               <CardDescription>
-                A post appears in the swipe file when reactions or comments meet
-                the minimum AND it&apos;s in the creator&apos;s top 20% of recent
-                posts (only creators with enough history are compared; new
-                creators use the minimum alone). Saving re-evaluates every
-                stored post.
+                Keep discovery focused with a separate signal for each kind of
+                post. Regular posts qualify by likes; lead magnets qualify by
+                comments.
               </CardDescription>
             </div>
           </div>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <Label htmlFor="vR">Min reactions</Label>
-              <Input id="vR" type="number" min={0} step={1} value={vR} onChange={(e) => setVR(e.target.value)} />
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="rounded-xl border border-border p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-semibold">Regular posts</div>
+                  <div className="text-xs text-muted-foreground">Likes only</div>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={regularEnabled}
+                  onClick={() => setRegularEnabled((value) => !value)}
+                  className={`relative h-6 w-11 rounded-full transition-colors ${
+                    regularEnabled ? "bg-primary" : "bg-muted-foreground/25"
+                  }`}
+                  aria-label="Use a minimum likes threshold for regular posts"
+                >
+                  <span
+                    className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${
+                      regularEnabled ? "translate-x-5" : "translate-x-0.5"
+                    }`}
+                  />
+                </button>
+              </div>
+              <div className="mt-4 space-y-1.5">
+                <Label htmlFor="regularLikes">Minimum likes</Label>
+                <Input
+                  id="regularLikes"
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={regularLikes}
+                  onChange={(event) => setRegularLikes(event.target.value)}
+                  disabled={!regularEnabled}
+                />
+              </div>
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="vC">Min comments</Label>
-              <Input id="vC" type="number" min={0} step={1} value={vC} onChange={(e) => setVC(e.target.value)} />
+            <div className="rounded-xl border border-border p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-semibold">Lead magnet posts</div>
+                  <div className="text-xs text-muted-foreground">Comments only</div>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={leadMagnetEnabled}
+                  onClick={() => setLeadMagnetEnabled((value) => !value)}
+                  className={`relative h-6 w-11 rounded-full transition-colors ${
+                    leadMagnetEnabled ? "bg-primary" : "bg-muted-foreground/25"
+                  }`}
+                  aria-label="Use a minimum comments threshold for lead magnet posts"
+                >
+                  <span
+                    className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${
+                      leadMagnetEnabled ? "translate-x-5" : "translate-x-0.5"
+                    }`}
+                  />
+                </button>
+              </div>
+              <div className="mt-4 space-y-1.5">
+                <Label htmlFor="leadMagnetComments">Minimum comments</Label>
+                <Input
+                  id="leadMagnetComments"
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={leadMagnetComments}
+                  onChange={(event) => setLeadMagnetComments(event.target.value)}
+                  disabled={!leadMagnetEnabled}
+                />
+              </div>
             </div>
           </div>
         </CardContent>

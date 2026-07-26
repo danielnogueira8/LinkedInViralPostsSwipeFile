@@ -56,6 +56,10 @@ import {
   saveBookmarkResource,
   summarizeBookmarkResource,
 } from "@/lib/content-resource-operations";
+import {
+  discoveryThresholdFilter,
+  getDiscoveryThresholds,
+} from "@/lib/discovery-thresholds";
 
 const POST_TYPES = ["regular", "lead_magnet"] as const;
 const SORT_COLUMN = {
@@ -374,6 +378,7 @@ export function registerSwipeTools(server: McpServer) {
         if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
         const accountIds = await trackedAccountIdsForService(workspaceId);
         const sb = supabaseAdmin();
+        const discoveryThresholds = await getDiscoveryThresholds(workspaceId);
         const sortKey = args.sort ?? "viral";
         const sortCol = SORT_COLUMN[sortKey];
         const ascending = args.dir === "asc";
@@ -385,6 +390,7 @@ export function registerSwipeTools(server: McpServer) {
           .select(postColumns(includeVisual))
           .in("account_id", accountIds.length ? accountIds : [NO_ROWS_SENTINEL])
           .eq("is_viral", true)
+          .or(discoveryThresholdFilter(discoveryThresholds))
           .eq("workspace_post_classification.workspace_id", workspaceId)
           .is("accounts.archived_at", null)
           .order(sortCol, { ascending, nullsFirst: false })

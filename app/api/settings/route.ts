@@ -3,6 +3,10 @@ import { scopedSupabase, trackedAccountIds } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
 import { selectAllRows } from "@/lib/db-paginate";
 import { z } from "zod";
+import {
+  DEFAULT_DISCOVERY_THRESHOLDS,
+  normalizeDiscoveryThresholds,
+} from "@/lib/discovery-thresholds";
 
 export const runtime = "nodejs";
 
@@ -14,6 +18,18 @@ const pairSchema = z.object({
 const bodySchema = z.object({
   viral: pairSchema,
   template: pairSchema,
+  discovery: z
+    .object({
+      regular: z.object({
+        enabled: z.boolean(),
+        minLikes: z.number().int().min(0),
+      }),
+      leadMagnet: z.object({
+        enabled: z.boolean(),
+        minComments: z.number().int().min(0),
+      }),
+    })
+    .default(DEFAULT_DISCOVERY_THRESHOLDS),
 });
 
 export async function GET() {
@@ -21,7 +37,7 @@ export async function GET() {
     const sb = await scopedSupabase();
     const { data } = await sb
       .settings()
-      .in("key", ["viral_thresholds", "template_thresholds"]);
+      .in("key", ["viral_thresholds", "template_thresholds", "discovery_thresholds"]);
     const byKey = Object.fromEntries((data ?? []).map((r) => [r.key, r.value]));
     // Fallbacks must match DEFAULT_VIRAL / DEFAULT_TEMPLATE in lib/viral.ts so
     // a workspace that never changed its settings sees the SAME numbers here
@@ -30,6 +46,9 @@ export async function GET() {
       ok: true,
       viral: byKey.viral_thresholds ?? { min_reactions: 50, min_comments: 50 },
       template: byKey.template_thresholds ?? { min_reactions: 500, min_comments: 100 },
+      discovery: normalizeDiscoveryThresholds(
+        byKey.discovery_thresholds ?? DEFAULT_DISCOVERY_THRESHOLDS,
+      ),
     });
   } catch (e) {
     return errorResponse(e);
@@ -43,12 +62,13 @@ export async function POST(req: Request) {
     if (!parsed.success) return NextResponse.json({ ok: false, error: parsed.error.message }, { status: 400 });
     const sb = await scopedSupabase();
 
-    const [r1, r2] = await Promise.all([
+    const [r1, r2, r3] = await Promise.all([
       sb.upsertSetting("viral_thresholds", parsed.data.viral),
       sb.upsertSetting("template_thresholds", parsed.data.template),
+      sb.upsertSetting("discovery_thresholds", parsed.data.discovery),
     ]);
-    if (r1.error || r2.error) {
-      return errorResponse(r1.error || r2.error);
+    if (r1.error || r2.error || r3.error) {
+      return errorResponse(r1.error || r2.error || r3.error);
     }
 
     // Finding #9 fix — DO NOT bulk-UPDATE the global posts.is_viral here.

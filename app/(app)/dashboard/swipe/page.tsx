@@ -11,7 +11,7 @@ import {
 import { FeaturedPostCard } from "@/components/featured-post-card";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { Flame, Trophy } from "lucide-react";
+import { Flame, Settings2, Trophy } from "lucide-react";
 import { SwipeFilters } from "./filters";
 import { SwipeGrid } from "./swipe-grid";
 import { NextDrop } from "./next-drop";
@@ -34,6 +34,10 @@ import {
   isDefaultSwipeSort,
 } from "@/lib/swipe-filter-policy";
 import { CategoryFilterRail } from "./category-filter-rail";
+import {
+  discoveryThresholdChips,
+  getDiscoveryThresholds,
+} from "@/lib/discovery-thresholds";
 
 // No `force-dynamic` — this page is naturally dynamic via auth() + searchParams,
 // but dropping force-dynamic lets Next's client-side Router Cache (~30s default)
@@ -271,6 +275,9 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
         {/* Filters */}
         <div className="px-4 sm:px-5 py-3">
           <SwipeFilters />
+          <Suspense fallback={null}>
+            <ActiveDiscoveryThresholds />
+          </Suspense>
         </div>
       </Toolbar>
 
@@ -278,6 +285,33 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
         <PostsSection sp={sp} filtersActive={filtersActive} />
       </Suspense>
     </PageShell>
+  );
+}
+
+async function ActiveDiscoveryThresholds() {
+  const sb = await scopedSupabase();
+  const chips = discoveryThresholdChips(
+    await getDiscoveryThresholds(sb.workspaceId, sb.raw),
+  );
+  if (chips.length === 0) return null;
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-border/60 pt-2">
+      {chips.map((chip) => (
+        <span
+          key={chip}
+          className="rounded-full border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground"
+        >
+          {chip}
+        </span>
+      ))}
+      <Link
+        href="/dashboard/settings"
+        className="ml-1 inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline"
+      >
+        <Settings2 className="h-3 w-3" />
+        Edit minimums
+      </Link>
+    </div>
   );
 }
 
@@ -564,8 +598,8 @@ async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: bool
           title="No posts match these filters"
           description={
             filtersActive
-              ? "Try widening the date range or lowering the minimums."
-              : "Track creators first, then run a scrape to fill your swipe file with posts to model."
+              ? "Try widening the date range or lowering the active minimum engagement settings."
+              : "Minimum engagement settings may be filtering results. You can lower them in Settings, or track creators and run a scrape."
           }
           action={
             filtersActive ? (

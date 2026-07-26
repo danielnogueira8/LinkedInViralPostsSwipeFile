@@ -5,6 +5,7 @@ import { SettingsForm } from "./form";
 import { PublishingCard } from "./publishing-card";
 import { DangerZone } from "./danger-zone";
 import { PageHeader, PageShell } from "@/components/app-surface";
+import { getDiscoveryThresholds } from "@/lib/discovery-thresholds";
 
 export const dynamic = "force-dynamic";
 
@@ -13,9 +14,10 @@ export default async function SettingsPage() {
   // instead of short-circuiting to env/defaults. Without this the form
   // showed defaults forever — users thought their saves weren't sticking.
   const sb = await scopedSupabase();
-  const [viral, template] = await Promise.all([
+  const [viral, template, discovery] = await Promise.all([
     getThresholds(sb.workspaceId),
     getTemplateThresholds(sb.workspaceId),
+    getDiscoveryThresholds(sb.workspaceId, sb.raw),
   ]);
   return (
     <PageShell>
@@ -23,7 +25,7 @@ export default async function SettingsPage() {
         title="Settings"
         description="Tune discovery thresholds, publishing, and workspace-level account controls."
       />
-      <SettingsForm initial={{ viral, template }} />
+      <SettingsForm initial={{ viral, template, discovery }} />
 
       {/* Suspense: PublishingCard reads useSearchParams (?linkedin= callback). */}
       <Suspense fallback={null}>

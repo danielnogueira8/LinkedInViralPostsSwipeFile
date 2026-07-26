@@ -20,6 +20,7 @@ function builderFor(table: string) {
     "select",
     "in",
     "eq",
+    "or",
     "gte",
     "lte",
     "not",
