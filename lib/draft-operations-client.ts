@@ -182,6 +182,20 @@ export function createDraftOperationsClient(
   fetcher: FetchDraftOperation = fetch,
 ) {
   return {
+    async find(draftId: string): Promise<DraftViewRow> {
+      const response = await fetchDraftOperation(
+        fetcher,
+        `/api/drafts/${draftId}`,
+        { method: "GET" },
+      );
+      const value = await readDraftOperationResponse(
+        response,
+        updateResponseSchema,
+        "Failed to load post",
+      );
+      return value.draft as DraftViewRow;
+    },
+
     async create(
       command: DraftCreateCommand,
     ): Promise<{ draft: DraftViewRow; deduped: boolean }> {
