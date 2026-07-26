@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { Artifact } from "@/lib/agent/contracts";
 import type { DraftRecord } from "@/lib/draft-lifecycle";
 import { createContentLineageStore } from "@/lib/content-learning/lineage";
+import { supabaseAdmin } from "@/lib/supabase";
 
 const nullableId = z.string().trim().min(1).max(160).nullable();
 
@@ -32,6 +33,16 @@ export type SavedDraftLineageOrigin = {
   weekPlanItemId?: string;
   opportunityId?: string;
 };
+
+export function savedDraftParentId(artifact: Artifact | null): string | null {
+  const candidate = artifact?.meta?.board_draft_id;
+  return typeof candidate === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      candidate,
+    )
+    ? candidate
+    : null;
+}
 
 export function tagArtifactWithGenerationLineage(
   artifact: Artifact,
@@ -70,6 +81,7 @@ export async function recordSavedDraftLineage(
   workspaceId: string,
   draft: DraftRecord,
   trustedOrigin: SavedDraftLineageOrigin = {},
+  lineageDb?: SupabaseClient,
 ): Promise<void> {
   const parsedSeed = generationLineageSeedSchema.safeParse(
     draft.meta?.content_lineage,
@@ -134,7 +146,7 @@ export async function recordSavedDraftLineage(
         ? "agent_opportunity"
         : "cowork";
 
-    await createContentLineageStore(db).record({
+    await createContentLineageStore(lineageDb ?? supabaseAdmin()).record({
       schemaVersion: 1,
       workspaceId,
       artifactId: draft.id,

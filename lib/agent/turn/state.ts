@@ -227,6 +227,7 @@ export type TurnExecuteContext = Pick<
   | "hookOnly"
   | "hookOnlyOriginalBody"
   | "currentTurnOperation"
+  | "trustedRefineTarget"
 >;
 
 export type TurnFinalizeContext = Pick<

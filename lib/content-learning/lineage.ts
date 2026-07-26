@@ -128,24 +128,31 @@ export function createContentLineageStore(
         return null;
       }
 
-      // Return an already-recorded snapshot before touching its source rows.
-      // Provenance sources may be deleted later, but retrying the original
-      // write must remain idempotent and return the canonical lineage.
-      const existing = await getByArtifact(
-        parsed.data.workspaceId,
-        parsed.data.artifactId,
-      );
-      if (existing) return existing;
-
       try {
-        const { error } = await db
-          .from("artifact_lineage")
-          .upsert(artifactLineageInputToRow(parsed.data), {
-            onConflict: "artifact_id",
-            ignoreDuplicates: true,
-          });
+        const row = artifactLineageInputToRow(parsed.data);
+        const { data, error } = await db.rpc("record_artifact_lineage", {
+          p_schema_version: row.schema_version,
+          p_workspace_id: row.workspace_id,
+          p_artifact_id: row.artifact_id,
+          p_parent_artifact_id: row.parent_artifact_id,
+          p_cowork_command: row.cowork_command,
+          p_cowork_chat_id: row.cowork_chat_id,
+          p_cowork_user_message_id: row.cowork_user_message_id,
+          p_user_direction: row.user_direction,
+          p_inputs: row.inputs,
+          p_origin: row.origin,
+          p_generation_model: row.generation_model,
+          p_generated_at: row.generated_at,
+          p_descriptor: row.descriptor,
+        });
         if (error) throw error;
-        return getByArtifact(parsed.data.workspaceId, parsed.data.artifactId);
+        const persisted = Array.isArray(data) ? data[0] : data;
+        if (!persisted) throw new Error("Artifact lineage write returned no row");
+        const lineage = artifactLineageFromRow(
+          persisted as ArtifactLineageRow,
+        );
+        if (!lineage) throw new Error("Stored Artifact lineage is invalid");
+        return lineage;
       } catch (error) {
         report({ operation: "record", error });
         return null;
