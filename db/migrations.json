@@ -1,7 +1,7 @@
 {
   "generatedBy": "npm run migrations:metadata",
-  "highest": 140,
-  "count": 140,
+  "highest": 141,
+  "count": 141,
   "files": [
     "migration-001-progress.sql",
     "migration-002-usage.sql",
@@ -142,6 +142,7 @@
     "migration-137-immutable-workspace-learning-snapshots.sql",
     "migration-138-posting-queue.sql",
     "migration-139-discovery-thresholds.sql",
-    "migration-140-posting-queue-allocator.sql"
+    "migration-140-posting-queue-allocator.sql",
+    "migration-141-atomic-posting-slot-creation.sql"
   ]
 }

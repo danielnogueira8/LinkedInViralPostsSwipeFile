@@ -6,6 +6,11 @@ const allocatorFix = readFileSync(
   "db/migration-140-posting-queue-allocator.sql",
   "utf8",
 );
+const atomicSlotCreation = readFileSync(
+  "db/migration-141-atomic-posting-slot-creation.sql",
+  "utf8",
+);
+const postingSlotsRoute = readFileSync("app/api/posting-slots/route.ts", "utf8");
 
 describe("posting queue migration", () => {
   test("enforces slot limits, unique local times, and concurrent occurrence claims", () => {
@@ -36,5 +41,22 @@ describe("posting queue migration", () => {
     expect(allocatorFix).toContain("occurrence_date + 7");
     expect(allocatorFix).not.toContain("generate_series(0, 730)");
     expect(allocatorFix).not.toMatch(/\+\s+offset\b/i);
+  });
+
+  test("locks before checking the daily slot cap", () => {
+    expect(atomicSlotCreation).toContain("create_posting_slot");
+    expect(atomicSlotCreation).toMatch(
+      /pg_advisory_xact_lock[\s\S]*select count\(\*\)[\s\S]*insert into posting_slots/i,
+    );
+    expect(atomicSlotCreation).toContain(
+      "revoke all on function create_posting_slot",
+    );
+    expect(atomicSlotCreation).toContain(
+      "grant execute on function create_posting_slot",
+    );
+    expect(postingSlotsRoute).toContain('.rpc("create_posting_slot"');
+    expect(postingSlotsRoute).not.toMatch(
+      /\.from\("posting_slots"\)\s*\.insert\(/,
+    );
   });
 });
