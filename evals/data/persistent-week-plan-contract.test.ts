@@ -147,6 +147,14 @@ describe("persistent weekly plan contract", () => {
     expect(briefing).toContain("!itemDraftReadiness(item).ready");
   });
 
+  test("cadence completion advances only after a draft exists", () => {
+    expect(briefing).toContain("cadenceDraftProgress(planItems)");
+    expect(briefing).toContain("draftProgress.drafted");
+    expect(briefing).not.toContain(
+      'item.status === "drafted" || itemDraftReadiness(item).ready',
+    );
+  });
+
   test("modeled posts skip direction while lead magnets require only a resource", () => {
     expect(draftRoute).toContain("getWeekPlanDraftReadiness");
     expect(draftRoute).toContain("resolveWeekPlanLeadMagnetId");

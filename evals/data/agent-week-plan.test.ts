@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  cadenceDraftProgress,
   composeWeekPlan,
   daysSince,
   getWeekPlanDraftReadiness,
@@ -16,6 +17,20 @@ import {
   reopenLegacyDismissedOpportunityItems,
   type StoredWeekPlan,
 } from "@/lib/agent-loop/week-plan-store";
+
+describe("cadenceDraftProgress", () => {
+  test("counts generated drafts, not selected references or ready input", () => {
+    expect(
+      cadenceDraftProgress([
+        { status: "planned" },
+        { status: "planned" },
+        { status: "drafting" },
+        { status: "drafted" },
+        { status: "dismissed" },
+      ]),
+    ).toEqual({ drafted: 1, total: 4 });
+  });
+});
 
 describe("nextDays", () => {
   test("starts tomorrow and includes weekends", () => {

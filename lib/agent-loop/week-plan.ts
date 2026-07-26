@@ -240,6 +240,23 @@ export function getWeekPlanDraftReadiness(input: {
   };
 }
 
+/**
+ * Cadence completion is an output metric: a slot advances only after draft
+ * generation succeeds. Selecting a source or supplying direction makes a slot
+ * ready, but it does not create content and therefore cannot count as progress.
+ */
+export function cadenceDraftProgress(
+  items: ReadonlyArray<{
+    status: "planned" | "drafting" | "drafted" | "dismissed";
+  }>,
+): { drafted: number; total: number } {
+  const active = items.filter((item) => item.status !== "dismissed");
+  return {
+    drafted: active.filter((item) => item.status === "drafted").length,
+    total: active.length,
+  };
+}
+
 /** Resource state is meaningful only for modeled lead-magnet posts. */
 export function resolveWeekPlanLeadMagnetId(input: {
   isLeadMagnet: boolean;
