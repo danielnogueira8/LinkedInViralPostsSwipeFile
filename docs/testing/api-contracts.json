@@ -52,10 +52,22 @@
     },
     {
       "id": "scheduling-publishing",
-      "success_evidence": ["evals/data/schedule-endpoint.test.ts"],
-      "failure_evidence": ["evals/data/schedule-endpoint.test.ts"],
-      "isolation_evidence": ["evals/data/zernio-media-workspace.test.ts"],
-      "mutation_evidence": ["evals/data/draft-mutation-publish-lock.test.ts"]
+      "success_evidence": [
+        "evals/data/schedule-endpoint.test.ts",
+        "evals/data/posting-slots-route.test.ts"
+      ],
+      "failure_evidence": [
+        "evals/data/schedule-endpoint.test.ts",
+        "evals/data/posting-slots-route.test.ts"
+      ],
+      "isolation_evidence": [
+        "evals/data/zernio-media-workspace.test.ts",
+        "evals/data/posting-slots-route.test.ts"
+      ],
+      "mutation_evidence": [
+        "evals/data/draft-mutation-publish-lock.test.ts",
+        "evals/data/posting-slots-route.test.ts"
+      ]
     },
     {
       "id": "batches-jobs-cron",
@@ -73,10 +85,22 @@
     },
     {
       "id": "authentication-workspaces",
-      "success_evidence": ["evals/data/clerk-webhook-purge.test.ts"],
-      "failure_evidence": ["evals/data/clerk-webhook-purge.test.ts"],
-      "isolation_evidence": ["evals/data/clerk-webhook-purge.test.ts"],
-      "mutation_evidence": ["evals/data/clerk-webhook-purge.test.ts"]
+      "success_evidence": [
+        "evals/data/clerk-webhook-purge.test.ts",
+        "evals/data/onboarding-posting-slots.test.ts"
+      ],
+      "failure_evidence": [
+        "evals/data/clerk-webhook-purge.test.ts",
+        "evals/data/onboarding-posting-slots.test.ts"
+      ],
+      "isolation_evidence": [
+        "evals/data/clerk-webhook-purge.test.ts",
+        "evals/data/onboarding-posting-slots.test.ts"
+      ],
+      "mutation_evidence": [
+        "evals/data/clerk-webhook-purge.test.ts",
+        "evals/data/onboarding-posting-slots.test.ts"
+      ]
     },
     {
       "id": "settings-preferences-feedback",
