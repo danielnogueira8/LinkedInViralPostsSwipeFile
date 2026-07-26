@@ -35,6 +35,10 @@ export type WorkspaceKnowledgeStoreOptions = {
   onFailure?: (failure: WorkspaceKnowledgeFailure) => void;
 };
 
+export const WORKSPACE_KNOWLEDGE_SCAN_LIMIT = 50;
+export const WORKSPACE_KNOWLEDGE_CONTEXT_ITEM_LIMIT = 20;
+export const WORKSPACE_KNOWLEDGE_CONTEXT_CHAR_LIMIT = 40_000;
+
 function reportDefault(failure: WorkspaceKnowledgeFailure): void {
   console.warn("[workspace-knowledge] operation failed", {
     operation: failure.operation,
@@ -176,19 +180,21 @@ export function createWorkspaceKnowledgeStore(
       }
     },
 
-    async archive(workspaceId, itemId) {
+    async archive(workspaceId, itemId, expectedUpdatedAt) {
       try {
-        const { data, error } = await db
-          .from("workspace_knowledge_items")
-          .update({ active: false, updated_at: new Date().toISOString() })
-          .eq("workspace_id", workspaceId)
-          .eq("id", itemId)
-          .eq("verification", "verified")
-          .select("*")
-          .maybeSingle();
+        const { data, error } = await db.rpc(
+          "archive_workspace_knowledge_item",
+          {
+            p_workspace_id: workspaceId,
+            p_item_id: itemId,
+            p_expected_updated_at: expectedUpdatedAt,
+          },
+        );
         if (error) throw error;
-        if (!data) return null;
-        const item = workspaceKnowledgeFromRow(data as KnowledgeRow);
+        const row = Array.isArray(data) ? data[0] : data;
+        const item = row
+          ? workspaceKnowledgeFromRow(row as KnowledgeRow)
+          : null;
         if (!item) throw new Error("Archived Workspace Knowledge item is invalid");
         return item;
       } catch (error) {
@@ -205,13 +211,32 @@ export function createWorkspaceKnowledgeStore(
           .eq("workspace_id", workspaceId)
           .eq("verification", "verified")
           .eq("active", true)
-          .order("updated_at", { ascending: false });
+          .order("updated_at", { ascending: false })
+          .limit(WORKSPACE_KNOWLEDGE_SCAN_LIMIT);
         if (error) throw error;
-        return (data ?? []).map((row) => {
+        const items: WorkspaceKnowledgeItem[] = [];
+        let usedChars = 0;
+        for (const row of data ?? []) {
           const item = workspaceKnowledgeFromRow(row as KnowledgeRow);
-          if (!item) throw new Error("Stored Workspace Knowledge item is invalid");
-          return item;
-        });
+          if (!item) {
+            report({
+              operation: "listActive",
+              error: new Error("Stored Workspace Knowledge item is invalid"),
+            });
+            continue;
+          }
+          const itemChars =
+            item.title.length + JSON.stringify(item.content).length;
+          if (
+            items.length >= WORKSPACE_KNOWLEDGE_CONTEXT_ITEM_LIMIT ||
+            usedChars + itemChars > WORKSPACE_KNOWLEDGE_CONTEXT_CHAR_LIMIT
+          ) {
+            break;
+          }
+          items.push(item);
+          usedChars += itemChars;
+        }
+        return items;
       } catch (error) {
         report({ operation: "listActive", error });
         return [];

@@ -102,6 +102,18 @@ describe("migration 129 PostgreSQL behavior", () => {
           fails(`
             insert into public.workspace_knowledge_items (
               workspace_id, proposal_key, kind, title, content, source,
+              source_ref, confidence, verification, last_verified_at
+            ) values (
+              'ws-1', repeat('d', 64), 'belief', 'Bypassed review',
+              '{"statement":"Unreviewed fact","rationale":null}',
+              'interview', 'answer-4', 0.9, 'verified', now()
+            )
+          `),
+        ).toBe(true);
+        expect(
+          fails(`
+            insert into public.workspace_knowledge_items (
+              workspace_id, proposal_key, kind, title, content, source,
               source_ref, confidence
             ) values (
               'ws-1', repeat('c', 64), 'proof', 'Wrong shape',
@@ -152,9 +164,25 @@ describe("migration 129 PostgreSQL behavior", () => {
         ).toBe("1");
         expect(
           fails(`
+            insert into public.workspace_knowledge_reviews (
+              workspace_id, item_id, decision, previous_item
+            ) select
+              'ws-2', id, 'approve', to_jsonb(item)
+            from public.workspace_knowledge_items item
+            where id = '${itemId}'
+          `),
+        ).toBe(true);
+        expect(
+          fails(`
             select * from public.review_workspace_knowledge_item(
               'ws-1', '${itemId}', '${updatedAt}', 'reject', null
             )
+          `),
+        ).toBe(true);
+        expect(
+          fails(`
+            update public.workspace_knowledge_items set active = false
+            where id = '${itemId}'
           `),
         ).toBe(true);
         expect(
@@ -163,6 +191,25 @@ describe("migration 129 PostgreSQL behavior", () => {
             where item_id = '${itemId}'
           `),
         ).toBe(true);
+
+        const approvedUpdatedAt = query(`
+          select updated_at from public.workspace_knowledge_items
+          where id = '${itemId}'
+        `);
+        expect(
+          query(`
+            select verification || '|' || active
+            from public.archive_workspace_knowledge_item(
+              'ws-1', '${itemId}', '${approvedUpdatedAt}'
+            )
+          `),
+        ).toBe("verified|false");
+        expect(
+          query(`
+            select count(*) from public.workspace_knowledge_reviews
+            where item_id = '${itemId}' and decision = 'archive'
+          `),
+        ).toBe("1");
 
         expect(
           query(`
@@ -181,6 +228,19 @@ describe("migration 129 PostgreSQL behavior", () => {
             )
           `),
         ).toBe("f");
+        expect(
+          query(`
+            select has_table_privilege(
+              'service_role',
+              'public.workspace_knowledge_items',
+              'update'
+            ) || '|' || has_table_privilege(
+              'service_role',
+              'public.workspace_knowledge_reviews',
+              'insert'
+            )
+          `),
+        ).toBe("false|false");
       } finally {
         if (started && existsSync(join(data, "postmaster.pid"))) {
           spawnSync("pg_ctl", ["-D", data, "-m", "fast", "stop"], {

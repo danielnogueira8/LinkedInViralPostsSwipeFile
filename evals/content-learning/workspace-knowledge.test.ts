@@ -55,7 +55,8 @@ describe("Workspace Knowledge row validation", () => {
         filters.push([field, value]);
         return query;
       }),
-      order: vi.fn(async () => ({ data: [row], error: null })),
+      order: vi.fn(() => query),
+      limit: vi.fn(async () => ({ data: [row], error: null })),
     };
     const db = {
       from: vi.fn(() => query),
@@ -69,6 +70,7 @@ describe("Workspace Knowledge row validation", () => {
       ["verification", "verified"],
       ["active", true],
     ]);
+    expect(query.limit).toHaveBeenCalledWith(50);
   });
 
   test("passes the review version and Workspace to the atomic operation", async () => {
@@ -89,6 +91,25 @@ describe("Workspace Knowledge row validation", () => {
       p_expected_updated_at: "2026-07-26T09:00:00.000Z",
       p_decision: "approve",
       p_replacement: null,
+    });
+  });
+
+  test("archives through the versioned domain operation", async () => {
+    const archivedRow = { ...row, active: false };
+    const rpc = vi.fn(async () => ({ data: archivedRow, error: null }));
+    const db = { rpc } as unknown as SupabaseClient;
+
+    await expect(
+      createWorkspaceKnowledgeStore(db).archive(
+        "workspace-1",
+        "knowledge-1",
+        "2026-07-26T10:00:00.000Z",
+      ),
+    ).resolves.toMatchObject({ active: false });
+    expect(rpc).toHaveBeenCalledWith("archive_workspace_knowledge_item", {
+      p_workspace_id: "workspace-1",
+      p_item_id: "knowledge-1",
+      p_expected_updated_at: "2026-07-26T10:00:00.000Z",
     });
   });
 });

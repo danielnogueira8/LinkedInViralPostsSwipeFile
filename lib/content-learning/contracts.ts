@@ -577,6 +577,7 @@ export interface WorkspaceKnowledge {
   archive(
     workspaceId: string,
     itemId: string,
+    expectedUpdatedAt: string,
   ): Promise<WorkspaceKnowledgeItem | null>;
   listActive(workspaceId: string): Promise<WorkspaceKnowledgeItem[]>;
 }

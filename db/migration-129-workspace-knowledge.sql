@@ -143,12 +143,48 @@ create trigger workspace_knowledge_validate_content
   on public.workspace_knowledge_items
   for each row execute function public.validate_workspace_knowledge_content();
 
+create or replace function public.enforce_workspace_knowledge_write_path()
+returns trigger
+language plpgsql
+set search_path = public, pg_temp
+as $$
+begin
+  if tg_op = 'INSERT' then
+    if new.verification <> 'proposed'
+      or new.last_verified_at is not null
+      or new.active <> true
+    then
+      raise exception 'Workspace Knowledge must enter as a proposal'
+        using errcode = '55000';
+    end if;
+    return new;
+  end if;
+
+  if coalesce(
+    current_setting('app.workspace_knowledge_operation', true),
+    ''
+  )
+    not in ('review', 'archive')
+  then
+    raise exception 'Workspace Knowledge changes require a domain operation'
+      using errcode = '55000';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists workspace_knowledge_enforce_write_path
+  on public.workspace_knowledge_items;
+create trigger workspace_knowledge_enforce_write_path
+  before insert or update on public.workspace_knowledge_items
+  for each row execute function public.enforce_workspace_knowledge_write_path();
+
 create table if not exists public.workspace_knowledge_reviews (
   id uuid primary key default gen_random_uuid(),
   workspace_id text not null,
   item_id uuid not null
     references public.workspace_knowledge_items(id) on delete cascade,
-  decision text not null check (decision in ('approve', 'reject')),
+  decision text not null check (decision in ('approve', 'reject', 'archive')),
   previous_item jsonb not null check (jsonb_typeof(previous_item) = 'object'),
   replacement jsonb check (
     replacement is null or jsonb_typeof(replacement) = 'object'
@@ -178,6 +214,32 @@ drop trigger if exists workspace_knowledge_reviews_immutable
 create trigger workspace_knowledge_reviews_immutable
   before update or delete on public.workspace_knowledge_reviews
   for each row execute function public.reject_workspace_knowledge_review_mutation();
+
+create or replace function public.validate_workspace_knowledge_review_scope()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  if not exists (
+    select 1 from public.workspace_knowledge_items item
+    where item.id = new.item_id
+      and item.workspace_id = new.workspace_id
+  ) then
+    raise exception 'Workspace Knowledge review is outside the Workspace'
+      using errcode = '23503';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists workspace_knowledge_reviews_validate_scope
+  on public.workspace_knowledge_reviews;
+create trigger workspace_knowledge_reviews_validate_scope
+  before insert on public.workspace_knowledge_reviews
+  for each row
+  execute function public.validate_workspace_knowledge_review_scope();
 
 create or replace function public.review_workspace_knowledge_item(
   p_workspace_id text,
@@ -236,6 +298,7 @@ begin
       using errcode = '22023';
   end if;
 
+  perform set_config('app.workspace_knowledge_operation', 'review', true);
   update public.workspace_knowledge_items item set
     kind = next_kind,
     title = next_title,
@@ -254,6 +317,55 @@ begin
   );
 
   return reviewed_item;
+end;
+$$;
+
+create or replace function public.archive_workspace_knowledge_item(
+  p_workspace_id text,
+  p_item_id uuid,
+  p_expected_updated_at timestamptz
+)
+returns public.workspace_knowledge_items
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  current_item public.workspace_knowledge_items;
+  archived_item public.workspace_knowledge_items;
+begin
+  select * into current_item
+  from public.workspace_knowledge_items item
+  where item.id = p_item_id and item.workspace_id = p_workspace_id
+  for update;
+
+  if not found then
+    raise exception 'Workspace Knowledge item not found'
+      using errcode = 'P0002';
+  end if;
+  if current_item.updated_at <> p_expected_updated_at then
+    raise exception 'Workspace Knowledge item changed during archive'
+      using errcode = '40001';
+  end if;
+  if current_item.verification <> 'verified' or not current_item.active then
+    raise exception 'Only active verified Workspace Knowledge can be archived'
+      using errcode = '55000';
+  end if;
+
+  perform set_config('app.workspace_knowledge_operation', 'archive', true);
+  update public.workspace_knowledge_items item set
+    active = false,
+    updated_at = now()
+  where item.id = current_item.id
+  returning * into archived_item;
+
+  insert into public.workspace_knowledge_reviews (
+    workspace_id, item_id, decision, previous_item, replacement
+  ) values (
+    p_workspace_id, p_item_id, 'archive', to_jsonb(current_item), null
+  );
+
+  return archived_item;
 end;
 $$;
 
@@ -277,15 +389,21 @@ revoke all on table public.workspace_knowledge_items
   from public, anon, authenticated;
 revoke all on table public.workspace_knowledge_reviews
   from public, anon, authenticated;
-grant select, insert, update, delete on table public.workspace_knowledge_items
+grant select, insert, delete on table public.workspace_knowledge_items
   to service_role;
-grant select, insert, delete on table public.workspace_knowledge_reviews
+grant select, delete on table public.workspace_knowledge_reviews
   to service_role;
 revoke all on function public.review_workspace_knowledge_item(
   text, uuid, timestamptz, text, jsonb
 ) from public, anon, authenticated;
 grant execute on function public.review_workspace_knowledge_item(
   text, uuid, timestamptz, text, jsonb
+) to service_role;
+revoke all on function public.archive_workspace_knowledge_item(
+  text, uuid, timestamptz
+) from public, anon, authenticated;
+grant execute on function public.archive_workspace_knowledge_item(
+  text, uuid, timestamptz
 ) to service_role;
 
 insert into public.app_schema_version (singleton, version, updated_at)
