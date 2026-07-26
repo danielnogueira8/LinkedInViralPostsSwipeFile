@@ -15,6 +15,10 @@ const publishingSlotRemoval = readFileSync(
   "db/migration-142-publishing-slot-removal.sql",
   "utf8",
 );
+const queueSlotIntegrity = readFileSync(
+  "db/migration-143-posting-queue-slot-integrity.sql",
+  "utf8",
+);
 
 describe("posting queue migration", () => {
   test("enforces slot limits, unique local times, and concurrent occurrence claims", () => {
@@ -65,6 +69,17 @@ describe("posting queue migration", () => {
     expect(postingSlotsRoute).toContain('.rpc("create_posting_slot"');
     expect(postingSlotsRoute).not.toMatch(
       /\.from\("posting_slots"\)\s*\.insert\(/,
+    );
+  });
+
+  test("serializes queue claims with recurring slot removal", () => {
+    expect(queueSlotIntegrity).toContain("posting_queue_active_slot_guard");
+    expect(queueSlotIntegrity).toMatch(
+      /from public\.posting_slots[\s\S]*deleted_at is null[\s\S]*for update/i,
+    );
+    expect(queueSlotIntegrity).toContain("using errcode = '40001'");
+    expect(queueSlotIntegrity).toContain(
+      "before insert or update of posting_slot_id",
     );
   });
 });

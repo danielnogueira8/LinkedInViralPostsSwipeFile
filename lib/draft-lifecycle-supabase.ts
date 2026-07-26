@@ -256,7 +256,7 @@ export function createSupabaseDraftLifecycleRepository(
         .maybeSingle();
       // The occurrence unique index is the concurrency boundary: another
       // scheduler may have claimed this same slot after candidate lookup.
-      if (error?.code === "23505") return "stale";
+      if (error?.code === "23505" || error?.code === "40001") return "stale";
       if (error) throw error;
       return data ? fromRow(data as unknown as DraftRow) : "stale";
     },

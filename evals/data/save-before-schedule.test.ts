@@ -65,6 +65,26 @@ describe("draft editor scheduling wiring", () => {
     );
   });
 
+  test("both queue flows preserve a publishing response in local metadata", () => {
+    const createAndQueue = source.slice(
+      source.indexOf("const createAndQueue"),
+      source.indexOf("const saveBeforeScheduling"),
+    );
+    const addToQueue = source.slice(
+      source.indexOf("const addToQueue"),
+      source.indexOf("const cancel", source.indexOf("const addToQueue")),
+    );
+
+    expect(createAndQueue).toContain("draftOperations.queue(id, input)");
+    expect(createAndQueue).toContain("scheduleStatus: data.scheduleStatus");
+    expect(createAndQueue).not.toContain('scheduleStatus: "scheduled"');
+    expect(addToQueue).toContain(
+      "draftOperations.queue(draft.id, queueInput)",
+    );
+    expect(addToQueue).toContain("scheduleStatus: data.scheduleStatus");
+    expect(addToQueue).not.toContain('scheduleStatus: "scheduled"');
+  });
+
   test("the schedule validation sees the live editor body", () => {
     expect(source).toContain("previewBody={body}");
     expect(source).toContain("previewBody ?? draft?.body");
