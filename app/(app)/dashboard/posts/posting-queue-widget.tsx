@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
   buildPostingQueueDays,
+  postingSlotHasActiveDraft,
   type PostingQueueDraft,
   type PostingQueueSlot,
 } from "@/lib/posting-queue";
@@ -118,11 +119,7 @@ export function PostingQueueWidget({
   };
 
   const removeSlot = async (slot: PostingQueueSlot) => {
-    const occupied = drafts.some(
-      (draft) =>
-        draft.postingSlotId === slot.id &&
-        (draft.scheduleStatus === "scheduled" || draft.scheduleStatus === "failed"),
-    );
+    const occupied = postingSlotHasActiveDraft(drafts, slot.id);
     if (
       occupied &&
       !window.confirm(

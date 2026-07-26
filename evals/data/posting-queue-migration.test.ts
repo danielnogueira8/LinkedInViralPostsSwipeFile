@@ -11,6 +11,10 @@ const atomicSlotCreation = readFileSync(
   "utf8",
 );
 const postingSlotsRoute = readFileSync("app/api/posting-slots/route.ts", "utf8");
+const publishingSlotRemoval = readFileSync(
+  "db/migration-142-publishing-slot-removal.sql",
+  "utf8",
+);
 
 describe("posting queue migration", () => {
   test("enforces slot limits, unique local times, and concurrent occurrence claims", () => {
@@ -27,6 +31,10 @@ describe("posting queue migration", () => {
     expect(sql).toMatch(
       /set[\s\S]*posting_slot_id\s*=\s*null,\s*posting_slot_occurrence_date\s*=\s*null/i,
     );
+    expect(publishingSlotRemoval).toContain(
+      "schedule_status in ('scheduled', 'publishing', 'failed')",
+    );
+    expect(publishingSlotRemoval).not.toMatch(/scheduled_at\s*=/i);
   });
 
   test("normalizes DST gaps and records a server log", () => {
