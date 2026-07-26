@@ -42,6 +42,8 @@ export type DraftRecord = {
   firstComment: string | null;
   publishedAt: string | null;
   publishError: string | null;
+  postingSlotId?: string | null;
+  postingSlotOccurrenceDate?: string | null;
   lifecycleVersion: number;
 };
 
@@ -106,6 +108,8 @@ export type DraftLifecycleRepository = {
       firstComment: string | null;
       planToPostOn: string;
       expectedVersion: number;
+      postingSlotId?: string | null;
+      postingSlotOccurrenceDate?: string | null;
     },
   ): Promise<DraftRecord | "stale">;
   cancelSchedule(id: string): Promise<DraftRecord | "conflict">;
@@ -411,6 +415,8 @@ export class DraftLifecycle {
       planToPostOn?: string;
       timezone?: string;
       firstComment?: string | null;
+      postingSlotId?: string | null;
+      postingSlotOccurrenceDate?: string | null;
     },
   ): Promise<DraftCommandOutcome<DraftRecord>> {
     if (!(await this.dependencies.canPublish?.())) {
@@ -473,6 +479,8 @@ export class DraftLifecycle {
       firstComment: input.firstComment?.trim() || null,
       planToPostOn,
       expectedVersion: draft.lifecycleVersion,
+      postingSlotId: input.postingSlotId ?? null,
+      postingSlotOccurrenceDate: input.postingSlotOccurrenceDate ?? null,
     });
     if (result === "stale") {
       return rejected(
@@ -514,6 +522,8 @@ export function draftRecordToApi(draft: DraftRecord) {
     first_comment: draft.firstComment,
     published_at: draft.publishedAt,
     publish_error: draft.publishError,
+    posting_slot_id: draft.postingSlotId ?? null,
+    posting_slot_occurrence_date: draft.postingSlotOccurrenceDate ?? null,
     lifecycle_version: draft.lifecycleVersion,
   };
 }

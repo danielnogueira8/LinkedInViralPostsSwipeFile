@@ -53,12 +53,16 @@ export type ScheduledDraftState = {
   scheduleStatus: "scheduled";
   planToPostOn: string;
   firstComment: string | null;
+  postingSlotId: null;
+  postingSlotOccurrenceDate: null;
 };
 
 export type UnscheduledDraftState = {
   scheduledAt: null;
   scheduleStatus: null;
   firstComment: null;
+  postingSlotId: null;
+  postingSlotOccurrenceDate: null;
 };
 
 const errorSchema = z.object({
@@ -82,6 +86,8 @@ const draftApiRecordSchema = z
     first_comment: z.string().nullable().optional(),
     published_at: z.string().nullable().optional(),
     publish_error: z.string().nullable().optional(),
+    posting_slot_id: z.string().nullable().optional(),
+    posting_slot_occurrence_date: z.string().nullable().optional(),
   })
   .passthrough();
 const createResponseSchema = z.discriminatedUnion("ok", [
@@ -243,6 +249,8 @@ export function createDraftOperationsClient(
         scheduleStatus: "scheduled",
         planToPostOn: value.planToPostOn,
         firstComment: value.firstComment,
+        postingSlotId: null,
+        postingSlotOccurrenceDate: null,
       };
     },
 
@@ -262,6 +270,8 @@ export function createDraftOperationsClient(
         scheduledAt: null,
         scheduleStatus: null,
         firstComment: null,
+        postingSlotId: null,
+        postingSlotOccurrenceDate: null,
       };
     },
   };

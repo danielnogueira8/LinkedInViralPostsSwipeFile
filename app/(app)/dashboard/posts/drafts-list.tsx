@@ -46,6 +46,7 @@ import {
   segmentedControlClass,
   segmentedItemClass,
 } from "@/components/app-surface";
+import { PostingQueueWidget } from "./posting-queue-widget";
 
 const DraftEditorModal = dynamic(
   () => import("../draft-editor-modal").then((mod) => mod.DraftEditorModal),
@@ -600,6 +601,12 @@ export function DraftsList({
   );
   return (
     <div className="flex flex-col gap-4">
+      <PostingQueueWidget
+        onOpenDraft={(draftId) => {
+          const draft = drafts.find((item) => item.id === draftId);
+          if (draft) openEdit(draft);
+        }}
+      />
       {/* Toolbar: search + kind filter */}
       <Toolbar className="flex flex-wrap items-center gap-2 p-2 sm:p-2.5">
         <div className="relative flex-1 min-w-[200px]">

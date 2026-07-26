@@ -13,7 +13,7 @@ import type { PostMediaAttachment } from "@/lib/post-media";
 import { recordSavedDraftLineage } from "@/lib/content-learning/generation-lineage";
 
 const DRAFT_COLUMNS =
-  "id, title, body, meta, kind, status, plan_to_post_on, chat_id, created_at, media_attachments, scheduled_at, schedule_status, first_comment, published_at, publish_error, lifecycle_version";
+  "id, title, body, meta, kind, status, plan_to_post_on, chat_id, created_at, media_attachments, scheduled_at, schedule_status, first_comment, published_at, publish_error, posting_slot_id, posting_slot_occurrence_date, lifecycle_version";
 
 type DraftRow = {
   id: string;
@@ -31,6 +31,8 @@ type DraftRow = {
   first_comment: string | null;
   published_at: string | null;
   publish_error: string | null;
+  posting_slot_id: string | null;
+  posting_slot_occurrence_date: string | null;
   lifecycle_version?: number | null;
 };
 
@@ -51,6 +53,8 @@ function fromRow(row: DraftRow): DraftRecord {
     firstComment: row.first_comment,
     publishedAt: row.published_at,
     publishError: row.publish_error,
+    postingSlotId: row.posting_slot_id,
+    postingSlotOccurrenceDate: row.posting_slot_occurrence_date,
     lifecycleVersion: Number(row.lifecycle_version ?? 0),
   };
 }
@@ -233,6 +237,8 @@ export function createSupabaseDraftLifecycleRepository(
           publish_attempts: 0,
           zernio_post_id: null,
           published_at: null,
+          posting_slot_id: patch.postingSlotId ?? null,
+          posting_slot_occurrence_date: patch.postingSlotOccurrenceDate ?? null,
           lifecycle_version: patch.expectedVersion + 1,
         })
         .eq("id", id)
@@ -242,6 +248,9 @@ export function createSupabaseDraftLifecycleRepository(
         .or(SCHEDULABLE_SCHEDULE_STATUS_FILTER)
         .select(DRAFT_COLUMNS)
         .maybeSingle();
+      // The occurrence unique index is the concurrency boundary: another
+      // scheduler may have claimed this same slot after candidate lookup.
+      if (error?.code === "23505") return "stale";
       if (error) throw error;
       return data ? fromRow(data as unknown as DraftRow) : "stale";
     },
@@ -253,6 +262,8 @@ export function createSupabaseDraftLifecycleRepository(
           schedule_status: null,
           scheduled_at: null,
           first_comment: null,
+          posting_slot_id: null,
+          posting_slot_occurrence_date: null,
         })
         .eq("id", id)
         .eq("workspace_id", workspaceId)
