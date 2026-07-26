@@ -1,7 +1,7 @@
 {
   "generatedBy": "npm run migrations:metadata",
-  "highest": 135,
-  "count": 135,
+  "highest": 136,
+  "count": 136,
   "files": [
     "migration-001-progress.sql",
     "migration-002-usage.sql",
@@ -137,6 +137,7 @@
     "migration-132-leadshark-outcome-adapter.sql",
     "migration-133-workspace-learning.sql",
     "migration-134-harden-artifact-lineage.sql",
-    "migration-135-restrict-revision-evidence.sql"
+    "migration-135-restrict-revision-evidence.sql",
+    "migration-136-complete-workspace-learning-outcomes.sql"
   ]
 }

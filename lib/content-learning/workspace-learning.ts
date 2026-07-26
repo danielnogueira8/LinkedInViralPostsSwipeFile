@@ -4,6 +4,8 @@ import { sanitizeVoiceProfile } from "@/lib/claude";
 import {
   CONTENT_LEARNING_SCHEMA_VERSION,
   workspaceLearningModelSchema,
+  type ContentOutcomeKind,
+  type ContentOutcomeSource,
   type LearningEvidence,
   type LearningSignal,
   type LearningSignalKind,
@@ -13,7 +15,7 @@ import {
 } from "@/lib/content-learning/contracts";
 
 export const WORKSPACE_LEARNING_CALCULATION_VERSION =
-  "workspace-learning-v1";
+  "workspace-learning-v2";
 export const WORKSPACE_LEARNING_REFRESH_MS =
   7 * 24 * 60 * 60 * 1_000;
 export const WORKSPACE_LEARNING_INELIGIBLE_CACHE_MS = 60_000;
@@ -135,7 +137,12 @@ type RevisionRow = {
 type OutcomeRow = {
   id: string;
   draft_id: string;
+  kind: ContentOutcomeKind;
+  source: ContentOutcomeSource;
+  confidence: number;
   quantity: number;
+  amount_minor: number | null;
+  currency: string | null;
 };
 
 type EvidenceRow = {
@@ -148,7 +155,12 @@ type EvidenceRow = {
   analytics_fetched_at: string | null;
   revision_id: string | null;
   outcome_id: string | null;
+  outcome_kind: ContentOutcomeKind | null;
+  outcome_source: ContentOutcomeSource | null;
+  outcome_confidence: number | null;
   outcome_quantity: number | null;
+  outcome_amount_minor: number | null;
+  outcome_currency: string | null;
 };
 
 type PublishedSample = {
@@ -296,6 +308,40 @@ function average(values: number[]): number | null {
     : null;
 }
 
+const OUTCOME_KIND_WEIGHT: Record<ContentOutcomeKind, number> = {
+  qualified_conversation: 1,
+  qualified_dm: 1,
+  lead_magnet_conversion: 1.25,
+  lead: 1.5,
+  booked_call: 3,
+  pipeline: 5,
+  revenue: 8,
+};
+
+export function outcomeEvidenceValue(outcome: OutcomeRow): number {
+  const sourceWeight = outcome.source === "leadshark" ? 1 : 0.85;
+  const amountMajor =
+    outcome.amount_minor === null ? null : outcome.amount_minor / 100;
+  const amountWeight =
+    amountMajor === null
+      ? 1
+      : 1 + Math.min(2, Math.log10(1 + amountMajor) / 3);
+  return (
+    OUTCOME_KIND_WEIGHT[outcome.kind] *
+    outcome.quantity *
+    outcome.confidence *
+    sourceWeight *
+    amountWeight
+  );
+}
+
+function sampleOutcomeValue(sample: PublishedSample): number {
+  return sample.outcomes.reduce(
+    (total, outcome) => total + outcomeEvidenceValue(outcome),
+    0,
+  );
+}
+
 function metricScore(
   group: PublishedSample[],
   all: PublishedSample[],
@@ -317,17 +363,15 @@ function metricScore(
       ? clamp((groupAverage - baseline) / Math.max(1, baseline))
       : null;
 
-  const allOutcomeRate =
-    all.filter((sample) => sample.outcomes.length > 0).length /
-    Math.max(1, all.length);
-  const groupOutcomeRate =
-    group.filter((sample) => sample.outcomes.length > 0).length /
-    Math.max(1, group.length);
+  const allOutcomeAverage =
+    average(all.map(sampleOutcomeValue)) ?? 0;
+  const groupOutcomeAverage =
+    average(group.map(sampleOutcomeValue)) ?? 0;
   const hasOutcomes = all.some((sample) => sample.outcomes.length > 0);
   const outcomeScore = hasOutcomes
     ? clamp(
-        (groupOutcomeRate - allOutcomeRate) /
-          Math.max(0.2, allOutcomeRate),
+        (groupOutcomeAverage - allOutcomeAverage) /
+          Math.max(1, allOutcomeAverage),
       )
     : null;
   const components = [impressionScore, outcomeScore].filter(
@@ -716,14 +760,27 @@ async function loadPublishedSamples(
         },
       ]);
     }
-    if (row.outcome_id && row.outcome_quantity !== null) {
-      outcomes.set(row.artifact_id, [
-        {
+    if (
+      row.outcome_id &&
+      row.outcome_kind &&
+      row.outcome_source &&
+      row.outcome_confidence !== null &&
+      row.outcome_quantity !== null
+    ) {
+      const current = outcomes.get(row.artifact_id) ?? [];
+      if (!current.some((outcome) => outcome.id === row.outcome_id)) {
+        current.push({
           id: row.outcome_id,
           draft_id: row.artifact_id,
+          kind: row.outcome_kind,
+          source: row.outcome_source,
+          confidence: row.outcome_confidence,
           quantity: row.outcome_quantity,
-        },
-      ]);
+          amount_minor: row.outcome_amount_minor,
+          currency: row.outcome_currency,
+        });
+        outcomes.set(row.artifact_id, current);
+      }
     }
   }
   return posts.map((post) => {
@@ -869,6 +926,8 @@ export function createWorkspaceLearningStore(
           !options.force &&
           current?.status === targetStatus &&
           current.sourceMode === expectedSourceMode &&
+          current.calculationVersion ===
+            WORKSPACE_LEARNING_CALCULATION_VERSION &&
           asOfMs - Date.parse(current.calculatedAt) <
             WORKSPACE_LEARNING_REFRESH_MS
         ) {
