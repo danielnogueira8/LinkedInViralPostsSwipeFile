@@ -68,6 +68,27 @@ _Avoid_: Voice Profile, template
 A standalone resource offered to readers through a LinkedIn post, typically in exchange for a comment or direct-message interaction.
 _Avoid_: Giveaway post, attachment, document post
 
+**Content Lineage**:
+The immutable, Workspace-owned record of how an Artifact was created and which
+sources, guidance, origin, and generation details influenced it.
+_Avoid_: Mutable Artifact metadata, analytics row, prompt log
+
+**Workspace Knowledge Item**:
+A source-backed story, belief, proof point, offer, audience insight, area of
+expertise, or prohibition that a Workspace can verify and use in Cowork.
+_Avoid_: Unverified memory, Voice Profile rule, generic context
+
+**Content Outcome**:
+Workspace-attributed business evidence connected to published content, such as
+a qualified conversation, lead, booked call, pipeline, or revenue.
+_Avoid_: Engagement metric, inferred revenue
+
+**Workspace Learning Model**:
+A versioned snapshot of deterministic, evidence-linked signals about which
+topics, hooks, formats, calls to action, sources, and voice preferences work for
+a Workspace.
+_Avoid_: Unversioned summary cache, model-generated score, global benchmark
+
 ## Publication
 
 **Plan Date**:
