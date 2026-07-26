@@ -215,6 +215,31 @@ export async function mutateStoredWeekPlanItemAcross(
   return null;
 }
 
+/**
+ * Resolve a rolling-window card against the plan that currently owns it.
+ * The client shows cards from two Monday-anchored plans near a week boundary,
+ * so a current-week-only preflight can reject a perfectly valid visible card.
+ */
+export async function resolveStoredWeekPlanItemAcross(
+  db: SupabaseClient,
+  workspaceId: string,
+  weekStarts: readonly string[],
+  itemId: string,
+): Promise<{
+  weekStart: string;
+  plan: StoredWeekPlan;
+  item: StoredWeekPlanItem;
+} | null> {
+  for (const candidateWeek of weekStarts) {
+    const plan = await loadStoredWeekPlan(db, workspaceId, candidateWeek);
+    const item = plan?.items.find((candidate) => candidate.id === itemId);
+    if (plan && item) {
+      return { weekStart: candidateWeek, plan, item };
+    }
+  }
+  return null;
+}
+
 export async function mutateStoredWeekPlanItem(
   db: SupabaseClient,
   workspaceId: string,

@@ -465,6 +465,12 @@ export function AgentBriefing() {
       );
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data?.ok) {
+        if (data?.recovery === "reload_week_plan") {
+          await loadWeekPlan();
+          throw new Error(
+            "Your week was refreshed. Try the current card again.",
+          );
+        }
         throw new Error(data?.error || "Couldn't find a different one — try again.");
       }
       await loadWeekPlan();
