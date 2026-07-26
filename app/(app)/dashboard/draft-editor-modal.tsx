@@ -2335,7 +2335,11 @@ function ScheduleRow({
     setBusy(true);
     try {
       const next = await draftOperations.unschedule(draft.id);
-      onMeta(draft.id, next);
+      onMeta(draft.id, {
+        ...next,
+        postingSlotId: null,
+        postingSlotOccurrenceDate: null,
+      });
       window.dispatchEvent(new Event("posting-queue-updated"));
       toast.success("Unscheduled.");
     } catch (e) {
