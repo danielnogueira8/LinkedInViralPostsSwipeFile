@@ -226,7 +226,7 @@ export function createSupabaseDraftLifecycleRepository(
     },
 
     async schedule(id, patch) {
-      const { data, error } = await db
+      let query = db
         .from("chat_artifacts")
         .update({
           schedule_status: "scheduled",
@@ -245,7 +245,13 @@ export function createSupabaseDraftLifecycleRepository(
         .eq("workspace_id", workspaceId)
         .eq("lifecycle_version", patch.expectedVersion)
         .in("status", [...SCHEDULABLE_DRAFT_STATUSES])
-        .or(SCHEDULABLE_SCHEDULE_STATUS_FILTER)
+        .or(SCHEDULABLE_SCHEDULE_STATUS_FILTER);
+      if (patch.requireNoActiveQueueBooking) {
+        query = query.or(
+          "posting_slot_id.is.null,schedule_status.is.null,schedule_status.eq.failed",
+        );
+      }
+      const { data, error } = await query
         .select(DRAFT_COLUMNS)
         .maybeSingle();
       // The occurrence unique index is the concurrency boundary: another

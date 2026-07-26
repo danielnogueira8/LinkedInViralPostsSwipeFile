@@ -110,6 +110,7 @@ export type DraftLifecycleRepository = {
       expectedVersion: number;
       postingSlotId?: string | null;
       postingSlotOccurrenceDate?: string | null;
+      requireNoActiveQueueBooking?: boolean;
     },
   ): Promise<DraftRecord | "stale">;
   cancelSchedule(id: string): Promise<DraftRecord | "conflict">;
@@ -417,6 +418,7 @@ export class DraftLifecycle {
       firstComment?: string | null;
       postingSlotId?: string | null;
       postingSlotOccurrenceDate?: string | null;
+      preserveExistingQueue?: boolean;
     },
   ): Promise<DraftCommandOutcome<DraftRecord>> {
     if (!(await this.dependencies.canPublish?.())) {
@@ -432,6 +434,15 @@ export class DraftLifecycle {
     }
     const draft = await this.repository.find(id);
     if (!draft) return rejected("not_found", "Draft not found", 404);
+    if (
+      input.preserveExistingQueue &&
+      (draft.scheduleStatus === "scheduled" ||
+        draft.scheduleStatus === "publishing") &&
+      draft.postingSlotId &&
+      draft.postingSlotOccurrenceDate
+    ) {
+      return accepted(draft);
+    }
     if (
       draft.scheduleStatus === "publishing" ||
       draft.scheduleStatus === "published"
@@ -481,6 +492,7 @@ export class DraftLifecycle {
       expectedVersion: draft.lifecycleVersion,
       postingSlotId: input.postingSlotId ?? null,
       postingSlotOccurrenceDate: input.postingSlotOccurrenceDate ?? null,
+      requireNoActiveQueueBooking: input.preserveExistingQueue,
     });
     if (result === "stale") {
       return rejected(
