@@ -414,7 +414,16 @@ export function DraftEditorModal({
         postingSlotOccurrenceDate: null,
         publishError: null,
       });
-      toast.success("Post created and scheduled on LinkedIn.");
+      const browserTimezone =
+        Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+      toast.success(
+        formatScheduleToast({
+          scheduledAt: data.scheduledAt,
+          accountTimezone: input.timezone || browserTimezone,
+          browserTimezone,
+          action: "scheduled",
+        }),
+      );
       onOpenChange(false);
     } catch (e) {
       toast.error((e as Error).message);

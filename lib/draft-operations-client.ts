@@ -45,6 +45,7 @@ export type SaveArtifactAsDraftCommand = {
 export type DraftScheduleCommand = {
   scheduledAt: string;
   planToPostOn: string;
+  timezone?: string;
   firstComment: string | null;
 };
 

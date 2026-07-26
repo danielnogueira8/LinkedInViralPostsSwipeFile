@@ -69,4 +69,13 @@ describe("draft editor scheduling wiring", () => {
     expect(source).toContain("previewBody={body}");
     expect(source).toContain("previewBody ?? draft?.body");
   });
+
+  test("new exact-time scheduling uses the dated schedule toast", () => {
+    expect(source).not.toContain(
+      'toast.success("Post created and scheduled on LinkedIn.")',
+    );
+    expect(source).toMatch(
+      /const createAndSchedule[\s\S]*formatScheduleToast\(\{[\s\S]*scheduledAt: data\.scheduledAt/,
+    );
+  });
 });
