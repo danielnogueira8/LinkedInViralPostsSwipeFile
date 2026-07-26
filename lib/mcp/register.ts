@@ -61,6 +61,7 @@ import {
   getDiscoveryThresholds,
 } from "@/lib/discovery-thresholds";
 import {
+  comparableRelevance,
   diverseCreatorResults,
   diversityCandidateLimit,
 } from "@/lib/mcp/creator-diversity";
@@ -95,13 +96,13 @@ const SORT_COLUMN = {
 // .eq("workspace_post_classification.workspace_id", workspaceId). Kept in sync
 // with the in-app agent's POST_COLS (lib/agent/tools.ts).
 const POST_COLS =
-  "id, account_id, text, post_url, posted_at, reactions, comments, reposts, media_type, post_type, is_viral, accounts!inner(name, niche), workspace_post_classification(is_viral)";
+  "id, account_id, text, post_url, posted_at, reactions, comments, reposts, viral_score, media_type, post_type, is_viral, accounts!inner(name, niche), workspace_post_classification(is_viral)";
 
 // Visual URLs can be large and are rarely needed to answer a broad research
 // query. Fetch them only when the caller is looking at one post, or has
 // explicitly asked to see the post's visual asset.
 const POST_WITH_VISUAL_COLS =
-  "id, account_id, text, post_url, posted_at, reactions, comments, reposts, media_type, post_type, media_urls, visual_kind, is_viral, accounts!inner(name, niche), workspace_post_classification(is_viral)";
+  "id, account_id, text, post_url, posted_at, reactions, comments, reposts, viral_score, media_type, post_type, media_urls, visual_kind, is_viral, accounts!inner(name, niche), workspace_post_classification(is_viral)";
 
 const NO_ROWS_SENTINEL = "00000000-0000-0000-0000-000000000000";
 
@@ -150,11 +151,13 @@ function normalizeEmbed<
     workspace_post_classification: _wpc,
     is_viral: _isViral,
     account_id: _accountId,
+    viral_score: _viralScore,
     media_urls,
     visual_kind,
     ...rest
   } = p as T & {
     account_id?: unknown;
+    viral_score?: unknown;
     media_urls?: unknown;
     visual_kind?: unknown;
     is_viral?: unknown;
@@ -162,6 +165,7 @@ function normalizeEmbed<
   void _wpc;
   void _isViral;
   void _accountId;
+  void _viralScore;
   const post = {
     ...rest,
     accounts: Array.isArray(p.accounts) ? (p.accounts[0] ?? null) : p.accounts,
@@ -425,6 +429,11 @@ export function registerSwipeTools(server: McpServer) {
           candidates,
           limit,
           (post) => String(post.account_id ?? post.id),
+          (best, alternative) =>
+            comparableRelevance(best[sortCol], alternative[sortCol], {
+              ascending,
+              kind: sortKey === "posted" ? "posted" : "number",
+            }),
         )
           .map((post) => normalizeEmbed(post, includeVisual));
         return includeVisual

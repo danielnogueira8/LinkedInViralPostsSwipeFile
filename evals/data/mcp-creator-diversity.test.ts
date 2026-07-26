@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  comparableRelevance,
   diverseCreatorResults,
   diversityCandidateLimit,
 } from "@/lib/mcp/creator-diversity";
@@ -7,7 +8,7 @@ import {
 type Candidate = { id: string; account_id: string; score: number };
 
 describe("MCP creator diversity", () => {
-  test("preserves the strongest same-creator results before adding diversity", () => {
+  test("prioritizes unique creators before repeated creators", () => {
     const candidates: Candidate[] = [
       { id: "a1", account_id: "a", score: 100 },
       { id: "a2", account_id: "a", score: 99 },
@@ -17,10 +18,17 @@ describe("MCP creator diversity", () => {
     ];
 
     expect(
-      diverseCreatorResults(candidates, 4, (post) => post.account_id).map(
-        (post) => post.id,
-      ),
-    ).toEqual(["a1", "a2", "b1", "c1"]);
+      diverseCreatorResults(
+        candidates,
+        4,
+        (post) => post.account_id,
+        (best, alternative) =>
+          comparableRelevance(best.score, alternative.score, {
+            ascending: false,
+            kind: "number",
+          }),
+      ).map((post) => post.id),
+    ).toEqual(["a1", "b1", "c1", "a2"]);
   });
 
   test("falls back to additional relevant posts when alternatives run out", () => {
@@ -32,13 +40,20 @@ describe("MCP creator diversity", () => {
     ];
 
     expect(
-      diverseCreatorResults(candidates, 4, (post) => post.account_id).map(
-        (post) => post.id,
-      ),
-    ).toEqual(["a1", "a2", "b1", "a3"]);
+      diverseCreatorResults(
+        candidates,
+        4,
+        (post) => post.account_id,
+        (best, alternative) =>
+          comparableRelevance(best.score, alternative.score, {
+            ascending: false,
+            kind: "number",
+          }),
+      ).map((post) => post.id),
+    ).toEqual(["a1", "b1", "a2", "a3"]);
   });
 
-  test("does not promote a distant alternative above the top two results", () => {
+  test("does not trade a dramatically stronger result for diversity", () => {
     const candidates: Candidate[] = [
       { id: "a1", account_id: "a", score: 100 },
       { id: "a2", account_id: "a", score: 99 },
@@ -48,13 +63,20 @@ describe("MCP creator diversity", () => {
     ];
 
     expect(
-      diverseCreatorResults(candidates, 2, (post) => post.account_id).map(
-        (post) => post.id,
-      ),
+      diverseCreatorResults(
+        candidates,
+        2,
+        (post) => post.account_id,
+        (best, alternative) =>
+          comparableRelevance(best.score, alternative.score, {
+            ascending: false,
+            kind: "number",
+          }),
+      ).map((post) => post.id),
     ).toEqual(["a1", "a2"]);
   });
 
-  test("caps a creator at two results when relevant alternatives exist", () => {
+  test("emits every available unique creator before a repeat", () => {
     const candidates: Candidate[] = [
       { id: "a1", account_id: "a", score: 100 },
       { id: "a2", account_id: "a", score: 99 },
@@ -64,10 +86,17 @@ describe("MCP creator diversity", () => {
     ];
 
     expect(
-      diverseCreatorResults(candidates, 4, (post) => post.account_id).map(
-        (post) => post.id,
-      ),
-    ).toEqual(["a1", "a2", "b1", "c1"]);
+      diverseCreatorResults(
+        candidates,
+        4,
+        (post) => post.account_id,
+        (best, alternative) =>
+          comparableRelevance(best.score, alternative.score, {
+            ascending: false,
+            kind: "number",
+          }),
+      ).map((post) => post.id),
+    ).toEqual(["a1", "b1", "c1", "a2"]);
   });
 
   test("preserves relevance order when every candidate has a unique creator", () => {
@@ -78,7 +107,12 @@ describe("MCP creator diversity", () => {
     ];
 
     expect(
-      diverseCreatorResults(candidates, 3, (post) => post.account_id),
+      diverseCreatorResults(
+        candidates,
+        3,
+        (post) => post.account_id,
+        () => true,
+      ),
     ).toEqual(candidates);
   });
 
@@ -86,5 +120,35 @@ describe("MCP creator diversity", () => {
     expect(diversityCandidateLimit(10)).toBe(40);
     expect(diversityCandidateLimit(50)).toBe(200);
     expect(diversityCandidateLimit(1)).toBe(4);
+  });
+
+  test("compares numeric relevance in both sort directions", () => {
+    expect(
+      comparableRelevance(100, 85, { ascending: false, kind: "number" }),
+    ).toBe(true);
+    expect(
+      comparableRelevance(100, 130, { ascending: true, kind: "number" }),
+    ).toBe(false);
+  });
+
+  test("uses a real time window for posted-date relevance", () => {
+    expect(
+      comparableRelevance("2026-07-26", "2026-07-20", {
+        ascending: false,
+        kind: "posted",
+      }),
+    ).toBe(true);
+    expect(
+      comparableRelevance("2026-07-26", "2025-07-26", {
+        ascending: false,
+        kind: "posted",
+      }),
+    ).toBe(false);
+    expect(
+      comparableRelevance("2025-07-26", "2026-07-26", {
+        ascending: true,
+        kind: "posted",
+      }),
+    ).toBe(false);
   });
 });
