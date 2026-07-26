@@ -6,6 +6,10 @@ import { getConnection, canPublish } from "@/lib/publishing";
 import { DraftLifecycle } from "@/lib/draft-lifecycle";
 import { createSupabaseDraftLifecycleRepository } from "@/lib/draft-lifecycle-supabase";
 import { timeZoneSchema } from "@/lib/schedule-local-date";
+import {
+  existingQueueBooking,
+  type ExistingQueueBooking,
+} from "@/lib/posting-queue-idempotency";
 
 export const runtime = "nodejs";
 
@@ -21,18 +25,48 @@ type Candidate = {
   timezone: string;
 };
 
+async function existingBookingResponse(
+  sb: Awaited<ReturnType<typeof scopedSupabase>>,
+  booking: ExistingQueueBooking,
+  fallbackTimezone: string,
+) {
+  const { data: slot, error } = await sb.raw
+    .from("posting_slots")
+    .select("timezone")
+    .eq("id", booking.postingSlotId)
+    .eq("workspace_id", sb.workspaceId)
+    .maybeSingle();
+  if (error) throw error;
+
+  return NextResponse.json({
+    ok: true,
+    ...booking,
+    timezone:
+      typeof slot?.timezone === "string" ? slot.timezone : fallbackTimezone,
+  });
+}
+
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
     const input = inputSchema.parse(await req.json().catch(() => ({})));
     const sb = await scopedSupabase();
+    const repository = createSupabaseDraftLifecycleRepository(
+      sb.raw,
+      sb.workspaceId,
+    );
+    const currentBooking = existingQueueBooking(await repository.find(id));
+    if (currentBooking) {
+      return existingBookingResponse(sb, currentBooking, input.timezone);
+    }
+
     const { error: ensureError } = await sb.raw.rpc("ensure_posting_slots", {
       p_workspace_id: sb.workspaceId,
       p_timezone: input.timezone,
     });
     if (ensureError) throw ensureError;
     const lifecycle = new DraftLifecycle(
-      createSupabaseDraftLifecycleRepository(sb.raw, sb.workspaceId),
+      repository,
       { canPublish: async () => canPublish(await getConnection(sb.workspaceId, sb.raw)) },
     );
 
@@ -61,24 +95,24 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         firstComment: input.firstComment,
         postingSlotId: candidate.slot_id,
         postingSlotOccurrenceDate: candidate.occurrence_date,
+        preserveExistingQueue: true,
       });
       if (outcome.ok) {
-        return NextResponse.json({
-          ok: true,
-          scheduledAt: outcome.value.scheduledAt,
-          scheduleStatus: outcome.value.scheduleStatus,
-          planToPostOn: outcome.value.planToPostOn,
-          firstComment: outcome.value.firstComment,
-          timezone: candidate.timezone,
-          postingSlotId: candidate.slot_id,
-          postingSlotOccurrenceDate: candidate.occurrence_date,
-        });
+        const booking = existingQueueBooking(outcome.value);
+        if (booking) {
+          return existingBookingResponse(sb, booking, candidate.timezone);
+        }
+        throw new Error("Queue scheduling returned no recurring slot booking.");
       }
       if (outcome.reason !== "stale_write") {
         return NextResponse.json(
           { ok: false, reason: outcome.reason, error: outcome.message },
           { status: outcome.status },
         );
+      }
+      const winningBooking = existingQueueBooking(await repository.find(id));
+      if (winningBooking) {
+        return existingBookingResponse(sb, winningBooking, input.timezone);
       }
     }
     return NextResponse.json(
