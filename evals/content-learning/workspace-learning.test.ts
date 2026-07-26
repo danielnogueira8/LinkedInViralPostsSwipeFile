@@ -5,6 +5,7 @@ import {
   calculatePublishedSignals,
   calculateVoiceSignals,
   createWorkspaceLearningStore,
+  outcomeEvidenceValue,
   selectRecentPublishedPosts,
   type PublishedRow,
   workspaceLearningFingerprint,
@@ -101,7 +102,16 @@ function sample(input: {
         ]
       : [],
     outcomes: input.outcome
-      ? [{ id: input.outcome, draft_id: input.id, quantity: 1 }]
+      ? [{
+          id: input.outcome,
+          draft_id: input.id,
+          kind: "lead" as const,
+          source: "manual" as const,
+          confidence: 1,
+          quantity: 1,
+          amount_minor: null,
+          currency: null,
+        }]
       : [],
     publishedAt:
       input.publishedAt === undefined ? at : input.publishedAt,
@@ -202,6 +212,39 @@ describe("deterministic Workspace Learning calculator", () => {
         expect.objectContaining({ kind: "outcome" }),
       ]),
     );
+  });
+
+  test("weights complete outcome evidence by business value and reliability", () => {
+    const base = {
+      id: "20000000-0000-4000-8000-000000000001",
+      draft_id: "10000000-0000-4000-8000-000000000001",
+      confidence: 1,
+      quantity: 1,
+      amount_minor: null,
+      currency: null,
+    };
+    const manualLead = outcomeEvidenceValue({
+      ...base,
+      kind: "lead",
+      source: "manual",
+    });
+    const importedLead = outcomeEvidenceValue({
+      ...base,
+      kind: "lead",
+      source: "leadshark",
+    });
+    const attributedRevenue = outcomeEvidenceValue({
+      ...base,
+      kind: "revenue",
+      source: "leadshark",
+      quantity: 2,
+      confidence: 0.9,
+      amount_minor: 100_000,
+      currency: "USD",
+    });
+
+    expect(importedLead).toBeGreaterThan(manualLead);
+    expect(attributedRevenue).toBeGreaterThan(importedLead * 2);
   });
 
   test("uses Voice exemplars without inventing performance", () => {
