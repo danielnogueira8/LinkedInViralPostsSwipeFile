@@ -16,6 +16,7 @@ import { toast } from "sonner";
 import { fetchJson } from "@/lib/api-fetch";
 import { INTERVIEW_QUESTIONS } from "@/lib/voice-interview";
 import type { VoiceRow } from "./manager";
+import type { WorkspaceKnowledgeItem } from "@/lib/content-learning/contracts";
 
 // The context interview: a short set of ghostwriter-style questions the user
 // answers to give the AI richer material. Answers are synthesized into the
@@ -24,9 +25,11 @@ import type { VoiceRow } from "./manager";
 export function VoiceInterviewCard({
   row,
   onSaved,
+  onKnowledgeSaved,
 }: {
   row: VoiceRow | null;
   onSaved: (saved: VoiceRow) => void;
+  onKnowledgeSaved: (items: WorkspaceKnowledgeItem[]) => void;
 }) {
   const profile = row?.profile ?? null;
   // Seed the fields from any previously-saved answers (keyed by question text).
@@ -61,7 +64,12 @@ export function VoiceInterviewCard({
     }
     setBusy(true);
     try {
-      const data = await fetchJson<{ ok: boolean; voice: VoiceRow; error?: string }>(
+      const data = await fetchJson<{
+        ok: boolean;
+        voice: VoiceRow;
+        knowledge?: WorkspaceKnowledgeItem[];
+        error?: string;
+      }>(
         "/api/voice/interview",
         {
           method: "POST",
@@ -71,6 +79,7 @@ export function VoiceInterviewCard({
       );
       if (!data.ok) throw new Error(data.error || "Couldn't process the interview.");
       onSaved(data.voice);
+      if (data.knowledge) onKnowledgeSaved(data.knowledge);
       // Only collapse into the read-only summary if there's actually a
       // summary to show — never collapse to a state with no form AND no
       // context (the server now throws on malformed/empty output instead of

@@ -7,6 +7,8 @@ import { PreferencesManager } from "./preferences";
 import { FeedbackMemoryManager } from "./feedback-memory";
 import type { ReviewableContentPreference } from "@/lib/preference-evidence";
 import type { ContentFeedback } from "@/lib/content-feedback";
+import type { WorkspaceKnowledgeItem } from "@/lib/content-learning/contracts";
+import { KnowledgeReview } from "./knowledge-review";
 
 // The Voice page's client shell. It owns the single source of truth for the
 // voice row so the source-of-voice column (profile + summary + exemplars) and
@@ -27,6 +29,8 @@ export function VoiceWorkspace({
   daysUntilRegen,
   preferences,
   feedback,
+  knowledgeProposals,
+  verifiedKnowledge,
 }: {
   initialRow: VoiceRow | null;
   canRegenerate: boolean;
@@ -34,8 +38,12 @@ export function VoiceWorkspace({
   daysUntilRegen: number;
   preferences: ReviewableContentPreference[];
   feedback: ContentFeedback[];
+  knowledgeProposals: WorkspaceKnowledgeItem[];
+  verifiedKnowledge: WorkspaceKnowledgeItem[];
 }) {
   const [row, setRow] = useState<VoiceRow | null>(initialRow);
+  const [proposals, setProposals] = useState(knowledgeProposals);
+  const [verified, setVerified] = useState(verifiedKnowledge);
 
   return (
     <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-[minmax(0,1.55fr)_minmax(0,1fr)]">
@@ -53,7 +61,24 @@ export function VoiceWorkspace({
       {/* Right rail — teach it more. Sticky on wide screens so it stays with
           the profile as the left column grows. */}
       <aside className="min-w-0 space-y-4 lg:sticky lg:top-6">
-        <VoiceInterviewCard row={row} onSaved={setRow} />
+        <VoiceInterviewCard
+          row={row}
+          onSaved={setRow}
+          onKnowledgeSaved={(items) => {
+            setProposals(
+              items.filter((item) => item.verification === "proposed"),
+            );
+            setVerified(
+              items.filter((item) => item.verification === "verified"),
+            );
+          }}
+        />
+        <KnowledgeReview
+          proposals={proposals}
+          verified={verified}
+          onProposalsChange={setProposals}
+          onVerifiedChange={setVerified}
+        />
         <PreferencesManager initial={preferences} />
         <FeedbackMemoryManager initial={feedback} />
       </aside>

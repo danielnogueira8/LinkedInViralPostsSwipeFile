@@ -570,6 +570,11 @@ export interface WorkspaceKnowledge {
   propose(
     proposal: WorkspaceKnowledgeProposal,
   ): Promise<WorkspaceKnowledgeItem | null>;
+  replaceInterviewProposals(
+    workspaceId: string,
+    sourceRefPrefix: string,
+    proposals: WorkspaceKnowledgeProposal[],
+  ): Promise<WorkspaceKnowledgeItem[] | null>;
   review(
     workspaceId: string,
     input: KnowledgeReviewInput,
@@ -579,6 +584,12 @@ export interface WorkspaceKnowledge {
     itemId: string,
     expectedUpdatedAt: string,
   ): Promise<WorkspaceKnowledgeItem | null>;
+  listProposed(workspaceId: string): Promise<WorkspaceKnowledgeItem[]>;
+  listActiveBySource(
+    workspaceId: string,
+    source: KnowledgeItemSource,
+    sourceRefPrefix: string,
+  ): Promise<WorkspaceKnowledgeItem[]>;
   listActive(workspaceId: string): Promise<WorkspaceKnowledgeItem[]>;
 }
 

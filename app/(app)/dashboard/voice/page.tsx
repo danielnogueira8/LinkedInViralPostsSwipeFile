@@ -10,6 +10,8 @@ import {
 import { listReviewablePreferences } from "@/lib/preference-evidence";
 import type { ContentFeedback } from "@/lib/content-feedback";
 import { PageHeader, PageShell } from "@/components/app-surface";
+import { createWorkspaceKnowledgeStore } from "@/lib/content-learning/workspace-knowledge";
+import { interviewKnowledgeSourcePrefix } from "@/lib/content-learning/interview-knowledge";
 
 export const dynamic = "force-dynamic";
 
@@ -73,6 +75,23 @@ export default async function VoicePage() {
     preferences: (prefData ?? []) as ContentPreference[],
   });
   const feedback = (feedbackData ?? []) as ContentFeedback[];
+  const knowledgeStore = createWorkspaceKnowledgeStore(sb.raw);
+  // This review surface is specifically for facts sourced from the Context
+  // interview. Keep future knowledge sources off this page so the provenance
+  // label remains truthful and revisions only reconcile their own Voice row.
+  const interviewKnowledge = row?.id
+    ? await knowledgeStore.listActiveBySource(
+        sb.workspaceId,
+        "interview",
+        interviewKnowledgeSourcePrefix(String(row.id)),
+      )
+    : [];
+  const knowledgeProposals = interviewKnowledge.filter(
+    (item) => item.verification === "proposed",
+  );
+  const verifiedKnowledge = interviewKnowledge.filter(
+    (item) => item.verification === "verified",
+  );
 
   return (
     <PageShell width="wide">
@@ -87,6 +106,8 @@ export default async function VoicePage() {
         daysUntilRegen={cooldown.daysUntilRegen}
         preferences={preferences}
         feedback={feedback}
+        knowledgeProposals={knowledgeProposals}
+        verifiedKnowledge={verifiedKnowledge}
       />
     </PageShell>
   );

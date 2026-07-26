@@ -36,6 +36,17 @@ describe("sanitizeInterviewAnswers", () => {
     expect(sanitizeInterviewAnswers("nope")).toEqual([]);
     expect(sanitizeInterviewAnswers([1, true, null])).toEqual([]);
   });
+
+  test("keeps only the last answer for a duplicated canonical question", () => {
+    expect(
+      sanitizeInterviewAnswers([
+        { question: "What changed?", answer: "First answer" },
+        { question: "What changed?", answer: "Updated answer" },
+      ]),
+    ).toEqual([
+      { question: "What changed?", answer: "Updated answer" },
+    ]);
+  });
 });
 
 describe("sanitizeVoiceProfile — interview fields", () => {
