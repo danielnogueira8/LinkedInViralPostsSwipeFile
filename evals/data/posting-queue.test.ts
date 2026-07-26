@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   buildPostingQueueDays,
   formatScheduleToast,
+  postingSlotHasActiveDraft,
   type PostingQueueSlot,
 } from "@/lib/posting-queue";
 
@@ -120,3 +121,27 @@ describe("formatScheduleToast", () => {
   });
 });
 
+describe("postingSlotHasActiveDraft", () => {
+  const queuedDraft = {
+    id: "draft-1",
+    title: "Draft",
+    scheduledAt: "2026-07-27T08:00:00.000Z",
+    scheduleStatus: "publishing",
+    postingSlotId: "monday-9",
+    postingSlotOccurrenceDate: "2026-07-27",
+  };
+
+  test("warns while a slot occurrence is actively publishing", () => {
+    expect(postingSlotHasActiveDraft([queuedDraft], "monday-9")).toBe(true);
+  });
+
+  test("does not warn for another slot or a published post", () => {
+    expect(postingSlotHasActiveDraft([queuedDraft], "monday-14")).toBe(false);
+    expect(
+      postingSlotHasActiveDraft(
+        [{ ...queuedDraft, scheduleStatus: "published" }],
+        "monday-9",
+      ),
+    ).toBe(false);
+  });
+});

@@ -29,6 +29,19 @@ export type PostingQueueDay = {
   occurrences: PostingQueueOccurrence[];
 };
 
+export function postingSlotHasActiveDraft(
+  drafts: readonly PostingQueueDraft[],
+  slotId: string,
+): boolean {
+  return drafts.some(
+    (draft) =>
+      draft.postingSlotId === slotId &&
+      (draft.scheduleStatus === "scheduled" ||
+        draft.scheduleStatus === "publishing" ||
+        draft.scheduleStatus === "failed"),
+  );
+}
+
 function zonedParts(date: Date, timeZone: string) {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone,
