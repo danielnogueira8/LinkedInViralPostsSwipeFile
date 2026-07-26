@@ -102,6 +102,11 @@ export async function purgeWorkspaceData(
       workspaceId,
     ),
   );
+  // Review history is append-only and cascades only during this owning-item
+  // erasure.
+  await wipe("workspace_knowledge_items", () =>
+    del("workspace_knowledge_items").eq("workspace_id", workspaceId),
+  );
   await wipe("content_preference_evidence", () =>
     del("content_preference_evidence").eq("workspace_id", workspaceId),
   );
