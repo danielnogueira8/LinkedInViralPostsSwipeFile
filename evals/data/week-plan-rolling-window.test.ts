@@ -111,7 +111,9 @@ describe("the next week is generated, not left blank", () => {
   const routeSrc = readFileSync("app/api/agent/week-plan/route.ts", "utf8");
 
   test("the route composes + stores a missing tail week", () => {
-    expect(routeSrc).toMatch(/composeFreshPlan\(sb\.raw, sb\.workspaceId, week\)/);
+    expect(routeSrc).toMatch(
+      /composeFreshPlan\(\s*sb\.raw,\s*sb\.workspaceId,\s*week,\s*await learningForPlan\(\),\s*\)/,
+    );
     expect(routeSrc).toMatch(/createStoredWeekPlan\(sb\.raw, sb\.workspaceId, fresh\)/);
   });
 

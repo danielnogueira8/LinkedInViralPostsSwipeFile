@@ -14,12 +14,18 @@ import {
 import {
   composeWeekPlan,
   daysSince,
+  GENERIC_WEEK_PROMPTS,
   postingGapNote,
   weekStart,
   workWeekDays,
   rollingWindowWeekStarts,
   withinRollingWindow,
 } from "@/lib/agent-loop/week-plan";
+import {
+  rankGenericWeekPrompts,
+  rankWeekPlanOpportunities,
+  weekPlanLearningSource,
+} from "@/lib/agent-loop/week-plan-learning";
 import {
   createStoredWeekPlan,
   findLegacyGenericDraftId,
@@ -29,6 +35,10 @@ import {
   type StoredWeekPlan,
 } from "@/lib/agent-loop/week-plan-store";
 import { SWIPE_POST_COLS } from "@/lib/swipe-query";
+import {
+  loadActiveWorkspaceLearning,
+} from "@/lib/content-learning/workspace-learning-context";
+import type { WorkspaceLearningModel } from "@/lib/content-learning/contracts";
 
 export const runtime = "nodejs";
 
@@ -39,6 +49,7 @@ async function composeFreshPlan(
   db: SupabaseClient,
   workspaceId: string,
   currentWeek: string,
+  learning: WorkspaceLearningModel | null,
 ): Promise<StoredWeekPlan> {
   const { data: opportunities, error: opportunityError } = await db
     .from("agent_opportunities")
@@ -52,10 +63,11 @@ async function composeFreshPlan(
   const sourcePostIds = opportunitySourcePostIds(opportunities);
   let leadMagnetPostIdSet = new Set<string>();
   const avatarByPostId = new Map<string, string>();
+  const textByPostId = new Map<string, string>();
   if (sourcePostIds.length > 0) {
     const { data: sourcePosts, error: sourcePostError } = await db
       .from("posts")
-      .select("id, post_type, accounts(profile_pic_url)")
+      .select("id, text, post_type, accounts(profile_pic_url)")
       .in("id", sourcePostIds);
     if (sourcePostError) throw sourcePostError;
     leadMagnetPostIdSet = leadMagnetPostIds(sourcePosts);
@@ -70,45 +82,70 @@ async function composeFreshPlan(
       ) {
         avatarByPostId.set(post.id, account.profile_pic_url);
       }
+      if (
+        typeof post.id === "string" &&
+        typeof post.text === "string"
+      ) {
+        textByPostId.set(post.id, post.text);
+      }
     }
   }
 
-  const opportunityById = new Map(
+  const rankedOpportunities = rankWeekPlanOpportunities(
     (opportunities ?? []).map((opportunity) => {
       const payload = (opportunity.payload ?? {}) as Record<string, unknown>;
       const sourcePostId =
         typeof opportunity.source_post_id === "string"
           ? opportunity.source_post_id
           : null;
-      return [
-        opportunity.id as string,
-        {
-          id: opportunity.id as string,
-          headline: readOpportunityHeadline(payload),
-          isLeadMagnet: opportunityIsLeadMagnet(
-            opportunity,
-            leadMagnetPostIdSet,
-          ),
-          authorAvatar: sourcePostId
-            ? (avatarByPostId.get(sourcePostId) ?? null)
-            : null,
-          sourcePostId,
-        },
-      ] as const;
+      return {
+        id: opportunity.id as string,
+        headline: readOpportunityHeadline(payload),
+        isLeadMagnet: opportunityIsLeadMagnet(
+          opportunity,
+          leadMagnetPostIdSet,
+        ),
+        authorAvatar: sourcePostId
+          ? (avatarByPostId.get(sourcePostId) ?? null)
+          : null,
+        sourcePostId,
+        sourceText: sourcePostId
+          ? (textByPostId.get(sourcePostId) ?? "")
+          : "",
+      };
     }),
+    learning,
   );
+  const opportunityById = new Map(
+    rankedOpportunities.map((opportunity) => [
+      opportunity.id,
+      opportunity,
+    ]),
+  );
+  const planSeed = Math.floor(
+    Date.parse(currentWeek) / (1000 * 60 * 60 * 24),
+  );
+  const promptOffset =
+    ((planSeed % GENERIC_WEEK_PROMPTS.length) +
+      GENERIC_WEEK_PROMPTS.length) %
+    GENERIC_WEEK_PROMPTS.length;
+  const rotatedPrompts = [
+    ...GENERIC_WEEK_PROMPTS.slice(promptOffset),
+    ...GENERIC_WEEK_PROMPTS.slice(0, promptOffset),
+  ];
+  const genericPrompts = learning
+    ? rankGenericWeekPrompts(rotatedPrompts, learning)
+    : GENERIC_WEEK_PROMPTS;
   const slots = composeWeekPlan({
-    opportunities: (opportunities ?? []).map((opportunity) => ({
-      id: opportunity.id as string,
-      isLeadMagnet: opportunityIsLeadMagnet(
-        opportunity,
-        leadMagnetPostIdSet,
-      ),
+    opportunities: rankedOpportunities.map((opportunity) => ({
+      id: opportunity.id,
+      isLeadMagnet: opportunity.isLeadMagnet,
     })),
     days: 7,
     maxLeadMagnets: MAX_LEAD_MAGNET_DAYS,
     minGenericDays: 2,
-    seed: Math.floor(Date.parse(currentWeek) / (1000 * 60 * 60 * 24)),
+    genericPrompts,
+    seed: learning ? 0 : planSeed,
   });
   const days = workWeekDays(new Date(`${currentWeek}T00:00:00.000Z`));
 
@@ -124,6 +161,10 @@ async function composeFreshPlan(
         prompt: slot.kind === "generic" ? slot.prompt : null,
         userContext: null,
         selectedLeadMagnetId: null,
+        learningSource:
+          slot.kind === "generic"
+            ? weekPlanLearningSource(slot.prompt, learning)
+            : null,
         status: "planned" as const,
         draftId: null,
       };
@@ -141,6 +182,9 @@ async function composeFreshPlan(
           author_avatar: opportunity?.authorAvatar ?? null,
           source_post_id: opportunity?.sourcePostId ?? null,
         },
+        learningSource: opportunity
+          ? weekPlanLearningSource(opportunity.sourceText, learning)
+          : null,
       };
     }),
   };
@@ -363,6 +407,22 @@ export async function GET() {
   try {
     const sb = await scopedSupabase();
     const currentWeek = weekStart();
+    let learningPromise: Promise<WorkspaceLearningModel | null> | null =
+      null;
+    const learningForPlan = () => {
+      learningPromise ??= loadActiveWorkspaceLearning(
+        sb.raw,
+        sb.workspaceId,
+      ).catch((error) => {
+        console.error("agent_week_plan_learning_failed", {
+          workspace_id: sb.workspaceId,
+          message:
+            error instanceof Error ? error.message : String(error),
+        });
+        return null;
+      });
+      return learningPromise;
+    };
     let plan: StoredWeekPlan | null = null;
     try {
       plan = await loadStoredWeekPlan(sb.raw, sb.workspaceId, currentWeek);
@@ -373,7 +433,12 @@ export async function GET() {
       });
     }
     if (!plan) {
-      plan = await composeFreshPlan(sb.raw, sb.workspaceId, currentWeek);
+      plan = await composeFreshPlan(
+        sb.raw,
+        sb.workspaceId,
+        currentWeek,
+        await learningForPlan(),
+      );
       plan = await createStoredWeekPlan(sb.raw, sb.workspaceId, plan);
     }
     plan = await restoreLegacyDismissedOpportunityItems(
@@ -405,7 +470,12 @@ export async function GET() {
         try {
           const existing = await loadStoredWeekPlan(sb.raw, sb.workspaceId, week);
           if (existing) return existing;
-          const fresh = await composeFreshPlan(sb.raw, sb.workspaceId, week);
+          const fresh = await composeFreshPlan(
+            sb.raw,
+            sb.workspaceId,
+            week,
+            await learningForPlan(),
+          );
           return await createStoredWeekPlan(sb.raw, sb.workspaceId, fresh);
         } catch (error) {
           // Never fail the whole cadence because the NEXT week couldn't be
