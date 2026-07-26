@@ -61,7 +61,8 @@ export type DraftQueueCommand = {
   timezone: string;
 };
 
-export type QueuedDraftState = ScheduledDraftState & {
+export type QueuedDraftState = Omit<ScheduledDraftState, "scheduleStatus"> & {
+  scheduleStatus: "scheduled" | "publishing";
   timezone: string;
   postingSlotId: string;
   postingSlotOccurrenceDate: string;
@@ -267,7 +268,7 @@ export function createDraftOperationsClient(
       );
       return {
         scheduledAt: value.scheduledAt,
-        scheduleStatus: "scheduled",
+        scheduleStatus: value.scheduleStatus,
         planToPostOn: value.planToPostOn,
         firstComment: value.firstComment,
       };
@@ -293,7 +294,7 @@ export function createDraftOperationsClient(
       );
       return {
         scheduledAt: value.scheduledAt,
-        scheduleStatus: "scheduled",
+        scheduleStatus: value.scheduleStatus,
         planToPostOn: value.planToPostOn,
         firstComment: value.firstComment,
         timezone: value.timezone,

@@ -451,7 +451,7 @@ export function DraftEditorModal({
       const data = await draftOperations.queue(id, input);
       onMeta(id, {
         scheduledAt: data.scheduledAt,
-        scheduleStatus: "scheduled",
+        scheduleStatus: data.scheduleStatus,
         planToPostOn: data.planToPostOn,
         firstComment: data.firstComment,
         postingSlotId: data.postingSlotId,
@@ -2393,7 +2393,7 @@ function ScheduleRow({
       const data = result.value;
       onMeta(draft.id, {
         scheduledAt: data.scheduledAt,
-        scheduleStatus: "scheduled",
+        scheduleStatus: data.scheduleStatus,
         planToPostOn: data.planToPostOn,
         firstComment: data.firstComment ?? null,
         postingSlotId: data.postingSlotId ?? null,

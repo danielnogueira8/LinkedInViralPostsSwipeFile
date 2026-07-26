@@ -189,6 +189,32 @@ describe("Draft operations client", () => {
     });
   });
 
+  it("preserves a publishing queue booking returned after an idempotent retry", async () => {
+    const fetcher = vi.fn(async () =>
+      jsonResponse({
+        ok: true,
+        scheduledAt: "2026-08-03T09:30:00.000Z",
+        scheduleStatus: "publishing",
+        planToPostOn: "2026-08-03",
+        firstComment: null,
+        timezone: "Europe/Lisbon",
+        postingSlotId: "slot-1",
+        postingSlotOccurrenceDate: "2026-08-03",
+      }),
+    );
+    const client = createDraftOperationsClient(fetcher);
+
+    await expect(
+      client.queue("draft-1", {
+        firstComment: null,
+        timezone: "Europe/Lisbon",
+      }),
+    ).resolves.toMatchObject({
+      scheduleStatus: "publishing",
+      postingSlotId: "slot-1",
+    });
+  });
+
   it("returns the canonical empty schedule after unscheduling", async () => {
     const fetcher = vi.fn(async () => jsonResponse({ ok: true }));
     const client = createDraftOperationsClient(fetcher);

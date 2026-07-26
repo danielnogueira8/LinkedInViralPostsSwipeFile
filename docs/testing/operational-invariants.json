@@ -82,6 +82,15 @@
       ]
     },
     {
+      "id": "posting-queue-slot-claim",
+      "boundary": "recurring slot assignment and removal",
+      "invariant": "A queue assignment cannot attach a draft to a soft-deleted recurring slot, and removing an occupied slot preserves its scheduled instant as a one-off schedule.",
+      "evidence": [
+        { "path": "evals/data/posting-queue-migration.test.ts", "test": "serializes queue claims with recurring slot removal" },
+        { "path": "evals/data/posting-queue-migration.test.ts", "test": "preserves scheduled instants when a slot is removed" }
+      ]
+    },
+    {
       "id": "cron-partial-failure-alert",
       "boundary": "cron recovery and alerting",
       "invariant": "Recovery failures fail closed, emit an alert, and never report stranded work as successful.",
