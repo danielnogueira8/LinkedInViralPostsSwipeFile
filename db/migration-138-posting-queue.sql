@@ -143,8 +143,11 @@ language sql stable security definer set search_path = public as $$
       slot.timezone
     from posting_slots slot
     cross join lateral (
-      select ((p_after at time zone slot.timezone)::date + offset) as occurrence_date
-      from generate_series(0, 730) offset
+      select (
+        (p_after at time zone slot.timezone)::date
+        + generated_day.day_number
+      ) as occurrence_date
+      from generate_series(0, 730) as generated_day(day_number)
     ) dates
     where slot.workspace_id = p_workspace_id
       and slot.deleted_at is null
