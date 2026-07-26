@@ -2,6 +2,10 @@ import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
 
 const sql = readFileSync("db/migration-138-posting-queue.sql", "utf8");
+const allocatorFix = readFileSync(
+  "db/migration-140-posting-queue-allocator.sql",
+  "utf8",
+);
 
 describe("posting queue migration", () => {
   test("enforces slot limits, unique local times, and concurrent occurrence claims", () => {
@@ -23,5 +27,12 @@ describe("posting queue migration", () => {
   test("normalizes DST gaps and records a server log", () => {
     expect(sql).toContain("posting_slot_utc_instant");
     expect(sql).toContain("raise log");
+  });
+
+  test("walks weekly occurrences only until each slot has an opening", () => {
+    expect(allocatorFix).toContain("with recursive candidates");
+    expect(allocatorFix).toContain("occurrence_date + 7");
+    expect(allocatorFix).not.toContain("generate_series(0, 730)");
+    expect(allocatorFix).not.toMatch(/\+\s+offset\b/i);
   });
 });
