@@ -133,6 +133,15 @@ export async function purgeWorkspaceData(
       workspaceId,
     ),
   );
+  await wipe("workspace_learning_snapshots", async () => {
+    const { data, error } = await sb.rpc("purge_workspace_learning", {
+      p_workspace_id: workspaceId,
+    });
+    return {
+      count: typeof data === "number" ? data : null,
+      error,
+    };
+  });
   await wipe("draft_edit_events", () =>
     del("draft_edit_events").eq("workspace_id", workspaceId),
   );

@@ -61,4 +61,35 @@ describe("working-summary sweep cursor", () => {
     expect(resumed.deadlineHit).toBe(false);
     expect(resumedVisited).toEqual(["ws-c", "ws-d", "ws-a", "ws-b"]);
   });
+
+  test("advances past a poison workspace without starving later work", async () => {
+    const saveCursor = vi.fn(async () => undefined);
+    const visited: string[] = [];
+    const result = await runWorkingSummarySweep({
+      workspaces: ["ws-a", "ws-b", "ws-c"],
+      cursor: null,
+      concurrency: 2,
+      refresh: async (workspaceId) => {
+        visited.push(workspaceId);
+        if (workspaceId === "ws-a") throw new Error("learning failed");
+        return true;
+      },
+      saveCursor,
+    });
+
+    expect(result).toMatchObject({
+      processed: 3,
+      generated: 2,
+      failed: 1,
+      failures: [
+        {
+          workspaceId: "ws-a",
+          message: "learning failed",
+        },
+      ],
+      nextCursor: "ws-a",
+    });
+    expect(visited).toEqual(["ws-a", "ws-b", "ws-c"]);
+    expect(saveCursor).toHaveBeenLastCalledWith("ws-a");
+  });
 });

@@ -17,7 +17,25 @@ export async function GET(req: Request) {
   try {
     const summary = await runWeeklyUserWorkingSummaries();
     console.log(JSON.stringify({ user_working_summaries_cron: summary }));
-    return NextResponse.json({ ok: true, ...summary });
+    if (summary.failed > 0) {
+      const detail = summary.failures
+        .map(
+          (failure) =>
+            `${failure.workspaceId}: ${failure.message}`,
+        )
+        .join("; ");
+      await postCronAlert(
+        { cron: "user-working-summaries" },
+        new Error(
+          `${summary.failed} Workspace Learning refreshes failed: ${detail}`,
+        ),
+      );
+    }
+    return NextResponse.json({
+      ok: true,
+      ...summary,
+      failures: undefined,
+    });
   } catch (error) {
     console.error(
       "user working summaries cron failed",

@@ -164,6 +164,10 @@ describe("purgeWorkspaceData — coverage + scoping", () => {
       name: "purge_content_outcomes",
       args: { p_workspace_id: WS },
     });
+    expect(rpcCalls).toContainEqual({
+      name: "purge_workspace_learning",
+      args: { p_workspace_id: WS },
+    });
   });
 
   test("NEVER deletes from the shared global catalog", async () => {

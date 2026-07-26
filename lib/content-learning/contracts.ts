@@ -458,6 +458,14 @@ export type LearningSignalKind = z.infer<
 export const learningEvidenceSchema = z.discriminatedUnion("kind", [
   z
     .object({
+      kind: z.literal("voice_exemplar"),
+      voiceProfileId: idSchema,
+      exemplarIndex: z.number().int().nonnegative(),
+      generatedAt: timestampSchema,
+    })
+    .strict(),
+  z
+    .object({
       kind: z.literal("lineage"),
       lineageId: idSchema,
       artifactId: idSchema,
@@ -474,7 +482,7 @@ export const learningEvidenceSchema = z.discriminatedUnion("kind", [
     .object({
       kind: z.literal("publication"),
       draftId: idSchema,
-      publishedAt: timestampSchema,
+      publishedAt: timestampSchema.nullable(),
     })
     .strict(),
   z
@@ -530,7 +538,7 @@ export const workspaceLearningModelSchema = z
     publishedPostCount: z.number().int().min(0),
     calculationVersion: z.string().trim().min(1).max(120),
     inputFingerprint: z.string().trim().min(1).max(200),
-    signals: z.array(learningSignalSchema),
+    signals: z.array(learningSignalSchema).max(100),
     calculatedAt: timestampSchema,
     createdAt: timestampSchema,
   })
