@@ -60,6 +60,10 @@ import {
   discoveryThresholdFilter,
   getDiscoveryThresholds,
 } from "@/lib/discovery-thresholds";
+import {
+  diverseCreatorResults,
+  diversityCandidateLimit,
+} from "@/lib/mcp/creator-diversity";
 
 const POST_TYPES = ["regular", "lead_magnet"] as const;
 const SORT_COLUMN = {
@@ -74,8 +78,8 @@ const SORT_COLUMN = {
 // ~10K tokens per result re-sent every tool round. Kept in sync with that file.
 // Only fields an LLM reasons over — kept in sync with the in-app agent's
 // POST_COLS (lib/agent/tools.ts). Trimmed the fields the model never consumes
-// and that downstream code re-fetches on its own (account_id,
-// accounts.id/handle/profile_pic_url, scraped_at [top-level scrape date is
+// and that downstream code re-fetches on its own (accounts.id/handle/profile_pic_url,
+// scraped_at [top-level scrape date is
 // surfaced separately]). is_viral IS selected but stripped by normalizeEmbed
 // before the row reaches the model — it is the resilient viral gate, not a
 // model-facing field. Keeps text + engagement + author name/niche + post_url/id.
@@ -91,13 +95,13 @@ const SORT_COLUMN = {
 // .eq("workspace_post_classification.workspace_id", workspaceId). Kept in sync
 // with the in-app agent's POST_COLS (lib/agent/tools.ts).
 const POST_COLS =
-  "id, text, post_url, posted_at, reactions, comments, reposts, media_type, post_type, is_viral, accounts!inner(name, niche), workspace_post_classification(is_viral)";
+  "id, account_id, text, post_url, posted_at, reactions, comments, reposts, media_type, post_type, is_viral, accounts!inner(name, niche), workspace_post_classification(is_viral)";
 
 // Visual URLs can be large and are rarely needed to answer a broad research
 // query. Fetch them only when the caller is looking at one post, or has
 // explicitly asked to see the post's visual asset.
 const POST_WITH_VISUAL_COLS =
-  "id, text, post_url, posted_at, reactions, comments, reposts, media_type, post_type, media_urls, visual_kind, is_viral, accounts!inner(name, niche), workspace_post_classification(is_viral)";
+  "id, account_id, text, post_url, posted_at, reactions, comments, reposts, media_type, post_type, media_urls, visual_kind, is_viral, accounts!inner(name, niche), workspace_post_classification(is_viral)";
 
 const NO_ROWS_SENTINEL = "00000000-0000-0000-0000-000000000000";
 
@@ -136,21 +140,28 @@ function passesWorkspaceViral<T extends WpcEmbed>(row: T): boolean {
   return first ? first.is_viral === true : true;
 }
 
-// Drops the workspace_post_classification join wrapper and the is_viral gate
-// column (both query filters, not fields the model needs) and unwraps the
-// accounts embed.
+// Drops the workspace_post_classification join wrapper, account_id diversity
+// key, and is_viral gate column (all query internals, not fields the model
+// needs), then unwraps the accounts embed.
 function normalizeEmbed<
   T extends { accounts: unknown; workspace_post_classification?: unknown },
 >(p: T, includeVisual = false) {
   const {
     workspace_post_classification: _wpc,
     is_viral: _isViral,
+    account_id: _accountId,
     media_urls,
     visual_kind,
     ...rest
-  } = p as T & { media_urls?: unknown; visual_kind?: unknown; is_viral?: unknown };
+  } = p as T & {
+    account_id?: unknown;
+    media_urls?: unknown;
+    visual_kind?: unknown;
+    is_viral?: unknown;
+  };
   void _wpc;
   void _isViral;
+  void _accountId;
   const post = {
     ...rest,
     accounts: Array.isArray(p.accounts) ? (p.accounts[0] ?? null) : p.accounts,
@@ -394,7 +405,7 @@ export function registerSwipeTools(server: McpServer) {
           .eq("workspace_post_classification.workspace_id", workspaceId)
           .is("accounts.archived_at", null)
           .order(sortCol, { ascending, nullsFirst: false })
-          .limit(limit);
+          .limit(diversityCandidateLimit(limit));
 
         if (args.niche) q = q.eq("accounts.niche", args.niche);
         const sinceIso = sinceCutoff(args.since);
@@ -409,8 +420,12 @@ export function registerSwipeTools(server: McpServer) {
 
         const { data, error } = await q;
         if (error) return dbErrorContent("search_viral_posts", error);
-        const posts = (data ?? [])
-          .filter(passesWorkspaceViral)
+        const candidates = (data ?? []).filter(passesWorkspaceViral);
+        const posts = diverseCreatorResults(
+          candidates,
+          limit,
+          (post) => String(post.account_id ?? post.id),
+        )
           .map((post) => normalizeEmbed(post, includeVisual));
         return includeVisual
           ? await postContentWithRenderedImages({ ok: true, count: posts.length, posts }, posts)

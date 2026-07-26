@@ -86,6 +86,37 @@ afterEach(() => {
 });
 
 describe("MCP post visual assets", () => {
+  test("diversifies search results by creator before repeating one", async () => {
+    const rows = [
+      { ...POST, id: "a1", account_id: "a", reactions: 1_000 },
+      { ...POST, id: "a2", account_id: "a", reactions: 900 },
+      { ...POST, id: "b1", account_id: "b", reactions: 800 },
+      { ...POST, id: "c1", account_id: "c", reactions: 700 },
+    ];
+    dbRef.current = makeFakeSupabase({ posts: { rows } });
+
+    const result = json(
+      await tools().search_viral_posts(
+        { limit: 3, sort: "reactions" },
+        extra(),
+      ),
+    );
+
+    expect(
+      (result.posts as Array<{ id: string }>).map((post) => post.id),
+    ).toEqual(["a1", "b1", "c1"]);
+    expect(result.posts).toEqual([
+      expect.not.objectContaining({ account_id: expect.anything() }),
+      expect.not.objectContaining({ account_id: expect.anything() }),
+      expect.not.objectContaining({ account_id: expect.anything() }),
+    ]);
+    expect(
+      queryFor(dbRef.current, "posts")?.filters.find(
+        (filter) => filter.method === "limit",
+      )?.args[0],
+    ).toBe(12);
+  });
+
   test("keeps broad searches lean unless the caller explicitly requests visuals", async () => {
     dbRef.current = makeFakeSupabase({ posts: { rows: [POST] } });
     const fetchImage = stubImageFetch();
