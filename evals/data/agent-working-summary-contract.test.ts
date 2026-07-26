@@ -18,17 +18,19 @@ describe("Your Agent working-summary wiring", () => {
     expect(summary).toContain("The formats carrying them");
     expect(summary).toContain("The hooks stopping the scroll");
     expect(summary).toMatch(
-      /Topics:\s*\{[\s\S]*?icon: BookOpenCheck,[\s\S]*?\},/,
+      /topic:\s*\{[\s\S]*?icon: BookOpenCheck,[\s\S]*?\},/,
     );
     expect(summary).toMatch(
-      /Formats:\s*\{[\s\S]*?icon: LayoutTemplate,[\s\S]*?\},/,
+      /format:\s*\{[\s\S]*?icon: LayoutTemplate,[\s\S]*?\},/,
     );
     expect(summary).toMatch(
-      /Hooks:\s*\{[\s\S]*?icon: FishingHook,[\s\S]*?\},/,
+      /hook:\s*\{[\s\S]*?icon: FishingHook,[\s\S]*?\},/,
     );
-    expect(summary).toContain("Best-performing hook");
+    expect(summary).toContain("Best-performing example");
     expect(summary).toContain("Example hook");
-    expect(summary).toContain("coerceStoredWorkingSummary(data.summary)");
+    expect(summary).toContain(
+      "coerceWorkspaceLearningSummaryView(data.summary)",
+    );
     expect(briefing.lastIndexOf("<AgentWorkingSummary")).toBeGreaterThan(
       briefing.indexOf("Model recently viral posts"),
     );
@@ -37,10 +39,22 @@ describe("Your Agent working-summary wiring", () => {
   test("the authenticated endpoint uses the shared persisted weekly analysis", () => {
     const route = read("app/api/agent/working-summary/route.ts");
     expect(route).toContain("scopedSupabase");
-    expect(route).toContain("readStoredUserWorkingSummary");
-    expect(route.indexOf("readStoredUserWorkingSummary(")).toBeLessThan(
-      route.indexOf("getUserWorkingSummary("),
+    expect(route).toContain("createWorkspaceLearningStore");
+    expect(route).toContain("store.refresh(sb.workspaceId, {");
+    expect(route).toContain('mode: "active"');
+    expect(route).not.toContain("getUserWorkingSummary");
+  });
+
+  test("Cowork retrieves the same active evidence model", () => {
+    const context = read("lib/agent/turn/context.ts");
+    const loader = read(
+      "lib/content-learning/workspace-learning-context.ts",
     );
+    expect(context).toContain("loadWorkspaceLearningBlock");
+    expect(context).not.toContain("loadPostPerformanceBlock");
+    expect(loader).toContain("createWorkspaceLearningStore");
+    expect(loader).toContain('model?.status === "active"');
+    expect(loader).toContain("renderWorkspaceLearningBlock(model)");
   });
 
   test("a resumable daily sweep keeps each analysis on a weekly TTL", () => {

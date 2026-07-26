@@ -126,7 +126,7 @@ export type TurnSetupState = {
     creatorName: string;
   } | null;
   feedbackMemory: ContentFeedback[];
-  postPerformanceBlock: string;
+  workspaceLearningBlock: string;
   preferences: ContentPreference[];
   priorPostDrafts: RecentDraft[];
   preloadedVoiceResult: ToolResult | null;
@@ -208,7 +208,7 @@ export type TurnExecuteContext = Pick<
   | "creatorStyleBlock"
   | "appliedCreatorStyle"
   | "feedbackMemory"
-  | "postPerformanceBlock"
+  | "workspaceLearningBlock"
   | "preferences"
   | "priorPostDrafts"
   | "preloadedVoiceResult"

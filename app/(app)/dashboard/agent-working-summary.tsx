@@ -8,39 +8,56 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import {
-  coerceStoredWorkingSummary,
-  WORKING_SUMMARY_CATEGORIES,
-  type UserWorkingSummary,
-  type UserWorkingSummaryCategory,
-} from "@/lib/agent-loop/user-working-summary-policy";
+  coerceWorkspaceLearningSummaryView,
+  WORKSPACE_LEARNING_DISPLAY_KINDS,
+  type WorkspaceLearningDisplayKind,
+  type WorkspaceLearningSignalView,
+  type WorkspaceLearningSummaryView,
+} from "@/lib/content-learning/workspace-learning-presentation";
 
 const CATEGORY_DETAILS: Record<
-  UserWorkingSummaryCategory,
+  WorkspaceLearningDisplayKind,
   {
+    title: string;
     description: string;
     exampleLabel: string;
     icon: LucideIcon;
   }
 > = {
-  Topics: {
+  topic: {
+    title: "Topics",
     description: "The topics earning attention",
     exampleLabel: "Example topic",
     icon: BookOpenCheck,
   },
-  Formats: {
+  format: {
+    title: "Formats",
     description: "The formats carrying them",
     exampleLabel: "Example structure",
     icon: LayoutTemplate,
   },
-  Hooks: {
+  hook: {
+    title: "Hooks",
     description: "The hooks stopping the scroll",
     exampleLabel: "Example hook",
     icon: FishingHook,
   },
 };
 
+function signalLabel(
+  signal: WorkspaceLearningSignalView,
+  isVoiceBaseline: boolean,
+): string {
+  if (isVoiceBaseline) return "Voice pattern";
+  if (signal.outcomeEvidenceCount > 0) return "Outcome-backed";
+  if (signal.score >= 0.25) return "Strong signal";
+  if (signal.score > 0) return "Positive signal";
+  return "No clear winner yet";
+}
+
 export function AgentWorkingSummary() {
-  const [summary, setSummary] = useState<UserWorkingSummary | null>(null);
+  const [summary, setSummary] =
+    useState<WorkspaceLearningSummaryView | null>(null);
   const [loading, setLoading] = useState(true);
 
   const loadSummary = useCallback(async () => {
@@ -51,7 +68,7 @@ export function AgentWorkingSummary() {
       });
       const data = await response.json().catch(() => ({}));
       if (response.ok && data?.ok && data.summary) {
-        setSummary(coerceStoredWorkingSummary(data.summary));
+        setSummary(coerceWorkspaceLearningSummaryView(data.summary));
       }
     } catch {
       // The panel is additive; the rest of Your Agent stays usable.
@@ -74,7 +91,7 @@ export function AgentWorkingSummary() {
       >
         <div className="h-4 w-44 animate-pulse rounded bg-muted" />
         <div className="mt-3 grid gap-3 md:grid-cols-3">
-          {WORKING_SUMMARY_CATEGORIES.map((category) => (
+          {WORKSPACE_LEARNING_DISPLAY_KINDS.map((category) => (
             <div
               key={category}
               className="h-40 animate-pulse rounded-xl bg-muted/70"
@@ -86,7 +103,7 @@ export function AgentWorkingSummary() {
   }
   if (!summary) return null;
 
-  const isVoiceBaseline = summary.source === "voice_profile";
+  const isVoiceBaseline = summary.sourceMode === "voice_exemplars";
   return (
     <section
       data-testid="agent-working-summary"
@@ -108,26 +125,26 @@ export function AgentWorkingSummary() {
           </div>
           <p className="mt-1 max-w-3xl text-xs leading-5 text-muted-foreground">
             {isVoiceBaseline
-              ? `Grounded in ${summary.analyzedPostCount} saved source posts from the ${summary.sourcePostCount} posts used to build your Voice. We’ll switch to live published-post performance once you have 5 posts.`
-              : `Based on your latest ${summary.analyzedPostCount} published posts and the LinkedIn metrics currently available.`}
+              ? `Grounded in ${summary.voiceSourcePostCount ?? summary.analyzedPostCount} source posts used to build your Voice. These are patterns, not performance claims. We’ll switch to published evidence once you have 5 posts.`
+              : `Based on ${summary.analyzedPostCount} of your published posts, with available performance, revision, and outcome evidence.`}
           </p>
         </div>
         <p className="shrink-0 text-[10px] text-muted-foreground">
           {isVoiceBaseline ? "Updates with your Voice" : "Analyzed weekly"}
           {" · "}
-          {new Date(summary.analyzedAt).toLocaleDateString("en-US", {
+          {new Date(summary.calculatedAt).toLocaleDateString("en-US", {
             month: "short",
             day: "numeric",
           })}
         </p>
       </div>
       <ul className="mt-4 grid gap-3 md:grid-cols-3">
-        {summary.insights.map((insight) => {
-          const details = CATEGORY_DETAILS[insight.label];
+        {summary.categories.map((category) => {
+          const details = CATEGORY_DETAILS[category.kind];
           const Icon = details.icon;
           return (
             <li
-              key={insight.label}
+              key={category.kind}
               className="flex min-h-44 flex-col rounded-xl border border-border bg-card p-4"
             >
               <div className="flex items-center gap-2.5">
@@ -136,37 +153,63 @@ export function AgentWorkingSummary() {
                 </span>
                 <div>
                   <h3 className="text-sm font-semibold text-foreground">
-                    {insight.label}
+                    {details.title}
                   </h3>
                   <p className="text-[11px] text-muted-foreground">
                     {details.description}
                   </p>
                 </div>
               </div>
-              <p className="mt-4 text-base font-semibold leading-6 text-foreground">
-                {insight.finding}
-              </p>
-              {insight.example ? (
-                <div className="mt-4 rounded-lg bg-muted/70 px-3 py-2.5">
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                    {insight.label === "Hooks" &&
-                    insight.exampleKind === "best_performing"
-                      ? "Best-performing hook"
-                      : details.exampleLabel}
-                  </p>
-                  <p className="mt-1 text-xs font-medium leading-5 text-foreground">
-                    “{insight.example}”
-                  </p>
-                </div>
-              ) : null}
-              <div className="mt-auto border-t border-border pt-3">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  {isVoiceBaseline ? "Source signal" : "Performance signal"}
+              {category.signals.length > 0 ? (
+                <ol className="mt-4 space-y-3">
+                  {category.signals.map((signal) => (
+                    <li
+                      key={signal.label}
+                      className="border-t border-border pt-3 first:border-0 first:pt-0"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="text-sm font-semibold leading-5 text-foreground">
+                          {signal.label}
+                        </p>
+                        <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[9px] font-semibold text-muted-foreground">
+                          {signalLabel(signal, isVoiceBaseline)}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-[11px] leading-4 text-muted-foreground">
+                        Seen in {signal.sampleSize}{" "}
+                        {isVoiceBaseline ? "source" : "published"}{" "}
+                        {signal.sampleSize === 1 ? "post" : "posts"}
+                        {!isVoiceBaseline &&
+                        signal.performanceEvidenceCount > 0
+                          ? ` · ${signal.performanceEvidenceCount} measured`
+                          : ""}
+                        {!isVoiceBaseline &&
+                        signal.outcomeEvidenceCount > 0
+                          ? ` · ${signal.outcomeEvidenceCount} outcome`
+                          : ""}
+                      </p>
+                      {signal.example ? (
+                        <div className="mt-2 rounded-lg bg-muted/70 px-3 py-2">
+                          <p className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
+                            {category.kind === "hook" &&
+                            !isVoiceBaseline &&
+                            signal.performanceEvidenceCount > 0
+                              ? "Best-performing example"
+                              : details.exampleLabel}
+                          </p>
+                          <p className="mt-1 line-clamp-3 text-[11px] font-medium leading-4 text-foreground">
+                            “{signal.example}”
+                          </p>
+                        </div>
+                      ) : null}
+                    </li>
+                  ))}
+                </ol>
+              ) : (
+                <p className="mt-4 text-xs leading-5 text-muted-foreground">
+                  Not enough evidence yet.
                 </p>
-                <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                  {insight.evidence}
-                </p>
-              </div>
+              )}
             </li>
           );
         })}
