@@ -82,6 +82,8 @@ const draftApiRecordSchema = z
     first_comment: z.string().nullable().optional(),
     published_at: z.string().nullable().optional(),
     publish_error: z.string().nullable().optional(),
+    posting_slot_id: z.string().nullable().optional(),
+    posting_slot_occurrence_date: z.string().nullable().optional(),
   })
   .passthrough();
 const createResponseSchema = z.discriminatedUnion("ok", [

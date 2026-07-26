@@ -9,6 +9,7 @@ import { copyToClipboard } from "@/lib/clipboard";
 import { draftEgressBody } from "@/lib/markdown/mode";
 import { LINKEDIN_MAX_CHARS } from "@/lib/linkedin-format";
 import { localDateFromDatetimeInput } from "@/lib/schedule-local-date";
+import { formatScheduleToast } from "@/lib/posting-queue";
 import {
   draftOperations,
   type DraftScheduleCommand,
@@ -39,6 +40,7 @@ import {
   Images,
   HardDrive,
   Magnet,
+  Plus,
 } from "lucide-react";
 import {
   Dialog,
@@ -407,6 +409,8 @@ export function DraftEditorModal({
         scheduleStatus: "scheduled",
         planToPostOn: data.planToPostOn,
         firstComment: data.firstComment,
+        postingSlotId: null,
+        postingSlotOccurrenceDate: null,
         publishError: null,
       });
       toast.success("Post created and scheduled on LinkedIn.");
@@ -2147,6 +2151,7 @@ function ScheduleRow({
 }) {
   const router = useRouter();
   const [connected, setConnected] = useState<boolean | null>(null);
+  const [queueAvailable, setQueueAvailable] = useState<boolean | null>(null);
   const [when, setWhen] = useState(isoToLocalInput(draft?.scheduledAt));
   const [firstComment, setFirstComment] = useState(draft?.firstComment ?? "");
   const [busy, setBusy] = useState(false);
@@ -2210,6 +2215,26 @@ function ScheduleRow({
     void loadConn();
   }, [loadConn]);
 
+  const loadQueueAvailability = useCallback(async () => {
+    try {
+      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+      const data = await fetchJson<{ slots: unknown[] }>(
+        `/api/posting-slots?timezone=${encodeURIComponent(timezone)}`,
+        { cache: "no-store" },
+      );
+      setQueueAvailable(data.slots.length > 0);
+    } catch {
+      setQueueAvailable(false);
+    }
+  }, []);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void loadQueueAvailability();
+    window.addEventListener("posting-queue-updated", loadQueueAvailability);
+    return () =>
+      window.removeEventListener("posting-queue-updated", loadQueueAvailability);
+  }, [loadQueueAvailability]);
+
   const schedule = async () => {
     const iso = localInputToIso(when);
     const planToPostOn = localDateFromDatetimeInput(when);
@@ -2219,7 +2244,13 @@ function ScheduleRow({
     }
     setBusy(true);
     try {
-      const input = { scheduledAt: iso, planToPostOn, firstComment: firstComment.trim() || null };
+      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+      const input = {
+        scheduledAt: iso,
+        planToPostOn,
+        timezone,
+        firstComment: firstComment.trim() || null,
+      };
       if (!draft) {
         await onCreateAndSchedule?.(input);
         return;
@@ -2232,9 +2263,68 @@ function ScheduleRow({
         firstComment: data.firstComment,
         publishError: null,
       });
-      toast.success("Scheduled to publish on LinkedIn.");
+      window.dispatchEvent(new Event("posting-queue-updated"));
+      toast.success(
+        formatScheduleToast({
+          scheduledAt: data.scheduledAt,
+          accountTimezone: timezone,
+          browserTimezone: timezone,
+          action: failed || draft.scheduleStatus === "scheduled" ? "rescheduled" : "scheduled",
+        }),
+      );
     } catch (e) {
       toast.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const addToQueue = async () => {
+    if (!draft) return;
+    setBusy(true);
+    try {
+      const response = await fetch(`/api/drafts/${draft.id}/queue`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          firstComment: firstComment.trim() || null,
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+        }),
+      });
+      const data = (await response.json()) as {
+        ok: boolean;
+        error?: string;
+        scheduledAt?: string;
+        planToPostOn?: string;
+        firstComment?: string | null;
+        timezone?: string;
+        postingSlotId?: string;
+        postingSlotOccurrenceDate?: string;
+      };
+      if (!response.ok || !data.ok || !data.scheduledAt || !data.planToPostOn) {
+        throw new Error(data.error || "Couldn't add this post to the queue.");
+      }
+      onMeta(draft.id, {
+        scheduledAt: data.scheduledAt,
+        scheduleStatus: "scheduled",
+        planToPostOn: data.planToPostOn,
+        firstComment: data.firstComment ?? null,
+        postingSlotId: data.postingSlotId ?? null,
+        postingSlotOccurrenceDate: data.postingSlotOccurrenceDate ?? null,
+        publishError: null,
+      });
+      window.dispatchEvent(new Event("posting-queue-updated"));
+      const browserTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+      toast.success(
+        formatScheduleToast({
+          scheduledAt: data.scheduledAt,
+          accountTimezone: data.timezone || browserTimezone,
+          browserTimezone,
+          action: failed ? "rescheduled" : "scheduled",
+        }),
+      );
+    } catch (error) {
+      toast.error((error as Error).message);
     } finally {
       setBusy(false);
     }
@@ -2245,7 +2335,12 @@ function ScheduleRow({
     setBusy(true);
     try {
       const next = await draftOperations.unschedule(draft.id);
-      onMeta(draft.id, next);
+      onMeta(draft.id, {
+        ...next,
+        postingSlotId: null,
+        postingSlotOccurrenceDate: null,
+      });
+      window.dispatchEvent(new Event("posting-queue-updated"));
       toast.success("Unscheduled.");
     } catch (e) {
       toast.error((e as Error).message);
@@ -2365,14 +2460,31 @@ function ScheduleRow({
           aria-label="First comment"
           title="Optional: add a first comment after publishing. Useful for links or extra context."
         />
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <span className={cn("text-xs", overLimit ? "text-destructive" : "text-muted-foreground")}>
             {publishBody.length}/{LINKEDIN_MAX_CHARS}
             {overLimit && ` — trim ${publishBody.length - LINKEDIN_MAX_CHARS}`}
           </span>
           <Button
             size="sm"
+            variant="outline"
             className="ml-auto gap-1.5"
+            onClick={addToQueue}
+            disabled={busy || mediaUploading || overLimit || !draft || queueAvailable !== true}
+            title={
+              !draft
+                ? "Save this post before adding it to the queue."
+                : queueAvailable === false
+                  ? "Add a recurring posting slot above the Posts filters first."
+                  : "Schedule in the earliest open recurring slot."
+            }
+          >
+            {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+            Add to Queue
+          </Button>
+          <Button
+            size="sm"
+            className="gap-1.5"
             onClick={schedule}
             disabled={busy || mediaUploading || overLimit || mediaTooLate || !when}
             title="Schedule this post to publish on LinkedIn at the selected time."

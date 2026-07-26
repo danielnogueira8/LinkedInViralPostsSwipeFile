@@ -10,7 +10,7 @@
 
 // The chat_artifacts columns page.tsx selects. Keep in sync with the SELECT.
 export const REVIEW_DRAFT_COLS =
-  "id, title, body, meta, kind, status, plan_to_post_on, chat_id, created_at, scheduled_at, schedule_status, first_comment, published_at, publish_error, media_attachments";
+  "id, title, body, meta, kind, status, plan_to_post_on, chat_id, created_at, scheduled_at, schedule_status, first_comment, published_at, publish_error, posting_slot_id, posting_slot_occurrence_date, media_attachments";
 
 export type ReviewDraftRow = {
   id: string;
@@ -27,6 +27,8 @@ export type ReviewDraftRow = {
   first_comment: string | null;
   published_at: string | null;
   publish_error: string | null;
+  posting_slot_id: string | null;
+  posting_slot_occurrence_date: string | null;
   media_attachments?: unknown;
 };
 

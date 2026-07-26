@@ -26,6 +26,8 @@ export type Draft = {
   firstComment?: string | null;
   publishedAt?: string | null;
   publishError?: string | null;
+  postingSlotId?: string | null;
+  postingSlotOccurrenceDate?: string | null;
   mediaAttachments?: PostMediaAttachment[];
   leadMagnet?: DraftLeadMagnetContext | null;
   meta?: Record<string, unknown> | null;
@@ -47,6 +49,8 @@ export type DraftViewRow = {
   first_comment?: string | null;
   published_at?: string | null;
   publish_error?: string | null;
+  posting_slot_id?: string | null;
+  posting_slot_occurrence_date?: string | null;
 };
 
 /** Convert either a board query row or a drafts API row into one client shape. */
@@ -93,5 +97,9 @@ export function normalizeDraft(row: DraftViewRow): Draft {
   if ("first_comment" in row) draft.firstComment = row.first_comment ?? null;
   if ("published_at" in row) draft.publishedAt = row.published_at ?? null;
   if ("publish_error" in row) draft.publishError = row.publish_error ?? null;
+  if ("posting_slot_id" in row) draft.postingSlotId = row.posting_slot_id ?? null;
+  if ("posting_slot_occurrence_date" in row) {
+    draft.postingSlotOccurrenceDate = row.posting_slot_occurrence_date ?? null;
+  }
   return draft;
 }
