@@ -10,7 +10,6 @@ import {
 import {
   GENERIC_WEEK_PROMPTS,
   pickNextGenericPrompt,
-  weekStart,
   rollingWindowWeekStarts,
 } from "@/lib/agent-loop/week-plan";
 import {
@@ -20,8 +19,8 @@ import {
   weekPlanLearningSource,
 } from "@/lib/agent-loop/week-plan-learning";
 import {
-  loadStoredWeekPlan,
   mutateStoredWeekPlanItemAcross,
+  resolveStoredWeekPlanItemAcross,
   type StoredWeekPlanItem,
 } from "@/lib/agent-loop/week-plan-store";
 import { loadActiveWorkspaceLearning } from "@/lib/content-learning/workspace-learning-context";
@@ -158,13 +157,36 @@ export async function POST(
   try {
     const { id } = await params;
     const sb = await scopedSupabase();
-    const currentWeek = weekStart();
-
-    const plan = await loadStoredWeekPlan(sb.raw, sb.workspaceId, currentWeek);
-    const current = plan?.items.find((item) => item.id === id) ?? null;
-    if (!current || current.status !== "planned") {
+    const visibleWeeks = rollingWindowWeekStarts();
+    const resolved = await resolveStoredWeekPlanItemAcross(
+      sb.raw,
+      sb.workspaceId,
+      visibleWeeks,
+      id,
+    );
+    if (!resolved) {
       return NextResponse.json(
-        { ok: false, error: "This card is no longer available to refresh." },
+        {
+          ok: false,
+          error: "This card changed since your week loaded. Refresh the cadence to see the latest card.",
+          recovery: "reload_week_plan",
+        },
+        { status: 404 },
+      );
+    }
+    const current = resolved.item;
+    if (current.status !== "planned") {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            current.status === "drafted"
+              ? "This card already has a draft and can no longer be replaced."
+              : current.status === "drafting"
+                ? "This card is currently being drafted and cannot be replaced yet."
+                : "This card is no longer active. Refresh the cadence to continue.",
+          recovery: "reload_week_plan",
+        },
         { status: 409 },
       );
     }
@@ -180,7 +202,7 @@ export async function POST(
         sb.raw,
         sb.workspaceId,
         current.opportunity?.is_lead_magnet === true,
-        usedOpportunityIds(plan!.items),
+        usedOpportunityIds(resolved.plan.items),
         learning,
       );
       if (!candidate) {
@@ -197,7 +219,7 @@ export async function POST(
     } else {
       nextPrompt = pickNextGenericPrompt({
         current: current.prompt ?? "",
-        usedPrompts: plan!.items
+        usedPrompts: resolved.plan.items
           .filter((item) => item.kind === "generic" && item.prompt)
           .map((item) => item.prompt as string),
         prompts: rankGenericWeekPrompts(
@@ -219,7 +241,7 @@ export async function POST(
     const updated = await mutateStoredWeekPlanItemAcross(
       sb.raw,
       sb.workspaceId,
-      rollingWindowWeekStarts(),
+      visibleWeeks,
       id,
       (item) => {
         if (item.status !== "planned") return null;
@@ -254,7 +276,11 @@ export async function POST(
     );
     if (!updated) {
       return NextResponse.json(
-        { ok: false, error: "This card is no longer available to refresh." },
+        {
+          ok: false,
+          error: "This card changed while it was refreshing. We can reload the cadence and try the latest version.",
+          recovery: "reload_week_plan",
+        },
         { status: 409 },
       );
     }

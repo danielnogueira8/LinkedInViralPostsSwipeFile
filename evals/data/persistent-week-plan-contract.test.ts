@@ -219,10 +219,17 @@ describe("persistent weekly plan contract", () => {
     );
     expect(rerollRoute).toContain("opportunityIsLeadMagnet(row, leadMagnetPostIdSet) === wantLeadMagnet");
     // Never re-picks an opportunity already showing elsewhere on the plan.
-    expect(rerollRoute).toContain("usedOpportunityIds(plan!.items)");
+    expect(rerollRoute).toContain("usedOpportunityIds(resolved.plan.items)");
     // Generic ("idea") slots swap prompts instead of opportunities.
     expect(rerollRoute).toContain("pickNextGenericPrompt(");
     expect(rerollRoute).toContain('item.status !== "planned"');
+    expect(rerollRoute).toContain("resolveStoredWeekPlanItemAcross");
+    expect(rerollRoute).toContain('recovery: "reload_week_plan"');
+    expect(briefing).toContain('data?.recovery === "reload_week_plan"');
+    expect(briefing).toContain("await loadWeekPlan()");
+    expect(rerollRoute).not.toContain(
+      "This card is no longer available to refresh.",
+    );
   });
 
   test("weekly recommendations use active learning as an explainable, overridable nudge", () => {
