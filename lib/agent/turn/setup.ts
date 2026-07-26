@@ -1292,7 +1292,7 @@ export async function setupChatTurn(
     creatorName: string;
   } | null = null;
   let feedbackMemory: ContentFeedback[] = [];
-  let postPerformanceBlock = "";
+  let workspaceLearningBlock = "";
   let preferences: ContentPreference[] = [];
   let priorPostDrafts: RecentDraft[] = [];
   let preloadedVoiceResult: ToolResult | null = null;
@@ -1370,7 +1370,7 @@ export async function setupChatTurn(
     creatorStyleBlock = turnContext.creatorStyleBlock;
     appliedCreatorStyle = turnContext.appliedCreatorStyle;
     feedbackMemory = turnContext.feedbackMemory;
-    postPerformanceBlock = turnContext.postPerformanceBlock;
+    workspaceLearningBlock = turnContext.workspaceLearningBlock;
     preferences = turnContext.preferences;
     priorPostDrafts = turnContext.priorPostDrafts;
     resolvedCustomSkills = turnContext.resolvedCustomSkills;
@@ -1676,7 +1676,7 @@ export async function setupChatTurn(
     creatorStyleBlock,
     appliedCreatorStyle,
     feedbackMemory,
-    postPerformanceBlock,
+    workspaceLearningBlock,
     preferences,
     priorPostDrafts,
     preloadedVoiceResult,

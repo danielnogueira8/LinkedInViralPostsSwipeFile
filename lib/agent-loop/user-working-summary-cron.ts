@@ -2,7 +2,6 @@ import { selectAllRows } from "@/lib/db-paginate";
 import { supabaseAdmin } from "@/lib/supabase";
 import { createWorkspaceLearningStore } from "@/lib/content-learning/workspace-learning";
 import { redactHighConfidenceLeaks } from "@/lib/agent/output-guard";
-import { getUserWorkingSummary } from "./user-working-summary";
 
 const CRON_STATE_WORKSPACE_ID = "__system__:user-working-summary";
 const CRON_CURSOR_KEY = "user_working_summary_cron_cursor_v1";
@@ -148,12 +147,11 @@ export async function runWorkingSummarySweep(input: {
 
 /**
  * The scheduler runs daily so a deadline-limited sweep can resume tomorrow,
- * while getUserWorkingSummary's seven-day TTL keeps the analysis itself weekly.
+ * while Workspace Learning's seven-day TTL keeps the analysis itself weekly.
  */
 export async function runWeeklyUserWorkingSummaries(opts: {
   concurrency?: number;
   startedAt?: number;
-  signal?: AbortSignal;
 } = {}) {
   const [workspaces, cursor] = await Promise.all([
     listWorkspacesForWorkingSummary(),
@@ -181,10 +179,7 @@ export async function runWeeklyUserWorkingSummaries(opts: {
           ? learningFailure
           : new Error("Workspace Learning refresh failed");
       }
-      const summary = await getUserWorkingSummary(db, workspaceId, {
-        signal: opts.signal,
-      });
-      return Boolean(learning || summary);
+      return Boolean(learning);
     },
     saveCursor: writeCronCursor,
   });

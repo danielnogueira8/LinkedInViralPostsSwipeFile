@@ -252,7 +252,7 @@ export type WriterInput = {
   preferences: PreferenceInput[];
   feedbackMemory: FeedbackInput[];
   /** Pre-rendered learnings from the workspace's own published-post analytics; "" when unavailable. */
-  postPerformanceBlock?: string;
+  workspaceLearningBlock?: string;
   priorPostDrafts: RecentDraft[];
   format?: NoModelFormat | null;
   customSkillBodies?: string[];
@@ -600,7 +600,7 @@ function compileMessages(
   const structureSkill = input.lean ? "" : POST_STRUCTURE_SKILL;
   const preferences = renderPreferencesBlock(input.preferences);
   const feedback = renderFeedbackMemoryBlock(input.feedbackMemory);
-  const postPerformance = input.postPerformanceBlock?.trim() ?? "";
+  const workspaceLearning = input.workspaceLearningBlock?.trim() ?? "";
   const format = formatBlock(input.format);
   const leadMagnet = input.leadMagnetBlock?.trim() ?? "";
   const creatorStyle = input.creatorStyleBlock?.trim() ?? "";
@@ -641,7 +641,7 @@ function compileMessages(
           creatorStyle,
           preferences,
           feedback,
-          postPerformance,
+          workspaceLearning,
         ]
           .filter(Boolean)
           .join("\n\n"),
@@ -694,7 +694,7 @@ function compileMessages(
           skills,
           preferences,
           feedback,
-          postPerformance,
+          workspaceLearning,
         ]
           .filter(Boolean)
           .join("\n\n"),
@@ -751,7 +751,7 @@ function compileMessages(
           skills,
           preferences,
           feedback,
-          postPerformance,
+          workspaceLearning,
         ]
           .filter(Boolean)
           .join("\n\n"),
@@ -801,7 +801,7 @@ function compileMessages(
           creatorStyle,
           preferences,
           feedback,
-          postPerformance,
+          workspaceLearning,
         ]
           .filter(Boolean)
           .join("\n\n"),
@@ -853,7 +853,7 @@ function compileMessages(
         creatorStyle,
         preferences,
         feedback,
-        postPerformance,
+        workspaceLearning,
       ]
         .filter(Boolean)
         .join("\n\n"),

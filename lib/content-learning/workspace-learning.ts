@@ -16,7 +16,52 @@ export const WORKSPACE_LEARNING_CALCULATION_VERSION =
   "workspace-learning-v1";
 export const WORKSPACE_LEARNING_REFRESH_MS =
   7 * 24 * 60 * 60 * 1_000;
+export const WORKSPACE_LEARNING_INELIGIBLE_CACHE_MS = 60_000;
 const PUBLISHED_SAMPLE_LIMIT = 50;
+const INELIGIBLE_CACHE_MAX_WORKSPACES = 500;
+
+type IneligibleCacheEntry = {
+  publishedPostCount: number;
+  expiresAt: number;
+};
+
+const ineligibleWorkspaces = new Map<string, IneligibleCacheEntry>();
+
+function cacheIneligibleWorkspace(
+  workspaceId: string,
+  publishedPostCount: number,
+  now: number,
+): void {
+  ineligibleWorkspaces.delete(workspaceId);
+  ineligibleWorkspaces.set(workspaceId, {
+    publishedPostCount,
+    expiresAt: now + WORKSPACE_LEARNING_INELIGIBLE_CACHE_MS,
+  });
+  while (
+    ineligibleWorkspaces.size > INELIGIBLE_CACHE_MAX_WORKSPACES
+  ) {
+    const oldest = ineligibleWorkspaces.keys().next().value;
+    if (typeof oldest !== "string") break;
+    ineligibleWorkspaces.delete(oldest);
+  }
+}
+
+function isRecentlyIneligible(
+  workspaceId: string,
+  publishedPostCount: number,
+  now: number,
+): boolean {
+  const cached = ineligibleWorkspaces.get(workspaceId);
+  if (
+    !cached ||
+    cached.expiresAt <= now ||
+    cached.publishedPostCount !== publishedPostCount
+  ) {
+    ineligibleWorkspaces.delete(workspaceId);
+    return false;
+  }
+  return true;
+}
 
 type LearningRow = {
   id: string;
@@ -815,6 +860,7 @@ export function createWorkspaceLearningStore(
           db,
           workspaceId,
         );
+        const asOfMs = Date.parse(asOf);
         const expectedSourceMode =
           publishedPostCount < 5
             ? "voice_exemplars"
@@ -823,17 +869,38 @@ export function createWorkspaceLearningStore(
           !options.force &&
           current?.status === targetStatus &&
           current.sourceMode === expectedSourceMode &&
-          Date.parse(asOf) - Date.parse(current.calculatedAt) <
+          asOfMs - Date.parse(current.calculatedAt) <
             WORKSPACE_LEARNING_REFRESH_MS
         ) {
           return current;
+        }
+        if (
+          !options.force &&
+          !current &&
+          isRecentlyIneligible(
+            workspaceId,
+            publishedPostCount,
+            asOfMs,
+          )
+        ) {
+          return null;
         }
         const calculated = await calculateSnapshot(
           db,
           workspaceId,
           asOf,
         );
-        if (!calculated) return current;
+        if (!calculated) {
+          if (!current) {
+            cacheIneligibleWorkspace(
+              workspaceId,
+              publishedPostCount,
+              asOfMs,
+            );
+          }
+          return current;
+        }
+        ineligibleWorkspaces.delete(workspaceId);
         const candidate = workspaceLearningModelSchema.parse({
           schemaVersion: CONTENT_LEARNING_SCHEMA_VERSION,
           id: "pending",

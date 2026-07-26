@@ -1,11 +1,21 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  getUserWorkingSummary: vi.fn(),
-  readStoredUserWorkingSummary: vi.fn(),
+  refresh: vi.fn(),
+  present: vi.fn(),
 }));
 
-vi.mock("@/lib/agent-loop/user-working-summary", () => mocks);
+vi.mock("@/lib/content-learning/workspace-learning", () => ({
+  createWorkspaceLearningStore: () => ({
+    refresh: mocks.refresh,
+  }),
+}));
+vi.mock(
+  "@/lib/content-learning/workspace-learning-presentation",
+  () => ({
+    presentWorkspaceLearning: mocks.present,
+  }),
+);
 vi.mock("@/lib/supabase-scoped", () => ({
   scopedSupabase: async () => ({
     raw: { name: "database" },
@@ -16,37 +26,45 @@ vi.mock("@/lib/supabase-scoped", () => ({
 const { GET } = await import("@/app/api/agent/working-summary/route");
 
 beforeEach(() => {
-  mocks.getUserWorkingSummary.mockReset();
-  mocks.readStoredUserWorkingSummary.mockReset();
+  mocks.refresh.mockReset();
+  mocks.present.mockReset();
 });
 
 describe("GET /api/agent/working-summary", () => {
-  test("returns the stored weekly summary without running analysis", async () => {
-    const stored = { version: 3, source: "published_posts" };
-    mocks.readStoredUserWorkingSummary.mockResolvedValue(stored);
+  test("resolves the active evidence-backed model through the freshness check", async () => {
+    const active = { id: "learning-1", status: "active" };
+    const summary = { sourceMode: "published_posts" };
+    mocks.refresh.mockResolvedValue(active);
+    mocks.present.mockReturnValue(summary);
 
     const response = await GET();
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
       ok: true,
-      summary: stored,
+      summary,
     });
-    expect(mocks.getUserWorkingSummary).not.toHaveBeenCalled();
+    expect(mocks.refresh).toHaveBeenCalledWith("workspace-1", {
+      mode: "active",
+    });
+    expect(mocks.present).toHaveBeenCalledWith(active);
   });
 
-  test("generates the first summary when no persisted analysis exists", async () => {
-    const generated = { version: 3, source: "voice_profile" };
-    mocks.readStoredUserWorkingSummary.mockResolvedValue(null);
-    mocks.getUserWorkingSummary.mockResolvedValue(generated);
+  test("activates the first model when no active snapshot exists", async () => {
+    const active = { id: "learning-2", status: "active" };
+    const summary = { sourceMode: "voice_exemplars" };
+    mocks.refresh.mockResolvedValue(active);
+    mocks.present.mockReturnValue(summary);
 
     const response = await GET();
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
       ok: true,
-      summary: generated,
+      summary,
     });
-    expect(mocks.getUserWorkingSummary).toHaveBeenCalledTimes(1);
+    expect(mocks.refresh).toHaveBeenCalledWith("workspace-1", {
+      mode: "active",
+    });
   });
 });

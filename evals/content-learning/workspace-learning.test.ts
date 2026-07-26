@@ -339,4 +339,67 @@ describe("deterministic Workspace Learning calculator", () => {
       }),
     );
   });
+
+  test("briefly caches an unchanged ineligible workspace without hiding a new fifth post", async () => {
+    const emptySnapshot = chain({ data: null, error: null });
+    const missingVoice = chain({ data: null, error: null });
+    let publishedCount = 0;
+    const from = vi.fn((table: string) => {
+      if (table === "workspace_learning_snapshots") {
+        return emptySnapshot;
+      }
+      if (table === "voice_profiles") return missingVoice;
+      return chain({
+        data: [],
+        count: publishedCount,
+        error: null,
+      });
+    });
+    const db = {
+      from,
+      rpc: vi.fn(async () => ({
+        data: {
+          ...storedSnapshot,
+          published_post_count: 5,
+          calculated_at: at,
+          created_at: at,
+        },
+        error: null,
+      })),
+    } as unknown as SupabaseClient;
+    const store = createWorkspaceLearningStore(db);
+    const workspaceId = "workspace-ineligible-cache";
+
+    await expect(
+      store.refresh(workspaceId, {
+        mode: "active",
+        asOf: at,
+      }),
+    ).resolves.toBeNull();
+    await expect(
+      store.refresh(workspaceId, {
+        mode: "active",
+        asOf: at,
+      }),
+    ).resolves.toBeNull();
+    expect(from).toHaveBeenCalledWith("voice_profiles");
+    expect(
+      from.mock.calls.filter(([table]) => table === "voice_profiles"),
+    ).toHaveLength(1);
+
+    publishedCount = 5;
+    await expect(
+      store.refresh(workspaceId, {
+        mode: "active",
+        asOf: at,
+      }),
+    ).resolves.toMatchObject({
+      sourceMode: "published_posts",
+      publishedPostCount: 5,
+    });
+    expect(
+      from.mock.calls.filter(([table]) => table === "chat_artifacts")
+        .length,
+    ).toBeGreaterThan(5);
+  });
 });

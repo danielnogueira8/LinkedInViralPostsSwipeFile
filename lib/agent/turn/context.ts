@@ -81,7 +81,7 @@ import {
   listLeadMagnetResources,
   listPreferenceResources,
 } from "@/lib/content-resource-operations";
-import { loadPostPerformanceBlock } from "@/lib/post-performance-learning";
+import { loadWorkspaceLearningBlock } from "@/lib/content-learning/workspace-learning-context";
 import { fetchRecentPostDrafts, type RecentDraft } from "@/lib/recent-drafts";
 import {
   completeChat,
@@ -1092,8 +1092,8 @@ export type TurnContext = {
   voiceResult: ToolResult | null;
   preferences: ContentPreference[];
   feedbackMemory: ContentFeedback[];
-  /** Rendered deterministic learnings from the workspace's own published-post analytics; "" when the sample is too thin or the read failed. */
-  postPerformanceBlock: string;
+  /** Reviewed, evidence-linked Workspace Learning; empty when unavailable. */
+  workspaceLearningBlock: string;
   priorPostDrafts: RecentDraft[];
   currentModelSource: ModelSourceRow | null;
   /** Envelope text for THIS turn's explicit model source ("" when none); also gates the user-row source stamp. */
@@ -1251,7 +1251,7 @@ export async function buildTurnContext(
     creatorName: string;
   } | null = null;
   let feedbackMemory: ContentFeedback[] = [];
-  let postPerformanceBlock = "";
+  let workspaceLearningBlock = "";
   let preferences: ContentPreference[] = [];
   let priorPostDrafts: RecentDraft[] = [];
   let voiceResult: ToolResult | null = null;
@@ -1302,13 +1302,12 @@ export async function buildTurnContext(
       return { data: [] };
     }
   })();
-  // Analytics learnings are advisory-only: any failure (or a thin sample)
-  // yields "" so the writer prompt is byte-identical for workspaces without
-  // usable post_analytics data.
-  const postPerformancePromise = (async () => {
+  // Workspace Learning is advisory-only: any missing/failed active snapshot
+  // yields "" so drafting remains available during a rollout or read outage.
+  const workspaceLearningPromise = (async () => {
     try {
       return await waitForChatSetup(
-        loadPostPerformanceBlock(sbRaw, workspaceId),
+        loadWorkspaceLearningBlock(sbRaw, workspaceId),
         setupSignal,
       );
     } catch {
@@ -1382,21 +1381,21 @@ export async function buildTurnContext(
   const [
     historyResult,
     feedbackResult,
-    postPerformance,
+    workspaceLearning,
     preferencesResult,
     recentDrafts,
     preloadedVoiceResult,
   ] = await Promise.all([
     historyPromise,
     feedbackPromise,
-    postPerformancePromise,
+    workspaceLearningPromise,
     preferencesPromise,
     recentDraftsPromise,
     voicePromise,
   ]);
   const rowsDesc = historyResult.data;
   feedbackMemory = (feedbackResult.data ?? []) as ContentFeedback[];
-  postPerformanceBlock = postPerformance;
+  workspaceLearningBlock = workspaceLearning;
   preferences = (preferencesResult.data ?? []) as ContentPreference[];
   priorPostDrafts = recentDrafts;
   voiceResult = preloadedVoiceResult;
@@ -2039,7 +2038,7 @@ export async function buildTurnContext(
     voiceResult,
     preferences,
     feedbackMemory,
-    postPerformanceBlock,
+    workspaceLearningBlock,
     priorPostDrafts,
     currentModelSource,
     currentModelEnvelope,
