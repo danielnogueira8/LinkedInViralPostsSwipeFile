@@ -15,8 +15,9 @@ import { providerModelAttribution } from "@/lib/agent/cowork-adapter-attempt";
 // Voice context interview. The set of questions a high-paying ghostwriter asks
 // a client to extract the raw material generic AI drafts lack — origin story,
 // contrarian beliefs, real proof, the reader's pains, the mission. The user's
-// answers (all skippable) are synthesized INTO their voice and stored on the
-// voice profile as always-on drafting context (VoiceProfile.interview_context).
+// answers (all skippable) are synthesized into reviewable context. The raw
+// result stays on the voice profile for editing, while only explicitly
+// approved Workspace Knowledge is eligible for drafting.
 // ---------------------------------------------------------------------------
 
 export type InterviewQuestion = {

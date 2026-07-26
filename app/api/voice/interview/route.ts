@@ -37,7 +37,8 @@ const bodySchema = z.object({
 // POST /api/voice/interview — run the context interview: take the user's
 // (skippable) answers, synthesize them INTO the user's voice, and merge the
 // result onto the voice profile's `profile` JSON (interview_answers = raw source
-// of truth, interview_context = the always-on drafting context).
+// of truth, interview_context = review input only). Drafting receives only the
+// Workspace Knowledge items the user explicitly approves.
 //
 // Standalone-safe: if the workspace has no voice profile yet, a MINIMAL ready
 // row is created holding just the interview data (a placeholder summary), so
@@ -123,7 +124,7 @@ export async function POST(req: Request) {
     // Guarantee a non-empty summary for the row (standalone profiles have none).
     const summary =
       nextProfile.summary ||
-      "Context interview completed — answers are used to write in your voice.";
+      "Context interview completed — review extracted context before drafting.";
 
     // interview_updated_at records "the interview was last saved" — distinct
     // from generated_at ("a real synthesis run completed"), which drives the
@@ -145,9 +146,10 @@ export async function POST(req: Request) {
       saved = data;
     } else {
       // Standalone: create a minimal ready row that carries only the interview.
-      // status:"ready" reflects the ROW being usable (interview_context is
-      // drafting-ready), not that a synthesis run happened — generated_at
-      // stays null so a later real generation isn't blocked by the cooldown.
+      // status:"ready" reflects the row being usable for interview review, not
+      // that the proposed context is approved for drafting or that a synthesis
+      // run happened. generated_at stays null so a later real generation isn't
+      // blocked by the cooldown.
       const { data, error } = await sb.raw
         .from("voice_profiles")
         .insert({

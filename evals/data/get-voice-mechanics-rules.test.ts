@@ -26,7 +26,21 @@ const strongFingerprint: MechanicsFingerprint = {
 
 function fakeClient(profile: Record<string, unknown>) {
   return {
-    from() {
+    from(table: string) {
+      if (table === "workspace_knowledge_items") {
+        return {
+          select() {
+            return this;
+          },
+          eq() {
+            return this;
+          },
+          order() {
+            return this;
+          },
+          limit: async () => ({ data: [], error: null }),
+        };
+      }
       return {
         select() {
           return this;

@@ -19,9 +19,9 @@ import type { VoiceRow } from "./manager";
 import type { WorkspaceKnowledgeItem } from "@/lib/content-learning/contracts";
 
 // The context interview: a short set of ghostwriter-style questions the user
-// answers to give the AI richer material. Answers are synthesized into the
-// user's voice and stored as always-on drafting context (editable). Every
-// question is skippable — a blank answer is simply dropped.
+// answers to give the AI richer material. Answers are synthesized into
+// reviewable Workspace Knowledge proposals. Every question is skippable — a
+// blank answer is simply dropped.
 export function VoiceInterviewCard({
   row,
   onSaved,

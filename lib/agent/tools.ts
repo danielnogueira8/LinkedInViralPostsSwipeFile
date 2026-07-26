@@ -22,6 +22,8 @@ import {
   mechanicsFingerprintToRules,
   voiceKeepsEmDashes,
 } from "@/lib/voice-mechanics";
+import { createWorkspaceKnowledgeStore } from "@/lib/content-learning/workspace-knowledge";
+import { renderWorkspaceKnowledgeBlock } from "@/lib/content-learning/workspace-knowledge-presentation";
 import { retryRead } from "@/lib/retry-read";
 import {
   selectModelingSourcePool,
@@ -886,6 +888,9 @@ export async function loadVoiceProfile(
       adapterHealth: options.adapterHealth,
     });
     const backstoryGuidance = renderBackstoryBlock(profile.biographical_facts);
+    const workspaceKnowledgeGuidance = renderWorkspaceKnowledgeBlock(
+      await createWorkspaceKnowledgeStore(sb).listActive(workspaceId),
+    );
     // Deterministic mechanics rules (capitalization, punctuation, emoji,
     // paragraphing) rendered from the measured fingerprint (lib/voice-
     // mechanics.ts) into imperative instructions the model can follow
@@ -898,12 +903,14 @@ export async function loadVoiceProfile(
     // Strip facts (returned separately as retrieval guidance), the RAW
     // interview_answers (source-of-truth for editing, not prompt input), and
     // the raw fingerprint (returned separately, already rendered into rules)
-    // from the dump. interview_context stays IN the profile — it's always-on
-    // drafting context the writer should use.
+    // from the dump. Raw interview context is also excluded: interview-derived
+    // facts may reach drafting only through explicitly verified Workspace
+    // Knowledge, rendered separately below.
     const profileForModel = {
       ...profile,
       biographical_facts: undefined,
       interview_answers: undefined,
+      interview_context: undefined,
       mechanics_fingerprint: undefined,
     };
     return {
@@ -917,6 +924,9 @@ export async function loadVoiceProfile(
         // Present ONLY when the profile has real biographical facts. The chat
         // agent should treat this as retrieval guidance, not a checklist.
         ...(backstoryGuidance ? { backstory_guidance: backstoryGuidance } : {}),
+        ...(workspaceKnowledgeGuidance
+          ? { workspace_knowledge_guidance: workspaceKnowledgeGuidance }
+          : {}),
         // Present ONLY when the fingerprint yielded confident, measured
         // rules. Treat these as HARD, non-negotiable mechanics — they're
         // measured facts about how this person writes, not a style guess.
