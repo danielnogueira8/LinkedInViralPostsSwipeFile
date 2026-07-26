@@ -73,8 +73,8 @@ alter table public.draft_edit_events
 update public.draft_edit_events event
 set
   lineage_id = lineage.id,
-  before_hash = encode(public.digest(event.before_body, 'sha256'), 'hex'),
-  after_hash = encode(public.digest(event.after_body, 'sha256'), 'hex'),
+  before_hash = encode(extensions.digest(event.before_body, 'sha256'), 'hex'),
+  after_hash = encode(extensions.digest(event.after_body, 'sha256'), 'hex'),
   change_summary = jsonb_build_object(
     'beforeChars', length(event.before_body),
     'afterChars', length(event.after_body),
@@ -116,11 +116,11 @@ update public.draft_edit_events event
 set
   before_hash = coalesce(
     event.before_hash,
-    encode(public.digest(event.before_body, 'sha256'), 'hex')
+    encode(extensions.digest(event.before_body, 'sha256'), 'hex')
   ),
   after_hash = coalesce(
     event.after_hash,
-    encode(public.digest(event.after_body, 'sha256'), 'hex')
+    encode(extensions.digest(event.after_body, 'sha256'), 'hex')
   ),
   change_summary = coalesce(
     event.change_summary,
@@ -248,9 +248,9 @@ begin
   new.saved_artifact_id := matched_artifact_id;
   new.lineage_id := matched_lineage_id;
   new.before_hash :=
-    encode(public.digest(new.before_body, 'sha256'), 'hex');
+    encode(extensions.digest(new.before_body, 'sha256'), 'hex');
   new.after_hash :=
-    encode(public.digest(new.after_body, 'sha256'), 'hex');
+    encode(extensions.digest(new.after_body, 'sha256'), 'hex');
   new.change_summary := jsonb_build_object(
     'beforeChars', length(new.before_body),
     'afterChars', length(new.after_body),
