@@ -31,6 +31,21 @@ Still unverified (need a second LinkedIn account to comment): does a keyword
 comment actually trigger a DM end-to-end, retroactive-comment behavior, and
 whether blank keywords truly DM every commenter.
 
+## Content Outcome import
+
+The hourly stats sync imports only LeadShark's documented cumulative
+`total_dms_sent` metric (`dms_sent` is its compatibility alias). A positive
+delta becomes a `lead_magnet_conversion` Content Outcome with `source:
+leadshark`, explicit 0.8 confidence, and a stable key containing the automation
+id, counter epoch, and cumulative count. Outcome insertion and checkpoint
+advancement happen in one locked database transaction, so retries and
+concurrent jobs cannot lose or duplicate a delta. A LeadShark counter reset
+starts a new epoch; a missing metric leaves the durable high-water untouched.
+
+Comments, likes, connections, replies, and follow-ups remain engagement
+signals. SwipeIn does not infer a qualified lead, pipeline, or revenue from
+them.
+
 ## New environment variable — `CREDENTIAL_ENCRYPTION_KEY`
 
 The first user-supplied secret in the app. LeadShark API keys are stored as
