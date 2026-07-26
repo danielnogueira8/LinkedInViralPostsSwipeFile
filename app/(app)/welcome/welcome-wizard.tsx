@@ -69,10 +69,14 @@ export function WelcomeWizard({ categories }: { categories: WelcomeCategory[] })
   async function trackCategories(opts: { track: boolean }) {
     setBusy(true);
     try {
-      const body =
-        opts.track && selected.size > 0
+      const timezone =
+        Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+      const body = {
+        timezone,
+        ...(opts.track && selected.size > 0
           ? { category_ids: Array.from(selected) }
-          : {};
+          : {}),
+      };
       const data = await fetchJson<{ ok: boolean; error?: string; tracked: number }>(
         "/api/onboarding/complete",
         {

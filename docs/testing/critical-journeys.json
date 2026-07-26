@@ -213,7 +213,7 @@
     {
       "id": "schedule-publish-idempotency",
       "capability": "Scheduling and publishing",
-      "invariant": "Scheduling and publishing are idempotent across edits, retries, duplicate responses, expired tokens, and stale claims; every filled recurring queue occurrence opens its exact workspace-owned draft even outside the board's bounded initial page; Markdown-emitting drafts preserve literal content and use the same canonical caption for preview, copy, length validation, and publish.",
+      "invariant": "Scheduling and publishing are idempotent across edits, retries, duplicate responses, expired tokens, and stale claims; onboarding provisions the workspace's recurring queue in its IANA timezone while read and queue paths repair missing defaults; every filled recurring queue occurrence opens its exact workspace-owned draft even outside the board's bounded initial page; Markdown-emitting drafts preserve literal content and use the same canonical caption for preview, copy, length validation, and publish.",
       "preferred_seam": "api-contract",
       "existing_coverage": [
         "evals/data/schedule-endpoint.test.ts",
@@ -224,6 +224,8 @@
         "evals/data/draft-lifecycle.test.ts",
         "evals/data/drafts-board.test.ts",
         "evals/data/posting-queue-draft.test.ts",
+        "evals/data/onboarding-posting-slots.test.ts",
+        "evals/data/posting-slots-route.test.ts",
         "e2e/draft-lifecycle.spec.ts"
       ],
       "status": "protected",
@@ -263,11 +265,12 @@
     {
       "id": "authenticated-app-access",
       "capability": "Authentication",
-      "invariant": "Protected product routes and MCP access require the intended authenticated user and workspace context.",
+      "invariant": "Protected product routes and MCP access require the intended authenticated user and workspace context, and onboarding completes only after workspace defaults are provisioned.",
       "preferred_seam": "browser",
       "existing_coverage": [
         "evals/data/mcp-clerk-auth.test.ts",
         "evals/data/clerk-webhook-purge.test.ts",
+        "evals/data/onboarding-posting-slots.test.ts",
         "e2e/smoke.spec.ts",
         "e2e/critical-journeys.spec.ts"
       ],

@@ -3,11 +3,13 @@ import { scopedSupabase } from "@/lib/supabase-scoped";
 import { z } from "zod";
 import { errorResponse } from "@/lib/workspace";
 import { enqueueScrapeJob } from "@/lib/scrape-jobs";
+import { timeZoneSchema } from "@/lib/schedule-local-date";
 
 export const runtime = "nodejs";
 
 const bodySchema = z.object({
   category_ids: z.array(z.string()).optional().default([]),
+  timezone: timeZoneSchema.optional().default("UTC"),
 });
 
 export async function POST(req: Request) {
@@ -16,7 +18,7 @@ export async function POST(req: Request) {
     if (!parsed.success) {
       return NextResponse.json({ ok: false, error: parsed.error.message }, { status: 400 });
     }
-    const { category_ids } = parsed.data;
+    const { category_ids, timezone } = parsed.data;
     const sb = await scopedSupabase();
 
     let tracked = 0;
@@ -50,6 +52,15 @@ export async function POST(req: Request) {
         scrape = { runId: queued.runId, alreadyRunning: queued.alreadyRunning };
       }
     }
+
+    // Provision the recurring queue at the durable workspace-completion
+    // boundary. The posting-slots GET and queue endpoints retain the same RPC
+    // as a repair path for existing or partially onboarded workspaces.
+    const { error: slotsError } = await sb.raw.rpc("ensure_posting_slots", {
+      p_workspace_id: sb.workspaceId,
+      p_timezone: timezone,
+    });
+    if (slotsError) throw slotsError;
 
     const { error: setErr } = await sb.upsertSetting("onboarded_at", {
       at: new Date().toISOString(),
