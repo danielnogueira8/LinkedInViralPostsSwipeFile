@@ -23,8 +23,7 @@ import type { DraftFinalizerSpecialists } from "@/lib/agent/finalize/finalizer";
 import { splicePreservedBody } from "@/lib/hook-splice";
 import {
   campaignImageContext,
-  enforceLeadMagnetCampaignCta,
-  hasLeadMagnetResourceOverlap,
+  transformLeadMagnetCampaignDraft,
 } from "@/lib/lead-magnet-campaign";
 import { enqueueLeadMagnetImageJob } from "@/lib/lead-magnet-image-jobs";
 import {
@@ -599,17 +598,17 @@ function createTransformDraftCandidate(
   plan: TurnPlan,
 ): (
   body: string,
-) => { ok: true; body: string } {
+) => { ok: true; body: string } | { ok: false; message: string } {
   return (body: string) => {
-    // Never reject here for lead-magnet mismatch; the finalizer owns the hard
-    // acceptance policy. If the post already mentions the campaign resource,
-    // enforce the canonical CTA link. Otherwise leave the draft as-is so a
-    // usable post is not lost to a soft structure gate.
-    let transformedBody =
-      setup.activeLeadMagnetCampaign &&
-      hasLeadMagnetResourceOverlap(body, setup.activeLeadMagnetCampaign)
-        ? enforceLeadMagnetCampaignCta(body, setup.activeLeadMagnetCampaign)
-        : body;
+    const campaignTransform = setup.activeLeadMagnetCampaign
+      ? transformLeadMagnetCampaignDraft(
+          body,
+          setup.activeLeadMagnetCampaign,
+          setup.effectiveUserInstruction,
+        )
+      : { ok: true as const, body };
+    if (!campaignTransform.ok) return campaignTransform;
+    let transformedBody = campaignTransform.body;
     const legacyHookOnlyAllowed =
       !setup.refineInstruction || isExclusiveHookRefine(setup.refineInstruction);
     if (
