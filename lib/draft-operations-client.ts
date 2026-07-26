@@ -55,6 +55,17 @@ export type ScheduledDraftState = {
   firstComment: string | null;
 };
 
+export type DraftQueueCommand = {
+  firstComment: string | null;
+  timezone: string;
+};
+
+export type QueuedDraftState = ScheduledDraftState & {
+  timezone: string;
+  postingSlotId: string;
+  postingSlotOccurrenceDate: string;
+};
+
 export type UnscheduledDraftState = {
   scheduledAt: null;
   scheduleStatus: null;
@@ -117,6 +128,19 @@ const scheduleResponseSchema = z.discriminatedUnion("ok", [
     scheduleStatus: z.literal("scheduled"),
     planToPostOn: z.string(),
     firstComment: z.string().nullable(),
+  }),
+]);
+const queueResponseSchema = z.discriminatedUnion("ok", [
+  errorSchema,
+  z.object({
+    ok: z.literal(true),
+    scheduledAt: z.string(),
+    scheduleStatus: z.enum(["scheduled", "publishing"]),
+    planToPostOn: z.string(),
+    firstComment: z.string().nullable(),
+    timezone: z.string(),
+    postingSlotId: z.string(),
+    postingSlotOccurrenceDate: z.string(),
   }),
 ]);
 const unscheduleResponseSchema = z.discriminatedUnion("ok", [
@@ -245,6 +269,35 @@ export function createDraftOperationsClient(
         scheduleStatus: "scheduled",
         planToPostOn: value.planToPostOn,
         firstComment: value.firstComment,
+      };
+    },
+
+    async queue(
+      draftId: string,
+      command: DraftQueueCommand,
+    ): Promise<QueuedDraftState> {
+      const response = await fetchDraftOperation(
+        fetcher,
+        `/api/drafts/${draftId}/queue`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(command),
+        },
+      );
+      const value = await readDraftOperationResponse(
+        response,
+        queueResponseSchema,
+        "Couldn't add this post to the queue.",
+      );
+      return {
+        scheduledAt: value.scheduledAt,
+        scheduleStatus: "scheduled",
+        planToPostOn: value.planToPostOn,
+        firstComment: value.firstComment,
+        timezone: value.timezone,
+        postingSlotId: value.postingSlotId,
+        postingSlotOccurrenceDate: value.postingSlotOccurrenceDate,
       };
     },
 
