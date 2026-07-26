@@ -1,5 +1,7 @@
 import { selectAllRows } from "@/lib/db-paginate";
 import { supabaseAdmin } from "@/lib/supabase";
+import { createWorkspaceLearningStore } from "@/lib/content-learning/workspace-learning";
+import { redactHighConfidenceLeaks } from "@/lib/agent/output-guard";
 import { getUserWorkingSummary } from "./user-working-summary";
 
 const CRON_STATE_WORKSPACE_ID = "__system__:user-working-summary";
@@ -83,6 +85,8 @@ export async function runWorkingSummarySweep(input: {
   processed: number;
   generated: number;
   skipped: number;
+  failed: number;
+  failures: Array<{ workspaceId: string; message: string }>;
   deadlineHit: boolean;
   nextCursor: string | null;
 }> {
@@ -98,6 +102,8 @@ export async function runWorkingSummarySweep(input: {
   let processed = 0;
   let generated = 0;
   let skipped = 0;
+  let failed = 0;
+  const failures: Array<{ workspaceId: string; message: string }> = [];
   let deadlineHit = false;
   let nextCursor = workspaces[0] ?? null;
 
@@ -109,10 +115,20 @@ export async function runWorkingSummarySweep(input: {
       break;
     }
     const batch = workspaces.slice(index, index + concurrency);
-    const results = await Promise.all(batch.map(input.refresh));
+    const results = await Promise.allSettled(batch.map(input.refresh));
     processed += batch.length;
-    for (const result of results) {
-      if (result) generated += 1;
+    for (const [resultIndex, result] of results.entries()) {
+      if (result.status === "rejected") {
+        failed += 1;
+        const raw =
+          result.reason instanceof Error
+            ? result.reason.message
+            : String(result.reason);
+        failures.push({
+          workspaceId: batch[resultIndex]!,
+          message: redactHighConfidenceLeaks(raw).text.slice(0, 240),
+        });
+      } else if (result.value) generated += 1;
       else skipped += 1;
     }
     nextCursor = workspaces[(index + batch.length) % workspaces.length] ?? null;
@@ -123,6 +139,8 @@ export async function runWorkingSummarySweep(input: {
     processed,
     generated,
     skipped,
+    failed,
+    failures,
     deadlineHit,
     nextCursor,
   };
@@ -146,12 +164,28 @@ export async function runWeeklyUserWorkingSummaries(opts: {
     cursor,
     concurrency: opts.concurrency,
     startedAt: opts.startedAt,
-    refresh: async (workspaceId) =>
-      Boolean(
-        await getUserWorkingSummary(supabaseAdmin(), workspaceId, {
-          signal: opts.signal,
-        }),
-      ),
+    refresh: async (workspaceId) => {
+      const db = supabaseAdmin();
+      let learningFailure: unknown = null;
+      const learning = await createWorkspaceLearningStore(
+        db,
+        (operation, error) => {
+          if (operation === "refresh") learningFailure = error;
+        },
+      ).refresh(
+        workspaceId,
+        { mode: "active" },
+      );
+      if (learningFailure) {
+        throw learningFailure instanceof Error
+          ? learningFailure
+          : new Error("Workspace Learning refresh failed");
+      }
+      const summary = await getUserWorkingSummary(db, workspaceId, {
+        signal: opts.signal,
+      });
+      return Boolean(learning || summary);
+    },
     saveCursor: writeCronCursor,
   });
 }

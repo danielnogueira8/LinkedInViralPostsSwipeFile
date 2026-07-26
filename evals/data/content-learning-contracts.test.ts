@@ -305,6 +305,12 @@ describe("content-learning contracts", () => {
           trend: "up",
           evidence: [
             {
+              kind: "voice_exemplar",
+              voiceProfileId: "voice-1",
+              exemplarIndex: 0,
+              generatedAt: timestamp,
+            },
+            {
               kind: "lineage",
               lineageId: "lineage-1",
               artifactId: "artifact-1",
