@@ -67,6 +67,12 @@ export async function PATCH(
       .eq("workspace_id", sb.workspaceId)
       .select(PREF_COLS)
       .maybeSingle();
+    if (error?.code === "23505") {
+      return NextResponse.json(
+        { ok: false, error: "You already have that preference." },
+        { status: 409 },
+      );
+    }
     if (error) throw error;
     if (!data) {
       return NextResponse.json(

@@ -48,6 +48,9 @@ export async function persistLearnedPreference(
       })
       .select("id")
       .single();
+    if (error?.code === "23505") {
+      return { ok: true, saved: false, reason: "duplicate", rule };
+    }
     if (error) throw error;
     return { ok: true, saved: true, id: (data as { id: string }).id, rule };
   } catch {

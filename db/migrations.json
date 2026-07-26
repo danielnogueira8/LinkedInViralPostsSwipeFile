@@ -1,7 +1,7 @@
 {
   "generatedBy": "npm run migrations:metadata",
-  "highest": 127,
-  "count": 127,
+  "highest": 128,
+  "count": 128,
   "files": [
     "migration-001-progress.sql",
     "migration-002-usage.sql",
@@ -129,6 +129,7 @@
     "migration-124-persistent-week-plans.sql",
     "migration-125-artifact-lineage.sql",
     "migration-126-backfill-artifact-lineage.sql",
-    "migration-127-revision-event-cursor.sql"
+    "migration-127-revision-event-cursor.sql",
+    "migration-128-preference-evidence.sql"
   ]
 }

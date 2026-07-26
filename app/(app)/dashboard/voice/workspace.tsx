@@ -5,7 +5,7 @@ import { VoiceManager, type VoiceRow } from "./manager";
 import { VoiceInterviewCard } from "./voice-interview-card";
 import { PreferencesManager } from "./preferences";
 import { FeedbackMemoryManager } from "./feedback-memory";
-import type { ContentPreference } from "@/lib/preferences";
+import type { ReviewableContentPreference } from "@/lib/preference-evidence";
 import type { ContentFeedback } from "@/lib/content-feedback";
 
 // The Voice page's client shell. It owns the single source of truth for the
@@ -32,7 +32,7 @@ export function VoiceWorkspace({
   canRegenerate: boolean;
   regenAvailableAt: string | null;
   daysUntilRegen: number;
-  preferences: ContentPreference[];
+  preferences: ReviewableContentPreference[];
   feedback: ContentFeedback[];
 }) {
   const [row, setRow] = useState<VoiceRow | null>(initialRow);

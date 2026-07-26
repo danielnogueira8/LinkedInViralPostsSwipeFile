@@ -167,7 +167,9 @@ export async function persistRevisionEventClaimResult(
   sb: SupabaseClient,
   workspaceId: string,
   claim: RevisionEventClaim,
-  result: { rules: string[] },
+  result: {
+    rules: Array<{ rule: string; evidenceEventIds: string[] }>;
+  },
   processor: string = REVISION_DISTILLER_PROCESSOR,
 ): Promise<boolean> {
   const { data, error } = await sb.rpc(

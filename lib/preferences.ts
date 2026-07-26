@@ -72,10 +72,10 @@ export const PREFS_INJECTED_CHARS_MAX = 24_000;
 // clamp to the cap. Deterministic — used by BOTH the API and remember_preference
 // so a stored rule and a learned rule are normalized identically.
 export function normalizePreferenceRule(raw: string): string {
-  return raw
+  const collapsed = raw
     .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, PREF_RULE_MAX);
+    .trim();
+  return [...collapsed].slice(0, PREF_RULE_MAX).join("");
 }
 
 // Normalize a raw detail: unlike the rule, this can be multi-line/multi-
@@ -97,13 +97,29 @@ export function normalizePreferenceDetail(raw: string | null | undefined): strin
 // can't accumulate near-duplicate learned rules every time the user restates a
 // preference. Not stored — computed at write time.
 export function preferenceDedupKey(rule: string): string {
-  return normalizePreferenceRule(rule)
+  const normalized = normalizePreferenceRule(rule)
     .toLowerCase()
+    .replace(/[’‘]/g, "'")
+    .replace(/[“”]/g, '"')
+    .replace(/[–—]/g, "-")
+    .replace(/…/g, ".");
+  const asciiKey = normalized
     // Punctuation → space (NOT removed), so "em-dashes" and "em dashes" collapse
     // to the same token stream instead of "emdashes" vs "em dashes".
     .replace(/[^a-z0-9]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+  const containsNonAscii = [...normalized].some(
+    (character) => (character.codePointAt(0) ?? 0) > 127,
+  );
+  const unicodeKey = normalized
+    .replace(/[\u0000-\u002f\u003a-\u0040\u005b-\u0060\u007b-\u007f\s]+/g, " ")
+    .replace(/[。！？、，；：（）【】《》．؟]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return containsNonAscii
+    ? `u:${unicodeKey || normalized}`
+    : asciiKey;
 }
 
 // True when `rule` duplicates one already present (by dedup key). Lets the API
