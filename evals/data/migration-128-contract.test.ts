@@ -17,6 +17,7 @@ describe("migration 128 contract", () => {
     expect(sql).toContain("validate_content_preference_evidence_scope");
     expect(sql).toContain("reject_content_preference_evidence_update");
     expect(sql).toContain("preference.source = 'edit_delta'");
+    expect(sql).toContain("extensions.digest(");
   });
 
   test("keeps evidence writes server-only and idempotent", () => {

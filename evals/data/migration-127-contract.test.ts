@@ -17,6 +17,8 @@ describe("migration 127 contract", () => {
     expect(sql).toContain("validate_draft_edit_event_lineage");
     expect(sql).toContain("reconcile_draft_edit_events_after_lineage");
     expect(sql).toContain("artifact_lineage_reconcile_draft_edit_events");
+    expect(sql).toContain("extensions.digest(");
+    expect(sql).not.toContain("public.digest(");
   });
 
   test("uses leased per-event processing state and server-only operations", () => {

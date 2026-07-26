@@ -119,7 +119,7 @@ as $$
     from normalized
   )
   select encode(
-    digest(
+    extensions.digest(
       case
         when octet_length(value) > length(value)
           then 'u:' || coalesce(nullif(value_unicode, ''), value)
