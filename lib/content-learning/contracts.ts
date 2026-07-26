@@ -101,6 +101,46 @@ export const artifactLineageSchema = artifactLineageInputSchema
   .strict();
 export type ArtifactLineage = z.infer<typeof artifactLineageSchema>;
 
+export const revisionEditOriginSchema = z.enum([
+  "cowork_artifact",
+  "posts_editor",
+  "unknown",
+]);
+export type RevisionEditOrigin = z.infer<typeof revisionEditOriginSchema>;
+
+export const revisionChangeSummarySchema = z
+  .object({
+    beforeChars: z.number().int().nonnegative(),
+    afterChars: z.number().int().nonnegative(),
+    deltaChars: z.number().int(),
+    beforeLines: z.number().int().nonnegative(),
+    afterLines: z.number().int().nonnegative(),
+    deltaLines: z.number().int(),
+  })
+  .strict();
+export type RevisionChangeSummary = z.infer<
+  typeof revisionChangeSummarySchema
+>;
+
+export const revisionEventSchema = z
+  .object({
+    schemaVersion: z.literal(CONTENT_LEARNING_SCHEMA_VERSION),
+    id: idSchema,
+    workspaceId: workspaceIdSchema,
+    artifactId: idSchema,
+    savedDraftId: nullableIdSchema,
+    lineageId: nullableIdSchema,
+    beforeBody: z.string(),
+    afterBody: z.string(),
+    editOrigin: revisionEditOriginSchema,
+    beforeHash: z.string().regex(/^[0-9a-f]{64}$/),
+    afterHash: z.string().regex(/^[0-9a-f]{64}$/),
+    changeSummary: revisionChangeSummarySchema,
+    createdAt: timestampSchema,
+  })
+  .strict();
+export type RevisionEvent = z.infer<typeof revisionEventSchema>;
+
 export const KNOWLEDGE_ITEM_KINDS = [
   "story",
   "belief",

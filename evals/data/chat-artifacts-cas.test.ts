@@ -19,6 +19,8 @@ const state: {
     patch: Record<string, unknown>;
     version: number | null;
   }>;
+  lastOrder: { column: string; ascending: boolean } | null;
+  recordedEdits: Array<Record<string, unknown>>;
 } = {
   chatRow: { id: "chat1" },
   messageRows: [],
@@ -27,6 +29,8 @@ const state: {
   lastVersionFilter: null,
   lastRpc: null,
   updateCalls: [],
+  lastOrder: null,
+  recordedEdits: [],
 };
 
 const fakeRaw = {
@@ -77,6 +81,10 @@ const fakeRaw = {
           return chain;
         },
         not: () => chain,
+        order: (column: string, options: { ascending: boolean }) => {
+          state.lastOrder = { column, ascending: options.ascending };
+          return chain;
+        },
         update: (patch: Record<string, unknown>) => {
           isWrite = true;
           state.lastUpdatePatch = patch;
@@ -102,6 +110,11 @@ vi.mock("@/lib/supabase-scoped", () => ({
 }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@clerk/nextjs/server", () => ({ auth: async () => ({ userId: "u1" }) }));
+vi.mock("@/lib/draft-edit-events", () => ({
+  recordDraftEditEvent: async (input: Record<string, unknown>) => {
+    state.recordedEdits.push(input);
+  },
+}));
 
 const { DELETE, PATCH } = await import("@/app/api/chats/[id]/artifacts/route");
 const ctx = { params: Promise.resolve({ id: "chat1" }) };
@@ -139,6 +152,8 @@ beforeEach(() => {
   state.lastVersionFilter = null;
   state.lastRpc = null;
   state.updateCalls = [];
+  state.lastOrder = null;
+  state.recordedEdits = [];
 });
 
 describe("DELETE /api/chats/[id]/artifacts — atomic stable-id removal", () => {
@@ -224,6 +239,78 @@ describe("PATCH /api/chats/[id]/artifacts — CAS guard", () => {
     expect(res.status).toBe(200);
     expect(state.lastVersionFilter).toBe(3);
     expect(state.lastUpdatePatch).toMatchObject({ artifacts_version: 4 });
+    expect(state.lastOrder).toEqual({
+      column: "created_at",
+      ascending: false,
+    });
+    expect(state.recordedEdits).toEqual([
+      expect.objectContaining({
+        artifactId: "art-a",
+        beforeBody: "Post A",
+        afterBody: "Edited body",
+      }),
+    ]);
+  });
+
+  test("edits only the newest authoritative copy of a reused Artifact id", async () => {
+    state.messageRows = [
+      {
+        id: "msg-newest",
+        artifacts_version: 7,
+        artifacts: [{ id: "art-a", kind: "post", body: "Latest refinement" }],
+      },
+      {
+        id: "msg-oldest",
+        artifacts_version: 3,
+        artifacts: [{ id: "art-a", kind: "post", body: "Original" }],
+      },
+    ];
+
+    const res = await PATCH(
+      patchRequest({ targetId: "art-a", body: "User edit" }),
+      ctx,
+    );
+
+    expect(res.status).toBe(200);
+    expect(state.updateCalls).toHaveLength(1);
+    expect(state.updateCalls[0]).toMatchObject({
+      id: "msg-newest",
+      version: 7,
+    });
+    expect(state.recordedEdits).toEqual([
+      expect.objectContaining({
+        beforeBody: "Latest refinement",
+        afterBody: "User edit",
+      }),
+    ]);
+  });
+
+  test("a repeated newest body never rewrites an older reused id", async () => {
+    state.messageRows = [
+      {
+        id: "msg-newest",
+        artifacts_version: 7,
+        artifacts: [{ id: "art-a", kind: "post", body: "Same body" }],
+      },
+      {
+        id: "msg-oldest",
+        artifacts_version: 3,
+        artifacts: [{ id: "art-a", kind: "post", body: "Old body" }],
+      },
+    ];
+
+    const res = await PATCH(
+      patchRequest({ targetId: "art-a", body: "Same body" }),
+      ctx,
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, updated: true });
+    expect(state.updateCalls).toHaveLength(1);
+    expect(state.updateCalls[0]).toMatchObject({
+      id: "msg-newest",
+      version: 7,
+    });
   });
 
   test("a concurrent write already bumped the version -> 409, edit not silently dropped", async () => {

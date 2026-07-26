@@ -3,6 +3,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { postCronAlert } from "@/lib/cron-alert";
 import { distillEditDeltaRules } from "@/lib/voice-edit-distiller";
 import { errorResponse } from "@/lib/workspace";
+import { listWorkspacesWithPendingRevisionEvents } from "@/lib/content-learning/revision-events";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,18 +22,7 @@ export async function GET(req: Request) {
 
   try {
     const sb = supabaseAdmin();
-    const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    const { data: workspaces, error: wsError } = await sb
-      .from("draft_edit_events")
-      .select("workspace_id")
-      .gte("created_at", since)
-      .order("created_at", { ascending: false })
-      .limit(200);
-    if (wsError) throw wsError;
-
-    const workspaceIds = [
-      ...new Set((workspaces ?? []).map((row) => row.workspace_id as string)),
-    ].slice(0, 20);
+    const workspaceIds = await listWorkspacesWithPendingRevisionEvents(sb, 20);
 
     const results: Array<{
       workspaceId: string;
