@@ -10,6 +10,7 @@ import { draftEgressBody } from "@/lib/markdown/mode";
 import { LINKEDIN_MAX_CHARS } from "@/lib/linkedin-format";
 import { localDateFromDatetimeInput } from "@/lib/schedule-local-date";
 import { formatScheduleToast } from "@/lib/posting-queue";
+import { saveThenSchedule } from "@/lib/save-before-schedule";
 import {
   draftOperations,
   type DraftScheduleCommand,
@@ -417,6 +418,24 @@ export function DraftEditorModal({
       onOpenChange(false);
     } catch (e) {
       toast.error((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Existing drafts schedule through the child rail, but body state lives here.
+  // Return false on save failure so both exact and queue scheduling stop before
+  // issuing their scheduling request. A successful save updates the parent
+  // draft immediately, which clears `dirty` even if scheduling later fails.
+  const saveBeforeScheduling = async (): Promise<boolean> => {
+    if (uploadingMedia) {
+      toast.error("Wait for the media upload to finish before scheduling.");
+      return false;
+    }
+    if (!dirty) return true;
+    setSaving(true);
+    try {
+      return Boolean(await persistBody());
     } finally {
       setSaving(false);
     }
@@ -1112,7 +1131,8 @@ export function DraftEditorModal({
                   draft={draft}
                   onMeta={onMeta}
                   onCreateAndSchedule={isNew ? createAndSchedule : undefined}
-                  previewBody={isNew ? body : undefined}
+                  onSaveBeforeSchedule={!isNew ? saveBeforeScheduling : undefined}
+                  previewBody={body}
                   previewMedia={isNew ? displayedMedia : undefined}
                   mediaUploading={uploadingMedia}
                 />
@@ -2138,6 +2158,7 @@ function ScheduleRow({
   draft,
   onMeta,
   onCreateAndSchedule,
+  onSaveBeforeSchedule,
   previewBody,
   previewMedia,
   mediaUploading = false,
@@ -2145,6 +2166,7 @@ function ScheduleRow({
   draft: Draft | null;
   onMeta: (id: string, patch: Partial<Draft>) => void;
   onCreateAndSchedule?: (input: ScheduleInput) => Promise<void>;
+  onSaveBeforeSchedule?: () => Promise<boolean>;
   previewBody?: string;
   previewMedia?: PostMediaAttachment[];
   mediaUploading?: boolean;
@@ -2187,7 +2209,7 @@ function ScheduleRow({
   // Successfully published — the cron flipped schedule_status='published' and
   // stamped published_at. The card should show WHEN, not the picker/connect prompt.
   const published = draft?.scheduleStatus === "published";
-  const publishBody = draftEgressBody(draft?.body ?? previewBody ?? "", draft?.meta);
+  const publishBody = draftEgressBody(previewBody ?? draft?.body ?? "", draft?.meta);
   const overLimit = publishBody.length > LINKEDIN_MAX_CHARS;
   const attachments = draft?.mediaAttachments ?? previewMedia ?? [];
   const hasMedia = attachments.length > 0;
@@ -2255,7 +2277,15 @@ function ScheduleRow({
         await onCreateAndSchedule?.(input);
         return;
       }
-      const data = await draftOperations.schedule(draft.id, input);
+      const result = await saveThenSchedule({
+        save: onSaveBeforeSchedule ?? (async () => true),
+        schedule: () => draftOperations.schedule(draft.id, input),
+      });
+      if (!result.ok) {
+        if (result.stage === "schedule") toast.error((result.error as Error).message);
+        return;
+      }
+      const data = result.value;
       onMeta(draft.id, {
         scheduledAt: data.scheduledAt,
         scheduleStatus: "scheduled",
@@ -2283,27 +2313,42 @@ function ScheduleRow({
     if (!draft) return;
     setBusy(true);
     try {
-      const response = await fetch(`/api/drafts/${draft.id}/queue`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          firstComment: firstComment.trim() || null,
-          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
-        }),
+      const result = await saveThenSchedule({
+        save: onSaveBeforeSchedule ?? (async () => true),
+        schedule: async () => {
+          const response = await fetch(`/api/drafts/${draft.id}/queue`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              firstComment: firstComment.trim() || null,
+              timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+            }),
+          });
+          const data = (await response.json()) as {
+            ok: boolean;
+            error?: string;
+            scheduledAt?: string;
+            planToPostOn?: string;
+            firstComment?: string | null;
+            timezone?: string;
+            postingSlotId?: string;
+            postingSlotOccurrenceDate?: string;
+          };
+          if (!response.ok || !data.ok || !data.scheduledAt || !data.planToPostOn) {
+            throw new Error(data.error || "Couldn't add this post to the queue.");
+          }
+          return {
+            ...data,
+            scheduledAt: data.scheduledAt,
+            planToPostOn: data.planToPostOn,
+          };
+        },
       });
-      const data = (await response.json()) as {
-        ok: boolean;
-        error?: string;
-        scheduledAt?: string;
-        planToPostOn?: string;
-        firstComment?: string | null;
-        timezone?: string;
-        postingSlotId?: string;
-        postingSlotOccurrenceDate?: string;
-      };
-      if (!response.ok || !data.ok || !data.scheduledAt || !data.planToPostOn) {
-        throw new Error(data.error || "Couldn't add this post to the queue.");
+      if (!result.ok) {
+        if (result.stage === "schedule") toast.error((result.error as Error).message);
+        return;
       }
+      const data = result.value;
       onMeta(draft.id, {
         scheduledAt: data.scheduledAt,
         scheduleStatus: "scheduled",
