@@ -86,7 +86,7 @@ afterEach(() => {
 });
 
 describe("MCP post visual assets", () => {
-  test("diversifies search results by creator before repeating one", async () => {
+  test("keeps top relevance results while capping creator repetition", async () => {
     const rows = [
       { ...POST, id: "a1", account_id: "a", reactions: 1_000 },
       { ...POST, id: "a2", account_id: "a", reactions: 900 },
@@ -104,7 +104,7 @@ describe("MCP post visual assets", () => {
 
     expect(
       (result.posts as Array<{ id: string }>).map((post) => post.id),
-    ).toEqual(["a1", "b1", "c1"]);
+    ).toEqual(["a1", "a2", "b1"]);
     expect(result.posts).toEqual([
       expect.not.objectContaining({ account_id: expect.anything() }),
       expect.not.objectContaining({ account_id: expect.anything() }),

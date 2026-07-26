@@ -1,5 +1,6 @@
 const CANDIDATE_MULTIPLIER = 4;
 const MAX_CANDIDATES = 200;
+const MAX_PRIMARY_RESULTS_PER_CREATOR = 2;
 
 /**
  * The database still owns relevance ranking. We inspect only a bounded prefix
@@ -10,8 +11,14 @@ export function diversityCandidateLimit(resultLimit: number): number {
 }
 
 /**
- * Round-robin over creator buckets while preserving both the database-ranked
- * creator order and each creator's internal relevance order.
+ * Keep the database's relevance order, but cap each creator in the primary
+ * pass. A second pass fills any remaining positions only when the candidate
+ * pool does not contain enough relevant alternatives.
+ *
+ * Allowing the first two results from a creator is deliberate: strict
+ * round-robin can promote a very weak result from another creator above the
+ * second-best result in the entire search. This keeps relevance primary while
+ * still preventing one creator from dominating a normal result set.
  */
 export function diverseCreatorResults<T>(
   candidates: readonly T[],
@@ -20,27 +27,26 @@ export function diverseCreatorResults<T>(
 ): T[] {
   if (limit <= 0 || candidates.length === 0) return [];
 
-  const buckets = new Map<string, T[]>();
+  const counts = new Map<string, number>();
+  const deferred: T[] = [];
+  const results: T[] = [];
+
   for (const candidate of candidates) {
     const key = creatorKey(candidate);
-    const bucket = buckets.get(key);
-    if (bucket) bucket.push(candidate);
-    else buckets.set(key, [candidate]);
+    const count = counts.get(key) ?? 0;
+    if (count >= MAX_PRIMARY_RESULTS_PER_CREATOR) {
+      deferred.push(candidate);
+      continue;
+    }
+    counts.set(key, count + 1);
+    results.push(candidate);
+    if (results.length === limit) return results;
   }
 
-  const results: T[] = [];
-  let depth = 0;
-  while (results.length < limit) {
-    let added = false;
-    for (const bucket of buckets.values()) {
-      const candidate = bucket[depth];
-      if (!candidate) continue;
-      results.push(candidate);
-      added = true;
-      if (results.length === limit) return results;
-    }
-    if (!added) break;
-    depth += 1;
+  for (const candidate of deferred) {
+    results.push(candidate);
+    if (results.length === limit) break;
   }
+
   return results;
 }
