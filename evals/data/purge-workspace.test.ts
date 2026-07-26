@@ -14,6 +14,10 @@ import { describe, test, expect, vi, beforeEach } from "vitest";
 
 type DeleteCall = { table: string; predicates: [string, unknown][] };
 const calls: DeleteCall[] = [];
+const rpcCalls: Array<{
+  name: string;
+  args: Record<string, unknown> | undefined;
+}> = [];
 // Tables the fake should make fail (to test error handling).
 const failTables = new Set<string>();
 
@@ -52,7 +56,14 @@ function makeRecorder() {
       Promise.resolve(onFulfilled(settle()));
     return builder;
   }
-  return { from };
+  const rpc = (
+    name: string,
+    args?: Record<string, unknown>,
+  ) => {
+    rpcCalls.push({ name, args });
+    return Promise.resolve({ data: 1, count: null, error: null });
+  };
+  return { from, rpc };
 }
 
 vi.mock("@/lib/supabase", () => ({
@@ -63,6 +74,7 @@ const { purgeWorkspaceData } = await import("@/lib/purge-workspace");
 
 beforeEach(() => {
   calls.length = 0;
+  rpcCalls.length = 0;
   failTables.clear();
 });
 
@@ -144,6 +156,10 @@ describe("purgeWorkspaceData — coverage + scoping", () => {
       .toBeLessThan(
         calls.findIndex((call) => call.table === "artifact_lineage"),
       );
+    expect(rpcCalls).toContainEqual({
+      name: "purge_workspace_knowledge",
+      args: { p_workspace_id: WS },
+    });
   });
 
   test("NEVER deletes from the shared global catalog", async () => {

@@ -104,9 +104,15 @@ export async function purgeWorkspaceData(
   );
   // Review history is append-only and cascades only during this owning-item
   // erasure.
-  await wipe("workspace_knowledge_items", () =>
-    del("workspace_knowledge_items").eq("workspace_id", workspaceId),
-  );
+  await wipe("workspace_knowledge_items", async (client) => {
+    const { data, error } = await client.rpc("purge_workspace_knowledge", {
+      p_workspace_id: workspaceId,
+    });
+    return {
+      count: typeof data === "number" ? data : null,
+      error,
+    };
+  });
   await wipe("content_preference_evidence", () =>
     del("content_preference_evidence").eq("workspace_id", workspaceId),
   );

@@ -149,6 +149,18 @@ language plpgsql
 set search_path = public, pg_temp
 as $$
 begin
+  if tg_op = 'DELETE' then
+    if coalesce(
+      current_setting('app.workspace_knowledge_operation', true),
+      ''
+    ) <> 'purge'
+    then
+      raise exception 'Workspace Knowledge deletion requires Workspace erasure'
+        using errcode = '55000';
+    end if;
+    return old;
+  end if;
+
   if tg_op = 'INSERT' then
     if new.verification <> 'proposed'
       or new.last_verified_at is not null
@@ -176,7 +188,7 @@ $$;
 drop trigger if exists workspace_knowledge_enforce_write_path
   on public.workspace_knowledge_items;
 create trigger workspace_knowledge_enforce_write_path
-  before insert or update on public.workspace_knowledge_items
+  before insert or update or delete on public.workspace_knowledge_items
   for each row execute function public.enforce_workspace_knowledge_write_path();
 
 create table if not exists public.workspace_knowledge_reviews (
@@ -201,7 +213,10 @@ as $$
 begin
   -- A cascade is allowed only when the service deletes the owning item during
   -- explicit Workspace erasure. Direct review-row deletion remains blocked.
-  if tg_op = 'DELETE' and pg_trigger_depth() > 1 then
+  if tg_op = 'DELETE'
+    and pg_trigger_depth() > 1
+    and current_setting('app.workspace_knowledge_operation', true) = 'purge'
+  then
     return old;
   end if;
   raise exception 'Workspace Knowledge review history is append-only'
@@ -369,6 +384,28 @@ begin
 end;
 $$;
 
+create or replace function public.purge_workspace_knowledge(
+  p_workspace_id text
+)
+returns bigint
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  deleted_count bigint;
+begin
+  if nullif(btrim(p_workspace_id), '') is null then
+    raise exception 'Workspace id is required' using errcode = '22023';
+  end if;
+  perform set_config('app.workspace_knowledge_operation', 'purge', true);
+  delete from public.workspace_knowledge_items item
+  where item.workspace_id = p_workspace_id;
+  get diagnostics deleted_count = row_count;
+  return deleted_count;
+end;
+$$;
+
 create index if not exists workspace_knowledge_review_queue_idx
   on public.workspace_knowledge_items
     (workspace_id, verification, active, created_at desc);
@@ -389,9 +426,9 @@ revoke all on table public.workspace_knowledge_items
   from public, anon, authenticated;
 revoke all on table public.workspace_knowledge_reviews
   from public, anon, authenticated;
-grant select, insert, delete on table public.workspace_knowledge_items
+grant select, insert on table public.workspace_knowledge_items
   to service_role;
-grant select, delete on table public.workspace_knowledge_reviews
+grant select on table public.workspace_knowledge_reviews
   to service_role;
 revoke all on function public.review_workspace_knowledge_item(
   text, uuid, timestamptz, text, jsonb
@@ -405,6 +442,10 @@ revoke all on function public.archive_workspace_knowledge_item(
 grant execute on function public.archive_workspace_knowledge_item(
   text, uuid, timestamptz
 ) to service_role;
+revoke all on function public.purge_workspace_knowledge(text)
+  from public, anon, authenticated;
+grant execute on function public.purge_workspace_knowledge(text)
+  to service_role;
 
 insert into public.app_schema_version (singleton, version, updated_at)
 values (true, 129, now())

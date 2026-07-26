@@ -212,8 +212,15 @@ describe("migration 129 PostgreSQL behavior", () => {
         ).toBe("1");
 
         expect(
+          fails(`
+            delete from public.workspace_knowledge_items where id = '${itemId}'
+          `),
+        ).toBe(true);
+        expect(
+          query("select public.purge_workspace_knowledge('ws-1')"),
+        ).toBe("1");
+        expect(
           query(`
-            delete from public.workspace_knowledge_items where id = '${itemId}';
             select count(*) from public.workspace_knowledge_reviews
             where item_id = '${itemId}'
           `),
@@ -236,11 +243,15 @@ describe("migration 129 PostgreSQL behavior", () => {
               'update'
             ) || '|' || has_table_privilege(
               'service_role',
+              'public.workspace_knowledge_items',
+              'delete'
+            ) || '|' || has_table_privilege(
+              'service_role',
               'public.workspace_knowledge_reviews',
               'insert'
             )
           `),
-        ).toBe("false|false");
+        ).toBe("false|false|false");
       } finally {
         if (started && existsSync(join(data, "postmaster.pid"))) {
           spawnSync("pg_ctl", ["-D", data, "-m", "fast", "stop"], {

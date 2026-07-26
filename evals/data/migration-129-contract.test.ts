@@ -22,6 +22,10 @@ describe("migration 129 contract", () => {
     expect(sql).toContain("current_item.updated_at <> p_expected_updated_at");
     expect(sql).toContain("current_item.verification <> 'proposed'");
     expect(sql).toContain("archive_workspace_knowledge_item");
+    expect(sql).toContain("purge_workspace_knowledge");
+    expect(sql).toContain(
+      "Workspace Knowledge deletion requires Workspace erasure",
+    );
     expect(sql).toContain("Workspace Knowledge must enter as a proposal");
     expect(sql).toContain("Workspace Knowledge changes require a domain operation");
     expect(sql).toContain("validate_workspace_knowledge_review_scope");
@@ -34,10 +38,10 @@ describe("migration 129 contract", () => {
     expect(sql).toContain("from public, anon, authenticated");
     expect(sql).toContain("to service_role");
     expect(sql).toContain(
-      "grant select, insert, delete on table public.workspace_knowledge_items",
+      "grant select, insert on table public.workspace_knowledge_items",
     );
     expect(sql).not.toContain(
-      "grant select, insert, update, delete on table public.workspace_knowledge_items",
+      "grant select, insert, delete on table public.workspace_knowledge_items",
     );
     expect(sql).not.toContain("create policy workspace_knowledge");
   });
