@@ -29,6 +29,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
+  cadenceDraftProgress,
   genericContextPlaceholder,
   getWeekPlanDraftReadiness,
 } from "@/lib/agent-loop/week-plan";
@@ -483,9 +484,7 @@ export function AgentBriefing() {
   const activePlanItems = planItems.filter(
     (item) => item.status !== "dismissed",
   );
-  const readyCount = activePlanItems.filter(
-    (item) => item.status === "drafted" || itemDraftReadiness(item).ready,
-  ).length;
+  const draftProgress = cadenceDraftProgress(planItems);
   const inputNeededCount = activePlanItems.filter(
     (item) =>
       item.status === "planned" && !itemDraftReadiness(item).ready,
@@ -535,12 +534,12 @@ export function AgentBriefing() {
                 <div
                   className="h-full rounded-full bg-accent-brand transition-[width]"
                   style={{
-                    width: `${Math.round((readyCount / Math.max(1, activePlanItems.length)) * 100)}%`,
+                    width: `${Math.round((draftProgress.drafted / Math.max(1, draftProgress.total)) * 100)}%`,
                   }}
                 />
               </div>
               <span className="text-xs font-semibold tabular-nums text-foreground">
-                {readyCount}/{activePlanItems.length}
+                {draftProgress.drafted}/{draftProgress.total}
               </span>
             </div>
           ) : null}
