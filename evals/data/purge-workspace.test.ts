@@ -98,7 +98,6 @@ describe("purgeWorkspaceData — coverage + scoping", () => {
       "modeled_draft_slots",
       "modeled_draft_batches",
       "chat_artifacts",
-      "artifact_lineage",
       "draft_edit_events",
       "content_learning_processing_cursors",
       "chat_modeling_sources",
@@ -152,10 +151,10 @@ describe("purgeWorkspaceData — coverage + scoping", () => {
       .toBeLessThan(
         calls.findIndex((call) => call.table === "modeled_draft_batches"),
       );
-    expect(calls.findIndex((call) => call.table === "chat_artifacts"))
-      .toBeLessThan(
-        calls.findIndex((call) => call.table === "artifact_lineage"),
-      );
+    expect(rpcCalls).toContainEqual({
+      name: "purge_artifact_lineage",
+      args: { p_workspace_id: WS },
+    });
     expect(rpcCalls).toContainEqual({
       name: "purge_workspace_knowledge",
       args: { p_workspace_id: WS },

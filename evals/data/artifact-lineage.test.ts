@@ -71,68 +71,53 @@ describe("Artifact Lineage store", () => {
 
   test("records idempotently, then returns the canonical row", async () => {
     const row = storedRow();
-    const upsert = vi.fn(async () => ({ error: null }));
-    const maybeSingle = vi
-      .fn()
-      .mockResolvedValueOnce({ data: null, error: null })
-      .mockResolvedValueOnce({ data: row, error: null });
-    const eqArtifact = vi.fn(() => ({ maybeSingle }));
-    const eqWorkspace = vi.fn(() => ({ eq: eqArtifact }));
-    const select = vi.fn(() => ({ eq: eqWorkspace }));
-    const from = vi.fn(() => ({ upsert, select }));
+    const rpc = vi.fn(async () => ({ data: row, error: null }));
     const store = createContentLineageStore(
-      { from } as unknown as SupabaseClient,
+      { rpc } as unknown as SupabaseClient,
     );
 
     await expect(store.record(input)).resolves.toMatchObject({
       id: row.id,
       artifactId: input.artifactId,
     });
-    expect(upsert).toHaveBeenCalledWith(
-      expect.objectContaining({ artifact_id: input.artifactId }),
-      {
-        onConflict: "artifact_id",
-        ignoreDuplicates: true,
-      },
-    );
-    expect(eqWorkspace).toHaveBeenCalledWith("workspace_id", "workspace-1");
-    expect(eqArtifact).toHaveBeenCalledWith(
-      "artifact_id",
-      input.artifactId,
+    expect(rpc).toHaveBeenCalledWith(
+      "record_artifact_lineage",
+      expect.objectContaining({
+        p_workspace_id: "workspace-1",
+        p_artifact_id: input.artifactId,
+        p_user_direction: input.userDirection,
+      }),
     );
   });
 
-  test("returns existing lineage without revalidating deleted source rows", async () => {
-    const row = storedRow();
-    const upsert = vi.fn(async () => ({ error: null }));
-    const maybeSingle = vi.fn(async () => ({ data: row, error: null }));
-    const eqArtifact = vi.fn(() => ({ maybeSingle }));
-    const eqWorkspace = vi.fn(() => ({ eq: eqArtifact }));
-    const select = vi.fn(() => ({ eq: eqWorkspace }));
-    const from = vi.fn(() => ({ upsert, select }));
+  test("rejects a conflicting retry instead of trusting an existing row", async () => {
+    const failure = vi.fn();
+    const rpc = vi.fn(async () => ({
+      data: null,
+      error: new Error("Artifact lineage collision"),
+    }));
     const store = createContentLineageStore(
-      { from } as unknown as SupabaseClient,
+      { rpc } as unknown as SupabaseClient,
+      { onFailure: failure },
     );
 
-    await expect(store.record(input)).resolves.toMatchObject({
-      id: row.id,
-      artifactId: input.artifactId,
+    await expect(store.record(input)).resolves.toBeNull();
+    expect(failure).toHaveBeenCalledWith({
+      operation: "record",
+      error: expect.objectContaining({
+        message: "Artifact lineage collision",
+      }),
     });
-    expect(upsert).not.toHaveBeenCalled();
   });
 
   test("fails open and reports storage errors without logging direction", async () => {
     const failure = vi.fn();
-    const upsert = vi.fn(async () => ({
+    const rpc = vi.fn(async () => ({
+      data: null,
       error: new Error("database unavailable"),
     }));
-    const maybeSingle = vi.fn(async () => ({ data: null, error: null }));
-    const eqArtifact = vi.fn(() => ({ maybeSingle }));
-    const eqWorkspace = vi.fn(() => ({ eq: eqArtifact }));
-    const select = vi.fn(() => ({ eq: eqWorkspace }));
-    const from = vi.fn(() => ({ upsert, select }));
     const store = createContentLineageStore(
-      { from } as unknown as SupabaseClient,
+      { rpc } as unknown as SupabaseClient,
       { onFailure: failure },
     );
 

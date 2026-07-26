@@ -41,7 +41,10 @@ import {
 } from "@/lib/openrouter";
 import { shouldUseAnthropic } from "@/lib/anthropic";
 import { stampDraftFormat } from "@/lib/markdown/mode";
-import { tagArtifactWithGenerationLineage } from "@/lib/content-learning/generation-lineage";
+import {
+  savedDraftParentId,
+  tagArtifactWithGenerationLineage,
+} from "@/lib/content-learning/generation-lineage";
 import {
   applyCiteSourceToDraftArtifacts,
   isDraftArtifact,
@@ -144,6 +147,7 @@ async function* runTurnPlan(
     skillIds,
     modelSourceId,
     currentTurnOperation,
+    trustedRefineTarget,
     structureMatch,
   } = setup;
 
@@ -396,9 +400,9 @@ async function* runTurnPlan(
           };
         }
         if (isDraftArtifact(tagged) && claimedUserMessageId) {
-          const parentCandidate =
+          const parentArtifactId =
             currentTurnOperation?.kind === "edit_artifact"
-              ? currentTurnOperation.artifactId
+              ? savedDraftParentId(trustedRefineTarget)
               : null;
           tagged = tagArtifactWithGenerationLineage(tagged, {
             schemaVersion: 1,
@@ -408,13 +412,7 @@ async function* runTurnPlan(
               currentTurnOperation?.kind === "edit_artifact"
                 ? "edit"
                 : "create",
-            parentArtifactId:
-              parentCandidate &&
-              /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-                parentCandidate,
-              )
-                ? parentCandidate
-                : null,
+            parentArtifactId,
             modelSourceId: modelSourceId ?? null,
             contentTemplateId:
               structureMatch?.candidate.kind === "template" ||

@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Artifact } from "@/lib/agent/contracts";
 import {
   recordSavedDraftLineage,
+  savedDraftParentId,
   tagArtifactWithGenerationLineage,
 } from "@/lib/content-learning/generation-lineage";
 import type { DraftRecord } from "@/lib/draft-lifecycle";
@@ -75,6 +76,27 @@ describe("generation lineage dual-write", () => {
     expect(tagArtifactWithGenerationLineage(cite, seed)).toBe(cite);
   });
 
+  test("uses only a trusted saved Draft id as an edit parent", () => {
+    expect(
+      savedDraftParentId({
+        id: "conversation-artifact",
+        kind: "post",
+        title: "Draft",
+        body: "Body",
+        meta: { board_draft_id: artifactId },
+      }),
+    ).toBe(artifactId);
+    expect(
+      savedDraftParentId({
+        id: artifactId,
+        kind: "post",
+        title: "Draft",
+        body: "Body",
+        meta: {},
+      }),
+    ).toBeNull();
+  });
+
   test("records exact direction and trusted agent origin after an edited Draft save", async () => {
     const maybeSingle = vi.fn(async () => ({
       data: {
@@ -89,51 +111,42 @@ describe("generation lineage dual-write", () => {
     const eqWorkspace = vi.fn(() => ({ eq: eqRole }));
     const eqChat = vi.fn(() => ({ eq: eqWorkspace }));
     const eqId = vi.fn(() => ({ eq: eqChat }));
-    const lineageMaybeSingle = vi
-      .fn()
-      .mockResolvedValueOnce({ data: null, error: null })
-      .mockResolvedValueOnce({
-        data: {
-          id: "44444444-4444-4444-8444-444444444444",
-          schema_version: 1,
-          workspace_id: "workspace-1",
-          artifact_id: artifactId,
-          parent_artifact_id: null,
-          cowork_command: "create",
-          cowork_chat_id: chatId,
-          cowork_user_message_id: userMessageId,
-          user_direction: "Write about founder-led systems.",
-          inputs: {
-            modelSourceId: null,
-            contentTemplateId: null,
-            creatorStyleId: null,
-            customSkillIds: ["anti-ai"],
-            leadMagnetId: null,
-            voiceProfileRevision: null,
-          },
-          origin: {
-            kind: "agent_opportunity",
-            weekPlanItemId: null,
-            opportunityId: "55555555-5555-4555-8555-555555555555",
-          },
-          generation_model: seed.generationModel,
-          generated_at: timestamp,
-          descriptor: {
-            topic: "Founder-led systems",
-            hookType: null,
-            structure: null,
-            ctaType: null,
-          },
-          created_at: timestamp,
+    const rpc = vi.fn(async () => ({
+      data: {
+        id: "44444444-4444-4444-8444-444444444444",
+        schema_version: 1,
+        workspace_id: "workspace-1",
+        artifact_id: artifactId,
+        parent_artifact_id: null,
+        cowork_command: "create",
+        cowork_chat_id: chatId,
+        cowork_user_message_id: userMessageId,
+        user_direction: "Write about founder-led systems.",
+        inputs: {
+          modelSourceId: null,
+          contentTemplateId: null,
+          creatorStyleId: null,
+          customSkillIds: ["anti-ai"],
+          leadMagnetId: null,
+          voiceProfileRevision: null,
         },
-        error: null,
-      });
-    const lineageEqArtifact = vi.fn(() => ({
-      maybeSingle: lineageMaybeSingle,
+        origin: {
+          kind: "agent_opportunity",
+          weekPlanItemId: null,
+          opportunityId: "55555555-5555-4555-8555-555555555555",
+        },
+        generation_model: seed.generationModel,
+        generated_at: timestamp,
+        descriptor: {
+          topic: "Founder-led systems",
+          hookType: null,
+          structure: null,
+          ctaType: null,
+        },
+        created_at: timestamp,
+      },
+      error: null,
     }));
-    const lineageEqWorkspace = vi.fn(() => ({ eq: lineageEqArtifact }));
-    const selectLineage = vi.fn(() => ({ eq: lineageEqWorkspace }));
-    const upsert = vi.fn(async () => ({ error: null }));
 
     const assistantOrder = vi.fn(async () => ({
       data: [
@@ -159,13 +172,10 @@ describe("generation lineage dual-write", () => {
         : { eq: eqId },
     );
 
-    const from = vi.fn((table: string) =>
-      table === "chat_messages"
-        ? { select: selectMessages }
-        : { select: selectLineage, upsert },
-    );
+    const from = vi.fn(() => ({ select: selectMessages }));
+    const client = { from, rpc } as unknown as SupabaseClient;
     await recordSavedDraftLineage(
-      { from } as unknown as SupabaseClient,
+      client,
       "workspace-1",
       {
         ...draft({
@@ -178,17 +188,18 @@ describe("generation lineage dual-write", () => {
       {
         opportunityId: "55555555-5555-4555-8555-555555555555",
       },
+      client,
     );
 
-    expect(upsert).toHaveBeenCalledWith(
+    expect(rpc).toHaveBeenCalledWith(
+      "record_artifact_lineage",
       expect.objectContaining({
-        workspace_id: "workspace-1",
-        artifact_id: artifactId,
-        user_direction: "Write about founder-led systems.",
-        generation_model: seed.generationModel,
-        origin: expect.objectContaining({ kind: "agent_opportunity" }),
+        p_workspace_id: "workspace-1",
+        p_artifact_id: artifactId,
+        p_user_direction: "Write about founder-led systems.",
+        p_generation_model: seed.generationModel,
+        p_origin: expect.objectContaining({ kind: "agent_opportunity" }),
       }),
-      expect.anything(),
     );
     expect(selectMessages).toHaveBeenCalledWith("artifacts");
   });
@@ -218,26 +229,32 @@ describe("generation lineage dual-write", () => {
         ? { eq: assistantEqChat }
         : { eq: userEqId },
     );
-    const upsert = vi.fn();
+    const rpc = vi.fn();
     const from = vi.fn((table: string) =>
-      table === "chat_messages" ? { select } : { upsert },
+      table === "chat_messages" ? { select } : {},
     );
+    const client = { from, rpc } as unknown as SupabaseClient;
 
     await recordSavedDraftLineage(
-      { from } as unknown as SupabaseClient,
+      client,
       "workspace-1",
       draft({ content_lineage: seed }),
+      {},
+      client,
     );
-    expect(upsert).not.toHaveBeenCalled();
+    expect(rpc).not.toHaveBeenCalled();
   });
 
   test("keeps Draft save fail-open when lineage has no valid seed", async () => {
     const from = vi.fn();
+    const client = { from } as unknown as SupabaseClient;
     await expect(
       recordSavedDraftLineage(
-        { from } as unknown as SupabaseClient,
+        client,
         "workspace-1",
         draft(null),
+        {},
+        client,
       ),
     ).resolves.toBeUndefined();
     expect(from).not.toHaveBeenCalled();

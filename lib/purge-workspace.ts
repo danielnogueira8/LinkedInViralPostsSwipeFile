@@ -164,11 +164,17 @@ export async function purgeWorkspaceData(
     del("modeled_draft_batches").eq("workspace_id", workspaceId),
   );
   await wipe("chat_artifacts", () => del("chat_artifacts").eq("workspace_id", workspaceId));
-  // Lineage is append-only during normal lifecycle. Its delete trigger allows
-  // this explicit GDPR erasure only after the owning Artifact is gone.
-  await wipe("artifact_lineage", () =>
-    del("artifact_lineage").eq("workspace_id", workspaceId),
-  );
+  // Lineage is append-only during normal lifecycle. Only this explicit,
+  // server-owned GDPR erasure function may remove its immutable snapshots.
+  await wipe("artifact_lineage", async () => {
+    const { data, error } = await sb.rpc("purge_artifact_lineage", {
+      p_workspace_id: workspaceId,
+    });
+    return {
+      count: typeof data === "number" ? data : null,
+      error,
+    };
+  });
   await wipe("chat_messages", () => del("chat_messages").eq("workspace_id", workspaceId));
   await wipe("chat_modeling_sources", () => del("chat_modeling_sources").eq("workspace_id", workspaceId));
   await wipe("chats", () => del("chats").eq("workspace_id", workspaceId));
