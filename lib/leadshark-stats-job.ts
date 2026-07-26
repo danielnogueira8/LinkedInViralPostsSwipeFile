@@ -1,10 +1,9 @@
 // The leadshark_sync_stats background-job handler (build plan §7).
 //
-// Poll-only. One LeadShark call per workspace — GET /api/automations returns the
-// `stats` block for every automation in the page, so we fan IN (one call) rather
-// than per-automation (which would burn the rate budget). Maps each automation's
-// stats onto our active rows by leadshark_automation_id. Stats are COUNTS ONLY —
-// no commenter PII is ever stored.
+// Poll-only. GET /api/automations returns the `stats` block for every automation
+// in each page, so we paginate and fan IN rather than fetching each automation
+// separately. Maps stats onto our active rows by leadshark_automation_id. Stats
+// are COUNTS ONLY — no commenter PII is ever stored.
 //
 // The job row is the only Workspace authority. A legacy payload Workspace may
 // be present, but it can never redirect this service-role operation.
@@ -17,7 +16,7 @@ import {
 } from "@/lib/background-jobs";
 import { supabaseAdmin } from "@/lib/supabase";
 import { getDecryptedKey } from "@/lib/leadshark-credentials";
-import { listAutomations } from "@/lib/leadshark";
+import { listAllAutomations } from "@/lib/leadshark";
 import { ingestLeadSharkStatsOutcome } from "@/lib/content-learning/leadshark-outcomes";
 
 type JobResult = {
@@ -81,9 +80,7 @@ export async function runLeadSharkStatsSyncJob(job: BackgroundJob): Promise<JobR
     rows.map((row) => [row.leadshark_automation_id, row]),
   );
 
-  // One page is enough for the expected per-workspace volume; paginate if a
-  // workspace ever exceeds the page size.
-  const listed = await listAutomations(apiKey, { page: 1, limit: 50 });
+  const listed = await listAllAutomations(apiKey);
   if (!listed.ok) {
     // A transient upstream failure — throw so the worker requeues within budget.
     throw new Error(`LeadShark stats fetch failed: ${listed.error.message}`);

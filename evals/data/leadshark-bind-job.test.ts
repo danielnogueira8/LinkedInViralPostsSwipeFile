@@ -20,7 +20,7 @@ const resolve = vi.fn();
 const createAutomation = vi.fn();
 const getAutomation = vi.fn();
 type ListedStub = { id: string; postId: string | null; stats: Record<string, number>; raw: unknown };
-const listAutomations =
+const listAllAutomations =
   vi.fn<() => Promise<{ ok: true; automations: ListedStub[] } | { ok: false; error: unknown }>>(
     async () => ({ ok: true, automations: [] }),
   );
@@ -50,7 +50,7 @@ vi.mock("@/lib/leadshark", async (importOriginal) => {
     ...actual, // keep the real isActivityUrn / assertActivityUrn guards
     createAutomation: (...a: unknown[]) => createAutomation(...(a as [])),
     getAutomation: (...a: unknown[]) => getAutomation(...(a as [])),
-    listAutomations: (...a: unknown[]) => listAutomations(...(a as [])),
+    listAllAutomations: (...a: unknown[]) => listAllAutomations(...(a as [])),
   };
 });
 
@@ -120,7 +120,7 @@ describe("runLeadSharkBindJob", () => {
     vi.clearAllMocks();
     getDecryptedKey.mockResolvedValue("ls_key");
     getAutomationById.mockResolvedValue(automation());
-    listAutomations.mockResolvedValue({ ok: true, automations: [] });
+    listAllAutomations.mockResolvedValue({ ok: true, automations: [] });
   });
   afterEach(() => vi.clearAllMocks());
 
@@ -247,7 +247,7 @@ describe("runLeadSharkBindJob", () => {
       postId: "urn:li:activity:999",
       shareUrl: null,
     });
-    listAutomations.mockResolvedValue({
+    listAllAutomations.mockResolvedValue({
       ok: true,
       automations: [{ id: "existing_ls", postId: "urn:li:activity:999", stats: {}, raw: {} }],
     });
@@ -259,5 +259,27 @@ describe("runLeadSharkBindJob", () => {
       "auto_1",
       expect.objectContaining({ leadsharkAutomationId: "existing_ls" }),
     );
+  });
+
+  test("never creates after an incomplete automation listing", async () => {
+    resolve.mockResolvedValue({
+      kind: "resolved",
+      postId: "urn:li:activity:999",
+      shareUrl: null,
+    });
+    listAllAutomations.mockResolvedValue({
+      ok: false,
+      error: {
+        kind: "transient",
+        status: 0,
+        message: "pagination incomplete",
+      },
+    });
+
+    await expect(runLeadSharkBindJob(job())).rejects.toThrow(
+      "pagination incomplete",
+    );
+    expect(createAutomation).not.toHaveBeenCalled();
+    expect(markBound).not.toHaveBeenCalled();
   });
 });
