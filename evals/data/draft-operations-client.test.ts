@@ -21,6 +21,21 @@ const draftRow = {
 };
 
 describe("Draft operations client", () => {
+  it("loads one Draft by id through the workspace-scoped endpoint", async () => {
+    const fetcher = vi.fn(async () =>
+      jsonResponse({ ok: true, draft: draftRow }),
+    );
+    const client = createDraftOperationsClient(fetcher);
+
+    await expect(client.find("draft-1")).resolves.toMatchObject({
+      id: "draft-1",
+      body: "Draft body",
+    });
+    expect(fetcher).toHaveBeenCalledWith("/api/drafts/draft-1", {
+      method: "GET",
+    });
+  });
+
   it("creates a board Draft through the typed operation path", async () => {
     const fetcher = vi.fn(async () =>
       jsonResponse({ ok: true, deduped: false, draft: draftRow }),

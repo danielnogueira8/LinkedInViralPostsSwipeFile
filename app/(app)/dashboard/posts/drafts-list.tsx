@@ -32,6 +32,8 @@ import {
   patchById,
   restoreFieldById,
 } from "@/lib/optimistic";
+import { createDraftOperationsClient } from "@/lib/draft-operations-client";
+import { loadPostingQueueDraft } from "@/lib/posting-queue-draft";
 import type { PostPreviewAuthor } from "../draft-editor-modal";
 import type {
   Draft,
@@ -52,6 +54,7 @@ const DraftEditorModal = dynamic(
   () => import("../draft-editor-modal").then((mod) => mod.DraftEditorModal),
   { loading: () => null },
 );
+const draftOperations = createDraftOperationsClient();
 
 // Drafts pipeline board. Each saved post/hook (a chat_artifacts row) is a card
 // in one of four columns — idea → drafting → ready → posted (migration 047).
@@ -514,6 +517,19 @@ export function DraftsList({
     setEditingId(draft.id);
     setEditorOpen(true);
   };
+  const openQueueDraft = async (draftId: string) => {
+    try {
+      const loaded = await loadPostingQueueDraft(
+        drafts,
+        draftId,
+        (id) => draftOperations.find(id),
+      );
+      setDrafts((current) => mergeServerDrafts(current, [loaded]));
+      openEdit(loaded);
+    } catch (error) {
+      toast.error((error as Error).message);
+    }
+  };
   // The live draft for the open drawer, derived from `drafts` by id (so meta
   // edits reflect instantly). null when creating a new post.
   const editing = editingId ? drafts.find((d) => d.id === editingId) ?? null : null;
@@ -602,10 +618,7 @@ export function DraftsList({
   return (
     <div className="flex flex-col gap-4">
       <PostingQueueWidget
-        onOpenDraft={(draftId) => {
-          const draft = drafts.find((item) => item.id === draftId);
-          if (draft) openEdit(draft);
-        }}
+        onOpenDraft={(draftId) => void openQueueDraft(draftId)}
       />
       {/* Toolbar: search + kind filter */}
       <Toolbar className="flex flex-wrap items-center gap-2 p-2 sm:p-2.5">
