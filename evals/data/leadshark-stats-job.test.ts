@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { BackgroundJob } from "@/lib/background-jobs";
 
 const getDecryptedKey = vi.fn();
-const listAutomations = vi.fn();
+const listAllAutomations = vi.fn();
 const ingestLeadSharkStatsOutcome = vi.fn();
 const markJobDone = vi.fn();
 const markJobFailed = vi.fn();
@@ -21,7 +21,7 @@ vi.mock("@/lib/leadshark-credentials", () => ({
   getDecryptedKey: (...args: unknown[]) => getDecryptedKey(...args),
 }));
 vi.mock("@/lib/leadshark", () => ({
-  listAutomations: (...args: unknown[]) => listAutomations(...args),
+  listAllAutomations: (...args: unknown[]) => listAllAutomations(...args),
 }));
 vi.mock("@/lib/content-learning/leadshark-outcomes", () => ({
   ingestLeadSharkStatsOutcome: (...args: unknown[]) =>
@@ -56,7 +56,7 @@ describe("LeadShark stats outcome sync", () => {
       ],
       error: null,
     });
-    listAutomations.mockResolvedValue({
+    listAllAutomations.mockResolvedValue({
       ok: true,
       automations: [
         {
@@ -131,7 +131,7 @@ describe("LeadShark stats outcome sync", () => {
       completed: 1,
     });
     expect(getDecryptedKey).not.toHaveBeenCalled();
-    expect(listAutomations).not.toHaveBeenCalled();
+    expect(listAllAutomations).not.toHaveBeenCalled();
     expect(markJobDone).toHaveBeenCalledWith(
       job,
       { skipped: "stats_sync_in_progress" },

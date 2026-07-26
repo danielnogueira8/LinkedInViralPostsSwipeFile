@@ -1,9 +1,14 @@
-import { describe, test, expect } from "vitest";
+import { afterEach, describe, test, expect, vi } from "vitest";
 import {
   isActivityUrn,
   assertActivityUrn,
   mapLeadSharkError,
+  listAllAutomations,
 } from "@/lib/leadshark";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 // ---------------------------------------------------------------------------
 // Pure-logic tests for the LeadShark client: the URN guard (the one thing that,
@@ -77,5 +82,74 @@ describe("error mapping", () => {
     expect(mapLeadSharkError(401, "x-api-key: ls_live_SECRET").message).not.toContain(
       "ls_live_SECRET",
     );
+  });
+});
+
+describe("automation pagination", () => {
+  test("loads every page and deduplicates moving-page overlap", async () => {
+    const first = Array.from({ length: 3 }, (_, index) => ({
+      id: `automation-${index + 1}`,
+      post_id: `urn:li:activity:${index + 1}`,
+    }));
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ items: first }), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            items: [
+              first[2],
+              {
+                id: "automation-4",
+                post_id: "urn:li:activity:4",
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+      );
+    vi.stubGlobal("fetch", fetch);
+
+    const result = await listAllAutomations("secret", {
+      pageSize: 3,
+      maxPages: 3,
+    });
+
+    expect(result).toMatchObject({ ok: true });
+    if (!result.ok) throw new Error("Expected successful pagination");
+    expect(result.automations.map((automation) => automation.id)).toEqual([
+      "automation-1",
+      "automation-2",
+      "automation-3",
+      "automation-4",
+    ]);
+    expect(fetch.mock.calls.map(([url]) => String(url))).toEqual([
+      expect.stringContaining("/api/automations?page=1&limit=3"),
+      expect.stringContaining("/api/automations?page=2&limit=3"),
+    ]);
+  });
+
+  test("fails closed when the bounded final page is still full", async () => {
+    const fullPage = {
+      items: [
+        { id: "automation-1" },
+        { id: "automation-2" },
+      ],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation(async () =>
+        new Response(JSON.stringify(fullPage), { status: 200 }),
+      ),
+    );
+
+    await expect(
+      listAllAutomations("secret", { pageSize: 2, maxPages: 2 }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { kind: "transient" },
+    });
   });
 });

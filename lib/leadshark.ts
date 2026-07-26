@@ -533,3 +533,61 @@ export async function listAutomations(
   if (res.ok) return { ok: true, automations: normalizeListedAutomations(res.json) };
   return { ok: false, error: res.error };
 }
+
+const AUTOMATION_PAGE_SIZE = 50;
+const AUTOMATION_MAX_PAGES = 20;
+
+/**
+ * Lists a bounded, deduplicated automation corpus. LeadShark does not expose a
+ * confirmed pagination envelope, so a short page is the only reliable end
+ * marker. A completely full final safety page fails closed instead of silently
+ * presenting a partial corpus as complete.
+ */
+export async function listAllAutomations(
+  apiKey: string,
+  opts?: {
+    pageSize?: number;
+    maxPages?: number;
+    signal?: AbortSignal;
+  },
+): Promise<
+  | { ok: true; automations: ListedAutomation[] }
+  | { ok: false; error: LeadSharkError }
+> {
+  const pageSize = Math.max(
+    1,
+    Math.min(AUTOMATION_PAGE_SIZE, Math.trunc(opts?.pageSize ?? AUTOMATION_PAGE_SIZE)),
+  );
+  const maxPages = Math.max(
+    1,
+    Math.min(AUTOMATION_MAX_PAGES, Math.trunc(opts?.maxPages ?? AUTOMATION_MAX_PAGES)),
+  );
+  const byId = new Map<string, ListedAutomation>();
+
+  for (let page = 1; page <= maxPages; page += 1) {
+    const listed = await listAutomations(apiKey, {
+      page,
+      limit: pageSize,
+      signal: opts?.signal,
+    });
+    if (!listed.ok) return listed;
+    for (const automation of listed.automations) {
+      if (automation.id && !byId.has(automation.id)) {
+        byId.set(automation.id, automation);
+      }
+    }
+    if (listed.automations.length < pageSize) {
+      return { ok: true, automations: [...byId.values()] };
+    }
+  }
+
+  return {
+    ok: false,
+    error: {
+      kind: "transient",
+      status: 0,
+      message:
+        "LeadShark returned more automation pages than can be synced safely.",
+    },
+  };
+}

@@ -30,7 +30,7 @@ const BIND_MAX_ATTEMPTS = 6;
 import {
   createAutomation,
   getAutomation,
-  listAutomations,
+  listAllAutomations,
   assertActivityUrn,
   isActivityUrn,
   type AutomationConfig,
@@ -222,13 +222,16 @@ async function bindOnce(
 }
 
 // Look for an existing LeadShark automation already targeting this URN (the
-// Auto-Automate dedupe). Best-effort — a failure here shouldn't block binding.
+// Auto-Automate dedupe). Fail closed when the complete listing is unavailable:
+// creating after a partial read could double-DM commenters.
 async function findExistingAutomationForPost(
   apiKey: string,
   postId: string,
 ): Promise<string | null> {
-  const listed = await listAutomations(apiKey, { limit: 50 });
-  if (!listed.ok) return null;
+  const listed = await listAllAutomations(apiKey);
+  if (!listed.ok) {
+    throw new BindRetryableError(listed.error.message);
+  }
   const match = listed.automations.find((a) => a.postId === postId);
   return match?.id ?? null;
 }
