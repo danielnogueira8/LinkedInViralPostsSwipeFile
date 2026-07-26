@@ -86,6 +86,7 @@ describe("purgeWorkspaceData — coverage + scoping", () => {
       "modeled_draft_slots",
       "modeled_draft_batches",
       "chat_artifacts",
+      "artifact_lineage",
       "chat_modeling_sources",
       "saved_posts",
       "lead_magnets",
@@ -136,6 +137,10 @@ describe("purgeWorkspaceData — coverage + scoping", () => {
     expect(calls.findIndex((call) => call.table === "modeled_draft_slots"))
       .toBeLessThan(
         calls.findIndex((call) => call.table === "modeled_draft_batches"),
+      );
+    expect(calls.findIndex((call) => call.table === "chat_artifacts"))
+      .toBeLessThan(
+        calls.findIndex((call) => call.table === "artifact_lineage"),
       );
   });
 
