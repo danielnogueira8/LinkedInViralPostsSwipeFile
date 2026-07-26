@@ -1,6 +1,6 @@
 create schema if not exists extensions;
 create extension if not exists pgcrypto with schema extensions;
-create role service_role;
+create role service_role bypassrls;
 create role anon;
 create role authenticated;
 
