@@ -8,15 +8,24 @@ import {
   opportunityIsLeadMagnet,
 } from "@/lib/agent-loop/opportunity-post-type";
 import {
+  GENERIC_WEEK_PROMPTS,
   pickNextGenericPrompt,
   weekStart,
   rollingWindowWeekStarts,
 } from "@/lib/agent-loop/week-plan";
 import {
+  rankGenericWeekPrompts,
+  rankWeekPlanOpportunities,
+  type WeekPlanLearningSource,
+  weekPlanLearningSource,
+} from "@/lib/agent-loop/week-plan-learning";
+import {
   loadStoredWeekPlan,
   mutateStoredWeekPlanItemAcross,
   type StoredWeekPlanItem,
 } from "@/lib/agent-loop/week-plan-store";
+import { loadActiveWorkspaceLearning } from "@/lib/content-learning/workspace-learning-context";
+import type { WorkspaceLearningModel } from "@/lib/content-learning/contracts";
 
 export const runtime = "nodejs";
 
@@ -28,6 +37,8 @@ type OpportunityCandidate = {
   isLeadMagnet: boolean;
   authorAvatar: string | null;
   sourcePostId: string | null;
+  sourceText: string;
+  learningSource: WeekPlanLearningSource | null;
 };
 
 /** Every opportunity already showing on this week's plan, so a reroll never
@@ -45,6 +56,7 @@ async function findOpportunityCandidate(
   workspaceId: string,
   wantLeadMagnet: boolean,
   excludeIds: ReadonlySet<string>,
+  learning: WorkspaceLearningModel | null,
 ): Promise<OpportunityCandidate | null> {
   const { data: opportunities, error } = await db
     .from("agent_opportunities")
@@ -69,10 +81,11 @@ async function findOpportunityCandidate(
   ];
   let leadMagnetPostIdSet = new Set<string>();
   const avatarByPostId = new Map<string, string>();
+  const textByPostId = new Map<string, string>();
   if (sourcePostIds.length > 0) {
     const { data: sourcePosts, error: sourcePostError } = await db
       .from("posts")
-      .select("id, post_type, accounts(profile_pic_url)")
+      .select("id, text, post_type, accounts(profile_pic_url)")
       .in("id", sourcePostIds);
     if (sourcePostError) throw sourcePostError;
     leadMagnetPostIdSet = leadMagnetPostIds(sourcePosts);
@@ -87,27 +100,48 @@ async function findOpportunityCandidate(
       ) {
         avatarByPostId.set(post.id, account.profile_pic_url);
       }
+      if (
+        typeof post.id === "string" &&
+        typeof post.text === "string"
+      ) {
+        textByPostId.set(post.id, post.text);
+      }
     }
   }
 
-  const match = pool.find(
-    (row) =>
-      opportunityIsLeadMagnet(row, leadMagnetPostIdSet) === wantLeadMagnet,
-  );
+  const candidates = pool
+    .filter(
+      (row) =>
+        opportunityIsLeadMagnet(row, leadMagnetPostIdSet) === wantLeadMagnet,
+    )
+    .map((row) => {
+      const payload = (row.payload ?? {}) as Record<string, unknown>;
+      const sourcePostId =
+        typeof row.source_post_id === "string"
+          ? row.source_post_id
+          : null;
+      const sourceText = sourcePostId
+        ? (textByPostId.get(sourcePostId) ?? "")
+        : "";
+      return {
+        id: row.id as string,
+        headline: readOpportunityHeadline(payload),
+        isLeadMagnet: wantLeadMagnet,
+        authorAvatar: sourcePostId
+          ? (avatarByPostId.get(sourcePostId) ?? null)
+          : null,
+        sourcePostId,
+        sourceText,
+        learningSource: weekPlanLearningSource(sourceText, learning),
+      };
+    });
+  const match = rankWeekPlanOpportunities(
+    candidates,
+    learning,
+    { preserveStrongest: false },
+  )[0];
   if (!match) return null;
-
-  const payload = (match.payload ?? {}) as Record<string, unknown>;
-  const sourcePostId =
-    typeof match.source_post_id === "string" ? match.source_post_id : null;
-  return {
-    id: match.id as string,
-    headline: readOpportunityHeadline(payload),
-    isLeadMagnet: wantLeadMagnet,
-    authorAvatar: sourcePostId
-      ? (avatarByPostId.get(sourcePostId) ?? null)
-      : null,
-    sourcePostId,
-  };
+  return match;
 }
 
 // -----------------------------------------------------------------------------
@@ -134,6 +168,10 @@ export async function POST(
         { status: 409 },
       );
     }
+    const learning = await loadActiveWorkspaceLearning(
+      sb.raw,
+      sb.workspaceId,
+    );
 
     let candidate: OpportunityCandidate | null = null;
     let nextPrompt: string | null = null;
@@ -143,6 +181,7 @@ export async function POST(
         sb.workspaceId,
         current.opportunity?.is_lead_magnet === true,
         usedOpportunityIds(plan!.items),
+        learning,
       );
       if (!candidate) {
         return NextResponse.json(
@@ -161,6 +200,10 @@ export async function POST(
         usedPrompts: plan!.items
           .filter((item) => item.kind === "generic" && item.prompt)
           .map((item) => item.prompt as string),
+        prompts: rankGenericWeekPrompts(
+          GENERIC_WEEK_PROMPTS,
+          learning,
+        ),
       });
       if (!nextPrompt) {
         return NextResponse.json(
@@ -185,6 +228,7 @@ export async function POST(
             ...item,
             userContext: null,
             selectedLeadMagnetId: null,
+            learningSource: candidate.learningSource,
             opportunity: {
               id: candidate.id,
               headline: candidate.headline,
@@ -195,7 +239,15 @@ export async function POST(
           };
         }
         if (item.kind === "generic" && nextPrompt) {
-          return { ...item, prompt: nextPrompt, userContext: null };
+          return {
+            ...item,
+            prompt: nextPrompt,
+            userContext: null,
+            learningSource: weekPlanLearningSource(
+              nextPrompt,
+              learning,
+            ),
+          };
         }
         return null;
       },

@@ -8,6 +8,10 @@ const itemSchema = z.object({
   prompt: z.string().nullable(),
   userContext: z.string().nullable(),
   selectedLeadMagnetId: z.string().nullable(),
+  learningSource: z
+    .enum(["voice_exemplars", "published_posts"])
+    .nullable()
+    .optional(),
   status: z.enum(["planned", "drafting", "drafted", "dismissed"]),
   // Optional keeps plans saved before this field was introduced readable.
   draftId: z.string().uuid().nullable().optional(),

@@ -12,6 +12,7 @@ import {
   ChevronRight,
   CheckCircle2,
   RefreshCcw,
+  TrendingUp,
 } from "lucide-react";
 import { AiIcon } from "@/components/ai-icon";
 import { AvatarImg } from "@/components/avatar-img";
@@ -165,6 +166,10 @@ type WeekPlanItem = {
   prompt: string | null;
   userContext: string | null;
   selectedLeadMagnetId: string | null;
+  learningSource?:
+    | "voice_exemplars"
+    | "published_posts"
+    | null;
   status: "planned" | "drafting" | "drafted" | "dismissed";
   draftId?: string | null;
 };
@@ -655,6 +660,21 @@ export function AgentBriefing() {
                       ? "Lead magnet"
                       : "Regular post"}
                   </p>
+                  {item.learningSource ? (
+                    <p
+                      className="mt-1 flex items-center gap-1 text-[9px] font-medium text-accent-brand"
+                      title={
+                        item.learningSource === "voice_exemplars"
+                          ? "This recommendation matches patterns in the posts used to build your Voice."
+                          : "This recommendation matches evidence from your published posts."
+                      }
+                    >
+                      <TrendingUp className="h-2.5 w-2.5" aria-hidden />
+                      {item.learningSource === "voice_exemplars"
+                        ? "Guided by your Voice"
+                        : "Guided by published results"}
+                    </p>
+                  ) : null}
                   <p className="mt-1 line-clamp-5 text-xs font-medium leading-4 text-foreground">
                     <span className={cn(item.kind === "generic" && "capitalize")}>
                       {title}

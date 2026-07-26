@@ -216,4 +216,24 @@ describe("persistent weekly plan contract", () => {
     expect(rerollRoute).toContain("pickNextGenericPrompt(");
     expect(rerollRoute).toContain('item.status !== "planned"');
   });
+
+  test("weekly recommendations use active learning as an explainable, overridable nudge", () => {
+    expect(planRoute).toContain("loadActiveWorkspaceLearning");
+    expect(planRoute).toContain("rankWeekPlanOpportunities");
+    expect(planRoute).toContain("rankGenericWeekPrompts");
+    expect(store).toContain("learningSource");
+    expect(briefing).toContain("Guided by your Voice");
+    expect(briefing).toContain("Guided by published results");
+    expect(rerollRoute).toContain("rankWeekPlanOpportunities");
+    expect(rerollRoute).toContain("rankGenericWeekPrompts");
+
+    // Learning chooses recommendations; explicit direction and resource
+    // selections remain the authoritative drafting inputs.
+    expect(draftRoute).toContain(
+      "const context = (input.context ?? item.userContext ?? \"\").trim()",
+    );
+    expect(draftRoute).toContain("requestedLeadMagnetId: input.leadMagnetId");
+    expect(draftRoute).toContain("draftFromPrompt(");
+    expect(draftRoute).toContain("actOnOpportunity(");
+  });
 });
