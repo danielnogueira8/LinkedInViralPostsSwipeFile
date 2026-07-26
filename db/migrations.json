@@ -1,7 +1,7 @@
 {
   "generatedBy": "npm run migrations:metadata",
-  "highest": 125,
-  "count": 125,
+  "highest": 126,
+  "count": 126,
   "files": [
     "migration-001-progress.sql",
     "migration-002-usage.sql",
@@ -127,6 +127,7 @@
     "migration-122-background-job-leadshark-types.sql",
     "migration-123-retire-lead-magnet-resource-job.sql",
     "migration-124-persistent-week-plans.sql",
-    "migration-125-artifact-lineage.sql"
+    "migration-125-artifact-lineage.sql",
+    "migration-126-backfill-artifact-lineage.sql"
   ]
 }

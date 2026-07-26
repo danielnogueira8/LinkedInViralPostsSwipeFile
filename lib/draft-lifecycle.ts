@@ -58,6 +58,10 @@ export type DraftLifecycleRepository = {
     meta: Record<string, unknown> | null;
     mediaAttachments: PostMediaAttachment[];
     savedBy: string | null;
+    lineageOrigin?: {
+      weekPlanItemId?: string;
+      opportunityId?: string;
+    };
   }): Promise<
     | { outcome: "saved" | "deduped"; draft: DraftRecord }
     | { outcome: "chat_not_found" }
@@ -212,6 +216,10 @@ export class DraftLifecycle {
     meta?: Record<string, unknown>;
     mediaAttachments?: PostMediaAttachment[];
     savedBy?: string | null;
+    lineageOrigin?: {
+      weekPlanItemId?: string;
+      opportunityId?: string;
+    };
   }): Promise<
     DraftCommandOutcome<{ draft: DraftRecord; deduped: boolean }>
   > {
@@ -225,6 +233,7 @@ export class DraftLifecycle {
       meta: input.meta ?? null,
       mediaAttachments: input.mediaAttachments ?? [],
       savedBy: input.savedBy ?? null,
+      lineageOrigin: input.lineageOrigin,
     });
     if (result.outcome === "chat_not_found") {
       return rejected("not_found", "Chat not found", 404);

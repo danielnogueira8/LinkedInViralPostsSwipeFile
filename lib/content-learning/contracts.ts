@@ -70,7 +70,7 @@ export const artifactLineageInputSchema = z
     workspaceId: workspaceIdSchema,
     artifactId: idSchema,
     parentArtifactId: nullableIdSchema,
-    coworkCommand: z.enum(["ask", "create", "edit"]),
+    coworkCommand: z.enum(["ask", "create", "edit", "unknown"]),
     coworkTurn: coworkTurnReferenceSchema.nullable(),
     userDirection: z.string().trim().min(1).max(12_000),
     inputs: contentLineageInputsSchema,

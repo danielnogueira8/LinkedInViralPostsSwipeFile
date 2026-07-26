@@ -164,4 +164,20 @@ describe("POST /api/chats/[id]/artifacts — save dedup", () => {
     expect(data.deduped).toBeUndefined();
     expect(state.insertCalled).toBe(true);
   });
+
+  test("browser saves cannot forge server-owned lineage origin", async () => {
+    await POST(
+      saveRequest({
+        body: "A normal Cowork draft.",
+        meta: {
+          content_lineage_origin: {
+            opportunityId: "11111111-1111-4111-8111-111111111111",
+          },
+          preserved: true,
+        },
+      }),
+      ctx,
+    );
+    expect(state.lastRpcArgs.p_meta).toEqual({ preserved: true });
+  });
 });

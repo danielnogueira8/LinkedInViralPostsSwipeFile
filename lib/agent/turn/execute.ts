@@ -41,6 +41,7 @@ import {
 } from "@/lib/openrouter";
 import { shouldUseAnthropic } from "@/lib/anthropic";
 import { stampDraftFormat } from "@/lib/markdown/mode";
+import { tagArtifactWithGenerationLineage } from "@/lib/content-learning/generation-lineage";
 import {
   applyCiteSourceToDraftArtifacts,
   isDraftArtifact,
@@ -140,6 +141,10 @@ async function* runTurnPlan(
     coworkTelemetry,
     customSkillBodies,
     customSkillNames,
+    skillIds,
+    modelSourceId,
+    currentTurnOperation,
+    structureMatch,
   } = setup;
 
   let citedSourceImage = initialCitedSourceImage;
@@ -389,6 +394,54 @@ async function* runTurnPlan(
             ...tagged,
             meta: stampDraftFormat(tagged.meta, responseModel),
           };
+        }
+        if (isDraftArtifact(tagged) && claimedUserMessageId) {
+          const parentCandidate =
+            currentTurnOperation?.kind === "edit_artifact"
+              ? currentTurnOperation.artifactId
+              : null;
+          tagged = tagArtifactWithGenerationLineage(tagged, {
+            schemaVersion: 1,
+            sourceArtifactId: tagged.id,
+            userMessageId: claimedUserMessageId,
+            coworkCommand:
+              currentTurnOperation?.kind === "edit_artifact"
+                ? "edit"
+                : "create",
+            parentArtifactId:
+              parentCandidate &&
+              /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+                parentCandidate,
+              )
+                ? parentCandidate
+                : null,
+            modelSourceId: modelSourceId ?? null,
+            contentTemplateId:
+              structureMatch?.candidate.kind === "template" ||
+              structureMatch?.candidate.kind === "builtin"
+                ? structureMatch.candidate.id
+                : null,
+            creatorStyleId: appliedCreatorStyle?.id ?? null,
+            customSkillIds: skillIds.slice(0, 20),
+            leadMagnetId: appliedLeadMagnet?.id ?? null,
+            voiceProfileRevision: (() => {
+              if (
+                !preloadedVoiceResult ||
+                typeof preloadedVoiceResult !== "object"
+              ) {
+                return null;
+              }
+              const voice = (preloadedVoiceResult as {
+                voice?: { generated_at?: unknown };
+              }).voice;
+              return typeof voice?.generated_at === "string" &&
+                voice.generated_at.trim()
+                ? voice.generated_at
+                : null;
+            })(),
+            generationModel: responseModel,
+            generatedAt: claimedTurnStartedAt!,
+          });
         }
 
         const citeSourceRef = modelSourceReference

@@ -10,6 +10,7 @@ import {
   MUTATABLE_SCHEDULE_STATUS_FILTER,
 } from "@/lib/draft-scheduling";
 import type { PostMediaAttachment } from "@/lib/post-media";
+import { recordSavedDraftLineage } from "@/lib/content-learning/generation-lineage";
 
 const DRAFT_COLUMNS =
   "id, title, body, meta, kind, status, plan_to_post_on, chat_id, created_at, media_attachments, scheduled_at, schedule_status, first_comment, published_at, publish_error, lifecycle_version";
@@ -122,7 +123,14 @@ export function createSupabaseDraftLifecycleRepository(
         return { outcome: "chat_not_found" as const };
       }
       if (!result.draft) throw new Error("save_chat_draft returned no draft");
-      return { outcome: result.outcome, draft: fromRow(result.draft) };
+      const draft = fromRow(result.draft);
+      await recordSavedDraftLineage(
+        db,
+        workspaceId,
+        draft,
+        input.lineageOrigin,
+      );
+      return { outcome: result.outcome, draft };
     },
 
     async create(input) {
@@ -145,7 +153,9 @@ export function createSupabaseDraftLifecycleRepository(
         .select(DRAFT_COLUMNS)
         .single();
       if (error) throw error;
-      return fromRow(data as unknown as DraftRow);
+      const draft = fromRow(data as unknown as DraftRow);
+      await recordSavedDraftLineage(db, workspaceId, draft);
+      return draft;
     },
 
     async createStandalone(input) {

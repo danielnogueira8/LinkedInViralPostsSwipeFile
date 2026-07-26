@@ -158,6 +158,7 @@ async function saveChatArtifactsToBoard(
   turnStartedAt: string,
   opportunityId?: string,
   isLeadMagnet?: boolean,
+  weekPlanItemId?: string,
 ): Promise<string[]> {
   // Only artifacts from THIS turn. The agent chat accumulates turns, so an
   // unscoped "latest assistant with artifacts" read could re-save a previous
@@ -190,6 +191,10 @@ async function saveChatArtifactsToBoard(
     if (artifact.kind !== "post" || typeof artifact.body !== "string") continue;
     const outcome = await lifecycle.saveFromChat({
       chatId,
+      lineageOrigin: {
+        ...(opportunityId ? { opportunityId } : {}),
+        ...(weekPlanItemId ? { weekPlanItemId } : {}),
+      },
       body: artifact.body,
       title: artifact.title,
       kind: isLeadMagnet ? "lead_magnet" : "post",
@@ -199,6 +204,9 @@ async function saveChatArtifactsToBoard(
         ...(artifact.meta ?? {}),
         suggested_by: AGENT_SUGGESTED_BY,
         ...(opportunityId ? { agent_opportunity_id: opportunityId } : {}),
+        ...(weekPlanItemId
+          ? { agent_week_plan_item_id: weekPlanItemId }
+          : {}),
       },
     });
     if (outcome.ok) draftIds.push(outcome.value.draft.id);
@@ -218,6 +226,7 @@ async function runTurnToDraftIds(
     createLeadMagnet?: { prompt: string };
   },
   opportunityId?: string,
+  weekPlanItemId?: string,
 ): Promise<string[]> {
   const chatId = await getOrCreateSystemChat(sb, workspaceId);
   const turnStartedAt = new Date().toISOString();
@@ -270,6 +279,7 @@ async function runTurnToDraftIds(
       turnStartedAt,
       opportunityId,
       Boolean(body.leadMagnetId || body.createLeadMagnet),
+      weekPlanItemId,
     );
     if (draftIds.length === 0) {
       throw new Error("Chat turn produced no draft artifact.");
@@ -290,6 +300,7 @@ export async function actOnOpportunity(
   },
   options?: {
     statusPolicy?: OpportunityStatusPolicy;
+    weekPlanItemId?: string;
   },
 ): Promise<{ ok: true; draftIds: string[] } | { ok: false; reason: string }> {
   if (!opportunity.source_post_id) {
@@ -345,6 +356,7 @@ export async function actOnOpportunity(
         ...(leadMagnetContext ?? {}),
       },
       opportunity.id,
+      options?.weekPlanItemId,
     );
     await updateOpportunityStatus(
       sb,
@@ -386,14 +398,21 @@ export async function draftFromPrompt(
   workspaceId: string,
   prompt: string,
   userContext: string,
+  weekPlanItemId?: string,
 ): Promise<{ ok: true; draftIds: string[] } | { ok: false; reason: string }> {
   try {
-    const draftIds = await runTurnToDraftIds(sb, workspaceId, {
-      message:
-        `Write one post in my voice. Topic direction: ${prompt}.\n\n` +
-        `Use only this real context supplied by the user for personal facts, examples, outcomes, and beliefs:\n${userContext}\n\n` +
-        "Do not invent a personal experience, client result, belief, or timeline beyond that context.",
-    });
+    const draftIds = await runTurnToDraftIds(
+      sb,
+      workspaceId,
+      {
+        message:
+          `Write one post in my voice. Topic direction: ${prompt}.\n\n` +
+          `Use only this real context supplied by the user for personal facts, examples, outcomes, and beliefs:\n${userContext}\n\n` +
+          "Do not invent a personal experience, client result, belief, or timeline beyond that context.",
+      },
+      undefined,
+      weekPlanItemId,
+    );
     return { ok: true, draftIds };
   } catch (error) {
     return {

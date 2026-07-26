@@ -219,6 +219,8 @@ export type TurnExecuteContext = Pick<
   | "coworkTelemetry"
   | "customSkillBodies"
   | "customSkillNames"
+  | "skillIds"
+  | "modelSourceId"
   | "structureMatch"
   | "imageGenerationAuthor"
   | "refineInstruction"
