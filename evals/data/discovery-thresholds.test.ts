@@ -87,10 +87,25 @@ describe("discovery threshold integration", () => {
     "lib/swipe-query.ts",
     "lib/agent/tools.ts",
     "lib/mcp/register.ts",
+    "app/(app)/dashboard/swipe/page.tsx",
   ])("%s applies the shared post-type filter", (file) => {
     const source = readFileSync(file, "utf8");
     expect(source).toContain("getDiscoveryThresholds");
     expect(source).toContain("discoveryThresholdFilter");
+  });
+
+  test("the last-batch featured rail applies the same post-type filter", () => {
+    const source = readFileSync(
+      "app/(app)/dashboard/swipe/page.tsx",
+      "utf8",
+    );
+    const railQuery = source.slice(
+      source.indexOf("const railPromise"),
+      source.indexOf("// Page 0 + the exact total count"),
+    );
+    expect(railQuery).toContain(
+      ".or(discoveryThresholdFilter(railThresholds!))",
+    );
   });
 
   test("settings exposes only likes for regular and comments for lead magnets", () => {

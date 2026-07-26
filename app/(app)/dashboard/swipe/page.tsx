@@ -35,6 +35,7 @@ import {
 } from "@/lib/swipe-filter-policy";
 import { CategoryFilterRail } from "./category-filter-rail";
 import {
+  discoveryThresholdFilter,
   discoveryThresholdChips,
   getDiscoveryThresholds,
 } from "@/lib/discovery-thresholds";
@@ -384,6 +385,9 @@ async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: bool
   const allTrackedIds = needsFeaturedRail
     ? await trackedAccountIds(sb.workspaceId)
     : [];
+  const railThresholdsPromise = needsFeaturedRail
+    ? getDiscoveryThresholds(sb.workspaceId, sb.raw)
+    : Promise.resolve(null);
 
   // Kick off featured-rail decoration concurrently with the feed. Filtered
   // requests skip this block entirely: the rail is hidden and bookmark
@@ -477,6 +481,7 @@ async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: bool
   // Resolve the side data started up top. Libraries are prop-drilled to every
   // card. Already retried + degraded to null/[] above, so this never throws.
   const { clients, lastRun, libraries } = await sideDataPromise;
+  const railThresholds = await railThresholdsPromise;
 
   // Last-batch featured rail: top 10 by reactions among posts scraped in
   // the most recent run, across all tracked accounts, ignoring the user's
@@ -494,6 +499,7 @@ async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: bool
             .select(SWIPE_POST_COLS)
             .in("account_id", allTrackedIds)
             .eq("is_viral", true)
+            .or(discoveryThresholdFilter(railThresholds!))
             .gte("scraped_at", lastRun.started_at!)
             .order("reactions", { ascending: false, nullsFirst: false })
             .limit(10),

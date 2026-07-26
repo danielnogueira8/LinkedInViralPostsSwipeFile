@@ -106,10 +106,11 @@
     {
       "id": "swipe-discovery-actions",
       "capability": "Swipe File",
-      "invariant": "Filtering, sorting, media actions, bookmarking, and modeling preserve the selected post and its metadata.",
+      "invariant": "Filtering, sorting, and saved post-type engagement thresholds apply consistently across the Swipe feed and featured rail; media actions, bookmarking, and modeling preserve the selected post and its metadata.",
       "preferred_seam": "browser",
       "existing_coverage": [
         "evals/data/swipe-sort.test.ts",
+        "evals/data/discovery-thresholds.test.ts",
         "evals/data/swipe-bookmark-query-contract.test.ts",
         "evals/data/bookmark-workflow.test.ts",
         "e2e/swipe-filter-accessibility.spec.ts",
