@@ -127,6 +127,7 @@ export async function POST(req: Request) {
           sb.workspaceId,
           item.prompt ?? "Share a real story from your work.",
           context,
+          item.id,
         );
         if (!result.ok) throw new Error(result.reason);
         await updateStatus("drafted", "drafting", result.draftIds[0]);
@@ -157,7 +158,7 @@ export async function POST(req: Request) {
         sb.workspaceId,
         opportunity as AgentOpportunityRow,
         leadMagnetId ? { leadMagnetId } : undefined,
-        { statusPolicy },
+        { statusPolicy, weekPlanItemId: item.id },
       );
       if (!result.ok) throw new Error(result.reason);
       await updateStatus("drafted", "drafting", result.draftIds[0]);

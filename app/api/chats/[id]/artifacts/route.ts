@@ -36,6 +36,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const sb = await scopedSupabase();
     const { userId } = await auth();
     const input = saveSchema.parse(await req.json());
+    const safeMeta = { ...(input.meta ?? {}) };
+    delete safeMeta.content_lineage_origin;
     const outcome = await new DraftLifecycle(
       createSupabaseDraftLifecycleRepository(sb.raw, sb.workspaceId),
     ).saveFromChat({
@@ -43,7 +45,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       body: input.body,
       title: input.title,
       kind: input.kind,
-      meta: input.meta,
+      meta: Object.keys(safeMeta).length > 0 ? safeMeta : undefined,
       mediaAttachments: input.media_attachments,
       savedBy: userId,
     });
@@ -128,7 +130,8 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
 // PATCH /api/chats/[id]/artifacts — replace a draft card's body/title/meta IN
 // PLACE. Used by Done-edit (the user edits a draft inline) and by
 // updateArtifactMeta (e.g. re-checking a lead-magnet). Targeted at ONE artifact
-// id — the target's meta is fully overwritten with what the client sends.
+// id — user-editable meta is overwritten, while server-owned lineage metadata
+// is preserved by rewriteArtifactInPlace.
 // -----------------------------------------------------------------------------
 const patchSchema = z.object({
   targetId: z.string().trim().min(1).max(100),

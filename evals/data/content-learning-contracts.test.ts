@@ -11,6 +11,41 @@ import {
 const timestamp = "2026-07-26T08:00:00.000Z";
 
 describe("content-learning contracts", () => {
+  test("represents unavailable historical Cowork commands explicitly", () => {
+    expect(
+      artifactLineageInputSchema.parse({
+        schemaVersion: 1,
+        workspaceId: "user_workspace",
+        artifactId: "artifact-legacy",
+        parentArtifactId: null,
+        coworkCommand: "unknown",
+        coworkTurn: null,
+        userDirection: "Historical direction unavailable.",
+        inputs: {
+          modelSourceId: null,
+          contentTemplateId: null,
+          creatorStyleId: null,
+          customSkillIds: [],
+          leadMagnetId: null,
+          voiceProfileRevision: null,
+        },
+        origin: {
+          kind: "backfill",
+          weekPlanItemId: null,
+          opportunityId: null,
+        },
+        generationModel: "unknown",
+        generatedAt: timestamp,
+        descriptor: {
+          topic: null,
+          hookType: null,
+          structure: null,
+          ctaType: null,
+        },
+      }).coworkCommand,
+    ).toBe("unknown");
+  });
+
   test("accepts a complete, versioned Artifact lineage input", () => {
     const parsed = artifactLineageInputSchema.parse({
       schemaVersion: 1,

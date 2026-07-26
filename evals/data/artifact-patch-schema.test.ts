@@ -1,5 +1,6 @@
 import { describe, test, expect } from "vitest";
 import { z } from "zod";
+import { rewriteArtifactInPlace } from "@/lib/artifact-rewrite";
 
 // ---------------------------------------------------------------------------
 // The PATCH /api/chats/[id]/artifacts request schema's body must NOT trim user
@@ -54,5 +55,81 @@ describe("PATCH /artifacts body schema preserves user whitespace", () => {
   test("body over the cap is rejected", () => {
     const r = patchSchema.safeParse({ targetId: "a1", body: "x".repeat(20_001) });
     expect(r.success).toBe(false);
+  });
+});
+
+describe("PATCH /artifacts preserves server-owned generation lineage", () => {
+  const trustedLineage = {
+    schemaVersion: 1,
+    sourceArtifactId: "source-1",
+    userMessageId: "message-1",
+    coworkCommand: "create",
+    generationModel: "test-model",
+    generatedAt: "2026-07-26T12:00:00.000Z",
+  };
+
+  test("browser metadata cannot replace or remove an existing lineage seed", () => {
+    const { next } = rewriteArtifactInPlace(
+      [
+        {
+          id: "artifact-1",
+          body: "Before",
+          meta: { content_lineage: trustedLineage, format: "text" },
+        },
+      ],
+      {
+        targetId: "artifact-1",
+        body: "After",
+        meta: {
+          content_lineage: { ...trustedLineage, generationModel: "forged" },
+          content_lineage_origin: { kind: "week_plan" },
+          format: "carousel",
+        },
+      },
+    );
+
+    expect(next[0]?.meta).toEqual({
+      content_lineage: trustedLineage,
+      format: "carousel",
+    });
+  });
+
+  test("browser metadata cannot add a lineage seed to an untagged artifact", () => {
+    const { next } = rewriteArtifactInPlace(
+      [{ id: "artifact-1", body: "Before", meta: { format: "text" } }],
+      {
+        targetId: "artifact-1",
+        body: "After",
+        meta: {
+          content_lineage: trustedLineage,
+          content_lineage_origin: { kind: "agent_opportunity" },
+          format: "carousel",
+        },
+      },
+    );
+
+    expect(next[0]?.meta).toEqual({ format: "carousel" });
+  });
+
+  test("omitting lineage from replacement metadata does not delete it", () => {
+    const { next } = rewriteArtifactInPlace(
+      [
+        {
+          id: "artifact-1",
+          body: "Before",
+          meta: { content_lineage: trustedLineage, format: "text" },
+        },
+      ],
+      {
+        targetId: "artifact-1",
+        body: "After",
+        meta: { format: "carousel" },
+      },
+    );
+
+    expect(next[0]?.meta).toEqual({
+      content_lineage: trustedLineage,
+      format: "carousel",
+    });
   });
 });
