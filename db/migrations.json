@@ -1,7 +1,7 @@
 {
   "generatedBy": "npm run migrations:metadata",
-  "highest": 138,
-  "count": 138,
+  "highest": 139,
+  "count": 139,
   "files": [
     "migration-001-progress.sql",
     "migration-002-usage.sql",
@@ -140,6 +140,7 @@
     "migration-135-restrict-revision-evidence.sql",
     "migration-136-complete-workspace-learning-outcomes.sql",
     "migration-137-immutable-workspace-learning-snapshots.sql",
-    "migration-138-posting-queue.sql"
+    "migration-138-posting-queue.sql",
+    "migration-139-discovery-thresholds.sql"
   ]
 }

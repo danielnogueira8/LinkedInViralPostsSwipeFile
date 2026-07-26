@@ -33,6 +33,10 @@ import {
   rotateFreshBand,
   shuffleFreshBand,
 } from "@/lib/idea-ranking";
+import {
+  discoveryThresholdFilter,
+  getDiscoveryThresholds,
+} from "@/lib/discovery-thresholds";
 
 // ---------------------------------------------------------------------------
 // Agent tools — read-only swipe-file / voice / brand access for the chat agent.
@@ -323,6 +327,7 @@ const searchViralPosts: ToolFn = async (args, workspaceId, signal, context) => {
     const accountIds = await trackedAccountIdsForTool(workspaceId, signal);
     signal?.throwIfAborted();
     const sb = supabaseAdmin();
+    const discoveryThresholds = await getDiscoveryThresholds(workspaceId);
     const sortKey = (args.sort as keyof typeof SORT_COLUMN) ?? "viral";
     const sortCol = SORT_COLUMN[sortKey] ?? SORT_COLUMN.viral;
     const ascending = args.dir === "asc";
@@ -342,6 +347,7 @@ const searchViralPosts: ToolFn = async (args, workspaceId, signal, context) => {
       .select(POST_COLS)
       .in("account_id", accountIds.length ? accountIds : [NO_ROWS_SENTINEL])
       .eq("is_viral", true)
+      .or(discoveryThresholdFilter(discoveryThresholds))
       .eq("workspace_post_classification.workspace_id", workspaceId)
       .is("accounts.archived_at", null)
       // Modeling selection ranks RECENCY-first: virality is already the
