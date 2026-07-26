@@ -96,6 +96,17 @@ export async function purgeWorkspaceData(
   await wipe("post_analytics", () =>
     del("post_analytics").eq("workspace_id", workspaceId),
   );
+  // Content Outcomes are append-only during normal use. The domain purge
+  // operation removes corrections and outcomes before their owning Drafts.
+  await wipe("content_outcomes", async (client) => {
+    const { data, error } = await client.rpc("purge_content_outcomes", {
+      p_workspace_id: workspaceId,
+    });
+    return {
+      count: typeof data === "number" ? data : null,
+      error,
+    };
+  });
   await wipe("content_learning_processing_cursors", () =>
     del("content_learning_processing_cursors").eq(
       "workspace_id",

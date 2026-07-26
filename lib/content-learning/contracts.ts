@@ -595,6 +595,10 @@ export interface WorkspaceKnowledge {
 
 export interface ContentOutcomes {
   ingest(outcome: ContentOutcome): Promise<ContentOutcome | null>;
+  listByDraft(
+    workspaceId: string,
+    draftId: string,
+  ): Promise<ContentOutcome[]>;
   correct(
     workspaceId: string,
     correction: ContentOutcomeCorrection,

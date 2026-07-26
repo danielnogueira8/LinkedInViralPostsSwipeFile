@@ -75,6 +75,7 @@ import {
   type ContentFeedbackRating,
   type ContentFeedbackReason,
 } from "@/lib/content-feedback-catalog";
+import { PostOutcomes } from "./post-outcomes";
 
 const FEEDBACK_REASON_LIMIT = 4;
 // Vercel rejects multipart request bodies above its platform limit before our
@@ -1115,6 +1116,13 @@ export function DraftEditorModal({
                 {!isNew && draft && draft.kind === "lead_magnet" && (
                   <LeadSharkPanel draftId={draft.id} />
                 )}
+
+                {!isNew &&
+                  draft &&
+                  (draft.status === "posted" ||
+                    draft.scheduleStatus === "published") && (
+                    <PostOutcomes key={draft.id} draftId={draft.id} />
+                  )}
 
                 <PostMediaSection
                   attachments={displayedMedia}
