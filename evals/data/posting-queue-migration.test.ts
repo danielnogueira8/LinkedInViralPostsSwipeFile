@@ -30,6 +30,8 @@ describe("posting queue migration", () => {
   });
 
   test("walks weekly occurrences only until each slot has an opening", () => {
+    expect(sql).toContain("generated_day.day_number");
+    expect(sql).not.toMatch(/\+\s+offset\b/i);
     expect(allocatorFix).toContain("with recursive candidates");
     expect(allocatorFix).toContain("occurrence_date + 7");
     expect(allocatorFix).not.toContain("generate_series(0, 730)");
