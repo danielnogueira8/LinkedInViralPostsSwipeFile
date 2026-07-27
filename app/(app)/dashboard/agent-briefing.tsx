@@ -16,10 +16,17 @@ import {
 } from "lucide-react";
 import { AiIcon } from "@/components/ai-icon";
 import { AvatarImg } from "@/components/avatar-img";
-import {
-  PostCard,
-  type PostCardRow,
-} from "@/components/post-card";
+import dynamic from "next/dynamic";
+import type { PostCardRow } from "@/components/post-card";
+
+// PostCard pulls a heavy subtree (lightbox, Ask-AI menu, media dialog) but
+// renders only in the below-the-fold "Model recently viral" section and the
+// Review-source dialog — both appear after the briefing fetch resolves, so
+// the card can load as its own chunk instead of the page's first bundle.
+const PostCard = dynamic(
+  () => import("@/components/post-card").then((mod) => mod.PostCard),
+  { loading: () => null },
+);
 import {
   Dialog,
   DialogContent,

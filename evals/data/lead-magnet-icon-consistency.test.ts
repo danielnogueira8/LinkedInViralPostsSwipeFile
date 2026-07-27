@@ -7,13 +7,15 @@ const ROOT = process.cwd();
 // Every surface that puts an icon next to a lead magnet. PR #1329 shipped the
 // "WORKING NOW" chip with lucide-react's <Magnet />; these are the rest of the
 // UI brought in line with it so one concept reads as one icon everywhere.
+// (posts/drafts-list.tsx is deliberately NOT a site: the board card's Giveaway
+// pill was removed — a giveaway forces the lead_magnet kind, so the kind badge
+// alone carries the signal, with the resource name in its tooltip.)
 const LEAD_MAGNET_ICON_SITES = [
   "app/(app)/dashboard/agent-briefing.tsx",
   "app/(app)/dashboard/chat-workspace.tsx",
   "app/(app)/dashboard/draft-editor-modal.tsx",
   "app/(app)/dashboard/lead-magnets/loading.tsx",
   "app/(app)/dashboard/nav-destinations.ts",
-  "app/(app)/dashboard/posts/drafts-list.tsx",
 ] as const;
 
 const read = (rel: string) => readFileSync(path.join(ROOT, rel), "utf8");

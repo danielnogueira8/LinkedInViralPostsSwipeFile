@@ -58,28 +58,24 @@ export async function GET() {
     // Which of these model a LEAD MAGNET post? `posts.post_type` is the
     // authoritative flag (stamped at scrape time, also what act.ts reads), and
     // agent_opportunities only carries source_post_id — so resolve it here for
-    // the whole pool (needed to compose the mix). One small IN query. The same
-    // read also grabs the complete source-post shape used by the Swipe File
-    // card, so users can inspect the original before asking the agent to model
-    // it. This remains one batched IN query for the entire opportunity pool.
+    // the whole pool (needed to compose the mix). One small IN query.
+    //
+    // Two-step on purpose: the pool only needs existence + post_type (no join,
+    // no long post text), while the FULL source-post card (SWIPE_POST_COLS +
+    // the accounts join) is fetched only for the handful of slots the mix
+    // actually keeps — the pool is ~4× the visible set.
     const sourcePostIds = opportunitySourcePostIds(opportunityPool);
     let leadMagnetIds = new Set<string>();
-    const sourcePostById = new Map<
-      string,
-      NonNullable<ReturnType<typeof normalizeAgentSourcePost>>
-    >();
+    const existingSourceIds = new Set<string>();
     if (sourcePostIds.length > 0) {
-      const { data: sourcePosts, error: sourcePostsError } = await sb.raw
+      const { data: postTypes, error: postTypesError } = await sb.raw
         .from("posts")
-        .select(SWIPE_POST_COLS)
+        .select("id, post_type")
         .in("id", sourcePostIds);
-      if (sourcePostsError) throw sourcePostsError;
-      leadMagnetIds = leadMagnetPostIds(sourcePosts);
-      for (const post of sourcePosts ?? []) {
-        const normalized = normalizeAgentSourcePost(post);
-        if (normalized) {
-          sourcePostById.set(normalized.id, normalized);
-        }
+      if (postTypesError) throw postTypesError;
+      leadMagnetIds = leadMagnetPostIds(postTypes);
+      for (const row of postTypes ?? []) {
+        if (typeof row?.id === "string") existingSourceIds.add(row.id);
       }
     }
 
@@ -96,17 +92,49 @@ export async function GET() {
         ...opportunity,
         payload: { ...payload, headline: readOpportunityHeadline(payload) },
         is_lead_magnet: opportunityIsLeadMagnet(opportunity, leadMagnetIds),
-        source_post: sourcePostId
-          ? (sourcePostById.get(sourcePostId) ?? null)
-          : null,
+        source_post: sourcePostId,
       };
-    }).filter((opportunity) => opportunity.source_post !== null);
+    }).filter(
+      (opportunity) =>
+        opportunity.source_post !== null &&
+        existingSourceIds.has(opportunity.source_post),
+    );
 
     // Compose the visible slots as a healthy content mix (2 regular + 1 lead
     // magnet by default), backfilling from either type when the bank is thin.
     // The pool is already score-sorted, so the mixer keeps the strongest of
     // each type. Falls back to plain top-N behaviour when the pool has one type.
-    const normalisedOpportunities = composeWorkingNowMix(normalisedPool);
+    const mixed = composeWorkingNowMix(normalisedPool);
+
+    // Attach the complete source-post card only for the slots the mix kept.
+    const mixedSourceIds = opportunitySourcePostIds(
+      mixed.map((opportunity) => ({ source_post_id: opportunity.source_post })),
+    );
+    const sourcePostById = new Map<
+      string,
+      NonNullable<ReturnType<typeof normalizeAgentSourcePost>>
+    >();
+    if (mixedSourceIds.length > 0) {
+      const { data: sourcePosts, error: sourcePostsError } = await sb.raw
+        .from("posts")
+        .select(SWIPE_POST_COLS)
+        .in("id", mixedSourceIds);
+      if (sourcePostsError) throw sourcePostsError;
+      for (const post of sourcePosts ?? []) {
+        const normalized = normalizeAgentSourcePost(post);
+        if (normalized) {
+          sourcePostById.set(normalized.id, normalized);
+        }
+      }
+    }
+    const normalisedOpportunities = mixed
+      .map((opportunity) => ({
+        ...opportunity,
+        source_post: opportunity.source_post
+          ? (sourcePostById.get(opportunity.source_post) ?? null)
+          : null,
+      }))
+      .filter((opportunity) => opportunity.source_post !== null);
 
     return NextResponse.json({
       ok: true,

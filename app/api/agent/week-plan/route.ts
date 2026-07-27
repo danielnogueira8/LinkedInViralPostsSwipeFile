@@ -407,6 +407,11 @@ export async function GET() {
   try {
     const sb = await scopedSupabase();
     const currentWeek = weekStart();
+    // postingGap is independent of the entire plan chain below (load →
+    // compose → restore → recover → later weeks) — start it now so it
+    // overlaps that sequence instead of adding a serial round trip at the
+    // tail of the endpoint.
+    const gapNotePromise = postingGap(sb.raw, sb.workspaceId);
     let learningPromise: Promise<WorkspaceLearningModel | null> | null =
       null;
     const learningForPlan = () => {
@@ -498,7 +503,7 @@ export async function GET() {
     };
     const [items, gapNote] = await Promise.all([
       attachSourcePosts(sb.raw, sb.workspaceId, windowPlan),
-      postingGap(sb.raw, sb.workspaceId),
+      gapNotePromise,
     ]);
     return NextResponse.json({
       ok: true,
