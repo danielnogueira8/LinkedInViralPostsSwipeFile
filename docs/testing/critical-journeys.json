@@ -123,6 +123,20 @@
       "follow_up_issue": 1000
     },
     {
+      "id": "analytics-partial-metric-rates",
+      "capability": "Analytics",
+      "invariant": "Summary, trend, and per-post engagement rates use the LinkedIn interaction metrics that are available, exclude observations with no interaction data from the rate denominator, and never hide valid rates because optional metrics are unavailable.",
+      "preferred_seam": "browser",
+      "existing_coverage": [
+        "evals/data/analytics-empty-state.test.ts",
+        "evals/data/analytics-periods.test.ts",
+        "evals/data/analytics-overview-ui.test.ts",
+        "e2e/analytics-responsive.spec.ts"
+      ],
+      "status": "protected",
+      "follow_up_issue": 999
+    },
+    {
       "id": "bookmark-ownership-sharing",
       "capability": "Bookmarks",
       "invariant": "Bookmark reads, writes, deletion, sharing, filtering, and modeling obey library ownership and workspace scope.",

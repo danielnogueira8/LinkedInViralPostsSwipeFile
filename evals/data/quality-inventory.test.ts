@@ -17,6 +17,7 @@ const requiredCapabilities = [
   "Cowork",
   "Your Agent",
   "Swipe File",
+  "Analytics",
   "Bookmarks",
   "Accounts and sources",
   "Drafts",

@@ -186,7 +186,7 @@ describe("period analytics", () => {
     ]);
   });
 
-  test("distinguishes unavailable period metrics from measured zero growth", () => {
+  test("calculates zero growth from available metrics without inventing saves", () => {
     const posts = [post("partial", "2026-07-20T10:00:00Z")];
     const snapshots = [
       snapshot("partial", "2026-07-26", {
@@ -216,7 +216,7 @@ describe("period analytics", () => {
         saves: null,
       }),
     );
-    expect(postEngagementRate(row)).toBeNull();
+    expect(postEngagementRate(row)).toBe(0);
   });
 });
 
@@ -283,7 +283,7 @@ describe("analytics overview trends", () => {
     ]);
   });
 
-  test("does not calculate a daily rate from incomplete interaction data", () => {
+  test("calculates a daily rate from the interactions LinkedIn provides", () => {
     const trend = buildAnalyticsTrend([
       snapshot("post-a", "2026-07-26", {
         impressions: 100,
@@ -308,7 +308,39 @@ describe("analytics overview trends", () => {
         date: "2026-07-27",
         impressions: 50,
         engagements: 9,
-        engagementRate: null,
+        engagementRate: 18,
+      }),
+    ]);
+  });
+
+  test("excludes impressions from observations with no interaction data", () => {
+    const trend = buildAnalyticsTrend([
+      snapshot("available", "2026-07-26", {
+        impressions: 100,
+        likes: 10,
+        saves: null,
+        sends: null,
+      }),
+      snapshot("available", "2026-07-27", {
+        impressions: 200,
+        likes: 20,
+        saves: null,
+        sends: null,
+      }),
+      snapshot("unavailable", "2026-07-26", {
+        impressions: 100,
+      }),
+      snapshot("unavailable", "2026-07-27", {
+        impressions: 900,
+      }),
+    ]);
+
+    expect(trend).toEqual([
+      expect.objectContaining({
+        date: "2026-07-27",
+        impressions: 900,
+        engagements: 10,
+        engagementRate: 10,
       }),
     ]);
   });

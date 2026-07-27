@@ -153,6 +153,23 @@ type SnapshotMetric =
   | "saves"
   | "sends";
 
+const ENGAGEMENT_METRIC_DEFINITIONS = [
+  { key: "likes", label: "reactions" },
+  { key: "comments", label: "comments" },
+  { key: "shares", label: "shares" },
+  { key: "saves", label: "saves" },
+  { key: "sends", label: "sends" },
+] as const satisfies readonly { key: SnapshotMetric; label: string }[];
+type EngagementMetric = (typeof ENGAGEMENT_METRIC_DEFINITIONS)[number]["key"];
+const ENGAGEMENT_METRICS: readonly EngagementMetric[] =
+  ENGAGEMENT_METRIC_DEFINITIONS.map(({ key }) => key);
+const engagementLabels = ENGAGEMENT_METRIC_DEFINITIONS.map(
+  ({ label }) => label,
+);
+export const ENGAGEMENT_RATE_HELP = `Percentage of impressions that resulted in an interaction. Includes ${engagementLabels
+  .slice(0, -1)
+  .join(", ")}, and ${engagementLabels.at(-1)} when LinkedIn provides them.`;
+
 type MetricGain = { artifactId: string; date: string; gain: number };
 
 function buildMetricGains(
@@ -202,79 +219,68 @@ function sumMetricGainsByDay(gains: readonly MetricGain[]): Map<string, number> 
   return byDay;
 }
 
-type EngagementRateMetric =
-  | "impressions"
-  | "likes"
-  | "comments"
-  | "shares"
-  | "saves"
-  | "sends";
+function buildAvailableDailyEngagementRates(
+  impressionGains: readonly MetricGain[],
+  interactionGains: Readonly<Record<EngagementMetric, MetricGain[]>>,
+): Map<string, number> {
+  type Observation = {
+    date: string;
+    impressions?: number;
+    interactions: Partial<Record<EngagementMetric, number>>;
+  };
+  const observations = new Map<string, Observation>();
+  const observationFor = (gain: MetricGain): Observation => {
+    const key = `${gain.artifactId}\u0000${gain.date}`;
+    const observation = observations.get(key) ?? {
+      date: gain.date,
+      interactions: {},
+    };
+    observations.set(key, observation);
+    return observation;
+  };
 
-function buildCompleteDailyEngagementRates(
-  gainsByMetric: Record<EngagementRateMetric, MetricGain[]>,
-): Map<string, number | null> {
-  const observations = new Map<
-    string,
-    {
-      date: string;
-      values: Partial<Record<EngagementRateMetric, number>>;
-    }
-  >();
-  for (const metric of Object.keys(gainsByMetric) as EngagementRateMetric[]) {
-    for (const gain of gainsByMetric[metric]) {
-      const key = `${gain.artifactId}\u0000${gain.date}`;
-      const observation = observations.get(key) ?? {
-        date: gain.date,
-        values: {},
-      };
-      observation.values[metric] = gain.gain;
-      observations.set(key, observation);
+  for (const gain of impressionGains) {
+    observationFor(gain).impressions = gain.gain;
+  }
+  for (const metric of ENGAGEMENT_METRICS) {
+    for (const gain of interactionGains[metric]) {
+      observationFor(gain).interactions[metric] = gain.gain;
     }
   }
 
-  const byDate = new Map<
+  const eligibleByDate = new Map<
     string,
-    { complete: boolean; impressions: number; engagements: number }
+    { impressions: number; engagements: number }
   >();
-  const required: EngagementRateMetric[] = [
-    "impressions",
-    "likes",
-    "comments",
-    "shares",
-    "saves",
-    "sends",
-  ];
   for (const observation of observations.values()) {
-    const daily = byDate.get(observation.date) ?? {
-      complete: true,
+    const availableInteractions = ENGAGEMENT_METRICS.filter((metric) =>
+      Object.prototype.hasOwnProperty.call(observation.interactions, metric),
+    );
+    if (
+      observation.impressions === undefined ||
+      availableInteractions.length === 0
+    ) {
+      continue;
+    }
+    const daily = eligibleByDate.get(observation.date) ?? {
       impressions: 0,
       engagements: 0,
     };
-    if (
-      !required.every((metric) =>
-        Object.prototype.hasOwnProperty.call(observation.values, metric),
-      )
-    ) {
-      daily.complete = false;
-    } else {
-      daily.impressions += observation.values.impressions ?? 0;
-      daily.engagements +=
-        (observation.values.likes ?? 0) +
-        (observation.values.comments ?? 0) +
-        (observation.values.shares ?? 0) +
-        (observation.values.saves ?? 0) +
-        (observation.values.sends ?? 0);
-    }
-    byDate.set(observation.date, daily);
+    daily.impressions += observation.impressions;
+    daily.engagements += availableInteractions.reduce(
+      (total, metric) => total + (observation.interactions[metric] ?? 0),
+      0,
+    );
+    eligibleByDate.set(observation.date, daily);
   }
 
   return new Map(
-    [...byDate.entries()].map(([date, daily]) => [
-      date,
-      daily.complete && daily.impressions > 0
-        ? Math.round((daily.engagements / daily.impressions) * 1000) / 10
-        : null,
-    ]),
+    [...eligibleByDate.entries()]
+      .filter(([, daily]) => daily.impressions > 0)
+      .map(([date, daily]) => [
+        date,
+        Math.round((daily.engagements / daily.impressions) * 1000) / 10,
+      ]),
   );
 }
 
@@ -294,44 +300,41 @@ export function buildDailyImpressionGains(
 export function buildAnalyticsTrend(
   snapshots: readonly AnalyticsSnapshot[],
 ): AnalyticsTrendPoint[] {
-  const gainsByMetric = {
-    impressions: buildMetricGains(snapshots, "impressions"),
-    likes: buildMetricGains(snapshots, "likes"),
-    comments: buildMetricGains(snapshots, "comments"),
-    shares: buildMetricGains(snapshots, "shares"),
-    saves: buildMetricGains(snapshots, "saves"),
-    sends: buildMetricGains(snapshots, "sends"),
-  } satisfies Record<EngagementRateMetric, MetricGain[]>;
-  const impressions = sumMetricGainsByDay(gainsByMetric.impressions);
-  const likes = sumMetricGainsByDay(gainsByMetric.likes);
-  const comments = sumMetricGainsByDay(gainsByMetric.comments);
-  const shares = sumMetricGainsByDay(gainsByMetric.shares);
-  const saves = sumMetricGainsByDay(gainsByMetric.saves);
-  const sends = sumMetricGainsByDay(gainsByMetric.sends);
-  const engagementRates = buildCompleteDailyEngagementRates(gainsByMetric);
+  const impressionGains = buildMetricGains(snapshots, "impressions");
+  const interactionGains = Object.fromEntries(
+    ENGAGEMENT_METRICS.map((metric) => [
+      metric,
+      buildMetricGains(snapshots, metric),
+    ]),
+  ) as Record<EngagementMetric, MetricGain[]>;
+  const impressions = sumMetricGainsByDay(impressionGains);
+  const interactions = Object.fromEntries(
+    ENGAGEMENT_METRICS.map((metric) => [
+      metric,
+      sumMetricGainsByDay(interactionGains[metric]),
+    ]),
+  ) as Record<EngagementMetric, Map<string, number>>;
+  const engagementRates = buildAvailableDailyEngagementRates(
+    impressionGains,
+    interactionGains,
+  );
   const dates = new Set([
     ...impressions.keys(),
-    ...likes.keys(),
-    ...comments.keys(),
-    ...shares.keys(),
-    ...saves.keys(),
-    ...sends.keys(),
+    ...ENGAGEMENT_METRICS.flatMap((metric) => [
+      ...interactions[metric].keys(),
+    ]),
   ]);
 
   return [...dates]
     .sort((a, b) => a.localeCompare(b))
     .map((date) => {
       const dailyImpressions = impressions.get(date) ?? null;
-      const dailyComments = comments.get(date) ?? null;
-      const dailyShares = shares.get(date) ?? null;
-      const dailySaves = saves.get(date) ?? null;
-      const interactionValues = [
-        likes.get(date),
-        comments.get(date),
-        shares.get(date),
-        saves.get(date),
-        sends.get(date),
-      ].filter((value): value is number => value !== undefined);
+      const dailyComments = interactions.comments.get(date) ?? null;
+      const dailyShares = interactions.shares.get(date) ?? null;
+      const dailySaves = interactions.saves.get(date) ?? null;
+      const interactionValues = ENGAGEMENT_METRICS.map((metric) =>
+        interactions[metric].get(date),
+      ).filter((value): value is number => value !== undefined);
       const engagements =
         interactionValues.length > 0
           ? interactionValues.reduce((total, value) => total + value, 0)
@@ -545,26 +548,30 @@ export function summarizePostMetrics(
     (total, post) => total + postEngagements(post),
     0,
   );
-  const hasCompleteRateData =
-    posts.length > 0 && posts.every(hasCompleteEngagementRateData);
+  const ratePosts = posts.filter(hasEngagementRateData);
+  const rateImpressions = ratePosts.reduce(
+    (total, post) => total + post.impressions,
+    0,
+  );
+  const rateEngagements = ratePosts.reduce(
+    (total, post) => total + postEngagements(post),
+    0,
+  );
   return {
     impressions,
     engagements,
     engagementRate:
-      hasCompleteRateData && impressions > 0
-        ? Math.round((engagements / impressions) * 1000) / 10
+      rateImpressions > 0
+        ? Math.round((rateEngagements / rateImpressions) * 1000) / 10
         : null,
     posts: posts.length,
   };
 }
 
 export function postEngagements(post: PostMetricsRow): number {
-  return (
-    (post.likes ?? 0) +
-    (post.comments ?? 0) +
-    (post.shares ?? 0) +
-    (post.saves ?? 0) +
-    (post.sends ?? 0)
+  return ENGAGEMENT_METRICS.reduce(
+    (total, metric) => total + (post[metric] ?? 0),
+    0,
   );
 }
 
@@ -573,30 +580,21 @@ export function postSavesAndShares(post: PostMetricsRow): number | null {
   return post.saves + post.shares;
 }
 
-type CompleteEngagementRateRow = PostMetricsRow & {
+type EngagementRateRow = PostMetricsRow & {
   impressions: number;
-  likes: number;
-  comments: number;
-  shares: number;
-  saves: number;
-  sends: number;
 };
 
-function hasCompleteEngagementRateData(
+function hasEngagementRateData(
   post: PostMetricsRow,
-): post is CompleteEngagementRateRow {
+): post is EngagementRateRow {
   return (
     post.impressions !== null &&
-    post.likes !== null &&
-    post.comments !== null &&
-    post.shares !== null &&
-    post.saves !== null &&
-    post.sends !== null
+    ENGAGEMENT_METRICS.some((metric) => post[metric] !== null)
   );
 }
 
 export function postEngagementRate(post: PostMetricsRow): number | null {
-  if (!hasCompleteEngagementRateData(post) || post.impressions <= 0) {
+  if (!hasEngagementRateData(post) || post.impressions <= 0) {
     return null;
   }
   return Math.round((postEngagements(post) / post.impressions) * 1000) / 10;
