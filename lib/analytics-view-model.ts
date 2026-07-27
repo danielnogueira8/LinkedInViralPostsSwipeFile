@@ -89,6 +89,16 @@ export const ANALYTICS_TREND_METRIC_OPTIONS = [
 export type AnalyticsTrendMetric =
   (typeof ANALYTICS_TREND_METRIC_OPTIONS)[number]["value"];
 
+export const POST_PERFORMANCE_SORT_OPTIONS = [
+  { value: "recent", label: "Most recent" },
+  { value: "impressions", label: "Impressions" },
+  { value: "engagementRate", label: "Engagement rate" },
+  { value: "comments", label: "Comments" },
+  { value: "savesAndShares", label: "Saves + shares" },
+] as const;
+export type PostPerformanceSort =
+  (typeof POST_PERFORMANCE_SORT_OPTIONS)[number]["value"];
+
 export function parseAnalyticsFilters(
   query: Record<string, string | string[] | undefined>,
 ): AnalyticsFilters {
@@ -322,8 +332,12 @@ function buildPeriodPostMetrics(
 
   return posts
     .map((post) => {
-      const metric = (name: SnapshotMetric) =>
-        totalsByMetric.get(name)?.get(post.artifactId) ?? 0;
+      const metric = (name: SnapshotMetric) => {
+        const values = totalsByMetric.get(name);
+        return values?.has(post.artifactId)
+          ? (values.get(post.artifactId) ?? 0)
+          : null;
+      };
       return {
         ...post,
         impressions: metric("impressions"),
@@ -335,16 +349,10 @@ function buildPeriodPostMetrics(
         sends: metric("sends"),
       };
     })
-    .filter(
-      (post) =>
-        (post.impressions ?? 0) +
-          (post.reach ?? 0) +
-          (post.likes ?? 0) +
-          (post.comments ?? 0) +
-          (post.shares ?? 0) +
-          (post.saves ?? 0) +
-          (post.sends ?? 0) >
-        0,
+    .filter((post) =>
+      metrics.some((metric) =>
+        totalsByMetric.get(metric)?.has(post.artifactId),
+      ),
     );
 }
 
@@ -450,13 +458,7 @@ export function summarizePostMetrics(
     0,
   );
   const engagements = posts.reduce(
-    (total, post) =>
-      total +
-      value(post.likes) +
-      value(post.comments) +
-      value(post.shares) +
-      value(post.saves) +
-      value(post.sends),
+    (total, post) => total + postEngagements(post),
     0,
   );
   return {
@@ -468,6 +470,68 @@ export function summarizePostMetrics(
         : null,
     posts: posts.length,
   };
+}
+
+export function postEngagements(post: PostMetricsRow): number {
+  return (
+    (post.likes ?? 0) +
+    (post.comments ?? 0) +
+    (post.shares ?? 0) +
+    (post.saves ?? 0) +
+    (post.sends ?? 0)
+  );
+}
+
+export function postSavesAndShares(post: PostMetricsRow): number | null {
+  if (post.saves === null || post.shares === null) return null;
+  return post.saves + post.shares;
+}
+
+export function postEngagementRate(post: PostMetricsRow): number | null {
+  if (
+    post.impressions === null ||
+    post.impressions <= 0 ||
+    post.likes === null ||
+    post.comments === null ||
+    post.shares === null ||
+    post.saves === null ||
+    post.sends === null
+  ) {
+    return null;
+  }
+  return Math.round((postEngagements(post) / post.impressions) * 1000) / 10;
+}
+
+function metricForPostSort(
+  post: PostMetricsRow,
+  sort: Exclude<PostPerformanceSort, "recent">,
+): number | null {
+  if (sort === "engagementRate") return postEngagementRate(post);
+  if (sort === "savesAndShares") return postSavesAndShares(post);
+  return post[sort];
+}
+
+export function filterAndSortPostPerformance(
+  posts: readonly PostMetricsRow[],
+  query: string,
+  sort: PostPerformanceSort,
+): PostMetricsRow[] {
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const filtered = normalizedQuery
+    ? posts.filter((post) =>
+        post.title.toLocaleLowerCase().includes(normalizedQuery),
+      )
+    : [...posts];
+  if (sort === "recent") return sortPostsByRecency(filtered);
+
+  return filtered.sort((a, b) => {
+    const aValue = metricForPostSort(a, sort);
+    const bValue = metricForPostSort(b, sort);
+    if (aValue === null && bValue !== null) return 1;
+    if (aValue !== null && bValue === null) return -1;
+    if (aValue !== bValue) return (bValue ?? 0) - (aValue ?? 0);
+    return comparePostsByRecency(a, b);
+  });
 }
 
 // Round a value UP to a "nice" number (1/2/5 × 10ⁿ) so the chart's top
@@ -500,14 +564,18 @@ export const impressionAxisTicks = metricAxisTicks;
 // Order the analytics table with the most recent posts on top: publish date
 // descending, undated posts last, ties broken by impressions (desc) so the
 // order is deterministic. Sorts a copy; pure + exported for unit tests.
+function comparePostsByRecency(a: PostMetricsRow, b: PostMetricsRow): number {
+  const at = a.publishedAt ? Date.parse(a.publishedAt) : NaN;
+  const bt = b.publishedAt ? Date.parse(b.publishedAt) : NaN;
+  const aValid = !Number.isNaN(at);
+  const bValid = !Number.isNaN(bt);
+  if (aValid && bValid && at !== bt) return bt - at;
+  if (aValid !== bValid) return aValid ? -1 : 1; // dated before undated
+  const impressionDifference = (b.impressions ?? 0) - (a.impressions ?? 0);
+  if (impressionDifference !== 0) return impressionDifference;
+  return a.artifactId.localeCompare(b.artifactId);
+}
+
 export function sortPostsByRecency(posts: PostMetricsRow[]): PostMetricsRow[] {
-  return [...posts].sort((a, b) => {
-    const at = a.publishedAt ? Date.parse(a.publishedAt) : NaN;
-    const bt = b.publishedAt ? Date.parse(b.publishedAt) : NaN;
-    const aValid = !Number.isNaN(at);
-    const bValid = !Number.isNaN(bt);
-    if (aValid && bValid && at !== bt) return bt - at;
-    if (aValid !== bValid) return aValid ? -1 : 1; // dated before undated
-    return (b.impressions ?? 0) - (a.impressions ?? 0);
-  });
+  return [...posts].sort(comparePostsByRecency);
 }

@@ -2,6 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 type AnalyticsFixture = {
   artifactId: string;
+  title: string;
   endpoint: string;
   headers: Record<string, string>;
 };
@@ -15,9 +16,10 @@ function isoDate(daysAgo: number): string {
 }
 
 async function seedAnalytics(page: Page): Promise<AnalyticsFixture> {
+  const title = `Analytics responsive fixture ${Date.now()}`;
   const created = await page.request.post("/api/drafts", {
     data: {
-      title: `Analytics responsive fixture ${Date.now()}`,
+      title,
       body: `A deterministic analytics fixture ${crypto.randomUUID()}`,
       kind: "post",
     },
@@ -112,7 +114,7 @@ async function seedAnalytics(page: Page): Promise<AnalyticsFixture> {
     if (!inserted.ok) {
       throw new Error(`Failed to seed analytics snapshots (${inserted.status})`);
     }
-    return { artifactId, endpoint: artifactEndpoint, headers };
+    return { artifactId, title, endpoint: artifactEndpoint, headers };
   } catch (error) {
     try {
       await cleanup();
@@ -154,6 +156,35 @@ test("analytics overview stays usable on mobile and desktop", async ({ page }) =
   await metric.click();
   await expect(metric).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByText("What changed", { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Post performance" }),
+  ).toBeVisible();
+
+  const search = page.getByRole("searchbox", { name: "Search posts" });
+  const sort = page.getByRole("combobox", { name: "Sort posts" });
+  await sort.selectOption("engagementRate");
+  await expect(sort).toHaveValue("engagementRate");
+  await search.fill("no matching analytics fixture");
+  await expect(page.getByText("No matching posts")).toBeVisible();
+  await page.getByRole("button", { name: "Clear search" }).click();
+  const exactPostHref = `/dashboard/posts?open=${encodeURIComponent(
+    fixture.artifactId,
+  )}`;
+  const exactPostLink = page
+    .locator(`a[href="${exactPostHref}"]:visible`)
+    .first();
+  await expect(exactPostLink).toBeVisible();
+  await exactPostLink.click();
+  await expect(
+    page.getByText("Edit post", { exact: true }).first(),
+  ).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Preview name" })).toHaveValue(
+    fixture.title,
+  );
+  await page.goBack();
+  await expect(
+    page.getByRole("heading", { name: "Post performance" }),
+  ).toBeVisible();
 
   const chart = page
     .getByRole("heading", { name: "Performance trend" })
@@ -171,6 +202,12 @@ test("analytics overview stays usable on mobile and desktop", async ({ page }) =
       hasHorizontalOverflow,
       `analytics should not overflow at ${width}px`,
     ).toBe(false);
+
+    if (width < 768) {
+      await expect(
+        page.locator(`a[href="${exactPostHref}"]:visible`).first(),
+      ).toBeVisible();
+    }
 
     const [chartBox, insightBox] = await Promise.all([
       chart.boundingBox(),

@@ -5,6 +5,8 @@ import {
   buildAnalyticsTrend,
   buildAnalyticsChangeInsight,
   filterAnalyticsContent,
+  filterAndSortPostPerformance,
+  postEngagementRate,
   parseAnalyticsFilters,
   periodBounds,
   type AnalyticsSnapshot,
@@ -146,6 +148,67 @@ describe("period analytics", () => {
       snapshots,
     });
   });
+
+  test("keeps measured posts whose cumulative metrics did not grow", () => {
+    const posts = [post("steady", "2026-07-20T10:00:00Z")];
+    const snapshots = [
+      snapshot("steady", "2026-07-26", {
+        impressions: 100,
+        likes: 10,
+      }),
+      snapshot("steady", "2026-07-27", {
+        impressions: 100,
+        likes: 10,
+      }),
+    ];
+
+    expect(
+      buildAnalyticsPeriodReport(
+        snapshots,
+        posts,
+        periodBounds("7d", "2026-07-27").current,
+      ).posts,
+    ).toEqual([
+      expect.objectContaining({
+        artifactId: "steady",
+        impressions: 0,
+        likes: 0,
+      }),
+    ]);
+  });
+
+  test("distinguishes unavailable period metrics from measured zero growth", () => {
+    const posts = [post("partial", "2026-07-20T10:00:00Z")];
+    const snapshots = [
+      snapshot("partial", "2026-07-26", {
+        impressions: 100,
+        comments: 5,
+        shares: 2,
+        saves: null,
+      }),
+      snapshot("partial", "2026-07-27", {
+        impressions: 110,
+        comments: 5,
+        shares: 2,
+        saves: null,
+      }),
+    ];
+
+    const [row] = buildAnalyticsPeriodReport(
+      snapshots,
+      posts,
+      periodBounds("7d", "2026-07-27").current,
+    ).posts;
+    expect(row).toEqual(
+      expect.objectContaining({
+        impressions: 10,
+        comments: 0,
+        shares: 0,
+        saves: null,
+      }),
+    );
+    expect(postEngagementRate(row)).toBeNull();
+  });
 });
 
 describe("analytics overview trends", () => {
@@ -241,5 +304,100 @@ describe("analytics overview trends", () => {
         { impressions: 0, engagements: 0, engagementRate: null, posts: 0 },
       ).headline,
     ).toBe("First measured activity");
+  });
+});
+
+describe("post performance", () => {
+  const performancePost = (
+    artifactId: string,
+    title: string,
+    publishedAt: string,
+    metrics: Partial<PostMetricsRow>,
+  ): PostMetricsRow => ({
+    ...post(artifactId, publishedAt),
+    title,
+    ...metrics,
+  });
+
+  test("calculates engagement rate from every reported interaction", () => {
+    expect(
+      postEngagementRate(
+        performancePost("a", "A", "2026-07-27T10:00:00Z", {
+          impressions: 200,
+          likes: 10,
+          comments: 4,
+          shares: 2,
+          saves: 3,
+          sends: 1,
+        }),
+      ),
+    ).toBe(10);
+    expect(
+      postEngagementRate(
+        performancePost("b", "B", "2026-07-27T10:00:00Z", {
+          impressions: null,
+        }),
+      ),
+    ).toBeNull();
+  });
+
+  test("searches titles and sorts metrics without mutating the input", () => {
+    const posts = [
+      performancePost("a", "Founder lessons", "2026-07-26T10:00:00Z", {
+        impressions: 200,
+        comments: 2,
+      }),
+      performancePost("b", "LinkedIn systems", "2026-07-27T10:00:00Z", {
+        impressions: 100,
+        comments: 20,
+      }),
+      performancePost("c", "Founder operating system", "2026-07-25T10:00:00Z", {
+        impressions: null,
+        comments: null,
+      }),
+    ];
+
+    expect(
+      filterAndSortPostPerformance(posts, " founder ", "impressions").map(
+        (candidate) => candidate.artifactId,
+      ),
+    ).toEqual(["a", "c"]);
+    expect(
+      filterAndSortPostPerformance(posts, "", "comments").map(
+        (candidate) => candidate.artifactId,
+      ),
+    ).toEqual(["b", "a", "c"]);
+    expect(posts.map((candidate) => candidate.artifactId)).toEqual([
+      "a",
+      "b",
+      "c",
+    ]);
+  });
+
+  test("supports recent, engagement-rate, and saves-plus-shares ordering", () => {
+    const posts = [
+      performancePost("older", "Older", "2026-07-20T10:00:00Z", {
+        impressions: 100,
+        likes: 20,
+        saves: 1,
+        shares: 1,
+      }),
+      performancePost("newer", "Newer", "2026-07-27T10:00:00Z", {
+        impressions: 1_000,
+        likes: 10,
+        saves: 10,
+        shares: 5,
+      }),
+    ];
+
+    expect(
+      filterAndSortPostPerformance(posts, "", "recent")[0].artifactId,
+    ).toBe("newer");
+    expect(
+      filterAndSortPostPerformance(posts, "", "engagementRate")[0].artifactId,
+    ).toBe("older");
+    expect(
+      filterAndSortPostPerformance(posts, "", "savesAndShares")[0].artifactId,
+    ).toBe("newer");
   });
 });

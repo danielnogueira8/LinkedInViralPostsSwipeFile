@@ -6,16 +6,22 @@ import Link from "next/link";
 import {
   ArrowDownRight,
   ArrowUpRight,
+  ExternalLink,
   Minus,
   RefreshCw,
+  Search,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   ANALYTICS_CONTENT_TYPE_OPTIONS,
   ANALYTICS_PERIOD_OPTIONS,
   ANALYTICS_TREND_METRIC_OPTIONS,
+  POST_PERFORMANCE_SORT_OPTIONS,
   buildAnalyticsChangeInsight,
+  filterAndSortPostPerformance,
   metricAxisTicks,
+  postEngagementRate,
+  postSavesAndShares,
   type AnalyticsContentType,
   type AnalyticsFilters,
   type AnalyticsPeriod,
@@ -23,6 +29,7 @@ import {
   type AnalyticsTrendMetric,
   type AnalyticsTrendPoint,
   type PostMetricsRow,
+  type PostPerformanceSort,
 } from "@/lib/analytics-view-model";
 
 // Re-export the server-safe view-model so existing importers of "./view" (the
@@ -330,49 +337,225 @@ export function AnalyticsView({
         </aside>
       </div>
 
-      {/* Per-post table */}
-      <div className="overflow-x-auto rounded-xl border border-border bg-card">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-border text-left text-xs text-muted-foreground">
-              <th className="px-4 py-2.5 font-medium">Post</th>
-              <th className="px-3 py-2.5 text-right font-medium">Published</th>
-              <th className="px-3 py-2.5 text-right font-medium">Impressions</th>
-              <th className="px-3 py-2.5 text-right font-medium">Reach</th>
-              <th className="px-3 py-2.5 text-right font-medium">Reactions</th>
-              <th className="px-3 py-2.5 text-right font-medium">Comments</th>
-              <th className="px-3 py-2.5 text-right font-medium">Shares</th>
-              <th className="px-3 py-2.5 text-right font-medium">Saves</th>
-              <th className="px-4 py-2.5 text-right font-medium">Sends</th>
-            </tr>
-          </thead>
-          <tbody>
-            {posts.map((p) => (
-              <tr key={p.artifactId} className="border-b border-border/60 last:border-0">
-                <td className="max-w-[320px] truncate px-4 py-2.5 text-foreground" title={p.title}>
-                  {p.title}
-                </td>
-                <td className="px-3 py-2.5 text-right text-muted-foreground">
-                  {fmtDate(p.publishedAt)}
-                </td>
-                <td className="px-3 py-2.5 text-right tabular-nums">{fmt(p.impressions)}</td>
-                <td className="px-3 py-2.5 text-right tabular-nums">{fmt(p.reach)}</td>
-                <td className="px-3 py-2.5 text-right tabular-nums">{fmt(p.likes)}</td>
-                <td className="px-3 py-2.5 text-right tabular-nums">{fmt(p.comments)}</td>
-                <td className="px-3 py-2.5 text-right tabular-nums">{fmt(p.shares)}</td>
-                <td className="px-3 py-2.5 text-right tabular-nums">{fmt(p.saves)}</td>
-                <td className="px-4 py-2.5 text-right tabular-nums">{fmt(p.sends)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <PostPerformanceSection posts={posts} period={filters.period} />
 
       <p className="text-xs text-muted-foreground">
         Covers posts published through SwipeIn only — LinkedIn doesn&apos;t expose
         metrics for posts published elsewhere.
       </p>
     </div>
+  );
+}
+
+function contentTypeLabel(contentType: PostMetricsRow["contentType"]): string {
+  return contentType === "lead_magnet" ? "Lead magnet" : "Regular";
+}
+
+function fmtRate(value: number | null): string {
+  return value === null ? "—" : `${value.toLocaleString("en-US")}%`;
+}
+
+export function PostPerformanceSection({
+  posts,
+  period,
+}: {
+  posts: PostMetricsRow[];
+  period: AnalyticsPeriod;
+}) {
+  const [query, setQuery] = useState("");
+  const [sort, setSort] = useState<PostPerformanceSort>("recent");
+  const visiblePosts = useMemo(
+    () => filterAndSortPostPerformance(posts, query, sort),
+    [posts, query, sort],
+  );
+  const periodLabel =
+    period === "all"
+      ? "lifetime totals"
+      : `activity captured in the selected ${period.toUpperCase()} window`;
+
+  return (
+    <section className="min-w-0 overflow-hidden rounded-xl border border-border bg-card">
+      <div className="border-b border-border p-4 sm:p-5">
+        <div>
+          <h2 className="text-sm font-semibold text-foreground">
+            Post performance
+          </h2>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">
+            Compare {periodLabel}. Open any title to view the exact post.
+          </p>
+        </div>
+        <div
+          className="mt-4 grid min-w-0 gap-2 sm:grid-cols-[minmax(0,1fr)_180px]"
+          role="group"
+          aria-label="Post performance controls"
+        >
+          <label className="relative min-w-0">
+            <span className="sr-only">Search posts</span>
+            <Search
+              aria-hidden="true"
+              className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+            />
+            <input
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search posts"
+              className="h-10 w-full min-w-0 rounded-lg border border-border bg-background pl-9 pr-3 text-sm text-foreground outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
+            />
+          </label>
+          <label>
+            <span className="sr-only">Sort posts</span>
+            <select
+              value={sort}
+              onChange={(event) =>
+                setSort(event.target.value as PostPerformanceSort)
+              }
+              className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+            >
+              {POST_PERFORMANCE_SORT_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      </div>
+
+      {visiblePosts.length === 0 ? (
+        <div className="px-5 py-12 text-center">
+          <p className="text-sm font-medium text-foreground">
+            No matching posts
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Try a different title or clear your search.
+          </p>
+          {query && (
+            <button
+              type="button"
+              onClick={() => setQuery("")}
+              className="mt-4 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-accent"
+            >
+              Clear search
+            </button>
+          )}
+        </div>
+      ) : (
+        <>
+          <div className="hidden overflow-x-auto md:block">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border text-left text-xs text-muted-foreground">
+                  <th className="px-4 py-2.5 font-medium">Post</th>
+                  <th className="px-3 py-2.5 text-right font-medium">
+                    Published
+                  </th>
+                  <th className="px-3 py-2.5 text-right font-medium">
+                    Impressions
+                  </th>
+                  <th className="px-3 py-2.5 text-right font-medium">
+                    Engagement rate
+                  </th>
+                  <th className="px-3 py-2.5 text-right font-medium">
+                    Comments
+                  </th>
+                  <th className="px-4 py-2.5 text-right font-medium">
+                    Saves + shares
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {visiblePosts.map((post) => (
+                  <tr
+                    key={post.artifactId}
+                    className="border-b border-border/60 last:border-0"
+                  >
+                    <td className="max-w-[360px] px-4 py-3">
+                      <Link
+                        href={`/dashboard/posts?open=${encodeURIComponent(
+                          post.artifactId,
+                        )}`}
+                        className="group block min-w-0 text-foreground hover:underline"
+                      >
+                        <span
+                          className="block truncate font-medium"
+                          title={post.title}
+                        >
+                          {post.title}
+                        </span>
+                        <span className="mt-0.5 block text-xs text-muted-foreground">
+                          {contentTypeLabel(post.contentType)}
+                        </span>
+                      </Link>
+                    </td>
+                    <td className="px-3 py-3 text-right text-muted-foreground">
+                      {fmtDate(post.publishedAt)}
+                    </td>
+                    <td className="px-3 py-3 text-right tabular-nums">
+                      {fmt(post.impressions)}
+                    </td>
+                    <td className="px-3 py-3 text-right tabular-nums">
+                      {fmtRate(postEngagementRate(post))}
+                    </td>
+                    <td className="px-3 py-3 text-right tabular-nums">
+                      {fmt(post.comments)}
+                    </td>
+                    <td className="px-4 py-3 text-right tabular-nums">
+                      {fmt(postSavesAndShares(post))}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="divide-y divide-border md:hidden">
+            {visiblePosts.map((post) => (
+              <Link
+                key={post.artifactId}
+                href={`/dashboard/posts?open=${encodeURIComponent(
+                  post.artifactId,
+                )}`}
+                className="block p-4 transition-colors hover:bg-accent/40"
+              >
+                <div className="flex min-w-0 items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="line-clamp-2 text-sm font-medium leading-5 text-foreground">
+                      {post.title}
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {contentTypeLabel(post.contentType)} ·{" "}
+                      {fmtDate(post.publishedAt)}
+                    </p>
+                  </div>
+                  <ExternalLink
+                    aria-hidden="true"
+                    className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground"
+                  />
+                </div>
+                <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3">
+                  {[
+                    ["Impressions", fmt(post.impressions)],
+                    ["Engagement rate", fmtRate(postEngagementRate(post))],
+                    ["Comments", fmt(post.comments)],
+                    ["Saves + shares", fmt(postSavesAndShares(post))],
+                  ].map(([label, value]) => (
+                    <div key={label}>
+                      <dt className="text-[11px] text-muted-foreground">
+                        {label}
+                      </dt>
+                      <dd className="mt-0.5 text-sm font-medium tabular-nums text-foreground">
+                        {value}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              </Link>
+            ))}
+          </div>
+        </>
+      )}
+    </section>
   );
 }
 

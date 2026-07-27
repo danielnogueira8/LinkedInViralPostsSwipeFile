@@ -1,7 +1,10 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test } from "vitest";
-import { PerformanceTrendCard } from "@/app/(app)/dashboard/analytics/view";
+import {
+  PerformanceTrendCard,
+  PostPerformanceSection,
+} from "@/app/(app)/dashboard/analytics/view";
 
 describe("analytics performance trend controls", () => {
   test("renders every selectable metric with impressions selected by default", () => {
@@ -77,5 +80,42 @@ describe("analytics performance trend controls", () => {
     );
     expect(html).toContain("Not enough daily changes yet");
     expect(html).not.toContain('aria-label="2026-07-26: 0 impressions"');
+  });
+});
+
+describe("analytics post performance", () => {
+  test("renders sortable controls, responsive views, and exact-post links", () => {
+    const html = renderToStaticMarkup(
+      createElement(PostPerformanceSection, {
+        period: "30d",
+        posts: [
+          {
+            artifactId: "draft/with spaces",
+            title: "A useful post",
+            publishedAt: "2026-07-27T10:00:00Z",
+            contentType: "lead_magnet",
+            impressions: 1_000,
+            reach: 800,
+            likes: 50,
+            comments: 20,
+            shares: 5,
+            saves: 10,
+            sends: 5,
+          },
+        ],
+      }),
+    );
+
+    expect(html).toContain("Post performance");
+    expect(html).toContain('type="search"');
+    expect(html).toContain("Most recent");
+    expect(html).toContain("Engagement rate");
+    expect(html).toContain("Saves + shares");
+    expect(html).toContain("md:block");
+    expect(html).toContain("md:hidden");
+    expect(html).toContain(
+      'href="/dashboard/posts?open=draft%2Fwith%20spaces"',
+    );
+    expect(html).toContain("Lead magnet");
   });
 });
