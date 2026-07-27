@@ -97,20 +97,20 @@ export default function LandingClient({
     <div className="overflow-x-hidden bg-background text-foreground">
       <section className="relative px-4 pb-14 pt-12 sm:px-6 sm:pt-16 lg:pb-24 lg:pt-20">
         <div aria-hidden="true" className="hero-dot-grid absolute inset-0" />
-        {/* Asymmetric hero: the copy block hangs on the left margin (no shared
-            centre axis on desktop), the product shot anchors below. */}
         <div className="relative mx-auto max-w-[1180px]">
+          {/* Centred hero copy block; the product shot anchors below. */}
+          <div className="flex flex-col items-center text-center">
           <div className="reveal-up inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground shadow-soft" style={{ "--reveal-delay": "0ms" } as React.CSSProperties}>
             <span className="live-dot size-1.5 rounded-full bg-accent-brand" />
             Your agent for research, writing, and publishing
           </div>
-          <h1 className="reveal-up mt-6 max-w-[900px] text-balance text-[clamp(2.8rem,6vw,5rem)] font-medium leading-[0.98] tracking-[-0.04em]" style={{ "--reveal-delay": "60ms" } as React.CSSProperties}>
+          <h1 className="reveal-up mx-auto mt-6 max-w-[900px] text-balance text-[clamp(2.8rem,6vw,5rem)] font-medium leading-[0.98] tracking-[-0.04em]" style={{ "--reveal-delay": "60ms" } as React.CSSProperties}>
             Your next LinkedIn post starts with proof.
           </h1>
-          <p className="reveal-up mt-6 max-w-[650px] text-pretty text-base leading-7 text-muted-foreground sm:text-lg sm:leading-8" style={{ "--reveal-delay": "110ms" } as React.CSSProperties}>
+          <p className="reveal-up mx-auto mt-6 max-w-[650px] text-pretty text-base leading-7 text-muted-foreground sm:text-lg sm:leading-8" style={{ "--reveal-delay": "110ms" } as React.CSSProperties}>
             SwipeIn’s agent finds breakout posts from creators you trust, drafts them in your voice, and lines them up on your calendar. You approve every word.
           </p>
-          <div className="reveal-up mt-8 flex flex-wrap items-center gap-3" style={{ "--reveal-delay": "150ms" } as React.CSSProperties}>
+          <div className="reveal-up mt-8 flex flex-wrap items-center justify-center gap-3" style={{ "--reveal-delay": "150ms" } as React.CSSProperties}>
             <PrimaryLink>Start writing free</PrimaryLink>
             <Link
               href="#workflow"
@@ -120,6 +120,7 @@ export default function LandingClient({
             </Link>
           </div>
           <p className="mt-3 text-xs text-muted-foreground">7 days free. No credit card required.</p>
+          </div>
 
           <div className="reveal-up relative mt-12 lg:mt-16" style={{ "--reveal-delay": "210ms" } as React.CSSProperties}>
             <div className="relative overflow-hidden rounded-[14px] bg-paper-trail p-2 shadow-[0_8px_24px_-18px_rgba(28,28,26,0.4)] sm:p-3">
@@ -289,9 +290,7 @@ export default function LandingClient({
                 [<ThumbsUp key="i" />, "Feedback memory", "Ratings and specific notes shape future generations."],
                 [<Palette key="i" />, "Creator styles", "Write in your own voice or choose the style of a creator you follow."],
                 [<Library key="i" />, "Proven frameworks", "Turn high-performing posts into reusable templates for new topics."],
-                // Claude is a labelled wordmark, not a raster logo in an icon
-                // slot — one icon voice (Lucide) across the grid.
-                [<span key="i" className="text-[13px] font-semibold leading-none tracking-[-0.01em]">Claude</span>, "Claude MCP connector", "Bring the same swipe file, creator styles, and proven templates into Claude through MCP."],
+                [<Image key="i" src="/claude.svg" alt="" width={18} height={18} />, "Claude MCP connector", "Bring the same swipe file, creator styles, and proven templates into Claude through MCP."],
               ] as const).map(([icon, title, copy], index) => (
                 <Feature key={title} icon={icon} title={title} copy={copy} className={index === 0 ? "sm:col-span-2" : undefined} />
               ))}
