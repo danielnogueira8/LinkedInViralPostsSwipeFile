@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Check, ArrowRight } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -128,11 +129,15 @@ export default function PricingPage() {
             </ul>
 
             <div className="pt-2">
-              <Link href="/sign-up" className="block">
-                <Button className="h-12 w-full text-base" size="lg">
-                  Start for free
-                  <ArrowRight className="h-4 w-4" />
-                </Button>
+              {/* A Link styled as the button — wrapping <Button> in <Link>
+                  produced invalid <a><button> nesting and a confusing a11y
+                  tree (two focus stops for one action). */}
+              <Link
+                href="/sign-up"
+                className={cn(buttonVariants({ size: "lg" }), "h-12 w-full text-base")}
+              >
+                Start for free
+                <ArrowRight className="h-4 w-4" />
               </Link>
               <p className="mt-3 text-center text-xs text-muted-foreground">
                 7 days free, no credit card required, cancel anytime
@@ -158,7 +163,7 @@ export default function PricingPage() {
               >
                 <summary className="flex cursor-pointer list-none items-center justify-between gap-4 text-base font-medium">
                   {qa.q}
-                  <span className="text-muted-foreground transition-transform group-open:rotate-45">
+                  <span className="text-muted-foreground transition-transform group-open:rotate-45 motion-reduce:transition-none">
                     +
                   </span>
                 </summary>

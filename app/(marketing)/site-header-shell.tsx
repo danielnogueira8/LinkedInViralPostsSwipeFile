@@ -4,10 +4,20 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { UserButton } from "@clerk/nextjs";
+import { Menu, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+
+const NAV_LINKS = [
+  { href: "/#features", label: "Features" },
+  { href: "/#pricing", label: "Pricing" },
+  { href: "/#faq", label: "FAQ" },
+] as const;
 
 export function SiteHeaderShell({ signedIn }: { signedIn: boolean }) {
   const [scrolled, setScrolled] = useState(false);
+  // Mobile disclosure menu — the desktop nav is hidden below `sm`, so without
+  // this the marketing links (and Sign in) are unreachable on phones.
+  const [menuOpen, setMenuOpen] = useState(false);
 
   useEffect(() => {
     let frame = 0;
@@ -30,7 +40,7 @@ export function SiteHeaderShell({ signedIn }: { signedIn: boolean }) {
     <header
       className={cn(
         "sticky top-0 z-40 w-full border-b transition-[background-color,backdrop-filter,border-color] duration-200",
-        scrolled
+        scrolled || menuOpen
           ? "border-border bg-background/88 backdrop-blur-md"
           : "border-transparent bg-background",
       )}
@@ -38,7 +48,12 @@ export function SiteHeaderShell({ signedIn }: { signedIn: boolean }) {
       <div className="mx-auto flex h-16 w-full max-w-[1180px] items-center px-4 sm:px-6">
         <div className="flex w-full items-center justify-between">
           <div className="flex items-center">
-            <Link href="/" className="flex items-center gap-2.5" aria-label="SwipeIn home">
+            <Link
+              href="/"
+              className="flex items-center gap-2.5"
+              aria-label="SwipeIn home"
+              onClick={() => setMenuOpen(false)}
+            >
               <Image
                 src="/swipeInIcon.png"
                 alt="SwipeIn"
@@ -50,24 +65,15 @@ export function SiteHeaderShell({ signedIn }: { signedIn: boolean }) {
               <span className="text-sm font-semibold tracking-[-0.01em]">SwipeIn</span>
             </Link>
             <nav className="ml-8 hidden items-center gap-5 sm:flex" aria-label="Marketing navigation">
-              <Link
-                href="/#features"
-                className="text-[13px] font-medium text-muted-foreground transition-colors hover:text-foreground"
-              >
-                Features
-              </Link>
-              <Link
-                href="/#pricing"
-                className="text-[13px] font-medium text-muted-foreground transition-colors hover:text-foreground"
-              >
-                Pricing
-              </Link>
-              <Link
-                href="/#faq"
-                className="text-[13px] font-medium text-muted-foreground transition-colors hover:text-foreground"
-              >
-                FAQ
-              </Link>
+              {NAV_LINKS.map((link) => (
+                <Link
+                  key={link.href}
+                  href={link.href}
+                  className="text-[13px] font-medium text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  {link.label}
+                </Link>
+              ))}
             </nav>
           </div>
 
@@ -98,9 +104,51 @@ export function SiteHeaderShell({ signedIn }: { signedIn: boolean }) {
                 </Link>
               </>
             )}
+            <button
+              type="button"
+              className="inline-flex size-10 items-center justify-center rounded-[10px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground sm:hidden"
+              aria-expanded={menuOpen}
+              aria-controls="marketing-mobile-menu"
+              aria-label={menuOpen ? "Close menu" : "Open menu"}
+              onClick={() => setMenuOpen((open) => !open)}
+            >
+              {menuOpen ? (
+                <X className="h-5 w-5" aria-hidden />
+              ) : (
+                <Menu className="h-5 w-5" aria-hidden />
+              )}
+            </button>
           </div>
         </div>
       </div>
+
+      {menuOpen && (
+        <nav
+          id="marketing-mobile-menu"
+          aria-label="Marketing navigation"
+          className="border-t border-border bg-background px-4 pb-4 pt-2 sm:hidden"
+        >
+          {NAV_LINKS.map((link) => (
+            <Link
+              key={link.href}
+              href={link.href}
+              onClick={() => setMenuOpen(false)}
+              className="block rounded-[8px] px-2 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-accent"
+            >
+              {link.label}
+            </Link>
+          ))}
+          {!signedIn && (
+            <Link
+              href="/sign-in"
+              onClick={() => setMenuOpen(false)}
+              className="block rounded-[8px] px-2 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            >
+              Sign in
+            </Link>
+          )}
+        </nav>
+      )}
     </header>
   );
 }

@@ -16,7 +16,7 @@ export default function PrivacyPage() {
         className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[300px] bg-gradient-to-b from-accent/30 to-transparent"
       />
 
-      <section className="mx-auto max-w-3xl px-6 pt-20 pb-20 md:pt-28">
+      <section className="mx-auto max-w-[65ch] px-6 pt-20 pb-20 md:pt-28">
         <h1 className="font-display text-4xl leading-[1.1] tracking-tight md:text-5xl">
           Privacy Policy
         </h1>
@@ -24,7 +24,7 @@ export default function PrivacyPage() {
           Effective {EFFECTIVE_DATE}
         </p>
 
-        <div className="mt-10 space-y-8 text-[15px] leading-relaxed text-black">
+        <div className="mt-10 space-y-8 text-[15px] leading-relaxed text-foreground">
           <Section title="1. Who we are">
             <p>
               Swipe File (&ldquo;Swipe File,&rdquo; &ldquo;we,&rdquo;
@@ -41,7 +41,7 @@ export default function PrivacyPage() {
               us at{" "}
               <a
                 href="mailto:hello@scalecontentlabs.com"
-                className="underline decoration-[#1C1C1A]/30 hover:decoration-[#1C1C1A]"
+                className="underline decoration-foreground/30 hover:decoration-foreground"
               >
                 hello@scalecontentlabs.com
               </a>
@@ -96,7 +96,7 @@ export default function PrivacyPage() {
               from Swipe File, email{" "}
               <a
                 href="mailto:hello@scalecontentlabs.com"
-                className="underline decoration-[#1C1C1A]/30 hover:decoration-[#1C1C1A]"
+                className="underline decoration-foreground/30 hover:decoration-foreground"
               >
                 hello@scalecontentlabs.com
               </a>{" "}
@@ -209,7 +209,7 @@ export default function PrivacyPage() {
               produces before you publish it (see our{" "}
               <Link
                 href="/terms"
-                className="underline decoration-[#1C1C1A]/30 hover:decoration-[#1C1C1A]"
+                className="underline decoration-foreground/30 hover:decoration-foreground"
               >
                 Terms of Service
               </Link>
@@ -267,7 +267,7 @@ export default function PrivacyPage() {
               You can request deletion at any time by emailing{" "}
               <a
                 href="mailto:hello@scalecontentlabs.com"
-                className="underline decoration-[#1C1C1A]/30 hover:decoration-[#1C1C1A]"
+                className="underline decoration-foreground/30 hover:decoration-foreground"
               >
                 hello@scalecontentlabs.com
               </a>
@@ -303,7 +303,7 @@ export default function PrivacyPage() {
               To exercise any of these rights, email{" "}
               <a
                 href="mailto:hello@scalecontentlabs.com"
-                className="underline decoration-[#1C1C1A]/30 hover:decoration-[#1C1C1A]"
+                className="underline decoration-foreground/30 hover:decoration-foreground"
               >
                 hello@scalecontentlabs.com
               </a>
@@ -352,18 +352,18 @@ export default function PrivacyPage() {
             </p>
           </Section>
 
-          <p className="border-t border-[rgba(28,28,26,0.12)] pt-6 text-sm text-muted-foreground">
+          <p className="border-t border-border pt-6 text-sm text-muted-foreground">
             Questions? Email{" "}
             <a
               href="mailto:hello@scalecontentlabs.com"
-              className="underline decoration-[#1C1C1A]/30 hover:decoration-[#1C1C1A]"
+              className="underline decoration-foreground/30 hover:decoration-foreground"
             >
               hello@scalecontentlabs.com
             </a>
             . See also our{" "}
             <Link
               href="/terms"
-              className="underline decoration-[#1C1C1A]/30 hover:decoration-[#1C1C1A]"
+              className="underline decoration-foreground/30 hover:decoration-foreground"
             >
               Terms of Service
             </Link>

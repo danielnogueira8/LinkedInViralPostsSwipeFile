@@ -41,6 +41,10 @@
   --color-primary: var(--primary);
   --color-accent-brand: var(--accent-brand);
   --color-accent-brand-foreground: var(--accent-brand-foreground);
+  --color-paper-trail: var(--paper-trail);
+  --color-paper-trail-front: var(--paper-trail-front);
+  --color-paper-trail-edge: var(--paper-trail-edge);
+  --color-paper-trail-ink: var(--paper-trail-ink);
   --color-status-high: var(--status-high);
   --color-status-high-bg: var(--status-high-bg);
   --color-status-med: var(--status-med);
@@ -113,6 +117,14 @@
      primary. Structural emphasis is --primary (near-black). */
   --accent-brand: oklch(0.62 0.17 40);
   --accent-brand-foreground: oklch(1 0 0);
+  /* Paper-trail treatment palette (hero shot + swipe-file panel). Named tokens
+     — the shader config in landing-print-treatments.tsx mirrors these exact
+     values because canvas shaders can't read CSS vars. Deliberately static in
+     dark mode: the treatment is a literal sheet of paper. */
+  --paper-trail: #f8f4e9;
+  --paper-trail-front: #cbbd9e;
+  --paper-trail-edge: #c9bd9f;
+  --paper-trail-ink: #292624;
   /* Restrained semantic accents. These are for state labels and small metadata
      only; navigation, structural icons, surfaces, and primary controls remain
      neutral. Every role keeps the same meaning across the product. */
@@ -214,6 +226,11 @@
   }
   html {
     @apply font-sans;
+  }
+  /* Clip horizontal overflow at the root (never `hidden`, which breaks
+     position: sticky) instead of per-page overflow-hidden wrappers. */
+  html, body {
+    overflow-x: clip;
   }
   /* Reference-style heading hierarchy — large but MEDIUM weight (not heavy),
      tight tracking. The reference's page titles read as deliberate through
@@ -527,6 +544,13 @@
      exactly one half. */
   .marquee-track {
     animation: marquee-scroll 36s linear infinite;
+  }
+  /* WCAG 2.2.2 — auto-scrolling content must be pausable (hover for mouse,
+     focus-within for keyboard). */
+  .marquee-track:hover,
+  .scroll-fade-x:hover .marquee-track,
+  .scroll-fade-x:focus-within .marquee-track {
+    animation-play-state: paused;
   }
   @keyframes marquee-scroll {
     from { transform: translateX(0); }

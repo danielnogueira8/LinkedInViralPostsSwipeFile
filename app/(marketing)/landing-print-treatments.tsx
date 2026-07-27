@@ -11,6 +11,8 @@ export const LANDING_SHADER_CONFIG = {
     speed: 0,
     minPixelRatio: 1,
     maxPixelCount: 320_000,
+    // Mirrors the --paper-trail / --paper-trail-front tokens (globals.css) —
+    // canvas shaders can't read CSS vars, so keep these in sync by hand.
     colorBack: "#f8f4e9",
     colorFront: "#cbbd9e",
     contrast: 0.18,
@@ -48,7 +50,7 @@ export function LandingPaperPanel() {
   return (
     <div
       aria-hidden="true"
-      className="relative min-h-72 overflow-hidden rounded-[14px] border border-[#c9bd9f] bg-[#f8f4e9] p-2 shadow-soft sm:min-h-[360px] sm:p-3"
+      className="relative min-h-72 overflow-hidden rounded-[14px] border border-paper-trail-edge bg-paper-trail p-2 shadow-soft sm:min-h-[360px] sm:p-3"
     >
       <LandingPaperTexture />
       <Image
@@ -59,8 +61,8 @@ export function LandingPaperPanel() {
         sizes="(max-width: 1023px) calc(100vw - 32px), 53vw"
         className="relative h-auto w-full rounded-[8px] outline outline-1 -outline-offset-1 outline-black/10 dark:outline-white/10"
       />
-      <div className="absolute inset-x-4 bottom-4 border border-[#292624]/15 bg-[#f8f4e9]/90 px-4 py-3 backdrop-blur-sm sm:inset-x-6 sm:bottom-6">
-        <p className="font-mono text-[10px] font-medium uppercase tracking-[0.16em] text-[#292624]/65">
+      <div className="absolute inset-x-4 bottom-4 border border-paper-trail-ink/15 bg-paper-trail/90 px-4 py-3 backdrop-blur-sm sm:inset-x-6 sm:bottom-6">
+        <p className="font-mono text-[10px] font-medium uppercase tracking-[0.16em] text-paper-trail-ink/65">
           Swipe File / Paper trail
         </p>
       </div>
