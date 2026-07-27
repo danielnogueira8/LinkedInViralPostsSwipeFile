@@ -20,6 +20,14 @@ export type PostMetricsRow = {
 };
 
 export type TrendPoint = { date: string; impressions: number };
+export type AnalyticsTrendPoint = {
+  date: string;
+  impressions: number | null;
+  engagements: number | null;
+  engagementRate: number | null;
+  comments: number | null;
+  savesAndShares: number | null;
+};
 
 export type AnalyticsSnapshot = {
   artifactId: string;
@@ -65,6 +73,21 @@ export type AnalyticsPeriodBounds = {
   current: DateWindow;
   previous: DateWindow | null;
 };
+export type AnalyticsChangeInsight = {
+  headline: string;
+  detail: string;
+  direction: "up" | "down" | "neutral";
+};
+
+export const ANALYTICS_TREND_METRIC_OPTIONS = [
+  { value: "impressions", label: "Impressions" },
+  { value: "engagements", label: "Engagements" },
+  { value: "engagementRate", label: "Engagement rate" },
+  { value: "comments", label: "Comments" },
+  { value: "savesAndShares", label: "Saves + shares" },
+] as const;
+export type AnalyticsTrendMetric =
+  (typeof ANALYTICS_TREND_METRIC_OPTIONS)[number]["value"];
 
 export function parseAnalyticsFilters(
   query: Record<string, string | string[] | undefined>,
@@ -178,6 +201,61 @@ export function buildDailyImpressionGains(
     .map(([date, impressions]) => ({ date, impressions }));
 }
 
+export function buildAnalyticsTrend(
+  snapshots: readonly AnalyticsSnapshot[],
+): AnalyticsTrendPoint[] {
+  const impressions = buildDailyMetricGains(snapshots, "impressions");
+  const likes = buildDailyMetricGains(snapshots, "likes");
+  const comments = buildDailyMetricGains(snapshots, "comments");
+  const shares = buildDailyMetricGains(snapshots, "shares");
+  const saves = buildDailyMetricGains(snapshots, "saves");
+  const sends = buildDailyMetricGains(snapshots, "sends");
+  const dates = new Set([
+    ...impressions.keys(),
+    ...likes.keys(),
+    ...comments.keys(),
+    ...shares.keys(),
+    ...saves.keys(),
+    ...sends.keys(),
+  ]);
+
+  return [...dates]
+    .sort((a, b) => a.localeCompare(b))
+    .map((date) => {
+      const dailyImpressions = impressions.get(date) ?? null;
+      const dailyComments = comments.get(date) ?? null;
+      const dailyShares = shares.get(date) ?? null;
+      const dailySaves = saves.get(date) ?? null;
+      const interactionValues = [
+        likes.get(date),
+        comments.get(date),
+        shares.get(date),
+        saves.get(date),
+        sends.get(date),
+      ].filter((value): value is number => value !== undefined);
+      const engagements =
+        interactionValues.length > 0
+          ? interactionValues.reduce((total, value) => total + value, 0)
+          : null;
+      return {
+        date,
+        impressions: dailyImpressions,
+        engagements,
+        engagementRate:
+          dailyImpressions !== null &&
+          dailyImpressions > 0 &&
+          engagements !== null
+            ? Math.round((engagements / dailyImpressions) * 1000) / 10
+            : null,
+        comments: dailyComments,
+        savesAndShares:
+          dailySaves === null && dailyShares === null
+            ? null
+            : (dailySaves ?? 0) + (dailyShares ?? 0),
+      };
+    });
+}
+
 export function filterAnalyticsContent(
   posts: readonly PostMetricsRow[],
   snapshots: readonly AnalyticsSnapshot[],
@@ -276,15 +354,88 @@ export function buildAnalyticsPeriodReport(
   window: DateWindow,
 ): {
   summary: AnalyticsSummary;
-  trend: TrendPoint[];
+  trend: AnalyticsTrendPoint[];
   posts: PostMetricsRow[];
 } {
+  const periodPosts = buildPeriodPostMetrics(snapshots, posts, window);
   return {
-    summary: buildAnalyticsPeriod(snapshots, posts, window),
-    trend: buildDailyImpressionGains(snapshots).filter((point) =>
+    summary: summarizePostMetrics(periodPosts),
+    trend: buildAnalyticsTrend(snapshots).filter((point) =>
       isInWindow(point.date, window),
     ),
-    posts: buildPeriodPostMetrics(snapshots, posts, window),
+    posts: periodPosts,
+  };
+}
+
+export function buildAnalyticsChangeInsight(
+  current: AnalyticsSummary,
+  previous: AnalyticsSummary | null,
+): AnalyticsChangeInsight {
+  const postLabel = `${current.posts.toLocaleString("en-US")} ${
+    current.posts === 1 ? "post" : "posts"
+  }`;
+  if (previous === null) {
+    return {
+      headline: "All-time performance",
+      detail: `Based on ${postLabel.replace("post", "tracked post")}.`,
+      direction: "neutral",
+    };
+  }
+  if (
+    previous.impressions === 0 &&
+    previous.engagements === 0 &&
+    (current.impressions > 0 || current.engagements > 0)
+  ) {
+    return {
+      headline: "First measured activity",
+      detail: `Compared with the previous period · ${postLabel.replace(
+        "post",
+        "measured post",
+      )}.`,
+      direction: "up",
+    };
+  }
+
+  const movements = [
+    {
+      label: "Impressions",
+      current: current.impressions,
+      previous: previous.impressions,
+    },
+    {
+      label: "Engagements",
+      current: current.engagements,
+      previous: previous.engagements,
+    },
+  ]
+    .filter((movement) => movement.previous > 0)
+    .map((movement) => ({
+      ...movement,
+      percent: Math.round(
+        ((movement.current - movement.previous) / movement.previous) * 100,
+      ),
+    }))
+    .sort((a, b) => Math.abs(b.percent) - Math.abs(a.percent));
+  const strongest = movements[0];
+  if (!strongest || strongest.percent === 0) {
+    return {
+      headline: "Performance held steady",
+      detail: `Compared with the previous period · ${postLabel.replace(
+        "post",
+        "measured post",
+      )}.`,
+      direction: "neutral",
+    };
+  }
+  return {
+    headline: `${strongest.label} ${
+      strongest.percent > 0 ? "increased" : "decreased"
+    } ${Math.abs(strongest.percent).toLocaleString("en-US")}%`,
+    detail: `Compared with the previous period · ${postLabel.replace(
+      "post",
+      "measured post",
+    )}.`,
+    direction: strongest.percent > 0 ? "up" : "down",
   };
 }
 
@@ -332,7 +483,7 @@ export function niceCeil(value: number): number {
 // The Y-axis scale for the impressions chart: a nice rounded top plus evenly
 // spaced tick values from top down to 0 (so the axis reads top-to-bottom).
 // Pure + exported so the tick math is unit-tested.
-export function impressionAxisTicks(
+export function metricAxisTicks(
   maxValue: number,
   divisions = 2,
 ): { top: number; ticks: number[] } {
@@ -341,6 +492,10 @@ export function impressionAxisTicks(
   for (let i = divisions; i >= 0; i--) ticks.push((top / divisions) * i);
   return { top, ticks };
 }
+
+// Compatibility name for existing consumers and tests written when the chart
+// only supported impressions.
+export const impressionAxisTicks = metricAxisTicks;
 
 // Order the analytics table with the most recent posts on top: publish date
 // descending, undated posts last, ties broken by impressions (desc) so the

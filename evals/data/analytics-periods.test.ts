@@ -2,6 +2,8 @@ import { describe, expect, test } from "vitest";
 import {
   buildAnalyticsPeriod,
   buildAnalyticsPeriodReport,
+  buildAnalyticsTrend,
+  buildAnalyticsChangeInsight,
   filterAnalyticsContent,
   parseAnalyticsFilters,
   periodBounds,
@@ -143,5 +145,101 @@ describe("period analytics", () => {
       posts,
       snapshots,
     });
+  });
+});
+
+describe("analytics overview trends", () => {
+  test("builds selectable daily metrics from the same cumulative deltas", () => {
+    const trend = buildAnalyticsTrend([
+      snapshot("post-a", "2026-07-26", {
+        impressions: 100,
+        likes: 10,
+        comments: 2,
+        shares: 1,
+        saves: 0,
+        sends: 0,
+      }),
+      snapshot("post-a", "2026-07-27", {
+        impressions: 150,
+        likes: 15,
+        comments: 5,
+        shares: 3,
+        saves: 2,
+        sends: 1,
+      }),
+    ]);
+
+    expect(trend).toEqual([
+      {
+        date: "2026-07-27",
+        impressions: 50,
+        engagements: 13,
+        engagementRate: 26,
+        comments: 3,
+        savesAndShares: 4,
+      },
+    ]);
+  });
+
+  test("preserves unavailable metrics instead of inventing zero values", () => {
+    const trend = buildAnalyticsTrend([
+      snapshot("post-a", "2026-07-25", {
+        impressions: null,
+        comments: 1,
+      }),
+      snapshot("post-a", "2026-07-26", {
+        impressions: null,
+        comments: 3,
+      }),
+      snapshot("post-a", "2026-07-27", {
+        impressions: null,
+        comments: 4,
+      }),
+    ]);
+
+    expect(trend).toEqual([
+      expect.objectContaining({
+        date: "2026-07-26",
+        impressions: null,
+        comments: 2,
+      }),
+      expect.objectContaining({
+        date: "2026-07-27",
+        impressions: null,
+        comments: 1,
+      }),
+    ]);
+  });
+
+  test("summarizes the strongest period movement without claiming causation", () => {
+    expect(
+      buildAnalyticsChangeInsight(
+        { impressions: 100, engagements: 10, engagementRate: 10, posts: 2 },
+        { impressions: 50, engagements: 20, engagementRate: 40, posts: 3 },
+      ),
+    ).toEqual({
+      headline: "Impressions increased 100%",
+      detail: "Compared with the previous period · 2 measured posts.",
+      direction: "up",
+    });
+  });
+
+  test("handles all-time and first-activity states without fake percentages", () => {
+    expect(
+      buildAnalyticsChangeInsight(
+        { impressions: 10, engagements: 2, engagementRate: 20, posts: 1 },
+        null,
+      ),
+    ).toEqual({
+      headline: "All-time performance",
+      detail: "Based on 1 tracked post.",
+      direction: "neutral",
+    });
+    expect(
+      buildAnalyticsChangeInsight(
+        { impressions: 10, engagements: 2, engagementRate: 20, posts: 1 },
+        { impressions: 0, engagements: 0, engagementRate: null, posts: 0 },
+      ).headline,
+    ).toBe("First measured activity");
   });
 });
