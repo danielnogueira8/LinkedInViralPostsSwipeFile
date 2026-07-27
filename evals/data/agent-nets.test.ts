@@ -5,6 +5,7 @@ import { describe, expect, test } from "vitest";
 import {
   areDraftsNearDuplicate,
   looksCorruptedDraft,
+  looksLikeRefusalOrClarification,
   normalizeDraftKey,
   stripEmDashes,
   aiTellMetrics,
@@ -63,6 +64,68 @@ describe("shared nets module", () => {
     expect(aiTellMetrics("This is a normal sentence with no tells.")).toEqual([]);
   });
 
+});
+
+describe("looksLikeRefusalOrClarification — the writer-refusal net", () => {
+  // The production bug this guards: the routed writer answered a newsjacking
+  // request with a refusal + options menu, and that prose was delivered as a
+  // Post artifact under "Your draft is ready." The net must catch that shape…
+  test("catches the observed newsjacking refusal verbatim in shape", () => {
+    expect(
+      looksLikeRefusalOrClarification(
+        "I can't run a live search_news call from here, so I can't verify what's actually trending today. Here are two honest paths forward: I can draft from a topic you paste in, or you can attach a source and I'll model it. Tell me which one you want?",
+      ),
+    ).toBe("opens with first-person incapability");
+  });
+
+  test("catches a refusal that buries the incapability mid-body (two signals)", () => {
+    expect(
+      looksLikeRefusalOrClarification(
+        "Happy to help with this one. I'm unable to access live news data from this route, so here are two options forward. Which one do you want?",
+      ),
+    ).toBe("refusal or clarifying question, not post prose");
+  });
+
+  test("catches a pure clarifying question with no incapability (two signals)", () => {
+    expect(
+      looksLikeRefusalOrClarification(
+        "I can write this a few different ways. Do you want it as a personal story or a contrarian take — tell me which direction you prefer?",
+      ),
+    ).toBe("refusal or clarifying question, not post prose");
+  });
+
+  // …without ever swallowing a real post. These are the false-positive traps.
+  test("passes a genuine post that opens on an emotional 'I can't'", () => {
+    expect(
+      looksLikeRefusalOrClarification(
+        "I can't believe it's been ten years since I started this company.\n\nWe almost ran out of money twice. What saved us was writing down what we learned, every week, in public.\n\nBuild proof before you need it.",
+      ),
+    ).toBeNull();
+  });
+
+  test("passes a genuine post that ends on a rhetorical question", () => {
+    expect(
+      looksLikeRefusalOrClarification(
+        "Your title is rented. Your reputation is owned.\n\nMost people can't explain what they do in one sentence.\n\nWrite it down. Publish it. Can you?",
+      ),
+    ).toBeNull();
+  });
+
+  test("passes a genuine post that mentions options as subject matter", () => {
+    expect(
+      looksLikeRefusalOrClarification(
+        "Founders think they have two options: hustle harder or raise money.\n\nThere's a third. Build in public and let the proof do the selling.\n\nThe founders who document the work never have to pitch as hard.",
+      ),
+    ).toBeNull();
+  });
+
+  test("passes a genuine post with a casual 'want me to' aside and nothing else", () => {
+    expect(
+      looksLikeRefusalOrClarification(
+        "We cut our onboarding from 14 days to 3.\n\nNo new hires. No new tools. We just deleted every step that existed to make a manager feel safe.\n\nWant me to break down the exact checklist? That's a post for next week.",
+      ),
+    ).toBeNull();
+  });
 });
 
 describe("rationaleTooGeneric — the 'why I wrote it this way' quality gate", () => {

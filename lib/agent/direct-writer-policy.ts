@@ -166,6 +166,32 @@ export function isOpinionOrQuestionAboutContent(instruction: string): boolean {
 }
 
 /**
+ * The instruction WORDING demands live news or fresh research, so no tool-less
+ * lane may claim the turn — regardless of how the turn was submitted. This is
+ * the text half of the research gates below (LIVE_OR_SPECIALIZED_RE +
+ * RESEARCH_REQUIREMENT_RE), exported so the explicit-command fast path in
+ * compile.ts (`commandCreateEligible`) can apply the SAME gates the free-text
+ * path applies here.
+ *
+ * The bug this prevents: every composer send carries an explicit `create`
+ * command, and that command used to claim the turn for the tool-less direct
+ * writer checking only voice/attachments/the starter-chip researchRequirement
+ * — never the instruction text. A typed "Newsjack a recent event about X.
+ * Search for verified news from the last 14 days first…" therefore landed on
+ * the direct_writer route, where the model has no search_news tool and could
+ * only refuse. With this gate the command fast path declines, and normal
+ * routing (read-only orchestrator → news_research with search_news) takes
+ * over. Plain typed briefs ("write a post about remote work") match neither
+ * pattern and keep the fast path.
+ */
+export function requiresLiveNewsOrResearch(instruction: string): boolean {
+  return (
+    LIVE_OR_SPECIALIZED_RE.test(instruction) ||
+    RESEARCH_REQUIREMENT_RE.test(instruction)
+  );
+}
+
+/**
  * The direct lane is intentionally narrow: one fully specified, original post
  * whose domain context is already loaded. Anything that may need a tool stays
  * on the hardened agent path.

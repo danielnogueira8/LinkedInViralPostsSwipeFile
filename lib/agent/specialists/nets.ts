@@ -76,6 +76,104 @@ export function looksCorruptedDraft(body: string): string | null {
   return null;
 }
 
+// Detect a writer response that is a REFUSAL or a clarifying question instead
+// of the requested post — the "I can't run a live search_news call from here…
+// here are two honest paths forward… tell me which one you want" class of
+// output. The direct_writer route's validate hook only checks for non-empty
+// text and the finalizer's gates have no refusal detection (the source-fidelity
+// verdict is telemetry-only by design), so without this net that prose was
+// packaged as a Post artifact under "Your draft is ready." — a conversational
+// reply rendered as a draft card. When this fires, the caller delivers the text
+// as a chat message with terminalReason "ask" instead of an artifact.
+//
+// DELIBERATELY high-precision, same posture as looksCorruptedDraft: a false
+// positive swallows a legitimate post, so the net requires at least TWO
+// independent signals — or ONE very strong one (the body OPENING with a
+// first-person incapability statement about a task capability, which real post
+// prose essentially never does). Consequences of that posture:
+//   • First-person incapability is only counted when it's about a CAPABILITY
+//     (run/access/search/verify/…), so a genuine opener like "I can't believe
+//     it's been ten years" or "I cannot wait to share this" never trips it.
+//   • A post that merely CONTAINS a question ("Can you explain your job?") or
+//     ends on one ("What would you do?") scores at most one signal and passes.
+//   • Meta-offer vocabulary is bounded to decision-routing phrasing ("paths
+//     forward", "here are two options") — a post that mentions "two options"
+//     in passing is not a signal.
+// Returns a short reason string when the body is a refusal/clarification, or
+// null when it looks like genuine post prose. Pure + exported for unit tests.
+export function looksLikeRefusalOrClarification(body: string): string | null {
+  const text = body.trim();
+  if (!text) return null;
+
+  // Signal 1 — first-person incapability ABOUT A TASK CAPABILITY: "I can't run
+  // a live search", "I'm unable to access", "I don't have access to". The
+  // capability-verb window is what keeps "I can't believe…" / "I can't wait…"
+  // (legitimate post openers) from matching.
+  const incapability =
+    /\bI(?:'m| am)? (?:can'?t|cannot|can not|unable to|not able to)\b[^.!?\n]{0,60}?\b(?:run|access|search|browse|call|fetch|verify|pull|retrieve|look up|open|visit|scrape|publish|connect|perform|conduct|complete|guarantee|confirm)\b/i.exec(
+      text,
+    ) ??
+    /\bI (?:don'?t|do not) have (?:access|a way|the ability|the tools|the data)\b/i.exec(
+      text,
+    ) ??
+    /\bI have no (?:way|access|ability) to\b/i.exec(text);
+
+  // The very strong single signal: the incapability IS the opening sentence.
+  // A real post never starts by telling the user what the writer cannot do; a
+  // refusal almost always does. (Requiring the first SENTENCE, not just an
+  // early position, keeps a one-line pleasantry like "Happy to help with this.
+  // I'm unable to…" on the two-signal path instead of firing on one.)
+  if (incapability) {
+    const prefix = text.slice(0, incapability.index);
+    if (!/[.!?]/.test(prefix)) {
+      return "opens with first-person incapability";
+    }
+  }
+
+  let signals = incapability ? 1 : 0;
+
+  // Signal 2 — meta-offer instead of content: the writer presents OPTIONS for
+  // the user to pick between rather than writing the post ("paths forward",
+  // "here are two options"). Bounded to decision-routing phrasing so a post
+  // that discusses options as subject matter doesn't match.
+  if (
+    /\b(?:paths?|ways?|routes?|options?) forward\b/i.test(text) ||
+    /\bhere (?:are|'re) (?:two|three|a few|a couple of|several)\b/i.test(text)
+  ) {
+    signals += 1;
+  }
+
+  // Signal 3 — the decision is handed back to the user: "tell me which",
+  // "let me know which one you want", "which do you prefer".
+  if (
+    /\b(?:tell me|let me know) which\b/i.test(text) ||
+    /\bwhich (?:one|option|path|approach|way) do you (?:want|prefer|like)\b/i.test(
+      text,
+    ) ||
+    /\bwhich do you (?:want|prefer)\b/i.test(text)
+  ) {
+    signals += 1;
+  }
+
+  // Signal 4 — an offer to proceed on confirmation: "want me to", "would you
+  // like me to", "shall I".
+  if (/\b(?:want me to|would you like me to|shall I)\b/i.test(text)) {
+    signals += 1;
+  }
+
+  // Signal 5 — the body ENDS on a user-directed question (a clarifying
+  // question's signature). Only the final sentence is inspected, and it must
+  // address the user, so a mid-post rhetorical question never counts.
+  if (/\?\s*$/.test(text)) {
+    const lastSentence = text.split(/(?<=[.!?])\s+/).pop() ?? "";
+    if (/\b(?:you|your|which|prefer|want|should I|sound)\b/i.test(lastSentence)) {
+      signals += 1;
+    }
+  }
+
+  return signals >= 2 ? "refusal or clarifying question, not post prose" : null;
+}
+
 // Normalize a draft body into a dedupe key: lowercase, collapse all runs of
 // whitespace to a single space, trim. So two render_post calls that differ only
 // in trailing whitespace / line-break count / casing are recognized as the same
