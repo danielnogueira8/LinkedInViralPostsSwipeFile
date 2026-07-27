@@ -20,6 +20,7 @@ const row = (
   artifactId,
   title: artifactId,
   publishedAt,
+  contentType: "regular",
   impressions,
   reach: 0,
   likes: 0,
