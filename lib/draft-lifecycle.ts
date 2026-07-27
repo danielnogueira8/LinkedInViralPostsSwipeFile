@@ -1,5 +1,8 @@
 import { deriveDraftTitle, isAutoDerivedTitle } from "@/lib/draft-title";
-import { leadMagnetContextFromMeta } from "@/lib/draft-lead-magnet";
+import {
+  leadMagnetContextFromMeta,
+  type LeadMagnetStamp,
+} from "@/lib/draft-lead-magnet";
 import {
   DRAFT_MUTATION_CONFLICT,
   DRAFT_SCHEDULING_CONFLICT,
@@ -300,6 +303,9 @@ export class DraftLifecycle {
       planToPostOn?: string | null;
       mediaAttachments?: PostMediaAttachment[];
       contentFormat?: ContentFormat;
+      // Giveaway attach/detach: a stamp sets meta.lead_magnet, null clears it,
+      // undefined leaves it alone.
+      leadMagnet?: LeadMagnetStamp | null;
     },
   ): Promise<DraftCommandOutcome<DraftRecord>> {
     const outcome = await this.mutateWithPrevious(id, input);
@@ -316,6 +322,7 @@ export class DraftLifecycle {
       planToPostOn?: string | null;
       mediaAttachments?: PostMediaAttachment[];
       contentFormat?: ContentFormat;
+      leadMagnet?: LeadMagnetStamp | null;
     },
   ): Promise<
     DraftCommandOutcome<{ draft: DraftRecord; previous: DraftRecord }>
@@ -378,8 +385,17 @@ export class DraftLifecycle {
       if (input.kind !== undefined) patch.kind = input.kind;
       if (input.planToPostOn !== undefined) patch.planToPostOn = input.planToPostOn;
       if (input.mediaAttachments !== undefined) patch.mediaAttachments = input.mediaAttachments;
-      if (input.contentFormat !== undefined) {
-        patch.meta = mergeDraftContentFormat(current.meta, input.contentFormat);
+      if (input.contentFormat !== undefined || input.leadMagnet !== undefined) {
+        // Both commands merge into meta — build it once so they compose instead
+        // of overwriting each other. leadMagnet: a stamp attaches/replaces the
+        // giveaway, null detaches it, undefined leaves meta.lead_magnet alone.
+        const meta =
+          input.contentFormat !== undefined
+            ? mergeDraftContentFormat(current.meta, input.contentFormat)
+            : { ...(current.meta ?? {}) };
+        if (input.leadMagnet === null) delete meta.lead_magnet;
+        else if (input.leadMagnet !== undefined) meta.lead_magnet = input.leadMagnet;
+        patch.meta = meta;
       }
       if (input.title !== undefined) {
         patch.title = input.title?.trim() || deriveDraftTitle(input.body ?? current.body);
