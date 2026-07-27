@@ -64,8 +64,37 @@ export function isAnthropicModel(model: string): boolean {
 // The bare model id Anthropic's API expects. Strips the `anthropic/` provider
 // prefix that OpenRouter slugs carry. `anthropic/claude-sonnet-5` →
 // `claude-sonnet-5`; a bare id is returned unchanged.
+//
+// OpenRouter slugs use DOTTED minor versions (`claude-haiku-4.5`) but the
+// Anthropic API dashes them (`claude-haiku-4-5`) — and for haiku only the
+// DATED id exists, so a bare dot→dash still 404s ("model: claude-haiku-4.5"
+// not_found_error took down news search when the provider flag moved it onto
+// this adapter). Map the slugs the app actually runs to their exact API ids;
+// for anything unmapped, fall back to the dot→dash transform (current-gen
+// aliases like `claude-sonnet-4-6` resolve) rather than passing a guaranteed-
+// invalid dotted id through.
+const ANTHROPIC_MODEL_ID_MAP: Record<string, string> = {
+  "claude-haiku-4.5": "claude-haiku-4-5-20251001",
+  "claude-opus-4.5": "claude-opus-4-5-20251101",
+  "claude-sonnet-4.5": "claude-sonnet-4-5-20250929",
+  "claude-opus-4.1": "claude-opus-4-1-20250805",
+};
 export function toAnthropicModelId(model: string): string {
-  return model.replace(/^anthropic\//i, "");
+  const bare = model.replace(/^anthropic\//i, "");
+  const mapped = ANTHROPIC_MODEL_ID_MAP[bare];
+  if (mapped) return mapped;
+  // `claude-sonnet-4.6` → `claude-sonnet-4-6`; already-dashed/undotted ids are
+  // returned unchanged.
+  return bare.replace(/(\d)\.(\d)/g, "$1-$2");
+}
+
+// Adaptive thinking and output_config.effort are gen-5-only: older models 400
+// on both ("adaptive thinking is not supported on this model",
+// "This model does not support the effort parameter" — claude-haiku-4-5
+// rejects each), so calls to anything else must go out plain. Takes the
+// RESOLVED API id (post toAnthropicModelId).
+export function supportsAdaptiveThinking(model: string): boolean {
+  return /^claude-(?:sonnet|opus|fable)-5(?:-|$)/i.test(model);
 }
 
 // True when the resolved model should be served by Anthropic. The flag gates the
@@ -423,10 +452,14 @@ export async function completeChatAnthropic(opts: {
     model,
     max_tokens: maxTokens,
     messages,
-    thinking: thinkingOff
-      ? { type: "disabled" }
-      : { type: "adaptive" },
-    output_config: { effort },
+    ...(supportsAdaptiveThinking(model)
+      ? {
+          thinking: thinkingOff
+            ? ({ type: "disabled" } as const)
+            : ({ type: "adaptive" } as const),
+          output_config: { effort },
+        }
+      : {}),
   };
   // cachePrompt:false sends the system prompt as a plain string (a string
   // cannot carry cache_control) and skips the tool breakpoint, so the call
@@ -512,8 +545,12 @@ export async function* streamChatAnthropic(opts: {
     max_tokens: maxTokens,
     messages,
     stream: true,
-    thinking: { type: "adaptive" },
-    output_config: { effort: "high" },
+    ...(supportsAdaptiveThinking(model)
+      ? {
+          thinking: { type: "adaptive" } as const,
+          output_config: { effort: "high" as const },
+        }
+      : {}),
   };
   const cache = opts.cachePrompt !== false;
   if (system) body.system = cache ? cachedSystem(system) : system;

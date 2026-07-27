@@ -41,9 +41,20 @@ export const FALLBACK_READ_ONLY_ORCHESTRATOR_MODEL = distinctFallbackModel(
 );
 
 const SAFE_NEWS_DEFAULT = "anthropic/claude-haiku-4.5";
+// Under AI_PROVIDER=anthropic the news pipeline runs on the Anthropic adapter,
+// whose grounded search is the web_search SERVER tool — supported on Sonnet 5
+// but NOT on Haiku 4.5 (the API 400s: "does not support programmatic tool
+// calling"). The safe default under the flag is therefore the Sonnet chat
+// model itself; a distinct cross-provider fallback below keeps a path open
+// when Anthropic is the thing that's down.
+const ANTHROPIC_SAFE_NEWS_DEFAULT = "anthropic/claude-sonnet-5";
+const safeNewsDefault =
+  process.env.AI_PROVIDER === "anthropic"
+    ? ANTHROPIC_SAFE_NEWS_DEFAULT
+    : SAFE_NEWS_DEFAULT;
 export const DEFAULT_NEWS_MODEL = SUPPORTED_NEWS_MODELS.includes(CHAT_MODEL)
   ? CHAT_MODEL
-  : SAFE_NEWS_DEFAULT;
+  : safeNewsDefault;
 
 export function resolveNewsModel(
   env: { OPENROUTER_NEWS_MODEL?: string } = {
@@ -64,7 +75,7 @@ export const FALLBACK_NEWS_MODEL = distinctFallbackModel(
   configuredNewsFallback &&
   SUPPORTED_NEWS_MODELS.includes(configuredNewsFallback)
     ? configuredNewsFallback
-    : SAFE_NEWS_DEFAULT,
+    : safeNewsDefault,
   ["openai/gpt-5.6-luna", "google/gemini-3.1-flash-lite", "z-ai/glm-5.2"].filter(
     (model) => SUPPORTED_NEWS_MODELS.includes(model),
   ),

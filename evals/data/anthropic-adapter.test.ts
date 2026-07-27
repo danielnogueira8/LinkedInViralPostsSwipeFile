@@ -268,7 +268,17 @@ describe("isAnthropicModel / toAnthropicModelId", () => {
   test("toAnthropicModelId strips the anthropic/ prefix, leaves bare ids alone", () => {
     expect(toAnthropicModelId("anthropic/claude-sonnet-5")).toBe("claude-sonnet-5");
     expect(toAnthropicModelId("claude-sonnet-5")).toBe("claude-sonnet-5");
-    expect(toAnthropicModelId("anthropic/claude-haiku-4.5")).toBe("claude-haiku-4.5");
+  });
+  test("toAnthropicModelId maps dotted OpenRouter slugs to real Anthropic API ids", () => {
+    // The Anthropic API 404s on dotted ids ("model: claude-haiku-4.5"
+    // not_found_error) — and for haiku only the dated id exists.
+    expect(toAnthropicModelId("anthropic/claude-haiku-4.5")).toBe(
+      "claude-haiku-4-5-20251001",
+    );
+    expect(toAnthropicModelId("claude-haiku-4.5")).toBe("claude-haiku-4-5-20251001");
+    // Unmapped dotted slugs fall back to the dot→dash transform (current-gen
+    // aliases like claude-sonnet-4-6 resolve on the API).
+    expect(toAnthropicModelId("anthropic/claude-sonnet-4.6")).toBe("claude-sonnet-4-6");
   });
 });
 

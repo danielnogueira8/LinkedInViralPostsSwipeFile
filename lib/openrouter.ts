@@ -1094,6 +1094,11 @@ export async function* streamChat(opts: {
 export const NEWS_SEARCH_MODEL_PRICING = {
   "google/gemini-3.1-flash-lite": { input: 0.25, output: 1.5, cachedInput: 0.025 },
   "anthropic/claude-haiku-4.5": { input: 1.0, output: 5.0, cachedInput: 0.1 },
+  // Supported for news under AI_PROVIDER=anthropic: the Anthropic web_search
+  // server tool runs on Sonnet 5 (verified — Haiku 4.5 rejects it), so the
+  // flag's default news model is Sonnet 5 via the adapter. Same rates as the
+  // main table's row below.
+  "anthropic/claude-sonnet-5": { input: 2.0, output: 10.0, cachedInput: 0.2 },
   "openai/gpt-5.6-luna": {
     input: 1.0,
     output: 6.0,
@@ -1150,18 +1155,27 @@ const OPENROUTER_PRICING: Record<
 };
 
 // The pricing table is keyed by OpenRouter slugs (`anthropic/claude-...`), but
-// under AI_PROVIDER=anthropic the adapter returns Anthropic's BARE id
-// (`claude-haiku-4.5`), which then flows into cost lookup via the served model.
-// Map a bare Claude id back to its `anthropic/`-prefixed pricing key so every
-// bare Claude model (current and future) prices correctly instead of silently
-// falling back to the GLM-5.1 rate and mis-counting the monthly cost cap. Bare
-// `claude-sonnet-5` keeps its own explicit row; this only kicks in when the
-// exact key is absent.
+// under AI_PROVIDER=anthropic the adapter returns Anthropic's API id
+// (`claude-haiku-4-5-20251001`), which then flows into cost lookup via the
+// served model. Map a bare Claude id back to its `anthropic/`-prefixed pricing
+// key so every bare Claude model (current and future) prices correctly instead
+// of silently falling back to the GLM-5.1 rate and mis-counting the monthly
+// cost cap. Bare `claude-sonnet-5` keeps its own explicit row; this only kicks
+// in when the exact key is absent.
 function pricingKey(model: string): string {
   if (Object.hasOwn(OPENROUTER_PRICING, model)) return model;
   if (/^claude-/i.test(model)) {
     const prefixed = `anthropic/${model}`;
     if (Object.hasOwn(OPENROUTER_PRICING, prefixed)) return prefixed;
+    // Anthropic API ids dash the minor version and may carry a date suffix
+    // (`claude-haiku-4-5-20251001`); OpenRouter pricing keys dot it
+    // (`anthropic/claude-haiku-4.5`). Normalize so adapter-served ids price at
+    // their true rate instead of falling back to the GLM-5.1 default.
+    const m = model.match(/^(claude-[a-z]+-\d+)-(\d+?)(?:-\d{8})?$/i);
+    if (m) {
+      const dotted = `anthropic/${m[1]}.${m[2]}`;
+      if (Object.hasOwn(OPENROUTER_PRICING, dotted)) return dotted;
+    }
   }
   return model;
 }
