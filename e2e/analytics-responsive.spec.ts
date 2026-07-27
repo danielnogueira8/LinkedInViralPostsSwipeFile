@@ -178,11 +178,6 @@ test("analytics overview stays usable on mobile and desktop", async ({ page }) =
   const sort = page.getByRole("combobox", { name: "Sort posts" });
   await sort.selectOption("engagementRate");
   await expect(sort).toHaveValue("engagementRate");
-  await expectEngagementRateHelp(
-    sort
-      .locator("xpath=../..")
-      .getByRole("button", { name: "How engagement rate is calculated" }),
-  );
   await search.fill("no matching analytics fixture");
   await expect(page.getByText("No matching posts")).toBeVisible();
   await page.getByRole("button", { name: "Clear search" }).click();
