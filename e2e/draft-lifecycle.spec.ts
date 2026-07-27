@@ -458,6 +458,94 @@ test.describe("Cowork draft lifecycle", () => {
     ).toBeVisible();
     expect(externalPublishAttempted).toBe(false);
   });
+
+  test("removes a queued post without deleting its recurring slot", async ({
+    page,
+  }) => {
+    await page.goto("/dashboard/posts");
+    const title = `Queue removal fixture ${Date.now()}`;
+    const created = await page.request.post("/api/drafts", {
+      data: {
+        title,
+        body: "A queued post whose recurring time must remain available.",
+        kind: "post",
+      },
+    });
+    expect(created.ok()).toBe(true);
+    const createdPayload = (await created.json()) as {
+      draft?: { id?: string };
+    };
+    const draftId = createdPayload.draft?.id;
+    if (!draftId) throw new Error("Queue removal fixture was not created");
+    draftsToDelete.push(draftId);
+    connectionRestorers.push(await activateTestPublishingConnection(draftId));
+
+    const timezone = await page.evaluate(
+      () => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+    );
+    const queued = await page.request.post(`/api/drafts/${draftId}/queue`, {
+      data: { firstComment: null, timezone },
+    });
+    expect(queued.ok()).toBe(true);
+    const booking = (await queued.json()) as {
+      postingSlotId: string;
+      postingSlotOccurrenceDate: string;
+    };
+
+    const slotDeleteRequests: string[] = [];
+    page.on("request", (request) => {
+      if (
+        request.method() === "DELETE" &&
+        request.url().includes("/api/posting-slots")
+      ) {
+        slotDeleteRequests.push(request.url());
+      }
+    });
+
+    await page.goto("/dashboard/posts");
+    const queue = page.getByRole("region", { name: "Posting queue" });
+    const queueToggle = queue.getByRole("button", {
+      name: /^Posting queue/,
+    });
+    await expect(queueToggle).toBeVisible();
+    if ((await queueToggle.getAttribute("aria-expanded")) === "false") {
+      await queueToggle.click();
+    }
+
+    const removePost = queue.getByRole("button", {
+      name: `Remove ${title} from queue`,
+    });
+    await expect(removePost).toBeVisible();
+    const currentSlot = removePost.locator(
+      "xpath=ancestor::*[@role='group'][1]",
+    );
+    const slotLabel = await currentSlot.getAttribute("aria-label");
+    if (!slotLabel) throw new Error("Queued occurrence has no accessible label");
+
+    const unscheduleResponse = page.waitForResponse(
+      (response) =>
+        response.url().includes(`/api/drafts/${draftId}/schedule`) &&
+        response.request().method() === "DELETE",
+    );
+    await removePost.click();
+    expect((await unscheduleResponse).ok()).toBe(true);
+    expect(slotDeleteRequests).toEqual([]);
+    await expect(
+      queue.getByRole("group", { name: slotLabel }),
+    ).toContainText("Open");
+
+    const queueState = await page.request.get(
+      `/api/posting-slots?timezone=${encodeURIComponent(timezone)}`,
+    );
+    expect(queueState.ok()).toBe(true);
+    const after = (await queueState.json()) as {
+      slots: Array<{ id: string }>;
+      drafts: Array<{ id: string }>;
+    };
+    expect(after.slots.map((slot) => slot.id)).toContain(booking.postingSlotId);
+    expect(after.drafts.map((draft) => draft.id)).not.toContain(draftId);
+    expect(booking.postingSlotOccurrenceDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
 });
 
 async function createChat(page: Page, title: string) {

@@ -619,6 +619,9 @@ export function DraftsList({
     <div className="flex flex-col gap-4">
       <PostingQueueWidget
         onOpenDraft={(draftId) => void openQueueDraft(draftId)}
+        onDraftRemovedFromQueue={(draftId, next) =>
+          applyMeta(draftId, next)
+        }
       />
       {/* Toolbar: search + kind filter */}
       <Toolbar className="flex flex-wrap items-center gap-2 p-2 sm:p-2.5">

@@ -26,7 +26,7 @@ function invalidatePostsSegment(): void {
 // Turn a draft into a REAL, timed LinkedIn publish (via the Zernio cron).
 //
 //   POST   /api/drafts/[id]/schedule  { scheduledAt, firstComment? }
-//   DELETE /api/drafts/[id]/schedule  → cancel (only while still 'scheduled')
+//   DELETE /api/drafts/[id]/schedule  → cancel (while 'scheduled' or 'failed')
 //
 // A DEDICATED endpoint, NOT a widening of the drafts PATCH — scheduling has its
 // own preconditions (connected account, future time, ≤3,000 chars, board-status

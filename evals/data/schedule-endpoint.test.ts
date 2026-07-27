@@ -5,7 +5,7 @@ import { describe, test, expect, vi, beforeEach } from "vitest";
 // LinkedIn auto-publish. This pins the validation gate (the security-relevant
 // part): must be connected, future-only, ≤3,000 chars, a BOARD-status draft
 // (never a pending_review draft — the review gate stays sovereign), and cancel
-// only while still 'scheduled'. On success it commits the schedule AND syncs
+// only while still 'scheduled' or 'failed'. On success it commits the schedule AND syncs
 // plan_to_post_on. scopedSupabase + lib/publishing are faked.
 // ---------------------------------------------------------------------------
 
@@ -14,9 +14,16 @@ import { describe, test, expect, vi, beforeEach } from "vitest";
 const state: {
   draft: { id: string; body: string; status: string; media_attachments?: unknown } | null;
   update: Record<string, unknown> | null;
+  filters: string[];
   deleteResult: { id: string } | null; // what the DELETE .select().maybeSingle() returns
   scheduleResult: { id: string } | null;
-} = { draft: null, update: null, deleteResult: null, scheduleResult: null };
+} = {
+  draft: null,
+  update: null,
+  filters: [],
+  deleteResult: null,
+  scheduleResult: null,
+};
 
 const fakeRaw = {
   from: () => {
@@ -24,8 +31,14 @@ const fakeRaw = {
     const ret = () => chain;
     Object.assign(chain, {
       select: ret,
-      eq: ret,
-      in: ret,
+      eq: (field: string, value: unknown) => {
+        state.filters.push(`${field}.eq.${String(value)}`);
+        return chain;
+      },
+      in: (field: string, values: unknown[]) => {
+        state.filters.push(`${field}.in.(${values.join(",")})`);
+        return chain;
+      },
       or: ret,
       update: (patch: Record<string, unknown>) => {
         state.update = patch;
@@ -74,6 +87,7 @@ const future = () => new Date(Date.now() + 3600_000).toISOString();
 beforeEach(() => {
   state.draft = { id: "d1", body: "a short post", status: "drafting", media_attachments: [] };
   state.update = null;
+  state.filters = [];
   state.deleteResult = { id: "d1" };
   state.scheduleResult = { id: "d1" };
   connRef.current = { status: "active", zernio_account_id: "acct-1" };
@@ -263,6 +277,15 @@ describe("DELETE — cancel", () => {
     expect(res.status).toBe(200);
     expect(data.ok).toBe(true);
     expect(state.update).toMatchObject({ schedule_status: null, scheduled_at: null });
+  });
+
+  test("also releases a failed recurring queue booking", async () => {
+    const res = await DELETE(req(), ctx);
+
+    expect(res.status).toBe(200);
+    expect(state.filters).toContain(
+      "schedule_status.in.(scheduled,failed)",
+    );
   });
 
   test("nothing to cancel (already publishing/published) → 409", async () => {

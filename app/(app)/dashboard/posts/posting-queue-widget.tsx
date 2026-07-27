@@ -1,9 +1,20 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { CalendarClock, ChevronDown, ChevronUp, Plus, Trash2 } from "lucide-react";
+import {
+  CalendarClock,
+  ChevronDown,
+  ChevronUp,
+  Plus,
+  Trash2,
+  X,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import {
+  draftOperations,
+  type UnscheduledDraftState,
+} from "@/lib/draft-operations-client";
 import {
   buildPostingQueueDays,
   postingSlotHasActiveDraft,
@@ -21,14 +32,20 @@ type QueueResponse = {
 
 export function PostingQueueWidget({
   onOpenDraft,
+  onDraftRemovedFromQueue,
 }: {
   onOpenDraft: (draftId: string) => void;
+  onDraftRemovedFromQueue: (
+    draftId: string,
+    state: UnscheduledDraftState,
+  ) => void;
 }) {
   const [slots, setSlots] = useState<PostingQueueSlot[]>([]);
   const [drafts, setDrafts] = useState<PostingQueueDraft[]>([]);
   const [collapsed, setCollapsed] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [addingDay, setAddingDay] = useState<number | null>(null);
+  const [removingDraftId, setRemovingDraftId] = useState<string | null>(null);
   const [time, setTime] = useState("09:00");
   const timezone = useMemo(
     () => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
@@ -151,6 +168,21 @@ export function PostingQueueWidget({
     }
   };
 
+  const removeDraftFromQueue = async (draft: PostingQueueDraft) => {
+    if (removingDraftId) return;
+    setRemovingDraftId(draft.id);
+    try {
+      const next = await draftOperations.unschedule(draft.id);
+      setDrafts((current) => current.filter((item) => item.id !== draft.id));
+      onDraftRemovedFromQueue(draft.id, next);
+      toast.success("Post removed from queue. The slot is still available.");
+    } catch (error) {
+      toast.error((error as Error).message);
+    } finally {
+      setRemovingDraftId(null);
+    }
+  };
+
   if (!loaded) {
     return <div className="h-16 animate-pulse rounded-xl border bg-muted/30" />;
   }
@@ -205,42 +237,70 @@ export function PostingQueueWidget({
                     </button>
                   </div>
                   <div className="mt-2 space-y-1.5">
-                    {day.occurrences.map((occurrence) => (
-                      <div
-                        key={occurrence.slot.id}
-                        className="group rounded-lg border bg-background/80 px-2 py-1.5"
-                      >
-                        <div className="flex items-center gap-1">
-                          <span className="text-[11px] font-medium">
-                            {new Intl.DateTimeFormat(undefined, {
-                              timeZone: occurrence.slot.timezone,
-                              hour: "numeric",
-                              minute: "2-digit",
-                            }).format(new Date(occurrence.scheduledAt))}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => void removeSlot(occurrence.slot)}
-                            className="ml-auto opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100"
-                            aria-label="Remove posting slot"
-                          >
-                            <Trash2 className="h-3 w-3 text-muted-foreground" />
-                          </button>
+                    {day.occurrences.map((occurrence) => {
+                      const timeLabel = new Intl.DateTimeFormat(undefined, {
+                        timeZone: occurrence.slot.timezone,
+                        hour: "numeric",
+                        minute: "2-digit",
+                      }).format(new Date(occurrence.scheduledAt));
+                      return (
+                        <div
+                          key={occurrence.slot.id}
+                          role="group"
+                          aria-label={`${day.weekday}, ${day.dateLabel} at ${timeLabel} posting slot`}
+                          className="group rounded-lg border bg-background/80 px-2 py-1.5"
+                        >
+                          <div className="flex items-center gap-1">
+                            <span className="text-[11px] font-medium">
+                              {timeLabel}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => void removeSlot(occurrence.slot)}
+                              className="ml-auto opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100"
+                              aria-label="Remove posting slot"
+                            >
+                              <Trash2 className="h-3 w-3 text-muted-foreground" />
+                            </button>
+                          </div>
+                          {occurrence.draft ? (
+                            <div className="mt-0.5 flex min-w-0 items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => onOpenDraft(occurrence.draft!.id)}
+                                className="min-w-0 flex-1 truncate text-left text-[11px] text-primary hover:underline"
+                                title={occurrence.draft.title || "Untitled post"}
+                              >
+                                {occurrence.draft.title || "Untitled post"}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void removeDraftFromQueue(occurrence.draft!)
+                                }
+                                disabled={
+                                  removingDraftId !== null ||
+                                  occurrence.draft.scheduleStatus === "publishing"
+                                }
+                                className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-wait disabled:opacity-40"
+                                aria-label={`Remove ${
+                                  occurrence.draft.title || "untitled post"
+                                } from queue`}
+                                title={
+                                  occurrence.draft.scheduleStatus === "publishing"
+                                    ? "This post is being published"
+                                    : "Remove post from queue"
+                                }
+                              >
+                                <X className="h-3 w-3" aria-hidden="true" />
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="text-[10px] text-muted-foreground">Open</div>
+                          )}
                         </div>
-                        {occurrence.draft ? (
-                          <button
-                            type="button"
-                            onClick={() => onOpenDraft(occurrence.draft!.id)}
-                            className="mt-0.5 block w-full truncate text-left text-[11px] text-primary hover:underline"
-                            title={occurrence.draft.title || "Untitled post"}
-                          >
-                            {occurrence.draft.title || "Untitled post"}
-                          </button>
-                        ) : (
-                          <div className="text-[10px] text-muted-foreground">Open</div>
-                        )}
-                      </div>
-                    ))}
+                      );
+                    })}
                     {day.noSlotsLeftToday && (
                       <p className="text-[10px] leading-snug text-muted-foreground">
                         No slots left today.
