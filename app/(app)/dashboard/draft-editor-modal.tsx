@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useCopiedFlag } from "@/lib/use-copied-flag";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -226,10 +226,12 @@ export function DraftEditorModal({
   const [leadMagnetsLoading, setLeadMagnetsLoading] = useState(false);
 
   // Lazily load the workspace's lead magnets the first time the giveaway picker
-  // is actually shown (a NEW lead-magnet post). Loaded once per mount and cached
-  // in state — reopening the modal or toggling Kind won't refetch. Errors leave
-  // the list empty (the picker degrades to the "create one first" hint).
-  const wantsLeadMagnets = open && isNew && newKind === "lead_magnet";
+  // is actually shown (a NEW lead-magnet post, or an EXISTING post whose Kind is
+  // lead_magnet). Loaded once per mount and cached in state — reopening the
+  // modal or toggling Kind won't refetch. Errors leave the list empty (the
+  // picker degrades to the "create one first" hint).
+  const wantsLeadMagnets =
+    open && (isNew ? newKind === "lead_magnet" : draft?.kind === "lead_magnet");
   useEffect(() => {
     if (!wantsLeadMagnets || leadMagnetOptions !== null || leadMagnetsLoading) return;
     let cancelled = false;
@@ -508,6 +510,44 @@ export function DraftEditorModal({
     } catch (e) {
       toast.error((e as Error).message);
     }
+  };
+
+  // The giveaway picker's options: the workspace's lead magnets, plus the
+  // currently attached giveaway if it's no longer in the list (a deleted
+  // resource) so the select can still display it instead of falling back to
+  // "None".
+  const giveawayOptions = useMemo<LeadMagnetOption[]>(() => {
+    const options = leadMagnetOptions ?? [];
+    const current = draft?.leadMagnet;
+    if (current?.id && !options.some((m) => m.id === current.id)) {
+      return [...options, { id: current.id, title: current.title }];
+    }
+    return options;
+  }, [leadMagnetOptions, draft?.leadMagnet]);
+
+  // Attach / swap / detach the giveaway on an EXISTING lead-magnet post.
+  // Optimistic with the picker's title; the PATCH resolves the full stamp
+  // (public_slug) server-side. null detaches.
+  const patchGiveaway = (leadMagnetId: string | null) => {
+    if (isNew || !draft) return;
+    const option = leadMagnetId
+      ? (giveawayOptions.find((m) => m.id === leadMagnetId) ?? null)
+      : null;
+    const meta = { ...(draft.meta ?? {}) };
+    if (option) {
+      meta.lead_magnet = { id: option.id, title: option.title, selection: "manual" };
+    } else {
+      delete meta.lead_magnet;
+    }
+    void patchMeta(
+      {
+        leadMagnet: option
+          ? { id: option.id, title: option.title, selection: "manual" }
+          : null,
+        meta,
+      },
+      { lead_magnet_id: leadMagnetId },
+    );
   };
 
   const copy = async () => {
@@ -1066,8 +1106,29 @@ export function DraftEditorModal({
                       <Select
                         value={isNew ? newKind || "auto" : (draft?.kind ?? "post")}
                         onValueChange={(v) => {
-                          if (isNew) setNewKind(v === "auto" ? "" : (v as DraftKind));
-                          else patchMeta({ kind: v as DraftKind }, { kind: v as DraftKind });
+                          if (isNew) {
+                            setNewKind(v === "auto" ? "" : (v as DraftKind));
+                            return;
+                          }
+                          const nextKind = v as DraftKind;
+                          // Switching AWAY from Lead Magnet detaches the giveaway
+                          // in the same PATCH — a regular post/hook has no
+                          // giveaway, and a leftover stamp would re-tag the post
+                          // as lead_magnet on the next load (normalizeDraft).
+                          if (
+                            draft?.kind === "lead_magnet" &&
+                            nextKind !== "lead_magnet" &&
+                            draft.leadMagnet
+                          ) {
+                            const meta = { ...(draft.meta ?? {}) };
+                            delete meta.lead_magnet;
+                            void patchMeta(
+                              { kind: nextKind, leadMagnet: null, meta },
+                              { kind: nextKind, lead_magnet_id: null },
+                            );
+                          } else {
+                            void patchMeta({ kind: nextKind }, { kind: nextKind });
+                          }
                         }}
                       >
                         <SelectTrigger
@@ -1154,14 +1215,60 @@ export function DraftEditorModal({
                       </PropRow>
                     )}
 
-                    {draft?.leadMagnet && (
+                    {/* EXISTING lead-magnet post → pick, swap, or detach the
+                        giveaway. Same picker as the new-post flow above; the
+                        PATCH stamps meta.lead_magnet server-side, which drives
+                        the comment-to-DM automation. */}
+                    {!isNew && draft?.kind === "lead_magnet" && (
                       <PropRow icon={<Magnet className="h-4 w-4" />} label="Giveaway">
-                        <span
-                          className="flex min-w-0 items-center gap-1 px-1 text-sm text-muted-foreground"
-                          title={`Lead magnet giveaway: ${draft.leadMagnet.title}`}
-                        >
-                          <span className="min-w-0 truncate">{draft.leadMagnet.title}</span>
-                        </span>
+                        {giveawayOptions.length > 0 ? (
+                          <Select
+                            value={draft.leadMagnet?.id ?? "none"}
+                            onValueChange={(v) =>
+                              patchGiveaway(!v || v === "none" ? null : v)
+                            }
+                          >
+                            <SelectTrigger
+                              className="-ml-1 h-8 border-transparent px-1 hover:bg-accent focus-visible:bg-accent"
+                              aria-label="Giveaway"
+                              title="The lead magnet resource this post gives away."
+                            >
+                              <SelectValue>
+                                {(v) =>
+                                  v === "none"
+                                    ? "None"
+                                    : (giveawayOptions.find((m) => m.id === v)?.title ??
+                                      "None")
+                                }
+                              </SelectValue>
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="none">None</SelectItem>
+                              {giveawayOptions.map((m) => (
+                                <SelectItem key={m.id} value={m.id}>
+                                  {m.title}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        ) : leadMagnetOptions === null ? (
+                          // Still loading (an attached giveaway renders the
+                          // select immediately via the synthetic option above).
+                          <span className="flex items-center gap-1.5 px-1 text-sm text-muted-foreground">
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            Loading…
+                          </span>
+                        ) : (
+                          <a
+                            href="/dashboard/lead-magnets"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 px-1 text-sm text-primary hover:underline"
+                          >
+                            Create a lead magnet
+                            <ExternalLink className="h-3 w-3" aria-hidden />
+                          </a>
+                        )}
                       </PropRow>
                     )}
 

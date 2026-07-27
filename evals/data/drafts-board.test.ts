@@ -486,7 +486,15 @@ describe("leadMagnetContextFromMeta", () => {
           selection: "auto",
         },
       }),
-    ).toEqual({ title: "Hook Audit Checklist", selection: "auto" });
+    ).toEqual({ id: "lm_1", title: "Hook Audit Checklist", selection: "auto" });
+  });
+
+  test("older stamps without an id still parse (giveaway picker falls back)", () => {
+    expect(
+      leadMagnetContextFromMeta({
+        lead_magnet: { title: "Founder Checklist", selection: "manual" },
+      }),
+    ).toEqual({ title: "Founder Checklist", selection: "manual" });
   });
 
   test("rejects malformed or absent metadata", () => {

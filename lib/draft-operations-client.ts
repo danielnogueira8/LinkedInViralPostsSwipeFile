@@ -22,6 +22,8 @@ export type DraftUpdateCommand = {
   plan_to_post_on?: string | null;
   media_attachments?: PostMediaAttachment[];
   content_format?: ContentFormat;
+  // Attach/swap the giveaway (lead_magnets id) or detach it (null).
+  lead_magnet_id?: string | null;
 };
 
 export type DraftCreateCommand = {

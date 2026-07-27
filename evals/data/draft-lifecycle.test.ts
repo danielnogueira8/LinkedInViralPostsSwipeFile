@@ -238,6 +238,54 @@ describe("DraftLifecycle command outcomes", () => {
     expect(created.draft.meta).toBeNull();
   });
 
+  // The giveaway picker on an EXISTING lead-magnet post PATCHes lead_magnet_id,
+  // which the route resolves to a stamp and the lifecycle merges into meta.
+  const stamp = {
+    id: "lm-1",
+    title: "5 Prompts",
+    selection: "manual" as const,
+    public_slug: "five-prompts",
+  };
+
+  test("mutate attaches a giveaway stamp into meta, preserving other keys", async () => {
+    repository.rows.set("draft-1", draft({ meta: { markdown: true } }));
+    const outcome = await lifecycle.mutate("draft-1", { leadMagnet: stamp });
+    expect(outcome).toMatchObject({ ok: true });
+    expect(repository.rows.get("draft-1")?.meta).toEqual({
+      markdown: true,
+      lead_magnet: stamp,
+    });
+  });
+
+  test("mutate with leadMagnet null detaches the giveaway, keeping other meta", async () => {
+    repository.rows.set(
+      "draft-1",
+      draft({ meta: { markdown: true, lead_magnet: stamp } }),
+    );
+    const outcome = await lifecycle.mutate("draft-1", { leadMagnet: null });
+    expect(outcome).toMatchObject({ ok: true });
+    expect(repository.rows.get("draft-1")?.meta).toEqual({ markdown: true });
+  });
+
+  test("mutate composes contentFormat and leadMagnet into one meta patch", async () => {
+    repository.rows.set("draft-1", draft({ meta: null }));
+    await lifecycle.mutate("draft-1", {
+      contentFormat: "markdown",
+      leadMagnet: stamp,
+    });
+    expect(repository.rows.get("draft-1")?.meta).toEqual({
+      markdown: true,
+      lead_magnet: stamp,
+    });
+  });
+
+  test("mutate without leadMagnet leaves meta.lead_magnet untouched", async () => {
+    const meta = { lead_magnet: stamp };
+    repository.rows.set("draft-1", draft({ meta }));
+    await lifecycle.mutate("draft-1", { status: "drafting" });
+    expect(repository.rows.get("draft-1")?.meta).toEqual(meta);
+  });
+
   test("rejects mutations and deletion after the publish lock is held", async () => {
     repository.rows.set("draft-1", draft({ scheduleStatus: "publishing" }));
 

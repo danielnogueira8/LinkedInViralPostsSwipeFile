@@ -11,6 +11,7 @@ import {
   type DraftRecord,
 } from "@/lib/draft-lifecycle";
 import { createSupabaseDraftLifecycleRepository } from "@/lib/draft-lifecycle-supabase";
+import { resolveLeadMagnetStamp, type LeadMagnetStamp } from "@/lib/draft-lead-magnet";
 import { recordDraftEditEvent } from "@/lib/draft-edit-events";
 
 export const runtime = "nodejs";
@@ -54,6 +55,9 @@ const patchSchema = z
       .optional(),
     media_attachments: postMediaAttachmentsSchema.optional(),
     content_format: z.enum(["plain", "markdown"]).optional(),
+    // The giveaway a lead-magnet post hands out: a lead_magnets id attaches (or
+    // swaps) it, null detaches it, omitted leaves meta.lead_magnet alone.
+    lead_magnet_id: z.string().uuid().nullable().optional(),
   })
   .refine(
     (v) =>
@@ -63,7 +67,8 @@ const patchSchema = z
       v.kind !== undefined ||
       v.plan_to_post_on !== undefined ||
       v.media_attachments !== undefined ||
-      v.content_format !== undefined,
+      v.content_format !== undefined ||
+      v.lead_magnet_id !== undefined,
     { message: "Nothing to update" },
   );
 
@@ -97,6 +102,27 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     const lifecycle = new DraftLifecycle(
       createSupabaseDraftLifecycleRepository(sb.raw, sb.workspaceId),
     );
+    // Resolve the giveaway picker's selection into the meta.lead_magnet stamp
+    // (workspace-scoped, so a client can't attach another workspace's magnet).
+    // undefined = untouched, null = detached.
+    let leadMagnet: LeadMagnetStamp | null | undefined;
+    if (input.lead_magnet_id !== undefined) {
+      if (input.lead_magnet_id === null) {
+        leadMagnet = null;
+      } else {
+        leadMagnet = await resolveLeadMagnetStamp(
+          sb.raw,
+          sb.workspaceId,
+          input.lead_magnet_id,
+        );
+        if (!leadMagnet) {
+          return NextResponse.json(
+            { ok: false, error: "Lead magnet not found" },
+            { status: 404 },
+          );
+        }
+      }
+    }
     // Capture the exact row whose lifecycle version won the CAS write. A
     // separate pre-read can become stale when mutate retries a concurrent edit.
     const mutation = await lifecycle.mutateWithPrevious(id, {
@@ -107,6 +133,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       planToPostOn: input.plan_to_post_on,
       mediaAttachments: input.media_attachments,
       contentFormat: input.content_format,
+      leadMagnet,
     });
     if (!mutation.ok) return outcomeResponse(mutation);
     if (input.body !== undefined) {
