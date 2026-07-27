@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useId, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -307,7 +307,7 @@ export function AnalyticsView({
             <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
               <span className="text-muted-foreground">
                 {t.help ? (
-                  <EngagementRateHelp id="analytics-summary-engagement-rate-help" />
+                  <EngagementRateHelp />
                 ) : (
                   t.label
                 )}
@@ -370,21 +370,45 @@ function fmtRate(value: number | null): string {
   return value === null ? "—" : `${value.toLocaleString("en-US")}%`;
 }
 
+const POST_PERFORMANCE_METRICS = [
+  {
+    key: "impressions",
+    label: "Impressions",
+    format: (post: PostMetricsRow) => fmt(post.impressions),
+  },
+  {
+    key: "engagement-rate",
+    label: "Engagement rate",
+    help: true,
+    format: (post: PostMetricsRow) => fmtRate(postEngagementRate(post)),
+  },
+  {
+    key: "comments",
+    label: "Comments",
+    format: (post: PostMetricsRow) => fmt(post.comments),
+  },
+  {
+    key: "saves-and-shares",
+    label: "Saves + shares",
+    format: (post: PostMetricsRow) => fmt(postSavesAndShares(post)),
+  },
+] as const;
+
 function EngagementRateHelp({
-  id,
   align = "left",
   placement = "bottom",
+  showLabel = true,
 }: {
-  id: string;
   align?: "left" | "right";
   placement?: "top" | "bottom";
+  showLabel?: boolean;
 }) {
+  const id = useId();
   return (
     <span className="relative inline-flex items-center gap-1">
-      <span>Engagement rate</span>
-      <span
-        role="img"
-        tabIndex={0}
+      {showLabel && <span>Engagement rate</span>}
+      <button
+        type="button"
         aria-label="How engagement rate is calculated"
         aria-describedby={id}
         className={cn(
@@ -394,7 +418,7 @@ function EngagementRateHelp({
         )}
       >
         <CircleHelp className="size-3.5" aria-hidden="true" />
-      </span>
+      </button>
       <span
         id={id}
         role="tooltip"
@@ -461,22 +485,25 @@ export function PostPerformanceSection({
               className="h-10 w-full min-w-0 rounded-lg border border-border bg-background pl-9 pr-3 text-sm text-foreground outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
             />
           </label>
-          <label>
-            <span className="sr-only">Sort posts</span>
-            <select
-              value={sort}
-              onChange={(event) =>
-                setSort(event.target.value as PostPerformanceSort)
-              }
-              className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-            >
-              {POST_PERFORMANCE_SORT_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
+          <div className="flex min-w-0 items-center gap-1.5">
+            <label className="min-w-0 flex-1">
+              <span className="sr-only">Sort posts</span>
+              <select
+                value={sort}
+                onChange={(event) =>
+                  setSort(event.target.value as PostPerformanceSort)
+                }
+                className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+              >
+                {POST_PERFORMANCE_SORT_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <EngagementRateHelp align="right" showLabel={false} />
+          </div>
         </div>
       </div>
 
@@ -508,21 +535,21 @@ export function PostPerformanceSection({
                   <th className="px-3 py-2.5 text-right font-medium">
                     Published
                   </th>
-                  <th className="px-3 py-2.5 text-right font-medium">
-                    Impressions
-                  </th>
-                  <th className="px-3 py-2.5 text-right font-medium">
-                    <EngagementRateHelp
-                      id="post-performance-table-engagement-rate-help"
-                      align="right"
-                    />
-                  </th>
-                  <th className="px-3 py-2.5 text-right font-medium">
-                    Comments
-                  </th>
-                  <th className="px-4 py-2.5 text-right font-medium">
-                    Saves + shares
-                  </th>
+                  {POST_PERFORMANCE_METRICS.map((metric, index) => (
+                    <th
+                      key={metric.key}
+                      className={cn(
+                        "px-3 py-2.5 text-right font-medium",
+                        index === POST_PERFORMANCE_METRICS.length - 1 && "pr-4",
+                      )}
+                    >
+                      {"help" in metric && metric.help ? (
+                        <EngagementRateHelp align="right" />
+                      ) : (
+                        metric.label
+                      )}
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
@@ -552,18 +579,18 @@ export function PostPerformanceSection({
                     <td className="px-3 py-3 text-right text-muted-foreground">
                       {fmtDate(post.publishedAt)}
                     </td>
-                    <td className="px-3 py-3 text-right tabular-nums">
-                      {fmt(post.impressions)}
-                    </td>
-                    <td className="px-3 py-3 text-right tabular-nums">
-                      {fmtRate(postEngagementRate(post))}
-                    </td>
-                    <td className="px-3 py-3 text-right tabular-nums">
-                      {fmt(post.comments)}
-                    </td>
-                    <td className="px-4 py-3 text-right tabular-nums">
-                      {fmt(postSavesAndShares(post))}
-                    </td>
+                    {POST_PERFORMANCE_METRICS.map((metric, index) => (
+                      <td
+                        key={metric.key}
+                        className={cn(
+                          "px-3 py-3 text-right tabular-nums",
+                          index === POST_PERFORMANCE_METRICS.length - 1 &&
+                            "pr-4",
+                        )}
+                      >
+                        {metric.format(post)}
+                      </td>
+                    ))}
                   </tr>
                 ))}
               </tbody>
@@ -571,7 +598,7 @@ export function PostPerformanceSection({
           </div>
 
           <div className="divide-y divide-border md:hidden">
-            {visiblePosts.map((post, index) => (
+            {visiblePosts.map((post) => (
               <article
                 key={post.artifactId}
                 className="p-4 transition-colors hover:bg-accent/40"
@@ -597,42 +624,23 @@ export function PostPerformanceSection({
                   />
                 </Link>
                 <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3">
-                  <div>
-                    <dt className="text-[11px] text-muted-foreground">
-                      Impressions
-                    </dt>
-                    <dd className="mt-0.5 text-sm font-medium tabular-nums text-foreground">
-                      {fmt(post.impressions)}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-[11px] text-muted-foreground">
-                      <EngagementRateHelp
-                        id={`post-performance-mobile-engagement-rate-help-${index}`}
-                        align="right"
-                        placement="top"
-                      />
-                    </dt>
-                    <dd className="mt-0.5 text-sm font-medium tabular-nums text-foreground">
-                      {fmtRate(postEngagementRate(post))}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-[11px] text-muted-foreground">
-                      Comments
-                    </dt>
-                    <dd className="mt-0.5 text-sm font-medium tabular-nums text-foreground">
-                      {fmt(post.comments)}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-[11px] text-muted-foreground">
-                      Saves + shares
-                    </dt>
-                    <dd className="mt-0.5 text-sm font-medium tabular-nums text-foreground">
-                      {fmt(postSavesAndShares(post))}
-                    </dd>
-                  </div>
+                  {POST_PERFORMANCE_METRICS.map((metric) => (
+                    <div key={metric.key}>
+                      <dt className="text-[11px] text-muted-foreground">
+                        {"help" in metric && metric.help ? (
+                          <EngagementRateHelp
+                            align="right"
+                            placement="top"
+                          />
+                        ) : (
+                          metric.label
+                        )}
+                      </dt>
+                      <dd className="mt-0.5 text-sm font-medium tabular-nums text-foreground">
+                        {metric.format(post)}
+                      </dd>
+                    </div>
+                  ))}
                 </dl>
               </article>
             ))}
@@ -665,7 +673,10 @@ export function PerformanceTrendCard({
 }: {
   trend: AnalyticsTrendPoint[];
 }) {
+  const engagementRateHelpId = useId();
   const [metric, setMetric] = useState<AnalyticsTrendMetric>("impressions");
+  const [engagementRateHelpVisible, setEngagementRateHelpVisible] =
+    useState(false);
   const [hoveredBar, setHoveredBar] = useState<number | null>(null);
   const option = ANALYTICS_TREND_METRIC_OPTIONS.find(
     (candidate) => candidate.value === metric,
@@ -694,41 +705,61 @@ export function PerformanceTrendCard({
             New activity captured between daily snapshots.
           </p>
         </div>
-        <div
-          className="-mx-1 flex w-full gap-1 overflow-x-auto px-1 pb-1 sm:mx-0 sm:px-0"
-          role="group"
-          aria-label="Chart metric"
-        >
-          {ANALYTICS_TREND_METRIC_OPTIONS.map((candidate) => (
-            <button
-              key={candidate.value}
-              type="button"
-              aria-pressed={metric === candidate.value}
-              aria-describedby={
-                candidate.value === "engagementRate"
-                  ? "analytics-trend-engagement-rate-help"
-                  : undefined
-              }
-              title={
-                candidate.value === "engagementRate"
-                  ? ENGAGEMENT_RATE_HELP
-                  : undefined
-              }
-              onClick={() => setMetric(candidate.value)}
-              className={cn(
-                "shrink-0 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors",
-                metric === candidate.value
-                  ? "bg-foreground text-background"
-                  : "bg-muted/60 text-muted-foreground hover:text-foreground",
-              )}
-            >
-              {candidate.label}
-            </button>
-          ))}
+        <div className="relative">
+          <div
+            className="-mx-1 flex w-full gap-1 overflow-x-auto px-1 pb-1 sm:mx-0 sm:px-0"
+            role="group"
+            aria-label="Chart metric"
+          >
+            {ANALYTICS_TREND_METRIC_OPTIONS.map((candidate) => {
+              const isEngagementRate =
+                candidate.value === "engagementRate";
+              return (
+                <button
+                  key={candidate.value}
+                  type="button"
+                  aria-pressed={metric === candidate.value}
+                  aria-describedby={
+                    isEngagementRate ? engagementRateHelpId : undefined
+                  }
+                  onClick={() => setMetric(candidate.value)}
+                  onMouseEnter={() =>
+                    isEngagementRate && setEngagementRateHelpVisible(true)
+                  }
+                  onMouseLeave={() =>
+                    isEngagementRate && setEngagementRateHelpVisible(false)
+                  }
+                  onFocus={() =>
+                    isEngagementRate && setEngagementRateHelpVisible(true)
+                  }
+                  onBlur={() =>
+                    isEngagementRate && setEngagementRateHelpVisible(false)
+                  }
+                  className={cn(
+                    "shrink-0 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors",
+                    metric === candidate.value
+                      ? "bg-foreground text-background"
+                      : "bg-muted/60 text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  {candidate.label}
+                </button>
+              );
+            })}
+          </div>
+          <span
+            id={engagementRateHelpId}
+            role="tooltip"
+            className={cn(
+              "pointer-events-none absolute right-0 top-full z-30 mt-1.5 w-64 rounded-lg border border-border",
+              "bg-popover px-2.5 py-2 text-left text-[11px] leading-4 text-popover-foreground shadow-md",
+              "transition-opacity motion-reduce:transition-none",
+              engagementRateHelpVisible ? "opacity-100" : "opacity-0",
+            )}
+          >
+            {ENGAGEMENT_RATE_HELP}
+          </span>
         </div>
-        <span id="analytics-trend-engagement-rate-help" className="sr-only">
-          {ENGAGEMENT_RATE_HELP}
-        </span>
       </div>
 
       {measuredTrend.length < 2 ? (

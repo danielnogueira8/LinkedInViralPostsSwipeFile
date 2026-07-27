@@ -49,7 +49,7 @@ describe("analytics performance trend controls", () => {
       "Percentage of impressions that resulted in an interaction.",
     );
     expect(html).toMatch(
-      /aria-describedby="analytics-trend-engagement-rate-help"/,
+      /aria-pressed="false" aria-describedby="[^"]+"[^>]*>Engagement rate<\/button>/,
     );
   });
 
