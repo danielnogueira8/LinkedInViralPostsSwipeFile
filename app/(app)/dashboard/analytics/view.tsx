@@ -395,16 +395,14 @@ const POST_PERFORMANCE_METRICS = [
 function EngagementRateHelp({
   align = "left",
   placement = "bottom",
-  showLabel = true,
 }: {
   align?: "left" | "right";
   placement?: "top" | "bottom";
-  showLabel?: boolean;
 }) {
   const id = useId();
   return (
     <span className="relative inline-flex items-center gap-1">
-      {showLabel && <span>Engagement rate</span>}
+      <span>Engagement rate</span>
       <button
         type="button"
         aria-label="How engagement rate is calculated"
@@ -483,25 +481,22 @@ export function PostPerformanceSection({
               className="h-10 w-full min-w-0 rounded-lg border border-border bg-background pl-9 pr-3 text-sm text-foreground outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
             />
           </label>
-          <div className="flex min-w-0 items-center gap-1.5">
-            <label className="min-w-0 flex-1">
-              <span className="sr-only">Sort posts</span>
-              <select
-                value={sort}
-                onChange={(event) =>
-                  setSort(event.target.value as PostPerformanceSort)
-                }
-                className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-              >
-                {POST_PERFORMANCE_SORT_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <EngagementRateHelp align="right" showLabel={false} />
-          </div>
+          <label className="min-w-0">
+            <span className="sr-only">Sort posts</span>
+            <select
+              value={sort}
+              onChange={(event) =>
+                setSort(event.target.value as PostPerformanceSort)
+              }
+              className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+            >
+              {POST_PERFORMANCE_SORT_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
       </div>
 
