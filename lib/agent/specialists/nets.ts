@@ -73,6 +73,21 @@ export function looksCorruptedDraft(body: string): string | null {
   ) {
     return "tool-call XML leaked into body";
   }
+  // 5) A pseudo tool call emitted AS the body: [search_news(query="…")] or a
+  //    bare search_news(…) opener. A tool-less writer that "knows" it needs a
+  //    tool it doesn't have sometimes simulates the call in-band instead of
+  //    writing the post (observed in prod: the entire delivered draft body was
+  //    '[search_news(query="AI generated content LinkedIn")]', packaged as a
+  //    Post card). Real post prose never OPENS with function-call syntax, and
+  //    the known-tool-name requirement keeps bracketed prose like
+  //    "[read: the full story] …" clean.
+  if (
+    /^\s*\[?\s*(?:search_news|search_web|search_viral_posts|inspect_attachments|draft_post|render_post|render_hook|run_tool)\s*\(/i.test(
+      body,
+    )
+  ) {
+    return "simulated tool call emitted as draft body";
+  }
   return null;
 }
 

@@ -26,6 +26,34 @@ describe("shared nets module", () => {
     expect(looksCorruptedDraft("A perfectly clean post body.")).toBeNull();
   });
 
+  test("looksCorruptedDraft flags a simulated tool call emitted as the draft body", () => {
+    // The prod case: the entire delivered "draft" was the tool-less writer
+    // simulating the search it couldn't run.
+    expect(
+      looksCorruptedDraft('[search_news(query="AI generated content LinkedIn")]'),
+    ).toBe("simulated tool call emitted as draft body");
+    // Bare (unbracketed) opener form.
+    expect(looksCorruptedDraft('search_news(query="x")')).toBe(
+      "simulated tool call emitted as draft body",
+    );
+    // Other tool names in the same simulated-call shape.
+    expect(looksCorruptedDraft('[search_viral_posts(niche="founder")]')).toBe(
+      "simulated tool call emitted as draft body",
+    );
+    // High precision: bracketed PROSE is not a tool call…
+    expect(
+      looksCorruptedDraft("[read: the full story] Here's what changed."),
+    ).toBeNull();
+    // …nor is a post that merely talks about searching the news.
+    expect(
+      looksCorruptedDraft(
+        "Everyone wants to search news for a hot take. The better move is having a point of view first.",
+      ),
+    ).toBeNull();
+    // …nor function-call syntax that isn't a known agent tool.
+    expect(looksCorruptedDraft("[calculate(tip=20%)] my rule for dinners")).toBeNull();
+  });
+
   test("normalizeDraftKey collapses whitespace + casing for dedupe", () => {
     expect(normalizeDraftKey("Hello   World\n\n")).toBe(normalizeDraftKey("hello world"));
   });
