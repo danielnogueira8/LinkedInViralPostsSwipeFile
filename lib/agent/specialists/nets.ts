@@ -344,6 +344,40 @@ export function aiTellMetrics(body: string): string[] {
   if (hasShortSentenceTriad && !tells.includes("rule-of-three")) {
     tells.push("rule-of-three");
   }
+  // Repeated-opener staccato — "Same three-sentence hook. Same fake setup.
+  // Same generic list." Three or more consecutive sentences in one paragraph
+  // opening with the SAME content word is the AI rhythm readers now pattern-
+  // match on sight (the "same. same. same." tell). The shared opener must be
+  // a content word — prose that happens to start consecutive sentences with
+  // "The"/"And"/"But" is ordinary writing, not the tell.
+  const OPENER_STOPWORDS = new Set([
+    "the", "a", "an", "and", "but", "so", "or", "if", "in", "on", "it",
+    "its", "this", "that", "these", "those", "we", "i", "you", "he", "she",
+    "they", "to", "of", "for", "with", "as", "at", "by", "my", "your",
+    "our", "their", "his", "her",
+  ]);
+  const hasRepeatedOpenerRun = body.split(/\n\s*\n/).some((paragraph) => {
+    const sentences = paragraph
+      .replace(/\s+/g, " ")
+      .trim()
+      .split(/(?<=[.!?])\s+/)
+      .filter(Boolean);
+    const openerOf = (sentence: string) =>
+      sentence.match(/^["'“”(\[]*([A-Za-z][\w'’-]*)/)?.[1]?.toLowerCase();
+    let run = 1;
+    for (let i = 1; i < sentences.length; i++) {
+      const prev = openerOf(sentences[i - 1]);
+      const curr = openerOf(sentences[i]);
+      if (curr && curr === prev && !OPENER_STOPWORDS.has(curr)) {
+        run += 1;
+        if (run >= 3) return true;
+      } else {
+        run = 1;
+      }
+    }
+    return false;
+  });
+  if (hasRepeatedOpenerRun) tells.push("repeated-opener");
   // "No fluff." / "Not another X." dismissive-negation pivot (exclude the
   // normal-speech "No one/idea/way…" openers).
   if (
@@ -388,7 +422,7 @@ export function aiTellMetrics(body: string): string[] {
     // #28 signposting announcements — "listen up, content incoming" preambles
     // that should just be cut. Bounded to the classic set so a real sentence
     // starting with "Here's" (fine) isn't grabbed.
-    ["signposting", /(?:^|[.!?]\s|\n)(?:Let'?s dive (?:in|into)|Buckle up|Here'?s what you need to know|Here'?s the (?:thing|deal|kicker)\b|Spoiler(?: alert)?\b|Without further ado)/i],
+    ["signposting", /(?:^|[.!?]\s|\n)(?:Let'?s dive (?:in|into)|Buckle up|Here'?s what you need to know|Here'?s the (?:thing|deal|kicker)\b|Here'?s what I mean\b|Spoiler(?: alert)?\b|Without further ado)/i],
     // #31 manufactured staccato drama — a RUN of ultra-short "No X. No Y."
     // fragments each leading with the same negation family ("No prior. No
     // nostalgia.", "Just ship. Just post."). The tell is two-in-a-row of these
@@ -403,7 +437,7 @@ export function aiTellMetrics(body: string): string[] {
     // High-signal no-ai-slop patterns: promotional setups that delay a claim
     // instead of making it. Kept narrow because these reach the repair pass.
     ["faux-insight-setup", /(?:^|[.!?]\s)(?:This is the part (?:most people|everyone) (?:skip|miss)|What (?:most people|everyone) (?:get wrong|miss)(?: is|:)|Here'?s what nobody tells you|The part everyone misses)\b/i],
-    ["colon-reveal", /(?:^|[.!?]\s)(?:The (?:detail|thing|part) that (?:makes it work|matters)|The (?:best|real) part)\s*:\s*[a-z]/i],
+    ["colon-reveal", /(?:^|[.!?]\s|\n)(?:The (?:detail|thing|part) that (?:makes it work|matters)|The (?:best|real) part|The (?:real|big|actual) (?:shift|difference|lesson|secret|reason|trick))\s*:\s*[a-z]/i],
     ["rhetorical-setup", /(?:^|[.!?]\s)(?:What if I told you\b|Think about it\s*:)/i],
   ];
   for (const [name, pattern] of patterns) {
