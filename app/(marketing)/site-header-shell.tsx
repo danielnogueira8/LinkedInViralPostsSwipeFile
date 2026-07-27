@@ -36,89 +36,88 @@ export function SiteHeaderShell({ signedIn }: { signedIn: boolean }) {
     };
   }, []);
 
+  // N5 floating-pill nav: a detached rounded-full pill (hairline, blur, soft
+  // shadow) inset from the viewport edges, replacing the full-width hairline
+  // bar. The header stays sticky in flow so pages need no offset padding.
   return (
-    <header
-      className={cn(
-        "sticky top-0 z-40 w-full border-b transition-[background-color,backdrop-filter,border-color] duration-200",
-        scrolled || menuOpen
-          ? "border-border bg-background/88 backdrop-blur-md"
-          : "border-transparent bg-background",
-      )}
-    >
-      <div className="mx-auto flex h-16 w-full max-w-[1180px] items-center px-4 sm:px-6">
-        <div className="flex w-full items-center justify-between">
-          <div className="flex items-center">
-            <Link
-              href="/"
-              className="flex items-center gap-2.5"
-              aria-label="SwipeIn home"
-              onClick={() => setMenuOpen(false)}
-            >
-              <Image
-                src="/swipeInIcon.png"
-                alt="SwipeIn"
-                width={30}
-                height={30}
-                priority
-                className="size-[30px] shrink-0 rounded-[8px]"
-              />
-              <span className="text-sm font-semibold tracking-[-0.01em]">SwipeIn</span>
-            </Link>
-            <nav className="ml-8 hidden items-center gap-5 sm:flex" aria-label="Marketing navigation">
-              {NAV_LINKS.map((link) => (
-                <Link
-                  key={link.href}
-                  href={link.href}
-                  className="text-[13px] font-medium text-muted-foreground transition-colors hover:text-foreground"
-                >
-                  {link.label}
-                </Link>
-              ))}
-            </nav>
-          </div>
+    <header className="sticky top-0 z-40 w-full px-3 pt-3 sm:px-5 sm:pt-4">
+      <div
+        className={cn(
+          "mx-auto flex h-14 w-full max-w-[880px] items-center justify-between gap-4 rounded-full border border-border bg-background/80 pl-4 pr-2 backdrop-blur-md transition-[background-color,box-shadow] duration-200",
+          scrolled || menuOpen ? "bg-background/92 shadow-soft-lg" : "shadow-soft",
+        )}
+      >
+        <div className="flex items-center">
+          <Link
+            href="/"
+            className="flex items-center gap-2.5"
+            aria-label="SwipeIn home"
+            onClick={() => setMenuOpen(false)}
+          >
+            <Image
+              src="/swipeInIcon.png"
+              alt="SwipeIn"
+              width={30}
+              height={30}
+              priority
+              className="size-[30px] shrink-0 rounded-[8px]"
+            />
+            <span className="font-wordmark text-[15px] tracking-[-0.01em]">SwipeIn</span>
+          </Link>
+          <nav className="ml-8 hidden items-center gap-5 sm:flex" aria-label="Marketing navigation">
+            {NAV_LINKS.map((link) => (
+              <Link
+                key={link.href}
+                href={link.href}
+                className="whitespace-nowrap text-[13px] font-medium text-muted-foreground transition-colors hover:text-foreground"
+              >
+                {link.label}
+              </Link>
+            ))}
+          </nav>
+        </div>
 
-          <div className="flex items-center gap-2">
-            {signedIn ? (
-              <>
-                <Link
-                  href="/dashboard"
-                  className="inline-flex h-10 items-center rounded-[10px] bg-primary px-4 text-[13px] font-medium text-primary-foreground transition-[background-color,scale] hover:bg-primary/88 active:scale-[0.96] motion-reduce:transition-none"
-                >
-                  Dashboard
-                </Link>
-                <UserButton />
-              </>
+        <div className="flex items-center gap-2">
+          {signedIn ? (
+            <>
+              <Link
+                href="/dashboard"
+                className="inline-flex h-10 items-center rounded-full bg-primary px-4 text-[13px] font-medium text-primary-foreground transition-[background-color,scale] hover:bg-primary/88 active:scale-[0.96] motion-reduce:transition-none"
+              >
+                Dashboard
+              </Link>
+              <UserButton />
+            </>
+          ) : (
+            <>
+              <Link
+                href="/sign-in"
+                className="hidden whitespace-nowrap text-[13px] font-medium text-muted-foreground transition-colors hover:text-foreground sm:inline"
+              >
+                Sign in
+              </Link>
+              <Link
+                href="/sign-up"
+                className="inline-flex h-10 items-center whitespace-nowrap rounded-full bg-primary px-4 text-[13px] font-medium text-primary-foreground transition-[background-color,scale] hover:bg-primary/88 active:scale-[0.96] motion-reduce:transition-none"
+              >
+                Start for free
+              </Link>
+            </>
+          )}
+          <button
+            type="button"
+            className="inline-flex size-10 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground sm:hidden"
+            aria-expanded={menuOpen}
+            aria-controls="marketing-mobile-menu"
+            aria-label={menuOpen ? "Close menu" : "Open menu"}
+            onClick={() => setMenuOpen((open) => !open)}
+          >
+            {menuOpen ? (
+              <X className="h-5 w-5" aria-hidden />
             ) : (
-              <>
-                <Link
-                  href="/sign-in"
-                  className="hidden text-[13px] font-medium text-muted-foreground transition-colors hover:text-foreground sm:inline"
-                >
-                  Sign in
-                </Link>
-                <Link
-                  href="/sign-up"
-                  className="inline-flex h-10 items-center rounded-[10px] bg-primary px-4 text-[13px] font-medium text-primary-foreground transition-[background-color,scale] hover:bg-primary/88 active:scale-[0.96] motion-reduce:transition-none"
-                >
-                  Start for free
-                </Link>
-              </>
+              <Menu className="h-5 w-5" aria-hidden />
             )}
-            <button
-              type="button"
-              className="inline-flex size-10 items-center justify-center rounded-[10px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground sm:hidden"
-              aria-expanded={menuOpen}
-              aria-controls="marketing-mobile-menu"
-              aria-label={menuOpen ? "Close menu" : "Open menu"}
-              onClick={() => setMenuOpen((open) => !open)}
-            >
-              {menuOpen ? (
-                <X className="h-5 w-5" aria-hidden />
-              ) : (
-                <Menu className="h-5 w-5" aria-hidden />
-              )}
-            </button>
-          </div>
+          </button>
         </div>
       </div>
 
@@ -126,7 +125,7 @@ export function SiteHeaderShell({ signedIn }: { signedIn: boolean }) {
         <nav
           id="marketing-mobile-menu"
           aria-label="Marketing navigation"
-          className="border-t border-border bg-background px-4 pb-4 pt-2 sm:hidden"
+          className="mx-auto mt-2 w-full max-w-[880px] rounded-[16px] border border-border bg-background/95 px-3 pb-3 pt-2 shadow-soft-lg backdrop-blur-md sm:hidden"
         >
           {NAV_LINKS.map((link) => (
             <Link

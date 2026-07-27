@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Geist, Geist_Mono, Fraunces } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
 import "./globals.css";
 
@@ -33,6 +33,15 @@ const geistMono = Geist_Mono({
   display: "swap",
 });
 
+// Fraunces (600) for the wordmark only — the single contrasting register that
+// keeps the marketing chrome from reading as a one-font template page.
+const fraunces = Fraunces({
+  variable: "--font-fraunces",
+  subsets: ["latin"],
+  weight: "600",
+  display: "swap",
+});
+
 export const metadata: Metadata = {
   title: "SwipeIn · Research, draft, and schedule your LinkedIn content",
   description:
@@ -48,7 +57,7 @@ export default function RootLayout({
     <ClerkProvider appearance={clerkAppearance}>
       <html
         lang="en"
-        className={`${geist.variable} ${geistMono.variable} h-full antialiased`}
+        className={`${geist.variable} ${geistMono.variable} ${fraunces.variable} h-full antialiased`}
       >
         <body className="min-h-full flex flex-col">{children}</body>
       </html>

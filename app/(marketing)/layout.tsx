@@ -26,61 +26,33 @@ async function SiteHeader() {
 }
 
 function SiteFooter() {
+  // Ft2 inline single-line footer: wordmark, links, and copyright share one
+  // row (wrapping on small screens) — no link columns, no brand blurb.
   return (
-    <footer className="border-t border-border bg-card">
-      <div className="mx-auto w-full max-w-[1180px] px-4 py-12 sm:px-6">
-        <div className="grid grid-cols-2 gap-8 md:grid-cols-4">
-          <div className="col-span-2 space-y-3">
-            <Link href="/" className="flex items-center">
-              <Image src="/swipeInIcon.png" alt="SwipeIn" width={30} height={30} className="size-[30px] rounded-[8px]" />
-              <span className="ml-2.5 text-sm font-semibold">SwipeIn</span>
-            </Link>
-            <p className="max-w-sm text-sm leading-6 text-muted-foreground font-sans">
-              Research proven LinkedIn content, draft in your voice, and move every post toward publication.
-            </p>
-          </div>
-
-          <div className="space-y-3">
-            <div className="text-sm font-medium text-foreground">Product</div>
-            <ul className="space-y-2 text-sm text-muted-foreground font-sans">
-              <li>
-                <Link href="/#features" className="hover:text-foreground">
-                  Features
-                </Link>
-              </li>
-              <li>
-                <Link href="/#pricing" className="hover:text-foreground">
-                  Pricing
-                </Link>
-              </li>
-              <li>
-                <Link href="/#faq" className="hover:text-foreground">
-                  FAQ
-                </Link>
-              </li>
-            </ul>
-          </div>
-
-          <div className="space-y-3">
-            <div className="text-sm font-medium text-foreground">Legal</div>
-            <ul className="space-y-2 text-sm text-muted-foreground font-sans">
-              <li>
-                <Link href="/privacy" className="hover:text-foreground">
-                  Privacy
-                </Link>
-              </li>
-              <li>
-                <Link href="/terms" className="hover:text-foreground">
-                  Terms
-                </Link>
-              </li>
-            </ul>
-          </div>
-        </div>
-
-        <div className="mt-10 flex flex-col items-start justify-between gap-3 border-t border-border pt-6 text-xs text-muted-foreground md:flex-row md:items-center font-sans">
-          <div>© {new Date().getFullYear()} SwipeIn. All rights reserved.</div>
-        </div>
+    <footer className="border-t border-border">
+      <div className="mx-auto flex w-full max-w-[1180px] flex-wrap items-center justify-between gap-x-8 gap-y-4 px-4 py-7 sm:px-6">
+        <Link href="/" className="flex items-center gap-2.5" aria-label="SwipeIn home">
+          <Image src="/swipeInIcon.png" alt="" width={24} height={24} className="size-6 rounded-[6px]" />
+          <span className="font-wordmark text-[15px] tracking-[-0.01em]">SwipeIn</span>
+        </Link>
+        <nav aria-label="Footer" className="flex flex-wrap items-center gap-x-5 gap-y-2 text-[13px] font-medium text-muted-foreground">
+          <Link href="/#features" className="whitespace-nowrap transition-colors hover:text-foreground">
+            Features
+          </Link>
+          <Link href="/#pricing" className="whitespace-nowrap transition-colors hover:text-foreground">
+            Pricing
+          </Link>
+          <Link href="/#faq" className="whitespace-nowrap transition-colors hover:text-foreground">
+            FAQ
+          </Link>
+          <Link href="/privacy" className="whitespace-nowrap transition-colors hover:text-foreground">
+            Privacy
+          </Link>
+          <Link href="/terms" className="whitespace-nowrap transition-colors hover:text-foreground">
+            Terms
+          </Link>
+        </nav>
+        <p className="text-xs text-muted-foreground">© {new Date().getFullYear()} SwipeIn. All rights reserved.</p>
       </div>
     </footer>
   );

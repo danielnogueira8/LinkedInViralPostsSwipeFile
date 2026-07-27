@@ -149,11 +149,11 @@ export default function PricingPage() {
 
       <section className="border-t border-border/60 bg-accent/15 py-20">
         <div className="mx-auto max-w-3xl px-6">
-          <div className="text-center">
-            <h2 className="font-display text-4xl leading-tight tracking-tight">
-              Common questions.
-            </h2>
-          </div>
+          {/* Flush-left heading — the hero above keeps the centred axis, so
+              this block deliberately breaks it instead of repeating it. */}
+          <h2 className="font-display text-4xl leading-tight tracking-tight">
+            Common questions.
+          </h2>
 
           <div className="mt-12 space-y-2">
             {FAQS.map((qa) => (
