@@ -1033,12 +1033,17 @@ export function DraftEditorModal({
                         key, prev/next navigation reuses the same instance and
                         ⌘Z on the new post would restore the PREVIOUS post's
                         text. Same pattern as PostOutcomes below. */}
+                    {/* toolbar="full": the same persistent editor chrome as the
+                        Cowork draft card (undo/redo, B/I/S, lists, special
+                        chars, image, emoji, clear formatting) instead of the
+                        selection-only floating toolbar. */}
                     <DraftEditor
                       key={draft?.id ?? "new"}
                       value={body}
                       onChange={setBody}
                       onMediaFiles={addMediaFiles}
                       allowImagePaste={isNew}
+                      toolbar="full"
                       rows={22}
                       textareaClassName="min-h-[52vh] rounded-xl border-transparent bg-transparent px-2 py-2 text-[15px] leading-8 shadow-none focus-visible:border-primary/20 focus-visible:ring-primary/10"
                     />
