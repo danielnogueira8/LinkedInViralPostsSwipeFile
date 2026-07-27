@@ -41,20 +41,18 @@ export const FALLBACK_READ_ONLY_ORCHESTRATOR_MODEL = distinctFallbackModel(
 );
 
 const SAFE_NEWS_DEFAULT = "anthropic/claude-haiku-4.5";
-// Under AI_PROVIDER=anthropic the news pipeline runs on the Anthropic adapter,
-// whose grounded search is the web_search SERVER tool — supported on Sonnet 5
-// but NOT on Haiku 4.5 (the API 400s: "does not support programmatic tool
-// calling"). The safe default under the flag is therefore the Sonnet chat
-// model itself; a distinct cross-provider fallback below keeps a path open
-// when Anthropic is the thing that's down.
-const ANTHROPIC_SAFE_NEWS_DEFAULT = "anthropic/claude-sonnet-5";
-const safeNewsDefault =
-  process.env.AI_PROVIDER === "anthropic"
-    ? ANTHROPIC_SAFE_NEWS_DEFAULT
-    : SAFE_NEWS_DEFAULT;
+// Haiku is the news default on BOTH provider paths: via OpenRouter's web
+// plugin historically, and under AI_PROVIDER=anthropic via the adapter's
+// direct-only web_search server tool (migration allowed pre-gen-5 models to
+// call it directly). Live A/B runs showed haiku surfaces the same major
+// stories as Sonnet 5 (same search backend) at ~half the cost and ~2-3x the
+// speed — and, being much faster, it doesn't brush the 45s stage timeout
+// the way a multi-search Sonnet discovery can. Sonnet 5 is the in-provider
+// fallback under the flag (below), so a haiku miss retries on the stronger
+// model without depending on OpenRouter.
 export const DEFAULT_NEWS_MODEL = SUPPORTED_NEWS_MODELS.includes(CHAT_MODEL)
   ? CHAT_MODEL
-  : safeNewsDefault;
+  : SAFE_NEWS_DEFAULT;
 
 export function resolveNewsModel(
   env: { OPENROUTER_NEWS_MODEL?: string } = {
@@ -70,12 +68,20 @@ export function resolveNewsModel(
 export const PRIMARY_NEWS_MODEL = resolveNewsModel();
 const configuredNewsFallback =
   process.env.OPENROUTER_NEWS_FALLBACK_MODEL?.trim();
+// Under the flag the preferred fallback is Sonnet 5 — same provider, full
+// programmatic web_search — so a haiku failure retries in-provider. Off the
+// flag the historical safe default keeps the cross-provider alternates
+// below as the distinct fallback.
+const NEWS_FALLBACK_PREFERRED =
+  process.env.AI_PROVIDER === "anthropic"
+    ? "anthropic/claude-sonnet-5"
+    : SAFE_NEWS_DEFAULT;
 export const FALLBACK_NEWS_MODEL = distinctFallbackModel(
   PRIMARY_NEWS_MODEL,
   configuredNewsFallback &&
   SUPPORTED_NEWS_MODELS.includes(configuredNewsFallback)
     ? configuredNewsFallback
-    : safeNewsDefault,
+    : NEWS_FALLBACK_PREFERRED,
   ["openai/gpt-5.6-luna", "google/gemini-3.1-flash-lite", "z-ai/glm-5.2"].filter(
     (model) => SUPPORTED_NEWS_MODELS.includes(model),
   ),

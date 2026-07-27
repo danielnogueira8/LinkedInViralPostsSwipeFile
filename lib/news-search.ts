@@ -280,62 +280,82 @@ export async function searchNews(opts: {
     .join("\n\n")
     .slice(0, 20_000);
 
-  const normalizationAttempt = await runCoworkAdapterAttempt({
-    registry,
-    adapterKey: `cowork_news_normalize:${discoveryModel}`,
-    signal: opts.signal,
-    call: () =>
-      completeChat({
-        model: discoveryModel,
-        maxTokens: 1500,
-        timeoutMs: NEWS_STAGE_TIMEOUT_MS,
-        // Structured extraction only — no reasoning, same latency guard as
-        // the discovery call above.
-        disableReasoning: true,
-        tools: [NEWS_RESULTS_TOOL],
-        forceTool: "report_news_results",
-        signal: opts.signal,
-        messages: [
+  // Small models occasionally answer a forced tool call in prose ("Adapter
+  // response validation failed" — seen live on haiku normalization). That is
+  // a flake, not a real failure, so retry the normalization once before
+  // giving up the whole search (which would surface as a wrong "no fresh
+  // story" answer after a SUCCESSFUL discovery).
+  const runNormalization = (attempt: number, fallbackReason?: string) =>
+    runCoworkAdapterAttempt({
+      registry,
+      adapterKey: `cowork_news_normalize:${discoveryModel}`,
+      signal: opts.signal,
+      call: () =>
+        completeChat({
+          model: discoveryModel,
+          maxTokens: 1500,
+          timeoutMs: NEWS_STAGE_TIMEOUT_MS,
+          // Structured extraction only — no reasoning, same latency guard as
+          // the discovery call above.
+          disableReasoning: true,
+          tools: [NEWS_RESULTS_TOOL],
+          forceTool: "report_news_results",
+          signal: opts.signal,
+          messages: [
+            {
+              role: "system",
+              content:
+                `Normalize the grounded web research into structured rows. Today is ${today}. ` +
+                `Use only sources and URLs present verbatim in the research. Never add a URL, fact, or date from memory. ` +
+                `Use the page's publication or last-updated date as YYYY-MM-DD. Omit candidates whose date cannot be determined.`,
+            },
+            { role: "user", content: groundedEvidence },
+          ],
+        }),
+      validate: (response) => {
+        if (!Array.isArray(response.toolArgs?.results)) {
+          throw new Error("News normalization was missing its required schema.");
+        }
+        return response;
+      },
+      persistUsage: (response) => {
+        const attribution = providerModelAttribution(
+          discoveryModel,
+          response.model,
+        );
+        return logOpenRouterUsage(
+            "news_search_normalize",
+            attribution.model,
+          response.usage,
+          opts.workspaceId,
           {
-            role: "system",
-            content:
-              `Normalize the grounded web research into structured rows. Today is ${today}. ` +
-              `Use only sources and URLs present verbatim in the research. Never add a URL, fact, or date from memory. ` +
-              `Use the page's publication or last-updated date as YYYY-MM-DD. Omit candidates whose date cannot be determined.`,
+            phase: "normalize",
+            ...attribution.metadata,
           },
-          { role: "user", content: groundedEvidence },
-        ],
-      }),
-    validate: (response) => {
-      if (!Array.isArray(response.toolArgs?.results)) {
-        throw new Error("News normalization was missing its required schema.");
-      }
-      return response;
-    },
-    persistUsage: (response) => {
-      const attribution = providerModelAttribution(
-        discoveryModel,
-        response.model,
-      );
-      return logOpenRouterUsage(
-          "news_search_normalize",
-          attribution.model,
-        response.usage,
-        opts.workspaceId,
-        {
-          phase: "normalize",
-          ...attribution.metadata,
-        },
-      );
-    },
-    usage: (response) => response.usage,
-    responseModel: (response) => response.model,
-    telemetry: opts.telemetry,
-    stage: "news_normalize",
-    attempt: 1,
-    model: discoveryModel,
-    rejectedReasonCode: "invalid_news_normalization",
-  });
+        );
+      },
+      usage: (response) => response.usage,
+      responseModel: (response) => response.model,
+      telemetry: opts.telemetry,
+      stage: "news_normalize",
+      attempt,
+      model: discoveryModel,
+      fallbackReason,
+      rejectedReasonCode: "invalid_news_normalization",
+    });
+
+  let normalizationAttempt;
+  try {
+    normalizationAttempt = await runNormalization(1);
+  } catch (error) {
+    if (opts.signal?.aborted || error instanceof UsagePersistenceError) {
+      throw error;
+    }
+    normalizationAttempt = await runNormalization(
+      2,
+      "primary_news_normalization_failed",
+    );
+  }
   const normalized = normalizationAttempt.value;
 
   // A structured row is still model output. Require its URL to appear in the
