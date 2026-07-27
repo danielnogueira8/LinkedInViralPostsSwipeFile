@@ -521,7 +521,11 @@ export function isDirectLeadMagnetEligible(
     requestsDurableOrAction(instruction) ||
     requestsPartialTargetVariation(instruction) ||
     requestsPartialTextDeliverable(instruction) ||
-    DIRECT_PARTIAL_REQUEST_RE.test(instruction)
+    DIRECT_PARTIAL_REQUEST_RE.test(instruction) ||
+    // Same live-news/research gate as the other direct lanes: a "newsjack X as
+    // a lead-magnet post" brief needs the grounded news_research route, not
+    // the tool-less writer (which can only simulate the search in-band).
+    requiresLiveNewsOrResearch(instruction)
   ) {
     return false;
   }

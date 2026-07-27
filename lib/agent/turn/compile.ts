@@ -2402,6 +2402,12 @@ export async function compileTurnPlan(
         structureMatch &&
         directSource &&
         !isOpinionOrQuestionAboutContent(effectiveUserInstruction) &&
+        // Same live-news/research gate as commandCreateEligible above: the
+        // embedding structure matcher can auto-match a builtin template for a
+        // newsjack brief, and without this the tool-less writer claimed the
+        // turn and could only SIMULATE the search it needs — prod shipped a
+        // draft whose whole body was '[search_news(query="…")]'.
+        !requiresLiveNewsOrResearch(effectiveUserInstruction) &&
         (composerTaskContext?.kind === "post" ||
           requestsFullPostDeliverable(effectiveUserInstruction) ||
           directPostCount === 1),
