@@ -911,12 +911,20 @@ export function createWorkspaceLearningStore(
       const targetStatus = options.mode ?? "shadow";
       let current: WorkspaceLearningModel | null = null;
       try {
-        current = await loadCurrent(db, workspaceId, targetStatus);
+        // These two reads are independent — fire them together so every
+        // refresh costs one round trip, not two. allSettled (not Promise.all)
+        // keeps the sequential version's exact partial-failure behavior: a
+        // loaded snapshot is still returned when only the count read fails,
+        // and the first error in original order is what the catch reports.
+        const [currentResult, countResult] = await Promise.allSettled([
+          loadCurrent(db, workspaceId, targetStatus),
+          loadPublishedPostCount(db, workspaceId),
+        ]);
+        if (currentResult.status === "fulfilled") current = currentResult.value;
+        if (currentResult.status === "rejected") throw currentResult.reason;
+        if (countResult.status === "rejected") throw countResult.reason;
+        const publishedPostCount = countResult.value;
         const asOf = options.asOf ?? new Date().toISOString();
-        const publishedPostCount = await loadPublishedPostCount(
-          db,
-          workspaceId,
-        );
         const asOfMs = Date.parse(asOf);
         const expectedSourceMode =
           publishedPostCount < 5

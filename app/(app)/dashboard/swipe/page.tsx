@@ -382,12 +382,15 @@ async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: bool
   // active. Avoid loading the full tracked-id set on those requests; the
   // narrowed resolver below can answer a category click directly in one join.
   const needsFeaturedRail = !sp.category && !filtersActive;
-  const allTrackedIds = needsFeaturedRail
-    ? await trackedAccountIds(sb.workspaceId)
-    : [];
+  // Independent of allTrackedIds — start it first so the RPC overlaps the
+  // tracked-ids read (and dedupes with the other threshold callers via the
+  // request-scoped cache in lib/discovery-thresholds).
   const railThresholdsPromise = needsFeaturedRail
     ? getDiscoveryThresholds(sb.workspaceId, sb.raw)
     : Promise.resolve(null);
+  const allTrackedIds = needsFeaturedRail
+    ? await trackedAccountIds(sb.workspaceId)
+    : [];
 
   // Kick off featured-rail decoration concurrently with the feed. Filtered
   // requests skip this block entirely: the rail is hidden and bookmark

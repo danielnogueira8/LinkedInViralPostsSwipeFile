@@ -139,34 +139,34 @@ export default async function ChatPage({
   // captured during prerendering or revalidation.
   await connection();
   const { freshSince, breakoutSince, baselineSince } = requestWindows();
-  const { count: freshInspirationCount } =
-    trackedAccountIds.length > 0
-      ? await sb.raw
-          .from("posts")
-          .select("id", { count: "exact", head: true })
-          .in("account_id", trackedAccountIds)
-          .gte("posted_at", freshSince)
-      : { count: 0 };
-
-  // Breakout radar (Phase E4): the hottest fresh regular post across tracked
-  // creators in the last 48h. Already-scraped data, no LLM. Regular posts only
-  // (same reason as the scanner: lead-magnet modeling needs a resource).
-  const { data: breakoutPost } =
-    trackedAccountIds.length > 0
-      ? await sb.raw
-          .from("posts")
-          .select(
-            "id, account_id, viral_score, reactions, comments, posted_at, accounts!inner(name, archived_at)",
-          )
-          .in("account_id", trackedAccountIds)
-          .eq("is_viral", true)
-          .or("post_type.is.null,post_type.eq.regular")
-          .is("accounts.archived_at", null)
-          .gte("posted_at", breakoutSince)
-          .order("viral_score", { ascending: false })
-          .limit(1)
-          .maybeSingle()
-      : { data: null };
+  // The count and the breakout-radar read are independent (both key off
+  // trackedAccountIds) — fire them together. The baseline read below stays
+  // sequential: it needs breakoutPost.account_id.
+  const [{ count: freshInspirationCount }, { data: breakoutPost }] =
+    await Promise.all([
+      trackedAccountIds.length > 0
+        ? sb.raw
+            .from("posts")
+            .select("id", { count: "exact", head: true })
+            .in("account_id", trackedAccountIds)
+            .gte("posted_at", freshSince)
+        : Promise.resolve({ count: 0 }),
+      trackedAccountIds.length > 0
+        ? sb.raw
+            .from("posts")
+            .select(
+              "id, account_id, viral_score, reactions, comments, posted_at, accounts!inner(name, archived_at)",
+            )
+            .in("account_id", trackedAccountIds)
+            .eq("is_viral", true)
+            .or("post_type.is.null,post_type.eq.regular")
+            .is("accounts.archived_at", null)
+            .gte("posted_at", breakoutSince)
+            .order("viral_score", { ascending: false })
+            .limit(1)
+            .maybeSingle()
+        : Promise.resolve({ data: null }),
+    ]);
   // The creator's 90-day norm, so the chip can say WHICH metric broke out
   // ("2.3k likes" / "140 comments" / "1.5× their norm").
   let breakoutBaseline: MetricBaseline | null = null;

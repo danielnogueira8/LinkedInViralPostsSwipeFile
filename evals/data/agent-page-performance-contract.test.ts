@@ -20,14 +20,17 @@ describe("Your Agent page performance contracts", () => {
     expect(badges).not.toContain('fetch("/api/agent/briefing"');
   });
 
-  test("week-plan source cards and posting-gap reads finish in parallel", () => {
+  test("the posting-gap read overlaps the plan chain instead of trailing it", () => {
     const route = read("app/api/agent/week-plan/route.ts");
-    const parallelBlock =
-      route.match(
-        /Promise\.all\(\[\s*attachSourcePosts\([\s\S]*?postingGap\([\s\S]*?\]\)/,
-      )?.[0] ?? "";
-
-    expect(parallelBlock).toContain("attachSourcePosts");
-    expect(parallelBlock).toContain("postingGap");
+    // postingGap is hoisted: started right after scopedSupabase (overlapping
+    // the load/compose/recover chain) and awaited in the tail Promise.all —
+    // never a serial round trip at the end of the endpoint.
+    const gapStart = route.indexOf("const gapNotePromise = postingGap(");
+    const planChain = route.indexOf("loadStoredWeekPlan(sb.raw");
+    const gapAwait = route.indexOf("gapNotePromise,");
+    expect(gapStart).toBeGreaterThan(-1);
+    expect(gapAwait).toBeGreaterThan(-1);
+    expect(gapStart).toBeLessThan(planChain);
+    expect(gapAwait).toBeGreaterThan(gapStart);
   });
 });

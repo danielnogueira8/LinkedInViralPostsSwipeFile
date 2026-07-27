@@ -114,9 +114,12 @@ describe("GET /api/agent/briefing source-post contract", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(
-      database.selects.find(({ table }) => table === "posts")?.columns,
-    ).toBe(SWIPE_POST_COLS);
+    // Two-step fetch: the whole pool is checked with the cheap existence +
+    // post_type read, and only the kept slots pay for the full Swipe File
+    // card shape (SWIPE_POST_COLS + the accounts join).
+    const postsSelects = database.selects.filter(({ table }) => table === "posts");
+    expect(postsSelects[0]?.columns).toBe("id, post_type");
+    expect(postsSelects.some(({ columns }) => columns === SWIPE_POST_COLS)).toBe(true);
     expect(body.opportunities).toHaveLength(1);
     expect(body.opportunities[0]).toMatchObject({
       id: "opportunity-1",

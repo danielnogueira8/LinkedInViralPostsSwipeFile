@@ -1,4 +1,6 @@
+import { cache } from "react";
 import { supabaseAdmin } from "@/lib/supabase";
+import { retryRead } from "@/lib/retry-read";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 export type DiscoveryThresholds = {
@@ -48,7 +50,13 @@ export function normalizeDiscoveryThresholds(value: unknown): DiscoveryThreshold
   };
 }
 
-export async function getDiscoveryThresholds(
+// Wrapped in React cache(): one Swipe page render resolves the thresholds in
+// up to four places (page chrome, rail, feed query, count query), and cache()
+// dedupes by argument for the duration of a single request — one RPC instead
+// of four. The read goes through retryRead() so a transient blip self-heals
+// BEFORE it can be memoized (cache() would otherwise stick the error for the
+// whole request — same reasoning as trackedAccountIds in supabase-scoped).
+export const getDiscoveryThresholds = cache(async function getDiscoveryThresholds(
   workspaceId: string,
   db: SupabaseClient = supabaseAdmin(),
 ): Promise<DiscoveryThresholds> {
@@ -56,12 +64,14 @@ export async function getDiscoveryThresholds(
   // centralizes the fallback). Lightweight query doubles without RPC support
   // receive the same public defaults.
   if (typeof db.rpc !== "function") return DEFAULT_DISCOVERY_THRESHOLDS;
-  const { data, error } = await db.rpc("get_discovery_thresholds", {
-    p_workspace_id: workspaceId,
-  });
+  const { data, error } = await retryRead(() =>
+    db.rpc("get_discovery_thresholds", {
+      p_workspace_id: workspaceId,
+    }),
+  );
   if (error) throw error;
   return normalizeDiscoveryThresholds(data);
-}
+});
 
 export function passesDiscoveryThreshold(
   post: {
