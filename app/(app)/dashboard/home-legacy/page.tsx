@@ -189,6 +189,7 @@ export default async function Dashboard() {
   // slice is too thin to be interesting, broaden to the whole 30-day
   // corpus so new workspaces don't see an empty card.
   const creatorBase = weekRows.length >= 5 ? weekRows : rows;
+  const creatorWindowLabel = weekRows.length >= 5 ? "this week's viral posts" : "recent viral posts";
   const creatorAgg = new Map<
     string,
     { name: string; profile_pic_url: string | null; count: number }
@@ -324,7 +325,7 @@ export default async function Dashboard() {
               )}
             </InsightCard>
 
-            <InsightCard title="Top creators" subtitle="this week's viral posts">
+            <InsightCard title="Top creators" subtitle={creatorWindowLabel}>
               {topCreators.length === 0 ? (
                 <EmptyHint>No viral posts since the last pull.</EmptyHint>
               ) : (

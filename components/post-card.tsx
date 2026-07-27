@@ -46,8 +46,10 @@ const CARD_MEDIA_SIZES =
 // (~weekly), so a card scraped a while ago has a dead src — the raw <Image fill>
 // then rendered an empty box inside the aspect-ratio frame with no signal. This
 // tracks the load error and swaps in a muted "image unavailable" placeholder so
-// the card reads as intentional, not broken. `key={src}` resets the error state
-// if a later scrape refreshes the URL. Props mirror the sites it replaces.
+// the card reads as intentional, not broken. Only the CURRENT src counts as
+// errored: when a background re-scrape refreshes the URL, the new src no longer
+// matches `erroredSrc` and the image gets a fresh attempt instead of staying
+// stuck on the placeholder. Props mirror the sites it replaces.
 function MediaImage({
   src,
   sizes,
@@ -61,8 +63,8 @@ function MediaImage({
   loading?: "eager" | "lazy";
   fetchPriority?: "high" | "auto";
 }) {
-  const [errored, setErrored] = useState(false);
-  if (errored) {
+  const [erroredSrc, setErroredSrc] = useState<string | null>(null);
+  if (erroredSrc === src) {
     return (
       <div className="absolute inset-0 grid place-items-center bg-muted/40 text-muted-foreground">
         <div className="flex flex-col items-center gap-1">
@@ -83,7 +85,7 @@ function MediaImage({
       loading={loading}
       fetchPriority={fetchPriority}
       quality={70}
-      onError={() => setErrored(true)}
+      onError={() => setErroredSrc(src)}
     />
   );
 }

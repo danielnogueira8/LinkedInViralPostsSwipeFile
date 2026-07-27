@@ -282,7 +282,11 @@ function PreferenceRow({
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Escape") onCancelEdit();
+              if (e.key === "Escape") {
+                setDraft(pref.rule);
+                setDraftDetail(pref.detail ?? "");
+                onCancelEdit();
+              }
             }}
             maxLength={PREF_RULE_MAX}
             autoFocus

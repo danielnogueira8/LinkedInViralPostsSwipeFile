@@ -83,12 +83,18 @@ function SourceChip({ href, label }: { href: string; label: string }) {
 function SourceCarousel({ cards }: { cards: CitedPost[] }) {
   const [index, setIndex] = useState(0);
   const count = cards.length;
+  // Clamp at render time (like DocumentLightbox) rather than via an effect, so
+  // a shrunk card set — e.g. streaming cites that rehydrate to fewer cards —
+  // can never index out of bounds and crash the card below.
+  const safeIndex = Math.min(index, Math.max(0, count - 1));
   const go = (delta: number) =>
     setIndex((i) => (((i + delta) % count) + count) % count);
 
+  if (count === 0) return null;
+
   return (
     <div className="flex flex-col gap-2.5" aria-label="Verified sources">
-      <InlineSourceCard post={cards[index]} compact />
+      <InlineSourceCard post={cards[safeIndex]} compact />
       <div className="flex items-center justify-between gap-3">
         <button
           type="button"
@@ -107,7 +113,7 @@ function SourceCarousel({ cards }: { cards: CitedPost[] }) {
               aria-label={`Go to source ${i + 1}`}
               className={cn(
                 "h-1.5 rounded-full transition-all",
-                i === index
+                i === safeIndex
                   ? "w-4 bg-primary"
                   : "w-1.5 bg-border hover:bg-primary/40",
               )}
@@ -124,7 +130,7 @@ function SourceCarousel({ cards }: { cards: CitedPost[] }) {
         </button>
       </div>
       <p className="text-center text-[11px] text-muted-foreground tabular-nums">
-        Source {index + 1} of {count}
+        Source {safeIndex + 1} of {count}
       </p>
     </div>
   );

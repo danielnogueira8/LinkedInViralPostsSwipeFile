@@ -110,7 +110,7 @@ export function StyleDetailDrawer({
             <div className="truncate text-xs text-muted-foreground">
               {[
                 row?.creator_name || row?.creator_handle || null,
-                row?.creator_handle ? `@${row.creator_handle}` : null,
+                row?.creator_name && row?.creator_handle ? `@${row.creator_handle}` : null,
                 row && row.sample_count > 0 ? `built from ${row.sample_count} posts` : null,
               ]
                 .filter(Boolean)
