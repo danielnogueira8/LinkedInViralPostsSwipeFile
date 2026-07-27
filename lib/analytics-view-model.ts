@@ -20,6 +20,87 @@ export type PostMetricsRow = {
 
 export type TrendPoint = { date: string; impressions: number };
 
+export type AnalyticsSnapshot = {
+  artifactId: string;
+  snapshotDate: string;
+  impressions: number | null;
+};
+
+export type AnalyticsSummary = {
+  impressions: number;
+  engagements: number;
+  engagementRate: number | null;
+  posts: number;
+};
+
+// LinkedIn analytics snapshots are cumulative. A trend must therefore add
+// the change from each post's previous observation, not add the cumulative
+// values captured on a date. The first observation establishes a baseline.
+// Provider corrections can lower a total; retain the prior high-water mark so
+// a later restoration is not counted again as new user activity.
+export function buildDailyImpressionGains(
+  snapshots: readonly AnalyticsSnapshot[],
+): TrendPoint[] {
+  const ordered = [...snapshots].sort((a, b) => {
+    if (a.artifactId !== b.artifactId) {
+      return a.artifactId.localeCompare(b.artifactId);
+    }
+    return a.snapshotDate.localeCompare(b.snapshotDate);
+  });
+  const highWaterByArtifact = new Map<string, number>();
+  const byDay = new Map<string, number>();
+
+  for (const snapshot of ordered) {
+    if (snapshot.impressions === null) continue;
+    const highWater = highWaterByArtifact.get(snapshot.artifactId);
+    if (highWater === undefined) {
+      highWaterByArtifact.set(snapshot.artifactId, snapshot.impressions);
+      continue;
+    }
+    const gain = Math.max(0, snapshot.impressions - highWater);
+    highWaterByArtifact.set(
+      snapshot.artifactId,
+      Math.max(highWater, snapshot.impressions),
+    );
+    byDay.set(snapshot.snapshotDate, (byDay.get(snapshot.snapshotDate) ?? 0) + gain);
+  }
+
+  return [...byDay.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, impressions]) => ({ date, impressions }));
+}
+
+// "Engagements" is deliberately explicit and stable: every interaction
+// LinkedIn reports for these posts, excluding passive impressions/reach.
+export function summarizePostMetrics(
+  posts: readonly PostMetricsRow[],
+): AnalyticsSummary {
+  const value = (metric: number | null) => metric ?? 0;
+  const impressions = posts.reduce(
+    (total, post) => total + value(post.impressions),
+    0,
+  );
+  const engagements = posts.reduce(
+    (total, post) =>
+      total +
+      value(post.likes) +
+      value(post.comments) +
+      value(post.shares) +
+      value(post.saves) +
+      value(post.sends),
+    0,
+  );
+  return {
+    impressions,
+    engagements,
+    engagementRate:
+      impressions > 0
+        ? Math.round((engagements / impressions) * 1000) / 10
+        : null,
+    posts: posts.length,
+  };
+}
+
 // Round a value UP to a "nice" number (1/2/5 × 10ⁿ) so the chart's top
 // gridline is a clean round figure (7 → 10, 4200 → 5000, 13000 → 20000).
 export function niceCeil(value: number): number {

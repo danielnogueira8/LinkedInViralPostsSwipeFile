@@ -7,9 +7,10 @@ import { AnalyticsView } from "./view";
 // from "./view" (a "use client" module). Calling a client module's function on
 // the server throws "Attempted to call sortPostsByRecency() from the server".
 import {
+  buildDailyImpressionGains,
   sortPostsByRecency,
+  type AnalyticsSnapshot,
   type PostMetricsRow,
-  type TrendPoint,
 } from "@/lib/analytics-view-model";
 
 export const dynamic = "force-dynamic";
@@ -83,17 +84,18 @@ export default async function AnalyticsPage() {
     posts = sortPostsByRecency(posts);
   }
 
-  // Daily impressions trend (last 30 days): sum each day's snapshots. Days
-  // without a snapshot are omitted (the chart renders what exists).
-  const byDay = new Map<string, number>();
-  for (const s of snapshots) {
-    const day = s.snapshot_date as string;
-    byDay.set(day, (byDay.get(day) ?? 0) + ((s.impressions as number | null) ?? 0));
-  }
-  const trend: TrendPoint[] = [...byDay.entries()]
-    .sort(([a], [b]) => (a < b ? -1 : 1))
-    .slice(-30)
-    .map(([date, impressions]) => ({ date, impressions }));
+  // Snapshots are cumulative per post. Show the observed gains between
+  // snapshots rather than summing cumulative account totals for each date.
+  const trend = buildDailyImpressionGains(
+    snapshots.map(
+      (snapshot) =>
+        ({
+          artifactId: snapshot.artifact_id as string,
+          snapshotDate: snapshot.snapshot_date as string,
+          impressions: (snapshot.impressions as number | null) ?? null,
+        }) satisfies AnalyticsSnapshot,
+    ),
+  ).slice(-30);
 
   const lastFetchedAt = snapshots.length
     ? (snapshots[snapshots.length - 1].fetched_at as string)

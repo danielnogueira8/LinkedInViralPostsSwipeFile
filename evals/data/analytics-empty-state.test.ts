@@ -1,9 +1,12 @@
 import { describe, expect, test } from "vitest";
 import { getAnalyticsEmptyState } from "@/app/(app)/dashboard/analytics/view";
 import {
+  buildDailyImpressionGains,
+  summarizePostMetrics,
   sortPostsByRecency,
   niceCeil,
   impressionAxisTicks,
+  type AnalyticsSnapshot,
   type PostMetricsRow,
 } from "@/lib/analytics-view-model";
 
@@ -158,5 +161,82 @@ describe("impressions chart Y-axis — nice rounded scale", () => {
     const { top, ticks } = impressionAxisTicks(0);
     expect(top).toBe(1);
     expect(ticks[ticks.length - 1]).toBe(0);
+  });
+});
+
+describe("analytics snapshot math", () => {
+  const snapshot = (
+    artifactId: string,
+    snapshotDate: string,
+    impressions: number | null,
+  ): AnalyticsSnapshot => ({ artifactId, snapshotDate, impressions });
+
+  test("charts gains between cumulative snapshots instead of summing cumulative totals", () => {
+    const trend = buildDailyImpressionGains([
+      snapshot("post-a", "2026-07-01", 100),
+      snapshot("post-b", "2026-07-01", 50),
+      snapshot("post-a", "2026-07-02", 130),
+      snapshot("post-b", "2026-07-02", 70),
+    ]);
+
+    // The old calculation showed 200 on Jul 2 (130 + 70). These snapshots
+    // are cumulative, so the actual observed gain is (130-100) + (70-50).
+    expect(trend).toEqual([{ date: "2026-07-02", impressions: 50 }]);
+  });
+
+  test("uses each post's own prior snapshot and does not mutate input order", () => {
+    const snapshots = [
+      snapshot("post-a", "2026-07-03", 180),
+      snapshot("post-a", "2026-07-01", 100),
+      snapshot("post-b", "2026-07-02", 20),
+      snapshot("post-a", "2026-07-02", 140),
+      snapshot("post-b", "2026-07-03", 35),
+    ];
+    const before = [...snapshots];
+
+    expect(buildDailyImpressionGains(snapshots)).toEqual([
+      { date: "2026-07-02", impressions: 40 },
+      { date: "2026-07-03", impressions: 55 },
+    ]);
+    expect(snapshots).toEqual(before);
+  });
+
+  test("keeps the high-water baseline through provider corrections", () => {
+    expect(
+      buildDailyImpressionGains([
+        snapshot("post-a", "2026-07-01", 100),
+        snapshot("post-a", "2026-07-02", 90),
+        snapshot("post-a", "2026-07-03", 120),
+      ]),
+    ).toEqual([
+      { date: "2026-07-02", impressions: 0 },
+      { date: "2026-07-03", impressions: 20 },
+    ]);
+  });
+});
+
+describe("analytics metric definitions", () => {
+  test("engagements include every explicit LinkedIn interaction", () => {
+    const summary = summarizePostMetrics([
+      {
+        ...row("post-a", "2026-07-01T10:00:00Z", 200),
+        likes: 10,
+        comments: 4,
+        shares: 3,
+        saves: 2,
+        sends: 1,
+      },
+    ]);
+
+    expect(summary).toEqual({
+      impressions: 200,
+      engagements: 20,
+      engagementRate: 10,
+      posts: 1,
+    });
+  });
+
+  test("returns no engagement rate when there are no impressions", () => {
+    expect(summarizePostMetrics([row("post-a", null, 0)]).engagementRate).toBeNull();
   });
 });

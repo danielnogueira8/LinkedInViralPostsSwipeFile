@@ -7,6 +7,7 @@ import { RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   impressionAxisTicks,
+  summarizePostMetrics,
   type PostMetricsRow,
   type TrendPoint,
 } from "@/lib/analytics-view-model";
@@ -88,14 +89,7 @@ export function AnalyticsView({
   }, [refreshing, router]);
 
   const totals = useMemo(() => {
-    const sum = (pick: (p: PostMetricsRow) => number | null) =>
-      posts.reduce((acc, p) => acc + (pick(p) ?? 0), 0);
-    return {
-      impressions: sum((p) => p.impressions),
-      reactions: sum((p) => p.likes),
-      comments: sum((p) => p.comments),
-      shares: sum((p) => p.shares),
-    };
+    return summarizePostMetrics(posts);
   }, [posts]);
 
   // Y-axis scale for the trend chart: a nice rounded top + evenly-spaced ticks.
@@ -167,31 +161,41 @@ export function AnalyticsView({
       {/* Summary tiles */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {[
-          { label: "Impressions", value: totals.impressions },
-          { label: "Reactions", value: totals.reactions },
-          { label: "Comments", value: totals.comments },
-          { label: "Shares", value: totals.shares },
+          { label: "Lifetime impressions", value: fmt(totals.impressions) },
+          { label: "Lifetime engagements", value: fmt(totals.engagements) },
+          {
+            label: "Engagement rate",
+            value:
+              totals.engagementRate === null
+                ? "—"
+                : `${totals.engagementRate.toLocaleString("en-US")}%`,
+          },
+          { label: "Published posts", value: fmt(totals.posts) },
         ].map((t) => (
           <div key={t.label} className="rounded-xl border border-border bg-card p-4">
             <div className="text-2xl font-semibold tabular-nums text-foreground">
-              {fmt(t.value)}
+              {t.value}
             </div>
             <div className="mt-1 text-xs text-muted-foreground">{t.label}</div>
           </div>
         ))}
       </div>
+      <p className="-mt-3 text-xs text-muted-foreground">
+        Engagements include reactions, comments, shares, saves, and sends.
+        Engagement rate is engagements divided by impressions.
+      </p>
 
-      {/* Impressions trend — CSS bars over the daily snapshot totals, with a
+      {/* Impressions trend — CSS bars over observed snapshot gains, with a
           Y-axis, gridlines, and a per-bar hover/focus tooltip. */}
       {trend.length >= 2 && (
         <div className="rounded-xl border border-border bg-card p-4">
           <div className="mb-4 text-sm font-medium text-foreground">
-            Impressions over time
+            New impressions over time
           </div>
           <div
             className="flex gap-3"
             role="img"
-            aria-label={`Bar chart of daily impressions from ${trend[0].date} to ${trend[trend.length - 1].date}, peaking at ${axis.top.toLocaleString("en-US")} impressions.`}
+            aria-label={`Bar chart of new impressions captured from ${trend[0].date} to ${trend[trend.length - 1].date}, peaking at ${axis.top.toLocaleString("en-US")} impressions.`}
           >
             {/* Y-axis: nice rounded tick labels, top-to-bottom. */}
             <div className="flex h-36 w-10 shrink-0 flex-col justify-between py-0.5 text-right text-[10px] leading-none text-muted-foreground tabular-nums">
@@ -244,7 +248,7 @@ export function AnalyticsView({
                       )}
                       <button
                         type="button"
-                        aria-label={`${t.date}: ${t.impressions.toLocaleString("en-US")} impressions`}
+                        aria-label={`${t.date}: ${t.impressions.toLocaleString("en-US")} new impressions captured`}
                         onFocus={() => setHoveredBar(i)}
                         onBlur={() =>
                           setHoveredBar((cur) => (cur === i ? null : cur))
