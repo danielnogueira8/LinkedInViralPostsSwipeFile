@@ -588,6 +588,56 @@ describe("completeChatAnthropic (mocked SDK)", () => {
     expect(res.citations).toEqual([]);
   });
 
+  test("pre-gen-5 models: web_search is direct-only and thinking/effort are omitted", async () => {
+    // haiku-4-5 400s on programmatic server-tool calling ("does not support
+    // programmatic tool calling") and on adaptive thinking/effort — the API
+    // itself suggests allowed_callers:["direct"].
+    lastBody.current = null;
+    finalMessage.mockResolvedValue({
+      content: [{ type: "text", text: "ok" }],
+      stop_reason: "end_turn",
+      model: "claude-haiku-4-5-20251001",
+      usage: { input_tokens: 10, output_tokens: 5 },
+    });
+    const { completeChatAnthropic } = await import("@/lib/anthropic");
+    await completeChatAnthropic({
+      model: "anthropic/claude-haiku-4.5",
+      messages: [{ role: "user", content: "news on X?" }],
+      plugins: [{ id: "web", max_results: 5 }],
+    });
+    const body = lastBody.current!;
+    const tools = (body.tools ?? []) as Array<Record<string, unknown>>;
+    const web = tools.find((t) => t.type === "web_search_20260209");
+    expect(web).toMatchObject({ name: "web_search", max_uses: 5, allowed_callers: ["direct"] });
+    expect(body.thinking).toBeUndefined();
+    expect(body.output_config).toBeUndefined();
+    // And the request went out under the REAL Anthropic API id, not the
+    // dotted OpenRouter slug that 404s.
+    expect(body.model).toBe("claude-haiku-4-5-20251001");
+  });
+
+  test("gen-5 models: web_search stays programmatic-capable and thinking is sent", async () => {
+    lastBody.current = null;
+    finalMessage.mockResolvedValue({
+      content: [{ type: "text", text: "ok" }],
+      stop_reason: "end_turn",
+      model: "claude-sonnet-5",
+      usage: { input_tokens: 10, output_tokens: 5 },
+    });
+    const { completeChatAnthropic } = await import("@/lib/anthropic");
+    await completeChatAnthropic({
+      model: "claude-sonnet-5",
+      messages: [{ role: "user", content: "news on X?" }],
+      plugins: [{ id: "web", max_results: 5 }],
+    });
+    const body = lastBody.current!;
+    const tools = (body.tools ?? []) as Array<Record<string, unknown>>;
+    const web = tools.find((t) => t.type === "web_search_20260209");
+    expect(web).toMatchObject({ name: "web_search", max_uses: 5 });
+    expect(web!.allowed_callers).toBeUndefined();
+    expect(body.thinking).toEqual({ type: "adaptive" });
+  });
+
   test("no system message → no system field (nothing to cache)", async () => {
     lastBody.current = null;
     finalMessage.mockResolvedValue({

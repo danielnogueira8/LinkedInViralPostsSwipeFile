@@ -476,12 +476,19 @@ export async function completeChatAnthropic(opts: {
   // server tool so news + grounded research keep working under the flag. The
   // server runs the search and returns grounded results; we harvest citations
   // from the response below. (Server tools run alongside any user tools.)
+  // Pre-gen-5 models (haiku-4-5) can't call server tools PROGRAMMATICALLY —
+  // the API 400s unless the tool is restricted to direct calls — so mark the
+  // tool direct-only there. One direct search per call is also ~2-3x faster,
+  // which is what the news stage wants.
   const maxUses = webSearchMaxUses(opts.plugins);
   if (maxUses !== undefined) {
     const webTool: Anthropic.WebSearchTool20260209 = {
       type: "web_search_20260209",
       name: "web_search",
       max_uses: maxUses,
+      ...(supportsAdaptiveThinking(model)
+        ? {}
+        : { allowed_callers: ["direct" as const] }),
     };
     body.tools = [...(body.tools ?? []), webTool];
   }
