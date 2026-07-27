@@ -373,9 +373,11 @@ function fmtRate(value: number | null): string {
 function EngagementRateHelp({
   id,
   align = "left",
+  placement = "bottom",
 }: {
   id: string;
   align?: "left" | "right";
+  placement?: "top" | "bottom";
 }) {
   return (
     <span className="relative inline-flex items-center gap-1">
@@ -397,11 +399,12 @@ function EngagementRateHelp({
         id={id}
         role="tooltip"
         className={cn(
-          "pointer-events-none absolute top-full z-30 mt-1.5 w-64 rounded-lg border border-border",
+          "pointer-events-none absolute z-30 w-64 rounded-lg border border-border",
           "bg-popover px-2.5 py-2 text-left text-[11px] font-normal leading-4 text-popover-foreground shadow-md",
           "opacity-0 transition-opacity peer-hover:opacity-100 peer-focus-visible:opacity-100",
           "motion-reduce:transition-none",
           align === "right" ? "right-0" : "left-0",
+          placement === "top" ? "bottom-full mb-1.5" : "top-full mt-1.5",
         )}
       >
         {ENGAGEMENT_RATE_HELP}
@@ -607,6 +610,7 @@ export function PostPerformanceSection({
                       <EngagementRateHelp
                         id={`post-performance-mobile-engagement-rate-help-${index}`}
                         align="right"
+                        placement="top"
                       />
                     </dt>
                     <dd className="mt-0.5 text-sm font-medium tabular-nums text-foreground">
