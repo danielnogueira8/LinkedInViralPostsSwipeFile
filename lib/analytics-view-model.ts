@@ -332,8 +332,12 @@ function buildPeriodPostMetrics(
 
   return posts
     .map((post) => {
-      const metric = (name: SnapshotMetric) =>
-        totalsByMetric.get(name)?.get(post.artifactId) ?? 0;
+      const metric = (name: SnapshotMetric) => {
+        const values = totalsByMetric.get(name);
+        return values?.has(post.artifactId)
+          ? (values.get(post.artifactId) ?? 0)
+          : null;
+      };
       return {
         ...post,
         impressions: metric("impressions"),
@@ -479,12 +483,22 @@ export function postEngagements(post: PostMetricsRow): number {
 }
 
 export function postSavesAndShares(post: PostMetricsRow): number | null {
-  if (post.saves === null && post.shares === null) return null;
-  return (post.saves ?? 0) + (post.shares ?? 0);
+  if (post.saves === null || post.shares === null) return null;
+  return post.saves + post.shares;
 }
 
 export function postEngagementRate(post: PostMetricsRow): number | null {
-  if (post.impressions === null || post.impressions <= 0) return null;
+  if (
+    post.impressions === null ||
+    post.impressions <= 0 ||
+    post.likes === null ||
+    post.comments === null ||
+    post.shares === null ||
+    post.saves === null ||
+    post.sends === null
+  ) {
+    return null;
+  }
   return Math.round((postEngagements(post) / post.impressions) * 1000) / 10;
 }
 

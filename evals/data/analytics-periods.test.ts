@@ -176,6 +176,39 @@ describe("period analytics", () => {
       }),
     ]);
   });
+
+  test("distinguishes unavailable period metrics from measured zero growth", () => {
+    const posts = [post("partial", "2026-07-20T10:00:00Z")];
+    const snapshots = [
+      snapshot("partial", "2026-07-26", {
+        impressions: 100,
+        comments: 5,
+        shares: 2,
+        saves: null,
+      }),
+      snapshot("partial", "2026-07-27", {
+        impressions: 110,
+        comments: 5,
+        shares: 2,
+        saves: null,
+      }),
+    ];
+
+    const [row] = buildAnalyticsPeriodReport(
+      snapshots,
+      posts,
+      periodBounds("7d", "2026-07-27").current,
+    ).posts;
+    expect(row).toEqual(
+      expect.objectContaining({
+        impressions: 10,
+        comments: 0,
+        shares: 0,
+        saves: null,
+      }),
+    );
+    expect(postEngagementRate(row)).toBeNull();
+  });
 });
 
 describe("analytics overview trends", () => {
