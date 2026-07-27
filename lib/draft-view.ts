@@ -67,18 +67,26 @@ export function normalizeDraft(row: DraftViewRow): Draft {
       ? (row.meta as Record<string, unknown>)
       : null;
   const sourceUrl = sourceUrlFromMeta(meta);
+  const leadMagnet = leadMagnetContextFromMeta(meta);
   const draft: Draft = {
     id: row.id,
     title: row.title,
     body: row.body,
+    // A giveaway (meta.lead_magnet) makes the post a lead magnet even when an
+    // older row was stamped kind='post' before that rule existed — same rule
+    // resolveDraftKind enforces at write time.
     kind:
-      row.kind === "hook" || row.kind === "lead_magnet" ? row.kind : "post",
+      row.kind === "hook"
+        ? "hook"
+        : row.kind === "lead_magnet" || leadMagnet
+          ? "lead_magnet"
+          : "post",
     status,
     planToPostOn: row.plan_to_post_on,
     chatId: row.chat_id,
     createdAt: row.created_at,
     ...(sourceUrl ? { sourceUrl } : {}),
-    leadMagnet: leadMagnetContextFromMeta(meta),
+    leadMagnet,
     meta,
     mediaAttachments: Array.isArray(row.media_attachments)
       ? (row.media_attachments as PostMediaAttachment[])

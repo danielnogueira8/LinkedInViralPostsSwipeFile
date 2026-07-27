@@ -3,8 +3,9 @@ import { resolveDraftKind } from "@/lib/post-type";
 import { createDraftSchema } from "@/lib/draft-create-schema";
 
 // ---------------------------------------------------------------------------
-// resolveDraftKind — the classify-on-generate/save logic. An explicit kind (a
-// user's manual pick, or a hook) ALWAYS wins and is never re-classified; a
+// resolveDraftKind — the classify-on-generate/save logic. A giveaway
+// (meta.lead_magnet) forces lead_magnet; a hook stays a hook; otherwise an
+// explicit kind (a user's manual pick) wins and is never re-classified, and a
 // kind-less post is auto-tagged regular vs lead-magnet from its body via the
 // existing classifyPost detector. Plus the widened createDraftSchema kind enum.
 // ---------------------------------------------------------------------------
@@ -31,6 +32,25 @@ describe("resolveDraftKind", () => {
     expect(resolveDraftKind(null, REGULAR_BODY)).toBe("post");
     expect(resolveDraftKind(undefined, "")).toBe("post");
     expect(resolveDraftKind(undefined, null)).toBe("post");
+  });
+
+  test("a giveaway (hasLeadMagnet) forces lead_magnet, even over explicit 'post'", () => {
+    // The bug: a post saved with meta.lead_magnet (giveaway attached) kept
+    // kind='post' when the body didn't trip the regex or an explicit 'post'
+    // was sent. A giveaway only makes sense on a lead-magnet post.
+    expect(resolveDraftKind(undefined, REGULAR_BODY, { hasLeadMagnet: true })).toBe(
+      "lead_magnet",
+    );
+    expect(resolveDraftKind("post", REGULAR_BODY, { hasLeadMagnet: true })).toBe(
+      "lead_magnet",
+    );
+    expect(resolveDraftKind(null, LEAD_MAGNET_BODY, { hasLeadMagnet: true })).toBe(
+      "lead_magnet",
+    );
+  });
+
+  test("a hook stays a hook even with a giveaway attached", () => {
+    expect(resolveDraftKind("hook", REGULAR_BODY, { hasLeadMagnet: true })).toBe("hook");
   });
 });
 
