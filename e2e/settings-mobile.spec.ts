@@ -24,6 +24,19 @@ test("minimum engagement settings are readable and touch-friendly on mobile", as
     expect(box, "threshold switch should have a measurable hit target").not.toBeNull();
     expect(box!.width).toBeGreaterThanOrEqual(44);
     expect(box!.height).toBeGreaterThanOrEqual(44);
+
+    const track = control.locator("span").first();
+    const thumb = track.locator("span");
+    const [trackBox, thumbBox] = await Promise.all([
+      track.boundingBox(),
+      thumb.boundingBox(),
+    ]);
+    expect(trackBox, "threshold switch track should be measurable").not.toBeNull();
+    expect(thumbBox, "threshold switch thumb should be measurable").not.toBeNull();
+    expect(thumbBox!.x).toBeGreaterThanOrEqual(trackBox!.x);
+    expect(thumbBox!.x + thumbBox!.width).toBeLessThanOrEqual(
+      trackBox!.x + trackBox!.width,
+    );
   }
   const initiallyChecked = await regularSwitch.getAttribute("aria-checked");
   await regularSwitch.click();
