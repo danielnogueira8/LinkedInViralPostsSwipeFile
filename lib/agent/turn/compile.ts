@@ -2491,13 +2491,36 @@ export async function compileTurnPlan(
     useDirectPartial,
     useDirectMulti,
     useDirectSource,
+    useDirectOriginal,
     useDirectLeadMagnet,
     useDirectCreatorStyle,
   } = directWriterEligibility;
+  // CENTRAL GATE, by lane family. Every CREATE-family lane already applies
+  // the live-news/research gate individually (#1568, #1579) — the tool-less
+  // writer can never serve a newsjack/research brief, only simulate the
+  // search in-band. Those per-lane gates have been missed TWICE, so the
+  // invariant is now also enforced once here: when ONLY create lanes claim
+  // and the instruction demands live news/research, the direct writer loses
+  // and the grounded read-only route takes over. This is a deliberate no-op
+  // on every input reachable today (all create lanes already reject such
+  // instructions); it exists so the NEXT claim path added above inherits the
+  // gate instead of having to remember it. Refine lanes are untouched:
+  // editing an existing draft never needs a search.
+  const directRefineClaimed = useDirectRefine || useGeneralRefine;
+  const directCreateClaimed =
+    useDirectPartial ||
+    useDirectMulti ||
+    useDirectSource ||
+    useDirectOriginal ||
+    useDirectLeadMagnet ||
+    useDirectCreatorStyle;
   const useDirectWriter =
     !reviewOperation &&
     !modeledBatchContractRequested &&
-    directWriterEligibility.eligible;
+    directWriterEligibility.eligible &&
+    (directRefineClaimed ||
+      !directCreateClaimed ||
+      !requiresLiveNewsOrResearch(effectiveUserInstruction));
   const directWriterWouldBeEligibleWithVoice =
     compileDirectWriterEligibility(true).eligible;
   const actionOrchestratorRoute: ActionOrchestratorRoute | null = useDirectWriter
