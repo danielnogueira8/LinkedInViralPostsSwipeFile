@@ -154,6 +154,23 @@ test("analytics overview stays usable on mobile and desktop", async ({ page }) =
   await metric.click();
   await expect(metric).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByText("What changed", { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Post performance" }),
+  ).toBeVisible();
+
+  const search = page.getByRole("searchbox", { name: "Search posts" });
+  const sort = page.getByRole("combobox", { name: "Sort posts" });
+  await sort.selectOption("engagementRate");
+  await expect(sort).toHaveValue("engagementRate");
+  await search.fill("no matching analytics fixture");
+  await expect(page.getByText("No matching posts")).toBeVisible();
+  await page.getByRole("button", { name: "Clear search" }).click();
+  const exactPostHref = `/dashboard/posts?open=${encodeURIComponent(
+    fixture.artifactId,
+  )}`;
+  await expect(
+    page.locator(`a[href="${exactPostHref}"]:visible`).first(),
+  ).toBeVisible();
 
   const chart = page
     .getByRole("heading", { name: "Performance trend" })
@@ -171,6 +188,12 @@ test("analytics overview stays usable on mobile and desktop", async ({ page }) =
       hasHorizontalOverflow,
       `analytics should not overflow at ${width}px`,
     ).toBe(false);
+
+    if (width < 768) {
+      await expect(
+        page.locator(`a[href="${exactPostHref}"]:visible`).first(),
+      ).toBeVisible();
+    }
 
     const [chartBox, insightBox] = await Promise.all([
       chart.boundingBox(),
