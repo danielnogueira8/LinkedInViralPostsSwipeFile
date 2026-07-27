@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 type AnalyticsFixture = {
   artifactId: string;
@@ -142,6 +142,14 @@ test.afterEach(async () => {
 
 test("analytics overview stays usable on mobile and desktop", async ({ page }) => {
   fixture = await seedAnalytics(page);
+  const expectEngagementRateHelp = async (trigger: Locator) => {
+    const describedBy = await trigger.getAttribute("aria-describedby");
+    expect(describedBy).toBeTruthy();
+    await trigger.focus();
+    const tooltip = page.locator(`[id="${describedBy}"]`);
+    await expect(tooltip).toBeVisible();
+    await expect(tooltip).toContainText("Percentage of impressions");
+  };
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/dashboard/analytics");
   await expect(page.getByRole("heading", { name: "Analytics" })).toBeVisible();
@@ -159,11 +167,22 @@ test("analytics overview stays usable on mobile and desktop", async ({ page }) =
   await expect(
     page.getByRole("heading", { name: "Post performance" }),
   ).toBeVisible();
+  const summaryHelp = page
+    .getByText("Engagement rate", { exact: true })
+    .first()
+    .locator("xpath=..")
+    .getByRole("button", { name: "How engagement rate is calculated" });
+  await expectEngagementRateHelp(summaryHelp);
 
   const search = page.getByRole("searchbox", { name: "Search posts" });
   const sort = page.getByRole("combobox", { name: "Sort posts" });
   await sort.selectOption("engagementRate");
   await expect(sort).toHaveValue("engagementRate");
+  await expectEngagementRateHelp(
+    sort
+      .locator("xpath=../..")
+      .getByRole("button", { name: "How engagement rate is calculated" }),
+  );
   await search.fill("no matching analytics fixture");
   await expect(page.getByText("No matching posts")).toBeVisible();
   await page.getByRole("button", { name: "Clear search" }).click();
@@ -190,6 +209,9 @@ test("analytics overview stays usable on mobile and desktop", async ({ page }) =
     .getByRole("heading", { name: "Performance trend" })
     .locator("xpath=ancestor::section");
   const insight = page.locator("aside").filter({ hasText: "What changed" });
+  await expectEngagementRateHelp(
+    chart.getByRole("button", { name: "Engagement rate", exact: true }),
+  );
 
   for (const width of [390, 320, 1280]) {
     await page.setViewportSize({ width, height: 844 });
@@ -207,6 +229,22 @@ test("analytics overview stays usable on mobile and desktop", async ({ page }) =
       await expect(
         page.locator(`a[href="${exactPostHref}"]:visible`).first(),
       ).toBeVisible();
+      const mobileCard = page.locator("article").filter({
+        has: page.locator(`a[href="${exactPostHref}"]`),
+      });
+      await expectEngagementRateHelp(
+        mobileCard.getByRole("button", {
+          name: "How engagement rate is calculated",
+        }),
+      );
+    } else {
+      await expectEngagementRateHelp(
+        page
+          .getByRole("columnheader", { name: /Engagement rate/ })
+          .getByRole("button", {
+            name: "How engagement rate is calculated",
+          }),
+      );
     }
 
     const [chartBox, insightBox] = await Promise.all([
