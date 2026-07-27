@@ -384,14 +384,14 @@ test.describe("UI loading and performance guardrails", () => {
     await page.getByText(title).click();
     await expect(page.getByRole("dialog")).toBeVisible();
     await page.setViewportSize({ width: 390, height: 844 });
-    await expect(page.getByRole("button", { name: /^Schedule on LinkedIn$/ })).toBeVisible({
+    await expect(page.getByRole("button", { name: /^Schedule$/ })).toBeVisible({
       timeout: 8_000,
     });
     const addToQueueButton = page.getByRole("button", {
       name: /^Add to Queue$/,
     });
     const scheduleButton = page.getByRole("button", {
-      name: /^Schedule on LinkedIn$/,
+      name: /^Schedule$/,
     });
     await expect(addToQueueButton).toBeVisible();
     await expect(page.getByText(/^\d+\/3,?000$/)).toHaveCount(0);
@@ -403,7 +403,7 @@ test.describe("UI loading and performance guardrails", () => {
 
     await page.getByLabel("Publish date and time").fill(futureDatetimeLocal());
     await page.getByLabel("First comment").fill("First comment from the UI loading spec.");
-    await page.getByRole("button", { name: /^Schedule on LinkedIn$/ }).click();
+    await page.getByRole("button", { name: /^Schedule$/ }).click();
 
     await expect(page.getByText(/Scheduled for/)).toBeVisible({ timeout: 8_000 });
     await expect(page.locator("main, [role=main]").first()).toBeVisible();

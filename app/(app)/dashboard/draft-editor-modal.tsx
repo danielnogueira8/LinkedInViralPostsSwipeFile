@@ -2573,7 +2573,7 @@ function ScheduleRow({
             title="Schedule this post to publish on LinkedIn at the selected time."
           >
             {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CalendarClock className="h-3.5 w-3.5" />}
-            {failed ? "Reschedule" : draft ? "Schedule on LinkedIn" : "Create & schedule on LinkedIn"}
+            {failed ? "Reschedule" : draft ? "Schedule" : "Create & schedule"}
           </Button>
         </div>
       </div>

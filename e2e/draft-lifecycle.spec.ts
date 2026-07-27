@@ -249,7 +249,7 @@ test.describe("Cowork draft lifecycle", () => {
         response.url().includes(`/api/drafts/${savePayload.artifact.id}/schedule`) &&
         response.request().method() === "POST",
     );
-    await dialog.getByRole("button", { name: /^Schedule on LinkedIn$/ }).click();
+    await dialog.getByRole("button", { name: /^Schedule$/ }).click();
     const scheduleResponse = await scheduleResponsePromise;
     expect(scheduleResponse.ok()).toBe(true);
 
