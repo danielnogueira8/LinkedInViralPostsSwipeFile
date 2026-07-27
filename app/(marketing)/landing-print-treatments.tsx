@@ -63,7 +63,7 @@ export function LandingPaperPanel() {
       />
       <div className="absolute inset-x-4 bottom-4 border border-paper-trail-ink/15 bg-paper-trail/90 px-4 py-3 backdrop-blur-sm sm:inset-x-6 sm:bottom-6">
         <p className="font-mono text-[10px] font-medium uppercase tracking-[0.16em] text-paper-trail-ink/65">
-          Swipe File / Paper trail
+          Swipe File
         </p>
       </div>
     </div>
