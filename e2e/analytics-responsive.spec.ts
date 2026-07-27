@@ -159,6 +159,17 @@ test("analytics overview stays usable on mobile and desktop", async ({ page }) =
   await expect(
     page.getByRole("heading", { name: "Post performance" }),
   ).toBeVisible();
+  await page
+    .locator(
+      '[aria-describedby="analytics-summary-engagement-rate-help"]',
+    )
+    .focus();
+  await expect(
+    page.locator("#analytics-summary-engagement-rate-help"),
+  ).toBeVisible();
+  await expect(
+    page.locator("#analytics-summary-engagement-rate-help"),
+  ).toContainText("Percentage of impressions");
 
   const search = page.getByRole("searchbox", { name: "Search posts" });
   const sort = page.getByRole("combobox", { name: "Sort posts" });
@@ -206,6 +217,23 @@ test("analytics overview stays usable on mobile and desktop", async ({ page }) =
     if (width < 768) {
       await expect(
         page.locator(`a[href="${exactPostHref}"]:visible`).first(),
+      ).toBeVisible();
+      await page
+        .locator(
+          '[aria-describedby="post-performance-mobile-engagement-rate-help-0"]',
+        )
+        .focus();
+      await expect(
+        page.locator("#post-performance-mobile-engagement-rate-help-0"),
+      ).toBeVisible();
+    } else {
+      await page
+        .locator(
+          '[aria-describedby="post-performance-table-engagement-rate-help"]',
+        )
+        .focus();
+      await expect(
+        page.locator("#post-performance-table-engagement-rate-help"),
       ).toBeVisible();
     }
 

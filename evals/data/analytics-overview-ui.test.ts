@@ -45,6 +45,12 @@ describe("analytics performance trend controls", () => {
     expect(html).toMatch(
       /aria-pressed="true"[^>]*>Impressions<\/button>/,
     );
+    expect(html).toContain(
+      "Percentage of impressions that resulted in an interaction.",
+    );
+    expect(html).toMatch(
+      /aria-describedby="analytics-trend-engagement-rate-help"/,
+    );
   });
 
   test("keeps the overview stable while daily history is still sparse", () => {
@@ -111,6 +117,10 @@ describe("analytics post performance", () => {
     expect(html).toContain("Most recent");
     expect(html).toContain("Engagement rate");
     expect(html).toContain("Saves + shares");
+    expect(html).toContain(
+      "Includes reactions, comments, shares, saves, and sends.",
+    );
+    expect(html).toContain('role="tooltip"');
     expect(html).toContain("md:block");
     expect(html).toContain("md:hidden");
     expect(html).toContain(

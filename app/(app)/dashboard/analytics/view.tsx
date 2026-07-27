@@ -6,6 +6,7 @@ import Link from "next/link";
 import {
   ArrowDownRight,
   ArrowUpRight,
+  CircleHelp,
   ExternalLink,
   Minus,
   RefreshCw,
@@ -45,6 +46,9 @@ export {
 } from "@/lib/analytics-view-model";
 
 export type AnalyticsEmptyState = "connect" | "awaiting_first_fetch" | "no_posts" | null;
+
+const ENGAGEMENT_RATE_HELP =
+  "Percentage of impressions that resulted in an interaction. Includes reactions, comments, shares, saves, and sends.";
 
 export function getAnalyticsEmptyState(opts: {
   linkedInConnected: boolean;
@@ -255,6 +259,7 @@ export function AnalyticsView({
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {[
           {
+            key: "impressions",
             label: filters.period === "all" ? "Lifetime impressions" : "Impressions",
             value: fmt(summary.impressions),
             comparison: formatComparison(
@@ -263,6 +268,7 @@ export function AnalyticsView({
             ),
           },
           {
+            key: "engagements",
             label: filters.period === "all" ? "Lifetime engagements" : "Engagements",
             value: fmt(summary.engagements),
             comparison: formatComparison(
@@ -271,7 +277,9 @@ export function AnalyticsView({
             ),
           },
           {
+            key: "engagement-rate",
             label: "Engagement rate",
+            help: true,
             value:
               summary.engagementRate === null
                 ? "—"
@@ -283,6 +291,7 @@ export function AnalyticsView({
             ),
           },
           {
+            key: "posts",
             label: filters.period === "all" ? "Tracked posts" : "Measured posts",
             value: fmt(summary.posts),
             comparison: formatComparison(
@@ -291,12 +300,18 @@ export function AnalyticsView({
             ),
           },
         ].map((t) => (
-          <div key={t.label} className="rounded-xl border border-border bg-card p-4">
+          <div key={t.key} className="rounded-xl border border-border bg-card p-4">
             <div className="text-2xl font-semibold tabular-nums text-foreground">
               {t.value}
             </div>
             <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
-              <span className="text-muted-foreground">{t.label}</span>
+              <span className="text-muted-foreground">
+                {t.help ? (
+                  <EngagementRateHelp id="analytics-summary-engagement-rate-help" />
+                ) : (
+                  t.label
+                )}
+              </span>
               {t.comparison && (
                 <span className="font-medium text-foreground">
                   {t.comparison} vs previous
@@ -353,6 +368,46 @@ function contentTypeLabel(contentType: PostMetricsRow["contentType"]): string {
 
 function fmtRate(value: number | null): string {
   return value === null ? "—" : `${value.toLocaleString("en-US")}%`;
+}
+
+function EngagementRateHelp({
+  id,
+  align = "left",
+}: {
+  id: string;
+  align?: "left" | "right";
+}) {
+  return (
+    <span className="relative inline-flex items-center gap-1">
+      <span>Engagement rate</span>
+      <span
+        role="img"
+        tabIndex={0}
+        aria-label="How engagement rate is calculated"
+        aria-describedby={id}
+        className={cn(
+          "peer inline-grid size-4 shrink-0 place-items-center rounded-full text-muted-foreground",
+          "hover:text-foreground focus-visible:text-foreground focus-visible:outline-none",
+          "focus-visible:ring-2 focus-visible:ring-ring/40",
+        )}
+      >
+        <CircleHelp className="size-3.5" aria-hidden="true" />
+      </span>
+      <span
+        id={id}
+        role="tooltip"
+        className={cn(
+          "pointer-events-none absolute top-full z-30 mt-1.5 w-64 rounded-lg border border-border",
+          "bg-popover px-2.5 py-2 text-left text-[11px] font-normal leading-4 text-popover-foreground shadow-md",
+          "opacity-0 transition-opacity peer-hover:opacity-100 peer-focus-visible:opacity-100",
+          "motion-reduce:transition-none",
+          align === "right" ? "right-0" : "left-0",
+        )}
+      >
+        {ENGAGEMENT_RATE_HELP}
+      </span>
+    </span>
+  );
 }
 
 export function PostPerformanceSection({
@@ -454,7 +509,10 @@ export function PostPerformanceSection({
                     Impressions
                   </th>
                   <th className="px-3 py-2.5 text-right font-medium">
-                    Engagement rate
+                    <EngagementRateHelp
+                      id="post-performance-table-engagement-rate-help"
+                      align="right"
+                    />
                   </th>
                   <th className="px-3 py-2.5 text-right font-medium">
                     Comments
@@ -510,16 +568,18 @@ export function PostPerformanceSection({
           </div>
 
           <div className="divide-y divide-border md:hidden">
-            {visiblePosts.map((post) => (
-              <Link
+            {visiblePosts.map((post, index) => (
+              <article
                 key={post.artifactId}
-                href={`/dashboard/posts?open=${encodeURIComponent(
-                  post.artifactId,
-                )}`}
-                className="block p-4 transition-colors hover:bg-accent/40"
+                className="p-4 transition-colors hover:bg-accent/40"
               >
-                <div className="flex min-w-0 items-start justify-between gap-3">
-                  <div className="min-w-0">
+                <Link
+                  href={`/dashboard/posts?open=${encodeURIComponent(
+                    post.artifactId,
+                  )}`}
+                  className="flex min-w-0 items-start justify-between gap-3"
+                >
+                  <div className="min-w-0 flex-1">
                     <p className="line-clamp-2 text-sm font-medium leading-5 text-foreground">
                       {post.title}
                     </p>
@@ -532,25 +592,45 @@ export function PostPerformanceSection({
                     aria-hidden="true"
                     className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground"
                   />
-                </div>
+                </Link>
                 <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3">
-                  {[
-                    ["Impressions", fmt(post.impressions)],
-                    ["Engagement rate", fmtRate(postEngagementRate(post))],
-                    ["Comments", fmt(post.comments)],
-                    ["Saves + shares", fmt(postSavesAndShares(post))],
-                  ].map(([label, value]) => (
-                    <div key={label}>
-                      <dt className="text-[11px] text-muted-foreground">
-                        {label}
-                      </dt>
-                      <dd className="mt-0.5 text-sm font-medium tabular-nums text-foreground">
-                        {value}
-                      </dd>
-                    </div>
-                  ))}
+                  <div>
+                    <dt className="text-[11px] text-muted-foreground">
+                      Impressions
+                    </dt>
+                    <dd className="mt-0.5 text-sm font-medium tabular-nums text-foreground">
+                      {fmt(post.impressions)}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-[11px] text-muted-foreground">
+                      <EngagementRateHelp
+                        id={`post-performance-mobile-engagement-rate-help-${index}`}
+                        align="right"
+                      />
+                    </dt>
+                    <dd className="mt-0.5 text-sm font-medium tabular-nums text-foreground">
+                      {fmtRate(postEngagementRate(post))}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-[11px] text-muted-foreground">
+                      Comments
+                    </dt>
+                    <dd className="mt-0.5 text-sm font-medium tabular-nums text-foreground">
+                      {fmt(post.comments)}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-[11px] text-muted-foreground">
+                      Saves + shares
+                    </dt>
+                    <dd className="mt-0.5 text-sm font-medium tabular-nums text-foreground">
+                      {fmt(postSavesAndShares(post))}
+                    </dd>
+                  </div>
                 </dl>
-              </Link>
+              </article>
             ))}
           </div>
         </>
@@ -620,6 +700,16 @@ export function PerformanceTrendCard({
               key={candidate.value}
               type="button"
               aria-pressed={metric === candidate.value}
+              aria-describedby={
+                candidate.value === "engagementRate"
+                  ? "analytics-trend-engagement-rate-help"
+                  : undefined
+              }
+              title={
+                candidate.value === "engagementRate"
+                  ? ENGAGEMENT_RATE_HELP
+                  : undefined
+              }
               onClick={() => setMetric(candidate.value)}
               className={cn(
                 "shrink-0 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors",
@@ -632,6 +722,9 @@ export function PerformanceTrendCard({
             </button>
           ))}
         </div>
+        <span id="analytics-trend-engagement-rate-help" className="sr-only">
+          {ENGAGEMENT_RATE_HELP}
+        </span>
       </div>
 
       {measuredTrend.length < 2 ? (
