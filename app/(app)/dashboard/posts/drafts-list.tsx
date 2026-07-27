@@ -15,7 +15,6 @@ import {
   ChevronRight,
   Paperclip,
   Link as LinkIcon,
-  Magnet,
   MoreHorizontal,
   Check,
   Trash2,
@@ -1490,7 +1489,14 @@ function DraftCard({
             {badge && (
               <span
                 className={cn("shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] font-medium", badge.cls)}
-                title={KIND_HELP[draft.kind]}
+                // A giveaway and the Lead Magnet kind are the same fact (a
+                // giveaway forces the kind), so there's no separate "Giveaway"
+                // pill — the resource name rides on this badge's tooltip.
+                title={
+                  draft.leadMagnet
+                    ? `Lead magnet giveaway: ${draft.leadMagnet.title}`
+                    : KIND_HELP[draft.kind]
+                }
               >
                 {badge.label}
               </span>
@@ -1529,15 +1535,6 @@ function DraftCard({
               <StatusPill tone="neutral" title={`${mediaCount} media attachment${mediaCount === 1 ? "" : "s"}`}>
                 <Paperclip className="h-3 w-3" aria-hidden />
                 {mediaCount}
-              </StatusPill>
-            )}
-            {draft.leadMagnet && (
-              <StatusPill
-                tone="brand"
-                title={`Lead magnet giveaway: ${draft.leadMagnet.title}`}
-              >
-                <Magnet className="h-3 w-3" aria-hidden />
-                Giveaway
               </StatusPill>
             )}
             {draft.sourceUrl && (
