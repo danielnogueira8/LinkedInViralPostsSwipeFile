@@ -296,6 +296,27 @@ describe("groupDraftsForBoard — filters", () => {
     const drafts = [draft({ id: "a" }), draft({ id: "b" })];
     expect(groupDraftsForBoard(drafts, "   ", "all").drafting.length).toBe(2);
   });
+
+  test("a 'post' row with a giveaway or lead-magnet body files under Lead magnets", () => {
+    // Legacy rows predate save-time classification (kind defaulted to 'post'),
+    // so the filter classifies on read — otherwise the Posts filter (and the
+    // editor's up/down walk) keeps serving lead magnets tagged 'post'.
+    const leadMagnetBody =
+      "I built a 40-page playbook. Comment GROWTH and I'll DM it to you.";
+    const drafts = [
+      draft({ id: "regular", kind: "post", body: "We cut churn 40%. Here's how." }),
+      draft({ id: "giveaway", kind: "post", leadMagnet: { title: "5 Prompts", selection: "auto" } }),
+      draft({ id: "legacy-lm", kind: "post", body: leadMagnetBody }),
+      draft({ id: "stored-lm", kind: "lead_magnet", body: "anything" }),
+      draft({ id: "hook", kind: "hook", body: leadMagnetBody }),
+    ];
+    expect(ids(groupDraftsForBoard(drafts, "", "post").drafting)).toEqual(["regular"]);
+    expect(ids(groupDraftsForBoard(drafts, "", "lead_magnet").drafting).sort()).toEqual(
+      ["giveaway", "legacy-lm", "stored-lm"],
+    );
+    // A hook is never promoted, even with a lead-magnet body.
+    expect(ids(groupDraftsForBoard(drafts, "", "hook").drafting)).toEqual(["hook"]);
+  });
 });
 
 describe("groupDraftsForBoard — sort within a column", () => {
