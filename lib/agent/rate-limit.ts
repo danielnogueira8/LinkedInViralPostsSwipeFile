@@ -26,7 +26,10 @@ import { selectAllRows } from "@/lib/db-paginate";
 //
 //   3. Monthly cost cap — sums usage_events.cost_usd for the workspace in the
 //      current calendar month. The hard money ceiling: per-workspace cost can
-//      never exceed this, which is what protects the plan margin.
+//      never exceed this by more than the small grace allowance
+//      (MONTHLY_GRACE_CREDITS, ~$0.25 at defaults), which lets a still-under-
+//      cap workspace finish the request it's on. A workspace already AT the
+//      cap starts nothing new.
 //
 // Both thresholds are env-configurable (CHAT_MONTHLY_BUDGET_USD etc.), so this
 // $5 default can be tuned per environment without a code change.
@@ -53,6 +56,25 @@ export const MONTHLY_BUDGET_USD = numEnv("CHAT_MONTHLY_BUDGET_USD", 5);
 // money ceiling and can bind first; getMonthlyUsage projects spend into the same
 // 1000-credit scale so the pill still fills accurately when cost is the limiter.
 export const MONTHLY_MESSAGE_LIMIT = numEnv("CHAT_MONTHLY_MESSAGE_LIMIT", 1000);
+
+// Grace overshoot, in pill credits: a workspace still UNDER the monthly cap may
+// finish the request it is on even when the reservation tips it past the
+// budget, up to this many credits over. Once usage is AT/OVER the cap, no new
+// AI work starts at all. Exists so a user at e.g. 979/1000 isn't blocked from
+// sending one more post just because the conservative per-turn estimate
+// (~10-50 credits) doesn't fit under the line.
+export const MONTHLY_GRACE_CREDITS = numEnv("CHAT_MONTHLY_GRACE_CREDITS", 50);
+
+// The grace expressed in dollars, on the same spend/budget × limit scale as
+// projectMonthlyUsage, so it tracks the env-configured budget and credit
+// limit. 0 when the cost cap is disabled.
+export function costCapGraceUsd(
+  budgetUsd: number = MONTHLY_BUDGET_USD,
+  limit: number = MONTHLY_MESSAGE_LIMIT,
+): number {
+  if (budgetUsd <= 0 || limit <= 0) return 0;
+  return (MONTHLY_GRACE_CREDITS / limit) * budgetUsd;
+}
 
 function numEnv(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -216,7 +238,11 @@ export async function claimChatTurn(
     // The COST cap, enforced atomically here with an in-flight reservation so
     // concurrent turns can't collectively overshoot the budget (the TOCTOU the
     // read-only checkChatRateLimit pre-check can't close). 0 disables it.
+    // p_grace_usd lets a still-under-cap workspace finish this turn even when
+    // the reservation tips it past the budget (migration 144); a workspace
+    // already AT the cap is still blocked.
     p_budget_usd: MONTHLY_BUDGET_USD,
+    p_grace_usd: costCapGraceUsd(),
     p_turn_cost_estimate: options.readOnlyOrchestrator
       ? Math.max(
           READ_ONLY_ORCHESTRATOR_COST_RESERVE_USD,
@@ -415,10 +441,15 @@ export function hasCostAllowanceForEstimate(
   spent: number,
   budgetUsd: number,
   estimatedExtraUsd: number,
+  graceUsd: number = 0,
 ): boolean {
   if (budgetUsd <= 0) return true;
   const extra = Math.max(0, estimatedExtraUsd);
-  return spent + extra <= budgetUsd;
+  // Already at/over the monthly cap: no new AI work, grace or not.
+  if (spent >= budgetUsd) return false;
+  // Under the cap: the request may go through even when its estimate tips the
+  // workspace past the budget, as long as the overshoot stays within grace.
+  return spent + extra <= budgetUsd + Math.max(0, graceUsd);
 }
 
 export async function getMonthlyUsage(
@@ -524,7 +555,7 @@ export async function checkChatCostAllowance(
       retryAfterSec: 30,
     };
   }
-  if (!hasCostAllowanceForEstimate(spent, MONTHLY_BUDGET_USD, estimatedExtraUsd)) {
+  if (!hasCostAllowanceForEstimate(spent, MONTHLY_BUDGET_USD, estimatedExtraUsd, costCapGraceUsd())) {
     return { ok: false, reason: "monthly", message: COST_CAP_MSG };
   }
   return { ok: true };
