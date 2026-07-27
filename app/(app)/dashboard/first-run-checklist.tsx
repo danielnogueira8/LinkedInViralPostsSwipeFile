@@ -58,11 +58,18 @@ export function FirstRunChecklist({ forceShow = false }: { forceShow?: boolean }
       .then((res) => res.json())
       .then((data) => {
         if (cancelled) return;
-        const next = data?.ok && data.items ? { ...DEFAULT_STATE, ...data.items } : DEFAULT_STATE;
+        // A parsed-but-failed response ({ok:false} or no items) is not a usable
+        // checklist — hide like a fetch failure rather than render a bogus
+        // "Setup 0/6" from the default state.
+        if (!data?.ok || !data.items) {
+          setState(forceShow ? "shown" : "hidden");
+          return;
+        }
+        const next = { ...DEFAULT_STATE, ...data.items };
         setItems(next);
         const allDone = Object.values(next).every(Boolean);
         // Auto-hide when dismissed or fully complete (unless forced for preview).
-        setState(!forceShow && (data?.dismissed || allDone) ? "hidden" : "shown");
+        setState(!forceShow && (data.dismissed || allDone) ? "hidden" : "shown");
       })
       .catch(() => {
         if (!cancelled) setState(forceShow ? "shown" : "hidden");

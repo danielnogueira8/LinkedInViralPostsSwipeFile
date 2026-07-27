@@ -311,7 +311,7 @@ export async function BookmarksView({ searchParams }: { searchParams: SP }) {
               </div>
               <HorizontalCategoryRail>
                   <FilterChip href={hrefFor(sp, { category: undefined })} active={!sp.category}>
-                    All <span className="ml-1 text-[10px] opacity-60">{categories.length}</span>
+                    All
                   </FilterChip>
                   {categories.map((c) => (
                     <FilterChip

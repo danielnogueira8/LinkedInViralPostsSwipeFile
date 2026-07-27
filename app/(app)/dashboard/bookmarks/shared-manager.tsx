@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { fetchJson } from "@/lib/api-fetch";
@@ -128,6 +128,33 @@ export function SharedBookmarksManager({
 
   const pendingIncomingCount = incoming.length;
 
+  // The full incoming list only loads when the dialog opens, so the trigger
+  // badge would never render without this: seed it from the pending-count
+  // endpoint on mount (same POST the nav badge uses — it also claims
+  // email-matched invites). Once the real list is loaded it takes over.
+  const [pendingCountSeed, setPendingCountSeed] = useState<number | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetchJson<{ ok: boolean; count?: number }>(
+      "/api/shared-bookmarks/pending-count",
+      { method: "POST" },
+    )
+      .then((data) => {
+        if (!cancelled && data.ok && typeof data.count === "number") {
+          setPendingCountSeed(data.count);
+        }
+      })
+      .catch(() => {
+        /* badge stays hidden — the dialog still loads the list on open */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const pendingBadgeCount = loaded
+    ? pendingIncomingCount
+    : (pendingCountSeed ?? pendingIncomingCount);
+
   async function invite(e: React.FormEvent) {
     e.preventDefault();
     const recipient = email.trim();
@@ -219,12 +246,12 @@ export function SharedBookmarksManager({
         className="inline-flex items-center gap-1.5 relative"
       >
         <Share2 className="h-3.5 w-3.5" /> Share
-        {pendingIncomingCount > 0 && (
+        {pendingBadgeCount > 0 && (
           <span
             className="absolute -top-1 -right-1 h-4 min-w-4 px-1 rounded-full bg-primary text-background text-[10px] font-semibold inline-flex items-center justify-center"
-            aria-label={`${pendingIncomingCount} pending invite${pendingIncomingCount === 1 ? "" : "s"}`}
+            aria-label={`${pendingBadgeCount} pending invite${pendingBadgeCount === 1 ? "" : "s"}`}
           >
-            {pendingIncomingCount}
+            {pendingBadgeCount}
           </span>
         )}
       </Button>

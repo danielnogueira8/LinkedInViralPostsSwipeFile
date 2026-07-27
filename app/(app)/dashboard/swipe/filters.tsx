@@ -90,6 +90,21 @@ export function SwipeFilters() {
   const [qSeed, setQSeed] = useState(snap.q);
   const qLastCommitted = useRef(snap.q);
   const qDebounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Last-committed full query string, same idea as qLastCommitted above but
+  // for update(): router.replace is deferred through startTransition, so
+  // snap.raw still shows the OLD url when a second filter commits right after
+  // the first (e.g. min-likes blur-commit immediately followed by a sort
+  // change). Building `next` from this ref — instead of the render-time
+  // snapshot — keeps the second commit from dropping the first's param.
+  const rawLastCommitted = useRef(snap.raw.toString());
+  useEffect(() => {
+    // External URL change (browser back / Reset link / elsewhere): reseed so
+    // the next update() builds on what the URL actually shows. Our own commits
+    // land with exactly the string we stored, so this is a no-op for those.
+    if (snap.raw.toString() !== rawLastCommitted.current) {
+      rawLastCommitted.current = snap.raw.toString();
+    }
+  }, [snap.raw]);
   // Reading qLastCommitted.current during render is intentional: it lets us
   // tell our *own* debounced URL write (which round-trips back through
   // useSearchParams) apart from an external change (browser back / Reset),
@@ -114,7 +129,7 @@ export function SwipeFilters() {
   }, []);
 
   function update(patch: Record<string, string | null>) {
-    const next = new URLSearchParams(snap.raw.toString());
+    const next = new URLSearchParams(rawLastCommitted.current);
     for (const [k, v] of Object.entries(patch)) {
       if (
         v === null ||
@@ -130,6 +145,7 @@ export function SwipeFilters() {
       }
     }
     const qs = next.toString();
+    rawLastCommitted.current = qs;
     // `replace` (not push) — filter toggles shouldn't pile up in browser history.
     // `scroll: false` — keep the user's scroll position when results re-render.
     startTransition(() => {
@@ -182,6 +198,7 @@ export function SwipeFilters() {
       const params = new URLSearchParams();
       if (snap.category) params.set("category", snap.category);
       const qs = params.toString();
+      rawLastCommitted.current = qs;
       router.replace(qs ? `/dashboard/swipe?${qs}` : "/dashboard/swipe", {
         scroll: false,
       });

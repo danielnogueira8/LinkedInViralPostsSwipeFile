@@ -381,8 +381,10 @@ function ProfileCard({
   const name = row.display_name?.trim() || prettifyHandle(row.linkedin_handle);
   const initials = initialsOf(name);
   // LinkedIn CDN URLs can expire; fall back to the initials avatar on error.
-  const [avatarBroken, setAvatarBroken] = useState(false);
-  const showAvatar = Boolean(row.avatar_url) && !avatarBroken;
+  // Track which URL broke so a fresh avatar_url (e.g. after regenerate) resets
+  // the fallback instead of staying stuck on initials.
+  const [brokenAvatarUrl, setBrokenAvatarUrl] = useState<string | null>(null);
+  const showAvatar = Boolean(row.avatar_url) && brokenAvatarUrl !== row.avatar_url;
 
   return (
     <Card className="overflow-hidden border-border/70 bg-card/90 shadow-soft">
@@ -395,7 +397,7 @@ function ProfileCard({
                 <img
                   src={row.avatar_url as string}
                   alt={name}
-                  onError={() => setAvatarBroken(true)}
+                  onError={() => setBrokenAvatarUrl(row.avatar_url)}
                 className="h-20 w-20 rounded-2xl border border-border/70 object-cover bg-muted"
               />
             ) : (

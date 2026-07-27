@@ -124,6 +124,10 @@ export function CommandPalette({ defaultOpen = false }: { defaultOpen?: boolean 
             runActive();
           } else if (e.key === "Tab") {
             // Focus trap: cycle within the dialog (input + option buttons).
+            // The option buttons are tabIndex={-1} — arrow keys own selection —
+            // so the browser can't Tab to them on its own and plain Tab from
+            // the input would escape the modal to the page behind it. Wrap
+            // manually in both directions: input ↔ last option.
             const root = dialogRef.current;
             if (!root) return;
             const focusables = Array.from(
@@ -132,7 +136,7 @@ export function CommandPalette({ defaultOpen = false }: { defaultOpen?: boolean 
             const first = focusables[0];
             const last = focusables[focusables.length - 1];
             if (!first || !last) return;
-            if (e.shiftKey && document.activeElement === first) {
+            if (document.activeElement === first) {
               e.preventDefault();
               last.focus();
             } else if (!e.shiftKey && document.activeElement === last) {

@@ -26,6 +26,6 @@ export const MOBILE_MORE_SECTIONS = [
   },
   {
     label: "Measure & manage",
-    paths: ["/dashboard/analytics", "/dashboard/settings"],
+    paths: ["/dashboard/analytics", "/dashboard/integrations", "/dashboard/settings"],
   },
 ] as const;

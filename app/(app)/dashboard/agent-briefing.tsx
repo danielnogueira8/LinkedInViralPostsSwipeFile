@@ -233,7 +233,9 @@ export function AgentBriefing() {
   const [actionError, setActionError] = useState<string | null>(null);
   // One durable Monday–Sunday plan is loaded automatically for this workspace.
   const [weekPlan, setWeekPlan] = useState<WeekPlan | null>(null);
-  const [planLoading, setPlanLoading] = useState(false);
+  // Starts true: the initial plan load fires a tick after mount, and we want
+  // the loading copy (not "0 slots") on the very first paint.
+  const [planLoading, setPlanLoading] = useState(true);
   const [weekPlanError, setWeekPlanError] = useState<string | null>(null);
   const [requiredInputItemId, setRequiredInputItemId] = useState<string | null>(null);
   const [requiredInputContext, setRequiredInputContext] = useState("");
@@ -721,6 +723,12 @@ export function AgentBriefing() {
                         See Draft
                         <ChevronRight className="h-3 w-3" aria-hidden />
                       </Link>
+                    ) : item.status === "drafted" ? (
+                      // Marked drafted but the draft row is gone (deleted on the
+                      // board) — explain instead of a dead "See Draft" button.
+                      <p className="w-full px-2 py-2 text-center text-[11px] font-medium text-muted-foreground">
+                        Draft was removed
+                      </p>
                     ) : (
                       <button
                         type="button"
@@ -751,11 +759,9 @@ export function AgentBriefing() {
                         {busy ? (
                           <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
                         ) : null}
-                        {item.status === "drafted"
-                          ? "See Draft"
-                          : item.status === "dismissed"
-                            ? "Skipped"
-                            : item.kind === "opportunity"
+                        {item.status === "dismissed"
+                          ? "Skipped"
+                          : item.kind === "opportunity"
                               ? item.opportunity?.is_lead_magnet
                                 ? readiness.ready
                                   ? "Draft this"

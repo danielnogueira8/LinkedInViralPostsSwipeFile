@@ -961,7 +961,13 @@ function AskPrompt({
   useEffect(() => {
     inputRef.current?.focus();
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key !== "Escape") return;
+      // CAPTURE phase + stopPropagation: the dialog's own Escape dismiss
+      // (Base UI useDismiss) listens on document in the BUBBLE phase and
+      // ignores defaultPrevented, so a plain bubble listener here would close
+      // the prompt AND the whole editor dialog on one keypress.
+      e.stopPropagation();
+      onClose();
     };
     // Dismiss on a click anywhere outside the prompt. Escape alone left the box
     // stranded over the draft when the user simply clicked away — the usual way
@@ -975,10 +981,10 @@ function AskPrompt({
     const onDown = (e: MouseEvent) => {
       if (!boxRef.current?.contains(e.target as Node)) onClose();
     };
-    document.addEventListener("keydown", onKey);
+    document.addEventListener("keydown", onKey, true);
     document.addEventListener("mousedown", onDown);
     return () => {
-      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("keydown", onKey, true);
       document.removeEventListener("mousedown", onDown);
     };
   }, [onClose]);
@@ -1078,13 +1084,21 @@ function EmojiPicker({
       if (ref.current && !ref.current.contains(e.target as Node)) onClose();
     }
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
+      if (e.key !== "Escape") return;
+      // CAPTURE phase + stopPropagation: the dialog's own Escape dismiss
+      // (Base UI useDismiss) listens on document in the BUBBLE phase and
+      // ignores defaultPrevented, so a plain bubble listener here would close
+      // the picker AND the whole editor dialog on one keypress. Focus stays on
+      // the textarea while the picker is open, so an element-level handler
+      // can't intercept it — the picker isn't an ancestor of the textarea.
+      e.stopPropagation();
+      onClose();
     }
     document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
+    document.addEventListener("keydown", onKey, true);
     return () => {
       document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("keydown", onKey, true);
     };
   }, [onClose]);
 

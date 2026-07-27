@@ -572,9 +572,7 @@ function LeadMagnetCard({
           variant="ghost"
           size="sm"
           onClick={async () => {
-            await copyToClipboard(publicUrl);
-            markCopied();
-            toast.success("Public link copied");
+            if (await copyToClipboard(publicUrl, "Public link copied")) markCopied();
           }}
         >
           {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />} Copy link
@@ -1277,8 +1275,7 @@ function LeadMagnetPreview({
           variant="outline"
           size="sm"
           onClick={async () => {
-            await copyToClipboard(publicUrl);
-            toast.success("Public link copied");
+            await copyToClipboard(publicUrl, "Public link copied");
           }}
         >
           <Copy className="h-4 w-4" /> Copy public link

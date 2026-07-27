@@ -1257,6 +1257,19 @@ export function ChatWorkspace({
     writeDraft(activeIdRef.current, input);
   }, [draftStoreReady, input]);
 
+  // Stash the CURRENT chat's unsent composer text into its draft slot. Call
+  // this before any batched setInput("") + setActiveId(...) switch: the swap
+  // block above writes the leaving chat's `input` during the NEXT render, and
+  // by then the state is already "" — which REMOVES the slot (blank drafts are
+  // deleted), silently destroying the draft. Callers must also mark the swap
+  // done (setDraftActiveId) so the skipped swap can't overwrite the stash.
+  // Reads the live DOM value (refs only) so long-lived closures can't capture
+  // a stale `input`.
+  const stashComposerDraft = useCallback(() => {
+    const id = activeIdRef.current;
+    writeDraft(id, inputRef.current?.value ?? readDraft(id));
+  }, []);
+
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
       const width = readDraftPanelWidth();
@@ -1675,6 +1688,11 @@ export function ChatWorkspace({
     (async () => {
       try {
         const previousActiveId = activeId;
+        // Stash the leaving chat's unsent draft BEFORE clearing the composer,
+        // and mark the draft-swap done — otherwise the batched switch below
+        // writes the just-cleared "" over it (blank REMOVES the saved slot).
+        stashComposerDraft();
+        setDraftActiveId(null);
         // A model-source handoff should always land on a fresh Cowork chat. On
         // soft navigations the server may pass initialChatId=null, but this
         // mounted client component keeps its old activeId unless we clear it.
@@ -1814,6 +1832,11 @@ export function ChatWorkspace({
       /* eslint-disable react-hooks/set-state-in-effect */
       preserveCommandOnNextChatChangeRef.current =
         activeId === null ? undefined : null;
+      // Stash the leaving chat's unsent draft BEFORE clearing the composer,
+      // and mark the draft-swap done — otherwise the batched switch below
+      // writes the just-cleared "" over it (blank REMOVES the saved slot).
+      stashComposerDraft();
+      setDraftActiveId(null);
       setActiveId(null);
       setInput("");
       setModelSource(null);
@@ -2099,6 +2122,11 @@ export function ChatWorkspace({
   // (A running chat keeps streaming in the background — switching away doesn't
   // abort it.)
   const newChat = useCallback(async () => {
+    // Stash the leaving chat's unsent draft BEFORE clearing the composer, and
+    // mark the draft-swap done so the batched switch below can't write the
+    // just-cleared "" over it (blank text REMOVES the saved slot).
+    stashComposerDraft();
+    setDraftActiveId(null);
     setInput("");
     enterCreateCommand();
     // Starting a session transitions through the temporary null owner and then
@@ -2182,7 +2210,7 @@ export function ChatWorkspace({
         pendingNewChatRef.current = null;
       }
     }
-  }, [enterCreateCommand, setActiveId, setAttachments, chatSession]);
+  }, [enterCreateCommand, setActiveId, setAttachments, chatSession, stashComposerDraft]);
 
   // Fire-and-forget AI titling for a chat whose title is still the default.
   // One cheap GLM-5.2 call (server-side, cost-logged); updates the local title
@@ -2505,10 +2533,28 @@ export function ChatWorkspace({
           // which this early-return never reaches. Drop the dedupe record so an
           // immediate retry of the same text isn't swallowed.
           if (attached) setModelSource(attached);
-          if (files.length) setAttachments(files);
-          if (turnPostFormat) setPendingPostFormat(turnPostFormat);
-          if (turnLeadMagnet) setPendingLeadMagnet(turnLeadMagnet);
-          if (turnCreatorStyle) setPendingCreatorStyle(turnCreatorStyle);
+          // Merge rather than replace (same reasoning as the pre-stream failure
+          // restore below): the user may have attached new files or made new
+          // picks while chat creation was in flight.
+          if (files.length) {
+            setAttachments((cur) => {
+              const seen = new Set(
+                cur.map((a) => `${a.kind}:${a.filename}:${a.size}`),
+              );
+              return [
+                ...cur,
+                ...files.filter(
+                  (f) => !seen.has(`${f.kind}:${f.filename}:${f.size}`),
+                ),
+              ];
+            });
+          }
+          if (turnPostFormat)
+            setPendingPostFormat((cur) => cur ?? turnPostFormat);
+          if (turnLeadMagnet)
+            setPendingLeadMagnet((cur) => cur ?? turnLeadMagnet);
+          if (turnCreatorStyle)
+            setPendingCreatorStyle((cur) => cur ?? turnCreatorStyle);
           chatSession.clearLastSend(lockKey);
           toast.error((e as Error).message);
           return;
@@ -3013,11 +3059,37 @@ export function ChatWorkspace({
           // Composer accessories are not keyed by chat, so restoring them while
           // another session is active would overwrite that session's choices.
           if (failedChatIsActive && activeComposerIsEmpty) {
-            if (files.length) setAttachments(files);
-            if (turnSkills.length) setPendingSkills(turnSkills);
-            if (turnPostFormat) setPendingPostFormat(turnPostFormat);
-            if (turnLeadMagnet) setPendingLeadMagnet(turnLeadMagnet);
-            if (turnCreatorStyle) setPendingCreatorStyle(turnCreatorStyle);
+            // Merge, don't REPLACE: the request was in flight for a whole
+            // round-trip before failing, and the user may have attached a new
+            // file or made new picks in that window — a blind restore would
+            // silently wipe those. List kinds merge with dedupe; single-pick
+            // kinds fill only an untouched (empty) slot. When the user touched
+            // nothing this is the same full restore as before.
+            if (files.length) {
+              setAttachments((cur) => {
+                const seen = new Set(
+                  cur.map((a) => `${a.kind}:${a.filename}:${a.size}`),
+                );
+                return [
+                  ...cur,
+                  ...files.filter(
+                    (f) => !seen.has(`${f.kind}:${f.filename}:${f.size}`),
+                  ),
+                ];
+              });
+            }
+            if (turnSkills.length) {
+              setPendingSkills((cur) => {
+                const seen = new Set(cur.map((s) => s.id));
+                return [...cur, ...turnSkills.filter((s) => !seen.has(s.id))];
+              });
+            }
+            if (turnPostFormat)
+              setPendingPostFormat((cur) => cur ?? turnPostFormat);
+            if (turnLeadMagnet)
+              setPendingLeadMagnet((cur) => cur ?? turnLeadMagnet);
+            if (turnCreatorStyle)
+              setPendingCreatorStyle((cur) => cur ?? turnCreatorStyle);
             if (turnStarterId) {
               writeComposerDraft(chatId, { text, starterId: turnStarterId });
             }
@@ -3555,6 +3627,10 @@ export function ChatWorkspace({
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    // IME composition (Japanese/Chinese/Korean input): Enter confirms a
+    // candidate rather than submitting, but the keydown still fires — let the
+    // IME consume every keystroke until the composition commits.
+    if (e.nativeEvent.isComposing) return;
     // Slash-menu navigation takes precedence while it's open.
     if (slashOpen) {
       if (e.key === "ArrowDown") {
@@ -6042,6 +6118,8 @@ function AskCard({
           placeholder="Or type your own answer…"
           className="mt-2 w-full rounded-xl border border-border bg-white px-3 py-2 text-sm outline-none focus:border-primary/40 focus:ring-2 focus:ring-primary/15"
           onKeyDown={(e) => {
+            // Enter during IME composition confirms a candidate, not the answer.
+            if (e.nativeEvent.isComposing) return;
             if (e.key === "Enter" && selectionComplete) {
               e.preventDefault();
               submit();

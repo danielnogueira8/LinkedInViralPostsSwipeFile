@@ -988,7 +988,13 @@ export function DraftEditorModal({
 
                 {mode === "edit" ? (
                   <div className="rounded-xl border border-border bg-card/90 p-3 shadow-soft">
+                    {/* Keyed by draft id: the editor holds per-post local state
+                        (undo/redo historyRef, emoji/Ask-AI popovers). Without a
+                        key, prev/next navigation reuses the same instance and
+                        ⌘Z on the new post would restore the PREVIOUS post's
+                        text. Same pattern as PostOutcomes below. */}
                     <DraftEditor
+                      key={draft?.id ?? "new"}
                       value={body}
                       onChange={setBody}
                       onMediaFiles={addMediaFiles}
@@ -1193,7 +1199,11 @@ export function DraftEditorModal({
                 />
 
                 {!isNew && draft && draft.kind === "lead_magnet" && (
-                  <LeadSharkPanel draftId={draft.id} />
+                  // Keyed on draft id so the automation form/enabled/saved state
+                  // can't leak into the next post on prev/next navigation —
+                  // load() only SETS state when data exists, so an unkeyed panel
+                  // would keep (and PUT) the previous post's config.
+                  <LeadSharkPanel key={draft.id} draftId={draft.id} />
                 )}
 
                 {!isNew &&
@@ -1212,7 +1222,13 @@ export function DraftEditorModal({
                   onRemove={removeMedia}
                 />
 
-                {!isNew && draft && <PostFeedbackMemory draft={draft} body={body} />}
+                {!isNew && draft && (
+                  // Keyed on draft id: feedback chips/note/saved state are local
+                  // and would otherwise survive prev/next navigation, letting
+                  // "Save feedback" POST the previous post's feedback against
+                  // this draft's id.
+                  <PostFeedbackMemory key={draft.id} draft={draft} body={body} />
+                )}
               </div>
             </aside>
           </div>

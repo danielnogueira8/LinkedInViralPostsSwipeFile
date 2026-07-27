@@ -378,9 +378,15 @@ export function DraftsList({
   useEffect(() => {
     if (!openParam) return;
     if (openedDeepLinkRef.current === openParam) return;
+    // Drop ?open= from the URL without a navigation/scroll jump.
+    const stripOpenParam = () => {
+      const next = new URLSearchParams(searchParams);
+      next.delete("open");
+      const qs = next.toString();
+      router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+    };
     // Wait until the target draft is in the list (it may arrive via the
-    // mergeServerDrafts sync a tick after mount). If it never shows, we still
-    // clear the param below so the URL doesn't stay dirty.
+    // mergeServerDrafts sync a tick after mount).
     const exists = drafts.some((d) => d.id === openParam);
     if (exists) {
       openedDeepLinkRef.current = openParam;
@@ -390,12 +396,15 @@ export function DraftsList({
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setEditingId(openParam);
       setEditorOpen(true);
-      // Drop ?open= from the URL without a navigation/scroll jump.
-      const next = new URLSearchParams(searchParams);
-      next.delete("open");
-      const qs = next.toString();
-      router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+      stripOpenParam();
+      return;
     }
+    // If it never shows (stale/typo'd link), still clear the param so the URL
+    // doesn't stay dirty — but only after a bounded wait: the effect re-runs
+    // on every drafts change and resets the timer, so a late-arriving draft
+    // always wins the race.
+    const stale = window.setTimeout(stripOpenParam, 5000);
+    return () => window.clearTimeout(stale);
   }, [openParam, drafts, pathname, router, searchParams]);
 
   const remove = async (id: string) => {
@@ -409,6 +418,9 @@ export function DraftsList({
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || "Failed to delete");
       toast.success("Post removed");
+      // The posting-queue widget polls only every 60s; nudge it so a deleted
+      // queued post disappears now instead of lingering as a phantom entry.
+      window.dispatchEvent(new Event("posting-queue-updated"));
     } catch (e) {
       setDrafts((cur) => reinsertById(cur, removed)); // roll back, reconciled
       toast.error((e as Error).message);
@@ -464,6 +476,8 @@ export function DraftsList({
           return next;
         });
         if (editingId && deleted.includes(editingId)) setEditorOpen(false);
+        // Same nudge as single delete: drop phantom queue entries at once.
+        window.dispatchEvent(new Event("posting-queue-updated"));
       }
       if (failed > 0) {
         toast.error(
@@ -1309,6 +1323,10 @@ function DraftCard({
         onOpen();
       }}
       onKeyDown={(e) => {
+        // Only when the card itself is focused: Enter/Space on descendant
+        // buttons (status-dot toggle, "Move to" menuitems) bubbles here and
+        // the preventDefault would cancel their native click activation.
+        if (e.target !== e.currentTarget) return;
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
           onOpen();
@@ -1343,7 +1361,12 @@ function DraftCard({
       title={`Open post. ${STATUS_HELP[column]}`}
     >
       {/* "Move to" menu — the keyboard/touch alternative to drag-and-drop.
-          Visible on hover, on card focus, and while its trigger is focused. */}
+          Visible on hover, on card focus, and while its trigger is focused.
+          Hidden in the Scheduled lane: boardColumnForDraft lets scheduleStatus
+          win over status, so a pipeline move would toast success while the
+          card stays put (and the cron still publishes it) — drag-and-drop
+          already refuses scheduled cards for the same reason. */}
+      {column !== "scheduled" && (
       <div className="absolute right-2 top-2">
         <button
           ref={moveTriggerRef}
@@ -1401,6 +1424,7 @@ function DraftCard({
           </>
         )}
       </div>
+      )}
       <div className="flex items-start gap-2.5">
         {/* The status dot doubles as the multi-select affordance: hover reveals
             the checkbox ring, selected turns it into a check. */}

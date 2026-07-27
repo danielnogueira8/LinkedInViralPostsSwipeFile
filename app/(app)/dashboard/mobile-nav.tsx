@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useState, useTransition, useCallback } from "react";
 import { MoreHorizontal, X } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -25,6 +25,7 @@ const MORE = MOBILE_MORE_SECTIONS.flatMap((section) =>
 
 export function MobileNav({ badges: initialBadges }: { badges?: Record<string, number> }) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const router = useRouter();
   const badges = useNavBadges(initialBadges);
   const [isPending, startTransition] = useTransition();
@@ -55,18 +56,36 @@ export function MobileNav({ badges: initialBadges }: { badges?: Record<string, n
     [pathname, router],
   );
 
-  if (pendingHref && pendingHref === pathname && !isPending) {
+  // Once the transition settles, clear the optimistic highlight — whether the
+  // URL caught up (success), redirected (Bookmarks lands on
+  // /dashboard/swipe?tab=bookmarks, never matching pendingHref), or the push
+  // failed, so a stale highlight never sticks on the wrong item.
+  if (pendingHref && !isPending) {
+    // setState in render is fine when guarded; avoids an extra effect tick.
     setPendingHref(null);
   }
 
   const effectivePath = pendingHref ?? pathname;
 
+  // Bookmarks is a view of the Swipe File: /dashboard/bookmarks redirects to
+  // /dashboard/swipe?tab=bookmarks, so after settling its path is Swipe's and
+  // only the tab param tells the two destinations apart. While a navigation is
+  // pending, the pending target decides instead.
+  const bookmarksActive = pendingHref
+    ? pendingHref === "/dashboard/bookmarks"
+    : pathname === "/dashboard/swipe" && searchParams.get("tab") === "bookmarks";
+
   const isActive = useCallback(
-    (href: string) =>
-      href === "/dashboard"
+    (href: string) => {
+      if (href === "/dashboard/bookmarks") return bookmarksActive;
+      if (href === "/dashboard/swipe") {
+        return effectivePath.startsWith(href) && !bookmarksActive;
+      }
+      return href === "/dashboard"
         ? effectivePath === "/dashboard"
-        : effectivePath.startsWith(href),
-    [effectivePath],
+        : effectivePath.startsWith(href);
+    },
+    [effectivePath, bookmarksActive],
   );
 
   // Sum of badges that live on items hidden behind "More" — surfaced on the

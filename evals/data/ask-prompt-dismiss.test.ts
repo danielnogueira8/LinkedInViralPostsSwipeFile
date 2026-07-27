@@ -26,7 +26,14 @@ describe("the Ask-AI prompt dismisses on an outside click", () => {
   });
 
   test("Escape still works — the new path is additive", () => {
-    expect(askPrompt).toMatch(/e\.key === "Escape"/);
+    // The handler early-returns for non-Escape keys (the inverted form of the
+    // old `e.key === "Escape"` check), stops propagation so the editor dialog's
+    // own Escape dismiss can't fire on the same keypress, and listens in the
+    // CAPTURE phase because Base UI's useDismiss listens on document in the
+    // bubble phase and ignores defaultPrevented.
+    expect(askPrompt).toMatch(/e\.key !== "Escape"\) return;/);
+    expect(askPrompt).toMatch(/e\.stopPropagation\(\)/);
+    expect(askPrompt).toMatch(/addEventListener\("keydown", onKey, true\)/);
     expect(askPrompt).toMatch(/removeEventListener\("keydown"/);
   });
 });
