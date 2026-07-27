@@ -5,6 +5,7 @@ import {
   mergeServerDrafts,
   boardColumnForDraft,
   adjacentDraftIds,
+  editorNavigationDrafts,
   COLUMN_PREVIEW_COUNT,
   type Draft,
 } from "@/app/(app)/dashboard/posts/drafts-list";
@@ -87,6 +88,83 @@ describe("adjacentDraftIds — edit-dialog navigation", () => {
   test("does not navigate when there is no current board post", () => {
     expect(adjacentDraftIds(drafts, null)).toEqual({ previousId: null, nextId: null });
     expect(adjacentDraftIds(drafts, "removed")).toEqual({ previousId: null, nextId: null });
+  });
+});
+
+describe("editorNavigationDrafts — the posts the editor's up/down arrows walk", () => {
+  const drafts = [
+    draft({ id: "drafting-1", status: "drafting" }),
+    draft({ id: "posted-1", status: "posted" }),
+    draft({ id: "drafting-2", status: "drafting" }),
+    draft({ id: "posted-2", status: "posted" }),
+  ];
+  const nav = (over: Partial<Parameters<typeof editorNavigationDrafts>[0]>) =>
+    editorNavigationDrafts({
+      view: "board",
+      drafts,
+      editingId: "drafting-1",
+      query: "",
+      kindFilter: "all",
+      ...over,
+    });
+
+  test("board view: stays inside the open post's OWN column", () => {
+    // The bug: arrows walked the raw drafts array, hopping a Drafting post
+    // straight into Posted.
+    expect(ids(nav({}))).toEqual(["drafting-1", "drafting-2"]);
+    expect(ids(nav({ editingId: "posted-2" }))).toEqual(["posted-1", "posted-2"]);
+  });
+
+  test("board view: column order follows the shown order (planned date, then recency)", () => {
+    const planned = [
+      draft({ id: "later", status: "drafting", planToPostOn: "2026-07-10" }),
+      draft({ id: "sooner", status: "drafting", planToPostOn: "2026-07-01" }),
+      draft({ id: "undated", status: "drafting" }),
+    ];
+    expect(
+      ids(
+        editorNavigationDrafts({
+          view: "board",
+          drafts: planned,
+          editingId: "undated",
+          query: "",
+          kindFilter: "all",
+        }),
+      ),
+    ).toEqual(["sooner", "later", "undated"]);
+  });
+
+  test("board view: honors the search/kind filter (never lands on a hidden post)", () => {
+    const mixed = [
+      draft({ id: "keep", status: "drafting", body: "launch recap" }),
+      draft({ id: "hidden", status: "drafting", body: "unrelated" }),
+    ];
+    expect(
+      ids(
+        editorNavigationDrafts({
+          view: "board",
+          drafts: mixed,
+          editingId: "keep",
+          query: "launch",
+          kindFilter: "all",
+        }),
+      ),
+    ).toEqual(["keep"]);
+  });
+
+  test("board view: open post missing or filtered out → nothing to walk", () => {
+    expect(ids(nav({ query: "no-such-post" }))).toEqual([]);
+    expect(ids(nav({ editingId: null }))).toEqual([]);
+  });
+
+  test("calendar view: walks every filtered post in pipeline order", () => {
+    // The calendar mixes statuses by day, so there is no single lane to stay in.
+    expect(ids(nav({ view: "calendar" }))).toEqual([
+      "drafting-1",
+      "drafting-2",
+      "posted-1",
+      "posted-2",
+    ]);
   });
 });
 

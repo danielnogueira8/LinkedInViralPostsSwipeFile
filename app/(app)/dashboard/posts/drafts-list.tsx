@@ -154,6 +154,28 @@ export function boardColumnForDraft(draft: Draft): BoardColumnId {
   return draft.status;
 }
 
+// The posts the editor's up/down arrows move through. Board view: ONLY the
+// posts in the open draft's own column, in the column's shown order — the
+// arrows walk the lane you're looking at and never hop a Drafting post into
+// Posted. Calendar view: every visible post in pipeline order (the calendar
+// mixes statuses by day, so there is no single lane to stay in). Both honor
+// the search/kind filter so navigation can't land on a hidden post.
+export function editorNavigationDrafts(input: {
+  view: "board" | "calendar";
+  drafts: Draft[];
+  editingId: string | null;
+  query: string;
+  kindFilter: "all" | DraftKind;
+}): Draft[] {
+  const groups = groupDraftsForBoard(input.drafts, input.query, input.kindFilter);
+  if (input.view === "calendar") {
+    return (Object.keys(groups) as BoardColumnId[]).flatMap((c) => groups[c]);
+  }
+  const editing = input.drafts.find((d) => d.id === input.editingId);
+  if (!editing) return [];
+  return groups[boardColumnForDraft(editing)];
+}
+
 // ---------------------------------------------------------------------------
 // Calendar-view helpers (pure + exported so the month math is unit-tested).
 // ---------------------------------------------------------------------------
@@ -538,10 +560,15 @@ export function DraftsList({
   // The live draft for the open drawer, derived from `drafts` by id (so meta
   // edits reflect instantly). null when creating a new post.
   const editing = editingId ? drafts.find((d) => d.id === editingId) ?? null : null;
-  // Keep editor navigation in the board's canonical draft order. This does not
-  // depend on which columns happen to be expanded, so moving between posts does
-  // not unexpectedly stop at a collapsed column boundary.
-  const { previousId, nextId } = adjacentDraftIds(drafts, editingId);
+  // Prev/next walk the VISIBLE grouping, not the raw drafts array: on the board
+  // that's the open post's own column (in shown order), so the arrows can never
+  // hop lanes (a Drafting post straight into Posted); on the calendar it's the
+  // filtered list in pipeline order. See editorNavigationDrafts.
+  const navDrafts = useMemo(
+    () => editorNavigationDrafts({ view, drafts, editingId, query, kindFilter }),
+    [view, drafts, editingId, query, kindFilter],
+  );
+  const { previousId, nextId } = adjacentDraftIds(navDrafts, editingId);
 
   // Move a card to a new status (optimistic; rolls back on failure). Shared by
   // the per-card status menu and drag-and-drop.
