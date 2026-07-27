@@ -46,6 +46,7 @@ import type {
   DraftStatus,
 } from "@/lib/draft-view";
 export type { Draft, DraftKind, DraftStatus, ScheduleStatus } from "@/lib/draft-view";
+import { classifyPost } from "@/lib/post-type";
 import {
   StatusPill,
   Surface,
@@ -106,6 +107,21 @@ export function mergeServerDrafts(current: Draft[], server: Draft[]): Draft[] {
   return [...additions, ...current];
 }
 
+// The kind used for FILTERING (not display). Stored kind wins for hooks and
+// lead magnets; a 'post' row is re-checked on read: a giveaway
+// (meta.lead_magnet) or a body that trips the lead-magnet detector files it
+// under Lead magnets, not Posts. Legacy rows predate save-time classification
+// (migration 055 defaulted everything to 'post'), so the filter can't trust
+// the stored kind blindly — this is the same rule resolveDraftKind applies at
+// write time, applied here to data written before it existed.
+export function filterKindForDraft(draft: Draft): DraftKind {
+  if (draft.kind === "hook") return "hook";
+  if (draft.kind === "lead_magnet" || draft.leadMagnet) return "lead_magnet";
+  return classifyPost(draft.body).post_type === "lead_magnet"
+    ? "lead_magnet"
+    : "post";
+}
+
 // Pure board model: filter by search query + kind, group by status, sort each
 // column by planned date (soonest first, undated last) then recency. Extracted
 // + exported so it's unit-testable independent of the React component.
@@ -123,7 +139,7 @@ export function groupDraftsForBoard(
     posted: [],
   };
   for (const d of drafts) {
-    if (kindFilter !== "all" && d.kind !== kindFilter) continue;
+    if (kindFilter !== "all" && filterKindForDraft(d) !== kindFilter) continue;
     if (
       q &&
       !(d.title ?? "").toLowerCase().includes(q) &&
@@ -177,7 +193,7 @@ export function groupPostsByDay(
   const byDay: Record<string, Draft[]> = {};
   const unscheduled: Draft[] = [];
   for (const d of drafts) {
-    if (kindFilter !== "all" && d.kind !== kindFilter) continue;
+    if (kindFilter !== "all" && filterKindForDraft(d) !== kindFilter) continue;
     if (
       q &&
       !(d.title ?? "").toLowerCase().includes(q) &&
