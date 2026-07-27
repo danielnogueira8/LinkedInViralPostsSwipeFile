@@ -2157,14 +2157,30 @@ export async function compileTurnPlan(
     // search must ALWAYS run a real search, even on an Ask turn with no
     // starter-supplied researchRequirement. Without this the turn falls to the
     // tool-less answer lane below and the model hallucinates "I don't have
-    // access to a swipe file database." Compile the research route whenever the
-    // request either carries a research requirement OR is an explicit
-    // workspace-collection search.
+    // access to a swipe file database." The same applies to live news: a typed
+    // "search verified news about X…" Ask otherwise lands on the tool-less
+    // lane and the model can only reply "I don't have live web search access"
+    // — the exact refusal that prompted this gate. Compile the research route
+    // whenever the request carries a research requirement, is an explicit
+    // workspace-collection search, OR its wording demands live news/research.
+    // Ask still never WRITES: only grounded_answer outcomes are served below,
+    // so a "newsjack this and write a post" Ask keeps the answer lane (which
+    // can say it can't write on Ask) instead of sneaking a draft through.
     const askWantsWorkspaceSearch = WORKSPACE_SEARCH_INTENT_RE.test(
       effectiveUserInstruction,
     );
+    // Same news signals the route compiler applies below (needsNews): an
+    // explicit news mention, or news wording paired with a research verb.
+    // requiresLiveNewsOrResearch covers the newsjack/breaking-news shapes.
+    const askWantsLiveNews =
+      EXPLICIT_NEWS_TOPIC_RE.test(effectiveUserInstruction) ||
+      (NEWS_RE.test(effectiveUserInstruction) &&
+        RESEARCH_RE.test(effectiveUserInstruction)) ||
+      requiresLiveNewsOrResearch(effectiveUserInstruction);
     const askResearchRoute =
-      composerTaskContext?.researchRequirement || askWantsWorkspaceSearch
+      composerTaskContext?.researchRequirement ||
+      askWantsWorkspaceSearch ||
+      askWantsLiveNews
         ? compileReadOnlyOrchestratorRoute({
             userInstruction: effectiveUserInstruction,
             isRefine: false,
