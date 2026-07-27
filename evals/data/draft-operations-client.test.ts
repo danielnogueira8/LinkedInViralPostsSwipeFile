@@ -204,6 +204,45 @@ describe("Draft operations client", () => {
     });
   });
 
+  it("schedules a Draft into the recurring occurrence selected by the user", async () => {
+    const fetcher = vi.fn(async () =>
+      jsonResponse({
+        ok: true,
+        scheduledAt: "2026-08-04T08:00:00.000Z",
+        scheduleStatus: "scheduled",
+        planToPostOn: "2026-08-04",
+        firstComment: "Keep this comment",
+        timezone: "Europe/Lisbon",
+        postingSlotId: "slot-tuesday",
+        postingSlotOccurrenceDate: "2026-08-04",
+      }),
+    );
+    const client = createDraftOperationsClient(fetcher);
+
+    await expect(
+      client.queueAt("draft-1", {
+        firstComment: "Keep this comment",
+        timezone: "Europe/Lisbon",
+        postingSlotId: "slot-tuesday",
+        postingSlotOccurrenceDate: "2026-08-04",
+      }),
+    ).resolves.toMatchObject({
+      scheduledAt: "2026-08-04T08:00:00.000Z",
+      postingSlotId: "slot-tuesday",
+      postingSlotOccurrenceDate: "2026-08-04",
+    });
+    expect(fetcher).toHaveBeenCalledWith("/api/drafts/draft-1/queue", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        firstComment: "Keep this comment",
+        timezone: "Europe/Lisbon",
+        postingSlotId: "slot-tuesday",
+        postingSlotOccurrenceDate: "2026-08-04",
+      }),
+    });
+  });
+
   it("preserves a publishing queue booking returned after an idempotent retry", async () => {
     const fetcher = vi.fn(async () =>
       jsonResponse({

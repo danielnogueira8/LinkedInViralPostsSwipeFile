@@ -61,6 +61,11 @@ export type DraftQueueCommand = {
   timezone: string;
 };
 
+export type DraftQueueTargetCommand = DraftQueueCommand & {
+  postingSlotId: string;
+  postingSlotOccurrenceDate: string;
+};
+
 export type QueuedDraftState = Omit<ScheduledDraftState, "scheduleStatus"> & {
   scheduleStatus: "scheduled" | "publishing";
   timezone: string;
@@ -307,6 +312,35 @@ export function createDraftOperationsClient(
         response,
         queueResponseSchema,
         "Couldn't add this post to the queue.",
+      );
+      return {
+        scheduledAt: value.scheduledAt,
+        scheduleStatus: value.scheduleStatus,
+        planToPostOn: value.planToPostOn,
+        firstComment: value.firstComment,
+        timezone: value.timezone,
+        postingSlotId: value.postingSlotId,
+        postingSlotOccurrenceDate: value.postingSlotOccurrenceDate,
+      };
+    },
+
+    async queueAt(
+      draftId: string,
+      command: DraftQueueTargetCommand,
+    ): Promise<QueuedDraftState> {
+      const response = await fetchDraftOperation(
+        fetcher,
+        `/api/drafts/${draftId}/queue`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(command),
+        },
+      );
+      const value = await readDraftOperationResponse(
+        response,
+        queueResponseSchema,
+        "Couldn't schedule this post in that queue slot.",
       );
       return {
         scheduledAt: value.scheduledAt,

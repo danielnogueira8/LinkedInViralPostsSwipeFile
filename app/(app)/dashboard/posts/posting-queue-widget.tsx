@@ -1,10 +1,16 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type DragEvent,
+} from "react";
 import {
   CalendarClock,
   ChevronDown,
   ChevronUp,
+  LoaderCircle,
   Plus,
   Trash2,
   X,
@@ -12,12 +18,22 @@ import {
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   draftOperations,
   type UnscheduledDraftState,
 } from "@/lib/draft-operations-client";
 import {
   buildPostingQueueDays,
+  DRAFT_DRAG_MIME,
+  formatScheduleToast,
   postingSlotHasActiveDraft,
+  type PostingQueueDropTarget,
   type PostingQueueDraft,
   type PostingQueueSlot,
 } from "@/lib/posting-queue";
@@ -32,9 +48,19 @@ type QueueResponse = {
 
 export function PostingQueueWidget({
   onOpenDraft,
+  queueCandidates,
+  onScheduleDraftInQueue,
   onDraftRemovedFromQueue,
 }: {
   onOpenDraft: (draftId: string) => void;
+  queueCandidates: Array<{ id: string; title: string }>;
+  onScheduleDraftInQueue: (
+    draftId: string,
+    target: PostingQueueDropTarget,
+  ) => Promise<{
+    draft: PostingQueueDraft;
+    action: "scheduled" | "rescheduled";
+  }>;
   onDraftRemovedFromQueue: (
     draftId: string,
     state: UnscheduledDraftState,
@@ -45,7 +71,16 @@ export function PostingQueueWidget({
   const [collapsed, setCollapsed] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [addingDay, setAddingDay] = useState<number | null>(null);
+  const [dragOverOccurrence, setDragOverOccurrence] = useState<string | null>(
+    null,
+  );
+  const [pickerTarget, setPickerTarget] =
+    useState<(PostingQueueDropTarget & { label: string }) | null>(null);
+  const [pickerDraftId, setPickerDraftId] = useState("");
   const [removingDraftId, setRemovingDraftId] = useState<string | null>(null);
+  const [schedulingDraftId, setSchedulingDraftId] = useState<string | null>(
+    null,
+  );
   const [time, setTime] = useState("09:00");
   const timezone = useMemo(
     () => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
@@ -183,6 +218,51 @@ export function PostingQueueWidget({
     }
   };
 
+  const scheduleDraftInOccurrence = async (
+    draftId: string,
+    target: PostingQueueDropTarget,
+  ): Promise<boolean> => {
+    if (schedulingDraftId || !draftId) return false;
+    setDragOverOccurrence(
+      `${target.postingSlotId}:${target.postingSlotOccurrenceDate}`,
+    );
+    setSchedulingDraftId(draftId);
+    try {
+      const result = await onScheduleDraftInQueue(draftId, target);
+      setDrafts((current) => [
+        ...current.filter((draft) => draft.id !== draftId),
+        result.draft,
+      ]);
+      toast.success(
+        formatScheduleToast({
+          scheduledAt: result.draft.scheduledAt,
+          accountTimezone: target.timezone,
+          browserTimezone: timezone,
+          action: result.action,
+        }),
+      );
+      return true;
+    } catch (error) {
+      toast.error((error as Error).message);
+      return false;
+    } finally {
+      setDragOverOccurrence(null);
+      setSchedulingDraftId(null);
+    }
+  };
+
+  const dropDraft = (
+    event: DragEvent<HTMLDivElement>,
+    target: PostingQueueDropTarget,
+  ) => {
+    event.preventDefault();
+    const draftId = (
+      event.dataTransfer.getData(DRAFT_DRAG_MIME) ||
+      event.dataTransfer.getData("text/plain")
+    ).trim();
+    void scheduleDraftInOccurrence(draftId, target);
+  };
+
   if (!loaded) {
     return <div className="h-16 animate-pulse rounded-xl border bg-muted/30" />;
   }
@@ -238,6 +318,10 @@ export function PostingQueueWidget({
                   </div>
                   <div className="mt-2 space-y-1.5">
                     {day.occurrences.map((occurrence) => {
+                      const occurrenceKey = `${occurrence.slot.id}:${day.date}`;
+                      const isDropTarget =
+                        dragOverOccurrence === occurrenceKey &&
+                        !occurrence.draft;
                       const timeLabel = new Intl.DateTimeFormat(undefined, {
                         timeZone: occurrence.slot.timezone,
                         hour: "numeric",
@@ -248,7 +332,45 @@ export function PostingQueueWidget({
                           key={occurrence.slot.id}
                           role="group"
                           aria-label={`${day.weekday}, ${day.dateLabel} at ${timeLabel} posting slot`}
-                          className="group rounded-lg border bg-background/80 px-2 py-1.5"
+                          onDragEnter={(event) => {
+                            if (!occurrence.draft) {
+                              event.preventDefault();
+                              setDragOverOccurrence(occurrenceKey);
+                            }
+                          }}
+                          onDragOver={(event) => {
+                            if (!occurrence.draft) {
+                              event.preventDefault();
+                              event.dataTransfer.dropEffect = "move";
+                              setDragOverOccurrence(occurrenceKey);
+                            }
+                          }}
+                          onDragLeave={(event) => {
+                            if (
+                              event.relatedTarget instanceof Node &&
+                              event.currentTarget.contains(event.relatedTarget)
+                            ) {
+                              return;
+                            }
+                            setDragOverOccurrence((current) =>
+                              current === occurrenceKey ? null : current,
+                            );
+                          }}
+                          onDrop={(event) => {
+                            if (occurrence.draft) return;
+                            void dropDraft(event, {
+                              postingSlotId: occurrence.slot.id,
+                              postingSlotOccurrenceDate: day.date,
+                              timezone: occurrence.slot.timezone,
+                            });
+                          }}
+                          className={cn(
+                            "group rounded-lg border bg-background/80 px-2 py-1.5 transition-colors",
+                            !occurrence.draft &&
+                              "border-dashed hover:border-primary/40",
+                            isDropTarget &&
+                              "border-primary bg-primary/[0.08] ring-2 ring-primary/20",
+                          )}
                         >
                           <div className="flex items-center gap-1">
                             <span className="text-[11px] font-medium">
@@ -296,7 +418,43 @@ export function PostingQueueWidget({
                               </button>
                             </div>
                           ) : (
-                            <div className="text-[10px] text-muted-foreground">Open</div>
+                            <div
+                              className={cn(
+                                "flex items-center justify-between gap-1 text-[10px] text-muted-foreground",
+                                isDropTarget && "font-medium text-primary",
+                              )}
+                            >
+                              <span>
+                                {schedulingDraftId && isDropTarget ? (
+                                  <span className="inline-flex items-center gap-1">
+                                    <LoaderCircle className="h-2.5 w-2.5 animate-spin" />
+                                    Scheduling…
+                                  </span>
+                                ) : isDropTarget ? (
+                                  "Drop post here"
+                                ) : (
+                                  "Open · Drop a post"
+                                )}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setPickerDraftId(
+                                    queueCandidates[0]?.id ?? "",
+                                  );
+                                  setPickerTarget({
+                                    postingSlotId: occurrence.slot.id,
+                                    postingSlotOccurrenceDate: day.date,
+                                    timezone: occurrence.slot.timezone,
+                                    label: `${day.weekday}, ${day.dateLabel} at ${timeLabel}`,
+                                  });
+                                }}
+                                className="shrink-0 rounded px-1 py-0.5 font-medium text-primary hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/35"
+                                aria-label={`Choose a post for ${day.weekday}, ${day.dateLabel} at ${timeLabel}`}
+                              >
+                                Choose
+                              </button>
+                            </div>
                           )}
                         </div>
                       );
@@ -330,6 +488,65 @@ export function PostingQueueWidget({
           </div>
         </div>
       )}
+      <Dialog
+        open={pickerTarget !== null}
+        onOpenChange={(open) => {
+          if (!open && !schedulingDraftId) setPickerTarget(null);
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Schedule a post here</DialogTitle>
+            <DialogDescription>
+              {pickerTarget?.label}. Choose any idea, draft, ready post, or
+              existing schedule.
+            </DialogDescription>
+          </DialogHeader>
+          {queueCandidates.length > 0 ? (
+            <div className="space-y-4">
+              <label className="grid gap-1.5 text-sm font-medium">
+                Post
+                <select
+                  value={pickerDraftId}
+                  onChange={(event) => setPickerDraftId(event.target.value)}
+                  className="h-10 w-full rounded-lg border bg-background px-3 text-sm"
+                >
+                  {queueCandidates.map((draft) => (
+                    <option key={draft.id} value={draft.id}>
+                      {draft.title}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <Button
+                className="w-full"
+                disabled={!pickerDraftId || schedulingDraftId !== null}
+                onClick={async () => {
+                  if (!pickerTarget || !pickerDraftId) return;
+                  const scheduled = await scheduleDraftInOccurrence(
+                    pickerDraftId,
+                    pickerTarget,
+                  );
+                  if (scheduled) setPickerTarget(null);
+                }}
+              >
+                {schedulingDraftId ? (
+                  <>
+                    <LoaderCircle className="h-4 w-4 animate-spin" />
+                    Scheduling…
+                  </>
+                ) : (
+                  "Schedule here"
+                )}
+              </Button>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              There are no eligible posts to schedule yet.
+            </p>
+          )}
+        </DialogContent>
+      </Dialog>
     </section>
   );
 }

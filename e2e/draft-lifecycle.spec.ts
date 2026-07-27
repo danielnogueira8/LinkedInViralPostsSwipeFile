@@ -546,6 +546,104 @@ test.describe("Cowork draft lifecycle", () => {
     expect(after.drafts.map((draft) => draft.id)).not.toContain(draftId);
     expect(booking.postingSlotOccurrenceDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
+
+  test("drags idea, draft, ready, and scheduled posts into exact queue slots", async ({
+    page,
+  }) => {
+    await page.goto("/dashboard/posts");
+    const fixtures = await Promise.all(
+      (["idea", "drafting", "ready"] as const).map(async (status) => {
+        const title = `Queue drag ${status} ${Date.now()}`;
+        const response = await page.request.post("/api/drafts", {
+          data: {
+            title,
+            body: `A ${status} post that should be scheduled by dropping it.`,
+            kind: "post",
+            status,
+          },
+        });
+        expect(response.ok()).toBe(true);
+        const payload = (await response.json()) as {
+          draft?: { id?: string };
+        };
+        const id = payload.draft?.id;
+        if (!id) throw new Error(`Could not create ${status} drag fixture`);
+        draftsToDelete.push(id);
+        return { id, title };
+      }),
+    );
+    connectionRestorers.push(
+      await activateTestPublishingConnection(fixtures[0]!.id),
+    );
+
+    await page.goto("/dashboard/posts");
+    const queue = page.getByRole("region", { name: "Posting queue" });
+    const queueToggle = queue.getByRole("button", {
+      name: /^Posting queue/,
+    });
+    if ((await queueToggle.getAttribute("aria-expanded")) === "false") {
+      await queueToggle.click();
+    }
+
+    for (const fixture of fixtures) {
+      const card = page
+        .locator('[role="button"][draggable="true"]:visible')
+        .filter({ hasText: fixture.title })
+        .first();
+      await expect(card).toBeVisible();
+      const target = queue
+        .getByRole("group")
+        .filter({ hasText: /Open · Drop a post/ })
+        .first();
+      await expect(target).toBeVisible();
+      const targetLabel = await target.getAttribute("aria-label");
+      if (!targetLabel) throw new Error("Queue drop target has no label");
+      const fixedTarget = queue.getByRole("group", { name: targetLabel });
+      await card.dragTo(fixedTarget);
+      await expect(fixedTarget).toContainText(fixture.title);
+    }
+
+    const scheduledCard = page
+      .locator('[role="button"][draggable="true"]:visible')
+      .filter({ hasText: fixtures[0]!.title })
+      .first();
+    await expect(scheduledCard).toBeVisible();
+    const rescheduleTarget = queue
+      .getByRole("group")
+      .filter({ hasText: /Open · Drop a post/ })
+      .first();
+    const targetLabel = await rescheduleTarget.getAttribute("aria-label");
+    if (!targetLabel) throw new Error("Reschedule target has no label");
+    await scheduledCard.dragTo(
+      queue.getByRole("group", { name: targetLabel }),
+    );
+    await expect(
+      queue.getByRole("group", { name: targetLabel }),
+    ).toContainText(fixtures[0]!.title);
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    const pickerTarget = queue
+      .getByRole("group")
+      .filter({ hasText: /Open · Drop a post/ })
+      .first();
+    const pickerTargetLabel = await pickerTarget.getAttribute("aria-label");
+    if (!pickerTargetLabel) throw new Error("Picker target has no label");
+    const fixedPickerTarget = queue.getByRole("group", {
+      name: pickerTargetLabel,
+    });
+    const choosePost = fixedPickerTarget.getByRole("button", {
+      name: /^Choose a post for /,
+    });
+    await choosePost.click();
+    const dialog = page.getByRole("dialog", {
+      name: "Schedule a post here",
+    });
+    await expect(dialog).toBeVisible();
+    await dialog.getByLabel("Post").selectOption(fixtures[1]!.id);
+    await dialog.getByRole("button", { name: "Schedule here" }).click();
+    await expect(dialog).toBeHidden();
+    await expect(fixedPickerTarget).toContainText(fixtures[1]!.title);
+  });
 });
 
 async function createChat(page: Page, title: string) {

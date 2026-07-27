@@ -34,6 +34,11 @@ import {
 } from "@/lib/optimistic";
 import { createDraftOperationsClient } from "@/lib/draft-operations-client";
 import { loadPostingQueueDraft } from "@/lib/posting-queue-draft";
+import {
+  canDragDraftToPostingQueue,
+  DRAFT_DRAG_MIME,
+  type PostingQueueDropTarget,
+} from "@/lib/posting-queue";
 import type { PostPreviewAuthor } from "../draft-editor-modal";
 import type {
   Draft,
@@ -610,7 +615,7 @@ export function DraftsList({
       draft={d}
       onOpen={() => openEdit(d)}
       onMove={(status) => void moveTo(d.id, status)}
-      draggable={boardColumnForDraft(d) !== "scheduled"}
+      draggable={canDragDraftToPostingQueue(d)}
       selected={selectedIds.has(d.id)}
       onToggleSelect={() => toggleSelect(d.id)}
     />
@@ -619,6 +624,47 @@ export function DraftsList({
     <div className="flex flex-col gap-4">
       <PostingQueueWidget
         onOpenDraft={(draftId) => void openQueueDraft(draftId)}
+        queueCandidates={drafts
+          .filter(canDragDraftToPostingQueue)
+          .map((draft) => ({
+            id: draft.id,
+            title:
+              draft.title?.trim() ||
+              draft.body.split("\n")[0]?.trim() ||
+              "Untitled post",
+          }))}
+        onScheduleDraftInQueue={async (
+          draftId: string,
+          target: PostingQueueDropTarget,
+        ) => {
+          const draft = drafts.find((item) => item.id === draftId);
+          if (!draft || !canDragDraftToPostingQueue(draft)) {
+            throw new Error("This post can no longer be scheduled.");
+          }
+          const action =
+            draft.scheduleStatus === "scheduled"
+              ? "rescheduled"
+              : "scheduled";
+          const next = await draftOperations.queueAt(draftId, {
+            firstComment: draft.firstComment ?? null,
+            timezone: target.timezone,
+            postingSlotId: target.postingSlotId,
+            postingSlotOccurrenceDate: target.postingSlotOccurrenceDate,
+          });
+          applyMeta(draftId, next);
+          return {
+            action,
+            draft: {
+              id: draft.id,
+              title: draft.title,
+              scheduledAt: next.scheduledAt,
+              scheduleStatus: next.scheduleStatus,
+              postingSlotId: next.postingSlotId,
+              postingSlotOccurrenceDate:
+                next.postingSlotOccurrenceDate,
+            },
+          };
+        }}
         onDraftRemovedFromQueue={(draftId, next) =>
           applyMeta(draftId, next)
         }
@@ -730,7 +776,10 @@ export function DraftsList({
               <div
                 key={c.id}
                 onDragOver={(e) => {
-                  if (!c.moveStatus) return;
+                  if (
+                    !c.moveStatus ||
+                    !e.dataTransfer.types.includes("text/plain")
+                  ) return;
                   e.preventDefault();
                   if (dragOver !== c.moveStatus) setDragOver(c.moveStatus);
                 }}
@@ -877,8 +926,11 @@ function CalendarView({
       c.month === 11 ? { year: c.year + 1, month: 0 } : { ...c, month: c.month + 1 },
     );
 
-  const drag = (e: DragEvent, id: string) => {
-    e.dataTransfer.setData("text/plain", id);
+  const drag = (e: DragEvent, draft: Draft) => {
+    e.dataTransfer.setData(DRAFT_DRAG_MIME, draft.id);
+    if (draft.scheduleStatus !== "scheduled") {
+      e.dataTransfer.setData("text/plain", draft.id);
+    }
     e.dataTransfer.effectAllowed = "move";
   };
 
@@ -923,6 +975,7 @@ function CalendarView({
               <div
                 key={cell.key}
                 onDragOver={(e) => {
+                  if (!e.dataTransfer.types.includes("text/plain")) return;
                   e.preventDefault();
                   if (dragOverDay !== cell.key) setDragOverDay(cell.key);
                 }}
@@ -962,8 +1015,8 @@ function CalendarView({
                     <button
                       key={p.id}
                       type="button"
-                      draggable
-                      onDragStart={(e) => drag(e, p.id)}
+                      draggable={canDragDraftToPostingQueue(p)}
+                      onDragStart={(e) => drag(e, p)}
                       onClick={() => onOpen(p)}
                       title={p.title ?? p.body.slice(0, 80)}
                       className={cn(
@@ -1005,6 +1058,7 @@ function CalendarView({
       {/* Unscheduled tray */}
       <div
         onDragOver={(e) => {
+          if (!e.dataTransfer.types.includes("text/plain")) return;
           e.preventDefault();
           if (!overTray) setOverTray(true);
         }}
@@ -1038,8 +1092,8 @@ function CalendarView({
               <button
                 key={p.id}
                 type="button"
-                draggable
-                onDragStart={(e) => drag(e, p.id)}
+                draggable={canDragDraftToPostingQueue(p)}
+                onDragStart={(e) => drag(e, p)}
                 onClick={() => onOpen(p)}
                 className={cn(
                   "flex items-center gap-2 rounded-lg border bg-card px-2.5 py-2 text-left text-[13px] font-medium cursor-grab active:cursor-grabbing hover:bg-accent/40",
@@ -1267,6 +1321,10 @@ function DraftCard({
           return;
         }
         e.dataTransfer.setData("text/plain", draft.id);
+        e.dataTransfer.setData(DRAFT_DRAG_MIME, draft.id);
+        if (draft.scheduleStatus === "scheduled") {
+          e.dataTransfer.clearData("text/plain");
+        }
         e.dataTransfer.effectAllowed = "move";
         if (cardRef.current) {
           e.dataTransfer.setDragImage(cardRef.current, 20, 20);

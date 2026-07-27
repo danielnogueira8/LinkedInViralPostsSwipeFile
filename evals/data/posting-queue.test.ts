@@ -1,10 +1,42 @@
 import { describe, expect, test } from "vitest";
 import {
   buildPostingQueueDays,
+  canDragDraftToPostingQueue,
   formatScheduleToast,
   postingSlotHasActiveDraft,
   type PostingQueueSlot,
 } from "@/lib/posting-queue";
+
+describe("posting queue drag eligibility", () => {
+  test.each(["idea", "drafting", "ready"] as const)(
+    "allows %s posts",
+    (status) => {
+      expect(
+        canDragDraftToPostingQueue({
+          status,
+          scheduleStatus: null,
+        }),
+      ).toBe(true);
+    },
+  );
+
+  test("allows a scheduled post to be moved to another occurrence", () => {
+    expect(
+      canDragDraftToPostingQueue({
+        status: "ready",
+        scheduleStatus: "scheduled",
+      }),
+    ).toBe(true);
+  });
+
+  test.each([
+    { status: "ready", scheduleStatus: "publishing" },
+    { status: "posted", scheduleStatus: "published" },
+    { status: "posted", scheduleStatus: null },
+  ] as const)("rejects locked or posted drafts", (draft) => {
+    expect(canDragDraftToPostingQueue(draft)).toBe(false);
+  });
+});
 
 const slots: PostingQueueSlot[] = [
   {
