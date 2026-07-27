@@ -6,8 +6,13 @@ import Link from "next/link";
 import { RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
+  ANALYTICS_CONTENT_TYPE_OPTIONS,
+  ANALYTICS_PERIOD_OPTIONS,
   impressionAxisTicks,
-  summarizePostMetrics,
+  type AnalyticsContentType,
+  type AnalyticsFilters,
+  type AnalyticsPeriod,
+  type AnalyticsSummary,
   type PostMetricsRow,
   type TrendPoint,
 } from "@/lib/analytics-view-model";
@@ -51,15 +56,51 @@ function fmtDate(iso: string | null): string {
   }
 }
 
+function formatComparison(
+  current: number | null,
+  previous: number | null,
+  kind: "percent" | "points" = "percent",
+): string | null {
+  if (current === null || previous === null) return null;
+  if (kind === "points") {
+    const change = Math.round((current - previous) * 10) / 10;
+    if (change === 0) return "No change";
+    return `${change > 0 ? "+" : ""}${change.toLocaleString("en-US")} pp`;
+  }
+  if (previous === 0) return current > 0 ? "New" : "No change";
+  const change = Math.round(((current - previous) / previous) * 100);
+  if (change === 0) return "No change";
+  return `${change > 0 ? "+" : ""}${change.toLocaleString("en-US")}%`;
+}
+
+function analyticsHref(
+  period: AnalyticsPeriod,
+  contentType: AnalyticsContentType,
+): string {
+  const params = new URLSearchParams();
+  if (period !== "30d") params.set("period", period);
+  if (contentType !== "all") params.set("type", contentType);
+  const query = params.toString();
+  return query ? `/dashboard/analytics?${query}` : "/dashboard/analytics";
+}
+
 export function AnalyticsView({
   posts,
   trend,
+  summary,
+  previousSummary,
+  filters,
+  analyticsPostCount,
   lastFetchedAt,
   linkedInConnected,
   hasEligiblePublishedPosts,
 }: {
   posts: PostMetricsRow[];
   trend: TrendPoint[];
+  summary: AnalyticsSummary;
+  previousSummary: AnalyticsSummary | null;
+  filters: AnalyticsFilters;
+  analyticsPostCount: number;
   lastFetchedAt: string | null;
   linkedInConnected: boolean;
   hasEligiblePublishedPosts: boolean;
@@ -88,10 +129,6 @@ export function AnalyticsView({
     }
   }, [refreshing, router]);
 
-  const totals = useMemo(() => {
-    return summarizePostMetrics(posts);
-  }, [posts]);
-
   // Y-axis scale for the trend chart: a nice rounded top + evenly-spaced ticks.
   const axis = useMemo(
     () => impressionAxisTicks(Math.max(1, ...trend.map((t) => t.impressions))),
@@ -101,7 +138,7 @@ export function AnalyticsView({
   const [hoveredBar, setHoveredBar] = useState<number | null>(null);
   const emptyState = getAnalyticsEmptyState({
     linkedInConnected,
-    postCount: posts.length,
+    postCount: analyticsPostCount,
     hasEligiblePublishedPosts,
   });
 
@@ -137,6 +174,50 @@ export function AnalyticsView({
 
   return (
     <div className="flex flex-col gap-6">
+      <div
+        className="flex flex-col gap-3 rounded-xl border border-border bg-card p-3 sm:flex-row sm:items-center sm:justify-between"
+        aria-label="Analytics filters"
+      >
+        <div className="flex flex-wrap gap-1" aria-label="Reporting period">
+          {ANALYTICS_PERIOD_OPTIONS.map(({ value: period, label }) => (
+            <Link
+              key={period}
+              href={analyticsHref(period, filters.contentType)}
+              aria-current={filters.period === period ? "page" : undefined}
+              className={cn(
+                "rounded-lg px-3 py-1.5 text-xs font-medium transition-colors",
+                filters.period === period
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:bg-accent hover:text-foreground",
+              )}
+            >
+              {label}
+            </Link>
+          ))}
+        </div>
+        <div className="flex flex-wrap gap-1" aria-label="Post type">
+          {ANALYTICS_CONTENT_TYPE_OPTIONS.map(
+            ({ value: contentType, label }) => (
+              <Link
+                key={contentType}
+                href={analyticsHref(filters.period, contentType)}
+                aria-current={
+                  filters.contentType === contentType ? "page" : undefined
+                }
+                className={cn(
+                  "rounded-lg px-3 py-1.5 text-xs font-medium transition-colors",
+                  filters.contentType === contentType
+                    ? "bg-foreground text-background"
+                    : "text-muted-foreground hover:bg-accent hover:text-foreground",
+                )}
+              >
+                {label}
+              </Link>
+            ),
+          )}
+        </div>
+      </div>
+
       {/* Toolbar: freshness + manual refresh */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-xs text-muted-foreground">
@@ -161,22 +242,55 @@ export function AnalyticsView({
       {/* Summary tiles */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {[
-          { label: "Lifetime impressions", value: fmt(totals.impressions) },
-          { label: "Lifetime engagements", value: fmt(totals.engagements) },
+          {
+            label: filters.period === "all" ? "Lifetime impressions" : "Impressions",
+            value: fmt(summary.impressions),
+            comparison: formatComparison(
+              summary.impressions,
+              previousSummary?.impressions ?? null,
+            ),
+          },
+          {
+            label: filters.period === "all" ? "Lifetime engagements" : "Engagements",
+            value: fmt(summary.engagements),
+            comparison: formatComparison(
+              summary.engagements,
+              previousSummary?.engagements ?? null,
+            ),
+          },
           {
             label: "Engagement rate",
             value:
-              totals.engagementRate === null
+              summary.engagementRate === null
                 ? "—"
-                : `${totals.engagementRate.toLocaleString("en-US")}%`,
+                : `${summary.engagementRate.toLocaleString("en-US")}%`,
+            comparison: formatComparison(
+              summary.engagementRate,
+              previousSummary?.engagementRate ?? null,
+              "points",
+            ),
           },
-          { label: "Published posts", value: fmt(totals.posts) },
+          {
+            label: filters.period === "all" ? "Tracked posts" : "Measured posts",
+            value: fmt(summary.posts),
+            comparison: formatComparison(
+              summary.posts,
+              previousSummary?.posts ?? null,
+            ),
+          },
         ].map((t) => (
           <div key={t.label} className="rounded-xl border border-border bg-card p-4">
             <div className="text-2xl font-semibold tabular-nums text-foreground">
               {t.value}
             </div>
-            <div className="mt-1 text-xs text-muted-foreground">{t.label}</div>
+            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+              <span className="text-muted-foreground">{t.label}</span>
+              {t.comparison && (
+                <span className="font-medium text-foreground">
+                  {t.comparison} vs previous
+                </span>
+              )}
+            </div>
           </div>
         ))}
       </div>

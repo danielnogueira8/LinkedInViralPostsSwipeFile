@@ -9,6 +9,7 @@ export type PostMetricsRow = {
   artifactId: string;
   title: string;
   publishedAt: string | null;
+  contentType: PostContentType;
   impressions: number | null;
   reach: number | null;
   likes: number | null;
@@ -24,6 +25,12 @@ export type AnalyticsSnapshot = {
   artifactId: string;
   snapshotDate: string;
   impressions: number | null;
+  reach?: number | null;
+  likes?: number | null;
+  comments?: number | null;
+  shares?: number | null;
+  saves?: number | null;
+  sends?: number | null;
 };
 
 export type AnalyticsSummary = {
@@ -33,6 +40,131 @@ export type AnalyticsSummary = {
   posts: number;
 };
 
+export const ANALYTICS_PERIOD_OPTIONS = [
+  { value: "7d", label: "7D" },
+  { value: "30d", label: "30D" },
+  { value: "90d", label: "90D" },
+  { value: "all", label: "All" },
+] as const;
+export type AnalyticsPeriod =
+  (typeof ANALYTICS_PERIOD_OPTIONS)[number]["value"];
+export type PostContentType = "regular" | "lead_magnet";
+export const ANALYTICS_CONTENT_TYPE_OPTIONS = [
+  { value: "all", label: "All posts" },
+  { value: "regular", label: "Regular" },
+  { value: "lead_magnet", label: "Lead magnets" },
+] as const;
+export type AnalyticsContentType =
+  (typeof ANALYTICS_CONTENT_TYPE_OPTIONS)[number]["value"];
+export type AnalyticsFilters = {
+  period: AnalyticsPeriod;
+  contentType: AnalyticsContentType;
+};
+export type DateWindow = { start: string | null; end: string };
+export type AnalyticsPeriodBounds = {
+  current: DateWindow;
+  previous: DateWindow | null;
+};
+
+export function parseAnalyticsFilters(
+  query: Record<string, string | string[] | undefined>,
+): AnalyticsFilters {
+  const period = query.period;
+  const contentType = query.type;
+  return {
+    period:
+      typeof period === "string" &&
+      ANALYTICS_PERIOD_OPTIONS.some((option) => option.value === period)
+        ? (period as AnalyticsPeriod)
+        : "30d",
+    contentType:
+      typeof contentType === "string" &&
+      ANALYTICS_CONTENT_TYPE_OPTIONS.some(
+        (option) => option.value === contentType,
+      )
+        ? (contentType as AnalyticsContentType)
+        : "all",
+  };
+}
+
+function shiftIsoDate(date: string, days: number): string {
+  const value = new Date(`${date}T00:00:00.000Z`);
+  value.setUTCDate(value.getUTCDate() + days);
+  return value.toISOString().slice(0, 10);
+}
+
+export function periodBounds(
+  period: AnalyticsPeriod,
+  today: string,
+): AnalyticsPeriodBounds {
+  if (period === "all") {
+    return { current: { start: null, end: today }, previous: null };
+  }
+  const days = Number.parseInt(period, 10);
+  const currentStart = shiftIsoDate(today, -(days - 1));
+  return {
+    current: { start: currentStart, end: today },
+    previous: {
+      start: shiftIsoDate(currentStart, -days),
+      end: shiftIsoDate(currentStart, -1),
+    },
+  };
+}
+
+type SnapshotMetric =
+  | "impressions"
+  | "reach"
+  | "likes"
+  | "comments"
+  | "shares"
+  | "saves"
+  | "sends";
+
+type MetricGain = { artifactId: string; date: string; gain: number };
+
+function buildMetricGains(
+  snapshots: readonly AnalyticsSnapshot[],
+  metric: SnapshotMetric,
+): MetricGain[] {
+  const ordered = [...snapshots].sort((a, b) => {
+    if (a.artifactId !== b.artifactId) {
+      return a.artifactId.localeCompare(b.artifactId);
+    }
+    return a.snapshotDate.localeCompare(b.snapshotDate);
+  });
+  const highWaterByArtifact = new Map<string, number>();
+  const gains: MetricGain[] = [];
+
+  for (const snapshot of ordered) {
+    const current = snapshot[metric];
+    if (current === null || current === undefined) continue;
+    const highWater = highWaterByArtifact.get(snapshot.artifactId);
+    if (highWater === undefined) {
+      highWaterByArtifact.set(snapshot.artifactId, current);
+      continue;
+    }
+    const gain = Math.max(0, current - highWater);
+    highWaterByArtifact.set(snapshot.artifactId, Math.max(highWater, current));
+    gains.push({
+      artifactId: snapshot.artifactId,
+      date: snapshot.snapshotDate,
+      gain,
+    });
+  }
+  return gains;
+}
+
+function buildDailyMetricGains(
+  snapshots: readonly AnalyticsSnapshot[],
+  metric: SnapshotMetric,
+): Map<string, number> {
+  const byDay = new Map<string, number>();
+  for (const entry of buildMetricGains(snapshots, metric)) {
+    byDay.set(entry.date, (byDay.get(entry.date) ?? 0) + entry.gain);
+  }
+  return byDay;
+}
+
 // LinkedIn analytics snapshots are cumulative. A trend must therefore add
 // the change from each post's previous observation, not add the cumulative
 // values captured on a date. The first observation establishes a baseline.
@@ -41,33 +173,119 @@ export type AnalyticsSummary = {
 export function buildDailyImpressionGains(
   snapshots: readonly AnalyticsSnapshot[],
 ): TrendPoint[] {
-  const ordered = [...snapshots].sort((a, b) => {
-    if (a.artifactId !== b.artifactId) {
-      return a.artifactId.localeCompare(b.artifactId);
-    }
-    return a.snapshotDate.localeCompare(b.snapshotDate);
-  });
-  const highWaterByArtifact = new Map<string, number>();
-  const byDay = new Map<string, number>();
-
-  for (const snapshot of ordered) {
-    if (snapshot.impressions === null) continue;
-    const highWater = highWaterByArtifact.get(snapshot.artifactId);
-    if (highWater === undefined) {
-      highWaterByArtifact.set(snapshot.artifactId, snapshot.impressions);
-      continue;
-    }
-    const gain = Math.max(0, snapshot.impressions - highWater);
-    highWaterByArtifact.set(
-      snapshot.artifactId,
-      Math.max(highWater, snapshot.impressions),
-    );
-    byDay.set(snapshot.snapshotDate, (byDay.get(snapshot.snapshotDate) ?? 0) + gain);
-  }
-
-  return [...byDay.entries()]
+  return [...buildDailyMetricGains(snapshots, "impressions").entries()]
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([date, impressions]) => ({ date, impressions }));
+}
+
+export function filterAnalyticsContent(
+  posts: readonly PostMetricsRow[],
+  snapshots: readonly AnalyticsSnapshot[],
+  contentType: AnalyticsContentType,
+): { posts: PostMetricsRow[]; snapshots: AnalyticsSnapshot[] } {
+  if (contentType === "all") {
+    return { posts: [...posts], snapshots: [...snapshots] };
+  }
+  const filteredPosts = posts.filter((post) => post.contentType === contentType);
+  const artifactIds = new Set(filteredPosts.map((post) => post.artifactId));
+  return {
+    posts: filteredPosts,
+    snapshots: snapshots.filter((snapshot) =>
+      artifactIds.has(snapshot.artifactId),
+    ),
+  };
+}
+
+function isInWindow(date: string, window: DateWindow): boolean {
+  return (
+    (window.start === null || date >= window.start) && date <= window.end
+  );
+}
+
+export function buildAnalyticsPeriod(
+  snapshots: readonly AnalyticsSnapshot[],
+  posts: readonly PostMetricsRow[],
+  window: DateWindow,
+): AnalyticsSummary {
+  return summarizePostMetrics(buildPeriodPostMetrics(snapshots, posts, window));
+}
+
+function buildPeriodPostMetrics(
+  snapshots: readonly AnalyticsSnapshot[],
+  posts: readonly PostMetricsRow[],
+  window: DateWindow,
+): PostMetricsRow[] {
+  if (window.start === null) return [...posts];
+
+  const metrics: SnapshotMetric[] = [
+    "impressions",
+    "reach",
+    "likes",
+    "comments",
+    "shares",
+    "saves",
+    "sends",
+  ];
+  const totalsByMetric = new Map<
+    SnapshotMetric,
+    Map<string, number>
+  >();
+  for (const metric of metrics) {
+    const byArtifact = new Map<string, number>();
+    for (const entry of buildMetricGains(snapshots, metric)) {
+      if (!isInWindow(entry.date, window)) continue;
+      byArtifact.set(
+        entry.artifactId,
+        (byArtifact.get(entry.artifactId) ?? 0) + entry.gain,
+      );
+    }
+    totalsByMetric.set(metric, byArtifact);
+  }
+
+  return posts
+    .map((post) => {
+      const metric = (name: SnapshotMetric) =>
+        totalsByMetric.get(name)?.get(post.artifactId) ?? 0;
+      return {
+        ...post,
+        impressions: metric("impressions"),
+        reach: metric("reach"),
+        likes: metric("likes"),
+        comments: metric("comments"),
+        shares: metric("shares"),
+        saves: metric("saves"),
+        sends: metric("sends"),
+      };
+    })
+    .filter(
+      (post) =>
+        (post.impressions ?? 0) +
+          (post.reach ?? 0) +
+          (post.likes ?? 0) +
+          (post.comments ?? 0) +
+          (post.shares ?? 0) +
+          (post.saves ?? 0) +
+          (post.sends ?? 0) >
+        0,
+    );
+}
+
+export function buildAnalyticsPeriodReport(
+  snapshots: readonly AnalyticsSnapshot[],
+  posts: readonly PostMetricsRow[],
+  window: DateWindow,
+): {
+  summary: AnalyticsSummary;
+  trend: TrendPoint[];
+  posts: PostMetricsRow[];
+} {
+  return {
+    summary: buildAnalyticsPeriod(snapshots, posts, window),
+    trend: buildDailyImpressionGains(snapshots).filter((point) =>
+      isInWindow(point.date, window),
+    ),
+    posts: buildPeriodPostMetrics(snapshots, posts, window),
+  };
 }
 
 // "Engagements" is deliberately explicit and stable: every interaction

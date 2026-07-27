@@ -7,7 +7,10 @@ import { AnalyticsView } from "./view";
 // from "./view" (a "use client" module). Calling a client module's function on
 // the server throws "Attempted to call sortPostsByRecency() from the server".
 import {
-  buildDailyImpressionGains,
+  buildAnalyticsPeriodReport,
+  filterAnalyticsContent,
+  parseAnalyticsFilters,
+  periodBounds,
   sortPostsByRecency,
   type AnalyticsSnapshot,
   type PostMetricsRow,
@@ -20,8 +23,13 @@ export const dynamic = "force-dynamic";
 // LinkedIn never appear here; the copy frames the page accordingly. Data
 // comes from the post_analytics snapshot table (refreshed daily by the cron,
 // or on demand via the Refresh button), never from Zernio at page-view time.
-export default async function AnalyticsPage() {
+export default async function AnalyticsPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const sb = await scopedSupabase();
+  const filters = parseAnalyticsFilters(await searchParams);
 
   const [snapshotsRes, connection, eligiblePostsRes] = await Promise.all([
     sb.raw
@@ -55,7 +63,7 @@ export default async function AnalyticsPage() {
   if (artifactIds.length) {
     const { data: artifacts } = await sb.raw
       .from("chat_artifacts")
-      .select("id, title, body, published_at")
+      .select("id, title, body, published_at, kind")
       .eq("workspace_id", sb.workspaceId)
       .in("id", artifactIds);
     posts = (artifacts ?? [])
@@ -70,6 +78,8 @@ export default async function AnalyticsPage() {
             body.split("\n")[0].slice(0, 80) ||
             "Untitled post",
           publishedAt: (a.published_at as string | null) ?? null,
+          contentType:
+            a.kind === "lead_magnet" ? "lead_magnet" : "regular",
           impressions: (m.impressions as number | null) ?? null,
           reach: (m.reach as number | null) ?? null,
           likes: (m.likes as number | null) ?? null,
@@ -83,19 +93,43 @@ export default async function AnalyticsPage() {
     // Most recent posts on top (was impressions-desc, which read as arbitrary).
     posts = sortPostsByRecency(posts);
   }
+  const analyticsPostCount = posts.length;
 
   // Snapshots are cumulative per post. Show the observed gains between
   // snapshots rather than summing cumulative account totals for each date.
-  const trend = buildDailyImpressionGains(
-    snapshots.map(
+  const metricSnapshots = snapshots.map(
       (snapshot) =>
         ({
           artifactId: snapshot.artifact_id as string,
           snapshotDate: snapshot.snapshot_date as string,
           impressions: (snapshot.impressions as number | null) ?? null,
+          reach: (snapshot.reach as number | null) ?? null,
+          likes: (snapshot.likes as number | null) ?? null,
+          comments: (snapshot.comments as number | null) ?? null,
+          shares: (snapshot.shares as number | null) ?? null,
+          saves: (snapshot.saves as number | null) ?? null,
+          sends: (snapshot.sends as number | null) ?? null,
         }) satisfies AnalyticsSnapshot,
-    ),
-  ).slice(-30);
+    );
+  const scoped = filterAnalyticsContent(
+    posts,
+    metricSnapshots,
+    filters.contentType,
+  );
+  const today = new Date().toISOString().slice(0, 10);
+  const bounds = periodBounds(filters.period, today);
+  const currentReport = buildAnalyticsPeriodReport(
+    scoped.snapshots,
+    scoped.posts,
+    bounds.current,
+  );
+  const previousSummary = bounds.previous
+    ? buildAnalyticsPeriodReport(
+        scoped.snapshots,
+        scoped.posts,
+        bounds.previous,
+      ).summary
+    : null;
 
   const lastFetchedAt = snapshots.length
     ? (snapshots[snapshots.length - 1].fetched_at as string)
@@ -111,8 +145,12 @@ export default async function AnalyticsPage() {
         }
       />
       <AnalyticsView
-        posts={posts}
-        trend={trend}
+        posts={currentReport.posts}
+        trend={currentReport.trend}
+        summary={currentReport.summary}
+        previousSummary={previousSummary}
+        filters={filters}
+        analyticsPostCount={analyticsPostCount}
         lastFetchedAt={lastFetchedAt}
         linkedInConnected={canPublish(connection)}
         hasEligiblePublishedPosts={(eligiblePostsRes.count ?? 0) > 0}
