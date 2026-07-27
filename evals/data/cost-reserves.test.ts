@@ -6,6 +6,7 @@ import {
   READ_ONLY_ORCHESTRATOR_COST_RESERVE_USD,
   MAX_VISION_CALLS_PER_TURN,
   hasCostAllowanceForEstimate,
+  costCapGraceUsd,
   turnCostEstimate,
 } from "@/lib/agent/rate-limit";
 import { CHAT_MODEL, hasOpenRouterPricing, openRouterCost } from "@/lib/openrouter";
@@ -68,26 +69,51 @@ describe("cost reserves for non-chat LLM paths — sanity", () => {
   });
 });
 
-describe("hasCostAllowanceForEstimate — each non-chat reserve blocks near-cap workspaces", () => {
-  test("a workspace at $4.90 spent is blocked from starting a batch (spent + reserve > $5)", () => {
-    // $4.90 + BATCH ~$0.35 > $5 → blocked
+describe("hasCostAllowanceForEstimate — non-chat reserves against the grace-aware cap", () => {
+  // checkChatCostAllowance passes costCapGraceUsd() in production, so these
+  // cases exercise the same grace the routes get ($0.25 on the default scale).
+  const GRACE = costCapGraceUsd(DEFAULT_MONTHLY_BUDGET_USD, 1000);
+
+  test("a workspace at $4.90 spent is still blocked from starting a batch (overshoot exceeds grace)", () => {
+    // $4.90 + BATCH $0.50 = $5.40 > $5 + $0.25 grace → blocked
     expect(
       hasCostAllowanceForEstimate(
         DEFAULT_MONTHLY_BUDGET_USD - 0.1,
         DEFAULT_MONTHLY_BUDGET_USD,
         BATCH_JOB_COST_RESERVE_USD,
+        GRACE,
       ),
     ).toBe(false);
   });
 
-  test("a workspace at $4.90 spent is blocked from starting a voice run", () => {
+  test("a workspace at $4.90 spent may start a voice run (overshoot fits inside grace)", () => {
+    // $4.90 + VOICE $0.25 = $5.15 ≤ $5 + $0.25 grace → allowed to finish the
+    // job it's on; the NEXT one is blocked because spend is then at the cap.
     expect(
       hasCostAllowanceForEstimate(
         DEFAULT_MONTHLY_BUDGET_USD - 0.1,
         DEFAULT_MONTHLY_BUDGET_USD,
         VOICE_JOB_COST_RESERVE_USD,
+        GRACE,
       ),
-    ).toBe(false);
+    ).toBe(true);
+  });
+
+  test("a workspace AT the cap is blocked from every reserve, grace or not", () => {
+    for (const reserve of [
+      VOICE_JOB_COST_RESERVE_USD,
+      BATCH_JOB_COST_RESERVE_USD,
+      VISION_CALL_COST_RESERVE_USD,
+    ]) {
+      expect(
+        hasCostAllowanceForEstimate(
+          DEFAULT_MONTHLY_BUDGET_USD,
+          DEFAULT_MONTHLY_BUDGET_USD,
+          reserve,
+          GRACE,
+        ),
+      ).toBe(false);
+    }
   });
 
   test("a fresh workspace can afford every non-chat path", () => {

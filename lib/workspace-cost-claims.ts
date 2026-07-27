@@ -1,4 +1,5 @@
 import { supabaseAdmin } from "@/lib/supabase";
+import { costCapGraceUsd } from "@/lib/agent/rate-limit";
 
 type Db = ReturnType<typeof supabaseAdmin>;
 
@@ -8,6 +9,11 @@ export async function claimWorkspaceCost(opts: {
   estimatedCostUsd: number;
   budgetUsd: number;
   ttlSeconds: number;
+  // Overshoot allowance past budgetUsd (migration 144). Defaults to the same
+  // monthly grace the chat turn claim uses, so every paid-AI entry point
+  // applies one policy: under the cap you may finish the request you're on,
+  // at the cap you start nothing.
+  graceUsd?: number;
   sb?: Db;
 }): Promise<string | null> {
   const sb = opts.sb ?? supabaseAdmin();
@@ -17,6 +23,7 @@ export async function claimWorkspaceCost(opts: {
     p_estimated_cost_usd: opts.estimatedCostUsd,
     p_budget_usd: opts.budgetUsd,
     p_ttl_seconds: opts.ttlSeconds,
+    p_grace_usd: opts.graceUsd ?? costCapGraceUsd(),
   });
   if (error) throw error;
   return typeof data === "string" && data ? data : null;

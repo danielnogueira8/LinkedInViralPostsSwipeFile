@@ -7,6 +7,7 @@ import {
   sumUsageCost,
   isOverCostCap,
   hasCostAllowanceForEstimate,
+  costCapGraceUsd,
   costEquivalentCredits,
 } from "@/lib/agent/rate-limit";
 
@@ -271,5 +272,36 @@ describe("hasCostAllowanceForEstimate — preflight reserve for extra model work
 
   test("budget <= 0 disables the cost allowance gate", () => {
     expect(hasCostAllowanceForEstimate(999, 0, 10)).toBe(true);
+  });
+
+  test("grace lets a still-under-cap workspace finish work that tips past the budget", () => {
+    // $4.98 + $0.05 reserve = $5.03 — over budget but inside the $0.25 grace.
+    expect(hasCostAllowanceForEstimate(4.98, BUDGET, 0.05, 0.25)).toBe(true);
+  });
+
+  test("grace never helps a workspace already AT/OVER the cap", () => {
+    expect(hasCostAllowanceForEstimate(5, BUDGET, 0.01, 0.25)).toBe(false);
+    expect(hasCostAllowanceForEstimate(5.2, BUDGET, 0.01, 0.25)).toBe(false);
+  });
+
+  test("overshoot beyond the grace allowance still blocks", () => {
+    // $4.98 + $0.30 = $5.28 > $5 + $0.25 grace.
+    expect(hasCostAllowanceForEstimate(4.98, BUDGET, 0.3, 0.25)).toBe(false);
+  });
+});
+
+describe("costCapGraceUsd — the grace allowance in dollars", () => {
+  test("50 credits on the default 1000-credit / $5 scale is $0.25", () => {
+    expect(costCapGraceUsd(5, 1000)).toBeCloseTo(0.25);
+  });
+
+  test("tracks the credit limit and budget scale", () => {
+    expect(costCapGraceUsd(10, 1000)).toBeCloseTo(0.5);
+    expect(costCapGraceUsd(5, 2000)).toBeCloseTo(0.125);
+  });
+
+  test("a disabled cost cap (budget <= 0) has no grace", () => {
+    expect(costCapGraceUsd(0, 1000)).toBe(0);
+    expect(costCapGraceUsd(5, 0)).toBe(0);
   });
 });
