@@ -103,6 +103,17 @@ The two times a newsjack shipped ungrounded garbage, it was a claim path
 missing exactly this gate (`commandCreateEligible` in #1568,
 `directStructureSource` in #1579).
 
+**Central gate (create-family lanes).** Since the per-lane gates have been
+missed twice, `useDirectWriter` now also enforces the invariant in one
+place: when *only* create-family lanes claim and the instruction demands
+live news/research, the direct writer loses regardless of what the
+individual gates say. It is a deliberate no-op on every input reachable
+today (all create lanes already reject those instructions) — it exists so
+the next claim path inherits the gate instead of remembering it. Refine
+lanes are exempt (editing a draft never needs a search). The invariant is
+pinned by `evals/data/direct-writer-gate-invariants.test.ts`, which fails
+CI if the central gate or any per-lane gate loses the predicate.
+
 ---
 
 ## 3. The finalizer gate pipeline (plug-in points)
