@@ -92,6 +92,50 @@ describe("shared nets module", () => {
     expect(aiTellMetrics("This is a normal sentence with no tells.")).toEqual([]);
   });
 
+  test("aiTellMetrics catches the repeated-opener staccato ('Same X. Same Y. Same Z.')", () => {
+    // The shipped-post tell: three consecutive sentences opening with the same
+    // content word.
+    expect(
+      aiTellMetrics(
+        'Same three-sentence hook. Same fake "here\'s what nobody tells you" setup. Same generic list of five tips that could apply to any founder.',
+      ),
+    ).toContain("repeated-opener");
+    // Two in a row is emphasis, not the tell.
+    expect(
+      aiTellMetrics("Same hook every time. Same setup every post. But the fix is not deleting AI from your workflow."),
+    ).not.toContain("repeated-opener");
+    // Function-word openers are ordinary prose, not the tell.
+    expect(
+      aiTellMetrics("The first draft was weak. The second one landed. The third paid for the week."),
+    ).not.toContain("repeated-opener");
+    // Paragraph breaks reset the run.
+    expect(
+      aiTellMetrics("Same problem in every account.\n\nSame fix in every retro."),
+    ).not.toContain("repeated-opener");
+  });
+
+  test("aiTellMetrics catches 'The real shift:' colon-reveal, including after a paragraph break", () => {
+    expect(
+      aiTellMetrics(
+        "Founders keep asking if AI content is getting caught. Wrong question.\n\nThe real shift: readers don't need a detector anymore.",
+      ),
+    ).toContain("colon-reveal");
+    expect(aiTellMetrics("The real shift: readers feel it.")).toContain("colon-reveal");
+    // A non-revealing use of the same words is fine.
+    expect(
+      aiTellMetrics("We tracked the real shift in budgets over four quarters and it held up."),
+    ).not.toContain("colon-reveal");
+  });
+
+  test("aiTellMetrics catches 'Here's what I mean' signposting", () => {
+    expect(
+      aiTellMetrics("The rhythm gives it away before the content does.\n\nHere's what I mean.\n\nAI writing defaults to the same shape every time."),
+    ).toContain("signposting");
+    expect(
+      aiTellMetrics("Clients ask what I mean by proof, so I show them the dashboard from March."),
+    ).not.toContain("signposting");
+  });
+
 });
 
 describe("looksLikeRefusalOrClarification — the writer-refusal net", () => {

@@ -437,11 +437,15 @@ export function createDraftFinalizer(
     const sourceVerified = state.sourceVerified;
 
     // -------------------------------------------------------------------------
-    // Gate 4: Quality — deterministic edit, then ONE model specialist chosen by
-    // turn type. Source/modeled turns run source-fidelity review for telemetry
-    // only; the model-based verdict is no longer a hard rejection. Everything
-    // else runs AI-tell repair. Cross-slot sameness rewriting is intentionally
-    // off the blocking path.
+    // Gate 4: Quality — deterministic edit, then the model specialists.
+    // Source/modeled turns run source-fidelity review for telemetry only; the
+    // model-based verdict is no longer a hard rejection. AI-tell repair runs
+    // for EVERY draft, sourced or not — it was previously skipped on sourced
+    // turns, which let grounded drafts ship with classic AI tells (staccato
+    // triads, signposting) because only ungrounded originals were repaired.
+    // The repair pass itself short-circuits on clean bodies, so a tell-free
+    // draft pays no extra model call. Cross-slot sameness rewriting is
+    // intentionally off the blocking path.
     // -------------------------------------------------------------------------
     const editResult = editStage(ctx, state);
     // editStage never rejects (a pure body transform) but is typed as a
@@ -459,18 +463,17 @@ export function createDraftFinalizer(
         );
       }
       state = fidelityResult.state;
-    } else {
-      const repairResult = await aiTellRepairStage(ctx, state);
-      if (!repairResult.ok) {
-        return emit(
-          candidate,
-          reject(candidate.origin, repairResult.rejection.code, repairResult.rejection.message),
-          sourceVerified,
-          editsSoFar(),
-        );
-      }
-      state = repairResult.state;
     }
+    const repairResult = await aiTellRepairStage(ctx, state);
+    if (!repairResult.ok) {
+      return emit(
+        candidate,
+        reject(candidate.origin, repairResult.rejection.code, repairResult.rejection.message),
+        sourceVerified,
+        editsSoFar(),
+      );
+    }
+    state = repairResult.state;
 
     const finalTransformResult = finalTransformStage(ctx, state);
     if (!finalTransformResult.ok) {
