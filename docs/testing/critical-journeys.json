@@ -93,11 +93,12 @@
     {
       "id": "agent-opportunity-inspection",
       "capability": "Your Agent",
-      "invariant": "Posts proposed for modeling preserve and display their original creator, body, media, engagement, and source actions before the user drafts or dismisses them.",
+      "invariant": "Posts proposed for modeling preserve and display their original creator, body, media, engagement, and source actions before the user drafts or dismisses them; scheduled discovery may create suggestions but never drafts content without an explicit user action.",
       "preferred_seam": "browser",
       "existing_coverage": [
         "evals/data/agent-briefing-route.test.ts",
         "evals/data/agent-opportunity-post-card.test.ts",
+        "evals/data/agent-loop-user-consent.test.ts",
         "e2e/weekly-cadence.spec.ts"
       ],
       "status": "protected",

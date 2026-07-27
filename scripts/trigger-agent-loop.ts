@@ -6,7 +6,7 @@
  *
  * Usage:
  *   CRON_SECRET=... npx tsx scripts/trigger-agent-loop.ts \
- *     --url https://<your-app>.vercel.app [--workspace <id>] [--cap 2]
+ *     --url https://<your-app>.vercel.app [--workspace <id>]
  */
 
 function arg(name: string): string | undefined {
@@ -16,7 +16,6 @@ function arg(name: string): string | undefined {
 
 const appUrl = arg("url") ?? process.env.APP_URL ?? process.env.NEXT_PUBLIC_APP_URL;
 const workspace = arg("workspace");
-const cap = arg("cap");
 const secret = process.env.CRON_SECRET;
 
 async function main() {
@@ -25,7 +24,6 @@ async function main() {
 
   const url = new URL("/api/cron/agent-loop", appUrl);
   if (workspace) url.searchParams.set("workspace", workspace);
-  if (cap) url.searchParams.set("cap", cap);
 
   console.log(`GET ${url.toString()}`);
   const res = await fetch(url, {

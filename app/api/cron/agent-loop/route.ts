@@ -7,19 +7,17 @@ import {
   scanFreshness,
   freshnessMessage,
 } from "@/lib/agent-loop/scan-freshness";
-import { actOnOpportunity, type AgentOpportunityRow } from "@/lib/agent-loop/act";
 import { errorResponse } from "@/lib/workspace";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-const DEFAULT_DAILY_DRAFT_CAP = 2;
-
-// Daily agent loop (PLAN-agent-loop Phase D3). For every workspace that tracks
-// at least one creator, scan for fresh opportunities and draft the top 1–2 into
-// the system chat ("Your agent"). Hard-capped per run; a failed opportunity
-// stays proposed for a retry on the next run.
+// Agent discovery loop (PLAN-agent-loop Phase D3). For every workspace that
+// tracks at least one creator, scan for fresh opportunities and leave them
+// proposed for the user to review. Drafting is deliberately user-triggered via
+// the Agent feed or weekly cadence; a scheduled job must never create content
+// the user did not request.
 export async function GET(req: Request) {
   const secret = process.env.CRON_SECRET;
   const auth = req.headers.get("authorization");
@@ -31,13 +29,6 @@ export async function GET(req: Request) {
     const sb = supabaseAdmin();
     const url = new URL(req.url);
     const workspaceParam = url.searchParams.get("workspace");
-    const capParam = Number(url.searchParams.get("cap"));
-    const draftCap = Math.max(
-      1,
-      (Number.isFinite(capParam) && capParam > 0 ? capParam : undefined) ??
-        Number(process.env.AGENT_DAILY_DRAFT_CAP ?? DEFAULT_DAILY_DRAFT_CAP) ??
-        DEFAULT_DAILY_DRAFT_CAP,
-    );
 
     let workspaceIds: string[];
     if (workspaceParam) {
@@ -75,8 +66,6 @@ export async function GET(req: Request) {
       scanned?: number;
       inserted?: number;
       expired?: number;
-      draftedToday?: number;
-      acted?: Array<{ id: string; ok: boolean; reason?: string }>;
       skipped?: string;
       error?: string;
     }> = [];
@@ -109,47 +98,11 @@ export async function GET(req: Request) {
         }
         const scan = await scanAgentOpportunities(sb, workspaceId);
 
-        // Hard daily cap: count drafts already completed today (UTC) so manual
-        // triggers can't push a workspace past the limit.
-        const startOfDay = new Date();
-        startOfDay.setUTCHours(0, 0, 0, 0);
-        const { count: draftedToday, error: countError } = await sb
-          .from("agent_opportunities")
-          .select("id", { count: "exact", head: true })
-          .eq("workspace_id", workspaceId)
-          .eq("status", "drafted")
-          .gte("acted_at", startOfDay.toISOString());
-        if (countError) throw countError;
-        const remaining = Math.max(0, draftCap - (draftedToday ?? 0));
-
-        const acted: Array<{ id: string; ok: boolean; reason?: string }> = [];
-        if (remaining > 0) {
-          const { data: opportunities, error: oppError } = await sb
-            .from("agent_opportunities")
-            .select("id, source_post_id, payload")
-            .eq("workspace_id", workspaceId)
-            .eq("status", "proposed")
-            .order("score", { ascending: false })
-            .limit(remaining);
-          if (oppError) throw oppError;
-
-          for (const opportunity of (opportunities ?? []) as AgentOpportunityRow[]) {
-            const result = await actOnOpportunity(sb, workspaceId, opportunity);
-            acted.push(
-              result.ok
-                ? { id: opportunity.id, ok: true }
-                : { id: opportunity.id, ok: false, reason: result.reason },
-            );
-          }
-        }
-
         results.push({
           workspaceId,
           scanned: scan.scanned,
           inserted: scan.inserted,
           expired: scan.expired,
-          draftedToday: draftedToday ?? 0,
-          acted,
         });
       } catch (error) {
         results.push({
