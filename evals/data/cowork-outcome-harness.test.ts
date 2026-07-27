@@ -1975,6 +1975,134 @@ describe("production-shaped Cowork outcome harness", () => {
     ]);
   });
 
+  // Regression: every composer send carries an explicit `create` command, and
+  // that command used to claim the turn for the tool-less direct writer while
+  // checking only voice/attachments/the starter-chip researchRequirement —
+  // never the instruction text. A TYPED newsjacking brief ("Newsjack… search
+  // verified news first") therefore landed on direct_writer, where the model
+  // has no search_news tool and could only refuse. The command fast path now
+  // applies the same live-news/research text gates as the free-text path, so
+  // this turn must route to news_research (read_only_orchestrator) exactly
+  // like the identical request sent without a command (test above).
+  test("a typed newsjacking brief sent with an explicit create command routes to news_research, not the tool-less writer", async () => {
+    const report = await runCoworkOutcomeScenario({
+      id: "typed-newsjacking-create-command",
+      request: {
+        message:
+          "Newsjack a recent event about AI-generated content. Search for verified news from the last 14 days first, then write a LinkedIn post about what it means for founders.",
+        command: { kind: "create", count: 1 },
+      },
+      model: {
+        provider: { rounds: [] },
+        readOnlyOrchestrator: {
+          plans: [
+            {
+              model: PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL,
+              toolArgs: {
+                actions: [
+                  {
+                    id: "news",
+                    type: "search_news",
+                    query: "AI-generated content recent event",
+                  },
+                  {
+                    id: "draft",
+                    type: "draft_post",
+                    evidenceActionIds: ["news"],
+                  },
+                ],
+              },
+              usage: usage(100, 20, 0.0012),
+            },
+          ],
+          toolResults: {
+            search_news: [
+              {
+                ok: true,
+                max_age_days: 14,
+                searched: 1,
+                results: [
+                  {
+                    title: "Major platform verifies AI-generated content labels",
+                    url: "https://example.com/news/ai-content-labels",
+                    source: "Example News",
+                    published_at: "2026-07-20",
+                    summary:
+                      "A major platform announced verified labels for AI-generated content.",
+                  },
+                ],
+              },
+            ],
+          },
+        },
+        directWriter: [
+          {
+            text: COMPLETE_POST,
+            finishReason: "stop",
+            usage: usage(210, 95, 0.0001888),
+          },
+        ],
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [COMPLETE_POST],
+        actionNames: ["search_news", "write_grounded_post"],
+        route: "read_only_orchestrator",
+      },
+    });
+
+    expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+    expect(report.safe.route).toBe("read_only_orchestrator");
+    expect(report.observed.readOnlyTools.map((tool) => tool.name)).toEqual([
+      "search_news",
+    ]);
+    // The single draft-engine call is the grounded write AFTER the news
+    // search — not a tool-less direct-writer turn.
+    expect(report.observed.directWriterRequests).toHaveLength(1);
+  });
+
+  // Guard against over-correction: a plain typed post brief sent with the
+  // same explicit create command must STILL take the tool-less direct-writer
+  // fast path — no research wording, no tools, one canonical draft.
+  test("a plain typed post brief sent with an explicit create command still routes to the direct writer", async () => {
+    const report = await runCoworkOutcomeScenario({
+      id: "typed-plain-post-create-command",
+      request: {
+        message: "Write a post about remote work.",
+        command: { kind: "create", count: 1 },
+      },
+      model: {
+        provider: { rounds: [] },
+        directWriter: [
+          {
+            text: COMPLETE_POST,
+            finishReason: "stop",
+            usage: usage(210, 95, 0.0001888),
+          },
+        ],
+      },
+      expected: {
+        terminal: "done",
+        artifactBodies: [COMPLETE_POST],
+        actionNames: [],
+        route: "direct_writer",
+      },
+    });
+
+    expect(
+      report.pass,
+      JSON.stringify({ failures: report.failureCodes, safe: report.safe }),
+    ).toBe(true);
+    expect(report.safe.route).toBe("direct_writer");
+    expect(report.observed.agentProviderRounds).toBe(0);
+    expect(report.observed.readOnlyPlannerRequests).toHaveLength(0);
+    expect(report.observed.readOnlyTools).toEqual([]);
+    expect(report.observed.directWriterRequests).toHaveLength(1);
+    expect(Object.keys(report.observed.directWriterRequests[0])).not.toContain(
+      "tools",
+    );
+  });
+
   test("produces the exact plural draft count from one verified research checkpoint", async () => {
     const report = await runCoworkOutcomeScenario({
       id: "read-only-orchestrator-news-multi-draft",

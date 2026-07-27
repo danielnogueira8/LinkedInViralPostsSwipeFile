@@ -21,6 +21,7 @@ import {
   isDirectRefineEligible,
   isGeneralRefineEligible,
   isOpinionOrQuestionAboutContent,
+  requiresLiveNewsOrResearch,
 } from "@/lib/agent/direct-writer-policy";
 import { classifyDirectRefineFocus } from "@/lib/agent/direct-refine-policy";
 import {
@@ -2351,11 +2352,21 @@ export async function compileTurnPlan(
       sourceResolved: Boolean(directSource),
       isRefine: skipDecision,
     });
+    // The explicit `create` command may claim the turn for the tool-less
+    // direct writer ONLY when the typed instruction itself needs no tools.
+    // requiresLiveNewsOrResearch applies the same live-news/research text
+    // gates isDirectOriginalPostEligible applies on the free-text path —
+    // without it, a typed "Newsjack a recent event… search verified news
+    // first" was claimed here and the writer (which has no search_news tool)
+    // could only refuse, instead of routing to news_research. A research
+    // starter chip already blocks via researchRequirement; a plain typed
+    // brief matches neither pattern and keeps the fast path.
     const commandCreateEligible = Boolean(
       explicitCreateOperation &&
         voiceResolved &&
         attachments.length === 0 &&
-        !composerTaskContext?.researchRequirement,
+        !composerTaskContext?.researchRequirement &&
+        !requiresLiveNewsOrResearch(effectiveUserInstruction),
     );
     const directMulti = Boolean(
       commandCreateEligible && (directPostCount ?? 1) > 1,

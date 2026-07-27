@@ -820,6 +820,46 @@ describe("DraftEngine", () => {
     );
   });
 
+  // Regression for the newsjacking-routing bug: the routed writer answered
+  // with a refusal + options menu ("I can't run a live search_news call from
+  // here… tell me which one you want"), and the finalize path — whose gates
+  // only reject empty/corrupted/too-short bodies — packaged that prose as a
+  // Post artifact under "Your draft is ready." The refusal net now short-
+  // circuits: the writer's message is delivered verbatim as chat text with
+  // terminalReason "ask" (telemetry's "clarified"), and NO artifact is
+  // produced. It also must NOT trigger a repair round — the writer said what
+  // it meant, so there is nothing to fix.
+  test("delivers a writer refusal as text with terminalReason ask and no artifact", async () => {
+    const refusal =
+      "I can't run a live search_news call from here, so I can't verify what's actually trending today. Here are two honest paths forward: paste a link and I'll model it, or give me the topic and I'll draft from that. Tell me which one you want?";
+    const writer = new ScriptedWriter([
+      { text: refusal, finishReason: "stop", usage: usage(90, 60) },
+    ]);
+    const result = await collect(writer, {
+      userInstruction:
+        "Write a newsjacking post about whatever is trending in AI today.",
+    });
+
+    expect(writer.requests.map((request) => request.stage)).toEqual([
+      "primary",
+    ]);
+    expect(artifacts(result.events)).toHaveLength(0);
+    expect(
+      result.events
+        .filter(
+          (event): event is Extract<AgentEvent, { type: "text" }> =>
+            event.type === "text",
+        )
+        .map((event) => event.delta),
+    ).toEqual([refusal]);
+    const doneEvent = done(result.events);
+    expect(doneEvent?.terminalReason).toBe("ask");
+    // The finish text is the writer's message as-is — never "Your draft is
+    // ready." pinned on a conversational reply.
+    expect(doneEvent?.message.content).toBe(refusal);
+    expect(doneEvent?.message.content).not.toContain("Your draft is ready");
+  });
+
   test("repairs a malformed partial list and returns text without draft cards", async () => {
     const partial = [
       "1.",

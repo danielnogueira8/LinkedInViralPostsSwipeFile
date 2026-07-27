@@ -31,6 +31,7 @@ import {
   areDraftsNearDuplicate,
   duplicateReasonFor,
   looksCorruptedDraft,
+  looksLikeRefusalOrClarification,
   normalizeDraftKey,
 } from "@/lib/agent/specialists/nets";
 import { editDraftBodySync } from "@/lib/agent/specialists/editor";
@@ -966,7 +967,17 @@ type FinalizedDraftEngineResult =
       kind: "artifact";
       artifact: Artifact & { kind: "post" };
     }
-  | { ok: true; kind: "text"; text: string }
+  // A text deliverable. `terminalReason` is "done" for a partial deliverable
+  // that fully satisfies its task, and "ask" when the writer answered with a
+  // refusal or clarifying question (see looksLikeRefusalOrClarification) —
+  // "ask" keeps the outcome guard's done-only artifact-count assertion out of
+  // the way and lets telemetry record the turn as "clarified".
+  | {
+      ok: true;
+      kind: "text";
+      text: string;
+      terminalReason: "done" | "ask";
+    }
   | {
       ok: false;
       origin: "direct_writer";
@@ -1072,14 +1083,14 @@ async function finalizePartialResponse(
       );
     }
   }
-  return { ok: true, kind: "text", text };
+  return { ok: true, kind: "text", text, terminalReason: "done" };
 }
 
 function engineDone(
   content: string,
   inputTokens: number,
   outputTokens: number,
-  terminalReason: "done" | "cancelled" | "deadline" | "error" = "done",
+  terminalReason: "done" | "ask" | "cancelled" | "deadline" | "error" = "done",
 ): AgentEvent {
   return {
     type: "done",
@@ -1442,7 +1453,7 @@ export async function* runSingleDraftTurn(
 
   const finish = (
     content: string,
-    terminalReason: "done" | "cancelled" | "deadline" | "error" = "done",
+    terminalReason: "done" | "ask" | "cancelled" | "deadline" | "error" = "done",
   ): AgentEvent => engineDone(content, inputTokens, outputTokens, terminalReason);
 
   const unavailableFidelityEvents = (
@@ -1510,6 +1521,30 @@ export async function* runSingleDraftTurn(
         latencyMs: Date.now() - partialFinalizerStartedAt,
       });
       return result;
+    }
+    // Refusal/clarification short-circuit. When the routed writer answers the
+    // request with prose TO THE USER instead of a post ("I can't run a live
+    // search_news call from here… here are two honest paths forward… tell me
+    // which one you want"), none of the finalizer gates below catch it: the
+    // deterministic checks only reject empty/corrupted/too-short bodies, and
+    // the source-fidelity verdict is telemetry-only by design. So that prose
+    // used to be packaged as a Post artifact under "Your draft is ready." —
+    // a conversational reply rendered as a draft card. The net runs BEFORE the
+    // finalizer so the message is delivered verbatim as chat text (never
+    // edited, never card-ified) and the turn ends with terminalReason "ask":
+    // the persist layer and telemetry already understand "ask" (it maps to
+    // terminal_outcome "clarified"), and the outcome guard only asserts draft
+    // counts for "done" terminals, so no artifact is expected here. The net is
+    // deliberately high-precision (two independent signals, or an opening
+    // incapability statement), so a genuine post is never rerouted by this.
+    const refusal = looksLikeRefusalOrClarification(response.text);
+    if (refusal) {
+      return {
+        ok: true,
+        kind: "text",
+        text: response.text.trim(),
+        terminalReason: "ask",
+      };
     }
     finalizerStartedAt = Date.now();
     const result = await finalizer
@@ -1667,7 +1702,7 @@ export async function* runSingleDraftTurn(
           }
           if (result.kind === "text") {
             yield { type: "text", delta: result.text };
-            yield finish(result.text);
+            yield finish(result.text, result.terminalReason);
           } else {
             yield {
               type: "artifact",
@@ -1717,7 +1752,7 @@ export async function* runSingleDraftTurn(
                 }
                 if (repairedResult.kind === "text") {
                   yield { type: "text", delta: repairedResult.text };
-                  yield finish(repairedResult.text);
+                  yield finish(repairedResult.text, repairedResult.terminalReason);
                 } else {
                   yield {
                     type: "artifact",
@@ -1777,7 +1812,7 @@ export async function* runSingleDraftTurn(
             }
             if (fallbackResult.kind === "text") {
               yield { type: "text", delta: fallbackResult.text };
-              yield finish(fallbackResult.text);
+              yield finish(fallbackResult.text, fallbackResult.terminalReason);
             } else {
               yield {
                 type: "artifact",
@@ -1829,7 +1864,10 @@ export async function* runSingleDraftTurn(
                   }
                   if (fallbackRepairResult.kind === "text") {
                     yield { type: "text", delta: fallbackRepairResult.text };
-                    yield finish(fallbackRepairResult.text);
+                    yield finish(
+                      fallbackRepairResult.text,
+                      fallbackRepairResult.terminalReason,
+                    );
                   } else {
                     yield {
                       type: "artifact",

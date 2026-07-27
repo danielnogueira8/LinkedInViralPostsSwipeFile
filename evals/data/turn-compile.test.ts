@@ -23,6 +23,7 @@ import {
   isDirectRefineEligible,
   isGeneralRefineEligible,
   isOpinionOrQuestionAboutContent,
+  requiresLiveNewsOrResearch,
 } from "@/lib/agent/direct-writer-policy";
 import {
   freeTextLayersOpenChoice,
@@ -2175,6 +2176,36 @@ describe("direct writer eligibility predicates", () => {
     test("a non-question statement is not an opinion ask", () => {
       expect(isOpinionOrQuestionAboutContent("this post is great")).toBe(false);
       expect(isOpinionOrQuestionAboutContent("")).toBe(false);
+    });
+  });
+
+  describe("requiresLiveNewsOrResearch — the command fast path's text gate", () => {
+    // The explicit `create` command path in compile.ts applies this gate to the
+    // typed instruction before claiming the turn for the tool-less direct
+    // writer. These are the SAME patterns isDirectOriginalPostEligible applies
+    // on the free-text path, so a newsjacking/research brief can never reach a
+    // writer that has no search_news tool — command or not.
+    test("catches typed newsjacking, live-news, and research briefs", () => {
+      for (const instruction of [
+        "Newsjack a recent event about AI-generated content. Search for verified news from the last 14 days first, then write a LinkedIn post about what it means for founders.",
+        "Write a post about today's news on AI regulation.",
+        "Write a post about the latest news in AI.",
+        "Research B2B pricing strategies and write a post about pricing discipline.",
+        "Fact-check the claim about remote work and write a post about it.",
+      ]) {
+        expect(requiresLiveNewsOrResearch(instruction)).toBe(true);
+      }
+    });
+
+    test("NEVER catches a plain typed post brief (it must keep the direct-writer fast path)", () => {
+      for (const instruction of [
+        "Write a post about remote work.",
+        "Write an original post in my voice about why a personal brand is career leverage.",
+        "give me 3 posts about hiring",
+        "Write a post about pricing discipline. Do not search or use sources.",
+      ]) {
+        expect(requiresLiveNewsOrResearch(instruction)).toBe(false);
+      }
     });
   });
 
