@@ -106,7 +106,7 @@ export default function LandingClient({
             Your next LinkedIn post starts with proof.
           </h1>
           <p className="reveal-up mx-auto mt-6 max-w-[650px] text-pretty text-base leading-7 text-muted-foreground sm:text-lg sm:leading-8" style={{ "--reveal-delay": "110ms" } as React.CSSProperties}>
-            SwipeIn&apos;s agent finds breakout posts from creators you trust, drafts them in your voice, and lines them up on your calendar. You approve every word.
+            SwipeIn’s agent finds breakout posts from creators you trust, drafts them in your voice, and lines them up on your calendar. You approve every word.
           </p>
           <div className="reveal-up mt-8 flex flex-wrap items-center justify-center gap-3" style={{ "--reveal-delay": "150ms" } as React.CSSProperties}>
             <PrimaryLink>Start writing free</PrimaryLink>
@@ -121,9 +121,9 @@ export default function LandingClient({
 
           <div className="reveal-up relative mt-12 lg:mt-16" style={{ "--reveal-delay": "210ms" } as React.CSSProperties}>
             <div className="absolute inset-x-[10%] bottom-0 top-[20%] -z-0 bg-accent-brand/10 blur-3xl" />
-            <div className="relative overflow-hidden rounded-[14px] bg-[#f8f4e9] p-2 shadow-[0_8px_24px_-18px_rgba(28,28,26,0.4)] sm:p-3">
+            <div className="relative overflow-hidden rounded-[14px] bg-paper-trail p-2 shadow-[0_8px_24px_-18px_rgba(28,28,26,0.4)] sm:p-3">
               <LandingPaperTexture />
-              <div className="relative flex h-9 items-center justify-between border-b border-[#292624]/10 px-2 sm:px-3">
+              <div className="relative flex h-9 items-center justify-between border-b border-paper-trail-ink/10 px-2 sm:px-3">
                 <div className="flex w-10 items-center gap-1.5" aria-hidden="true">
                   <span className="live-dot size-1.5 rounded-full bg-accent-brand" />
                 </div>
@@ -211,7 +211,7 @@ export default function LandingClient({
                 actor="Agent"
                 icon={<Search />}
                 title="Find the signal"
-                copy="Track the creators your buyers already read. SwipeIn surfaces posts outperforming each creator's normal baseline, so small accounts and large accounts compete on quality rather than raw reach."
+                copy="Track the creators your buyers already read. SwipeIn surfaces posts outperforming each creator’s normal baseline, so small accounts and large accounts compete on quality rather than raw reach."
               >
                 <SignalPanel />
               </WorkflowRow>
@@ -316,7 +316,7 @@ export default function LandingClient({
                 key={label}
                 className={`px-4 py-7 sm:px-6 ${index % 2 ? "border-l border-border" : ""} ${index > 1 ? "border-t border-border sm:border-t-0" : ""} ${index > 0 ? "sm:border-l sm:border-border" : ""}`}
               >
-                <p className="text-3xl font-medium tracking-[-0.03em] sm:text-4xl">
+                <p className="text-3xl font-medium tabular-nums tracking-[-0.03em] sm:text-4xl">
                   <CountUp value={value} />
                 </p>
                 <p className="mt-2 text-xs leading-5 text-muted-foreground">{label}</p>
@@ -483,10 +483,10 @@ function DraftPanel() {
       </div>
       <div className="rounded-[10px] border border-border bg-background p-4">
         <div className="flex items-center justify-between border-b border-border pb-3">
-        <div className="flex items-center gap-2.5"><span className="grid size-8 place-items-center rounded-full bg-primary text-xs font-medium text-primary-foreground">JD</span><div><p className="text-sm font-medium">John Doe</p><p className="text-xs text-muted-foreground">Ready to review</p></div></div>
+        <div className="flex items-center gap-2.5"><span className="grid size-8 place-items-center rounded-full bg-primary text-xs font-medium text-primary-foreground">MO</span><div><p className="text-sm font-medium">Maya Okonkwo</p><p className="text-xs text-muted-foreground">Example draft · ready to review</p></div></div>
           <FileText className="size-4 text-muted-foreground" />
         </div>
-        <p className="mt-4 text-sm leading-6">3 AI tools I actually use to ghostwrite LinkedIn content.<br /><br />Not a &quot;best AI tools&quot; list. These survived 6 years of writing for founders and 30+ posts that crossed 1,000 comments.<br /><br />1/ Claude → for overall work<br />The one I live in all day. Best for research, create sales assets, and planning your content schedule.<br /><br />2/ SwipeIn → for research &amp; writing<br />This is where I source all my inspiration from. I track 100+ creators and get fed their best content daily. Trained on my voice and thousands of viral posts.<br /><br />3/ Notion → for content calendars<br />Where my content planning lives: ideas, drafts, scheduled posts, client feedback. Still the best workspace.</p>
+        <p className="mt-4 text-sm leading-6">3 AI tools I actually use to ghostwrite LinkedIn content.<br /><br />Not a &quot;best AI tools&quot; list. These are the three that survived real client work.<br /><br />1/ Claude → for deep work<br />The one I live in all day. Best for research, sales assets, and planning your content schedule.<br /><br />2/ Perplexity → for fact-checks<br />Fast, sourced answers when a claim needs to be verified before it goes in a post.<br /><br />3/ Notion → for content calendars<br />Where my content planning lives: ideas, drafts, scheduled posts, client feedback. Still the best workspace.</p>
         <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-border pt-3">
           <button type="button" className="min-h-10 rounded-[8px] bg-state-success-bg px-3 text-xs font-medium text-state-success transition-[background-color,scale] hover:bg-state-success-bg/70 active:scale-[0.96]">Good</button>
           <button type="button" className="min-h-10 rounded-[8px] bg-state-danger-bg px-3 text-xs font-medium text-state-danger transition-[background-color,scale] hover:bg-state-danger-bg/70 active:scale-[0.96]">Needs work</button>

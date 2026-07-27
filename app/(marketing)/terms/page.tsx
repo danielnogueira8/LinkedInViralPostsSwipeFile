@@ -15,7 +15,7 @@ export default function TermsPage() {
         className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[300px] bg-gradient-to-b from-accent/30 to-transparent"
       />
 
-      <section className="mx-auto max-w-3xl px-6 pt-20 pb-20 md:pt-28">
+      <section className="mx-auto max-w-[65ch] px-6 pt-20 pb-20 md:pt-28">
         <h1 className="font-display text-4xl leading-[1.1] tracking-tight md:text-5xl">
           Terms of Service
         </h1>
@@ -23,7 +23,7 @@ export default function TermsPage() {
           Effective {EFFECTIVE_DATE}
         </p>
 
-        <div className="mt-10 space-y-8 text-[15px] leading-relaxed text-black">
+        <div className="mt-10 space-y-8 text-[15px] leading-relaxed text-foreground">
           <Section title="1. Agreement">
             <p>
               These Terms govern your use of Swipe File (the &ldquo;Service&rdquo;),
@@ -32,7 +32,7 @@ export default function TermsPage() {
               Terms and to our{" "}
               <Link
                 href="/privacy"
-                className="underline decoration-[#1C1C1A]/30 hover:decoration-[#1C1C1A]"
+                className="underline decoration-foreground/30 hover:decoration-foreground"
               >
                 Privacy Policy
               </Link>
@@ -59,7 +59,7 @@ export default function TermsPage() {
               and any free trial terms are listed on our{" "}
               <Link
                 href="/pricing"
-                className="underline decoration-[#1C1C1A]/30 hover:decoration-[#1C1C1A]"
+                className="underline decoration-foreground/30 hover:decoration-foreground"
               >
                 pricing page
               </Link>
@@ -156,7 +156,7 @@ export default function TermsPage() {
               described in our{" "}
               <Link
                 href="/privacy"
-                className="underline decoration-[#1C1C1A]/30 hover:decoration-[#1C1C1A]"
+                className="underline decoration-foreground/30 hover:decoration-foreground"
               >
                 Privacy Policy
               </Link>
@@ -190,7 +190,7 @@ export default function TermsPage() {
               and where they are located, is kept in our{" "}
               <Link
                 href="/privacy"
-                className="underline decoration-[#1C1C1A]/30 hover:decoration-[#1C1C1A]"
+                className="underline decoration-foreground/30 hover:decoration-foreground"
               >
                 Privacy Policy
               </Link>
@@ -210,7 +210,7 @@ export default function TermsPage() {
               workspace data after a reasonable period (see our{" "}
               <Link
                 href="/privacy"
-                className="underline decoration-[#1C1C1A]/30 hover:decoration-[#1C1C1A]"
+                className="underline decoration-foreground/30 hover:decoration-foreground"
               >
                 Privacy Policy
               </Link>
@@ -288,7 +288,7 @@ export default function TermsPage() {
               Questions about these Terms: email{" "}
               <a
                 href="mailto:hello@scalecontentlabs.com"
-                className="underline decoration-[#1C1C1A]/30 hover:decoration-[#1C1C1A]"
+                className="underline decoration-foreground/30 hover:decoration-foreground"
               >
                 hello@scalecontentlabs.com
               </a>

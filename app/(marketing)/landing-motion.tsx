@@ -104,13 +104,21 @@ export function CountUp({ value }: { value: number }) {
 export function RotatingPhrases({ phrases }: { phrases: string[] }) {
   const reduced = usePrefersReducedMotion();
   const [index, setIndex] = useState(0);
+  // WCAG 2.2.2 — auto-updating content needs a pause mechanism: hover pauses
+  // for mouse users, and the sr-only toggle gives keyboard/AT users the same
+  // control without disturbing the layout.
+  const [paused, setPaused] = useState(false);
   useEffect(() => {
-    if (reduced) return;
+    if (reduced || paused) return;
     const id = setInterval(() => setIndex((i) => (i + 1) % phrases.length), 2600);
     return () => clearInterval(id);
-  }, [reduced, phrases.length]);
+  }, [reduced, paused, phrases.length]);
   return (
-    <span className="inline-grid align-baseline">
+    <span
+      className="inline-grid align-baseline"
+      onMouseEnter={() => setPaused(true)}
+      onMouseLeave={() => setPaused(false)}
+    >
       {phrases.map((phrase, i) => (
         <span
           key={phrase}
@@ -122,6 +130,13 @@ export function RotatingPhrases({ phrases }: { phrases: string[] }) {
           {phrase}
         </span>
       ))}
+      <button
+        type="button"
+        className="sr-only"
+        onClick={() => setPaused((p) => !p)}
+      >
+        {paused ? "Play rotating phrases" : "Pause rotating phrases"}
+      </button>
     </span>
   );
 }
