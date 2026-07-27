@@ -97,18 +97,20 @@ export default function LandingClient({
     <div className="overflow-x-hidden bg-background text-foreground">
       <section className="relative px-4 pb-14 pt-12 sm:px-6 sm:pt-16 lg:pb-24 lg:pt-20">
         <div aria-hidden="true" className="hero-dot-grid absolute inset-0" />
-        <div className="relative mx-auto max-w-[1180px] text-center">
-          <div className="reveal-up mx-auto inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground shadow-soft" style={{ "--reveal-delay": "0ms" } as React.CSSProperties}>
+        {/* Asymmetric hero: the copy block hangs on the left margin (no shared
+            centre axis on desktop), the product shot anchors below. */}
+        <div className="relative mx-auto max-w-[1180px]">
+          <div className="reveal-up inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground shadow-soft" style={{ "--reveal-delay": "0ms" } as React.CSSProperties}>
             <span className="live-dot size-1.5 rounded-full bg-accent-brand" />
             Your agent for research, writing, and publishing
           </div>
-          <h1 className="reveal-up mx-auto mt-6 max-w-[900px] text-balance text-[clamp(2.8rem,6vw,5rem)] font-medium leading-[0.98] tracking-[-0.04em]" style={{ "--reveal-delay": "60ms" } as React.CSSProperties}>
+          <h1 className="reveal-up mt-6 max-w-[900px] text-balance text-[clamp(2.8rem,6vw,5rem)] font-medium leading-[0.98] tracking-[-0.04em]" style={{ "--reveal-delay": "60ms" } as React.CSSProperties}>
             Your next LinkedIn post starts with proof.
           </h1>
-          <p className="reveal-up mx-auto mt-6 max-w-[650px] text-pretty text-base leading-7 text-muted-foreground sm:text-lg sm:leading-8" style={{ "--reveal-delay": "110ms" } as React.CSSProperties}>
+          <p className="reveal-up mt-6 max-w-[650px] text-pretty text-base leading-7 text-muted-foreground sm:text-lg sm:leading-8" style={{ "--reveal-delay": "110ms" } as React.CSSProperties}>
             SwipeIn’s agent finds breakout posts from creators you trust, drafts them in your voice, and lines them up on your calendar. You approve every word.
           </p>
-          <div className="reveal-up mt-8 flex flex-wrap items-center justify-center gap-3" style={{ "--reveal-delay": "150ms" } as React.CSSProperties}>
+          <div className="reveal-up mt-8 flex flex-wrap items-center gap-3" style={{ "--reveal-delay": "150ms" } as React.CSSProperties}>
             <PrimaryLink>Start writing free</PrimaryLink>
             <Link
               href="#workflow"
@@ -120,7 +122,6 @@ export default function LandingClient({
           <p className="mt-3 text-xs text-muted-foreground">7 days free. No credit card required.</p>
 
           <div className="reveal-up relative mt-12 lg:mt-16" style={{ "--reveal-delay": "210ms" } as React.CSSProperties}>
-            <div className="absolute inset-x-[10%] bottom-0 top-[20%] -z-0 bg-accent-brand/10 blur-3xl" />
             <div className="relative overflow-hidden rounded-[14px] bg-paper-trail p-2 shadow-[0_8px_24px_-18px_rgba(28,28,26,0.4)] sm:p-3">
               <LandingPaperTexture />
               <div className="relative flex h-9 items-center justify-between border-b border-paper-trail-ink/10 px-2 sm:px-3">
@@ -142,6 +143,27 @@ export default function LandingClient({
             <div className="relative z-10 mx-auto -mt-8 w-full max-w-[400px] text-left sm:-mt-14 sm:ml-6 sm:mr-auto lg:ml-10">
               <AgentTrace />
             </div>
+          </div>
+
+          {/* Live counters ride with the hero instead of a mid-page stats
+              strip — proof sits next to the product shot it describes. */}
+          <div className="mt-14 grid grid-cols-2 border-y border-border sm:grid-cols-4 lg:mt-20">
+            {([
+              { value: stats.postsPulledToday, label: "posts pulled today" },
+              { value: stats.creatorsTracked, label: "creators tracked" },
+              { value: stats.viralPostsArchived, label: "viral posts archived" },
+              { value: stats.templatesGenerated, label: "patterns extracted" },
+            ] satisfies { value: number; label: string }[]).map(({ value, label }, index) => (
+              <div
+                key={label}
+                className={`px-4 py-7 sm:px-6 ${index % 2 ? "border-l border-border" : ""} ${index > 1 ? "border-t border-border sm:border-t-0" : ""} ${index > 0 ? "sm:border-l sm:border-border" : ""}`}
+              >
+                <p className="text-3xl font-medium tabular-nums tracking-[-0.03em] sm:text-4xl">
+                  <CountUp value={value} />
+                </p>
+                <p className="mt-2 text-xs leading-5 text-muted-foreground">{label}</p>
+              </div>
+            ))}
           </div>
         </div>
       </section>
@@ -193,6 +215,8 @@ export default function LandingClient({
 
       <section id="workflow" className="px-4 py-20 sm:px-6 sm:py-28">
         <div className="mx-auto max-w-[1180px]">
+          {/* The one downstream Reveal on the page — everything below renders
+              statically so the page settles after the hero entrance. */}
           <Reveal>
             <div className="max-w-[720px]">
               <h2 className="text-balance text-[clamp(2.2rem,4vw,3.75rem)] font-medium leading-[1.04] tracking-[-0.035em]">
@@ -205,50 +229,42 @@ export default function LandingClient({
           </Reveal>
 
           <div className="mt-14 divide-y divide-border border-y border-border">
-            <Reveal>
-              <WorkflowRow
-                number="01"
-                actor="Agent"
-                icon={<Search />}
-                title="Find the signal"
-                copy="Track the creators your buyers already read. SwipeIn surfaces posts outperforming each creator’s normal baseline, so small accounts and large accounts compete on quality rather than raw reach."
-              >
-                <SignalPanel />
-              </WorkflowRow>
-            </Reveal>
-            <Reveal>
-              <WorkflowRow
-                number="02"
-                actor="Agent"
-                icon={<AiIcon />}
-                title="Make it yours"
-                copy="Choose your voice or a saved creator style, then start from a proven post framework. The agent applies the source, style, and feedback before producing an editable draft."
-              >
-                <DraftPanel />
-              </WorkflowRow>
-            </Reveal>
-            <Reveal>
-              <WorkflowRow
-                number="03"
-                actor="Agent"
-                icon={<LayoutDashboard />}
-                title="Manage your posts"
-                copy="The agent moves ideas, drafts, approved posts, and published work through one clear board. See what needs attention and keep every source attached."
-              >
-                <PostsBoardPanel />
-              </WorkflowRow>
-            </Reveal>
-            <Reveal>
-              <WorkflowRow
-                number="04"
-                actor="You approve"
-                icon={<CalendarDays />}
-                title="Give it a next action"
-                copy="Review the draft, request changes or approve it, and schedule it to LinkedIn. The original source stays attached for traceability."
-              >
-                <CalendarPanel />
-              </WorkflowRow>
-            </Reveal>
+            <WorkflowRow
+              number="01"
+              actor="Agent"
+              icon={<Search />}
+              title="Find the signal"
+              copy="Track the creators your buyers already read. SwipeIn surfaces posts outperforming each creator’s normal baseline, so small accounts and large accounts compete on quality rather than raw reach."
+            >
+              <SignalPanel />
+            </WorkflowRow>
+            <WorkflowRow
+              number="02"
+              actor="Agent"
+              icon={<AiIcon />}
+              title="Make it yours"
+              copy="Choose your voice or a saved creator style, then start from a proven post framework. The agent applies the source, style, and feedback before producing an editable draft."
+            >
+              <DraftPanel />
+            </WorkflowRow>
+            <WorkflowRow
+              number="03"
+              actor="Agent"
+              icon={<LayoutDashboard />}
+              title="Manage your posts"
+              copy="The agent moves ideas, drafts, approved posts, and published work through one clear board. See what needs attention and keep every source attached."
+            >
+              <PostsBoardPanel />
+            </WorkflowRow>
+            <WorkflowRow
+              number="04"
+              actor="You approve"
+              icon={<CalendarDays />}
+              title="Give it a next action"
+              copy="Review the draft, request changes or approve it, and schedule it to LinkedIn. The original source stays attached for traceability."
+            >
+              <CalendarPanel />
+            </WorkflowRow>
           </div>
         </div>
       </section>
@@ -256,16 +272,16 @@ export default function LandingClient({
       <section id="features" className="surface-noise relative border-y border-border bg-card px-4 py-20 sm:px-6 sm:py-24">
         <div className="relative mx-auto max-w-[1180px]">
           <div className="grid gap-10 lg:grid-cols-[0.8fr_1.2fr] lg:gap-20">
-            <Reveal>
-              <div>
-                <h2 className="text-balance text-[clamp(2.1rem,3.5vw,3.4rem)] leading-[1.05] tracking-[-0.035em]">
-                  The workspace remembers what makes your content yours.
-                </h2>
-                <p className="mt-5 max-w-md text-pretty leading-7 text-muted-foreground">
-                  Good and Needs work are not throwaway reactions. Your feedback becomes durable guidance for the next draft.
-                </p>
-              </div>
-            </Reveal>
+            <div>
+              <h2 className="text-balance text-[clamp(2.1rem,3.5vw,3.4rem)] leading-[1.05] tracking-[-0.035em]">
+                The workspace remembers what makes your content yours.
+              </h2>
+              <p className="mt-5 max-w-md text-pretty leading-7 text-muted-foreground">
+                Good and Needs work are not throwaway reactions. Your feedback becomes durable guidance for the next draft.
+              </p>
+            </div>
+            {/* Asymmetric tile grid: the lead tile spans both columns so the
+                six cards don't read as one repeated template tile. */}
             <div className="grid gap-3 sm:grid-cols-2">
               {([
                 [<Mic2 key="i" />, "Voice profile", "Phrasing, rhythm, structure, and the language you avoid."],
@@ -273,11 +289,11 @@ export default function LandingClient({
                 [<ThumbsUp key="i" />, "Feedback memory", "Ratings and specific notes shape future generations."],
                 [<Palette key="i" />, "Creator styles", "Write in your own voice or choose the style of a creator you follow."],
                 [<Library key="i" />, "Proven frameworks", "Turn high-performing posts into reusable templates for new topics."],
-                [<Image key="i" src="/claude.svg" alt="" width={18} height={18} />, "Claude MCP connector", "Bring the same swipe file, creator styles, and proven templates into Claude through MCP."],
+                // Claude is a labelled wordmark, not a raster logo in an icon
+                // slot — one icon voice (Lucide) across the grid.
+                [<span key="i" className="text-[13px] font-semibold leading-none tracking-[-0.01em]">Claude</span>, "Claude MCP connector", "Bring the same swipe file, creator styles, and proven templates into Claude through MCP."],
               ] as const).map(([icon, title, copy], index) => (
-                <Reveal key={title} delay={index * 60}>
-                  <Feature icon={icon} title={title} copy={copy} />
-                </Reveal>
+                <Feature key={title} icon={icon} title={title} copy={copy} className={index === 0 ? "sm:col-span-2" : undefined} />
               ))}
             </div>
           </div>
@@ -286,115 +302,82 @@ export default function LandingClient({
 
       <section className="px-4 py-20 sm:px-6 sm:py-28">
         <div className="mx-auto grid max-w-[1000px] gap-10 lg:grid-cols-[0.8fr_1.2fr] lg:items-center lg:gap-20">
-          <Reveal>
-            <div>
-              <p className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">A trace, not a template</p>
-              <h2 className="mt-4 text-balance text-[clamp(2.1rem,3.5vw,3.4rem)] leading-[1.05] tracking-[-0.035em]">
-                Source material, not source copy.
-              </h2>
-              <p className="mt-5 max-w-md text-pretty leading-7 text-muted-foreground">
-                The best ideas leave a trail. SwipeIn keeps the original signal close while your point of view does the writing.
-              </p>
-            </div>
-          </Reveal>
-          <Reveal delay={100}>
-            <LandingPaperPanel />
-          </Reveal>
+          <div>
+            <p className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">A trace, not a template</p>
+            <h2 className="mt-4 text-balance text-[clamp(2.1rem,3.5vw,3.4rem)] leading-[1.05] tracking-[-0.035em]">
+              Source material, not source copy.
+            </h2>
+            <p className="mt-5 max-w-md text-pretty leading-7 text-muted-foreground">
+              The best ideas leave a trail. SwipeIn keeps the original signal close while your point of view does the writing.
+            </p>
+          </div>
+          <LandingPaperPanel />
         </div>
       </section>
 
-      <section className="px-4 py-16 sm:px-6 sm:py-20">
-        <Reveal>
-          <div className="mx-auto grid max-w-[1180px] grid-cols-2 border-y border-border sm:grid-cols-4">
-            {([
-              { value: stats.postsPulledToday, label: "posts pulled today" },
-              { value: stats.creatorsTracked, label: "creators tracked" },
-              { value: stats.viralPostsArchived, label: "viral posts archived" },
-              { value: stats.templatesGenerated, label: "patterns extracted" },
-            ] satisfies { value: number; label: string }[]).map(({ value, label }, index) => (
-              <div
-                key={label}
-                className={`px-4 py-7 sm:px-6 ${index % 2 ? "border-l border-border" : ""} ${index > 1 ? "border-t border-border sm:border-t-0" : ""} ${index > 0 ? "sm:border-l sm:border-border" : ""}`}
-              >
-                <p className="text-3xl font-medium tabular-nums tracking-[-0.03em] sm:text-4xl">
-                  <CountUp value={value} />
-                </p>
-                <p className="mt-2 text-xs leading-5 text-muted-foreground">{label}</p>
-              </div>
-            ))}
-          </div>
-        </Reveal>
-      </section>
-
       <section id="pricing" className="px-4 pb-20 pt-8 sm:px-6 sm:pb-28">
-        <Reveal>
-          <div className="gradient-hairline mx-auto grid max-w-[1000px] overflow-hidden rounded-[14px] bg-card lg:grid-cols-[1fr_0.85fr]">
-            <div className="p-7 sm:p-10 lg:p-12">
-              <p className="text-sm font-medium text-muted-foreground">One complete workspace</p>
-              <h2 className="mt-4 max-w-lg text-balance text-[clamp(2.3rem,4vw,3.7rem)] leading-[1.03] tracking-[-0.04em]">
-                Publish from evidence, not pressure.
-              </h2>
-              <p className="mt-5 max-w-md leading-7 text-muted-foreground">
-                Research, writing, planning, and publishing stay together. Try the full product for seven days.
-              </p>
-              <div className="mt-8"><PrimaryLink>Start your free week</PrimaryLink></div>
-            </div>
-            <div className="border-t border-border bg-muted/60 p-7 sm:p-10 lg:border-l lg:border-t-0 lg:p-12">
-              <p className="text-sm font-medium">Launch plan</p>
-              <div className="mt-3 flex items-end gap-2">
-                <span className="pb-1 text-lg text-muted-foreground line-through decoration-1">$99</span>
-                <span className="text-5xl font-medium tracking-[-0.04em]">$79</span>
-                <span className="pb-1 text-sm text-muted-foreground">per month</span>
-              </div>
-              <ul className="mt-8 space-y-3">
-                {included.map((item) => (
-                  <li key={item} className="flex items-start gap-3 text-sm leading-6">
-                    <Check className="mt-1 size-3.5 text-accent-brand" />
-                    {item}
-                  </li>
-                ))}
-              </ul>
-            </div>
+        <div className="gradient-hairline mx-auto grid max-w-[1000px] overflow-hidden rounded-[14px] bg-card lg:grid-cols-[1fr_0.85fr]">
+          <div className="p-7 sm:p-10 lg:p-12">
+            <p className="text-sm font-medium text-muted-foreground">One complete workspace</p>
+            <h2 className="mt-4 max-w-lg text-balance text-[clamp(2.3rem,4vw,3.7rem)] leading-[1.03] tracking-[-0.04em]">
+              Publish from evidence, not pressure.
+            </h2>
+            <p className="mt-5 max-w-md leading-7 text-muted-foreground">
+              Research, writing, planning, and publishing stay together. Try the full product for seven days.
+            </p>
+            <div className="mt-8"><PrimaryLink>Start your free week</PrimaryLink></div>
           </div>
-        </Reveal>
+          <div className="border-t border-border bg-muted/60 p-7 sm:p-10 lg:border-l lg:border-t-0 lg:p-12">
+            <p className="text-sm font-medium">Launch plan</p>
+            <div className="mt-3 flex items-end gap-2">
+              <span className="pb-1 text-lg text-muted-foreground line-through decoration-1">$99</span>
+              <span className="text-5xl font-medium tracking-[-0.04em]">$79</span>
+              <span className="pb-1 text-sm text-muted-foreground">per month</span>
+            </div>
+            <ul className="mt-8 space-y-3">
+              {included.map((item) => (
+                <li key={item} className="flex items-start gap-3 text-sm leading-6">
+                  <Check className="mt-1 size-3.5 text-accent-brand" />
+                  {item}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
       </section>
 
       <section id="faq" className="surface-noise relative border-t border-border bg-card px-4 py-20 sm:px-6 sm:py-24">
         <div className="relative mx-auto grid max-w-[1000px] gap-10 lg:grid-cols-[0.55fr_1fr] lg:gap-20">
-          <Reveal>
-            <div>
-              <h2 className="text-4xl tracking-[-0.035em]">Questions, answered.</h2>
-              <p className="mt-4 text-sm leading-6 text-muted-foreground">The practical details before you start.</p>
-            </div>
-          </Reveal>
-          <Reveal delay={100}>
-            <div className="border-t border-border">
-              {faqs.map(([question, answer]) => (
-                <details key={question} className="group border-b border-border py-5">
-                  <summary className="flex cursor-pointer list-none items-center justify-between gap-5 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30">
-                    {question}
-                    <span className="text-xl font-light text-muted-foreground transition-transform group-open:rotate-45">+</span>
-                  </summary>
-                  <p className="max-w-2xl pt-4 text-sm leading-6 text-muted-foreground">{answer}</p>
-                </details>
-              ))}
-            </div>
-          </Reveal>
+          <div>
+            <h2 className="text-4xl tracking-[-0.035em]">Questions, answered.</h2>
+            <p className="mt-4 text-sm leading-6 text-muted-foreground">The practical details before you start.</p>
+          </div>
+          <div className="border-t border-border">
+            {faqs.map(([question, answer]) => (
+              <details key={question} className="group border-b border-border py-5">
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-5 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30">
+                  {question}
+                  <span className="text-xl font-light text-muted-foreground transition-transform group-open:rotate-45">+</span>
+                </summary>
+                <p className="max-w-2xl pt-4 text-sm leading-6 text-muted-foreground">{answer}</p>
+              </details>
+            ))}
+          </div>
         </div>
       </section>
 
+      {/* Closing CTA hangs on the left margin too — the page never returns to
+          the centred-axis default after the hero broke it. */}
       <section className="px-4 py-20 sm:px-6 sm:py-28">
-        <Reveal>
-          <div className="mx-auto max-w-[900px] text-center">
-            <h2 className="text-balance text-[clamp(2.5rem,5vw,4.5rem)] leading-[1] tracking-[-0.04em]">
-              Stop asking a blank page for ideas.
-            </h2>
-            <p className="mx-auto mt-5 max-w-xl text-pretty leading-7 text-muted-foreground">
-              Start with what is working, add your point of view, and give every draft somewhere to go.
-            </p>
-            <div className="mt-8"><PrimaryLink>Start writing free</PrimaryLink></div>
-          </div>
-        </Reveal>
+        <div className="mx-auto max-w-[900px]">
+          <h2 className="max-w-[720px] text-balance text-[clamp(2.5rem,5vw,4.5rem)] leading-[1] tracking-[-0.04em]">
+            Stop asking a blank page for ideas.
+          </h2>
+          <p className="mt-5 max-w-xl text-pretty leading-7 text-muted-foreground">
+            Start with what is working, add your point of view, and give every draft somewhere to go.
+          </p>
+          <div className="mt-8"><PrimaryLink>Start writing free</PrimaryLink></div>
+        </div>
       </section>
     </div>
   );
@@ -527,12 +510,26 @@ function CalendarPanel() {
   );
 }
 
-function Feature({ icon, title, copy }: { icon: React.ReactNode; title: string; copy: string }) {
+function Feature({
+  icon,
+  title,
+  copy,
+  className,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  copy: string;
+  className?: string;
+}) {
+  // Icon sits inline with the heading (no rounded-square icon box), so the
+  // tile leads with typography instead of the icon-tile template shape.
   return (
-    <SpotlightCard className="h-full rounded-[10px] border border-border bg-background p-5">
-      <span className="grid size-9 place-items-center rounded-[8px] border border-border bg-card text-muted-foreground [&_svg]:size-4">{icon}</span>
-      <h3 className="mt-5 text-sm font-medium tracking-[0]">{title}</h3>
-      <p className="mt-2 text-sm leading-6 text-muted-foreground">{copy}</p>
+    <SpotlightCard className={`h-full rounded-[10px] border border-border bg-background p-5 ${className ?? ""}`}>
+      <h3 className="flex items-center gap-2.5 text-sm font-medium tracking-[0]">
+        <span className="grid size-5 shrink-0 place-items-center text-muted-foreground [&_svg]:size-4">{icon}</span>
+        {title}
+      </h3>
+      <p className="mt-2.5 text-sm leading-6 text-muted-foreground">{copy}</p>
     </SpotlightCard>
   );
 }
