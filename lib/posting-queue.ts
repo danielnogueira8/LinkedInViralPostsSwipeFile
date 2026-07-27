@@ -20,6 +20,25 @@ export type PostingQueueOccurrence = {
   draft: PostingQueueDraft | null;
 };
 
+export type PostingQueueDropTarget = {
+  postingSlotId: string;
+  postingSlotOccurrenceDate: string;
+  timezone: string;
+};
+
+export const DRAFT_DRAG_MIME = "application/x-swipein-draft-id";
+
+export function canDragDraftToPostingQueue(draft: {
+  status: string;
+  scheduleStatus?: string | null;
+}): boolean {
+  return (
+    draft.status !== "posted" &&
+    draft.scheduleStatus !== "publishing" &&
+    draft.scheduleStatus !== "published"
+  );
+}
+
 export type PostingQueueDay = {
   date: string;
   weekday: string;

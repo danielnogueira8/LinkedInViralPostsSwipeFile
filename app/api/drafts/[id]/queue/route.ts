@@ -5,7 +5,11 @@ import { errorResponse } from "@/lib/workspace";
 import { getConnection, canPublish } from "@/lib/publishing";
 import { DraftLifecycle } from "@/lib/draft-lifecycle";
 import { createSupabaseDraftLifecycleRepository } from "@/lib/draft-lifecycle-supabase";
-import { timeZoneSchema } from "@/lib/schedule-local-date";
+import {
+  calendarDateSchema,
+  timeZoneSchema,
+} from "@/lib/schedule-local-date";
+import { postingSlotInstant } from "@/lib/posting-queue";
 import {
   existingQueueBooking,
   type ExistingQueueBooking,
@@ -16,12 +20,26 @@ export const runtime = "nodejs";
 const inputSchema = z.object({
   firstComment: z.string().trim().max(3000).nullable().optional(),
   timezone: timeZoneSchema.default("UTC"),
-});
+  postingSlotId: z.string().uuid().optional(),
+  postingSlotOccurrenceDate: calendarDateSchema.optional(),
+}).refine(
+  (input) =>
+    Boolean(input.postingSlotId) ===
+    Boolean(input.postingSlotOccurrenceDate),
+  "A posting slot and occurrence date must be selected together.",
+);
 
 type Candidate = {
   slot_id: string;
   occurrence_date: string;
   scheduled_at: string;
+  timezone: string;
+};
+
+type TargetSlot = {
+  id: string;
+  day_of_week: number;
+  local_time: string;
   timezone: string;
 };
 
@@ -55,6 +73,69 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       sb.raw,
       sb.workspaceId,
     );
+    const lifecycle = new DraftLifecycle(
+      repository,
+      { canPublish: async () => canPublish(await getConnection(sb.workspaceId, sb.raw)) },
+    );
+
+    if (input.postingSlotId && input.postingSlotOccurrenceDate) {
+      const { data, error } = await sb.raw
+        .from("posting_slots")
+        .select("id, day_of_week, local_time, timezone")
+        .eq("id", input.postingSlotId)
+        .eq("workspace_id", sb.workspaceId)
+        .is("deleted_at", null)
+        .maybeSingle();
+      if (error) throw error;
+      const slot = data as TargetSlot | null;
+      if (!slot) {
+        return NextResponse.json(
+          { ok: false, error: "This posting slot is no longer available." },
+          { status: 409 },
+        );
+      }
+      const occurrenceDay = new Date(
+        `${input.postingSlotOccurrenceDate}T12:00:00.000Z`,
+      ).getUTCDay();
+      if (occurrenceDay !== slot.day_of_week) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "The selected slot does not occur on that date.",
+          },
+          { status: 400 },
+        );
+      }
+      const scheduledAt = postingSlotInstant(
+        input.postingSlotOccurrenceDate,
+        slot.local_time,
+        slot.timezone,
+      ).toISOString();
+      const outcome = await lifecycle.schedule(id, {
+        scheduledAt,
+        planToPostOn: input.postingSlotOccurrenceDate,
+        timezone: slot.timezone,
+        firstComment: input.firstComment,
+        postingSlotId: slot.id,
+        postingSlotOccurrenceDate: input.postingSlotOccurrenceDate,
+      });
+      if (!outcome.ok) {
+        return NextResponse.json(
+          { ok: false, reason: outcome.reason, error: outcome.message },
+          { status: outcome.status },
+        );
+      }
+      const booking = existingQueueBooking(outcome.value);
+      if (!booking) {
+        throw new Error("Targeted queue scheduling returned no slot booking.");
+      }
+      return NextResponse.json({
+        ok: true,
+        ...booking,
+        timezone: slot.timezone,
+      });
+    }
+
     const currentBooking = existingQueueBooking(await repository.find(id));
     if (currentBooking) {
       return existingBookingResponse(sb, currentBooking, input.timezone);
@@ -65,11 +146,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       p_timezone: input.timezone,
     });
     if (ensureError) throw ensureError;
-    const lifecycle = new DraftLifecycle(
-      repository,
-      { canPublish: async () => canPublish(await getConnection(sb.workspaceId, sb.raw)) },
-    );
-
     // A competing request can claim the candidate between lookup and lifecycle
     // CAS. Retry against the now-current earliest opening; the unique index is
     // what guarantees two requests can never occupy one occurrence.
