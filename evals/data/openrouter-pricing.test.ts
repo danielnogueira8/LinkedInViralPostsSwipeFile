@@ -129,6 +129,17 @@ describe("openRouterCost — Anthropic (bare) slug pricing", () => {
     expect(hasOpenRouterPricing("claude-sonnet-4.6")).toBe(true);
   });
 
+  test("Anthropic API ids (dashed/dated) resolve to the dotted prefixed row", () => {
+    // The adapter serves `claude-haiku-4-5-20251001` and `claude-sonnet-4-6`
+    // (Anthropic's real ids); without normalization those missed every row and
+    // silently priced at the GLM-5.1 fallback.
+    expect(openRouterCost("claude-haiku-4-5-20251001", M, M)).toBeCloseTo(6, 6);
+    expect(openRouterCost("claude-haiku-4-5-20251001", M, 0)).toBeCloseTo(1, 6);
+    expect(openRouterCost("claude-sonnet-4-6", M, M)).toBeCloseTo(18, 6);
+    expect(hasOpenRouterPricing("claude-haiku-4-5-20251001")).toBe(true);
+    expect(hasOpenRouterPricing("claude-sonnet-4-6")).toBe(true);
+  });
+
   test("an unknown bare claude-* id still falls back (no prefixed row) rather than throwing", () => {
     // A future Claude id with no row anywhere: pricingKey tries anthropic/<id>,
     // misses, and openRouterCost lands on the GLM-5.1 fallback — no throw.
