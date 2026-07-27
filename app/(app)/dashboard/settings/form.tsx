@@ -25,6 +25,40 @@ function toNonNegInt(raw: string): number {
   return n;
 }
 
+function ThresholdSwitch({
+  checked,
+  label,
+  onCheckedChange,
+}: {
+  checked: boolean;
+  label: string;
+  onCheckedChange: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      onClick={onCheckedChange}
+      className="grid size-11 shrink-0 place-items-center rounded-full outline-none focus-visible:ring-3 focus-visible:ring-ring/30"
+    >
+      <span
+        aria-hidden
+        className={`relative h-6 w-11 rounded-full transition-colors ${
+          checked ? "bg-primary" : "bg-muted-foreground/25"
+        }`}
+      >
+        <span
+          className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${
+            checked ? "translate-x-5" : "translate-x-0.5"
+          }`}
+        />
+      </span>
+    </button>
+  );
+}
+
 export function SettingsForm({
   initial,
 }: {
@@ -105,20 +139,16 @@ export function SettingsForm({
       </Toolbar>
 
       <Card className="overflow-hidden border-border/70 bg-card/90 shadow-soft">
-        <CardHeader>
-          <div className="flex items-start gap-3">
-            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-primary/10 bg-primary/[0.07] text-primary">
-              <Gauge className="h-4 w-4" />
-            </div>
-            <div className="min-w-0 space-y-1">
-              <CardTitle className="text-base">Minimum engagement</CardTitle>
-              <CardDescription>
-                Keep discovery focused with a separate signal for each kind of
-                post. Regular posts qualify by likes; lead magnets qualify by
-                comments.
-              </CardDescription>
-            </div>
+        <CardHeader className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-2">
+          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-primary/10 bg-primary/[0.07] text-primary">
+            <Gauge className="h-4 w-4" />
           </div>
+          <CardTitle className="min-w-0 text-base">Minimum engagement</CardTitle>
+          <CardDescription className="col-span-2 sm:col-span-1 sm:col-start-2">
+            Keep discovery focused with a separate signal for each kind of
+            post. Regular posts qualify by likes; lead magnets qualify by
+            comments.
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="grid gap-4 sm:grid-cols-2">
@@ -128,22 +158,11 @@ export function SettingsForm({
                   <div className="text-sm font-semibold">Regular posts</div>
                   <div className="text-xs text-muted-foreground">Likes only</div>
                 </div>
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={regularEnabled}
-                  onClick={() => setRegularEnabled((value) => !value)}
-                  className={`relative h-6 w-11 rounded-full transition-colors ${
-                    regularEnabled ? "bg-primary" : "bg-muted-foreground/25"
-                  }`}
-                  aria-label="Use a minimum likes threshold for regular posts"
-                >
-                  <span
-                    className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${
-                      regularEnabled ? "translate-x-5" : "translate-x-0.5"
-                    }`}
-                  />
-                </button>
+                <ThresholdSwitch
+                  checked={regularEnabled}
+                  onCheckedChange={() => setRegularEnabled((value) => !value)}
+                  label="Use a minimum likes threshold for regular posts"
+                />
               </div>
               <div className="mt-4 space-y-1.5">
                 <Label htmlFor="regularLikes">Minimum likes</Label>
@@ -164,22 +183,13 @@ export function SettingsForm({
                   <div className="text-sm font-semibold">Lead magnet posts</div>
                   <div className="text-xs text-muted-foreground">Comments only</div>
                 </div>
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={leadMagnetEnabled}
-                  onClick={() => setLeadMagnetEnabled((value) => !value)}
-                  className={`relative h-6 w-11 rounded-full transition-colors ${
-                    leadMagnetEnabled ? "bg-primary" : "bg-muted-foreground/25"
-                  }`}
-                  aria-label="Use a minimum comments threshold for lead magnet posts"
-                >
-                  <span
-                    className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${
-                      leadMagnetEnabled ? "translate-x-5" : "translate-x-0.5"
-                    }`}
-                  />
-                </button>
+                <ThresholdSwitch
+                  checked={leadMagnetEnabled}
+                  onCheckedChange={() =>
+                    setLeadMagnetEnabled((value) => !value)
+                  }
+                  label="Use a minimum comments threshold for lead magnet posts"
+                />
               </div>
               <div className="mt-4 space-y-1.5">
                 <Label htmlFor="leadMagnetComments">Minimum comments</Label>
@@ -198,7 +208,7 @@ export function SettingsForm({
         </CardContent>
       </Card>
 
-      <Button onClick={save} disabled={busy}>
+      <Button onClick={save} disabled={busy} className="w-full sm:w-auto">
         {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
         {busy ? "Saving…" : "Save thresholds"}
       </Button>
