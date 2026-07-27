@@ -273,7 +273,7 @@ export function createSupabaseDraftLifecycleRepository(
         })
         .eq("id", id)
         .eq("workspace_id", workspaceId)
-        .eq("schedule_status", "scheduled")
+        .in("schedule_status", ["scheduled", "failed"])
         .select(DRAFT_COLUMNS)
         .maybeSingle();
       if (error) throw error;

@@ -228,7 +228,7 @@
     {
       "id": "schedule-publish-idempotency",
       "capability": "Scheduling and publishing",
-      "invariant": "Scheduling and publishing are idempotent across edits, retries, duplicate responses, expired tokens, and stale claims; onboarding provisions the workspace's recurring queue in its IANA timezone while read and queue paths repair missing defaults; every filled recurring queue occurrence opens its exact workspace-owned draft even outside the board's bounded initial page; Markdown-emitting drafts preserve literal content and use the same canonical caption for preview, copy, length validation, and publish.",
+      "invariant": "Scheduling and publishing are idempotent across edits, retries, duplicate responses, expired tokens, and stale claims; onboarding provisions the workspace's recurring queue in its IANA timezone while read and queue paths repair missing defaults; every filled recurring queue occurrence opens its exact workspace-owned draft even outside the board's bounded initial page, and removing that post releases the occurrence without deleting its recurring slot; Markdown-emitting drafts preserve literal content and use the same canonical caption for preview, copy, length validation, and publish.",
       "preferred_seam": "api-contract",
       "existing_coverage": [
         "evals/data/schedule-endpoint.test.ts",
@@ -238,6 +238,7 @@
         "evals/data/markdown-mode.test.ts",
         "evals/data/draft-lifecycle.test.ts",
         "evals/data/drafts-board.test.ts",
+        "evals/data/posting-queue.test.ts",
         "evals/data/posting-queue-draft.test.ts",
         "evals/data/onboarding-posting-slots.test.ts",
         "evals/data/posting-slots-route.test.ts",

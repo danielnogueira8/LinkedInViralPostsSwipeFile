@@ -238,6 +238,8 @@ describe("Draft operations client", () => {
       scheduledAt: null,
       scheduleStatus: null,
       firstComment: null,
+      postingSlotId: null,
+      postingSlotOccurrenceDate: null,
     });
     expect(fetcher).toHaveBeenCalledWith("/api/drafts/draft-1/schedule", {
       method: "DELETE",
