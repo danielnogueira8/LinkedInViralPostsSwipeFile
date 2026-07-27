@@ -90,16 +90,25 @@ describe("period analytics", () => {
         impressions: 100,
         likes: 10,
         comments: 2,
+        shares: 0,
+        saves: 0,
+        sends: 0,
       }),
       snapshot("regular", "2026-07-20", {
         impressions: 150,
         likes: 15,
         comments: 4,
+        shares: 0,
+        saves: 0,
+        sends: 0,
       }),
       snapshot("regular", "2026-07-27", {
         impressions: 250,
         likes: 25,
         comments: 9,
+        shares: 0,
+        saves: 0,
+        sends: 0,
       }),
     ];
     const posts = [post("regular", "2026-01-23T10:00:00Z")];
@@ -270,6 +279,36 @@ describe("analytics overview trends", () => {
         date: "2026-07-27",
         impressions: null,
         comments: 1,
+      }),
+    ]);
+  });
+
+  test("does not calculate a daily rate from incomplete interaction data", () => {
+    const trend = buildAnalyticsTrend([
+      snapshot("post-a", "2026-07-26", {
+        impressions: 100,
+        likes: 10,
+        comments: 2,
+        shares: 1,
+        saves: null,
+        sends: 0,
+      }),
+      snapshot("post-a", "2026-07-27", {
+        impressions: 150,
+        likes: 15,
+        comments: 4,
+        shares: 2,
+        saves: null,
+        sends: 1,
+      }),
+    ]);
+
+    expect(trend).toEqual([
+      expect.objectContaining({
+        date: "2026-07-27",
+        impressions: 50,
+        engagements: 9,
+        engagementRate: null,
       }),
     ]);
   });

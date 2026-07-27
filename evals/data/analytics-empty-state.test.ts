@@ -240,4 +240,20 @@ describe("analytics metric definitions", () => {
   test("returns no engagement rate when there are no impressions", () => {
     expect(summarizePostMetrics([row("post-a", null, 0)]).engagementRate).toBeNull();
   });
+
+  test("does not present a complete rate when an interaction metric is unavailable", () => {
+    expect(
+      summarizePostMetrics([
+        {
+          ...row("complete", "2026-07-01T10:00:00Z", 100),
+          likes: 10,
+        },
+        {
+          ...row("partial", "2026-07-02T10:00:00Z", 100),
+          likes: 10,
+          saves: null,
+        },
+      ]).engagementRate,
+    ).toBeNull();
+  });
 });
