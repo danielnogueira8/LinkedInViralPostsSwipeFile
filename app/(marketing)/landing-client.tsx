@@ -281,8 +281,6 @@ export default function LandingClient({
                 Good and Needs work are not throwaway reactions. Your feedback becomes durable guidance for the next draft.
               </p>
             </div>
-            {/* Asymmetric tile grid: the lead tile spans both columns so the
-                six cards don't read as one repeated template tile. */}
             <div className="grid gap-3 sm:grid-cols-2">
               {([
                 [<Mic2 key="i" />, "Voice profile", "Phrasing, rhythm, structure, and the language you avoid."],
@@ -291,8 +289,8 @@ export default function LandingClient({
                 [<Palette key="i" />, "Creator styles", "Write in your own voice or choose the style of a creator you follow."],
                 [<Library key="i" />, "Proven frameworks", "Turn high-performing posts into reusable templates for new topics."],
                 [<Image key="i" src="/claude.svg" alt="" width={18} height={18} />, "Claude MCP connector", "Bring the same swipe file, creator styles, and proven templates into Claude through MCP."],
-              ] as const).map(([icon, title, copy], index) => (
-                <Feature key={title} icon={icon} title={title} copy={copy} className={index === 0 ? "sm:col-span-2" : undefined} />
+              ] as const).map(([icon, title, copy]) => (
+                <Feature key={title} icon={icon} title={title} copy={copy} />
               ))}
             </div>
           </div>
@@ -513,17 +511,15 @@ function Feature({
   icon,
   title,
   copy,
-  className,
 }: {
   icon: React.ReactNode;
   title: string;
   copy: string;
-  className?: string;
 }) {
   // Icon sits inline with the heading (no rounded-square icon box), so the
   // tile leads with typography instead of the icon-tile template shape.
   return (
-    <SpotlightCard className={`h-full rounded-[10px] border border-border bg-background p-5 ${className ?? ""}`}>
+    <SpotlightCard className="h-full rounded-[10px] border border-border bg-background p-5">
       <h3 className="flex items-center gap-2.5 text-sm font-medium tracking-[0]">
         <span className="grid size-5 shrink-0 place-items-center text-muted-foreground [&_svg]:size-4">{icon}</span>
         {title}
