@@ -69,12 +69,18 @@ const draftOperations = createDraftOperationsClient();
 
 export type BoardColumnId = DraftStatus | "scheduled";
 
+// The kinds offered in the posts filter. Hooks are deliberately NOT a filter
+// option — they're still posts-in-progress and show under "All"; a dedicated
+// Hooks toggle was noise. (The filter machinery still supports "hook" — the
+// pure helpers take any DraftKind.)
+const KIND_FILTER_OPTIONS = ["all", "post", "lead_magnet"] as const;
+type KindFilterOption = (typeof KIND_FILTER_OPTIONS)[number];
+
 // Filter-toggle labels (the "Regular Post" internal value reads as "Posts").
-const KIND_FILTER_LABEL: Record<"all" | DraftKind, string> = {
+const KIND_FILTER_LABEL: Record<KindFilterOption, string> = {
   all: "All",
   post: "Posts",
   lead_magnet: "Lead magnets",
-  hook: "Hooks",
 };
 
 // The small colored badge shown on a board card for the non-regular kinds.
@@ -737,7 +743,7 @@ export function DraftsList({
           />
         </div>
         <div className={segmentedControlClass()}>
-          {(["all", "post", "lead_magnet", "hook"] as const).map((k) => (
+          {KIND_FILTER_OPTIONS.map((k) => (
             <button
               key={k}
               type="button"
