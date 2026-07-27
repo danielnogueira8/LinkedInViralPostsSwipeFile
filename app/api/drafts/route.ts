@@ -75,8 +75,12 @@ export async function POST(req: Request) {
     const sb = await scopedSupabase();
     const input = createDraftSchema.parse(await req.json());
     // Compute the kind exactly as the lifecycle will, so we only attach a
-    // giveaway to a post that actually ends up a lead magnet.
-    const resolvedKind = resolveDraftKind(input.kind, input.body);
+    // giveaway to a post that actually ends up a lead magnet. A chosen
+    // giveaway forces the lead-magnet kind (a giveaway only makes sense on a
+    // lead-magnet post) — resolveDraftKind enforces the same rule from meta.
+    const resolvedKind = resolveDraftKind(input.kind, input.body, {
+      hasLeadMagnet: Boolean(input.lead_magnet_id),
+    });
     const meta = await resolveLeadMagnetMeta(
       sb.raw,
       sb.workspaceId,

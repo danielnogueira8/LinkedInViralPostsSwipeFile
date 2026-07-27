@@ -351,6 +351,26 @@ describe("normalizeDraft — API row → board Draft", () => {
     expect(normalizeDraft({ ...row, kind: "weird" }).kind).toBe("post");
   });
 
+  test("a giveaway (meta.lead_magnet) upgrades a 'post' row to lead_magnet", () => {
+    // Rows written before the giveaway⇒lead_magnet rule existed carry
+    // kind='post' with the giveaway in meta — display them as lead magnets.
+    const withGiveaway = {
+      ...row,
+      kind: "post",
+      meta: { lead_magnet: { title: "5 Prompts", selection: "auto" } },
+    };
+    expect(normalizeDraft(withGiveaway).kind).toBe("lead_magnet");
+    // A hook is never promoted, and a lead_magnet row stays lead_magnet.
+    expect(normalizeDraft({ ...withGiveaway, kind: "hook" }).kind).toBe("hook");
+    expect(normalizeDraft({ ...withGiveaway, kind: "lead_magnet" }).kind).toBe(
+      "lead_magnet",
+    );
+    // A malformed giveaway stamp doesn't flip the kind.
+    expect(
+      normalizeDraft({ ...row, meta: { lead_magnet: { title: "" } } }).kind,
+    ).toBe("post");
+  });
+
   test("a board-authored draft (chat_id null) is preserved, not coerced", () => {
     expect(normalizeDraft({ ...row, chat_id: null }).chatId).toBeNull();
     expect(normalizeDraft({ ...row, chat_id: "c9" }).chatId).toBe("c9");

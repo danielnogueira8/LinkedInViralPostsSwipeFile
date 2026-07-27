@@ -1,4 +1,5 @@
 import { deriveDraftTitle, isAutoDerivedTitle } from "@/lib/draft-title";
+import { leadMagnetContextFromMeta } from "@/lib/draft-lead-magnet";
 import {
   DRAFT_MUTATION_CONFLICT,
   DRAFT_SCHEDULING_CONFLICT,
@@ -182,7 +183,9 @@ export class DraftLifecycle {
     // (meta.lead_magnet), resolved server-side from the picker's selection.
     meta?: Record<string, unknown> | null;
   }) {
-    const kind = resolveDraftKind(input.kind, input.body);
+    const kind = resolveDraftKind(input.kind, input.body, {
+      hasLeadMagnet: leadMagnetContextFromMeta(input.meta) !== null,
+    });
     return this.repository.createStandalone({
       kind,
       status: input.status ?? defaultDraftStatus(kind),
@@ -228,7 +231,9 @@ export class DraftLifecycle {
   }): Promise<
     DraftCommandOutcome<{ draft: DraftRecord; deduped: boolean }>
   > {
-    const kind = resolveDraftKind(input.kind, input.body);
+    const kind = resolveDraftKind(input.kind, input.body, {
+      hasLeadMagnet: leadMagnetContextFromMeta(input.meta) !== null,
+    });
     const result = await this.repository.saveChatDraft({
       chatId: input.chatId,
       kind,

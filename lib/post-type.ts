@@ -116,9 +116,13 @@ export function classifyPost(
 export type DraftKind = "post" | "hook" | "lead_magnet";
 
 // Resolve the KIND for a draft being created/saved. RULES:
-//   • An EXPLICIT kind always wins — a user's manual choice must never be
-//     re-classified away on a later save/refine.
 //   • A hook stays a hook (never auto-promoted to lead_magnet).
+//   • A post carrying a giveaway (meta.lead_magnet) IS a lead magnet — the
+//     giveaway only makes sense on a lead-magnet post, so it overrides even an
+//     explicit "post" choice (which usually means the kind simply wasn't
+//     reclassified when the giveaway got attached).
+//   • An EXPLICIT kind otherwise always wins — a user's manual choice must
+//     never be re-classified away on a later save/refine.
 //   • Otherwise, auto-classify the body: a post whose text trips the lead-magnet
 //     detector (the same classifyPost used on scraped posts) becomes
 //     'lead_magnet'; else 'post'. So a lead magnet written in Cowork is tagged
@@ -127,7 +131,10 @@ export type DraftKind = "post" | "hook" | "lead_magnet";
 export function resolveDraftKind(
   explicit: DraftKind | null | undefined,
   body: string | null | undefined,
+  opts?: { hasLeadMagnet?: boolean },
 ): DraftKind {
+  if (explicit === "hook") return explicit; // a hook stays a hook
+  if (opts?.hasLeadMagnet) return "lead_magnet"; // a giveaway forces the kind
   if (explicit) return explicit; // manual choice wins
   return classifyPost(body ?? "").post_type === "lead_magnet"
     ? "lead_magnet"
