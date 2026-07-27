@@ -2543,15 +2543,11 @@ function ScheduleRow({
           aria-label="First comment"
           title="Optional: add a first comment after publishing. Useful for links or extra context."
         />
-        <div className="flex flex-wrap items-center gap-2">
-          <span className={cn("text-xs", overLimit ? "text-destructive" : "text-muted-foreground")}>
-            {publishBody.length}/{LINKEDIN_MAX_CHARS}
-            {overLimit && ` — trim ${publishBody.length - LINKEDIN_MAX_CHARS}`}
-          </span>
+        <div className="grid grid-cols-2 gap-2">
           <Button
             size="sm"
             variant="outline"
-            className="ml-auto gap-1.5"
+            className="min-w-0 gap-1 px-2 text-[11px] sm:gap-1.5 sm:text-xs"
             onClick={addToQueue}
             disabled={
               busy ||
@@ -2571,7 +2567,7 @@ function ScheduleRow({
           </Button>
           <Button
             size="sm"
-            className="gap-1.5"
+            className="min-w-0 gap-1 px-2 text-[11px] sm:gap-1.5 sm:text-xs"
             onClick={schedule}
             disabled={busy || mediaUploading || overLimit || mediaTooLate || !when}
             title="Schedule this post to publish on LinkedIn at the selected time."
