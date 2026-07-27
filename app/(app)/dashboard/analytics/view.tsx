@@ -3,18 +3,26 @@
 import { useCallback, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { RefreshCw } from "lucide-react";
+import {
+  ArrowDownRight,
+  ArrowUpRight,
+  Minus,
+  RefreshCw,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   ANALYTICS_CONTENT_TYPE_OPTIONS,
   ANALYTICS_PERIOD_OPTIONS,
-  impressionAxisTicks,
+  ANALYTICS_TREND_METRIC_OPTIONS,
+  buildAnalyticsChangeInsight,
+  metricAxisTicks,
   type AnalyticsContentType,
   type AnalyticsFilters,
   type AnalyticsPeriod,
   type AnalyticsSummary,
+  type AnalyticsTrendMetric,
+  type AnalyticsTrendPoint,
   type PostMetricsRow,
-  type TrendPoint,
 } from "@/lib/analytics-view-model";
 
 // Re-export the server-safe view-model so existing importers of "./view" (the
@@ -26,7 +34,7 @@ export {
   niceCeil,
   impressionAxisTicks,
   type PostMetricsRow,
-  type TrendPoint,
+  type AnalyticsTrendPoint,
 } from "@/lib/analytics-view-model";
 
 export type AnalyticsEmptyState = "connect" | "awaiting_first_fetch" | "no_posts" | null;
@@ -96,7 +104,7 @@ export function AnalyticsView({
   hasEligiblePublishedPosts,
 }: {
   posts: PostMetricsRow[];
-  trend: TrendPoint[];
+  trend: AnalyticsTrendPoint[];
   summary: AnalyticsSummary;
   previousSummary: AnalyticsSummary | null;
   filters: AnalyticsFilters;
@@ -129,13 +137,10 @@ export function AnalyticsView({
     }
   }, [refreshing, router]);
 
-  // Y-axis scale for the trend chart: a nice rounded top + evenly-spaced ticks.
-  const axis = useMemo(
-    () => impressionAxisTicks(Math.max(1, ...trend.map((t) => t.impressions))),
-    [trend],
+  const changeInsight = useMemo(
+    () => buildAnalyticsChangeInsight(summary, previousSummary),
+    [previousSummary, summary],
   );
-  // Which bar's tooltip is showing (by index), set on hover/focus. null = none.
-  const [hoveredBar, setHoveredBar] = useState<number | null>(null);
   const emptyState = getAnalyticsEmptyState({
     linkedInConnected,
     postCount: analyticsPostCount,
@@ -299,121 +304,31 @@ export function AnalyticsView({
         Engagement rate is engagements divided by impressions.
       </p>
 
-      {/* Impressions trend — CSS bars over observed snapshot gains, with a
-          Y-axis, gridlines, and a per-bar hover/focus tooltip. */}
-      {trend.length >= 2 && (
-        <div className="rounded-xl border border-border bg-card p-4">
-          <div className="mb-4 text-sm font-medium text-foreground">
-            New impressions over time
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(240px,1fr)]">
+        <PerformanceTrendCard trend={trend} />
+        <aside className="flex min-h-52 flex-col rounded-xl border border-border bg-card p-5">
+          <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+            {changeInsight.direction === "up" ? (
+              <ArrowUpRight className="h-4 w-4 text-emerald-600" />
+            ) : changeInsight.direction === "down" ? (
+              <ArrowDownRight className="h-4 w-4 text-amber-600" />
+            ) : (
+              <Minus className="h-4 w-4 text-muted-foreground" />
+            )}
+            What changed
           </div>
-          <div
-            className="flex gap-3"
-            role="img"
-            aria-label={`Bar chart of new impressions captured from ${trend[0].date} to ${trend[trend.length - 1].date}, peaking at ${axis.top.toLocaleString("en-US")} impressions.`}
-          >
-            {/* Y-axis: nice rounded tick labels, top-to-bottom. */}
-            <div className="flex h-36 w-10 shrink-0 flex-col justify-between py-0.5 text-right text-[10px] leading-none text-muted-foreground tabular-nums">
-              {axis.ticks.map((tick) => (
-                <span key={tick}>{fmt(tick)}</span>
-              ))}
-            </div>
-
-            {/* Plot: gridlines behind, bars in front. */}
-            <div className="relative min-w-0 flex-1">
-              {/* Recessive horizontal gridlines, one per tick. */}
-              <div className="pointer-events-none absolute inset-0 flex flex-col justify-between">
-                {axis.ticks.map((tick, i) => (
-                  <div
-                    key={tick}
-                    className={cn(
-                      "h-px w-full",
-                      i === axis.ticks.length - 1 ? "bg-border" : "bg-border/50",
-                    )}
-                  />
-                ))}
-              </div>
-
-              <div className="relative flex h-36 items-end gap-[2px]">
-                {trend.map((t, i) => {
-                  const pct = (t.impressions / axis.top) * 100;
-                  const active = hoveredBar === i;
-                  return (
-                    <div
-                      key={t.date}
-                      className="group relative flex h-full flex-1 items-end justify-center"
-                      onMouseEnter={() => setHoveredBar(i)}
-                      onMouseLeave={() =>
-                        setHoveredBar((cur) => (cur === i ? null : cur))
-                      }
-                    >
-                      {/* Tooltip: value leads, date follows. Shown on hover/focus. */}
-                      {active && (
-                        <div
-                          role="tooltip"
-                          className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-1.5 -translate-x-1/2 whitespace-nowrap rounded-lg border border-border bg-popover px-2.5 py-1.5 text-center shadow-md"
-                        >
-                          <div className="text-xs font-semibold text-popover-foreground tabular-nums">
-                            {t.impressions.toLocaleString("en-US")}
-                          </div>
-                          <div className="text-[10px] text-muted-foreground tabular-nums">
-                            {t.date}
-                          </div>
-                        </div>
-                      )}
-                      <button
-                        type="button"
-                        aria-label={`${t.date}: ${t.impressions.toLocaleString("en-US")} new impressions captured`}
-                        onFocus={() => setHoveredBar(i)}
-                        onBlur={() =>
-                          setHoveredBar((cur) => (cur === i ? null : cur))
-                        }
-                        className={cn(
-                          "w-full max-w-[22px] rounded-t-[4px] transition-[height,background-color] outline-none",
-                          "focus-visible:ring-2 focus-visible:ring-ring/50",
-                          active ? "bg-primary" : "bg-primary/75 hover:bg-primary",
-                        )}
-                        style={{ height: `${Math.max(2, pct)}%` }}
-                      />
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-
-          {/* X-axis: first and last dates, aligned under the plot (past the axis). */}
-          <div className="mt-2 flex justify-between pl-[52px] text-xs text-muted-foreground tabular-nums">
-            <span>{trend[0].date}</span>
-            <span>{trend[trend.length - 1].date}</span>
-          </div>
-          {/* Non-visual access to the same data (screen readers, keyboard). */}
-          <details className="mt-3">
-            <summary className="cursor-pointer text-xs font-medium text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden list-none">
-              View daily data
-            </summary>
-            <div className="mt-2 max-h-56 overflow-y-auto rounded-lg border border-border/60">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b border-border bg-muted/40 text-left text-muted-foreground">
-                    <th className="px-3 py-1.5 font-medium">Date</th>
-                    <th className="px-3 py-1.5 text-right font-medium">Impressions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {trend.map((t) => (
-                    <tr key={t.date} className="border-b border-border/50 last:border-0">
-                      <td className="px-3 py-1.5 tabular-nums">{t.date}</td>
-                      <td className="px-3 py-1.5 text-right tabular-nums">
-                        {t.impressions.toLocaleString("en-US")}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </details>
-        </div>
-      )}
+          <p className="mt-7 text-xl font-semibold leading-snug text-foreground">
+            {changeInsight.headline}
+          </p>
+          <p className="mt-2 text-sm leading-6 text-muted-foreground">
+            {changeInsight.detail}
+          </p>
+          <p className="mt-auto border-t border-border/70 pt-4 text-xs leading-5 text-muted-foreground">
+            Directional signal only. More measured posts make comparisons more
+            reliable.
+          </p>
+        </aside>
+      </div>
 
       {/* Per-post table */}
       <div className="overflow-x-auto rounded-xl border border-border bg-card">
@@ -458,6 +373,220 @@ export function AnalyticsView({
         metrics for posts published elsewhere.
       </p>
     </div>
+  );
+}
+
+function trendValue(
+  point: AnalyticsTrendPoint,
+  metric: AnalyticsTrendMetric,
+): number | null {
+  return point[metric];
+}
+
+function formatTrendValue(
+  value: number | null,
+  metric: AnalyticsTrendMetric,
+): string {
+  if (value === null) return "—";
+  return metric === "engagementRate"
+    ? `${value.toLocaleString("en-US")}%`
+    : fmt(value);
+}
+
+export function PerformanceTrendCard({
+  trend,
+}: {
+  trend: AnalyticsTrendPoint[];
+}) {
+  const [metric, setMetric] = useState<AnalyticsTrendMetric>("impressions");
+  const [hoveredBar, setHoveredBar] = useState<number | null>(null);
+  const option = ANALYTICS_TREND_METRIC_OPTIONS.find(
+    (candidate) => candidate.value === metric,
+  )!;
+  const measuredTrend = useMemo(
+    () => trend.filter((point) => trendValue(point, metric) !== null),
+    [metric, trend],
+  );
+  const values = useMemo(
+    () => measuredTrend.map((point) => trendValue(point, metric) as number),
+    [measuredTrend, metric],
+  );
+  const axis = useMemo(
+    () => metricAxisTicks(Math.max(1, ...values)),
+    [values],
+  );
+
+  return (
+    <section className="min-w-0 rounded-xl border border-border bg-card p-4 sm:p-5">
+      <div className="flex flex-col gap-3">
+        <div>
+          <h2 className="text-sm font-medium text-foreground">
+            Performance trend
+          </h2>
+          <p className="mt-1 text-xs text-muted-foreground">
+            New activity captured between daily snapshots.
+          </p>
+        </div>
+        <div
+          className="-mx-1 flex w-full gap-1 overflow-x-auto px-1 pb-1 sm:mx-0 sm:px-0"
+          role="group"
+          aria-label="Chart metric"
+        >
+          {ANALYTICS_TREND_METRIC_OPTIONS.map((candidate) => (
+            <button
+              key={candidate.value}
+              type="button"
+              aria-pressed={metric === candidate.value}
+              onClick={() => setMetric(candidate.value)}
+              className={cn(
+                "shrink-0 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors",
+                metric === candidate.value
+                  ? "bg-foreground text-background"
+                  : "bg-muted/60 text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {candidate.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {measuredTrend.length < 2 ? (
+        <div className="grid h-52 place-items-center text-center">
+          <div>
+            <p className="text-sm font-medium text-foreground">
+              Not enough daily changes yet
+            </p>
+            <p className="mt-1 max-w-xs text-xs leading-5 text-muted-foreground">
+              At least two measured days are needed to draw a useful trend.
+            </p>
+          </div>
+        </div>
+      ) : (
+        <>
+          <div
+            className="mt-6 flex gap-3"
+            aria-label={`${option.label} trend from ${measuredTrend[0].date} to ${
+              measuredTrend[measuredTrend.length - 1].date
+            }`}
+          >
+            <div className="flex h-44 w-11 shrink-0 flex-col justify-between py-0.5 text-right text-[10px] leading-none text-muted-foreground tabular-nums">
+              {axis.ticks.map((tick) => (
+                <span key={tick}>{formatTrendValue(tick, metric)}</span>
+              ))}
+            </div>
+
+            <div className="relative min-w-0 flex-1">
+              <div className="pointer-events-none absolute inset-0 flex flex-col justify-between">
+                {axis.ticks.map((tick, index) => (
+                  <div
+                    key={tick}
+                    className={cn(
+                      "h-px w-full",
+                      index === axis.ticks.length - 1
+                        ? "bg-border"
+                        : "bg-border/50",
+                    )}
+                  />
+                ))}
+              </div>
+
+              <div className="relative flex h-44 items-end gap-[2px]">
+                {measuredTrend.map((point, index) => {
+                  const value = trendValue(point, metric);
+                  const pct = ((value ?? 0) / axis.top) * 100;
+                  const active = hoveredBar === index;
+                  return (
+                    <div
+                      key={point.date}
+                      className="group relative flex h-full min-w-0 flex-1 items-end justify-center"
+                      onMouseEnter={() => setHoveredBar(index)}
+                      onMouseLeave={() =>
+                        setHoveredBar((current) =>
+                          current === index ? null : current,
+                        )
+                      }
+                    >
+                      {active && (
+                        <div
+                          role="tooltip"
+                          className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-1.5 -translate-x-1/2 whitespace-nowrap rounded-lg border border-border bg-popover px-2.5 py-1.5 text-center shadow-md"
+                        >
+                          <div className="text-xs font-semibold text-popover-foreground tabular-nums">
+                            {formatTrendValue(value, metric)}
+                          </div>
+                          <div className="text-[10px] text-muted-foreground tabular-nums">
+                            {point.date}
+                          </div>
+                        </div>
+                      )}
+                      <button
+                        type="button"
+                        aria-label={`${point.date}: ${formatTrendValue(
+                          value,
+                          metric,
+                        )} ${option.label.toLowerCase()}`}
+                        onFocus={() => setHoveredBar(index)}
+                        onBlur={() =>
+                          setHoveredBar((current) =>
+                            current === index ? null : current,
+                          )
+                        }
+                        className={cn(
+                          "w-full max-w-[22px] rounded-t-[4px] transition-[height,background-color] outline-none",
+                          "focus-visible:ring-2 focus-visible:ring-ring/50",
+                          active
+                            ? "bg-primary"
+                            : "bg-primary/70 hover:bg-primary",
+                        )}
+                        style={{ height: `${Math.max(2, pct)}%` }}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-2 flex justify-between pl-14 text-xs text-muted-foreground tabular-nums">
+            <span>{measuredTrend[0].date}</span>
+            <span>{measuredTrend[measuredTrend.length - 1].date}</span>
+          </div>
+          <details className="mt-3">
+            <summary className="cursor-pointer list-none text-xs font-medium text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
+              View daily data
+            </summary>
+            <div className="mt-2 max-h-56 overflow-y-auto rounded-lg border border-border/60">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-border bg-muted/40 text-left text-muted-foreground">
+                    <th className="px-3 py-1.5 font-medium">Date</th>
+                    <th className="px-3 py-1.5 text-right font-medium">
+                      {option.label}
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {measuredTrend.map((point) => (
+                    <tr
+                      key={point.date}
+                      className="border-b border-border/50 last:border-0"
+                    >
+                      <td className="px-3 py-1.5 tabular-nums">
+                        {point.date}
+                      </td>
+                      <td className="px-3 py-1.5 text-right tabular-nums">
+                        {formatTrendValue(trendValue(point, metric), metric)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </details>
+        </>
+      )}
+    </section>
   );
 }
 
