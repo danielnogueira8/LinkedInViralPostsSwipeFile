@@ -17,6 +17,7 @@ import {
   ANALYTICS_CONTENT_TYPE_OPTIONS,
   ANALYTICS_PERIOD_OPTIONS,
   ANALYTICS_TREND_METRIC_OPTIONS,
+  ENGAGEMENT_RATE_HELP,
   POST_PERFORMANCE_SORT_OPTIONS,
   buildAnalyticsChangeInsight,
   filterAndSortPostPerformance,
@@ -46,9 +47,6 @@ export {
 } from "@/lib/analytics-view-model";
 
 export type AnalyticsEmptyState = "connect" | "awaiting_first_fetch" | "no_posts" | null;
-
-const ENGAGEMENT_RATE_HELP =
-  "Percentage of impressions that resulted in an interaction. Includes reactions, comments, shares, saves, and sends.";
 
 export function getAnalyticsEmptyState(opts: {
   linkedInConnected: boolean;

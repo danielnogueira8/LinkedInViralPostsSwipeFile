@@ -241,7 +241,7 @@ describe("analytics metric definitions", () => {
     expect(summarizePostMetrics([row("post-a", null, 0)]).engagementRate).toBeNull();
   });
 
-  test("does not present a complete rate when an interaction metric is unavailable", () => {
+  test("uses available interactions when optional metrics are unavailable", () => {
     expect(
       summarizePostMetrics([
         {
@@ -254,6 +254,59 @@ describe("analytics metric definitions", () => {
           saves: null,
         },
       ]).engagementRate,
-    ).toBeNull();
+    ).toBe(10);
+  });
+
+  test("keeps engagement rate readable when optional private metrics are unavailable", () => {
+    const summary = summarizePostMetrics([
+      {
+        ...row("public-metrics", "2026-07-01T10:00:00Z", 200),
+        likes: 10,
+        comments: 4,
+        shares: 3,
+        saves: null,
+        sends: null,
+      },
+    ]);
+
+    expect(summary.engagementRate).toBe(8.5);
+  });
+
+  test("does not invent a rate when every interaction metric is unavailable", () => {
+    const summary = summarizePostMetrics([
+      {
+        ...row("unavailable", "2026-07-01T10:00:00Z", 200),
+        likes: null,
+        comments: null,
+        shares: null,
+        saves: null,
+        sends: null,
+      },
+    ]);
+
+    expect(summary.engagementRate).toBeNull();
+  });
+
+  test("excludes fully unavailable posts without blanking known rates", () => {
+    const summary = summarizePostMetrics([
+      {
+        ...row("available", "2026-07-01T10:00:00Z", 200),
+        likes: 10,
+        comments: 4,
+        shares: 3,
+        saves: null,
+        sends: null,
+      },
+      {
+        ...row("unavailable", "2026-07-02T10:00:00Z", 800),
+        likes: null,
+        comments: null,
+        shares: null,
+        saves: null,
+        sends: null,
+      },
+    ]);
+
+    expect(summary.engagementRate).toBe(8.5);
   });
 });

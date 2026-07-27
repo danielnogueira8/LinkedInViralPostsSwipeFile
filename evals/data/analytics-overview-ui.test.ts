@@ -118,7 +118,7 @@ describe("analytics post performance", () => {
     expect(html).toContain("Engagement rate");
     expect(html).toContain("Saves + shares");
     expect(html).toContain(
-      "Includes reactions, comments, shares, saves, and sends.",
+      "Includes reactions, comments, shares, saves, and sends when LinkedIn provides them.",
     );
     expect(html).toContain('role="tooltip"');
     expect(html).toContain("md:block");
