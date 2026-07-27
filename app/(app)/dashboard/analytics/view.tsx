@@ -21,6 +21,7 @@ import {
   filterAndSortPostPerformance,
   metricAxisTicks,
   postEngagementRate,
+  postSavesAndShares,
   type AnalyticsContentType,
   type AnalyticsFilters,
   type AnalyticsPeriod,
@@ -350,11 +351,6 @@ function contentTypeLabel(contentType: PostMetricsRow["contentType"]): string {
   return contentType === "lead_magnet" ? "Lead magnet" : "Regular";
 }
 
-function savesAndShares(post: PostMetricsRow): number | null {
-  if (post.saves === null && post.shares === null) return null;
-  return (post.saves ?? 0) + (post.shares ?? 0);
-}
-
 function fmtRate(value: number | null): string {
   return value === null ? "—" : `${value.toLocaleString("en-US")}%`;
 }
@@ -390,6 +386,7 @@ export function PostPerformanceSection({
         </div>
         <div
           className="mt-4 grid min-w-0 gap-2 sm:grid-cols-[minmax(0,1fr)_180px]"
+          role="group"
           aria-label="Post performance controls"
         >
           <label className="relative min-w-0">
@@ -504,7 +501,7 @@ export function PostPerformanceSection({
                       {fmt(post.comments)}
                     </td>
                     <td className="px-4 py-3 text-right tabular-nums">
-                      {fmt(savesAndShares(post))}
+                      {fmt(postSavesAndShares(post))}
                     </td>
                   </tr>
                 ))}
@@ -520,7 +517,6 @@ export function PostPerformanceSection({
                   post.artifactId,
                 )}`}
                 className="block p-4 transition-colors hover:bg-accent/40"
-                aria-label={`Open ${post.title}`}
               >
                 <div className="flex min-w-0 items-start justify-between gap-3">
                   <div className="min-w-0">
@@ -542,7 +538,7 @@ export function PostPerformanceSection({
                     ["Impressions", fmt(post.impressions)],
                     ["Engagement rate", fmtRate(postEngagementRate(post))],
                     ["Comments", fmt(post.comments)],
-                    ["Saves + shares", fmt(savesAndShares(post))],
+                    ["Saves + shares", fmt(postSavesAndShares(post))],
                   ].map(([label, value]) => (
                     <div key={label}>
                       <dt className="text-[11px] text-muted-foreground">

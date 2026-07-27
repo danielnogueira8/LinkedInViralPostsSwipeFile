@@ -148,6 +148,34 @@ describe("period analytics", () => {
       snapshots,
     });
   });
+
+  test("keeps measured posts whose cumulative metrics did not grow", () => {
+    const posts = [post("steady", "2026-07-20T10:00:00Z")];
+    const snapshots = [
+      snapshot("steady", "2026-07-26", {
+        impressions: 100,
+        likes: 10,
+      }),
+      snapshot("steady", "2026-07-27", {
+        impressions: 100,
+        likes: 10,
+      }),
+    ];
+
+    expect(
+      buildAnalyticsPeriodReport(
+        snapshots,
+        posts,
+        periodBounds("7d", "2026-07-27").current,
+      ).posts,
+    ).toEqual([
+      expect.objectContaining({
+        artifactId: "steady",
+        impressions: 0,
+        likes: 0,
+      }),
+    ]);
+  });
 });
 
 describe("analytics overview trends", () => {

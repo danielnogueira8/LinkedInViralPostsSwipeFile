@@ -345,16 +345,10 @@ function buildPeriodPostMetrics(
         sends: metric("sends"),
       };
     })
-    .filter(
-      (post) =>
-        (post.impressions ?? 0) +
-          (post.reach ?? 0) +
-          (post.likes ?? 0) +
-          (post.comments ?? 0) +
-          (post.shares ?? 0) +
-          (post.saves ?? 0) +
-          (post.sends ?? 0) >
-        0,
+    .filter((post) =>
+      metrics.some((metric) =>
+        totalsByMetric.get(metric)?.has(post.artifactId),
+      ),
     );
 }
 
@@ -460,13 +454,7 @@ export function summarizePostMetrics(
     0,
   );
   const engagements = posts.reduce(
-    (total, post) =>
-      total +
-      value(post.likes) +
-      value(post.comments) +
-      value(post.shares) +
-      value(post.saves) +
-      value(post.sends),
+    (total, post) => total + postEngagements(post),
     0,
   );
   return {
@@ -480,7 +468,7 @@ export function summarizePostMetrics(
   };
 }
 
-function postEngagements(post: PostMetricsRow): number {
+export function postEngagements(post: PostMetricsRow): number {
   return (
     (post.likes ?? 0) +
     (post.comments ?? 0) +
@@ -488,6 +476,11 @@ function postEngagements(post: PostMetricsRow): number {
     (post.saves ?? 0) +
     (post.sends ?? 0)
   );
+}
+
+export function postSavesAndShares(post: PostMetricsRow): number | null {
+  if (post.saves === null && post.shares === null) return null;
+  return (post.saves ?? 0) + (post.shares ?? 0);
 }
 
 export function postEngagementRate(post: PostMetricsRow): number | null {
@@ -500,10 +493,7 @@ function metricForPostSort(
   sort: Exclude<PostPerformanceSort, "recent">,
 ): number | null {
   if (sort === "engagementRate") return postEngagementRate(post);
-  if (sort === "savesAndShares") {
-    if (post.saves === null && post.shares === null) return null;
-    return (post.saves ?? 0) + (post.shares ?? 0);
-  }
+  if (sort === "savesAndShares") return postSavesAndShares(post);
   return post[sort];
 }
 

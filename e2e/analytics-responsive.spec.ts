@@ -2,6 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 type AnalyticsFixture = {
   artifactId: string;
+  title: string;
   endpoint: string;
   headers: Record<string, string>;
 };
@@ -15,9 +16,10 @@ function isoDate(daysAgo: number): string {
 }
 
 async function seedAnalytics(page: Page): Promise<AnalyticsFixture> {
+  const title = `Analytics responsive fixture ${Date.now()}`;
   const created = await page.request.post("/api/drafts", {
     data: {
-      title: `Analytics responsive fixture ${Date.now()}`,
+      title,
       body: `A deterministic analytics fixture ${crypto.randomUUID()}`,
       kind: "post",
     },
@@ -112,7 +114,7 @@ async function seedAnalytics(page: Page): Promise<AnalyticsFixture> {
     if (!inserted.ok) {
       throw new Error(`Failed to seed analytics snapshots (${inserted.status})`);
     }
-    return { artifactId, endpoint: artifactEndpoint, headers };
+    return { artifactId, title, endpoint: artifactEndpoint, headers };
   } catch (error) {
     try {
       await cleanup();
@@ -168,8 +170,20 @@ test("analytics overview stays usable on mobile and desktop", async ({ page }) =
   const exactPostHref = `/dashboard/posts?open=${encodeURIComponent(
     fixture.artifactId,
   )}`;
+  const exactPostLink = page
+    .locator(`a[href="${exactPostHref}"]:visible`)
+    .first();
+  await expect(exactPostLink).toBeVisible();
+  await exactPostLink.click();
   await expect(
-    page.locator(`a[href="${exactPostHref}"]:visible`).first(),
+    page.getByText("Edit post", { exact: true }).first(),
+  ).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Preview name" })).toHaveValue(
+    fixture.title,
+  );
+  await page.goBack();
+  await expect(
+    page.getByRole("heading", { name: "Post performance" }),
   ).toBeVisible();
 
   const chart = page
