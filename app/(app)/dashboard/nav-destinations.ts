@@ -1,4 +1,4 @@
-import type { ComponentType } from "react";
+import { createElement, type ComponentType } from "react";
 import {
   Handshake,
   FileText,
@@ -18,8 +18,9 @@ import { AiIcon } from "@/components/ai-icon";
 
 // The sidebar uses the COLORED Claude mark (brand orange), same as the
 // landing page and the Claude Workflows header — not the monochrome glyph.
+// createElement, not JSX: this is a .ts file (JSX only parses in .tsx).
 function ClaudeWorkflowsNavIcon({ className }: { className?: string }) {
-  return <ClaudeIcon variant="brand" className={className} />;
+  return createElement(ClaudeIcon, { variant: "brand", className });
 }
 
 export type NavDestination = {
