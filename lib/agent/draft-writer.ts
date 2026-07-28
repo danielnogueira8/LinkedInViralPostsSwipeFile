@@ -44,6 +44,10 @@ export type DraftWriterRequest = {
   // prior drafts, so the full prompt is unique to that slot. Let those calls
   // opt out of paying for a cache entry that another slot cannot reuse.
   cachePrompt?: boolean;
+  // Character boundary for the invariant leading portion of the flattened
+  // system prompt. The Anthropic adapter can cache that prefix while leaving
+  // request-selected skills and workspace context outside the cache entry.
+  cacheSystemPrefixChars?: number;
   // "none" means no explicit reasoning override. This avoids excluding a
   // provider that cannot accept OpenRouter's reasoning controls when the writer
   // model changes. A ReasoningEffort explicitly opts the thin path into it.
@@ -88,6 +92,7 @@ export const openRouterDraftWriter: DraftWriterAdapter = {
       timeoutMs: request.timeoutMs,
       sessionId: request.sessionId,
       cachePrompt: request.cachePrompt,
+      cacheSystemPrefixChars: request.cacheSystemPrefixChars,
       ...(request.reasoning === "none"
         ? {}
         : { reasoningEffort: request.reasoning }),
