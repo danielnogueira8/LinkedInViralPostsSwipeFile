@@ -174,7 +174,9 @@ export default async function ClaudePage() {
                   <p className="text-[13px] leading-6 text-foreground/80">{agent.payoff}</p>
                 </div>
 
-                <div className="mt-auto rounded-lg border border-border/60 bg-muted/30 p-3">
+                {/* Flows right after the payoff text — no mt-auto, so a short
+                    prompt never floats at the bottom of a stretched card. */}
+                <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
                   <div className="mb-2 flex items-center justify-between gap-2">
                     <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
                       Prompt
