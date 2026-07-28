@@ -25,6 +25,7 @@ const seed = {
   customSkillIds: ["anti-ai"],
   leadMagnetId: null,
   voiceProfileRevision: null,
+  explorationLane: "familiar" as const,
   generationModel: "openai/gpt-5.6-luna",
   generatedAt: timestamp,
 };
@@ -129,6 +130,7 @@ describe("generation lineage dual-write", () => {
           customSkillIds: ["anti-ai"],
           leadMagnetId: null,
           voiceProfileRevision: null,
+          explorationLane: "familiar",
         },
         origin: {
           kind: "agent_opportunity",
@@ -199,6 +201,7 @@ describe("generation lineage dual-write", () => {
         p_user_direction: "Write about founder-led systems.",
         p_generation_model: seed.generationModel,
         p_origin: expect.objectContaining({ kind: "agent_opportunity" }),
+        p_inputs: expect.objectContaining({ explorationLane: "familiar" }),
       }),
     );
     expect(selectMessages).toHaveBeenCalledWith("artifacts");

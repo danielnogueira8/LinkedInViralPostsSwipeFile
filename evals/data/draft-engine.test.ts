@@ -849,6 +849,44 @@ describe("DraftEngine", () => {
     expect(userContent).not.toContain("Distinct recent territory 7.");
   });
 
+  test("assigns an automatic Exploration Lane before writing an original post", async () => {
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(100, 70) },
+    ]);
+    const result = await collect(writer);
+
+    const systemContent = writer.requests[0].messages.find(
+      (message) => message.role === "system",
+    )?.content;
+    expect(systemContent).toContain("EXPLORATION LANE: FAMILIAR");
+    expect(systemContent).toContain(
+      "Do not invent facts, expertise, experiences, or results to satisfy this lane.",
+    );
+    expect(artifacts(result.events)[0].meta).toMatchObject({
+      exploration_lane: "familiar",
+    });
+  });
+
+  test("does not apply the automatic Exploration Lane mix to a source-modeled post", async () => {
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(100, 70) },
+    ]);
+    await collect(writer, {
+      task: {
+        kind: "source",
+        source: {
+          id: "source-1",
+          text: "A proven source post with a specific structure to model.",
+        },
+      },
+    });
+
+    const systemContent = writer.requests[0].messages.find(
+      (message) => message.role === "system",
+    )?.content;
+    expect(systemContent).not.toContain("EXPLORATION LANE:");
+  });
+
   test("neutralizes forged current-post boundaries on direct refine", async () => {
     const writer = new ScriptedWriter([
       { text: COMPLETE_POST, finishReason: "stop", usage: usage(100, 70) },

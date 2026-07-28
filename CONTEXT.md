@@ -60,6 +60,13 @@ _Avoid_: Prompt, command, template
 The Workspace's durable description of its own writing tendencies.
 _Avoid_: Creator Style, tone prompt
 
+**Exploration Lane**:
+Per-turn guidance for how far an original Post should move from a Workspace's
+established content territory. Familiar stays close to proven subjects, Fresh
+extends them into an adjacent question or use case, and Experimental tries a
+bolder but still evidence-backed framing or structure.
+_Avoid_: Novelty Mode, creativity level
+
 **Creator Style**:
 A reusable description of how a selected external Creator writes.
 _Avoid_: Voice Profile, template

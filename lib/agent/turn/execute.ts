@@ -45,6 +45,7 @@ import {
   savedDraftParentId,
   tagArtifactWithGenerationLineage,
 } from "@/lib/content-learning/generation-lineage";
+import { explorationLaneSchema } from "@/lib/content-learning/contracts";
 import {
   applyCiteSourceToDraftArtifacts,
   isDraftArtifact,
@@ -438,6 +439,12 @@ async function* runTurnPlan(
                 ? voice.generated_at
                 : null;
             })(),
+            explorationLane:
+              currentTurnOperation?.kind !== "edit_artifact"
+                ? (explorationLaneSchema.safeParse(
+                    tagged.meta?.exploration_lane,
+                  ).data ?? null)
+                : null,
             generationModel: responseModel,
             generatedAt: claimedTurnStartedAt!,
           });

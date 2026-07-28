@@ -29,6 +29,13 @@ export const contentDescriptorSchema = z
   .strict();
 export type ContentDescriptor = z.infer<typeof contentDescriptorSchema>;
 
+export const explorationLaneSchema = z.enum([
+  "familiar",
+  "fresh",
+  "experimental",
+]);
+export type ExplorationLane = z.infer<typeof explorationLaneSchema>;
+
 export const contentLineageInputsSchema = z
   .object({
     modelSourceId: nullableIdSchema,
@@ -37,6 +44,7 @@ export const contentLineageInputsSchema = z
     customSkillIds: z.array(idSchema).max(20),
     leadMagnetId: nullableIdSchema,
     voiceProfileRevision: nullableIdSchema,
+    explorationLane: explorationLaneSchema.nullable().optional(),
   })
   .strict();
 export type ContentLineageInputs = z.infer<
