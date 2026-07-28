@@ -784,11 +784,7 @@ export function DraftEditor({
             <span className="text-muted-foreground">
               {LINKEDIN_SEE_MORE_CHARS - count} chars before “…see more”
             </span>
-          ) : (
-            <span className="text-muted-foreground">
-              hook cut at {LINKEDIN_SEE_MORE_CHARS} chars
-            </span>
-          )}
+          ) : null}
         </span>
         <span className={cn("tabular-nums", over && "text-state-danger font-medium")}>
           {count.toLocaleString()} / {LINKEDIN_MAX_CHARS.toLocaleString()}
