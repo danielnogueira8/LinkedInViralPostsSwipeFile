@@ -140,6 +140,52 @@ describe("openRouterCost — Anthropic (bare) slug pricing", () => {
     expect(hasOpenRouterPricing("claude-sonnet-4-6")).toBe(true);
   });
 
+  test("a realistic Anthropic turn with cache write prices exactly (the billing bug)", () => {
+    // The production case behind "credits stopped deducting": a Sonnet 5 turn
+    // with 6,019 fresh input tokens and 8,955 cache-creation tokens was logged
+    // at $0.0226 because Anthropic's fresh-only input_tokens was treated as the
+    // OpenRouter-style total (and the cache write consumed the whole budget).
+    // After mapUsage normalizes prompt_tokens to the total, the same turn
+    // prices at the true $0.0420.
+    const usage = {
+      prompt_tokens: 6_019 + 8_955,
+      completion_tokens: 754,
+      prompt_tokens_details: { cached_tokens: 0, cache_write_tokens: 8_955 },
+    };
+    const { costUsd } = openRouterUsageCost("claude-sonnet-5", usage);
+    // 6,019 fresh × $2/M + 8,955 write × $2.50/M + 754 out × $10/M
+    expect(costUsd).toBeCloseTo(
+      (6_019 * 2 + 8_955 * 2.5 + 754 * 10) / 1_000_000,
+      6,
+    );
+    expect(costUsd).toBeCloseTo(0.0419655, 6);
+  });
+
+  test("cache reads bill at the cache rate instead of clamping fresh input to zero", () => {
+    // Warm-turn shape that used to bill nearly $0: fresh input 1,000, cache
+    // read 9,000 — the old fresh-only count clamped freshInput to 0.
+    const { costUsd } = openRouterUsageCost("claude-sonnet-5", {
+      prompt_tokens: 1_000 + 9_000,
+      completion_tokens: 0,
+      prompt_tokens_details: { cached_tokens: 9_000, cache_write_tokens: 0 },
+    });
+    // 1,000 fresh × $2/M + 9,000 cached × $0.20/M
+    expect(costUsd).toBeCloseTo((1_000 * 2 + 9_000 * 0.2) / 1_000_000, 6);
+  });
+
+  test("web search requests add the per-request fee on top of token cost", () => {
+    const base = openRouterUsageCost("claude-sonnet-5", {
+      prompt_tokens: 1_000,
+      completion_tokens: 100,
+    });
+    const withSearch = openRouterUsageCost("claude-sonnet-5", {
+      prompt_tokens: 1_000,
+      completion_tokens: 100,
+      prompt_tokens_details: { web_search_requests: 2 },
+    });
+    expect(withSearch.costUsd - base.costUsd).toBeCloseTo(0.02, 6);
+  });
+
   test("an unknown bare claude-* id still falls back (no prefixed row) rather than throwing", () => {
     // A future Claude id with no row anywhere: pricingKey tries anthropic/<id>,
     // misses, and openRouterCost lands on the GLM-5.1 fallback — no throw.

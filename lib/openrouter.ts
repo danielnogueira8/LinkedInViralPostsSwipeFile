@@ -460,6 +460,9 @@ export type Usage = {
   prompt_tokens_details?: {
     cached_tokens?: number;
     cache_write_tokens?: number;
+    // Anthropic web_search server-tool requests (billed per request, on top of
+    // token pricing — see ANTHROPIC_WEB_SEARCH_FEE_USD).
+    web_search_requests?: number;
   };
   // Numeric count only. Cowork never records provider reasoning text.
   completion_tokens_details?: { reasoning_tokens?: number };
@@ -1211,6 +1214,12 @@ export function openRouterCost(
   );
 }
 
+// Anthropic's web_search server tool: $10 per 1,000 requests, billed on top of
+// token pricing. The OpenRouter web plugin bundled its fee into usage.cost, so
+// searches on the Anthropic path need this added explicitly or every grounded
+// search is free on the ledger.
+export const ANTHROPIC_WEB_SEARCH_FEE_USD = 0.01;
+
 export function openRouterUsageCost(
   model: string,
   usage: Usage | undefined,
@@ -1229,6 +1238,8 @@ export function openRouterUsageCost(
     usage?.prompt_tokens_details?.cache_write_tokens ?? 0;
   const reasoningTokens =
     usage?.completion_tokens_details?.reasoning_tokens ?? 0;
+  const webSearchRequests =
+    usage?.prompt_tokens_details?.web_search_requests ?? 0;
   const exactCost = typeof usage?.cost === "number" && Number.isFinite(usage.cost)
     ? usage.cost
     : null;
@@ -1239,14 +1250,18 @@ export function openRouterUsageCost(
     cachedInputTokens,
     cacheWriteTokens,
     costUsd:
-      exactCost ??
-      openRouterCost(
-        model,
-        inputTokens,
-        outputTokens,
-        cachedInputTokens,
-        cacheWriteTokens,
-      ),
+      (exactCost ??
+        openRouterCost(
+          model,
+          inputTokens,
+          outputTokens,
+          cachedInputTokens,
+          cacheWriteTokens,
+        )) +
+      // Anthropic's web_search server tool bills per REQUEST on top of token
+      // pricing; the OpenRouter web plugin bundled its fee into usage.cost, so
+      // a news search on the Anthropic path was previously unbilled entirely.
+      webSearchRequests * ANTHROPIC_WEB_SEARCH_FEE_USD,
   };
 }
 
@@ -1256,8 +1271,7 @@ export async function logOpenRouterUsage(
   usage: Usage | undefined,
   workspaceId: string,
   meta?: Record<string, unknown>,
-): Promise<void> {
-  const {
+): Promise<void> {  const {
     inputTokens,
     outputTokens,
     reasoningTokens,

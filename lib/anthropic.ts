@@ -367,12 +367,24 @@ export function effortFor(opts: {
 
 export function mapUsage(u: Anthropic.Usage | undefined): Usage | undefined {
   if (!u) return undefined;
+  const cached = u.cache_read_input_tokens ?? 0;
+  const cacheWrite = u.cache_creation_input_tokens ?? 0;
   return {
-    prompt_tokens: u.input_tokens ?? 0,
+    // Anthropic's input_tokens EXCLUDES cached + cache-creation tokens, but the
+    // whole downstream cost pipeline is built on OpenRouter's semantics, where
+    // prompt_tokens is the TOTAL input and cached/cache-write are the
+    // cheaper-billed subsets. Passing Anthropic's fresh-only count through made
+    // the pricing math subtract the cached amounts from an already-fresh total
+    // — undercounting every Anthropic turn by ~half (and far more on warm
+    // cache-read turns), which is why credits stopped deducting correctly.
+    prompt_tokens: (u.input_tokens ?? 0) + cached + cacheWrite,
     completion_tokens: u.output_tokens ?? 0,
     prompt_tokens_details: {
-      cached_tokens: u.cache_read_input_tokens ?? 0,
-      cache_write_tokens: u.cache_creation_input_tokens ?? 0,
+      cached_tokens: cached,
+      cache_write_tokens: cacheWrite,
+      ...(u.server_tool_use?.web_search_requests
+        ? { web_search_requests: u.server_tool_use.web_search_requests }
+        : {}),
     },
   };
 }
