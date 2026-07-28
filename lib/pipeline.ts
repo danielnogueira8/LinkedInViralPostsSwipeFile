@@ -10,7 +10,11 @@ import {
   classifyPostForAllWorkspaces,
 } from "./viral";
 import { classifyPost } from "./post-type";
-import { extractHookWithClaude, templatizeOutlierPost } from "./claude";
+import {
+  extractHookWithClaude,
+  templatizeOutlierPost,
+  PLATFORM_WORKSPACE,
+} from "./claude";
 import { TEMPLATES_PER_WORKSPACE_MAX } from "./templates";
 import { embedTemplateBody } from "./template-embeddings";
 import {
@@ -581,7 +585,9 @@ export async function runDailyPipeline(
       const scrapeIds = toScrape.map((a) => a.id);
       const toEmbed = await postsNeedingEmbeddingForAccounts(scrapeIds);
       if (toEmbed.length > 0) {
-        const embedded = await embedAndStorePosts(toEmbed);
+        const embedded = await embedAndStorePosts(toEmbed, {
+          workspaceId: PLATFORM_WORKSPACE,
+        });
         console.log(
           JSON.stringify({ pipeline_embed: { candidates: toEmbed.length, embedded } }),
         );
@@ -633,7 +639,9 @@ export async function runDailyPipeline(
       });
       try {
         const templatized = await templatizeOutlierPost(candidate.text);
-        const embedding = await embedTemplateBody(templatized.body);
+        const embedding = await embedTemplateBody(templatized.body, {
+          workspaceId: PLATFORM_WORKSPACE,
+        });
         const { data: trackers, error: trackersErr } = await sb
           .from("workspace_accounts")
           .select("workspace_id")

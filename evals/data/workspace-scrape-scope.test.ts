@@ -91,7 +91,7 @@ vi.mock("@/lib/hooks", () => ({
   qualifiesForHookLibrary: vi.fn(),
   normalizeHookForDedupe: vi.fn(),
 }));
-vi.mock("@/lib/claude", () => ({ extractHookWithClaude: vi.fn(), templatizeOutlierPost: vi.fn() }));
+vi.mock("@/lib/claude", () => ({ extractHookWithClaude: vi.fn(), templatizeOutlierPost: vi.fn(), PLATFORM_WORKSPACE: "platform" }));
 
 const { runDailyPipeline } = await import("@/lib/pipeline");
 
