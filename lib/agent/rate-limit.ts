@@ -367,48 +367,40 @@ export async function releaseChatTurn(
   }
 }
 
-// Read the workspace's monthly usage for the credits pill — expressed as the
-// BINDING constraint, in message-credit units.
+// Read the workspace's monthly usage for the credits pill — the money meter,
+// expressed in credit units (limit = MONTHLY_MESSAGE_LIMIT).
 //
-// There are TWO monthly ceilings: the message-count cap (MONTHLY_MESSAGE_LIMIT,
-// enforced in claim_chat_turn) AND the $5 cost cap (MONTHLY_BUDGET_USD,
-// enforced in checkChatRateLimit). Either can bind first — a heavy multi-tool
-// user can hit the dollar cap before the 1000-message cap. If the pill tracked only the
-// message count, it could show credits left while the user is actually blocked
-// by cost — a confusing lie.
+// Credits are COST, never message count. A $0.05 turn must deduct ~5 credits
+// at a $10 budget — but the pill used to show MAX(messages, cost projection),
+// so any workspace whose message count outran the cost projection watched the
+// pill tick exactly 1 per post no matter what the turn actually cost (the
+// "deducted 1 credit for a $0.05 post" bug). The monthly MESSAGE cap
+// (MONTHLY_MESSAGE_LIMIT) still exists, but it is a separate abuse guardrail
+// enforced inside claim_chat_turn with its own banner — it no longer drives
+// what the pill charges.
 //
-// So `used` is the MAX of: (a) actual messages this month, and (b) the
-// cost-projected equivalent = round(spend / budget * limit). Whichever ceiling
-// the workspace is nearer drives the pill, and it's always shown in the message
-// units the user understands. `limit` stays MONTHLY_MESSAGE_LIMIT. So when cost
-// binds first, the pill fills to ~limit (and reads 1000/1000) right as the dollar
-// cap blocks them — pill and reality agree.
-//
-// Both reads run in parallel. Never throws: on error returns used:0 so the pill
-// degrades to "0/limit" rather than breaking the UI.
+// Never throws: on error returns used:0 so the pill degrades to "0/limit"
+// rather than breaking the UI.
 // The credits-pill arithmetic, split out PURE so it's unit-tested independently
-// of the DB reads. There are TWO ceilings — the message-count cap and the $
-// cost cap — and either can bind first. `used` is the MAX of actual messages
-// and the cost-projected equivalent (spend/budget × limit), clamped to `limit`,
-// so a cost-bound workspace reads full right as the $ cap blocks it (pill and
-// reality agree). `boundBy` says which ceiling is nearer. Exported for tests.
+// of the DB read. `used` is the cost projection (spend/budget × limit),
+// clamped to `limit`, so the pill reads full right as the $ cap blocks —
+// pill and reality agree. `boundBy` stays in the shape for API compatibility
+// and is always "cost". Exported for tests.
 export function projectMonthlyUsage(
-  messages: number,
   spent: number,
   budgetUsd: number,
   limit: number,
 ): { used: number; limit: number; boundBy: "messages" | "cost" } {
   const costProjected =
     budgetUsd > 0 ? Math.round((spent / budgetUsd) * limit) : 0;
-  const used = Math.min(limit, Math.max(messages, costProjected));
-  return { used, limit, boundBy: costProjected > messages ? "cost" : "messages" };
+  return { used: Math.min(limit, costProjected), limit, boundBy: "cost" };
 }
 
 // Converts one turn's provider spend into the same unit as the credits pill.
 // This is a cost-equivalent estimate, not an authoritative before/after monthly
-// counter delta: the monthly projection also has cumulative rounding and a
-// message-count floor. Keep the conversion here beside projectMonthlyUsage so
-// telemetry and billing cannot silently drift to different formulas.
+// counter delta: the monthly projection also has cumulative rounding. Keep the
+// conversion here beside projectMonthlyUsage so telemetry and billing cannot
+// silently drift to different formulas.
 export function costEquivalentCredits(
   costUsd: number,
   budgetUsd: number = MONTHLY_BUDGET_USD,
@@ -465,30 +457,20 @@ export async function getMonthlyUsage(
     // workspace can exceed PostgREST's 1000-row default well before the cost
     // cap trips. selectAllRows pages past that instead of silently
     // undercounting spend.
-    const [msgRes, costRows] = await Promise.all([
+    const costRows = await selectAllRows<{ cost_usd: number | null }>(() =>
       sb
-        .from("chat_messages")
-        .select("id", { count: "exact", head: true })
+        .from("usage_events")
+        .select("cost_usd")
         .eq("workspace_id", workspaceId)
-        .eq("role", "user")
-        .gte("created_at", monthStart),
-      selectAllRows<{ cost_usd: number | null }>(() =>
-        sb
-          .from("usage_events")
-          .select("cost_usd")
-          .eq("workspace_id", workspaceId)
-          .gte("ts", monthStart),
-      ).catch(() => null),
-    ]);
-    if (msgRes.error) throw msgRes.error;
-    const messages = msgRes.count ?? 0;
-    // Cost read is best-effort — if it fails, fall back to the message count
-    // alone (the message cap still enforces; we just can't reflect cost here).
+        .gte("ts", monthStart),
+    ).catch(() => null);
+    // Cost read is best-effort — if it fails, degrade to 0 rather than break
+    // the pill (the $ cap itself still enforces via checkChatRateLimit).
     const spent = costRows ? sumUsageCost(costRows) : 0;
-    return projectMonthlyUsage(messages, spent, MONTHLY_BUDGET_USD, limit);
+    return projectMonthlyUsage(spent, MONTHLY_BUDGET_USD, limit);
   } catch (e) {
     console.error("getMonthlyUsage fail", (e as Error).message);
-    return { used: 0, limit, boundBy: "messages" };
+    return { used: 0, limit, boundBy: "cost" };
   }
 }
 
