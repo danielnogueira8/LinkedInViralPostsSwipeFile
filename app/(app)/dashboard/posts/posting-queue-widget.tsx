@@ -367,9 +367,9 @@ export function PostingQueueWidget({
                           className={cn(
                             "group rounded-lg border bg-background/80 px-2 py-1.5 transition-colors",
                             !occurrence.draft &&
-                              "border-dashed hover:border-primary/40",
+                              "border-dashed hover:border-accent-brand/50",
                             isDropTarget &&
-                              "border-primary bg-primary/[0.08] ring-2 ring-primary/20",
+                              "border-accent-brand bg-accent-brand/[0.10] ring-2 ring-accent-brand/30",
                           )}
                         >
                           <div className="flex items-center gap-1">
@@ -421,7 +421,7 @@ export function PostingQueueWidget({
                             <div
                               className={cn(
                                 "flex items-center justify-between gap-1 text-[10px] text-muted-foreground",
-                                isDropTarget && "font-medium text-primary",
+                                isDropTarget && "font-medium text-accent-brand",
                               )}
                             >
                               <span>
