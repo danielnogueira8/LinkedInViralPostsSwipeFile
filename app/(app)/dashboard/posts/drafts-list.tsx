@@ -396,6 +396,9 @@ export function DraftsList({
   // it. `editorOpen` drives the dialog so closing animates out before we drop
   // the target.
   const [editorOpen, setEditorOpen] = useState(false);
+  const [newPostQueueTarget, setNewPostQueueTarget] = useState<
+    (PostingQueueDropTarget & { label: string }) | null
+  >(null);
   // Board vs calendar view. Default to Kanban; the last choice is remembered in
   // localStorage so it sticks across visits. We MUST start at the SSR default
   // ("board") so the server and first client render agree (a localStorage read
@@ -596,10 +599,12 @@ export function DraftsList({
   };
 
   const openNew = () => {
+    setNewPostQueueTarget(null);
     setEditingId(null);
     setEditorOpen(true);
   };
   const openEdit = (draft: Draft) => {
+    setNewPostQueueTarget(null);
     setEditingId(draft.id);
     setEditorOpen(true);
   };
@@ -710,6 +715,11 @@ export function DraftsList({
     <div className="flex flex-col gap-4">
       <PostingQueueWidget
         onOpenDraft={(draftId) => void openQueueDraft(draftId)}
+        onCreateDraftForSlot={(target) => {
+          setNewPostQueueTarget(target);
+          setEditingId(null);
+          setEditorOpen(true);
+        }}
         queueCandidates={drafts
           .filter(canDragDraftToPostingQueue)
           .map((draft) => ({
@@ -941,9 +951,13 @@ export function DraftsList({
 
       <DraftEditorModal
         open={editorOpen}
-        onOpenChange={setEditorOpen}
+        onOpenChange={(open) => {
+          setEditorOpen(open);
+          if (!open) setNewPostQueueTarget(null);
+        }}
         draft={editing}
         author={author}
+        initialQueueTarget={newPostQueueTarget}
         onCreated={addDraft}
         onSaved={applyEdit}
         onMeta={applyMeta}

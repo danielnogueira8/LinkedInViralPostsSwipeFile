@@ -9,7 +9,10 @@ import { copyToClipboard } from "@/lib/clipboard";
 import { draftEgressBody } from "@/lib/markdown/mode";
 import { LINKEDIN_MAX_CHARS } from "@/lib/linkedin-format";
 import { localDateFromDatetimeInput } from "@/lib/schedule-local-date";
-import { formatScheduleToast } from "@/lib/posting-queue";
+import {
+  formatScheduleToast,
+  type PostingQueueDropTarget,
+} from "@/lib/posting-queue";
 import { saveThenSchedule } from "@/lib/save-before-schedule";
 import {
   draftOperations,
@@ -161,6 +164,7 @@ export function DraftEditorModal({
   onOpenChange,
   draft,
   author = DEFAULT_POST_PREVIEW_AUTHOR,
+  initialQueueTarget = null,
   onCreated,
   onSaved,
   onMeta,
@@ -173,6 +177,7 @@ export function DraftEditorModal({
   // null → creating a new post; otherwise editing this one.
   draft: Draft | null;
   author?: PostPreviewAuthor;
+  initialQueueTarget?: (PostingQueueDropTarget & { label: string }) | null;
   onCreated: (draft: Draft) => void;
   onSaved: (id: string, body: string) => void;
   // Optimistic property change on an existing post (title / status / date).
@@ -189,6 +194,10 @@ export function DraftEditorModal({
   // image worker can patch draft.mediaAttachments while a manual PATCH is in
   // flight, and a blind snapshot-restore would drop that image.
   const liveDraftRef = useRef(draft);
+  // A queue-targeted create may save successfully before the slot claim fails.
+  // Retain that canonical id so a retry updates and schedules the same row
+  // even if the parent draft prop has not reconciled yet.
+  const createdDraftIdRef = useRef<string | null>(null);
   const [body, setBody] = useState(draft?.body ?? "");
   const [saving, setSaving] = useState(false);
   const [copied, markCopied] = useCopiedFlag();
@@ -302,6 +311,9 @@ export function DraftEditorModal({
   // session prevents it from attaching media to a fresh editor instance. This
   // runs after the open/draft transition commits, never while rendering.
   useEffect(() => {
+    if (seedKey === "open:__new__") {
+      createdDraftIdRef.current = null;
+    }
     for (const previewUrl of pendingPreviewUrls.current.values()) {
       URL.revokeObjectURL(previewUrl);
     }
@@ -341,6 +353,29 @@ export function DraftEditorModal({
       return null;
     }
     try {
+      if (initialQueueTarget && createdDraftIdRef.current) {
+        const retryKind = draft?.kind ?? (newKind || undefined);
+        await draftOperations.update(
+          createdDraftIdRef.current,
+          {
+            body: trimmed,
+            title: newName || null,
+            status: draft?.status ?? newStatus,
+            plan_to_post_on: draft?.planToPostOn ?? (newDate || null),
+            ...(retryKind ? { kind: retryKind } : {}),
+            lead_magnet_id:
+              retryKind === "lead_magnet"
+                ? draft?.leadMagnet?.id ?? (newLeadMagnetId || null)
+                : null,
+            media_attachments: mediaAttachmentsForPersistence(
+              draft?.mediaAttachments ?? newMedia,
+            ),
+          },
+          { fallbackError: "Failed to save" },
+        );
+        onSaved(createdDraftIdRef.current, trimmed);
+        return createdDraftIdRef.current;
+      }
       if (isNew) {
         const data = await draftOperations.create({
           body: trimmed,
@@ -359,6 +394,7 @@ export function DraftEditorModal({
             ? { media_attachments: mediaAttachmentsForPersistence(newMedia) }
             : {}),
         });
+        createdDraftIdRef.current = data.draft.id;
         onCreated(normalizeDraft(data.draft));
         return data.draft.id;
       }
@@ -384,13 +420,55 @@ export function DraftEditorModal({
     }
     setSaving(true);
     const id = await persistBody();
-    setSaving(false);
-    if (id) {
-      toast.success(isNew ? "Post created" : "Post saved");
-      // Close on every successful save — new or existing — so the action has
-      // one consistent outcome (the board reflects the change immediately).
-      onOpenChange(false);
+    if (!id) {
+      setSaving(false);
+      return;
     }
+    if (initialQueueTarget) {
+      try {
+        const data = await draftOperations.queueAt(id, {
+          firstComment: null,
+          timezone: initialQueueTarget.timezone,
+          postingSlotId: initialQueueTarget.postingSlotId,
+          postingSlotOccurrenceDate:
+            initialQueueTarget.postingSlotOccurrenceDate,
+          localTime: initialQueueTarget.localTime,
+        });
+        onMeta(id, {
+          scheduledAt: data.scheduledAt,
+          scheduleStatus: data.scheduleStatus,
+          planToPostOn: data.planToPostOn,
+          firstComment: data.firstComment,
+          postingSlotId: data.postingSlotId,
+          postingSlotOccurrenceDate: data.postingSlotOccurrenceDate,
+          publishError: null,
+        });
+        window.dispatchEvent(new Event("posting-queue-updated"));
+        const browserTimezone =
+          Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+        toast.success(
+          formatScheduleToast({
+            scheduledAt: data.scheduledAt,
+            accountTimezone: data.timezone,
+            browserTimezone,
+            action: "scheduled",
+          }),
+        );
+        onOpenChange(false);
+      } catch (error) {
+        // Creation has already persisted. Keep both the editor and target open
+        // so the same action can retry scheduling without duplicating the post.
+        toast.error((error as Error).message);
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
+    setSaving(false);
+    toast.success(isNew ? "Post created" : "Post saved");
+    // Close on every successful save — new or existing — so the action has
+    // one consistent outcome (the board reflects the change immediately).
+    onOpenChange(false);
   };
 
   const createAndSchedule = async (input: ScheduleInput) => {
@@ -963,6 +1041,16 @@ export function DraftEditorModal({
             </Button>
           </div>
         </div>
+        {initialQueueTarget && (
+          <div
+            className="border-b border-accent-brand/20 bg-accent-brand/[0.06] px-4 py-2 text-xs text-foreground sm:px-5"
+            role="status"
+          >
+            This post will be scheduled for{" "}
+            <span className="font-semibold">{initialQueueTarget.label}</span>{" "}
+            when saved.
+          </div>
+        )}
 
         <DialogTitle className="sr-only">
           {isNew ? "New post" : "Edit post"}
@@ -1299,16 +1387,18 @@ export function DraftEditorModal({
                   </div>
                 </section>
 
-                <ScheduleRow
-                  draft={draft}
-                  onMeta={onMeta}
-                  onCreateAndSchedule={isNew ? createAndSchedule : undefined}
-                  onCreateAndQueue={isNew ? createAndQueue : undefined}
-                  onSaveBeforeSchedule={!isNew ? saveBeforeScheduling : undefined}
-                  previewBody={body}
-                  previewMedia={isNew ? displayedMedia : undefined}
-                  mediaUploading={uploadingMedia}
-                />
+                {!initialQueueTarget && (
+                  <ScheduleRow
+                    draft={draft}
+                    onMeta={onMeta}
+                    onCreateAndSchedule={isNew ? createAndSchedule : undefined}
+                    onCreateAndQueue={isNew ? createAndQueue : undefined}
+                    onSaveBeforeSchedule={!isNew ? saveBeforeScheduling : undefined}
+                    previewBody={body}
+                    previewMedia={isNew ? displayedMedia : undefined}
+                    mediaUploading={uploadingMedia}
+                  />
+                )}
 
                 {!isNew && draft && draft.kind === "lead_magnet" && (
                   // Keyed on draft id so the automation form/enabled/saved state
@@ -1357,13 +1447,25 @@ export function DraftEditorModal({
               disabled={
                 busy ||
                 uploadingMedia ||
-                (isNew
+                (initialQueueTarget
+                  ? isNew && !trimmed && !titleDraft.trim()
+                  : isNew
                   ? !trimmed && !titleDraft.trim()
                   : !trimmed || !dirty)
               }
             >
               {saving || uploadingMedia ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-              {saving ? "Saving..." : uploadingMedia ? "Uploading media..." : isNew ? "Create post" : "Save"}
+              {saving
+                ? initialQueueTarget
+                  ? "Saving & scheduling..."
+                  : "Saving..."
+                : uploadingMedia
+                  ? "Uploading media..."
+                  : initialQueueTarget
+                    ? "Save & schedule"
+                    : isNew
+                      ? "Create post"
+                      : "Save"}
             </Button>
           </div>
         </div>

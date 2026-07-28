@@ -50,6 +50,154 @@ test.describe("new board posts and LinkedIn scheduling", () => {
     expect(scheduledId).not.toBe("");
     draftsToDelete.push(scheduledId);
   });
+
+  test("creates a post from an open queue slot and schedules it there on save", async ({ page }) => {
+    consoleGuard.allowConsoleError(/Failed to load resource.*409/i);
+    const queue = page.getByRole("region", { name: "Posting queue" });
+    const queueToggle = queue.getByRole("button", { name: /^Posting queue/ });
+    if ((await queueToggle.getAttribute("aria-expanded")) === "false") {
+      await queueToggle.click();
+    }
+
+    const createForSlot = queue.getByRole("button", { name: /^Create a post for / }).first();
+    await expect(createForSlot).toBeVisible();
+    const slotLabel = (await createForSlot.getAttribute("aria-label"))?.replace(
+      "Create a post for ",
+      "",
+    );
+    if (!slotLabel) throw new Error("Open queue slot has no accessible label");
+
+    let createRequests = 0;
+    const updatePayloads: Array<Record<string, unknown>> = [];
+    const queuedDraftIds: string[] = [];
+    page.on("request", (request) => {
+      if (request.url().endsWith("/api/drafts") && request.method() === "POST") {
+        createRequests += 1;
+      }
+      if (
+        request.url().includes("/api/drafts/") &&
+        request.method() === "PATCH"
+      ) {
+        updatePayloads.push(request.postDataJSON());
+      }
+    });
+    let queueAttempts = 0;
+    let queuePayload: {
+      postingSlotId: string;
+      postingSlotOccurrenceDate: string;
+      localTime?: string;
+    } | null = null;
+    await page.route("**/api/drafts/*/queue", async (route) => {
+      queuedDraftIds.push(route.request().url().split("/").at(-2) ?? "");
+      const payload = route.request().postDataJSON() as NonNullable<typeof queuePayload>;
+      queuePayload = payload;
+      queueAttempts += 1;
+      if (queueAttempts === 1) {
+        await route.fulfill({
+          status: 409,
+          contentType: "application/json",
+          body: JSON.stringify({ ok: false, error: "Queue temporarily unavailable" }),
+        });
+        return;
+      }
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          ok: true,
+          scheduledAt: `${payload.postingSlotOccurrenceDate}T12:00:00.000Z`,
+          scheduleStatus: "scheduled",
+          planToPostOn: payload.postingSlotOccurrenceDate,
+          firstComment: null,
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+          postingSlotId: payload.postingSlotId,
+          postingSlotOccurrenceDate: payload.postingSlotOccurrenceDate,
+        }),
+      });
+    });
+
+    await createForSlot.click();
+    const editor = page.getByRole("dialog");
+    await expect(editor).toBeVisible();
+    await expect(
+      editor.getByText(`This post will be scheduled for ${slotLabel} when saved.`),
+    ).toBeVisible();
+    await editor.getByLabel("Preview name").fill(`Slot-created post ${Date.now()}`);
+    const body = "A post created directly from an open publishing slot.";
+    await editor.locator("textarea").first().fill(body);
+    const createResponse = page.waitForResponse((response) =>
+      response.url().endsWith("/api/drafts") && response.request().method() === "POST",
+    );
+    await editor.getByRole("button", { name: "Save & schedule" }).click();
+    const created = (await (await createResponse).json()) as { draft: { id: string } };
+    draftsToDelete.push(created.draft.id);
+
+    await expect(page.getByText("Queue temporarily unavailable")).toBeVisible();
+    await expect(editor).toBeVisible();
+    await expect(editor.locator("textarea").first()).toHaveValue(body);
+    expect(createRequests).toBe(1);
+    expect(queuedDraftIds).toEqual([created.draft.id]);
+
+    const updatedTitle = `Retried slot-created post ${Date.now()}`;
+    const updatedBody = `${body}\n\nUpdated before retry.`;
+    await editor.getByLabel("Preview name").fill(updatedTitle);
+    await editor.getByLabel("Preview name").press("Tab");
+    await editor.locator("textarea").first().fill(updatedBody);
+    await editor.getByRole("button", { name: "Save & schedule" }).click();
+    await expect(editor).toBeHidden();
+    expect(createRequests).toBe(1);
+    expect(queuedDraftIds).toEqual([created.draft.id, created.draft.id]);
+    expect(updatePayloads).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ title: updatedTitle }),
+        expect.objectContaining({ body: updatedBody }),
+      ]),
+    );
+    expect(queuePayload).toMatchObject({
+      postingSlotId: expect.any(String),
+      postingSlotOccurrenceDate: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+      localTime: expect.stringMatching(/^\d{2}:\d{2}/),
+    });
+  });
+
+  test("keeps queue scheduling untouched when slot-created post saving fails", async ({ page }) => {
+    consoleGuard.allowConsoleError(/Failed to load resource.*500/i);
+    const queue = page.getByRole("region", { name: "Posting queue" });
+    const queueToggle = queue.getByRole("button", { name: /^Posting queue/ });
+    if ((await queueToggle.getAttribute("aria-expanded")) === "false") {
+      await queueToggle.click();
+    }
+    const createForSlot = queue.getByRole("button", { name: /^Create a post for / }).first();
+    await expect(createForSlot).toBeVisible();
+
+    let queueRequests = 0;
+    await page.route("**/api/drafts/*/queue", async (route) => {
+      queueRequests += 1;
+      await route.abort();
+    });
+    await page.route("**/api/drafts", async (route) => {
+      if (route.request().method() !== "POST") {
+        await route.continue();
+        return;
+      }
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ ok: false, error: "Draft save failed" }),
+      });
+    });
+
+    await createForSlot.click();
+    const editor = page.getByRole("dialog");
+    const body = "Keep this editor content after the save fails.";
+    await editor.getByLabel("Preview name").fill("Failed slot-created post");
+    await editor.locator("textarea").first().fill(body);
+    await editor.getByRole("button", { name: "Save & schedule" }).click();
+
+    await expect(page.getByText("Draft save failed")).toBeVisible();
+    await expect(editor).toBeVisible();
+    await expect(editor.locator("textarea").first()).toHaveValue(body);
+    expect(queueRequests).toBe(0);
+  });
 });
 
 async function createPost(page: Page, buttonName: string) {
