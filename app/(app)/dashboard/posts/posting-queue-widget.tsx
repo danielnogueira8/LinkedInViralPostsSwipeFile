@@ -10,6 +10,7 @@ import {
   CalendarClock,
   ChevronDown,
   ChevronUp,
+  Clock3,
   LoaderCircle,
   Plus,
   Trash2,
@@ -32,6 +33,7 @@ import {
   buildPostingQueueDays,
   DRAFT_DRAG_MIME,
   formatScheduleToast,
+  localTimeForInstant,
   postingSlotHasActiveDraft,
   type PostingQueueDropTarget,
   type PostingQueueDraft,
@@ -77,6 +79,12 @@ export function PostingQueueWidget({
   const [pickerTarget, setPickerTarget] =
     useState<(PostingQueueDropTarget & { label: string }) | null>(null);
   const [pickerDraftId, setPickerDraftId] = useState("");
+  const [timeEditor, setTimeEditor] = useState<{
+    draft: PostingQueueDraft;
+    target: PostingQueueDropTarget;
+    label: string;
+  } | null>(null);
+  const [editedLocalTime, setEditedLocalTime] = useState("");
   const [removingDraftId, setRemovingDraftId] = useState<string | null>(null);
   const [schedulingDraftId, setSchedulingDraftId] = useState<string | null>(
     null,
@@ -322,11 +330,14 @@ export function PostingQueueWidget({
                       const isDropTarget =
                         dragOverOccurrence === occurrenceKey &&
                         !occurrence.draft;
+                      const displayedAt =
+                        occurrence.draft?.scheduledAt ??
+                        occurrence.scheduledAt;
                       const timeLabel = new Intl.DateTimeFormat(undefined, {
                         timeZone: occurrence.slot.timezone,
                         hour: "numeric",
                         minute: "2-digit",
-                      }).format(new Date(occurrence.scheduledAt));
+                      }).format(new Date(displayedAt));
                       return (
                         <div
                           key={occurrence.slot.id}
@@ -395,6 +406,41 @@ export function PostingQueueWidget({
                               >
                                 {occurrence.draft.title || "Untitled post"}
                               </button>
+                              {occurrence.draft.scheduleStatus ===
+                                "scheduled" && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setEditedLocalTime(
+                                      localTimeForInstant(
+                                        occurrence.draft!.scheduledAt,
+                                        occurrence.slot.timezone,
+                                      ),
+                                    );
+                                    setTimeEditor({
+                                      draft: occurrence.draft!,
+                                      target: {
+                                        postingSlotId: occurrence.slot.id,
+                                        postingSlotOccurrenceDate: day.date,
+                                        timezone:
+                                          occurrence.slot.timezone,
+                                      },
+                                      label: `${day.weekday}, ${day.dateLabel}`,
+                                    });
+                                  }}
+                                  className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                                  aria-label={`Change scheduled hour for ${
+                                    occurrence.draft.title ||
+                                    "untitled post"
+                                  }`}
+                                  title="Change scheduled hour"
+                                >
+                                  <Clock3
+                                    className="h-3 w-3"
+                                    aria-hidden="true"
+                                  />
+                                </button>
+                              )}
                               <button
                                 type="button"
                                 onClick={() =>
@@ -545,6 +591,60 @@ export function PostingQueueWidget({
               There are no eligible posts to schedule yet.
             </p>
           )}
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={timeEditor !== null}
+        onOpenChange={(open) => {
+          if (!open && !schedulingDraftId) setTimeEditor(null);
+        }}
+      >
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Change scheduled hour</DialogTitle>
+            <DialogDescription>
+              {timeEditor?.label}. This post will stay in its current queue
+              slot.
+            </DialogDescription>
+          </DialogHeader>
+          <label className="grid gap-1.5 text-sm font-medium">
+            Publishing time
+            <input
+              type="time"
+              value={editedLocalTime}
+              onChange={(event) =>
+                setEditedLocalTime(event.target.value)
+              }
+              className="h-10 rounded-lg border bg-background px-3 text-sm"
+            />
+          </label>
+          <Button
+            disabled={
+              !timeEditor ||
+              !editedLocalTime ||
+              schedulingDraftId !== null
+            }
+            onClick={async () => {
+              if (!timeEditor || !editedLocalTime) return;
+              const scheduled = await scheduleDraftInOccurrence(
+                timeEditor.draft.id,
+                {
+                  ...timeEditor.target,
+                  localTime: editedLocalTime,
+                },
+              );
+              if (scheduled) setTimeEditor(null);
+            }}
+          >
+            {schedulingDraftId ? (
+              <>
+                <LoaderCircle className="h-4 w-4 animate-spin" />
+                Saving…
+              </>
+            ) : (
+              "Save time"
+            )}
+          </Button>
         </DialogContent>
       </Dialog>
     </section>

@@ -66,6 +66,7 @@ export type DraftQueueCommand = {
 export type DraftQueueTargetCommand = DraftQueueCommand & {
   postingSlotId: string;
   postingSlotOccurrenceDate: string;
+  localTime?: string;
 };
 
 export type QueuedDraftState = Omit<ScheduledDraftState, "scheduleStatus"> & {
