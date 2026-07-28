@@ -279,6 +279,76 @@ describe("Draft operations client", () => {
     });
   });
 
+  it("moves a queued post and returns both sides of an occupied-slot swap", async () => {
+    const fetcher = vi.fn(async () =>
+      jsonResponse({
+        ok: true,
+        swapped: true,
+        timezone: "Europe/Lisbon",
+        drafts: [
+          {
+            id: "draft-1",
+            scheduledAt: "2026-08-04T08:00:00.000Z",
+            scheduleStatus: "scheduled",
+            planToPostOn: "2026-08-04",
+            firstComment: null,
+            postingSlotId: "slot-tuesday",
+            postingSlotOccurrenceDate: "2026-08-04",
+          },
+          {
+            id: "draft-2",
+            scheduledAt: "2026-08-03T08:00:00.000Z",
+            scheduleStatus: "scheduled",
+            planToPostOn: "2026-08-03",
+            firstComment: null,
+            postingSlotId: "slot-monday",
+            postingSlotOccurrenceDate: "2026-08-03",
+          },
+        ],
+      }),
+    );
+    const client = createDraftOperationsClient(fetcher);
+
+    await expect(
+      client.moveQueue("draft-1", {
+        postingSlotId: "slot-tuesday",
+        postingSlotOccurrenceDate: "2026-08-04",
+      }),
+    ).resolves.toMatchObject({
+      swapped: true,
+      drafts: [
+        { id: "draft-1", postingSlotId: "slot-tuesday" },
+        { id: "draft-2", postingSlotId: "slot-monday" },
+      ],
+    });
+    expect(fetcher).toHaveBeenCalledWith(
+      "/api/drafts/draft-1/queue/move",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          postingSlotId: "slot-tuesday",
+          postingSlotOccurrenceDate: "2026-08-04",
+        }),
+      },
+    );
+  });
+
+  it("does not replay an ambiguous queue move after a lost response", async () => {
+    const fetcher = vi
+      .fn()
+      .mockRejectedValue(new TypeError("response was lost"));
+    const client = createDraftOperationsClient(fetcher);
+
+    await expect(
+      client.moveQueue("draft-1", {
+        postingSlotId: "slot-tuesday",
+        postingSlotOccurrenceDate: "2026-08-04",
+      }),
+    ).rejects.toThrow("response was lost");
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
   it("preserves a publishing queue booking returned after an idempotent retry", async () => {
     const fetcher = vi.fn(async () =>
       jsonResponse({

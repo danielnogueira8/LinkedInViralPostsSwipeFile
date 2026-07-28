@@ -9,7 +9,7 @@ export type PostingQueueDraft = {
   id: string;
   title: string | null;
   scheduledAt: string;
-  scheduleStatus: string | null;
+  scheduleStatus: ScheduleStatus;
   postingSlotId: string | null;
   postingSlotOccurrenceDate: string | null;
 };
@@ -28,6 +28,14 @@ export type PostingQueueDropTarget = {
 };
 
 export const DRAFT_DRAG_MIME = "application/x-swipein-draft-id";
+export const QUEUED_DRAFT_DRAG_MIME =
+  "application/x-swipein-queued-draft-id";
+
+export function canReceiveQueuedDraft(
+  scheduleStatus: string | null | undefined,
+): boolean {
+  return scheduleStatus == null || scheduleStatus === "scheduled";
+}
 
 export function canDragDraftToPostingQueue(draft: {
   status: string;
@@ -243,3 +251,4 @@ export function formatScheduleToast(input: {
     : "";
   return `Post ${input.action ?? "scheduled"} for ${relative}${date} at ${time}${zone}`;
 }
+import type { ScheduleStatus } from "@/lib/draft-view";

@@ -19,6 +19,10 @@ const queueSlotIntegrity = readFileSync(
   "db/migration-143-posting-queue-slot-integrity.sql",
   "utf8",
 );
+const queueMoveSwap = readFileSync(
+  "db/migration-145-posting-queue-move-swap.sql",
+  "utf8",
+);
 
 describe("posting queue migration", () => {
   test("enforces slot limits, unique local times, and concurrent occurrence claims", () => {
@@ -81,5 +85,19 @@ describe("posting queue migration", () => {
     expect(queueSlotIntegrity).toContain(
       "before insert or update of posting_slot_id",
     );
+  });
+
+  test("moves and swaps queue occurrences inside one database transaction", () => {
+    expect(queueMoveSwap).toContain("move_posting_queue_draft");
+    expect(queueMoveSwap).toMatch(
+      /from public\.chat_artifacts[\s\S]*for update/i,
+    );
+    expect(queueMoveSwap).toMatch(
+      /posting_slot_id\s*=\s*null[\s\S]*update public\.chat_artifacts[\s\S]*posting_slot_id\s*=\s*p_target_slot_id/i,
+    );
+    expect(queueMoveSwap).toContain(
+      "grant execute on function public.move_posting_queue_draft",
+    );
+    expect(queueMoveSwap).toContain("version = excluded.version");
   });
 });
