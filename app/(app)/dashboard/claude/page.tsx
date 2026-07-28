@@ -27,50 +27,6 @@ import { SWIPEIN_MCP_INSTRUCTIONS } from "@/lib/mcp/llms-instructions";
 // the initialize POST, so the connector URL must be the canonical www host.
 const CONNECTOR_URL_BASE = "https://www.tryswipein.com/api/mcp";
 
-const SETUP_STEPS: { title: string; body: React.ReactNode }[] = [
-  {
-    title: "Open Claude → Settings → Connectors",
-    body: (
-      <>
-        In <span className="font-medium text-foreground">claude.ai</span> (web or desktop),
-        go to your profile menu → <span className="font-medium text-foreground">Settings</span> →{" "}
-        <span className="font-medium text-foreground">Connectors</span>, then click{" "}
-        <span className="font-medium text-foreground">Add custom connector</span>.
-      </>
-    ),
-  },
-  {
-    title: "Paste the URL and name it SwipeIn",
-    body: (
-      <>
-        Paste the URL below into the <span className="font-medium text-foreground">MCP server URL</span>{" "}
-        field and name the connector{" "}
-        <span className="font-medium text-foreground">SwipeIn</span> — the workflow prompts below
-        reference it by that name. Leave the Advanced fields (Client ID / Secret) empty; Claude handles
-        registration automatically.
-      </>
-    ),
-  },
-  {
-    title: "Sign in with the email on your Swipe File account",
-    body: (
-      <>
-        Claude will open a sign-in screen. Use the same email you use here. The connector is locked to
-        allow-listed accounts only.
-      </>
-    ),
-  },
-  {
-    title: "Run a workflow",
-    body: (
-      <>
-        Open any chat. You&apos;ll see <span className="font-medium text-foreground">SwipeIn</span>{" "}
-        available as a tool source. Copy one of the agents below and paste it in.
-      </>
-    ),
-  },
-];
-
 // Workflows — copy-and-run agents. Each is framed as a named agent you put to
 // work: the `tag` is the agent's name (rendered as the card's chip), the title
 // is its concrete payoff, and the prompt is the brief you hand it. Every prompt
@@ -200,6 +156,48 @@ export default async function ClaudePage() {
               Claude unless you explicitly call a tool.
             </span>
           </div>
+          {/* One-time setup, about a minute — everything you need is on this card. */}
+          <ol className="mt-4 space-y-3 border-t border-border/60 pt-4">
+            {(
+              [
+                [
+                  "Paste it in and name it SwipeIn",
+                  <>
+                    Drop the URL above into the{" "}
+                    <span className="font-medium text-foreground">MCP server URL</span> field and name
+                    the connector{" "}
+                    <span className="font-medium text-foreground">SwipeIn</span> — every prompt below
+                    references it by that name. Leave the Advanced fields (Client ID / Secret) empty;
+                    Claude handles registration automatically.
+                  </>,
+                ],
+                [
+                  "Sign in with your Swipe File email",
+                  <>
+                    Claude opens a sign-in screen. Use the{" "}
+                    <span className="font-medium text-foreground">same email you use here</span> — the
+                    connector is locked to allow-listed accounts.
+                  </>,
+                ],
+                [
+                  "Run a workflow",
+                  <>
+                    Open any chat and <span className="font-medium text-foreground">SwipeIn</span>{" "}
+                    shows up as a tool source. Copy one of the agents below and paste it in.
+                  </>,
+                ],
+              ] as const
+            ).map(([title, body], i) => (
+              <li key={title} className="flex items-start gap-3">
+                <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-foreground text-[10px] font-medium text-background">
+                  {i + 1}
+                </span>
+                <span className="text-[13px] leading-5 text-muted-foreground">
+                  <span className="font-medium text-foreground">{title}.</span> {body}
+                </span>
+              </li>
+            ))}
+          </ol>
         </CardContent>
       </Card>
 
@@ -230,31 +228,6 @@ export default async function ClaudePage() {
             </a>
           </div>
         </div>
-      </section>
-
-      <section className="space-y-4">
-        <div className="space-y-1">
-          <h2 className="text-xl font-semibold tracking-tight">Setup — 4 steps</h2>
-          <p className="text-sm text-muted-foreground">Takes about a minute. One-time only.</p>
-        </div>
-        <ol className="grid gap-3 md:grid-cols-2">
-          {SETUP_STEPS.map((step, i) => (
-            <li
-              key={step.title}
-              className="rounded-xl border border-border/60 bg-card p-4 shadow-[0_1px_2px_0_rgba(15,23,42,0.04)]"
-            >
-              <div className="flex items-start gap-3">
-                <div className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-foreground text-[12px] font-medium text-background">
-                  {i + 1}
-                </div>
-                <div className="space-y-1">
-                  <div className="text-sm font-medium">{step.title}</div>
-                  <div className="text-sm text-muted-foreground leading-6">{step.body}</div>
-                </div>
-              </div>
-            </li>
-          ))}
-        </ol>
       </section>
 
       <section className="space-y-4">
