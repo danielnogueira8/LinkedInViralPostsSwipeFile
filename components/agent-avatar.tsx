@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 // Agent avatars on the Claude Workflows page. The bundled art is DiceBear
-// "Bottts" (Pablo Stanley — free for personal and commercial use), one SVG
+// "Bottts Neutral" (Pablo Stanley — free for personal and commercial use), one SVG
 // per agent in public/agents/<slug>.svg.
 //
 // To replace one with your own art, drop a PNG at public/agents/<slug>.png —
