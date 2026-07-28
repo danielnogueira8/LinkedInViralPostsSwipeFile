@@ -74,6 +74,20 @@ const sampleCreators = [
   ["Leo Moreau", "Bootstrapping", "leo-moreau"],
 ] as const;
 
+// The agent roster shown in the "Meet the agents" section — same avatars as
+// the Claude Workflows page (public/agents/<slug>.svg). Lines are the
+// marketing one-liner; the full prompts live on the dashboard page.
+const AGENT_ROSTER = [
+  { slug: "bulk-writer", name: "Bulk Writer", line: "10 posts modeled on what's winning right now." },
+  { slug: "calendar-architect", name: "Calendar Architect", line: "A full week of content, no two posts alike." },
+  { slug: "remix", name: "Remix", line: "One viral post becomes three angles." },
+  { slug: "offer-hunter", name: "Offer Hunter", line: "Reverse-engineers the best lead magnets." },
+  { slug: "hook-scout", name: "Hook Scout", line: "5 hooks from what's pulling right now." },
+  { slug: "timing-strategist", name: "Timing Strategist", line: "Schedules around when big posts land." },
+  { slug: "trend-radar", name: "Trend Radar", line: "This week's best posts at a glance." },
+  { slug: "roster-manager", name: "Roster Manager", line: "Grows your swipe file in one line." },
+] as const;
+
 function PrimaryLink({ children }: { children: React.ReactNode }) {
   return (
     <Link
@@ -293,6 +307,51 @@ export default function LandingClient({
                 <Feature key={title} icon={icon} title={title} copy={copy} />
               ))}
             </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Meet the agents — the specialist roster and how it works. */}
+      <section id="agents" className="border-b border-border px-4 py-20 sm:px-6 sm:py-24">
+        <div className="mx-auto max-w-[1180px]">
+          <div className="max-w-[680px]">
+            <p className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">Meet the agents</p>
+            <h2 className="mt-4 text-balance text-[clamp(2.1rem,3.5vw,3.4rem)] leading-[1.05] tracking-[-0.035em]">
+              A team of specialists, each with one job.
+            </h2>
+            <p className="mt-5 max-w-[620px] text-pretty leading-7 text-muted-foreground">
+              Every agent is a ready-made prompt that runs on your SwipeIn data — your voice, your swipe file, your calendar. Run them in Cowork, or connect Claude once and paste them there.
+            </p>
+          </div>
+
+          <ol className="mt-10 grid gap-3 sm:grid-cols-3">
+            {([
+              ["Connect once", "Open Cowork — or add the SwipeIn connector to Claude in one paste. Your voice profile and swipe file come with it."],
+              ["Pick an agent", "Each one arrives knowing its craft: bulk drafts, newsjacking, calendars, hooks. Copy it in and put it to work."],
+              ["Approve the work", "Drafts land on your Posts board, grounded in real viral posts and written in your voice. Nothing ships without your yes."],
+            ] as const).map(([title, copy], i) => (
+              <li key={title} className="rounded-xl border border-border bg-card p-5">
+                <span className="text-[11px] font-semibold tabular-nums text-muted-foreground">0{i + 1}</span>
+                <p className="mt-2 text-sm font-semibold">{title}</p>
+                <p className="mt-1.5 text-[13px] leading-6 text-muted-foreground">{copy}</p>
+              </li>
+            ))}
+          </ol>
+
+          <div className="mt-10 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {AGENT_ROSTER.map((agent) => (
+              <div key={agent.slug} className="rounded-xl border border-border bg-card p-4">
+                <Image
+                  src={`/agents/${agent.slug}.svg`}
+                  alt=""
+                  width={40}
+                  height={40}
+                  className="size-10 rounded-xl border border-border/60 bg-muted object-cover"
+                />
+                <p className="mt-3 text-[13px] font-semibold leading-5">{agent.name}</p>
+                <p className="mt-1 text-[12px] leading-5 text-muted-foreground">{agent.line}</p>
+              </div>
+            ))}
           </div>
         </div>
       </section>
