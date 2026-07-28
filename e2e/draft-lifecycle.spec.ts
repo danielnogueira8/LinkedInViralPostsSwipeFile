@@ -547,7 +547,7 @@ test.describe("Cowork draft lifecycle", () => {
     expect(booking.postingSlotOccurrenceDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
-  test("drags idea, draft, ready, and scheduled posts into exact queue slots", async ({
+  test("drags idea, draft, and ready posts into exact queue slots and edits a queued hour", async ({
     page,
   }) => {
     await page.goto("/dashboard/posts");
@@ -603,23 +603,33 @@ test.describe("Cowork draft lifecycle", () => {
       await expect(fixedTarget).toContainText(fixture.title);
     }
 
-    const scheduledCard = page
-      .locator('[role="button"][draggable="true"]:visible')
-      .filter({ hasText: fixtures[0]!.title })
-      .first();
-    await expect(scheduledCard).toBeVisible();
-    const rescheduleTarget = queue
-      .getByRole("group")
-      .filter({ hasText: /Open · Drop a post/ })
-      .first();
-    const targetLabel = await rescheduleTarget.getAttribute("aria-label");
-    if (!targetLabel) throw new Error("Reschedule target has no label");
-    await scheduledCard.dragTo(
-      queue.getByRole("group", { name: targetLabel }),
+    const occupiedTarget = queue
+      .getByText(fixtures[0]!.title, { exact: true })
+      .locator("xpath=ancestor::*[@role='group'][1]");
+    await occupiedTarget
+      .getByRole("button", {
+        name: `Change scheduled hour for ${fixtures[0]!.title}`,
+      })
+      .click();
+    const timeDialog = page.getByRole("dialog", {
+      name: "Change scheduled hour",
+    });
+    await expect(timeDialog).toBeVisible();
+    await timeDialog.getByLabel("Publishing time").fill("13:37");
+    const timeChangeResponse = page.waitForResponse(
+      (response) =>
+        response.url().includes(`/api/drafts/${fixtures[0]!.id}/queue`) &&
+        response.request().method() === "POST" &&
+        response.request().postDataJSON()?.localTime === "13:37",
     );
+    await timeDialog.getByRole("button", { name: "Save time" }).click();
+    expect((await timeChangeResponse).ok()).toBe(true);
+    await expect(timeDialog).toBeHidden();
     await expect(
-      queue.getByRole("group", { name: targetLabel }),
-    ).toContainText(fixtures[0]!.title);
+      queue
+        .getByText(fixtures[0]!.title, { exact: true })
+        .locator("xpath=ancestor::*[@role='group'][1]"),
+    ).toContainText(/1:37 PM|13:37/);
 
     await page.setViewportSize({ width: 390, height: 844 });
     const pickerTarget = queue

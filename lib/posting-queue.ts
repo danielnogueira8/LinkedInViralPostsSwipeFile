@@ -24,6 +24,7 @@ export type PostingQueueDropTarget = {
   postingSlotId: string;
   postingSlotOccurrenceDate: string;
   timezone: string;
+  localTime?: string;
 };
 
 export const DRAFT_DRAG_MIME = "application/x-swipein-draft-id";
@@ -82,6 +83,14 @@ function zonedParts(date: Date, timeZone: string) {
     minute: value("minute"),
     second: value("second"),
   };
+}
+
+export function localTimeForInstant(
+  scheduledAt: string,
+  timeZone: string,
+): string {
+  const parts = zonedParts(new Date(scheduledAt), timeZone);
+  return `${String(parts.hour).padStart(2, "0")}:${String(parts.minute).padStart(2, "0")}`;
 }
 
 function dateKey(parts: { year: number; month: number; day: number }) {
@@ -163,10 +172,11 @@ export function buildPostingQueueDays(
       .filter((slot) => slot.dayOfWeek === dayOfWeek)
       .map((slot) => {
         const instant = postingSlotInstant(date, slot.localTime, slot.timezone);
+        const draft = activeDrafts.get(`${slot.id}:${date}`) ?? null;
         return {
           slot,
-          scheduledAt: instant.toISOString(),
-          draft: activeDrafts.get(`${slot.id}:${date}`) ?? null,
+          scheduledAt: draft?.scheduledAt ?? instant.toISOString(),
+          draft,
         };
       })
       .filter((occurrence) => offset > 0 || occurrence.scheduledAt >= now.toISOString())

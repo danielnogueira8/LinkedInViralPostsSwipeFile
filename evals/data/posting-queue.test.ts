@@ -126,6 +126,32 @@ describe("buildPostingQueueDays", () => {
     expect(days[0].occurrences[0].draft?.id).toBe("draft-1");
     expect(days[0].occurrences[1].draft).toBeNull();
   });
+
+  test("filters and orders an edited occurrence by its effective publishing time", () => {
+    const days = buildPostingQueueDays(
+      slots,
+      [
+        {
+          id: "edited",
+          title: "Edited to later",
+          scheduledAt: "2026-07-27T12:00:00.000Z",
+          scheduleStatus: "scheduled",
+          postingSlotId: "monday-9",
+          postingSlotOccurrenceDate: "2026-07-27",
+        },
+      ],
+      new Date("2026-07-27T10:00:00.000Z"),
+      "Europe/Lisbon",
+    );
+
+    expect(days[0].occurrences.map((item) => item.slot.id)).toEqual([
+      "monday-9",
+      "monday-14",
+    ]);
+    expect(days[0].occurrences[0].scheduledAt).toBe(
+      "2026-07-27T12:00:00.000Z",
+    );
+  });
 });
 
 describe("formatScheduleToast", () => {

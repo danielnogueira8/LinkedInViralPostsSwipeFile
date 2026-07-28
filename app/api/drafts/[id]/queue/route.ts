@@ -22,6 +22,10 @@ const inputSchema = z.object({
   timezone: timeZoneSchema.default("UTC"),
   postingSlotId: z.string().uuid().optional(),
   postingSlotOccurrenceDate: calendarDateSchema.optional(),
+  localTime: z
+    .string()
+    .regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/)
+    .optional(),
 }).refine(
   (input) =>
     Boolean(input.postingSlotId) ===
@@ -67,7 +71,16 @@ async function existingBookingResponse(
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
-    const input = inputSchema.parse(await req.json().catch(() => ({})));
+    const parsedInput = inputSchema.safeParse(
+      await req.json().catch(() => ({})),
+    );
+    if (!parsedInput.success) {
+      return NextResponse.json(
+        { ok: false, error: "Choose a valid posting queue time." },
+        { status: 400 },
+      );
+    }
+    const input = parsedInput.data;
     const sb = await scopedSupabase();
     const repository = createSupabaseDraftLifecycleRepository(
       sb.raw,
@@ -108,7 +121,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       }
       const scheduledAt = postingSlotInstant(
         input.postingSlotOccurrenceDate,
-        slot.local_time,
+        input.localTime ?? slot.local_time,
         slot.timezone,
       ).toISOString();
       const outcome = await lifecycle.schedule(id, {

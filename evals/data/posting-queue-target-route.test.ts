@@ -75,7 +75,7 @@ vi.mock("@/lib/workspace", () => ({
 const { POST } = await import("@/app/api/drafts/[id]/queue/route");
 const context = { params: Promise.resolve({ id: "draft-1" }) };
 
-function request(date = "2099-08-04") {
+function request(date = "2099-08-04", localTime?: string) {
   return new Request("https://app.tryswipein.com/api/drafts/draft-1/queue", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -84,6 +84,7 @@ function request(date = "2099-08-04") {
       timezone: "Europe/Lisbon",
       postingSlotId: targetSlot.id,
       postingSlotOccurrenceDate: date,
+      ...(localTime ? { localTime } : {}),
     }),
   });
 }
@@ -149,6 +150,28 @@ describe("targeted recurring queue scheduling", () => {
 
     expect(response.status).toBe(200);
     expect(schedule).toHaveBeenCalledOnce();
+  });
+
+  test("changes one queued occurrence's hour without detaching it from the slot", async () => {
+    const response = await POST(request("2099-08-04", "11:30"), context);
+
+    expect(response.status).toBe(200);
+    expect(schedule).toHaveBeenCalledWith(
+      "draft-1",
+      expect.objectContaining({
+        scheduledAt: "2099-08-04T10:30:00.000Z",
+        postingSlotId: targetSlot.id,
+        postingSlotOccurrenceDate: "2099-08-04",
+      }),
+    );
+  });
+
+  test("rejects an invalid queued occurrence hour", async () => {
+    const response = await POST(request("2099-08-04", "25:00"), context);
+
+    expect(response.status).toBe(400);
+    expect((await response.json()).error).toMatch(/valid posting queue time/i);
+    expect(schedule).not.toHaveBeenCalled();
   });
 
   test("reports a target conflict instead of silently choosing another slot", async () => {

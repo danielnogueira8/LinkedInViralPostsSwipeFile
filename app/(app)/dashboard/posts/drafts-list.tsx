@@ -736,6 +736,7 @@ export function DraftsList({
             timezone: target.timezone,
             postingSlotId: target.postingSlotId,
             postingSlotOccurrenceDate: target.postingSlotOccurrenceDate,
+            localTime: target.localTime,
           });
           applyMeta(draftId, next);
           return {
