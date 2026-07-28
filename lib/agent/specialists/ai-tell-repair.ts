@@ -1,5 +1,5 @@
 import {
-  CHAT_MODEL,
+  BACKGROUND_MODEL,
   completeChat,
   logOpenRouterUsage,
   UsagePersistenceError,
@@ -10,10 +10,6 @@ import {
   type AdapterHealthRegistry,
 } from "@/lib/agent/adapter-health";
 import {
-  isAutoRouterModel,
-  PRIMARY_DRAFT_WRITER_MODEL,
-} from "@/lib/agent/model-config";
-import {
   runCoworkAdapterAttempt,
   providerModelAttribution,
 } from "@/lib/agent/cowork-adapter-attempt";
@@ -21,17 +17,12 @@ import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
 import { editDraftBody, type EditorModelRewrite } from "./editor";
 import { aiTellMetrics, looksCorruptedDraft } from "./nets";
 
-// Defaults to the one app-wide chat model so every text-LLM call uses the
-// SAME model unless pinned via OPENROUTER_AI_TELL_MODEL — with ONE exception:
-// never the openrouter/auto meta-router. AI-tell repair is a narrow,
-// forced-tool copy edit on the turn's critical path; the auto-router served
-// it z-ai/glm-5.2 in production, which hung past the 8s stage timeout on
-// EVERY repair (dead time per turn, and zero repaired drafts). When the chat
-// model is the auto-router, pin the same writer primary the app trusts
-// instead. (A cheaper pin via OPENROUTER_AI_TELL_MODEL is still reasonable.)
-const DEFAULT_AI_TELL_MODEL = isAutoRouterModel(CHAT_MODEL)
-  ? PRIMARY_DRAFT_WRITER_MODEL
-  : CHAT_MODEL;
+// Defaults to the cheap background tier so a narrow, forced-tool copy edit
+// never pays writer-tier prices: Haiku 4.5 under the Anthropic flag (half the
+// writer's cost, and it never rides openrouter/auto into a slow/hanging GLM —
+// the 8s-timeout-every-repair bug), CHAT_MODEL off the flag. Pin
+// OPENROUTER_AI_TELL_MODEL to override.
+const DEFAULT_AI_TELL_MODEL = BACKGROUND_MODEL;
 
 export function resolveAiTellModel(value = process.env.OPENROUTER_AI_TELL_MODEL): string {
   return value?.trim() || DEFAULT_AI_TELL_MODEL;

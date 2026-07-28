@@ -448,14 +448,14 @@ describe("completeChatAnthropic (mocked SDK)", () => {
       {
         type: "text",
         text: "big stable system prompt",
-        cache_control: { type: "ephemeral" },
+        cache_control: { type: "ephemeral", ttl: "1h" },
       },
     ]);
     // the LAST tool carries the cache breakpoint (caches the full tool block);
     // earlier tools do not.
     const tools = body.tools as Array<{ name: string; cache_control?: unknown }>;
     expect(tools[0].cache_control).toBeUndefined();
-    expect(tools[1].cache_control).toEqual({ type: "ephemeral" });
+    expect(tools[1].cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
   });
 
   // A cache WRITE costs ~1.25x input, so paths that structurally cannot read
@@ -511,7 +511,7 @@ describe("completeChatAnthropic (mocked SDK)", () => {
     const body = lastBody.current!;
     expect(Array.isArray(body.system)).toBe(true);
     const tools = body.tools as Array<{ cache_control?: unknown }>;
-    expect(tools[tools.length - 1].cache_control).toEqual({ type: "ephemeral" });
+    expect(tools[tools.length - 1].cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
   });
 
   // REGRESSION: the web_search server tool is appended AFTER the user tools, so
@@ -547,7 +547,7 @@ describe("completeChatAnthropic (mocked SDK)", () => {
     // web_search really is last...
     expect(tools[tools.length - 1].type).toBe("web_search_20260209");
     // ...and it carries the one and only breakpoint.
-    expect(tools[tools.length - 1].cache_control).toEqual({ type: "ephemeral" });
+    expect(tools[tools.length - 1].cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
     const marked = tools.filter((t) => t.cache_control !== undefined);
     expect(marked).toHaveLength(1);
   });
