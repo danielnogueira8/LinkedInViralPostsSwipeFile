@@ -547,6 +547,66 @@ test.describe("Cowork draft lifecycle", () => {
     expect(booking.postingSlotOccurrenceDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
+  test("shows a specific-time schedule in its queue day without filling a recurring slot", async ({
+    page,
+  }) => {
+    await page.goto("/dashboard/posts");
+    const title = `One-off queue fixture ${Date.now()}`;
+    const created = await page.request.post("/api/drafts", {
+      data: {
+        title,
+        body: "A post scheduled at a specific time outside the recurring queue.",
+        kind: "post",
+      },
+    });
+    expect(created.ok()).toBe(true);
+    const payload = (await created.json()) as {
+      draft?: { id?: string };
+    };
+    const draftId = payload.draft?.id;
+    if (!draftId) throw new Error("One-off queue fixture was not created");
+    draftsToDelete.push(draftId);
+    connectionRestorers.push(
+      await activateTestPublishingConnection(draftId),
+    );
+
+    const scheduledAt = new Date(
+      Date.now() + 36 * 60 * 60 * 1000,
+    ).toISOString();
+    const timezone = await page.evaluate(
+      () => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+    );
+    const scheduled = await page.request.post(
+      `/api/drafts/${draftId}/schedule`,
+      {
+        data: {
+          scheduledAt,
+          timezone,
+          firstComment: null,
+        },
+      },
+    );
+    expect(scheduled.ok()).toBe(true);
+
+    await page.goto("/dashboard/posts");
+    const queue = page.getByRole("region", { name: "Posting queue" });
+    const queueToggle = queue.getByRole("button", {
+      name: /^Posting queue/,
+    });
+    if ((await queueToggle.getAttribute("aria-expanded")) === "false") {
+      await queueToggle.click();
+    }
+    const oneOff = queue
+      .getByRole("group", { name: /one-off schedule$/ })
+      .filter({ hasText: title });
+    await expect(oneOff).toBeVisible();
+    await expect(oneOff).toContainText("One-off");
+    await oneOff.getByRole("button", { name: title }).click();
+    await expect(
+      page.getByRole("heading", { name: "Edit post" }),
+    ).toBeVisible();
+  });
+
   test("drags posts into queue slots and swaps occupied occurrences", async ({
     page,
   }) => {

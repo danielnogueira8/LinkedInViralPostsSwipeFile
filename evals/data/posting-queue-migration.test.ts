@@ -10,7 +10,10 @@ const atomicSlotCreation = readFileSync(
   "db/migration-141-atomic-posting-slot-creation.sql",
   "utf8",
 );
-const postingSlotsRoute = readFileSync("app/api/posting-slots/route.ts", "utf8");
+const postingSlotsRoute = readFileSync(
+  "app/api/posting-slots/route.ts",
+  "utf8",
+);
 const publishingSlotRemoval = readFileSync(
   "db/migration-142-publishing-slot-removal.sql",
   "utf8",
@@ -23,6 +26,10 @@ const queueMoveSwap = readFileSync(
   "db/migration-145-posting-queue-move-swap.sql",
   "utf8",
 );
+const queueScheduleLookup = readFileSync(
+  "db/migration-146-posting-queue-schedule-lookup.sql",
+  "utf8",
+);
 
 describe("posting queue migration", () => {
   test("enforces slot limits, unique local times, and concurrent occurrence claims", () => {
@@ -31,7 +38,9 @@ describe("posting queue migration", () => {
     expect(sql).toContain("posting_slot_occurrence_date");
     expect(sql).toContain("chat_artifacts_posting_slot_occurrence_idx");
     expect(sql).toContain("next_posting_queue_occurrence");
-    expect(sql).toContain("The unique occurrence index is the final concurrent");
+    expect(sql).toContain(
+      "The unique occurrence index is the final concurrent",
+    );
   });
 
   test("preserves scheduled instants when a slot is removed", () => {
@@ -99,5 +108,17 @@ describe("posting queue migration", () => {
       "grant execute on function public.move_posting_queue_draft",
     );
     expect(queueMoveSwap).toContain("version = excluded.version");
+  });
+
+  test("indexes active schedule lookups by workspace before time", () => {
+    expect(queueScheduleLookup).toContain(
+      "chat_artifacts_workspace_active_schedule_idx",
+    );
+    expect(queueScheduleLookup).toMatch(
+      /workspace_id,\s*schedule_status,\s*scheduled_at/i,
+    );
+    expect(queueScheduleLookup).toContain(
+      "schedule_status in ('scheduled', 'publishing', 'failed')",
+    );
   });
 });

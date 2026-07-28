@@ -1,11 +1,6 @@
 "use client";
 
-import {
-  useEffect,
-  useMemo,
-  useState,
-  type DragEvent,
-} from "react";
+import { useEffect, useMemo, useState, type DragEvent } from "react";
 import {
   CalendarClock,
   ChevronDown,
@@ -84,8 +79,9 @@ export function PostingQueueWidget({
   const [dragOverOccurrence, setDragOverOccurrence] = useState<string | null>(
     null,
   );
-  const [pickerTarget, setPickerTarget] =
-    useState<(PostingQueueDropTarget & { label: string }) | null>(null);
+  const [pickerTarget, setPickerTarget] = useState<
+    (PostingQueueDropTarget & { label: string }) | null
+  >(null);
   const [pickerDraftId, setPickerDraftId] = useState("");
   const [timeEditor, setTimeEditor] = useState<{
     draft: PostingQueueDraft;
@@ -113,7 +109,8 @@ export function PostingQueueWidget({
       { cache: "no-store" },
     );
     const data = (await response.json()) as QueueResponse & { error?: string };
-    if (!response.ok || !data.ok) throw new Error(data.error || "Couldn't load posting queue.");
+    if (!response.ok || !data.ok)
+      throw new Error(data.error || "Couldn't load posting queue.");
     setSlots(data.slots);
     setDrafts(data.drafts);
     onQueueSnapshotLoaded(data.drafts);
@@ -152,16 +149,12 @@ export function PostingQueueWidget({
     () =>
       days.flatMap((day) =>
         day.occurrences
-          .filter(
-            (occurrence) =>
-              canReceiveQueuedDraft(
-                occurrence.draft?.scheduleStatus,
-              ),
+          .filter((occurrence) =>
+            canReceiveQueuedDraft(occurrence.draft?.scheduleStatus),
           )
           .map((occurrence) => {
             const scheduledAt =
-              occurrence.draft?.scheduledAt ??
-              occurrence.scheduledAt;
+              occurrence.draft?.scheduledAt ?? occurrence.scheduledAt;
             const timeLabel = new Intl.DateTimeFormat(undefined, {
               timeZone: occurrence.slot.timezone,
               hour: "numeric",
@@ -171,9 +164,7 @@ export function PostingQueueWidget({
               key: `${occurrence.slot.id}:${day.date}`,
               label: `${day.weekday}, ${day.dateLabel} at ${timeLabel}${
                 occurrence.draft
-                  ? ` — swap with ${
-                      occurrence.draft.title || "Untitled post"
-                    }`
+                  ? ` — swap with ${occurrence.draft.title || "Untitled post"}`
                   : ""
               }`,
               draftId: occurrence.draft?.id ?? null,
@@ -221,7 +212,8 @@ export function PostingQueueWidget({
       }
       setSlots((current) =>
         [...current, data.slot!].sort(
-          (a, b) => a.dayOfWeek - b.dayOfWeek || a.localTime.localeCompare(b.localTime),
+          (a, b) =>
+            a.dayOfWeek - b.dayOfWeek || a.localTime.localeCompare(b.localTime),
         ),
       );
       setAddingDay(null);
@@ -241,11 +233,15 @@ export function PostingQueueWidget({
       return;
     }
     try {
-      const response = await fetch(`/api/posting-slots?id=${encodeURIComponent(slot.id)}`, {
-        method: "DELETE",
-      });
+      const response = await fetch(
+        `/api/posting-slots?id=${encodeURIComponent(slot.id)}`,
+        {
+          method: "DELETE",
+        },
+      );
       const data = (await response.json()) as { ok: boolean; error?: string };
-      if (!response.ok || !data.ok) throw new Error(data.error || "Couldn't remove slot.");
+      if (!response.ok || !data.ok)
+        throw new Error(data.error || "Couldn't remove slot.");
       setSlots((current) => current.filter((item) => item.id !== slot.id));
       setDrafts((current) =>
         current.map((draft) =>
@@ -322,8 +318,7 @@ export function PostingQueueWidget({
     try {
       const result = await draftOperations.moveQueue(draftId, {
         postingSlotId: target.postingSlotId,
-        postingSlotOccurrenceDate:
-          target.postingSlotOccurrenceDate,
+        postingSlotOccurrenceDate: target.postingSlotOccurrenceDate,
       });
       const movedById = new Map(
         result.drafts.map((draft) => [draft.id, draft]),
@@ -337,16 +332,13 @@ export function PostingQueueWidget({
                 scheduledAt: moved.scheduledAt,
                 scheduleStatus: moved.scheduleStatus,
                 postingSlotId: moved.postingSlotId,
-                postingSlotOccurrenceDate:
-                  moved.postingSlotOccurrenceDate,
+                postingSlotOccurrenceDate: moved.postingSlotOccurrenceDate,
               }
             : draft;
         }),
       );
       onQueuedDraftsMoved(result.drafts);
-      const movedDraft = result.drafts.find(
-        (draft) => draft.id === draftId,
-      );
+      const movedDraft = result.drafts.find((draft) => draft.id === draftId);
       if (movedDraft) {
         toast.success(
           result.swapped
@@ -400,7 +392,10 @@ export function PostingQueueWidget({
   }
 
   return (
-    <section className="rounded-xl border border-border bg-card shadow-soft" aria-label="Posting queue">
+    <section
+      className="rounded-xl border border-border bg-card shadow-soft"
+      aria-label="Posting queue"
+    >
       <button
         type="button"
         onClick={toggleCollapsed}
@@ -410,7 +405,9 @@ export function PostingQueueWidget({
         <CalendarClock className="h-4 w-4 text-primary" />
         <span className="text-sm font-semibold">Posting queue</span>
         <span className="text-xs text-muted-foreground">
-          {slots.length === 0 ? "Add a recurring time to enable one-click scheduling." : "Your next 7 days"}
+          {slots.length === 0
+            ? "Add a recurring time to enable one-click scheduling."
+            : "Your next 7 days"}
         </span>
         {collapsed ? (
           <ChevronDown className="ml-auto h-4 w-4 text-muted-foreground" />
@@ -430,36 +427,76 @@ export function PostingQueueWidget({
               return (
                 <div
                   key={day.date}
-                  className={cn("min-h-32 p-2", day.isToday && "bg-primary/[0.04]")}
+                  className={cn(
+                    "min-h-32 p-2",
+                    day.isToday && "bg-primary/[0.04]",
+                  )}
                 >
                   <div className="flex items-start justify-between gap-1">
                     <div>
                       <div className="text-xs font-semibold">{day.weekday}</div>
-                      <div className="text-[11px] text-muted-foreground">{day.dateLabel}</div>
+                      <div className="text-[11px] text-muted-foreground">
+                        {day.dateLabel}
+                      </div>
                     </div>
                     <button
                       type="button"
-                      onClick={() => setAddingDay(daySlots[0]?.dayOfWeek ?? new Date(`${day.date}T12:00:00.000Z`).getUTCDay())}
+                      onClick={() =>
+                        setAddingDay(
+                          daySlots[0]?.dayOfWeek ??
+                            new Date(`${day.date}T12:00:00.000Z`).getUTCDay(),
+                        )
+                      }
                       disabled={daySlots.length >= 3}
                       className="rounded p-1 text-muted-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-30"
                       aria-label={`Add slot on ${day.weekday}`}
-                      title={daySlots.length >= 3 ? "Maximum three slots per day" : "Add posting slot"}
+                      title={
+                        daySlots.length >= 3
+                          ? "Maximum three slots per day"
+                          : "Add posting slot"
+                      }
                     >
                       <Plus className="h-3.5 w-3.5" />
                     </button>
                   </div>
                   <div className="mt-2 space-y-1.5">
-                    {day.occurrences.map((occurrence) => {
-                      const occurrenceKey = `${occurrence.slot.id}:${day.date}`;
-                      const isDropTarget =
-                        dragOverOccurrence === occurrenceKey;
-                      const canReceiveQueuedMove =
-                        canReceiveQueuedDraft(
-                          occurrence.draft?.scheduleStatus,
+                    {day.items.map((item) => {
+                      if (item.kind === "one_off") {
+                        const draft = item.draft;
+                        const timeLabel = new Intl.DateTimeFormat(undefined, {
+                          timeZone: timezone,
+                          hour: "numeric",
+                          minute: "2-digit",
+                        }).format(new Date(draft.scheduledAt));
+                        return (
+                          <div
+                            key={`one-off:${draft.id}`}
+                            role="group"
+                            className="rounded-lg border border-accent-brand/25 bg-accent-brand/[0.06] px-2 py-1.5"
+                            aria-label={`${day.weekday}, ${day.dateLabel} at ${timeLabel} one-off schedule`}
+                          >
+                            <div className="text-[10px] font-medium uppercase tracking-wide text-accent-brand">
+                              One-off · {timeLabel}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => onOpenDraft(draft.id)}
+                              className="mt-0.5 block w-full truncate text-left text-[11px] text-primary hover:underline"
+                              title={draft.title || "Untitled post"}
+                            >
+                              {draft.title || "Untitled post"}
+                            </button>
+                          </div>
                         );
+                      }
+                      const occurrence = item.occurrence;
+                      const occurrenceKey = `${occurrence.slot.id}:${day.date}`;
+                      const isDropTarget = dragOverOccurrence === occurrenceKey;
+                      const canReceiveQueuedMove = canReceiveQueuedDraft(
+                        occurrence.draft?.scheduleStatus,
+                      );
                       const displayedAt =
-                        occurrence.draft?.scheduledAt ??
-                        occurrence.scheduledAt;
+                        occurrence.draft?.scheduledAt ?? occurrence.scheduledAt;
                       const timeLabel = new Intl.DateTimeFormat(undefined, {
                         timeZone: occurrence.slot.timezone,
                         hour: "numeric",
@@ -470,8 +507,7 @@ export function PostingQueueWidget({
                           key={occurrence.slot.id}
                           role="group"
                           draggable={
-                            occurrence.draft?.scheduleStatus ===
-                            "scheduled"
+                            occurrence.draft?.scheduleStatus === "scheduled"
                           }
                           aria-disabled={
                             (occurrence.draft != null &&
@@ -479,8 +515,7 @@ export function PostingQueueWidget({
                             undefined
                           }
                           title={
-                            occurrence.draft &&
-                            !canReceiveQueuedMove
+                            occurrence.draft && !canReceiveQueuedMove
                               ? "This queue occurrence is locked and cannot be moved."
                               : undefined
                           }
@@ -492,8 +527,7 @@ export function PostingQueueWidget({
                               );
                             if (
                               !occurrence.draft ||
-                              (isQueuedMove &&
-                                canReceiveQueuedMove)
+                              (isQueuedMove && canReceiveQueuedMove)
                             ) {
                               event.preventDefault();
                               setDragOverOccurrence(occurrenceKey);
@@ -506,8 +540,7 @@ export function PostingQueueWidget({
                               );
                             if (
                               !occurrence.draft ||
-                              (isQueuedMove &&
-                                canReceiveQueuedMove)
+                              (isQueuedMove && canReceiveQueuedMove)
                             ) {
                               event.preventDefault();
                               event.dataTransfer.dropEffect = "move";
@@ -532,8 +565,7 @@ export function PostingQueueWidget({
                               );
                             if (
                               occurrence.draft &&
-                              (!isQueuedMove ||
-                                !canReceiveQueuedMove)
+                              (!isQueuedMove || !canReceiveQueuedMove)
                             ) {
                               return;
                             }
@@ -545,8 +577,7 @@ export function PostingQueueWidget({
                           }}
                           onDragStart={(event) => {
                             if (
-                              occurrence.draft?.scheduleStatus !==
-                              "scheduled"
+                              occurrence.draft?.scheduleStatus !== "scheduled"
                             ) {
                               event.preventDefault();
                               return;
@@ -561,8 +592,8 @@ export function PostingQueueWidget({
                             "group rounded-lg border bg-background/80 px-2 py-1.5 transition-colors",
                             !occurrence.draft &&
                               "border-dashed hover:border-accent-brand/50",
-                            occurrence.draft?.scheduleStatus ===
-                              "scheduled" && "cursor-grab active:cursor-grabbing",
+                            occurrence.draft?.scheduleStatus === "scheduled" &&
+                              "cursor-grab active:cursor-grabbing",
                             isDropTarget &&
                               "border-accent-brand bg-accent-brand/[0.10] ring-2 ring-accent-brand/30",
                           )}
@@ -584,9 +615,13 @@ export function PostingQueueWidget({
                             <div className="mt-0.5 flex min-w-0 items-center gap-1">
                               <button
                                 type="button"
-                                onClick={() => onOpenDraft(occurrence.draft!.id)}
+                                onClick={() =>
+                                  onOpenDraft(occurrence.draft!.id)
+                                }
                                 className="min-w-0 flex-1 truncate text-left text-[11px] text-primary hover:underline"
-                                title={occurrence.draft.title || "Untitled post"}
+                                title={
+                                  occurrence.draft.title || "Untitled post"
+                                }
                               >
                                 {occurrence.draft.title || "Untitled post"}
                               </button>
@@ -596,22 +631,19 @@ export function PostingQueueWidget({
                                   <button
                                     type="button"
                                     onClick={() => {
-                                      const firstTarget =
-                                        moveTargets.find(
-                                          (target) =>
-                                            target.draftId !==
-                                            occurrence.draft!.id,
-                                        );
+                                      const firstTarget = moveTargets.find(
+                                        (target) =>
+                                          target.draftId !==
+                                          occurrence.draft!.id,
+                                      );
                                       setMovePicker({
                                         draft: occurrence.draft!,
-                                        targetKey:
-                                          firstTarget?.key ?? "",
+                                        targetKey: firstTarget?.key ?? "",
                                       });
                                     }}
                                     className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
                                     aria-label={`Move ${
-                                      occurrence.draft.title ||
-                                      "untitled post"
+                                      occurrence.draft.title || "untitled post"
                                     } to another queue slot`}
                                     title="Move to another queue slot"
                                   >
@@ -625,28 +657,23 @@ export function PostingQueueWidget({
                                     onClick={() => {
                                       setEditedLocalTime(
                                         localTimeForInstant(
-                                          occurrence.draft!
-                                            .scheduledAt,
+                                          occurrence.draft!.scheduledAt,
                                           occurrence.slot.timezone,
                                         ),
                                       );
                                       setTimeEditor({
                                         draft: occurrence.draft!,
                                         target: {
-                                          postingSlotId:
-                                            occurrence.slot.id,
-                                          postingSlotOccurrenceDate:
-                                            day.date,
-                                          timezone:
-                                            occurrence.slot.timezone,
+                                          postingSlotId: occurrence.slot.id,
+                                          postingSlotOccurrenceDate: day.date,
+                                          timezone: occurrence.slot.timezone,
                                         },
                                         label: `${day.weekday}, ${day.dateLabel}`,
                                       });
                                     }}
                                     className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
                                     aria-label={`Change scheduled hour for ${
-                                      occurrence.draft.title ||
-                                      "untitled post"
+                                      occurrence.draft.title || "untitled post"
                                     }`}
                                     title="Change scheduled hour"
                                   >
@@ -664,14 +691,16 @@ export function PostingQueueWidget({
                                 }
                                 disabled={
                                   removingDraftId !== null ||
-                                  occurrence.draft.scheduleStatus === "publishing"
+                                  occurrence.draft.scheduleStatus ===
+                                    "publishing"
                                 }
                                 className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-wait disabled:opacity-40"
                                 aria-label={`Remove ${
                                   occurrence.draft.title || "untitled post"
                                 } from queue`}
                                 title={
-                                  occurrence.draft.scheduleStatus === "publishing"
+                                  occurrence.draft.scheduleStatus ===
+                                  "publishing"
                                     ? "This post is being published"
                                     : "Remove post from queue"
                                 }
@@ -726,11 +755,16 @@ export function PostingQueueWidget({
                         No slots left today.
                       </p>
                     )}
-                    {day.occurrences.length === 0 && !day.noSlotsLeftToday && (
-                      <p className="text-[10px] text-muted-foreground">No slots</p>
-                    )}
+                    {day.occurrences.length === 0 &&
+                      day.oneOffDrafts.length === 0 &&
+                      !day.noSlotsLeftToday && (
+                        <p className="text-[10px] text-muted-foreground">
+                          No slots
+                        </p>
+                      )}
                   </div>
-                  {addingDay === new Date(`${day.date}T12:00:00.000Z`).getUTCDay() && (
+                  {addingDay ===
+                    new Date(`${day.date}T12:00:00.000Z`).getUTCDay() && (
                     <div className="mt-2 flex gap-1">
                       <input
                         type="time"
@@ -739,7 +773,11 @@ export function PostingQueueWidget({
                         className="h-7 min-w-0 flex-1 rounded-md border bg-background px-1 text-[11px]"
                         aria-label={`New ${day.weekday} posting time`}
                       />
-                      <Button size="sm" className="h-7 px-2 text-[11px]" onClick={() => void addSlot(addingDay)}>
+                      <Button
+                        size="sm"
+                        className="h-7 px-2 text-[11px]"
+                        onClick={() => void addSlot(addingDay)}
+                      >
                         Add
                       </Button>
                     </div>
@@ -819,8 +857,8 @@ export function PostingQueueWidget({
           <DialogHeader>
             <DialogTitle>Move queued post</DialogTitle>
             <DialogDescription>
-              Choose a new queue time. If it already contains a post,
-              the two posts will swap places.
+              Choose a new queue time. If it already contains a post, the two
+              posts will swap places.
             </DialogDescription>
           </DialogHeader>
           <label className="grid gap-1.5 text-sm font-medium">
@@ -840,10 +878,7 @@ export function PostingQueueWidget({
               className="h-10 w-full rounded-lg border bg-background px-3 text-sm"
             >
               {moveTargets
-                .filter(
-                  (target) =>
-                    target.draftId !== movePicker?.draft.id,
-                )
+                .filter((target) => target.draftId !== movePicker?.draft.id)
                 .map((target) => (
                   <option key={target.key} value={target.key}>
                     {target.label}
@@ -852,15 +887,11 @@ export function PostingQueueWidget({
             </select>
           </label>
           <Button
-            disabled={
-              !movePicker?.targetKey ||
-              schedulingDraftId !== null
-            }
+            disabled={!movePicker?.targetKey || schedulingDraftId !== null}
             onClick={async () => {
               if (!movePicker) return;
               const destination = moveTargets.find(
-                (target) =>
-                  target.key === movePicker.targetKey,
+                (target) => target.key === movePicker.targetKey,
               );
               if (!destination) return;
               const moved = await moveQueuedDraft(
@@ -900,17 +931,13 @@ export function PostingQueueWidget({
             <input
               type="time"
               value={editedLocalTime}
-              onChange={(event) =>
-                setEditedLocalTime(event.target.value)
-              }
+              onChange={(event) => setEditedLocalTime(event.target.value)}
               className="h-10 rounded-lg border bg-background px-3 text-sm"
             />
           </label>
           <Button
             disabled={
-              !timeEditor ||
-              !editedLocalTime ||
-              schedulingDraftId !== null
+              !timeEditor || !editedLocalTime || schedulingDraftId !== null
             }
             onClick={async () => {
               if (!timeEditor || !editedLocalTime) return;

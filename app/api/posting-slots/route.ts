@@ -24,45 +24,66 @@ export async function GET(req: Request) {
   try {
     const sb = await scopedSupabase();
     const url = new URL(req.url);
-    const timezone = timeZoneSchema.parse(url.searchParams.get("timezone") || "UTC");
+    const timezone = timeZoneSchema.parse(
+      url.searchParams.get("timezone") || "UTC",
+    );
     const { error: ensureError } = await sb.raw.rpc("ensure_posting_slots", {
       p_workspace_id: sb.workspaceId,
       p_timezone: timezone,
     });
     if (ensureError) throw ensureError;
-    const [{ data: slots, error: slotsError }, { data: setting, error: settingError }] =
-      await Promise.all([
-        sb.raw
-          .from("posting_slots")
-          .select("id, day_of_week, local_time, timezone")
-          .eq("workspace_id", sb.workspaceId)
-          .is("deleted_at", null)
-          .order("day_of_week")
-          .order("local_time"),
-        sb.raw
-          .from("settings")
-          .select("value")
-          .eq("workspace_id", sb.workspaceId)
-          .eq("key", "posting_queue_collapsed")
-          .maybeSingle(),
-      ]);
+    const [
+      { data: slots, error: slotsError },
+      { data: setting, error: settingError },
+    ] = await Promise.all([
+      sb.raw
+        .from("posting_slots")
+        .select("id, day_of_week, local_time, timezone")
+        .eq("workspace_id", sb.workspaceId)
+        .is("deleted_at", null)
+        .order("day_of_week")
+        .order("local_time"),
+      sb.raw
+        .from("settings")
+        .select("value")
+        .eq("workspace_id", sb.workspaceId)
+        .eq("key", "posting_queue_collapsed")
+        .maybeSingle(),
+    ]);
     if (slotsError) throw slotsError;
     if (settingError) throw settingError;
 
+    const now = new Date();
+    const queueWindowEnd = new Date(now.getTime() + 8 * 24 * 60 * 60 * 1000);
+    const draftColumns =
+      "id, title, scheduled_at, schedule_status, posting_slot_id, posting_slot_occurrence_date";
     const slotIds = (slots ?? []).map((slot) => slot.id as string);
-    let drafts: unknown[] = [];
-    if (slotIds.length > 0) {
-      const { data, error } = await sb.raw
+    const recurringPromise =
+      slotIds.length === 0
+        ? Promise.resolve({ data: [], error: null })
+        : sb.raw
+            .from("chat_artifacts")
+            .select(draftColumns)
+            .eq("workspace_id", sb.workspaceId)
+            .in("posting_slot_id", slotIds)
+            .in("schedule_status", ["scheduled", "publishing", "failed"]);
+    const [recurringResult, oneOffResult] = await Promise.all([
+      recurringPromise,
+      sb.raw
         .from("chat_artifacts")
-        .select(
-          "id, title, scheduled_at, schedule_status, posting_slot_id, posting_slot_occurrence_date",
-        )
+        .select(draftColumns)
         .eq("workspace_id", sb.workspaceId)
-        .in("posting_slot_id", slotIds)
-        .in("schedule_status", ["scheduled", "publishing", "failed"]);
-      if (error) throw error;
-      drafts = data ?? [];
-    }
+        .is("posting_slot_id", null)
+        .in("schedule_status", ["scheduled", "publishing", "failed"])
+        .gte("scheduled_at", now.toISOString())
+        .lt("scheduled_at", queueWindowEnd.toISOString()),
+    ]);
+    if (recurringResult.error) throw recurringResult.error;
+    if (oneOffResult.error) throw oneOffResult.error;
+    const drafts = [
+      ...(recurringResult.data ?? []),
+      ...(oneOffResult.data ?? []),
+    ];
     return NextResponse.json({
       ok: true,
       collapsed: setting?.value === true,
@@ -133,7 +154,10 @@ export async function PATCH(req: Request) {
   try {
     const sb = await scopedSupabase();
     const input = patchSchema.parse(await req.json());
-    const { error } = await sb.upsertSetting("posting_queue_collapsed", input.collapsed);
+    const { error } = await sb.upsertSetting(
+      "posting_queue_collapsed",
+      input.collapsed,
+    );
     if (error) throw error;
     return NextResponse.json({ ok: true });
   } catch (error) {
@@ -151,7 +175,10 @@ export async function DELETE(req: Request) {
     });
     if (error) throw error;
     if (!data) {
-      return NextResponse.json({ ok: false, error: "Posting slot not found." }, { status: 404 });
+      return NextResponse.json(
+        { ok: false, error: "Posting slot not found." },
+        { status: 404 },
+      );
     }
     return NextResponse.json({ ok: true });
   } catch (error) {
