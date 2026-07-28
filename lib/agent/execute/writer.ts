@@ -568,6 +568,36 @@ export function writerHistoryDigest(history: ChatMessage[]): string {
 
 type SingleTask = Exclude<WriterTask, { kind: "multi" }>;
 
+type CompiledWriterPrompt = {
+  messages: ChatMessage[];
+  cachePrompt?: boolean;
+  cacheSystemPrefixChars?: number;
+};
+
+function withStableSystemPrefix(
+  messages: ChatMessage[],
+  stableSystemEnd: string,
+): CompiledWriterPrompt {
+  const system = messages.find((message) => message.role === "system")?.content;
+  if (typeof system !== "string" || !stableSystemEnd) return { messages };
+  // The first occurrence is the server-assembled policy block. A later copy
+  // may be user-authored inside a custom skill and must remain uncached.
+  const stableEndStart = system.indexOf(stableSystemEnd);
+  if (stableEndStart < 0) return { messages };
+  const stableEnd = stableEndStart + stableSystemEnd.length;
+  const separatorChars = system.startsWith("\n\n", stableEnd) ? 2 : 0;
+  return {
+    messages,
+    // Keep the separator on the cached side. Joining the transport blocks
+    // therefore reproduces the original system string byte for byte.
+    cacheSystemPrefixChars: stableEnd + separatorChars,
+  };
+}
+
+function withoutPromptCache(messages: ChatMessage[]): CompiledWriterPrompt {
+  return { messages, cachePrompt: false };
+}
+
 /**
  * Slot-scope line for a multi-draft turn. A series ("3-part", "Part 1…") is
  * NOT N interchangeable variations: each slot must write only its own part,
@@ -587,7 +617,7 @@ function compileMessages(
   input: WriterInput,
   task: SingleTask,
   variation?: DraftVariation,
-): ChatMessage[] {
+): CompiledWriterPrompt {
   const instruction =
     task.kind === "refine" ? task.instruction : input.userInstruction;  const selectedSkills = selectSkills(instruction);
   const skills = renderCombinedSkills(
@@ -620,7 +650,7 @@ function compileMessages(
     : [];
 
   if (task.kind === "grounded") {
-    return [
+    return withStableSystemPrefix([
       {
         role: "system",
         content: [
@@ -670,14 +700,14 @@ function compileMessages(
           "Return the complete post now.",
         ].join("\n\n"),
       },
-    ];
+    ], structureSkill || writingSkill);
   }
 
   if (task.kind === "partial") {
     const fieldRules = task.spec.contract.requiredFields
       .map((field) => `- ${field}:`)
       .join("\n");
-    return [
+    return withoutPromptCache([
       {
         role: "system",
         content: [
@@ -721,7 +751,7 @@ function compileMessages(
           "Return only the exact numbered items now.",
         ].join("\n\n"),
       },
-    ];
+    ]);
   }
 
   if (task.kind === "refine") {
@@ -740,7 +770,7 @@ function compileMessages(
           : task.focus === "shorten"
             ? "Return the whole post, materially shorter. Never return a patch, excerpt, hook, or summary."
             : "Return the whole revised post, not a patch or excerpt.";
-    return [
+    return withoutPromptCache([
       {
         role: "system",
         content: [
@@ -778,11 +808,11 @@ function compileMessages(
               : "Return the complete replacement post now.",
         ].join("\n\n"),
       },
-    ];
+    ]);
   }
 
   if (task.kind === "source") {
-    return [
+    return withStableSystemPrefix([
       {
         role: "system",
         content: [
@@ -831,10 +861,10 @@ function compileMessages(
           "Return the complete post now.",
         ].join("\n\n"),
       },
-    ];
+    ], writingSkill);
   }
 
-  return [
+  return withStableSystemPrefix([
     {
       role: "system",
       content: [
@@ -880,7 +910,7 @@ function compileMessages(
         "Write the complete post now.",
       ].join("\n\n"),
     },
-  ];
+  ], structureSkill || writingSkill);
 }
 
 function repairMessages(
@@ -923,6 +953,8 @@ function attemptRequest(opts: {
   messages: ChatMessage[];
   stage: DraftWriterStage;
   model: string;
+  cachePrompt?: boolean;
+  cacheSystemPrefixChars?: number;
 }): DraftWriterRequest {
   const task = opts.input.task ?? { kind: "original" as const };
   const variation =
@@ -948,7 +980,10 @@ function attemptRequest(opts: {
       : SINGLE_DRAFT_CALL_TIMEOUT_MS,
     signal: opts.signal,
     sessionId: opts.input.sessionId,
-    ...(variation ? { cachePrompt: false } : {}),
+    ...(variation || opts.cachePrompt === false ? { cachePrompt: false } : {}),
+    ...(!variation && opts.cachePrompt !== false && opts.cacheSystemPrefixChars
+      ? { cacheSystemPrefixChars: opts.cacheSystemPrefixChars }
+      : {}),
     reasoning: narrowRefine
       ? opts.input.lean
         ? "minimal"
@@ -1185,7 +1220,8 @@ export async function* runSingleDraftTurn(
     task.kind === "original" || task.kind === "source" || task.kind === "grounded"
       ? task.variation
       : undefined;
-  const baseMessages = compileMessages(input, task, variation);
+  const compiledPrompt = compileMessages(input, task, variation);
+  const baseMessages = compiledPrompt.messages;
   const policyInstruction =
     task.kind === "refine" ? task.instruction : input.userInstruction;
   const claimGroundingInstruction =
@@ -1396,7 +1432,15 @@ export async function* runSingleDraftTurn(
       signal: turnSignal,
       call: () =>
         deps.writer.write(
-          attemptRequest({ input, signal: turnSignal, messages, stage, model }),
+          attemptRequest({
+            input,
+            signal: turnSignal,
+            messages,
+            stage,
+            model,
+            cachePrompt: compiledPrompt.cachePrompt,
+            cacheSystemPrefixChars: compiledPrompt.cacheSystemPrefixChars,
+          }),
         ),
       validate: (response) => {
         if (!response.text.trim()) {

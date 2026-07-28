@@ -532,6 +532,50 @@ describe("completeChatAnthropic (mocked SDK)", () => {
     }
   });
 
+  test("the direct-writer adapter caches a stable prefix without changing one byte of system text", async () => {
+    const previousProvider = process.env.AI_PROVIDER;
+    process.env.AI_PROVIDER = "anthropic";
+    const stable = "stable writer policy\n\n";
+    const dynamic = "workspace-specific skills and preferences";
+    const originalSystem = `${stable}${dynamic}`;
+    lastBody.current = null;
+    finalMessage.mockResolvedValue({
+      content: [{ type: "text", text: "finished post" }],
+      stop_reason: "end_turn",
+      model: "claude-sonnet-5",
+      usage: { input_tokens: 10, output_tokens: 5 },
+    });
+    try {
+      const { openRouterDraftWriter } = await import("@/lib/agent/draft-writer");
+      await openRouterDraftWriter.write({
+        stage: "primary",
+        model: "claude-sonnet-5",
+        messages: [
+          { role: "system", content: originalSystem },
+          { role: "user", content: "write the post" },
+        ],
+        maxTokens: 3_000,
+        timeoutMs: 60_000,
+        reasoning: "none",
+        cacheSystemPrefixChars: stable.length,
+      });
+
+      const blocks = lastBody.current!["system"] as Array<{
+        text: string;
+        cache_control?: unknown;
+      }>;
+      expect(blocks.map((block) => block.text).join("")).toBe(originalSystem);
+      expect(blocks[0]).toMatchObject({
+        text: stable,
+        cache_control: { type: "ephemeral", ttl: "5m" },
+      });
+      expect(blocks[1]).toEqual({ type: "text", text: dynamic });
+    } finally {
+      if (previousProvider === undefined) delete process.env.AI_PROVIDER;
+      else process.env.AI_PROVIDER = previousProvider;
+    }
+  });
+
   test("caching stays ON by default (every existing caller is unchanged)", async () => {
     lastBody.current = null;
     finalMessage.mockResolvedValue({

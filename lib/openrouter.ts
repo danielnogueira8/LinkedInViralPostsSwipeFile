@@ -623,6 +623,9 @@ export async function completeChat(opts: {
   //
   // Defaults to caching ON, so every existing caller is unchanged.
   cachePrompt?: boolean;
+  // Direct-Anthropic only: cache exactly this many leading characters of the
+  // already-flattened system prompt. Omitted keeps whole-system caching.
+  cacheSystemPrefixChars?: number;
   signal?: AbortSignal;
   // One-shot completions must never inherit the route's full 300s ceiling.
   // Callers with tighter UX budgets (for example image preprocessing) can

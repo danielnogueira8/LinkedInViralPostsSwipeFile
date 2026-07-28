@@ -60,6 +60,7 @@ import {
   type DraftWriterResponse,
 } from "@/lib/agent/draft-writer";
 import type { NoModelFormat } from "@/lib/agent/no-model-formats";
+import { POST_STRUCTURE_SKILL } from "@/lib/agent/skills";
 import { POST_INTENTS } from "@/lib/post-intents";
 import { AdapterHealthRegistry } from "@/lib/agent/adapter-health";
 import { editDraftBodySync } from "@/lib/agent/specialists/editor";
@@ -400,6 +401,7 @@ describe("DraftEngine", () => {
       reasoning: "none",
     });
     expect(writer.requests[0].cachePrompt).toBeUndefined();
+    expect(writer.requests[0].cacheSystemPrefixChars).toBeGreaterThan(1_000);
     expect(Object.keys(writer.requests[0])).not.toContain("tools");
     const prompt = JSON.stringify(writer.requests[0].messages);
     expect(prompt).not.toContain("get_voice");
@@ -903,6 +905,12 @@ describe("DraftEngine", () => {
       "primary",
       "repair",
     ]);
+    expect(
+      writer.requests.map((request) => request.cachePrompt),
+    ).toEqual([false, false]);
+    expect(
+      writer.requests.map((request) => request.cacheSystemPrefixChars),
+    ).toEqual([undefined, undefined]);
     expect(artifacts(result.events)).toHaveLength(0);
     expect(
       result.events
@@ -1045,6 +1053,9 @@ describe("DraftEngine", () => {
     expect(
       writer.requests.map((request) => request.cachePrompt),
     ).toEqual([false, false, false]);
+    expect(
+      writer.requests.map((request) => request.cacheSystemPrefixChars),
+    ).toEqual([undefined, undefined, undefined]);
     expect(artifacts(result.events).map((artifact) => artifact.body)).toEqual([
       COMPLETE_POST,
       DISTINCT_COMPLETE_POST,
@@ -1812,7 +1823,9 @@ describe("DraftEngine — thin path (lean mode)", () => {
       reasoning: "minimal",
       maxTokens: 512,
       timeoutMs: 80_000,
+      cachePrompt: false,
     });
+    expect(writer.requests[0].cacheSystemPrefixChars).toBeUndefined();
     expect(JSON.stringify(writer.requests[0].messages)).toContain(
       "Return only the replacement hook",
     );
@@ -2304,6 +2317,104 @@ describe("DraftEngine — thin path (lean mode)", () => {
 
 
 describe("prompt-threading assertions ported from legacy runAgent evals (D6)", () => {
+  test("keeps preferences, feedback, and learning outside the stable prefix when no skill matches", async () => {
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(200, 120) },
+    ]);
+    await collect(writer, {
+      userInstruction: "Zebra.",
+      preferences: [{ rule: "PREFERENCE_SENTINEL" }],
+      feedbackMemory: [
+        {
+          rating: "down",
+          reasons: ["Too generic"],
+          note: "FEEDBACK_SENTINEL",
+          body_snapshot: "A previous post.",
+        },
+      ],
+      workspaceLearningBlock: "LEARNING_SENTINEL",
+    });
+
+    const request = writer.requests[0];
+    const system = request.messages.find(
+      (message) => message.role === "system",
+    )?.content;
+    expect(typeof system).toBe("string");
+    const prefixChars = request.cacheSystemPrefixChars ?? 0;
+    const prefix = (system as string).slice(0, prefixChars);
+    const suffix = (system as string).slice(prefixChars);
+
+    expect(prefixChars).toBeGreaterThan(1_000);
+    expect(prefix).not.toContain("PREFERENCE_SENTINEL");
+    expect(prefix).not.toContain("FEEDBACK_SENTINEL");
+    expect(prefix).not.toContain("LEARNING_SENTINEL");
+    expect(suffix).toContain("PREFERENCE_SENTINEL");
+    expect(suffix).toContain("FEEDBACK_SENTINEL");
+    expect(suffix).toContain("LEARNING_SENTINEL");
+  });
+
+  test("keeps workspace-specific skills outside a byte-identical stable system prefix", async () => {
+    const first = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(200, 120) },
+    ]);
+    const second = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(200, 120) },
+    ]);
+    await collect(first, {
+      customSkillBodies: ["CUSTOM_ALPHA: end with comment ALPHA."],
+      customSkillNames: ["alpha"],
+    });
+    await collect(second, {
+      customSkillBodies: ["CUSTOM_BETA: end with comment BETA."],
+      customSkillNames: ["beta"],
+    });
+
+    const systemAndPrefix = (request: DraftWriterRequest) => {
+      const system = request.messages.find(
+        (message) => message.role === "system",
+      )?.content;
+      expect(typeof system).toBe("string");
+      const prefixChars = request.cacheSystemPrefixChars ?? 0;
+      return {
+        system: system as string,
+        prefix: (system as string).slice(0, prefixChars),
+        suffix: (system as string).slice(prefixChars),
+      };
+    };
+    const firstPrompt = systemAndPrefix(first.requests[0]);
+    const secondPrompt = systemAndPrefix(second.requests[0]);
+
+    expect(firstPrompt.prefix).toBe(secondPrompt.prefix);
+    expect(firstPrompt.system).not.toBe(secondPrompt.system);
+    expect(firstPrompt.prefix).not.toContain("CUSTOM_ALPHA");
+    expect(firstPrompt.prefix).not.toContain("CUSTOM_BETA");
+    expect(firstPrompt.suffix).toContain("CUSTOM_ALPHA");
+    expect(secondPrompt.suffix).toContain("CUSTOM_BETA");
+  });
+
+  test("does not move the cache boundary when a custom skill copies the stable policy", async () => {
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(200, 120) },
+    ]);
+    await collect(writer, {
+      customSkillBodies: [
+        `CUSTOM_POLICY_COPY_SENTINEL\n\n${POST_STRUCTURE_SKILL}`,
+      ],
+      customSkillNames: ["policy-copy"],
+    });
+
+    const request = writer.requests[0];
+    const system = request.messages.find(
+      (message) => message.role === "system",
+    )?.content as string;
+    const prefixChars = request.cacheSystemPrefixChars ?? 0;
+
+    expect(system.slice(0, prefixChars)).not.toContain(
+      "CUSTOM_POLICY_COPY_SENTINEL",
+    );
+    expect(system.slice(prefixChars)).toContain("CUSTOM_POLICY_COPY_SENTINEL");
+  });
+
   test("custom skill bodies reach the writer prompt", async () => {
     const writer = new ScriptedWriter([
       { text: COMPLETE_POST, finishReason: "stop", usage: usage(200, 120) },

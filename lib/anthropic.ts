@@ -338,27 +338,36 @@ export function extractCitations(
   return [...byUrl.values()];
 }
 
-// Wrap the hoisted system string as a single cached text block. The app's system
-// prompt is large and stable per workspace + skill set (writer ~13k tokens: the
-// skill/policy/voice stack), and it was NEVER cached — the adapter hoisted it to
-// a plain string, which cannot carry cache_control. Emitting the array form with
-// one ephemeral breakpoint caches the ENTIRE system prefix for every Anthropic
-// call (writer, planner, specialists) in one place. On repeat turns the prefix
-// bills at ~0.1x instead of full price.
-//
-// Per-variation lines (v1/v2/v3) that some writer branches interpolate into the
-// system string just make each variation its own cache entry — no partial-prefix
-// breakage, since the whole system is one block. Non-variation turns still hit.
-function cachedSystem(system: string): Anthropic.TextBlockParam[] {
+// Wrap the hoisted system string in cacheable Anthropic text blocks. Ordinary
+// callers keep the one-block whole-system behavior. The direct writer can also
+// provide a proven invariant boundary: only that leading prefix is cached and
+// request/workspace-specific suffix text stays uncached. Concatenating the block
+// text always reproduces the original flattened system string exactly.
+function cachedSystem(
+  system: string,
+  prefixChars?: number,
+): Anthropic.TextBlockParam[] {
   // System prompts include request-selected skills and workspace context.
   // Production showed most whole-system entries receiving at most one quick
   // read, where the 5m write breaks even but the 1h write does not. Stable tool
   // definitions keep their separate 1h breakpoint in markLastToolCached().
+  const splitAt =
+    Number.isInteger(prefixChars) &&
+    (prefixChars ?? 0) > 0 &&
+    (prefixChars ?? 0) < system.length
+      ? prefixChars!
+      : system.length;
+  const cachedPrefix: Anthropic.TextBlockParam = {
+    type: "text",
+    text: system.slice(0, splitAt),
+    cache_control: { type: "ephemeral", ttl: "5m" },
+  };
+  if (splitAt === system.length) return [cachedPrefix];
   return [
+    cachedPrefix,
     {
       type: "text",
-      text: system,
-      cache_control: { type: "ephemeral", ttl: "5m" },
+      text: system.slice(splitAt),
     },
   ];
 }
@@ -476,6 +485,7 @@ export async function completeChatAnthropic(opts: {
   sessionId?: string;
   // See the option doc in openrouter.ts. Defaults to caching ON.
   cachePrompt?: boolean;
+  cacheSystemPrefixChars?: number;
 }): Promise<CompleteResult> {
   const requested = opts.model || anthropicChatModel();
   const model = toAnthropicModelId(requested);
@@ -502,7 +512,11 @@ export async function completeChatAnthropic(opts: {
   // cannot carry cache_control) and skips the tool breakpoint, so the call
   // pays no cache-write premium. See the option's doc in openrouter.ts.
   const cache = opts.cachePrompt !== false;
-  if (system) body.system = cache ? cachedSystem(system) : system;
+  if (system) {
+    body.system = cache
+      ? cachedSystem(system, opts.cacheSystemPrefixChars)
+      : system;
+  }
   if (opts.tools?.length) {
     body.tools = toAnthropicTools(opts.tools);
     body.tool_choice = opts.forceTool
