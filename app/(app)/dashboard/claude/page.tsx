@@ -189,7 +189,7 @@ export default async function ClaudePage() {
                   {agent.skills.length > 0 ? (
                     <div className="mt-2 flex flex-wrap items-center gap-1 border-t border-border/60 pt-2">
                       <span className="text-[9px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
-                        Carries
+                        Skills
                       </span>
                       {agent.skills.map((skillId) => (
                         <span
