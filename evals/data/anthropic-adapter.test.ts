@@ -172,11 +172,20 @@ describe("mapUsage", () => {
         output_tokens: 40,
         cache_read_input_tokens: 60,
         cache_creation_input_tokens: 20,
+        cache_creation: {
+          ephemeral_5m_input_tokens: 12,
+          ephemeral_1h_input_tokens: 8,
+        },
       } as never),
     ).toEqual({
       prompt_tokens: 180,
       completion_tokens: 40,
-      prompt_tokens_details: { cached_tokens: 60, cache_write_tokens: 20 },
+      prompt_tokens_details: {
+        cached_tokens: 60,
+        cache_write_tokens: 20,
+        cache_write_5m_tokens: 12,
+        cache_write_1h_tokens: 8,
+      },
     });
   });
   test("carries web_search_requests for the search fee", () => {
@@ -448,7 +457,7 @@ describe("completeChatAnthropic (mocked SDK)", () => {
       {
         type: "text",
         text: "big stable system prompt",
-        cache_control: { type: "ephemeral", ttl: "1h" },
+        cache_control: { type: "ephemeral", ttl: "5m" },
       },
     ]);
     // the LAST tool carries the cache breakpoint (caches the full tool block);

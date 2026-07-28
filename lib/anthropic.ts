@@ -350,14 +350,15 @@ export function extractCitations(
 // system string just make each variation its own cache entry — no partial-prefix
 // breakage, since the whole system is one block. Non-variation turns still hit.
 function cachedSystem(system: string): Anthropic.TextBlockParam[] {
-  // Same 1h TTL rationale as markLastToolCached: a 5-minute cache dies between
-  // turns and every turn rewrites ~9-13k tokens at 1.25x; the 1h window turns
-  // those into 0.1x reads across a normal writing session.
+  // System prompts include request-selected skills and workspace context.
+  // Production showed most whole-system entries receiving at most one quick
+  // read, where the 5m write breaks even but the 1h write does not. Stable tool
+  // definitions keep their separate 1h breakpoint in markLastToolCached().
   return [
     {
       type: "text",
       text: system,
-      cache_control: { type: "ephemeral", ttl: "1h" },
+      cache_control: { type: "ephemeral", ttl: "5m" },
     },
   ];
 }
@@ -398,6 +399,14 @@ export function mapUsage(u: Anthropic.Usage | undefined): Usage | undefined {
     prompt_tokens_details: {
       cached_tokens: cached,
       cache_write_tokens: cacheWrite,
+      ...(u.cache_creation
+        ? {
+            cache_write_5m_tokens:
+              u.cache_creation.ephemeral_5m_input_tokens ?? 0,
+            cache_write_1h_tokens:
+              u.cache_creation.ephemeral_1h_input_tokens ?? 0,
+          }
+        : {}),
       ...(u.server_tool_use?.web_search_requests
         ? { web_search_requests: u.server_tool_use.web_search_requests }
         : {}),

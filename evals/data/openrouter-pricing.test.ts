@@ -95,8 +95,8 @@ describe("openRouterCost — Anthropic (bare) slug pricing", () => {
   test("cache-read tokens bill at $0.20/M, cache-write at $4.00/M (1h TTL)", () => {
     // 1M input all cache reads → $0.20 (not $2).
     expect(openRouterCost("claude-sonnet-5", M, 0, M)).toBeCloseTo(0.2, 6);
-    // 1M input all cache writes (0 reads) → $4.00 (2x input — the adapter
-    // marks every breakpoint ttl:"1h"; 5m would be $2.50).
+    // The aggregate-only compatibility shape defaults to a 1h write. Mixed
+    // Anthropic usage supplies the explicit 5m/1h fields tested below.
     expect(openRouterCost("claude-sonnet-5", M, 0, 0, M)).toBeCloseTo(4.0, 6);
   });
 
@@ -161,6 +161,40 @@ describe("openRouterCost — Anthropic (bare) slug pricing", () => {
       6,
     );
     expect(costUsd).toBeCloseTo(0.055398, 6);
+  });
+
+  test("prices the captured original-post trace at the 5-minute system-cache rate", () => {
+    const { costUsd } = openRouterUsageCost("claude-sonnet-5", {
+      prompt_tokens: 17_948,
+      completion_tokens: 1_755,
+      prompt_tokens_details: {
+        cached_tokens: 0,
+        cache_write_tokens: 13_457,
+        cache_write_5m_tokens: 13_457,
+        cache_write_1h_tokens: 0,
+      },
+    });
+
+    // 4,491 fresh × $2/M + 13,457 5m write × $2.50/M + 1,755 out × $10/M.
+    expect(costUsd).toBeCloseTo(0.0601745, 7);
+  });
+
+  test("prices mixed 5-minute system and 1-hour tool cache writes independently", () => {
+    const { costUsd } = openRouterUsageCost("claude-sonnet-5", {
+      prompt_tokens: 12_000,
+      completion_tokens: 0,
+      prompt_tokens_details: {
+        cached_tokens: 0,
+        cache_write_tokens: 10_000,
+        cache_write_5m_tokens: 4_000,
+        cache_write_1h_tokens: 6_000,
+      },
+    });
+
+    expect(costUsd).toBeCloseTo(
+      (2_000 * 2 + 4_000 * 2.5 + 6_000 * 4) / 1_000_000,
+      7,
+    );
   });
 
   test("cache reads bill at the cache rate instead of clamping fresh input to zero", () => {

@@ -460,6 +460,8 @@ export type Usage = {
   prompt_tokens_details?: {
     cached_tokens?: number;
     cache_write_tokens?: number;
+    cache_write_5m_tokens?: number;
+    cache_write_1h_tokens?: number;
     // Anthropic web_search server-tool requests (billed per request, on top of
     // token pricing — see ANTHROPIC_WEB_SEARCH_FEE_USD).
     web_search_requests?: number;
@@ -1102,10 +1104,9 @@ export async function* streamChat(opts: {
 // ---------------------------------------------------------------------------
 
 // USD per million tokens. Update if OpenRouter/Z.ai changes rates.
-// cacheWrite is the 1-hour-TTL prompt-cache write rate (2x input) — every
-// cache_control breakpoint the Anthropic adapter emits is ttl:"1h". Anthropic
-// usage doesn't split 5m vs 1h write tokens, so the single rate must match the
-// TTL we actually send.
+// cacheWrite is the 1-hour-TTL rate; cacheWrite5m is the 5-minute rate.
+// Anthropic reports the two TTL buckets separately and openRouterUsageCost
+// preserves that split so mixed system/tool breakpoints bill exactly.
 export const NEWS_SEARCH_MODEL_PRICING = {
   "google/gemini-3.1-flash-lite": { input: 0.25, output: 1.5, cachedInput: 0.025 },
   "anthropic/claude-haiku-4.5": {
@@ -1113,6 +1114,7 @@ export const NEWS_SEARCH_MODEL_PRICING = {
     output: 5.0,
     cachedInput: 0.1,
     cacheWrite: 2.0,
+    cacheWrite5m: 1.25,
   },
   // Supported for news under AI_PROVIDER=anthropic: the Anthropic web_search
   // server tool runs on Sonnet 5 (verified — Haiku 4.5 rejects it), so the
@@ -1123,6 +1125,7 @@ export const NEWS_SEARCH_MODEL_PRICING = {
     output: 10.0,
     cachedInput: 0.2,
     cacheWrite: 4.0,
+    cacheWrite5m: 2.5,
   },
   "openai/gpt-5.6-luna": {
     input: 1.0,
@@ -1137,7 +1140,13 @@ export const SUPPORTED_NEWS_MODELS = Object.keys(NEWS_SEARCH_MODEL_PRICING);
 
 const OPENROUTER_PRICING: Record<
   string,
-  { input: number; output: number; cachedInput: number; cacheWrite?: number }
+  {
+    input: number;
+    output: number;
+    cachedInput: number;
+    cacheWrite?: number;
+    cacheWrite5m?: number;
+  }
 > = {
   ...NEWS_SEARCH_MODEL_PRICING,
   "qwen/qwen3.7-plus": { input: 0.32, output: 1.28, cachedInput: 0.064 },
@@ -1149,6 +1158,7 @@ const OPENROUTER_PRICING: Record<
     output: 15.0,
     cachedInput: 0.3,
     cacheWrite: 6.0,
+    cacheWrite5m: 3.75,
   },
   // Sonnet 5 is used as a fallback by the thin writer and orchestrators.
   // Without this entry openRouterCost would fall back to the GLM-5.1 rate and
@@ -1161,18 +1171,19 @@ const OPENROUTER_PRICING: Record<
     output: 10.0,
     cachedInput: 0.2,
     cacheWrite: 4.0,
+    cacheWrite5m: 2.5,
   },
   // Bare slug is what the Anthropic adapter sends (AI_PROVIDER=anthropic). The
   // adapter leaves usage.cost unset, so this table computes cost from tokens.
   // Sonnet 5 intro pricing: $2/M in, $10/M out; cache-read 0.1x input = $0.20,
-  // cache-write 1h TTL 2x input = $4.00 (the adapter marks every breakpoint
-  // ttl:"1h"; 5m would be 1.25x = $2.50). (Standard rates after the intro
+  // cache-write 1h TTL 2x input = $4.00; 5m is 1.25x = $2.50. (Standard rates after the intro
   // window are $3/$15 — bump these lines when the intro ends 2026-08-31.)
   "claude-sonnet-5": {
     input: 2.0,
     output: 10.0,
     cachedInput: 0.2,
     cacheWrite: 4.0,
+    cacheWrite5m: 2.5,
   },
   // Cross-provider fallback for the read-only Cowork orchestrator. OpenRouter's
   // model catalog lists $1.50/M input, $9/M output, and $0.15/M cache reads.
@@ -1228,6 +1239,7 @@ export function openRouterCost(
   outputTokens: number,
   cachedInputTokens = 0,
   cacheWriteTokens = 0,
+  cacheWrite5mTokens = 0,
 ): number {
   const p =
     OPENROUTER_PRICING[pricingKey(model)] ?? OPENROUTER_PRICING["z-ai/glm-5.1"];
@@ -1236,6 +1248,11 @@ export function openRouterCost(
     Math.max(0, cacheWriteTokens),
     Math.max(0, inputTokens - boundedCached),
   );
+  const boundedCacheWrite5m = Math.min(
+    Math.max(0, cacheWrite5mTokens),
+    boundedCacheWrite,
+  );
+  const boundedCacheWrite1h = boundedCacheWrite - boundedCacheWrite5m;
   const freshInput = Math.max(
     0,
     inputTokens - boundedCached - boundedCacheWrite,
@@ -1243,7 +1260,8 @@ export function openRouterCost(
   return (
     (freshInput * p.input +
       boundedCached * p.cachedInput +
-      boundedCacheWrite * (p.cacheWrite ?? p.input) +
+      boundedCacheWrite5m * (p.cacheWrite5m ?? p.cacheWrite ?? p.input) +
+      boundedCacheWrite1h * (p.cacheWrite ?? p.input) +
       outputTokens * p.output) /
     1_000_000
   );
@@ -1271,6 +1289,8 @@ export function openRouterUsageCost(
   const cachedInputTokens = usage?.prompt_tokens_details?.cached_tokens ?? 0;
   const cacheWriteTokens =
     usage?.prompt_tokens_details?.cache_write_tokens ?? 0;
+  const cacheWrite5mTokens =
+    usage?.prompt_tokens_details?.cache_write_5m_tokens ?? 0;
   const reasoningTokens =
     usage?.completion_tokens_details?.reasoning_tokens ?? 0;
   const webSearchRequests =
@@ -1292,6 +1312,7 @@ export function openRouterUsageCost(
           outputTokens,
           cachedInputTokens,
           cacheWriteTokens,
+          cacheWrite5mTokens,
         )) +
       // Anthropic's web_search server tool bills per REQUEST on top of token
       // pricing; the OpenRouter web plugin bundled its fee into usage.cost, so
@@ -1334,6 +1355,15 @@ export async function logOpenRouterUsage(
         ...(meta ?? {}),
         cached_input_tokens: cached,
         cache_write_tokens: cacheWrite,
+        cache_write_5m_tokens:
+          usage?.prompt_tokens_details?.cache_write_5m_tokens ?? 0,
+        cache_write_1h_tokens:
+          usage?.prompt_tokens_details?.cache_write_1h_tokens ??
+          Math.max(
+            0,
+            cacheWrite -
+              (usage?.prompt_tokens_details?.cache_write_5m_tokens ?? 0),
+          ),
         reasoning_tokens: reasoningTokens,
       },
     });
