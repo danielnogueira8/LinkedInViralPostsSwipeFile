@@ -1156,6 +1156,7 @@ describe("list_drafts — read the board, workspace-scoped", () => {
     const res = (await runTool("list_drafts", {}, "ws-1")) as { ok: boolean; count: number; drafts: unknown[] };
     expect(res.ok).toBe(true);
     expect(res.count).toBe(1);
+    expect(res.drafts[0]).not.toHaveProperty("plan_to_post_on");
     const q = queryFor(dbRef.current, "chat_artifacts")!;
     const wsFilter = q.filters.find((f) => f.method === "eq" && f.args[0] === "workspace_id");
     expect(wsFilter?.args[1]).toBe("ws-1"); // SECURITY: scoped
@@ -1223,10 +1224,11 @@ describe("move_on_board — set pipeline stage, workspace-scoped", () => {
     dbRef.current = makeFakeSupabase({ chat_artifacts: { single: { ...DRAFT, status: "ready" } } });
     const res = (await runTool("move_on_board", { id: "d1", status: "ready" }, "ws-1")) as {
       ok: boolean;
-      draft?: { status: string };
+      draft?: { status: string; plan_to_post_on?: string | null };
     };
     expect(res.ok).toBe(true);
     expect(res.draft?.status).toBe("ready");
+    expect(res.draft).not.toHaveProperty("plan_to_post_on");
     // SECURITY: the UPDATE is filtered by BOTH id AND workspace_id.
     const q = queryFor(dbRef.current, "chat_artifacts")!;
     expect(q.filters.find((f) => f.method === "eq" && f.args[0] === "id")?.args[1]).toBe("d1");

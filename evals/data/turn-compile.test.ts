@@ -358,137 +358,17 @@ describe("compileActionOrchestratorRoute", () => {
     });
   });
 
-  test("compiles a relative planned date deterministically", () => {
-    expect(actionRoute("Schedule the hiring draft for Friday.")).toEqual({
-      kind: "action_management",
-      targetCount: 1,
-      requirements: [{ type: "schedule_post", date: "2026-07-17" }],
-    });
-  });
-
   test.each([
+    "Schedule the hiring draft for Friday.",
     "Set my pricing draft for Friday.",
     "Put my pricing draft on Friday.",
-  ])("treats date-bearing set/put wording as scheduling: %s", (instruction) => {
-    expect(actionRoute(instruction)).toEqual({
-      kind: "action_management",
-      targetCount: 1,
-      requirements: [{ type: "schedule_post", date: "2026-07-17" }],
-    });
-  });
-
-  test("does not read a board status out of a title during set/put scheduling", () => {
-    expect(actionRoute("Set my From Draft to Ready post for Friday.")).toEqual({
-      kind: "action_management",
-      targetCount: 1,
-      requirements: [{ type: "schedule_post", date: "2026-07-17" }],
-    });
-    expect(actionRoute("Set my post From Draft to Ready for Friday.")).toEqual({
-      kind: "action_management",
-      targetCount: 1,
-      requirements: [{ type: "schedule_post", date: "2026-07-17" }],
-    });
-    for (const title of [
-      "From Idea to Ready",
-      "From Drafting to Ready",
-      "How to Move to Ready",
-    ]) {
-      expect(actionRoute(`Set my post “${title}” for Friday.`)).toEqual({
-        kind: "action_management",
-        targetCount: 1,
-        requirements: [{ type: "schedule_post", date: "2026-07-17" }],
-      });
-    }
-    expect(actionRoute("Set my post How to Move to Ready for Friday.")).toEqual({
-      kind: "action_management",
-      targetCount: 1,
-      requirements: [{ type: "schedule_post", date: "2026-07-17" }],
-    });
-  });
-
-  test.each([
-    "Set my pricing draft to ready for Friday.",
     "Set my pricing draft to ready and schedule it for Friday.",
-  ])("preserves an explicit board destination while scheduling: %s", (instruction) => {
+    "Remove the planned date from the hiring post.",
+    "Move the hiring draft to ready and schedule it for tomorrow.",
+  ])("routes retired planning-date commands to the real publishing boundary: %s", (instruction) => {
     expect(actionRoute(instruction)).toEqual({
-      kind: "action_management",
-      targetCount: 1,
-      requirements: [
-        { type: "move_on_board", status: "ready" },
-        { type: "schedule_post", date: "2026-07-17" },
-      ],
-    });
-  });
-
-  test("uses the explicit destination after a status-bearing title", () => {
-    expect(
-      actionRoute("Set my From Draft to Ready post to idea for Friday."),
-    ).toEqual({
-      kind: "action_management",
-      targetCount: 1,
-      requirements: [
-        { type: "move_on_board", status: "idea" },
-        { type: "schedule_post", date: "2026-07-17" },
-      ],
-    });
-    expect(
-      actionRoute("Set my post “From Idea to Ready” to drafting for Friday."),
-    ).toEqual({
-      kind: "action_management",
-      targetCount: 1,
-      requirements: [
-        { type: "move_on_board", status: "drafting" },
-        { type: "schedule_post", date: "2026-07-17" },
-      ],
-    });
-  });
-
-  test.each([
-    ["Schedule the Friday lessons draft for Monday.", "2026-07-20"],
-    ["Schedule the Today I Learned draft for Friday.", "2026-07-17"],
-  ] as const)("uses the requested destination date in %s", (instruction, date) => {
-    expect(actionRoute(instruction)).toMatchObject({
-      kind: "action_management",
-      targetCount: 1,
-      requirements: [{ type: "schedule_post", date }],
-    });
-  });
-
-  test("clears a planned date without misclassifying it as draft deletion", () => {
-    expect(actionRoute("Remove the planned date from the hiring post.")).toEqual({
-      kind: "action_management",
-      targetCount: 1,
-      requirements: [{ type: "schedule_post", date: null }],
-    });
-  });
-
-  test("clears planned dates for a bounded named target list", () => {
-    expect(
-      actionRoute("Remove the planned dates from the hiring and pricing posts."),
-    ).toEqual({
-      kind: "action_management",
-      targetCount: 2,
-      requirements: [{ type: "schedule_post", date: null }],
-    });
-    expect(
-      actionRoute("Remove the planned dates from the hiring draft and pricing post."),
-    ).toEqual({
-      kind: "action_management",
-      targetCount: 2,
-      requirements: [{ type: "schedule_post", date: null }],
-    });
-  });
-
-  test("compiles a combined move and schedule for the same target", () => {
-    expect(
-      actionRoute("Move the hiring draft to ready and schedule it for tomorrow."),
-    ).toEqual({
-      kind: "action_management",
-      targetCount: 1,
-      requirements: [
-        { type: "move_on_board", status: "ready" },
-        { type: "schedule_post", date: "2026-07-15" },
-      ],
+      kind: "disallowed_action",
+      disallowedReason: "publish",
     });
   });
 
@@ -521,7 +401,6 @@ describe("compileActionOrchestratorRoute", () => {
   test.each([
     ["Move the hiring and pricing drafts to ready.", 2],
     ["Move the hiring draft and pricing post to ready.", 2],
-    ["Schedule the hiring, pricing, and launch drafts for Friday.", 3],
   ] as const)("counts a grammatical named target list in %s", (instruction, count) => {
     expect(actionRoute(instruction)).toMatchObject({
       kind: "action_management",
@@ -686,37 +565,18 @@ describe("compileActionOrchestratorRoute", () => {
     });
   });
 
-  test("refuses mixed per-requirement target counts", () => {
-    expect(
-      actionRoute("Move two drafts to ready and schedule one post for Friday."),
-    ).toEqual({ kind: "no_action", noActionReason: "mixed_count" });
-  });
-
   test.each([
+    "Move two drafts to ready and schedule one post for Friday.",
     "Move the hiring draft to ready and schedule two posts for Friday.",
-    "Move two drafts to ready and schedule the hiring post for Friday.",
-    "Move two drafts to ready and schedule one of them for Friday.",
-    "Move this to ready and schedule two posts for Friday.",
-  ])("refuses implicit or pronominal count conflicts: %s", (instruction) => {
+    "Schedule the hiring draft.",
+    "Schedule the hiring draft for Friday and on Monday.",
+  ])("does not create hidden planning dates from compound or incomplete requests: %s", (instruction) => {
     expect(actionRoute(instruction)).toEqual({
-      kind: "no_action",
-      noActionReason: "mixed_count",
+      kind: "disallowed_action",
+      disallowedReason: "publish",
     });
   });
 
-  test("asks a server-owned clarification when a schedule has no date", () => {
-    expect(actionRoute("Schedule the hiring draft.")).toMatchObject({
-      kind: "clarify_action",
-      clarificationReason: "date",
-    });
-  });
-
-  test("asks when multiple destination dates are present", () => {
-    expect(actionRoute("Schedule the hiring draft for Friday and on Monday.")).toMatchObject({
-      kind: "clarify_action",
-      clarificationReason: "date",
-    });
-  });
 
   test.each([
     "Move the draft from ready.",
@@ -799,107 +659,12 @@ describe("compileActionOrchestratorRoute", () => {
     });
   });
 
-  test("uses a date clarification answer as the authorized destination date", () => {
+  test("keeps clarified scheduling on the real publishing boundary", () => {
     expect(
       actionRoute("Schedule the hiring draft.\n\nClarification answer: Tomorrow"),
     ).toEqual({
-      kind: "action_management",
-      targetCount: 1,
-      requirements: [{ type: "schedule_post", date: "2026-07-15" }],
-    });
-  });
-
-  test.each([
-    ["Europe/Lisbon", "today", "2026-07-15"],
-    ["America/Los_Angeles", "today", "2026-07-14"],
-    ["Pacific/Kiritimati", "tomorrow", "2026-07-16"],
-    ["Pacific/Honolulu", "tomorrow", "2026-07-15"],
-  ] as const)(
-    "resolves %s calendar language in the user's IANA timezone",
-    (clientTimezone, word, expectedDate) => {
-      expect(
-        compileActionOrchestratorRoute(
-          {
-            userInstruction: `Schedule this draft for ${word}.`,
-            isRefine: false,
-            hasModelSource: false,
-            hasAttachments: false,
-            hasLeadMagnet: false,
-            hasCreatorStyle: false,
-            clientTimezone,
-          },
-          new Date("2026-07-14T23:30:00.000Z"),
-        ),
-      ).toEqual({
-        kind: "action_management",
-        targetCount: 1,
-        requirements: [
-          { type: "schedule_post", date: expectedDate, timeZone: clientTimezone },
-        ],
-      });
-    },
-  );
-
-  test("preserves the absolute local date across a later count clarification", () => {
-    const initial = compileActionOrchestratorRoute(
-      {
-        userInstruction: "Schedule all drafts.",
-        isRefine: false,
-        hasModelSource: false,
-        hasAttachments: false,
-        hasLeadMagnet: false,
-        hasCreatorStyle: false,
-        clientTimezone: "Europe/Lisbon",
-      },
-      new Date("2026-07-14T23:30:00.000Z"),
-    );
-    expect(initial).toMatchObject({
-      kind: "clarify_action",
-      clarificationReason: "date",
-      remainingClarifications: ["date", "target_count"],
-    });
-    if (!initial || initial.kind !== "clarify_action") {
-      throw new Error("Expected a date clarification.");
-    }
-
-    const dated = advanceActionOrchestratorClarification(
-      initial,
-      "Tomorrow",
-      new Date("2026-07-14T23:30:00.000Z"),
-      "Europe/Lisbon",
-    );
-    expect(dated).toMatchObject({
-      kind: "clarify_action",
-      clarificationReason: "target_count",
-      partialRequirements: [
-        {
-          type: "schedule_post",
-          date: "2026-07-16",
-          timeZone: "Europe/Lisbon",
-        },
-      ],
-    });
-    if (dated.kind !== "clarify_action") {
-      throw new Error("Expected a count clarification.");
-    }
-
-    expect(
-      advanceActionOrchestratorClarification(
-        dated,
-        "Two",
-        new Date("2026-07-15T23:30:00.000Z"),
-        "Europe/Lisbon",
-      ),
-    ).toEqual({
-      kind: "action_management",
-      targetCount: 2,
-      requirements: [
-        {
-          type: "schedule_post",
-          date: "2026-07-16",
-          timeZone: "Europe/Lisbon",
-        },
-      ],
+      kind: "disallowed_action",
+      disallowedReason: "publish",
     });
   });
 
@@ -913,7 +678,7 @@ describe("compileActionOrchestratorRoute", () => {
     });
   });
 
-  test("lets a schedule answer escape an action clarification without looping", () => {
+  test("does not let a schedule answer create a hidden date from an action clarification", () => {
     const initial = actionRoute("Move my pricing draft.");
     expect(initial).toMatchObject({
       kind: "clarify_action",
@@ -928,11 +693,23 @@ describe("compileActionOrchestratorRoute", () => {
         "Schedule it for Friday",
         ACTION_ROUTE_NOW,
       ),
-    ).toEqual({
-      kind: "action_management",
-      targetCount: 1,
-      requirements: [{ type: "schedule_post", date: "2026-07-17" }],
-    });
+    ).toEqual({ kind: "disallowed_action", disallowedReason: "publish" });
+  });
+
+  test("closes a persisted legacy date clarification at the publishing boundary", () => {
+    expect(
+      advanceActionOrchestratorClarification(
+        {
+          kind: "clarify_action",
+          clarificationReason: "date",
+          remainingClarifications: ["date"],
+          partialRequirements: [],
+          partialTargetCount: 1,
+        },
+        "Tomorrow",
+        ACTION_ROUTE_NOW,
+      ),
+    ).toEqual({ kind: "disallowed_action", disallowedReason: "publish" });
   });
 
   test.each([

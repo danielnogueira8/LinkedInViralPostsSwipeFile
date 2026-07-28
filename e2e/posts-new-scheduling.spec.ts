@@ -202,6 +202,7 @@ test.describe("new board posts and LinkedIn scheduling", () => {
 
 async function createPost(page: Page, buttonName: string) {
   await page.getByRole("button", { name: "New post" }).click();
+  await expect(page.getByLabel("Planning date")).toHaveCount(0);
   await page.getByLabel("Preview name").fill(`Unscheduled board post ${Date.now()}`);
   await page.locator("textarea").first().fill("An unscheduled post created directly from the board.");
   const responsePromise = page.waitForResponse((response) =>

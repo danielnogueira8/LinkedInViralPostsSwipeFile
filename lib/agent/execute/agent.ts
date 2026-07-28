@@ -762,17 +762,6 @@ const ACTION_PLAN_TOOL: ToolDef = {
                 additionalProperties: false,
                 properties: {
                   id: { type: "string" },
-                  type: { const: "schedule_post" },
-                  draftId: { type: "string" },
-                  date: { type: ["string", "null"] },
-                },
-                required: ["id", "type", "draftId", "date"],
-              },
-              {
-                type: "object",
-                additionalProperties: false,
-                properties: {
-                  id: { type: "string" },
                   type: { const: "clarify_target" },
                   candidateDraftIds: {
                     type: "array",

@@ -28,7 +28,6 @@ import {
   Trash2,
   X,
   ListChecks,
-  Calendar,
   CalendarClock,
   Send,
   Type,
@@ -216,11 +215,10 @@ export function DraftEditorModal({
     liveDraftRef.current = draft;
   }, [draft]);
 
-  // NEW-POST form state — a new post can now set status + planned date up front
-  // (previously disabled until after create). Title uses titleDraft below. These
+  // NEW-POST form state — a new post can set its status up front. Title uses
+  // titleDraft below. These
   // seed to sensible defaults each time the "New post" panel opens.
   const [newStatus, setNewStatus] = useState<DraftStatus>("drafting");
-  const [newDate, setNewDate] = useState<string>("");
   // A new post's Kind. Empty (undefined) → the server auto-classifies from the
   // body; picking one makes it explicit (auto-classify then respects it).
   const [newKind, setNewKind] = useState<DraftKind | "">("");
@@ -298,7 +296,6 @@ export function DraftEditorModal({
       // Reset the new-post fields when the panel (re)opens onto a new post.
       if (!draft) {
         setNewStatus("drafting");
-        setNewDate("");
         setNewKind("");
         setNewLeadMagnetId("");
         setNewMedia([]);
@@ -345,7 +342,7 @@ export function DraftEditorModal({
   // null. Shared by Save and the Model-in-Chat handoff (which needs an id).
   const persistBody = async (): Promise<string | null> => {
     // A NEW post can be saved with an empty body as long as it has a name — you
-    // set the card up now (name/status/date) and write the body later. An
+    // set the card up now (name/status) and write the body later. An
     // existing post still needs content to save meaningfully.
     const newName = titleDraft.trim();
     if (isNew ? !trimmed && !newName : !trimmed) {
@@ -361,7 +358,6 @@ export function DraftEditorModal({
             body: trimmed,
             title: newName || null,
             status: draft?.status ?? newStatus,
-            plan_to_post_on: draft?.planToPostOn ?? (newDate || null),
             ...(retryKind ? { kind: retryKind } : {}),
             lead_magnet_id:
               retryKind === "lead_magnet"
@@ -381,7 +377,6 @@ export function DraftEditorModal({
           body: trimmed,
           ...(newName ? { title: newName } : {}),
           status: newStatus,
-          plan_to_post_on: newDate || null,
           // Only send an explicit kind when the user picked one; otherwise the
           // server auto-classifies (regular vs lead-magnet) from the body.
           ...(newKind ? { kind: newKind } : {}),
@@ -1056,7 +1051,7 @@ export function DraftEditorModal({
           {isNew ? "New post" : "Edit post"}
         </DialogTitle>
         <DialogDescription className="sr-only">
-          Edit the post body, preview name, status, and planning date.
+          Edit the post body, preview name, status, kind, and publishing schedule.
         </DialogDescription>
 
         <div className="min-h-0 flex-1 overflow-y-auto lg:overflow-hidden">
@@ -1153,7 +1148,7 @@ export function DraftEditorModal({
                     <div>
                       <h3 className="text-sm font-semibold tracking-tight">Post settings</h3>
                       <p className="text-xs text-muted-foreground">
-                        Board stage, calendar plan, and format.
+                        Board stage and format.
                       </p>
                     </div>
                   </div>
@@ -1184,21 +1179,6 @@ export function DraftEditorModal({
                           ))}
                         </SelectContent>
                       </Select>
-                    </PropRow>
-
-                    <PropRow icon={<Calendar className="h-4 w-4" />} label="Planning date">
-                      <input
-                        type="date"
-                        value={isNew ? newDate : (draft?.planToPostOn ?? "")}
-                        onChange={(e) => {
-                          const v = e.target.value || null;
-                          if (isNew) setNewDate(e.target.value);
-                          else patchMeta({ planToPostOn: v }, { plan_to_post_on: v });
-                        }}
-                        className="-ml-1 h-8 rounded-md bg-transparent px-1 text-sm text-muted-foreground outline-none hover:bg-accent focus:bg-accent disabled:opacity-60"
-                        aria-label="Planning date"
-                        title="A planning date for your content calendar. This does not publish to LinkedIn."
-                      />
                     </PropRow>
 
                     <PropRow icon={<Type className="h-4 w-4" />} label="Kind">
@@ -2741,8 +2721,7 @@ function ScheduleRow({
         Schedule on LinkedIn
       </div>
       <p className="mb-2 text-xs leading-snug text-muted-foreground">
-        This creates the real LinkedIn publishing schedule. The planning date above
-        is only for organizing your calendar.
+        This creates the real LinkedIn publishing schedule.
         {hasMedia ? " Media posts must publish within 7 days of upload." : ""}
       </p>
       {failed && draft.publishError && (
