@@ -7198,7 +7198,7 @@ function ArtifactCard({
           <span className="text-muted-foreground">
             {body.length <= LINKEDIN_SEE_MORE_CHARS
               ? `${LINKEDIN_SEE_MORE_CHARS - body.length} chars before “…see more”`
-              : `hook cut at ${LINKEDIN_SEE_MORE_CHARS} chars`}
+              : ""}
           </span>
           <span
             className={cn(
