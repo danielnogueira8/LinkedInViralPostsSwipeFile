@@ -10,6 +10,10 @@ import {
   type AdapterHealthRegistry,
 } from "@/lib/agent/adapter-health";
 import {
+  isAutoRouterModel,
+  PRIMARY_DRAFT_WRITER_MODEL,
+} from "@/lib/agent/model-config";
+import {
   runCoworkAdapterAttempt,
   providerModelAttribution,
 } from "@/lib/agent/cowork-adapter-attempt";
@@ -17,11 +21,17 @@ import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
 import { editDraftBody, type EditorModelRewrite } from "./editor";
 import { aiTellMetrics, looksCorruptedDraft } from "./nets";
 
-// Defaults to the one app-wide chat model (OPENROUTER_CHAT_MODEL) so every
-// text-LLM call uses the SAME model unless pinned via OPENROUTER_AI_TELL_MODEL.
-// (AI-tell repair is a narrow, forced-tool copy edit — a bounded rewrite, not
-// open judgment — so a cheaper pin here is reasonable if you want one.)
-const DEFAULT_AI_TELL_MODEL = CHAT_MODEL;
+// Defaults to the one app-wide chat model so every text-LLM call uses the
+// SAME model unless pinned via OPENROUTER_AI_TELL_MODEL — with ONE exception:
+// never the openrouter/auto meta-router. AI-tell repair is a narrow,
+// forced-tool copy edit on the turn's critical path; the auto-router served
+// it z-ai/glm-5.2 in production, which hung past the 8s stage timeout on
+// EVERY repair (dead time per turn, and zero repaired drafts). When the chat
+// model is the auto-router, pin the same writer primary the app trusts
+// instead. (A cheaper pin via OPENROUTER_AI_TELL_MODEL is still reasonable.)
+const DEFAULT_AI_TELL_MODEL = isAutoRouterModel(CHAT_MODEL)
+  ? PRIMARY_DRAFT_WRITER_MODEL
+  : CHAT_MODEL;
 
 export function resolveAiTellModel(value = process.env.OPENROUTER_AI_TELL_MODEL): string {
   return value?.trim() || DEFAULT_AI_TELL_MODEL;

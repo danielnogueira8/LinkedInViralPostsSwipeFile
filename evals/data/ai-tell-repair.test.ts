@@ -28,6 +28,23 @@ describe("conditional AI-tell repair", () => {
     expect(resolveAiTellModel("custom/model")).toBe("custom/model");
   });
 
+  test("never rides the auto-router — pins the writer primary instead", async () => {
+    // Prod runs CHAT_MODEL=openrouter/auto, and the router served repair calls
+    // z-ai/glm-5.2, which hung past the 8s stage timeout on every attempt.
+    // With the chat model set to the auto-router, repair must follow the
+    // pinned writer primary instead.
+    vi.resetModules();
+    process.env.OPENROUTER_CHAT_MODEL = "openrouter/auto";
+    const mod = await import("@/lib/agent/specialists/ai-tell-repair");
+    const config = await import("@/lib/agent/model-config");
+    expect(mod.resolveAiTellModel(undefined)).toBe(
+      config.PRIMARY_DRAFT_WRITER_MODEL,
+    );
+    expect(mod.resolveAiTellModel(undefined)).not.toContain("openrouter/auto");
+    vi.resetModules();
+    delete process.env.OPENROUTER_CHAT_MODEL;
+  });
+
   test("does not call a model for a clean post", async () => {
     const body = "I changed our pricing last week because the old plan confused buyers.";
     const result = await repairAiTells({ body });

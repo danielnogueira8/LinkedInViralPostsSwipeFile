@@ -722,6 +722,21 @@ export async function setupChatTurn(
             409,
           );
         }
+        // A retry that TYPES a different count in the message text (no chip):
+        // the frozen count would silently win over the fresh instruction —
+        // the user asks for 1 draft and watches 6 run. Same refusal as the
+        // chip mismatch above: send it as a new request instead of replaying
+        // the wrong task.
+        const retryTextCount = deps.explicitMessageDraftCount(userText);
+        if (
+          retryTextCount !== null &&
+          retryTextCount !== pairedGenerationConfigMarker.config.draftCount
+        ) {
+          return turnError(
+            "That Retry no longer matches the draft count used by the original task. Send a new request instead.",
+            409,
+          );
+        }
         resolvedGenerationConfig = pairedGenerationConfigMarker.config;
         generationConfigRestoredFromRetry = true;
       } else if (requestedGenerationConfig) {
