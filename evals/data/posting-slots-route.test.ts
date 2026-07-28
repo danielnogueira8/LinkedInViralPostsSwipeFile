@@ -110,6 +110,22 @@ describe("/api/posting-slots contract", () => {
     expect(upsertSetting).toHaveBeenCalledWith("posting_queue_collapsed", true);
   });
 
+  test("PATCH persists organic timing variation independently", async () => {
+    const response = await PATCH(
+      request("PATCH", { timeVariationEnabled: true }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(upsertSetting).toHaveBeenCalledWith(
+      "posting_queue_time_variation_enabled",
+      true,
+    );
+    expect(upsertSetting).not.toHaveBeenCalledWith(
+      "posting_queue_collapsed",
+      expect.anything(),
+    );
+  });
+
   test("DELETE scopes slot removal to the authenticated workspace", async () => {
     const slotId = "8d60d20f-0751-4754-9455-e9e5245eb846";
     const response = await DELETE(request("DELETE", undefined, `?id=${slotId}`));
