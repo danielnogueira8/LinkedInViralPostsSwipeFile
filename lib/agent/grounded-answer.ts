@@ -6,6 +6,7 @@ import {
 import { FALLBACK_READ_ONLY_ORCHESTRATOR_MODEL } from "@/lib/agent/model-config";
 import { wrapUntrustedDelimited, INJECTION_GUARD } from "@/lib/agent/untrusted";
 import type { GroundedSource } from "@/lib/agent/evidence";
+import { INTERACTIVE_RESPONSE_GUIDANCE } from "@/lib/agent/prompt-guidance";
 
 export type GroundedAnswerFormat =
   | "summary"
@@ -163,6 +164,7 @@ export const synthesizeGroundedAnswer: SynthesizeGroundedAnswer = async (
             role: "system",
             content: [
               "You are SwipeIn's grounded research-answer synthesizer.",
+              INTERACTIVE_RESPONSE_GUIDANCE,
               "Return the requested analysis as ordinary assistant text. Never draft, rewrite, or edit a LinkedIn post, and never claim that an artifact was created.",
               "Use only the supplied verified evidence. If the evidence does not support a claim, omit it. Distinguish direct observations from inference.",
               input.sourcePresentation === "structured_workspace"

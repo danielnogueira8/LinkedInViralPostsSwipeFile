@@ -19,6 +19,7 @@ import {
   INJECTION_GUARD,
   wrapUntrustedDelimited,
 } from "@/lib/agent/untrusted";
+import { REVIEW_COVERAGE_GUIDANCE } from "@/lib/agent/prompt-guidance";
 
 // Defaults to the one app-wide chat model (OPENROUTER_CHAT_MODEL) so every
 // text-LLM call uses the SAME model unless pinned via
@@ -149,11 +150,13 @@ function partialFidelityInstructions(
 export function buildSourceFidelitySystemPrompt(
   deliverableKind: SourceFidelityDeliverableKind = "post",
 ): string {
-  return (
-    (deliverableKind === "post"
+  return [
+    deliverableKind === "post"
       ? POST_FIDELITY_INSTRUCTIONS
-      : partialFidelityInstructions(deliverableKind)) + INJECTION_GUARD
-  );
+      : partialFidelityInstructions(deliverableKind),
+    REVIEW_COVERAGE_GUIDANCE,
+    INJECTION_GUARD,
+  ].join("\n\n");
 }
 
 export const SOURCE_FIDELITY_SYSTEM_PROMPT =

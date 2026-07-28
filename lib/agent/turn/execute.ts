@@ -58,6 +58,7 @@ import {
   withGeneratedImageMeta,
   withLeadMagnetImagePlanStep,
 } from "@/lib/agent/turn/artifact-tags";
+import { buildAnswerSystemPrompt } from "@/lib/agent/prompt-guidance";
 
 export type TurnExecuteDependencies = {
   runWriterTurn: typeof runWriterTurn;
@@ -729,14 +730,13 @@ async function* executeAnswerTurn(
   // never compensate for a routing miss by returning draft-shaped text.
   const systemMessage: ChatMessage = {
     role: "system",
-    content: [
-      "You are Cowork, a LinkedIn content assistant. Answer the user's question or brainstorming request helpfully and concisely.",
+    content: buildAnswerSystemPrompt(
       setup.currentTurnOperation?.kind === "review_artifact" ||
       (setup.currentTurnOperation?.kind === "ask" &&
         setup.currentTurnOperation.artifactId)
-        ? "The authoritative typed operation is REVIEW. Give critique or feedback only. Do not rewrite the draft, even if the message itself sounds like an edit command."
-        : "This answer operation is not authorized to create or edit an artifact. Answer or brainstorm only; never return a replacement LinkedIn post draft.",
-    ].join("\n\n"),
+        ? "review"
+        : "answer",
+    ),
   };
   const messages: ChatMessage[] = [systemMessage, ...setup.history];
   const stream = streamChat({
