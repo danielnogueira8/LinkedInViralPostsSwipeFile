@@ -54,6 +54,29 @@ describe("selectSkills — specialized skills survive the cap", () => {
     expect(got).toContain("newsjacking");
     expect(got[0]).toBe("newsjacking");
   });
+
+  test("an explicit modeling request selects model-from-source (specialized, survives the cap)", () => {
+    const got = ids("Model this post for me — same structure, my facts, in my voice");
+    expect(got).toContain("model-from-source");
+    expect(got[0]).toBe("model-from-source");
+  });
+
+  test("modeling phrasings all trigger it", () => {
+    for (const msg of [
+      "Swipe this post and make it mine",
+      "Here's a post that worked — do mine",
+      "My version of this post, please",
+      "Rewrite this with my numbers",
+    ]) {
+      expect(ids(msg)).toContain("model-from-source");
+    }
+  });
+
+  test("a plain original-post request does NOT trigger modeling", () => {
+    expect(ids("write a post about pricing strategy in my voice")).not.toContain(
+      "model-from-source",
+    );
+  });
 });
 
 describe("selectSkills — cap and ordering invariants", () => {
@@ -102,7 +125,7 @@ describe("selectSkills — registry integrity", () => {
     // explicitOnly (see skills-anti-ai-gate.test.ts).
     const specialized = SKILLS.filter((s) => s.specialized).map((s) => s.id).sort();
     expect(specialized).toEqual(
-      ["anti-ai", "brandjacking", "lead-magnet", "namejacking", "newsjacking"].sort(),
+      ["anti-ai", "brandjacking", "lead-magnet", "model-from-source", "namejacking", "newsjacking"].sort(),
     );
   });
 

@@ -33,6 +33,7 @@ export const SKILL_CHIP_LABEL: Record<string, string> = {
   hooks: "Hook craft",
   "voice-match": "Voice match",
   "lead-magnet": "Lead-magnet craft",
+  "model-from-source": "Source modeling",
 };
 
 export function composePrompt(brief: string, skillIds: string[]): string {
@@ -72,7 +73,7 @@ export const AGENTS: Agent[] = [
     title: "10 posts, modeled on what's winning right now",
     payoff: "Walk away with 10 ready-to-edit posts in your voice — a full content pipeline in one run.",
     icon: AiIcon,
-    skills: ["anti-slop", "structure", "hooks", "voice-match"],
+    skills: ["anti-slop", "structure", "hooks", "model-from-source", "voice-match"],
     brief:
       "Use the SwipeIn connector. Call get_voice to load my writing voice. Then search_viral_posts for the 20 most viral regular posts from the last 7 days, pick the 10 with the most distinct structures, and write 10 posts modeled on them in my voice — no two using the same hook pattern, each under 1,500 characters. Save each one as a draft with create_draft, passing the modeled post's id as source_post_id.",
   },
@@ -82,7 +83,7 @@ export const AGENTS: Agent[] = [
     title: "A full week of content, no two posts alike",
     payoff: "Get a 7-day calendar where every day uses a different proven hook pattern — no repeats, no blank-page mornings.",
     icon: CalendarDays,
-    skills: ["anti-slop", "structure", "hooks", "voice-match"],
+    skills: ["anti-slop", "structure", "hooks", "model-from-source", "voice-match"],
     brief:
       "Use the SwipeIn connector. Call get_voice first to load my writing voice. Then search_viral_posts for the top 20 viral posts from the last 14 days and group them by hook pattern. Build me a 7-day posting calendar — one post per day, each using a different pattern I haven't overused, drafted in my voice and under 1,500 characters. Save every post with create_draft (pass the modeled post's id as source_post_id for each) and schedule them across the week with schedule_draft.",
   },
@@ -92,7 +93,7 @@ export const AGENTS: Agent[] = [
     title: "Turn one viral post into three angles",
     payoff: "One proven post becomes three distinct posts — same winning structure, three different stories you can space out.",
     icon: Repeat2,
-    skills: ["anti-slop", "voice-match"],
+    skills: ["anti-slop", "model-from-source", "voice-match"],
     brief:
       "Use the SwipeIn connector. Call get_voice first to load my writing voice. Then find the single most viral post from the last 30 days, pull its structure with get_template, and write me 3 different posts that keep the hook structure but tell 3 different stories from my world. Match my voice, flag the part of each that's doing the heavy lifting, and save all three with create_draft, passing the source post's id as source_post_id.",
   },

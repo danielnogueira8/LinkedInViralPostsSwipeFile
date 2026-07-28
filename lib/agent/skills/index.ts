@@ -298,6 +298,195 @@ Worked patterns (swap the event for whatever is actually breaking — confirm it
 - Outage: "Half the internet went down. The lesson isn't multi-cloud — it's smaller and cheaper."`,
 };
 
+// Pour the user's real facts into the exact shape of a specific post that
+// already worked. Fires when the user pairs a specific source post with
+// "do it for me" — the modeling lane's craft rules (hook mechanic kept,
+// structure mirrored line-for-line, only personal facts swapped, facts the
+// writer doesn't have become explicit placeholders, never inventions).
+// Specialized like the other post-type skills so it survives the selection
+// cap over generic craft skills.
+const MODEL_FROM_SOURCE: Skill = {
+  id: "model-from-source",
+  specialized: true,
+  triggers: [
+    "model this post",
+    "model this for me",
+    "model a post",
+    "model after",
+    "modeled after",
+    "my version of this post",
+    "same structure, my facts",
+    "make this one but for",
+    "rewrite this with my numbers",
+    "swipe this post",
+    "here's a post that worked",
+  ],
+  body: `# Modeling a post from a source (same build, your facts)
+
+The source post is a mold, not a topic. Your job is to pour the user's
+reality into the exact same shape. When this skill applies, structure wins
+over style: do NOT redesign the post, do NOT "improve" it, do NOT merge it
+with a different format.
+
+One source, one output, same build. The deliverable is a post, not an
+analysis. Don't explain the structure back to the user unless they ask.
+
+## Step 0 — Is this moldable at all
+
+Before pouring, ask one question: did this post work because of its
+structure, or because of who posted it and what they proved?
+
+A post that pulled 4,000 comments because a 200k-follower account gave
+away a $50k client roster is not moldable. You inherit the shape and none
+of the reach. The mold is still fine to use, but say so before writing:
+"This one leaned on [their audience / their specific proof]. Structure
+transfers, the result probably won't."
+
+One line. Then continue or suggest a different source. Don't turn this
+into an essay, and don't skip it silently.
+
+## Rule 1 — Hook: keep it nearly identical, change only the personal angle
+
+The hook keeps the source's construction, word pattern, and tension. You
+change ONLY the part that belongs to the author — their specific claim,
+number, role, or situation — with the user's equivalent.
+
+- SOURCE: "I built a Claude library with 10 AI prompts"
+  ADAPTED: "I built a Claude library with 10 prompts to write better content"
+  (same frame, same number — only the purpose becomes the user's)
+- SOURCE: "I quit my job at Google to write daily"
+  ADAPTED (user is a freelancer): "I quit freelancing to write daily"
+
+Never write a NEW hook. If the source hook is a number, keep a number. If
+it's a confession, confess the user's equivalent. If it's a contradiction,
+contradict the same way. The mechanic is always inherited.
+
+How tightly you copy the WORDS scales with how ownable they are.
+
+- Commodity frame — "I built X with 10 Y", "Most people get X wrong",
+  "X years ago I was broke. Today..." — nobody owns it. Copy the
+  construction almost word for word. That's the point of the mold.
+- Ownable line — a distinctive image, an unusual verb, a turn of phrase
+  the author is known for, anything that would be recognized on sight —
+  keep the mechanic, write a new line onto it. Same move, different words.
+
+Test: if the source hook got screenshotted next to your draft, does it read
+as "same format" or as "copied his post"? Same format is the job. Copied
+his post gets the user called out.
+
+## Rule 2 — Structure: identical, line for line
+
+Mirror the source's architecture exactly:
+
+- Same paragraph count and same approximate paragraph lengths.
+- Same list format: if the source is a 5-item numbered list with a bold
+  label per item, the draft is a 5-item numbered list with a bold label per
+  item. Not 4 items. Not 6. Not bullets instead of numbers.
+- Same formatting quirks: if line 2 is a sentence in parentheses, the draft
+  has a sentence in parentheses on line 2. If the source uses a one-word
+  paragraph, so does the draft. Arrows (→), dashes, blank lines, emoji
+  count — all preserved.
+- Same ending shape: if the source closes with a two-line CTA and a P.S.,
+  the draft closes with a two-line CTA and a P.S.
+
+Read the source as a skeleton first, then write onto that skeleton. Do not
+let "better writing" leak in — the source's shape is the reason the post
+worked.
+
+When the facts won't fill the shape. Source has a 7-item list, the user
+has 3 real items. Structure holds up to the placeholder cap in Rule 3: keep
+7 slots, fill 3, mark the rest. Past that cap, honesty wins and structure
+bends — cut the list to what's true, and say so in one line:
+"Source ran 7, you've got 4 real ones, so this is the 4-item version."
+Never pad a list with invented items to protect the count.
+
+## Rule 3 — Only the personalized facts change
+
+Swap the details that are specific to the original author for the user's
+equivalents, and nothing else:
+
+- Personal facts: "I'm 30 years old" → the user's real age ("I'm 28 years
+  old"). Job titles, company, niche, audience, product name, geography.
+- Their numbers → the user's real numbers. Keep the source's number TYPE
+  and magnitude — a count stays a count, a revenue figure stays a revenue
+  figure — but the value is the user's. NEVER carry the original author's
+  numbers over as if they were the user's.
+- Their story specifics (client names, tools, anecdotes) → the user's
+  equivalents.
+
+Where the user's facts come from, in this order: the voice profile for
+whoever the post is for, the brief, then earlier in this conversation.
+Workspace writing rules override all of them — banned figures and banned
+phrases stay banned inside a mold. A modeling pass is the single most
+likely place a retired number climbs back in.
+
+When a swap needs a fact you don't have — a number, a name, a specific
+story — do NOT invent one and do NOT keep the original author's version.
+Leave a clearly-marked placeholder the user can fill in without another
+round-trip: [your number], [your age], [your client name], [your result].
+Keep placeholders rare (at most 2-3 per post) and always specific about
+what belongs there — [your monthly recurring revenue], never [number].
+Tell the user about every placeholder in one line after the draft so they
+know exactly what to fill in.
+
+Everything else — the argument, the lesson, the sequence of points — stays.
+
+## Hard rules
+
+- Never invent a personal fact the user hasn't given you. A placeholder is
+  always better than a fabrication, and a fabrication is always worse than
+  asking.
+- The source author's identity disappears entirely: no leftover names,
+  companies, ages, or anecdotes that belong to them.
+- The user's voice profile still governs the sentences INSIDE the skeleton:
+  their word choice, their rhythm. The source supplies the shape; the voice
+  supplies the sound.
+- Anti-slop rules still apply to what you write — but they never override
+  the source's structure. A rule-of-three in the SOURCE's structure is kept
+  (it modeled a winner); a rule-of-three you invent is not.
+- The original post stays attached as the source link. Don't hide the mold.
+
+## Clean-up pass
+
+Before delivering, read the draft once for AI tells and once for leaked
+facts.
+
+- AI tells. Working from a skeleton pulls writing toward the generic, so
+  this draft is more prone to it than a net-new post. Cut the setup
+  phrases, the tidy symmetry you added, the words the user would never say.
+- Leaked facts. Any claim you can't trace to the user is a number or a
+  story that came over from the source. Check every one against the swap
+  list.
+
+This pass may change words. It may NOT change structure. Paragraph count,
+list count, quirks, and ending shape are locked from Rule 2. If the
+clean-up wants to merge two paragraphs or trim a list, it's wrong. The
+shape is the asset.
+
+Don't narrate the pass. Just deliver the cleaned result.
+
+## Output format
+
+**Swapped:** [source fact] → [user fact] · [source fact] → [user fact] · ...
+**Fill in:** [your number] in line 4 · [your client name] in the P.S.
+
+(then the finished post, ready to paste, no commentary inside it)
+
+Swap list first, in one or two lines, so every fact is auditable in five
+seconds. Skip the "Fill in" line when there are no placeholders. Skip the
+whole header when nothing was swapped — but if nothing was swapped, you
+didn't model anything.
+
+## Quick check before delivering
+
+Read source and draft side by side. Same hook shape with the user's angle?
+Same paragraph count, list format, quirks, ending? Only personal facts
+swapped — every swap true for the user or left as a marked placeholder?
+Placeholders listed for the user in one line? Nothing ownable copied
+verbatim? If a line could have been written without seeing the source,
+rewrite it onto the skeleton.`,
+};
+
 export const SKILLS: Skill[] = [
   HOOKS,
   LEAD_MAGNET,
@@ -306,6 +495,7 @@ export const SKILLS: Skill[] = [
   BRANDJACKING,
   NEWSJACKING,
   ANTI_AI,
+  MODEL_FROM_SOURCE,
 ];
 
 // ---------------------------------------------------------------------------
