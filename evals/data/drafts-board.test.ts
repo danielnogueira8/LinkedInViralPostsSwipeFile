@@ -115,7 +115,7 @@ describe("editorNavigationDrafts — the posts the editor's up/down arrows walk"
     expect(ids(nav({ editingId: "posted-2" }))).toEqual(["posted-1", "posted-2"]);
   });
 
-  test("board view: column order follows the shown order (planned date, then recency)", () => {
+  test("board view: column order follows the shown order (recency, planned date breaks ties)", () => {
     const planned = [
       draft({ id: "later", status: "drafting", planToPostOn: "2026-07-10" }),
       draft({ id: "sooner", status: "drafting", planToPostOn: "2026-07-01" }),
@@ -320,7 +320,22 @@ describe("groupDraftsForBoard — filters", () => {
 });
 
 describe("groupDraftsForBoard — sort within a column", () => {
-  test("planned dates sort soonest-first, ahead of undated", () => {
+  test("newest first, always — a fresh undated draft outranks older planned cards", () => {
+    // The MCP case: a draft that just landed (no plan date) must surface at
+    // the top of its lane, not sink below older planned posts.
+    const g = groupDraftsForBoard(
+      [
+        draft({ id: "old-planned", planToPostOn: "2026-06-28", createdAt: "2026-06-20T00:00:00.000Z" }),
+        draft({ id: "older-planned", planToPostOn: "2026-07-10", createdAt: "2026-06-01T00:00:00.000Z" }),
+        draft({ id: "fresh-mcp", createdAt: "2026-06-27T12:00:00.000Z" }),
+      ],
+      "",
+      "all",
+    );
+    expect(ids(g.drafting)).toEqual(["fresh-mcp", "old-planned", "older-planned"]);
+  });
+
+  test("planned dates sort soonest-first when recency ties", () => {
     const g = groupDraftsForBoard(
       [
         draft({ id: "undated" }),

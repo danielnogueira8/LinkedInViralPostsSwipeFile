@@ -21,7 +21,7 @@ export const PUBLIC_MCP_TOOLS = [
   { name: "restore_account", description: "Resume tracking a previously removed creator.", group: "Creators", access: "Manage" },
   { name: "list_drafts", description: "List post drafts and their publishing state.", group: "Content", access: "Read" },
   { name: "get_draft", description: "Read one complete post draft, including its body and media references.", group: "Content", access: "Read" },
-  { name: "create_draft", description: "Create a post, hook, or lead-magnet draft on the Posts board.", group: "Content", access: "Create" },
+  { name: "create_draft", description: "Create a post, hook, or lead-magnet draft on the Posts board; pass source_post_id/source_url when the draft is modeled on a swipe-file post.", group: "Content", access: "Create" },
   { name: "schedule_draft", description: "Schedule a saved draft for LinkedIn publishing.", group: "Content", access: "Manage" },
   { name: "unschedule_draft", description: "Cancel a draft's pending LinkedIn schedule.", group: "Content", access: "Manage" },
   { name: "list_lead_magnets", description: "List the workspace's saved lead magnets.", group: "Content", access: "Read" },
