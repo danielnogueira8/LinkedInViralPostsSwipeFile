@@ -755,6 +755,20 @@ export function DraftsList({
         onDraftRemovedFromQueue={(draftId, next) =>
           applyMeta(draftId, next)
         }
+        onQueuedDraftsMoved={(movedDrafts) => {
+          movedDrafts.forEach((draft) => applyMeta(draft.id, draft));
+        }}
+        onQueueSnapshotLoaded={(queueDrafts) => {
+          queueDrafts.forEach((draft) =>
+            applyMeta(draft.id, {
+              scheduledAt: draft.scheduledAt,
+              scheduleStatus: draft.scheduleStatus,
+              postingSlotId: draft.postingSlotId,
+              postingSlotOccurrenceDate:
+                draft.postingSlotOccurrenceDate,
+            }),
+          );
+        }}
       />
       {/* Toolbar: search + kind filter */}
       <Toolbar className="flex flex-wrap items-center gap-2 p-2 sm:p-2.5">

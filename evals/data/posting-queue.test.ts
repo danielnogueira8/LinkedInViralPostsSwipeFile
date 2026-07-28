@@ -1,9 +1,11 @@
 import { describe, expect, test } from "vitest";
 import {
   buildPostingQueueDays,
+  canReceiveQueuedDraft,
   canDragDraftToPostingQueue,
   formatScheduleToast,
   postingSlotHasActiveDraft,
+  type PostingQueueDraft,
   type PostingQueueSlot,
 } from "@/lib/posting-queue";
 
@@ -35,6 +37,14 @@ describe("posting queue drag eligibility", () => {
     { status: "posted", scheduleStatus: null },
   ] as const)("rejects locked or posted drafts", (draft) => {
     expect(canDragDraftToPostingQueue(draft)).toBe(false);
+  });
+
+  test("only open or scheduled occurrences accept queue moves", () => {
+    expect(canReceiveQueuedDraft(null)).toBe(true);
+    expect(canReceiveQueuedDraft("scheduled")).toBe(true);
+    expect(canReceiveQueuedDraft("publishing")).toBe(false);
+    expect(canReceiveQueuedDraft("failed")).toBe(false);
+    expect(canReceiveQueuedDraft("published")).toBe(false);
   });
 });
 
@@ -180,7 +190,7 @@ describe("formatScheduleToast", () => {
 });
 
 describe("postingSlotHasActiveDraft", () => {
-  const queuedDraft = {
+  const queuedDraft: PostingQueueDraft = {
     id: "draft-1",
     title: "Draft",
     scheduledAt: "2026-07-27T08:00:00.000Z",

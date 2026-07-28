@@ -12,6 +12,7 @@ import {
   ChevronUp,
   Clock3,
   LoaderCircle,
+  Move,
   Plus,
   Trash2,
   X,
@@ -27,14 +28,17 @@ import {
 } from "@/components/ui/dialog";
 import {
   draftOperations,
+  type MovedQueuedDraftState,
   type UnscheduledDraftState,
 } from "@/lib/draft-operations-client";
 import {
   buildPostingQueueDays,
+  canReceiveQueuedDraft,
   DRAFT_DRAG_MIME,
   formatScheduleToast,
   localTimeForInstant,
   postingSlotHasActiveDraft,
+  QUEUED_DRAFT_DRAG_MIME,
   type PostingQueueDropTarget,
   type PostingQueueDraft,
   type PostingQueueSlot,
@@ -53,6 +57,8 @@ export function PostingQueueWidget({
   queueCandidates,
   onScheduleDraftInQueue,
   onDraftRemovedFromQueue,
+  onQueuedDraftsMoved,
+  onQueueSnapshotLoaded,
 }: {
   onOpenDraft: (draftId: string) => void;
   queueCandidates: Array<{ id: string; title: string }>;
@@ -67,6 +73,8 @@ export function PostingQueueWidget({
     draftId: string,
     state: UnscheduledDraftState,
   ) => void;
+  onQueuedDraftsMoved: (drafts: MovedQueuedDraftState[]) => void;
+  onQueueSnapshotLoaded: (drafts: PostingQueueDraft[]) => void;
 }) {
   const [slots, setSlots] = useState<PostingQueueSlot[]>([]);
   const [drafts, setDrafts] = useState<PostingQueueDraft[]>([]);
@@ -85,6 +93,10 @@ export function PostingQueueWidget({
     label: string;
   } | null>(null);
   const [editedLocalTime, setEditedLocalTime] = useState("");
+  const [movePicker, setMovePicker] = useState<{
+    draft: PostingQueueDraft;
+    targetKey: string;
+  } | null>(null);
   const [removingDraftId, setRemovingDraftId] = useState<string | null>(null);
   const [schedulingDraftId, setSchedulingDraftId] = useState<string | null>(
     null,
@@ -104,6 +116,7 @@ export function PostingQueueWidget({
     if (!response.ok || !data.ok) throw new Error(data.error || "Couldn't load posting queue.");
     setSlots(data.slots);
     setDrafts(data.drafts);
+    onQueueSnapshotLoaded(data.drafts);
     setCollapsed(data.collapsed);
     setLoaded(true);
   };
@@ -134,6 +147,45 @@ export function PostingQueueWidget({
   const days = useMemo(
     () => buildPostingQueueDays(slots, drafts, new Date(), timezone),
     [slots, drafts, timezone],
+  );
+  const moveTargets = useMemo(
+    () =>
+      days.flatMap((day) =>
+        day.occurrences
+          .filter(
+            (occurrence) =>
+              canReceiveQueuedDraft(
+                occurrence.draft?.scheduleStatus,
+              ),
+          )
+          .map((occurrence) => {
+            const scheduledAt =
+              occurrence.draft?.scheduledAt ??
+              occurrence.scheduledAt;
+            const timeLabel = new Intl.DateTimeFormat(undefined, {
+              timeZone: occurrence.slot.timezone,
+              hour: "numeric",
+              minute: "2-digit",
+            }).format(new Date(scheduledAt));
+            return {
+              key: `${occurrence.slot.id}:${day.date}`,
+              label: `${day.weekday}, ${day.dateLabel} at ${timeLabel}${
+                occurrence.draft
+                  ? ` — swap with ${
+                      occurrence.draft.title || "Untitled post"
+                    }`
+                  : ""
+              }`,
+              draftId: occurrence.draft?.id ?? null,
+              target: {
+                postingSlotId: occurrence.slot.id,
+                postingSlotOccurrenceDate: day.date,
+                timezone: occurrence.slot.timezone,
+              } satisfies PostingQueueDropTarget,
+            };
+          }),
+      ),
+    [days],
   );
 
   const toggleCollapsed = async () => {
@@ -259,11 +311,83 @@ export function PostingQueueWidget({
     }
   };
 
+  const moveQueuedDraft = async (
+    draftId: string,
+    target: PostingQueueDropTarget,
+  ): Promise<boolean> => {
+    if (schedulingDraftId || !draftId) return false;
+    const occurrenceKey = `${target.postingSlotId}:${target.postingSlotOccurrenceDate}`;
+    setDragOverOccurrence(occurrenceKey);
+    setSchedulingDraftId(draftId);
+    try {
+      const result = await draftOperations.moveQueue(draftId, {
+        postingSlotId: target.postingSlotId,
+        postingSlotOccurrenceDate:
+          target.postingSlotOccurrenceDate,
+      });
+      const movedById = new Map(
+        result.drafts.map((draft) => [draft.id, draft]),
+      );
+      setDrafts((current) =>
+        current.map((draft) => {
+          const moved = movedById.get(draft.id);
+          return moved
+            ? {
+                ...draft,
+                scheduledAt: moved.scheduledAt,
+                scheduleStatus: moved.scheduleStatus,
+                postingSlotId: moved.postingSlotId,
+                postingSlotOccurrenceDate:
+                  moved.postingSlotOccurrenceDate,
+              }
+            : draft;
+        }),
+      );
+      onQueuedDraftsMoved(result.drafts);
+      const movedDraft = result.drafts.find(
+        (draft) => draft.id === draftId,
+      );
+      if (movedDraft) {
+        toast.success(
+          result.swapped
+            ? "Posts swapped in the posting queue."
+            : formatScheduleToast({
+                scheduledAt: movedDraft.scheduledAt,
+                accountTimezone: result.timezone,
+                browserTimezone: timezone,
+                action: "rescheduled",
+              }),
+        );
+      }
+      return true;
+    } catch (error) {
+      toast.error((error as Error).message);
+      try {
+        await load();
+      } catch {
+        toast.error(
+          "Couldn't refresh the posting queue. Reload the page to confirm the move.",
+        );
+      }
+      return false;
+    } finally {
+      setDragOverOccurrence(null);
+      setSchedulingDraftId(null);
+    }
+  };
+
   const dropDraft = (
     event: DragEvent<HTMLDivElement>,
     target: PostingQueueDropTarget,
   ) => {
     event.preventDefault();
+    const queuedDraftId = event.dataTransfer
+      .getData(QUEUED_DRAFT_DRAG_MIME)
+      .trim();
+    if (queuedDraftId) {
+      void moveQueuedDraft(queuedDraftId, target);
+      return;
+    }
     const draftId = (
       event.dataTransfer.getData(DRAFT_DRAG_MIME) ||
       event.dataTransfer.getData("text/plain")
@@ -328,8 +452,11 @@ export function PostingQueueWidget({
                     {day.occurrences.map((occurrence) => {
                       const occurrenceKey = `${occurrence.slot.id}:${day.date}`;
                       const isDropTarget =
-                        dragOverOccurrence === occurrenceKey &&
-                        !occurrence.draft;
+                        dragOverOccurrence === occurrenceKey;
+                      const canReceiveQueuedMove =
+                        canReceiveQueuedDraft(
+                          occurrence.draft?.scheduleStatus,
+                        );
                       const displayedAt =
                         occurrence.draft?.scheduledAt ??
                         occurrence.scheduledAt;
@@ -342,15 +469,46 @@ export function PostingQueueWidget({
                         <div
                           key={occurrence.slot.id}
                           role="group"
+                          draggable={
+                            occurrence.draft?.scheduleStatus ===
+                            "scheduled"
+                          }
+                          aria-disabled={
+                            (occurrence.draft != null &&
+                              !canReceiveQueuedMove) ||
+                            undefined
+                          }
+                          title={
+                            occurrence.draft &&
+                            !canReceiveQueuedMove
+                              ? "This queue occurrence is locked and cannot be moved."
+                              : undefined
+                          }
                           aria-label={`${day.weekday}, ${day.dateLabel} at ${timeLabel} posting slot`}
                           onDragEnter={(event) => {
-                            if (!occurrence.draft) {
+                            const isQueuedMove =
+                              event.dataTransfer.types.includes(
+                                QUEUED_DRAFT_DRAG_MIME,
+                              );
+                            if (
+                              !occurrence.draft ||
+                              (isQueuedMove &&
+                                canReceiveQueuedMove)
+                            ) {
                               event.preventDefault();
                               setDragOverOccurrence(occurrenceKey);
                             }
                           }}
                           onDragOver={(event) => {
-                            if (!occurrence.draft) {
+                            const isQueuedMove =
+                              event.dataTransfer.types.includes(
+                                QUEUED_DRAFT_DRAG_MIME,
+                              );
+                            if (
+                              !occurrence.draft ||
+                              (isQueuedMove &&
+                                canReceiveQueuedMove)
+                            ) {
                               event.preventDefault();
                               event.dataTransfer.dropEffect = "move";
                               setDragOverOccurrence(occurrenceKey);
@@ -368,17 +526,43 @@ export function PostingQueueWidget({
                             );
                           }}
                           onDrop={(event) => {
-                            if (occurrence.draft) return;
+                            const isQueuedMove =
+                              event.dataTransfer.types.includes(
+                                QUEUED_DRAFT_DRAG_MIME,
+                              );
+                            if (
+                              occurrence.draft &&
+                              (!isQueuedMove ||
+                                !canReceiveQueuedMove)
+                            ) {
+                              return;
+                            }
                             void dropDraft(event, {
                               postingSlotId: occurrence.slot.id,
                               postingSlotOccurrenceDate: day.date,
                               timezone: occurrence.slot.timezone,
                             });
                           }}
+                          onDragStart={(event) => {
+                            if (
+                              occurrence.draft?.scheduleStatus !==
+                              "scheduled"
+                            ) {
+                              event.preventDefault();
+                              return;
+                            }
+                            event.dataTransfer.effectAllowed = "move";
+                            event.dataTransfer.setData(
+                              QUEUED_DRAFT_DRAG_MIME,
+                              occurrence.draft.id,
+                            );
+                          }}
                           className={cn(
                             "group rounded-lg border bg-background/80 px-2 py-1.5 transition-colors",
                             !occurrence.draft &&
                               "border-dashed hover:border-accent-brand/50",
+                            occurrence.draft?.scheduleStatus ===
+                              "scheduled" && "cursor-grab active:cursor-grabbing",
                             isDropTarget &&
                               "border-accent-brand bg-accent-brand/[0.10] ring-2 ring-accent-brand/30",
                           )}
@@ -408,38 +592,70 @@ export function PostingQueueWidget({
                               </button>
                               {occurrence.draft.scheduleStatus ===
                                 "scheduled" && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setEditedLocalTime(
-                                      localTimeForInstant(
-                                        occurrence.draft!.scheduledAt,
-                                        occurrence.slot.timezone,
-                                      ),
-                                    );
-                                    setTimeEditor({
-                                      draft: occurrence.draft!,
-                                      target: {
-                                        postingSlotId: occurrence.slot.id,
-                                        postingSlotOccurrenceDate: day.date,
-                                        timezone:
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const firstTarget =
+                                        moveTargets.find(
+                                          (target) =>
+                                            target.draftId !==
+                                            occurrence.draft!.id,
+                                        );
+                                      setMovePicker({
+                                        draft: occurrence.draft!,
+                                        targetKey:
+                                          firstTarget?.key ?? "",
+                                      });
+                                    }}
+                                    className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                                    aria-label={`Move ${
+                                      occurrence.draft.title ||
+                                      "untitled post"
+                                    } to another queue slot`}
+                                    title="Move to another queue slot"
+                                  >
+                                    <Move
+                                      className="h-3 w-3"
+                                      aria-hidden="true"
+                                    />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setEditedLocalTime(
+                                        localTimeForInstant(
+                                          occurrence.draft!
+                                            .scheduledAt,
                                           occurrence.slot.timezone,
-                                      },
-                                      label: `${day.weekday}, ${day.dateLabel}`,
-                                    });
-                                  }}
-                                  className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
-                                  aria-label={`Change scheduled hour for ${
-                                    occurrence.draft.title ||
-                                    "untitled post"
-                                  }`}
-                                  title="Change scheduled hour"
-                                >
-                                  <Clock3
-                                    className="h-3 w-3"
-                                    aria-hidden="true"
-                                  />
-                                </button>
+                                        ),
+                                      );
+                                      setTimeEditor({
+                                        draft: occurrence.draft!,
+                                        target: {
+                                          postingSlotId:
+                                            occurrence.slot.id,
+                                          postingSlotOccurrenceDate:
+                                            day.date,
+                                          timezone:
+                                            occurrence.slot.timezone,
+                                        },
+                                        label: `${day.weekday}, ${day.dateLabel}`,
+                                      });
+                                    }}
+                                    className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                                    aria-label={`Change scheduled hour for ${
+                                      occurrence.draft.title ||
+                                      "untitled post"
+                                    }`}
+                                    title="Change scheduled hour"
+                                  >
+                                    <Clock3
+                                      className="h-3 w-3"
+                                      aria-hidden="true"
+                                    />
+                                  </button>
+                                </>
                               )}
                               <button
                                 type="button"
@@ -591,6 +807,78 @@ export function PostingQueueWidget({
               There are no eligible posts to schedule yet.
             </p>
           )}
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={movePicker !== null}
+        onOpenChange={(open) => {
+          if (!open && !schedulingDraftId) setMovePicker(null);
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Move queued post</DialogTitle>
+            <DialogDescription>
+              Choose a new queue time. If it already contains a post,
+              the two posts will swap places.
+            </DialogDescription>
+          </DialogHeader>
+          <label className="grid gap-1.5 text-sm font-medium">
+            Destination
+            <select
+              value={movePicker?.targetKey ?? ""}
+              onChange={(event) =>
+                setMovePicker((current) =>
+                  current
+                    ? {
+                        ...current,
+                        targetKey: event.target.value,
+                      }
+                    : null,
+                )
+              }
+              className="h-10 w-full rounded-lg border bg-background px-3 text-sm"
+            >
+              {moveTargets
+                .filter(
+                  (target) =>
+                    target.draftId !== movePicker?.draft.id,
+                )
+                .map((target) => (
+                  <option key={target.key} value={target.key}>
+                    {target.label}
+                  </option>
+                ))}
+            </select>
+          </label>
+          <Button
+            disabled={
+              !movePicker?.targetKey ||
+              schedulingDraftId !== null
+            }
+            onClick={async () => {
+              if (!movePicker) return;
+              const destination = moveTargets.find(
+                (target) =>
+                  target.key === movePicker.targetKey,
+              );
+              if (!destination) return;
+              const moved = await moveQueuedDraft(
+                movePicker.draft.id,
+                destination.target,
+              );
+              if (moved) setMovePicker(null);
+            }}
+          >
+            {schedulingDraftId ? (
+              <>
+                <LoaderCircle className="h-4 w-4 animate-spin" />
+                Moving…
+              </>
+            ) : (
+              "Move post"
+            )}
+          </Button>
         </DialogContent>
       </Dialog>
       <Dialog
