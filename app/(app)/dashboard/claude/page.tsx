@@ -15,6 +15,7 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { AiIcon } from "@/components/ai-icon";
+import { AgentAvatar } from "@/components/agent-avatar";
 import type { ComponentType } from "react";
 import { ClaudeIcon } from "@/components/claude-icon";
 import { CopyAiInstructions, CopyConnectorUrl, CopyPrompt } from "./copy";
@@ -76,7 +77,8 @@ const SETUP_STEPS: { title: string; body: React.ReactNode }[] = [
 // opens with "Use the SwipeIn connector" so it reads naturally AND quietly
 // reinforces the connector name from setup.
 type Agent = {
-  tag: string; // the agent's name — rendered as the card chip, e.g. "Batch Writer Agent"
+  tag: string; // the agent's name — rendered next to its avatar, e.g. "Batch Writer Agent"
+  slug: string; // avatar file: public/agents/<slug>.svg (a <slug>.png overrides)
   title: string;
   payoff: string; // what you walk away with — the incentive
   prompt: string;
@@ -87,75 +89,83 @@ type Agent = {
 const AGENTS: Agent[] = [
   {
     tag: "Bulk Writer Agent",
+    slug: "bulk-writer",
     title: "10 posts, modeled on what's winning right now",
     payoff: "Walk away with 10 ready-to-edit posts in your voice — a full content pipeline in one run.",
     time: "~3 min",
     icon: AiIcon,
     prompt:
-      "Use the SwipeIn connector. First call get_voice to load my writing voice, then fetch viral regular posts and write 10 adapted for me, modeled after stuff that went viral in the last 7 days. Match my voice, vary the hook patterns, and keep each under 1,500 characters.",
+      "Use the SwipeIn connector. Call get_voice to load my writing voice. Then search_viral_posts for the 20 most viral regular posts from the last 7 days, pick the 10 with the most distinct structures, and write 10 posts modeled on them in my voice — no two using the same hook pattern, each under 1,500 characters, no AI tells (no \"Same X. Same Y.\" rhythm, no \"Here's the part everyone misses\" openers). Save each one as a draft with create_draft.",
   },
   {
     tag: "Calendar Architect Agent",
+    slug: "calendar-architect",
     title: "A full week of content, no two posts alike",
     payoff: "Get a 7-day calendar where every day uses a different proven hook pattern — no repeats, no blank-page mornings.",
     time: "~4 min",
     icon: CalendarDays,
     prompt:
-      "Use the SwipeIn connector. Call get_voice first to load my writing voice. Then look at the top 20 viral posts from the last 14 days and group them by hook pattern. Build me a 7-day posting calendar — one post per day, each using a different pattern I haven't overused. Draft every post in my voice, under 1,500 characters, and label which pattern each one uses.",
+      "Use the SwipeIn connector. Call get_voice first to load my writing voice. Then search_viral_posts for the top 20 viral posts from the last 14 days and group them by hook pattern. Build me a 7-day posting calendar — one post per day, each using a different pattern I haven't overused, drafted in my voice and under 1,500 characters. Save every post with create_draft and schedule them across the week with schedule_draft.",
   },
   {
     tag: "Remix Agent",
+    slug: "remix",
     title: "Turn one viral post into three angles",
     payoff: "One proven post becomes three distinct posts — same winning structure, three different stories you can space out.",
     time: "~2 min",
     icon: Repeat2,
     prompt:
-      "Use the SwipeIn connector. Call get_voice first to load my writing voice. Then find the single most viral post in the last 30 days, pull its template, and write me 3 different posts that keep the hook structure but tell 3 different stories from my world. Match my voice and flag the part of each that's doing the heavy lifting.",
+      "Use the SwipeIn connector. Call get_voice first to load my writing voice. Then find the single most viral post from the last 30 days, pull its structure with get_template, and write me 3 different posts that keep the hook structure but tell 3 different stories from my world. Match my voice, flag the part of each that's doing the heavy lifting, and save all three with create_draft.",
   },
   {
     tag: "Offer Hunter Agent",
+    slug: "offer-hunter",
     title: "Reverse-engineer the best lead magnets",
     payoff: "See exactly what's being given away to drive 500+ comments — and get an adapted offer you can run this week.",
     time: "~3 min",
     icon: Magnet,
     prompt:
-      "Use the SwipeIn connector. Find lead-magnet posts (post_type = lead_magnet) from the last 30 days with more than 500 comments. For the top 3, tell me what they're giving away, the exact hook and CTA they used. Then call get_voice and write me an adapted version of the best one for my audience, in my voice.",
+      "Use the SwipeIn connector. search_viral_posts for lead-magnet posts (post_type = lead_magnet) from the last 30 days with more than 500 comments. For the top 3, tell me what they're giving away, the exact hook and CTA they used. Then call get_voice and write an adapted version of the best one for my audience, in my voice, and save it with create_draft.",
   },
   {
     tag: "Hook Scout Agent",
+    slug: "hook-scout",
     title: "5 hooks to test, based on what's pulling now",
     payoff: "Skip the guesswork — get 5 hooks tied to patterns that are actually pulling engagement this week, ranked by why.",
     time: "~2 min",
     icon: Lightbulb,
     prompt:
-      "Use the SwipeIn connector. Call get_voice first to load my writing voice. Then look at every viral post from the last 7 days and rank the hook patterns by average engagement. Give me the top 5 patterns and write one fresh hook for each in my voice, with a one-line note on why that pattern is working right now.",
+      "Use the SwipeIn connector. Call get_voice first to load my writing voice. Then search_viral_posts for every viral post from the last 7 days and rank the hook patterns by average engagement. Give me the top 5 patterns and write one fresh hook for each in my voice, with a one-line note on why that pattern is working right now.",
   },
   {
     tag: "Timing Strategist Agent",
+    slug: "timing-strategist",
     title: "Schedule around when big posts actually land",
     payoff: "Stop guessing post times — get the day-and-hour windows where the creators you track land their biggest hits.",
     time: "~2 min",
     icon: Clock,
     prompt:
-      "Use the SwipeIn connector. Across the viral posts from the last 30 days, tell me which days of the week and times of day produce the most viral posts for the creators I track. Then suggest a posting schedule for my 5 best drafts this week that lines up with those windows.",
+      "Use the SwipeIn connector. Across the viral posts from the last 30 days, tell me which days of the week and times of day produce the most viral posts for the creators I track. Then list_drafts, pick my 5 strongest, and schedule them into those windows with schedule_draft.",
   },
   {
     tag: "Trend Radar Agent",
+    slug: "trend-radar",
     title: "See this week's best posts at a glance",
     payoff: "A fast read on what's working in your niche right now — hooks, authors, and engagement, ranked.",
     time: "~1 min",
     icon: Search,
     prompt:
-      "Use the SwipeIn connector. Pull the top 10 viral posts from the last 7 days in my niche, sorted by reactions. Give me the hook, the author, and engagement for each so I can see what's working at a glance.",
+      "Use the SwipeIn connector. search_viral_posts for the top 10 viral posts from the last 7 days in my niche, sorted by reactions. Give me the hook, the author, and engagement for each so I can see what's working at a glance.",
   },
   {
     tag: "Roster Manager Agent",
+    slug: "roster-manager",
     title: "Add a creator to track",
     payoff: "Grow your swipe file in one line — add a creator and instantly see who else you track in their niche.",
     time: "~1 min",
     icon: UserPlus,
     prompt:
-      "Use the SwipeIn connector. Add linkedin.com/in/justinwelsh to my tracked accounts under niche 'solopreneur'. Then show me what other accounts I'm already tracking in that niche.",
+      "Use the SwipeIn connector. add_account for linkedin.com/in/justinwelsh under niche 'solopreneur'. Then show me what other accounts I'm already tracking in that niche.",
   },
 ];
 
@@ -174,23 +184,6 @@ export default async function ClaudePage() {
         title="Claude Workflows"
         description="Advanced, external workflow support for people who want to run SwipeIn data inside Claude. For day-to-day drafting and scheduling, Cowork is the simpler path."
       />
-
-      <div className="grid gap-3 rounded-xl border border-border/60 bg-muted/20 p-3 md:grid-cols-2">
-        <div className="rounded-lg bg-background px-3 py-2.5">
-          <div className="text-sm font-medium">Use Cowork inside SwipeIn</div>
-          <p className="mt-1 text-xs leading-snug text-muted-foreground">
-            Best for drafting, multi-draft runs, approving posts, and saving work
-            straight into your Posts board.
-          </p>
-        </div>
-        <div className="rounded-lg bg-background px-3 py-2.5">
-          <div className="text-sm font-medium">Use Claude Workflows</div>
-          <p className="mt-1 text-xs leading-snug text-muted-foreground">
-            Best when you intentionally want an advanced Claude-side workflow
-            using SwipeIn as a connected data source.
-          </p>
-        </div>
-      </div>
 
       <Card>
         <CardHeader>
@@ -289,12 +282,22 @@ export default async function ClaudePage() {
                 key={agent.title}
                 className="flex flex-col gap-3 rounded-xl border border-border/60 bg-card p-4 shadow-[0_1px_2px_0_rgba(15,23,42,0.04)]"
               >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
-                    <Icon className="h-3 w-3" />
-                    {agent.tag}
+                <div className="flex items-start justify-between gap-2">
+                  <span className="inline-flex items-center gap-2.5">
+                    <span className="relative shrink-0">
+                      <AgentAvatar
+                        slug={agent.slug}
+                        className="size-10 rounded-xl border border-border/60 bg-muted object-cover"
+                      />
+                      <span className="absolute -bottom-1 -right-1 grid size-4 place-items-center rounded-full border border-border/60 bg-background text-muted-foreground">
+                        <Icon className="h-2.5 w-2.5" />
+                      </span>
+                    </span>
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                      {agent.tag}
+                    </span>
                   </span>
-                  <span className="flex items-center gap-1 text-[10px] tabular-nums text-muted-foreground">
+                  <span className="flex items-center gap-1 pt-1 text-[10px] tabular-nums text-muted-foreground">
                     <Clock className="h-3 w-3" />
                     {agent.time}
                   </span>
