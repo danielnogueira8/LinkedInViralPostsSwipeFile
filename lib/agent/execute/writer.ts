@@ -925,6 +925,12 @@ function attemptRequest(opts: {
   model: string;
 }): DraftWriterRequest {
   const task = opts.input.task ?? { kind: "original" as const };
+  const variation =
+    task.kind === "original" ||
+    task.kind === "source" ||
+    task.kind === "grounded"
+      ? task.variation
+      : undefined;
   const narrowRefine =
     task.kind === "refine" &&
     (task.focus === "hook" || task.focus === "cta");
@@ -942,6 +948,7 @@ function attemptRequest(opts: {
       : SINGLE_DRAFT_CALL_TIMEOUT_MS,
     signal: opts.signal,
     sessionId: opts.input.sessionId,
+    ...(variation ? { cachePrompt: false } : {}),
     reasoning: narrowRefine
       ? opts.input.lean
         ? "minimal"
