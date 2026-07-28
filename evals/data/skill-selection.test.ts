@@ -77,6 +77,30 @@ describe("selectSkills — specialized skills survive the cap", () => {
       "model-from-source",
     );
   });
+
+  test("an original-post request selects the original-post craft skill", () => {
+    const got = ids("Write a post about why most onboarding flows lose users");
+    expect(got).toContain("original-post");
+  });
+
+  test("original-post does NOT fire on modeling, refine, or newsjack phrasing", () => {
+    expect(ids("Model this post for me — same structure, my facts")).not.toContain(
+      "original-post",
+    );
+    expect(ids("newsjack the OpenAI announcement with a punchy hook")).not.toContain(
+      "original-post",
+    );
+  });
+
+  test("original-post ranks after post-type specialized skills when both trip", () => {
+    // "Newsjack … and write a post about it": the newsjack guidance must win
+    // the cap ahead of the generic original-post craft.
+    const got = ids("newsjack the OpenAI launch and write a post about what it means");
+    expect(got).toContain("newsjacking");
+    expect(got.indexOf("newsjacking")).toBeLessThan(
+      got.includes("original-post") ? got.indexOf("original-post") : Number.MAX_SAFE_INTEGER,
+    );
+  });
 });
 
 describe("selectSkills — cap and ordering invariants", () => {

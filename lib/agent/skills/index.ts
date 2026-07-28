@@ -487,6 +487,301 @@ verbatim? If a line could have been written without seeing the source,
 rewrite it onto the skeleton.`,
 };
 
+// Write an original post from scratch. Fires when the user asks for a new
+// post WITHOUT a source to model — the craft layer for the most common
+// request type: name the job the post is doing, keep one center of gravity,
+// make the first line work, let the shape follow, cut what doesn't serve.
+// Deliberately GENERIC (not specialized): selectTurnSkills drops an inferred
+// newsjack ("write a post about X's funding round") when another specialized
+// skill is present, and grounding current events always beats the generic
+// craft layer. Generic tier means the newsjack guidance wins that turn, and
+// this skill still injects on plain original requests.
+const ORIGINAL_POST: Skill = {
+  id: "original-post",
+  triggers: [
+    "write a post about",
+    "write a linkedin post",
+    "write an original post",
+    "write something about",
+    "post idea",
+    "give me a post",
+    "i want to post about",
+    "turn this into a post",
+    "draft a post about",
+  ],
+  body: `# Original posts
+
+One post, one job, done properly.
+
+Most posts fail for three reasons. They're doing two jobs at once. The
+first line clears its throat instead of doing work. Or the writer picked
+a format before they knew what the post was for. Everything below attacks
+those three.
+
+## This is not a template library
+
+Nothing here is a mold. No numbered post types to pick from, no
+fill-in-the-blank hooks, no required beat sequence. That's deliberate.
+Format-first writing produces posts that are structurally correct and
+completely forgettable, and a reader can feel the template through the
+words.
+
+What's fixed is the thinking: name the job, keep one center of gravity,
+make the first line work, let the shape follow, cut what doesn't serve
+the job. Everything else is open. If the post wants a shape nobody has
+described, write it. If it wants forty words, write forty. If it wants
+four hundred, write four hundred.
+
+These are constraints on rigor, not on creativity.
+
+## Step 1 — Name the job
+
+Before anything else, answer this: **what is this post for?**
+
+Not the topic. The job. Different jobs are graded on different things,
+and applying the wrong bar is how good posts get talked out of existing.
+
+Common jobs, non-exhaustive:
+
+- **Change how someone sees something.** An argument. Graded on whether
+  a smart reader could disagree, and whether the post survives it.
+- **Teach a move.** Tactical. Graded on whether the reader can run it
+  tomorrow without asking a follow-up question.
+- **Hand over something usable.** A resource, a list, a set of tells, a
+  stack. Graded on density and saveability. Length is a feature here,
+  not a bug.
+- **Say who you are.** Identity, faith, values, a line in the sand.
+  Graded on conviction and specificity, never on novelty. Nobody has to
+  disagree. The job is to be recognized by the people who share it.
+- **Share news.** A launch, a hire, a milestone, a move. Graded on
+  whether the reader gets why it matters to them.
+- **Make someone feel less alone.** Recognition. Graded on whether it
+  names something real that usually goes unsaid.
+- **Start a fight worth having.** Provocation. Graded on whether the
+  writer will actually defend it in the comments.
+
+Write the job as one sentence. Keep it visible while drafting. When you
+later ask whether a line stays or goes, this sentence is what you ask it
+against.
+
+A post can carry a secondary effect. It can only have one job. A launch
+post that teaches something on the way is a launch post. Grade it as one.
+
+## Step 2 — One center of gravity
+
+The old rule, "one idea per post," is nearly right and gets misapplied.
+A post with twelve items and eleven more after it can be perfectly
+focused, as long as every one of the twenty-three serves the same job.
+
+The real test: **could a reader say what this post was for, in one line,
+without re-reading it?**
+
+What breaks that:
+
+- Two jobs stapled together. A story about your childhood that turns
+  into a product launch halfway through is two posts, and the reader
+  feels the seam.
+- A middle that wanders. This is where a second idea sneaks in wearing
+  an "and another thing" costume. Cut it.
+- A close that answers a different question than the hook asked.
+
+What does not break it:
+
+- Length. A long post with one job is focused.
+- Many items. Twenty tells about the same problem is one center of
+  gravity.
+- Digressions and asides, as long as they orbit.
+
+## Step 3 — The first line does work
+
+Not "the first line is the point." That rule is too blunt, and it deletes
+good openers. The real rule is that the first line has to **do something**
+rather than warm up.
+
+Setup that opens a loop is work. "When I left Goldman Sachs in 2010, the
+first book I read was Rework" is setup, and it earns its place: the name
+carries weight and the sentence opens a question. Setup that clears the
+throat is not work. "I've been thinking a lot about hiring lately" gives
+the reader nothing and can be deleted with no loss.
+
+Test: cover the first line. Does the post lose anything? If not, it was
+a runway.
+
+Four things a first line can do. Pick whichever the post supports:
+
+- **Open a gap.** Something is missing and the reader wants it closed.
+- **Create friction.** Contradict something the reader believes. Only if
+  the post will defend it.
+- **Trigger recognition.** Name a thought the reader has had and never
+  said out loud.
+- **Land a surprise.** A fact that shouldn't be true but is.
+
+Rules that hold across all four:
+
+- **Specific beats abstract.** A number, a name, a date, a moment. "We
+  lost a client last Tuesday over a four-word email" stops people.
+  "Communication matters" does not.
+- **Don't oversell.** The first line writes a cheque the post has to
+  cash. Overpromising burns trust that took months to build.
+- **Short, usually.** Most good first lines are under fifteen words. Not
+  a law. If you're past twenty, check whether you're explaining.
+
+Write three or four before choosing. The first one is almost never the
+best one. The good version tends to show up after you've written the
+obvious version and gotten it out of the way.
+
+**One exception worth naming.** Identity and recognition posts often open
+warm and plain, and that's correct for the job. "My friends, I've got
+good news for you today" does no clever work and is exactly right,
+because the job is affiliation, not curiosity. Don't sharpen a post out
+of its own register.
+
+## Step 4 — Shape follows the job
+
+Now, and not before, ask what form this needs. Jobs pull toward shapes:
+
+- **Changing a mind** wants an argument: the claim, why people believe
+  otherwise, what changed, what to do about it.
+- **Teaching a move** wants a sequence, and only earns it if the steps
+  are something the reader couldn't have guessed.
+- **Handing over a resource** wants density: get to the goods fast, make
+  every item pull its weight, don't pad the intro.
+- **Saying who you are** wants a story or a plain statement. Both work.
+  Cleverness usually hurts here.
+- **Sharing news** wants context first, news second, and a clear line on
+  why the reader should care.
+- **Recognition** wants short and unadorned. Say the thing. Stop.
+
+These describe what tends to happen, not forms to fill. Build something
+else when the post calls for it.
+
+One rule holds across every shape: **give the reader something they
+couldn't have produced by thinking harder.** A number you have and they
+don't. A moment they weren't in. A tell they'd never noticed. An item
+they'd never have found. Without that, the post is a well-organized
+restatement of what the reader already suspected.
+
+## Step 5 — Facts and proof
+
+Concrete detail is what separates a real post from a plausible one. Pull
+it from the voice profile for whoever the post is for, then the brief,
+then earlier in this conversation. Workspace writing rules override all
+of them.
+
+**Never invent a fact.** Not a client result, not a revenue figure, not
+a headcount, not a timeline, not a story that didn't happen. Never round
+a real number up because it sounds better. Never attribute a belief or an
+experience to the writer that they haven't expressed.
+
+When a line needs a fact you don't have, leave a marked placeholder the
+user can fill without a round-trip: [your number], [your client name],
+[your result]. Be specific about what belongs there, so
+[your monthly recurring revenue], never [number]. Keep them rare, at most
+two or three, and list them in one line after the draft.
+
+A placeholder is always better than a fabrication. Asking is better than
+both when the whole post hangs on the missing fact.
+
+If the post rests on a claim with nothing behind it, say so in one line
+and offer the version that is backed. Don't refuse to write, and don't
+lecture. Just name the hole and hand over the alternative.
+
+## Step 6 — The close
+
+The close is one move, calibrated to the job.
+
+An argument closes on its sharpest restatement. A tactical post closes on
+the instruction. A resource post closes on the ask, and the ask can be
+direct, because the reader just got something. An identity post closes on
+the sentiment, and softness is correct there. A news post closes on the
+next step.
+
+Whatever it is, it stops. The most common failure is a post that reaches
+its point and keeps talking for three more lines, each softer than the
+last. Find the strongest line near the end and end there.
+
+On calls to action: match the ask to what the post gave. A post that
+handed over twenty-three usable things has earned a direct CTA and a
+repost line. A quiet story about a hard year has not, and stapling one on
+cheapens the whole thing.
+
+## Step 7 — Cut what doesn't serve the job
+
+Not "cut twenty percent." That's the right number for an argument and the
+wrong number for a resource post, where trimming items destroys the value.
+Cut against the job sentence from Step 1.
+
+Goes on sight, in every genre:
+
+- Any line that doesn't serve the job.
+- Throat-clearing before the first working line.
+- Hedges: "I think," "it seems like," "arguably," "in many ways."
+- Empty transitions: "Here's the thing." "But here's what's interesting."
+  "The bottom line?"
+- The explanation of the joke, the metaphor, or the point. If you made
+  it, trust it.
+- The second-best version of a line you already wrote better.
+- Symmetry added because three sounded nicer than two.
+
+**AI tells, specifically.** These make a post read as machine-written
+even when the content is good: em dashes, "it's not X, it's Y," tidy
+tricolons, "in today's landscape," starting sentences with "But here's
+the thing," and paragraphs of identical length. Vary the rhythm. Let a
+sentence run long, then cut one to three words.
+
+**Read it out loud.** Any line the writer would never say to a person in
+a room gets rewritten or removed.
+
+## Voice
+
+The voice profile governs the sentences. Word choice, sentence length,
+formality, whether they swear, whether they use lists, how they sign off.
+Match it.
+
+Voice is not tone adjectives. It's specific habits: the words this person
+reaches for, how they start sentences, what they'd never say. Apply those
+rather than writing generically-good prose and hoping it passes.
+
+Register matters as much as vocabulary. A faith post, a launch post, and
+a teardown from the same person sound different from each other and all
+sound like them. Don't flatten a post into house style.
+
+If the profile is thin, write plainly and say it needs more. Plain is
+recoverable. Wrong-voice is not.
+
+## Output
+
+Deliver the post alone, clean, ready to paste. No commentary inside it.
+
+Then, underneath, at most two short lines:
+
+**Job:** [the one sentence from Step 1]
+**Fill in:** [your number] in line 3 · [your client name] in the close
+
+Drop the "Fill in" line when there are no placeholders. Don't explain the
+structure, justify choices, or offer a menu of alternatives unless asked.
+
+## Final check
+
+Read it cold, as a stranger scrolling.
+
+- Is the job clear, and is there only one?
+- Does the first line do work, or is it a runway?
+- Is there something here the reader couldn't have produced by thinking
+  harder?
+- Is every fact true, or marked as a placeholder?
+- Does the ask match what the post gave?
+- Does it end at its strongest line, or three lines after it?
+- Does it sound like this person, in the right register for this job?
+
+Grade against the job, not against a house standard. An identity post
+that nobody could disagree with is doing its job. A resource post with
+twenty-three items is focused. A launch post is allowed to be a launch
+post. The bar moves. What doesn't move is that the post has one job, the
+first line works, the facts are true, and nothing is in there that isn't
+serving the point.`,
+};
+
 export const SKILLS: Skill[] = [
   HOOKS,
   LEAD_MAGNET,
@@ -496,6 +791,7 @@ export const SKILLS: Skill[] = [
   NEWSJACKING,
   ANTI_AI,
   MODEL_FROM_SOURCE,
+  ORIGINAL_POST,
 ];
 
 // ---------------------------------------------------------------------------
