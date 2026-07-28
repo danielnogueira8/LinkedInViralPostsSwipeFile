@@ -28,7 +28,6 @@ import {
   SpotlightCard,
 } from "./landing-motion";
 import {
-  LandingPaperPanel,
   LandingPaperTexture,
   LANDING_SOURCE_MATERIAL_IMAGE,
 } from "./landing-print-treatments";
@@ -353,21 +352,6 @@ export default function LandingClient({
               </div>
             ))}
           </div>
-        </div>
-      </section>
-
-      <section className="px-4 py-20 sm:px-6 sm:py-28">
-        <div className="mx-auto grid max-w-[1000px] gap-10 lg:grid-cols-[0.8fr_1.2fr] lg:items-center lg:gap-20">
-          <div>
-            <p className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">A trace, not a template</p>
-            <h2 className="mt-4 text-balance text-[clamp(2.1rem,3.5vw,3.4rem)] leading-[1.05] tracking-[-0.035em]">
-              Source material, not source copy.
-            </h2>
-            <p className="mt-5 max-w-md text-pretty leading-7 text-muted-foreground">
-              The best ideas leave a trail. SwipeIn keeps the original signal close while your point of view does the writing.
-            </p>
-          </div>
-          <LandingPaperPanel />
         </div>
       </section>
 
