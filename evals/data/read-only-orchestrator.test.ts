@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { AgentEvent } from "@/lib/agent/contracts";
+
+// Freshness-relative fixture date for news results: the executor filters
+// news by age (NEWS_MAX_AGE_DAYS, default 14) against the REAL clock, so a
+// hardcoded published_at silently goes stale — 2026-07-14 fixtures passed
+// on 2026-07-27 and failed CI the next day.
+const freshDate = (daysAgo = 3): string =>
+  new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
 import type { WriterInput } from "@/lib/agent/execute/writer";
 import type { ExecuteModeledDraftBatchInput } from "@/lib/agent/execute/writer";
 import {
@@ -1808,7 +1815,7 @@ describe("read-only orchestrator execution", () => {
             {
               title: "OpenAI announcement",
               url: "https://openai.com/news/announcement",
-              published_at: "2026-07-14",
+              published_at: freshDate(),
               summary: "OpenAI announced a product update.",
             },
           ],
@@ -1954,7 +1961,7 @@ describe("read-only orchestrator execution", () => {
             {
               title: "OpenAI announcement",
               url: "https://openai.com/news/announcement",
-              published_at: "2026-07-14",
+              published_at: freshDate(),
               summary: "OpenAI announced a product update.",
             },
           ],
@@ -2133,7 +2140,7 @@ describe("read-only orchestrator execution", () => {
             {
               title: "OpenAI announcement",
               url: "https://openai.com/news/announcement",
-              published_at: "2026-07-14",
+              published_at: freshDate(),
               summary: "OpenAI announced a product update.",
             },
           ],
@@ -2175,7 +2182,7 @@ describe("read-only orchestrator execution", () => {
           {
             title: "OpenAI announcement",
             url: "https://openai.com/news/announcement",
-            published_at: "2026-07-14",
+            published_at: freshDate(),
             summary: "OpenAI announced a product update.",
           },
         ],
@@ -2268,7 +2275,7 @@ describe("read-only orchestrator execution", () => {
           {
             title: "OpenAI announcement",
             url: "https://openai.com/news/announcement",
-            published_at: "2026-07-14",
+            published_at: freshDate(),
             summary: "OpenAI announced a product update.",
           },
         ],

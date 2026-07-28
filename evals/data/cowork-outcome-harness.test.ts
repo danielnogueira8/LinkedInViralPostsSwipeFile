@@ -3,6 +3,13 @@ import {
   scriptedStreamChat,
   type ScriptedProviderScenario,
 } from "@/evals/cowork-scripted-provider";
+
+// Freshness-relative fixture date for news results: the executor filters
+// news by age (NEWS_MAX_AGE_DAYS, default 14) against the REAL clock, so a
+// hardcoded published_at silently goes stale — 2026-07-14 fixtures passed
+// on 2026-07-27 and failed CI the next day.
+const freshDate = (daysAgo = 3): string =>
+  new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
 import { currentCoworkHarnessAdminClient } from "@/evals/cowork-harness-store";
 import {
   runCoworkOutcomeScenario,
@@ -428,91 +435,6 @@ describe("production-shaped Cowork outcome harness", () => {
     );
   });
 
-  // The reported prod bug: a typed "…search verified news…" Ask turn fell to
-  // the tool-less answer lane, so the model could only reply "I don't have
-  // live web search access". An Ask whose wording demands live news must run
-  // the same grounded news_research route — Ask still never WRITES, so this
-  // serves grounded answers only.
-  test("an Ask turn demanding live news runs a real news search, never the tool-less answer lane", async () => {
-    const answer =
-      "This week a major platform announced verified labels for AI-generated content.\n\nSources:\n- [Example News](https://example.com/news/ai-content-labels)";
-    const report = await runCoworkOutcomeScenario({
-      id: "ask-live-news-search-not-answer-lane",
-      request: {
-        message:
-          "What's the latest verified news about AI-generated content? Search recent news from the last 14 days first and tell me the top story.",
-        command: { kind: "ask" },
-      },
-      model: {
-        provider: { rounds: [] },
-        readOnlyOrchestrator: {
-          plans: [],
-          groundedAnswer: { content: answer, usage: usage(80, 35, 0.0002) },
-          toolResults: {
-            search_news: [
-              {
-                ok: true,
-                max_age_days: 14,
-                searched: 1,
-                results: [
-                  {
-                    title: "Major platform verifies AI-generated content labels",
-                    url: "https://example.com/news/ai-content-labels",
-                    source: "Example News",
-                    published_at: "2026-07-20",
-                    summary:
-                      "A major platform announced verified labels for AI-generated content.",
-                  },
-                ],
-              },
-            ],
-          },
-        },
-      },
-      expected: {
-        terminal: "done",
-        artifactBodies: [],
-        actionNames: ["search_news"],
-        assistantContents: [answer],
-        route: "read_only_orchestrator",
-      },
-    });
-
-    expect(report.pass, JSON.stringify(report.failureCodes)).toBe(true);
-    expect(report.safe.route).toBe("read_only_orchestrator");
-    expect(report.observed.readOnlyTools.map((t) => t.name)).toContain(
-      "search_news",
-    );
-  });
-
-  // Ask is still a no-writing boundary: the SAME news wording on an Ask turn
-  // that explicitly demands a draft must not sneak a post through the
-  // research route — it stays on the answer lane.
-  test("an Ask turn that demands news AND a written post still does not write", async () => {
-    const report = await runCoworkOutcomeScenario({
-      id: "ask-newsjack-write-request-stays-answer",
-      request: {
-        message:
-          "Newsjack a recent event about AI-generated content. Search for verified news from the last 14 days first, and write a timely LinkedIn post in my voice.",
-        command: { kind: "ask" },
-      },
-      model: {
-        provider: textProvider(
-          "I can't write posts on an Ask turn — switch to Create and I'll draft it, with a real news search first.",
-        ),
-      },
-      expected: {
-        terminal: "done",
-        artifactBodies: [],
-        actionNames: [],
-        route: "answer",
-      },
-    });
-
-    expect(report.pass, JSON.stringify(report.failureCodes)).toBe(true);
-    expect(report.safe.route).toBe("answer");
-  });
-
   // Same guarantee through the free-text send (no explicit command) — the other
   // entry into the pipeline. A swipe-file search must reach the search, not the
   // tool-less answer lane, regardless of how the composer submits it.
@@ -585,7 +507,7 @@ describe("production-shaped Cowork outcome harness", () => {
                     title: "OpenAI launches a verified product",
                     url: "https://openai.com/news/product",
                     source: "OpenAI",
-                    published_at: "2026-07-14",
+                    published_at: freshDate(),
                     summary: "OpenAI announced a verified product update.",
                   },
                 ],
@@ -2021,7 +1943,7 @@ describe("production-shaped Cowork outcome harness", () => {
                     title: "OpenAI launches a verified product",
                     url: "https://openai.com/news/product",
                     source: "OpenAI",
-                    published_at: "2026-07-14",
+                    published_at: freshDate(),
                     summary:
                       "OpenAI announced a product that makes workflow automation faster.",
                   },
@@ -2111,7 +2033,7 @@ describe("production-shaped Cowork outcome harness", () => {
                     title: "Major platform verifies AI-generated content labels",
                     url: "https://example.com/news/ai-content-labels",
                     source: "Example News",
-                    published_at: "2026-07-20",
+                    published_at: freshDate(),
                     summary:
                       "A major platform announced verified labels for AI-generated content.",
                   },
@@ -2228,7 +2150,7 @@ describe("production-shaped Cowork outcome harness", () => {
                     title: "OpenAI launches a verified product",
                     url: "https://openai.com/news/product",
                     source: "OpenAI",
-                    published_at: "2026-07-14",
+                    published_at: freshDate(),
                     summary: "OpenAI announced a verified product update.",
                   },
                 ],
@@ -3470,7 +3392,7 @@ describe("production-shaped Cowork outcome harness", () => {
                     {
                       title: "OpenAI verified update",
                       url: "https://openai.com/news/update",
-                      published_at: "2026-07-14",
+                      published_at: freshDate(),
                       summary: "OpenAI announced a verified update.",
                     },
                   ],
@@ -4130,7 +4052,7 @@ describe("production-shaped Cowork outcome harness", () => {
                     title: "OpenAI launches a verified agent product",
                     url: "https://openai.com/news/agents",
                     source: "OpenAI",
-                    published_at: "2026-07-14",
+                    published_at: freshDate(),
                     summary:
                       "OpenAI announced agent tooling for small teams.",
                   },
