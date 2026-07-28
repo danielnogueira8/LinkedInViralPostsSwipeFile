@@ -274,7 +274,7 @@ export default function LandingClient({
               number="04"
               actor="You approve"
               icon={<CalendarDays />}
-              title="Give it a next action"
+              title="Schedule on LinkedIn"
               copy="Review the draft, request changes or approve it, and schedule it to LinkedIn. The original source stays attached for traceability."
             >
               <CalendarPanel />
