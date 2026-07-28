@@ -161,7 +161,11 @@ describe("effortFor", () => {
 });
 
 describe("mapUsage", () => {
-  test("maps Anthropic usage into the OpenRouter-shaped Usage", () => {
+  test("maps Anthropic usage into the OpenRouter-shaped Usage with TOTAL input tokens", () => {
+    // Anthropic's input_tokens EXCLUDES cache reads + cache writes; the
+    // downstream pricing math expects OpenRouter semantics (prompt_tokens =
+    // total input, cached/write = cheaper-billed subsets). Feeding the
+    // fresh-only count through undercounted every turn by ~half or more.
     expect(
       mapUsage({
         input_tokens: 100,
@@ -170,10 +174,21 @@ describe("mapUsage", () => {
         cache_creation_input_tokens: 20,
       } as never),
     ).toEqual({
-      prompt_tokens: 100,
+      prompt_tokens: 180,
       completion_tokens: 40,
       prompt_tokens_details: { cached_tokens: 60, cache_write_tokens: 20 },
     });
+  });
+  test("carries web_search_requests for the search fee", () => {
+    expect(
+      mapUsage({
+        input_tokens: 10,
+        output_tokens: 5,
+        cache_read_input_tokens: 0,
+        cache_creation_input_tokens: 0,
+        server_tool_use: { web_search_requests: 2 },
+      } as never)?.prompt_tokens_details?.web_search_requests,
+    ).toBe(2);
   });
   test("returns undefined when usage is absent", () => {
     expect(mapUsage(undefined)).toBeUndefined();
@@ -181,6 +196,7 @@ describe("mapUsage", () => {
   test("coerces missing token fields to zero", () => {
     const u = mapUsage({ input_tokens: 5, output_tokens: 3 } as never);
     expect(u?.prompt_tokens_details).toEqual({ cached_tokens: 0, cache_write_tokens: 0 });
+    expect(u?.prompt_tokens).toBe(5);
   });
 });
 
