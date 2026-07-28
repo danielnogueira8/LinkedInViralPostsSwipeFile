@@ -133,7 +133,11 @@ export function DraftEditor({
     if (!ta) return;
     const fit = () => {
       ta.style.height = "auto";
-      ta.style.height = `${ta.scrollHeight}px`;
+      // scrollHeight rounds to whole pixels, which can land a fraction of a
+      // line short — the last line of the draft renders visibly clipped at
+      // the bottom of the Cowork card. The small buffer guarantees the final
+      // line always gets its full height.
+      ta.style.height = `${ta.scrollHeight + 4}px`;
     };
     fit();
     const ro = new ResizeObserver(fit);
