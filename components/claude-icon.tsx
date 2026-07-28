@@ -4,10 +4,11 @@ import { cn } from "@/lib/utils";
 /**
  * Claude brand mark. Two variants live in /public:
  *   - claude.svg        — fixed orange (#D97757). Use on light backgrounds when
- *                         we want the brand color to read (hero badge, claude page tile).
+ *                         we want the brand color to read (hero badge, claude page
+ *                         tile, and the sidebar's Claude Workflows row).
  *   - claude_black.svg  — single-path with fill=currentColor so it inherits the
- *                         text color. Use inside nav rows, where the icon needs to
- *                         track the muted-foreground/foreground active-state shift.
+ *                         text color. Use where the icon must track the
+ *                         muted-foreground/foreground active-state shift.
  *
  * Shaped to match Lucide icons (`{ className?: string }`) so it can drop into
  * existing `icon: ComponentType<{ className?: string }>` nav slots — pass `h-4 w-4`

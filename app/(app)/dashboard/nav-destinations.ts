@@ -16,6 +16,12 @@ import { ClaudeIcon } from "@/components/claude-icon";
 import { SwipeInIcon } from "@/components/swipein-icon";
 import { AiIcon } from "@/components/ai-icon";
 
+// The sidebar uses the COLORED Claude mark (brand orange), same as the
+// landing page and the Claude Workflows header — not the monochrome glyph.
+function ClaudeWorkflowsNavIcon({ className }: { className?: string }) {
+  return <ClaudeIcon variant="brand" className={className} />;
+}
+
 export type NavDestination = {
   href: string;
   label: string;
@@ -67,7 +73,7 @@ export const NAV_SECTIONS: NavSection[] = [
     label: "Tools",
     items: [
       { href: "/dashboard/analytics", label: "Analytics", icon: ChartNoAxesColumn, tooltip: "LinkedIn performance of posts published through SwipeIn." },
-      { href: "/dashboard/claude", label: "Claude Workflows", icon: ClaudeIcon, tooltip: "Reusable AI workflows for content tasks." },
+      { href: "/dashboard/claude", label: "Claude Workflows", icon: ClaudeWorkflowsNavIcon, tooltip: "Reusable AI workflows for content tasks." },
       { href: "/dashboard/integrations", label: "Integrations", icon: Plug, tooltip: "Connect third-party tools like LeadShark." },
       { href: "/dashboard/settings", label: "Settings", icon: Settings, tooltip: "Workspace settings and publishing connections." },
     ],
