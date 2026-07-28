@@ -95,7 +95,9 @@ describe("buildPostingQueueDays", () => {
       new Date("2026-07-27T12:00:00.000Z"),
       "Europe/Lisbon",
     );
-    expect(days[0].occurrences.map((item) => item.slot.id)).toEqual(["monday-14"]);
+    expect(days[0].occurrences.map((item) => item.slot.id)).toEqual([
+      "monday-14",
+    ]);
     expect(days[0].noSlotsLeftToday).toBe(false);
 
     const late = buildPostingQueueDays(
@@ -158,9 +160,85 @@ describe("buildPostingQueueDays", () => {
       "monday-9",
       "monday-14",
     ]);
-    expect(days[0].occurrences[0].scheduledAt).toBe(
-      "2026-07-27T12:00:00.000Z",
+    expect(days[0].occurrences[0].scheduledAt).toBe("2026-07-27T12:00:00.000Z");
+  });
+
+  test("shows one-off schedules on their account-local day without filling a slot", () => {
+    const days = buildPostingQueueDays(
+      slots,
+      [
+        {
+          id: "one-off",
+          title: "Specific-time post",
+          scheduledAt: "2026-07-28T20:30:00.000Z",
+          scheduleStatus: "scheduled",
+          postingSlotId: null,
+          postingSlotOccurrenceDate: null,
+        },
+      ],
+      new Date("2026-07-27T10:00:00.000Z"),
+      "Europe/Lisbon",
     );
+
+    expect(days[1].oneOffDrafts.map((draft) => draft.id)).toEqual(["one-off"]);
+    expect(days[1].occurrences.every((item) => item.draft === null)).toBe(true);
+  });
+
+  test("orders one-off schedules and recurring occurrences chronologically", () => {
+    const days = buildPostingQueueDays(
+      slots,
+      [
+        {
+          id: "one-off",
+          title: "Early specific-time post",
+          scheduledAt: "2026-07-27T07:00:00.000Z",
+          scheduleStatus: "scheduled",
+          postingSlotId: null,
+          postingSlotOccurrenceDate: null,
+        },
+      ],
+      new Date("2026-07-27T06:00:00.000Z"),
+      "Europe/Lisbon",
+    );
+
+    expect(days[0].items.map((item) => item.kind)).toEqual([
+      "one_off",
+      "occurrence",
+      "occurrence",
+    ]);
+    expect(days[0].items.map((item) => item.scheduledAt)).toEqual([
+      "2026-07-27T07:00:00.000Z",
+      "2026-07-27T08:00:00.000Z",
+      "2026-07-27T13:00:00.000Z",
+    ]);
+  });
+
+  test("excludes past and published one-off schedules", () => {
+    const days = buildPostingQueueDays(
+      [],
+      [
+        {
+          id: "past",
+          title: "Past",
+          scheduledAt: "2026-07-27T09:00:00.000Z",
+          scheduleStatus: "scheduled",
+          postingSlotId: null,
+          postingSlotOccurrenceDate: null,
+        },
+        {
+          id: "published",
+          title: "Published",
+          scheduledAt: "2026-07-28T09:00:00.000Z",
+          scheduleStatus: "published",
+          postingSlotId: null,
+          postingSlotOccurrenceDate: null,
+        },
+      ],
+      new Date("2026-07-27T10:00:00.000Z"),
+      "Europe/Lisbon",
+    );
+
+    expect(days.flatMap((day) => day.oneOffDrafts)).toEqual([]);
   });
 });
 
@@ -185,7 +263,9 @@ describe("formatScheduleToast", () => {
         browserTimezone: "America/New_York",
         action: "rescheduled",
       }),
-    ).toMatch(/^Post rescheduled for Tomorrow, Jul 27 at 9:00 AM (GMT\+1|WEST)$/);
+    ).toMatch(
+      /^Post rescheduled for Tomorrow, Jul 27 at 9:00 AM (GMT\+1|WEST)$/,
+    );
   });
 });
 

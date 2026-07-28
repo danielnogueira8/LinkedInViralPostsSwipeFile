@@ -1,7 +1,7 @@
 {
   "generatedBy": "npm run migrations:metadata",
-  "highest": 145,
-  "count": 145,
+  "highest": 146,
+  "count": 146,
   "files": [
     "migration-001-progress.sql",
     "migration-002-usage.sql",
@@ -147,6 +147,7 @@
     "migration-142-publishing-slot-removal.sql",
     "migration-143-posting-queue-slot-integrity.sql",
     "migration-144-cost-cap-grace.sql",
-    "migration-145-posting-queue-move-swap.sql"
+    "migration-145-posting-queue-move-swap.sql",
+    "migration-146-posting-queue-schedule-lookup.sql"
   ]
 }

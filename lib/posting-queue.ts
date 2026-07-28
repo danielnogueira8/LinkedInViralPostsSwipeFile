@@ -28,8 +28,7 @@ export type PostingQueueDropTarget = {
 };
 
 export const DRAFT_DRAG_MIME = "application/x-swipein-draft-id";
-export const QUEUED_DRAFT_DRAG_MIME =
-  "application/x-swipein-queued-draft-id";
+export const QUEUED_DRAFT_DRAG_MIME = "application/x-swipein-queued-draft-id";
 
 export function canReceiveQueuedDraft(
   scheduleStatus: string | null | undefined,
@@ -55,6 +54,19 @@ export type PostingQueueDay = {
   isToday: boolean;
   noSlotsLeftToday: boolean;
   occurrences: PostingQueueOccurrence[];
+  oneOffDrafts: PostingQueueDraft[];
+  items: (
+    | {
+        kind: "occurrence";
+        scheduledAt: string;
+        occurrence: PostingQueueOccurrence;
+      }
+    | {
+        kind: "one_off";
+        scheduledAt: string;
+        draft: PostingQueueDraft;
+      }
+  )[];
 };
 
 export function postingSlotHasActiveDraft(
@@ -173,6 +185,25 @@ export function buildPostingQueueDays(
         draft,
       ]),
   );
+  const oneOffDraftsByDate = new Map<string, PostingQueueDraft[]>();
+  for (const draft of drafts) {
+    if (
+      draft.postingSlotId ||
+      draft.postingSlotOccurrenceDate ||
+      draft.scheduleStatus === "published" ||
+      !draft.scheduledAt ||
+      draft.scheduledAt < now.toISOString()
+    ) {
+      continue;
+    }
+    const date = dateKey(
+      zonedParts(new Date(draft.scheduledAt), accountTimezone),
+    );
+    oneOffDraftsByDate.set(date, [
+      ...(oneOffDraftsByDate.get(date) ?? []),
+      draft,
+    ]);
+  }
   return Array.from({ length: 7 }, (_, offset) => {
     const date = addCalendarDays(today, offset);
     const dayOfWeek = new Date(`${date}T12:00:00.000Z`).getUTCDay();
@@ -187,9 +218,27 @@ export function buildPostingQueueDays(
           draft,
         };
       })
-      .filter((occurrence) => offset > 0 || occurrence.scheduledAt >= now.toISOString())
+      .filter(
+        (occurrence) =>
+          offset > 0 || occurrence.scheduledAt >= now.toISOString(),
+      )
       .sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt));
     const hadSlots = slots.some((slot) => slot.dayOfWeek === dayOfWeek);
+    const oneOffDrafts = [...(oneOffDraftsByDate.get(date) ?? [])].sort(
+      (a, b) => a.scheduledAt.localeCompare(b.scheduledAt),
+    );
+    const items = [
+      ...occurrences.map((occurrence) => ({
+        kind: "occurrence" as const,
+        scheduledAt: occurrence.scheduledAt,
+        occurrence,
+      })),
+      ...oneOffDrafts.map((draft) => ({
+        kind: "one_off" as const,
+        scheduledAt: draft.scheduledAt,
+        draft,
+      })),
+    ].sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt));
     return {
       date,
       weekday: new Intl.DateTimeFormat("en-US", {
@@ -204,6 +253,8 @@ export function buildPostingQueueDays(
       isToday: offset === 0,
       noSlotsLeftToday: offset === 0 && hadSlots && occurrences.length === 0,
       occurrences,
+      oneOffDrafts,
+      items,
     };
   });
 }
@@ -228,7 +279,8 @@ export function formatScheduleToast(input: {
   const today = dateKey(zonedParts(now, input.accountTimezone));
   const scheduledDate = dateKey(zonedParts(scheduled, input.accountTimezone));
   const distance = dayDistance(today, scheduledDate);
-  const relative = distance === 0 ? "Today, " : distance === 1 ? "Tomorrow, " : "";
+  const relative =
+    distance === 0 ? "Today, " : distance === 1 ? "Tomorrow, " : "";
   const date = new Intl.DateTimeFormat("en-US", {
     timeZone: input.accountTimezone,
     month: "short",
@@ -242,12 +294,15 @@ export function formatScheduleToast(input: {
   const showZone =
     input.browserTimezone && input.browserTimezone !== input.accountTimezone;
   const zone = showZone
-    ? ` ${new Intl.DateTimeFormat("en-US", {
-        timeZone: input.accountTimezone,
-        timeZoneName: "short",
-      })
-        .formatToParts(scheduled)
-        .find((part) => part.type === "timeZoneName")?.value ?? input.accountTimezone}`
+    ? ` ${
+        new Intl.DateTimeFormat("en-US", {
+          timeZone: input.accountTimezone,
+          timeZoneName: "short",
+        })
+          .formatToParts(scheduled)
+          .find((part) => part.type === "timeZoneName")?.value ??
+        input.accountTimezone
+      }`
     : "";
   return `Post ${input.action ?? "scheduled"} for ${relative}${date} at ${time}${zone}`;
 }
