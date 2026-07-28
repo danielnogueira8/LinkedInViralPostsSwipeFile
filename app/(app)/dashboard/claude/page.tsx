@@ -16,8 +16,8 @@ import {
 } from "lucide-react";
 import { AiIcon } from "@/components/ai-icon";
 import { AgentAvatar } from "@/components/agent-avatar";
+import Image from "next/image";
 import type { ComponentType } from "react";
-import { ClaudeIcon } from "@/components/claude-icon";
 import { CopyAiInstructions, CopyConnectorUrl, CopyPrompt } from "./copy";
 import { requireWorkspaceId } from "@/lib/workspace";
 import { PUBLIC_MCP_TOOLS } from "@/lib/mcp/public-tools";
@@ -177,8 +177,9 @@ export default async function ClaudePage() {
     <div className="space-y-8">
       <PageHeader
         meta={
-          <span className="grid h-9 w-9 place-items-center rounded-lg bg-foreground text-background">
-            <ClaudeIcon className="h-4 w-4" />
+          <span className="grid h-9 w-9 place-items-center rounded-lg border border-border/60 bg-muted">
+            {/* The colored Claude mark, same as the landing features grid. */}
+            <Image src="/claude.svg" alt="" width={20} height={20} />
           </span>
         }
         title="Claude Workflows"
