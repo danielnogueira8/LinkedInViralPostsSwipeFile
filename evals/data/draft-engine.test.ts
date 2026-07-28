@@ -2544,7 +2544,11 @@ describe("output language", () => {
   }
 
   test("every draft path compiles the always-English output rule", async () => {
-    const cases: Array<{ label: string; overrides: Partial<WriterInput> }> = [
+    const cases: Array<{
+      label: string;
+      overrides: Partial<WriterInput>;
+      output?: string;
+    }> = [
       { label: "original", overrides: {} },
       { label: "lean original", overrides: { lean: true } },
       {
@@ -2590,11 +2594,31 @@ describe("output language", () => {
           },
         },
       },
+      {
+        label: "partial deliverable",
+        output: "1.\nHook: Build proof before you need it.",
+        overrides: {
+          task: {
+            kind: "partial",
+            spec: {
+              kind: "hook",
+              label: "Hook",
+              expectedCount: 1,
+              contract: {
+                expectedCount: 1,
+                requiredFields: ["Hook"],
+                forbidFraming: true,
+                fieldsOnly: false,
+              },
+            },
+          },
+        },
+      },
     ];
 
-    for (const { label, overrides } of cases) {
+    for (const { label, overrides, output = COMPLETE_POST } of cases) {
       const writer = new ScriptedWriter([
-        { text: COMPLETE_POST, finishReason: "stop", usage: usage(100, 70) },
+        { text: output, finishReason: "stop", usage: usage(100, 70) },
       ]);
       await collect(writer, overrides);
       const system = systemOf(writer);
@@ -2626,5 +2650,73 @@ describe("output language", () => {
     expect(system).toContain("model its hook, structure, rhythm, and progression");
     // ...but never mirrors its language.
     expect(system).toContain("Never mirror the source post's language");
+  });
+});
+
+describe("writer instruction scope", () => {
+  test("applies explicit scope rules to every draft path", async () => {
+    const cases: Array<{ label: string; overrides: Partial<WriterInput> }> = [
+      { label: "original", overrides: {} },
+      { label: "lean original", overrides: { lean: true } },
+      {
+        label: "refine",
+        overrides: {
+          task: {
+            kind: "refine",
+            instruction: "Tighten every paragraph.",
+            focus: "general",
+            target: REFINE_TARGET,
+          },
+        },
+      },
+      {
+        label: "grounded",
+        overrides: {
+          task: {
+            kind: "grounded",
+            sources: [
+              {
+                id: "https://example.com/evidence",
+                kind: "news",
+                text: "Verified evidence.",
+              },
+            ],
+          },
+        },
+      },
+      {
+        label: "source modeling",
+        overrides: {
+          task: {
+            kind: "source",
+            source: { id: "source-1", text: "A source post." },
+          },
+        },
+      },
+    ];
+
+    for (const { label, overrides } of cases) {
+      const writer = new ScriptedWriter([
+        { text: COMPLETE_POST, finishReason: "stop", usage: usage(100, 70) },
+      ]);
+      await collect(writer, overrides);
+      const system = String(
+        writer.requests[0].messages.find(
+          (message) => message.role === "system",
+        )?.content ?? "",
+      );
+      expect(system, label).toContain(
+        "apply each unscoped instruction to every requested post or every requested list item",
+      );
+      expect(system, label).toContain(
+        "An instruction that names a specific section or field applies only there",
+      );
+      expect(system, label).toContain(
+        "A total count or limit remains global",
+      );
+      expect(system, label).toContain(
+        "Do not infer or add deliverables the user did not request",
+      );
+    }
   });
 });

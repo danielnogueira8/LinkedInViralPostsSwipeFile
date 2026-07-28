@@ -424,4 +424,16 @@ describe("source-fidelity reviewer prompt", () => {
     expect(SOURCE_FIDELITY_SYSTEM_PROMPT).toMatch(/generalize/i);
     expect(SOURCE_FIDELITY_SYSTEM_PROMPT).not.toMatch(/loose[^.]*adaptation is a pass/i);
   });
+
+  test("reviews every fidelity criterion before reporting all material defects", () => {
+    expect(SOURCE_FIDELITY_SYSTEM_PROMPT).toContain(
+      "Evaluate every criterion above before deciding",
+    );
+    expect(SOURCE_FIDELITY_SYSTEM_PROMPT).toContain(
+      "report every distinct material defect you find",
+    );
+    expect(SOURCE_FIDELITY_SYSTEM_PROMPT).toContain(
+      "omit pure style preferences",
+    );
+  });
 });

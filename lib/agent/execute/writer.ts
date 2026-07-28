@@ -58,6 +58,7 @@ import {
   selectSkills,
 } from "@/lib/agent/skills";
 import type { ToolResult } from "@/lib/agent/tools";
+import { LITERAL_SCOPE_GUIDANCE } from "@/lib/agent/prompt-guidance";
 import {
   FALLBACK_DRAFT_WRITER_MODEL,
   PRIMARY_DRAFT_WRITER_MODEL,
@@ -597,7 +598,10 @@ function compileMessages(
     "Call get_voice first if you haven't this turn, then write to the profile",
     "Use the supplied voice profile and write to it",
   );
-  const writingSkill = input.lean ? THIN_WRITING_NOTE : GLOBAL_WRITING_SKILL;
+  const writingSkill = [
+    LITERAL_SCOPE_GUIDANCE,
+    input.lean ? THIN_WRITING_NOTE : GLOBAL_WRITING_SKILL,
+  ].join("\n\n");
   const structureSkill = input.lean ? "" : POST_STRUCTURE_SKILL;
   const preferences = renderPreferencesBlock(input.preferences);
   const feedback = renderFeedbackMemoryBlock(input.feedbackMemory);
