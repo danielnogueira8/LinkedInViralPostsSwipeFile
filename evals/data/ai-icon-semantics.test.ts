@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 const AI_SURFACES = new Set([
   "app/(app)/dashboard/agent-briefing.tsx",
   "app/(app)/dashboard/chat-workspace.tsx",
-  "app/(app)/dashboard/claude/page.tsx",
+  "app/(app)/dashboard/claude/agents.ts",
   "app/(app)/dashboard/draft-editor.tsx",
   "app/(app)/dashboard/first-run-checklist.tsx",
   "app/(app)/dashboard/lead-magnets/manager.tsx",

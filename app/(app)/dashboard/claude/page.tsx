@@ -4,117 +4,20 @@ import {
   Plug,
   Shield,
   Check,
-  CalendarDays,
-  Repeat2,
-  Magnet,
-  Lightbulb,
-  Clock,
-  Search,
-  UserPlus,
   BookOpenText,
   ExternalLink,
 } from "lucide-react";
-import { AiIcon } from "@/components/ai-icon";
 import { AgentAvatar } from "@/components/agent-avatar";
 import Image from "next/image";
-import type { ComponentType } from "react";
 import { CopyAiInstructions, CopyConnectorUrl, CopyPrompt } from "./copy";
 import { requireWorkspaceId } from "@/lib/workspace";
 import { PUBLIC_MCP_TOOLS } from "@/lib/mcp/public-tools";
 import { SWIPEIN_MCP_INSTRUCTIONS } from "@/lib/mcp/llms-instructions";
+import { AGENTS, composePrompt, SKILL_CHIP_LABEL } from "./agents";
 
 // The apex domain 307-redirects to www; MCP clients don't follow redirects on
 // the initialize POST, so the connector URL must be the canonical www host.
 const CONNECTOR_URL_BASE = "https://www.tryswipein.com/api/mcp";
-
-// Workflows — copy-and-run agents. Each is framed as a named agent you put to
-// work: the `tag` is the agent's name (rendered as the card's chip), the title
-// is its concrete payoff, and the prompt is the brief you hand it. Every prompt
-// opens with "Use the SwipeIn connector" so it reads naturally AND quietly
-// reinforces the connector name from setup.
-type Agent = {
-  tag: string; // the agent's name — rendered next to its avatar, e.g. "Batch Writer Agent"
-  slug: string; // avatar file: public/agents/<slug>.svg (a <slug>.png overrides)
-  title: string;
-  payoff: string; // what you walk away with — the incentive
-  prompt: string;
-  icon: ComponentType<{ className?: string }>;
-};
-
-const AGENTS: Agent[] = [
-  {
-    tag: "Bulk Writer Agent",
-    slug: "bulk-writer",
-    title: "10 posts, modeled on what's winning right now",
-    payoff: "Walk away with 10 ready-to-edit posts in your voice — a full content pipeline in one run.",
-    icon: AiIcon,
-    prompt:
-      "Use the SwipeIn connector. Call get_voice to load my writing voice. Then search_viral_posts for the 20 most viral regular posts from the last 7 days, pick the 10 with the most distinct structures, and write 10 posts modeled on them in my voice — no two using the same hook pattern, each under 1,500 characters, no AI tells (no \"Same X. Same Y.\" rhythm, no \"Here's the part everyone misses\" openers). Save each one as a draft with create_draft.",
-  },
-  {
-    tag: "Calendar Architect Agent",
-    slug: "calendar-architect",
-    title: "A full week of content, no two posts alike",
-    payoff: "Get a 7-day calendar where every day uses a different proven hook pattern — no repeats, no blank-page mornings.",
-    icon: CalendarDays,
-    prompt:
-      "Use the SwipeIn connector. Call get_voice first to load my writing voice. Then search_viral_posts for the top 20 viral posts from the last 14 days and group them by hook pattern. Build me a 7-day posting calendar — one post per day, each using a different pattern I haven't overused, drafted in my voice and under 1,500 characters. Save every post with create_draft and schedule them across the week with schedule_draft.",
-  },
-  {
-    tag: "Remix Agent",
-    slug: "remix",
-    title: "Turn one viral post into three angles",
-    payoff: "One proven post becomes three distinct posts — same winning structure, three different stories you can space out.",
-    icon: Repeat2,
-    prompt:
-      "Use the SwipeIn connector. Call get_voice first to load my writing voice. Then find the single most viral post from the last 30 days, pull its structure with get_template, and write me 3 different posts that keep the hook structure but tell 3 different stories from my world. Match my voice, flag the part of each that's doing the heavy lifting, and save all three with create_draft.",
-  },
-  {
-    tag: "Offer Hunter Agent",
-    slug: "offer-hunter",
-    title: "Reverse-engineer the best lead magnets",
-    payoff: "See exactly what's being given away to drive 500+ comments — and get an adapted offer you can run this week.",
-    icon: Magnet,
-    prompt:
-      "Use the SwipeIn connector. search_viral_posts for lead-magnet posts (post_type = lead_magnet) from the last 30 days with more than 500 comments. For the top 3, tell me what they're giving away, the exact hook and CTA they used. Then call get_voice and write an adapted version of the best one for my audience, in my voice, and save it with create_draft.",
-  },
-  {
-    tag: "Hook Scout Agent",
-    slug: "hook-scout",
-    title: "5 hooks to test, based on what's pulling now",
-    payoff: "Skip the guesswork — get 5 hooks tied to patterns that are actually pulling engagement this week, ranked by why.",
-    icon: Lightbulb,
-    prompt:
-      "Use the SwipeIn connector. Call get_voice first to load my writing voice. Then search_viral_posts for every viral post from the last 7 days and rank the hook patterns by average engagement. Give me the top 5 patterns and write one fresh hook for each in my voice, with a one-line note on why that pattern is working right now.",
-  },
-  {
-    tag: "Timing Strategist Agent",
-    slug: "timing-strategist",
-    title: "Schedule around when big posts actually land",
-    payoff: "Stop guessing post times — get the day-and-hour windows where the creators you track land their biggest hits.",
-    icon: Clock,
-    prompt:
-      "Use the SwipeIn connector. Across the viral posts from the last 30 days, tell me which days of the week and times of day produce the most viral posts for the creators I track. Then list_drafts, pick my 5 strongest, and schedule them into those windows with schedule_draft.",
-  },
-  {
-    tag: "Trend Radar Agent",
-    slug: "trend-radar",
-    title: "See this week's best posts at a glance",
-    payoff: "A fast read on what's working in your niche right now — hooks, authors, and engagement, ranked.",
-    icon: Search,
-    prompt:
-      "Use the SwipeIn connector. search_viral_posts for the top 10 viral posts from the last 7 days in my niche, sorted by reactions. Give me the hook, the author, and engagement for each so I can see what's working at a glance.",
-  },
-  {
-    tag: "Roster Manager Agent",
-    slug: "roster-manager",
-    title: "Add a creator to track",
-    payoff: "Grow your swipe file in one line — add a creator and instantly see who else you track in their niche.",
-    icon: UserPlus,
-    prompt:
-      "Use the SwipeIn connector. add_account for linkedin.com/in/justinwelsh under niche 'solopreneur'. Then show me what other accounts I'm already tracking in that niche.",
-  },
-];
 
 export default async function ClaudePage() {
   const workspaceId = await requireWorkspaceId();
@@ -242,6 +145,7 @@ export default async function ClaudePage() {
         <div className="grid gap-3 md:grid-cols-2">
           {AGENTS.map((agent) => {
             const Icon = agent.icon;
+            const prompt = composePrompt(agent.brief, agent.skills);
             return (
               <div
                 key={agent.title}
@@ -275,11 +179,26 @@ export default async function ClaudePage() {
                     <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
                       Prompt
                     </span>
-                    <CopyPrompt prompt={agent.prompt} />
+                    <CopyPrompt prompt={prompt} />
                   </div>
-                  <p className="text-[13px] leading-6 text-muted-foreground whitespace-pre-wrap">
-                    {agent.prompt}
+                  <p className="max-h-48 overflow-y-auto whitespace-pre-wrap pr-1 text-[13px] leading-6 text-muted-foreground">
+                    {prompt}
                   </p>
+                  {agent.skills.length > 0 ? (
+                    <div className="mt-2 flex flex-wrap items-center gap-1 border-t border-border/60 pt-2">
+                      <span className="text-[9px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
+                        Carries
+                      </span>
+                      {agent.skills.map((skillId) => (
+                        <span
+                          key={skillId}
+                          className="rounded-full bg-background px-1.5 py-0.5 text-[9px] font-medium text-muted-foreground"
+                        >
+                          {SKILL_CHIP_LABEL[skillId] ?? skillId}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
               </div>
             );
