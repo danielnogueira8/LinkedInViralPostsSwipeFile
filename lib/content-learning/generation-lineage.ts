@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { Artifact } from "@/lib/agent/contracts";
 import type { DraftRecord } from "@/lib/draft-lifecycle";
 import { createContentLineageStore } from "@/lib/content-learning/lineage";
+import { explorationLaneSchema } from "@/lib/content-learning/contracts";
 import { supabaseAdmin } from "@/lib/supabase";
 
 const nullableId = z.string().trim().min(1).max(160).nullable();
@@ -20,6 +21,7 @@ export const generationLineageSeedSchema = z
     customSkillIds: z.array(z.string().trim().min(1).max(160)).max(20),
     leadMagnetId: nullableId,
     voiceProfileRevision: nullableId,
+    explorationLane: explorationLaneSchema.nullable().optional(),
     generationModel: z.string().trim().min(1).max(200),
     generatedAt: z.string().datetime({ offset: true }),
   })
@@ -164,6 +166,7 @@ export async function recordSavedDraftLineage(
         customSkillIds: seed.customSkillIds,
         leadMagnetId: seed.leadMagnetId,
         voiceProfileRevision: seed.voiceProfileRevision,
+        explorationLane: seed.explorationLane ?? null,
       },
       origin: {
         kind: originKind,

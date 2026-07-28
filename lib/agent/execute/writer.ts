@@ -79,6 +79,11 @@ import {
   type DirectRefineFocus,
 } from "@/lib/agent/direct-refine-policy";
 import {
+  automaticExplorationLane,
+  explorationLaneGuidance,
+  type ExplorationLane,
+} from "@/lib/agent/original-post-exploration";
+import {
   classifyAdapterFailure,
   coworkAdapterHealth,
   type AdapterHealthRegistry,
@@ -650,6 +655,7 @@ function compileMessages(
   input: WriterInput,
   task: SingleTask,
   variation?: DraftVariation,
+  explorationLane: ExplorationLane | null = null,
 ): CompiledWriterPrompt {
   const instruction =
     task.kind === "refine" ? task.instruction : input.userInstruction;  const selectedSkills = selectSkills(instruction);
@@ -677,6 +683,9 @@ function compileMessages(
   const recentDraftExcerpts = recentDraftExcerptsBlock(
     input.priorPostDrafts,
   );
+  const explorationGuidance = explorationLane
+    ? explorationLaneGuidance(explorationLane)
+    : "";
   const history = writerHistoryDigest(input.history ?? []);
   const historyLines = history
     ? [
@@ -925,6 +934,7 @@ function compileMessages(
         preferences,
         feedback,
         workspaceLearning,
+        explorationGuidance,
       ]
         .filter(Boolean)
         .join("\n\n"),
@@ -1263,7 +1273,23 @@ export async function* runSingleDraftTurn(
     task.kind === "original" || task.kind === "source" || task.kind === "grounded"
       ? task.variation
       : undefined;
-  const compiledPrompt = compileMessages(input, task, variation);
+  const explorationLane =
+    task.kind === "original"
+      ? automaticExplorationLane(
+          [
+            input.workspaceId,
+            input.sessionId ?? "no-session",
+            input.priorPostDrafts[0]?.id ?? "no-recent-draft",
+            input.userInstruction,
+          ].join("\n"),
+        )
+      : null;
+  const compiledPrompt = compileMessages(
+    input,
+    task,
+    variation,
+    explorationLane,
+  );
   const baseMessages = compiledPrompt.messages;
   const policyInstruction =
     task.kind === "refine" ? task.instruction : input.userInstruction;
@@ -1391,7 +1417,15 @@ export async function* runSingleDraftTurn(
           ...task.target,
           body: artifact.body,
         }
-      : artifact;
+      : explorationLane
+        ? {
+            ...artifact,
+            meta: {
+              ...(artifact.meta ?? {}),
+              exploration_lane: explorationLane,
+            },
+          }
+        : artifact;
   const successText =
     task.kind === "refine" ? UPDATED_DRAFT_READY_TEXT : DRAFT_READY_TEXT;
   let writerAttempt = 0;
