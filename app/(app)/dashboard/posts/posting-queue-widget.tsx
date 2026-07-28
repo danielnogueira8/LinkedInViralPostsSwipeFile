@@ -9,6 +9,7 @@ import {
   LoaderCircle,
   Move,
   Plus,
+  Settings2,
   Trash2,
   X,
 } from "lucide-react";
@@ -43,9 +44,20 @@ import { cn } from "@/lib/utils";
 type QueueResponse = {
   ok: true;
   collapsed: boolean;
+  timeVariationEnabled: boolean;
   slots: PostingQueueSlot[];
   drafts: PostingQueueDraft[];
 };
+
+const SETTINGS_DAYS = [
+  { dayOfWeek: 1, label: "Monday" },
+  { dayOfWeek: 2, label: "Tuesday" },
+  { dayOfWeek: 3, label: "Wednesday" },
+  { dayOfWeek: 4, label: "Thursday" },
+  { dayOfWeek: 5, label: "Friday" },
+  { dayOfWeek: 6, label: "Saturday" },
+  { dayOfWeek: 0, label: "Sunday" },
+] as const;
 
 export function PostingQueueWidget({
   onOpenDraft,
@@ -78,6 +90,12 @@ export function PostingQueueWidget({
   const [slots, setSlots] = useState<PostingQueueSlot[]>([]);
   const [drafts, setDrafts] = useState<PostingQueueDraft[]>([]);
   const [collapsed, setCollapsed] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [timeVariationEnabled, setTimeVariationEnabled] = useState(false);
+  const [savingVariation, setSavingVariation] = useState(false);
+  const [settingsTimes, setSettingsTimes] = useState<Record<number, string>>(
+    () => Object.fromEntries(SETTINGS_DAYS.map((day) => [day.dayOfWeek, "09:00"])),
+  );
   const [loaded, setLoaded] = useState(false);
   const [addingDay, setAddingDay] = useState<number | null>(null);
   const [dragOverOccurrence, setDragOverOccurrence] = useState<string | null>(
@@ -119,6 +137,7 @@ export function PostingQueueWidget({
     setDrafts(data.drafts);
     onQueueSnapshotLoaded(data.drafts);
     setCollapsed(data.collapsed);
+    setTimeVariationEnabled(data.timeVariationEnabled === true);
     setLoaded(true);
   };
 
@@ -199,12 +218,12 @@ export function PostingQueueWidget({
     }
   };
 
-  const addSlot = async (dayOfWeek: number) => {
+  const addSlot = async (dayOfWeek: number, localTime = time) => {
     try {
       const response = await fetch("/api/posting-slots", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dayOfWeek, localTime: time, timezone }),
+        body: JSON.stringify({ dayOfWeek, localTime, timezone }),
       });
       const data = (await response.json()) as {
         ok: boolean;
@@ -223,6 +242,31 @@ export function PostingQueueWidget({
       setAddingDay(null);
     } catch (error) {
       toast.error((error as Error).message);
+    }
+  };
+
+  const updateTimeVariation = async () => {
+    if (savingVariation) return;
+    const next = !timeVariationEnabled;
+    setTimeVariationEnabled(next);
+    setSavingVariation(true);
+    try {
+      const response = await fetch("/api/posting-slots", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ timeVariationEnabled: next }),
+      });
+      if (!response.ok) throw new Error("Couldn't save queue timing.");
+      toast.success(
+        next
+          ? "Queue time variation enabled"
+          : "Queue time variation disabled",
+      );
+    } catch (error) {
+      setTimeVariationEnabled(!next);
+      toast.error((error as Error).message);
+    } finally {
+      setSavingVariation(false);
     }
   };
 
@@ -400,25 +444,39 @@ export function PostingQueueWidget({
       className="rounded-xl border border-border bg-card shadow-soft"
       aria-label="Posting queue"
     >
-      <button
-        type="button"
-        onClick={toggleCollapsed}
-        className="flex w-full items-center gap-2 px-3 py-2.5 text-left"
-        aria-expanded={!collapsed}
-      >
-        <CalendarClock className="h-4 w-4 text-primary" />
-        <span className="text-sm font-semibold">Posting queue</span>
-        <span className="text-xs text-muted-foreground">
-          {slots.length === 0
-            ? "Add a recurring time to enable one-click scheduling."
-            : "Your next 7 days"}
-        </span>
-        {collapsed ? (
-          <ChevronDown className="ml-auto h-4 w-4 text-muted-foreground" />
-        ) : (
-          <ChevronUp className="ml-auto h-4 w-4 text-muted-foreground" />
-        )}
-      </button>
+      <div className="flex items-center gap-2 px-3 py-2.5">
+        <CalendarClock className="h-4 w-4 shrink-0 text-primary" />
+        <div className="min-w-0 flex-1">
+          <span className="text-sm font-semibold">Posting queue</span>
+          <span className="ml-2 text-xs text-muted-foreground">
+            {slots.length === 0
+              ? "Add a recurring time to enable one-click scheduling."
+              : "Your next 7 days"}
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={() => setSettingsOpen(true)}
+          className="grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/35"
+          aria-label="Queue settings"
+          title="Posting queue settings"
+        >
+          <Settings2 className="h-4 w-4" aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          onClick={toggleCollapsed}
+          className="grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/35"
+          aria-label={`Posting queue, ${collapsed ? "expand" : "collapse"}`}
+          aria-expanded={!collapsed}
+        >
+          {collapsed ? (
+            <ChevronDown className="h-4 w-4" />
+          ) : (
+            <ChevronUp className="h-4 w-4" />
+          )}
+        </button>
+      </div>
       {!collapsed && (
         <div className="overflow-x-auto border-t">
           <div className="grid min-w-[840px] grid-cols-7 divide-x">
@@ -805,6 +863,158 @@ export function PostingQueueWidget({
           </div>
         </div>
       )}
+      <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
+        <DialogContent className="left-auto right-0 top-0 h-dvh max-h-dvh w-full max-w-md translate-x-0 translate-y-0 grid-rows-[auto_minmax(0,1fr)] rounded-none p-0 sm:max-w-md">
+          <DialogHeader className="border-b px-5 py-4 pr-12 text-left">
+            <DialogTitle>Posting queue settings</DialogTitle>
+            <DialogDescription>
+              Set the recurring times that power Add to Queue.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="min-h-0 space-y-5 overflow-y-auto overscroll-contain px-5 py-4">
+            <section className="rounded-xl border border-border p-4">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h3 className="text-sm font-semibold">
+                    Natural timing variation
+                  </h3>
+                  <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                    Schedule each newly queued post up to 15 minutes before or
+                    after its slot. Times you choose manually stay exact.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={timeVariationEnabled}
+                  aria-label="Vary posting queue times by up to 15 minutes"
+                  disabled={savingVariation}
+                  onClick={() => void updateTimeVariation()}
+                  className="grid size-11 shrink-0 place-items-center rounded-full outline-none focus-visible:ring-3 focus-visible:ring-ring/30 disabled:cursor-wait disabled:opacity-60"
+                >
+                  <span
+                    aria-hidden="true"
+                    className={cn(
+                      "relative h-6 w-11 rounded-full transition-colors",
+                      timeVariationEnabled
+                        ? "bg-primary"
+                        : "bg-muted-foreground/25",
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        "absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform",
+                        timeVariationEnabled
+                          ? "translate-x-5"
+                          : "translate-x-0",
+                      )}
+                    />
+                  </span>
+                </button>
+              </div>
+            </section>
+
+            <section aria-labelledby="recurring-times-heading">
+              <div className="mb-3">
+                <h3
+                  id="recurring-times-heading"
+                  className="text-sm font-semibold"
+                >
+                  Recurring posting times
+                </h3>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Add up to three times per day. Removing an occupied slot keeps
+                  its post scheduled as a one-off.
+                </p>
+              </div>
+              <div className="space-y-3">
+                {SETTINGS_DAYS.map((day) => {
+                  const daySlots = slots
+                    .filter((slot) => slot.dayOfWeek === day.dayOfWeek)
+                    .sort((a, b) => a.localTime.localeCompare(b.localTime));
+                  return (
+                    <div
+                      key={day.dayOfWeek}
+                      className="rounded-xl border border-border p-3"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-sm font-semibold">
+                          {day.label}
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          {daySlots.length}/3
+                        </span>
+                      </div>
+                      {daySlots.length > 0 ? (
+                        <div className="mt-2 space-y-1.5">
+                          {daySlots.map((slot) => (
+                            <div
+                              key={slot.id}
+                              className="flex items-center gap-2 rounded-lg bg-muted/50 px-2.5 py-2"
+                            >
+                              <Clock3
+                                className="h-3.5 w-3.5 text-muted-foreground"
+                                aria-hidden="true"
+                              />
+                              <span className="text-sm">
+                                {slot.localTime.slice(0, 5)}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => void removeSlot(slot)}
+                                className="ml-auto rounded p-1 text-muted-foreground hover:bg-background hover:text-foreground"
+                                aria-label={`Remove ${day.label} ${slot.localTime.slice(0, 5)} posting slot`}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="mt-2 text-xs text-muted-foreground">
+                          No posting times
+                        </p>
+                      )}
+                      <div className="mt-2 flex gap-2">
+                        <input
+                          type="time"
+                          value={settingsTimes[day.dayOfWeek] ?? "09:00"}
+                          disabled={daySlots.length >= 3}
+                          onChange={(event) =>
+                            setSettingsTimes((current) => ({
+                              ...current,
+                              [day.dayOfWeek]: event.target.value,
+                            }))
+                          }
+                          className="h-9 min-w-0 flex-1 rounded-lg border bg-background px-2 text-sm disabled:opacity-50"
+                          aria-label={`New ${day.label} posting time in settings`}
+                        />
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={
+                            daySlots.length >= 3 ||
+                            !settingsTimes[day.dayOfWeek]
+                          }
+                          onClick={() =>
+                            void addSlot(
+                              day.dayOfWeek,
+                              settingsTimes[day.dayOfWeek] ?? "09:00",
+                            )
+                          }
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                          Add
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          </div>
+        </DialogContent>
+      </Dialog>
       <Dialog
         open={pickerTarget !== null}
         onOpenChange={(open) => {

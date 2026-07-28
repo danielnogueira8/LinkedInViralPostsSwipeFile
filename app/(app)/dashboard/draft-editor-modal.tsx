@@ -428,7 +428,6 @@ export function DraftEditorModal({
           postingSlotId: initialQueueTarget.postingSlotId,
           postingSlotOccurrenceDate:
             initialQueueTarget.postingSlotOccurrenceDate,
-          localTime: initialQueueTarget.localTime,
         });
         onMeta(id, {
           scheduledAt: data.scheduledAt,

@@ -49,6 +49,26 @@ test.describe("new board posts and LinkedIn scheduling", () => {
     );
   });
 
+  test("opens queue settings in a right-side panel", async ({ page }) => {
+    const queue = page.getByRole("region", { name: "Posting queue" });
+    await queue.getByRole("button", { name: "Queue settings" }).click();
+
+    const settings = page.getByRole("dialog", {
+      name: "Posting queue settings",
+    });
+    await expect(settings).toBeVisible();
+    await expect(
+      settings.getByRole("switch", {
+        name: "Vary posting queue times by up to 15 minutes",
+      }),
+    ).toBeVisible();
+    await expect(
+      settings.getByRole("heading", { name: "Recurring posting times" }),
+    ).toBeVisible();
+    await expect(settings.getByText("Monday", { exact: true })).toBeVisible();
+    await expect(settings.getByText("Sunday", { exact: true })).toBeVisible();
+  });
+
   test("creates and schedules a post from the board", async ({ page }) => {
     const scheduledAt = futureDatetimeLocal();
     let scheduledId = "";

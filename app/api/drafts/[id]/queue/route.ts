@@ -14,6 +14,7 @@ import {
   existingQueueBooking,
   type ExistingQueueBooking,
 } from "@/lib/posting-queue-idempotency";
+import { varyPostingQueueInstant } from "@/lib/posting-queue-variation";
 
 export const runtime = "nodejs";
 
@@ -46,6 +47,19 @@ type TargetSlot = {
   local_time: string;
   timezone: string;
 };
+
+async function queueTimeVariationEnabled(
+  sb: Awaited<ReturnType<typeof scopedSupabase>>,
+): Promise<boolean> {
+  const { data, error } = await sb.raw
+    .from("settings")
+    .select("value")
+    .eq("workspace_id", sb.workspaceId)
+    .eq("key", "posting_queue_time_variation_enabled")
+    .maybeSingle();
+  if (error) throw error;
+  return data?.value === true;
+}
 
 async function existingBookingResponse(
   sb: Awaited<ReturnType<typeof scopedSupabase>>,
@@ -92,6 +106,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     );
 
     if (input.postingSlotId && input.postingSlotOccurrenceDate) {
+      const currentBooking = existingQueueBooking(await repository.find(id));
+      if (
+        input.localTime === undefined &&
+        currentBooking?.postingSlotId === input.postingSlotId &&
+        currentBooking.postingSlotOccurrenceDate ===
+          input.postingSlotOccurrenceDate
+      ) {
+        return existingBookingResponse(sb, currentBooking, input.timezone);
+      }
       const { data, error } = await sb.raw
         .from("posting_slots")
         .select("id, day_of_week, local_time, timezone")
@@ -119,19 +142,39 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           { status: 400 },
         );
       }
-      const scheduledAt = postingSlotInstant(
+      const nominalScheduledAt = postingSlotInstant(
         input.postingSlotOccurrenceDate,
         input.localTime ?? slot.local_time,
         slot.timezone,
-      ).toISOString();
-      const outcome = await lifecycle.schedule(id, {
+      );
+      const nominalScheduledAtIso = nominalScheduledAt.toISOString();
+      const scheduledAt = varyPostingQueueInstant({
+        scheduledAt: nominalScheduledAt,
+        occurrenceDate: input.postingSlotOccurrenceDate,
+        timezone: slot.timezone,
+        enabled:
+          input.localTime === undefined &&
+          (await queueTimeVariationEnabled(sb)),
+      }).toISOString();
+      const scheduleInput = {
         scheduledAt,
         planToPostOn: input.postingSlotOccurrenceDate,
         timezone: slot.timezone,
         firstComment: input.firstComment,
         postingSlotId: slot.id,
         postingSlotOccurrenceDate: input.postingSlotOccurrenceDate,
-      });
+      };
+      let outcome = await lifecycle.schedule(id, scheduleInput);
+      if (
+        !outcome.ok &&
+        outcome.reason === "media_expiry" &&
+        scheduledAt !== nominalScheduledAtIso
+      ) {
+        outcome = await lifecycle.schedule(id, {
+          ...scheduleInput,
+          scheduledAt: nominalScheduledAtIso,
+        });
+      }
       if (!outcome.ok) {
         return NextResponse.json(
           { ok: false, reason: outcome.reason, error: outcome.message },
@@ -159,6 +202,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       p_timezone: input.timezone,
     });
     if (ensureError) throw ensureError;
+    const variationEnabled = await queueTimeVariationEnabled(sb);
     // A competing request can claim the candidate between lookup and lifecycle
     // CAS. Retry against the now-current earliest opening; the unique index is
     // what guarantees two requests can never occupy one occurrence.
@@ -178,14 +222,32 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           { status: 409 },
         );
       }
-      const outcome = await lifecycle.schedule(id, {
-        scheduledAt: candidate.scheduled_at,
+      const nominalScheduledAt = new Date(candidate.scheduled_at).toISOString();
+      const scheduledAt = varyPostingQueueInstant({
+        scheduledAt: new Date(candidate.scheduled_at),
+        occurrenceDate: candidate.occurrence_date,
+        timezone: candidate.timezone,
+        enabled: variationEnabled,
+      }).toISOString();
+      const scheduleInput = {
+        scheduledAt,
         timezone: candidate.timezone,
         firstComment: input.firstComment,
         postingSlotId: candidate.slot_id,
         postingSlotOccurrenceDate: candidate.occurrence_date,
         preserveExistingQueue: true,
-      });
+      };
+      let outcome = await lifecycle.schedule(id, scheduleInput);
+      if (
+        !outcome.ok &&
+        outcome.reason === "media_expiry" &&
+        scheduledAt !== nominalScheduledAt
+      ) {
+        outcome = await lifecycle.schedule(id, {
+          ...scheduleInput,
+          scheduledAt: nominalScheduledAt,
+        });
+      }
       if (outcome.ok) {
         const booking = existingQueueBooking(outcome.value);
         if (booking) {

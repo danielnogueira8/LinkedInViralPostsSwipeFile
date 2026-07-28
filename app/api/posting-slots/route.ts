@@ -12,7 +12,17 @@ const createSchema = z.object({
   timezone: timeZoneSchema,
 });
 
-const patchSchema = z.object({ collapsed: z.boolean() });
+const patchSchema = z
+  .object({
+    collapsed: z.boolean().optional(),
+    timeVariationEnabled: z.boolean().optional(),
+  })
+  .refine(
+    (value) =>
+      value.collapsed !== undefined ||
+      value.timeVariationEnabled !== undefined,
+    "Choose a posting queue setting to update.",
+  );
 const postingSlotRowSchema = z.object({
   id: z.string().uuid(),
   day_of_week: z.number().int().min(0).max(6),
@@ -34,7 +44,8 @@ export async function GET(req: Request) {
     if (ensureError) throw ensureError;
     const [
       { data: slots, error: slotsError },
-      { data: setting, error: settingError },
+      { data: collapsedSetting, error: collapsedSettingError },
+      { data: variationSetting, error: variationSettingError },
     ] = await Promise.all([
       sb.raw
         .from("posting_slots")
@@ -49,9 +60,16 @@ export async function GET(req: Request) {
         .eq("workspace_id", sb.workspaceId)
         .eq("key", "posting_queue_collapsed")
         .maybeSingle(),
+      sb.raw
+        .from("settings")
+        .select("value")
+        .eq("workspace_id", sb.workspaceId)
+        .eq("key", "posting_queue_time_variation_enabled")
+        .maybeSingle(),
     ]);
     if (slotsError) throw slotsError;
-    if (settingError) throw settingError;
+    if (collapsedSettingError) throw collapsedSettingError;
+    if (variationSettingError) throw variationSettingError;
 
     const now = new Date();
     const queueWindowEnd = new Date(now.getTime() + 8 * 24 * 60 * 60 * 1000);
@@ -86,7 +104,8 @@ export async function GET(req: Request) {
     ];
     return NextResponse.json({
       ok: true,
-      collapsed: setting?.value === true,
+      collapsed: collapsedSetting?.value === true,
+      timeVariationEnabled: variationSetting?.value === true,
       slots: (slots ?? []).map((slot) => ({
         id: slot.id,
         dayOfWeek: slot.day_of_week,
@@ -154,11 +173,27 @@ export async function PATCH(req: Request) {
   try {
     const sb = await scopedSupabase();
     const input = patchSchema.parse(await req.json());
-    const { error } = await sb.upsertSetting(
-      "posting_queue_collapsed",
-      input.collapsed,
-    );
-    if (error) throw error;
+    const writes = [
+      ...(input.collapsed === undefined
+        ? []
+        : [
+            sb.upsertSetting(
+              "posting_queue_collapsed",
+              input.collapsed,
+            ),
+          ]),
+      ...(input.timeVariationEnabled === undefined
+        ? []
+        : [
+            sb.upsertSetting(
+              "posting_queue_time_variation_enabled",
+              input.timeVariationEnabled,
+            ),
+          ]),
+    ];
+    const results = await Promise.all(writes);
+    const failed = results.find((result) => result.error);
+    if (failed?.error) throw failed.error;
     return NextResponse.json({ ok: true });
   } catch (error) {
     return errorResponse(error);
