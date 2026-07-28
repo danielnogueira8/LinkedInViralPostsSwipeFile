@@ -17,6 +17,7 @@ import {
   Link as LinkIcon,
   MoreHorizontal,
   Check,
+  Clock,
   Trash2,
   X,
 } from "lucide-react";
@@ -94,6 +95,25 @@ function kindBadge(kind: DraftKind): { label: string; cls: string } | null {
   return null;
 }
 
+// True for drafts created through the MCP connector (Claude) — the
+// create_draft tool stamps meta.created_via = "mcp" on every one.
+export function isMcpCreatedDraft(draft: Draft): boolean {
+  return (draft.meta as { created_via?: unknown } | null)?.created_via === "mcp";
+}
+
+// "Jul 27, 8:57 PM" — the created date+time stamp every board card shows, so
+// a freshly landed draft is visibly the newest thing in the lane.
+export function formatCreatedAt(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 // A committed, timed LinkedIn publish (distinct from planToPostOn, the soft
 // calendar date). Null scheduleStatus = planning-only. Lifecycle:
 // scheduled → publishing → published | failed (set by the cron).
@@ -128,8 +148,10 @@ export function filterKindForDraft(draft: Draft): DraftKind {
 }
 
 // Pure board model: filter by search query + kind, group by status, sort each
-// column by planned date (soonest first, undated last) then recency. Extracted
-// + exported so it's unit-testable independent of the React component.
+// column by recency (newest first — a draft that just landed, e.g. via the MCP
+// connector, always surfaces at the top of its lane instead of sinking below
+// older planned cards). Planned date is a tiebreaker for same-second creates.
+// Extracted + exported so it's unit-testable independent of the React component.
 export function groupDraftsForBoard(
   drafts: Draft[],
   query: string,
@@ -155,11 +177,13 @@ export function groupDraftsForBoard(
   }
   for (const s of Object.keys(groups) as BoardColumnId[]) {
     groups[s].sort((a, b) => {
+      const recency = b.createdAt.localeCompare(a.createdAt);
+      if (recency !== 0) return recency;
       if (a.planToPostOn && b.planToPostOn)
         return a.planToPostOn.localeCompare(b.planToPostOn);
       if (a.planToPostOn) return -1;
       if (b.planToPostOn) return 1;
-      return b.createdAt.localeCompare(a.createdAt);
+      return 0;
     });
   }
   return groups;
@@ -1540,6 +1564,14 @@ function DraftCard({
                 Agent
               </span>
             )}
+            {isMcpCreatedDraft(draft) && (
+              <span
+                className="inline-flex shrink-0 items-center rounded-full border border-border/70 bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
+                title="Created via the MCP connector (a Claude-side workflow)."
+              >
+                MCP
+              </span>
+            )}
             {draft.scheduleStatus === "scheduled" || draft.scheduleStatus === "publishing" ? (
               <StatusPill tone="info" title="Scheduled to auto-publish on LinkedIn.">
                 <CalendarClock className="h-3 w-3" aria-hidden />
@@ -1573,6 +1605,10 @@ function DraftCard({
                 Source
               </StatusPill>
             )}
+            <StatusPill tone="neutral" title={`Created ${formatCreatedAt(draft.createdAt)}`}>
+              <Clock className="h-3 w-3" aria-hidden />
+              {formatCreatedAt(draft.createdAt)}
+            </StatusPill>
           </div>
         </div>
       </div>
