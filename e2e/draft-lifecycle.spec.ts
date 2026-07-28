@@ -653,7 +653,7 @@ test.describe("Cowork draft lifecycle", () => {
       await expect(card).toBeVisible();
       const target = queue
         .getByRole("group")
-        .filter({ hasText: /Open · Drop a post/ })
+        .filter({ hasText: /Open · Create or drop a post/ })
         .first();
       await expect(target).toBeVisible();
       const targetLabel = await target.getAttribute("aria-label");
@@ -803,7 +803,7 @@ test.describe("Cowork draft lifecycle", () => {
 
     const pickerTarget = queue
       .getByRole("group")
-      .filter({ hasText: /Open · Drop a post/ })
+      .filter({ hasText: /Open · Create or drop a post/ })
       .first();
     const pickerTargetLabel = await pickerTarget.getAttribute("aria-label");
     if (!pickerTargetLabel) throw new Error("Picker target has no label");

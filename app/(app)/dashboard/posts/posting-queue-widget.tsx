@@ -49,6 +49,7 @@ type QueueResponse = {
 
 export function PostingQueueWidget({
   onOpenDraft,
+  onCreateDraftForSlot,
   queueCandidates,
   onScheduleDraftInQueue,
   onDraftRemovedFromQueue,
@@ -56,6 +57,9 @@ export function PostingQueueWidget({
   onQueueSnapshotLoaded,
 }: {
   onOpenDraft: (draftId: string) => void;
+  onCreateDraftForSlot: (
+    target: PostingQueueDropTarget & { label: string },
+  ) => void;
   queueCandidates: Array<{ id: string; title: string }>;
   onScheduleDraftInQueue: (
     draftId: string,
@@ -715,7 +719,20 @@ export function PostingQueueWidget({
                                 isDropTarget && "font-medium text-accent-brand",
                               )}
                             >
-                              <span>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  onCreateDraftForSlot({
+                                    postingSlotId: occurrence.slot.id,
+                                    postingSlotOccurrenceDate: day.date,
+                                    timezone: occurrence.slot.timezone,
+                                    localTime: occurrence.slot.localTime,
+                                    label: `${day.weekday}, ${day.dateLabel} at ${timeLabel}`,
+                                  })
+                                }
+                                className="min-w-0 flex-1 truncate rounded text-left hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/35"
+                                aria-label={`Create a post for ${day.weekday}, ${day.dateLabel} at ${timeLabel}`}
+                              >
                                 {schedulingDraftId && isDropTarget ? (
                                   <span className="inline-flex items-center gap-1">
                                     <LoaderCircle className="h-2.5 w-2.5 animate-spin" />
@@ -724,9 +741,9 @@ export function PostingQueueWidget({
                                 ) : isDropTarget ? (
                                   "Drop post here"
                                 ) : (
-                                  "Open · Drop a post"
+                                  "Open · Create or drop a post"
                                 )}
-                              </span>
+                              </button>
                               <button
                                 type="button"
                                 onClick={() => {
