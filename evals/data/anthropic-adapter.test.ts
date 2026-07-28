@@ -498,6 +498,40 @@ describe("completeChatAnthropic (mocked SDK)", () => {
     expect(tools.every((t) => t.cache_control === undefined)).toBe(true);
   });
 
+  test("the direct-writer adapter forwards an explicit cache opt-out", async () => {
+    const previousProvider = process.env.AI_PROVIDER;
+    process.env.AI_PROVIDER = "anthropic";
+    lastBody.current = null;
+    finalMessage.mockResolvedValue({
+      content: [{ type: "text", text: "finished post" }],
+      stop_reason: "end_turn",
+      model: "claude-sonnet-5",
+      usage: { input_tokens: 10, output_tokens: 5 },
+    });
+    try {
+      const { openRouterDraftWriter } = await import("@/lib/agent/draft-writer");
+      await openRouterDraftWriter.write({
+        stage: "primary",
+        model: "claude-sonnet-5",
+        messages: [
+          { role: "system", content: "unique variation system prompt" },
+          { role: "user", content: "write version two" },
+        ],
+        maxTokens: 3_000,
+        timeoutMs: 60_000,
+        reasoning: "none",
+        cachePrompt: false,
+      });
+
+      expect(lastBody.current!["system"]).toBe(
+        "unique variation system prompt",
+      );
+    } finally {
+      if (previousProvider === undefined) delete process.env.AI_PROVIDER;
+      else process.env.AI_PROVIDER = previousProvider;
+    }
+  });
+
   test("caching stays ON by default (every existing caller is unchanged)", async () => {
     lastBody.current = null;
     finalMessage.mockResolvedValue({

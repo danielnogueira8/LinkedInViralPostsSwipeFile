@@ -399,6 +399,7 @@ describe("DraftEngine", () => {
       model: PRIMARY_DRAFT_WRITER_MODEL,
       reasoning: "none",
     });
+    expect(writer.requests[0].cachePrompt).toBeUndefined();
     expect(Object.keys(writer.requests[0])).not.toContain("tools");
     const prompt = JSON.stringify(writer.requests[0].messages);
     expect(prompt).not.toContain("get_voice");
@@ -1041,6 +1042,9 @@ describe("DraftEngine", () => {
       "primary",
       "repair",
     ]);
+    expect(
+      writer.requests.map((request) => request.cachePrompt),
+    ).toEqual([false, false, false]);
     expect(artifacts(result.events).map((artifact) => artifact.body)).toEqual([
       COMPLETE_POST,
       DISTINCT_COMPLETE_POST,

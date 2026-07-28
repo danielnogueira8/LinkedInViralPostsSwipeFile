@@ -40,6 +40,10 @@ export type DraftWriterRequest = {
   timeoutMs: number;
   signal?: AbortSignal;
   sessionId?: string;
+  // Multi-draft slots add a version-specific system instruction and accepted
+  // prior drafts, so the full prompt is unique to that slot. Let those calls
+  // opt out of paying for a cache entry that another slot cannot reuse.
+  cachePrompt?: boolean;
   // "none" means no explicit reasoning override. This avoids excluding a
   // provider that cannot accept OpenRouter's reasoning controls when the writer
   // model changes. A ReasoningEffort explicitly opts the thin path into it.
@@ -83,6 +87,7 @@ export const openRouterDraftWriter: DraftWriterAdapter = {
       signal: request.signal,
       timeoutMs: request.timeoutMs,
       sessionId: request.sessionId,
+      cachePrompt: request.cachePrompt,
       ...(request.reasoning === "none"
         ? {}
         : { reasoningEffort: request.reasoning }),
