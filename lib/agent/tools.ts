@@ -1089,8 +1089,8 @@ const searchNewsTool: ToolFn = async (args, workspaceId, signal, context) => {
 
 // ---------------------------------------------------------------------------
 // Board tools — the FIRST agent WRITES. These let the agent operate the user's
-// OWN drafts board (chat_artifacts: status idea→drafting→ready→posted +
-// plan_to_post_on), mirroring PATCH /api/drafts/[id]. Only ever touch the user's
+// OWN drafts board (chat_artifacts: status idea→drafting→ready→posted),
+// mirroring PATCH /api/drafts/[id]. Only ever touch the user's
 // own saved drafts — nothing external is sent, nothing another workspace owns.
 //
 // SECURITY-CRITICAL: TOOL_FNS run on supabaseAdmin() (service-role, which
@@ -1100,12 +1100,12 @@ const searchNewsTool: ToolFn = async (args, workspaceId, signal, context) => {
 // ---------------------------------------------------------------------------
 
 const DRAFT_STATUSES = ["idea", "drafting", "ready", "posted"] as const;
-type DraftStatus = (typeof DRAFT_STATUSES)[number];
 const DRAFT_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+type DraftStatus = (typeof DRAFT_STATUSES)[number];
 
 // The columns the agent reasons over for a draft — enough to identify + target
 // one, never the whole body (keeps the tool result small when listing many).
-const DRAFT_COLS = "id, title, kind, status, plan_to_post_on, created_at";
+const DRAFT_COLS = "id, title, kind, status, created_at";
 
 function draftLifecycleForAgent(workspaceId: string) {
   return new DraftLifecycle(
@@ -1119,8 +1119,14 @@ function draftForAgent(draft: DraftRecord) {
     title: draft.title,
     kind: draft.kind,
     status: draft.status,
-    plan_to_post_on: draft.planToPostOn,
     created_at: draft.createdAt,
+  };
+}
+
+function legacyScheduledDraftForAgent(draft: DraftRecord) {
+  return {
+    ...draftForAgent(draft),
+    plan_to_post_on: draft.planToPostOn,
   };
 }
 
@@ -1170,7 +1176,14 @@ const listDrafts: ToolFn = async (args, workspaceId, signal) => {
     if (signal) q = q.abortSignal(signal);
     const { data, error } = await q;
     if (error) return err(error.message);
-    return { ok: true, count: data?.length ?? 0, drafts: data ?? [] };
+    const drafts = (data ?? []).map((draft) => ({
+      id: draft.id,
+      title: draft.title,
+      kind: draft.kind,
+      status: draft.status,
+      created_at: draft.created_at,
+    }));
+    return { ok: true, count: drafts.length, drafts };
   } catch (e) {
     return err((e as Error).message);
   }
@@ -1210,20 +1223,18 @@ const moveOnBoard: ToolFn = async (args, workspaceId) => {
   }
 };
 
-// schedule_post — set (or clear) a saved draft's planned post date. Deterministic
-// validation: YYYY-MM-DD, not in the past (a past plan date is almost always a
-// GLM mistake). null clears the date. The user's own draft only.
+// Compatibility-only executor for action checkpoints created before
+// planning-only dates were retired. It is intentionally absent from TOOL_DEFS,
+// so no new model turn can request it.
 const schedulePost: ToolFn = async (args, workspaceId) => {
   try {
     const id = typeof args.id === "string" ? args.id.trim() : "";
     if (!id) return err("A draft id is required (call list_drafts to get one).");
     let date: string | null;
     if (args.date === null || args.date === undefined || args.date === "") {
-      date = null; // clear the planned date
+      date = null;
     } else if (typeof args.date === "string" && DRAFT_DATE_RE.test(args.date.trim())) {
       date = args.date.trim();
-      // Reject a past date (compared in UTC day terms). A plan for yesterday is a
-      // model error, not a real intent.
       const today = new Date().toISOString().slice(0, 10);
       if (date < today) {
         return err(`"${date}" is in the past. Pick today (${today}) or a future date.`);
@@ -1241,7 +1252,7 @@ const schedulePost: ToolFn = async (args, workspaceId) => {
           : outcome.message,
       );
     }
-    return { ok: true, draft: draftForAgent(outcome.value) };
+    return { ok: true, draft: legacyScheduledDraftForAgent(outcome.value) };
   } catch (e) {
     return err((e as Error).message);
   }
@@ -1415,7 +1426,7 @@ export const TOOL_DEFS: ToolDef[] = [
   },
   // -----------------------------------------------------------------------
   // Board tools — operate the user's OWN drafts pipeline (their saved posts).
-  // list_drafts is the id-space; move_on_board + schedule_post act on it. Only
+  // list_drafts is the id-space; move_on_board acts on it. Only
   // the user's own drafts; nothing external is sent.
   // -----------------------------------------------------------------------
   {
@@ -1423,7 +1434,7 @@ export const TOOL_DEFS: ToolDef[] = [
     function: {
       name: "list_drafts",
       description:
-        "List the user's SAVED drafts (their posts pipeline board) with each one's status and planned date. Use this to find the exact draft id before moving or scheduling one — never guess an id. Optionally filter by status or a case-insensitive title substring. Returns ids, titles, kinds, statuses, and planned dates (not the full body).",
+        "List the user's SAVED drafts (their posts pipeline board). Use this to find the exact draft id before moving one — never guess an id. Optionally filter by status or a case-insensitive title substring. Returns ids, titles, kinds, and statuses (not the full body).",
       parameters: {
         type: "object",
         properties: {
@@ -1463,26 +1474,6 @@ export const TOOL_DEFS: ToolDef[] = [
       },
     },
   },
-  {
-    type: "function",
-    function: {
-      name: "schedule_post",
-      description:
-        "Set (or clear) the planned post date on one of the user's saved drafts. Get the draft id from list_drafts first. The date must be today or in the future. Pass date: null to clear a planned date. This only plans it on the board — it does NOT publish anything.",
-      parameters: {
-        type: "object",
-        required: ["id"],
-        properties: {
-          id: { type: "string", description: "The saved draft's id (from list_drafts)." },
-          date: {
-            type: ["string", "null"],
-            description: "Planned post date as YYYY-MM-DD (today or later), or null to clear it.",
-          },
-        },
-      },
-    },
-  },
-
   // -----------------------------------------------------------------------
   // Render-artifact tools — STRUCTURED OUTPUT pattern.
   //

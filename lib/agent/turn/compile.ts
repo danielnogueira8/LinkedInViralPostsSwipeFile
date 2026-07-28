@@ -242,15 +242,6 @@ function wantsSchedule(instruction: string): boolean {
   );
 }
 
-function isDateBearingSetPutSchedule(instruction: string): boolean {
-  return (
-    hasCommand(instruction, "set|put") &&
-    /\b(?:for|on)\s+(?:this\s+)?(?:\d{4}-\d{2}-\d{2}|today|tomorrow|sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/i.test(
-      instruction,
-    )
-  );
-}
-
 export function explicitBoardDestinationStatuses(
   instruction: string,
 ): Array<BoardMoveStatus | "posted"> {
@@ -264,7 +255,6 @@ export function explicitBoardDestinationStatuses(
     start: match.index ?? 0,
     end: (match.index ?? 0) + match[0].length,
   }));
-  const dateBearingSetPut = isDateBearingSetPutSchedule(instruction);
   const destinations = [
     ...beforeDate.matchAll(
       /\b(?:to|into|as)\s+(idea|drafting|ready|posted)\b/giu,
@@ -312,10 +302,7 @@ export function explicitBoardDestinationStatuses(
         const quotedTitle = /^["“][\s\S]*["”]$/u.test(titleOrSource);
         const explicitSourceStatus =
           /^from\s+(?:idea|drafting|ready|posted)$/i.test(titleOrSource);
-        if (
-          !quotedTitle &&
-          (dateBearingSetPut || !explicitSourceStatus)
-        ) {
+        if (!quotedTitle && !explicitSourceStatus) {
           return [];
         }
       }
@@ -336,10 +323,6 @@ export function explicitBoardDestinationStatuses(
         | "posted",
     ];
   });
-}
-
-function hasExplicitBoardDestination(instruction: string): boolean {
-  return explicitBoardDestinationStatuses(instruction).length > 0;
 }
 
 function changesPublishingSchedule(instruction: string): boolean {
@@ -480,106 +463,6 @@ function requestedMoveStatus(
       : undefined;
 }
 
-function isoDay(date: Date): string {
-  return date.toISOString().slice(0, 10);
-}
-
-function validTimeZone(value: string | undefined): string | undefined {
-  if (!value || value.length > 64) return undefined;
-  try {
-    new Intl.DateTimeFormat("en-US", { timeZone: value }).format(0);
-    return value;
-  } catch {
-    return undefined;
-  }
-}
-
-function localIsoDay(date: Date, timeZone: string | undefined): string {
-  const normalized = validTimeZone(timeZone);
-  if (!normalized) return isoDay(date);
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: normalized,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(date);
-  const part = (type: Intl.DateTimeFormatPartTypes) =>
-    parts.find((item) => item.type === type)?.value ?? "";
-  return `${part("year")}-${part("month")}-${part("day")}`;
-}
-
-function addUtcDays(date: Date, days: number): Date {
-  const next = new Date(date);
-  next.setUTCDate(next.getUTCDate() + days);
-  return next;
-}
-
-const WEEKDAY_INDEX: Record<string, number> = {
-  sunday: 0,
-  monday: 1,
-  tuesday: 2,
-  wednesday: 3,
-  thursday: 4,
-  friday: 5,
-  saturday: 6,
-};
-
-function scheduledDate(
-  instruction: string,
-  now: Date,
-  timeZone?: string,
-): string | null | undefined {
-  if (clearsSchedule(instruction)) return null;
-  const today = localIsoDay(now, timeZone);
-  const localNow = new Date(`${today}T00:00:00.000Z`);
-  const token =
-    "\\d{4}-\\d{2}-\\d{2}|today|tomorrow|sunday|monday|tuesday|wednesday|thursday|friday|saturday";
-  const clarification = instruction.match(
-    new RegExp(`\\bClarification answer:\\s*(${token})\\s*[.!?]?$`, "i"),
-  )?.[1];
-  const destinationMatches = clarification
-    ? [clarification]
-    : [
-        ...instruction.matchAll(
-          new RegExp(`\\b(?:for|on)\\s+(?:this\\s+)?(${token})\\b`, "giu"),
-        ),
-        ...instruction.matchAll(
-          new RegExp(
-            `\\b(?:draft|post|it|this|that|one)\\s+(${token})\\s*[.!?]?$`,
-            "giu",
-          ),
-        ),
-      ].map((match) => match[1]);
-  const normalized = [
-    ...new Set(
-      destinationMatches.map((value) => value.toLocaleLowerCase("en-US")),
-    ),
-  ];
-  if (normalized.length !== 1) return undefined;
-  const requested = normalized[0];
-  const explicit = requested?.match(/^\d{4}-\d{2}-\d{2}$/)?.[0];
-  if (explicit) {
-    const parsed = new Date(`${explicit}T00:00:00.000Z`);
-    if (
-      !Number.isNaN(parsed.getTime()) &&
-      isoDay(parsed) === explicit &&
-      explicit >= today
-    ) {
-      return explicit;
-    }
-    return undefined;
-  }
-  if (requested === "tomorrow") return isoDay(addUtcDays(localNow, 1));
-  if (requested === "today") return today;
-  const weekday = requested && requested in WEEKDAY_INDEX ? requested : undefined;
-  if (weekday) {
-    const target = WEEKDAY_INDEX[weekday];
-    const delta = (target - localNow.getUTCDay() + 7) % 7;
-    return isoDay(addUtcDays(localNow, delta));
-  }
-  return undefined;
-}
-
 type ClarificationReason = Extract<
   ActionOrchestratorRoute,
   { kind: "clarify_action" }
@@ -613,49 +496,14 @@ export function advanceActionOrchestratorClarification(
   let targetCount = route.partialTargetCount ?? null;
 
   if (current === "date") {
-    const date = scheduledDate(
-      `Schedule this draft for ${answer}`,
-      now,
-      clientTimezone,
-    );
-    if (date === undefined) return route;
-    requirements.push({
-      type: "schedule_post",
-      date,
-      ...(validTimeZone(clientTimezone)
-        ? { timeZone: clientTimezone }
-        : {}),
-    });
+    return { kind: "disallowed_action", disallowedReason: "publish" };
   } else if (current === "target_count") {
     const count = requestedTargetCount(`Move ${answer} drafts`);
     if (count.kind !== "ok") return route;
     targetCount = count.count;
   } else {
     if (wantsSchedule(answer)) {
-      const date = scheduledDate(answer, now, clientTimezone);
-      if (date === undefined) {
-        return clarificationRoute(
-          ["date", ...remaining.slice(1)],
-          requirements,
-          targetCount,
-        );
-      }
-      requirements.push({
-        type: "schedule_post",
-        date,
-        ...(validTimeZone(clientTimezone)
-          ? { timeZone: clientTimezone }
-          : {}),
-      });
-      remaining.shift();
-      if (remaining.length > 0) {
-        return clarificationRoute(remaining, requirements, targetCount);
-      }
-      return {
-        kind: "action_management",
-        targetCount: targetCount ?? 1,
-        requirements,
-      };
+      return { kind: "disallowed_action", disallowedReason: "publish" };
     }
     const status = requestedMoveStatus(answer);
     if (!status || status === "ambiguous") return route;
@@ -679,7 +527,7 @@ export function advanceActionOrchestratorClarification(
 
 export function compileActionOrchestratorRoute(
   input: ActionOrchestratorRoutingInput,
-  now: Date = new Date(),
+  _now: Date = new Date(),
 ): ActionOrchestratorRoute | null {
   const instruction = input.userInstruction.replace(/\s+/g, " ").trim();
   if (
@@ -725,8 +573,13 @@ export function compileActionOrchestratorRoute(
   if (changesPublishingSchedule(instruction)) {
     return { kind: "disallowed_action", disallowedReason: "publish" };
   }
-  const clearsPlannedDate = clearsSchedule(instruction);
-  if (hasCommand(instruction, "delete|remove") && !clearsPlannedDate) {
+  // Planning-only dates were removed from Posts. Cowork must not acknowledge a
+  // hidden board plan as if it scheduled publishing; real scheduling stays in
+  // the Posts queue/date-time flow.
+  if (wantsSchedule(instruction) || clearsSchedule(instruction)) {
+    return { kind: "disallowed_action", disallowedReason: "publish" };
+  }
+  if (hasCommand(instruction, "delete|remove")) {
     return { kind: "disallowed_action", disallowedReason: "delete" };
   }
 
@@ -735,23 +588,10 @@ export function compileActionOrchestratorRoute(
     "mark|move|set|put|change|advance|promote|shift|ready|push|take|send",
   );
   const likelyBoardMutation = hasLikelyBoardMoveCommand(instruction);
-  const hasSeparateMoveCommand = hasCommand(
-    instruction,
-    "mark|move|change|advance|promote|shift|ready|push|take|send",
-  );
-  const moveStatus =
-    isDateBearingSetPutSchedule(instruction) &&
-    !hasSeparateMoveCommand &&
-    !hasExplicitBoardDestination(instruction)
-      ? undefined
-      : requestedMoveStatus(instruction);
+  const moveStatus = requestedMoveStatus(instruction);
   if (moveStatus === "posted") {
     return { kind: "disallowed_action", disallowedReason: "posted" };
   }
-  const schedulesPost = wantsSchedule(instruction) || clearsPlannedDate;
-  const date = schedulesPost
-    ? scheduledDate(instruction, now, input.clientTimezone)
-    : undefined;
   const targetCount = requestedTargetCount(instruction);
   if (targetCount.kind === "mixed") {
     return { kind: "no_action", noActionReason: "mixed_count" };
@@ -763,25 +603,14 @@ export function compileActionOrchestratorRoute(
       status: moveStatus,
     });
   }
-  if (schedulesPost && date !== undefined) {
-    requirements.push({
-      type: "schedule_post",
-      date: date ?? null,
-      ...(validTimeZone(input.clientTimezone)
-        ? { timeZone: input.clientTimezone }
-        : {}),
-    });
-  }
   const remaining: ClarificationReason[] = [];
   if (
     moveStatus === "ambiguous" ||
     (!moveStatus &&
-      !schedulesPost &&
       (moveCommandRequested || likelyBoardMutation))
   ) {
     remaining.push("action");
   }
-  if (schedulesPost && date === undefined) remaining.push("date");
   // The board-action lane is for MOVING/SCHEDULING saved drafts. A bare count
   // ambiguity is only OUR concern when the turn actually wants a board action —
   // otherwise a pure content request like "find 4 top posts and rewrite them"
@@ -795,8 +624,7 @@ export function compileActionOrchestratorRoute(
     requirements.length > 0 ||
     remaining.length > 0 ||
     moveCommandRequested ||
-    likelyBoardMutation ||
-    schedulesPost;
+    likelyBoardMutation;
   if (targetCount.kind === "clarify" && hasBoardActionIntent) {
     remaining.push("target_count");
   }
