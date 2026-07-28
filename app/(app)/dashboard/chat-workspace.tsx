@@ -154,10 +154,12 @@ import {
 import { AGENT_CHAT_TITLE } from "@/lib/agent-loop/constants";
 import {
   clearComposerStarter,
+  consumeComposerExplorationLane,
   moveComposerDraft,
   readComposerDraft,
   readDraft,
   writeComposerDraft,
+  writeComposerExplorationLane,
   writeDraft,
 } from "@/lib/chat-draft-storage";
 import {
@@ -179,8 +181,10 @@ import { chatSetupDeadlines } from "@/lib/chat-stream-policy";
 import {
   DRAFT_COUNT_OPTIONS,
   POST_TYPE_OPTIONS,
+  explorationLaneForComposer,
   generationConfigForSelection,
   type DraftCountSelection,
+  type ExplorationLaneSelection,
   type PostTypeSelection,
 } from "@/lib/generation-config";
 import type { DraftKind } from "@/lib/post-type";
@@ -667,6 +671,19 @@ export function ChatWorkspace({
   // fallback). Same Auto/explicit shape and lifecycle as draftCountSelection.
   const [postTypeSelection, setPostTypeSelection] =
     useState<PostTypeSelection>("auto");
+  const [explorationLaneSelection, setExplorationLaneSelection] =
+    useState<ExplorationLaneSelection>("auto");
+  const chooseExplorationLane = useCallback(
+    (selection: ExplorationLaneSelection) => {
+      setExplorationLaneSelection(selection);
+      writeComposerExplorationLane(activeIdRef.current, selection);
+    },
+    [],
+  );
+  const effectiveExplorationLaneSelection = explorationLaneForComposer(
+    explorationLaneSelection,
+    Boolean(modelSource),
+  );
   // Close every composer picker when the active chat changes (switch OR the
   // active chat being deleted, which sets activeId to null). The pickers are
   // anchored to the always-mounted composer, so without this a picker opened in
@@ -1258,7 +1275,9 @@ export function ChatWorkspace({
   const [draftStoreReady, setDraftStoreReady] = useState(false);
   const [forcedDraftByChat, setForcedDraftByChat] = useState<Record<string, string>>({});
   useEffect(() => {
-    setInput(readDraft(activeIdRef.current));
+    const composerDraft = readComposerDraft(activeIdRef.current);
+    setInput(composerDraft.text);
+    setExplorationLaneSelection(composerDraft.explorationLane);
     setDraftActiveId(activeIdRef.current);
     setDraftStoreReady(true);
   }, []);
@@ -1277,8 +1296,13 @@ export function ChatWorkspace({
       });
       writeDraft(arrivingChatId, forcedDraft);
       setInput(forcedDraft);
+      setExplorationLaneSelection(
+        readComposerDraft(arrivingChatId).explorationLane,
+      );
     } else {
-      setInput(readDraft(arrivingChatId));
+      const arrivingDraft = readComposerDraft(arrivingChatId);
+      setInput(arrivingDraft.text);
+      setExplorationLaneSelection(arrivingDraft.explorationLane);
     }
     setDraftActiveId(arrivingChatId);
   }
@@ -1897,7 +1921,11 @@ export function ChatWorkspace({
     if (starter.command === "create" && draftCountSelection === "auto") {
       setDraftCountSelection(1);
     }
-    writeComposerDraft(activeIdRef.current, { text: prompt, starterId: id });
+    writeComposerDraft(activeIdRef.current, {
+      text: prompt,
+      starterId: id,
+      explorationLane: readComposerDraft(activeIdRef.current).explorationLane,
+    });
     setInput(prompt);
     requestAnimationFrame(() => {
       const el = inputRef.current;
@@ -2505,7 +2533,11 @@ export function ChatWorkspace({
         ? readComposerDraft(turnStarterOwnerId).starterId ?? undefined
         : undefined;
       let turnGenerationConfig = appliesComposerControls
-        ? generationConfigForSelection(draftCountSelection, postTypeSelection)
+        ? generationConfigForSelection(
+            draftCountSelection,
+            postTypeSelection,
+            effectiveExplorationLaneSelection,
+          )
         : undefined;
       // These are only the skills explicitly selected for this turn. Target
       // skill inheritance is a server-owned operation rule.
@@ -2726,6 +2758,13 @@ export function ChatWorkspace({
       if (turnStarterId) clearComposerStarter(turnStarterOwnerId);
       if (turnCommand) {
         setCoworkComposer({ kind: "ask" });
+      }
+      if (turnCommand?.kind === "create") {
+        const visibleLane = consumeComposerExplorationLane(
+          chatId,
+          activeIdRef.current,
+        );
+        if (visibleLane) setExplorationLaneSelection(visibleLane);
       }
 
       // Optimistically title an untitled chat from this first message, matching
@@ -3130,7 +3169,12 @@ export function ChatWorkspace({
             if (turnCreatorStyle)
               setPendingCreatorStyle((cur) => cur ?? turnCreatorStyle);
             if (turnStarterId) {
-              writeComposerDraft(chatId, { text, starterId: turnStarterId });
+              writeComposerDraft(chatId, {
+                text,
+                starterId: turnStarterId,
+                explorationLane:
+                  turnGenerationConfig?.explorationLane ?? "auto",
+              });
             }
             if (turnCommand?.kind === "ask") {
               setCoworkComposer({
@@ -3141,6 +3185,9 @@ export function ChatWorkspace({
               });
             } else if (turnCommand?.kind === "create") {
               enterCreateCommand(turnCommand.count);
+              chooseExplorationLane(
+                turnGenerationConfig?.explorationLane ?? "auto",
+              );
             } else if (turnCommand?.kind === "edit") {
               setCoworkComposer({
                 kind: "edit",
@@ -3386,6 +3433,8 @@ export function ChatWorkspace({
     effectiveCoworkComposer,
     draftCountSelection,
     postTypeSelection,
+    effectiveExplorationLaneSelection,
+    chooseExplorationLane,
     initialVoiceReady,
     router,
     maybeAutoTitle,
@@ -4260,7 +4309,7 @@ export function ChatWorkspace({
                       })}
                     </div>
                   </div>
-                  <div className="flex items-center justify-between gap-3 pt-3.5">
+                  <div className="flex items-center justify-between gap-3 py-3.5">
                     <div>
                       <p className="text-sm font-medium text-foreground">Post type</p>
                       <p className="mt-0.5 text-xs text-muted-foreground">
@@ -4291,6 +4340,65 @@ export function ChatWorkspace({
                             }}
                             className={cn(
                               "rounded-lg px-2 py-1.5 text-xs font-medium transition-colors",
+                              selected
+                                ? "bg-card text-primary shadow-sm"
+                                : "text-muted-foreground hover:bg-card/70 hover:text-foreground",
+                            )}
+                          >
+                            {label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-3 pt-3.5 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">
+                        Exploration lane
+                      </p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        {modelSource
+                          ? "Automatic while modeling a source Post."
+                          : effectiveExplorationLaneSelection === "familiar"
+                            ? "Stay close to proven subjects, with a new angle."
+                            : effectiveExplorationLaneSelection === "fresh"
+                              ? "Explore an adjacent question or use case."
+                              : effectiveExplorationLaneSelection === "experimental"
+                                ? "Try a bolder, evidence-backed framing."
+                                : "Automatically balances proven, adjacent, and bolder ideas."}
+                      </p>
+                    </div>
+                    <div
+                      role="group"
+                      aria-label="Exploration Lane"
+                      className="grid shrink-0 grid-cols-2 gap-1 rounded-xl border border-border bg-muted/50 p-1 sm:flex"
+                    >
+                      {(
+                        [
+                          "auto",
+                          "familiar",
+                          "fresh",
+                          "experimental",
+                        ] as const
+                      ).map((option) => {
+                        const selected =
+                          effectiveExplorationLaneSelection === option;
+                        const label =
+                          option === "auto"
+                            ? "Automatic"
+                            : option[0].toUpperCase() + option.slice(1);
+                        return (
+                          <button
+                            key={option}
+                            type="button"
+                            aria-pressed={selected}
+                            disabled={Boolean(modelSource)}
+                            onClick={() => {
+                              chooseExplorationLane(option);
+                              setGenerationSettingsOpen(false);
+                            }}
+                            className={cn(
+                              "rounded-lg px-2 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-45",
                               selected
                                 ? "bg-card text-primary shadow-sm"
                                 : "text-muted-foreground hover:bg-card/70 hover:text-foreground",
@@ -5165,7 +5273,8 @@ export function ChatWorkspace({
                   "h-9 shrink-0 gap-1.5 rounded-xl border-border bg-card px-2.5 hover:bg-muted",
                   (generationSettingsOpen ||
                     draftCountSelection !== "auto" ||
-                    postTypeSelection !== "auto") &&
+                    postTypeSelection !== "auto" ||
+                    effectiveExplorationLaneSelection !== "auto") &&
                     "border-primary/60 text-primary",
                 )}
                 aria-label={`Generation settings — Post count: ${
@@ -5178,9 +5287,13 @@ export function ChatWorkspace({
                     : postTypeSelection === "regular"
                       ? "Regular"
                       : "Lead magnet"
+                }, exploration lane: ${
+                  effectiveExplorationLaneSelection === "auto"
+                    ? "Automatic"
+                    : effectiveExplorationLaneSelection
                 }`}
                 aria-expanded={generationSettingsOpen}
-                title="Choose how many Posts to create and which post type to source"
+                title="Choose Post count, type, and exploration lane"
               >
                 <SlidersHorizontal className="h-4 w-4" aria-hidden />
                 <span className="text-xs font-medium tabular-nums">
@@ -5189,6 +5302,11 @@ export function ChatWorkspace({
                     : `${draftCountSelection} ${draftCountSelection === 1 ? "post" : "posts"}`}
                   {postTypeSelection !== "auto" &&
                     ` · ${postTypeSelection === "regular" ? "Regular" : "Lead magnet"}`}
+                  {effectiveExplorationLaneSelection !== "auto" &&
+                    ` · ${
+                      effectiveExplorationLaneSelection[0].toUpperCase() +
+                      effectiveExplorationLaneSelection.slice(1)
+                    }`}
                 </span>
               </Button>
               )}

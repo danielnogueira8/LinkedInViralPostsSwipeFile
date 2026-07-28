@@ -1,5 +1,9 @@
 import { z } from "zod";
 import { resolveTurnCount } from "@/lib/agent/turn/count";
+import {
+  explorationLaneSchema,
+  type ExplorationLane,
+} from "@/lib/content-learning/contracts";
 
 export const DRAFT_COUNT_OPTIONS = [1, 2, 3, 4, 5, 6] as const;
 
@@ -25,6 +29,14 @@ export const POST_TYPE_OPTIONS = ["regular", "lead_magnet"] as const;
 
 export type PostTypeOption = (typeof POST_TYPE_OPTIONS)[number];
 export type PostTypeSelection = "auto" | PostTypeOption;
+export type ExplorationLaneSelection = "auto" | ExplorationLane;
+
+export function explorationLaneForComposer(
+  selection: ExplorationLaneSelection,
+  hasModelSource: boolean,
+): ExplorationLaneSelection {
+  return hasModelSource ? "auto" : selection;
+}
 
 export const postTypeSchema = z.union([
   z.literal("regular"),
@@ -36,6 +48,7 @@ export const generationConfigV1Schema = z
     version: z.literal(1),
     draftCount: draftCountSchema,
     postType: postTypeSchema.optional(),
+    explorationLane: explorationLaneSchema.optional(),
   })
   .strict();
 
@@ -59,14 +72,22 @@ export type ResolvedGenerationConfig = z.infer<
 export function generationConfigForSelection(
   draftCountSelection: DraftCountSelection,
   postTypeSelection: PostTypeSelection = "auto",
+  explorationLaneSelection: ExplorationLaneSelection = "auto",
 ): GenerationConfigV1 | undefined {
-  if (draftCountSelection === "auto" && postTypeSelection === "auto") {
+  if (
+    draftCountSelection === "auto" &&
+    postTypeSelection === "auto" &&
+    explorationLaneSelection === "auto"
+  ) {
     return undefined;
   }
   return {
     version: 1,
     draftCount: draftCountSelection === "auto" ? 1 : draftCountSelection,
     ...(postTypeSelection === "auto" ? {} : { postType: postTypeSelection }),
+    ...(explorationLaneSelection === "auto"
+      ? {}
+      : { explorationLane: explorationLaneSelection }),
   };
 }
 
@@ -91,5 +112,8 @@ export function resolveGenerationConfig(input: {
     ...(input.selected?.postType
       ? { postType: input.selected.postType, postTypeSource: "ui" as const }
       : { postTypeSource: "default" as const }),
+    ...(input.selected?.explorationLane
+      ? { explorationLane: input.selected.explorationLane }
+      : {}),
   };
 }

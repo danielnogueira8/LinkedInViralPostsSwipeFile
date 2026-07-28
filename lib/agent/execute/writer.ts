@@ -264,6 +264,8 @@ export type WriterInput = {
   /** Pre-rendered learnings from the workspace's own published-post analytics; "" when unavailable. */
   workspaceLearningBlock?: string;
   priorPostDrafts: RecentDraft[];
+  /** Optional user-selected lane for original posts; automatic when absent. */
+  explorationLane?: ExplorationLane;
   format?: NoModelFormat | null;
   customSkillBodies?: string[];
   customSkillNames?: string[];
@@ -1275,7 +1277,8 @@ export async function* runSingleDraftTurn(
       : undefined;
   const explorationLane =
     task.kind === "original"
-      ? automaticExplorationLane(
+      ? input.explorationLane ??
+        automaticExplorationLane(
           [
             input.workspaceId,
             input.sessionId ?? "no-session",

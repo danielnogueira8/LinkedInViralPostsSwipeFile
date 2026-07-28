@@ -326,7 +326,13 @@ export async function setupChatTurn(
     createLeadMagnet = body.createLeadMagnet;
     requestedGenerationConfig =
       body.command?.kind === "create"
-        ? { version: 1, draftCount: body.command.count }
+        ? {
+            version: 1,
+            draftCount: body.command.count,
+            ...(body.generationConfig?.explorationLane
+              ? { explorationLane: body.generationConfig.explorationLane }
+              : {}),
+          }
         : (body.generationConfig ?? null);
     composerStarterId = body.starterId;
     const { data: chat, error } = await sbRaw
@@ -719,6 +725,16 @@ export async function setupChatTurn(
         ) {
           return turnError(
             "That Retry no longer matches the draft count used by the original task. Send a new request instead.",
+            409,
+          );
+        }
+        if (
+          requestedGenerationConfig?.explorationLane &&
+          requestedGenerationConfig.explorationLane !==
+            pairedGenerationConfigMarker.config.explorationLane
+        ) {
+          return turnError(
+            "That Retry no longer matches the exploration lane used by the original task. Send a new request instead.",
             409,
           );
         }
