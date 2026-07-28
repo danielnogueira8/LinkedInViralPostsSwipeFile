@@ -556,6 +556,16 @@ export function ChatWorkspace({
   const [chatSearch, setChatSearch] = useState("");
   const [pendingModelSource, setModelSource] = useState<ModelSource | null>(null);
   const [modelSourceChatId, setModelSourceChatId] = useState<string | null>(null);
+  // The source a conversation is working FROM after its first send. The staged
+  // chip is consumed into the turn, but the context should stay visible for
+  // the rest of the chat instead of vanishing the moment writing starts —
+  // this record keeps it, keyed by chat so each conversation has its own.
+  const [consumedSourceByChat, setConsumedSourceByChat] = useState<
+    Record<string, ModelSource>
+  >({});
+  const consumedSource = activeId
+    ? (consumedSourceByChat[activeId] ?? null)
+    : null;
   const modelSource = modelSourceBelongsToChat(activeId, modelSourceChatId)
     ? pendingModelSource
     : null;
@@ -2838,6 +2848,13 @@ export function ChatWorkspace({
         }
         streamStarted = true;
         if (attached) {
+          // The staged chip is consumed — but the context isn't done. Keep it
+          // as this chat's working context so it stays visible for the rest
+          // of the conversation instead of disappearing when writing starts.
+          setConsumedSourceByChat((current) => ({
+            ...current,
+            [chatId]: attached,
+          }));
           setModelSource((current) =>
             current?.id === attached.id ? null : current,
           );
@@ -4832,12 +4849,25 @@ export function ChatWorkspace({
               </div>
             )}
             <div className="flex flex-col gap-2 px-3 pt-3">
-              {modelSource && (
+              {modelSource ? (
                 <SourcePostChip
                   source={modelSource}
                   onRemove={() => setModelSource(null)}
                 />
-              )}
+              ) : consumedSource ? (
+                <SourcePostChip
+                  source={consumedSource}
+                  pinnedContext
+                  onRemove={() =>
+                    setConsumedSourceByChat((current) => {
+                      if (!activeId) return current;
+                      const next = { ...current };
+                      delete next[activeId];
+                      return next;
+                    })
+                  }
+                />
+              ) : null}
             {attachments.length > 0 && (
               <div className="flex flex-wrap gap-1.5">
                 {attachments.map((a) => (
@@ -5489,9 +5519,14 @@ export function ChatWorkspace({
 function SourcePostChip({
   source,
   onRemove,
+  pinnedContext = false,
 }: {
   source: ModelSource | ModelSourceAttachment;
   onRemove?: () => void;
+  // True when the chip is the chat's PERSISTENT context (the source this
+  // conversation is working from), not the about-to-send staging chip — the
+  // tag makes it recognizable as context rather than a pending attachment.
+  pinnedContext?: boolean;
 }) {
   if ("state" in source && source.state === "unavailable") {
     return (
@@ -5518,6 +5553,11 @@ function SourcePostChip({
       )}
       <div className="min-w-0 flex-1">
         <p className="text-xs font-semibold flex items-center gap-1.5">
+          {pinnedContext && (
+            <span className="inline-flex items-center rounded-full border border-primary/20 bg-primary/[0.07] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.1em] text-primary">
+              Context
+            </span>
+          )}
           {source.kind === "draft"
             ? "Refining your post"
             : source.kind === "template"
