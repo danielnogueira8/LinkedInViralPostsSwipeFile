@@ -32,6 +32,7 @@ import {
   Maximize2,
   Minimize2,
   PanelLeftOpen,
+  PanelLeftClose,
   Layers,
   MessageSquare,
   MessageCircleQuestionMark,
@@ -530,6 +531,27 @@ export function ChatWorkspace({
   // Mobile only: the chat-history sidebar is an off-canvas drawer (it's a fixed
   // inline column on md+). Closed by default so the conversation has full width.
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  // Desktop only: the inline chat-history column can be collapsed to give the
+  // conversation the full width. Persisted so the preference survives reloads.
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      return window.localStorage.getItem("coworkSidebarCollapsed") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const toggleSidebarCollapsed = () => {
+    setSidebarCollapsed((prev) => {
+      const next = !prev;
+      try {
+        window.localStorage.setItem("coworkSidebarCollapsed", next ? "1" : "0");
+      } catch {
+        // Storage unavailable (private mode) — the toggle still works in-memory.
+      }
+      return next;
+    });
+  };
   // Chat-history search query (filters the list by title, client-side).
   const [chatSearch, setChatSearch] = useState("");
   const [pendingModelSource, setModelSource] = useState<ModelSource | null>(null);
@@ -3766,20 +3788,26 @@ export function ChatWorkspace({
           aria-hidden="true"
         />
       )}
-      {/* Left: chat history. Inline column on md+, off-canvas drawer on mobile. */}
+      {/* Left: chat history. Inline column on md+ (collapsible to zero width),
+          off-canvas drawer on mobile. The inner wrapper keeps a fixed w-64 so
+          content never squishes during the desktop width transition. */}
       <aside
         className={cn(
-          "flex w-64 shrink-0 flex-col border-r border-border",
+          "flex shrink-0 flex-col overflow-hidden",
           // Mobile drawer must be OPAQUE so the conversation behind it doesn't
           // bleed through the list; the translucent sidebar tint is desktop-only.
           "bg-card md:bg-muted/90",
-          // Desktop: normal inline column.
-          "md:relative md:translate-x-0",
-          // Mobile: fixed drawer that slides in/out from the left.
-          "absolute inset-y-0 left-0 z-40 shadow-xl md:shadow-none transition-transform duration-200 md:transition-none",
+          // Desktop: inline column, animated between full width and collapsed.
+          "md:relative md:translate-x-0 md:transition-[width] md:duration-200",
+          sidebarCollapsed
+            ? "md:w-0 md:border-r-0"
+            : "md:w-64 md:border-r md:border-border",
+          // Mobile: fixed drawer that slides in/out from the left at full width.
+          "absolute inset-y-0 left-0 z-40 w-64 shadow-xl md:shadow-none transition-transform duration-200",
           sidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0",
         )}
       >
+        <div className="flex w-64 shrink-0 flex-1 min-h-0 flex-col">
         <div className="flex items-center gap-2 p-3 pb-2.5">
           <Button
             onClick={() => {
@@ -3791,6 +3819,16 @@ export function ChatWorkspace({
           >
             <Plus className="h-4 w-4" /> New session
           </Button>
+          {/* Collapse the column (desktop only; mobile uses the drawer close). */}
+          <button
+            type="button"
+            onClick={toggleSidebarCollapsed}
+            className="hidden md:inline-flex shrink-0 rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+            aria-label="Collapse chat history"
+            title="Collapse chat history"
+          >
+            <PanelLeftClose className="h-4 w-4" />
+          </button>
           {/* Close the drawer (mobile only). */}
           <button
             type="button"
@@ -3859,10 +3897,27 @@ export function ChatWorkspace({
             ))
           )}
         </div>
+        </div>
       </aside>
 
       {/* Center: conversation */}
       <section className="flex-1 min-w-0 flex flex-col relative bg-card">
+        {/* Desktop collapsed-sidebar bar: the only way back to the session list
+            once the column is collapsed. */}
+        {sidebarCollapsed && (
+          <div className="hidden md:flex items-center gap-2 border-b border-border bg-card/90 px-2 py-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={toggleSidebarCollapsed}
+              className="inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-muted-foreground hover:bg-accent hover:text-foreground"
+              aria-label="Show chat history"
+              title="Show chat history"
+            >
+              <PanelLeftOpen className="h-4 w-4" />
+              Sessions
+            </button>
+          </div>
+        )}
         {/* Mobile header: open chat history + new chat (the sidebar is a drawer
             on mobile, so these are the only way in). Hidden on md+ where the
             sidebar is always visible. */}
