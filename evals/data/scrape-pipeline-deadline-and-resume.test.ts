@@ -126,7 +126,7 @@ describe("runDailyPipeline — resume dedupe + deadline self-stop", () => {
       qualifiesForHookLibrary: vi.fn(),
       normalizeHookForDedupe: vi.fn(),
     }));
-    vi.doMock("@/lib/claude", () => ({ extractHookWithClaude: vi.fn(), templatizeOutlierPost: vi.fn() }));
+    vi.doMock("@/lib/claude", () => ({ extractHookWithClaude: vi.fn(), templatizeOutlierPost: vi.fn(), PLATFORM_WORKSPACE: "platform" }));
 
     const { runDailyPipeline } = await import("@/lib/pipeline");
     await runDailyPipeline(undefined, { runId: "resumed-run" });
@@ -209,7 +209,7 @@ describe("runDailyPipeline — resume dedupe + deadline self-stop", () => {
       qualifiesForHookLibrary: vi.fn(),
       normalizeHookForDedupe: vi.fn(),
     }));
-    vi.doMock("@/lib/claude", () => ({ extractHookWithClaude: vi.fn(), templatizeOutlierPost: vi.fn() }));
+    vi.doMock("@/lib/claude", () => ({ extractHookWithClaude: vi.fn(), templatizeOutlierPost: vi.fn(), PLATFORM_WORKSPACE: "platform" }));
 
     const { runDailyPipeline } = await import("@/lib/pipeline");
     // Started 6 minutes ago — well past CRON_BUDGET_MS(300s) - CRON_DEADLINE_MARGIN_MS(90s).

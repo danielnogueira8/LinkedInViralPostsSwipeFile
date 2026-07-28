@@ -92,11 +92,12 @@ describe("openRouterCost — Anthropic (bare) slug pricing", () => {
     expect(openRouterCost("claude-sonnet-5", 0, M)).toBeCloseTo(10, 6);
   });
 
-  test("cache-read tokens bill at $0.20/M, cache-write at $2.50/M", () => {
+  test("cache-read tokens bill at $0.20/M, cache-write at $4.00/M (1h TTL)", () => {
     // 1M input all cache reads → $0.20 (not $2).
     expect(openRouterCost("claude-sonnet-5", M, 0, M)).toBeCloseTo(0.2, 6);
-    // 1M input all cache writes (0 reads) → $2.50.
-    expect(openRouterCost("claude-sonnet-5", M, 0, 0, M)).toBeCloseTo(2.5, 6);
+    // 1M input all cache writes (0 reads) → $4.00 (2x input — the adapter
+    // marks every breakpoint ttl:"1h"; 5m would be $2.50).
+    expect(openRouterCost("claude-sonnet-5", M, 0, 0, M)).toBeCloseTo(4.0, 6);
   });
 
   test("the bare Anthropic slug is priced by its own row (no GLM-5.1 fallback)", () => {
@@ -146,19 +147,20 @@ describe("openRouterCost — Anthropic (bare) slug pricing", () => {
     // at $0.0226 because Anthropic's fresh-only input_tokens was treated as the
     // OpenRouter-style total (and the cache write consumed the whole budget).
     // After mapUsage normalizes prompt_tokens to the total, the same turn
-    // prices at the true $0.0420.
+    // prices at the true $0.0554 (cache writes bill at the 1h-TTL rate of 2x
+    // input = $4.00/M, which is what Anthropic actually charged).
     const usage = {
       prompt_tokens: 6_019 + 8_955,
       completion_tokens: 754,
       prompt_tokens_details: { cached_tokens: 0, cache_write_tokens: 8_955 },
     };
     const { costUsd } = openRouterUsageCost("claude-sonnet-5", usage);
-    // 6,019 fresh × $2/M + 8,955 write × $2.50/M + 754 out × $10/M
+    // 6,019 fresh × $2/M + 8,955 write × $4.00/M + 754 out × $10/M
     expect(costUsd).toBeCloseTo(
-      (6_019 * 2 + 8_955 * 2.5 + 754 * 10) / 1_000_000,
+      (6_019 * 2 + 8_955 * 4 + 754 * 10) / 1_000_000,
       6,
     );
-    expect(costUsd).toBeCloseTo(0.0419655, 6);
+    expect(costUsd).toBeCloseTo(0.055398, 6);
   });
 
   test("cache reads bill at the cache rate instead of clamping fresh input to zero", () => {
@@ -231,6 +233,12 @@ describe("openRouterCost — news search model pricing", () => {
   test("prices Haiku 4.5 at $1 in / $5 out for env override experiments", () => {
     expect(openRouterCost("anthropic/claude-haiku-4.5", M, M)).toBeCloseTo(6, 6);
     expect(openRouterCost("anthropic/claude-haiku-4.5", M, 0, M)).toBeCloseTo(0.1, 6);
+  });
+
+  test("prices Haiku 4.5 cache writes at the 1h-TTL rate ($2.00/M, 2x input)", () => {
+    expect(openRouterCost("anthropic/claude-haiku-4.5", M, 0, 0, M)).toBeCloseTo(2.0, 6);
+    // The bare adapter id normalizes to the same row.
+    expect(openRouterCost("claude-haiku-4-5-20251001", M, 0, 0, M)).toBeCloseTo(2.0, 6);
   });
 });
 

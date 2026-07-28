@@ -19,7 +19,7 @@ import {
   getTemplateOutlierConfig,
   score,
 } from "../lib/viral";
-import { templatizeOutlierPost } from "../lib/claude";
+import { templatizeOutlierPost, PLATFORM_WORKSPACE } from "../lib/claude";
 import { TEMPLATES_PER_WORKSPACE_MAX } from "../lib/templates";
 import { embedTemplateBody } from "../lib/template-embeddings";
 import { selectAllRows, selectInChunks } from "../lib/db-paginate";
@@ -149,7 +149,9 @@ async function main() {
     if (workspaceIds.length === 0) continue;
     try {
       const templatized = await templatizeOutlierPost(q.post.text as string);
-      const embedding = await embedTemplateBody(templatized.body);
+      const embedding = await embedTemplateBody(templatized.body, {
+        workspaceId: PLATFORM_WORKSPACE,
+      });
       for (const wsId of workspaceIds) {
         const { error: claimErr } = await sb.rpc("claim_content_template_slot", {
           p_workspace_id: wsId,

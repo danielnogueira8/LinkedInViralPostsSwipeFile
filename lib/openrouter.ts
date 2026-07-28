@@ -1102,14 +1102,28 @@ export async function* streamChat(opts: {
 // ---------------------------------------------------------------------------
 
 // USD per million tokens. Update if OpenRouter/Z.ai changes rates.
+// cacheWrite is the 1-hour-TTL prompt-cache write rate (2x input) — every
+// cache_control breakpoint the Anthropic adapter emits is ttl:"1h". Anthropic
+// usage doesn't split 5m vs 1h write tokens, so the single rate must match the
+// TTL we actually send.
 export const NEWS_SEARCH_MODEL_PRICING = {
   "google/gemini-3.1-flash-lite": { input: 0.25, output: 1.5, cachedInput: 0.025 },
-  "anthropic/claude-haiku-4.5": { input: 1.0, output: 5.0, cachedInput: 0.1 },
+  "anthropic/claude-haiku-4.5": {
+    input: 1.0,
+    output: 5.0,
+    cachedInput: 0.1,
+    cacheWrite: 2.0,
+  },
   // Supported for news under AI_PROVIDER=anthropic: the Anthropic web_search
   // server tool runs on Sonnet 5 (verified — Haiku 4.5 rejects it), so the
   // flag's default news model is Sonnet 5 via the adapter. Same rates as the
   // main table's row below.
-  "anthropic/claude-sonnet-5": { input: 2.0, output: 10.0, cachedInput: 0.2 },
+  "anthropic/claude-sonnet-5": {
+    input: 2.0,
+    output: 10.0,
+    cachedInput: 0.2,
+    cacheWrite: 4.0,
+  },
   "openai/gpt-5.6-luna": {
     input: 1.0,
     output: 6.0,
@@ -1130,22 +1144,35 @@ const OPENROUTER_PRICING: Record<
   "z-ai/glm-5.1": { input: 1.4, output: 4.4, cachedInput: 0.26 },
   "z-ai/glm-5": { input: 1.0, output: 3.2, cachedInput: 0.2 },
   // Retained for historical usage rows and explicit env overrides.
-  "anthropic/claude-sonnet-4.6": { input: 3.0, output: 15.0, cachedInput: 0.3 },
+  "anthropic/claude-sonnet-4.6": {
+    input: 3.0,
+    output: 15.0,
+    cachedInput: 0.3,
+    cacheWrite: 6.0,
+  },
   // Sonnet 5 is used as a fallback by the thin writer and orchestrators.
   // Without this entry openRouterCost would fall back to the GLM-5.1 rate and
   // under-count spend, so the monthly cost cap would be wrong. Sonnet 5 is
-  // currently $2 in / $10 out; cache-read is 0.1x input = $0.20.
-  "anthropic/claude-sonnet-5": { input: 2.0, output: 10.0, cachedInput: 0.2 },
+  // currently $2 in / $10 out; cache-read is 0.1x input = $0.20, cache-write
+  // (1h TTL) is 2x input = $4.00. (This literal overrides the spread
+  // NEWS_SEARCH_MODEL_PRICING row — keep them identical.)
+  "anthropic/claude-sonnet-5": {
+    input: 2.0,
+    output: 10.0,
+    cachedInput: 0.2,
+    cacheWrite: 4.0,
+  },
   // Bare slug is what the Anthropic adapter sends (AI_PROVIDER=anthropic). The
   // adapter leaves usage.cost unset, so this table computes cost from tokens.
   // Sonnet 5 intro pricing: $2/M in, $10/M out; cache-read 0.1x input = $0.20,
-  // cache-write 1.25x input = $2.50. (Standard rates after the intro window are
-  // $3/$15 — bump these two lines when the intro ends 2026-08-31.)
+  // cache-write 1h TTL 2x input = $4.00 (the adapter marks every breakpoint
+  // ttl:"1h"; 5m would be 1.25x = $2.50). (Standard rates after the intro
+  // window are $3/$15 — bump these lines when the intro ends 2026-08-31.)
   "claude-sonnet-5": {
     input: 2.0,
     output: 10.0,
     cachedInput: 0.2,
-    cacheWrite: 2.5,
+    cacheWrite: 4.0,
   },
   // Cross-provider fallback for the read-only Cowork orchestrator. OpenRouter's
   // model catalog lists $1.50/M input, $9/M output, and $0.15/M cache reads.

@@ -403,7 +403,7 @@ export async function createTemplateResource(input: {
   data: TemplateInput;
 }): Promise<OperationResult<ContentTemplate>> {
   const { db, workspaceId, data: request } = input;
-  const embedding = await embedTemplateBody(request.body);
+  const embedding = await embedTemplateBody(request.body, { workspaceId });
   const inferredStructureType = structureTypeFromCategory(request.category);
   const { data, error } = await db
     .rpc("claim_content_template_slot", {
