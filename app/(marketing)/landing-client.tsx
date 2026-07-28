@@ -319,13 +319,13 @@ export default function LandingClient({
               A team of specialists, each with one job.
             </h2>
             <p className="mt-5 max-w-[620px] text-pretty leading-7 text-muted-foreground">
-              Every agent is a ready-made prompt that runs on your SwipeIn data — your voice, your swipe file, your calendar. Run them in Cowork, or connect Claude once and paste them there.
+              Every agent is a ready-made prompt that runs in Claude on your SwipeIn data — your voice, your swipe file, your calendar. Connect once, paste a prompt, and put a specialist to work.
             </p>
           </div>
 
           <ol className="mt-10 grid gap-3 sm:grid-cols-3">
             {([
-              ["Connect once", "Open Cowork — or add the SwipeIn connector to Claude in one paste. Your voice profile and swipe file come with it."],
+              ["Connect once", "Add the SwipeIn connector to Claude with one URL. Your voice profile, swipe file, and calendar come with it."],
               ["Pick an agent", "Each one arrives knowing its craft: bulk drafts, newsjacking, calendars, hooks. Copy it in and put it to work."],
               ["Approve the work", "Drafts land on your Posts board, grounded in real viral posts and written in your voice. Nothing ships without your yes."],
             ] as const).map(([title, copy], i) => (
