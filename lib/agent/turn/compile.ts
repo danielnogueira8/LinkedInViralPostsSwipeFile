@@ -1915,13 +1915,29 @@ export type ResolvedFindAndModelSource = {
 };
 
 /**
+ * A modeling source must carry enough TEXT to mirror. Viral-sorted "regular"
+ * results can be topped by a meme or a one-line caption (high engagement, ~15
+ * words and an image — e.g. a "Born to / Forced to" meme post that was once
+ * the top result). There is no structure to model in that, so the writer
+ * freestyles and the draft reads as unmodeled even though the Source chip
+ * claims otherwise. Require a real body of prose before a post may be the
+ * model. Pure + exported for tests.
+ */
+const MIN_MODELABLE_WORDS = 40;
+export function isModelableSourceText(text: string): boolean {
+  return text.trim().split(/\s+/).filter(Boolean).length >= MIN_MODELABLE_WORDS;
+}
+
+/**
  * THIN PATH find-and-model source resolver. Runs the SAME rotation-aware search
  * the heavy loop's directSourceModelingTurn prefetch uses (top viral REGULAR
- * post, limit 1), so "find a top post and rewrite it" resolves a source up
- * front and can take the lean direct route instead of the GLM render loop.
- * Returns the source body (for the engine) AND the post_url (for the source
- * chip). Fail-open: any error / empty result returns undefined and the caller
- * falls through to the heavy path unchanged.
+ * posts), then takes the FIRST candidate that is actually modelable (enough
+ * prose to mirror — see isModelableSourceText), so "find a top post and
+ * rewrite it" resolves a real source up front and can take the lean direct
+ * route instead of the GLM render loop. Returns the source body (for the
+ * engine) AND the post_url (for the source chip). Fail-open: any error, empty
+ * result, or no modelable candidate returns undefined and the caller falls
+ * through to the heavy path unchanged.
  */
 export async function resolveFindAndModelSource(
   workspaceId: string,
@@ -1930,7 +1946,7 @@ export async function resolveFindAndModelSource(
   try {
     const result = await runTool(
       "search_viral_posts",
-      { post_type: "regular", sort: "viral", dir: "desc", limit: 1 },
+      { post_type: "regular", sort: "viral", dir: "desc", limit: 8 },
       workspaceId,
       signal,
       { autoSelectModelingSources: true },
@@ -1943,17 +1959,20 @@ export async function resolveFindAndModelSource(
           post_url?: unknown;
         }>)
       : [];
-    const top = posts[0];
-    if (
-      !top ||
-      typeof top.id !== "string" ||
-      typeof top.text !== "string" ||
-      !top.text.trim()
-    ) {
-      return undefined;
+    let top: { id: string; text: string; post_url?: unknown } | undefined;
+    let body = "";
+    for (const candidate of posts) {
+      if (typeof candidate.id !== "string" || typeof candidate.text !== "string") {
+        continue;
+      }
+      const canonical = canonicalScrapedPostText(candidate.text);
+      if (canonical && isModelableSourceText(canonical)) {
+        top = { id: candidate.id, text: candidate.text, post_url: candidate.post_url };
+        body = canonical;
+        break;
+      }
     }
-    const body = canonicalScrapedPostText(top.text);
-    if (!body) return undefined;
+    if (!top) return undefined;
     const sourceUrl =
       typeof top.post_url === "string" && /^https?:\/\//i.test(top.post_url)
         ? top.post_url
