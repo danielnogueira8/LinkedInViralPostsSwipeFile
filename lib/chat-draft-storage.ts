@@ -3,6 +3,10 @@ import {
   composerStarterIdSchema,
   type ComposerStarterId,
 } from "@/lib/composer-task-context";
+import {
+  explorationLaneSchema,
+  type ExplorationLane,
+} from "@/lib/content-learning/contracts";
 
 export const draftKey = (id: string | null) =>
   `swipein:chat-draft:${id ?? "__new__"}`;
@@ -10,6 +14,7 @@ export const draftKey = (id: string | null) =>
 export type ComposerDraft = {
   text: string;
   starterId: ComposerStarterId | null;
+  explorationLane: ExplorationLane | "auto";
 };
 
 const storedComposerDraftSchema = z
@@ -17,10 +22,15 @@ const storedComposerDraftSchema = z
     version: z.literal(1),
     text: z.string(),
     starterId: composerStarterIdSchema.nullable(),
+    explorationLane: explorationLaneSchema.or(z.literal("auto")).optional(),
   })
   .strict();
 
-const EMPTY_COMPOSER_DRAFT: ComposerDraft = { text: "", starterId: null };
+const EMPTY_COMPOSER_DRAFT: ComposerDraft = {
+  text: "",
+  starterId: null,
+  explorationLane: "auto",
+};
 
 function serializeComposerDraft(draft: ComposerDraft): string {
   return JSON.stringify({ version: 1, ...draft });
@@ -40,12 +50,13 @@ export function readComposerDraft(id: string | null): ComposerDraft {
         return {
           text: parsed.data.text,
           starterId: parsed.data.starterId,
+          explorationLane: parsed.data.explorationLane ?? "auto",
         };
       }
     } catch {
       // Legacy entries are plain text, not JSON.
     }
-    return { text: raw, starterId: null };
+    return { text: raw, starterId: null, explorationLane: "auto" };
   } catch {
     return EMPTY_COMPOSER_DRAFT;
   }
@@ -57,7 +68,11 @@ export function writeComposerDraft(
   draft: ComposerDraft,
 ): void {
   try {
-    if (draft.text.trim()) {
+    if (
+      draft.text.trim() ||
+      draft.starterId !== null ||
+      draft.explorationLane !== "auto"
+    ) {
       localStorage.setItem(draftKey(id), serializeComposerDraft(draft));
     } else {
       localStorage.removeItem(draftKey(id));
@@ -99,6 +114,22 @@ export function clearComposerStarter(id: string | null): void {
   writeComposerDraft(id, { ...draft, starterId: null });
 }
 
+export function writeComposerExplorationLane(
+  id: string | null,
+  explorationLane: ComposerDraft["explorationLane"],
+): void {
+  const draft = readComposerDraft(id);
+  writeComposerDraft(id, { ...draft, explorationLane });
+}
+
+export function consumeComposerExplorationLane(
+  turnChatId: string,
+  activeChatId: string | null,
+): ComposerDraft["explorationLane"] | null {
+  writeComposerExplorationLane(turnChatId, "auto");
+  return turnChatId === activeChatId ? "auto" : null;
+}
+
 export function readDraft(id: string | null): string {
   return readComposerDraft(id).text;
 }
@@ -108,5 +139,6 @@ export function writeDraft(id: string | null, text: string): void {
   writeComposerDraft(id, {
     text,
     starterId: text.trim() ? existing.starterId : null,
+    explorationLane: existing.explorationLane,
   });
 }

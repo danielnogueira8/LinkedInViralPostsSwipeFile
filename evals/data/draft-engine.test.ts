@@ -867,11 +867,29 @@ describe("DraftEngine", () => {
     });
   });
 
-  test("does not apply the automatic Exploration Lane mix to a source-modeled post", async () => {
+  test("a manual Exploration Lane overrides the automatic mix for an original post", async () => {
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(100, 70) },
+    ]);
+    const result = await collect(writer, {
+      explorationLane: "experimental",
+    });
+
+    const systemContent = writer.requests[0].messages.find(
+      (message) => message.role === "system",
+    )?.content;
+    expect(systemContent).toContain("EXPLORATION LANE: EXPERIMENTAL");
+    expect(artifacts(result.events)[0].meta).toMatchObject({
+      exploration_lane: "experimental",
+    });
+  });
+
+  test("ignores a manual Exploration Lane on a source-modeled post", async () => {
     const writer = new ScriptedWriter([
       { text: COMPLETE_POST, finishReason: "stop", usage: usage(100, 70) },
     ]);
     await collect(writer, {
+      explorationLane: "experimental",
       task: {
         kind: "source",
         source: {

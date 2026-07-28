@@ -211,6 +211,7 @@ export type TurnExecuteContext = Pick<
   | "workspaceLearningBlock"
   | "preferences"
   | "priorPostDrafts"
+  | "resolvedGenerationConfig"
   | "preloadedVoiceResult"
   | "claimedTurnStartedAt"
   | "claimedUserMessageId"

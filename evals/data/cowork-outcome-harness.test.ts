@@ -580,6 +580,12 @@ describe("production-shaped Cowork outcome harness", () => {
       request: {
         message:
           "Write an original post in my voice about why a personal brand is career leverage.",
+        command: { kind: "create", count: 1 },
+        generationConfig: {
+          version: 1,
+          draftCount: 1,
+          explorationLane: "experimental",
+        },
       },
       model: {
         provider: { rounds: [] },
@@ -639,6 +645,15 @@ describe("production-shaped Cowork outcome harness", () => {
     expect(
       report.persisted.messages.some((message) => message.role === "tool"),
     ).toBe(false);
+    const userRow = report.persisted.messages.find(
+      (message) => message.role === "user",
+    );
+    expect(userRow?.generation_config).toMatchObject({
+      explorationLane: "experimental",
+    });
+    expect(report.persisted.artifacts[0]?.meta).toMatchObject({
+      exploration_lane: "experimental",
+    });
   });
 
   test("routes the exact July 14 flagship prompt through the tool-free writer", async () => {
