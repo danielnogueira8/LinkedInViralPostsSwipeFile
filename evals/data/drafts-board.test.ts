@@ -6,6 +6,7 @@ import {
   boardColumnForDraft,
   adjacentDraftIds,
   editorNavigationDrafts,
+  shouldShowPlanningDate,
   COLUMN_PREVIEW_COUNT,
   type Draft,
 } from "@/app/(app)/dashboard/posts/drafts-list";
@@ -268,6 +269,32 @@ describe("boardColumnForDraft — single source of truth for board/mobile column
     expect(
       boardColumnForDraft(draft({ id: "b", status: "ready", scheduleStatus: "failed" })),
     ).toBe("ready");
+  });
+});
+
+describe("planning-date card chip", () => {
+  test("shows a planning date only when LinkedIn publishing does not own the date", () => {
+    expect(
+      shouldShowPlanningDate(
+        draft({ id: "planned", planToPostOn: "2026-07-30", scheduledAt: null }),
+      ),
+    ).toBe(true);
+    expect(
+      shouldShowPlanningDate(
+        draft({
+          id: "scheduled",
+          planToPostOn: "2026-07-30",
+          scheduledAt: "2026-07-30T08:00:00.000Z",
+          scheduleStatus: null,
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  test("does not invent a planning chip when no planning date exists", () => {
+    expect(
+      shouldShowPlanningDate(draft({ id: "undated", planToPostOn: null })),
+    ).toBe(false);
   });
 });
 

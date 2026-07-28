@@ -101,6 +101,13 @@ export function isMcpCreatedDraft(draft: Draft): boolean {
   return (draft.meta as { created_via?: unknown } | null)?.created_via === "mcp";
 }
 
+// scheduledAt is the durable signal that LinkedIn publishing owns the date.
+// Guarding on it as well as scheduleStatus prevents a stale/null lifecycle
+// snapshot from showing the same date again as a planning-only chip.
+export function shouldShowPlanningDate(draft: Draft): boolean {
+  return Boolean(draft.planToPostOn && !draft.scheduledAt);
+}
+
 // "Jul 27, 8:57 PM" — the created date+time stamp every board card shows, so
 // a freshly landed draft is visibly the newest thing in the lane.
 export function formatCreatedAt(iso: string): string {
@@ -1616,7 +1623,7 @@ function DraftCard({
                 <AlertCircle className="h-3 w-3" aria-hidden />
                 Failed
               </StatusPill>
-            ) : plannedDate ? (
+            ) : plannedDate && shouldShowPlanningDate(draft) ? (
               <StatusPill tone="neutral" title="Planning date only. Open the post to schedule publishing.">
                 <Calendar className="h-3 w-3" aria-hidden />
                 {plannedDate}
