@@ -266,9 +266,16 @@ export function markLastToolCached(
   for (const tool of tools) {
     delete (tool as { cache_control?: unknown }).cache_control;
   }
+  // One-hour TTL: the default 5-minute window dies between turns, so every
+  // turn paid a FULL cache write (~9k tokens at 1.25x) with ~zero reads. The
+  // 1h window costs 2x the 5m write but reads stay at 0.1x — any prefix read
+  // more than ~3 times in the hour (a normal writing session) comes out well
+  // ahead. See docs: prompt caching TTL pricing.
   (
-    tools[tools.length - 1] as { cache_control?: { type: "ephemeral" } }
-  ).cache_control = { type: "ephemeral" };
+    tools[tools.length - 1] as {
+      cache_control?: { type: "ephemeral"; ttl?: "5m" | "1h" };
+    }
+  ).cache_control = { type: "ephemeral", ttl: "1h" };
 }
 
 // The OpenRouter callers request live web search via `plugins: [{id:"web", ...}]`
@@ -343,7 +350,16 @@ export function extractCitations(
 // system string just make each variation its own cache entry — no partial-prefix
 // breakage, since the whole system is one block. Non-variation turns still hit.
 function cachedSystem(system: string): Anthropic.TextBlockParam[] {
-  return [{ type: "text", text: system, cache_control: { type: "ephemeral" } }];
+  // Same 1h TTL rationale as markLastToolCached: a 5-minute cache dies between
+  // turns and every turn rewrites ~9-13k tokens at 1.25x; the 1h window turns
+  // those into 0.1x reads across a normal writing session.
+  return [
+    {
+      type: "text",
+      text: system,
+      cache_control: { type: "ephemeral", ttl: "1h" },
+    },
+  ];
 }
 
 // The app's reasoning knobs -> Anthropic effort. Sonnet has adaptive thinking on

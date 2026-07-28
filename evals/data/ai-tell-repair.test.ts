@@ -14,7 +14,7 @@ vi.mock("@/lib/openrouter", async (original) => {
 const { repairAiTells, resolveAiTellModel } = await import(
   "@/lib/agent/specialists/ai-tell-repair"
 );
-const { CHAT_MODEL } = await import("@/lib/openrouter");
+const { CHAT_MODEL, BACKGROUND_MODEL } = await import("@/lib/openrouter");
 
 beforeEach(() => {
   completeChat.mockReset();
@@ -28,21 +28,12 @@ describe("conditional AI-tell repair", () => {
     expect(resolveAiTellModel("custom/model")).toBe("custom/model");
   });
 
-  test("never rides the auto-router — pins the writer primary instead", async () => {
-    // Prod runs CHAT_MODEL=openrouter/auto, and the router served repair calls
-    // z-ai/glm-5.2, which hung past the 8s stage timeout on every attempt.
-    // With the chat model set to the auto-router, repair must follow the
-    // pinned writer primary instead.
-    vi.resetModules();
-    process.env.OPENROUTER_CHAT_MODEL = "openrouter/auto";
-    const mod = await import("@/lib/agent/specialists/ai-tell-repair");
-    const config = await import("@/lib/agent/model-config");
-    expect(mod.resolveAiTellModel(undefined)).toBe(
-      config.PRIMARY_DRAFT_WRITER_MODEL,
-    );
-    expect(mod.resolveAiTellModel(undefined)).not.toContain("openrouter/auto");
-    vi.resetModules();
-    delete process.env.OPENROUTER_CHAT_MODEL;
+  test("repair runs on the cheap background tier, never the auto-router", () => {
+    // Repair is a narrow forced-tool copy edit — it follows BACKGROUND_MODEL
+    // (Haiku 4.5 under the Anthropic flag, CHAT_MODEL off it), never the
+    // openrouter/auto meta-router that hung GLM past the 8s stage timeout.
+    expect(resolveAiTellModel(undefined)).toBe(BACKGROUND_MODEL);
+    expect(resolveAiTellModel(undefined)).not.toContain("openrouter/auto");
   });
 
   test("does not call a model for a clean post", async () => {
