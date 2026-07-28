@@ -7524,15 +7524,6 @@ function ArtifactCard({
                       ? `Next open day: ${formatScheduleDay(nextOpenDay)}`
                       : "Choose any future date and time."}
                 </span>
-                {nextOpenDay && (
-                  <button
-                    type="button"
-                    className="font-medium text-primary hover:underline"
-                    onClick={() => setScheduleWhen(suggestedScheduleLocalInput(nextOpenDay))}
-                  >
-                    Use it
-                  </button>
-                )}
               </div>
               <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
                 <input
