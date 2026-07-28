@@ -81,6 +81,28 @@ describe("OpenRouter provider routing", () => {
     ).toBe(0.15);
   });
 
+  test("BACKGROUND_MODEL runs on Haiku 4.5 under the Anthropic flag, CHAT_MODEL off it", async () => {
+    // The cheap forced-tool tier (idea briefs, lead-magnet setup, voice
+    // distillation, titles) must not ride openrouter/auto into GLM when the
+    // flag is on — it runs on the Anthropic key like everything else.
+    vi.stubEnv("AI_PROVIDER", "anthropic");
+    vi.resetModules();
+    const flagged = await import("@/lib/openrouter");
+    expect(flagged.BACKGROUND_MODEL).toBe("anthropic/claude-haiku-4.5");
+
+    // An explicit Anthropic-side pin wins over the default.
+    vi.stubEnv("ANTHROPIC_BACKGROUND_MODEL", "anthropic/claude-sonnet-5");
+    vi.resetModules();
+    const pinned = await import("@/lib/openrouter");
+    expect(pinned.BACKGROUND_MODEL).toBe("anthropic/claude-sonnet-5");
+
+    // Off the flag the tier follows CHAT_MODEL as before.
+    vi.unstubAllEnvs();
+    vi.resetModules();
+    const unflagged = await import("@/lib/openrouter");
+    expect(unflagged.BACKGROUND_MODEL).toBe(unflagged.CHAT_MODEL);
+  });
+
   test("by DEFAULT pins no provider (OpenRouter load-balances) but requires parameter support", () => {
     // No `order` key at all — that's the true "no pin" (an empty [] would still
     // signal a degenerate preference). require_parameters stays on so a swap

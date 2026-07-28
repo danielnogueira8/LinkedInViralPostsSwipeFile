@@ -491,10 +491,18 @@ export const REASONING_MODEL = CHAT_MODEL;
 
 // Background tier — templatize + hook extraction. Defaults to GLM-5.2 as well
 // (5.2 is both cheaper and stronger than 5.1, so there's no reason to keep the
-// mechanical tasks on the older model). Kept as a separate env knob in case you
-// ever want to point the cheap, high-volume tasks at a smaller/cheaper model.
+// mechanical tasks on the older model) — EXCEPT under the Anthropic flag, where
+// these small forced-tool jobs (idea briefs, lead-magnet assessment/repair,
+// voice distillation, chat titles) run on Haiku 4.5 directly on the Anthropic
+// key instead of riding openrouter/auto into GLM. That's the whole point of the
+// flag: one provider, one bill, and no dependence on the OpenRouter key's limit.
+// Override per environment with ANTHROPIC_BACKGROUND_MODEL, or point the whole
+// tier anywhere with OPENROUTER_BACKGROUND_MODEL.
 export const BACKGROUND_MODEL =
-  process.env.OPENROUTER_BACKGROUND_MODEL || CHAT_MODEL;
+  process.env.OPENROUTER_BACKGROUND_MODEL ||
+  (process.env.AI_PROVIDER === "anthropic"
+    ? process.env.ANTHROPIC_BACKGROUND_MODEL || "anthropic/claude-haiku-4.5"
+    : CHAT_MODEL);
 
 // GLM-5.2 reasoning policy. OpenRouter currently defaults this model to High,
 // but we send it explicitly so a provider/default change cannot silently alter
