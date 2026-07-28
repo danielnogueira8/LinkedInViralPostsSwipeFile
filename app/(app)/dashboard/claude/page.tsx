@@ -142,7 +142,9 @@ export default async function ClaudePage() {
           </p>
         </div>
 
-        <div className="grid gap-3 md:grid-cols-2">
+        {/* items-start: cards size to their own content instead of stretching
+            to the tallest card in the row, so no dead space anywhere. */}
+        <div className="grid items-start gap-3 md:grid-cols-2">
           {AGENTS.map((agent) => {
             const Icon = agent.icon;
             const prompt = composePrompt(agent.brief, agent.skills);
