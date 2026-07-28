@@ -61,6 +61,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { DraftEditor } from "./draft-editor";
+import { titleFromNewDraftPaste } from "@/lib/draft-title";
 import { LeadSharkPanel } from "./leadshark-panel";
 import { cn } from "@/lib/utils";
 import { AvatarImg } from "@/components/avatar-img";
@@ -1124,6 +1125,15 @@ export function DraftEditorModal({
                       key={draft?.id ?? "new"}
                       value={body}
                       onChange={setBody}
+                      onTextPaste={(pastedText) => {
+                        const nextTitle = titleFromNewDraftPaste({
+                          isNew,
+                          currentTitle: titleDraft,
+                          currentBody: body,
+                          pastedText,
+                        });
+                        if (nextTitle) setTitleDraft(nextTitle);
+                      }}
                       onMediaFiles={addMediaFiles}
                       allowImagePaste={isNew}
                       toolbar="full"

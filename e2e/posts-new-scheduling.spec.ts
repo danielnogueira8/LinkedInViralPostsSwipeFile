@@ -24,6 +24,31 @@ test.describe("new board posts and LinkedIn scheduling", () => {
     expect(draft.schedule_status).toBeNull();
   });
 
+  test("uses the first line of pasted post text as a blank new draft's title", async ({
+    page,
+  }) => {
+    await page.getByRole("button", { name: "New post" }).click();
+    const editor = page.getByRole("dialog");
+    const body = editor.locator("textarea").first();
+    await body.evaluate((element) => {
+      const clipboard = new DataTransfer();
+      clipboard.setData(
+        "text/plain",
+        "A pasted hook becomes the title\n\nThe remaining post stays in the editor.",
+      );
+      element.dispatchEvent(
+        new ClipboardEvent("paste", {
+          bubbles: true,
+          cancelable: true,
+          clipboardData: clipboard,
+        }),
+      );
+    });
+    await expect(editor.getByLabel("Preview name")).toHaveValue(
+      "A pasted hook becomes the title",
+    );
+  });
+
   test("creates and schedules a post from the board", async ({ page }) => {
     const scheduledAt = futureDatetimeLocal();
     let scheduledId = "";

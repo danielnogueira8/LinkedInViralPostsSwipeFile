@@ -1,5 +1,9 @@
 import { describe, test, expect } from "vitest";
-import { deriveDraftTitle, isAutoDerivedTitle } from "@/lib/draft-title";
+import {
+  deriveDraftTitle,
+  isAutoDerivedTitle,
+  titleFromNewDraftPaste,
+} from "@/lib/draft-title";
 
 // ---------------------------------------------------------------------------
 // Title derivation for board posts. Backs the "Update post" fix: when a post's
@@ -73,5 +77,59 @@ describe("isAutoDerivedTitle — manual vs auto", () => {
       ? deriveDraftTitle(newBody)
       : manualTitle;
     expect(next).toBe("My favorite hook");
+  });
+});
+
+describe("titleFromNewDraftPaste — Posts new-draft flow", () => {
+  test("uses the pasted post's first line when the new draft is blank", () => {
+    expect(
+      titleFromNewDraftPaste({
+        isNew: true,
+        currentTitle: "",
+        currentBody: "",
+        pastedText: "The hook becomes the title\n\nThe rest stays in the body.",
+      }),
+    ).toBe("The hook becomes the title");
+  });
+
+  test("preserves a title the user already entered", () => {
+    expect(
+      titleFromNewDraftPaste({
+        isNew: true,
+        currentTitle: "My custom title",
+        currentBody: "",
+        pastedText: "Pasted hook\n\nPasted body",
+      }),
+    ).toBeNull();
+  });
+
+  test("does not rename an existing post or a partially written draft", () => {
+    expect(
+      titleFromNewDraftPaste({
+        isNew: false,
+        currentTitle: "",
+        currentBody: "",
+        pastedText: "Pasted hook",
+      }),
+    ).toBeNull();
+    expect(
+      titleFromNewDraftPaste({
+        isNew: true,
+        currentTitle: "",
+        currentBody: "Already writing",
+        pastedText: "Pasted continuation",
+      }),
+    ).toBeNull();
+  });
+
+  test("ignores text-free clipboard content", () => {
+    expect(
+      titleFromNewDraftPaste({
+        isNew: true,
+        currentTitle: "",
+        currentBody: "",
+        pastedText: "   ",
+      }),
+    ).toBeNull();
   });
 });

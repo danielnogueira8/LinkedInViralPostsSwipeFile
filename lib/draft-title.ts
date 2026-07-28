@@ -18,6 +18,29 @@ export function deriveDraftTitle(body: string): string {
   return `${trimmed.trim()}…`;
 }
 
+export function titleFromNewDraftPaste({
+  isNew,
+  currentTitle,
+  currentBody,
+  pastedText,
+}: {
+  isNew: boolean;
+  currentTitle: string;
+  currentBody: string;
+  pastedText: string;
+}): string | null {
+  if (
+    !isNew ||
+    currentTitle.trim() ||
+    currentBody.trim() ||
+    !pastedText.trim()
+  ) {
+    return null;
+  }
+  const title = deriveDraftTitle(pastedText);
+  return title === "Untitled post" ? null : title;
+}
+
 // Whether `title` looks auto-derived from `body` (rather than a name the user
 // typed). True when it equals the body-derived title, or is empty / a generic
 // "Untitled" placeholder. Used to decide if a body change should refresh the
