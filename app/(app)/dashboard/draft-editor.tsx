@@ -52,6 +52,7 @@ export function DraftEditor({
   className,
   textareaClassName,
   onMediaFiles,
+  onTextPaste,
   allowImagePaste = false,
   toolbar = "floating",
   onBlur,
@@ -64,6 +65,7 @@ export function DraftEditor({
   className?: string;
   textareaClassName?: string;
   onMediaFiles?: (files: File[]) => void;
+  onTextPaste?: (text: string) => void;
   // Image paste belongs to the New Post flow. Drag/drop and the Attach control
   // remain available wherever this editor is used.
   allowImagePaste?: boolean;
@@ -678,6 +680,8 @@ export function DraftEditor({
           onBlur?.();
         }}
         onPaste={(event) => {
+          const pastedText = event.clipboardData.getData("text/plain");
+          if (pastedText) onTextPaste?.(pastedText);
           // Keep this on the editor rather than the document: image pastes are
           // only meaningful while this post editor is mounted, and a nested
           // image-aware control can opt out with preventDefault().
