@@ -2807,7 +2807,7 @@ describe("writer plan narration (narratePlan)", () => {
       "Applying your voice and content intelligence",
       "Writing your post",
       "Checking structure and completeness",
-      "Removing AI tells",
+      "Checking for AI tells",
       "Finalizing your draft",
     ]);
     expect(planUpdates(events).at(-1)?.steps.every((step) => step.status === "done"))
@@ -2827,6 +2827,20 @@ describe("writer plan narration (narratePlan)", () => {
 
     expect(activePlanLabels(events)[0]).toBe(
       "Applying Contrarian Intelligence skill",
+    );
+  });
+
+  test("does not claim to apply a voice profile when none is available", async () => {
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(120, 80) },
+    ]);
+    const { events } = await collect(writer, {
+      narratePlan: true,
+      voiceResult: { ok: false, error: "Voice profile unavailable" },
+    });
+
+    expect(activePlanLabels(events)[0]).toBe(
+      "Applying content intelligence and writing rules",
     );
   });
 
@@ -2917,11 +2931,11 @@ describe("writer plan narration (narratePlan)", () => {
       "Applying your voice and content intelligence",
       "Writing draft 1 of 2",
       "Checking structure and completeness",
-      "Removing AI tells",
+      "Checking for AI tells",
       "Finalizing your draft",
       "Writing draft 2 of 2",
       "Checking structure and completeness",
-      "Removing AI tells",
+      "Checking for AI tells",
       "Finalizing your draft",
     ]);
     expect(planUpdates(events).at(-1)?.steps.every((step) => step.status === "done"))

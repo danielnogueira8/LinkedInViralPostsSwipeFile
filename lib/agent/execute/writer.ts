@@ -2598,6 +2598,12 @@ export async function runModeledDraftSlot(
   };
 
   try {
+    input.engineInput.onProgressStage?.(
+      writerContextProgressStage({
+        ...input.engineInput,
+        task,
+      }),
+    );
     for await (const event of runSingle({
       ...input.engineInput,
       task,
@@ -3995,7 +4001,7 @@ async function* runLocalSlotBatch(
 // Durable modeled batch coordinator (uses the injected repository adapter).
 // ---------------------------------------------------------------------------
 
-async function* runDurableSlotBatch(
+async function* runDurableSlotBatchEvents(
   input: WriterInput,
   task: Extract<WriterTask, { kind: "multi" }>,
   sources: ModeledDraftBatchSource[],
@@ -4088,6 +4094,51 @@ async function* runDurableSlotBatch(
   );
 }
 
+async function* runDurableSlotBatch(
+  input: WriterInput,
+  task: Extract<WriterTask, { kind: "multi" }>,
+  sources: ModeledDraftBatchSource[],
+  repository: ModeledDraftBatchRepository,
+): AsyncGenerator<AgentEvent> {
+  if (!input.narratePlan) {
+    yield* runDurableSlotBatchEvents(input, task, sources, repository);
+    return;
+  }
+
+  let steps = advancePlanStep(
+    input.planPreambleSteps ?? [],
+    writerContextProgressStage(input),
+  );
+  yield { type: "plan_update", steps };
+
+  let failed = false;
+  for await (const event of streamWriterProgress(
+    input,
+    (streamInput) =>
+      runDurableSlotBatchEvents(streamInput, task, sources, repository),
+  )) {
+    if (event.type === "writer_progress") {
+      const active = steps.find((step) => step.status === "active");
+      if (
+        active?.id === event.stage.id &&
+        active.label === event.stage.label
+      ) {
+        continue;
+      }
+      steps = advancePlanStep(steps, event.stage);
+      yield { type: "plan_update", steps };
+      continue;
+    }
+    if (event.type === "error") failed = true;
+    yield event;
+  }
+
+  if (!failed) {
+    steps = completeActivePlanSteps(steps);
+    yield { type: "plan_update", steps };
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Slot batch turn dispatcher
 // ---------------------------------------------------------------------------
@@ -4137,17 +4188,29 @@ function writerSingleStepLabel(
   return "Writing your post";
 }
 
-function writerContextProgressStage(input: WriterInput): WriterProgressStage {
+export function writerContextProgressStage(
+  input: WriterInput,
+): WriterProgressStage {
   const appliedSkillNames = (input.customSkillNames ?? [])
     .slice(0, input.customSkillBodies?.length ?? 0)
     .map((name) => name.trim())
     .filter(Boolean);
+  const voice =
+    input.voiceResult.ok === true &&
+    input.voiceResult.voice &&
+    typeof input.voiceResult.voice === "object" &&
+    !Array.isArray(input.voiceResult.voice)
+      ? input.voiceResult.voice
+      : null;
+  const hasVoice = Boolean(voice && Object.keys(voice).length > 0);
   const label =
     appliedSkillNames.length === 1
       ? `Applying ${appliedSkillNames[0]} skill`
       : appliedSkillNames.length > 1
         ? `Applying ${appliedSkillNames.length} selected skills`
-        : "Applying your voice and content intelligence";
+        : hasVoice
+          ? "Applying your voice and content intelligence"
+          : "Applying content intelligence and writing rules";
   return { id: "apply_writer_intelligence", label };
 }
 
@@ -4187,9 +4250,9 @@ function writerFinalizerProgressStage(
       id: "verify_source_fidelity",
       label: "Checking source fidelity",
     },
-    ai_tell_cleanup: {
-      id: "remove_ai_tells",
-      label: "Removing AI tells",
+    ai_tell_check: {
+      id: "check_ai_tells",
+      label: "Checking for AI tells",
     },
     artifact: {
       id: "finalize_draft",

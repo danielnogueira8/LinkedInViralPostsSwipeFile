@@ -43,6 +43,7 @@ import { distinctFallbackModel } from "@/lib/agent/model-routing";
 import {
   runWriterTurn,
   streamWriterProgress,
+  writerContextProgressStage,
   WRITER_TURN_BUDGET_MS,
   type WriterInput,
   type WriterTask,
@@ -5469,6 +5470,8 @@ async function* runReadOnlyOrchestratorCore(
       if (error instanceof GroundedAnswerSynthesisError) {
         await recordSynthesisAttempts(error.attempts);
       }
+      steps = completeActivePlanSteps(steps);
+      yield { type: "plan_update", steps };
       if (await input.cancellationBoundary()) {
         yield completedDone({
           content: readOnlyInterruptionContent(
@@ -5670,11 +5673,6 @@ async function* runReadOnlyOrchestratorCore(
         value: Awaited<ReturnType<typeof executeBatch>> | null;
       } = { value: null };
       try {
-        steps = advancePlanStep(steps, {
-          id: "apply_modeled_intelligence",
-          label: "Applying your voice and content intelligence",
-        });
-        yield { type: "plan_update", steps };
         let batchProgressSequence = 0;
         const batchEngineInput: WriterInput = {
           ...input.writerInput,
@@ -5961,8 +5959,8 @@ async function* runReadOnlyOrchestratorCore(
     },
   };
   steps = advancePlanStep(steps, {
+    ...writerContextProgressStage(proseInput),
     id: "apply_grounded_writer_intelligence",
-    label: "Applying your voice and source intelligence",
   });
   yield { type: "plan_update", steps };
   const prose = streamWriterProgress(proseInput, deps.runProse);

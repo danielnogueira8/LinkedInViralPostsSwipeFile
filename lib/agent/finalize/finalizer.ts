@@ -204,7 +204,7 @@ export type DraftFinalizerDecision = {
 export type DraftFinalizerStage =
   | "validation"
   | "source_fidelity"
-  | "ai_tell_cleanup"
+  | "ai_tell_check"
   | "artifact";
 
 export type DraftFinalizerOptions = {
@@ -481,7 +481,7 @@ export function createDraftFinalizer(
       }
       state = fidelityResult.state;
     }
-    reportStage("ai_tell_cleanup");
+    reportStage("ai_tell_check");
     const repairResult = await aiTellRepairStage(ctx, state);
     if (!repairResult.ok) {
       return emit(

@@ -2786,8 +2786,8 @@ describe("read-only orchestrator execution", () => {
               label: "Writing your post",
             });
             draftInput.onProgressStage?.({
-              id: "remove_ai_tells_1",
-              label: "Removing AI tells",
+              id: "check_ai_tells_1",
+              label: "Checking for AI tells",
             });
             yield {
               type: "artifact" as const,
@@ -2822,7 +2822,7 @@ describe("read-only orchestrator execution", () => {
           event.type === "plan_update" &&
           event.steps.some(
             (step) =>
-              step.status === "active" && step.label === "Removing AI tells",
+              step.status === "active" && step.label === "Checking for AI tells",
           ),
       ),
     ).toBe(true);
@@ -2908,8 +2908,8 @@ describe("read-only orchestrator execution", () => {
             label: "Writing your post",
           });
           batchInput.engineInput.onProgressStage?.({
-            id: "remove_ai_tells_1",
-            label: "Removing AI tells",
+            id: "check_ai_tells_1",
+            label: "Checking for AI tells",
           });
           return {
             kind: "complete" as const,
@@ -2991,7 +2991,7 @@ describe("read-only orchestrator execution", () => {
           event.type === "plan_update" &&
           event.steps.some(
             (step) =>
-              step.status === "active" && step.label === "Removing AI tells",
+              step.status === "active" && step.label === "Checking for AI tells",
           ),
       ),
     ).toBe(true);
@@ -3333,6 +3333,17 @@ describe("read-only orchestrator execution", () => {
     expect(batchInputs).toHaveLength(1);
     expect(batchInputs[0].sources).toEqual([]);
     expect(result.events.filter((event) => event.type === "artifact")).toHaveLength(2);
+    expect(
+      result.events.some(
+        (event) =>
+          event.type === "plan_update" &&
+          event.steps.some(
+            (step) =>
+              step.status === "active" &&
+              step.label.startsWith("Applying "),
+          ),
+      ),
+    ).toBe(false);
   });
 
   test.each([
