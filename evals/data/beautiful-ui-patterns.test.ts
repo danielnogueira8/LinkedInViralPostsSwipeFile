@@ -39,13 +39,13 @@ describe("shared Beautiful UI interaction patterns", () => {
     );
   });
 
-  test("the dashboard shell makes search and a new Cowork session directly available", () => {
+  test("the sidebar stays focused on navigation while mobile search remains available", () => {
     const nav = source("app/(app)/dashboard/nav.tsx");
     const chrome = source("app/(app)/dashboard/client-chrome.tsx");
 
-    expect(nav).toContain("Search the workspace");
-    expect(nav).toContain("/dashboard?new=1");
-    expect(nav).toContain("OPEN_COMMAND_PALETTE_EVENT");
+    expect(nav).not.toContain("Search the workspace");
+    expect(nav).not.toContain("/dashboard?new=1");
+    expect(nav).not.toContain("OPEN_COMMAND_PALETTE_EVENT");
     expect(chrome).toContain("OPEN_COMMAND_PALETTE_EVENT");
     expect(source("lib/ui-events.ts")).toContain(
       '"swipein:open-command-palette"',

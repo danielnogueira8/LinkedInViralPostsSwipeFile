@@ -54,18 +54,10 @@ test.describe("UI loading and performance guardrails", () => {
     await expect(page.locator("main, [role=main]").first()).toBeVisible();
   });
 
-  test("workspace search opens from the persistent sidebar", async ({ page }) => {
+  test("workspace search opens from the keyboard shortcut", async ({ page }) => {
     await page.goto("/dashboard/agent");
 
-    const search = page.getByRole("button", {
-      name: "Search the workspace",
-    });
-    await expect(search).toBeVisible();
-    await expect(
-      page.getByRole("link", { name: "New Cowork session" }),
-    ).toHaveAttribute("href", "/dashboard?new=1");
-
-    await search.click();
+    await page.keyboard.press("Control+k");
     const palette = page.getByRole("dialog", { name: "Command palette" });
     await expect(palette).toBeVisible();
     await expect(palette.getByRole("combobox")).toBeFocused();
@@ -73,7 +65,7 @@ test.describe("UI loading and performance guardrails", () => {
     await page.keyboard.press("Escape");
     await expect(palette).toBeHidden();
 
-    await search.click();
+    await page.keyboard.press("Control+k");
     await expect(palette).toBeVisible();
   });
 
