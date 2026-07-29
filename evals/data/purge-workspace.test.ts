@@ -20,6 +20,15 @@ const rpcCalls: Array<{
 }> = [];
 // Tables the fake should make fail (to test error handling).
 const failTables = new Set<string>();
+const failReadTables = new Map<string, { code?: string; message: string }>();
+const failRpcs = new Map<string, { code?: string; message: string }>();
+const knowledgeSourceRevisionRows: Array<{
+  storage_bucket: string | null;
+  storage_path: string | null;
+}> = [];
+const storageCalls: Array<{ bucket: string; paths: string[] }> = [];
+const failStorageBuckets = new Set<string>();
+let schemaVersion = 147;
 
 // A fully-generic, always-awaitable Supabase stand-in. Records delete().eq()
 // chains for the purge assertions, but supports EVERY builder method (insert,
@@ -32,14 +41,26 @@ function makeRecorder() {
     const predicates: [string, unknown][] = [];
     const settle = () => {
       if (isDelete) calls.push({ table, predicates });
-      const error =
-        isDelete && failTables.has(table) ? { message: `boom: ${table}` } : null;
-      return { data: [], count: error ? null : 1, error };
+      const error = isDelete
+        ? failTables.has(table)
+          ? { message: `boom: ${table}` }
+          : null
+        : failReadTables.get(table) ?? null;
+      return {
+        data:
+          !isDelete && table === "knowledge_source_revisions"
+            ? knowledgeSourceRevisionRows
+            : !isDelete && table === "app_schema_version"
+              ? { version: schemaVersion }
+            : [],
+        count: error ? null : 1,
+        error,
+      };
     };
     const builder: Record<string, unknown> = {};
     const passthroughs = [
       "select", "insert", "upsert", "update", "in", "is", "gte", "lte",
-      "order", "limit", "not", "neq", "ilike", "match",
+      "order", "limit", "not", "neq", "ilike", "match", "range",
     ];
     for (const m of passthroughs) builder[m] = () => builder;
     builder.delete = () => {
@@ -61,9 +82,27 @@ function makeRecorder() {
     args?: Record<string, unknown>,
   ) => {
     rpcCalls.push({ name, args });
-    return Promise.resolve({ data: 1, count: null, error: null });
+    return Promise.resolve({
+      data: failRpcs.has(name) ? null : 1,
+      count: null,
+      error: failRpcs.get(name) ?? null,
+    });
   };
-  return { from, rpc };
+  const storage = {
+    from(bucket: string) {
+      return {
+        remove(paths: string[]) {
+          storageCalls.push({ bucket, paths });
+          const failed = failStorageBuckets.has(bucket);
+          return Promise.resolve({
+            data: failed ? null : paths.map((name) => ({ name })),
+            error: failed ? { message: `storage unavailable: ${bucket}` } : null,
+          });
+        },
+      };
+    },
+  };
+  return { from, rpc, storage };
 }
 
 vi.mock("@/lib/supabase", () => ({
@@ -76,6 +115,12 @@ beforeEach(() => {
   calls.length = 0;
   rpcCalls.length = 0;
   failTables.clear();
+  failReadTables.clear();
+  failRpcs.clear();
+  knowledgeSourceRevisionRows.length = 0;
+  storageCalls.length = 0;
+  failStorageBuckets.clear();
+  schemaVersion = 147;
 });
 
 const WS = "org_ws123";
@@ -160,6 +205,10 @@ describe("purgeWorkspaceData — coverage + scoping", () => {
       args: { p_workspace_id: WS },
     });
     expect(rpcCalls).toContainEqual({
+      name: "purge_workspace_knowledge_sources",
+      args: { p_workspace_id: WS },
+    });
+    expect(rpcCalls).toContainEqual({
       name: "purge_content_outcomes",
       args: { p_workspace_id: WS },
     });
@@ -223,6 +272,118 @@ describe("purgeWorkspaceData — coverage + scoping", () => {
 });
 
 describe("purgeWorkspaceData — resilience", () => {
+  test("deletes private source objects before purging their database paths", async () => {
+    knowledgeSourceRevisionRows.push(
+      {
+        storage_bucket: "knowledge-sources",
+        storage_path: `${WS}/calls/one.pdf`,
+      },
+      {
+        storage_bucket: "knowledge-sources",
+        storage_path: `${WS}/calls/two.docx`,
+      },
+      { storage_bucket: null, storage_path: null },
+    );
+
+    const res = await purgeWorkspaceData(WS, USER);
+
+    expect(res.ok).toBe(true);
+    expect(storageCalls).toEqual([
+      {
+        bucket: "knowledge-sources",
+        paths: [`${WS}/calls/one.pdf`, `${WS}/calls/two.docx`],
+      },
+    ]);
+    expect(
+      rpcCalls.findIndex((call) => call.name === "purge_workspace_knowledge_sources"),
+    ).toBeGreaterThan(-1);
+    expect(res.deleted["knowledge_source_storage"]).toBe(2);
+  });
+
+  test("retains source rows for a retry when private object deletion fails", async () => {
+    knowledgeSourceRevisionRows.push({
+      storage_bucket: "knowledge-sources",
+      storage_path: `${WS}/calls/one.pdf`,
+    });
+    failStorageBuckets.add("knowledge-sources");
+
+    const res = await purgeWorkspaceData(WS, USER);
+
+    expect(res.ok).toBe(false);
+    expect(res.errors).toContainEqual({
+      table: "knowledge_source_storage",
+      error: "storage unavailable: knowledge-sources",
+    });
+    expect(
+      rpcCalls.some((call) => call.name === "purge_workspace_knowledge_sources"),
+    ).toBe(false);
+  });
+
+  test("pre-migration missing Knowledge Source RPC does not block erasure", async () => {
+    failReadTables.set("knowledge_source_revisions", {
+      code: "PGRST205",
+      message: "Could not find the table public.knowledge_source_revisions",
+    });
+    schemaVersion = 146;
+    failRpcs.set("purge_workspace_knowledge_sources", {
+      code: "PGRST202",
+      message: "Could not find the function public.purge_workspace_knowledge_sources",
+    });
+
+    const res = await purgeWorkspaceData(WS, USER);
+
+    expect(res.ok).toBe(true);
+    expect(res.deleted["knowledge_sources"]).toBe(0);
+  });
+
+  test("a missing-table cache response fails closed after migration 147", async () => {
+    failReadTables.set("knowledge_source_revisions", {
+      code: "PGRST205",
+      message: "Could not find the table public.knowledge_source_revisions",
+    });
+
+    const res = await purgeWorkspaceData(WS, USER);
+
+    expect(res.ok).toBe(false);
+    expect(res.errors).toContainEqual({
+      table: "knowledge_source_storage",
+      error: "Could not find the table public.knowledge_source_revisions",
+    });
+    expect(
+      rpcCalls.some((call) => call.name === "purge_workspace_knowledge_sources"),
+    ).toBe(false);
+  });
+
+  test("a stale missing-RPC response fails erasure when source tables exist", async () => {
+    failRpcs.set("purge_workspace_knowledge_sources", {
+      code: "PGRST202",
+      message: "Could not find the function public.purge_workspace_knowledge_sources",
+    });
+
+    const res = await purgeWorkspaceData(WS, USER);
+
+    expect(res.ok).toBe(false);
+    expect(res.errors).toContainEqual({
+      table: "knowledge_sources",
+      error: "Could not find the function public.purge_workspace_knowledge_sources",
+    });
+  });
+
+  test("a real Knowledge Source purge failure is still reported", async () => {
+    failRpcs.set("purge_workspace_knowledge_sources", {
+      code: "57014",
+      message: "statement timeout",
+    });
+
+    const res = await purgeWorkspaceData(WS, USER);
+
+    expect(res.ok).toBe(false);
+    expect(res.errors).toContainEqual({
+      table: "knowledge_sources",
+      error: "statement timeout",
+    });
+  });
+
   test("a failing table is reported but the erasure continues", async () => {
     failTables.add("voice_profiles");
     const res = await purgeWorkspaceData(WS, USER);
