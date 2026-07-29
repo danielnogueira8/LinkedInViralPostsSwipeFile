@@ -368,7 +368,7 @@ export function registerSwipeTools(server: McpServer) {
     {
       title: "Search viral posts",
       description:
-        "Search the viral swipe file. Filter by niche, date range, engagement thresholds, and post type. Returns top matching posts from accounts your workspace tracks. A one-post search includes rendered original images when available; set include_visual to true for images in a larger result set.",
+        "Search the viral swipe file. Filter by niche, date range, engagement thresholds, and post type. Returns structured results with visual asset URLs from accounts your workspace tracks and renders an interactive Swipe File in supported clients. A one-post search embeds original images when available; set include_visual to true to embed images in a larger result set.",
       inputSchema: {
         niche: z.string().optional().describe("Exact account niche, e.g. 'AI', 'SaaS'."),
         since: z
@@ -389,7 +389,7 @@ export function registerSwipeTools(server: McpServer) {
         include_visual: z
           .boolean()
           .optional()
-          .describe("Include rendered original images, visual asset URLs, and visual metadata. Use when the user asks to see a post's image or visual asset. Always included when limit is 1."),
+          .describe("Embed rendered original images in the tool content. Visual asset URLs and metadata are always included for the interactive app. Image content is always embedded when limit is 1."),
       },
       _meta: SWIPE_FILE_APP_TOOL_META,
     },
@@ -404,11 +404,15 @@ export function registerSwipeTools(server: McpServer) {
         const sortCol = SORT_COLUMN[sortKey];
         const ascending = args.dir === "asc";
         const limit = args.limit ?? 10;
-        const includeVisual = shouldIncludePostVisual(limit, args.include_visual);
+        const renderVisuals = shouldIncludePostVisual(limit, args.include_visual);
+        // The attached MCP App renders post media directly from these URLs.
+        // Keep URL metadata in every search result, but only embed base64 image
+        // content for narrow or explicitly visual model requests.
+        const includeVisualMetadata = true;
 
         let q = sb
           .from("posts")
-          .select(postColumns(includeVisual))
+          .select(postColumns(includeVisualMetadata))
           .in("account_id", accountIds.length ? accountIds : [NO_ROWS_SENTINEL])
           .eq("is_viral", true)
           .or(discoveryThresholdFilter(discoveryThresholds))
@@ -441,9 +445,9 @@ export function registerSwipeTools(server: McpServer) {
               kind: sortKey === "posted" ? "posted" : "number",
             }),
         )
-          .map((post) => normalizeEmbed(post, includeVisual));
+          .map((post) => normalizeEmbed(post, includeVisualMetadata));
         const payload = { ok: true, count: posts.length, posts };
-        return includeVisual
+        return renderVisuals
           ? await postContentWithRenderedImages(payload, posts, true)
           : { ...jsonContent(payload), structuredContent: payload };
       } catch (e) {
@@ -854,7 +858,7 @@ export function registerSwipeTools(server: McpServer) {
     {
       title: "Schedule a saved draft on LinkedIn",
       description:
-        "Create or update the real LinkedIn auto-publish schedule for one saved draft. The workspace must have LinkedIn connected. Use list_drafts first to get the draft id. scheduled_at must be an ISO datetime in the future.",
+        "Create or update the real LinkedIn auto-publish schedule for one saved draft after explicit user confirmation. Declining or cancelling leaves the draft unchanged. The workspace must have LinkedIn connected. Use list_drafts first to get the draft id. scheduled_at must be an ISO datetime in the future.",
       inputSchema: {
         id: z.string().uuid().describe("Draft UUID from list_drafts."),
         scheduled_at: z

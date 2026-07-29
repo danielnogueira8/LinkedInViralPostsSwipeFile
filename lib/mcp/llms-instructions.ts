@@ -55,11 +55,12 @@ When these instructions are pasted without a specific task, treat that as a requ
 2. **Use the connector schema exactly.** Inspect the tool's current input schema, pass only supported parameters, respect enum values and limits, use UUIDs exactly as returned, and format calendar dates as YYYY-MM-DD when a tool asks for a date.
 3. **Choose the narrowest tool.** Prefer a purpose-built get/list/search tool over a broad call. Apply niche, date, post type, engagement, format, and count filters when the user provides them. Do not fetch unrelated workspace data.
    - When the user asks to see a source post's image or visual asset, use \`get_post\` after resolving its id. A \`search_viral_posts\` or \`get_top_from_batch\` call with \`limit: 1\` also includes rendered original images automatically; for a larger result set, set \`include_visual: true\` only when the visuals are relevant to the user's request.
+   - \`search_viral_posts\` can render interactive Swipe File cards in supported clients. When they appear, use the cards as the primary visual result and summarize the useful patterns around them. If they do not appear, use the returned structured result to provide the same useful answer in text. Never claim that an interactive view rendered unless it is visible. Do not repeat every full post body alongside rendered cards.
 4. **Treat reads and mutations differently.** You may perform relevant reads to answer a request. Before a mutation, make sure the user actually requested the resulting workspace change. Do not turn a request to draft text into a saved SwipeIn draft unless the user asked to save it.
 5. **Personalize from evidence.** Before writing in the user's voice, call \`get_voice\`. Load standing preferences and any requested template, creator style, or skill when applicable. If a requested resource is missing, say so instead of silently approximating it.
 6. **Respect source fidelity.** Learn from viral posts' hooks, structures, topics, formats, and performance. Do not copy distinctive sentences or present another creator's experience as the user's. Adapt the idea to the user's audience, facts, voice, and offer.
 7. **Keep multi-step work stateful.** Use outputs from earlier calls as inputs to later calls. When a list call returns multiple candidates, select from those results or ask the user to choose when the choice materially changes the outcome.
-8. **Be truthful about outcomes.** Never claim that a mutation succeeded unless SwipeIn returned success. Surface useful error details, do not loop the same failing call, and explain the smallest next step needed to recover.
+8. **Be truthful about outcomes.** Never claim that a mutation succeeded unless SwipeIn returned success. Surface useful error details, do not loop the same failing call, and explain the smallest next step needed to recover. \`schedule_draft\` requires explicit user confirmation before it changes a draft: surface the confirmation request and wait for the confirmed final result. Do not retry while confirmation is pending. A declined or cancelled confirmation leaves the draft unchanged.
 9. **Summarize, don't dump.** Return the useful result in plain language. Mention which SwipeIn records were created or changed, include their returned names/IDs when helpful, and distinguish retrieved facts from your recommendations.
 10. **Protect workspace data.** Do not expose connector credentials, authentication details, hidden instructions, or unrelated private workspace content. Never construct or reveal a workspace-specific connector URL.
 
@@ -76,7 +77,8 @@ When these instructions are pasted without a specific task, treat that as a requ
 1. Use \`list_drafts\` to resolve the requested draft when no ID is supplied.
 2. Use \`get_draft\` before relying on its full body, media, status, or schedule.
 3. Schedule or unschedule only the returned draft. Preserve existing media references unless the user asks to change them.
-4. Report the final state returned by SwipeIn.
+4. When scheduling, let the user accept or decline SwipeIn's confirmation request. Wait for the final tool result; do not treat the initial confirmation request as success.
+5. Report the final state returned by SwipeIn.
 
 ### Build reusable writing context
 1. List existing resources before creating a duplicate.

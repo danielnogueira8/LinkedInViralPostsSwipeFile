@@ -61,26 +61,50 @@ button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-v
 #filters button, .model { align-self: end; border-color: var(--coral); color: white; background: var(--coral); }
 #filters button:hover, .model:hover { background: var(--coral-hover); }
 .status { min-height: 20px; margin: 0 0 8px; font-size: 13px; }
-.posts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-.card { overflow: hidden; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); }
-.card-body { padding: 14px; }
-.meta { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
-.author { font-weight: 700; }
+.carousel { width: 100%; max-width: 660px; margin: 0 auto; }
+.carousel-stage { min-width: 0; }
+.card {
+  overflow: hidden; border: 1px solid var(--border); border-radius: 14px;
+  background: var(--surface); box-shadow: 0 5px 22px color-mix(in srgb, var(--text) 8%, transparent);
+}
+.card-body { padding: 16px 18px 14px; }
+.meta { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 14px; }
+.identity { display: flex; min-width: 0; align-items: center; gap: 10px; }
+.avatar {
+  display: grid; width: 44px; height: 44px; flex: 0 0 44px; place-items: center;
+  border-radius: 50%; color: white; background: var(--coral); font-weight: 750;
+}
+.author { overflow: hidden; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
 .byline, .metrics { color: var(--muted); font-size: 12px; }
 .kind { padding: 3px 7px; border-radius: 999px; background: var(--surface-soft); font-size: 11px; white-space: nowrap; }
-.copy { margin: 0; white-space: pre-wrap; font-size: 14px; line-height: 1.48; }
-details:not([open]) .copy { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 7; }
-summary { width: fit-content; margin-top: 9px; color: var(--muted); cursor: pointer; font-size: 12px; }
-.media { display: block; width: 100%; max-height: 240px; object-fit: cover; border-top: 1px solid var(--border); background: var(--surface-soft); }
-.metrics { display: flex; gap: 12px; padding: 10px 14px; border-top: 1px solid var(--border); }
-.actions { display: grid; grid-template-columns: 1fr 1.25fr; gap: 8px; padding: 0 14px 14px; }
+.copy { margin: 0; white-space: pre-wrap; font-size: 15px; line-height: 1.5; }
+details:not([open]) .copy { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 8; }
+summary { width: fit-content; margin-top: 10px; color: var(--muted); cursor: pointer; font-size: 13px; font-weight: 650; }
+.media-frame {
+  display: grid; overflow: hidden; min-height: 180px; max-height: 430px; place-items: center;
+  border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
+  background: var(--surface-soft);
+}
+.media { display: block; width: 100%; max-height: 430px; object-fit: contain; }
+.metrics { display: flex; gap: 18px; padding: 11px 18px; }
+.actions { display: grid; grid-template-columns: 1fr 1.25fr; gap: 8px; padding: 0 18px 16px; }
 .secondary { background: var(--surface-soft); }
-.empty { grid-column: 1 / -1; padding: 30px; border: 1px dashed var(--border); border-radius: 16px; text-align: center; color: var(--muted); }
+.carousel-nav { display: grid; grid-template-columns: 42px 1fr 42px; align-items: center; gap: 10px; margin-top: 12px; }
+.nav-button { display: grid; width: 42px; height: 42px; min-height: 42px; place-items: center; padding: 0; border-radius: 50%; font-size: 22px; }
+.nav-button:disabled { cursor: default; color: color-mix(in srgb, var(--muted) 35%, transparent); background: transparent; }
+.carousel-position { text-align: center; color: var(--muted); font-size: 13px; }
+.carousel-dots { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; margin-top: 9px; }
+.dot { width: 7px; height: 7px; min-height: 7px; padding: 0; border: 0; border-radius: 50%; background: var(--border); }
+.dot[aria-current="true"] { background: var(--coral); transform: scale(1.25); }
+.empty { padding: 30px; border: 1px dashed var(--border); border-radius: 16px; text-align: center; color: var(--muted); }
 @media (max-width: 640px) {
   #app { padding: 12px; }
   #filters { grid-template-columns: 1fr 1fr; }
   #filters label:first-child { grid-column: 1 / -1; }
-  .posts { grid-template-columns: 1fr; }
+  .card-body { padding: 14px; }
+  .actions { padding: 0 14px 14px; }
+  .metrics { padding-inline: 14px; }
+  .media-frame, .media { max-height: 360px; }
 }
 `;
 
@@ -98,6 +122,9 @@ const since = document.getElementById("since") as HTMLSelectElement;
 const postType = document.getElementById("post-type") as HTMLSelectElement;
 
 const app = new App({ name: "SwipeIn Swipe File", version: "1.0.0" });
+let currentPosts: SwipePost[] = [];
+let currentIndex = 0;
+let touchStartX: number | null = null;
 
 function validLinkedInMedia(value: unknown): string | null {
   if (typeof value !== "string") return null;
@@ -160,18 +187,34 @@ function createText(tag: string, className: string, text: string): HTMLElement {
   return element;
 }
 
-function renderCard(post: SwipePost): HTMLElement {
+function initials(name: string): string {
+  return (
+    name
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0]?.toUpperCase())
+      .join("") || "LI"
+  );
+}
+
+function renderCard(post: SwipePost, position: number, total: number): HTMLElement {
   const postUrl = validLinkedInPostUrl(post.post_url);
+  const author = post.accounts?.name || "LinkedIn creator";
   const card = document.createElement("article");
   card.className = "card";
+  card.tabIndex = 0;
+  card.setAttribute("aria-label", `Post ${position} of ${total} by ${author}`);
 
   const body = document.createElement("div");
   body.className = "card-body";
   const meta = document.createElement("div");
   meta.className = "meta";
   const identity = document.createElement("div");
-  identity.append(
-    createText("div", "author", post.accounts?.name || "LinkedIn creator"),
+  identity.className = "identity";
+  const identityCopy = document.createElement("div");
+  identityCopy.append(
+    createText("div", "author", author),
     createText(
       "div",
       "byline",
@@ -180,6 +223,7 @@ function renderCard(post: SwipePost): HTMLElement {
         .join(" · "),
     ),
   );
+  identity.append(createText("div", "avatar", initials(author)), identityCopy);
   meta.append(
     identity,
     createText(
@@ -193,18 +237,24 @@ function renderCard(post: SwipePost): HTMLElement {
   const copy = createText("p", "copy", post.text || "No post copy available.");
   const summary = document.createElement("summary");
   summary.textContent = "Show more";
+  details.addEventListener("toggle", () => {
+    summary.textContent = details.open ? "Show less" : "Show more";
+  });
   details.append(copy, summary);
   body.append(meta, details);
   card.append(body);
 
   const mediaUrl = post.media_urls?.map(validLinkedInMedia).find(Boolean);
   if (mediaUrl) {
+    const frame = document.createElement("div");
+    frame.className = "media-frame";
     const image = document.createElement("img");
     image.className = "media";
     image.src = mediaUrl;
     image.alt = "Original post media";
     image.loading = "lazy";
-    card.append(image);
+    frame.append(image);
+    card.append(frame);
   }
 
   const metrics = document.createElement("div");
@@ -259,15 +309,77 @@ function renderCard(post: SwipePost): HTMLElement {
   return card;
 }
 
+function setIndex(nextIndex: number) {
+  if (currentPosts.length === 0) return;
+  currentIndex = Math.max(0, Math.min(nextIndex, currentPosts.length - 1));
+  renderCarousel();
+}
+
+function renderCarousel() {
+  if (currentPosts.length === 0) return;
+  const stage = document.createElement("div");
+  stage.className = "carousel-stage";
+  stage.append(
+    renderCard(currentPosts[currentIndex], currentIndex + 1, currentPosts.length),
+  );
+
+  const nav = document.createElement("nav");
+  nav.className = "carousel-nav";
+  nav.setAttribute("aria-label", "Post carousel navigation");
+  const previous = document.createElement("button");
+  previous.type = "button";
+  previous.className = "nav-button";
+  previous.setAttribute("aria-label", "Previous post");
+  previous.textContent = "‹";
+  previous.disabled = currentIndex === 0;
+  previous.addEventListener("click", () => setIndex(currentIndex - 1));
+  const next = document.createElement("button");
+  next.type = "button";
+  next.className = "nav-button";
+  next.setAttribute("aria-label", "Next post");
+  next.textContent = "›";
+  next.disabled = currentIndex === currentPosts.length - 1;
+  next.addEventListener("click", () => setIndex(currentIndex + 1));
+  nav.append(
+    previous,
+    createText(
+      "div",
+      "carousel-position",
+      `${currentIndex + 1} of ${currentPosts.length}`,
+    ),
+    next,
+  );
+
+  const dots = document.createElement("div");
+  dots.className = "carousel-dots";
+  dots.setAttribute("aria-label", "Choose a post");
+  currentPosts.forEach((post, index) => {
+    const dot = document.createElement("button");
+    dot.type = "button";
+    dot.className = "dot";
+    dot.setAttribute(
+      "aria-label",
+      `Show post ${index + 1} by ${post.accounts?.name || "LinkedIn creator"}`,
+    );
+    if (index === currentIndex) dot.setAttribute("aria-current", "true");
+    dot.addEventListener("click", () => setIndex(index));
+    dots.append(dot);
+  });
+  postsEl.replaceChildren(stage, nav, dots);
+}
+
 function render(result: CallToolResult) {
   const payload = parseResult(result);
-  const posts = Array.isArray(payload.posts) ? payload.posts : [];
-  postsEl.replaceChildren(
-    ...(posts.length
-      ? posts.map(renderCard)
-      : [createText("p", "empty", payload.error || "No matching posts found.")]),
-  );
-  countEl.textContent = `${posts.length} post${posts.length === 1 ? "" : "s"}`;
+  currentPosts = Array.isArray(payload.posts) ? payload.posts : [];
+  currentIndex = 0;
+  if (currentPosts.length > 0) {
+    renderCarousel();
+  } else {
+    postsEl.replaceChildren(
+      createText("p", "empty", payload.error || "No matching posts found."),
+    );
+  }
+  countEl.textContent = `${currentPosts.length} post${currentPosts.length === 1 ? "" : "s"}`;
   statusEl.textContent = "";
   root.setAttribute("aria-busy", "false");
 }
@@ -289,6 +401,28 @@ app.onhostcontextchanged = applyHostContext;
 app.onerror = () => {
   statusEl.textContent = "The Swipe File view hit an error. Please refresh it.";
 };
+
+postsEl.addEventListener("keydown", (event) => {
+  if (event.key === "ArrowLeft") {
+    event.preventDefault();
+    setIndex(currentIndex - 1);
+  } else if (event.key === "ArrowRight") {
+    event.preventDefault();
+    setIndex(currentIndex + 1);
+  }
+});
+postsEl.addEventListener("touchstart", (event) => {
+  touchStartX = event.changedTouches[0]?.clientX ?? null;
+}, { passive: true });
+postsEl.addEventListener("touchend", (event) => {
+  if (touchStartX === null) return;
+  const endX = event.changedTouches[0]?.clientX;
+  if (endX === undefined) return;
+  const distance = endX - touchStartX;
+  touchStartX = null;
+  if (Math.abs(distance) < 50) return;
+  setIndex(currentIndex + (distance < 0 ? 1 : -1));
+}, { passive: true });
 
 filters.addEventListener("submit", async (event) => {
   event.preventDefault();
