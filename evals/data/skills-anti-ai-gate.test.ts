@@ -1,5 +1,9 @@
 import { describe, expect, test } from "vitest";
-import { SKILLS, selectSkills } from "@/lib/agent/skills";
+import {
+  ANTI_AI_READER_TELL_RULES,
+  SKILLS,
+  selectSkills,
+} from "@/lib/agent/skills";
 
 // ---------------------------------------------------------------------------
 // anti-ai is imported from the Claude skill, which requires EXPLICIT invocation:
@@ -65,6 +69,7 @@ describe("imported skill content survived the port", () => {
   test("anti-ai includes the de-ai reader-tell audit and word-bank references", () => {
     const antiAi = body("anti-ai");
 
+    expect(antiAi).toContain(ANTI_AI_READER_TELL_RULES);
     expect(antiAi).toMatch(/reader-facing tells/i);
     expect(antiAi).toMatch(/negative parallelism/i);
     expect(antiAi).toMatch(/participial tail/i);

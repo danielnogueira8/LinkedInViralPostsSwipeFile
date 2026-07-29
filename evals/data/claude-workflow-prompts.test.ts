@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  ANTI_AI_READER_TELL_RULES,
   GLOBAL_WRITING_SKILL,
   OUTPUT_LANGUAGE_RULE,
   POST_STRUCTURE_SKILL,
@@ -18,7 +19,7 @@ import {
 // ship the diluted version again.
 
 describe("workflow prompts carry the full skill text", () => {
-  test("every writing agent embeds the global anti-slop rules verbatim", () => {
+  test("every writing agent embeds both anti-slop rule sets verbatim", () => {
     const writingAgents = AGENTS.filter((agent) =>
       agent.skills.includes("anti-slop"),
     );
@@ -26,10 +27,50 @@ describe("workflow prompts carry the full skill text", () => {
     for (const agent of writingAgents) {
       const prompt = composePrompt(agent.brief, agent.skills);
       expect(prompt).toContain(GLOBAL_WRITING_SKILL);
+      expect(prompt).toContain(ANTI_AI_READER_TELL_RULES);
       expect(prompt).toContain(OUTPUT_LANGUAGE_RULE);
       // The brief leads; the rules follow under an explicit marker.
       expect(prompt.indexOf(agent.brief)).toBe(0);
       expect(prompt).toContain("WRITING RULES");
+    }
+  });
+
+  test("Claude prompts carry the expanded words and reader tells", () => {
+    const additions = [
+      "elucidate",
+      "kaleidoscope",
+      "unyielding",
+      "participial tail",
+      "dead metaphor flogging",
+      "Tier 2 is allowed alone but banned in clusters",
+      "fragment-heavy LinkedIn cadence",
+    ];
+
+    const reference = ANTI_AI_READER_TELL_RULES.toLowerCase();
+    for (const addition of additions) {
+      expect(reference).toContain(addition.toLowerCase());
+    }
+
+    for (const agent of AGENTS.filter((entry) =>
+      entry.skills.includes("anti-slop"),
+    )) {
+      const prompt = composePrompt(agent.brief, agent.skills).toLowerCase();
+      for (const addition of additions) {
+        expect(prompt, `${agent.tag} is missing ${addition}`).toContain(
+          addition.toLowerCase(),
+        );
+      }
+    }
+  });
+
+  test("normal workflows do not inherit explicit detector-rewrite mechanics", () => {
+    for (const agent of AGENTS.filter((entry) =>
+      entry.skills.includes("anti-slop"),
+    )) {
+      const prompt = composePrompt(agent.brief, agent.skills);
+      expect(prompt).not.toContain("DETECTOR-FIRST mode");
+      expect(prompt).not.toContain("Tells: N → M");
+      expect(prompt).not.toContain("Drop most of the source's points");
     }
   });
 
