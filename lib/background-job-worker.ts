@@ -31,6 +31,10 @@ import { runLeadSharkStatsSyncJob } from "@/lib/leadshark-stats-job";
 import { supabaseAdmin } from "@/lib/supabase";
 import { UsagePersistenceError } from "@/lib/openrouter";
 import {
+  failKnowledgeIngestionAfterRetries,
+  runKnowledgeIngestionJob,
+} from "@/lib/knowledge-sources/operations";
+import {
   claimWorkspaceCost,
   releaseWorkspaceCost,
 } from "@/lib/workspace-cost-claims";
@@ -84,6 +88,11 @@ async function runBackgroundJob(job: BackgroundJob): Promise<{
   requeued: number;
   unsupported: number;
 }> {
+  // Knowledge ingestion is deterministic local parsing and must not consume or
+  // reserve the user's AI budget.
+  if (job.type === "knowledge_ingestion") {
+    return runBackgroundJobClaimed(job);
+  }
   const sb = supabaseAdmin();
   const operationKey = `background-job:${job.id}`;
   const costClaim = await claimWorkspaceCost({
@@ -155,6 +164,8 @@ async function runBackgroundJobClaimed(job: BackgroundJob): Promise<{
         return await runLeadSharkBindJob(job);
       case "leadshark_sync_stats":
         return await runLeadSharkStatsSyncJob(job);
+      case "knowledge_ingestion":
+        return await runKnowledgeIngestionJob(job, sb);
       case "lead_magnet_resource":
         await markJobFailed(
           job,
@@ -189,6 +200,9 @@ async function runBackgroundJobClaimed(job: BackgroundJob): Promise<{
       if (job.attempts < job.max_attempts) {
         await requeueJob(job, message, sb);
         return { completed: 0, failed: 0, requeued: 1, unsupported: 0, holdCostClaim };
+      }
+      if (job.type === "knowledge_ingestion") {
+        await failKnowledgeIngestionAfterRetries(job, sb);
       }
       await markJobFailed(job, message, sb);
       return { completed: 0, failed: 1, requeued: 0, unsupported: 0, holdCostClaim };
