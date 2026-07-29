@@ -332,6 +332,28 @@ function writeDraftPanelWidth(width: number): void {
   }
 }
 
+function trapDialogFocus(event: KeyboardEvent<HTMLDivElement>): void {
+  if (event.key !== "Tab") return;
+  const focusable = Array.from(
+    event.currentTarget.querySelectorAll<HTMLElement>(
+      'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    ),
+  ).filter((element) => element.getAttribute("aria-hidden") !== "true");
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (!first || !last) {
+    event.preventDefault();
+    return;
+  }
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
 function readVoiceWarningDismissed(): boolean {
   try {
     return window.sessionStorage.getItem(VOICE_WARNING_DISMISSED_KEY) === "1";
@@ -525,6 +547,8 @@ export function ChatWorkspace({
   // attention; opened from the header toggle. Mobile uses a bottom sheet.
   const [contextPanelOpen, setContextPanelOpen] = useState(false);
   const [mobileContextOpen, setMobileContextOpen] = useState(false);
+  const mobileContextTriggerRef = useRef<HTMLButtonElement>(null);
+  const mobileContextCloseRef = useRef<HTMLButtonElement>(null);
   const [draftPanelWidth, setDraftPanelWidth] = useState(DRAFT_PANEL_DEFAULT_WIDTH);
   const [draftPanelWidthReady, setDraftPanelWidthReady] = useState(false);
   const [resizingDraftPanel, setResizingDraftPanel] = useState(false);
@@ -536,8 +560,10 @@ export function ChatWorkspace({
   const [voiceWarningDismissed, setVoiceWarningDismissed] = useState(false);
   const voiceWarningShownRef = useRef(false);
   // Mobile only: the drafts panel is a bottom sheet (the desktop inline column is
-  // hidden below lg). Opened via the floating "Drafts (N)" pill above the composer.
+  // hidden below lg). Opened from the in-flow shortcut above the composer.
   const [mobileDraftsOpen, setMobileDraftsOpen] = useState(false);
+  const mobileDraftsTriggerRef = useRef<HTMLButtonElement>(null);
+  const mobileDraftsCloseRef = useRef<HTMLButtonElement>(null);
   // Mobile only: the chat-history sidebar is an off-canvas drawer (it's a fixed
   // inline column on md+). Closed by default so the conversation has full width.
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -1085,6 +1111,26 @@ export function ChatWorkspace({
       document.removeEventListener("keydown", onKey);
     };
   }, [contextMenuOpen]);
+
+  useEffect(() => {
+    if (!mobileContextOpen && !mobileDraftsOpen) return;
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (mobileContextOpen) {
+        setMobileContextOpen(false);
+        requestAnimationFrame(() => mobileContextTriggerRef.current?.focus());
+      } else {
+        setMobileDraftsOpen(false);
+        requestAnimationFrame(() => mobileDraftsTriggerRef.current?.focus());
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    requestAnimationFrame(() => {
+      if (mobileContextOpen) mobileContextCloseRef.current?.focus();
+      else mobileDraftsCloseRef.current?.focus();
+    });
+    return () => document.removeEventListener("keydown", onKey);
+  }, [mobileContextOpen, mobileDraftsOpen]);
 
   // Reconcile the workspace's custom skills with the DB on mount (for the /
   // autocomplete + ⚡ picker). The list is SEEDED from the server prop above, so
@@ -4830,6 +4876,48 @@ export function ChatWorkspace({
                 </div>
               </div>
             )}
+            {(hasContext || hasDraftPanel) && (
+              <div
+                data-testid="mobile-composer-panel-shortcuts"
+                className={cn(
+                  "grid gap-2 lg:hidden",
+                  hasContext && hasDraftPanel ? "grid-cols-2" : "grid-cols-1",
+                )}
+              >
+                {hasContext && (
+                  <button
+                    ref={mobileContextTriggerRef}
+                    type="button"
+                    onClick={() => setMobileContextOpen(true)}
+                    className="flex h-11 min-w-0 items-center gap-2 rounded-xl border border-border bg-card px-3 text-sm font-medium shadow-sm transition-colors hover:bg-muted"
+                    aria-label="Show chat context"
+                  >
+                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                      <Layers className="h-3.5 w-3.5" aria-hidden />
+                    </span>
+                    <span className="truncate">Context</span>
+                    <span className="ml-auto h-2 w-2 shrink-0 rounded-full bg-primary" aria-hidden />
+                  </button>
+                )}
+                {hasDraftPanel && (
+                  <button
+                    ref={mobileDraftsTriggerRef}
+                    type="button"
+                    onClick={() => setMobileDraftsOpen(true)}
+                    className="flex h-11 min-w-0 items-center gap-2 rounded-xl border border-border bg-card px-3 text-sm font-medium shadow-sm transition-colors hover:bg-muted"
+                    aria-label={`Show ${ARTIFACT_PANEL_TITLE.toLowerCase()}`}
+                  >
+                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                      <FileText className="h-3.5 w-3.5" aria-hidden />
+                    </span>
+                    <span className="truncate">{ARTIFACT_PANEL_TITLE}</span>
+                    <span className="ml-auto inline-flex min-w-5 shrink-0 items-center justify-center rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
+                      {artifacts.length}
+                    </span>
+                  </button>
+                )}
+              </div>
+            )}
             <div
               className={cn(
                 "relative overflow-hidden rounded-[1.35rem] border bg-card/90 shadow-[0_18px_60px_rgba(28,28,26,0.12)] ring-1 ring-white/70 backdrop-blur transition-colors",
@@ -5474,28 +5562,23 @@ export function ChatWorkspace({
         </aside>
       )}
 
-      {/* Mobile: a floating "Context" pill that opens the context card as a
-          bottom sheet (the desktop rail is hidden below lg). Sits above the
-          drafts pill so the two don't stack on top of each other. */}
-      {hasContext && !mobileContextOpen && (
-        <button
-          type="button"
-          onClick={() => setMobileContextOpen(true)}
-          className={cn(
-            "lg:hidden absolute left-1/2 -translate-x-1/2 z-20 inline-flex items-center gap-1.5 rounded-full border border-border bg-card/90 px-3.5 py-2 text-xs font-medium shadow-md backdrop-blur hover:bg-card transition-colors",
-            hasDraftPanel ? "bottom-44" : "bottom-32",
-          )}
-          aria-label="Show chat context"
-        >
-          <Layers className="h-3.5 w-3.5" />
-          Context
-        </button>
-      )}
+      {/* Mobile context and posts open from the in-flow shortcut row above the
+          composer. Keeping these controls in normal layout flow prevents them
+          from obscuring source context on narrow screens. */}
       {mobileContextOpen && hasContext && (
-        <div className="lg:hidden absolute inset-0 z-40 flex flex-col justify-end" role="dialog" aria-modal="true">
+        <div
+          className="lg:hidden absolute inset-0 z-40 flex flex-col justify-end"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Chat context"
+          onKeyDown={trapDialogFocus}
+        >
           <div
             className="absolute inset-0 bg-black/40"
-            onClick={() => setMobileContextOpen(false)}
+            onClick={() => {
+              setMobileContextOpen(false);
+              requestAnimationFrame(() => mobileContextTriggerRef.current?.focus());
+            }}
             aria-hidden="true"
           />
           <div className="relative max-h-[80%] flex flex-col rounded-t-[1.35rem] border-t border-border bg-card shadow-xl animate-in slide-in-from-bottom duration-200">
@@ -5505,9 +5588,13 @@ export function ChatWorkspace({
                 Context
               </span>
               <button
+                ref={mobileContextCloseRef}
                 type="button"
-                onClick={() => setMobileContextOpen(false)}
-                className="rounded-lg p-1.5 text-muted-foreground hover:bg-card hover:text-foreground"
+                onClick={() => {
+                  setMobileContextOpen(false);
+                  requestAnimationFrame(() => mobileContextTriggerRef.current?.focus());
+                }}
+                className="flex h-11 w-11 items-center justify-center rounded-xl text-muted-foreground hover:bg-muted hover:text-foreground"
                 aria-label="Close context"
               >
                 <X className="h-4 w-4" />
@@ -5520,25 +5607,20 @@ export function ChatWorkspace({
         </div>
       )}
 
-      {/* Mobile: a floating "Drafts (N)" pill above the composer that opens the
-          drafts as a bottom sheet. The desktop panel is hidden below lg, so this
-          is the ONLY way to reach generated drafts on a phone. */}
-      {hasDraftPanel && !mobileDraftsOpen && (
-        <button
-          type="button"
-          onClick={() => setMobileDraftsOpen(true)}
-          className="lg:hidden absolute bottom-32 left-1/2 -translate-x-1/2 z-20 inline-flex items-center gap-1.5 rounded-full border border-border bg-card/90 px-3.5 py-2 text-xs font-medium shadow-md backdrop-blur hover:bg-card transition-colors"
-          aria-label={`Show ${ARTIFACT_PANEL_TITLE.toLowerCase()}`}
-        >
-          <FileText className="h-3.5 w-3.5" />
-          {ARTIFACT_PANEL_TITLE} ({artifacts.length})
-        </button>
-      )}
       {mobileDraftsOpen && hasDraftPanel && (
-        <div className="lg:hidden absolute inset-0 z-40 flex flex-col justify-end" role="dialog" aria-modal="true">
+        <div
+          className="lg:hidden absolute inset-0 z-40 flex flex-col justify-end"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`${ARTIFACT_PANEL_TITLE} panel`}
+          onKeyDown={trapDialogFocus}
+        >
           <div
             className="absolute inset-0 bg-black/40"
-            onClick={() => setMobileDraftsOpen(false)}
+            onClick={() => {
+              setMobileDraftsOpen(false);
+              requestAnimationFrame(() => mobileDraftsTriggerRef.current?.focus());
+            }}
             aria-hidden="true"
           />
           <div className="relative max-h-[80%] flex flex-col rounded-t-[1.35rem] border-t border-border bg-card shadow-xl animate-in slide-in-from-bottom duration-200">
@@ -5547,9 +5629,13 @@ export function ChatWorkspace({
                 {ARTIFACT_PANEL_TITLE} ({artifacts.length})
               </span>
               <button
+                ref={mobileDraftsCloseRef}
                 type="button"
-                onClick={() => setMobileDraftsOpen(false)}
-                className="rounded-lg p-1.5 text-muted-foreground hover:bg-card hover:text-foreground"
+                onClick={() => {
+                  setMobileDraftsOpen(false);
+                  requestAnimationFrame(() => mobileDraftsTriggerRef.current?.focus());
+                }}
+                className="flex h-11 w-11 items-center justify-center rounded-xl text-muted-foreground hover:bg-muted hover:text-foreground"
                 aria-label="Close drafts"
               >
                 <X className="h-4 w-4" />
@@ -5592,35 +5678,45 @@ function SourcePostChip({
       </div>
     );
   }
-  const preview = source.postText.replace(/\s+/g, " ").slice(0, 90).trim();
+  const normalizedPreview = source.postText.replace(/\s+/g, " ").trim();
+  const preview = normalizedPreview.slice(0, 90).trim();
+  const previewIsTruncated = normalizedPreview.length > preview.length;
+  const sourceCopy =
+    source.kind === "draft"
+      ? { label: "Editing source", title: "Refining your post" }
+      : source.kind === "template"
+        ? { label: "Template source", title: "Filling template" }
+        : {
+            label: "Modeling source",
+            title: source.authorName || "Original post",
+          };
   return (
-    <div className="flex items-start gap-2.5 rounded-2xl border border-border bg-card px-3 py-2.5">
+    <div
+      data-testid="composer-source-card"
+      className="flex items-start gap-2.5 rounded-xl border border-border bg-muted/35 px-3 py-2.5 sm:rounded-2xl sm:bg-card"
+    >
       {source.authorAvatar ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
           src={source.authorAvatar}
           alt=""
-          className="h-8 w-8 rounded-xl object-cover shrink-0 mt-0.5"
+          className="mt-0.5 h-9 w-9 shrink-0 rounded-full object-cover sm:h-8 sm:w-8 sm:rounded-xl"
         />
       ) : (
-        <div className="h-8 w-8 rounded-xl bg-white flex items-center justify-center shrink-0 mt-0.5">
+        <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-card lg:h-8 lg:w-8 lg:rounded-xl lg:bg-white">
           <FileText className="h-4 w-4 text-muted-foreground" />
         </div>
       )}
       <div className="min-w-0 flex-1">
-        <p className="text-xs font-semibold flex items-center gap-1.5">
+        <div className="mb-0.5 flex min-w-0 flex-wrap items-center gap-1.5">
           {pinnedContext && (
             <span className="inline-flex items-center rounded-full border border-primary/20 bg-primary/[0.07] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.1em] text-primary">
               Context
             </span>
           )}
-          {source.kind === "draft"
-            ? "Refining your post"
-            : source.kind === "template"
-              ? "Filling template"
-              : source.authorName
-                ? `Modeling after: ${source.authorName}`
-                : "Modeling after this post"}
+          <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+            {sourceCopy.label}
+          </span>
           {source.partial && (
             <span className="text-[10px] font-normal text-state-warning bg-state-warning-bg rounded px-1.5 py-0.5">
               partial
@@ -5635,14 +5731,20 @@ function SourcePostChip({
               Lead Magnet: Auto
             </span>
           )}
-        </p>
-        <p className="text-xs text-muted-foreground truncate">{preview}…</p>
+        </div>
+        <p className="truncate text-xs font-semibold text-foreground">{sourceCopy.title}</p>
+        {preview && (
+          <p className="truncate text-xs text-muted-foreground">
+            {preview}
+            {previewIsTruncated ? "…" : ""}
+          </p>
+        )}
       </div>
       {onRemove && (
       <button
         type="button"
         onClick={onRemove}
-        className="rounded-lg p-1 text-muted-foreground hover:bg-card hover:text-foreground shrink-0"
+        className="-my-1 flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-muted-foreground hover:bg-card hover:text-foreground"
         aria-label="Remove source post"
       >
         <X className="h-4 w-4" />
