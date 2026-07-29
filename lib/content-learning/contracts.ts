@@ -167,6 +167,7 @@ export const knowledgeItemSourceSchema = z.enum([
   "voice_profile",
   "published_post",
   "cowork",
+  "knowledge_source",
 ]);
 export type KnowledgeItemSource = z.infer<
   typeof knowledgeItemSourceSchema

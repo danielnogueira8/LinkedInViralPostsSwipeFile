@@ -5,12 +5,16 @@ import {
   AlertCircle,
   Archive,
   CheckCircle2,
+  Check,
   FileText,
   FileUp,
   LibraryBig,
+  Lightbulb,
   Loader2,
   NotebookPen,
+  Quote,
   Search,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -38,11 +42,13 @@ import {
   formatKnowledgeDate,
   knowledgeFailureMessage,
   type KnowledgeSourceSummary,
+  type KnowledgeProposalDetail,
 } from "@/lib/knowledge-sources/types";
 
 type Props = {
   initialSources: KnowledgeSourceSummary[];
   available: boolean;
+  extractionAvailable: boolean;
 };
 
 type ApiResult = {
@@ -55,6 +61,7 @@ type ApiResult = {
   status?: string;
   signedUrl?: string;
   path?: string;
+  items?: KnowledgeProposalDetail[];
 };
 
 async function jsonResponse(response: Response): Promise<ApiResult> {
@@ -110,7 +117,19 @@ function uploadSignedFile(
   });
 }
 
-export function KnowledgeLibrary({ initialSources, available }: Props) {
+function proposalText(item: KnowledgeProposalDetail): string {
+  return (
+    Object.values(item.content).find(
+      (value): value is string => typeof value === "string" && value.length > 0,
+    ) ?? item.title
+  );
+}
+
+export function KnowledgeLibrary({
+  initialSources,
+  available,
+  extractionAvailable,
+}: Props) {
   const [sources, setSources] = useState(initialSources);
   const [query, setQuery] = useState("");
   const [noteOpen, setNoteOpen] = useState(false);
@@ -120,12 +139,19 @@ export function KnowledgeLibrary({ initialSources, available }: Props) {
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [reviewSource, setReviewSource] =
+    useState<KnowledgeSourceSummary | null>(null);
+  const [insights, setInsights] = useState<KnowledgeProposalDetail[]>([]);
+  const [insightsLoading, setInsightsLoading] = useState(false);
+  const [busyInsightId, setBusyInsightId] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
 
   const processing = sources.some(
     (source) =>
-      (source.status === "pending" || source.status === "processing") &&
-      source.jobId,
+      ((source.status === "pending" || source.status === "processing") &&
+        source.jobId) ||
+      source.extractionStatus === "queued" ||
+      source.extractionStatus === "running",
   );
 
   async function refreshSources() {
@@ -265,6 +291,69 @@ export function KnowledgeLibrary({ initialSources, available }: Props) {
     }
   }
 
+  async function openInsights(source: KnowledgeSourceSummary) {
+    setReviewSource(source);
+    setInsights([]);
+    setInsightsLoading(true);
+    try {
+      const result = await jsonResponse(
+        await fetch(
+          `/api/knowledge-sources/${encodeURIComponent(source.id)}/insights`,
+          { cache: "no-store" },
+        ),
+      );
+      setInsights(result.items ?? []);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Could not load insights.",
+      );
+    } finally {
+      setInsightsLoading(false);
+    }
+  }
+
+  async function reviewInsight(
+    item: KnowledgeProposalDetail,
+    action: "approve" | "reject",
+  ) {
+    if (busyInsightId) return;
+    setBusyInsightId(item.id);
+    try {
+      const response = await fetch(
+        `/api/voice/knowledge/${encodeURIComponent(item.id)}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action,
+            expectedUpdatedAt: item.updatedAt,
+          }),
+        },
+      );
+      await jsonResponse(response);
+      setInsights((current) =>
+        action === "reject"
+          ? current.filter((candidate) => candidate.id !== item.id)
+          : current.map((candidate) =>
+              candidate.id === item.id
+                ? { ...candidate, verification: "verified" }
+                : candidate,
+            ),
+      );
+      toast.success(
+        action === "approve"
+          ? "Approved for Cowork"
+          : "Insight dismissed",
+      );
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Could not review insight.",
+      );
+    } finally {
+      setBusyInsightId(null);
+    }
+  }
+
   if (!available) {
     return (
       <EmptyState
@@ -322,7 +411,13 @@ export function KnowledgeLibrary({ initialSources, available }: Props) {
         <div className="grid gap-3 md:grid-cols-2">
           {filtered.map((source) => {
             const active =
-              source.status === "pending" || source.status === "processing";
+              source.status === "pending" ||
+              source.status === "processing" ||
+              source.extractionStatus === "queued" ||
+              source.extractionStatus === "running";
+            const analyzing =
+              source.extractionStatus === "queued" ||
+              source.extractionStatus === "running";
             return (
               <Surface
                 key={source.id}
@@ -352,14 +447,22 @@ export function KnowledgeLibrary({ initialSources, available }: Props) {
                     </div>
                     <StatusPill
                       tone={
-                        source.status === "ready"
+                        analyzing
+                          ? "warning"
+                          : source.extractionStatus === "failed"
+                            ? "danger"
+                            : source.status === "ready"
                           ? "success"
                           : source.status === "failed"
                             ? "danger"
                             : "warning"
                       }
                     >
-                      {source.status === "ready" ? (
+                      {analyzing ? (
+                        <Loader2 className="animate-spin" />
+                      ) : source.extractionStatus === "failed" ? (
+                        <AlertCircle />
+                      ) : source.status === "ready" ? (
                         <CheckCircle2 />
                       ) : source.status === "failed" ? (
                         <AlertCircle />
@@ -367,7 +470,11 @@ export function KnowledgeLibrary({ initialSources, available }: Props) {
                         <Loader2 className="animate-spin" />
                       )}
                       {source.status === "ready"
-                        ? "Ready"
+                        ? analyzing
+                          ? "Analyzing"
+                          : source.extractionStatus === "failed"
+                            ? "Analysis failed"
+                          : "Ready"
                         : source.status === "failed"
                           ? "Needs attention"
                           : "Processing"}
@@ -378,21 +485,41 @@ export function KnowledgeLibrary({ initialSources, available }: Props) {
                       {knowledgeFailureMessage(source.errorCode)}
                     </p>
                   )}
-                  <div className="mt-3 flex items-center justify-between gap-2">
+                  {source.extractionStatus === "failed" && (
+                    <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                      The source is still searchable, but automatic insight
+                      extraction could not finish.
+                    </p>
+                  )}
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
                     <span className="text-xs text-muted-foreground">
                       Added{" "}
                       {formatKnowledgeDate(source.createdAt)}
                     </span>
-                    <Button
-                      size="xs"
-                      variant="ghost"
-                      disabled={active}
-                      onClick={() => void archiveSource(source)}
-                      aria-label={`Archive ${source.title}`}
-                    >
-                      <Archive />
-                      Archive
-                    </Button>
+                    <div className="flex items-center gap-1">
+                      {extractionAvailable &&
+                        source.status === "ready" &&
+                        !analyzing && (
+                          <Button
+                            size="xs"
+                            variant="outline"
+                            onClick={() => void openInsights(source)}
+                          >
+                            <Lightbulb />
+                            Review insights
+                          </Button>
+                        )}
+                      <Button
+                        size="xs"
+                        variant="ghost"
+                        disabled={active}
+                        onClick={() => void archiveSource(source)}
+                        aria-label={`Archive ${source.title}`}
+                      >
+                        <Archive />
+                        Archive
+                      </Button>
+                    </div>
                   </div>
                 </div>
               </Surface>
@@ -400,6 +527,93 @@ export function KnowledgeLibrary({ initialSources, available }: Props) {
           })}
         </div>
       )}
+
+      <Dialog
+        open={reviewSource !== null}
+        onOpenChange={(open) => {
+          if (!open) setReviewSource(null);
+        }}
+      >
+        <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Review extracted insights</DialogTitle>
+            <DialogDescription>
+              {reviewSource?.title}. Cowork can use an insight only after you
+              approve it.
+            </DialogDescription>
+          </DialogHeader>
+          {insightsLoading ? (
+            <div className="grid min-h-40 place-items-center">
+              <Loader2 className="size-5 animate-spin text-muted-foreground" />
+            </div>
+          ) : insights.length === 0 ? (
+            <EmptyState
+              icon={<Lightbulb className="size-6" />}
+              title="No durable insights found"
+              description="The source remains searchable, but it did not contain a specific fact or idea worth saving separately."
+            />
+          ) : (
+            <div className="space-y-3">
+              {insights.map((item) => (
+                <article
+                  key={item.id}
+                  className="space-y-3 rounded-xl border border-border/70 p-4"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                        {item.kind.replaceAll("_", " ")}
+                      </p>
+                      <h3 className="mt-1 font-semibold">{item.title}</h3>
+                    </div>
+                    {item.verification === "verified" && (
+                      <StatusPill tone="success">
+                        <CheckCircle2 />
+                        Approved
+                      </StatusPill>
+                    )}
+                  </div>
+                  <p className="text-sm leading-6">{proposalText(item)}</p>
+                  {item.evidence.map((evidence, index) => (
+                    <blockquote
+                      key={`${item.id}-${index}`}
+                      className="flex gap-2 rounded-lg bg-muted/60 p-3 text-xs leading-5 text-muted-foreground"
+                    >
+                      <Quote className="mt-0.5 size-3.5 shrink-0" />
+                      <span>{evidence.excerpt}</span>
+                    </blockquote>
+                  ))}
+                  {item.verification === "proposed" && (
+                    <div className="flex justify-end gap-2">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={busyInsightId !== null}
+                        onClick={() => void reviewInsight(item, "reject")}
+                      >
+                        <X />
+                        Dismiss
+                      </Button>
+                      <Button
+                        size="sm"
+                        disabled={busyInsightId !== null}
+                        onClick={() => void reviewInsight(item, "approve")}
+                      >
+                        {busyInsightId === item.id ? (
+                          <Loader2 className="animate-spin" />
+                        ) : (
+                          <Check />
+                        )}
+                        Approve
+                      </Button>
+                    </div>
+                  )}
+                </article>
+              ))}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={noteOpen} onOpenChange={setNoteOpen}>
         <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-xl">

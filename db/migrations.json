@@ -1,7 +1,7 @@
 {
   "generatedBy": "npm run migrations:metadata",
-  "highest": 148,
-  "count": 148,
+  "highest": 149,
+  "count": 149,
   "files": [
     "migration-001-progress.sql",
     "migration-002-usage.sql",
@@ -150,6 +150,7 @@
     "migration-145-posting-queue-move-swap.sql",
     "migration-146-posting-queue-schedule-lookup.sql",
     "migration-147-knowledge-sources.sql",
-    "migration-148-knowledge-source-ingestion.sql"
+    "migration-148-knowledge-source-ingestion.sql",
+    "migration-149-knowledge-extraction.sql"
   ]
 }
