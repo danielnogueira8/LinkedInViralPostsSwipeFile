@@ -207,8 +207,10 @@ Worked patterns:
 - Underdog: "You don't need their $X tool." → what the tool actually does, the cheap substitute.`,
 };
 
-// Ported from the Claude `anti-ai` skill. Condensed to the field-tested rules;
-// the source carries a longer appendix of A/B transcripts.
+// Combines the field-tested detector protocol from the Claude `anti-ai` skill
+// with the reader-facing audit workflow and reference taxonomy from `de-ai`.
+// The reference files are inlined below because loose markdown files are not
+// guaranteed to ship in the Next.js serverless bundle.
 //
 // explicitOnly because the source skill demands it: it must fire on "/anti-ai",
 // never on "make this sound less AI". It licenses heavy rewriting, so a
@@ -224,38 +226,140 @@ const ANTI_AI: Skill = {
   specialized: true,
   explicitOnly: true,
   triggers: ["anti-ai", "anti ai"],
-  body: `# Anti-AI rewrite (make text read as genuinely human)
-You have full license to modify heavily — restructure, cut, reorder, roughen. Preserve only: the core message and facts, the author's intent and audience, and the format (a LinkedIn post stays a LinkedIn post).
+  body: `# Anti-AI rewrite: reader-clean and detector-aware
+Do two distinct jobs without confusing them:
 
-The target is not "sounds nicer". Statistical detectors don't read style — they detect PLANNED text, where every sentence advances a known arc. Clean, punchy, typo-ridden and rambling rewrites all failed testing equally. Surface mess is not the lever.
+1. Remove reader-facing tells: the visible wording, construction, rhythm and formatting patterns that make a person think "ChatGPT wrote this."
+2. Reduce statistical-detector signals: the planned-text fingerprint where every sentence advances a tidy arc.
 
-## If the user has their own rough draft (the reliable path)
-Interleave: keep THEIR sentences verbatim — never fix their grammar, typos or run-ons, those fractures are the human signal. Add your sentences BETWEEN theirs, never two of yours in a row, staying under ~40% added words. Keep their opening sentence exactly as written; first tokens set the frame. Tell them which lines are theirs so later edits don't paraphrase the signal away.
+A clean tell audit does NOT prove a detector pass. Pangram, GPTZero and Originality-style classifiers do not score the visible checklist directly, and no detector result can be guaranteed. Say this plainly only when the user asks about detector scores; otherwise do the work without a disclaimer preamble.
 
-## If only AI text exists — discourse fracture
-Write ONE meandering incident, not an argument. If each sentence advances a distinct point, it fails however it's dressed. Outline test: if it can be tidied into bullets, rewrite it.
-- interrupt yourself and abandon the plan mid-piece
-- leave a self-correction visible ("this was february, or march. february.")
-- repeat words because the writer is still annoyed, don't vary them
-- emotional punctuation at feeling spikes; lowercase in casual registers
-- leave domain/local vocabulary raw — prices, times, jargon as that world says them
-- report dialogue unquoted, with a name
-- end on a contradiction the writer notices and leaves; never a synthesis or recap
+## Choose the editing mode
 
-## The constraints that override all of the above
-These are where careful rewrites still fail:
-- NO punchlines. If a line would get a laugh read aloud, it's crafted — make it duller. Rants vent, they don't perform.
-- NO essay skeleton in disguise: no "week one… week two…", no "you know what actually worked?" pivot, no thesis sentence, no elegant callback ending.
-- Keep it SHORT (~160 words). Longer gives the classifier more evidence and lets structure creep back.
-- DROP most of the original's points — keep 2–3 and abandon the rest. Covering every argument IS the planning fingerprint.
-- At most ~4 named specifics, and re-hit them. One colleague mentioned three times beats three colleagues mentioned once.
-- NEVER write a sentence whose only job is to say what a moment MEANS. Banned: "that's the part that got me", "here's the thing", "which is exactly the problem", "let that sink in", "that's the [x] part honestly". This single pattern flipped a verified test from Human to 100% AI. If a moment matters, hit the detail again — never label it.
-- No soft framing adverbs stacked on: quietly, genuinely, truly, honestly-as-a-tag, literally-as-intensifier, actually-as-pivot, basically. At most one, inside a sentence doing real work.
+- Plain \`/anti-ai\`, or any request to pass a detector: use DETECTOR-FIRST mode. You may restructure, cut, reorder and roughen heavily. Preserve the core facts and message, the author's intent and audience, and the format. The detector protocol overrides the surgical-preservation rules below.
+- An explicit request to preserve the piece, keep its structure, or only remove reader-facing tells: use SURGICAL mode. Preserve every point in its original order, keep the format, stay within roughly ±15% of the original length, preserve the hook's and ending's jobs, and keep the author's voice.
 
-Invent fresh names, days and numbers every time — never reuse the examples' specifics.
+Never invent anecdotes, names, dates, numbers, quotes, studies or statistics in either mode. If a useful concrete detail is missing, insert a clearly marked placeholder and list it after the draft. Do not silently turn a hypothetical into a real event.
 
-## Before delivering, verify
-Is it ONE incident that can't be outlined? Is there a visible self-interruption and self-correction? Is it under the word cap? Are there ≤4 specifics, re-hit rather than accumulated? Is there ZERO significance-marking commentary? If the piece is formal (client docs, white papers) say plainly that this rewrite style doesn't fit, and offer a style-only pass instead.`,
+## Step 1: audit before editing
+
+Count actual hits in the source and write the total down as the before-score. One hit alone proves nothing; clusters are the signal. Audit all five groups:
+
+- Lexicon: tier-1 words; tier-2 clusters (2+ in one sentence or 5+ in the piece).
+- Constructions: negative parallelism, rule of three, rhetorical Q&A, copula dodges, participial tails, false ranges, hedge stacks, vague authority, false suspense, analogy reflexes, invented concept labels, inspirational pivots, grandiosity, repeated openers and flogged metaphors.
+- Punctuation and format: em dashes or double-hyphen pivots, bold-first bullets, emoji/decorative bullets, Title Case headings, colon-split titles and markdown residue.
+- Structure and rhythm: uniform sentence lengths, rectangular paragraphs, fractal summaries, signposted conclusions, pep-talk endings, prompt echoes, listicles in disguise, one-point dilution and uniform staccato.
+- Content and voice: no visible detail early, generic unnamed people/tools/places, narrative clichés, performed earnestness, uniform positivity, both-sidesing, suspiciously tidy anecdotes and scrubbed-away contractions or colloquialisms.
+
+## Step 2A: detector-first protocol
+
+### If the user supplied their own rough draft (the reliable path)
+
+Interleave. Keep THEIR sentences verbatim; never fix their grammar, typos or run-ons because those fractures are the human signal. Keep their opening sentence exactly as written. Add your sentences BETWEEN theirs, never two of yours in a row, and stay below roughly 40% added words. Tell the user which lines remain theirs so a later edit does not paraphrase the signal away.
+
+Run the reader-facing cleanup only on YOUR inserted sentences. A visible tell inside a genuine human sentence does not license changing that sentence in detector-first mode.
+
+### If only AI text exists: discourse fracture
+
+Write ONE meandering incident, not an argument. If each sentence advances a distinct point, it fails however it is dressed. Outline test: if the result can be tidied into bullets, rewrite it.
+
+- Interrupt yourself and visibly abandon the plan mid-piece.
+- Leave a self-correction visible ("this was February, or March. February.").
+- Repeat a plain word because the writer is still annoyed; do not rotate synonyms.
+- Let punctuation spike with the feeling; lowercase is fine in a casual register.
+- Leave domain/local vocabulary raw: actual prices, times and jargon as that world says them.
+- Report dialogue unquoted, with a real supplied name or a flagged placeholder.
+- End on a contradiction the writer notices and leaves. Never synthesize or recap.
+
+These constraints override the reader-cleanup workflow when they conflict:
+
+- NO punchlines. If a line would get a laugh read aloud, it is crafted; make it duller. Rants vent, they do not perform.
+- NO essay skeleton in disguise: no "week one… week two…", rhetorical pivot, thesis sentence, moral sentence or elegant callback.
+- Keep it short, around 160 words. More length lets structure creep back.
+- Drop most of the source's points. Keep 2–3 and abandon the rest; covering every argument is a planning fingerprint.
+- Use at most about 4 named specifics and re-hit them. One colleague mentioned three times beats three colleagues mentioned once.
+- NEVER add a sentence whose only job is to say what a moment MEANS. Ban "that's the part that got me", "here's the thing", "which is exactly the problem", "let that sink in" and "that's the [x] part honestly". Hit the detail again instead of labeling its significance.
+- Do not stack soft framing adverbs: quietly, genuinely, truly, honestly-as-a-tag, literally-as-intensifier, actually-as-pivot, basically. At most one, doing real work.
+
+Do not reuse the examples' fake specifics. Use only facts supplied by the user or flagged placeholders.
+
+## Step 2B: surgical tell-removal workflow
+
+Fix in this order:
+
+1. Cut restatement. AI often says the same thing about 1.5 times. Keep the strongest statement.
+2. Kill the constructions. Say the positive claim directly; break unnecessary triads; state rhetorical answers; change "serves as" to "is"; delete unsupported participial tails; name a source or own the claim.
+3. Replace flagged lexicon with the plain spoken word, then prefer a concrete noun from the text's world over any generic synonym.
+4. Ground it with a supplied number, day, price, name, brand or irrelevant-but-true detail. If none exists, use and flag a placeholder.
+5. Fix rhythm carefully: include genuine sentence-length spread, but do not manufacture it by chopping prose into fragments.
+6. Use no more than one em dash. Strip emoji bullets, bold-first bullets, title case and markdown residue unless the destination or established voice calls for them.
+7. Let something stay uneven: an admission, mild opinion, unresolved edge or aside with attitude.
+
+### Construction reference: spot it, then fix it
+
+- Negative parallelism ("It's not X, it's Y", "Not X. Not Y. Just Z."): say Y directly, unless the contrast is concrete and genuinely asymmetric.
+- Rule of three: keep the best item, use two, or use four with one oddly specific item.
+- Rhetorical Q&A ("The result? Devastating."): state it. Keep only a question the reader was genuinely asking.
+- Copula dodge ("serves as", "stands as", "marks", "represents", "boasts"): use "is" or "has".
+- Participial tail ("..., highlighting the importance of..."): delete it or promote it to a supported claim.
+- False range ("from X to Y" where no spectrum exists): name the actual items.
+- Hedge stack: commit. Keep at most one earned hedge.
+- Vague authority ("experts argue", "studies show"): name the source, own the claim, or cut it.
+- False suspense ("Here's the kicker", "The best part?"): deliver the content without a drumroll.
+- Analogy reflex: keep an analogy only when it is clearer than the thing itself.
+- Invented concept label: describe the mechanism in plain words.
+- Inspirational pivot or grandiosity: stay concrete and scale the claim to the evidence.
+- Repeated openers and dead metaphor flogging: vary the opener and use the metaphor once.
+
+### Word-bank reference
+
+Tier 1 must reach zero unless a term is literal, a real domain term or an evidenced part of the author's voice:
+
+- Verbs: delve, leverage, underscore, harness, foster, navigate (figurative), utilize, facilitate, streamline, bolster, illuminate, showcase, embark, elevate, empower, unleash, unlock (figurative), uncover, optimize, garner, resonate, revolutionize, shed light on, synthesize, elucidate, transcend, reimagine, intertwine, entwine, grapple with, espouse, exemplify, underpin.
+- Nouns: tapestry, landscape (figurative), realm, ecosystem (figurative), paradigm, synergy, testament, beacon, journey (figurative), interplay, intricacies, symphony (figurative), kaleidoscope, tempest, whimsy, quest (figurative), roadmap (figurative), endeavor, myriad, plethora, advancements, trajectory (figurative).
+- Modifiers: pivotal, crucial, seamless, robust, vibrant, intricate, meticulous, nuanced, cutting-edge, transformative, game-changing, groundbreaking, unparalleled, invaluable, multifaceted, commendable, indelible, poignant, profound, relentless, tireless, unwavering, unyielding, timeless, ever-evolving, fast-paced.
+- Stock phrases: "in today's fast-paced world", "it's important to note", "plays a pivotal role", "stands as a testament", "navigate the complexities", "in conclusion", "in summary", conclusion-opening "overall" or "ultimately", "at its core", "that being said", "a key takeaway", "paving the way", "valuable insights", "deeper understanding", "when it comes to", "not only... but also", "here's the kicker/thing/best part", "look no further", "let's explore/unpack/break down", sentence-opening "furthermore", "moreover" or "additionally".
+- Narrative clichés: "couldn't help but feel", "heart pounding", "a sense of X washed over", "found solace in", "the human spirit", "from that day on", "little did I know", "a stark reminder", "a cautionary tale", "newfound sense of purpose", "what lay ahead", "turn of events", "thick with tension", "stumbled upon", "nestled", "bustling", "enigmatic", "captivating", "glimpse into".
+
+Tier 2 is allowed alone but banned in clusters: comprehensive, significant, essential, critical, key, dynamic, innovative, powerful, notable, vital, vast, rich, deep, explore, enhance, ensure, highlight, reveal, engage, embrace, insights, perspective, framework, approach, strategy, challenges, opportunities, potential, impact, quietly, genuinely, truly, remarkably, arguably, generally speaking, typically, thought-provoking, well-being, resilience, perseverance, dedication, commitment, high-quality, step-by-step, sustainable. Replace until there are fewer than 2 in a sentence and fewer than 5 in the piece.
+
+Default swaps: leverage/utilize → use; delve/dive into → look at or get into; seamless → smooth or describe what did not break; robust → solid; navigate → handle; foster → build; facilitate → help or run; streamline → simplify; underscore/highlight/showcase → show; optimize → improve; empower → let; landscape/realm/space → name the field; tapestry/interplay → mix or back-and-forth; testament → proof; journey → name the actual period; myriad/plethora → the real number; transformative/game-changing → state what changed; comprehensive → full; furthermore/moreover/additionally → also or delete; valuable insights → what I learned. A concrete specific beats every default swap.
+
+### Formatting, structure and voice reference
+
+- Target no more than one em dash; also catch the double-hyphen variant.
+- Remove bold-first bullets, decorative/emoji bullets, title-case headings and raw markdown where the destination does not render it.
+- Break uniform 15–20-word sentences and rectangular paragraphs. Include one sentence of 6 words or fewer and one of 25+ words when the format has room, with uneven paragraphs.
+- Delete previews, recaps, signposted conclusions, pep-talk endings, prompt echoes and duplicated points.
+- The picture test: the first three sentences should evoke a supplied thing, place, number or name. Never invent one.
+- Restore contractions and ordinary colloquialisms from the author's register. Keep some friction instead of auto-balancing every claim or polishing every anecdote into a perfect lesson.
+- Always remove chatbot scaffolding, self-reference, knowledge-cutoff notes, unfilled placeholders, suspicious citations, AI tracking parameters and non-email sign-offs.
+
+## The rhythm trap
+
+Clipped, one-line-paragraph, fragment-heavy LinkedIn cadence is now a tell itself. "Same service. Different packaging." reads as AI-fluent, not human.
+
+- Do not add burstiness by breaking prose into staccato fragments.
+- Use at most one or two standalone single-sentence paragraphs in a short piece.
+- Humans write long sentences. Let some run.
+- If the source is already clipped, rejoin some lines into flowing sentences.
+- Do not thesaurus-swap into weirdness, scatter random typos or scrub personality along with the tells.
+
+## Step 3: verify and deliver
+
+Check the mode first.
+
+For detector-first work: is it one incident that cannot be outlined? Does it contain a real self-interruption and self-correction? Is it around the word cap? Are there no more than about 4 supplied or flagged specifics, re-hit rather than accumulated? Is there zero significance-labeling commentary? If the piece is formal (client document, white paper), say plainly that discourse fracture does not fit and use the surgical pass instead.
+
+For surgical work: are all original points present in order? Is length within roughly 15%? Did tier 1 reach zero and tier 2 fall below cluster thresholds? Is there no negative parallelism, rule of three or rhetorical Q&A? Are em dashes at one or fewer? Did rhythm improve without fragmentation? Did the author's voice survive?
+
+Output:
+
+1. The edited text, ready to copy, with no inline annotations.
+2. \`Tells: N → M\` on one line.
+3. Three to six bullets naming the biggest changes, all placeholders that need real values, and—in interleave mode—which lines remain verbatim human text.
+
+No preamble, no permission question and no "I hope this helps."`,
 };
 
 const NEWSJACKING: Skill = {
