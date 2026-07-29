@@ -102,13 +102,10 @@ describe("lead magnet image generation", () => {
     expect(afterCiteResolvedTheImage).toBe(true);
   });
 
-  test("defaults to CURRENT (non-retired) OpenRouter models", () => {
-    // These were previously "-preview" slugs that OpenRouter retired, which
-    // silently broke image generation (the fallback + analysis models 404'd).
-    // Verified live on the OpenRouter model list.
-    expect(IMAGE_GENERATION_MODEL).toBe("google/gemini-3-pro-image");
+  test("defaults primary image work to native OpenAI and keeps a provider-diverse fallback", () => {
+    expect(IMAGE_GENERATION_MODEL).toBe("openai/gpt-image-2");
     expect(LEAD_MAGNET_IMAGE_FALLBACK_MODEL).toBe("google/gemini-3.1-flash-image");
-    expect(LEAD_MAGNET_IMAGE_ANALYSIS_MODEL).toBe("google/gemini-3.5-flash");
+    expect(LEAD_MAGNET_IMAGE_ANALYSIS_MODEL).toBe("openai/gpt-5.6-luna");
   });
 
   test("REGRESSION GUARD: no image model default is a retired '-preview' slug", () => {

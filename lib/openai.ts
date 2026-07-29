@@ -7,25 +7,16 @@ import type {
   ToolDef,
   Usage,
 } from "./openrouter";
+import {
+  routesToNativeOpenAIModel as routesToNativeOpenAI,
+} from "./model-provider-routing";
+export {
+  OPENAI_LUNA_MODEL,
+  routesToNativeOpenAIModel as routesToNativeOpenAI,
+} from "./model-provider-routing";
 
 const OPENAI_BASE_URL =
   process.env.OPENAI_BASE_URL?.replace(/\/+$/, "") || "https://api.openai.com/v1";
-
-export const OPENAI_LUNA_MODEL = "openai/gpt-5.6-luna";
-
-export function routesToNativeOpenAI(model: string): boolean {
-  const value = model.trim().toLowerCase();
-  return (
-    value.startsWith("anthropic/") ||
-    value.startsWith("claude-") ||
-    value.startsWith("openai/") ||
-    value.startsWith("gpt-") ||
-    value.startsWith("o1") ||
-    value.startsWith("o3") ||
-    value.startsWith("o4") ||
-    value.startsWith("text-embedding-")
-  );
-}
 
 /** @deprecated Use routesToNativeOpenAI; legacy Claude slugs also route here. */
 export const isOpenAIModel = routesToNativeOpenAI;

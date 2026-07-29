@@ -27,6 +27,7 @@ import {
   type ToolDef,
   type Usage,
 } from "@/lib/openrouter";
+import { resolveNativeOpenAIPrimary } from "@/lib/model-provider-routing";
 import {
   coworkAdapterHealth,
   type AdapterHealthRegistry,
@@ -376,8 +377,13 @@ function withoutUndefined<T extends Record<string, unknown>>(
 // OPENROUTER_ACTION_ORCHESTRATOR_MODEL. The fallback stays independent (safety
 // net only). Note: the orchestrator plans multi-step tool actions — keep the
 // chat model tool-calling-capable, or pin a capable model here.
-export const PRIMARY_ACTION_ORCHESTRATOR_MODEL =
-  process.env.OPENROUTER_ACTION_ORCHESTRATOR_MODEL || CHAT_MODEL;
+export const PRIMARY_ACTION_ORCHESTRATOR_MODEL = resolveNativeOpenAIPrimary(
+  [
+    process.env.OPENAI_ACTION_ORCHESTRATOR_MODEL,
+    process.env.OPENROUTER_ACTION_ORCHESTRATOR_MODEL,
+  ],
+  CHAT_MODEL,
+);
 export const FALLBACK_ACTION_ORCHESTRATOR_MODEL = distinctFallbackModel(
   PRIMARY_ACTION_ORCHESTRATOR_MODEL,
   process.env.OPENROUTER_ACTION_ORCHESTRATOR_FALLBACK_MODEL ||
@@ -3568,8 +3574,13 @@ function safeHttpUrl(value: string): string | null {
 // OPENROUTER_WEB_RESEARCH_MODEL. This is a text LLM call that adds OpenRouter's
 // web plugin — keep the chat model web-grounding-capable, or pin a model here
 // (Haiku was the prior cheap default). The fallback stays independent.
-export const PRIMARY_WEB_RESEARCH_MODEL =
-  process.env.OPENROUTER_WEB_RESEARCH_MODEL || CHAT_MODEL;
+export const PRIMARY_WEB_RESEARCH_MODEL = resolveNativeOpenAIPrimary(
+  [
+    process.env.OPENAI_WEB_RESEARCH_MODEL,
+    process.env.OPENROUTER_WEB_RESEARCH_MODEL,
+  ],
+  CHAT_MODEL,
+);
 const FALLBACK_WEB_RESEARCH_MODEL = distinctFallbackModel(
   PRIMARY_WEB_RESEARCH_MODEL,
   process.env.OPENROUTER_WEB_RESEARCH_FALLBACK_MODEL ||

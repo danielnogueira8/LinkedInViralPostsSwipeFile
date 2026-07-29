@@ -38,11 +38,14 @@ import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
 import { supabaseAdmin } from "@/lib/supabase";
 import { createHash } from "node:crypto";
 import type { RecentDraft } from "@/lib/recent-drafts";
+import { resolveNativeOpenAIPrimary } from "@/lib/model-provider-routing";
 
 // Defaults to the one app-wide chat model (OPENROUTER_CHAT_MODEL) so every
 // text-LLM call uses the SAME model unless pinned via OPENROUTER_FRESHNESS_MODEL.
-export const FRESHNESS_MODEL =
-  process.env.OPENROUTER_FRESHNESS_MODEL || CHAT_MODEL;
+export const FRESHNESS_MODEL = resolveNativeOpenAIPrimary(
+  [process.env.OPENAI_FRESHNESS_MODEL, process.env.OPENROUTER_FRESHNESS_MODEL],
+  CHAT_MODEL,
+);
 
 // ON by default. AGENT_FRESHNESS_TRACKER=0 disables — a one-flag kill switch;
 // with it off the generation prompt is unchanged from before this feature.

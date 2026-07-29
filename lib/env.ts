@@ -2,7 +2,7 @@ import { z } from "zod";
 
 // ---------------------------------------------------------------------------
 // Runtime environment validation. Env vars were read ad-hoc via process.env in
-// ~50 places; a missing REQUIRED secret (Supabase, OpenRouter, CRON_SECRET)
+// ~50 places; a missing REQUIRED secret (Supabase, OpenAI, CRON_SECRET)
 // didn't fail at boot — it failed at the first request that needed it, as an
 // opaque runtime 500. This module validates the required set ONCE at server
 // startup (see instrumentation.ts) and throws a single, aggregated, readable
@@ -10,7 +10,8 @@ import { z } from "zod";
 // caught at deploy time, not by a user.
 //
 // Scope is deliberately narrow: ONLY the vars the app cannot function without.
-// The many optional tuning knobs (OPENROUTER_*_MODEL, AGENT_*_MS, VIRAL_*,
+// The many optional tuning knobs (OPENAI_*_MODEL, OPENROUTER_*_FALLBACK_MODEL,
+// AGENT_*_MS, VIRAL_*,
 // HEALTH_DIGEST_WEBHOOK, direct-Anthropic keys, etc.) all have safe in-code
 // defaults or are feature-gated, so requiring them here would break local/dev
 // and preview for no benefit. They stay validated at their point of use.
@@ -26,9 +27,6 @@ const requiredEnvSchema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
   // Native OpenAI serves Luna text, embeddings, and any OpenAI image model.
   OPENAI_API_KEY: z.string().min(1),
-  // OpenRouter remains required for explicitly configured non-OpenAI models
-  // such as the current Gemini image-generation and analysis paths.
-  OPENROUTER_API_KEY: z.string().min(1),
   // Bearer secret guarding the cron endpoints (they fail closed without it,
   // so an unset value means every cron is 401 — the scrape/publish/queue all
   // silently stop).
@@ -79,8 +77,8 @@ export function validateEnv(source: Record<string, string | undefined> = process
   }
 
   // The former AI_PROVIDER switch was removed: OpenAI model slugs route
-  // directly to OpenAI, while explicitly configured non-OpenAI slugs route
-  // through OpenRouter. Reject stale values so a deploy cannot appear to have
+  // directly to OpenAI. OpenRouter is optional and only used by provider-
+  // diverse fallback models. Reject stale values so a deploy cannot appear to have
   // switched providers while actually using model-based routing.
   const aiProvider = source.AI_PROVIDER;
   if (aiProvider) {

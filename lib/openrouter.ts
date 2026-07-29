@@ -1,6 +1,13 @@
 import { supabaseAdmin } from "./supabase";
 import { holdWorkspaceCostClaims } from "./workspace-cost-claims";
 import { providerModelAttribution } from "./agent/cowork-adapter-attempt";
+import {
+  isOpenAIEmbeddingModel,
+  isOpenAIImageModel,
+  OPENAI_EMBEDDING_MODEL,
+  OPENAI_IMAGE_MODEL,
+  resolveNativeOpenAIPrimary,
+} from "./model-provider-routing";
 export { providerModelAttribution } from "./agent/cowork-adapter-attempt";
 
 // ---------------------------------------------------------------------------
@@ -32,19 +39,23 @@ export { providerModelAttribution } from "./agent/cowork-adapter-attempt";
 //
 // Each is env-overridable for A/B or pinning (OPENROUTER_CHAT_MODEL etc.).
 //
-export const CHAT_MODEL =
-  process.env.OPENAI_CHAT_MODEL ||
-  process.env.OPENROUTER_CHAT_MODEL ||
-  "openai/gpt-5.6-luna";
+export const CHAT_MODEL = resolveNativeOpenAIPrimary([
+  process.env.OPENAI_CHAT_MODEL,
+  process.env.OPENROUTER_CHAT_MODEL,
+]);
 
 // Embedding model for the viral-learning retrieval loop. OpenAI serves this
 // model directly. text-embedding-3-small is
 // 1536-dim (must match db/migration-088 `vector(1536)`); a model swap that
 // changes the width needs a matching migration + re-embed.
-export const EMBEDDING_MODEL =
-  process.env.OPENAI_EMBEDDING_MODEL ||
-  process.env.OPENROUTER_EMBEDDING_MODEL ||
-  "openai/text-embedding-3-small";
+export const EMBEDDING_MODEL = resolveNativeOpenAIPrimary(
+  [
+    process.env.OPENAI_EMBEDDING_MODEL,
+    process.env.OPENROUTER_EMBEDDING_MODEL,
+  ],
+  OPENAI_EMBEDDING_MODEL,
+  isOpenAIEmbeddingModel,
+);
 export const EMBEDDING_DIM = 1536;
 
 const OPENROUTER_BASE_URL =
@@ -510,10 +521,10 @@ export const REASONING_MODEL = CHAT_MODEL;
 
 // Background tier — templatize + hook extraction. Defaults to Luna so the
 // former Haiku jobs use the same native OpenAI transport and accounting path.
-export const BACKGROUND_MODEL =
-  process.env.OPENAI_BACKGROUND_MODEL ||
-  process.env.OPENROUTER_BACKGROUND_MODEL ||
-  CHAT_MODEL;
+export const BACKGROUND_MODEL = resolveNativeOpenAIPrimary(
+  [process.env.OPENAI_BACKGROUND_MODEL, process.env.OPENROUTER_BACKGROUND_MODEL],
+  CHAT_MODEL,
+);
 
 // GLM-5.2 reasoning policy. OpenRouter currently defaults this model to High,
 // but we send it explicitly so a provider/default change cannot silently alter
@@ -734,8 +745,11 @@ export async function completeChat(opts: {
   };
 }
 
-export const IMAGE_GENERATION_MODEL =
-  process.env.OPENROUTER_IMAGE_MODEL || "google/gemini-3-pro-image";
+export const IMAGE_GENERATION_MODEL = resolveNativeOpenAIPrimary(
+  [process.env.OPENAI_IMAGE_MODEL, process.env.OPENROUTER_IMAGE_MODEL],
+  OPENAI_IMAGE_MODEL,
+  isOpenAIImageModel,
+);
 
 export type ImageGenerationResult = {
   b64Json: string;

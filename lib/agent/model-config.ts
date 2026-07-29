@@ -1,5 +1,9 @@
 import { CHAT_MODEL, SUPPORTED_NEWS_MODELS } from "@/lib/openrouter";
 import { distinctFallbackModel } from "@/lib/agent/model-routing";
+import {
+  resolveNativeOpenAIPrimary,
+  routesToNativeOpenAIModel,
+} from "@/lib/model-provider-routing";
 
 // OpenRouter's "auto" meta-model routes each request to whatever model is most
 // popular for the task — so the served model is non-deterministic and can rotate
@@ -15,24 +19,28 @@ export function isAutoRouterModel(model: string): boolean {
 }
 
 // Luna is the validated native-OpenAI writer.
-const PINNED_WRITER_WHEN_AUTO =
-  process.env.OPENAI_WRITER_MODEL ||
-  process.env.OPENROUTER_WRITER_WHEN_AUTO ||
-  "openai/gpt-5.6-luna";
+const PINNED_WRITER_WHEN_AUTO = resolveNativeOpenAIPrimary([
+  process.env.OPENAI_WRITER_MODEL,
+  process.env.OPENROUTER_WRITER_WHEN_AUTO,
+]);
 
 // The writer's effective primary: an explicit writer pin, else a known-good model
 // when CHAT_MODEL is the router, else CHAT_MODEL itself (the "one model
 // everywhere" default for a normal pinned chat model).
 function writerPrimary(envPin: string | undefined): string {
-  const explicit = envPin?.trim();
-  if (explicit) return explicit;
-  return isAutoRouterModel(CHAT_MODEL) ? PINNED_WRITER_WHEN_AUTO : CHAT_MODEL;
+  return resolveNativeOpenAIPrimary(
+    [envPin],
+    isAutoRouterModel(CHAT_MODEL) ? PINNED_WRITER_WHEN_AUTO : CHAT_MODEL,
+  );
 }
 
-export const PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL =
-  process.env.OPENAI_READ_ONLY_ORCHESTRATOR_MODEL ||
-  process.env.OPENROUTER_READ_ONLY_ORCHESTRATOR_MODEL ||
-  CHAT_MODEL;
+export const PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL = resolveNativeOpenAIPrimary(
+  [
+    process.env.OPENAI_READ_ONLY_ORCHESTRATOR_MODEL,
+    process.env.OPENROUTER_READ_ONLY_ORCHESTRATOR_MODEL,
+  ],
+  CHAT_MODEL,
+);
 export const FALLBACK_READ_ONLY_ORCHESTRATOR_MODEL = distinctFallbackModel(
   PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL,
   process.env.OPENROUTER_READ_ONLY_ORCHESTRATOR_FALLBACK_MODEL ||
@@ -53,9 +61,12 @@ export function resolveNewsModel(
 ): string {
   const configured =
     env.OPENAI_NEWS_MODEL?.trim() || env.OPENROUTER_NEWS_MODEL?.trim();
-  return configured && SUPPORTED_NEWS_MODELS.includes(configured)
-    ? configured
-    : DEFAULT_NEWS_MODEL;
+  return resolveNativeOpenAIPrimary(
+    [configured],
+    DEFAULT_NEWS_MODEL,
+    (model) =>
+      routesToNativeOpenAIModel(model) && SUPPORTED_NEWS_MODELS.includes(model),
+  );
 }
 
 export const PRIMARY_NEWS_MODEL = resolveNewsModel();

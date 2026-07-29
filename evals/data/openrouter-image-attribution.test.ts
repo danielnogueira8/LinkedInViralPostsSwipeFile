@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { generateImage, IMAGE_GENERATION_MODEL } from "@/lib/openrouter";
+import { generateImage } from "@/lib/openrouter";
 
 // ---------------------------------------------------------------------------
 // generateImage — model-attribution follow-up. OpenRouter doesn't consistently
@@ -36,8 +36,11 @@ describe("generateImage: model attribution", () => {
 
   test("falls back to the requested model when the response has none", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => imageResponse()));
-    const res = await generateImage({ prompt: "a cat" });
-    expect(res.model).toBe(IMAGE_GENERATION_MODEL);
+    const res = await generateImage({
+      prompt: "a cat",
+      model: "google/gemini-3.1-flash-image",
+    });
+    expect(res.model).toBe("google/gemini-3.1-flash-image");
   });
 
   test("uses the provider-served model when the response echoes one", async () => {
@@ -45,7 +48,10 @@ describe("generateImage: model attribution", () => {
       "fetch",
       vi.fn(async () => imageResponse({ model: "google/gemini-served-variant" })),
     );
-    const res = await generateImage({ prompt: "a cat" });
+    const res = await generateImage({
+      prompt: "a cat",
+      model: "google/gemini-3.1-flash-image",
+    });
     expect(res.model).toBe("google/gemini-served-variant");
   });
 
