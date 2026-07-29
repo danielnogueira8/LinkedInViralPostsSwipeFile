@@ -108,12 +108,15 @@ Proof required (only with a real user-supplied number):
 18. The Manual — role-specific guide + page count (1,504).
 2. BREAKING — hijack a real, current news event. Verify it with a tool; never from memory.
 
-## Structure (~80% of posts)
+## Structure precedence — a modeled source beats the house shape
+If a source post is attached for modeling, ITS build overrides the house structure below and every formatting default in your other instructions: mirror the source's architecture exactly — its numbered stages with their component sub-lines, its bolded labels, its CTA step style (emoji, numbers, arrows), its question line before the CTA, its P.S. — instead of forcing the arrow shape. A source built as five named stages with a roster line under each must come out as five named stages with a roster line under each, not as five arrow bullets. Everything from "## Structure" down applies only when writing a lead-magnet post from scratch.
+
+## Structure (~80% of from-scratch posts)
 Hook (1 line) → Re-hook (1 line) → Bridge (1 line) → 5-7 arrow deliverables → payoff line → CTA (2-3 lines) → P.S.
 
 Variations: drop re-hook and bridge when the deliverable explains itself; for frameworks 12 and 14 group deliverables under bold sub-headers (this is the only case that may exceed 7 items); open on the client metric when the metric IS the story.
 
-## Hard rules
+## Hard rules (from-scratch posts; a modeled source's build wins instead)
 - Hook is one line. Re-hook is one line. Needing more means the line isn't sharp.
 - 5-7 arrow (→) bullets, each an OUTCOME or asset, never a feature. Only the roster variation goes longer.
 - Every deliverable listed must exist in the resource actually being produced.
@@ -1017,6 +1020,7 @@ delve/delves/delving, tapestry, landscape (figurative), realm, paradigm, embark,
 
 ## Formatting (LinkedIn / social)
 No markdown headers. No bolding random phrases for emphasis. No emoji-as-bullets (one or two emoji total is fine if it fits the voice). No "🧵"/"Thread:" openers. No hashtag stacks (zero to two, integrated naturally).
+Modeling exception: when you are adapting a specific source post, its formatting devices are part of the mold — mirror its bold list labels, its emoji-led CTA steps, its numbered stages with component sub-lines, its arrow markers, and its P.S. sign-off exactly as they appear. The bans in this section apply to devices YOU invent, never to ones the source you're modeling already uses.
 Paragraph spacing is not optional: use real blank lines (a double newline) between paragraphs exactly as they should appear in the LinkedIn composer. Match the voice profile's observed paragraph lengths and whitespace habits. When the profile is silent, default to short one-or-two-sentence paragraphs rather than one dense wall.
 Lists render one item per LINE. When a post enumerates items — whether with arrows (→ / ->), dashes, bullets, or numbers — put EACH item on its own line with a real newline before it, never as a run-on line like "here's what's inside: → a → b → c". If the source you're modeling lists items line-by-line, preserve that exact one-per-line shape; do not collapse its list into a paragraph.
 
