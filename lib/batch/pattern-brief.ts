@@ -2,6 +2,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { CHAT_MODEL, completeChat, logOpenRouterUsage } from "@/lib/openrouter";
 import { selectAllRows } from "@/lib/db-paginate";
 import { providerModelAttribution } from "@/lib/agent/cowork-adapter-attempt";
+import { resolveNativeOpenAIPrimary } from "@/lib/model-provider-routing";
 
 // The weekly pattern-mining brief (viral-learning loop, PR 4). Once a week we
 // sample a workspace's VIRAL vs NON-VIRAL scraped posts and ask a strong model
@@ -16,8 +17,10 @@ import { providerModelAttribution } from "@/lib/agent/cowork-adapter-attempt";
 
 // Defaults to the one app-wide chat model (OPENROUTER_CHAT_MODEL) so every
 // text-LLM call uses the SAME model unless pinned via OPENROUTER_PATTERN_MODEL.
-export const PATTERN_MODEL =
-  process.env.OPENROUTER_PATTERN_MODEL || CHAT_MODEL;
+export const PATTERN_MODEL = resolveNativeOpenAIPrimary(
+  [process.env.OPENAI_PATTERN_MODEL, process.env.OPENROUTER_PATTERN_MODEL],
+  CHAT_MODEL,
+);
 
 // The settings KV key the brief lives under (per workspace).
 export const PATTERN_BRIEF_KEY = "viral_pattern_brief";

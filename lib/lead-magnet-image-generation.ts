@@ -19,6 +19,7 @@ import type { LeadMagnetMetadata } from "@/lib/lead-magnets";
 import type { Artifact } from "@/lib/agent/contracts";
 import { wrapUntrustedDelimited } from "@/lib/agent/untrusted";
 import { providerModelAttribution } from "@/lib/agent/cowork-adapter-attempt";
+import { resolveNativeOpenAIPrimary } from "@/lib/model-provider-routing";
 import {
   imageAnalysisInputHash,
   readImageAnalysisCache,
@@ -34,24 +35,17 @@ export const AUTOMATIC_LEAD_MAGNET_IMAGE_GENERATION_ENABLED = false;
 export const LEAD_MAGNET_IMAGE_COST_RESERVE_USD = Number(
   process.env.LEAD_MAGNET_IMAGE_COST_RESERVE_USD ?? 0.25,
 );
-// IMPORTANT: keep these pointed at models that ACTUALLY EXIST on OpenRouter.
-// The previous defaults ("google/gemini-3-pro-image-preview" and
-// "google/gemini-3-flash-preview") were RETIRED — OpenRouter drops `-preview`
-// slugs when a model graduates. That silently broke lead-magnet images: the
-// primary (gemini-3-pro-image, still live) works, but when it fails or its
-// output fails the quality check, the fallback retry hit the dead model and
-// 404'd, throwing the whole job → no image. The analysis pass fails open (it
-// only affects prompt quality), but it too was calling a dead model on every
-// run. Verified live on the OpenRouter model list; a genuinely different
-// image model (3.1-flash-image) so the fallback adds real diversity.
+// Keep a genuinely independent non-OpenAI fallback for provider outages.
+// Primary image generation is native OpenAI (IMAGE_GENERATION_MODEL).
 export const LEAD_MAGNET_IMAGE_FALLBACK_MODEL =
   process.env.OPENROUTER_IMAGE_FALLBACK_MODEL?.trim() ||
   "google/gemini-3.1-flash-image";
-// VISION (reads the source-post image) — modality-separate, so it does NOT
-// follow OPENROUTER_CHAT_MODEL (a text-only chat model couldn't read the image).
-// Keeps its own vision-capable default; pin OPENROUTER_IMAGE_ANALYSIS_MODEL.
-export const LEAD_MAGNET_IMAGE_ANALYSIS_MODEL =
-  process.env.OPENROUTER_IMAGE_ANALYSIS_MODEL || "google/gemini-3.5-flash";
+// Luna accepts image input natively. Preserve the legacy OpenRouter pin only
+// as an explicit override for rollback or provider-diverse fallback testing.
+export const LEAD_MAGNET_IMAGE_ANALYSIS_MODEL = resolveNativeOpenAIPrimary([
+  process.env.OPENAI_IMAGE_ANALYSIS_MODEL,
+  process.env.OPENROUTER_IMAGE_ANALYSIS_MODEL,
+]);
 const LEAD_MAGNET_IMAGE_ANALYSIS_PROMPT_VERSION = 1;
 
 export type SourcePostImage = {

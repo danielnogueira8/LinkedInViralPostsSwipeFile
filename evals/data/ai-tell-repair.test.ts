@@ -25,7 +25,10 @@ describe("conditional AI-tell repair", () => {
   test("falls back to the configured chat model when its override is absent or blank", () => {
     expect(resolveAiTellModel(undefined)).toBe(CHAT_MODEL);
     expect(resolveAiTellModel("   ")).toBe(CHAT_MODEL);
-    expect(resolveAiTellModel("custom/model")).toBe("custom/model");
+    expect(resolveAiTellModel("custom/model")).toBe(CHAT_MODEL);
+    expect(resolveAiTellModel("openai/gpt-5.6-terra")).toBe(
+      "openai/gpt-5.6-terra",
+    );
   });
 
   test("repair runs on the cheap background tier, never the auto-router", () => {

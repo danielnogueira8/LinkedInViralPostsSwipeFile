@@ -13,14 +13,14 @@ const VALID = {
 describe("validateEnv", () => {
   test("returns the parsed required env when all are present", () => {
     const out = validateEnv(VALID);
-    expect(out.OPENROUTER_API_KEY).toBe("or-key");
+    expect(out.OPENAI_API_KEY).toBe("openai-key");
     expect(out.NEXT_PUBLIC_SUPABASE_URL).toBe("https://proj.supabase.co");
   });
 
-  test("throws naming a single missing var", () => {
+  test("allows OpenRouter to be absent when only native primaries are available", () => {
     const rest = { ...VALID };
     delete (rest as Partial<typeof VALID>).OPENROUTER_API_KEY;
-    expect(() => validateEnv(rest)).toThrowError(/OPENROUTER_API_KEY: is required but not set/);
+    expect(() => validateEnv(rest)).not.toThrow();
   });
 
   test("aggregates every problem into one error", () => {
@@ -30,7 +30,7 @@ describe("validateEnv", () => {
     } catch (e) {
       msg = (e as Error).message;
     }
-    for (const key of Object.keys(VALID)) {
+    for (const key of Object.keys(VALID).filter((key) => key !== "OPENROUTER_API_KEY")) {
       expect(msg).toContain(key);
     }
     // A single throw, not one-per-var.
@@ -136,9 +136,9 @@ describe("validateEnv", () => {
     );
   });
 
-  test("still requires OPENROUTER_API_KEY for configured non-OpenAI image models", () => {
+  test("does not make an optional fallback credential a boot dependency", () => {
     const rest = { ...VALID };
     delete (rest as Partial<typeof rest>).OPENROUTER_API_KEY;
-    expect(() => validateEnv(rest)).toThrowError(/OPENROUTER_API_KEY: is required but not set/);
+    expect(() => validateEnv(rest)).not.toThrow();
   });
 });

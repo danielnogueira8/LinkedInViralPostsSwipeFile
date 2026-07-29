@@ -16,6 +16,7 @@ import {
 import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
 import { editDraftBody, type EditorModelRewrite } from "./editor";
 import { aiTellMetrics, looksCorruptedDraft } from "./nets";
+import { resolveNativeOpenAIPrimary } from "@/lib/model-provider-routing";
 
 // Defaults to the cheap background tier so a narrow, forced-tool copy edit
 // never pays writer-tier prices: Haiku 4.5 under the Anthropic flag (half the
@@ -24,8 +25,11 @@ import { aiTellMetrics, looksCorruptedDraft } from "./nets";
 // OPENROUTER_AI_TELL_MODEL to override.
 const DEFAULT_AI_TELL_MODEL = BACKGROUND_MODEL;
 
-export function resolveAiTellModel(value = process.env.OPENROUTER_AI_TELL_MODEL): string {
-  return value?.trim() || DEFAULT_AI_TELL_MODEL;
+export function resolveAiTellModel(
+  value =
+    process.env.OPENAI_AI_TELL_MODEL || process.env.OPENROUTER_AI_TELL_MODEL,
+): string {
+  return resolveNativeOpenAIPrimary([value], DEFAULT_AI_TELL_MODEL);
 }
 
 export function aiTellRepairEnabled(): boolean {
