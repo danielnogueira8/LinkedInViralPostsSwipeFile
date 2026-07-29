@@ -633,7 +633,7 @@ describe("production-shaped Cowork outcome harness", () => {
     expect(report.observed.directWriterRequests[0]).toMatchObject({
       stage: "primary",
       model: PRIMARY_DRAFT_WRITER_MODEL,
-      reasoning: "none",
+      reasoning: "sonnet-low",
     });
     expect(Object.keys(report.observed.directWriterRequests[0])).not.toContain(
       "tools",

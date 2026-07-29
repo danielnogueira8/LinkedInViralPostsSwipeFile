@@ -480,7 +480,7 @@ describe("DraftEngine", () => {
     expect(writer.requests[0]).toMatchObject({
       stage: "primary",
       model: PRIMARY_DRAFT_WRITER_MODEL,
-      reasoning: "none",
+      reasoning: "sonnet-low",
     });
     expect(writer.requests[0].cachePrompt).toBeUndefined();
     expect(writer.requests[0].cacheSystemPrefixChars).toBeGreaterThan(1_000);

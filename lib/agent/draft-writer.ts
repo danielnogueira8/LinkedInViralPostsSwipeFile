@@ -48,10 +48,10 @@ export type DraftWriterRequest = {
   // system prompt. The Anthropic adapter can cache that prefix while leaving
   // request-selected skills and workspace context outside the cache entry.
   cacheSystemPrefixChars?: number;
-  // "none" means no explicit reasoning override. This avoids excluding a
-  // provider that cannot accept OpenRouter's reasoning controls when the writer
-  // model changes. A ReasoningEffort explicitly opts the thin path into it.
-  reasoning: "none" | ReasoningEffort;
+  // "none" means no explicit reasoning override. "sonnet-low" requests low
+  // effort only when the selected model is Sonnet 5, preserving the provider
+  // default for fallback models that may not accept this reasoning control.
+  reasoning: "none" | "sonnet-low" | ReasoningEffort;
 };
 
 export type DraftWriterResponse = {
@@ -66,6 +66,11 @@ export interface DraftWriterAdapter {
   write(request: DraftWriterRequest): Promise<DraftWriterResponse>;
 }
 
+function isSonnet5(model: string): boolean {
+  return model.trim().toLowerCase().replace(/^anthropic\//, "") ===
+    "claude-sonnet-5";
+}
+
 export const openRouterDraftWriter: DraftWriterAdapter = {
   async write(request) {
     // reasoning === "none": send NO reasoning-related field at all. completeChat
@@ -77,13 +82,15 @@ export const openRouterDraftWriter: DraftWriterAdapter = {
     // reasoning shape for some models (Gemini 3.x maps reasoning.effort →
     // thinkingLevel and rejects enabled:false), which returns a 400 Bad Request.
     // That 400 is exactly what broke google/gemini-3.6-flash as a writer model:
-    // every primary attempt 400'd in ~145ms and fell back to Sonnet. The
-    // reasoning-DEFAULT over-reasoning case (deepseek-v4-pro burning the whole
-    // budget) can only occur under the auto-router, where the writer already pins
-    // Sonnet→Luna (model-config writerPrimary), so no writer call runs a
-    // reasoning-default model; the 6k max_tokens ceiling is the remaining
-    // backstop. An explicit ReasoningEffort ("medium"/"minimal", thin path) is
-    // still passed through — those ARE valid across models.
+    // every primary attempt 400'd in ~145ms and fell back to Sonnet.
+    const reasoningEffort =
+      request.reasoning === "sonnet-low"
+        ? isSonnet5(request.model)
+          ? "low"
+          : undefined
+        : request.reasoning === "none"
+          ? undefined
+          : request.reasoning;
     const result = await completeChat({
       messages: request.messages,
       model: request.model,
@@ -93,9 +100,7 @@ export const openRouterDraftWriter: DraftWriterAdapter = {
       sessionId: request.sessionId,
       cachePrompt: request.cachePrompt,
       cacheSystemPrefixChars: request.cacheSystemPrefixChars,
-      ...(request.reasoning === "none"
-        ? {}
-        : { reasoningEffort: request.reasoning }),
+      ...(reasoningEffort ? { reasoningEffort } : {}),
     });
     return {
       text: result.text,
