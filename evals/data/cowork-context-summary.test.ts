@@ -1,9 +1,11 @@
 import { describe, test, expect } from "vitest";
 import {
+  latestPersistedModelSource,
   summarizeChatContext,
   isContextSummaryEmpty,
   type ContextSourcePost,
 } from "@/lib/cowork-context-summary";
+import { hydrate } from "@/lib/chat-hydration";
 
 // ---------------------------------------------------------------------------
 // summarizeChatContext folds the per-message context the transcript already
@@ -69,6 +71,63 @@ describe("summarizeChatContext", () => {
     const s = summarizeChatContext({ messages: [], sourcePost: source });
     expect(s.sourcePost).toEqual(source);
     expect(isContextSummaryEmpty(s)).toBe(false);
+  });
+
+  test("restores the owning chat's modeled source from its persisted transcript", () => {
+    const messages = hydrate([
+      {
+        id: "user-a",
+        role: "user",
+        content: "Model this in my voice.",
+        artifacts: null,
+        model_source_id: "source-a",
+        model_source_attachment: {
+          id: "source-a",
+          kind: "swipe",
+          state: "available",
+          authorName: "Ada",
+          authorAvatar: null,
+          postText: "A source post that must survive switching chats.",
+          partial: false,
+          postType: "regular",
+        },
+      },
+    ]);
+
+    const summary = summarizeChatContext({ messages });
+
+    expect(summary.sourcePost).toMatchObject({
+      kind: "swipe",
+      authorName: "Ada",
+      postText: "A source post that must survive switching chats.",
+    });
+    expect(isContextSummaryEmpty(summary)).toBe(false);
+  });
+
+  test("keeps restored modeled sources scoped to their owning chat transcript", () => {
+    const messageFor = (chat: "A" | "B") =>
+      hydrate([
+        {
+          id: `user-${chat}`,
+          role: "user" as const,
+          content: `Model source ${chat}.`,
+          artifacts: null,
+          model_source_id: `source-${chat}`,
+          model_source_attachment: {
+            id: `source-${chat}`,
+            kind: "swipe" as const,
+            state: "available" as const,
+            authorName: `Author ${chat}`,
+            authorAvatar: null,
+            postText: `Post ${chat}`,
+            partial: false,
+            postType: "regular" as const,
+          },
+        },
+      ]);
+
+    expect(latestPersistedModelSource(messageFor("A"))?.id).toBe("source-A");
+    expect(latestPersistedModelSource(messageFor("B"))?.id).toBe("source-B");
   });
 
   test("blank / whitespace skill and file names are ignored", () => {
