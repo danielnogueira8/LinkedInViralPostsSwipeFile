@@ -17,8 +17,18 @@ const {
   SWIPE_FILE_APP_RESOURCE_URI,
   registerSwipeFileAppResource,
 } = await import("@/lib/mcp/swipe-file-app");
+const { SWIPE_FILE_APP_HTML } = await import(
+  "@/lib/mcp/swipe-file-app.generated"
+);
 
 describe("Swipe File MCP App", () => {
+  test("ships executable JavaScript instead of corrupting the bundle during HTML injection", () => {
+    const script = SWIPE_FILE_APP_HTML.match(/<script>([\s\S]*)<\/script>/)?.[1];
+
+    expect(script).toBeDefined();
+    expect(() => new Function(script!)).not.toThrow();
+  });
+
   test("links the existing search tool to the interactive app resource", () => {
     const tools = new Map<string, Record<string, unknown>>();
     registerSwipeTools({
@@ -36,7 +46,7 @@ describe("Swipe File MCP App", () => {
         "ui/resourceUri": SWIPE_FILE_APP_RESOURCE_URI,
       },
     });
-    expect(SWIPE_FILE_APP_RESOURCE_URI).toContain("swipe-file-v2");
+    expect(SWIPE_FILE_APP_RESOURCE_URI).toContain("swipe-file-v3");
   });
 
   test("serves one self-contained, sandboxed HTML app resource", async () => {
@@ -88,7 +98,7 @@ describe("Swipe File MCP App", () => {
     expect(result.contents[0]._meta).toMatchObject({
       ui: {
         csp: {
-          resourceDomains: ["https://media.licdn.com"],
+          resourceDomains: ["https://*.licdn.com"],
         },
       },
     });

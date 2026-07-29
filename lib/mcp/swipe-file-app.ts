@@ -3,7 +3,7 @@ import { MCP_STABLE_CACHE_HINT } from "@/lib/mcp/cache-hints";
 import { SWIPE_FILE_APP_HTML } from "./swipe-file-app.generated";
 
 export const SWIPE_FILE_APP_RESOURCE_URI =
-  "ui://swipein/swipe-file-v2.html";
+  "ui://swipein/swipe-file-v3.html";
 export const MCP_APP_MIME_TYPE = "text/html;profile=mcp-app";
 
 export const SWIPE_FILE_APP_TOOL_META = {
@@ -28,7 +28,7 @@ export function registerSwipeFileAppResource(server: McpServer) {
       _meta: {
         ui: {
           csp: {
-            resourceDomains: ["https://media.licdn.com"],
+            resourceDomains: ["https://*.licdn.com"],
           },
         },
       },
@@ -42,7 +42,7 @@ export function registerSwipeFileAppResource(server: McpServer) {
           _meta: {
             ui: {
               csp: {
-                resourceDomains: ["https://media.licdn.com"],
+                resourceDomains: ["https://*.licdn.com"],
               },
             },
           },

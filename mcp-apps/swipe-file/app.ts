@@ -60,7 +60,7 @@ input, select, button {
   padding: 8px 10px; color: var(--text); background: var(--surface); font: inherit;
 }
 button { cursor: pointer; font-weight: 650; }
-button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible {
+button:focus-visible, input:focus-visible, select:focus-visible {
   outline: 2px solid var(--coral); outline-offset: 2px;
 }
 #filters button, .model { align-self: end; border-color: var(--coral); color: white; background: var(--coral); }
@@ -89,8 +89,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-v
 .byline, .metrics { color: var(--muted); font-size: 12px; }
 .kind { padding: 3px 7px; border-radius: 999px; background: var(--surface-soft); font-size: 11px; white-space: nowrap; }
 .copy { margin: 0; white-space: pre-wrap; font-size: 15px; line-height: 1.5; }
-details:not([open]) .copy { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 8; }
-summary { width: fit-content; margin-top: 10px; color: var(--muted); cursor: pointer; font-size: 13px; font-weight: 650; }
+.copy.is-clamped { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: var(--copy-clamp-lines); }
+.expand { min-height: auto; margin-top: 10px; border: 0; padding: 0; color: var(--muted); background: transparent; font-size: 13px; font-weight: 650; }
 .media-frame {
   display: grid; overflow: hidden; min-height: 180px; max-height: 430px; place-items: center;
   border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
@@ -146,7 +146,7 @@ function validLinkedInMedia(value: unknown): string | null {
   if (typeof value !== "string") return null;
   try {
     const url = new URL(value);
-    return url.protocol === "https:" && url.hostname === "media.licdn.com"
+    return url.protocol === "https:" && url.hostname.endsWith(".licdn.com")
       ? url.toString()
       : null;
   } catch {
@@ -269,18 +269,32 @@ function renderCard(post: SwipePost, position: number, total: number): HTMLEleme
     ),
   );
 
-  const details = document.createElement("details");
   const copy = createText("p", "copy", post.text || "No post copy available.");
-  const summary = document.createElement("summary");
-  summary.textContent = "Show more";
-  details.addEventListener("toggle", () => {
-    summary.textContent = details.open ? "Show less" : "Show more";
-  });
-  details.append(copy, summary);
-  body.append(meta, details);
+  const mediaUrl = post.media_urls?.map(validLinkedInMedia).find(Boolean);
+  const clampLines = mediaUrl ? 12 : 18;
+  const text = post.text || "";
+  const textLong = text.length > 480 || text.split("\n").length > clampLines;
+  if (textLong) {
+    copy.classList.add("is-clamped");
+    copy.style.setProperty("--copy-clamp-lines", String(clampLines));
+  }
+  body.append(meta, copy);
+  if (textLong) {
+    const expand = document.createElement("button");
+    expand.type = "button";
+    expand.className = "expand";
+    expand.textContent = "Show more";
+    expand.setAttribute("aria-expanded", "false");
+    expand.addEventListener("click", () => {
+      const expanded = expand.getAttribute("aria-expanded") === "true";
+      expand.setAttribute("aria-expanded", String(!expanded));
+      expand.textContent = expanded ? "Show more" : "Show less";
+      copy.classList.toggle("is-clamped", expanded);
+    });
+    body.append(expand);
+  }
   card.append(body);
 
-  const mediaUrl = post.media_urls?.map(validLinkedInMedia).find(Boolean);
   if (mediaUrl) {
     const frame = document.createElement("div");
     frame.className = "media-frame";
