@@ -1,4 +1,8 @@
 import { z } from "zod";
+import {
+  MODEL_SOURCE_SELECTION_POLICY,
+  type ModelSourceSelectionPolicy,
+} from "@/lib/agent/model-source-selection-policy";
 import type { DraftCount } from "@/lib/generation-config";
 import type { ToolCall } from "@/lib/openrouter";
 
@@ -52,6 +56,7 @@ type StarterTaskDefinition = {
   kind: ComposerTaskKind;
   sourceMode: ComposerSourceMode;
   research?: StarterResearchDefinition;
+  sourceSelection?: ModelSourceSelectionPolicy;
   // Draft count the starter implies when neither the UI picker nor an explicit
   // message count settles it (e.g. a 3-part series is meaningless as 1 draft).
   defaultDraftCount?: number;
@@ -104,6 +109,7 @@ const STARTER_TASKS: Record<
       postType: "regular",
       oneSourcePerDraft: true,
     },
+    sourceSelection: MODEL_SOURCE_SELECTION_POLICY,
   },
   "model-recent-lead-magnet": {
     kind: "post",
@@ -116,6 +122,7 @@ const STARTER_TASKS: Record<
       postType: "lead_magnet",
       oneSourcePerDraft: true,
     },
+    sourceSelection: MODEL_SOURCE_SELECTION_POLICY,
   },
   "working-this-week": {
     kind: "answer",
@@ -155,6 +162,7 @@ type ComposerTaskContextBase = {
   selectedSourceId?: string;
   starterId?: ComposerStarterId;
   researchRequirement?: ComposerResearchRequirement;
+  sourceSelection?: ModelSourceSelectionPolicy;
 };
 
 export type ComposerTaskContext =
@@ -278,6 +286,9 @@ export function resolveComposerTaskContext(input: ComposerTaskSelection & {
     sourceMode,
     ...(selectedSourceId ? { selectedSourceId } : {}),
     ...(input.starterId ? { starterId: input.starterId } : {}),
+    ...(!selectedSourceId && starter?.sourceSelection
+      ? { sourceSelection: starter.sourceSelection }
+      : {}),
   };
   if (kind === "post") {
     // Priority: explicit UI pick > explicit message count > starter-implied

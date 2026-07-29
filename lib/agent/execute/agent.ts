@@ -3,6 +3,7 @@ import type { AgentEvent, Artifact, PlanStep } from "@/lib/agent/contracts";
 import {
   canonicalizeReadOnlyOrchestratorRoute,
   explicitBoardDestinationStatuses,
+  isModelableSourceText,
   type ActionOrchestratorRoute,
   type ActionRequirement,
 } from "@/lib/agent/turn/compile";
@@ -74,6 +75,11 @@ import {
 } from "@/lib/agent/grounded-answer";
 import { groundedWorkspaceSourceArtifacts } from "@/lib/agent/grounded-source-citations";
 import { MAX_GROUNDED_ANSWER_RESULTS } from "@/lib/agent/evidence";
+import { workspaceRowToCitedPost } from "@/lib/cite-resolve";
+import {
+  isModelSourceChoicePostId,
+  modelSourceChoiceId,
+} from "@/lib/agent/model-source-choice";
 
 export {
   FALLBACK_READ_ONLY_ORCHESTRATOR_MODEL,
@@ -2508,9 +2514,9 @@ export function parseReadOnlyPlan(
     return plan;
   }
   const expectedTerminal =
-    route.outcome?.kind === "grounded_answer"
-      ? "answer_from_evidence"
-      : "draft_post";
+    route.outcome?.kind === "draft"
+      ? "draft_post"
+      : "answer_from_evidence";
   if (terminal?.type !== expectedTerminal) {
     throw new Error(
       expectedTerminal === "draft_post"
@@ -3161,13 +3167,20 @@ function compiledResearchTerminal(
   route: ReadOnlyOrchestratorRoute,
   evidenceActionIds: string[],
 ): ReadOnlyAction {
-  if (route.outcome?.kind === "grounded_answer") {
+  if (
+    route.outcome?.kind === "grounded_answer" ||
+    route.outcome?.kind === "source_selection"
+  ) {
     return {
       id: "answer",
       type: "answer_from_evidence",
       evidenceActionIds,
-      format: route.outcome.format,
-      ...(route.outcome.resultCount
+      format:
+        route.outcome.kind === "grounded_answer"
+          ? route.outcome.format
+          : "summary",
+      ...(route.outcome.kind === "grounded_answer" &&
+      route.outcome.resultCount
         ? { resultCount: route.outcome.resultCount }
         : {}),
     };
@@ -3217,7 +3230,9 @@ export function compileServerReadOnlyPlan(
   }
   if (route.kind === "workspace_research") {
     const search = compiledWorkspaceSearchAction(
-      route.minimumSources,
+      route.outcome?.kind === "source_selection"
+        ? route.outcome.searchPoolSize
+        : route.minimumSources,
       authoritativeInstruction,
       "swipe",
       route.workspacePostType,
@@ -3425,9 +3440,11 @@ const READ_ONLY_PLAN_TOOL: ToolDef = {
 
 function readOnlyPlannerSystem(route: ReadOnlyOrchestratorRoute): string {
   const terminal =
-    route.outcome?.kind === "grounded_answer"
-      ? `answer_from_evidence using format ${route.outcome.format}`
-      : "draft_post";
+    route.outcome?.kind === "draft"
+      ? "draft_post"
+      : route.outcome?.kind === "grounded_answer"
+        ? `answer_from_evidence using format ${route.outcome.format}`
+        : "answer_from_evidence";
   return [
     "You are SwipeIn's read-only action planner.",
     "Return only a schema-valid action plan through return_read_only_plan.",
@@ -4141,6 +4158,35 @@ function readOnlyToolMessage(
   };
 }
 
+function sourceSelectionTranscriptResult(
+  result: Record<string, unknown>,
+): Record<string, unknown> {
+  const posts = Array.isArray(result.posts)
+    ? result.posts.map((row) => {
+        if (!row || typeof row !== "object") return row;
+        const rest = { ...(row as Record<string, unknown>) };
+        const accounts = rest.accounts;
+        delete rest.media_urls;
+        delete rest.visual_kind;
+        const sanitizedAccounts =
+          accounts && typeof accounts === "object" && !Array.isArray(accounts)
+            ? (() => {
+                const account = {
+                  ...(accounts as Record<string, unknown>),
+                };
+                delete account.profile_pic_url;
+                return account;
+              })()
+            : accounts;
+        return { ...rest, accounts: sanitizedAccounts };
+      })
+    : result.posts;
+  return {
+    ...result,
+    ...(posts ? { posts } : {}),
+  };
+}
+
 function newsSources(
   result: Record<string, unknown>,
   now: Date,
@@ -4211,11 +4257,13 @@ function workspaceSources(
     const accountRow = Array.isArray(item.accounts)
       ? item.accounts[0]
       : item.accounts;
+    const account =
+      accountRow && typeof accountRow === "object"
+        ? (accountRow as Record<string, unknown>)
+        : undefined;
     const author =
-      accountRow &&
-      typeof accountRow === "object" &&
-      typeof (accountRow as Record<string, unknown>).name === "string"
-        ? String((accountRow as Record<string, unknown>).name).trim()
+      typeof account?.name === "string"
+        ? account.name.trim()
         : undefined;
     const metric = (key: "reactions" | "comments" | "reposts") => {
       const value = item[key];
@@ -4243,6 +4291,37 @@ function workspaceSources(
         ...(postedAt ? { publishedAt: postedAt } : {}),
         ...(author ? { author } : {}),
         ...(hasMetrics ? { metrics } : {}),
+        card: workspaceRowToCitedPost({
+          id: normalized.id,
+          text: normalized.text,
+          post_url: normalized.url ?? null,
+          posted_at: postedAt ?? null,
+          reactions: metrics.reactions ?? 0,
+          comments: metrics.comments ?? 0,
+          reposts: metrics.reposts ?? 0,
+          media_type:
+            typeof item.media_type === "string" ? item.media_type : null,
+          media_urls: Array.isArray(item.media_urls)
+            ? item.media_urls.filter(
+                (value): value is string => typeof value === "string",
+              )
+            : null,
+          visual_kind:
+            item.visual_kind === "photo" || item.visual_kind === "graphic"
+              ? item.visual_kind
+              : null,
+          accounts: account
+            ? {
+                name: author,
+                niche:
+                  typeof account.niche === "string" ? account.niche : null,
+                profile_pic_url:
+                  typeof account.profile_pic_url === "string"
+                    ? account.profile_pic_url
+                    : null,
+              }
+            : null,
+        }),
       },
     ];
   });
@@ -4925,7 +5004,12 @@ async function* runReadOnlyOrchestratorCore(
               input.signal,
               {
                 autoSelectModelingSources:
-                  input.route.outcome?.kind === "draft",
+                  input.route.outcome?.kind === "draft" ||
+                  input.route.outcome?.kind === "source_selection",
+                requireModelableSources:
+                  input.route.outcome?.kind === "source_selection",
+                includeSourceCardMedia:
+                  input.route.outcome?.kind === "source_selection",
                 modelingReserveCount:
                   input.route.workspaceDraftSourceMode === "one_to_one"
                     ? Math.min(
@@ -5039,7 +5123,10 @@ async function* runReadOnlyOrchestratorCore(
           ? { summary: toolSummary(call.function.name, result) ?? undefined }
           : {}),
       };
-      const transcriptResult = { ...result };
+      const transcriptResult =
+        input.route.outcome?.kind === "source_selection"
+          ? sourceSelectionTranscriptResult(result)
+          : { ...result };
       delete transcriptResult.reserve_posts;
       messages.push(readOnlyToolMessage(id, transcriptResult));
       yield completedDone({
@@ -5064,7 +5151,10 @@ async function* runReadOnlyOrchestratorCore(
         ? { summary: toolSummary(call.function.name, result) ?? undefined }
         : {}),
     };
-    const transcriptResult = { ...result };
+    const transcriptResult =
+      input.route.outcome?.kind === "source_selection"
+        ? sourceSelectionTranscriptResult(result)
+        : { ...result };
     delete transcriptResult.reserve_posts;
     messages.push(readOnlyToolMessage(id, transcriptResult));
     if (!ok) {
@@ -5113,6 +5203,114 @@ async function* runReadOnlyOrchestratorCore(
   }
 
   const terminalAction = plan.actions.at(-1);
+  if (
+    terminalAction?.type === "answer_from_evidence" &&
+    input.route.outcome?.kind === "source_selection"
+  ) {
+    const availableSources = distinctGroundedSources(
+      terminalAction.evidenceActionIds.flatMap(
+        (id) => evidenceByAction.get(id) ?? [],
+      ),
+    );
+    const candidates = availableSources
+      .filter(
+        (source) =>
+          source.kind === "workspace_post" &&
+          isModelSourceChoicePostId(source.id) &&
+          isModelableSourceText(source.text),
+      )
+      .slice(0, input.route.outcome.candidateCount);
+    const minimumSources = Math.max(3, input.route.minimumSources ?? 3);
+    if (candidates.length < minimumSources) {
+      const message = `I found only ${candidates.length} of the ${minimumSources} source posts needed to give you a useful choice, so I did not spend credits drafting from a weak default.`;
+      yield {
+        type: "error",
+        code: "orchestrator_modeling_candidates_insufficient",
+        message,
+        recovery: "continue",
+      };
+      yield completedDone({
+        content: message,
+        terminalReason: "error",
+        toolCalls: calls,
+        toolMessages: messages,
+        inputTokens,
+        outputTokens,
+      });
+      return;
+    }
+    if (await input.cancellationBoundary()) {
+      yield completedDone({
+        content: readOnlyInterruptionContent(
+          input,
+          "Stopped before the source choices were presented.",
+        ),
+        terminalReason: readOnlyInterruptionReason(input),
+        toolCalls: calls,
+        toolMessages: messages,
+        inputTokens,
+        outputTokens,
+      });
+      return;
+    }
+
+    // Keep third-party text out of persisted ask arguments. The verified cards
+    // immediately above the ask show the author, copy, media, and metrics; the
+    // choices bind only their stable carousel positions to server-owned ids.
+    const candidateOptions = candidates.map(
+      (_source, index) => `Post ${index + 1}`,
+    );
+    const options = candidateOptions;
+    const choiceIds = candidates.map((source) =>
+      modelSourceChoiceId(source.id),
+    );
+    const question = "Which post should I model?";
+    const askId = deps.idFactory();
+    const askArgs = JSON.stringify({
+      question,
+      options,
+      choiceIds,
+      allowOther: false,
+    });
+    const askCall: ToolCall = {
+      id: askId,
+      type: "function",
+      function: { name: "ask_user", arguments: askArgs },
+    };
+    calls.push(askCall);
+    yield {
+      type: "tool_start",
+      id: askId,
+      name: "ask_user",
+      args: askArgs,
+    };
+    yield {
+      type: "ask",
+      ask: {
+        question,
+        options,
+        choiceIds,
+        allowOther: false,
+      },
+    };
+    yield { type: "tool_end", id: askId, name: "ask_user", ok: true };
+    messages.push(
+      readOnlyToolMessage(askId, { ok: true, answer_pending: true }),
+    );
+    steps = steps.map((step) => ({ ...step, status: "done" as const }));
+    yield { type: "plan_update", steps };
+    yield completedDone({
+      content:
+        "I found these strong source posts. Choose one and I’ll model it in your voice.",
+      artifacts: groundedWorkspaceSourceArtifacts(candidates),
+      terminalReason: "ask",
+      toolCalls: calls,
+      toolMessages: messages,
+      inputTokens,
+      outputTokens,
+    });
+    return;
+  }
   if (terminalAction?.type === "answer_from_evidence") {
     const availableSources = distinctGroundedSources(
       terminalAction.evidenceActionIds.flatMap(

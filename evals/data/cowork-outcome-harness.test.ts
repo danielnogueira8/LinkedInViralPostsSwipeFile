@@ -203,6 +203,41 @@ const MODELED_FIVE_SOURCE_ROWS = [
   },
 ] as const;
 
+const SELECTABLE_SOURCE_ROWS = [
+  {
+    id: "00000000-0000-4000-8000-000000000701",
+    text: COMPLETE_POST,
+    post_url:
+      "https://www.linkedin.com/feed/update/urn:li:activity:7000000000000000701",
+    author_name: "Fixture Creator",
+    post_type: "regular",
+  },
+  {
+    id: "00000000-0000-4000-8000-000000000702",
+    text: SECOND_POST,
+    post_url:
+      "https://www.linkedin.com/feed/update/urn:li:activity:7000000000000000702",
+    author_name: "Fixture Creator",
+    post_type: "regular",
+  },
+  {
+    id: "00000000-0000-4000-8000-000000000703",
+    text: THIRD_POST,
+    post_url:
+      "https://www.linkedin.com/feed/update/urn:li:activity:7000000000000000703",
+    author_name: "Fixture Creator",
+    post_type: "regular",
+  },
+  {
+    id: "00000000-0000-4000-8000-000000000704",
+    text: FOURTH_POST,
+    post_url:
+      "https://www.linkedin.com/feed/update/urn:li:activity:7000000000000000704",
+    author_name: "Fixture Creator",
+    post_type: "regular",
+  },
+] as const;
+
 const CREATOR_STYLE = {
   id: "00000000-0000-4000-8000-000000000402",
   name: "Evidence-led cadence",
@@ -3623,42 +3658,136 @@ describe("production-shaped Cowork outcome harness", () => {
     expect(report.persisted.artifacts).toHaveLength(2);
   });
 
-  test("the default modeled-post starter preserves its source chip", async () => {
-    const scenario = modeledThreeScenario(
-      "typed-modeled-starter-default-count",
-    );
-    const [source] = MODELED_SOURCE_ROWS;
-    scenario.request = {
-      message: "AI slop for content writers.",
-      starterId: "model-top-viral",
-    };
-    scenario.model.sourceFidelity = [{ outcome: "verified" }];
-    scenario.model.readOnlyOrchestrator!.toolResults = {
-      search_viral_posts: [
-        { ok: true, count: 2, posts: MODELED_SOURCE_ROWS.slice(0, 2) },
-      ],
-    };
-    scenario.model.directWriter = [
+  test("the default modeled-post starter shows candidates and preserves the chosen source", async () => {
+    const selected = SELECTABLE_SOURCE_ROWS[1];
+    const sequence = await runCoworkOutcomeSequence([
       {
-        text: COMPLETE_POST,
-        finishReason: "stop",
-        usage: usage(210, 95, 0.00019),
+        id: "typed-modeled-starter-choose-source",
+        request: {
+          message: "AI slop for content writers.",
+          starterId: "model-top-viral",
+        },
+        model: {
+          provider: { rounds: [] },
+          readOnlyOrchestrator: {
+            plans: [],
+            toolResults: {
+              search_viral_posts: [
+                {
+                  ok: true,
+                  count: SELECTABLE_SOURCE_ROWS.length,
+                  posts: [...SELECTABLE_SOURCE_ROWS],
+                },
+              ],
+            },
+          },
+          directWriter: [],
+        },
+        expected: {
+          terminal: "ask",
+          artifactBodies: SELECTABLE_SOURCE_ROWS.map(() => ""),
+          actionNames: ["search_viral_posts", "ask_user"],
+          route: "read_only_orchestrator",
+        },
       },
-    ];
-    scenario.expected = {
-      terminal: "done",
-      artifactBodies: [COMPLETE_POST],
-      actionNames: ["search_viral_posts", "write_grounded_post"],
-      sourcePostIds: [source.id],
-      sourceReferences: [{ id: source.id, url: source.post_url }],
-    };
+      {
+        id: "typed-modeled-starter-write-chosen-source",
+        request: {
+          message: "Post 2",
+          clarificationChoiceIndex: 1,
+        },
+        model: {
+          provider: { rounds: [] },
+          sourceFidelity: [{ outcome: "verified" }],
+          directWriter: [
+            {
+              text: COMPLETE_POST,
+              finishReason: "stop",
+              usage: usage(210, 95, 0.00019),
+            },
+          ],
+        },
+        expected: {
+          terminal: "done",
+          artifactBodies: [COMPLETE_POST],
+          actionNames: [],
+          sourcePostIds: [selected.id],
+          route: "direct_writer",
+        },
+      },
+    ]);
 
-    const report = await runCoworkOutcomeScenario(scenario);
+    expect(sequence.pass, JSON.stringify(sequence.attempts)).toBe(true);
+    expect(sequence.attempts[0]?.observed.directWriterRequests).toEqual([]);
+    expect(sequence.attempts[1]?.persisted.artifacts[0]?.meta).toMatchObject({
+      source_post_id: selected.id,
+      source_url: selected.post_url,
+    });
+  });
 
-    expect(report.pass, report.failureCodes.join(", ")).toBe(true);
-    expect(report.persisted.artifacts[0]?.meta).toMatchObject({
-      source_post_id: source.id,
-      source_url: source.post_url,
+  test("a free-text modeled-post request keeps create authority across source selection", async () => {
+    const selected = SELECTABLE_SOURCE_ROWS[2];
+    const originalRequest =
+      "Find one top-performing regular post in my swipe file and rewrite it in my voice.";
+    const sequence = await runCoworkOutcomeSequence([
+      {
+        id: "free-text-modeled-post-choose-source",
+        request: { message: originalRequest },
+        model: {
+          provider: { rounds: [] },
+          readOnlyOrchestrator: {
+            plans: [],
+            toolResults: {
+              search_viral_posts: [
+                {
+                  ok: true,
+                  count: SELECTABLE_SOURCE_ROWS.length,
+                  posts: [...SELECTABLE_SOURCE_ROWS],
+                },
+              ],
+            },
+          },
+          directWriter: [],
+        },
+        expected: {
+          terminal: "ask",
+          artifactBodies: SELECTABLE_SOURCE_ROWS.map(() => ""),
+          actionNames: ["search_viral_posts", "ask_user"],
+          route: "read_only_orchestrator",
+        },
+      },
+      {
+        id: "free-text-modeled-post-write-chosen-source",
+        request: {
+          message: "Post 3",
+          clarificationChoiceIndex: 2,
+        },
+        model: {
+          provider: { rounds: [] },
+          sourceFidelity: [{ outcome: "verified" }],
+          directWriter: [
+            {
+              text: COMPLETE_POST,
+              finishReason: "stop",
+              usage: usage(210, 95, 0.00019),
+            },
+          ],
+        },
+        expected: {
+          terminal: "done",
+          artifactBodies: [COMPLETE_POST],
+          actionNames: [],
+          sourcePostIds: [selected.id],
+          route: "direct_writer",
+        },
+      },
+    ]);
+
+    expect(sequence.pass, JSON.stringify(sequence.attempts)).toBe(true);
+    expect(sequence.attempts[0]?.observed.directWriterRequests).toEqual([]);
+    expect(sequence.attempts[1]?.persisted.artifacts[0]?.meta).toMatchObject({
+      source_post_id: selected.id,
+      source_url: selected.post_url,
     });
   });
 
@@ -4602,35 +4731,24 @@ describe("production-shaped Cowork outcome harness", () => {
             search_viral_posts: [
               {
                 ok: true,
-                count: 1,
-                posts: [
-                  {
-                    id: "source-pinned-starter",
-                    text: "A sourcing lesson.",
-                    post_url: "https://linkedin.com/pinned-starter",
-                  },
-                ],
+                count: SELECTABLE_SOURCE_ROWS.length,
+                posts: [...SELECTABLE_SOURCE_ROWS],
               },
             ],
           },
         },
-        directWriter: [
-          {
-            text: COMPLETE_POST,
-            finishReason: "stop",
-            usage: usage(210, 95, 0.0001888),
-          },
-        ],
+        directWriter: [],
       },
       expected: {
-        terminal: "done",
-        artifactBodies: [COMPLETE_POST],
-        actionNames: ["search_viral_posts", "write_grounded_post"],
+        terminal: "ask",
+        artifactBodies: SELECTABLE_SOURCE_ROWS.map(() => ""),
+        actionNames: ["search_viral_posts", "ask_user"],
         route: "read_only_orchestrator",
       },
     });
 
     expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+    expect(report.observed.directWriterRequests).toEqual([]);
   });
 
   test("a completed action lane cannot authorize a second action from an ambiguous follow-up", async () => {

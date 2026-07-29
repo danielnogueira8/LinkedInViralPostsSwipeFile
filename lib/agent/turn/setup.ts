@@ -75,6 +75,7 @@ import {
 } from "@/lib/chat-artifact-policy";
 import { resolveFreeTextArtifactIntent } from "@/lib/agent/turn/resolve-artifact-intent";
 import { turnOperationToolCall } from "@/lib/agent/turn/operation-marker";
+import { parseModelSourceChoiceId } from "@/lib/agent/model-source-choice";
 import { commandToTurnOperation } from "@/lib/cowork-command";
 import { getSkillsByNames } from "@/lib/content-resource-operations";
 import { SKILLS_PER_TURN_MAX } from "@/lib/custom-skills";
@@ -405,6 +406,7 @@ export async function setupChatTurn(
     const recentMessageWindow = (recentMessages ?? []) as Array<{
       id: string;
       role: ChatMessage["role"];
+      content: unknown;
       tool_calls: ToolCall[] | null;
       artifacts: Artifact[] | null;
       terminal_reason:
@@ -539,6 +541,40 @@ export async function setupChatTurn(
             );
           }
         }
+        const selectedModelSource = parseModelSourceChoiceId(
+          selectedClarificationChoiceId,
+        );
+        if (selectedModelSource) {
+          if (modelSourceId) {
+            return turnError(
+              "That source choice conflicts with another attached Post. Choose the source again.",
+              409,
+            );
+          }
+          const stashedSourceId =
+            await deps.stashWorkspacePostAsModelSource({
+              db: sbRaw,
+              workspaceId,
+              postId: selectedModelSource.postId,
+              signal: setupSignal,
+            });
+          if (!stashedSourceId) {
+            return turnError(
+              "That source Post is no longer available in this workspace. Run the search again to choose a current source.",
+              409,
+            );
+          }
+          modelSourceId = stashedSourceId;
+          currentTurnModelSourceOwnership = "server_selected";
+          const originalInstruction =
+            typeof pendingOperationOwner?.content === "string"
+              ? pendingOperationOwner.content.trim()
+              : "";
+          resolvedActionInstruction = [
+            originalInstruction || "Model the selected source Post in my voice.",
+            "The user selected one of the server-presented source candidates.",
+          ].join("\n\n");
+        }
         if (pendingOperation.operation.kind === "ask") {
           applyTurnOperation({ kind: "ask" });
         } else if (pendingOperation.operation.kind === "edit_artifact") {
@@ -611,7 +647,7 @@ export async function setupChatTurn(
         }
       }
     }
-    let preclaimInstruction = userText;
+    let preclaimInstruction = resolvedActionInstruction ?? userText;
     if (actionAnswer.cancelled && pendingActionAsk) {
       persistedActionContinuation = true;
       normalizedActionRoute = {
@@ -1096,6 +1132,16 @@ export async function setupChatTurn(
     hasAuthoritativeDraftCount = preclaim.hasAuthoritativeDraftCount;
     composerTaskSelection = preclaim.composerTaskSelection;
     composerTaskContext = preclaim.composerTaskContext;
+    // Candidate selection is the first half of a create operation even when
+    // the request arrived as starter/free text rather than a typed command.
+    // Persist that authority on the owner row so the answer to the ask card
+    // cannot degrade into a generic answer turn.
+    if (
+      !currentTurnOperation &&
+      preclaim.preclaimReadOnlyRoute?.outcome?.kind === "source_selection"
+    ) {
+      applyTurnOperation({ kind: "create_post", delivery: "atomic" });
+    }
     activeDraftCountOverride = preclaim.activeDraftCountOverride;
     normalizedActionRoute = preclaim.normalizedActionRoute;
     const preclaimReadOnlyRoute = preclaim.preclaimReadOnlyRoute;

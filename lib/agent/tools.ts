@@ -5,6 +5,8 @@ import { DraftLifecycle, type DraftRecord } from "@/lib/draft-lifecycle";
 import { createSupabaseDraftLifecycleRepository } from "@/lib/draft-lifecycle-supabase";
 import { parseDayStart, parseDayEnd, sinceCutoff } from "@/lib/mcp/util";
 import { wrapUntrustedXml } from "@/lib/agent/untrusted";
+import { canonicalScrapedPostText } from "@/lib/agent/scraped-post-text";
+import { isModelableSourceText } from "@/lib/agent/model-source-selection-policy";
 import { UsagePersistenceError, type ToolDef } from "@/lib/openrouter";
 import type { AdapterHealthRegistry } from "@/lib/agent/adapter-health";
 import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
@@ -155,6 +157,8 @@ export function normalizeToolCallArguments(name: string, raw: string): string {
 // verdict, keeping Cowork and the Swipe File aligned.
 const POST_COLS =
   "id, text, post_url, posted_at, reactions, comments, reposts, media_type, post_type, is_viral, accounts!inner(name, niche), workspace_post_classification(is_viral)";
+const POST_SOURCE_CARD_COLS =
+  "id, text, post_url, posted_at, reactions, comments, reposts, media_type, media_urls, visual_kind, post_type, is_viral, accounts!inner(name, niche, profile_pic_url), workspace_post_classification(is_viral)";
 
 
 // Drops the workspace_post_classification join wrapper and the global is_viral
@@ -210,6 +214,12 @@ export interface ToolExecutionContext {
   // Present only when the server has confirmed that these auto-selected posts
   // will be modeled. Analytical searches and explicit source ids never use it.
   autoSelectModelingSources?: boolean;
+  // Candidate-choice turns filter the full fetched pool before selecting the
+  // returned primaries, so short captions cannot hide usable posts behind them.
+  requireModelableSources?: boolean;
+  // Live source-selection cards need the same visual fields the canonical
+  // reload rehydrates. The executor strips these URLs from model history.
+  includeSourceCardMedia?: boolean;
   // Replacement sources are returned separately from the user-requested
   // primaries. Only the modeled-batch coordinator consumes them; analytical
   // searches and single-source modeling leave this at zero.
@@ -305,7 +315,10 @@ const searchViralPosts: ToolFn = async (args, workspaceId, signal, context) => {
     const toIso = parseDayEnd(args.to as string | undefined);
     const discovery = await discoverSourcePosts(sb, {
       workspaceId,
-      columns: POST_COLS,
+      columns:
+        context?.includeSourceCardMedia === true
+          ? POST_SOURCE_CARD_COLS
+          : POST_COLS,
       accountIds,
       filters: {
         niche:
@@ -336,9 +349,17 @@ const searchViralPosts: ToolFn = async (args, workspaceId, signal, context) => {
       signal,
     });
     const normalizedCandidates = discovery.rows.map(normalizeEmbed);
-    const candidates = autoSelectModelingSources
+    const normalizedModelingCandidates = autoSelectModelingSources
       ? normalizedCandidates.map(withCanonicalModelingSourceUrl)
       : normalizedCandidates;
+    const candidates =
+      context?.requireModelableSources === true
+        ? normalizedModelingCandidates.filter((candidate) =>
+            isModelableSourceText(
+              canonicalScrapedPostText(candidate.text),
+            ),
+          )
+        : normalizedModelingCandidates;
 
     // Analytical query → return the strict ranking as-is (unchanged behavior).
     if (!autoSelectModelingSources && !rotateDefaultIdeas) {

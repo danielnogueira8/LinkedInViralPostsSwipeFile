@@ -134,7 +134,14 @@ export async function* enforceTurnOutcome(
       // validated set crosses the persistence boundary or none of it does.
       // Legacy turns keep their resumable subset checkpoint behavior during
       // the compatibility window.
-      if (plan.atomicDraftSet && (!successful || sawRecoverableError)) {
+      const bufferedDraftCount = Array.from(buffered.values()).filter(
+        (bufferedEvent) => bufferedEvent.artifact.kind !== "cite",
+      ).length;
+      if (
+        plan.atomicDraftSet &&
+        bufferedDraftCount > 0 &&
+        (!successful || sawRecoverableError)
+      ) {
         buffered.clear();
         sawRecoverableError = false;
         yield {
@@ -157,6 +164,14 @@ export async function* enforceTurnOutcome(
       // apply, but exact-count validation belongs to the eventual resumed turn.
       if (successful || sawRecoverableError) {
         for (const bufferedEvent of buffered.values()) yield bufferedEvent;
+      } else if (event.terminalReason === "ask") {
+        // A research clarification may present verified source cards for the
+        // user to choose from. Drafts still stay behind the successful-done
+        // boundary; citations are read-only evidence and are safe to render
+        // with the persisted ask.
+        for (const bufferedEvent of buffered.values()) {
+          if (bufferedEvent.artifact.kind === "cite") yield bufferedEvent;
+        }
       }
       buffered.clear();
       sawRecoverableError = false;

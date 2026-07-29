@@ -33,6 +33,7 @@ export function groundedWorkspaceSourceArtifacts(
           postId: source.id,
           presentation: GROUNDED_SOURCE_PRESENTATION,
           ...(sourceUrl ? { sourceUrl } : {}),
+          ...(source.card?.id === source.id ? { card: source.card } : {}),
         },
       },
     ];
