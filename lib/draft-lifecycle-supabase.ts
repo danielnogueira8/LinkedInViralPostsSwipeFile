@@ -229,6 +229,7 @@ export function createSupabaseDraftLifecycleRepository(
       let query = db
         .from("chat_artifacts")
         .update({
+          status: patch.status,
           schedule_status: "scheduled",
           scheduled_at: patch.scheduledAt,
           first_comment: patch.firstComment,

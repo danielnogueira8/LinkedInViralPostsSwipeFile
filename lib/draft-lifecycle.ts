@@ -108,6 +108,7 @@ export type DraftLifecycleRepository = {
   schedule(
     id: string,
     patch: {
+      status: "ready";
       scheduledAt: string;
       firstComment: string | null;
       planToPostOn: string;
@@ -459,10 +460,32 @@ export class DraftLifecycle {
       input.preserveExistingQueue &&
       (draft.scheduleStatus === "scheduled" ||
         draft.scheduleStatus === "publishing") &&
+      draft.scheduledAt &&
       draft.postingSlotId &&
       draft.postingSlotOccurrenceDate
     ) {
-      return accepted(draft);
+      if (draft.status === "ready" || draft.scheduleStatus === "publishing") {
+        return accepted(draft);
+      }
+      const normalized = await this.repository.schedule(id, {
+        status: "ready",
+        scheduledAt: draft.scheduledAt,
+        firstComment: draft.firstComment,
+        planToPostOn:
+          draft.planToPostOn ?? draft.postingSlotOccurrenceDate,
+        expectedVersion: draft.lifecycleVersion,
+        postingSlotId: draft.postingSlotId,
+        postingSlotOccurrenceDate: draft.postingSlotOccurrenceDate,
+        requireNoActiveQueueBooking: false,
+      });
+      if (normalized === "stale") {
+        return rejected(
+          "stale_write",
+          `This draft changed or started publishing before the schedule was saved. ${DRAFT_SCHEDULING_CONFLICT}`,
+          409,
+        );
+      }
+      return accepted(normalized);
     }
     if (
       draft.scheduleStatus === "publishing" ||
@@ -507,6 +530,7 @@ export class DraftLifecycle {
     const planToPostOn =
       input.planToPostOn ?? localDateForInstant(input.scheduledAt, input.timezone);
     const result = await this.repository.schedule(id, {
+      status: "ready",
       scheduledAt: input.scheduledAt,
       firstComment: input.firstComment?.trim() || null,
       planToPostOn,

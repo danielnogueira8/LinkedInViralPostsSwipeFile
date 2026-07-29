@@ -430,6 +430,7 @@ export function DraftEditorModal({
             initialQueueTarget.postingSlotOccurrenceDate,
         });
         onMeta(id, {
+          status: data.status,
           scheduledAt: data.scheduledAt,
           scheduleStatus: data.scheduleStatus,
           planToPostOn: data.planToPostOn,
@@ -481,6 +482,7 @@ export function DraftEditorModal({
     try {
       const data = await draftOperations.schedule(id, input);
       onMeta(id, {
+        status: data.status,
         scheduledAt: data.scheduledAt,
         scheduleStatus: "scheduled",
         planToPostOn: data.planToPostOn,
@@ -525,6 +527,7 @@ export function DraftEditorModal({
     try {
       const data = await draftOperations.queue(id, input);
       onMeta(id, {
+        status: data.status,
         scheduledAt: data.scheduledAt,
         scheduleStatus: data.scheduleStatus,
         planToPostOn: data.planToPostOn,
@@ -2566,6 +2569,7 @@ function ScheduleRow({
       }
       const data = result.value;
       onMeta(draft.id, {
+        status: data.status,
         scheduledAt: data.scheduledAt,
         scheduleStatus: "scheduled",
         planToPostOn: data.planToPostOn,
@@ -2611,6 +2615,7 @@ function ScheduleRow({
       }
       const data = result.value;
       onMeta(draft.id, {
+        status: data.status,
         scheduledAt: data.scheduledAt,
         scheduleStatus: data.scheduleStatus,
         planToPostOn: data.planToPostOn,

@@ -67,6 +67,7 @@ vi.mock("@/lib/publishing", () => ({
 }));
 
 vi.mock("@/lib/draft-lifecycle", () => ({
+  BOARD_DRAFT_STATUSES: ["idea", "drafting", "ready", "posted"],
   DraftLifecycle: class {
     schedule = schedule;
   },
@@ -119,6 +120,7 @@ beforeEach(() => {
   schedule.mockResolvedValue({
     ok: true,
     value: {
+      status: "ready",
       scheduledAt: "2099-08-04T08:00:00.000Z",
       scheduleStatus: "scheduled",
       planToPostOn: "2099-08-04",
@@ -160,6 +162,7 @@ describe("targeted recurring queue scheduling", () => {
 
   test("moves an existing scheduled Draft instead of returning its old booking", async () => {
     state.current = {
+      status: "ready",
       scheduledAt: "2099-08-01T08:00:00.000Z",
       scheduleStatus: "scheduled",
       postingSlotId: "old-slot",
@@ -175,6 +178,7 @@ describe("targeted recurring queue scheduling", () => {
   test("changes one queued occurrence's hour without detaching it from the slot", async () => {
     state.variationEnabled = true;
     state.current = {
+      status: "ready",
       scheduledAt: "2099-08-04T08:00:00.000Z",
       scheduleStatus: "scheduled",
       planToPostOn: "2099-08-04",
@@ -222,6 +226,7 @@ describe("targeted recurring queue scheduling", () => {
     schedule.mockImplementationOnce(
       async (_id: string, input: Record<string, unknown>) => {
         state.current = {
+          status: "ready",
           scheduledAt: input.scheduledAt,
           scheduleStatus: "scheduled",
           postingSlotId: input.postingSlotId,
@@ -248,6 +253,45 @@ describe("targeted recurring queue scheduling", () => {
     random.mockRestore();
   });
 
+  test("normalizes an older drafting booking without changing its chosen time", async () => {
+    state.variationEnabled = true;
+    state.current = {
+      status: "drafting",
+      scheduledAt: "2099-08-04T07:45:00.000Z",
+      scheduleStatus: "scheduled",
+      planToPostOn: "2099-08-04",
+      firstComment: "Original comment",
+      postingSlotId: targetSlot.id,
+      postingSlotOccurrenceDate: "2099-08-04",
+    };
+    schedule.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        ...state.current,
+        status: "ready",
+      },
+    });
+    const random = vi.spyOn(Math, "random");
+
+    const response = await POST(request(), context);
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(schedule).toHaveBeenCalledWith(
+      "draft-1",
+      expect.objectContaining({
+        scheduledAt: "2099-08-04T07:45:00.000Z",
+        postingSlotId: targetSlot.id,
+        postingSlotOccurrenceDate: "2099-08-04",
+        preserveExistingQueue: true,
+      }),
+    );
+    expect(body.status).toBe("ready");
+    expect(body.scheduledAt).toBe("2099-08-04T07:45:00.000Z");
+    expect(random).not.toHaveBeenCalled();
+    random.mockRestore();
+  });
+
   test("falls back to the valid slot time when positive variation exceeds media expiry", async () => {
     state.variationEnabled = true;
     const random = vi.spyOn(Math, "random").mockReturnValue(1);
@@ -261,6 +305,7 @@ describe("targeted recurring queue scheduling", () => {
       .mockResolvedValueOnce({
         ok: true,
         value: {
+          status: "ready",
           scheduledAt: "2099-08-04T08:00:00.000Z",
           scheduleStatus: "scheduled",
           planToPostOn: "2099-08-04",
@@ -318,6 +363,7 @@ describe("targeted recurring queue scheduling", () => {
       .mockResolvedValueOnce({
         ok: true,
         value: {
+          status: "ready",
           scheduledAt: "2099-08-04T08:00:00.000Z",
           scheduleStatus: "scheduled",
           planToPostOn: "2099-08-04",

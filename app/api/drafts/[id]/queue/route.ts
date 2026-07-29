@@ -113,7 +113,42 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         currentBooking.postingSlotOccurrenceDate ===
           input.postingSlotOccurrenceDate
       ) {
-        return existingBookingResponse(sb, currentBooking, input.timezone);
+        if (currentBooking.status === "ready") {
+          return existingBookingResponse(sb, currentBooking, input.timezone);
+        }
+        const normalized = await lifecycle.schedule(id, {
+          scheduledAt: currentBooking.scheduledAt,
+          planToPostOn:
+            currentBooking.planToPostOn ??
+            currentBooking.postingSlotOccurrenceDate,
+          timezone: input.timezone,
+          firstComment: currentBooking.firstComment,
+          postingSlotId: currentBooking.postingSlotId,
+          postingSlotOccurrenceDate:
+            currentBooking.postingSlotOccurrenceDate,
+          preserveExistingQueue: true,
+        });
+        if (!normalized.ok) {
+          return NextResponse.json(
+            {
+              ok: false,
+              reason: normalized.reason,
+              error: normalized.message,
+            },
+            { status: normalized.status },
+          );
+        }
+        const normalizedBooking = existingQueueBooking(normalized.value);
+        if (!normalizedBooking) {
+          throw new Error(
+            "Queue booking normalization returned no recurring slot booking.",
+          );
+        }
+        return existingBookingResponse(
+          sb,
+          normalizedBooking,
+          input.timezone,
+        );
       }
       const { data, error } = await sb.raw
         .from("posting_slots")
@@ -193,7 +228,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
 
     const currentBooking = existingQueueBooking(await repository.find(id));
-    if (currentBooking) {
+    if (currentBooking?.status === "ready") {
       return existingBookingResponse(sb, currentBooking, input.timezone);
     }
 

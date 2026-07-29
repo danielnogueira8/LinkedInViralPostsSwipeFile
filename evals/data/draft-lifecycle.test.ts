@@ -123,6 +123,7 @@ class MemoryRepository implements DraftLifecycleRepository {
     };
     const next = {
       ...current,
+      status: patch.status,
       scheduledAt: patch.scheduledAt,
       scheduleStatus: "scheduled" as const,
       firstComment: patch.firstComment,
@@ -548,6 +549,55 @@ describe("DraftLifecycle command outcomes", () => {
     expect(scheduled.ok && scheduled.value.firstComment).toBe("link");
     const cancelled = await lifecycle.cancelSchedule("draft-1");
     expect(cancelled.ok && cancelled.value.planToPostOn).toBe("2099-12-31");
+  });
+
+  test("scheduling a drafting post automatically marks it ready", async () => {
+    repository.rows.set("draft-1", draft({ status: "drafting" }));
+
+    const scheduled = await lifecycle.schedule("draft-1", {
+      scheduledAt: future,
+    });
+
+    expect(scheduled).toMatchObject({
+      ok: true,
+      value: {
+        status: "ready",
+        scheduleStatus: "scheduled",
+      },
+    });
+    expect(repository.rows.get("draft-1")?.status).toBe("ready");
+  });
+
+  test("retrying an existing queue booking marks a drafting post ready without moving it", async () => {
+    repository.rows.set(
+      "draft-1",
+      draft({
+        status: "drafting",
+        scheduledAt: "2099-12-30T09:00:00.000Z",
+        scheduleStatus: "scheduled",
+        planToPostOn: "2099-12-30",
+        postingSlotId: "slot-1",
+        postingSlotOccurrenceDate: "2099-12-30",
+      }),
+    );
+
+    const scheduled = await lifecycle.schedule("draft-1", {
+      scheduledAt: future,
+      postingSlotId: "slot-2",
+      postingSlotOccurrenceDate: "2099-12-31",
+      preserveExistingQueue: true,
+    });
+
+    expect(scheduled).toMatchObject({
+      ok: true,
+      value: {
+        status: "ready",
+        scheduledAt: "2099-12-30T09:00:00.000Z",
+        postingSlotId: "slot-1",
+        postingSlotOccurrenceDate: "2099-12-30",
+      },
+    });
+    expect(repository.rows.get("draft-1")?.status).toBe("ready");
   });
 
   // markdown-model drafts (meta.markdown): the LinkedIn caption is the
