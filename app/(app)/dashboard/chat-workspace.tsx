@@ -134,14 +134,15 @@ import type {
   PlanStep,
 } from "@/lib/agent/contracts";
 import {
-  commandForComposer,
   initialCoworkComposerState,
   preservesCoworkCommandOnSessionChange,
-  resumesPersistedCoworkOperation,
-  type CoworkCommand,
   type CoworkComposerCommandKind,
   type CoworkComposerState,
 } from "@/lib/cowork-command";
+import {
+  createChatWorkspaceController,
+  type ChatWorkspaceSendOptions,
+} from "@/lib/chat-workspace-controller";
 import {
   isAskSelectionComplete,
   resolveAskSubmission,
@@ -156,7 +157,6 @@ import {
 import { AGENT_CHAT_TITLE } from "@/lib/agent-loop/constants";
 import {
   clearComposerStarter,
-  consumeComposerExplorationLane,
   moveComposerDraft,
   readComposerDraft,
   readDraft,
@@ -184,7 +184,6 @@ import {
   DRAFT_COUNT_OPTIONS,
   POST_TYPE_OPTIONS,
   explorationLaneForComposer,
-  generationConfigForSelection,
   type DraftCountSelection,
   type ExplorationLaneSelection,
   type PostTypeSelection,
@@ -477,6 +476,7 @@ export function ChatWorkspace({
       initialArtifacts: initialMessages.flatMap((message) => message.artifacts ?? []),
     }),
   );
+  const [workspaceController] = useState(createChatWorkspaceController);
   const sessionSnapshot = useSyncExternalStore(
     chatSession.subscribe,
     chatSession.snapshot,
@@ -2395,13 +2395,7 @@ export function ChatWorkspace({
 
   const send = useCallback(async (
     overrideText?: string,
-    sendOpts?: {
-      command?: CoworkCommand;
-      retryOfUserMessageId?: string;
-      actionSelectionIds?: string[];
-      clarificationChoiceIndex?: number;
-      clarificationAssistantMessageId?: string;
-    },
+    sendOpts?: ChatWorkspaceSendOptions,
   ) => {
     // Caller passes overrideText to send a specific message without going
     // through the composer input — used by the "Continue" recovery button on
@@ -2553,60 +2547,35 @@ export function ChatWorkspace({
       const turnCreatorStyle = pendingCreatorStyle;
       const turnCreatorStyleApplies = !attached;
       const turnKnowledgeSources = pendingKnowledgeSources;
-      // The Ask-card submission callback always supplies this field, including
-      // an empty array for free-text/non-board answers. Presence means "resume
-      // the persisted pending operation"; checking length would accidentally
-      // compile an empty-selection answer as a brand-new Ask command.
-      const resumesPersistedOperation = resumesPersistedCoworkOperation({
-        ...(sendOpts?.retryOfUserMessageId
-          ? { retryOfUserMessageId: sendOpts.retryOfUserMessageId }
-          : {}),
-        ...(sendOpts?.actionSelectionIds !== undefined
-          ? { actionSelectionIds: sendOpts.actionSelectionIds }
-          : {}),
-        ...(sendOpts?.clarificationAssistantMessageId
-          ? {
-              clarificationAssistantMessageId:
-                sendOpts.clarificationAssistantMessageId,
-            }
-          : {}),
-      });
-      const appliesComposerControls =
-        overrideText === undefined &&
-        !resumesPersistedOperation &&
-        !sendOpts?.command;
-      const turnCommand =
-        resumesPersistedOperation
-          ? undefined
-          : sendOpts?.command ??
-            commandForComposer({
-              kind: composerCommandKind,
-              count:
-                draftCountSelection === "auto" ? 1 : draftCountSelection,
-              ...(composerCommandKind === "ask" && askContextPost
-                ? { contextPostId: askContextPost.artifactId }
-                : {}),
-              ...(effectiveCoworkComposer.kind === "edit" && editTargetPost
-                ? {
-                    targetPostId: editTargetPost.artifactId,
-                    scope: effectiveCoworkComposer.scope,
-                  }
-                : {}),
-            });
       const turnStarterOwnerId = targetChatId;
-      const turnStarterId = appliesComposerControls
-        ? readComposerDraft(turnStarterOwnerId).starterId ?? undefined
-        : undefined;
-      let turnGenerationConfig = appliesComposerControls
-        ? generationConfigForSelection(
-            draftCountSelection,
-            postTypeSelection,
-            effectiveExplorationLaneSelection,
-          )
-        : undefined;
-      // These are only the skills explicitly selected for this turn. Target
-      // skill inheritance is a server-owned operation rule.
-      const turnSkillIds = turnSkills.map((skill) => skill.id);
+      const turnPlan = workspaceController.prepareTurn({
+        composer:
+          effectiveCoworkComposer.kind === "edit" && editTargetPost
+            ? {
+                ...effectiveCoworkComposer,
+                targetPostId: editTargetPost.artifactId,
+              }
+            : effectiveCoworkComposer,
+        draftCountSelection,
+        postTypeSelection,
+        explorationLaneSelection: effectiveExplorationLaneSelection,
+        starterId:
+          readComposerDraft(turnStarterOwnerId).starterId ?? undefined,
+        skillIds: turnSkills.map((skill) => skill.id),
+        knowledgeSourceIds: turnKnowledgeSources.map((source) => source.id),
+        hasPostFormat: Boolean(turnPostFormat),
+        hasCreatorStyle: Boolean(
+          turnCreatorStyle && turnCreatorStyleApplies,
+        ),
+        ...(askContextPost
+          ? { askContextPostId: askContextPost.artifactId }
+          : {}),
+        ...(sendOpts ? { sendOptions: sendOpts } : {}),
+        isProgrammaticSend: overrideText !== undefined,
+      });
+      const { requestFields: turnRequestFields } = turnPlan;
+      const turnCommand = turnRequestFields.command;
+      const turnStarterId = turnRequestFields.starterId;
       setSkillPickerOpen(false);
       setPostFormatPickerOpen(false);
       setCreatorStylePickerOpen(false);
@@ -2733,7 +2702,6 @@ export function ChatWorkspace({
           });
         }
       }
-      if (refineThisTurn) turnGenerationConfig = undefined;
 
       // Only clear the composer when sending what the user actually typed —
       // a programmatic send (recovery button, etc.) shouldn't wipe their
@@ -2834,13 +2802,12 @@ export function ChatWorkspace({
       if (turnCommand) {
         setCoworkComposer({ kind: "ask" });
       }
-      if (turnCommand?.kind === "create") {
-        const visibleLane = consumeComposerExplorationLane(
-          chatId,
-          activeIdRef.current,
-        );
-        if (visibleLane) setExplorationLaneSelection(visibleLane);
-      }
+      const visibleLane = workspaceController.consumeExplorationLane(
+        turnPlan,
+        chatId,
+        activeIdRef.current,
+      );
+      if (visibleLane) setExplorationLaneSelection(visibleLane);
 
       // Optimistically title an untitled chat from this first message, matching
       // the server's auto-title (first 60 chars).
@@ -2886,8 +2853,7 @@ export function ChatWorkspace({
               : {}),
             ...(attached ? { modelSourceId: attached.id } : {}),
             ...(filePayload.length ? { attachments: filePayload } : {}),
-            ...(turnCommand ? { command: turnCommand } : {}),
-            ...(turnSkillIds.length ? { skillIds: turnSkillIds } : {}),
+            ...turnRequestFields,
             ...(turnPostFormat ? { forcedNoModelFormatId: turnPostFormat } : {}),
             ...(turnLeadMagnet &&
             turnLeadMagnetApplies &&
@@ -2912,33 +2878,6 @@ export function ChatWorkspace({
             ...(turnCreatorStyle && turnCreatorStyleApplies
               ? { creatorStyleId: turnCreatorStyle.id }
               : {}),
-            ...(turnKnowledgeSources.length
-              ? {
-                  knowledgeSourceIds: turnKnowledgeSources.map(
-                    (source) => source.id,
-                  ),
-                }
-              : {}),
-            // Context is scoped to this turn. Stamp explicit clears for every
-            // unselected binding so a later opt-in cannot revive a stale skill,
-            // creator style, or format from behind this turn.
-            ...(appliesComposerControls
-              ? {
-                  contextPolicy: {
-                    clear: [
-                      ...(turnSkillIds.length ? [] : ["skills"]),
-                      ...(turnCreatorStyle && turnCreatorStyleApplies
-                        ? []
-                        : ["creator_style"]),
-                      ...(turnPostFormat ? [] : ["post_format"]),
-                    ],
-                  },
-                }
-              : {}),
-            ...(turnGenerationConfig
-              ? { generationConfig: turnGenerationConfig }
-              : {}),
-            ...(turnStarterId ? { starterId: turnStarterId } : {}),
           }),
         }, ctrl.signal, {
           timeoutMs: chatSetupDeadlines({
@@ -3254,8 +3193,7 @@ export function ChatWorkspace({
               writeComposerDraft(chatId, {
                 text,
                 starterId: turnStarterId,
-                explorationLane:
-                  turnGenerationConfig?.explorationLane ?? "auto",
+                explorationLane: turnPlan.explorationLaneToRestore,
               });
             }
             if (turnCommand?.kind === "ask") {
@@ -3267,9 +3205,7 @@ export function ChatWorkspace({
               });
             } else if (turnCommand?.kind === "create") {
               enterCreateCommand(turnCommand.count);
-              chooseExplorationLane(
-                turnGenerationConfig?.explorationLane ?? "auto",
-              );
+              chooseExplorationLane(turnPlan.explorationLaneToRestore);
             } else if (turnCommand?.kind === "edit") {
               setCoworkComposer({
                 kind: "edit",
@@ -3526,6 +3462,7 @@ export function ChatWorkspace({
     setActiveId,
     writerContentFormat,
     enterCreateCommand,
+    workspaceController,
   ]);
 
   // Stop the active chat's in-flight run — really stop it, not just cancel
