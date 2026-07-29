@@ -86,15 +86,18 @@ export async function GET(
         (marker?.version ?? 0) >= 153
           ? await getLeadSharkAutomationDefaults(sb.workspaceId, sb.raw)
           : null;
+      const keyword = inferCommentKeyword(
+        draft.body ?? "",
+        lm?.title ?? "",
+      );
       const config = savedDefaults
         ? materializeLeadSharkAutomationDefaults(savedDefaults, {
             name: title,
             url: url || "your link",
+            keyword,
           })
         : {
-            keywords: [
-              inferCommentKeyword(draft.body ?? "", lm?.title ?? ""),
-            ].filter(Boolean),
+            keywords: [keyword].filter(Boolean),
             dmTemplate: defaultDmTemplate(title, url || "your link"),
             dmTemplateVariations: [],
             commentReplyTemplates: [],
