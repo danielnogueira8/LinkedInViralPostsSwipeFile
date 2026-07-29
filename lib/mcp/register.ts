@@ -64,6 +64,7 @@ import {
   diversityCandidateLimit,
 } from "@/lib/mcp/creator-diversity";
 import { mcpWorkspaceId } from "@/lib/mcp/context";
+import { SWIPE_FILE_APP_TOOL_META } from "@/lib/mcp/swipe-file-app";
 
 const POST_TYPES = ["regular", "lead_magnet"] as const;
 const SORT_COLUMN = {
@@ -279,7 +280,11 @@ async function renderPostImage(url: string): Promise<ImageContent | null> {
   }
 }
 
-async function postContentWithRenderedImages(payload: unknown, posts: unknown[]) {
+async function postContentWithRenderedImages(
+  payload: Record<string, unknown>,
+  posts: unknown[],
+  includeStructuredContent = false,
+) {
   const urls = visualUrlsFromPosts(posts);
   if (urls.length === 0) return jsonContent(payload);
   const images = (await Promise.all(urls.map(renderPostImage))).filter(
@@ -287,6 +292,7 @@ async function postContentWithRenderedImages(payload: unknown, posts: unknown[])
   );
   return {
     content: [...jsonContent(payload).content, ...images],
+    ...(includeStructuredContent ? { structuredContent: payload } : {}),
   };
 }
 
@@ -384,6 +390,7 @@ export function registerSwipeTools(server: McpServer) {
           .optional()
           .describe("Include rendered original images, visual asset URLs, and visual metadata. Use when the user asks to see a post's image or visual asset. Always included when limit is 1."),
       },
+      _meta: SWIPE_FILE_APP_TOOL_META,
     },
     async (args, extra) => {
       try {
@@ -434,9 +441,10 @@ export function registerSwipeTools(server: McpServer) {
             }),
         )
           .map((post) => normalizeEmbed(post, includeVisual));
+        const payload = { ok: true, count: posts.length, posts };
         return includeVisual
-          ? await postContentWithRenderedImages({ ok: true, count: posts.length, posts }, posts)
-          : jsonContent({ ok: true, count: posts.length, posts });
+          ? await postContentWithRenderedImages(payload, posts, true)
+          : { ...jsonContent(payload), structuredContent: payload };
       } catch (e) {
         return errorContent((e as Error).message);
       }

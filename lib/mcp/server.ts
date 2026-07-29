@@ -5,6 +5,7 @@ import {
   type McpHttpHandler,
 } from "@modelcontextprotocol/server";
 import { registerSwipeTools } from "@/lib/mcp/register";
+import { registerSwipeFileAppResource } from "@/lib/mcp/swipe-file-app";
 
 const SERVER_INFO = {
   name: "linkedin-swipe-mcp",
@@ -28,6 +29,7 @@ const SERVER_INFO = {
 export function createSwipeMcpServer(): McpServer {
   const server = new McpServer(SERVER_INFO);
   registerSwipeTools(server);
+  registerSwipeFileAppResource(server);
   return server;
 }
 
