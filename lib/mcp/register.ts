@@ -64,6 +64,7 @@ import {
   diversityCandidateLimit,
 } from "@/lib/mcp/creator-diversity";
 import { mcpWorkspaceId } from "@/lib/mcp/context";
+import { confirmScheduleDraft } from "@/lib/mcp/schedule-confirmation";
 import { SWIPE_FILE_APP_TOOL_META } from "@/lib/mcp/swipe-file-app";
 
 const POST_TYPES = ["regular", "lead_magnet"] as const;
@@ -882,12 +883,27 @@ export function registerSwipeTools(server: McpServer) {
         const workspaceId = workspaceFromExtra(extra);
         if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
 
-        const outcome = await draftLifecycleForWorkspace(workspaceId).schedule(id, {
-          scheduledAt: scheduled_at,
-          planToPostOn: plan_to_post_on,
-          timezone,
-          firstComment: first_comment,
-        });
+        const confirmation = await confirmScheduleDraft(
+          {
+            id,
+            scheduled_at,
+            plan_to_post_on,
+            timezone,
+            first_comment,
+          },
+          extra,
+        );
+        if (!confirmation.confirmed) return confirmation.result;
+
+        const outcome = await draftLifecycleForWorkspace(workspaceId).schedule(
+          confirmation.input.id,
+          {
+            scheduledAt: confirmation.input.scheduled_at,
+            planToPostOn: confirmation.input.plan_to_post_on,
+            timezone: confirmation.input.timezone,
+            firstComment: confirmation.input.first_comment,
+          },
+        );
         if (!outcome.ok) return errorContent(outcome.message);
         return jsonContent({ ok: true, draft: draftForMcp(outcome.value) });
       } catch (e) {
