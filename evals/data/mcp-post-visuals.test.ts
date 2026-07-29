@@ -117,7 +117,7 @@ describe("MCP post visual assets", () => {
     ).toBe(12);
   });
 
-  test("keeps broad searches lean unless the caller explicitly requests visuals", async () => {
+  test("gives the interactive app media URLs without embedding broad-search images", async () => {
     dbRef.current = makeFakeSupabase({ posts: { rows: [POST] } });
     const fetchImage = stubImageFetch();
 
@@ -128,9 +128,11 @@ describe("MCP post visual assets", () => {
     expect((rawResult as { structuredContent?: unknown }).structuredContent).toEqual(
       result,
     );
-    expect(queryFor(dbRef.current, "posts")?.selectArg).not.toContain("media_urls");
-    expect(returnedPost).not.toHaveProperty("media_urls");
-    expect(returnedPost).not.toHaveProperty("visual_kind");
+    expect(queryFor(dbRef.current, "posts")?.selectArg).toContain("media_urls");
+    expect(returnedPost).toMatchObject({
+      media_urls: POST.media_urls,
+      visual_kind: POST.visual_kind,
+    });
     expect(fetchImage).not.toHaveBeenCalled();
   });
 

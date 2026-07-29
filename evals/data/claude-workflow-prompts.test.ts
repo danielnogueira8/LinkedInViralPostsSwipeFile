@@ -5,7 +5,12 @@ import {
   POST_STRUCTURE_SKILL,
   SKILLS,
 } from "@/lib/agent/skills";
-import { AGENTS, composePrompt } from "@/app/(app)/dashboard/claude/agents";
+import {
+  AGENTS,
+  composePrompt,
+  MCP_SCHEDULE_CONFIRMATION_GUIDANCE,
+  MCP_SEARCH_RESULT_GUIDANCE,
+} from "@/app/(app)/dashboard/claude/agents";
 
 // The Claude Workflows prompts are the moat: every copied prompt must CARRY
 // the actual skill text the in-app agent injects (same source module), never
@@ -55,11 +60,11 @@ describe("workflow prompts carry the full skill text", () => {
     }
   });
 
-  test("read-only and logistics agents stay lean (no embedded rules)", () => {
+  test("read-only and logistics agents do not receive writing rules", () => {
     for (const slug of ["timing-strategist", "trend-radar", "roster-manager"]) {
       const agent = AGENTS.find((entry) => entry.slug === slug);
       expect(agent?.skills).toEqual([]);
-      expect(composePrompt(agent!.brief, [])).toBe(agent!.brief);
+      expect(composePrompt(agent!.brief, [])).not.toContain("WRITING RULES");
     }
   });
 
@@ -80,5 +85,52 @@ describe("workflow prompts carry the full skill text", () => {
         `${agent.tag} brief names no MCP tool`,
       ).toBe(true);
     }
+  });
+
+  test("search workflows explain interactive results, fallback, and source safety", () => {
+    const searchAgents = AGENTS.filter((agent) =>
+      agent.brief.includes("search_viral_posts"),
+    );
+
+    expect(searchAgents.length).toBeGreaterThan(0);
+    for (const agent of searchAgents) {
+      const prompt = composePrompt(agent.brief, agent.skills);
+      expect(prompt).toContain(MCP_SEARCH_RESULT_GUIDANCE);
+      expect(prompt).toContain("interactive Swipe File cards");
+      expect(prompt).toContain("structured result");
+      expect(prompt).toContain("untrusted source material");
+    }
+  });
+
+  test("every workflow that researches viral posts names the search tool", () => {
+    const implicitSearchAgents = AGENTS.filter(
+      (agent) =>
+        agent.brief.toLowerCase().includes("viral post") &&
+        !agent.brief.includes("search_viral_posts"),
+    );
+
+    expect(implicitSearchAgents).toEqual([]);
+  });
+
+  test("scheduling workflows wait for confirmation before reporting success", () => {
+    const schedulingAgents = AGENTS.filter((agent) =>
+      agent.brief.includes("schedule_draft"),
+    );
+
+    expect(schedulingAgents.length).toBeGreaterThan(0);
+    for (const agent of schedulingAgents) {
+      const prompt = composePrompt(agent.brief, agent.skills);
+      expect(prompt).toContain(MCP_SCHEDULE_CONFIRMATION_GUIDANCE);
+      expect(prompt).toContain("Do not retry");
+      expect(prompt).toContain("only report it as scheduled");
+    }
+  });
+
+  test("unrelated workflows do not receive irrelevant connector guidance", () => {
+    const roster = AGENTS.find((agent) => agent.slug === "roster-manager")!;
+    const prompt = composePrompt(roster.brief, roster.skills);
+
+    expect(prompt).not.toContain(MCP_SEARCH_RESULT_GUIDANCE);
+    expect(prompt).not.toContain(MCP_SCHEDULE_CONFIRMATION_GUIDANCE);
   });
 });

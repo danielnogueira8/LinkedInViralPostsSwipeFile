@@ -75,6 +75,11 @@ describe("Swipe File MCP App", () => {
     expect(result.contents[0].text).toContain("search_viral_posts");
     expect(result.contents[0].text).toContain("untrusted content");
     expect(result.contents[0].text).toContain(".linkedin.com");
+    expect(result.contents[0].text).toContain("Previous post");
+    expect(result.contents[0].text).toContain("Next post");
+    expect(result.contents[0].text).toContain("aria-roledescription");
+    expect(result.contents[0].text).toContain("carousel");
+    expect(result.contents[0].text).toContain("Original post media");
     expect(result.contents[0]._meta).toMatchObject({
       ui: {
         csp: {
