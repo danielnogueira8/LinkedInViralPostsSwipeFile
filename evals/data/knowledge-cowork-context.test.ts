@@ -16,7 +16,7 @@ const source: AppliedKnowledgeSource = {
 };
 
 describe("Cowork Knowledge context", () => {
-  test("accepts only a bounded explicit source selection", () => {
+  test("temporarily accepts bounded legacy selections during rolling deploys", () => {
     expect(
       chatTurnRequestSchema.parse({
         message: "Write a post from this call",
@@ -49,7 +49,8 @@ describe("Cowork Knowledge context", () => {
     expect(block).toContain("Customer call");
     expect(block).toContain("Customers repeatedly ask for weekly reporting.");
     expect(block).toContain("untrusted");
-    expect(block).toContain("reference material");
+    expect(block).toContain("source evidence");
+    expect(block).toContain("not a verified Workspace fact");
   });
 
   test("stamps exact source revisions and chunks onto generated artifacts", () => {

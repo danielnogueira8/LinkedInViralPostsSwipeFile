@@ -99,9 +99,8 @@ import { waitForChatSetup } from "@/lib/chat-stream-policy";
 import { retrieveKnowledgeSourceContext } from "@/lib/knowledge-sources/retrieval";
 import { originalTemplateMatch } from "@/lib/agent/original-template-reference";
 import {
-  appliedKnowledgeSources,
-  buildKnowledgeContextBlock,
-  type AppliedKnowledgeSource,
+  appliedWorkspaceKnowledge,
+  type AppliedWorkspaceKnowledge,
 } from "@/lib/knowledge-sources/context";
 import { loadVoiceProfile, type ToolResult } from "@/lib/agent/tools";
 import { compileIdeaBrief } from "@/lib/agent/idea-brief";
@@ -1144,8 +1143,7 @@ export type TurnContext = {
   customSkillNames: string[];
   /** Best existing Content Template chosen for structure-only original-post guidance, if any. */
   structureMatch: StructureMatchResult | null;
-  knowledgeSources: AppliedKnowledgeSource[];
-  selectedKnowledgeSources: AppliedKnowledgeSource[];
+  workspaceKnowledge: AppliedWorkspaceKnowledge;
 };
 
 export type BuildTurnContextInput = {
@@ -1170,7 +1168,6 @@ export type BuildTurnContextInput = {
   /** Frozen skills from the persisted retry marker; bypasses the DB re-read. */
   customSkillRetryContext: CustomSkillRetryContext | null;
   skillIds: string[];
-  knowledgeSourceIds: string[];
   /** Pre-claim composer resolution; re-resolved inside from the post-clarification instruction. */
   composerTaskContext: ComposerTaskContext | null;
   composerTaskSelection: ComposerTaskSelection;
@@ -1214,7 +1211,6 @@ export async function buildTurnContext(
     creatorStyleRetryContext,
     customSkillRetryContext,
     skillIds,
-    knowledgeSourceIds,
     composerTaskSelection,
     resolvedGenerationConfig,
     hasAuthoritativeDraftCount,
@@ -1278,8 +1274,10 @@ export async function buildTurnContext(
   let customSkillNames: string[] = [];
   let postClarificationPostCount: number | null = null;
   let structureMatch: StructureMatchResult | null = null;
-  let knowledgeSources: AppliedKnowledgeSource[] = [];
-  let selectedKnowledgeSources: AppliedKnowledgeSource[] = [];
+  let workspaceKnowledge: AppliedWorkspaceKnowledge = {
+    promptBlock: "",
+    sources: [],
+  };
 
   // Load prior transcript (excluding the message we just inserted is fine —
   // include it; it's the latest user turn the agent should answer).
@@ -1486,22 +1484,28 @@ export async function buildTurnContext(
   // a long modeled post never hits the 8000-char message cap and a reloaded
   // transcript never shows the raw delimiter blob.
   const blocks: ContentBlock[] = [{ type: "text", text: userText }];
-  if (knowledgeSourceIds.length > 0) {
-    const retrieved = await waitForChatSetup(
+  try {
+    const retrievedKnowledge = await waitForChatSetup(
       retrieveKnowledgeSourceContext({
         workspaceId,
-        sourceIds: knowledgeSourceIds,
         query: effectiveUserInstruction,
         db: sbRaw,
+        signal: setupSignal,
       }),
       setupSignal,
     );
-    selectedKnowledgeSources = appliedKnowledgeSources([], retrieved.sources);
-    knowledgeSources = appliedKnowledgeSources(retrieved.chunks);
-    const knowledgeBlock = buildKnowledgeContextBlock(retrieved.chunks);
-    if (knowledgeBlock) {
-      blocks.push({ type: "text", text: knowledgeBlock });
-    }
+    workspaceKnowledge = appliedWorkspaceKnowledge(
+      retrievedKnowledge.chunks,
+    );
+  } catch (error) {
+    if (setupSignal.aborted) throw error;
+    console.warn("workspace_knowledge_retrieval_skipped", {
+      workspaceId,
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+  if (workspaceKnowledge.promptBlock) {
+    blocks.push({ type: "text", text: workspaceKnowledge.promptBlock });
   }
 
   const variationSource = refineTargetId
@@ -2083,7 +2087,6 @@ export async function buildTurnContext(
     customSkillBodies,
     customSkillNames,
     structureMatch,
-    knowledgeSources,
-    selectedKnowledgeSources,
+    workspaceKnowledge,
   };
 }

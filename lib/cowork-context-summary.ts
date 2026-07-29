@@ -26,7 +26,6 @@ export type ChatContextSummary = {
   creatorStyle: CreatorStyleContext | null;
   leadMagnet: AppliedLeadMagnet | null;
   files: string[];
-  knowledgeSources: { id: string; title: string }[];
 };
 
 // True when the summary holds nothing worth showing — the card should not render.
@@ -37,8 +36,7 @@ export function isContextSummaryEmpty(summary: ChatContextSummary): boolean {
     summary.postFormats.length === 0 &&
     summary.creatorStyle === null &&
     summary.leadMagnet === null &&
-    summary.files.length === 0 &&
-    summary.knowledgeSources.length === 0
+    summary.files.length === 0
   );
 }
 
@@ -69,7 +67,6 @@ export function summarizeChatContext(input: {
     | "creatorStyle"
     | "leadMagnet"
     | "files"
-    | "knowledgeSources"
   >[];
   sourcePost?: ContextSourcePost | null;
 }): ChatContextSummary {
@@ -79,7 +76,6 @@ export function summarizeChatContext(input: {
   const formatsSeen = new Set<string>();
   const files: string[] = [];
   const filesSeen = new Set<string>();
-  const knowledgeSources = new Map<string, { id: string; title: string }>();
   let creatorStyle: CreatorStyleContext | null = null;
   let leadMagnet: AppliedLeadMagnet | null = null;
 
@@ -87,9 +83,6 @@ export function summarizeChatContext(input: {
     for (const skill of message.skills ?? []) pushUnique(skills, skillsSeen, skill);
     pushUnique(postFormats, formatsSeen, message.postFormat);
     for (const file of message.files ?? []) pushUnique(files, filesSeen, file);
-    for (const source of message.knowledgeSources ?? []) {
-      if (source.id && source.title) knowledgeSources.set(source.id, source);
-    }
     // Last non-empty wins (oldest→newest overwrite).
     if (message.creatorStyle) creatorStyle = message.creatorStyle;
     if (message.leadMagnet) leadMagnet = message.leadMagnet;
@@ -102,6 +95,5 @@ export function summarizeChatContext(input: {
     creatorStyle,
     leadMagnet,
     files,
-    knowledgeSources: [...knowledgeSources.values()],
   };
 }

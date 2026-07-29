@@ -8,36 +8,29 @@ const workspace = fs.readFileSync(
   "utf8",
 );
 
-describe("Cowork Knowledge selector UI", () => {
-  test("offers explicit Knowledge selection", () => {
-    expect(workspace).toContain("Choose Knowledge sources");
-    expect(workspace).toContain("pendingKnowledgeSources");
-    expect(workspace).toContain('aria-label="Choose Knowledge sources"');
+describe("automatic Workspace Knowledge UI", () => {
+  test("does not present durable Knowledge as per-message context", () => {
+    expect(workspace).not.toContain("Choose Knowledge sources");
+    expect(workspace).not.toContain("pendingKnowledgeSources");
+    expect(workspace).not.toContain('aria-label="Choose Knowledge sources"');
   });
 
-  test("sends only the Knowledge ids selected for the turn", () => {
+  test("does not send Knowledge ids from the browser", () => {
     const turn = createChatWorkspaceController().prepareTurn({
       composer: { kind: "ask" },
       draftCountSelection: "auto",
       postTypeSelection: "auto",
       explorationLaneSelection: "auto",
       skillIds: [],
-      knowledgeSourceIds: [
-        "11111111-1111-4111-8111-111111111111",
-        "22222222-2222-4222-8222-222222222222",
-      ],
       hasPostFormat: false,
       hasCreatorStyle: false,
     });
 
-    expect(turn.requestFields.knowledgeSourceIds).toEqual([
-      "11111111-1111-4111-8111-111111111111",
-      "22222222-2222-4222-8222-222222222222",
-    ]);
+    expect(turn.requestFields).not.toHaveProperty("knowledgeSourceIds");
   });
 
-  test("shows selected Knowledge as transparent message context", () => {
-    expect(workspace).toContain("message.knowledgeSources");
-    expect(workspace).toContain("Knowledge:");
+  test("does not show Knowledge as a selected context chip", () => {
+    expect(workspace).not.toContain("message.knowledgeSources");
+    expect(workspace).not.toContain("Knowledge:");
   });
 });

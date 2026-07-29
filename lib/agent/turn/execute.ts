@@ -154,7 +154,7 @@ async function* runTurnPlan(
     currentTurnOperation,
     trustedRefineTarget,
     structureMatch,
-    knowledgeSources,
+    workspaceKnowledge,
   } = setup;
 
   let citedSourceImage = initialCitedSourceImage;
@@ -200,6 +200,7 @@ async function* runTurnPlan(
     preferences,
     feedbackMemory,
     workspaceLearningBlock,
+    workspaceKnowledgeBlock: workspaceKnowledge.promptBlock,
     priorPostDrafts,
     explorationLane: resolvedGenerationConfig?.explorationLane,
     originalTemplateReference:
@@ -403,7 +404,7 @@ async function* runTurnPlan(
             ),
             appliedCreatorStyle,
           ),
-          knowledgeSources,
+          workspaceKnowledge.sources,
         );
         if (isDraftArtifact(tagged) && turnContract.kind === "post") {
           tagged = {
@@ -457,7 +458,7 @@ async function* runTurnPlan(
                 : null,
             generationModel: responseModel,
             generatedAt: claimedTurnStartedAt!,
-            knowledgeSources: knowledgeSources.map((source) => ({
+            knowledgeSources: workspaceKnowledge.sources.map((source) => ({
               sourceId: source.sourceId,
               sourceRevisionId: source.sourceRevisionId,
               chunkIds: source.chunkIds,

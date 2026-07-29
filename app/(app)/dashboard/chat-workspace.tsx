@@ -64,7 +64,6 @@ import {
   ImageIcon,
   Newspaper,
   SlidersHorizontal,
-  BookOpenCheck,
   type LucideIcon,
 } from "lucide-react";
 import { AiIcon } from "@/components/ai-icon";
@@ -88,7 +87,6 @@ import {
   type NoModelFormatId,
 } from "@/lib/agent/no-model-format-catalog";
 import type { CreatorStyleSummary } from "@/lib/creator-styles";
-import type { KnowledgeSourceSummary } from "@/lib/knowledge-sources/types";
 import {
   NEGATIVE_FEEDBACK_REASONS,
   POSITIVE_FEEDBACK_REASONS,
@@ -619,12 +617,6 @@ export function ChatWorkspace({
   const [leadMagnets, setLeadMagnets] = useState<LeadMagnetSummary[]>([]);
   const [pendingLeadMagnet, setPendingLeadMagnet] =
     useState<PendingLeadMagnet | null>(null);
-  const [knowledgeSources, setKnowledgeSources] = useState<
-    KnowledgeSourceSummary[]
-  >([]);
-  const [pendingKnowledgeSources, setPendingKnowledgeSources] = useState<
-    KnowledgeSourceSummary[]
-  >([]);
   const [leadMagnetAiUsage, setLeadMagnetAiUsage] = useState<{
     used: number;
     limit: number;
@@ -644,8 +636,6 @@ export function ChatWorkspace({
   const creatorStylePickerRef = useRef<HTMLDivElement>(null);
   const [leadMagnetPickerOpen, setLeadMagnetPickerOpen] = useState(false);
   const leadMagnetPickerRef = useRef<HTMLDivElement>(null);
-  const [knowledgePickerOpen, setKnowledgePickerOpen] = useState(false);
-  const knowledgePickerRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!leadMagnetPickerDisabled) return;
     // A modeled source is an external navigation state; clear incompatible
@@ -706,7 +696,6 @@ export function ChatWorkspace({
       setPostFormatPickerOpen(false);
       setCreatorStylePickerOpen(false);
       setLeadMagnetPickerOpen(false);
-      setKnowledgePickerOpen(false);
       setGenerationSettingsOpen(false);
       setContextMenuOpen(false);
       const preserveCommand = preservesCoworkCommandOnSessionChange(
@@ -1050,23 +1039,6 @@ export function ChatWorkspace({
   }, [leadMagnetPickerOpen]);
 
   useEffect(() => {
-    if (!knowledgePickerOpen) return;
-    const onDocPointerDown = (event: globalThis.MouseEvent) => {
-      if (knowledgePickerRef.current?.contains(event.target as Node)) return;
-      setKnowledgePickerOpen(false);
-    };
-    const onKey = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") setKnowledgePickerOpen(false);
-    };
-    document.addEventListener("mousedown", onDocPointerDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDocPointerDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [knowledgePickerOpen]);
-
-  useEffect(() => {
     if (!generationSettingsOpen) return;
     const onDocPointerDown = (e: globalThis.MouseEvent) => {
       const target = e.target as Node;
@@ -1122,40 +1094,6 @@ export function ChatWorkspace({
       alive = false;
     };
   }, []);
-
-  useEffect(() => {
-    let alive = true;
-    fetch("/api/knowledge-sources")
-      .then((response) => response.json())
-      .then((data) => {
-        if (!alive || !data?.ok || !Array.isArray(data.sources)) return;
-        setKnowledgeSources(
-          (data.sources as KnowledgeSourceSummary[]).filter(
-            (source) => source.status === "ready",
-          ),
-        );
-      })
-      .catch(() => undefined);
-    return () => {
-      alive = false;
-    };
-  }, []);
-
-  const toggleKnowledgeSource = useCallback(
-    (source: KnowledgeSourceSummary) => {
-      setPendingKnowledgeSources((current) => {
-        if (current.some((selected) => selected.id === source.id)) {
-          return current.filter((selected) => selected.id !== source.id);
-        }
-        if (current.length >= 20) {
-          toast.info("You can use up to 20 Knowledge sources per message.");
-          return current;
-        }
-        return [...current, source];
-      });
-    },
-    [],
-  );
 
   // Load the workspace's READY creator styles once (for the style picker). Only
   // 'ready' ones can be applied, so we keep just those. Best-effort.
@@ -2268,8 +2206,6 @@ export function ChatWorkspace({
     setLeadMagnetPickerOpen(false);
     setPendingCreatorStyle(null);
     setCreatorStylePickerOpen(false);
-    setPendingKnowledgeSources([]);
-    setKnowledgePickerOpen(false);
     setContextMenuOpen(false);
     const request = (async (): Promise<string | null> => {
       try {
@@ -2546,7 +2482,6 @@ export function ChatWorkspace({
       // rule as Post Format — the badge + stream field are gated on it.
       const turnCreatorStyle = pendingCreatorStyle;
       const turnCreatorStyleApplies = !attached;
-      const turnKnowledgeSources = pendingKnowledgeSources;
       const turnStarterOwnerId = targetChatId;
       const turnPlan = workspaceController.prepareTurn({
         composer:
@@ -2562,7 +2497,6 @@ export function ChatWorkspace({
         starterId:
           readComposerDraft(turnStarterOwnerId).starterId ?? undefined,
         skillIds: turnSkills.map((skill) => skill.id),
-        knowledgeSourceIds: turnKnowledgeSources.map((source) => source.id),
         hasPostFormat: Boolean(turnPostFormat),
         hasCreatorStyle: Boolean(
           turnCreatorStyle && turnCreatorStyleApplies,
@@ -2580,7 +2514,6 @@ export function ChatWorkspace({
       setPostFormatPickerOpen(false);
       setCreatorStylePickerOpen(false);
       setLeadMagnetPickerOpen(false);
-      setKnowledgePickerOpen(false);
       setGenerationSettingsOpen(false);
       setContextMenuOpen(false);
 
@@ -2743,14 +2676,6 @@ export function ChatWorkspace({
                 },
               }
           : {}),
-        ...(turnKnowledgeSources.length
-          ? {
-              knowledgeSources: turnKnowledgeSources.map((source) => ({
-                id: source.id,
-                title: source.title,
-              })),
-            }
-          : {}),
         ...(attached
           ? {
               modelSource: {
@@ -2797,7 +2722,6 @@ export function ChatWorkspace({
       if (turnPostFormat) setPendingPostFormat(null);
       if (turnLeadMagnet) setPendingLeadMagnet(null);
       if (turnCreatorStyle) setPendingCreatorStyle(null);
-      if (turnKnowledgeSources.length) setPendingKnowledgeSources([]);
       if (turnStarterId) clearComposerStarter(turnStarterOwnerId);
       if (turnCommand) {
         setCoworkComposer({ kind: "ask" });
@@ -3445,7 +3369,6 @@ export function ChatWorkspace({
     pendingLeadMagnet,
     leadMagnetPickerDisabled,
     pendingCreatorStyle,
-    pendingKnowledgeSources,
     composerCommandKind,
     askContextPost,
     editTargetPost,
@@ -4476,32 +4399,6 @@ export function ChatWorkspace({
                     type="button"
                     onClick={() => {
                       setContextMenuOpen(false);
-                      setKnowledgePickerOpen(true);
-                    }}
-                    className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <BookOpenCheck
-                      className={cn(
-                        "h-4 w-4 shrink-0",
-                        pendingKnowledgeSources.length > 0
-                          ? "text-primary"
-                          : "text-muted-foreground",
-                      )}
-                      aria-hidden
-                    />
-                    <span className="flex-1 text-foreground">
-                      Choose Knowledge sources
-                    </span>
-                    {pendingKnowledgeSources.length > 0 && (
-                      <span className="text-xs text-primary">
-                        {pendingKnowledgeSources.length}
-                      </span>
-                    )}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setContextMenuOpen(false);
                       setCreatorStylePickerOpen(true);
                     }}
                     disabled={!!modelSource}
@@ -4544,85 +4441,6 @@ export function ChatWorkspace({
                       <Check className="ml-auto h-3.5 w-3.5 text-primary" />
                     )}
                   </button>
-                </div>
-              </div>
-            )}
-
-            {knowledgePickerOpen && (
-              <div
-                ref={knowledgePickerRef}
-                role="dialog"
-                aria-label="Choose Knowledge sources"
-                className="absolute bottom-full left-0 right-0 z-20 mb-3 overflow-hidden rounded-2xl border border-border bg-card/95 shadow-[0_24px_80px_rgba(28,28,26,0.16)] backdrop-blur"
-              >
-                <div className="flex items-center justify-between border-b border-border px-3.5 py-2">
-                  <div>
-                    <p className="text-sm font-semibold">Knowledge sources</p>
-                    <p className="text-[11px] text-muted-foreground">
-                      Only selected sources are used for this message.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setKnowledgePickerOpen(false)}
-                    className="text-muted-foreground hover:text-foreground"
-                    aria-label="Close"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                </div>
-                <div className="max-h-72 overflow-y-auto py-1">
-                  {knowledgeSources.length === 0 && (
-                    <p className="px-3.5 py-4 text-sm text-muted-foreground">
-                      Add a ready source in Knowledge, then choose it here.
-                    </p>
-                  )}
-                  {knowledgeSources.map((source) => {
-                    const selected = pendingKnowledgeSources.some(
-                      (candidate) => candidate.id === source.id,
-                    );
-                    return (
-                      <button
-                        key={source.id}
-                        type="button"
-                        aria-pressed={selected}
-                        onClick={() => toggleKnowledgeSource(source)}
-                        className={cn(
-                          "flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm transition-colors hover:bg-muted",
-                          selected && "bg-primary/[0.07]",
-                        )}
-                      >
-                        <BookOpenCheck
-                          className={cn(
-                            "h-4 w-4 shrink-0",
-                            selected ? "text-primary" : "text-muted-foreground",
-                          )}
-                          aria-hidden
-                        />
-                        <span className="min-w-0 flex-1 truncate">
-                          {source.title}
-                        </span>
-                        {selected && (
-                          <Check className="h-3.5 w-3.5 text-primary" aria-hidden />
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
-                <div className="flex items-center justify-between border-t border-border px-3.5 py-2">
-                  <Link
-                    href="/dashboard/knowledge"
-                    className="text-xs text-muted-foreground hover:text-foreground"
-                  >
-                    Manage Knowledge
-                  </Link>
-                  <Button
-                    type="button"
-                    size="sm"
-                    onClick={() => setKnowledgePickerOpen(false)}
-                  >
-                    Done
-                  </Button>
                 </div>
               </div>
             )}
@@ -5147,29 +4965,6 @@ export function ChatWorkspace({
                 ))}
               </div>
             )}
-            {pendingKnowledgeSources.length > 0 && (
-              <div className="flex flex-wrap gap-1.5">
-                {pendingKnowledgeSources.map((source) => (
-                  <span
-                    key={source.id}
-                    className="inline-flex items-center gap-1.5 rounded-full border border-primary/25 bg-primary/[0.07] py-1 pl-2.5 pr-1.5 text-xs text-foreground"
-                  >
-                    <BookOpenCheck className="h-3 w-3 text-primary" aria-hidden />
-                    <span className="max-w-[180px] truncate">
-                      Knowledge: {source.title}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => toggleKnowledgeSource(source)}
-                      className="text-muted-foreground hover:text-foreground"
-                      aria-label={`Remove ${source.title}`}
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </span>
-                ))}
-              </div>
-            )}
             {pendingPostFormat && (
               <div className="flex flex-wrap gap-1.5">
                 <span className="inline-flex items-center gap-1.5 rounded-full border border-state-danger-border bg-state-danger-bg pl-2.5 pr-1.5 py-1 text-xs text-primary">
@@ -5414,7 +5209,6 @@ export function ChatWorkspace({
                   setPostFormatPickerOpen(false);
                   setCreatorStylePickerOpen(false);
                   setLeadMagnetPickerOpen(false);
-                  setKnowledgePickerOpen(false);
                   setContextMenuOpen(false);
                   setGenerationSettingsOpen((open) => !open);
                 }}
@@ -5470,7 +5264,6 @@ export function ChatWorkspace({
                     setPostFormatPickerOpen(false);
                     setCreatorStylePickerOpen(false);
                     setLeadMagnetPickerOpen(false);
-                    setKnowledgePickerOpen(false);
                     setContextMenuOpen((open) => !open);
                   }}
                   className={cn(
@@ -5480,13 +5273,12 @@ export function ChatWorkspace({
                       pendingSkills.length > 0 ||
                       pendingPostFormat ||
                       pendingCreatorStyle ||
-                      pendingLeadMagnet ||
-                      pendingKnowledgeSources.length > 0) &&
+                      pendingLeadMagnet) &&
                       "border-primary/60 text-primary",
                   )}
                   aria-label="Add context"
                   aria-expanded={contextMenuOpen}
-                  title="Attach files or choose Knowledge, skills, format, style, or a lead magnet"
+                  title="Attach files or choose skills, format, style, or a lead magnet"
                 >
                   <Plus className="h-4 w-4" aria-hidden />
                   <span className="text-xs font-medium">Add context</span>
@@ -5494,15 +5286,13 @@ export function ChatWorkspace({
                     pendingSkills.length > 0 ||
                     pendingPostFormat ||
                     pendingCreatorStyle ||
-                    pendingLeadMagnet ||
-                    pendingKnowledgeSources.length > 0) && (
+                    pendingLeadMagnet) && (
                     <span className="text-xs font-medium tabular-nums">
                       {attachments.length +
                         pendingSkills.length +
                         (pendingPostFormat ? 1 : 0) +
                         (pendingCreatorStyle ? 1 : 0) +
-                        (pendingLeadMagnet ? 1 : 0) +
-                        pendingKnowledgeSources.length}
+                        (pendingLeadMagnet ? 1 : 0)}
                     </span>
                   )}
                 </Button>
@@ -6166,22 +5956,6 @@ function MessageBubble({
               >
                 <Zap className="h-3 w-3" aria-hidden />
                 <span className="max-w-[160px] truncate">/{name}</span>
-              </span>
-            ))}
-          </div>
-        )}
-        {message.knowledgeSources && message.knowledgeSources.length > 0 && (
-          <div className="flex max-w-[85%] flex-wrap justify-end gap-1.5">
-            {message.knowledgeSources.map((source) => (
-              <span
-                key={source.id}
-                className="inline-flex items-center gap-1.5 rounded-full border border-primary/25 bg-primary/[0.07] px-2.5 py-0.5 text-[11px] text-foreground"
-                title={`Knowledge source selected: ${source.title}`}
-              >
-                <BookOpenCheck className="h-3 w-3 text-primary" aria-hidden />
-                <span className="max-w-[200px] truncate">
-                  Knowledge: {source.title}
-                </span>
               </span>
             ))}
           </div>
