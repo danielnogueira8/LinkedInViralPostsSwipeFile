@@ -67,7 +67,7 @@ export function mapZernioError(
     return {
       kind: "token_expired",
       status,
-      message: "Your LinkedIn connection expired. Reconnect it in Settings, then reschedule.",
+      message: "Your LinkedIn connection expired. Reconnect it in Integrations, then reschedule.",
     };
   }
   // 402 Payment Required (or explicit plan/quota/billing wording): the Zernio

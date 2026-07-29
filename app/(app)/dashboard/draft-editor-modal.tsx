@@ -8,6 +8,7 @@ import { fetchJson } from "@/lib/api-fetch";
 import { copyToClipboard } from "@/lib/clipboard";
 import { draftEgressBody } from "@/lib/markdown/mode";
 import { LINKEDIN_MAX_CHARS } from "@/lib/linkedin-format";
+import { LINKEDIN_INTEGRATIONS_PATH } from "@/lib/linkedin-integration-destination";
 import { localDateFromDatetimeInput } from "@/lib/schedule-local-date";
 import {
   formatScheduleToast,
@@ -2424,7 +2425,7 @@ function localInputToIso(v: string): string | null {
 // The "Publish to LinkedIn" control in the draft editor. Turns the draft into a
 // real, timed auto-publish via the Zernio cron (POST /api/drafts/[id]/schedule),
 // or cancels one. Gates on the workspace's LinkedIn connection: with none, it
-// shows a "Connect in Settings" prompt instead of the picker (belt to the
+// shows a "Connect in Integrations" prompt instead of the picker (belt to the
 // endpoint's own 409). Optimistic — updates the draft via onMeta.
 type ScheduleInput = DraftScheduleCommand;
 
@@ -2686,7 +2687,11 @@ function ScheduleRow({
         <span className="flex-1 text-muted-foreground">
           Connect your LinkedIn account to schedule posts.
         </span>
-        <Button size="sm" variant="outline" onClick={() => router.push("/dashboard/settings")}>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => router.push(LINKEDIN_INTEGRATIONS_PATH)}
+        >
           Connect
         </Button>
       </div>

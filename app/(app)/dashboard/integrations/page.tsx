@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { Suspense } from "react";
 import { PageHeader, PageShell } from "@/components/app-surface";
 import { SurfaceHelp } from "@/components/surface-help";
 import { getWorkspaceId } from "@/lib/workspace";
@@ -7,17 +7,15 @@ import {
   type LeadSharkCredentialSafe,
 } from "@/lib/leadshark-credentials";
 import { LeadSharkCard } from "./leadshark-card";
+import { LinkedInPublishingCard } from "./linkedin-card";
 import { getLeadSharkAutomationDefaults } from "@/lib/leadshark-defaults";
 import { defaultLeadSharkAutomationDefaults } from "@/lib/leadshark-default-config";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 
 export const dynamic = "force-dynamic";
 
-// Integrations hub. Home for third-party tools the user connects with their own
-// credentials. First tenant: LeadShark (comment-triggered auto-DM). The
-// LinkedIn/Zernio publishing connection deliberately stays in Settings for now
-// (moving it would touch a working OAuth ?returnTo flow for no functional gain);
-// a pointer below keeps users from hunting for it.
+// Integrations hub. Home for third-party tools the user connects to SwipeIn:
+// LinkedIn publishing through Zernio and LeadShark comment-triggered auto-DMs.
 export default async function IntegrationsPage() {
   const workspaceId = await getWorkspaceId();
   const sb = workspaceId ? await scopedSupabase() : null;
@@ -50,25 +48,21 @@ export default async function IntegrationsPage() {
       <PageHeader
         title="Integrations"
         meta={
-          <SurfaceHelp title="Connect third-party tools with your own account. LeadShark auto-DMs people who comment on your lead-magnet posts." />
+          <SurfaceHelp title="Connect LinkedIn for publishing and analytics, and connect LeadShark to auto-DM people who comment on your lead-magnet posts." />
         }
-        description="Connect third-party tools to SwipeIn. These use your own account and credentials."
+        description="Connect the accounts and tools SwipeIn uses for publishing, analytics, and automations."
       />
 
       <div className="space-y-4">
+        <Suspense fallback={null}>
+          <LinkedInPublishingCard returnTo="integrations" />
+        </Suspense>
+
         <LeadSharkCard
           initial={initial}
           initialDefaults={initialDefaults}
           defaultsAvailable={defaultsAvailable}
         />
-
-        <p className="max-w-3xl text-xs text-muted-foreground">
-          Looking for your LinkedIn publishing connection? That lives in{" "}
-          <Link href="/dashboard/settings" className="underline underline-offset-2">
-            Settings → Publishing
-          </Link>
-          .
-        </p>
       </div>
     </PageShell>
   );

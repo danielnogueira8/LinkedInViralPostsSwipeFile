@@ -60,7 +60,7 @@ function relativeTime(iso: string | null): string {
 }
 
 // Integrations → LeadShark: connect a user-supplied LeadShark API key so
-// lead-magnet posts can auto-DM commenters. Three states mirror PublishingCard:
+// lead-magnet posts can auto-DM commenters. Three states mirror LinkedInPublishingCard:
 // not connected, connected, and invalid (reconnect). The key is write-only — it
 // is never returned by the API, so there is no "reveal key".
 function lines(value: string): string[] {

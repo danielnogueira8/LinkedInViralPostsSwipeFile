@@ -13,6 +13,7 @@ import {
   Search,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { LINKEDIN_INTEGRATIONS_PATH } from "@/lib/linkedin-integration-destination";
 import {
   ANALYTICS_CONTENT_TYPE_OPTIONS,
   ANALYTICS_PERIOD_OPTIONS,
@@ -161,8 +162,8 @@ export function AnalyticsView({
     return (
       <EmptyCard
         title="Connect LinkedIn to see analytics"
-        body="Analytics covers posts published through SwipeIn. Connect your LinkedIn account in Settings, schedule a post, and metrics will start appearing here after it publishes."
-        cta={{ href: "/dashboard/settings", label: "Open Settings" }}
+        body="Analytics covers posts published through SwipeIn. Connect your LinkedIn account in Integrations, schedule a post, and metrics will start appearing here after it publishes."
+        cta={{ href: LINKEDIN_INTEGRATIONS_PATH, label: "Open Integrations" }}
       />
     );
   }
