@@ -41,7 +41,7 @@ describe("background job type contract", () => {
       /'lead_magnet_resource'[\s\S]*status\s+in\s*\(\s*'done'\s*,\s*'failed'\s*,\s*'cancelled'\s*\)/i,
     );
     const currentSql = readFileSync(
-      "db/migration-149-knowledge-extraction.sql",
+      "db/migration-150-knowledge-retrieval.sql",
       "utf8",
     );
     for (const type of BACKGROUND_JOB_TYPES) {

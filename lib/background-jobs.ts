@@ -11,6 +11,7 @@ export const BACKGROUND_JOB_TYPES = [
   "leadshark_sync_stats",
   "knowledge_ingestion",
   "knowledge_extraction",
+  "knowledge_embedding",
 ] as const;
 
 export type BackgroundJobType = (typeof BACKGROUND_JOB_TYPES)[number];
