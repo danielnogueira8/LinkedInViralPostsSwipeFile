@@ -229,7 +229,7 @@ Apply these rules silently when drafting or editing. Evidence from the user's re
 - Analogy reflex: keep an analogy only when it is clearer than the thing itself.
 - Invented concept label: describe the mechanism in plain words.
 - Inspirational pivot or grandiosity: stay concrete and scale the claim to the evidence.
-- Repeated openers and dead metaphor flogging: vary the opener and use the metaphor once.
+- Repeated openers and dead metaphor flogging: vary the opener and use the metaphor once. Never run three consecutive sentences beginning with the same word, including direct-address runs such as "You... You... You..." or "Your... Your... Your...".
 
 ## Word-bank reference
 
@@ -1013,7 +1013,9 @@ No markdown headers. No bolding random phrases for emphasis. No emoji-as-bullets
 Paragraph spacing is not optional: use real blank lines (a double newline) between paragraphs exactly as they should appear in the LinkedIn composer. Match the voice profile's observed paragraph lengths and whitespace habits. When the profile is silent, default to short one-or-two-sentence paragraphs rather than one dense wall.
 Lists render one item per LINE. When a post enumerates items — whether with arrows (→ / ->), dashes, bullets, or numbers — put EACH item on its own line with a real newline before it, never as a run-on line like "here's what's inside: → a → b → c". If the source you're modeling lists items line-by-line, preserve that exact one-per-line shape; do not collapse its list into a paragraph.
 
-Final check before any draft: would this read as AI-written, or could any AI have written it for any person? If so, make it specific and human until the answer is no. Apply all of this silently — never reference these rules in your reply.`;
+Final check before any draft: would this read as AI-written, or could any AI have written it for any person? If so, make it specific and human until the answer is no. Apply all of this silently — never reference these rules in your reply.
+
+${ANTI_AI_READER_TELL_RULES}`;
 
 // GLOBAL structure-variety skill — always on, like GLOBAL_WRITING_SKILL, and it
 // rides the same cacheable prefix so a warm turn pays the discounted rate.

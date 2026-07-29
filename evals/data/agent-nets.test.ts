@@ -114,6 +114,26 @@ describe("shared nets module", () => {
     ).not.toContain("repeated-opener");
   });
 
+  test("aiTellMetrics catches the clustered tells from the flagged Cowork original", () => {
+    const flaggedExcerpt = [
+      "You post for weeks and get 40 impressions. You write something you're proud of and it gets 2 likes. You start wondering if the whole thing is a waste of time.",
+      "",
+      "Your offer can get copied. Your pricing can get undercut. Your product can get cloned by someone with a bigger team.",
+      "",
+      "That's the lever. Not likes, not impressions, not follower count. Trust compounds every time you post something true.",
+      "",
+      "You need proof, opinions, and reps.",
+    ].join("\n");
+
+    expect(aiTellMetrics(flaggedExcerpt)).toEqual(
+      expect.arrayContaining([
+        "repeated-opener",
+        "negative-parallelism",
+        "rule-of-three",
+      ]),
+    );
+  });
+
   test("aiTellMetrics catches 'The real shift:' colon-reveal, including after a paragraph break", () => {
     expect(
       aiTellMetrics(

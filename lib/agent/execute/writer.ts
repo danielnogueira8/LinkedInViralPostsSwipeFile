@@ -54,6 +54,7 @@ import {
 } from "@/lib/post-structure-skeleton";
 import type { NoModelFormat } from "@/lib/agent/no-model-formats";
 import {
+  ANTI_AI_READER_TELL_RULES,
   GLOBAL_WRITING_SKILL,
   OUTPUT_LANGUAGE_RULE,
   POST_STRUCTURE_SKILL,
@@ -671,7 +672,9 @@ function compileMessages(
   );
   const writingSkill = [
     LITERAL_SCOPE_GUIDANCE,
-    input.lean ? THIN_WRITING_NOTE : GLOBAL_WRITING_SKILL,
+    input.lean
+      ? `${THIN_WRITING_NOTE}\n\n${ANTI_AI_READER_TELL_RULES}`
+      : GLOBAL_WRITING_SKILL,
   ].join("\n\n");
   const structureSkill = input.lean ? "" : POST_STRUCTURE_SKILL;
   const preferences = renderPreferencesBlock(input.preferences);

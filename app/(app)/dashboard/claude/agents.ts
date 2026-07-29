@@ -10,7 +10,6 @@ import {
 } from "lucide-react";
 import { AiIcon } from "@/components/ai-icon";
 import {
-  ANTI_AI_READER_TELL_RULES,
   GLOBAL_WRITING_SKILL,
   OUTPUT_LANGUAGE_RULE,
   POST_STRUCTURE_SKILL,
@@ -20,9 +19,9 @@ import {
 // Each workflow prompt CARRIES the actual skill text the in-app agent injects
 // (same source module, so the two can never drift) — the copied prompt is the
 // whole moat, not a one-line summary of it. The blocks append to the brief in
-// the same order the agent applies them: language, anti-slop, the expanded
-// reader-tell reference, structure, then task craft (hooks / lead-magnet /
-// voice). Detector-first anti-ai mechanics remain explicit-only.
+// the same order the agent applies them: language, anti-slop (including the
+// expanded reader-tell reference), structure, then task craft (hooks /
+// lead-magnet / voice). Detector-first anti-ai mechanics remain explicit-only.
 export function skillBody(id: string): string {
   const body = SKILLS.find((skill) => skill.id === id)?.body;
   if (!body) throw new Error(`Unknown skill: ${id}`);
@@ -70,7 +69,7 @@ export function composePrompt(brief: string, skillIds: string[]): string {
   const writingBlocks = [
     OUTPUT_LANGUAGE_RULE,
     ...(skillIds.includes("anti-slop")
-      ? [GLOBAL_WRITING_SKILL, ANTI_AI_READER_TELL_RULES]
+      ? [GLOBAL_WRITING_SKILL]
       : []),
     ...(skillIds.includes("structure") ? [POST_STRUCTURE_SKILL] : []),
     ...skillIds

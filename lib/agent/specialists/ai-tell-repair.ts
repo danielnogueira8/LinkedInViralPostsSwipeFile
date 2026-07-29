@@ -87,6 +87,9 @@ function buildRewrite(
                 role: "system",
                 content:
                   "You are a surgical copy editor. Fix only the listed AI-writing patterns. " +
+                  "For repeated-opener, rewrite any three-sentence run that starts with the same word, including You or Your. " +
+                  "For negative-parallelism, replace 'Not X, not Y, not Z' with the positive claim stated directly. " +
+                  "For rule-of-three, change an unnecessary three-beat list or cadence to natural prose, two beats, or four beats. " +
                   "Preserve every fact, claim, example, number, CTA, point of view, paragraph order, and the writer's voice. " +
                   "Do not add facts or generic polish. Keep roughly the same length. Return the entire post through the tool.",
               },

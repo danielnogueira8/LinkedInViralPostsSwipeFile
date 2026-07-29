@@ -60,7 +60,10 @@ import {
   type DraftWriterResponse,
 } from "@/lib/agent/draft-writer";
 import type { NoModelFormat } from "@/lib/agent/no-model-formats";
-import { POST_STRUCTURE_SKILL } from "@/lib/agent/skills";
+import {
+  ANTI_AI_READER_TELL_RULES,
+  POST_STRUCTURE_SKILL,
+} from "@/lib/agent/skills";
 import { POST_INTENTS } from "@/lib/post-intents";
 import { AdapterHealthRegistry } from "@/lib/agent/adapter-health";
 import { editDraftBodySync } from "@/lib/agent/specialists/editor";
@@ -496,7 +499,17 @@ describe("DraftEngine", () => {
   test("accepts an insufficient shorten candidate without repair", async () => {
     const target = {
       ...REFINE_TARGET,
-      body: `${COMPLETE_POST}\n\n${"Useful public proof compounds over time. ".repeat(16)}`,
+      body: [
+        "A useful reputation keeps working after your title changes.",
+        "",
+        "Public proof shows buyers how you think before a call, and it keeps doing that work between conversations.",
+        "",
+        ...Array.from(
+          { length: 8 },
+          () =>
+            "Useful public proof compounds over time. Useful public proof helps buyers decide before the call.",
+        ),
+      ].join("\n\n"),
     };
     const writer = new ScriptedWriter([
       { text: target.body, finishReason: "stop", usage: usage(100, 70) },
@@ -2150,8 +2163,7 @@ describe("DraftEngine — thin path (lean mode)", () => {
   test("a too_short original-turn draft is accepted under the relaxed policy", async () => {
     // The too_short content gate is no longer a hard rejection, so a short
     // from-scratch draft is delivered on the first attempt.
-    const shortDraft =
-      "Cold outbound works. Send more DMs. That's the whole post.";
+    const shortDraft = "Cold outbound works. Send more DMs today.";
     const writer = new ScriptedWriter([
       { text: shortDraft, finishReason: "stop", usage: usage(200, 120) },
     ]);
@@ -2873,6 +2885,89 @@ describe("output language", () => {
     expect(system).toContain("model its hook, structure, rhythm, and progression");
     // ...but never mirrors its language.
     expect(system).toContain("Never mirror the source post's language");
+  });
+});
+
+describe("de-ai prompt coverage", () => {
+  function systemOf(writer: ScriptedWriter): string {
+    return String(
+      writer.requests[0].messages.find((message) => message.role === "system")
+        ?.content ?? "",
+    );
+  }
+
+  test("every draft path compiles the shared reader-tell rules", async () => {
+    const cases: Array<{
+      label: string;
+      overrides: Partial<WriterInput>;
+      output?: string;
+    }> = [
+      { label: "original", overrides: {} },
+      { label: "lean original", overrides: { lean: true } },
+      {
+        label: "refine",
+        overrides: {
+          task: {
+            kind: "refine",
+            instruction: "Tighten every paragraph.",
+            focus: "general",
+            target: REFINE_TARGET,
+          },
+        },
+      },
+      {
+        label: "grounded",
+        overrides: {
+          task: {
+            kind: "grounded",
+            sources: [
+              {
+                id: "https://example.com/evidence",
+                kind: "news",
+                text: "Verified evidence.",
+              },
+            ],
+          },
+        },
+      },
+      {
+        label: "source modeling",
+        overrides: {
+          task: {
+            kind: "source",
+            source: { id: "source-1", text: "A source post." },
+          },
+        },
+      },
+      {
+        label: "partial deliverable",
+        output: "1.\nHook: Build proof before you need it.",
+        overrides: {
+          task: {
+            kind: "partial",
+            spec: {
+              kind: "hook",
+              label: "Hook",
+              expectedCount: 1,
+              contract: {
+                expectedCount: 1,
+                requiredFields: ["Hook"],
+                forbidFraming: true,
+                fieldsOnly: false,
+              },
+            },
+          },
+        },
+      },
+    ];
+
+    for (const { label, overrides, output = COMPLETE_POST } of cases) {
+      const writer = new ScriptedWriter([
+        { text: output, finishReason: "stop", usage: usage(100, 70) },
+      ]);
+      await collect(writer, overrides);
+      expect(systemOf(writer), label).toContain(ANTI_AI_READER_TELL_RULES);
+    }
   });
 });
 

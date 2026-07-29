@@ -4201,9 +4201,24 @@ describe("production-shaped Cowork outcome harness", () => {
     {
       label: "shorten",
       instruction: "Make it shorter.",
-      targetBody: `${COMPLETE_POST}\n\n${"Useful public proof compounds over time. ".repeat(14).trim()}`,
-      candidateBody: `${COMPLETE_POST}\n\n${"Useful public proof compounds. ".repeat(4).trim()}`,
-      expectedBody: `${COMPLETE_POST}\n\n${"Useful public proof compounds. ".repeat(4).trim()}`,
+      targetBody: `${COMPLETE_POST}\n\n${[
+        "Useful public proof compounds over time.",
+        "Buyers can inspect it before the call.",
+        "A visible record keeps explaining how you think.",
+        "That evidence works between conversations.",
+      ].join(" ").concat(" ").repeat(4).trim()}`,
+      candidateBody: `${COMPLETE_POST}\n\n${[
+        "Useful public proof compounds over time.",
+        "Buyers can inspect it before the call.",
+        "A visible record keeps explaining how you think.",
+        "That evidence works between conversations.",
+      ].join(" ")}`,
+      expectedBody: `${COMPLETE_POST}\n\n${[
+        "Useful public proof compounds over time.",
+        "Buyers can inspect it before the call.",
+        "A visible record keeps explaining how you think.",
+        "That evidence works between conversations.",
+      ].join(" ")}`,
     },
     {
       label: "general rewrite",

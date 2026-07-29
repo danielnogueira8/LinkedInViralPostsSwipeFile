@@ -58,6 +58,26 @@ describe("conditional AI-tell repair", () => {
     expect(completeChat.mock.calls[0][0].model).toBe(CHAT_MODEL);
   });
 
+  test("explains the newly enforced tells to the repair model", async () => {
+    completeChat.mockResolvedValue({
+      text: "",
+      toolArgs: {
+        body: "A visible body of work protects your edge. Buyers trust the proof they have already seen.",
+      },
+      usage: { prompt_tokens: 20, completion_tokens: 10 },
+    });
+
+    await repairAiTells({
+      body:
+        "Your offer gets copied. Your price gets undercut. Your product gets cloned. Not likes, not impressions, not follower count.",
+    });
+
+    const systemPrompt = String(completeChat.mock.calls[0][0].messages[0].content);
+    expect(systemPrompt).toContain("including You or Your");
+    expect(systemPrompt).toContain("Not X, not Y, not Z");
+    expect(systemPrompt).toContain("rule-of-three");
+  });
+
   test("fails open when the rewrite still contains an AI tell", async () => {
     const body = "Fast, cheap, easy.";
     completeChat.mockResolvedValue({ text: "", toolArgs: { body } });
