@@ -272,6 +272,59 @@ export function findDismissiveNegation(text: string): string[] {
   return hits;
 }
 
+// ---- repeated openers -----------------------------------------------------
+//
+// Three consecutive sentences in one paragraph starting with the same word.
+// Most function words are excluded, but You/Your are intentionally checked:
+// "You post. You write. You wonder." and "Your offer. Your price. Your
+// product." are now common direct-address AI rhythms.
+
+const OPENER_STOPWORDS = new Set([
+  "the", "a", "an", "and", "but", "so", "or", "if", "in", "on", "it",
+  "its", "this", "that", "these", "those", "we", "i", "he", "she",
+  "they", "to", "of", "for", "with", "as", "at", "by", "my", "our",
+  "their", "his", "her",
+]);
+
+export function findRepeatedOpeners(text: string): string[] {
+  const hits: string[] = [];
+  for (const paragraph of text.split(/\n\s*\n/)) {
+    const sentences = splitSentences(paragraph);
+    const openerOf = (sentence: string) =>
+      sentence.match(/^["'“”(\[]*([A-Za-z][\w'’-]*)/)?.[1]?.toLowerCase();
+    let run = 1;
+    for (let index = 1; index < sentences.length; index += 1) {
+      const previous = openerOf(sentences[index - 1]);
+      const current = openerOf(sentences[index]);
+      if (current && current === previous && !OPENER_STOPWORDS.has(current)) {
+        run += 1;
+        if (run === 3) {
+          hits.push(sentences.slice(index - 2, index + 1).join(" "));
+        }
+      } else {
+        run = 1;
+      }
+    }
+  }
+  return hits;
+}
+
+// ---- negative parallelism -------------------------------------------------
+//
+// A three-beat negative list such as "Not likes, not impressions, not follower
+// count." manufactures contrast instead of stating the positive claim.
+
+export function findNegativeParallelism(text: string): string[] {
+  const hits: string[] = [];
+  const pattern =
+    /(?:^|[.!?]\s|\n)((?:not|no)\s+[^,.!?\n]{1,48},\s*(?:not|no)\s+[^,.!?\n]{1,48},\s*(?:not|no|just)\s+[^.!?\n]{1,64})(?=[.!?]|$)/gim;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(text)) !== null) {
+    hits.push(match[1].trim());
+  }
+  return hits;
+}
+
 // ---- aggregate ------------------------------------------------------------
 //
 // Run every structural detector and return a flat list of violations. Empty =
@@ -302,16 +355,26 @@ export function structuralViolations(text: string): Violation[] {
   for (const f of findDismissiveNegation(text)) {
     v.push({ rule: "dismissive-negation", detail: `"${f}"` });
   }
+  for (const run of findRepeatedOpeners(text)) {
+    v.push({ rule: "repeated-opener", detail: `"${run}"` });
+  }
+  for (const run of findNegativeParallelism(text)) {
+    v.push({ rule: "negative-parallelism", detail: `"${run}"` });
+  }
   return v;
 }
 
 // The HEADLINE structural tells — the patterns a user actually flagged and the
-// skill most needs to enforce: rule-of-three and the dismissive-negation
-// fragment. The LIVE eval gates on these (the model is non-deterministic, and
-// the noisier signals like uniform-length / parataxis would flake a live run);
-// the full structuralViolations + the unit tests remain the precise guard.
+// skill most needs to enforce. The LIVE eval gates on these (the model is
+// non-deterministic, and noisier signals like uniform-length / parataxis would
+// flake a live run); the full structuralViolations + unit tests remain the
+// precise guard.
 export function headlineViolations(text: string): Violation[] {
   return structuralViolations(text).filter(
-    (v) => v.rule === "rule-of-three" || v.rule === "dismissive-negation",
+    (v) =>
+      v.rule === "rule-of-three" ||
+      v.rule === "dismissive-negation" ||
+      v.rule === "repeated-opener" ||
+      v.rule === "negative-parallelism",
   );
 }

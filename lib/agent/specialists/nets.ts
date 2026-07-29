@@ -301,13 +301,10 @@ export function stripEmDashes(body: string): string {
     .replace(/[ \t]{2,}/g, " ");
 }
 
-// Detect-and-LOG the structural AI tells we DON'T auto-rewrite (rewriting a
-// staccato triad or a banned word means rephrasing — unsafe to do mechanically
-// without mangling a deliberate line). So instead of editing, we emit a metric
-// when a shipped draft trips one, giving observability ("how often does a draft
-// go out with a rule-of-three?") without the rewrite risk. The precise detector
-// library lives in evals/anti-slop-detectors.ts (and gates the live suite); this
-// is a deliberately tiny, conservative lib-side mirror for the runtime log only.
+// Detect the structural AI tells that trigger the bounded rewrite and the
+// final delivery gate. Rephrasing these mechanically would risk changing the
+// writer's meaning, so the model repair handles the edit; this conservative
+// runtime mirror decides whether a candidate is clean enough to ship.
 export function aiTellMetrics(body: string): string[] {
   const tells: string[] = [];
   // rule-of-three "a, b, c." cadence (1-4 short words each, no and/or) — the
@@ -347,13 +344,13 @@ export function aiTellMetrics(body: string): string[] {
   // Repeated-opener staccato — "Same three-sentence hook. Same fake setup.
   // Same generic list." Three or more consecutive sentences in one paragraph
   // opening with the SAME content word is the AI rhythm readers now pattern-
-  // match on sight (the "same. same. same." tell). The shared opener must be
-  // a content word — prose that happens to start consecutive sentences with
-  // "The"/"And"/"But" is ordinary writing, not the tell.
+  // match on sight (the "same. same. same." tell). The shared opener must
+  // normally be a content word. "You" and "Your" are the deliberate exception:
+  // a three-beat direct-address run is a visible LinkedIn-AI cadence.
   const OPENER_STOPWORDS = new Set([
     "the", "a", "an", "and", "but", "so", "or", "if", "in", "on", "it",
-    "its", "this", "that", "these", "those", "we", "i", "you", "he", "she",
-    "they", "to", "of", "for", "with", "as", "at", "by", "my", "your",
+    "its", "this", "that", "these", "those", "we", "i", "he", "she",
+    "they", "to", "of", "for", "with", "as", "at", "by", "my",
     "our", "their", "his", "her",
   ]);
   const hasRepeatedOpenerRun = body.split(/\n\s*\n/).some((paragraph) => {
@@ -378,6 +375,16 @@ export function aiTellMetrics(body: string): string[] {
     return false;
   });
   if (hasRepeatedOpenerRun) tells.push("repeated-opener");
+  // Negative parallelism — "Not likes, not impressions, not follower count."
+  // Keep this narrow: three comma-separated negative beats, with "just"
+  // allowed only in the final reveal position.
+  if (
+    /(?:^|[.!?]\s|\n)(?:not|no)\s+[^,.!?\n]{1,48},\s*(?:not|no)\s+[^,.!?\n]{1,48},\s*(?:not|no|just)\s+[^.!?\n]{1,64}(?=[.!?]|$)/i.test(
+      body,
+    )
+  ) {
+    tells.push("negative-parallelism");
+  }
   // "No fluff." / "Not another X." dismissive-negation pivot (exclude the
   // normal-speech "No one/idea/way…" openers).
   if (
@@ -412,7 +419,7 @@ export function aiTellMetrics(body: string): string[] {
     // ones that are almost never natural in a founder's LinkedIn voice. "Delve",
     // "testament to", "at its core", "in today's fast-paced", "navigate the
     // complexities", "a game changer", "the landscape of".
-    ["ai-vocabulary", /\b(?:delve into|delving into|a testament to|at its core|in today'?s (?:fast-paced|digital|modern|ever-changing)|navigat(?:e|ing) the (?:complexit|landscape|nuance)|the (?:ever-evolving|ever-changing) landscape|underscor(?:e|es|ing) the importance|it'?s worth noting that|when it comes to)\b/i],
+    ["ai-vocabulary", /\b(?:delve into|delving into|elucidat(?:e|es|ed|ing)|kaleidoscop(?:e|ic)|unyielding|a testament to|at its core|in today'?s (?:fast-paced|digital|modern|ever-changing)|navigat(?:e|ing) the (?:complexit|landscape|nuance)|the (?:ever-evolving|ever-changing) landscape|underscor(?:e|es|ing) the importance|it'?s worth noting that|when it comes to)\b/i],
     // #23 filler phrases — wordy connectives a human tightens by reflex.
     ["filler-phrase", /\b(?:in order to\b|due to the fact that|for the (?:simple )?reason that|needless to say|it goes without saying|at the end of the day|when all is said and done)\b/i],
     // #27 persuasive authority tropes — the "trust me, here's the real truth"

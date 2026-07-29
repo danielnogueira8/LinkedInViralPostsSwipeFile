@@ -338,6 +338,29 @@ describe("aiTellRepairStage", () => {
     expect(result).toMatchObject({ ok: true, state: { body: "Repaired body.", repaired: true } });
   });
 
+  test("rejects a draft when the repair pass leaves a detected tell behind", async () => {
+    const body = "Your offer gets copied. Your price gets undercut. Your product gets cloned.";
+    const specialists = passThroughSpecialists();
+    specialists.repairAiTells = vi.fn(async () => ({
+      body,
+      repaired: false,
+      detected: ["repeated-opener"],
+    }));
+
+    const result = await aiTellRepairStage(
+      ctx({ specialists }),
+      state({ body }),
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      rejection: {
+        code: "domain_constraint",
+        repairInstruction: expect.stringContaining("repeated-opener"),
+      },
+    });
+  });
+
   test("forwards keepEmDashes from editOptions and the character-range ceiling", async () => {
     const specialists = passThroughSpecialists();
     await aiTellRepairStage(
