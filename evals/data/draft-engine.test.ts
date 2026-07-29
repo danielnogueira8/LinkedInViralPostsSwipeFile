@@ -2790,24 +2790,74 @@ describe("writer plan narration (narratePlan)", () => {
         event.type === "plan_update",
     );
 
-  test("wraps a single-draft turn in an active → done step", async () => {
+  const activePlanLabels = (events: AgentEvent[]) =>
+    planUpdates(events).flatMap((event) =>
+      event.steps
+        .filter((step) => step.status === "active")
+        .map((step) => step.label),
+    );
+
+  test("narrates the real intelligence, writing, and finalizer phases", async () => {
     const writer = new ScriptedWriter([
       { text: COMPLETE_POST, finishReason: "stop", usage: usage(120, 80) },
     ]);
     const { events } = await collect(writer, { narratePlan: true });
 
-    expect(planUpdates(events)).toEqual([
-      {
-        type: "plan_update",
-        steps: [
-          { id: "write_post", label: "Writing your post", status: "active" },
-        ],
-      },
-      {
-        type: "plan_update",
-        steps: [{ id: "write_post", label: "Writing your post", status: "done" }],
-      },
+    expect(activePlanLabels(events)).toEqual([
+      "Applying your voice and content intelligence",
+      "Writing your post",
+      "Checking structure and completeness",
+      "Removing AI tells",
+      "Finalizing your draft",
     ]);
+    expect(planUpdates(events).at(-1)?.steps.every((step) => step.status === "done"))
+      .toBe(true);
+    expect(artifacts(events)).toHaveLength(1);
+  });
+
+  test("names a selected skill only when that skill is actually in the writer prompt", async () => {
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(120, 80) },
+    ]);
+    const { events } = await collect(writer, {
+      narratePlan: true,
+      customSkillBodies: ["Find the sharpest counterintuitive claim."],
+      customSkillNames: ["Contrarian Intelligence"],
+    });
+
+    expect(activePlanLabels(events)[0]).toBe(
+      "Applying Contrarian Intelligence skill",
+    );
+  });
+
+  test("shows source-fidelity review only for a source-backed draft", async () => {
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(120, 80) },
+    ]);
+    const { events } = await collect(writer, {
+      narratePlan: true,
+      task: {
+        kind: "source",
+        source: {
+          id: "source-1",
+          text: "A source post with enough substance to model its argument without inventing a different premise.",
+        },
+      },
+    });
+
+    expect(activePlanLabels(events)).toContain("Checking source fidelity");
+  });
+
+  test("explains when a rejected candidate is being revised", async () => {
+    const writer = new ScriptedWriter([
+      { text: INCOMPLETE_POST, finishReason: "length", usage: usage(120, 80) },
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(130, 85) },
+    ]);
+    const { events } = await collect(writer, { narratePlan: true });
+
+    expect(activePlanLabels(events)).toContain(
+      "Refining the draft after quality checks",
+    );
     expect(artifacts(events)).toHaveLength(1);
   });
 
@@ -2871,14 +2921,9 @@ describe("writer plan narration (narratePlan)", () => {
     );
     const { events } = await collect(writer, { narratePlan: true });
 
-    expect(planUpdates(events)).toEqual([
-      {
-        type: "plan_update",
-        steps: [
-          { id: "write_post", label: "Writing your post", status: "active" },
-        ],
-      },
-    ]);
+    expect(activePlanLabels(events)).toContain("Writing your post");
+    expect(planUpdates(events).at(-1)?.steps.some((step) => step.status === "active"))
+      .toBe(true);
     expect(events.some((event) => event.type === "error")).toBe(true);
   });
 });

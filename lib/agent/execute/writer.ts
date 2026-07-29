@@ -20,6 +20,7 @@ import {
   type DraftCandidateTransform,
   type DraftFinalizerDecision,
   type DraftFinalizerRejectionCode,
+  type DraftFinalizerStage,
   type DraftFinalizerSpecialists,
 } from "@/lib/agent/finalize/finalizer";
 import {
@@ -262,6 +263,11 @@ export type WriterDependencies = {
   now?: () => number;
 };
 
+export type WriterProgressStage = Readonly<{
+  id: string;
+  label: string;
+}>;
+
 export type WriterInput = {
   workspaceId: string;
   sessionId?: string;
@@ -309,6 +315,8 @@ export type WriterInput = {
   narratePlan?: boolean;
   /** Optional preamble steps injected before the writer's own narration. */
   planPreambleSteps?: PlanStep[];
+  /** Internal observer used to stream real writer/finalizer phase changes. */
+  onProgressStage?: (stage: WriterProgressStage) => void;
 };
 
 const productionDependencies: WriterDependencies = {
@@ -1417,6 +1425,7 @@ export async function* runSingleDraftTurn(
         }
       : undefined;
   let finalizerStartedAt: number | null = null;
+  let writerAttempt = 0;
   const engineEditOptions = {
     keepEmDashes: voiceResultKeepsEmDashes(input.voiceResult),
   };
@@ -1444,6 +1453,11 @@ export async function* runSingleDraftTurn(
           finalizerStartedAt === null ? 0 : Date.now() - finalizerStartedAt,
       });
       input.onFinalizerDecision?.(decision);
+    },
+    onStage: (stage) => {
+      input.onProgressStage?.(
+        writerFinalizerProgressStage(stage, writerAttempt),
+      );
     },
     adapterHealth: deps.adapterHealth,
     telemetry: input.telemetry,
@@ -1501,7 +1515,6 @@ export async function* runSingleDraftTurn(
         : artifact;
   const successText =
     task.kind === "refine" ? UPDATED_DRAFT_READY_TEXT : DRAFT_READY_TEXT;
-  let writerAttempt = 0;
   let lastDraftedBody = "";
   const stageFailures: Array<
     { stage: string } & ReturnType<typeof describeWriterStageFailure>
@@ -1576,6 +1589,7 @@ export async function* runSingleDraftTurn(
     messages: ChatMessage[],
   ): Promise<DraftWriterResponse> => {
     const attempt = ++writerAttempt;
+    input.onProgressStage?.(writerCallProgressStage(stage, attempt, task));
     const attemptPromptProfile = compiledPrompt.promptCostProfile
       ? remeasureWriterPromptCost(compiledPrompt.promptCostProfile, messages)
       : undefined;
@@ -4126,6 +4140,92 @@ function writerSingleStepLabel(
   return "Writing your post";
 }
 
+function writerContextProgressStage(input: WriterInput): WriterProgressStage {
+  const appliedSkillNames = (input.customSkillNames ?? [])
+    .slice(0, input.customSkillBodies?.length ?? 0)
+    .map((name) => name.trim())
+    .filter(Boolean);
+  const label =
+    appliedSkillNames.length === 1
+      ? `Applying ${appliedSkillNames[0]} skill`
+      : appliedSkillNames.length > 1
+        ? `Applying ${appliedSkillNames.length} selected skills`
+        : "Applying your voice and content intelligence";
+  return { id: "apply_writer_intelligence", label };
+}
+
+function writerCallProgressStage(
+  stage: DraftWriterStage,
+  attempt: number,
+  task: Exclude<WriterTask, { kind: "multi" }>,
+): WriterProgressStage {
+  if (stage === "primary") {
+    return {
+      id: "write_post",
+      label: writerSingleStepLabel(task),
+    };
+  }
+  return {
+    id: `${stage}_post_${attempt}`,
+    label:
+      stage === "repair"
+        ? "Refining the draft after quality checks"
+        : "Trying a fresh draft approach",
+  };
+}
+
+function writerFinalizerProgressStage(
+  stage: DraftFinalizerStage,
+  attempt: number,
+): WriterProgressStage {
+  const details: Record<
+    DraftFinalizerStage,
+    { id: string; label: string }
+  > = {
+    validation: {
+      id: "validate_draft",
+      label: "Checking structure and completeness",
+    },
+    source_fidelity: {
+      id: "verify_source_fidelity",
+      label: "Checking source fidelity",
+    },
+    ai_tell_cleanup: {
+      id: "remove_ai_tells",
+      label: "Removing AI tells",
+    },
+    artifact: {
+      id: "finalize_draft",
+      label: "Finalizing your draft",
+    },
+  };
+  const detail = details[stage];
+  return {
+    id: `${detail.id}_${attempt}`,
+    label: detail.label,
+  };
+}
+
+function advanceWriterPlan(
+  steps: PlanStep[],
+  stage: WriterProgressStage,
+): PlanStep[] {
+  return [
+    ...steps.map((step) =>
+      step.status === "active"
+        ? { ...step, status: "done" as const }
+        : step,
+    ),
+    { ...stage, status: "active" as const },
+  ];
+}
+
+type WriterNarrationQueueItem =
+  | { kind: "progress"; stage: WriterProgressStage }
+  | { kind: "event"; event: AgentEvent }
+  | { kind: "complete" }
+  | { kind: "error"; error: unknown };
+
 // ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------
@@ -4142,27 +4242,74 @@ export async function* runWriterTurn(
     yield* runSingleDraftTurn(input);
     return;
   }
-  // The direct-writer lane has no orchestrator checklist above this write, so
-  // narrate the write itself — otherwise the turn sits on "Planning next
-  // moves" until the draft pops out. Only this lane opts in (narratePlan):
-  // the read-only orchestrator owns the on-screen plan there, and plan_update
-  // REPLACES the whole list, so two narrators would clobber each other.
-  const step: PlanStep = {
-    id: "write_post",
-    label: writerSingleStepLabel(task),
-    status: "active",
+
+  // The direct-writer lane has no orchestrator checklist above it. Stream
+  // callbacks from the actual writer and finalizer work into the same async
+  // event queue so the UI changes labels exactly when the backend changes
+  // phases. This deliberately avoids timer-driven or guessed status copy.
+  let steps = advanceWriterPlan(
+    input.planPreambleSteps ?? [],
+    writerContextProgressStage(input),
+  );
+  yield { type: "plan_update", steps };
+
+  const queued: WriterNarrationQueueItem[] = [];
+  let wakeQueue: (() => void) | null = null;
+  const enqueue = (item: WriterNarrationQueueItem): void => {
+    queued.push(item);
+    wakeQueue?.();
+    wakeQueue = null;
   };
-  yield {
-    type: "plan_update",
-    steps: [...(input.planPreambleSteps ?? []), step],
+  const waitForQueue = async (): Promise<void> => {
+    if (queued.length > 0) return;
+    await new Promise<void>((resolve) => {
+      wakeQueue = resolve;
+    });
   };
+  const stream = runSingleDraftTurn({
+    ...input,
+    onProgressStage: (stage) => {
+      input.onProgressStage?.(stage);
+      enqueue({ kind: "progress", stage });
+    },
+  });
+  const pump = (async () => {
+    try {
+      for await (const event of stream) enqueue({ kind: "event", event });
+      enqueue({ kind: "complete" });
+    } catch (error) {
+      enqueue({ kind: "error", error });
+    }
+  })();
+
   let failed = false;
-  for await (const event of runSingleDraftTurn(input)) {
-    if (event.type === "error") failed = true;
-    yield event;
+  let complete = false;
+  while (!complete) {
+    await waitForQueue();
+    const item = queued.shift();
+    if (!item) continue;
+    if (item.kind === "progress") {
+      steps = advanceWriterPlan(steps, item.stage);
+      yield { type: "plan_update", steps };
+      continue;
+    }
+    if (item.kind === "event") {
+      if (item.event.type === "error") failed = true;
+      yield item.event;
+      continue;
+    }
+    if (item.kind === "error") throw item.error;
+    complete = true;
   }
+  await pump;
+
   if (!failed) {
-    yield { type: "plan_update", steps: [{ ...step, status: "done" }] };
+    steps = steps.map((step) =>
+      step.status === "active"
+        ? { ...step, status: "done" as const }
+        : step,
+    );
+    yield { type: "plan_update", steps };
   }
 }
 

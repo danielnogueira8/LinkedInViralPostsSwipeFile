@@ -297,6 +297,18 @@ describe("read-only orchestrator plan contract", () => {
     ]);
     expect(JSON.stringify(ask.ask)).not.toContain("Author 1");
     expect(JSON.stringify(ask.ask)).not.toContain("useful opening line");
+    expect(
+      result.events
+        .filter(
+          (event): event is Extract<AgentEvent, { type: "plan_update" }> =>
+            event.type === "plan_update",
+        )
+        .flatMap((event) =>
+          event.steps
+            .filter((step) => step.status === "active")
+            .map((step) => step.label),
+        ),
+    ).toContain("Filtering for relevant, model-ready posts");
 
     const done = result.events.findLast((event) => event.type === "done");
     expect(done).toMatchObject({

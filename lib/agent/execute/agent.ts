@@ -5218,6 +5218,17 @@ async function* runReadOnlyOrchestratorCore(
     terminalAction?.type === "answer_from_evidence" &&
     input.route.outcome?.kind === "source_selection"
   ) {
+    steps = [
+      ...steps.map((step) =>
+        step.status === "active" ? { ...step, status: "done" as const } : step,
+      ),
+      {
+        id: "filter_source_candidates",
+        label: "Filtering for relevant, model-ready posts",
+        status: "active",
+      },
+    ];
+    yield { type: "plan_update", steps };
     const availableSources = distinctGroundedSources(
       terminalAction.evidenceActionIds.flatMap(
         (id) => evidenceByAction.get(id) ?? [],
@@ -5231,6 +5242,10 @@ async function* runReadOnlyOrchestratorCore(
           isModelableSourceText(source.text),
       )
       .slice(0, input.route.outcome.candidateCount);
+    steps = steps.map((step) =>
+      step.status === "active" ? { ...step, status: "done" as const } : step,
+    );
+    yield { type: "plan_update", steps };
     const minimumSources = Math.max(3, input.route.minimumSources ?? 3);
     if (candidates.length < minimumSources) {
       const message = `I found only ${candidates.length} of the ${minimumSources} source posts needed to give you a useful choice, so I did not spend credits drafting from a weak default.`;
