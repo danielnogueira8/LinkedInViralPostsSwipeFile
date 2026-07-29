@@ -14,6 +14,7 @@ import { describe, test, expect, vi, beforeEach } from "vitest";
 
 type DeleteCall = { table: string; predicates: [string, unknown][] };
 const calls: DeleteCall[] = [];
+const operationOrder: string[] = [];
 const rpcCalls: Array<{
   name: string;
   args: Record<string, unknown> | undefined;
@@ -25,6 +26,9 @@ const failRpcs = new Map<string, { code?: string; message: string }>();
 const knowledgeSourceRevisionRows: Array<{
   storage_bucket: string | null;
   storage_path: string | null;
+}> = [];
+const pendingKnowledgeSourceRows: Array<{
+  pending_storage_path: string | null;
 }> = [];
 const storageCalls: Array<{ bucket: string; paths: string[] }> = [];
 const failStorageBuckets = new Set<string>();
@@ -40,7 +44,10 @@ function makeRecorder() {
     let isDelete = false;
     const predicates: [string, unknown][] = [];
     const settle = () => {
-      if (isDelete) calls.push({ table, predicates });
+      if (isDelete) {
+        calls.push({ table, predicates });
+        operationOrder.push(`delete:${table}`);
+      }
       const error = isDelete
         ? failTables.has(table)
           ? { message: `boom: ${table}` }
@@ -50,6 +57,8 @@ function makeRecorder() {
         data:
           !isDelete && table === "knowledge_source_revisions"
             ? knowledgeSourceRevisionRows
+            : !isDelete && table === "knowledge_sources"
+              ? pendingKnowledgeSourceRows
             : !isDelete && table === "app_schema_version"
               ? { version: schemaVersion }
             : [],
@@ -82,6 +91,7 @@ function makeRecorder() {
     args?: Record<string, unknown>,
   ) => {
     rpcCalls.push({ name, args });
+    operationOrder.push(`rpc:${name}`);
     return Promise.resolve({
       data: failRpcs.has(name) ? null : 1,
       count: null,
@@ -113,11 +123,13 @@ const { purgeWorkspaceData } = await import("@/lib/purge-workspace");
 
 beforeEach(() => {
   calls.length = 0;
+  operationOrder.length = 0;
   rpcCalls.length = 0;
   failTables.clear();
   failReadTables.clear();
   failRpcs.clear();
   knowledgeSourceRevisionRows.length = 0;
+  pendingKnowledgeSourceRows.length = 0;
   storageCalls.length = 0;
   failStorageBuckets.clear();
   schemaVersion = 147;
@@ -273,6 +285,7 @@ describe("purgeWorkspaceData — coverage + scoping", () => {
 
 describe("purgeWorkspaceData — resilience", () => {
   test("deletes private source objects before purging their database paths", async () => {
+    schemaVersion = 148;
     knowledgeSourceRevisionRows.push(
       {
         storage_bucket: "knowledge-sources",
@@ -284,6 +297,9 @@ describe("purgeWorkspaceData — resilience", () => {
       },
       { storage_bucket: null, storage_path: null },
     );
+    pendingKnowledgeSourceRows.push({
+      pending_storage_path: `${WS}/pending/upload.pdf`,
+    });
 
     const res = await purgeWorkspaceData(WS, USER);
 
@@ -291,13 +307,23 @@ describe("purgeWorkspaceData — resilience", () => {
     expect(storageCalls).toEqual([
       {
         bucket: "knowledge-sources",
-        paths: [`${WS}/calls/one.pdf`, `${WS}/calls/two.docx`],
+        paths: [
+          `${WS}/calls/one.pdf`,
+          `${WS}/calls/two.docx`,
+          `${WS}/pending/upload.pdf`,
+        ],
       },
     ]);
     expect(
       rpcCalls.findIndex((call) => call.name === "purge_workspace_knowledge_sources"),
     ).toBeGreaterThan(-1);
-    expect(res.deleted["knowledge_source_storage"]).toBe(2);
+    expect(res.deleted["knowledge_source_storage"]).toBe(3);
+    const sourcePurgeIndex = operationOrder.indexOf(
+      "rpc:purge_workspace_knowledge_sources",
+    );
+    const jobDeleteIndex = operationOrder.indexOf("delete:background_jobs");
+    expect(sourcePurgeIndex).toBeGreaterThan(-1);
+    expect(jobDeleteIndex).toBeGreaterThan(sourcePurgeIndex);
   });
 
   test("retains source rows for a retry when private object deletion fails", async () => {
@@ -367,6 +393,26 @@ describe("purgeWorkspaceData — resilience", () => {
       table: "knowledge_sources",
       error: "Could not find the function public.purge_workspace_knowledge_sources",
     });
+  });
+
+  test("retains source rows when pending-path schema cannot be verified", async () => {
+    failReadTables.set("app_schema_version", {
+      code: "57014",
+      message: "schema marker unavailable",
+    });
+
+    const res = await purgeWorkspaceData(WS, USER);
+
+    expect(res.ok).toBe(false);
+    expect(res.errors).toContainEqual({
+      table: "knowledge_source_storage",
+      error: "schema marker unavailable",
+    });
+    expect(
+      rpcCalls.some(
+        (call) => call.name === "purge_workspace_knowledge_sources",
+      ),
+    ).toBe(false);
   });
 
   test("a real Knowledge Source purge failure is still reported", async () => {

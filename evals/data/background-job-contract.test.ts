@@ -40,8 +40,12 @@ describe("background job type contract", () => {
     expect(sql).toMatch(
       /'lead_magnet_resource'[\s\S]*status\s+in\s*\(\s*'done'\s*,\s*'failed'\s*,\s*'cancelled'\s*\)/i,
     );
+    const currentSql = readFileSync(
+      "db/migration-148-knowledge-source-ingestion.sql",
+      "utf8",
+    );
     for (const type of BACKGROUND_JOB_TYPES) {
-      expect(sql).toContain(`'${type}'`);
+      expect(currentSql).toContain(`'${type}'`);
     }
     expect(sql).toMatch(/values\s*\(\s*true\s*,\s*123\s*,/i);
   });

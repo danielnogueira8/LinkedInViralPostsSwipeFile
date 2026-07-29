@@ -91,9 +91,6 @@ export async function purgeWorkspaceData(
   await wipe("provider_locks", () =>
     del("provider_locks").eq("workspace_id", workspaceId),
   );
-  await wipe("background_jobs", () =>
-    del("background_jobs").eq("workspace_id", workspaceId),
-  );
 
   // Chat and generated content. Analytics references artifacts.
   await wipe("post_analytics", () =>
@@ -176,6 +173,55 @@ export async function purgeWorkspaceData(
       };
     }
 
+    const { data: marker, error: markerError } = await client
+      .from("app_schema_version")
+      .select("version")
+      .eq("singleton", true)
+      .maybeSingle();
+    const markerVersion = (marker as { version?: unknown } | null)?.version;
+    if (markerError || typeof markerVersion !== "number") {
+      knowledgeSourceStorageReady = false;
+      return {
+        count: null,
+        error:
+          markerError ?? {
+            message: "Knowledge Source schema version could not be verified",
+          },
+      };
+    }
+    if (markerVersion >= 148) {
+      try {
+        const pendingRows = await selectAllRows<{
+          pending_storage_path: string | null;
+        }>(() =>
+          client
+            .from("knowledge_sources")
+            .select("pending_storage_path")
+            .eq("workspace_id", workspaceId),
+        );
+        rows.push(
+          ...pendingRows.map((row) => ({
+            storage_bucket: row.pending_storage_path
+              ? "knowledge-sources"
+              : null,
+            storage_path: row.pending_storage_path,
+          })),
+        );
+      } catch (error) {
+        knowledgeSourceStorageReady = false;
+        return {
+          count: null,
+          error: {
+            message:
+              error instanceof Error
+                ? error.message
+                : (error as { message?: string })?.message ??
+                  "Pending Knowledge Source storage lookup failed",
+          },
+        };
+      }
+    }
+
     const byBucket = new Map<string, string[]>();
     for (const row of rows) {
       if (!row.storage_bucket || !row.storage_path) continue;
@@ -229,6 +275,12 @@ export async function purgeWorkspaceData(
   } else {
     deleted.knowledge_sources = null;
   }
+  // Knowledge Sources reference their ingestion jobs. Remove their private
+  // objects and source rows first so workspace erasure cannot be blocked by
+  // the ingestion-job foreign key.
+  await wipe("background_jobs", () =>
+    del("background_jobs").eq("workspace_id", workspaceId),
+  );
   await wipe("content_preference_evidence", () =>
     del("content_preference_evidence").eq("workspace_id", workspaceId),
   );
