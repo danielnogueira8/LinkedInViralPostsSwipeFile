@@ -83,6 +83,12 @@ describe("Knowledge Library UI contract", () => {
     );
   });
 
+  test("offers a visible recovery action for failed insight analysis", () => {
+    expect(workspaceSource).toContain("Retry analysis");
+    expect(workspaceSource).toContain("retryAnalysis");
+    expect(workspaceSource).toContain("method: \"POST\"");
+  });
+
   test("formats dates identically across server and browser locales", () => {
     expect(formatKnowledgeDate("2026-07-29T23:30:00-07:00")).toBe("Jul 30");
   });

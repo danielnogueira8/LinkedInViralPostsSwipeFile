@@ -6,7 +6,6 @@ import {
   type BackgroundJob,
 } from "@/lib/background-jobs";
 import {
-  BACKGROUND_MODEL,
   completeChat,
   logOpenRouterUsage,
   type ToolDef,
@@ -21,6 +20,11 @@ type ChunkRow = {
   ordinal: number;
   content: string;
 };
+
+export const KNOWLEDGE_EXTRACTION_MODEL = "anthropic/claude-haiku-4.5";
+export const KNOWLEDGE_EXTRACTION_BATCH_SIZE = 4;
+export const KNOWLEDGE_EXTRACTION_MAX_ITEMS = 4;
+const KNOWLEDGE_EXTRACTION_MAX_TOKENS = 2_600;
 
 const extractedItemSchema = z
   .object({
@@ -44,7 +48,7 @@ const extractedItemSchema = z
 
 const extractionSchema = z
   .object({
-    items: z.array(extractedItemSchema).max(8),
+    items: z.array(extractedItemSchema).max(KNOWLEDGE_EXTRACTION_MAX_ITEMS),
   })
   .strict();
 
@@ -62,7 +66,7 @@ const EXTRACTION_TOOL: ToolDef = {
       properties: {
         items: {
           type: "array",
-          maxItems: 8,
+          maxItems: KNOWLEDGE_EXTRACTION_MAX_ITEMS,
           items: {
             type: "object",
             properties: {
@@ -111,12 +115,12 @@ Return only claims that are explicit in the supplied source. Do not infer missin
 For every item:
 - choose the best semantic kind;
 - write a short neutral title;
-- put the core claim in primary and optional supporting detail in secondary;
+- keep primary concise (at most 80 words) and optional secondary detail at most 120 words;
 - identify the chunk ordinal;
-- copy one exact, contiguous supporting quote from that same chunk;
+- copy one exact, contiguous supporting quote from that same chunk, at most 80 words;
 - lower confidence when wording is ambiguous.
 
-Skip navigation, boilerplate, generic advice, duplicated claims, and anything without an exact quote. An empty items array is valid. The output is only a proposal: the user will review it before it can be used.${INJECTION_GUARD}`;
+Return at most ${KNOWLEDGE_EXTRACTION_MAX_ITEMS} items per batch. Skip navigation, boilerplate, generic advice, duplicated claims, and anything without an exact quote. An empty items array is valid. The output is only a proposal: the user will review it before it can be used.${INJECTION_GUARD}`;
 
 export function selectExtractionChunks<T>(
   chunks: T[],
@@ -133,6 +137,20 @@ export function selectExtractionChunks<T>(
     }
   }
   return selected;
+}
+
+export function extractionChunkBatches<T>(chunks: readonly T[]): T[][] {
+  const batches: T[][] = [];
+  for (
+    let offset = 0;
+    offset < chunks.length;
+    offset += KNOWLEDGE_EXTRACTION_BATCH_SIZE
+  ) {
+    batches.push(
+      chunks.slice(offset, offset + KNOWLEDGE_EXTRACTION_BATCH_SIZE),
+    );
+  }
+  return batches;
 }
 
 export function knowledgeContentForExtraction(
@@ -197,9 +215,9 @@ async function extractBatch(input: {
     .join("\n\n");
   const response = await completeChat({
     cachePrompt: false,
-    model: BACKGROUND_MODEL,
+    model: KNOWLEDGE_EXTRACTION_MODEL,
     disableReasoning: true,
-    maxTokens: 2_200,
+    maxTokens: KNOWLEDGE_EXTRACTION_MAX_TOKENS,
     timeoutMs: 45_000,
     messages: [
       { role: "system", content: EXTRACTION_SYSTEM },
@@ -211,7 +229,10 @@ async function extractBatch(input: {
     tools: [EXTRACTION_TOOL],
     forceTool: EXTRACTION_TOOL_NAME,
   });
-  const attribution = providerModelAttribution(BACKGROUND_MODEL, response.model);
+  const attribution = providerModelAttribution(
+    KNOWLEDGE_EXTRACTION_MODEL,
+    response.model,
+  );
   await logOpenRouterUsage(
     "knowledge_source_extraction",
     attribution.model,
@@ -219,7 +240,7 @@ async function extractBatch(input: {
     input.workspaceId,
     attribution.metadata,
   );
-  if (response.finishReason === "length" || !response.toolArgs) {
+  if (!response.toolArgs) {
     throw new Error("knowledge_extraction_invalid_output");
   }
   const parsed = extractionSchema.safeParse(response.toolArgs);
@@ -267,8 +288,7 @@ export async function runKnowledgeExtractionJob(
   if (chunks.length === 0) throw new Error("knowledge_extraction_no_chunks");
 
   let proposed = 0;
-  for (let offset = 0; offset < chunks.length; offset += 6) {
-    const batch = chunks.slice(offset, offset + 6);
+  for (const batch of extractionChunkBatches(chunks)) {
     const extracted = await extractBatch({
       workspaceId: job.workspace_id,
       sourceTitle: String(source.title),

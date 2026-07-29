@@ -1,7 +1,7 @@
 {
   "generatedBy": "npm run migrations:metadata",
-  "highest": 151,
-  "count": 151,
+  "highest": 152,
+  "count": 152,
   "files": [
     "migration-001-progress.sql",
     "migration-002-usage.sql",
@@ -153,6 +153,7 @@
     "migration-148-knowledge-source-ingestion.sql",
     "migration-149-knowledge-extraction.sql",
     "migration-150-knowledge-retrieval.sql",
-    "migration-151-retry-leadshark-activity-binding.sql"
+    "migration-151-retry-leadshark-activity-binding.sql",
+    "migration-152-retry-knowledge-extraction.sql"
   ]
 }

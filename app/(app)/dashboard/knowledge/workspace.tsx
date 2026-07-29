@@ -13,6 +13,7 @@ import {
   Loader2,
   NotebookPen,
   Quote,
+  RotateCcw,
   Search,
   X,
 } from "lucide-react";
@@ -49,6 +50,7 @@ type Props = {
   initialSources: KnowledgeSourceSummary[];
   available: boolean;
   extractionAvailable: boolean;
+  retryAvailable: boolean;
 };
 
 type ApiResult = {
@@ -129,6 +131,7 @@ export function KnowledgeLibrary({
   initialSources,
   available,
   extractionAvailable,
+  retryAvailable,
 }: Props) {
   const [sources, setSources] = useState(initialSources);
   const [query, setQuery] = useState("");
@@ -144,6 +147,7 @@ export function KnowledgeLibrary({
   const [insights, setInsights] = useState<KnowledgeProposalDetail[]>([]);
   const [insightsLoading, setInsightsLoading] = useState(false);
   const [busyInsightId, setBusyInsightId] = useState<string | null>(null);
+  const [retryingSourceId, setRetryingSourceId] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
 
   const processing = sources.some(
@@ -312,6 +316,29 @@ export function KnowledgeLibrary({
     }
   }
 
+  async function retryAnalysis(source: KnowledgeSourceSummary) {
+    if (retryingSourceId) return;
+    setRetryingSourceId(source.id);
+    try {
+      await jsonResponse(
+        await fetch(
+          `/api/knowledge-sources/${encodeURIComponent(source.id)}/insights`,
+          { method: "POST" },
+        ),
+      );
+      await refreshSources();
+      toast.success("Analysis queued");
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Could not retry analysis.",
+      );
+    } finally {
+      setRetryingSourceId(null);
+    }
+  }
+
   async function reviewInsight(
     item: KnowledgeProposalDetail,
     action: "approve" | "reject",
@@ -414,7 +441,8 @@ export function KnowledgeLibrary({
               source.status === "pending" ||
               source.status === "processing" ||
               source.extractionStatus === "queued" ||
-              source.extractionStatus === "running";
+              source.extractionStatus === "running" ||
+              retryingSourceId === source.id;
             const analyzing =
               source.extractionStatus === "queued" ||
               source.extractionStatus === "running";
@@ -487,8 +515,9 @@ export function KnowledgeLibrary({
                   )}
                   {source.extractionStatus === "failed" && (
                     <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                      The source is still searchable, but automatic insight
-                      extraction could not finish.
+                      The source is still searchable and any saved insights
+                      remain available. Retry analysis to finish extracting
+                      insights.
                     </p>
                   )}
                   <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
@@ -497,6 +526,23 @@ export function KnowledgeLibrary({
                       {formatKnowledgeDate(source.createdAt)}
                     </span>
                     <div className="flex items-center gap-1">
+                      {retryAvailable &&
+                        source.status === "ready" &&
+                        source.extractionStatus === "failed" && (
+                          <Button
+                            size="xs"
+                            variant="outline"
+                            disabled={retryingSourceId !== null}
+                            onClick={() => void retryAnalysis(source)}
+                          >
+                            {retryingSourceId === source.id ? (
+                              <Loader2 className="animate-spin" />
+                            ) : (
+                              <RotateCcw />
+                            )}
+                            Retry analysis
+                          </Button>
+                        )}
                       {extractionAvailable &&
                         source.status === "ready" &&
                         !analyzing && (
