@@ -2,7 +2,7 @@ import { Suspense } from "react";
 import { getThresholds, getTemplateThresholds } from "@/lib/viral";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { SettingsForm } from "./form";
-import { PublishingCard } from "./publishing-card";
+import { LinkedInPublishingCard } from "../integrations/linkedin-card";
 import { DangerZone } from "./danger-zone";
 import { PageHeader, PageShell } from "@/components/app-surface";
 import { getDiscoveryThresholds } from "@/lib/discovery-thresholds";
@@ -27,9 +27,9 @@ export default async function SettingsPage() {
       />
       <SettingsForm initial={{ viral, template, discovery }} />
 
-      {/* Suspense: PublishingCard reads useSearchParams (?linkedin= callback). */}
+      {/* Suspense: LinkedInPublishingCard reads useSearchParams (?linkedin= callback). */}
       <Suspense fallback={null}>
-        <PublishingCard />
+        <LinkedInPublishingCard />
       </Suspense>
 
       <div className="pt-2">

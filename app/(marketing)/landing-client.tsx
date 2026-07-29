@@ -39,7 +39,7 @@ const faqs = [
   ],
   [
     "Can it publish to LinkedIn?",
-    "Yes. Connect LinkedIn in Settings and schedule approved drafts directly. You can also use the calendar as a planning-only workflow.",
+    "Yes. Connect LinkedIn in Integrations and schedule approved drafts directly. You can also use the calendar as a planning-only workflow.",
   ],
   [
     "Where do the source posts come from?",

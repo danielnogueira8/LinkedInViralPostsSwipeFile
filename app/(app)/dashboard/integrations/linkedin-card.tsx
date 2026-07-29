@@ -22,6 +22,11 @@ import {
 } from "@/components/ui/dialog";
 import { Loader2, CheckCircle2, AlertTriangle } from "lucide-react";
 import { fetchJson } from "@/lib/api-fetch";
+import {
+  getLinkedInConnectionPath,
+  getLinkedInConnectEndpoint,
+  type LinkedInConnectionSurface,
+} from "@/lib/linkedin-integration-destination";
 
 type ConnState = {
   status: "active" | "disconnected";
@@ -42,11 +47,15 @@ function LinkedInMark({ className = "" }: { className?: string }) {
   );
 }
 
-// Settings → "Publishing": connect the workspace's LinkedIn account (via Zernio)
-// so scheduled drafts auto-publish. Three states: not connected, connected, and
-// disconnected/expired (Reconnect). Distinct from "Tracked Accounts" (the
-// creators the app scrapes) — this is where WE post FROM.
-export function PublishingCard() {
+// Shared LinkedIn publishing connection card used by Integrations and Settings.
+// Three states: not connected, connected, and disconnected/expired (Reconnect).
+// Distinct from "Tracked Accounts" (the creators the app scrapes) — this is
+// where WE post FROM.
+export function LinkedInPublishingCard({
+  returnTo = "settings",
+}: {
+  returnTo?: LinkedInConnectionSurface;
+}) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [conn, setConn] = useState<ConnState>(null);
@@ -91,8 +100,8 @@ export function PublishingCard() {
     } else if (result === "connect_failed") {
       toast.error("Couldn't finish connecting LinkedIn. Please try again.");
     }
-    router.replace("/dashboard/settings");
-  }, [searchParams, router, load]);
+    router.replace(getLinkedInConnectionPath(returnTo));
+  }, [searchParams, router, load, returnTo]);
 
   const connect = async () => {
     if (busy) return;
@@ -103,7 +112,7 @@ export function PublishingCard() {
         authUrl?: string;
         alreadyConnected?: boolean;
         error?: string;
-      }>("/api/integrations/linkedin", { method: "POST" });
+      }>(getLinkedInConnectEndpoint(returnTo), { method: "POST" });
       // Already connected — don't start a new OAuth flow. Re-sync the card so it
       // shows the connected state and let the user know.
       if (data.ok && data.alreadyConnected) {
@@ -114,7 +123,7 @@ export function PublishingCard() {
       }
       if (!data.ok || !data.authUrl) throw new Error(data.error || "Couldn't start connecting.");
       // Hand off to Zernio's hosted OAuth; it redirects back to our finalize
-      // callback, which bounces to /settings?linkedin=connected.
+      // callback, which bounces back to the surface that initiated the flow.
       window.location.href = data.authUrl;
     } catch (e) {
       toast.error((e as Error).message);

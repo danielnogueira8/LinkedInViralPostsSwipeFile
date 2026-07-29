@@ -19,10 +19,12 @@ const ensureProfile = vi.fn<(id: string) => Promise<string>>(async () => "profil
 const getConnectUrl = vi.fn<(opts: ConnectUrlOpts) => Promise<string>>(
   async () => "https://zernio.com/hosted/auth?x=1",
 );
+const finalizeConnection = vi.fn<(id: string) => Promise<boolean>>(async () => true);
 const deleteAccount = vi.fn(async () => true);
 const markDisconnected = vi.fn(async () => {});
 
 vi.mock("@/lib/workspace", () => ({
+  requireWorkspaceId: () => requireWorkspaceId(),
   // Mirror the real errorResponse envelope so a thrown error is observable.
   errorResponse: (e: unknown) =>
     Response.json(
@@ -39,6 +41,7 @@ vi.mock("@/lib/publishing", () => ({
   getConnection: (id: string) => getConnection(id),
   canPublish: (conn: unknown) => canPublish(conn),
   ensureProfile: (id: string) => ensureProfile(id),
+  finalizeConnection: (id: string) => finalizeConnection(id),
   markDisconnected: (...a: unknown[]) => markDisconnected(...(a as [])),
 }));
 
@@ -49,6 +52,9 @@ vi.mock("@/lib/zernio", () => ({
 }));
 
 const { POST } = await import("@/app/api/integrations/linkedin/route");
+const { GET: FINALIZE } = await import(
+  "@/app/api/integrations/linkedin/finalize/route"
+);
 
 function post(url = "https://app.tryswipein.com/api/integrations/linkedin") {
   return new Request(url, { method: "POST" });
@@ -106,6 +112,21 @@ describe("POST /api/integrations/linkedin — already-connected guard", () => {
     expect(arg.redirectUrl).toContain("returnTo=welcome");
   });
 
+  test("carries returnTo=integrations into the finalize redirectUrl (allow-listed)", async () => {
+    getConnection.mockResolvedValue(null);
+    canPublish.mockReturnValue(false);
+
+    await POST(
+      post(
+        "https://app.tryswipein.com/api/integrations/linkedin?returnTo=integrations",
+      ),
+    );
+
+    const arg = getConnectUrl.mock.calls[0][0] as { redirectUrl: string };
+    expect(arg.redirectUrl).toContain("/api/integrations/linkedin/finalize");
+    expect(arg.redirectUrl).toContain("returnTo=integrations");
+  });
+
   test("an arbitrary returnTo is NOT reflected (defaults to Settings)", async () => {
     getConnection.mockResolvedValue(null);
     canPublish.mockReturnValue(false);
@@ -115,5 +136,49 @@ describe("POST /api/integrations/linkedin — already-connected guard", () => {
     const arg = getConnectUrl.mock.calls[0][0] as { redirectUrl: string };
     expect(arg.redirectUrl).not.toContain("returnTo=");
     expect(arg.redirectUrl).not.toContain("evil.example");
+  });
+});
+
+describe("GET /api/integrations/linkedin/finalize — safe return destination", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    requireWorkspaceId.mockResolvedValue("user_1");
+    finalizeConnection.mockResolvedValue(true);
+  });
+
+  test("onboarding still returns to the welcome wizard", async () => {
+    const res = await FINALIZE(
+      new Request(
+        "https://app.tryswipein.com/api/integrations/linkedin/finalize?returnTo=welcome",
+      ),
+    );
+
+    expect(res.headers.get("location")).toBe(
+      "https://app.tryswipein.com/welcome?linkedin=connected",
+    );
+  });
+
+  test("Integrations connects return to the Integrations page", async () => {
+    const res = await FINALIZE(
+      new Request(
+        "https://app.tryswipein.com/api/integrations/linkedin/finalize?returnTo=integrations",
+      ),
+    );
+
+    expect(res.headers.get("location")).toBe(
+      "https://app.tryswipein.com/dashboard/integrations?linkedin=connected",
+    );
+  });
+
+  test("unknown destinations remain locked to Settings", async () => {
+    const res = await FINALIZE(
+      new Request(
+        "https://app.tryswipein.com/api/integrations/linkedin/finalize?returnTo=https://evil.example",
+      ),
+    );
+
+    expect(res.headers.get("location")).toBe(
+      "https://app.tryswipein.com/dashboard/settings?linkedin=connected",
+    );
   });
 });

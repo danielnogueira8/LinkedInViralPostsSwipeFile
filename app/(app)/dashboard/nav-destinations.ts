@@ -77,8 +77,8 @@ export const NAV_SECTIONS: NavSection[] = [
     items: [
       { href: "/dashboard/analytics", label: "Analytics", icon: ChartNoAxesColumn, tooltip: "LinkedIn performance of posts published through SwipeIn." },
       { href: "/dashboard/claude", label: "Claude Workflows", icon: ClaudeWorkflowsNavIcon, tooltip: "Reusable AI workflows for content tasks." },
-      { href: "/dashboard/integrations", label: "Integrations", icon: Plug, tooltip: "Connect third-party tools like LeadShark." },
-      { href: "/dashboard/settings", label: "Settings", icon: Settings, tooltip: "Workspace settings and publishing connections." },
+      { href: "/dashboard/integrations", label: "Integrations", icon: Plug, tooltip: "Connect LinkedIn and automation tools." },
+      { href: "/dashboard/settings", label: "Settings", icon: Settings, tooltip: "Workspace discovery and account settings." },
     ],
   },
 ];
