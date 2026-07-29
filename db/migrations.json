@@ -1,7 +1,7 @@
 {
   "generatedBy": "npm run migrations:metadata",
-  "highest": 156,
-  "count": 156,
+  "highest": 157,
+  "count": 157,
   "files": [
     "migration-001-progress.sql",
     "migration-002-usage.sql",
@@ -158,6 +158,7 @@
     "migration-153-leadshark-automation-defaults.sql",
     "migration-154-source-post-count.sql",
     "migration-155-unbounded-content-preferences.sql",
-    "migration-156-automatic-workspace-knowledge.sql"
+    "migration-156-automatic-workspace-knowledge.sql",
+    "migration-157-openai-usage-provider.sql"
   ]
 }

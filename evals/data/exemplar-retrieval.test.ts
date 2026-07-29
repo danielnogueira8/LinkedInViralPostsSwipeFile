@@ -161,7 +161,7 @@ describe("buildExemplarBlock", () => {
     expect(sink.mock.calls[0][0].stage_attempts).toContainEqual(
       expect.objectContaining({
         stage: "legacy_exemplar_embedding",
-        provider: "openrouter",
+        provider: "openai",
         outcome: "accepted",
         input_tokens: 7,
       }),

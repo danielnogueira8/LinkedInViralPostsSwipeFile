@@ -382,7 +382,7 @@ export const FALLBACK_ACTION_ORCHESTRATOR_MODEL = distinctFallbackModel(
   PRIMARY_ACTION_ORCHESTRATOR_MODEL,
   process.env.OPENROUTER_ACTION_ORCHESTRATOR_FALLBACK_MODEL ||
     "google/gemini-3.5-flash",
-  ["anthropic/claude-sonnet-5"],
+  ["openai/gpt-5.6-luna"],
 );
 export const ACTION_ORCHESTRATOR_DEADLINE_MS = 85_000;
 
@@ -3574,7 +3574,7 @@ const FALLBACK_WEB_RESEARCH_MODEL = distinctFallbackModel(
   PRIMARY_WEB_RESEARCH_MODEL,
   process.env.OPENROUTER_WEB_RESEARCH_FALLBACK_MODEL ||
     FALLBACK_READ_ONLY_ORCHESTRATOR_MODEL,
-  ["anthropic/claude-sonnet-5", "google/gemini-3.5-flash"],
+  ["openai/gpt-5.6-luna", "google/gemini-3.5-flash"],
 );
 
 type WebResearchResult = {

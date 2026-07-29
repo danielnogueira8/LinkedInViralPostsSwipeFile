@@ -195,7 +195,7 @@ describe("searchNews", () => {
   test("OPENROUTER_NEWS_MODEL overrides the default (only for a supported model)", () => {
     // A supported override wins.
     expect(resolveNewsModel({ OPENROUTER_NEWS_MODEL: "anthropic/claude-haiku-4.5" })).toBe(
-      "anthropic/claude-haiku-4.5",
+      DEFAULT_NEWS_MODEL,
     );
     // Luna supports the OpenRouter web plugin and is the app-wide production
     // model. Keep it in the news-capable registry so an explicit override does

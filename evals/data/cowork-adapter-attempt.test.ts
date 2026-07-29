@@ -109,8 +109,7 @@ describe("Cowork adapter attempt boundary", () => {
     });
   });
 
-  test("attributes a claude attempt to anthropic under the flag, openrouter otherwise", async () => {
-    const prev = process.env.AI_PROVIDER;
+  test("attributes OpenAI models to OpenAI and other models to OpenRouter", async () => {
     const recordFor = async (model: string) => {
       const sink = vi.fn();
       const telemetry = createCoworkTurnTelemetry(
@@ -148,20 +147,9 @@ describe("Cowork adapter attempt boundary", () => {
       return sink.mock.calls[0][0].stage_attempts[0].provider;
     };
 
-    try {
-      process.env.AI_PROVIDER = "anthropic";
-      // A claude model served while the flag is on → anthropic.
-      expect(await recordFor("claude-sonnet-5")).toBe("anthropic");
-      expect(await recordFor("anthropic/claude-sonnet-5")).toBe("anthropic");
-      // A non-claude model is still openrouter even with the flag on.
-      expect(await recordFor("z-ai/glm-5.2")).toBe("openrouter");
-      // Flag off → even a claude model is openrouter (it genuinely ran there).
-      delete process.env.AI_PROVIDER;
-      expect(await recordFor("claude-sonnet-5")).toBe("openrouter");
-    } finally {
-      if (prev === undefined) delete process.env.AI_PROVIDER;
-      else process.env.AI_PROVIDER = prev;
-    }
+    expect(await recordFor("openai/gpt-5.6-luna")).toBe("openai");
+    expect(await recordFor("gpt-5.6-luna")).toBe("openai");
+    expect(await recordFor("z-ai/glm-5.2")).toBe("openrouter");
   });
 
   test("charges a rejected response once and opens the invalid adapter circuit", async () => {

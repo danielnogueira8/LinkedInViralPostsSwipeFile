@@ -16,7 +16,6 @@ import {
   checkChatCostAllowance,
 } from "@/lib/agent/rate-limit";
 import { runCreatorStyleGeneration } from "@/lib/agent/creator-style-profile";
-import { setAnthropicKey } from "@/lib/claude";
 import { LEAD_MAGNET_IMAGE_COST_RESERVE_USD } from "@/lib/lead-magnet-image-generation";
 import {
   parseLeadMagnetImageJobPayload,
@@ -487,7 +486,6 @@ async function runScrapeBackgroundJob(job: BackgroundJob): Promise<{
     return { completed: 0, failed: 0, requeued: 1, unsupported: 0 };
   }
 
-  setAnthropicKey(process.env.SWIPE_ANTHROPIC_KEY || process.env.ANTHROPIC_API_KEY);
   const result = await runDailyPipeline(workspaceId ?? undefined, { runId });
   await markJobDone(
     job,

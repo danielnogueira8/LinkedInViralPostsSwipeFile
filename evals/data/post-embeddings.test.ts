@@ -41,10 +41,11 @@ describe("post-embeddings pure helpers", () => {
   });
 });
 
-describe("embedText: OpenRouter embeddings client", () => {
+describe("embedText: native OpenAI embeddings client", () => {
   beforeEach(() => {
     vi.unstubAllGlobals();
     vi.stubEnv("OPENROUTER_API_KEY", "test-key");
+    vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
   });
 
   test("empty input short-circuits with no network call", async () => {
@@ -182,7 +183,7 @@ describe("embedText: OpenRouter embeddings client", () => {
       "fetch",
       vi.fn(async () => new Response("nope", { status: 400 })),
     );
-    await expect(embedText(["a"])).rejects.toThrow(/OpenRouter embeddings 400/);
+    await expect(embedText(["a"])).rejects.toThrow(/OpenAI embeddings failed \(400\)/);
   });
 
   test("sends the configured model and the input array to the embeddings endpoint", async () => {
@@ -192,7 +193,7 @@ describe("embedText: OpenRouter embeddings client", () => {
     const call = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(String(call[0])).toMatch(/\/embeddings$/);
     const body = JSON.parse(call[1].body as string);
-    expect(body.model).toBe(EMBEDDING_MODEL);
+    expect(body.model).toBe("text-embedding-3-small");
     expect(body.input).toEqual(["only"]);
   });
 });

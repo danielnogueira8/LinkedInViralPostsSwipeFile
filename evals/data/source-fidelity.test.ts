@@ -278,7 +278,7 @@ describe("reviewModeledDraft outcomes", () => {
       expect.arrayContaining([
         expect.objectContaining({
           stage: "finalizer_source_fidelity",
-          provider: "openrouter",
+            provider: "openai",
           outcome: "accepted",
           input_tokens: 30,
           output_tokens: 5,

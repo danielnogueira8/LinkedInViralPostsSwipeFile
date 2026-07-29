@@ -37,7 +37,7 @@ import {
   logOpenRouterUsage,
   type Usage,
 } from "@/lib/openrouter";
-import { shouldUseAnthropic } from "@/lib/anthropic";
+import { routesToNativeOpenAI } from "@/lib/openai";
 import {
   runWriterTurn,
   type GroundedSource,
@@ -1238,7 +1238,7 @@ async function runCoworkOutcomeScenarioWithStore(
       // else "openrouter". Per-row keeps mixed primary/fallback turns valid and
       // matches logOpenRouterUsage exactly.
       (row) =>
-        row.provider !== (shouldUseAnthropic(row.model) ? "anthropic" : "openrouter") ||
+        row.provider !== (routesToNativeOpenAI(row.model) ? "openai" : "openrouter") ||
         row.workspace_id !== store.workspaceId,
     ) ||
     assistantInputTokens !== inputTokens ||

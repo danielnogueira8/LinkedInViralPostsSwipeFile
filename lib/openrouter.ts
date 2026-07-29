@@ -32,24 +32,19 @@ export { providerModelAttribution } from "./agent/cowork-adapter-attempt";
 //
 // Each is env-overridable for A/B or pinning (OPENROUTER_CHAT_MODEL etc.).
 //
-// Provider switch: when AI_PROVIDER=anthropic, the whole text surface defaults
-// to the Anthropic model (claude-sonnet-5) so one flag moves chat + writers +
-// gates + background onto one bill. An explicit OPENROUTER_CHAT_MODEL still wins
-// (for pinning/A-B). completeChat/streamChat delegate to lib/anthropic.ts when
-// the resolved model is claude-*. Embeddings + image gen never move.
 export const CHAT_MODEL =
+  process.env.OPENAI_CHAT_MODEL ||
   process.env.OPENROUTER_CHAT_MODEL ||
-  (process.env.AI_PROVIDER === "anthropic"
-    ? process.env.ANTHROPIC_CHAT_MODEL || "claude-sonnet-5"
-    : "z-ai/glm-5.2");
+  "openai/gpt-5.6-luna";
 
-// Embedding model for the viral-learning retrieval loop. OpenRouter serves
-// OpenAI's embedding models via its GA /api/v1/embeddings endpoint, so we reuse
-// the same OPENROUTER_API_KEY — no new provider. text-embedding-3-small is
+// Embedding model for the viral-learning retrieval loop. OpenAI serves this
+// model directly. text-embedding-3-small is
 // 1536-dim (must match db/migration-088 `vector(1536)`); a model swap that
 // changes the width needs a matching migration + re-embed.
 export const EMBEDDING_MODEL =
-  process.env.OPENROUTER_EMBEDDING_MODEL || "openai/text-embedding-3-small";
+  process.env.OPENAI_EMBEDDING_MODEL ||
+  process.env.OPENROUTER_EMBEDDING_MODEL ||
+  "openai/text-embedding-3-small";
 export const EMBEDDING_DIM = 1536;
 
 const OPENROUTER_BASE_URL =
@@ -301,6 +296,28 @@ export async function embedText(
   const model = opts.model || EMBEDDING_MODEL;
   const deadline = AbortSignal.timeout(Math.max(1, opts.timeoutMs ?? EMBED_TIMEOUT_MS));
   const signal = opts.signal ? AbortSignal.any([opts.signal, deadline]) : deadline;
+  {
+    const { routesToNativeOpenAI, embedTextOpenAI } = await import("./openai");
+    if (routesToNativeOpenAI(model)) {
+      const result = await embedTextOpenAI(texts, { model, signal });
+      for (const [index, vector] of result.embeddings.entries()) {
+        if (vector.length !== EMBEDDING_DIM) {
+          throw new Error(
+            `OpenAI embeddings: vector ${index} has width ${vector.length}, expected ${EMBEDDING_DIM}`,
+          );
+        }
+      }
+      if (opts.workspaceId) {
+        await logOpenRouterUsage(
+          "embed_posts",
+          result.model,
+          { prompt_tokens: result.promptTokens },
+          opts.workspaceId,
+        );
+      }
+      return result;
+    }
+  }
   const res = await fetchWithRetry(
     `${OPENROUTER_BASE_URL}/embeddings`,
     {
@@ -491,20 +508,12 @@ export function estimatedUsage(promptText: string, outputText: string): Usage {
 // Reasoning tier — the chat agent and voice synthesis. Alias of CHAT_MODEL.
 export const REASONING_MODEL = CHAT_MODEL;
 
-// Background tier — templatize + hook extraction. Defaults to GLM-5.2 as well
-// (5.2 is both cheaper and stronger than 5.1, so there's no reason to keep the
-// mechanical tasks on the older model) — EXCEPT under the Anthropic flag, where
-// these small forced-tool jobs (idea briefs, lead-magnet assessment/repair,
-// voice distillation, chat titles) run on Haiku 4.5 directly on the Anthropic
-// key instead of riding openrouter/auto into GLM. That's the whole point of the
-// flag: one provider, one bill, and no dependence on the OpenRouter key's limit.
-// Override per environment with ANTHROPIC_BACKGROUND_MODEL, or point the whole
-// tier anywhere with OPENROUTER_BACKGROUND_MODEL.
+// Background tier — templatize + hook extraction. Defaults to Luna so the
+// former Haiku jobs use the same native OpenAI transport and accounting path.
 export const BACKGROUND_MODEL =
+  process.env.OPENAI_BACKGROUND_MODEL ||
   process.env.OPENROUTER_BACKGROUND_MODEL ||
-  (process.env.AI_PROVIDER === "anthropic"
-    ? process.env.ANTHROPIC_BACKGROUND_MODEL || "anthropic/claude-haiku-4.5"
-    : CHAT_MODEL);
+  CHAT_MODEL;
 
 // GLM-5.2 reasoning policy. OpenRouter currently defaults this model to High,
 // but we send it explicitly so a provider/default change cannot silently alter
@@ -635,13 +644,9 @@ export async function completeChat(opts: {
   sessionId?: string;
 }): Promise<CompleteResult> {
   const model = opts.model || BACKGROUND_MODEL;
-  // Provider seam: Anthropic serves Claude models when the flag is on — in
-  // BOTH the bare (`claude-sonnet-5`) and OpenRouter-prefixed
-  // (`anthropic/claude-sonnet-5`) forms, since the app's writer/fallback/vision
-  // defaults use the prefixed slug. Dynamic import keeps the graph acyclic.
   {
-    const { shouldUseAnthropic, completeChatAnthropic } = await import("./anthropic");
-    if (shouldUseAnthropic(model)) return completeChatAnthropic({ ...opts, model });
+    const { routesToNativeOpenAI, completeChatOpenAI } = await import("./openai");
+    if (routesToNativeOpenAI(model)) return completeChatOpenAI({ ...opts, model });
   }
   const body: Record<string, unknown> = {
     model,
@@ -751,6 +756,12 @@ export async function generateImage(opts: {
 }): Promise<ImageGenerationResult> {
   const outputFormat = opts.outputFormat ?? "png";
   const requestedModel = opts.model || IMAGE_GENERATION_MODEL;
+  {
+    const { routesToNativeOpenAI, generateImageOpenAI } = await import("./openai");
+    if (routesToNativeOpenAI(requestedModel)) {
+      return generateImageOpenAI({ ...opts, outputFormat, model: requestedModel });
+    }
+  }
   const body: Record<string, unknown> = {
     model: requestedModel,
     prompt: opts.prompt,
@@ -894,12 +905,10 @@ export async function* streamChat(opts: {
   sessionId?: string;
 }): AsyncGenerator<StreamDelta> {
   const model = opts.model || CHAT_MODEL;
-  // Provider seam (streaming): text-only Anthropic path for Claude models
-  // (bare or anthropic/-prefixed) when the flag is on.
   {
-    const { shouldUseAnthropic, streamChatAnthropic } = await import("./anthropic");
-    if (shouldUseAnthropic(model)) {
-      yield* streamChatAnthropic({ ...opts, model });
+    const { routesToNativeOpenAI, streamChatOpenAI } = await import("./openai");
+    if (routesToNativeOpenAI(model)) {
+      yield* streamChatOpenAI({ ...opts, model });
       return;
     }
   }
@@ -1112,6 +1121,9 @@ export async function* streamChat(opts: {
 // preserves that split so mixed system/tool breakpoints bill exactly.
 export const NEWS_SEARCH_MODEL_PRICING = {
   "google/gemini-3.1-flash-lite": { input: 0.25, output: 1.5, cachedInput: 0.025 },
+  // Historical rows remain priced for cost-dashboard accuracy, but are
+  // excluded from SUPPORTED_NEWS_MODELS below and cannot be selected for new
+  // discovery calls.
   "anthropic/claude-haiku-4.5": {
     input: 1.0,
     output: 5.0,
@@ -1119,10 +1131,6 @@ export const NEWS_SEARCH_MODEL_PRICING = {
     cacheWrite: 2.0,
     cacheWrite5m: 1.25,
   },
-  // Supported for news under AI_PROVIDER=anthropic: the Anthropic web_search
-  // server tool runs on Sonnet 5 (verified — Haiku 4.5 rejects it), so the
-  // flag's default news model is Sonnet 5 via the adapter. Same rates as the
-  // main table's row below.
   "anthropic/claude-sonnet-5": {
     input: 2.0,
     output: 10.0,
@@ -1139,7 +1147,9 @@ export const NEWS_SEARCH_MODEL_PRICING = {
   "z-ai/glm-5.2": { input: 0.93, output: 3.0, cachedInput: 0.18 },
 } as const;
 
-export const SUPPORTED_NEWS_MODELS = Object.keys(NEWS_SEARCH_MODEL_PRICING);
+export const SUPPORTED_NEWS_MODELS = Object.keys(NEWS_SEARCH_MODEL_PRICING).filter(
+  (model) => !model.startsWith("anthropic/"),
+);
 
 const OPENROUTER_PRICING: Record<
   string,
@@ -1338,12 +1348,8 @@ export async function logOpenRouterUsage(
     cacheWriteTokens: cacheWrite,
     costUsd,
   } = openRouterUsageCost(model, usage);
-  // Attribute spend to whoever actually served it. A Claude model (bare or
-  // anthropic/-prefixed) is served by Anthropic ONLY when the flag routes it
-  // there — with the flag off, anthropic/claude-* genuinely runs on OpenRouter,
-  // so it must stay labeled openrouter. shouldUseAnthropic encodes exactly that.
-  const { shouldUseAnthropic } = await import("./anthropic");
-  const provider = shouldUseAnthropic(model) ? "anthropic" : "openrouter";
+  const { routesToNativeOpenAI } = await import("./openai");
+  const provider = routesToNativeOpenAI(model) ? "openai" : "openrouter";
   try {
     const sb = supabaseAdmin();
     const { error } = await sb.from("usage_events").insert({

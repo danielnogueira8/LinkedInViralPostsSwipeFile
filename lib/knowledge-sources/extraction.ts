@@ -21,7 +21,7 @@ type ChunkRow = {
   content: string;
 };
 
-export const KNOWLEDGE_EXTRACTION_MODEL = "anthropic/claude-haiku-4.5";
+export const KNOWLEDGE_EXTRACTION_MODEL = "openai/gpt-5.6-luna";
 export const KNOWLEDGE_EXTRACTION_BATCH_SIZE = 4;
 export const KNOWLEDGE_EXTRACTION_MAX_ITEMS = 4;
 const KNOWLEDGE_EXTRACTION_MAX_TOKENS = 2_600;

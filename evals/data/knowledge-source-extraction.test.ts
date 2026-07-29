@@ -43,7 +43,7 @@ describe("Knowledge Source extraction", () => {
     const chunks = Array.from({ length: 15 }, (_, ordinal) => ({ ordinal }));
 
     expect(KNOWLEDGE_EXTRACTION_MODEL).toBe(
-      "anthropic/claude-haiku-4.5",
+      "openai/gpt-5.6-luna",
     );
     expect(KNOWLEDGE_EXTRACTION_BATCH_SIZE).toBe(4);
     expect(KNOWLEDGE_EXTRACTION_MAX_ITEMS).toBe(4);

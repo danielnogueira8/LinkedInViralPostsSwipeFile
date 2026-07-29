@@ -15,7 +15,6 @@ const mocks = vi.hoisted(() => ({
   runCreatorStyleGeneration: vi.fn(),
   runVoiceGeneration: vi.fn(),
   runDailyPipeline: vi.fn(),
-  setAnthropicKey: vi.fn(),
   revalidatePath: vi.fn(),
   claimWorkspaceCost: vi.fn(async () => "cost-claim-1"),
   releaseWorkspaceCost: vi.fn(async () => undefined),
@@ -45,10 +44,6 @@ vi.mock("@/lib/agent/rate-limit", () => ({
   MONTHLY_BUDGET_USD: 5,
   BATCH_JOB_COST_RESERVE_USD: 0.35,
   VOICE_JOB_COST_RESERVE_USD: 0.2,
-}));
-
-vi.mock("@/lib/claude", () => ({
-  setAnthropicKey: mocks.setAnthropicKey,
 }));
 
 vi.mock("@/lib/lead-magnet-image-generation", () => ({
@@ -500,7 +495,6 @@ describe("background job worker", () => {
     const result = await drainBackgroundJobs({ limit: 1, workerId: "worker-1" });
 
     expect(result).toMatchObject({ claimed: 1, completed: 1, requeued: 0, failed: 0 });
-    expect(mocks.setAnthropicKey).toHaveBeenCalled();
     expect(mocks.runDailyPipeline).toHaveBeenCalledWith("ws-1", { runId: "run-1" });
     expect(mocks.markJobDone).toHaveBeenCalledWith(
       expect.objectContaining({ id: "scrape-job-1", locked_by: "worker-1" }),
