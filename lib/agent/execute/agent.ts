@@ -5628,6 +5628,11 @@ async function* runReadOnlyOrchestratorCore(
   // one here dropped fully-modelable scraped posts whose url column is null
   // from the candidate pool for no modeling-quality reason. When a url IS
   // present it must still be genuinely canonical (not malformed/untrusted).
+  steps = advancePlanStep(steps, {
+    id: "filter_verified_draft_sources",
+    label: "Filtering the verified source set",
+  });
+  yield { type: "plan_update", steps };
   const canonicalPool = modeledSourcePool
     .flatMap((source) =>
       source.kind === "workspace_post" &&
@@ -5646,6 +5651,8 @@ async function* runReadOnlyOrchestratorCore(
         : [],
     )
     .slice(0, expectedDrafts + 5);
+  steps = completeActivePlanSteps(steps);
+  yield { type: "plan_update", steps };
   // The durable one-source-per-draft BATCH runs only when the workspace can
   // actually supply a distinct verified source for every requested draft.
   // When the chip asks for more drafts than there are distinct canonical
@@ -5953,6 +5960,11 @@ async function* runReadOnlyOrchestratorCore(
       ...input.writerInput.dependencies,
     },
   };
+  steps = advancePlanStep(steps, {
+    id: "apply_grounded_writer_intelligence",
+    label: "Applying your voice and source intelligence",
+  });
+  yield { type: "plan_update", steps };
   const prose = streamWriterProgress(proseInput, deps.runProse);
 
   try {
