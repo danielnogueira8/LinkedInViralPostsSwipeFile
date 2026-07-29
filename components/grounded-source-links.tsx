@@ -87,23 +87,43 @@ function SourceChip({ href, label }: { href: string; label: string }) {
   );
 }
 
-// One-at-a-time carousel of source cards that wraps (last → first). Prev/next
-// plus a dot per card. Rendered only when there is more than one card.
+const SOURCES_PER_PAGE = 3;
+
+// Three-at-a-time carousel of source cards that wraps (last page → first).
+// Prev/next retain the existing controls while each step advances one page.
 function SourceCarousel({ cards }: { cards: CitedPost[] }) {
-  const [index, setIndex] = useState(0);
+  const [page, setPage] = useState(0);
   const count = cards.length;
+  const pageCount = Math.ceil(count / SOURCES_PER_PAGE);
   // Clamp at render time (like DocumentLightbox) rather than via an effect, so
   // a shrunk card set — e.g. streaming cites that rehydrate to fewer cards —
-  // can never index out of bounds and crash the card below.
-  const safeIndex = Math.min(index, Math.max(0, count - 1));
+  // can never index out of bounds and crash the cards below.
+  const safePage = Math.min(page, Math.max(0, pageCount - 1));
+  const firstVisible = safePage * SOURCES_PER_PAGE;
+  const visibleCards = cards.slice(
+    firstVisible,
+    firstVisible + SOURCES_PER_PAGE,
+  );
+  const lastVisible = firstVisible + visibleCards.length;
   const go = (delta: number) =>
-    setIndex((i) => (((i + delta) % count) + count) % count);
+    setPage((current) =>
+      (((current + delta) % pageCount) + pageCount) % pageCount
+    );
 
   if (count === 0) return null;
 
   return (
     <div className="flex flex-col gap-2.5" aria-label="Verified sources">
-      <InlineSourceCard post={cards[safeIndex]} compact />
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+        {visibleCards.map((card) => (
+          <InlineSourceCard
+            key={card.id}
+            post={card}
+            compact
+            mediaLoading="eager"
+          />
+        ))}
+      </div>
       <div className="flex items-center justify-between gap-3">
         <button
           type="button"
@@ -114,15 +134,15 @@ function SourceCarousel({ cards }: { cards: CitedPost[] }) {
           <ChevronLeft className="h-4 w-4" aria-hidden />
         </button>
         <div className="flex items-center gap-1.5" aria-hidden>
-          {cards.map((card, i) => (
+          {Array.from({ length: pageCount }, (_, pageIndex) => (
             <button
-              key={card.id}
+              key={`source-page-${pageIndex}`}
               type="button"
-              onClick={() => setIndex(i)}
-              aria-label={`Go to source ${i + 1}`}
+              onClick={() => setPage(pageIndex)}
+              aria-label={`Go to source group ${pageIndex + 1}`}
               className={cn(
                 "h-1.5 rounded-full transition-all",
-                i === safeIndex
+                pageIndex === safePage
                   ? "w-4 bg-primary"
                   : "w-1.5 bg-border hover:bg-primary/40",
               )}
@@ -139,7 +159,7 @@ function SourceCarousel({ cards }: { cards: CitedPost[] }) {
         </button>
       </div>
       <p className="text-center text-[11px] text-muted-foreground tabular-nums">
-        Source {safeIndex + 1} of {count}
+        Sources {firstVisible + 1}–{lastVisible} of {count}
       </p>
     </div>
   );
@@ -159,11 +179,14 @@ export function GroundedSourceLinks({ artifacts }: { artifacts?: Artifact[] }) {
   );
 
   return (
-    // Center the sources and cap their width to roughly a Swipe File card, so
-    // the carousel reads as an editorial preview rather than a full-width block.
-    // Comfortable vertical spacing above/below (my-1.5) keeps it from crowding
-    // the answer text.
-    <div className="my-1.5 flex w-full max-w-[360px] flex-col gap-2.5 mx-auto">
+    // Use the same width cap as the conversation so three compact source cards
+    // fit without turning the carousel into a full-bleed surface.
+    <div
+      className={cn(
+        "my-1.5 mx-auto flex w-full flex-col gap-2.5",
+        cards.length > 1 ? "max-w-4xl" : "max-w-[360px]",
+      )}
+    >
       <div className="flex items-center gap-2 px-0.5">
         <ShieldCheck
           className="size-3.5 text-state-success"
