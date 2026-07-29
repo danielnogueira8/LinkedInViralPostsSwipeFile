@@ -11,6 +11,7 @@ const ALLOWED_ADMIN_APP_FILES = new Set([
   "app/api/backfill-post-types/route.ts",
   "app/api/backfill-status/route.ts",
   "app/api/cron/agent-loop/route.ts",
+  "app/api/cron/agent-inbox/route.ts", // service-only daily inbox generation
   "app/api/cron/daily-recovery/route.ts",
   "app/api/cron/daily/route.ts",
   "app/api/cron/edit-delta-distill/route.ts",
@@ -38,7 +39,10 @@ describe("authenticated database seams", () => {
   });
 
   test("the scoped client retains explicit workspace predicates", () => {
-    const source = readFileSync(resolve(ROOT, "lib/supabase-scoped.ts"), "utf8");
+    const source = readFileSync(
+      resolve(ROOT, "lib/supabase-scoped.ts"),
+      "utf8",
+    );
 
     expect(source).toContain('.eq("workspace_id", workspaceId)');
     expect(source).toContain("const sb = supabaseAdmin();");
@@ -58,7 +62,9 @@ describe("authenticated database seams", () => {
     const offenders = sourceFiles(APP).flatMap((path) => {
       const source = readFileSync(path, "utf8");
       if (!source.includes("getConnection(")) return [];
-      return /getConnection\([^,\n)]+\)/.test(source) ? [relative(ROOT, path)] : [];
+      return /getConnection\([^,\n)]+\)/.test(source)
+        ? [relative(ROOT, path)]
+        : [];
     });
 
     expect(offenders).toEqual([]);

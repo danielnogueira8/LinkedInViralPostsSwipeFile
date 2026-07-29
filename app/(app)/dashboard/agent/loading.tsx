@@ -6,14 +6,17 @@ export default function AgentLoading() {
     <PageShell width="full" aria-busy="true">
       <PageHeader
         title="Your Agent"
-        description="Set this week's direction, review drafts, and act on opportunities your agent found."
+        description="Fresh, evidence-backed directions for what to write next."
       />
       <LoadingState label="Loading your agent" />
-      <div className="animate-pulse rounded-2xl border border-border bg-card/60 p-4 sm:p-5">
-        <div className="h-14 rounded-xl bg-muted" />
-        <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-7">
-          {Array.from({ length: 7 }).map((_, index) => (
-            <div key={index} className="h-56 rounded-xl bg-muted/70" />
+      <div className="animate-pulse rounded-[1.75rem] border border-border bg-card/60 p-4 sm:p-6">
+        <div className="h-12 w-72 rounded-xl bg-muted" />
+        <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {Array.from({ length: 3 }).map((_, index) => (
+            <div
+              key={index}
+              className="h-[30rem] rounded-[1.75rem] bg-muted/70"
+            />
           ))}
         </div>
       </div>
