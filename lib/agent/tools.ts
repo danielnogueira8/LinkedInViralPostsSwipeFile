@@ -27,10 +27,11 @@ import {
   isVariedDiscoverySearch,
   variedDiscoveryOrder,
 } from "@/lib/discovery-selection";
+import { discoverSourcePosts } from "@/lib/source-post-discovery";
 import {
-  discoveryThresholdFilter,
-  getDiscoveryThresholds,
-} from "@/lib/discovery-thresholds";
+  claimDiscoveryRotationCursor,
+  recentlyUsedDiscoverySourceIds,
+} from "@/lib/discovery-history";
 
 // ---------------------------------------------------------------------------
 // Agent tools — read-only swipe-file / voice / brand access for the chat agent.
@@ -41,9 +42,9 @@ import {
 // tool definitions. Write/mutation tools are intentionally NOT exposed here in
 // v1 — the chat can read the swipe file and draft, but not modify accounts.
 //
-// Kept deliberately close to register.ts so the two don't drift: same POST_COLS,
-// same filters, same normalizeEmbed. If the MCP query logic changes, mirror it
-// here.
+// Source-post discovery is shared with MCP and the web Swipe File through
+// lib/source-post-discovery.ts. This adapter owns only Cowork-specific result
+// shaping, ranking, and tool behavior.
 // ---------------------------------------------------------------------------
 
 // Hard caps on generated post/hook length. render_post's cap is well above the
@@ -139,8 +140,8 @@ export function normalizeToolCallArguments(name: string, raw: string): string {
 //     scrape date once at the top level (scrape.scraped_at).
 //   visual_kind — almost always null; the model never acts on it.
 //   is_viral — the model never reasons over it; normalizeEmbed strips it before
-//     the row is returned. It IS selected (below) because it is the resilient
-//     viral gate: see passesWorkspaceViral.
+//     the row is returned. It IS selected because the canonical source-post
+//     discovery operation uses it as the resilient global gate.
 // Keeps text + engagement + author name/niche + post_url/id (for citing). This
 // is the same "stop shipping fields the model never consumes" cut as #437.
 //
@@ -149,40 +150,12 @@ export function normalizeToolCallArguments(name: string, raw: string): string {
 // so the agent can never starve to empty while the dashboard is full — and
 // LEFT-embeds THIS workspace's per-workspace classification (default embed, NOT
 // !inner: a post with no classification row for this workspace is still
-// returned). passesWorkspaceViral then drops only the posts this workspace has
-// EXPLICITLY reclassified as non-viral (its own stricter thresholds). A missing
-// row falls back to the global verdict. The embed is filtered per query via
-// .eq("workspace_post_classification.workspace_id", workspaceId) so it carries
-// only this workspace's row. This ends the read/write split: the agent and the
-// Swipe File now agree for the same workspace/window.
+// returned). The canonical discovery operation drops only posts this workspace
+// EXPLICITLY reclassified as non-viral. A missing row falls back to the global
+// verdict, keeping Cowork and the Swipe File aligned.
 const POST_COLS =
   "id, text, post_url, posted_at, reactions, comments, reposts, media_type, post_type, is_viral, accounts!inner(name, niche), workspace_post_classification(is_viral)";
 
-
-// Sentinel UUID that matches no rows, used so an `.in("account_id", [])` never
-// degenerates into "no filter" (which would leak other workspaces' posts).
-const NO_ROWS_SENTINEL = "00000000-0000-0000-0000-000000000000";
-
-// Resilient per-workspace viral eligibility (see POST_COLS). The query already
-// gates on the GLOBAL posts.is_viral=true (the Swipe File's set), then LEFT-
-// embeds this workspace's classification. Keep the post UNLESS this workspace
-// has an explicit row demoting it to non-viral. A MISSING row (the creator was
-// added after these posts were scraped, or the dual-write failed — the cause of
-// the "no verified evidence" starvation) falls back to the global verdict, so
-// the agent never returns empty while the dashboard is full.
-type WpcEmbed = {
-  workspace_post_classification?:
-    | Array<{ is_viral: boolean }>
-    | { is_viral: boolean }
-    | null;
-};
-function passesWorkspaceViral<T extends WpcEmbed>(row: T): boolean {
-  const wpc = row.workspace_post_classification;
-  const first = Array.isArray(wpc) ? wpc[0] : wpc;
-  // Row present → honor the workspace's own verdict. No row → keep (the query
-  // already gated to the global is_viral=true set).
-  return first ? first.is_viral === true : true;
-}
 
 // Drops the workspace_post_classification join wrapper and the global is_viral
 // gate column (both query filters, not fields the model needs) and unwraps the
@@ -193,14 +166,14 @@ function normalizeEmbed<
     workspace_post_classification?: unknown;
     is_viral?: unknown;
   },
->(p: T) {
+>(p: T): T & { accounts: unknown } {
   const { workspace_post_classification, is_viral, ...rest } = p;
   void workspace_post_classification;
   void is_viral;
   return {
     ...rest,
     accounts: Array.isArray(p.accounts) ? (p.accounts[0] ?? null) : p.accounts,
-  };
+  } as T & { accounts: unknown };
 }
 
 // Wrap the scraped post `text` field so the model sees it as DATA, not
@@ -313,7 +286,6 @@ const searchViralPosts: ToolFn = async (args, workspaceId, signal, context) => {
     const accountIds = await trackedAccountIdsForTool(workspaceId, signal);
     signal?.throwIfAborted();
     const sb = supabaseAdmin();
-    const discoveryThresholds = await getDiscoveryThresholds(workspaceId);
     const sortKey = (args.sort as keyof typeof SORT_COLUMN) ?? "viral";
     const sortCol = SORT_COLUMN[sortKey] ?? SORT_COLUMN.viral;
     const ascending = args.dir === "asc";
@@ -328,55 +300,42 @@ const searchViralPosts: ToolFn = async (args, workspaceId, signal, context) => {
       ? Math.min(finalLimit * 6, 120)
       : finalLimit;
 
-    let q = sb
-      .from("posts")
-      .select(POST_COLS)
-      .in("account_id", accountIds.length ? accountIds : [NO_ROWS_SENTINEL])
-      .eq("is_viral", true)
-      .or(discoveryThresholdFilter(discoveryThresholds))
-      .eq("workspace_post_classification.workspace_id", workspaceId)
-      .is("accounts.archived_at", null)
-      // Modeling selection ranks RECENCY-first: virality is already the
-      // eligibility gate (the is_viral gate above), and a pure viral-score
-      // ranking made every chat pick the same mega-viral posts. Analytical
-      // queries keep their explicit sort untouched.
-      .order(autoSelectModelingSources ? "posted_at" : sortCol, {
-        ascending: autoSelectModelingSources ? false : ascending,
-        nullsFirst: false,
-      })
-      .limit(fetchLimit);
-
-    // Niche names are categorical and user-entered prompts commonly vary only
-    // in casing ("saas" vs "SaaS"). `ilike` without wildcards preserves exact
-    // punctuation/spacing while making that identity comparison case-insensitive.
-    if (args.niche) q = q.ilike("accounts.niche", args.niche as string);
-    if (typeof args.query === "string" && args.query.trim()) {
-      q = q.textSearch("text", args.query.trim(), {
-        type: "websearch",
-        config: "english",
-      });
-    }
     const sinceIso = sinceCutoff(args.since as string | undefined);
     const fromIso = parseDayStart(args.from as string | undefined);
     const toIso = parseDayEnd(args.to as string | undefined);
-    if (sinceIso) q = q.gte("posted_at", sinceIso);
-    if (fromIso) q = q.gte("posted_at", fromIso);
-    if (toIso) q = q.lte("posted_at", toIso);
-    if (typeof args.min_reactions === "number")
-      q = q.gte("reactions", args.min_reactions);
-    if (typeof args.min_comments === "number")
-      q = q.gte("comments", args.min_comments);
-    if (args.post_type) q = q.eq("post_type", args.post_type as string);
-    if (signal) q = q.abortSignal(signal);
-
-    const { data, error } = await q;
-    if (error) return err(error.message);
-    // Resilient per-workspace viral gate: drop only posts THIS workspace has
-    // explicitly demoted; a missing classification row keeps the global verdict
-    // (never starve while the Swipe File is full). See passesWorkspaceViral.
-    const normalizedCandidates = (data ?? [])
-      .filter(passesWorkspaceViral)
-      .map(normalizeEmbed);
+    const discovery = await discoverSourcePosts(sb, {
+      workspaceId,
+      columns: POST_COLS,
+      accountIds,
+      filters: {
+        niche:
+          typeof args.niche === "string" ? args.niche : undefined,
+        query:
+          typeof args.query === "string" ? args.query : undefined,
+        since: sinceIso,
+        from: fromIso,
+        to: toIso,
+        minReactions:
+          typeof args.min_reactions === "number"
+            ? args.min_reactions
+            : undefined,
+        minComments:
+          typeof args.min_comments === "number"
+            ? args.min_comments
+            : undefined,
+        postType:
+          typeof args.post_type === "string" ? args.post_type : undefined,
+      },
+      order: {
+        // Modeling selection ranks recency-first; analytical searches retain
+        // their requested sort.
+        column: autoSelectModelingSources ? "posted_at" : sortCol,
+        ascending: autoSelectModelingSources ? false : ascending,
+      },
+      window: { kind: "limit", limit: fetchLimit },
+      signal,
+    });
+    const normalizedCandidates = discovery.rows.map(normalizeEmbed);
     const candidates = autoSelectModelingSources
       ? normalizedCandidates.map(withCanonicalModelingSourceUrl)
       : normalizedCandidates;
@@ -387,16 +346,19 @@ const searchViralPosts: ToolFn = async (args, workspaceId, signal, context) => {
       return { ok: true, count: posts.length, posts };
     }
 
-    const usedIds = await recentlyUsedSourceIds(workspaceId, signal);
+    const usedIds = await recentlyUsedDiscoverySourceIds(workspaceId, {
+      client: sb,
+      signal,
+    });
     // Cross-chat cooldown for modeling: posts turned into a draft within the
     // last MODELING_SOURCE_COOLDOWN_DAYS are withheld while anything fresher
     // exists (selection keeps them as a last-resort top-up only).
     const cooldownIds = autoSelectModelingSources
-      ? await usedSourceIdsWithin(
-          workspaceId,
-          MODELING_SOURCE_COOLDOWN_DAYS,
+      ? await recentlyUsedDiscoverySourceIds(workspaceId, {
+          client: sb,
           signal,
-        )
+          horizonDays: MODELING_SOURCE_COOLDOWN_DAYS,
+        })
       : new Set<string>();
     const surfacedIds = getSurfacedIds(workspaceId);
     // Both branches below rotate the same durable per-workspace cursor: the
@@ -404,7 +366,10 @@ const searchViralPosts: ToolFn = async (args, workspaceId, signal, context) => {
     // start, see its own comment below), so without this the confirmed-
     // modeling branch returned the literal same top-ranked post on most real
     // requests — the durable claim below is what actually varies results.
-    const cursor = await nextRotationCursor(workspaceId, signal);
+    const cursor = await claimDiscoveryRotationCursor(workspaceId, {
+      client: sb,
+      signal,
+    });
     signal?.throwIfAborted();
     // Server-confirmed auto-modeling uses the single secure selection policy.
     // Ordinary idea discovery retains its pre-existing stable rank + rotation.
@@ -526,12 +491,6 @@ const TOP_BATCH_MAX_WINDOW_DAYS = 30;
 // widen to 30 days instead of presenting a thin week as "what's working".
 const TOP_BATCH_SPARSE_BELOW = 3;
 
-// How far back a source post counts as "recently used" for idea generation.
-// Matches the batch adapted-horizon (8 weeks): a post adapted within this window
-// should be deprioritized as an idea (avoid repeating yourself), but an older one
-// is fair to revisit for a fresh audience.
-const IDEA_USED_HORIZON_DAYS = 56;
-
 // Hard cooldown for AUTO-MODELING: once a source post has been turned into a
 // draft, it cannot be re-picked for this many days — on ANY chat — unless the
 // eligible pool literally can't fill the request (small swipe files never
@@ -574,102 +533,6 @@ function getSurfacedIds(workspaceId: string): Set<string> {
     (r) => r.at > cutoff,
   );
   return new Set(entries.map((r) => r.id));
-}
-
-// Atomically claim the current durable per-workspace cursor and advance it for
-// the next caller. The database RPC serializes concurrent claims; there is no
-// read/upsert window in which two requests can receive the same cursor.
-async function nextRotationCursor(
-  workspaceId: string,
-  signal?: AbortSignal,
-): Promise<number> {
-  try {
-    signal?.throwIfAborted();
-    const sb = supabaseAdmin();
-    let claim = sb.rpc("claim_modeling_source_rotation_cursor", {
-      p_workspace_id: workspaceId,
-    });
-    if (signal) claim = claim.abortSignal(signal);
-    const { data, error } = await claim;
-    if (error) {
-      console.warn(
-        JSON.stringify({
-          modeling_source_rotation_cursor_claim_failed: {
-            workspace_id: workspaceId,
-            message: error.message,
-          },
-        }),
-      );
-      return 0;
-    }
-    const numeric = typeof data === "string" ? Number(data) : data;
-    return typeof numeric === "number" && Number.isFinite(numeric)
-      ? Math.trunc(numeric)
-      : 0;
-  } catch (error) {
-    if (signal?.aborted) throw error;
-    console.warn(
-      JSON.stringify({
-        modeling_source_rotation_cursor_error: {
-          workspace_id: workspaceId,
-          message: (error as Error).message,
-        },
-      }),
-    );
-    return 0; // best-effort: no rotation on error, exactly today's behavior
-  }
-}
-
-// Source-post ids this workspace has ALREADY drafted from recently — across BOTH
-// modeled batches AND interactive Cowork drafts (both stash meta.source_post_id
-// when a draft is modeled from a source). Used to rank ideas: a post already
-// turned into a draft is "most-mentioned" and should fall behind fresh ones, so
-// the agent doesn't keep pitching the same idea. Best-effort: on any read error
-// we return an empty set (no dedup) rather than fail the tool.
-async function usedSourceIdsWithin(
-  workspaceId: string,
-  horizonDays: number,
-  signal?: AbortSignal,
-): Promise<Set<string>> {
-  const sinceIso = new Date(
-    Date.now() - horizonDays * 24 * 60 * 60 * 1000,
-  ).toISOString();
-  const ids = new Set<string>();
-  try {
-    signal?.throwIfAborted();
-    let query = supabaseAdmin()
-      .from("chat_artifacts")
-      .select("meta")
-      .eq("workspace_id", workspaceId)
-      // Any draft carrying a source_post_id counts — batch OR Cowork. (We can't
-      // filter on meta->>source_post_id IS NOT NULL cheaply across shapes, so
-      // over-fetch a bounded window and filter in JS.)
-      .gte("created_at", sinceIso)
-      // Newest first, so if a workspace exceeds the cap the 1000 rows we keep are
-      // the MOST-RECENT ones (the repeats we most want to avoid), not an
-      // arbitrary slice. Without the order the cap made "which used-ids survive"
-      // undefined, so a recent repeat could slip through.
-      .order("created_at", { ascending: false })
-      .limit(1000);
-    if (signal) query = query.abortSignal(signal);
-    const { data } = await query;
-    for (const row of data ?? []) {
-      const id = (row as { meta?: { source_post_id?: string | null } }).meta
-        ?.source_post_id;
-      if (id) ids.add(id);
-    }
-  } catch (error) {
-    if (signal?.aborted) throw error;
-    /* best-effort: no dedup signal on error */
-  }
-  return ids;
-}
-
-async function recentlyUsedSourceIds(
-  workspaceId: string,
-  signal?: AbortSignal,
-): Promise<Set<string>> {
-  return usedSourceIdsWithin(workspaceId, IDEA_USED_HORIZON_DAYS, signal);
 }
 
 function pickLegacyIdeas<T extends { accounts?: unknown }>(
@@ -743,28 +606,19 @@ const getTopFromBatch: ToolFn = async (args, workspaceId, _signal, context) => {
     // Bounded to a fixed, generous multiple so this stays one cheap query.
     const CANDIDATE_MULTIPLIER = 6;
     const candidateCap = Math.min(finalLimit * CANDIDATE_MULTIPLIER, 120);
-    let q = sb
-      .from("posts")
-      .select(POST_COLS)
-      .in("account_id", accountIds)
-      .eq("is_viral", true)
-      .eq("workspace_post_classification.workspace_id", workspaceId)
-      .is("accounts.archived_at", null)
-      .gte("posted_at", sinceIso)
-      .order("reactions", { ascending: false, nullsFirst: false })
-      .limit(candidateCap);
-    // Optional post-type filter (regular vs lead_magnet). Without it "top 5
-    // regular posts" would silently include lead-magnet posts, since the ranking
-    // is purely by reactions. Mirrors search_viral_posts's post_type filter.
-    if (args.post_type) q = q.eq("post_type", args.post_type as string);
-    const { data, error } = await q;
-    if (error) return err(error.message);
-    // Resilient per-workspace viral gate: drop only posts THIS workspace has
-    // explicitly demoted; a missing classification row keeps the global verdict
-    // (never starve while the Swipe File is full). See passesWorkspaceViral.
-    const normalizedCandidates = (data ?? [])
-      .filter(passesWorkspaceViral)
-      .map(normalizeEmbed);
+    const discovery = await discoverSourcePosts(sb, {
+      workspaceId,
+      columns: POST_COLS,
+      accountIds,
+      filters: {
+        since: sinceIso,
+        postType:
+          typeof args.post_type === "string" ? args.post_type : undefined,
+      },
+      order: { column: "reactions", ascending: false },
+      window: { kind: "limit", limit: candidateCap },
+    });
+    const normalizedCandidates = discovery.rows.map(normalizeEmbed);
     const autoSelectModelingSources = context?.autoSelectModelingSources === true;
     const candidates = autoSelectModelingSources
       ? normalizedCandidates.map(withCanonicalModelingSourceUrl)
@@ -776,7 +630,9 @@ const getTopFromBatch: ToolFn = async (args, workspaceId, _signal, context) => {
     // most recent posts" for ideation: recency now has real candidates to
     // rank, not just whichever 5 already won on reactions. Reactions still
     // breaks ties among equally-recent posts via the pre-sorted input.
-    const usedIds = await recentlyUsedSourceIds(workspaceId);
+    const usedIds = await recentlyUsedDiscoverySourceIds(workspaceId, {
+      client: sb,
+    });
     const surfacedIds = getSurfacedIds(workspaceId);
     const byRecency = [...candidates].sort(
       (a, b) =>
@@ -788,7 +644,9 @@ const getTopFromBatch: ToolFn = async (args, workspaceId, _signal, context) => {
     // to hardcode this to 0, which meant the in-memory-only surfacedIds map
     // (best-effort, resets on every cold start) was the sole rotation signal
     // on most real requests, producing the same top-ranked post every time.
-    const cursor = await nextRotationCursor(workspaceId);
+    const cursor = await claimDiscoveryRotationCursor(workspaceId, {
+      client: sb,
+    });
     const modeledPool = autoSelectModelingSources
       ? selectModelingSourcePool({
           candidates: byRecency,

@@ -90,6 +90,55 @@ afterEach(() => {
 });
 
 describe("MCP post visual assets", () => {
+  test("sanitizes canonical discovery read failures", async () => {
+    dbRef.current = makeFakeSupabase({
+      posts: { error: { message: "relation workspace_secret does not exist" } },
+    });
+
+    const result = json(
+      await tools().search_viral_posts(
+        { strict_ranking: true },
+        extra(),
+      ),
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      error: "Something went wrong processing that request.",
+    });
+  });
+
+  test("uses the canonical case-insensitive niche and full-text topic filters", async () => {
+    dbRef.current = makeFakeSupabase({ posts: { rows: [] } });
+
+    await tools().search_viral_posts(
+      {
+        niche: "AI & SaaS",
+        query: "pricing strategy",
+        strict_ranking: true,
+      },
+      extra(),
+    );
+
+    const query = queryFor(dbRef.current, "posts");
+    expect(
+      query?.filters.find((filter) => filter.method === "ilike")?.args,
+    ).toEqual(["accounts.niche", "AI & SaaS"]);
+    expect(
+      query?.filters.find((filter) => filter.method === "textSearch")?.args,
+    ).toEqual([
+      "text",
+      "pricing strategy",
+      { type: "websearch", config: "english" },
+    ]);
+    expect(
+      query?.filters.find(
+        (filter) =>
+          filter.method === "eq" && filter.args[0] === "accounts.niche",
+      ),
+    ).toBeUndefined();
+  });
+
   test("rotates repeated discovery searches but preserves explicit strict ranking", async () => {
     const rows = Array.from({ length: 20 }, (_, index) => ({
       ...POST,
