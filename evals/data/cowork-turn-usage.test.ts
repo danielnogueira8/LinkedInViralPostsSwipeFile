@@ -1,10 +1,41 @@
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test } from "vitest";
+import { TaskUsageSummary } from "@/app/(app)/dashboard/cowork-trust-details";
 import {
   parseCoworkTurnUsage,
   researchSourcesFromArtifact,
 } from "@/lib/cowork-turn-usage";
 
 describe("Cowork turn trust metadata", () => {
+  test("the per-message credit label never exposes provider or model details", () => {
+    const usage = parseCoworkTurnUsage({
+      total_credits: 4,
+      total_cost_usd: 0.019,
+      stages: [
+        {
+          kind: "writing",
+          credits: 4,
+          cost_usd: 0.019,
+          models: ["secret-provider/secret-model"],
+        },
+      ],
+    });
+    if (!usage) throw new Error("usage fixture must be valid");
+
+    const html = renderToStaticMarkup(
+      createElement(TaskUsageSummary, { usage }),
+    );
+
+    expect(html).toContain("~4 credits");
+    expect(html).not.toContain("<details");
+    expect(html).not.toContain("<summary");
+    expect(html).not.toContain("title=");
+    expect(html).not.toContain("secret-provider");
+    expect(html).not.toContain("secret-model");
+    expect(html).not.toContain("provider cost");
+  });
+
   test("accepts a bounded usage breakdown and rejects malformed values", () => {
     expect(
       parseCoworkTurnUsage({
