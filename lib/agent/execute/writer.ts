@@ -2600,7 +2600,7 @@ export async function runModeledDraftSlot(
   const reportSlotProgress = (stage: WriterProgressStage): void => {
     input.engineInput.onProgressStage?.({
       ...stage,
-      id: `slot_${input.slot.index}_${stage.id}`,
+      id: `${input.slot.id}:${input.source.id}:${stage.id}`,
     });
   };
 

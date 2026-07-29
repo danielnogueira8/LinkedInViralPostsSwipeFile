@@ -2977,7 +2977,7 @@ describe("writer plan narration (narratePlan)", () => {
         acceptedBySlot.set(request.slotIndex, request.artifact);
         return true;
       }),
-      replaceSlotSource: vi.fn(async () => false),
+      replaceSlotSource: vi.fn(async () => true),
       complete: vi.fn(async () => ({
         kind: "complete" as const,
         artifacts: [...acceptedBySlot.entries()]
@@ -3000,8 +3000,40 @@ describe("writer plan narration (narratePlan)", () => {
               id: "check_ai_tells",
               label: "Checking for AI tells",
             });
+            if (slotInput.source.id === "durable-source-1") {
+              writerInput.onFinalizerDecision?.({
+                origin: "direct_writer",
+                outcome: "rejected",
+                rejectionCode: "too_short",
+                sourceVerified: true,
+                edited: false,
+                repaired: false,
+                samenessRewrote: false,
+              });
+              yield {
+                type: "error" as const,
+                code: "draft_engine_exhausted",
+                message: "The first source was not model-ready.",
+                recovery: "continue" as const,
+              };
+              yield {
+                type: "done" as const,
+                terminalReason: "error" as const,
+                message: {
+                  content: "Trying another verified source.",
+                  tool_calls: null,
+                  artifacts: [],
+                  toolMessages: [],
+                  inputTokens: 20,
+                  outputTokens: 10,
+                },
+              };
+              return;
+            }
             const body =
-              slotInput.slot.index === 0 ? COMPLETE_POST : ANOTHER_POST;
+              slotInput.source.id === "durable-source-2"
+                ? ANOTHER_POST
+                : COMPLETE_POST;
             yield {
               type: "artifact" as const,
               artifact: {
@@ -3045,6 +3077,12 @@ describe("writer plan narration (narratePlan)", () => {
               kind: "workspace_post",
               url: "https://linkedin.com/posts/durable-source-2",
               text: "Second durable source post.",
+            },
+            {
+              id: "durable-source-3",
+              kind: "workspace_post",
+              url: "https://linkedin.com/posts/durable-source-3",
+              text: "Reserve durable source post.",
             },
           ],
         },
