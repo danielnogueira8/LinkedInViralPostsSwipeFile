@@ -22,11 +22,7 @@ import {
 } from "@/components/ui/dialog";
 import { Loader2, CheckCircle2, AlertTriangle } from "lucide-react";
 import { fetchJson } from "@/lib/api-fetch";
-import {
-  getLinkedInConnectionPath,
-  getLinkedInConnectEndpoint,
-  type LinkedInConnectionSurface,
-} from "@/lib/linkedin-integration-destination";
+import { LINKEDIN_INTEGRATIONS_PATH } from "@/lib/linkedin-integration-destination";
 
 type ConnState = {
   status: "active" | "disconnected";
@@ -47,15 +43,11 @@ function LinkedInMark({ className = "" }: { className?: string }) {
   );
 }
 
-// Shared LinkedIn publishing connection card used by Integrations and Settings.
+// LinkedIn publishing connection card used by Integrations.
 // Three states: not connected, connected, and disconnected/expired (Reconnect).
 // Distinct from "Tracked Accounts" (the creators the app scrapes) — this is
 // where WE post FROM.
-export function LinkedInPublishingCard({
-  returnTo = "settings",
-}: {
-  returnTo?: LinkedInConnectionSurface;
-}) {
+export function LinkedInPublishingCard() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [conn, setConn] = useState<ConnState>(null);
@@ -100,8 +92,8 @@ export function LinkedInPublishingCard({
     } else if (result === "connect_failed") {
       toast.error("Couldn't finish connecting LinkedIn. Please try again.");
     }
-    router.replace(getLinkedInConnectionPath(returnTo));
-  }, [searchParams, router, load, returnTo]);
+    router.replace(LINKEDIN_INTEGRATIONS_PATH);
+  }, [searchParams, router, load]);
 
   const connect = async () => {
     if (busy) return;
@@ -112,7 +104,7 @@ export function LinkedInPublishingCard({
         authUrl?: string;
         alreadyConnected?: boolean;
         error?: string;
-      }>(getLinkedInConnectEndpoint(returnTo), { method: "POST" });
+      }>("/api/integrations/linkedin?returnTo=integrations", { method: "POST" });
       // Already connected — don't start a new OAuth flow. Re-sync the card so it
       // shows the connected state and let the user know.
       if (data.ok && data.alreadyConnected) {
@@ -123,7 +115,7 @@ export function LinkedInPublishingCard({
       }
       if (!data.ok || !data.authUrl) throw new Error(data.error || "Couldn't start connecting.");
       // Hand off to Zernio's hosted OAuth; it redirects back to our finalize
-      // callback, which bounces back to the surface that initiated the flow.
+      // callback, which returns to Integrations.
       window.location.href = data.authUrl;
     } catch (e) {
       toast.error((e as Error).message);

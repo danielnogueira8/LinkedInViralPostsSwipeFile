@@ -55,7 +55,7 @@ export default async function IntegrationsPage() {
 
       <div className="space-y-4">
         <Suspense fallback={null}>
-          <LinkedInPublishingCard returnTo="integrations" />
+          <LinkedInPublishingCard />
         </Suspense>
 
         <LeadSharkCard
