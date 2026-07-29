@@ -83,6 +83,29 @@ beforeEach(() => {
   state.rowsByTable = {};
 });
 
+function missingSourcePostCountRpcDb(
+  posts: Record<string, unknown>[] = [],
+) {
+  return makeFakeSupabase(
+    { posts: { rows: posts } },
+    {
+      get_discovery_thresholds: {
+        data: {
+          regular: { enabled: true, minLikes: 100 },
+          leadMagnet: { enabled: true, minComments: 100 },
+        },
+      },
+      count_source_posts: {
+        error: {
+          code: "PGRST202",
+          message:
+            "Could not find the function public.count_source_posts in the schema cache",
+        } as never,
+      },
+    },
+  );
+}
+
 describe("Swipe File query contract", () => {
   test("filters category feeds directly by workspace membership", async () => {
     await fetchSwipePage({
@@ -362,6 +385,83 @@ describe("Swipe File query contract", () => {
       }),
     });
     expect(db.queries).toEqual([]);
+  });
+
+  test("falls back to the canonical scan when count_source_posts is absent from the schema cache", async () => {
+    const db = missingSourcePostCountRpcDb([
+      {
+        id: "source-1",
+        accounts: [{ archived_at: null }],
+        workspace_post_classification: [],
+      },
+      {
+        id: "source-2",
+        accounts: [{ archived_at: null }],
+        workspace_post_classification: [{ is_viral: true }],
+      },
+    ]);
+
+    await expect(
+      countSourcePosts(db.client as never, {
+        workspaceId: "workspace-with-stale-schema",
+        accountIds: ["11111111-1111-4111-8111-111111111111"],
+      }),
+    ).resolves.toBe(2);
+    expect(db.rpcs).toContainEqual({
+      name: "count_source_posts",
+      args: expect.any(Object),
+    });
+    expect(db.queries).toEqual([
+      expect.objectContaining({
+        table: "posts",
+        selectArg: expect.stringContaining("accounts!inner(id)"),
+      }),
+    ]);
+  });
+
+  test("does not hide unrelated count_source_posts failures", async () => {
+    const db = makeFakeSupabase(
+      {},
+      {
+        get_discovery_thresholds: {
+          data: {
+            regular: { enabled: true, minLikes: 100 },
+            leadMagnet: { enabled: true, minComments: 100 },
+          },
+        },
+        count_source_posts: {
+          error: {
+            code: "PGRST500",
+            message: "Database unavailable",
+          } as never,
+        },
+      },
+    );
+
+    await expect(
+      countSourcePosts(db.client as never, {
+        workspaceId: "workspace-with-read-failure",
+        accountIds: ["11111111-1111-4111-8111-111111111111"],
+      }),
+    ).rejects.toMatchObject({
+      name: "SourcePostDiscoveryError",
+      message: "Database unavailable",
+    });
+    expect(db.queries).toEqual([]);
+  });
+
+  test("the missing-RPC fallback preserves category workspace membership", async () => {
+    const db = missingSourcePostCountRpcDb();
+
+    await expect(
+      countSourcePosts(db.client as never, {
+        workspaceId: "workspace-with-stale-schema",
+        categoryId: "category-1",
+      }),
+    ).resolves.toBe(0);
+    expect(db.queries[0]?.selectArg).toContain(
+      "accounts!inner(id, workspace_accounts!inner())",
+    );
   });
 });
 
