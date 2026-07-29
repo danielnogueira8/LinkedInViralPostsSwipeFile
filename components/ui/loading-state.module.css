@@ -1,0 +1,48 @@
+@keyframes pixel-on {
+  0%,
+  100% {
+    opacity: 0.14;
+    transform: scale(0.82);
+  }
+
+  45% {
+    opacity: 0.92;
+    transform: scale(1);
+  }
+}
+
+@keyframes label-shimmer {
+  from {
+    background-position: 200% 0;
+  }
+
+  to {
+    background-position: -200% 0;
+  }
+}
+
+.pixel {
+  animation: pixel-on var(--loading-pixel-duration) ease-in-out
+    var(--loading-pixel-delay) infinite;
+}
+
+.label {
+  color: transparent;
+  background-image: linear-gradient(
+    90deg,
+    color-mix(in oklab, var(--muted-foreground) 78%, transparent) 35%,
+    var(--foreground) 50%,
+    color-mix(in oklab, var(--muted-foreground) 78%, transparent) 65%
+  );
+  background-position: 200% 0;
+  background-size: 200% 100%;
+  background-clip: text;
+  animation: label-shimmer 1.4s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .label,
+  .pixel {
+    animation: none;
+  }
+}

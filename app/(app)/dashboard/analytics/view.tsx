@@ -10,9 +10,9 @@ import {
   ExternalLink,
   Minus,
   RefreshCw,
-  Search,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { SearchField } from "@/components/ui/search-field";
 import { LINKEDIN_INTEGRATIONS_PATH } from "@/lib/linkedin-integration-destination";
 import {
   ANALYTICS_CONTENT_TYPE_OPTIONS,
@@ -468,20 +468,14 @@ export function PostPerformanceSection({
           role="group"
           aria-label="Post performance controls"
         >
-          <label className="relative min-w-0">
-            <span className="sr-only">Search posts</span>
-            <Search
-              aria-hidden="true"
-              className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
-            />
-            <input
-              type="search"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search posts"
-              className="h-10 w-full min-w-0 rounded-lg border border-border bg-background pl-9 pr-3 text-sm text-foreground outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
-            />
-          </label>
+          <SearchField
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            onClear={() => setQuery("")}
+            placeholder="Search posts"
+            aria-label="Search posts"
+            className="rounded-lg"
+          />
           <label className="min-w-0">
             <span className="sr-only">Sort posts</span>
             <select

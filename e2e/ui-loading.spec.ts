@@ -54,6 +54,44 @@ test.describe("UI loading and performance guardrails", () => {
     await expect(page.locator("main, [role=main]").first()).toBeVisible();
   });
 
+  test("workspace search opens from the persistent sidebar", async ({ page }) => {
+    await page.goto("/dashboard/agent");
+
+    const search = page.getByRole("button", {
+      name: "Search the workspace",
+    });
+    await expect(search).toBeVisible();
+    await expect(
+      page.getByRole("link", { name: "New Cowork session" }),
+    ).toHaveAttribute("href", "/dashboard?new=1");
+
+    await search.click();
+    const palette = page.getByRole("dialog", { name: "Command palette" });
+    await expect(palette).toBeVisible();
+    await expect(palette.getByRole("combobox")).toBeFocused();
+
+    await page.keyboard.press("Escape");
+    await expect(palette).toBeHidden();
+
+    await search.click();
+    await expect(palette).toBeVisible();
+  });
+
+  test("workspace search remains available from the mobile header", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/dashboard/agent");
+
+    const search = page.getByRole("button", {
+      name: "Search the workspace",
+    });
+    await expect(search).toBeVisible();
+    await search.click();
+
+    const palette = page.getByRole("dialog", { name: "Command palette" });
+    await expect(palette).toBeVisible();
+    await expect(palette.getByRole("combobox")).toBeFocused();
+  });
+
   test("lead magnets route shows useful content quickly", async ({ page }) => {
     await page.goto("/dashboard/lead-magnets");
 

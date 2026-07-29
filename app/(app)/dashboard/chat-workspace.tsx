@@ -124,6 +124,11 @@ import { useCopiedFlag } from "@/lib/use-copied-flag";
 import { resolveIntent } from "@/lib/post-intents";
 import { AvatarImg } from "@/components/avatar-img";
 import { Button } from "@/components/ui/button";
+import { SearchField } from "@/components/ui/search-field";
+import {
+  LoadingPixels,
+} from "@/components/ui/loading-state";
+import { TimedLoadingState } from "@/components/ui/timed-loading-state";
 import { normalizePostBody } from "@/lib/post-body-normalize";
 import { looksCorruptedDraft } from "@/lib/agent/specialists/nets";
 import type {
@@ -3850,26 +3855,14 @@ export function ChatWorkspace({
         </div>
         {/* Search the history by title. */}
         <div className="px-3 pb-3">
-          <div className="relative">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-            <input
+          <SearchField
               value={chatSearch}
               onChange={(e) => setChatSearch(e.target.value)}
+              onClear={() => setChatSearch("")}
               placeholder="Search sessions…"
-              className="w-full rounded-xl border border-border bg-card/70 pl-8 pr-7 py-2 text-xs outline-none shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] transition focus:border-primary/40 focus:ring-2 focus:ring-primary/15"
               aria-label="Search chats"
+              className="h-9 border-border bg-card/70 text-xs"
             />
-            {chatSearch && (
-              <button
-                type="button"
-                onClick={() => setChatSearch("")}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                aria-label="Clear search"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            )}
-          </div>
         </div>
         <div className="flex-1 overflow-y-auto px-2.5 pb-3 flex flex-col gap-2">
           {chats.length === 0 ? (
@@ -5793,13 +5786,11 @@ function ReattachingIndicator({ steps }: { steps: PlanStep[] }) {
     return <PlanChecklist steps={steps} status="Working" />;
   }
   return (
-    <div className="flex items-center gap-2 px-1 py-2 text-sm text-muted-foreground">
-      <span className="inline-flex gap-0.5" aria-hidden>
-        <span className="working-dot h-1.5 w-1.5 rounded-full bg-primary" />
-        <span className="working-dot h-1.5 w-1.5 rounded-full bg-primary [animation-delay:0.2s]" />
-        <span className="working-dot h-1.5 w-1.5 rounded-full bg-primary [animation-delay:0.4s]" />
-      </span>
-      Cowork is still working on this…
+    <div className="px-1 py-2">
+      <TimedLoadingState
+        label="Cowork is still working on this"
+        variant="dots"
+      />
     </div>
   );
 }
@@ -6320,20 +6311,45 @@ function AgentProgressShell({
   count?: string;
   children: ReactNode;
 }) {
+  const [expanded, setExpanded] = useState(true);
+
   return (
     <div className="agent-card-in w-full max-w-2xl rounded-2xl border border-primary/15 bg-card/90 px-3.5 py-3 shadow-sm shadow-primary/5">
-      <div className="mb-2 flex items-center justify-between gap-3">
+      <button
+        type="button"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((current) => !current)}
+        className="-mx-1 flex w-[calc(100%+0.5rem)] items-center justify-between gap-3 rounded-lg px-1 py-0.5 text-left transition-colors hover:bg-muted/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/25"
+      >
         <span className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-primary/85">
           <AiIcon className="h-3.5 w-3.5 shrink-0" />
           <span className="agent-shimmer">{title}</span>
         </span>
-        {count && (
-          <span className="text-[11px] font-medium tabular-nums text-muted-foreground/80">
-            {count}
-          </span>
-        )}
+        <span className="inline-flex items-center gap-1.5">
+          {count && (
+            <span className="text-[11px] font-medium tabular-nums text-muted-foreground/80">
+              {count}
+            </span>
+          )}
+          <ChevronDown
+            className={cn(
+              "size-3.5 text-muted-foreground transition-transform duration-200 motion-reduce:transition-none",
+              expanded && "rotate-180",
+            )}
+            aria-hidden="true"
+          />
+        </span>
+      </button>
+      <div
+        className="grid transition-[grid-template-rows,opacity,margin] duration-200 motion-reduce:transition-none"
+        style={{
+          gridTemplateRows: expanded ? "1fr" : "0fr",
+          opacity: expanded ? 1 : 0,
+          marginTop: expanded ? "0.5rem" : 0,
+        }}
+      >
+        <div className="min-h-0 overflow-hidden">{children}</div>
       </div>
-      {children}
     </div>
   );
 }
@@ -6341,10 +6357,11 @@ function AgentProgressShell({
 function AgentProgressStatus({ status }: { status: string }) {
   return (
     <AgentProgressShell title="Working">
-      <div className="agent-step-in flex items-center gap-2 text-[13px] text-muted-foreground">
-        <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" />
-        <span>{status}</span>
-      </div>
+      <TimedLoadingState
+        label={status}
+        variant="dots"
+        className="agent-step-in text-[13px]"
+      />
     </AgentProgressShell>
   );
 }
@@ -6373,7 +6390,7 @@ function PlanChecklist({ steps, status }: { steps: PlanStep[]; status: string | 
             {s.status === "done" ? (
               <CheckCircle2 className="check-pop h-4 w-4 shrink-0 text-state-success" />
             ) : visuallyActive ? (
-              <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" />
+              <LoadingPixels variant="dots" />
             ) : (
               <Circle className="h-4 w-4 shrink-0 text-muted-foreground/40" />
             )}
@@ -6444,7 +6461,7 @@ function ActivityStream({
               className="agent-step-in flex items-center gap-2 text-[13px] text-muted-foreground"
             >
               {t.ok === undefined ? (
-                <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" />
+                <LoadingPixels variant="dots" />
               ) : recoveredLater ? (
                 // A self-corrected retry: a calm, non-alarming completed step.
                 <CheckCircle2 className="check-pop h-4 w-4 shrink-0 text-muted-foreground/60" />

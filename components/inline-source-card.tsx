@@ -51,7 +51,7 @@ export function InlineSourceCard({
       post.mediaType === "video");
 
   return (
-    <div className="rounded-xl border border-border/60 bg-card text-card-foreground overflow-hidden">
+    <div className="overflow-hidden rounded-xl border border-border/70 bg-card text-card-foreground shadow-soft transition-[border-color,box-shadow] duration-200 hover:border-input hover:shadow-soft-lg motion-reduce:transition-none">
       {/* Header */}
       <div className="flex items-start justify-between gap-3 px-3.5 pt-3 pb-2">
         <div className="flex items-center gap-2.5 min-w-0">

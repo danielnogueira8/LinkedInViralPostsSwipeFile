@@ -14,12 +14,12 @@ import {
   NotebookPen,
   Quote,
   RotateCcw,
-  Search,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { SearchField } from "@/components/ui/search-field";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -412,14 +412,14 @@ export function KnowledgeLibrary({
             </Button>
           </div>
         </div>
-        <Toolbar className="flex items-center gap-2 px-3">
-          <Search className="size-4 text-muted-foreground" />
-          <Input
+        <Toolbar className="p-1.5">
+          <SearchField
             aria-label="Search knowledge"
             placeholder="Search your knowledge"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            className="border-0 bg-transparent px-0 shadow-none focus-visible:ring-0"
+            onClear={() => setQuery("")}
+            className="border-transparent bg-transparent shadow-none"
           />
         </Toolbar>
       </Surface>

@@ -6,6 +6,7 @@ import { Search, CornerDownLeft } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { NAV_DESTINATIONS } from "@/app/(app)/dashboard/nav-destinations";
 import { hrefWithPersistedFilters } from "@/components/persisted-filter-state";
+import { OPEN_COMMAND_PALETTE_EVENT } from "@/lib/ui-events";
 
 // Global command palette (Cmd-K / Ctrl-K): a centered modal with one fuzzy input
 // over the nav destinations + "New chat". Keyboard-native — ↑/↓ to move, Enter to
@@ -69,8 +70,13 @@ export function CommandPalette({ defaultOpen = false }: { defaultOpen?: boolean 
         setOpen((v) => !v);
       }
     };
+    const onOpen = () => setOpen(true);
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener(OPEN_COMMAND_PALETTE_EVENT, onOpen);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener(OPEN_COMMAND_PALETTE_EVENT, onOpen);
+    };
   }, []);
 
   // Clamp the active index in range — derived during render, not an effect.

@@ -3,11 +3,12 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState, useTransition, useCallback } from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2, Search, SquarePen } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { hrefWithPersistedFilters } from "@/components/persisted-filter-state";
 import { NAV_SECTIONS } from "./nav-destinations";
 import { useNavBadges } from "./nav-badges";
+import { OPEN_COMMAND_PALETTE_EVENT } from "@/lib/ui-events";
 
 export function SideNav({ badges: initialBadges }: { badges?: Record<string, number> }) {
   const pathname = usePathname();
@@ -53,7 +54,35 @@ export function SideNav({ badges: initialBadges }: { badges?: Record<string, num
   const effectivePath = pendingHref ?? pathname;
 
   return (
-    <nav className="flex flex-col gap-4">
+    <nav className="flex flex-col gap-4" aria-label="Workspace navigation">
+      <div className="flex flex-col gap-1.5">
+        <button
+          type="button"
+          onClick={() =>
+            window.dispatchEvent(
+              new Event(OPEN_COMMAND_PALETTE_EVENT),
+            )
+          }
+          className="group flex h-9 w-full items-center gap-2 rounded-lg border border-border bg-background/70 px-2.5 text-left text-xs text-muted-foreground shadow-[inset_0_1px_0_rgb(255_255_255_/_0.7)] transition-colors hover:border-input hover:bg-card hover:text-foreground"
+          aria-label="Search the workspace"
+        >
+          <Search className="size-3.5 shrink-0" aria-hidden="true" />
+          <span className="min-w-0 flex-1 truncate">
+            Search the workspace
+          </span>
+          <kbd className="rounded-md border border-border bg-card px-1.5 py-0.5 font-sans text-[9px] text-muted-foreground">
+            ⌘K
+          </kbd>
+        </button>
+        <Link
+          href="/dashboard?new=1"
+          prefetch
+          className="flex h-9 items-center gap-2 rounded-lg bg-primary px-2.5 text-xs font-medium text-primary-foreground transition-[background-color,scale] hover:bg-primary/90 active:scale-[0.98] motion-reduce:transform-none"
+        >
+          <SquarePen className="size-3.5" aria-hidden="true" />
+          New Cowork session
+        </Link>
+      </div>
       {NAV_SECTIONS.map((section) => (
         <div key={section.label}>
           <div className="px-3 pb-1 text-xs font-medium text-muted-foreground/70">

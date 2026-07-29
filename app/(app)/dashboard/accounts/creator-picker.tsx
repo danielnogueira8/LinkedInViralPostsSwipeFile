@@ -13,13 +13,11 @@ import {
   Layers3,
   Loader2,
   PackageOpen,
-  Search,
   Users,
-  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { SearchField } from "@/components/ui/search-field";
 import { StatusPill, Surface } from "@/components/app-surface";
 import { cn } from "@/lib/utils";
 import { fetchJson } from "@/lib/api-fetch";
@@ -595,21 +593,21 @@ export function CreatorPicker({
       )}
 
       <div className="flex flex-col gap-3 border-y border-border/60 py-3 sm:flex-row sm:items-center">
-        <div className="relative min-w-0 flex-1">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
+        <SearchField
             value={query}
             onChange={(event) => {
               setQuery(event.target.value);
               resetVisibleCreatorCount();
             }}
+            onClear={() => {
+              setQuery("");
+              resetVisibleCreatorCount();
+            }}
             placeholder={mode === "explore" ? "Search by creator, expertise, or topic" : "Search your creators"}
-            className="h-11 pl-10 pr-11"
+            aria-label="Search creators"
+            containerClassName="min-w-0 flex-1"
+            className="h-11"
           />
-          {query && (
-            <button type="button" onClick={() => { setQuery(""); resetVisibleCreatorCount(); }} aria-label="Clear search" className="absolute right-0 top-0 grid h-11 w-11 place-items-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground"><X className="h-4 w-4" /></button>
-          )}
-        </div>
         {mode === "explore" && (
           <label className="flex h-11 items-center gap-2 rounded-xl border border-border/70 bg-background px-3 text-sm text-muted-foreground">
             {sort === "highest-engagement" ? <BarChart3 className="h-4 w-4" /> : <ArrowDownAZ className="h-4 w-4" />}

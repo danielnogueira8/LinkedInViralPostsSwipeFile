@@ -47,6 +47,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { SearchField } from "@/components/ui/search-field";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -183,19 +184,20 @@ export function LeadMagnetsManager({
           </div>
         </div>
         {items.length > 0 && (
-          <div className="relative w-full sm:max-w-md">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
+          <SearchField
               value={searchQuery}
               onChange={(event) => {
                 setSearchQuery(event.target.value);
                 setPage(1);
               }}
+              onClear={() => {
+                setSearchQuery("");
+                setPage(1);
+              }}
               placeholder="Search lead magnets..."
               aria-label="Search lead magnets"
-              className="h-10 rounded-xl bg-background pl-9"
+              containerClassName="w-full sm:max-w-md"
             />
-          </div>
         )}
       </Toolbar>
 
