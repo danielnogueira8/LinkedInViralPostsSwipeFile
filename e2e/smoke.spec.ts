@@ -69,6 +69,18 @@ test.describe("dashboard smoke — key pages render their content", () => {
     await page.waitForLoadState("networkidle");
     // The shell rendered (not a Clerk redirect / error page).
     await expect(page.locator("main, [role=main]").first()).toBeVisible();
+    await expect(page.getByLabel("Context interview")).toHaveCount(0);
+  });
+
+  test("knowledge renders the context interview and private library", async ({
+    page,
+  }) => {
+    await page.goto("/dashboard/knowledge");
+    await expect(page).toHaveURL(/\/dashboard\/knowledge/);
+    await expect(page.getByLabel("Context interview")).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: /private source library/i }),
+    ).toBeVisible();
   });
 });
 
