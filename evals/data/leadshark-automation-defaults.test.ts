@@ -28,17 +28,21 @@ describe("LeadShark automation defaults", () => {
 
     expect(html).toContain("Automation defaults");
     expect(html).toContain("Default DM");
+    expect(html).not.toContain("Trigger keywords");
     expect(html).toContain(RESOURCE_URL_TOKEN);
     expect(html).toContain("Saving changes will be available");
   });
 
   test("materializes the current lead magnet without persisting a stale resource", () => {
     const defaults = defaultLeadSharkAutomationDefaults();
+    defaults.keywords = ["STALE"];
     const result = materializeLeadSharkAutomationDefaults(defaults, {
       name: "Founder playbook",
       url: "https://tryswipein.com/lm/founder-playbook",
+      keyword: "PLAYBOOK",
     });
 
+    expect(result.keywords).toEqual(["PLAYBOOK"]);
     expect(defaults.dmTemplate).toContain(RESOURCE_URL_TOKEN);
     expect(defaults.dmTemplate).toContain(RESOURCE_NAME_TOKEN);
     expect(result.dmTemplate).toContain("Founder playbook");

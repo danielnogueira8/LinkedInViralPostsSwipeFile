@@ -41,23 +41,24 @@ function replaceResourceTokens(
 
 export function materializeLeadSharkAutomationDefaults(
   defaults: LeadSharkAutomationDefaults,
-  resource: { name: string; url: string },
+  context: { name: string; url: string; keyword: string },
 ): AutomationConfigDraft {
   return {
     ...defaults,
-    dmTemplate: replaceResourceTokens(defaults.dmTemplate, resource) ?? "",
+    keywords: [context.keyword.trim()].filter(Boolean),
+    dmTemplate: replaceResourceTokens(defaults.dmTemplate, context) ?? "",
     dmTemplateVariations: defaults.dmTemplateVariations.map(
-      (value) => replaceResourceTokens(value, resource) ?? "",
+      (value) => replaceResourceTokens(value, context) ?? "",
     ),
     commentReplyTemplates: defaults.commentReplyTemplates.map(
-      (value) => replaceResourceTokens(value, resource) ?? "",
+      (value) => replaceResourceTokens(value, context) ?? "",
     ),
     nonConnectionReplyTemplates: defaults.nonConnectionReplyTemplates.map(
-      (value) => replaceResourceTokens(value, resource) ?? "",
+      (value) => replaceResourceTokens(value, context) ?? "",
     ),
     followUpTemplate: replaceResourceTokens(
       defaults.followUpTemplate,
-      resource,
+      context,
     ),
   };
 }
@@ -87,6 +88,7 @@ export function validateLeadSharkAutomationDefaults(
     // cannot become invalid only when a real resource is inserted later.
     name: "R".repeat(240),
     url: `https://tryswipein.com/lm/${"s".repeat(400)}`,
+    keyword: "GUIDE",
   });
   return [...issues, ...validateAutomationConfig(materialized)];
 }

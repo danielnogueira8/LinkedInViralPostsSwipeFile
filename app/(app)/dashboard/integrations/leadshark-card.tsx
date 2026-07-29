@@ -265,10 +265,10 @@ export function LeadSharkCard({
               <div>
                 <h3 className="text-sm font-semibold">Automation defaults</h3>
                 <p className="text-xs text-muted-foreground">
-                  Applied to each new lead-magnet automation. SwipeIn replaces{" "}
+                  Applied to each new lead-magnet automation. SwipeIn generates
+                  the trigger keyword from that post and replaces{" "}
                   <code>{RESOURCE_NAME_TOKEN}</code> and{" "}
-                  <code>{RESOURCE_URL_TOKEN}</code> with that post&apos;s
-                  selected resource.
+                  <code>{RESOURCE_URL_TOKEN}</code> with its selected resource.
                 </p>
               </div>
               {!defaultsAvailable ? (
@@ -281,24 +281,6 @@ export function LeadSharkCard({
                   installed.
                 </p>
               ) : null}
-              <div className="space-y-1.5">
-                <Label htmlFor="leadshark-default-keywords">
-                  Trigger keywords (comma separated)
-                </Label>
-                <Input
-                  id="leadshark-default-keywords"
-                  value={defaults.keywords.join(", ")}
-                  onChange={(event) =>
-                    patchDefaults({
-                      keywords: event.target.value
-                        .split(",")
-                        .map((value) => value.trim())
-                        .filter(Boolean),
-                    })
-                  }
-                  placeholder="PLAYBOOK, GUIDE"
-                />
-              </div>
               <div className="space-y-1.5">
                 <Label htmlFor="leadshark-default-dm">Default DM</Label>
                 <Textarea
