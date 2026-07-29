@@ -33,6 +33,7 @@ import {
   requestsDurableOrAction,
   requestsDirectSourceModeling,
   requestsFullPostDeliverable,
+  requestsModelingSourceSelection,
 } from "@/lib/agent/source-policy";
 import { isOpinionOrQuestionAboutContent } from "@/lib/agent/direct-writer-policy";
 import { compileModeledPostIntent } from "@/lib/agent/modeled-post-intent";
@@ -1223,6 +1224,9 @@ export async function buildTurnContext(
   } = input;
   let composerTaskContext = input.composerTaskContext;
   let activeDraftCountOverride = input.activeDraftCountOverride;
+  const sourceSelectionPending =
+    !modelSourceId &&
+    requestsModelingSourceSelection(userText, composerTaskContext);
 
   let history: ChatMessage[];
   let effectiveUserInstruction = userText;
@@ -1353,25 +1357,26 @@ export async function buildTurnContext(
   // get_voice. A transient failure is fail-open: the turn leaves get_voice
   // available for the model to retry.
   const shouldPreloadVoice = Boolean(
-    composerTaskContext?.kind === "post" ||
-    skipDecision ||
-    modelSourceId ||
-    requestsDirectSourceModeling(userText) ||
-    compileDirectPartialTextSpec(userText) ||
-    requestedDirectPostCount(userText) ||
-    isNoModelPostRequest(userText, Boolean(modelSourceId)) ||
-    compileReadOnlyOrchestratorReserveRoute({
-      userInstruction: userText,
-      ...(activeDraftCountOverride
-        ? { draftCountOverride: activeDraftCountOverride }
-        : {}),
-      isRefine: skipDecision,
-      hasModelSource: Boolean(modelSourceId),
-      hasAttachments: attachments.length > 0,
-      hasLeadMagnet: Boolean(leadMagnetId || createLeadMagnet),
-      hasCreatorStyle: Boolean(creatorStyleId),
-      composerTaskContext: composerTaskContext ?? undefined,
-    })?.outcome?.kind === "draft",
+    !sourceSelectionPending &&
+      (composerTaskContext?.kind === "post" ||
+        skipDecision ||
+        modelSourceId ||
+        requestsDirectSourceModeling(userText) ||
+        compileDirectPartialTextSpec(userText) ||
+        requestedDirectPostCount(userText) ||
+        isNoModelPostRequest(userText, Boolean(modelSourceId)) ||
+        compileReadOnlyOrchestratorReserveRoute({
+          userInstruction: userText,
+          ...(activeDraftCountOverride
+            ? { draftCountOverride: activeDraftCountOverride }
+            : {}),
+          isRefine: skipDecision,
+          hasModelSource: Boolean(modelSourceId),
+          hasAttachments: attachments.length > 0,
+          hasLeadMagnet: Boolean(leadMagnetId || createLeadMagnet),
+          hasCreatorStyle: Boolean(creatorStyleId),
+          composerTaskContext: composerTaskContext ?? undefined,
+        })?.outcome?.kind === "draft"),
   );
   const voicePromise = shouldPreloadVoice
     ? waitForChatSetup(
@@ -1701,11 +1706,12 @@ export async function buildTurnContext(
     modelSourceId && currentModelEnvelope,
   );
   const effectivePostTurn = Boolean(
-    composerTaskContext?.kind === "post" ||
-    skipDecision ||
-    modelSourceId ||
-    requestsDirectSourceModeling(effectiveUserInstruction) ||
-    isNoModelPostRequest(effectiveUserInstruction, hasModelSource),
+    !sourceSelectionPending &&
+      (composerTaskContext?.kind === "post" ||
+        skipDecision ||
+        modelSourceId ||
+        requestsDirectSourceModeling(effectiveUserInstruction) ||
+        isNoModelPostRequest(effectiveUserInstruction, hasModelSource)),
   );
   if (effectivePostTurn && !voiceResult) {
     voiceResult = await waitForChatSetup(
@@ -1755,14 +1761,16 @@ export async function buildTurnContext(
     };
   }
 
-  shouldAttachLeadMagnet = shouldApplyLeadMagnetContext({
-    userText: effectiveUserInstruction,
-    refineInstruction,
-    hasModelSource,
-    modelSourcePostType,
-    noModelFormatId: appliedNoModelFormat?.id,
-    hasSelectedLeadMagnet: Boolean(manualLeadMagnetId || createLeadMagnet),
-  });
+  shouldAttachLeadMagnet =
+    !sourceSelectionPending &&
+    shouldApplyLeadMagnetContext({
+      userText: effectiveUserInstruction,
+      refineInstruction,
+      hasModelSource,
+      modelSourcePostType,
+      noModelFormatId: appliedNoModelFormat?.id,
+      hasSelectedLeadMagnet: Boolean(manualLeadMagnetId || createLeadMagnet),
+    });
 
   if (shouldAttachLeadMagnet && !appliedLeadMagnet) {
     let selectedLeadMagnet: LeadMagnet | null = null;

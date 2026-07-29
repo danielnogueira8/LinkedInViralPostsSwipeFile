@@ -205,6 +205,122 @@ describe("read-only orchestrator plan contract", () => {
     );
   });
 
+  test("source-selection routes always show modelable cards and stop before drafting", async () => {
+    const posts = Array.from({ length: 5 }, (_, index) => ({
+      id: `${index + 1}0000000-0000-4000-8000-000000000000`,
+      text: wrapScrapedPostText({
+        text: [
+          `Candidate ${index + 1} has a useful opening line.`,
+          "",
+          "This source has enough concrete prose to expose a real structure, a meaningful setup, a clear progression, and a conclusion worth adapting without copying any claims or personal details from the original author into the user's new post.",
+        ].join("\n"),
+      }).text,
+      post_url: `https://www.linkedin.com/feed/update/urn:li:activity:${index + 1}`,
+      reactions: 500 - index,
+      comments: 40 - index,
+      media_type: "image",
+      media_urls: [`https://media.example/candidate-${index + 1}.jpg`],
+      visual_kind: "graphic",
+      accounts: {
+        name: `Author ${index + 1}`,
+        niche: "B2B SaaS",
+        profile_pic_url: `https://media.example/author-${index + 1}.jpg`,
+      },
+    }));
+    const shortPosts = Array.from({ length: 5 }, (_, index) => ({
+      id: `9000000${index}-0000-4000-8000-000000000000`,
+      text: wrapScrapedPostText({ text: "Too short to model well." }).text,
+      post_url: `https://www.linkedin.com/posts/short-${index + 1}`,
+      accounts: { name: `Short Author ${index + 1}` },
+    }));
+    const runTool = vi.fn(async () => ({
+      ok: true,
+      posts: [...shortPosts, ...posts],
+    }));
+
+    const result = await collect(
+      input({
+        userInstruction:
+          "Find a top-performing regular post in my swipe file and rewrite it in my voice.",
+        route: {
+          kind: "workspace_research",
+          outcome: {
+            kind: "source_selection",
+            candidateCount: 5,
+            searchPoolSize: 10,
+          },
+          minimumSources: 3,
+          workspacePostType: "regular",
+          workspaceSearchMode: "strict_top",
+        },
+      }),
+      [],
+      runTool,
+    );
+
+    expect(result.draftInputs).toHaveLength(0);
+    expect(runTool).toHaveBeenCalledWith(
+      "search_viral_posts",
+      expect.objectContaining({ limit: 10, post_type: "regular" }),
+      "ws-1",
+      expect.any(AbortSignal),
+      expect.objectContaining({
+        autoSelectModelingSources: true,
+        requireModelableSources: true,
+        includeSourceCardMedia: true,
+      }),
+    );
+    const ask = result.events.find((event) => event.type === "ask");
+    expect(ask).toMatchObject({
+      type: "ask",
+      ask: {
+        question: "Which post should I model?",
+        allowOther: false,
+      },
+    });
+    if (ask?.type !== "ask") throw new Error("Expected source selection ask");
+    expect(ask.ask.options).toHaveLength(5);
+    expect(ask.ask.choiceIds).toHaveLength(5);
+    expect(ask.ask.choiceIds?.[0]).toBe(
+      "model-source:10000000-0000-4000-8000-000000000000",
+    );
+    expect(ask.ask.options).toEqual([
+      "Post 1",
+      "Post 2",
+      "Post 3",
+      "Post 4",
+      "Post 5",
+    ]);
+    expect(JSON.stringify(ask.ask)).not.toContain("Author 1");
+    expect(JSON.stringify(ask.ask)).not.toContain("useful opening line");
+
+    const done = result.events.findLast((event) => event.type === "done");
+    expect(done).toMatchObject({
+      type: "done",
+      terminalReason: "ask",
+      message: {
+        artifacts: expect.arrayContaining([
+          expect.objectContaining({
+            kind: "cite",
+            meta: expect.objectContaining({
+              postId: "10000000-0000-4000-8000-000000000000",
+              card: expect.objectContaining({
+                id: "10000000-0000-4000-8000-000000000000",
+                authorName: "Author 1",
+                mediaType: "image",
+                mediaUrls: ["https://media.example/candidate-1.jpg"],
+              }),
+            }),
+          }),
+        ]),
+      },
+    });
+    if (done?.type !== "done") throw new Error("Expected completed ask");
+    expect(JSON.stringify(done.message.toolMessages)).not.toContain(
+      "media.example",
+    );
+  });
+
   test("web research rejects uncited prose and switches providers for grounded citations", async () => {
     vi.stubEnv("OPENROUTER_API_KEY", "test-key");
     const requestedModels: string[] = [];

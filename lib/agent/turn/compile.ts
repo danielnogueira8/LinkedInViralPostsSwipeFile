@@ -6,6 +6,7 @@ import {
   requestsDurableOrAction,
   requestsDirectSourceModeling,
   requestsFullPostDeliverable,
+  requestsModelingSourceSelection,
 } from "@/lib/agent/source-policy";
 import {
   compileDirectPartialTextSpec,
@@ -41,6 +42,11 @@ import type { ComposerTaskContext } from "@/lib/composer-task-context";
 import type { Source, WriterTask } from "@/lib/agent/execute/writer";
 import type { CoworkRoute } from "@/lib/agent/cowork-telemetry";
 import type { ModelSourceReference } from "@/lib/agent/turn/context";
+import {
+  isModelableSourceText,
+  MODEL_SOURCE_SELECTION_POLICY,
+  modelingSourceSelectionEnabled,
+} from "@/lib/agent/model-source-selection-policy";
 import { MAX_GROUNDED_ANSWER_RESULTS } from "@/lib/agent/evidence";
 import type { TurnCompileContext } from "@/lib/agent/turn/state";
 import type {
@@ -663,6 +669,11 @@ export type ReadOnlyOrchestratorRoute = {
   outcome?:
     | { kind: "draft"; expectedDrafts: number }
     | {
+        kind: "source_selection";
+        candidateCount: 5;
+        searchPoolSize: 10;
+      }
+    | {
         kind: "grounded_answer";
         format: "summary" | "takeaways" | "comparison" | "report";
         resultCount?: number;
@@ -756,7 +767,17 @@ function composerResearchRoute(
   const requirement = context?.researchRequirement;
   if (!context || !requirement) return null;
   const outcome =
-    context.kind === "post"
+    modelingSourceSelectionEnabled() &&
+    context.sourceSelection &&
+    context.kind === "post" &&
+    context.expectedDraftCount === 1 &&
+    requirement.lane === "workspace"
+      ? ({
+          kind: "source_selection",
+          candidateCount: context.sourceSelection.candidateCount,
+          searchPoolSize: context.sourceSelection.searchPoolSize,
+        } as const)
+      : context.kind === "post"
       ? ({ kind: "draft", expectedDrafts: context.expectedDraftCount } as const)
       : ({
           kind: "grounded_answer",
@@ -769,7 +790,11 @@ function composerResearchRoute(
     return {
       kind: "workspace_research",
       outcome,
-      minimumSources: requirement.minimumSources,
+      minimumSources:
+        outcome.kind === "source_selection"
+          ? (context.sourceSelection?.minimumSources ??
+            requirement.minimumSources)
+          : requirement.minimumSources,
       workspaceSearchMode: requirement.searchMode,
       ...(requirement.since ? { workspaceSince: requirement.since } : {}),
       ...(requirement.postType
@@ -1452,6 +1477,9 @@ export function compileReadOnlyOrchestratorRoute(
     sourceModelingRequest
       ? modeledIntent.minimumSources
       : requestedSourceMinimum(researchClause, explicitSourceCount);
+  const selectSourceBeforeDraft =
+    sourceModelingRequest &&
+    requestsModelingSourceSelection(instruction, input.composerTaskContext);
   const needsFileInspection =
     input.hasAttachments && FILE_INSPECTION_RE.test(instruction);
   const needsNews =
@@ -1683,8 +1711,16 @@ export function compileReadOnlyOrchestratorRoute(
   if (needsWorkspaceResearch) {
     return {
       kind: "workspace_research",
-      outcome: { kind: "draft", expectedDrafts },
-      minimumSources: workspaceMinimumSources,
+      outcome: selectSourceBeforeDraft
+        ? {
+            kind: "source_selection",
+            candidateCount: MODEL_SOURCE_SELECTION_POLICY.candidateCount,
+            searchPoolSize: MODEL_SOURCE_SELECTION_POLICY.searchPoolSize,
+          }
+        : { kind: "draft", expectedDrafts },
+      minimumSources: selectSourceBeforeDraft
+        ? MODEL_SOURCE_SELECTION_POLICY.minimumSources
+        : workspaceMinimumSources,
       workspaceSearchMode: STRICT_TOP_SOURCE_RE.test(researchClause)
         ? "strict_top"
         : "diverse",
@@ -1692,7 +1728,9 @@ export function compileReadOnlyOrchestratorRoute(
         ? { workspaceSince: requestedWorkspaceWindow(researchClause) }
         : {}),
       ...(workspacePostType ? { workspacePostType } : {}),
-      ...(workspaceDraftSourceMode ? { workspaceDraftSourceMode } : {}),
+      ...(!selectSourceBeforeDraft && workspaceDraftSourceMode
+        ? { workspaceDraftSourceMode }
+        : {}),
       ...(input.explicitPostType ? { explicitPostType: input.explicitPostType } : {}),
     };
   }
@@ -1751,10 +1789,7 @@ export type ResolvedFindAndModelSource = {
  * claims otherwise. Require a real body of prose before a post may be the
  * model. Pure + exported for tests.
  */
-const MIN_MODELABLE_WORDS = 40;
-export function isModelableSourceText(text: string): boolean {
-  return text.trim().split(/\s+/).filter(Boolean).length >= MIN_MODELABLE_WORDS;
-}
+export { isModelableSourceText } from "@/lib/agent/model-source-selection-policy";
 
 /**
  * THIN PATH find-and-model source resolver. Runs the SAME rotation-aware search
@@ -2126,6 +2161,10 @@ export async function compileTurnPlan(
   const wantsFindAndModel =
     !currentModelSource?.post_text.trim() &&
     !modelSourceId &&
+    !requestsModelingSourceSelection(
+      effectiveUserInstruction,
+      composerTaskContext,
+    ) &&
     requestsDirectSourceModeling(effectiveUserInstruction);
   const resolvedFindSource = wantsFindAndModel
     ? await resolveFindAndModelSource(workspaceId, setupSignal)
@@ -2493,15 +2532,18 @@ export async function compileTurnPlan(
           draftCountOverride: activeDraftCountOverride,
         }).kind !== "none"),
   );
+  const sourceSelectionOnly =
+    readOnlyOrchestratorRoute?.outcome?.kind === "source_selection";
   // Re-running the same eligibility compiler with only voice marked available
   // distinguishes a real writing request with a missing prerequisite from a
   // compound/brainstorm request intentionally left to the answer lane.
   const writingOperationRequested = Boolean(
-    directWriterWouldBeEligibleWithVoice ||
-      explicitCreateOperation ||
-      skipDecision ||
-      modeledBatchContractRequested ||
-      deterministicModeledRoute,
+    !sourceSelectionOnly &&
+      (directWriterWouldBeEligibleWithVoice ||
+        explicitCreateOperation ||
+        skipDecision ||
+        modeledBatchContractRequested ||
+        deterministicModeledRoute),
   );
   if (writingOperationRequested && preloadedVoiceResult?.ok !== true) {
     // A missing voice profile is never transient — retrying re-runs the exact

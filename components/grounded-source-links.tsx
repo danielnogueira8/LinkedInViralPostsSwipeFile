@@ -22,7 +22,7 @@ type RehydratedCard = { id?: unknown; postUrl?: unknown };
 // A grounded source, resolved as far as its data allows: a full post card when
 // the server rehydrated one (meta.card, filled by rehydrateCites on chat load),
 // else just the verified LinkedIn href for a chip fallback.
-type ResolvedSource = { href: string; card: CitedPost | null };
+type ResolvedSource = { href: string | null; card: CitedPost | null };
 
 // A full CitedPost has the fields InlineSourceCard renders. rehydrateCites fills
 // a complete row from the DB, but a persisted/partial meta.card (e.g. an old
@@ -55,13 +55,17 @@ function groundedSources(artifacts: Artifact[]): ResolvedSource[] {
       : undefined;
     const href =
       rehydratedUrl ?? verifiedLinkedInSourceUrl(artifact.meta.sourceUrl);
-    if (!href || seen.has(href)) continue;
-    seen.add(href);
+    const renderableCard =
+      matches && isRenderableCard(card) ? card : null;
+    if (!href && !renderableCard) continue;
+    const identity = `post:${String(postId)}`;
+    if (seen.has(identity)) continue;
+    seen.add(identity);
     // Only render a full card when the rehydrated post matches this cite's id
     // AND is a complete CitedPost; else fall back to the chip.
     out.push({
-      href,
-      card: matches && isRenderableCard(card) ? card : null,
+      href: href ?? null,
+      card: renderableCard,
     });
   }
   return out.slice(0, MAX_GROUNDED_ANSWER_RESULTS);
@@ -149,7 +153,10 @@ export function GroundedSourceLinks({ artifacts }: { artifacts?: Artifact[] }) {
     .map((s) => s.card)
     .filter((c): c is CitedPost => c !== null);
   // Sources that couldn't resolve to a full card keep a chip so nothing is lost.
-  const chipOnly = sources.filter((s) => s.card === null);
+  const chipOnly = sources.filter(
+    (source): source is { href: string; card: null } =>
+      source.card === null && source.href !== null,
+  );
 
   return (
     // Center the sources and cap their width to roughly a Swipe File card, so

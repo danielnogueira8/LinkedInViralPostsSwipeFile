@@ -105,6 +105,7 @@ import { compileModeledPostIntent } from "@/lib/agent/modeled-post-intent";
 import {
   composerStarterIdSchema,
 } from "@/lib/composer-task-context";
+import { stashWorkspacePostAsModelSource } from "@/lib/agent/model-source-choice";
 
 import {
   NO_MODEL_FORMAT_IDS,
@@ -459,6 +460,7 @@ export type ChatTurnDependencies = {
   completeChat: typeof completeChat;
   fetchRecentPostDrafts: typeof fetchRecentPostDrafts;
   generateLeadMagnetResource: typeof generateLeadMagnetResource;
+  stashWorkspacePostAsModelSource: typeof stashWorkspacePostAsModelSource;
   now: () => Date;
   draftFinalizerSpecialists?: Partial<DraftFinalizerSpecialists>;
   /** Optional telemetry sink for tests/observers. Defaults to console logging. */
@@ -478,6 +480,7 @@ const productionChatTurnDependencies: ChatTurnDependencies = {
   completeChat,
   fetchRecentPostDrafts,
   generateLeadMagnetResource,
+  stashWorkspacePostAsModelSource,
   now: () => new Date(),
 };
 

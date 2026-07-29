@@ -134,6 +134,17 @@ describe("GroundedSourceLinks", () => {
     expect(html).not.toContain('aria-label="Next source"');
   });
 
+  test("a complete verified card still renders when the stored post has no LinkedIn URL", () => {
+    const id = "10000000-0000-4000-8000-000000000001";
+    const html = render([
+      citeWithCard(id, fullCard(id, { postUrl: null })),
+    ]);
+
+    expect(html).toContain("Dana Founder");
+    expect(html).toContain("founder-led sales");
+    expect(html).not.toContain("<a ");
+  });
+
   test("sources are centered and width-capped (~a Swipe File card), not full width", () => {
     const id = "10000000-0000-4000-8000-000000000001";
     const html = render([citeWithCard(id, fullCard(id))]);

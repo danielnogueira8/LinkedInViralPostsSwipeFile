@@ -305,7 +305,9 @@ function duplicateOutcomeFailureCodes(input: {
   if (
     duplicates(input.artifacts.map((artifact) => artifact.id)) ||
     duplicates(
-      input.artifacts.map((artifact) => `${artifact.kind}:${artifact.body}`),
+      input.artifacts
+        .filter((artifact) => artifact.kind !== "cite")
+        .map((artifact) => `${artifact.kind}:${artifact.body}`),
     )
   ) {
     failureCodes.push("duplicate_artifact");
@@ -623,6 +625,31 @@ async function runCoworkOutcomeScenarioWithStore(
     store.seedHistoricalBookmarkModelSource(
       scenario.seed.historicalBookmarkModelSource,
     );
+  }
+  for (const result of
+    scenario.model.readOnlyOrchestrator?.toolResults?.search_viral_posts ??
+    []) {
+    const posts = Array.isArray(result.posts) ? result.posts : [];
+    for (const candidate of posts) {
+      if (!candidate || typeof candidate !== "object") continue;
+      const row = candidate as Record<string, unknown>;
+      if (
+        typeof row.id !== "string" ||
+        typeof row.text !== "string" ||
+        typeof row.post_url !== "string"
+      ) {
+        continue;
+      }
+      store.seedWorkspacePostCandidate({
+        id: row.id,
+        postText: row.text,
+        postUrl: row.post_url,
+        postType:
+          row.post_type === "lead_magnet" ? "lead_magnet" : "regular",
+        authorName:
+          typeof row.author_name === "string" ? row.author_name : undefined,
+      });
+    }
   }
   if (scenario.seed?.customSkill) {
     store.seedCustomSkill(scenario.seed.customSkill);

@@ -1,6 +1,7 @@
 import { supabaseAdmin } from "@/lib/supabase";
 import { trackedAccountIds } from "@/lib/supabase-scoped";
 import { neutralizeMarkers } from "@/lib/agent/untrusted";
+import { verifiedLinkedInSourceUrl } from "@/lib/linkedin-url";
 
 // ---------------------------------------------------------------------------
 // Cited source posts — resolve a post id the chat agent referenced (via a
@@ -43,9 +44,9 @@ const NO_ROWS_SENTINEL = "00000000-0000-0000-0000-000000000000";
 
 // How many cited cards we'll resolve+render per assistant turn. Bounds DOM,
 // image-optimizer load, and DB work even if the model over-cites.
-export const MAX_CITES = 4;
+export const MAX_CITES = 5;
 
-type Row = {
+export type WorkspaceCitedPostRow = {
   id: string;
   text: string | null;
   post_url: string | null;
@@ -62,7 +63,21 @@ type Row = {
     | null;
 };
 
-function toCard(row: Row): CitedPost {
+type Row = WorkspaceCitedPostRow;
+
+function safeHttpUrl(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  try {
+    const parsed = new URL(value.trim());
+    return parsed.protocol === "https:" || parsed.protocol === "http:"
+      ? parsed.toString()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export function workspaceRowToCitedPost(row: Row): CitedPost {
   const acc = Array.isArray(row.accounts) ? row.accounts[0] : row.accounts;
   return {
     id: row.id,
@@ -70,17 +85,20 @@ function toCard(row: Row): CitedPost {
     // leaves the server, so a malicious post can't poison a later turn if the
     // card text is ever re-fed to the model.
     text: row.text ? neutralizeMarkers(row.text) : null,
-    postUrl: row.post_url,
+    postUrl: verifiedLinkedInSourceUrl(row.post_url) ?? null,
     postedAt: row.posted_at,
     reactions: row.reactions ?? 0,
     comments: row.comments ?? 0,
     reposts: row.reposts ?? 0,
     mediaType: row.media_type ?? "none",
-    mediaUrls: row.media_urls ?? [],
+    mediaUrls: (row.media_urls ?? []).flatMap((value) => {
+      const url = safeHttpUrl(value);
+      return url ? [url] : [];
+    }),
     visualKind: row.visual_kind ?? null,
     authorName: acc?.name ?? "Unknown",
     authorNiche: acc?.niche ?? null,
-    authorAvatar: acc?.profile_pic_url ?? null,
+    authorAvatar: safeHttpUrl(acc?.profile_pic_url),
   };
 }
 
@@ -170,7 +188,12 @@ async function queryCards(
       .in("id", ids)
       .in("account_id", accountIds.length ? accountIds : [NO_ROWS_SENTINEL]);
     if (error || !data) return new Map();
-    return new Map((data as Row[]).map((r) => [r.id, toCard(r)]));
+    return new Map(
+      (data as Row[]).map((row) => [
+        row.id,
+        workspaceRowToCitedPost(row),
+      ]),
+    );
   } catch {
     return new Map();
   }

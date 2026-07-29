@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { resolveComposerTaskContext } from "@/lib/composer-task-context";
 import { requestedBasePostCount } from "@/lib/agent/turn/context";
 import { POST_INTENTS } from "@/lib/post-intents";
@@ -757,7 +757,7 @@ describe("compileReadOnlyOrchestratorRoute", () => {
     });
   });
 
-  test("a default single modeled draft retains one-to-one source attribution", () => {
+  test("a default single modeled draft requires the user to choose from five candidates first", () => {
     const composerTaskContext = resolveComposerTaskContext({
       starterId: "model-top-viral",
       fallbackPostCount: null,
@@ -771,10 +771,40 @@ describe("compileReadOnlyOrchestratorRoute", () => {
       }),
     ).toMatchObject({
       kind: "workspace_research",
-      outcome: { kind: "draft", expectedDrafts: 1 },
-      minimumSources: 1,
-      workspaceDraftSourceMode: "one_to_one",
+      outcome: {
+        kind: "source_selection",
+        candidateCount: 5,
+        searchPoolSize: 10,
+      },
+      minimumSources: 3,
+      workspacePostType: "regular",
+      workspaceSearchMode: "strict_top",
     });
+  });
+
+  test("the source-selection rollout can restore immediate single-source modeling", () => {
+    vi.stubEnv("MODEL_SOURCE_SELECTION_ENABLED", "false");
+    try {
+      const composerTaskContext = resolveComposerTaskContext({
+        starterId: "model-top-viral",
+        fallbackPostCount: null,
+      });
+
+      expect(
+        compileReadOnlyOrchestratorRoute({
+          ...readOnlyBase,
+          userInstruction: "AI slop for content writers.",
+          composerTaskContext,
+        }),
+      ).toMatchObject({
+        kind: "workspace_research",
+        outcome: { kind: "draft", expectedDrafts: 1 },
+        minimumSources: 1,
+        workspaceDraftSourceMode: "one_to_one",
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   test("the recent lead-magnet starter carries its source window and post type", () => {
@@ -791,6 +821,12 @@ describe("compileReadOnlyOrchestratorRoute", () => {
       }),
     ).toMatchObject({
       kind: "workspace_research",
+      outcome: {
+        kind: "source_selection",
+        candidateCount: 5,
+        searchPoolSize: 10,
+      },
+      minimumSources: 3,
       workspaceSince: "30d",
       workspacePostType: "lead_magnet",
       workspaceSearchMode: "strict_top",
@@ -1074,15 +1110,30 @@ describe("compileReadOnlyOrchestratorRoute", () => {
   ] as const)(
     "preserves a one-to-one source transformation contract: %s",
     (userInstruction, expectedDrafts, workspacePostType) => {
-      expect(
-        compileReadOnlyOrchestratorRoute({ ...readOnlyBase, userInstruction }),
-      ).toMatchObject({
-        kind: "workspace_research",
-        outcome: { kind: "draft", expectedDrafts },
-        minimumSources: expectedDrafts,
-        workspacePostType,
-        workspaceDraftSourceMode: "one_to_one",
+      const route = compileReadOnlyOrchestratorRoute({
+        ...readOnlyBase,
+        userInstruction,
       });
+      expect(route).toMatchObject(
+        expectedDrafts === 1
+          ? {
+              kind: "workspace_research",
+              outcome: {
+                kind: "source_selection",
+                candidateCount: 5,
+                searchPoolSize: 10,
+              },
+              minimumSources: 3,
+              workspacePostType,
+            }
+          : {
+              kind: "workspace_research",
+              outcome: { kind: "draft", expectedDrafts },
+              minimumSources: expectedDrafts,
+              workspacePostType,
+              workspaceDraftSourceMode: "one_to_one",
+            },
+      );
     },
   );
 
@@ -1119,7 +1170,7 @@ describe("compileReadOnlyOrchestratorRoute", () => {
     });
   });
 
-  test("leaves single-post modeling untouched by the campaign default", () => {
+  test("keeps single-post modeling out of the campaign default while requiring source choice", () => {
     const route = compileReadOnlyOrchestratorRoute({
       ...readOnlyBase,
       userInstruction:
@@ -1127,7 +1178,12 @@ describe("compileReadOnlyOrchestratorRoute", () => {
     });
     expect(route).toMatchObject({
       kind: "workspace_research",
-      outcome: { kind: "draft", expectedDrafts: 1 },
+      outcome: {
+        kind: "source_selection",
+        candidateCount: 5,
+        searchPoolSize: 10,
+      },
+      minimumSources: 3,
     });
     expect(route?.workspacePostType).toBeUndefined();
   });
@@ -1839,7 +1895,7 @@ describe("compileReadOnlyOrchestratorRoute", () => {
     ).toBeNull();
   });
 
-  test("pins a clear one-source modeled request to the deterministic source lane", () => {
+  test("pins a clear one-source modeled request to deterministic source selection", () => {
     expect(
       compileReadOnlyOrchestratorRoute({
         ...readOnlyBase,
@@ -1848,9 +1904,12 @@ describe("compileReadOnlyOrchestratorRoute", () => {
       }),
     ).toMatchObject({
       kind: "workspace_research",
-      outcome: { kind: "draft", expectedDrafts: 1 },
-      minimumSources: 1,
-      workspaceDraftSourceMode: "one_to_one",
+      outcome: {
+        kind: "source_selection",
+        candidateCount: 5,
+        searchPoolSize: 10,
+      },
+      minimumSources: 3,
     });
   });
 
