@@ -1,4 +1,7 @@
 import { describe, expect, test } from "vitest";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { LeadSharkCard } from "@/app/(app)/dashboard/integrations/leadshark-card";
 import {
   RESOURCE_NAME_TOKEN,
   RESOURCE_URL_TOKEN,
@@ -8,6 +11,27 @@ import {
 } from "@/lib/leadshark-default-config";
 
 describe("LeadShark automation defaults", () => {
+  test("shows the default messages for a connected account during schema rollout", () => {
+    const html = renderToStaticMarkup(
+      createElement(LeadSharkCard, {
+        initial: {
+          connected: true,
+          status: "active",
+          keyHint: "••••ef79",
+          lastVerifiedAt: "2026-07-21T10:00:00.000Z",
+          lastError: null,
+        },
+        initialDefaults: defaultLeadSharkAutomationDefaults(),
+        defaultsAvailable: false,
+      }),
+    );
+
+    expect(html).toContain("Automation defaults");
+    expect(html).toContain("Default DM");
+    expect(html).toContain(RESOURCE_URL_TOKEN);
+    expect(html).toContain("Saving changes will be available");
+  });
+
   test("materializes the current lead magnet without persisting a stale resource", () => {
     const defaults = defaultLeadSharkAutomationDefaults();
     const result = materializeLeadSharkAutomationDefaults(defaults, {

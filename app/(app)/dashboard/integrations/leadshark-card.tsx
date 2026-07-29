@@ -187,7 +187,9 @@ export function LeadSharkCard({
     try {
       const data = await fetchJson<{ ok: boolean; error?: string }>(
         "/api/integrations/leadshark",
-        { method: "DELETE" },
+        {
+          method: "DELETE",
+        },
       );
       if (!data.ok) throw new Error(data.error || "Couldn't disconnect.");
       setCred({
@@ -227,7 +229,9 @@ export function LeadSharkCard({
               </CardDescription>
             </div>
           </div>
-          <StatusPill tone={connected ? "success" : invalid ? "warning" : "neutral"}>
+          <StatusPill
+            tone={connected ? "success" : invalid ? "warning" : "neutral"}
+          >
             {connected ? "Connected" : invalid ? "Reconnect" : "Not connected"}
           </StatusPill>
         </div>
@@ -257,175 +261,181 @@ export function LeadSharkCard({
                 Disconnect
               </Button>
             </div>
-            {defaultsAvailable ? (
-              <section className="space-y-4 rounded-xl border border-border/70 p-4">
-                <div>
-                  <h3 className="text-sm font-semibold">Automation defaults</h3>
-                  <p className="text-xs text-muted-foreground">
-                    Applied to each new lead-magnet automation. SwipeIn replaces{" "}
-                    <code>{RESOURCE_NAME_TOKEN}</code> and{" "}
-                    <code>{RESOURCE_URL_TOKEN}</code> with that post&apos;s
-                    selected resource.
-                  </p>
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="leadshark-default-keywords">
-                    Trigger keywords (comma separated)
-                  </Label>
-                  <Input
-                    id="leadshark-default-keywords"
-                    value={defaults.keywords.join(", ")}
-                    onChange={(event) =>
-                      patchDefaults({
-                        keywords: event.target.value
-                          .split(",")
-                          .map((value) => value.trim())
-                          .filter(Boolean),
-                      })
-                    }
-                    placeholder="PLAYBOOK, GUIDE"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="leadshark-default-dm">Default DM</Label>
-                  <Textarea
-                    id="leadshark-default-dm"
-                    value={defaults.dmTemplate}
-                    onChange={(event) =>
-                      patchDefaults({ dmTemplate: event.target.value })
-                    }
-                    rows={4}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Keep {RESOURCE_URL_TOKEN} in every DM so the right resource
-                    is always delivered. {RESOURCE_NAME_TOKEN} is optional.
-                  </p>
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="leadshark-default-dm-variations">
-                    DM variations (one per line)
-                  </Label>
-                  <Textarea
-                    id="leadshark-default-dm-variations"
-                    value={defaults.dmTemplateVariations.join("\n")}
-                    onChange={(event) =>
-                      patchDefaults({
-                        dmTemplateVariations: lines(event.target.value),
-                      })
-                    }
-                    rows={4}
-                    placeholder={`Every variation must include ${RESOURCE_URL_TOKEN}`}
-                  />
-                </div>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="leadshark-default-replies">
-                      Comment replies (one per line)
-                    </Label>
-                    <Textarea
-                      id="leadshark-default-replies"
-                      value={defaults.commentReplyTemplates.join("\n")}
-                      onChange={(event) =>
-                        patchDefaults({
-                          commentReplyTemplates: lines(event.target.value),
-                        })
-                      }
-                      rows={4}
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="leadshark-default-nonconnection">
-                      Not connected replies (one per line)
-                    </Label>
-                    <Textarea
-                      id="leadshark-default-nonconnection"
-                      value={defaults.nonConnectionReplyTemplates.join("\n")}
-                      onChange={(event) =>
-                        patchDefaults({
-                          nonConnectionReplyTemplates: lines(
-                            event.target.value,
-                          ),
-                        })
-                      }
-                      rows={4}
-                    />
-                  </div>
-                </div>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <DefaultsToggle
-                    checked={defaults.autoConnect}
-                    onChange={(autoConnect) => patchDefaults({ autoConnect })}
-                    label="Auto-connect"
-                  />
-                  <DefaultsToggle
-                    checked={defaults.autoLike}
-                    onChange={(autoLike) => patchDefaults({ autoLike })}
-                    label="Auto-like comments"
-                  />
-                  <DefaultsToggle
-                    checked={defaults.followUpEnabled}
-                    onChange={(followUpEnabled) =>
-                      patchDefaults({ followUpEnabled })
-                    }
-                    label="Send a follow-up DM"
-                  />
-                  <DefaultsToggle
-                    checked={defaults.followUpOnlyIfNoResponse}
-                    onChange={(followUpOnlyIfNoResponse) =>
-                      patchDefaults({ followUpOnlyIfNoResponse })
-                    }
-                    label="Follow up only if no reply"
-                  />
-                </div>
-                {defaults.followUpEnabled ? (
-                  <div className="grid gap-3 sm:grid-cols-[1fr_10rem]">
-                    <div className="space-y-1.5">
-                      <Label htmlFor="leadshark-default-followup">
-                        Follow-up message
-                      </Label>
-                      <Textarea
-                        id="leadshark-default-followup"
-                        value={defaults.followUpTemplate ?? ""}
-                        onChange={(event) =>
-                          patchDefaults({
-                            followUpTemplate: event.target.value,
-                          })
-                        }
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="leadshark-default-delay">
-                        Delay (minutes)
-                      </Label>
-                      <Input
-                        id="leadshark-default-delay"
-                        type="number"
-                        min={1}
-                        max={43_200}
-                        value={defaults.followUpDelayMinutes}
-                        onChange={(event) =>
-                          patchDefaults({
-                            followUpDelayMinutes:
-                              Number(event.target.value) || 60,
-                          })
-                        }
-                      />
-                    </div>
-                  </div>
-                ) : null}
-                <Button
-                  onClick={() => void saveDefaults()}
-                  disabled={savingDefaults}
+            <section className="space-y-4 rounded-xl border border-border/70 p-4">
+              <div>
+                <h3 className="text-sm font-semibold">Automation defaults</h3>
+                <p className="text-xs text-muted-foreground">
+                  Applied to each new lead-magnet automation. SwipeIn replaces{" "}
+                  <code>{RESOURCE_NAME_TOKEN}</code> and{" "}
+                  <code>{RESOURCE_URL_TOKEN}</code> with that post&apos;s
+                  selected resource.
+                </p>
+              </div>
+              {!defaultsAvailable ? (
+                <p
+                  role="status"
+                  className="rounded-lg border border-state-warning-border bg-state-warning-bg p-3 text-xs text-state-warning"
                 >
-                  {savingDefaults ? (
-                    <Loader2 className="animate-spin" />
-                  ) : (
-                    <Save />
-                  )}
-                  Save automation defaults
-                </Button>
-              </section>
-            ) : null}
+                  These are the defaults SwipeIn will use. Saving changes will
+                  be available after the Automation Defaults database update is
+                  installed.
+                </p>
+              ) : null}
+              <div className="space-y-1.5">
+                <Label htmlFor="leadshark-default-keywords">
+                  Trigger keywords (comma separated)
+                </Label>
+                <Input
+                  id="leadshark-default-keywords"
+                  value={defaults.keywords.join(", ")}
+                  onChange={(event) =>
+                    patchDefaults({
+                      keywords: event.target.value
+                        .split(",")
+                        .map((value) => value.trim())
+                        .filter(Boolean),
+                    })
+                  }
+                  placeholder="PLAYBOOK, GUIDE"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="leadshark-default-dm">Default DM</Label>
+                <Textarea
+                  id="leadshark-default-dm"
+                  value={defaults.dmTemplate}
+                  onChange={(event) =>
+                    patchDefaults({ dmTemplate: event.target.value })
+                  }
+                  rows={4}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Keep {RESOURCE_URL_TOKEN} in every DM so the right resource is
+                  always delivered. {RESOURCE_NAME_TOKEN} is optional.
+                </p>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="leadshark-default-dm-variations">
+                  DM variations (one per line)
+                </Label>
+                <Textarea
+                  id="leadshark-default-dm-variations"
+                  value={defaults.dmTemplateVariations.join("\n")}
+                  onChange={(event) =>
+                    patchDefaults({
+                      dmTemplateVariations: lines(event.target.value),
+                    })
+                  }
+                  rows={4}
+                  placeholder={`Every variation must include ${RESOURCE_URL_TOKEN}`}
+                />
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label htmlFor="leadshark-default-replies">
+                    Comment replies (one per line)
+                  </Label>
+                  <Textarea
+                    id="leadshark-default-replies"
+                    value={defaults.commentReplyTemplates.join("\n")}
+                    onChange={(event) =>
+                      patchDefaults({
+                        commentReplyTemplates: lines(event.target.value),
+                      })
+                    }
+                    rows={4}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="leadshark-default-nonconnection">
+                    Not connected replies (one per line)
+                  </Label>
+                  <Textarea
+                    id="leadshark-default-nonconnection"
+                    value={defaults.nonConnectionReplyTemplates.join("\n")}
+                    onChange={(event) =>
+                      patchDefaults({
+                        nonConnectionReplyTemplates: lines(event.target.value),
+                      })
+                    }
+                    rows={4}
+                  />
+                </div>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <DefaultsToggle
+                  checked={defaults.autoConnect}
+                  onChange={(autoConnect) => patchDefaults({ autoConnect })}
+                  label="Auto-connect"
+                />
+                <DefaultsToggle
+                  checked={defaults.autoLike}
+                  onChange={(autoLike) => patchDefaults({ autoLike })}
+                  label="Auto-like comments"
+                />
+                <DefaultsToggle
+                  checked={defaults.followUpEnabled}
+                  onChange={(followUpEnabled) =>
+                    patchDefaults({ followUpEnabled })
+                  }
+                  label="Send a follow-up DM"
+                />
+                <DefaultsToggle
+                  checked={defaults.followUpOnlyIfNoResponse}
+                  onChange={(followUpOnlyIfNoResponse) =>
+                    patchDefaults({ followUpOnlyIfNoResponse })
+                  }
+                  label="Follow up only if no reply"
+                />
+              </div>
+              {defaults.followUpEnabled ? (
+                <div className="grid gap-3 sm:grid-cols-[1fr_10rem]">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="leadshark-default-followup">
+                      Follow-up message
+                    </Label>
+                    <Textarea
+                      id="leadshark-default-followup"
+                      value={defaults.followUpTemplate ?? ""}
+                      onChange={(event) =>
+                        patchDefaults({
+                          followUpTemplate: event.target.value,
+                        })
+                      }
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="leadshark-default-delay">
+                      Delay (minutes)
+                    </Label>
+                    <Input
+                      id="leadshark-default-delay"
+                      type="number"
+                      min={1}
+                      max={43_200}
+                      value={defaults.followUpDelayMinutes}
+                      onChange={(event) =>
+                        patchDefaults({
+                          followUpDelayMinutes:
+                            Number(event.target.value) || 60,
+                        })
+                      }
+                    />
+                  </div>
+                </div>
+              ) : null}
+              <Button
+                onClick={() => void saveDefaults()}
+                disabled={savingDefaults || !defaultsAvailable}
+              >
+                {savingDefaults ? (
+                  <Loader2 className="animate-spin" />
+                ) : (
+                  <Save />
+                )}
+                Save automation defaults
+              </Button>
+            </section>
           </>
         ) : (
           <>
@@ -457,7 +467,11 @@ export function LeadSharkCard({
                   disabled={busy}
                   className="flex-1"
                 />
-                <Button onClick={connect} disabled={busy || !apiKey.trim()} className="gap-2">
+                <Button
+                  onClick={connect}
+                  disabled={busy || !apiKey.trim()}
+                  className="gap-2"
+                >
                   {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                   {invalid ? "Reconnect" : "Connect"}
                 </Button>
@@ -500,17 +514,25 @@ export function LeadSharkCard({
           <DialogHeader>
             <DialogTitle>Disconnect LeadShark?</DialogTitle>
             <DialogDescription>
-              We&apos;ll remove your stored API key. Automations already set up in
-              LeadShark keep running there, but SwipeIn won&apos;t create new ones
-              until you reconnect.
+              We&apos;ll remove your stored API key. Automations already set up
+              in LeadShark keep running there, but SwipeIn won&apos;t create new
+              ones until you reconnect.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setConfirmOpen(false)} disabled={busy}>
+            <Button
+              variant="outline"
+              onClick={() => setConfirmOpen(false)}
+              disabled={busy}
+            >
               Cancel
             </Button>
             <Button variant="destructive" onClick={disconnect} disabled={busy}>
-              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Disconnect"}
+              {busy ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                "Disconnect"
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
