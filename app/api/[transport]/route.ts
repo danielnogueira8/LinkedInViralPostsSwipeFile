@@ -1,6 +1,7 @@
 import type { AuthInfo } from "@modelcontextprotocol/server";
 import { createSwipeMcpHandler } from "@/lib/mcp/server";
 import { verifyToken } from "@/lib/mcp/clerk-auth";
+import { mcpRequestLogLine } from "@/lib/mcp/observability";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -31,9 +32,40 @@ async function authenticate(request: Request): Promise<AuthInfo | Response> {
 }
 
 async function handler(request: Request): Promise<Response> {
-  const authInfo = await authenticate(request);
-  if (authInfo instanceof Response) return authInfo;
-  return mcpHandler.fetch(request, { authInfo });
+  const startedAt = performance.now();
+  let authenticated = false;
+  try {
+    const authInfo = await authenticate(request);
+    if (authInfo instanceof Response) {
+      console.info(
+        mcpRequestLogLine(request, {
+          status: authInfo.status,
+          durationMs: performance.now() - startedAt,
+          authenticated,
+        }),
+      );
+      return authInfo;
+    }
+    authenticated = true;
+    const response = await mcpHandler.fetch(request, { authInfo });
+    console.info(
+      mcpRequestLogLine(request, {
+        status: response.status,
+        durationMs: performance.now() - startedAt,
+        authenticated,
+      }),
+    );
+    return response;
+  } catch (error) {
+    console.info(
+      mcpRequestLogLine(request, {
+        status: 500,
+        durationMs: performance.now() - startedAt,
+        authenticated,
+      }),
+    );
+    throw error;
+  }
 }
 
 export { handler as GET, handler as POST, handler as DELETE };

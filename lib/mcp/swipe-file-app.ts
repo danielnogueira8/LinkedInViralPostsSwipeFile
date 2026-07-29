@@ -1,4 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/server";
+import { MCP_STABLE_CACHE_HINT } from "@/lib/mcp/cache-hints";
 import { SWIPE_FILE_APP_HTML } from "./swipe-file-app.generated";
 
 export const SWIPE_FILE_APP_RESOURCE_URI =
@@ -23,6 +24,7 @@ export function registerSwipeFileAppResource(server: McpServer) {
       description:
         "Interactive cards for reading, filtering, and modeling viral LinkedIn posts.",
       mimeType: MCP_APP_MIME_TYPE,
+      cacheHint: MCP_STABLE_CACHE_HINT,
       _meta: {
         ui: {
           csp: {
@@ -49,4 +51,3 @@ export function registerSwipeFileAppResource(server: McpServer) {
     }),
   );
 }
-

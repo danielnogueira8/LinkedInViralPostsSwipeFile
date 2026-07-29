@@ -4,6 +4,8 @@ import {
   type Implementation,
   type McpHttpHandler,
 } from "@modelcontextprotocol/server";
+import { MCP_CACHE_HINTS } from "@/lib/mcp/cache-hints";
+import { mcpProtocolErrorLogLine } from "@/lib/mcp/observability";
 import { registerSwipeTools } from "@/lib/mcp/register";
 import { mcpRequestStateCodec } from "@/lib/mcp/request-state";
 import { registerSwipeFileAppResource } from "@/lib/mcp/swipe-file-app";
@@ -29,6 +31,7 @@ const SERVER_INFO = {
  */
 export function createSwipeMcpServer(): McpServer {
   const server = new McpServer(SERVER_INFO, {
+    cacheHints: MCP_CACHE_HINTS,
     requestState: {
       verify: mcpRequestStateCodec.verify,
     },
@@ -43,7 +46,7 @@ export function createSwipeMcpHandler(): McpHttpHandler {
     legacy: "stateless",
     responseMode: "auto",
     onerror(error) {
-      console.error("[mcp:protocol]", error);
+      console.error(mcpProtocolErrorLogLine(error));
     },
   });
 }
