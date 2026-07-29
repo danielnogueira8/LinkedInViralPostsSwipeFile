@@ -1,4 +1,5 @@
 import { supabaseAdmin } from "@/lib/supabase";
+import { selectAllRows } from "@/lib/db-paginate";
 
 // -----------------------------------------------------------------------------
 // Hard-delete ALL of a workspace's data (GDPR erasure / self-serve "delete my
@@ -68,6 +69,8 @@ export async function purgeWorkspaceData(
   }
 
   const del = (table: string) => sb.from(table).delete({ count: "exact" });
+  const databaseErrorCode = (error: unknown) =>
+    (error as { code?: string } | null)?.code;
 
   // Transient work and caches. Provider locks must precede their jobs.
   await wipe("ai_operation_claims", () =>
@@ -124,6 +127,108 @@ export async function purgeWorkspaceData(
       error,
     };
   });
+  let knowledgeSourceStorageReady = true;
+  let knowledgeSourceSchemaPresent = false;
+  await wipe("knowledge_source_storage", async (client) => {
+    type StoredSourceObject = {
+      storage_bucket: string | null;
+      storage_path: string | null;
+    };
+    let rows: StoredSourceObject[];
+    try {
+      rows = await selectAllRows<StoredSourceObject>(() =>
+        client
+          .from("knowledge_source_revisions")
+          .select("storage_bucket,storage_path")
+          .eq("workspace_id", workspaceId),
+      );
+      knowledgeSourceSchemaPresent = true;
+    } catch (error) {
+      // 42P01 proves the relation itself is absent. PostgREST cache errors do
+      // not unless the authoritative migration marker is still below 147.
+      if (databaseErrorCode(error) === "42P01") {
+        return { count: 0, error: null };
+      }
+      if (databaseErrorCode(error) === "PGRST205") {
+        const { data: marker, error: markerError } = await client
+          .from("app_schema_version")
+          .select("version")
+          .eq("singleton", true)
+          .maybeSingle();
+        if (
+          !markerError &&
+          typeof (marker as { version?: unknown } | null)?.version === "number" &&
+          (marker as { version: number }).version < 147
+        ) {
+          return { count: 0, error: null };
+        }
+      }
+      knowledgeSourceStorageReady = false;
+      return {
+        count: null,
+        error: {
+          message:
+            error instanceof Error
+              ? error.message
+              : (error as { message?: string })?.message ??
+                "Knowledge Source storage lookup failed",
+        },
+      };
+    }
+
+    const byBucket = new Map<string, string[]>();
+    for (const row of rows) {
+      if (!row.storage_bucket || !row.storage_path) continue;
+      if (!row.storage_path.startsWith(`${workspaceId}/`)) {
+        knowledgeSourceStorageReady = false;
+        return {
+          count: null,
+          error: { message: "Knowledge Source storage path is outside the Workspace" },
+        };
+      }
+      const paths = byBucket.get(row.storage_bucket) ?? [];
+      paths.push(row.storage_path);
+      byBucket.set(row.storage_bucket, paths);
+    }
+
+    let removed = 0;
+    for (const [bucket, paths] of byBucket) {
+      for (let offset = 0; offset < paths.length; offset += 100) {
+        const batch = paths.slice(offset, offset + 100);
+        const { error } = await client.storage.from(bucket).remove(batch);
+        if (error) {
+          knowledgeSourceStorageReady = false;
+          return { count: null, error };
+        }
+        removed += batch.length;
+      }
+    }
+    return { count: removed, error: null };
+  });
+  if (knowledgeSourceStorageReady) {
+    await wipe("knowledge_sources", async (client) => {
+      const { data, error } = await client.rpc(
+        "purge_workspace_knowledge_sources",
+        { p_workspace_id: workspaceId },
+      );
+      // This app change intentionally deploys before migration 147 so the user
+      // can apply the final migration bundle once all Knowledge Library PRs
+      // are merged. Missing-schema is the only compatibility exception.
+      const missingRpc =
+        error &&
+        !knowledgeSourceSchemaPresent &&
+        (
+          databaseErrorCode(error) === "PGRST202" ||
+          databaseErrorCode(error) === "42883"
+        );
+      return {
+        count: missingRpc ? 0 : typeof data === "number" ? data : null,
+        error: missingRpc ? null : error,
+      };
+    });
+  } else {
+    deleted.knowledge_sources = null;
+  }
   await wipe("content_preference_evidence", () =>
     del("content_preference_evidence").eq("workspace_id", workspaceId),
   );

@@ -85,6 +85,11 @@ A source-backed story, belief, proof point, offer, audience insight, area of
 expertise, or prohibition that a Workspace can verify and use in Cowork.
 _Avoid_: Unverified memory, Voice Profile rule, generic context
 
+**Knowledge Source**:
+A durable, Workspace-owned note, document, or transcript from which reviewable
+Workspace Knowledge Items can be derived.
+_Avoid_: Knowledge Item, raw context, memory
+
 **Content Outcome**:
 Workspace-attributed business evidence connected to published content, such as
 a qualified conversation, lead, booked call, pipeline, or revenue.
