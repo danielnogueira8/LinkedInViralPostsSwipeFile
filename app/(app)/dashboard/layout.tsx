@@ -5,6 +5,7 @@ import { FirstRunChecklist } from "./first-run-checklist";
 import { DashboardClientChrome } from "./client-chrome";
 import { DashboardContentFrame } from "./content-frame";
 import { HydrationSafeUserButton } from "./hydration-safe-user-button";
+import { WorkspaceSearchButton } from "@/components/workspace-search-button";
 import Image from "next/image";
 import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
@@ -111,6 +112,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
             className="h-7 w-7 rounded-md shrink-0"
           />
           <div className="flex items-center gap-1">
+            <WorkspaceSearchButton />
             <UsagePill />
             <HydrationSafeUserButton
               fallbackClassName="h-8 w-8 rounded-full"

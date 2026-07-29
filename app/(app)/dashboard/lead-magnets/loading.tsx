@@ -1,15 +1,17 @@
 import { Magnet } from "lucide-react";
 
 import { PageHeader, PageShell, Surface, Toolbar } from "@/components/app-surface";
+import { LoadingState } from "@/components/ui/loading-state";
 
 export default function LeadMagnetsLoading() {
   return (
-    <PageShell role="status" aria-live="polite">
+    <PageShell aria-busy="true">
       <PageHeader
         title={<span className="block h-8 w-44 animate-pulse rounded-md bg-muted" />}
         description={<span className="block h-4 w-full max-w-xl animate-pulse rounded-md bg-muted/70" />}
         actions={<span className="hidden h-9 w-40 animate-pulse rounded-full bg-muted sm:block" />}
       />
+      <LoadingState label="Loading lead magnets" />
 
       <Toolbar className="space-y-4 p-3">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

@@ -2,7 +2,8 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState, useTransition, useMemo, memo, useRef, useEffect } from "react";
-import { ArrowDown, ArrowUp, ArrowUpDown, X, CalendarRange, FileType2, Heart, MessageCircle, Search, SlidersHorizontal } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, X, CalendarRange, FileType2, Heart, MessageCircle, SlidersHorizontal } from "lucide-react";
+import { SearchField } from "@/components/ui/search-field";
 import { cn } from "@/lib/utils";
 import {
   countAdvancedSwipeFilters,
@@ -423,17 +424,14 @@ const SearchChip = memo(function SearchChip({
 }: { value: string; onChange: (v: string) => void; onCommit: (v: string) => void; onClear: () => void }) {
   const active = !!value;
   return (
-    <div
+    <SearchField
+      containerClassName="shrink-0"
       className={cn(
-        "inline-flex items-center rounded-full border bg-card overflow-hidden transition-[color,background-color,border-color,box-shadow,opacity] duration-150 ease-[cubic-bezier(0.25,1,0.5,1)] h-8",
-        active ? "border-primary/40 ring-1 ring-primary/15" : "border-border/60 hover:border-border",
+        "h-8 rounded-full bg-card text-xs font-medium shadow-none",
+        active
+          ? "w-44 border-primary/40 ring-1 ring-primary/15"
+          : "w-48 border-border/60 hover:border-border",
       )}
-    >
-      <span className={cn("pl-3 pr-1.5 grid place-items-center", active ? "text-primary" : "text-muted-foreground")}>
-        <Search className="h-3.5 w-3.5" />
-      </span>
-      <input
-        type="text"
         value={value}
         placeholder="Creator name"
         onChange={(e) => onChange(e.target.value)}
@@ -443,22 +441,8 @@ const SearchChip = memo(function SearchChip({
           if (e.key === "Escape") onClear();
         }}
         aria-label="Search by creator name"
-        className={cn(
-          "py-1.5 bg-transparent text-foreground font-medium outline-none",
-          active ? "pl-1 pr-1 w-36" : "pl-1 pr-3 w-44 placeholder:text-muted-foreground placeholder:font-normal",
-        )}
-      />
-      {active && (
-        <button
-          type="button"
-          onClick={onClear}
-          className="self-stretch grid place-items-center w-7 pr-2 text-muted-foreground hover:text-foreground transition-colors"
-          aria-label="Clear creator search"
-        >
-          <X className="h-3 w-3" />
-        </button>
-      )}
-    </div>
+      onClear={onClear}
+    />
   );
 });
 

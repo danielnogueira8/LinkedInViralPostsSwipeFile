@@ -138,14 +138,17 @@ export function AgentWorkingSummary() {
           })}
         </p>
       </div>
-      <ul className="mt-4 grid gap-3 md:grid-cols-3">
+      <ul
+        className="-mx-1 mt-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-1 pb-2 md:mx-0 md:grid md:grid-cols-3 md:overflow-visible md:px-0 md:pb-0"
+        aria-label="Workspace learning insights"
+      >
         {summary.categories.map((category) => {
           const details = CATEGORY_DETAILS[category.kind];
           const Icon = details.icon;
           return (
             <li
               key={category.kind}
-              className="flex min-h-44 flex-col rounded-xl border border-border bg-card p-4"
+              className="flex min-h-44 w-[82vw] max-w-[22rem] shrink-0 snap-start flex-col rounded-xl border border-border bg-card p-4 shadow-soft md:w-auto md:max-w-none"
             >
               <div className="flex items-center gap-2.5">
                 <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-foreground">

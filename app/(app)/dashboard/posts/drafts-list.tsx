@@ -5,7 +5,6 @@ import dynamic from "next/dynamic";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import {
-  Search,
   CalendarClock,
   AlertCircle,
   Plus,
@@ -20,6 +19,7 @@ import {
 import { AiIcon } from "@/components/ai-icon";
 import { isAgentSuggestedMeta } from "@/lib/agent-loop/constants";
 import { Button } from "@/components/ui/button";
+import { SearchField } from "@/components/ui/search-field";
 import { cn } from "@/lib/utils";
 import {
   byId,
@@ -646,15 +646,15 @@ export function DraftsList({
       />
       {/* Toolbar: search + kind filter */}
       <Toolbar className="flex flex-wrap items-center gap-2 p-2 sm:p-2.5">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search posts…"
-            className="h-9 w-full rounded-xl border border-transparent bg-background/80 pl-8 pr-3 text-sm shadow-soft outline-none transition-colors placeholder:text-muted-foreground/70 focus:border-primary/25 focus:ring-2 focus:ring-ring/25"
-          />
-        </div>
+        <SearchField
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          onClear={() => setQuery("")}
+          placeholder="Search posts…"
+          aria-label="Search posts"
+          containerClassName="min-w-[200px] flex-1"
+          className="h-9 border-transparent bg-background/80"
+        />
         <div className={segmentedControlClass()}>
           {KIND_FILTER_OPTIONS.map((k) => (
             <button

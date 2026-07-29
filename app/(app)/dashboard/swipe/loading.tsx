@@ -1,8 +1,12 @@
+import { LoadingState } from "@/components/ui/loading-state";
+
 // Streams instantly on sidebar nav so the page feels responsive while the
 // server query runs. The actual filters/posts will replace this once ready.
 export default function SwipeLoading() {
   return (
-    <div className="space-y-6 animate-pulse">
+    <div className="space-y-6">
+      <LoadingState label="Loading your Swipe File" />
+      <div className="space-y-6 animate-pulse">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div className="space-y-2">
           <div className="h-9 w-44 rounded-md bg-muted" />
@@ -40,6 +44,7 @@ export default function SwipeLoading() {
             </div>
           </div>
         ))}
+      </div>
       </div>
     </div>
   );

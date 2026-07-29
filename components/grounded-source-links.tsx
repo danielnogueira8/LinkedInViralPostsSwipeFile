@@ -1,7 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronLeft, ChevronRight, ExternalLink } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  ExternalLink,
+  ShieldCheck,
+} from "lucide-react";
 import type { Artifact } from "@/lib/agent/contracts";
 import type { CitedPost } from "@/lib/cite-resolve";
 import { MAX_GROUNDED_ANSWER_RESULTS } from "@/lib/agent/evidence";
@@ -152,6 +157,18 @@ export function GroundedSourceLinks({ artifacts }: { artifacts?: Artifact[] }) {
     // Comfortable vertical spacing above/below (my-1.5) keeps it from crowding
     // the answer text.
     <div className="my-1.5 flex w-full max-w-[360px] flex-col gap-2.5 mx-auto">
+      <div className="flex items-center gap-2 px-0.5">
+        <ShieldCheck
+          className="size-3.5 text-state-success"
+          aria-hidden="true"
+        />
+        <span className="text-xs font-semibold text-foreground">
+          Verified {sources.length === 1 ? "source" : "sources"}
+        </span>
+        <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-md border border-border bg-muted px-1.5 text-[10px] font-semibold tabular-nums text-muted-foreground">
+          {sources.length}
+        </span>
+      </div>
       {cards.length > 1 ? (
         <SourceCarousel cards={cards} />
       ) : cards.length === 1 ? (

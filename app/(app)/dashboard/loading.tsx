@@ -1,3 +1,5 @@
+import { LoadingState } from "@/components/ui/loading-state";
+
 // Streamed instantly while the chat workspace server component fetches.
 // Mirrors the real ChatWorkspace layout (history sidebar + conversation +
 // composer + drafts panel) and its exact outer dimensions, so the skeleton →
@@ -5,8 +7,11 @@
 // sidebar (layout.tsx) stays painted; this replaces the page body.
 export default function ChatLoading() {
   return (
-    <div className="-mt-2 animate-pulse">
-      <div className="flex h-[calc(100dvh-9rem)] min-h-[520px] rounded-xl border border-border/60 overflow-hidden bg-background">
+    <div className="-mt-2">
+      <div className="mb-2 px-1">
+        <LoadingState label="Opening Cowork" />
+      </div>
+      <div className="flex h-[calc(100dvh-9rem)] min-h-[520px] animate-pulse rounded-xl border border-border/60 overflow-hidden bg-background">
         {/* Left: chat history */}
         <aside className="hidden md:flex w-60 shrink-0 flex-col border-r border-border/60 bg-sidebar/40">
           <div className="p-3">

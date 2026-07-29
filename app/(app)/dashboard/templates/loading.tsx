@@ -1,6 +1,10 @@
+import { LoadingState } from "@/components/ui/loading-state";
+
 export default function TemplatesLoading() {
   return (
-    <div className="space-y-6 animate-pulse">
+    <div className="space-y-6">
+      <LoadingState label="Loading templates" />
+      <div className="space-y-6 animate-pulse">
       <div className="space-y-2">
         <div className="h-9 w-40 rounded-md bg-muted" />
         <div className="h-4 w-96 max-w-full rounded-md bg-muted/70" />
@@ -18,6 +22,7 @@ export default function TemplatesLoading() {
             <div className="h-3 w-4/5 rounded bg-muted/70" />
           </div>
         ))}
+      </div>
       </div>
     </div>
   );
