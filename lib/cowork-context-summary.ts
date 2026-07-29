@@ -14,6 +14,19 @@ export type ContextSourcePost = {
 
 export type CreatorStyleContext = { name: string; creatorName: string | null };
 
+// The transcript is the durable owner of modeled-post context. Returning the
+// latest attachment lets every chat reconstruct its own source after a reload
+// instead of depending on component memory.
+export function latestPersistedModelSource(
+  messages: Pick<Message, "modelSource">[],
+): NonNullable<Message["modelSource"]> | null {
+  let source: NonNullable<Message["modelSource"]> | null = null;
+  for (const message of messages) {
+    if (message.modelSource) source = message.modelSource;
+  }
+  return source;
+}
+
 // Everything that has shaped a chat, collapsed to one referenceable view. Built
 // by aggregating the per-message context the transcript already carries (each
 // user Message stamps the skills / format / creator style / lead magnet / files
@@ -57,8 +70,9 @@ function pushUnique(into: string[], seen: Set<string>, value: string | undefined
 //   • Single-valued context (creator style, lead magnet) takes the MOST RECENT
 //     non-empty value: the chat's current style/giveaway, since a later turn can
 //     switch it. Iterating oldest→newest and overwriting yields "last wins".
-//   • The source post comes from the live modelSource when present; it's the same
-//     post every turn in a chat, so there's nothing to aggregate.
+//   • The source post comes from the live handoff while it is pending, then from
+//     the owning user message once the server has persisted and rehydrated it.
+//     The live handoff wins during the brief overlap around a send.
 export function summarizeChatContext(input: {
   messages: Pick<
     Message,
@@ -67,6 +81,7 @@ export function summarizeChatContext(input: {
     | "creatorStyle"
     | "leadMagnet"
     | "files"
+    | "modelSource"
   >[];
   sourcePost?: ContextSourcePost | null;
 }): ChatContextSummary {
@@ -88,8 +103,21 @@ export function summarizeChatContext(input: {
     if (message.leadMagnet) leadMagnet = message.leadMagnet;
   }
 
+  const persistedModelSource = latestPersistedModelSource(input.messages);
+  const persistedSourcePost: ContextSourcePost | null =
+    persistedModelSource?.state === "available"
+      ? {
+          authorName: persistedModelSource.authorName,
+          authorAvatar: persistedModelSource.authorAvatar,
+          postText: persistedModelSource.postText,
+          partial: persistedModelSource.partial,
+          postType: persistedModelSource.postType,
+          kind: persistedModelSource.kind,
+        }
+      : null;
+
   return {
-    sourcePost: input.sourcePost ?? null,
+    sourcePost: input.sourcePost ?? persistedSourcePost,
     skills,
     postFormats,
     creatorStyle,
