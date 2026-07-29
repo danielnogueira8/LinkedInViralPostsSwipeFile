@@ -1,4 +1,4 @@
-import { ChevronDown, Coins, ExternalLink, Newspaper } from "lucide-react";
+import { Coins, ExternalLink, Newspaper } from "lucide-react";
 
 import type { CoworkTurnUsage, ResearchSource } from "@/lib/cowork-turn-usage";
 
@@ -12,49 +12,25 @@ const USAGE_STAGE_LABELS: Record<
   other: "Other",
 };
 
-function modelDisplayName(model: string): string {
-  if (/luna/i.test(model)) return "Luna";
-  if (/haiku/i.test(model)) return "Haiku";
-  if (/sonnet/i.test(model)) return "Sonnet";
-  if (/gemini/i.test(model)) return "Gemini";
-  if (/glm/i.test(model)) return "GLM";
-  return model.split("/").pop() ?? model;
-}
-
 export function TaskUsageSummary({ usage }: { usage: CoworkTurnUsage }) {
-  // Native <details> disclosure: the credit breakdown used to live in a
-  // title tooltip — invisible to keyboard, touch, and screen readers.
+  // Credits belong to the generated message, but provider/model attribution is
+  // internal accounting metadata. Keep this label non-interactive so hover,
+  // focus, and activation cannot reveal implementation details.
   return (
-    <details className="group w-fit">
-      <summary
-        className="inline-flex w-fit cursor-pointer list-none flex-wrap items-center gap-x-2 gap-y-1 rounded-full border border-border bg-muted/35 px-2.5 py-1 text-[11px] text-muted-foreground [&::-webkit-details-marker]:hidden"
-        aria-label={`Estimated credit impact: ${usage.totalCredits} credits. Activate for the breakdown.`}
-      >
-        <Coins className="h-3 w-3" aria-hidden />
-        <span className="font-medium text-foreground">
-          ~{usage.totalCredits} {usage.totalCredits === 1 ? "credit" : "credits"}
+    <div
+      className="inline-flex w-fit flex-wrap items-center gap-x-2 gap-y-1 rounded-full border border-border bg-muted/35 px-2.5 py-1 text-[11px] text-muted-foreground"
+      aria-label={`Estimated credit impact: ${usage.totalCredits} credits.`}
+    >
+      <Coins className="h-3 w-3" aria-hidden />
+      <span className="font-medium text-foreground">
+        ~{usage.totalCredits} {usage.totalCredits === 1 ? "credit" : "credits"}
+      </span>
+      {usage.stages.map((stage) => (
+        <span key={stage.kind}>
+          {USAGE_STAGE_LABELS[stage.kind]} ~{stage.credits}
         </span>
-        {usage.stages.map((stage) => (
-          <span key={stage.kind}>
-            {USAGE_STAGE_LABELS[stage.kind]} ~{stage.credits}
-          </span>
-        ))}
-        <ChevronDown className="h-3 w-3 transition-transform group-open:rotate-180" aria-hidden />
-      </summary>
-      <div className="mt-1.5 max-w-xs rounded-lg border border-border bg-card p-2.5 text-[11px] leading-5 text-muted-foreground shadow-soft">
-        {usage.stages.map((stage) => (
-          <div key={stage.kind}>
-            {USAGE_STAGE_LABELS[stage.kind]}: ~{stage.credits} credits ·{" "}
-            {stage.models.map(modelDisplayName).join(", ") || "server"}
-          </div>
-        ))}
-        <div className="mt-1.5 border-t border-border pt-1.5">
-          Estimated from this task&apos;s ${usage.totalCostUsd.toFixed(4)} provider
-          cost. Your monthly counter also accounts for its message-count floor
-          and cumulative rounding.
-        </div>
-      </div>
-    </details>
+      ))}
+    </div>
   );
 }
 
