@@ -224,6 +224,34 @@ function done(events: AgentEvent[]) {
 }
 
 describe("DraftEngine", () => {
+  test("uses an existing Content Template as a structure reference while keeping the task original", async () => {
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(180, 90) },
+    ]);
+
+    const result = await collect(writer, {
+      task: { kind: "original" },
+      originalTemplateReference: {
+        title: "Single insight",
+        structureType: "story",
+        body: "{sharp observation}\n\n{reason it matters}\n\n{concrete proof}",
+      },
+    });
+
+    expect(artifacts(result.events)).toHaveLength(1);
+    expect(writer.requests).toHaveLength(1);
+
+    const prompt = writer.requests[0].messages
+      .map((message) => String(message.content))
+      .join("\n\n");
+    expect(prompt).toContain("CONTENT TEMPLATE REFERENCE DATA");
+    expect(prompt).toContain("{sharp observation}");
+    expect(prompt).toContain("Do not fill it line by line");
+    expect(prompt).toContain("Write an original post from the supplied brief and voice");
+    expect(prompt).not.toContain("direct fixed-source LinkedIn post writer");
+    expect(prompt).not.toContain("# Vary the STRUCTURE of every from-scratch post");
+  });
+
   test.each([
     {
       name: "repairs punctuation drift on the requested line",

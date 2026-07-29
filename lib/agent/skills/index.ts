@@ -648,6 +648,13 @@ four hundred, write four hundred.
 
 These are constraints on rigor, not on creativity.
 
+When a Content Template is supplied, use it as evidence of what a complete
+post looks like, not as a form to fill. Study four things: what the hook does,
+how the idea progresses, where the proof appears, and how the post stops. Then
+write from the user's own thesis, facts, and voice. Do not inherit the
+template's wording, placeholders, anecdotes, numbers, or CTA. The template
+raises the execution bar; it never supplies the substance.
+
 ## Step 1 — Name the job
 
 Before anything else, answer this: **what is this post for?**

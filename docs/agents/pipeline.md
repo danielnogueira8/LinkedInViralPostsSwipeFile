@@ -77,7 +77,7 @@ flowchart TD
     ED -->|no target| EC[clarify: which Post?]
 
     OP -->|create_post / none| CR{direct-writer claim paths,<br/>first match wins}
-    CR -->|commandCreateEligible<br/>+ live-news gate ✓| W1[direct writer: original]
+    CR -->|commandCreateEligible<br/>+ live-news gate ✓| W1[direct writer: original<br/>matched Content Template stays<br/>structure-only reference data]
     CR -->|directPartial| W2[direct writer: partial text<br/>hooks / ideas / outlines]
     CR -->|directMulti| W3[direct writer: counted multi-post]
     CR -->|directSource / find-and-model /<br/>directStructureSource<br/>+ live-news gate ✓| W4[direct writer: source-modeled]
@@ -99,6 +99,14 @@ The direct-writer claim paths each need the **same** unsafe-intent gates.
 When a new claim path is added, it must reject:
 `requiresLiveNewsOrResearch` (newsjack/breaking/research wording), compound
 deliverables, partial+post mixes, durable actions, unresolved references.
+
+Automatic Content Template matching does not turn an original request into a
+source-modeled request. Setup reuses the matcher result already computed for the
+turn, keeps the highest-ranked workspace or built-in Content Template, and
+passes it to the original writer as untrusted structure-only reference data.
+This adds no model call or drafting pass. Source Posts are never silently
+substituted for a Content Template in this path.
+
 The two times a newsjack shipped ungrounded garbage, it was a claim path
 missing exactly this gate (`commandCreateEligible` in #1568,
 `directStructureSource` in #1579).

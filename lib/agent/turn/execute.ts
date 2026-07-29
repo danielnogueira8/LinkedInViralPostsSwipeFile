@@ -61,6 +61,7 @@ import {
 } from "@/lib/agent/turn/artifact-tags";
 import { buildAnswerSystemPrompt } from "@/lib/agent/prompt-guidance";
 import { tagArtifactWithKnowledgeSources } from "@/lib/knowledge-sources/context";
+import { originalTemplateReferenceFromMatch } from "@/lib/agent/original-template-reference";
 
 export type TurnExecuteDependencies = {
   runWriterTurn: typeof runWriterTurn;
@@ -201,6 +202,8 @@ async function* runTurnPlan(
     workspaceLearningBlock,
     priorPostDrafts,
     explorationLane: resolvedGenerationConfig?.explorationLane,
+    originalTemplateReference:
+      originalTemplateReferenceFromMatch(structureMatch) ?? undefined,
     format: selectedNoModelFormat,
     customSkillBodies,
     customSkillNames,

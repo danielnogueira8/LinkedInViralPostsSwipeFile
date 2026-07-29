@@ -85,6 +85,10 @@ import {
   type ExplorationLane,
 } from "@/lib/agent/original-post-exploration";
 import {
+  renderOriginalTemplateReference,
+  type OriginalTemplateReference,
+} from "@/lib/agent/original-template-reference";
+import {
   classifyAdapterFailure,
   coworkAdapterHealth,
   type AdapterHealthRegistry,
@@ -267,6 +271,8 @@ export type WriterInput = {
   priorPostDrafts: RecentDraft[];
   /** Optional user-selected lane for original posts; automatic when absent. */
   explorationLane?: ExplorationLane;
+  /** Existing Content Template selected without another model call; original posts use it as structure-only reference data. */
+  originalTemplateReference?: OriginalTemplateReference;
   format?: NoModelFormat | null;
   customSkillBodies?: string[];
   customSkillNames?: string[];
@@ -676,7 +682,11 @@ function compileMessages(
       ? `${THIN_WRITING_NOTE}\n\n${ANTI_AI_READER_TELL_RULES}`
       : GLOBAL_WRITING_SKILL,
   ].join("\n\n");
-  const structureSkill = input.lean ? "" : POST_STRUCTURE_SKILL;
+  const structureSkill =
+    input.lean ||
+    (task.kind === "original" && input.originalTemplateReference)
+      ? ""
+      : POST_STRUCTURE_SKILL;
   const preferences = renderPreferencesBlock(input.preferences);
   const feedback = renderFeedbackMemoryBlock(input.feedbackMemory);
   const workspaceLearning = input.workspaceLearningBlock?.trim() ?? "";
@@ -691,6 +701,10 @@ function compileMessages(
   const explorationGuidance = explorationLane
     ? explorationLaneGuidance(explorationLane)
     : "";
+  const originalTemplateReference =
+    task.kind === "original"
+      ? renderOriginalTemplateReference(input.originalTemplateReference)
+      : "";
   const history = writerHistoryDigest(input.history ?? []);
   const historyLines = history
     ? [
@@ -933,7 +947,7 @@ function compileMessages(
         writingSkill,
         structureSkill,
         skills,
-        format,
+        originalTemplateReference || format,
         leadMagnet,
         creatorStyle,
         preferences,
