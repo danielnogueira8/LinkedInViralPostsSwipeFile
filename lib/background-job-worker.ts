@@ -35,6 +35,10 @@ import {
   runKnowledgeIngestionJob,
 } from "@/lib/knowledge-sources/operations";
 import {
+  failKnowledgeExtractionAfterRetries,
+  runKnowledgeExtractionJob,
+} from "@/lib/knowledge-sources/extraction";
+import {
   claimWorkspaceCost,
   releaseWorkspaceCost,
 } from "@/lib/workspace-cost-claims";
@@ -89,7 +93,8 @@ async function runBackgroundJob(job: BackgroundJob): Promise<{
   unsupported: number;
 }> {
   // Knowledge ingestion is deterministic local parsing and must not consume or
-  // reserve the user's AI budget.
+  // reserve the user's AI budget. Extraction is intentionally excluded: it is
+  // a model-backed job and goes through the normal workspace cost claim.
   if (job.type === "knowledge_ingestion") {
     return runBackgroundJobClaimed(job);
   }
@@ -166,6 +171,8 @@ async function runBackgroundJobClaimed(job: BackgroundJob): Promise<{
         return await runLeadSharkStatsSyncJob(job);
       case "knowledge_ingestion":
         return await runKnowledgeIngestionJob(job, sb);
+      case "knowledge_extraction":
+        return await runKnowledgeExtractionJob(job, sb);
       case "lead_magnet_resource":
         await markJobFailed(
           job,
@@ -203,6 +210,8 @@ async function runBackgroundJobClaimed(job: BackgroundJob): Promise<{
       }
       if (job.type === "knowledge_ingestion") {
         await failKnowledgeIngestionAfterRetries(job, sb);
+      } else if (job.type === "knowledge_extraction") {
+        await failKnowledgeExtractionAfterRetries(job, sb);
       }
       await markJobFailed(job, message, sb);
       return { completed: 0, failed: 1, requeued: 0, unsupported: 0, holdCostClaim };

@@ -14,11 +14,13 @@ export type KnowledgeSourceSummary = {
   errorCode: string | null;
   sizeBytes: number | null;
   jobId: string | null;
+  extractionStatus: "queued" | "running" | "done" | "failed" | null;
+  extractionErrorCode: string | null;
   createdAt: string;
   updatedAt: string;
 };
 
-type StoredKnowledgeSource = {
+export type StoredKnowledgeSource = {
   id: string;
   kind: "file" | "note";
   title: string;
@@ -28,6 +30,8 @@ type StoredKnowledgeSource = {
   error_code: string | null;
   declared_size_bytes: number | null;
   ingestion_job_id: string | null;
+  extraction_job?: { status?: string } | Array<{ status?: string }> | null;
+  extraction_error_code?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -35,6 +39,14 @@ type StoredKnowledgeSource = {
 export function publicKnowledgeSource(
   row: StoredKnowledgeSource,
 ): KnowledgeSourceSummary {
+  const extractionJob = Array.isArray(row.extraction_job)
+    ? row.extraction_job[0]
+    : row.extraction_job;
+  const extractionStatus = ["queued", "running", "done", "failed"].includes(
+    extractionJob?.status ?? "",
+  )
+    ? (extractionJob!.status as KnowledgeSourceSummary["extractionStatus"])
+    : null;
   return {
     id: row.id,
     kind: row.kind,
@@ -45,10 +57,34 @@ export function publicKnowledgeSource(
     errorCode: row.error_code,
     sizeBytes: row.declared_size_bytes,
     jobId: row.ingestion_job_id,
+    extractionStatus,
+    extractionErrorCode: row.extraction_error_code ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
 }
+
+export type KnowledgeProposalDetail = {
+  id: string;
+  kind:
+    | "story"
+    | "belief"
+    | "proof"
+    | "offer"
+    | "audience_insight"
+    | "topic_expertise"
+    | "prohibition";
+  title: string;
+  content: Record<string, string | null>;
+  confidence: number;
+  verification: "proposed" | "verified" | "rejected";
+  updatedAt: string;
+  evidence: Array<{
+    excerpt: string;
+    startOffset: number;
+    endOffset: number;
+  }>;
+};
 
 export function knowledgeFailureMessage(code: string | null): string {
   switch (code) {
