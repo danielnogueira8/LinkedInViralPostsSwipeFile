@@ -83,15 +83,19 @@ describe("post-type discovery thresholds", () => {
 });
 
 describe("discovery threshold integration", () => {
+  test("the canonical Source Post operation applies the shared post-type filter", () => {
+    const source = readFileSync("lib/source-post-discovery.ts", "utf8");
+    expect(source).toContain("getDiscoveryThresholds");
+    expect(source).toContain("discoveryThresholdFilter");
+  });
+
   test.each([
     "lib/swipe-query.ts",
     "lib/agent/tools.ts",
     "lib/mcp/register.ts",
-    "app/(app)/dashboard/swipe/page.tsx",
-  ])("%s applies the shared post-type filter", (file) => {
+  ])("%s delegates discovery to the canonical Source Post operation", (file) => {
     const source = readFileSync(file, "utf8");
-    expect(source).toContain("getDiscoveryThresholds");
-    expect(source).toContain("discoveryThresholdFilter");
+    expect(source).toContain("discoverSourcePosts");
   });
 
   test("the last-batch featured rail applies the same post-type filter", () => {

@@ -1,9 +1,9 @@
 import { scopedSupabase, trackedAccountIds } from "./supabase-scoped";
 import { retryRead } from "./retry-read";
 import {
-  discoveryThresholdFilter,
-  getDiscoveryThresholds,
-} from "./discovery-thresholds";
+  countSourcePosts,
+  discoverSourcePosts,
+} from "./source-post-discovery";
 
 // One page of the swipe feed, shaped exactly like PostCard/SwipeDeck expect.
 // The server component fetches page 0; the infinite-scroll client fetches
@@ -18,10 +18,10 @@ export const SWIPE_PAGE_SIZE = 30;
 // payload + DB I/O on the highest-traffic page. Dropped with the old templating
 // pipeline (the Templates page uses the generic content_templates library now).
 export const SWIPE_POST_COLS =
-  "id, text, post_url, post_type, posted_at, reactions, comments, reposts, media_type, media_urls, visual_kind, scraped_at, viral_score, viral_basis, baseline_score, accounts!inner(name, niche, linkedin_handle, profile_pic_url, viral_post_count, total_post_count)";
+  "id, text, post_url, post_type, posted_at, reactions, comments, reposts, media_type, media_urls, visual_kind, scraped_at, viral_score, viral_basis, baseline_score, is_viral, accounts!inner(name, niche, linkedin_handle, profile_pic_url, viral_post_count, total_post_count), workspace_post_classification(is_viral)";
 
 const SWIPE_POST_COLS_WORKSPACE =
-  "id, text, post_url, post_type, posted_at, reactions, comments, reposts, media_type, media_urls, visual_kind, scraped_at, viral_score, viral_basis, baseline_score, accounts!inner(name, niche, linkedin_handle, profile_pic_url, viral_post_count, total_post_count, workspace_accounts!inner())";
+  "id, text, post_url, post_type, posted_at, reactions, comments, reposts, media_type, media_urls, visual_kind, scraped_at, viral_score, viral_basis, baseline_score, is_viral, accounts!inner(name, niche, linkedin_handle, profile_pic_url, viral_post_count, total_post_count, workspace_accounts!inner()), workspace_post_classification(is_viral)";
 
 const POST_TYPES = new Set(["regular", "lead_magnet"]);
 
@@ -123,8 +123,15 @@ export type SwipeAccountScope =
   | { workspaceId: string; accountIds?: never };
 
 function flatten(p: Record<string, unknown>): SwipePost {
+  const {
+    workspace_post_classification: _workspaceClassification,
+    is_viral: _globalViral,
+    ...post
+  } = p;
+  void _workspaceClassification;
+  void _globalViral;
   return {
-    ...p,
+    ...post,
     accounts: Array.isArray(p.accounts) ? p.accounts[0] ?? null : p.accounts,
   } as unknown as SwipePost;
 }
@@ -214,47 +221,29 @@ export async function fetchSwipePage(opts: SwipeAccountScope & {
     filters.type && POST_TYPES.has(filters.type) ? filters.type : null;
 
   const sb = await scopedSupabase();
-  const discoveryThresholds = await getDiscoveryThresholds(sb.workspaceId, sb.raw);
-  // Built inside a factory so retryRead can re-run a fresh query on a
-  // transient blip — PostgREST builders are single-shot thenables.
-  const buildQuery = () => {
-    let q = sb.raw
-      .from("posts")
-      .select(workspaceId ? SWIPE_POST_COLS_WORKSPACE : SWIPE_POST_COLS)
-      .eq("is_viral", true)
-      .or(discoveryThresholdFilter(discoveryThresholds))
-      .order(sortCol, { ascending, nullsFirst: false })
-      .range(offset, offset + limit); // inclusive → limit+1 rows
-    if (workspaceId) {
-      q = q
-        .eq("accounts.category_id", filters.category!)
-        .eq("accounts.workspace_accounts.workspace_id", workspaceId);
-    } else {
-      q = q.in("account_id", accountIds!);
-    }
-    if (sortCol !== "posted_at") {
-      q = q.order("posted_at", { ascending: recAscending, nullsFirst: false });
-    }
-    if (filters.from) q = q.gte("posted_at", filters.from);
-    if (filters.to) q = q.lte("posted_at", filters.to);
-    if (filters.minR != null) q = q.gte("reactions", filters.minR);
-    if (filters.minC != null) q = q.gte("comments", filters.minC);
-    if (postType) q = q.eq("post_type", postType);
-    // Relative sort only ranks posts that beat their creator's own baseline.
-    // Restrict to rows with a computed baseline so the page is dense with
-    // genuine relative outperformers (legacy/flat-fallback rows have none).
-    if (isRelative) q = q.not("baseline_score", "is", null).gt("baseline_score", 0);
-    return q;
-  };
-
-  const { data: rawPosts, error } = await retryRead<Record<string, unknown>[]>(buildQuery);
-  // Surface a read failure instead of rendering an empty grid that looks like
-  // "no posts match". SSR hits the error boundary; the API route returns 500
-  // and the client grid surfaces it.
-  if (error) throw new Error(`Failed to load viral posts: ${error.message}`);
-  const all = (rawPosts ?? []).map(flatten);
-  const hasMore = all.length > limit;
-  let posts = hasMore ? all.slice(0, limit) : all;
+  const discovery = await discoverSourcePosts(sb.raw, {
+    workspaceId: sb.workspaceId,
+    columns: workspaceId ? SWIPE_POST_COLS_WORKSPACE : SWIPE_POST_COLS,
+    ...(workspaceId
+      ? { categoryId: filters.category! }
+      : { accountIds: accountIds! }),
+    filters: {
+      from: filters.from,
+      to: filters.to,
+      minReactions: filters.minR,
+      minComments: filters.minC,
+      postType,
+    },
+    order: {
+      column: sortCol,
+      ascending,
+      secondaryPostedAtAscending:
+        sortCol === "posted_at" ? undefined : recAscending,
+    },
+    window: { kind: "page", offset, limit },
+    requirePositiveBaseline: isRelative,
+  });
+  let posts = discovery.rows.map(flatten);
 
   if (rebucketByDay) {
     posts = [...posts].sort((a, b) => {
@@ -280,17 +269,13 @@ export async function fetchSwipePage(opts: SwipeAccountScope & {
     posts = [...posts].sort((a, b) => ratio(b) - ratio(a));
   }
 
-  return { posts, nextOffset: hasMore ? offset + limit : null };
+  return { posts, nextOffset: discovery.nextOffset };
 }
 
 /**
  * Total count of viral posts matching the same filters as fetchSwipePage —
- * for the "N viral posts" header (replaces the "N+" we showed when only the
- * has-more flag was known). Uses head:true + count:"exact" so no rows are
- * transferred; only the WHERE clauses matter (no ordering/range). The
- * `is_viral` partial composite indexes (migration 022) cover it.
- *
- * Must keep its WHERE clauses in sync with fetchSwipePage's.
+ * for the "N viral posts" header. This calls the same canonical discovery read
+ * as fetchSwipePage, including the workspace's explicit demotions.
  */
 export async function countSwipePosts(opts: SwipeAccountScope & {
   filters: SwipeFilters;
@@ -305,36 +290,21 @@ export async function countSwipePosts(opts: SwipeAccountScope & {
 
   const postType =
     filters.type && POST_TYPES.has(filters.type) ? filters.type : null;
+  const { rankByRelative } = resolveSwipeSort(filters);
 
   const sb = await scopedSupabase();
-  const discoveryThresholds = await getDiscoveryThresholds(sb.workspaceId, sb.raw);
-  // Factory so retryRead can re-run on a transient blip (see fetchSwipePage).
-  const buildQuery = () => {
-    let q = sb.raw
-      .from("posts")
-      .select(
-        workspaceId
-          ? "id, accounts!inner(category_id, workspace_accounts!inner())"
-          : "id",
-        { count: "exact", head: true },
-      )
-      .eq("is_viral", true)
-      .or(discoveryThresholdFilter(discoveryThresholds));
-    if (workspaceId) {
-      q = q
-        .eq("accounts.category_id", filters.category!)
-        .eq("accounts.workspace_accounts.workspace_id", workspaceId);
-    } else {
-      q = q.in("account_id", accountIds!);
-    }
-    if (filters.from) q = q.gte("posted_at", filters.from);
-    if (filters.to) q = q.lte("posted_at", filters.to);
-    if (filters.minR != null) q = q.gte("reactions", filters.minR);
-    if (filters.minC != null) q = q.gte("comments", filters.minC);
-    if (postType) q = q.eq("post_type", postType);
-    return q;
-  };
-
-  const { count } = await retryRead<unknown[]>(buildQuery);
-  return count ?? 0;
+  return countSourcePosts(sb.raw, {
+    workspaceId: sb.workspaceId,
+    ...(workspaceId
+      ? { categoryId: filters.category! }
+      : { accountIds: accountIds! }),
+    filters: {
+      from: filters.from,
+      to: filters.to,
+      minReactions: filters.minR,
+      minComments: filters.minC,
+      postType,
+    },
+    requirePositiveBaseline: rankByRelative,
+  });
 }

@@ -74,6 +74,7 @@ describe("Swipe File MCP App", () => {
     });
     expect(result.contents[0].text).toContain("Model this post");
     expect(result.contents[0].text).toContain("search_viral_posts");
+    expect(result.contents[0].text).toContain("Search post copy");
     expect(result.contents[0].text).toContain("untrusted content");
     expect(result.contents[0].text).toContain(".linkedin.com");
     expect(result.contents[0].text).toContain("Previous post");

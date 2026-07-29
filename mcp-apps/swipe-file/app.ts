@@ -133,7 +133,7 @@ const postsEl = document.getElementById("posts")!;
 const countEl = document.getElementById("result-count")!;
 const statusEl = document.getElementById("status")!;
 const filters = document.getElementById("filters") as HTMLFormElement;
-const niche = document.getElementById("niche") as HTMLInputElement;
+const topicQuery = document.getElementById("query") as HTMLInputElement;
 const since = document.getElementById("since") as HTMLSelectElement;
 const postType = document.getElementById("post-type") as HTMLSelectElement;
 
@@ -478,7 +478,7 @@ filters.addEventListener("submit", async (event) => {
     const result = await app.callServerTool({
       name: "search_viral_posts",
       arguments: {
-        ...(niche.value.trim() ? { niche: niche.value.trim() } : {}),
+        ...(topicQuery.value.trim() ? { query: topicQuery.value.trim() } : {}),
         ...(since.value ? { since: since.value } : {}),
         ...(postType.value ? { post_type: postType.value } : {}),
         sort: "viral",

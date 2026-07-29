@@ -56,9 +56,9 @@ import {
   summarizeBookmarkResource,
 } from "@/lib/content-resource-operations";
 import {
-  discoveryThresholdFilter,
-  getDiscoveryThresholds,
-} from "@/lib/discovery-thresholds";
+  discoverSourcePosts,
+  SourcePostDiscoveryError,
+} from "@/lib/source-post-discovery";
 import {
   comparableRelevance,
   diverseCreatorResults,
@@ -100,11 +100,9 @@ const SORT_COLUMN = {
 // so the agent can never starve to empty while the dashboard is full — and
 // LEFT-embeds this workspace's per-workspace classification (default embed, NOT
 // !inner: a post with no classification row for this workspace is still
-// returned). passesWorkspaceViral then drops only the posts this workspace has
-// EXPLICITLY reclassified non-viral; a missing row falls back to the global
-// verdict. Filtered per query via
-// .eq("workspace_post_classification.workspace_id", workspaceId). Kept in sync
-// with the in-app agent's POST_COLS (lib/agent/tools.ts).
+// returned). The canonical source-post discovery operation drops only posts
+// this workspace explicitly reclassified non-viral; a missing row falls back
+// to the global verdict.
 const POST_COLS =
   "id, account_id, text, post_url, posted_at, reactions, comments, reposts, viral_score, media_type, post_type, is_viral, accounts!inner(name, niche), workspace_post_classification(is_viral)";
 
@@ -113,8 +111,6 @@ const POST_COLS =
 // explicitly asked to see the post's visual asset.
 const POST_WITH_VISUAL_COLS =
   "id, account_id, text, post_url, posted_at, reactions, comments, reposts, viral_score, media_type, post_type, media_urls, visual_kind, is_viral, accounts!inner(name, niche, profile_pic_url), workspace_post_classification(is_viral)";
-
-const NO_ROWS_SENTINEL = "00000000-0000-0000-0000-000000000000";
 
 // "Top from the latest scrape" = best posts PUBLISHED in this many days before
 // the most recent scrape run. 7 days ("this week" / what's working now), kept in
@@ -134,29 +130,19 @@ const SUPPORTED_IMAGE_MIME_TYPES = new Set([
   "image/webp",
 ]);
 
-// Resilient per-workspace viral eligibility (see POST_COLS). The query gates on
-// the GLOBAL posts.is_viral=true (the Swipe File's set), then LEFT-embeds this
-// workspace's classification. Keep the post UNLESS this workspace explicitly
-// demoted it; a MISSING row falls back to the global verdict so the agent never
-// starves while the dashboard is full. Kept in sync with lib/agent/tools.ts.
-type WpcEmbed = {
-  workspace_post_classification?:
-    | Array<{ is_viral: boolean }>
-    | { is_viral: boolean }
-    | null;
-};
-function passesWorkspaceViral<T extends WpcEmbed>(row: T): boolean {
-  const wpc = row.workspace_post_classification;
-  const first = Array.isArray(wpc) ? wpc[0] : wpc;
-  return first ? first.is_viral === true : true;
-}
-
 // Drops the workspace_post_classification join wrapper, account_id diversity
 // key, and is_viral gate column (all query internals, not fields the model
 // needs), then unwraps the accounts embed.
 function normalizeEmbed<
   T extends { accounts: unknown; workspace_post_classification?: unknown },
->(p: T, includeVisual = false) {
+>(
+  p: T,
+  includeVisual = false,
+): T & {
+  accounts: unknown;
+  media_urls?: string[];
+  visual_kind?: string | null;
+} {
   const {
     workspace_post_classification: _wpc,
     is_viral: _isViral,
@@ -180,7 +166,13 @@ function normalizeEmbed<
     ...rest,
     accounts: Array.isArray(p.accounts) ? (p.accounts[0] ?? null) : p.accounts,
   };
-  if (!includeVisual) return post;
+  if (!includeVisual) {
+    return post as T & {
+      accounts: unknown;
+      media_urls?: string[];
+      visual_kind?: string | null;
+    };
+  }
 
   return {
     ...post,
@@ -188,6 +180,10 @@ function normalizeEmbed<
       ? media_urls.filter((url): url is string => typeof url === "string")
       : [],
     visual_kind: typeof visual_kind === "string" ? visual_kind : null,
+  } as T & {
+    accounts: unknown;
+    media_urls?: string[];
+    visual_kind?: string | null;
   };
 }
 
@@ -375,11 +371,18 @@ export function registerSwipeTools(server: McpServer) {
   server.registerTool(
     "search_viral_posts",
     {
-      title: "Search viral posts",
+      title: "Search Source Posts",
       description:
-        "Search the viral swipe file. Filter by niche, date range, engagement thresholds, and post type. Returns structured results with visual asset URLs from accounts your workspace tracks and renders an interactive Swipe File in supported clients. A one-post search embeds original images when available; set include_visual to true to embed images in a larger result set.",
+        "Search the Source Posts in your Swipe File. Filter by post-copy topic, Creator niche, date range, engagement thresholds, and post type. Returns structured results with visual asset URLs from Creators in your workspace and renders an interactive Swipe File in supported clients. A one-post search embeds original images when available; set include_visual to true to embed images in a larger result set.",
       inputSchema: {
-        niche: z.string().optional().describe("Exact account niche, e.g. 'AI', 'SaaS'."),
+        niche: z
+          .string()
+          .optional()
+          .describe("Exact Creator niche, matched case-insensitively, e.g. 'AI', 'SaaS'."),
+        query: z
+          .string()
+          .optional()
+          .describe("Full-text topic search within post copy."),
         since: z
           .enum(["1d", "7d", "30d"])
           .optional()
@@ -412,7 +415,6 @@ export function registerSwipeTools(server: McpServer) {
         if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
         const accountIds = await trackedAccountIdsForService(workspaceId);
         const sb = supabaseAdmin();
-        const discoveryThresholds = await getDiscoveryThresholds(workspaceId);
         const sortKey = args.sort ?? "viral";
         const sortCol = SORT_COLUMN[sortKey];
         const ascending = args.dir === "asc";
@@ -423,31 +425,30 @@ export function registerSwipeTools(server: McpServer) {
         // content for narrow or explicitly visual model requests.
         const includeVisualMetadata = true;
 
-        let q = sb
-          .from("posts")
-          .select(postColumns(includeVisualMetadata))
-          .in("account_id", accountIds.length ? accountIds : [NO_ROWS_SENTINEL])
-          .eq("is_viral", true)
-          .or(discoveryThresholdFilter(discoveryThresholds))
-          .eq("workspace_post_classification.workspace_id", workspaceId)
-          .is("accounts.archived_at", null)
-          .order(sortCol, { ascending, nullsFirst: false })
-          .limit(diversityCandidateLimit(limit));
-
-        if (args.niche) q = q.eq("accounts.niche", args.niche);
         const sinceIso = sinceCutoff(args.since);
         const fromIso = parseDayStart(args.from);
         const toIso = parseDayEnd(args.to);
-        if (sinceIso) q = q.gte("posted_at", sinceIso);
-        if (fromIso) q = q.gte("posted_at", fromIso);
-        if (toIso) q = q.lte("posted_at", toIso);
-        if (args.min_reactions !== undefined) q = q.gte("reactions", args.min_reactions);
-        if (args.min_comments !== undefined) q = q.gte("comments", args.min_comments);
-        if (args.post_type) q = q.eq("post_type", args.post_type);
-
-        const { data, error } = await q;
-        if (error) return dbErrorContent("search_viral_posts", error);
-        const candidates = (data ?? []).filter(passesWorkspaceViral);
+        const discovery = await discoverSourcePosts(sb, {
+          workspaceId,
+          columns: postColumns(includeVisualMetadata),
+          accountIds,
+          filters: {
+            niche: args.niche,
+            query: args.query,
+            since: sinceIso,
+            from: fromIso,
+            to: toIso,
+            minReactions: args.min_reactions,
+            minComments: args.min_comments,
+            postType: args.post_type,
+          },
+          order: { column: sortCol, ascending },
+          window: {
+            kind: "limit",
+            limit: diversityCandidateLimit(limit),
+          },
+        });
+        const candidates = discovery.rows;
         const creatorDiverseCandidates = diverseCreatorResults(
           candidates,
           candidates.length,
@@ -472,6 +473,9 @@ export function registerSwipeTools(server: McpServer) {
           ? await postContentWithRenderedImages(payload, posts, true)
           : { ...jsonContent(payload), structuredContent: payload };
       } catch (e) {
+        if (e instanceof SourcePostDiscoveryError) {
+          return dbErrorContent("search_viral_posts", e.readError);
+        }
         return errorContent((e as Error).message);
       }
     },
@@ -595,23 +599,15 @@ export function registerSwipeTools(server: McpServer) {
         ).toISOString();
         const resultLimit = limit ?? 5;
         const includeVisual = shouldIncludePostVisual(resultLimit, include_visual);
-        let q = sb
-          .from("posts")
-          .select(postColumns(includeVisual))
-          .in("account_id", accountIds)
-          .eq("is_viral", true)
-          .eq("workspace_post_classification.workspace_id", workspaceId)
-          .is("accounts.archived_at", null)
-          .gte("posted_at", sinceIso)
-          .order("reactions", { ascending: false, nullsFirst: false })
-          .limit(resultLimit);
-        // Optional post-type filter (regular vs lead_magnet) so "top regular
-        // posts" doesn't silently include lead-magnet posts.
-        if (post_type) q = q.eq("post_type", post_type);
-        const { data, error } = await q;
-        if (error) return dbErrorContent("get_top_from_batch", error);
-        const posts = (data ?? [])
-          .filter(passesWorkspaceViral)
+        const discovery = await discoverSourcePosts(sb, {
+          workspaceId,
+          columns: postColumns(includeVisual),
+          accountIds,
+          filters: { since: sinceIso, postType: post_type },
+          order: { column: "reactions", ascending: false },
+          window: { kind: "limit", limit: resultLimit },
+        });
+        const posts = discovery.rows
           .map((post) => normalizeEmbed(post, includeVisual));
         const payload = {
           ok: true,
@@ -627,6 +623,9 @@ export function registerSwipeTools(server: McpServer) {
           ? await postContentWithRenderedImages(payload, posts)
           : jsonContent(payload);
       } catch (e) {
+        if (e instanceof SourcePostDiscoveryError) {
+          return dbErrorContent("get_top_from_batch", e.readError);
+        }
         return errorContent((e as Error).message);
       }
     },
