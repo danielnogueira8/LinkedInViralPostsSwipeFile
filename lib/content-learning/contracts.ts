@@ -45,6 +45,18 @@ export const contentLineageInputsSchema = z
     leadMagnetId: nullableIdSchema,
     voiceProfileRevision: nullableIdSchema,
     explorationLane: explorationLaneSchema.nullable().optional(),
+    knowledgeSources: z
+      .array(
+        z
+          .object({
+            sourceId: idSchema,
+            sourceRevisionId: idSchema,
+            chunkIds: z.array(idSchema).max(6),
+          })
+          .strict(),
+      )
+      .max(20)
+      .optional(),
   })
   .strict();
 export type ContentLineageInputs = z.infer<

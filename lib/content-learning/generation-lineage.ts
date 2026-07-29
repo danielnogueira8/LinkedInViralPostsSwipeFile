@@ -24,6 +24,18 @@ export const generationLineageSeedSchema = z
     explorationLane: explorationLaneSchema.nullable().optional(),
     generationModel: z.string().trim().min(1).max(200),
     generatedAt: z.string().datetime({ offset: true }),
+    knowledgeSources: z
+      .array(
+        z
+          .object({
+            sourceId: nullableId.unwrap(),
+            sourceRevisionId: nullableId.unwrap(),
+            chunkIds: z.array(nullableId.unwrap()).max(6),
+          })
+          .strict(),
+      )
+      .max(20)
+      .optional(),
   })
   .strict();
 
@@ -167,6 +179,7 @@ export async function recordSavedDraftLineage(
         leadMagnetId: seed.leadMagnetId,
         voiceProfileRevision: seed.voiceProfileRevision,
         explorationLane: seed.explorationLane ?? null,
+        knowledgeSources: seed.knowledgeSources ?? [],
       },
       origin: {
         kind: originKind,
