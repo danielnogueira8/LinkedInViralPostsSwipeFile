@@ -12,13 +12,16 @@ import {
   type TemplateInput,
 } from "@/lib/templates";
 import { BUILTIN_TEMPLATES } from "@/lib/templates-builtin";
-import { embedTemplateBody, structureTypeFromCategory } from "@/lib/template-embeddings";
+import {
+  embedTemplateBody,
+  structureTypeFromCategory,
+} from "@/lib/template-embeddings";
 import {
   isDuplicatePreference,
-  PREFS_PER_WORKSPACE_MAX,
   type ContentPreference,
   type PreferenceInput,
 } from "@/lib/preferences";
+import { selectAllRows } from "@/lib/db-paginate";
 import {
   LEAD_MAGNET_COLS,
   coerceLeadMagnet,
@@ -30,10 +33,14 @@ import { normalizeCollapsedMarkdownTables } from "@/lib/markdown-tables";
 
 export const CUSTOM_CATEGORY_LIMIT = 50;
 export const CATEGORY_COLS = "id, label";
-export const TEMPLATE_COLS = "id, workspace_id, title, category, body, source, origin_post_id, created_at, updated_at";
-export const SKILL_COLS = "id, workspace_id, name, description, body, created_at, updated_at";
-export const PREF_COLS = "id, workspace_id, rule, detail, source, created_at, updated_at";
-export const BRAND_COLS = "id, name, brand_colors, notes, logo_url, font_primary, font_secondary, created_at";
+export const TEMPLATE_COLS =
+  "id, workspace_id, title, category, body, source, origin_post_id, created_at, updated_at";
+export const SKILL_COLS =
+  "id, workspace_id, name, description, body, created_at, updated_at";
+export const PREF_COLS =
+  "id, workspace_id, rule, detail, source, created_at, updated_at";
+export const BRAND_COLS =
+  "id, name, brand_colors, notes, logo_url, font_primary, font_secondary, created_at";
 export const LEAD_MAGNET_LIST_COLS =
   "id, workspace_id, user_id, title, source_url, source_type, public_slug, is_public, metadata, created_at, updated_at";
 export const BOOKMARK_RESOURCE_COLS =
@@ -181,7 +188,9 @@ export async function getTemplateResource(input: {
   workspaceId: string;
   id: string;
 }): Promise<TemplateResource | null> {
-  const builtin = BUILTIN_TEMPLATES.find((template) => template.id === input.id);
+  const builtin = BUILTIN_TEMPLATES.find(
+    (template) => template.id === input.id,
+  );
   if (builtin) return builtin;
   if (!UUID_RE.test(input.id)) return null;
   const { data, error } = await input.db
@@ -259,15 +268,18 @@ export async function listPreferenceResources(input: {
   workspaceId: string;
   limit?: number;
 }): Promise<ContentPreference[]> {
-  let query = input.db
-    .from("content_preferences")
-    .select(PREF_COLS)
-    .eq("workspace_id", input.workspaceId)
-    .order("created_at", { ascending: false });
-  if (input.limit !== undefined) query = query.limit(input.limit);
-  const { data, error } = await query;
-  if (error) throw error;
-  return (data ?? []) as ContentPreference[];
+  const makeQuery = () =>
+    input.db
+      .from("content_preferences")
+      .select(PREF_COLS)
+      .eq("workspace_id", input.workspaceId)
+      .order("created_at", { ascending: false });
+  if (input.limit !== undefined) {
+    const { data, error } = await makeQuery().limit(input.limit);
+    if (error) throw error;
+    return (data ?? []) as ContentPreference[];
+  }
+  return selectAllRows<ContentPreference>(() => makeQuery() as never);
 }
 
 export type LeadMagnetSummary = Omit<LeadMagnet, "markdown_body">;
@@ -390,7 +402,10 @@ export async function createCategoryResource(input: {
     .select(CATEGORY_COLS)
     .single();
   if (insertError) throw insertError;
-  return { ok: true, value: { id: String(data.id), label: String(data.label) } };
+  return {
+    ok: true,
+    value: { id: String(data.id), label: String(data.label) },
+  };
 }
 
 // Atomic: claim_content_template_slot (migration 100) takes a per-workspace
@@ -455,7 +470,11 @@ export async function createSkillResource(input: {
     .eq("workspace_id", workspaceId);
   if (countError) throw countError;
   if ((count ?? 0) >= SKILLS_PER_WORKSPACE_MAX) {
-    return { ok: false, status: 409, error: `You've reached the limit of ${SKILLS_PER_WORKSPACE_MAX} custom skills. Delete one to add another.` };
+    return {
+      ok: false,
+      status: 409,
+      error: `You've reached the limit of ${SKILLS_PER_WORKSPACE_MAX} custom skills. Delete one to add another.`,
+    };
   }
   const { data, error } = await db
     .from("custom_skills")
@@ -463,7 +482,11 @@ export async function createSkillResource(input: {
     .select(SKILL_COLS)
     .single();
   if (error?.code === "23505") {
-    return { ok: false, status: 409, error: `A skill named "${request.name}" already exists.` };
+    return {
+      ok: false,
+      status: 409,
+      error: `A skill named "${request.name}" already exists.`,
+    };
   }
   if (error) throw error;
   return { ok: true, value: data as CustomSkill };
@@ -475,17 +498,19 @@ export async function createPreferenceResource(input: {
   data: PreferenceInput;
 }): Promise<OperationResult<ContentPreference>> {
   const { db, workspaceId, data: request } = input;
-  const { data: existing, error: readError } = await db
-    .from("content_preferences")
-    .select(PREF_COLS)
-    .eq("workspace_id", workspaceId);
-  if (readError) throw readError;
-  const rows = (existing ?? []) as ContentPreference[];
-  if (rows.length >= PREFS_PER_WORKSPACE_MAX) {
-    return { ok: false, status: 409, error: `You've reached the limit of ${PREFS_PER_WORKSPACE_MAX} preferences. Delete one to add another.` };
-  }
+  const rows = await selectAllRows<ContentPreference>(
+    () =>
+      db
+        .from("content_preferences")
+        .select(PREF_COLS)
+        .eq("workspace_id", workspaceId) as never,
+  );
   if (isDuplicatePreference(request.rule, rows)) {
-    return { ok: false, status: 409, error: "You already have that preference." };
+    return {
+      ok: false,
+      status: 409,
+      error: "You already have that preference.",
+    };
   }
   const { data, error } = await db
     .from("content_preferences")
@@ -521,7 +546,9 @@ export async function createLeadMagnetResource(input: {
   };
 }): Promise<OperationResult<LeadMagnet>> {
   const { db, workspaceId, userId, data: request } = input;
-  const markdown = normalizeCollapsedMarkdownTables(request.markdown_body).trim();
+  const markdown = normalizeCollapsedMarkdownTables(
+    request.markdown_body,
+  ).trim();
   const { data, error } = await db
     .from("lead_magnets")
     .insert({

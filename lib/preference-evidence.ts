@@ -4,6 +4,7 @@ import type { ContentPreference } from "@/lib/preferences";
 import { z } from "zod";
 
 const EVIDENCE_PER_PREFERENCE = 3;
+const EVIDENCE_IDS_PER_REQUEST = 20;
 
 export type PreferenceEvidence = {
   id: string;
@@ -90,20 +91,31 @@ export async function listReviewablePreferences(input: {
   }
 
   try {
-    const { data, error } = await input.db.rpc(
-      "list_content_preference_evidence",
-      {
-        p_workspace_id: input.workspaceId,
-        p_preference_ids: learnedIds,
-        p_per_preference: EVIDENCE_PER_PREFERENCE,
-      },
-    );
-    if (error) throw error;
-    const parsed = z.array(EvidenceRowSchema).safeParse(data ?? []);
-    if (!parsed.success) {
-      throw new Error("Preference evidence response was invalid");
+    const evidence: EvidenceRow[] = [];
+    for (
+      let index = 0;
+      index < learnedIds.length;
+      index += EVIDENCE_IDS_PER_REQUEST
+    ) {
+      const { data, error } = await input.db.rpc(
+        "list_content_preference_evidence",
+        {
+          p_workspace_id: input.workspaceId,
+          p_preference_ids: learnedIds.slice(
+            index,
+            index + EVIDENCE_IDS_PER_REQUEST,
+          ),
+          p_per_preference: EVIDENCE_PER_PREFERENCE,
+        },
+      );
+      if (error) throw error;
+      const parsed = z.array(EvidenceRowSchema).safeParse(data ?? []);
+      if (!parsed.success) {
+        throw new Error("Preference evidence response was invalid");
+      }
+      evidence.push(...parsed.data);
     }
-    return attachPreferenceEvidence(input.preferences, parsed.data);
+    return attachPreferenceEvidence(input.preferences, evidence);
   } catch (error) {
     console.warn("[content-learning] preference evidence read unavailable", {
       workspaceId: input.workspaceId,

@@ -16,6 +16,7 @@ import { byId, removeById, reinsertById } from "@/lib/optimistic";
 import type { ContentFeedback } from "@/lib/content-feedback";
 import { ThumbsDown, ThumbsUp, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import { VoiceMemoryList } from "./memory-list";
 
 export function FeedbackMemoryManager({
   initial,
@@ -23,7 +24,9 @@ export function FeedbackMemoryManager({
   initial: ContentFeedback[];
 }) {
   const [items, setItems] = useState(initial);
-  const [confirmDelete, setConfirmDelete] = useState<ContentFeedback | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<ContentFeedback | null>(
+    null,
+  );
 
   const remove = async (id: string) => {
     const removed = byId(items, id);
@@ -33,7 +36,8 @@ export function FeedbackMemoryManager({
         `/api/content-feedback/${id}`,
         { method: "DELETE" },
       );
-      if (!data?.ok) throw new Error(data?.error || "Failed to remove feedback");
+      if (!data?.ok)
+        throw new Error(data?.error || "Failed to remove feedback");
       toast.success("Feedback removed");
     } catch (e) {
       setItems((cur) => reinsertById(cur, removed));
@@ -67,7 +71,10 @@ export function FeedbackMemoryManager({
             </p>
           </div>
         ) : (
-          <ul className="overflow-hidden rounded-lg border border-border/60 bg-background/45">
+          <VoiceMemoryList
+            label="Recent taste feedback"
+            testId="taste-feedback-scroll"
+          >
             {items.map((item) => (
               <FeedbackRow
                 key={item.id}
@@ -75,7 +82,7 @@ export function FeedbackMemoryManager({
                 onDelete={() => setConfirmDelete(item)}
               />
             ))}
-          </ul>
+          </VoiceMemoryList>
         )}
       </CardContent>
 
@@ -103,7 +110,9 @@ function FeedbackRow({
 }) {
   const positive = item.rating === "up";
   const Icon = positive ? ThumbsUp : ThumbsDown;
-  const reasons = item.reasons.length ? item.reasons.join(", ") : "General feedback";
+  const reasons = item.reasons.length
+    ? item.reasons.join(", ")
+    : "General feedback";
   const excerpt = item.body_snapshot.replace(/\s+/g, " ").trim();
 
   return (

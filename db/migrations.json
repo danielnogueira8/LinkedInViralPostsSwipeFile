@@ -1,7 +1,7 @@
 {
   "generatedBy": "npm run migrations:metadata",
-  "highest": 154,
-  "count": 154,
+  "highest": 155,
+  "count": 155,
   "files": [
     "migration-001-progress.sql",
     "migration-002-usage.sql",
@@ -156,6 +156,7 @@
     "migration-151-retry-leadshark-activity-binding.sql",
     "migration-152-retry-knowledge-extraction.sql",
     "migration-153-leadshark-automation-defaults.sql",
-    "migration-154-source-post-count.sql"
+    "migration-154-source-post-count.sql",
+    "migration-155-unbounded-content-preferences.sql"
   ]
 }

@@ -106,4 +106,25 @@ describe("reviewable preference evidence", () => {
     expect(rejecting[0]?.evidence).toEqual([]);
     expect(malformed[0]?.evidence).toEqual([]);
   });
+
+  test("loads evidence in database-safe chunks when memory grows beyond 20 rules", async () => {
+    const calls: string[][] = [];
+    const preferences = Array.from({ length: 21 }, (_, index) =>
+      preference(`pref-${index + 1}`),
+    );
+
+    const result = await listReviewablePreferences({
+      db: {
+        rpc: async (_name: string, params: { p_preference_ids: string[] }) => {
+          calls.push(params.p_preference_ids);
+          return { data: [], error: null };
+        },
+      } as never,
+      workspaceId: "ws-1",
+      preferences,
+    });
+
+    expect(calls.map((ids) => ids.length)).toEqual([20, 1]);
+    expect(result).toHaveLength(21);
+  });
 });
