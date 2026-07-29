@@ -64,6 +64,11 @@ import {
 import type { ToolResult } from "@/lib/agent/tools";
 import { LITERAL_SCOPE_GUIDANCE } from "@/lib/agent/prompt-guidance";
 import {
+  measureWriterPromptCost,
+  remeasureWriterPromptCost,
+  type WriterPromptCostProfile,
+} from "@/lib/agent/prompt-cost-profile";
+import {
   FALLBACK_DRAFT_WRITER_MODEL,
   PRIMARY_DRAFT_WRITER_MODEL,
   THIN_DRAFT_WRITER_MODEL,
@@ -619,7 +624,22 @@ type CompiledWriterPrompt = {
   messages: ChatMessage[];
   cachePrompt?: boolean;
   cacheSystemPrefixChars?: number;
+  promptCostProfile?: WriterPromptCostProfile;
 };
+
+function withPromptCostProfile(
+  compiled: CompiledWriterPrompt,
+  sections: Record<string, string>,
+): CompiledWriterPrompt {
+  return {
+    ...compiled,
+    promptCostProfile: measureWriterPromptCost({
+      messages: compiled.messages,
+      cacheableSystemPrefixChars: compiled.cacheSystemPrefixChars,
+      sections,
+    }),
+  };
+}
 
 function withStableSystemPrefix(
   messages: ChatMessage[],
@@ -928,7 +948,7 @@ function compileMessages(
     ], writingSkill);
   }
 
-  return withStableSystemPrefix([
+  const compiled = withStableSystemPrefix([
     {
       role: "system",
       content: [
@@ -983,6 +1003,23 @@ function compileMessages(
       ].join("\n\n"),
     },
   ], structureSkill || writingSkill);
+
+  return withPromptCostProfile(compiled, {
+    request: input.userInstruction,
+    global_writing_rules: writingSkill,
+    structure_rules: structureSkill,
+    task_and_custom_skills: skills,
+    template_or_format: originalTemplateReference || format,
+    lead_magnet: leadMagnet,
+    creator_style: creatorStyle,
+    preferences,
+    feedback,
+    workspace_learning: workspaceLearning,
+    conversation_history: history,
+    recent_drafts: recentDraftExcerpts,
+    voice_profile: voiceProfileBlock(input.voiceResult),
+    exploration_guidance: explorationGuidance,
+  });
 }
 
 function repairMessages(
@@ -1523,6 +1560,9 @@ export async function* runSingleDraftTurn(
     messages: ChatMessage[],
   ): Promise<DraftWriterResponse> => {
     const attempt = ++writerAttempt;
+    const attemptPromptProfile = compiledPrompt.promptCostProfile
+      ? remeasureWriterPromptCost(compiledPrompt.promptCostProfile, messages)
+      : undefined;
     const result = await runCoworkAdapterAttempt({
       registry: deps.adapterHealth,
       adapterKey: `cowork_direct_writer:${model}`,
@@ -1559,12 +1599,16 @@ export async function* runSingleDraftTurn(
           {
             stage,
             ...attribution.metadata,
+            ...(attemptPromptProfile
+              ? { input_profile: attemptPromptProfile }
+              : {}),
           },
         );
       },
       usage: (response) => response.usage,
       responseModel: (response) => response.model,
       telemetry: input.telemetry,
+      promptProfile: attemptPromptProfile,
       stage: `writer_${stage}`,
       attempt,
       model,
