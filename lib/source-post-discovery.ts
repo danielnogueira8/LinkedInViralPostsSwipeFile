@@ -80,6 +80,15 @@ export class SourcePostDiscoveryError extends Error {
   }
 }
 
+function isMissingSourcePostCountRpc(error: unknown): boolean {
+  return Boolean(
+    error &&
+      typeof error === "object" &&
+      "code" in error &&
+      error.code === "PGRST202",
+  );
+}
+
 type WorkspaceClassificationEmbed = {
   workspace_post_classification?:
     | Array<{ is_viral: boolean }>
@@ -313,27 +322,35 @@ export async function countSourcePosts(
         }),
       { signal: request.signal },
     );
-    if (error) throw new SourcePostDiscoveryError(error);
-    const count = typeof data === "string" ? Number(data) : data;
-    if (typeof count !== "number" || !Number.isFinite(count) || count < 0) {
-      throw new SourcePostDiscoveryError({
-        message: "Source Post count returned an invalid result",
-      });
+    if (!error) {
+      const count = typeof data === "string" ? Number(data) : data;
+      if (typeof count !== "number" || !Number.isFinite(count) || count < 0) {
+        throw new SourcePostDiscoveryError({
+          message: "Source Post count returned an invalid result",
+        });
+      }
+      return Math.trunc(count);
     }
-    return Math.trunc(count);
+    if (!isMissingSourcePostCountRpc(error)) {
+      throw new SourcePostDiscoveryError(error);
+    }
   }
 
-  // Lightweight query doubles without RPC support use the same canonical
-  // eligibility scan. Production Supabase clients always take the constant-
-  // size count_source_posts RPC path above.
+  // Lightweight query doubles and deployments whose additive count RPC has not
+  // reached the PostgREST schema cache use the same canonical eligibility scan.
+  // The RPC remains the normal constant-size path once migration 154 is live.
   const pageSize = MAX_SOURCE_POST_PAGE_LIMIT;
   let offset = 0;
   let count = 0;
+  const countColumns =
+    "accountIds" in request
+      ? "id, accounts!inner(id)"
+      : "id, accounts!inner(id, workspace_accounts!inner())";
 
   for (;;) {
     const page = await discoverSourcePosts(db, {
       ...request,
-      columns: "id",
+      columns: countColumns,
       order: { column: "id", ascending: true },
       window: { kind: "page", offset, limit: pageSize },
     });
