@@ -134,12 +134,22 @@ export function DraftEditor({
     const ta = taRef.current;
     if (!ta) return;
     const fit = () => {
+      // This textarea grows inside a scrolling parent. Setting its height to
+      // "auto" briefly removes most of that parent's scrollable content, which
+      // makes the browser clamp scrollTop to 0. Restore the user's viewport
+      // after measuring so typing lower in a Cowork Post never jumps to the
+      // beginning of the draft.
+      const editorScroller = ta.parentElement;
+      const scrollTop = editorScroller?.scrollTop;
       ta.style.height = "auto";
       // scrollHeight rounds to whole pixels, which can land a fraction of a
       // line short — the last line of the draft renders visibly clipped at
       // the bottom of the Cowork card. The small buffer guarantees the final
       // line always gets its full height.
       ta.style.height = `${ta.scrollHeight + 4}px`;
+      if (editorScroller && scrollTop !== undefined) {
+        editorScroller.scrollTop = scrollTop;
+      }
     };
     fit();
     const ro = new ResizeObserver(fit);

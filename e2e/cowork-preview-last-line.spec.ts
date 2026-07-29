@@ -22,55 +22,12 @@ Because they are.`;
 test("the Cowork post preview leaves breathing room below the final line", async ({
   page,
 }) => {
-  await page.goto("/dashboard");
-  const chat = await createChat(page, "Cowork last-line geometry");
-  const switcher = await createChat(page, "Cowork geometry switcher");
-
-  await page.route(`**/api/chats/${chat.id}`, async (route) => {
-    if (route.request().method() !== "GET") {
-      await route.continue();
-      return;
-    }
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        ok: true,
-        chat: { ...chat, running: false },
-        messages: [
-          {
-            id: "assistant-last-line-geometry",
-            role: "assistant",
-            content: "Here is the post.",
-            tool_calls: null,
-            tool_call_id: null,
-            artifacts: [
-              {
-                id: "artifact-last-line-geometry",
-                kind: "post",
-                title: "Last-line geometry",
-                body: LONG_POST,
-                meta: {},
-              },
-            ],
-            created_at: "2026-07-29T13:55:00.000Z",
-          },
-        ],
-      }),
-    });
-  });
+  const { textarea, cleanup } = await openLongCoworkPost(
+    page,
+    "Cowork last-line geometry",
+  );
 
   try {
-    await page.goto(`/dashboard?chat=${switcher.id}`);
-    await page.getByText(chat.title, { exact: true }).locator("..").click();
-    const textarea = page.getByLabel("Post body");
-    await expect(textarea).toBeVisible();
-
-    const widen = page.getByRole("button", {
-      name: "Widen drafts panel for writing",
-    });
-    if (await widen.isVisible()) await widen.click();
-
     const geometry = await textarea.evaluate((element) => {
       const textarea = element as HTMLTextAreaElement;
       const styles = getComputedStyle(textarea);
@@ -121,10 +78,129 @@ test("the Cowork post preview leaves breathing room below the final line", async
       JSON.stringify(geometry),
     ).toBeGreaterThanOrEqual(Math.ceil(geometry.lineHeight));
   } finally {
-    await page.request.delete(`/api/chats/${chat.id}`);
-    await page.request.delete(`/api/chats/${switcher.id}`);
+    await cleanup();
   }
 });
+
+test("typing in a scrolled Cowork post keeps the caret in view", async ({
+  page,
+}) => {
+  const { textarea, cleanup } = await openLongCoworkPost(
+    page,
+    "Cowork typing scroll",
+  );
+
+  try {
+    const initialEditorState = await textarea.evaluate((element) => {
+      const textarea = element as HTMLTextAreaElement;
+      const editorScroller = textarea.parentElement;
+      if (!editorScroller) throw new Error("Editor scroller not found");
+      textarea.focus();
+      textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+      editorScroller.scrollTop = editorScroller.scrollHeight;
+      return {
+        scrollTop: editorScroller.scrollTop,
+        textareaHeight: textarea.clientHeight,
+      };
+    });
+    expect(initialEditorState.scrollTop).toBeGreaterThan(0);
+
+    await textarea.press("Enter");
+    await textarea.pressSequentially("New final line");
+
+    const readEditorState = () =>
+      textarea.evaluate((element) => {
+        const textarea = element as HTMLTextAreaElement;
+        const editorScroller = textarea.parentElement;
+        if (!editorScroller) throw new Error("Editor scroller not found");
+        const textareaRect = textarea.getBoundingClientRect();
+        const scrollerRect = editorScroller.getBoundingClientRect();
+        const styles = getComputedStyle(textarea);
+        const caretBottom =
+          textareaRect.bottom - Number.parseFloat(styles.paddingBottom);
+        return {
+          caretIsVisible: caretBottom <= scrollerRect.bottom + 1,
+          scrollTop: editorScroller.scrollTop,
+          textareaHeight: textarea.clientHeight,
+        };
+      });
+
+    await expect.poll(async () => (await readEditorState()).caretIsVisible).toBe(
+      true,
+    );
+    const finalEditorState = await readEditorState();
+    expect(finalEditorState.scrollTop).toBeGreaterThanOrEqual(
+      initialEditorState.scrollTop - 8,
+    );
+    expect(finalEditorState.textareaHeight).toBeGreaterThan(
+      initialEditorState.textareaHeight,
+    );
+  } finally {
+    await cleanup();
+  }
+});
+
+async function openLongCoworkPost(
+  page: import("@playwright/test").Page,
+  title: string,
+) {
+  await page.goto("/dashboard");
+  const chat = await createChat(page, title);
+  const switcher = await createChat(page, `${title} switcher`);
+  const fixtureId = title.toLowerCase().replaceAll(/[^a-z0-9]+/g, "-");
+
+  await page.route(`**/api/chats/${chat.id}`, async (route) => {
+    if (route.request().method() !== "GET") {
+      await route.continue();
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        chat: { ...chat, running: false },
+        messages: [
+          {
+            id: `assistant-${fixtureId}`,
+            role: "assistant",
+            content: "Here is the post.",
+            tool_calls: null,
+            tool_call_id: null,
+            artifacts: [
+              {
+                id: `artifact-${fixtureId}`,
+                kind: "post",
+                title,
+                body: LONG_POST,
+                meta: {},
+              },
+            ],
+            created_at: "2026-07-29T13:55:00.000Z",
+          },
+        ],
+      }),
+    });
+  });
+
+  await page.goto(`/dashboard?chat=${switcher.id}`);
+  await page.getByText(chat.title, { exact: true }).locator("..").click();
+  const textarea = page.getByLabel("Post body");
+  await expect(textarea).toBeVisible();
+
+  const widen = page.getByRole("button", {
+    name: "Widen drafts panel for writing",
+  });
+  if (await widen.isVisible()) await widen.click();
+
+  return {
+    textarea,
+    cleanup: async () => {
+      await page.request.delete(`/api/chats/${chat.id}`);
+      await page.request.delete(`/api/chats/${switcher.id}`);
+    },
+  };
+}
 
 async function createChat(
   page: import("@playwright/test").Page,
