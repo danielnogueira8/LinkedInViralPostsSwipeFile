@@ -34,6 +34,7 @@ to critical modules only after the linked gap-closing tickets land.
 ```bash
 npm run test:evals       # fast deterministic regression suite
 npm run test:coverage    # deterministic suite plus concise coverage summary
+npm run e2e:mcp-app      # self-contained MCP App browser checks
 npm run e2e:smoke        # authenticated render smoke checks
 npm run e2e:ui           # critical UI workflow checks
 ```

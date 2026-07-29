@@ -208,7 +208,7 @@ function linkedInMediaUrl(value: unknown): string | null {
   if (typeof value !== "string" || value.length > 4_096) return null;
   try {
     const url = new URL(value);
-    return url.protocol === "https:" && url.hostname === "media.licdn.com"
+    return url.protocol === "https:" && url.hostname.endsWith(".licdn.com")
       ? url.toString()
       : null;
   } catch {

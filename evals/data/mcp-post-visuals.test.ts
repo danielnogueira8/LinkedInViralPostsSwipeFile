@@ -47,13 +47,14 @@ const POST = {
   comments: 25,
   reposts: 10,
   media_type: "image",
-  media_urls: ["https://media.licdn.com/dms/image/post-image.jpg"],
+  media_urls: ["https://media-exp1.licdn.com/dms/image/post-image.jpg"],
   visual_kind: "screenshot",
   post_type: "regular",
   accounts: [{
     name: "Example Creator",
     niche: "Marketing",
-    profile_pic_url: "https://media.licdn.com/dms/image/profile-photo.jpg",
+    profile_pic_url:
+      "https://media-exp1.licdn.com/dms/image/profile-photo.jpg",
   }],
   workspace_post_classification: [{ is_viral: true }],
 };
