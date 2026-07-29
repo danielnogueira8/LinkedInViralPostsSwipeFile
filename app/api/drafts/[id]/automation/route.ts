@@ -17,6 +17,8 @@ import {
   type AutomationConfigDraft,
 } from "@/lib/leadshark-config";
 import { MAX_KEYWORDS } from "@/lib/leadshark";
+import { getLeadSharkAutomationDefaults } from "@/lib/leadshark-defaults";
+import { materializeLeadSharkAutomationDefaults } from "@/lib/leadshark-default-config";
 
 export const runtime = "nodejs";
 
@@ -58,6 +60,9 @@ export async function GET(
     const isLeadMagnet = draft.kind === "lead_magnet";
     const credential = await getCredentialSafe(sb.workspaceId);
     const existing = await getAutomationForArtifact(sb.workspaceId, id);
+    const lm = isLeadMagnet
+      ? artifactLeadMagnet({ meta: draft.meta ?? undefined })
+      : null;
 
     // Prefill from the lead magnet, only when it's a lead-magnet draft.
     let prefill: {
@@ -66,18 +71,48 @@ export async function GET(
       leadMagnetId: string | null;
       leadMagnetTitle: string | null;
       leadMagnetUrl: string | null;
+      config: AutomationConfigDraft;
     } | null = null;
     if (isLeadMagnet) {
-      const lm = artifactLeadMagnet({ meta: draft.meta ?? undefined });
       const title = lm?.title ?? "resource";
       const slug = lm?.publicSlug ?? null;
       const url = slug ? `${originFrom(req)}/lm/${slug}` : "";
+      const { data: marker } = await sb.raw
+        .from("app_schema_version")
+        .select("version")
+        .eq("singleton", true)
+        .maybeSingle();
+      const savedDefaults =
+        (marker?.version ?? 0) >= 153
+          ? await getLeadSharkAutomationDefaults(sb.workspaceId, sb.raw)
+          : null;
+      const config = savedDefaults
+        ? materializeLeadSharkAutomationDefaults(savedDefaults, {
+            name: title,
+            url: url || "your link",
+          })
+        : {
+            keywords: [
+              inferCommentKeyword(draft.body ?? "", lm?.title ?? ""),
+            ].filter(Boolean),
+            dmTemplate: defaultDmTemplate(title, url || "your link"),
+            dmTemplateVariations: [],
+            commentReplyTemplates: [],
+            nonConnectionReplyTemplates: [],
+            autoConnect: false,
+            autoLike: false,
+            followUpEnabled: false,
+            followUpTemplate: null,
+            followUpDelayMinutes: 60,
+            followUpOnlyIfNoResponse: true,
+          };
       prefill = {
-        keyword: inferCommentKeyword(draft.body ?? "", lm?.title ?? ""),
-        dmTemplate: defaultDmTemplate(title, url || "your link"),
+        keyword: config.keywords[0] ?? "",
+        dmTemplate: config.dmTemplate,
         leadMagnetId: lm?.id ?? null,
         leadMagnetTitle: lm?.title ?? null,
         leadMagnetUrl: url || null,
+        config,
       };
     }
 
@@ -108,7 +143,6 @@ const putSchema = z.object({
   followUpTemplate: z.string().max(4000).nullable().default(null),
   followUpDelayMinutes: z.number().int().positive().max(43200).default(60),
   followUpOnlyIfNoResponse: z.boolean().default(true),
-  leadMagnetId: z.string().uuid().nullable().default(null),
 });
 
 export async function PUT(
@@ -127,6 +161,19 @@ export async function PUT(
       return NextResponse.json(
         { ok: false, error: "LeadShark automations are only for lead-magnet posts." },
         { status: 400 },
+      );
+    }
+    const leadMagnet = artifactLeadMagnet({
+      meta: draft.meta ?? undefined,
+    });
+    if (!leadMagnet?.id || !leadMagnet.publicSlug) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            "Choose a lead magnet resource before saving its automation.",
+        },
+        { status: 409 },
       );
     }
 
@@ -161,7 +208,7 @@ export async function PUT(
 
     const automation = await upsertAutomationConfig(sb.workspaceId, {
       artifactId: id,
-      leadMagnetId: input.leadMagnetId,
+      leadMagnetId: leadMagnet.id,
       ...cfg,
     });
     return NextResponse.json({ ok: true, automation });

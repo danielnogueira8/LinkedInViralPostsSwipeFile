@@ -7,6 +7,9 @@ import {
   type LeadSharkCredentialSafe,
 } from "@/lib/leadshark-credentials";
 import { LeadSharkCard } from "./leadshark-card";
+import { getLeadSharkAutomationDefaults } from "@/lib/leadshark-defaults";
+import { defaultLeadSharkAutomationDefaults } from "@/lib/leadshark-default-config";
+import { scopedSupabase } from "@/lib/supabase-scoped";
 
 export const dynamic = "force-dynamic";
 
@@ -17,6 +20,7 @@ export const dynamic = "force-dynamic";
 // a pointer below keeps users from hunting for it.
 export default async function IntegrationsPage() {
   const workspaceId = await getWorkspaceId();
+  const sb = workspaceId ? await scopedSupabase() : null;
 
   // Signed-out safety: render the not-connected shape rather than throwing.
   const initial: LeadSharkCredentialSafe = workspaceId
@@ -28,6 +32,18 @@ export default async function IntegrationsPage() {
         lastVerifiedAt: null,
         lastError: null,
       };
+  const { data: marker } = sb
+    ? await sb.raw
+        .from("app_schema_version")
+        .select("version")
+        .eq("singleton", true)
+        .maybeSingle()
+    : { data: null };
+  const defaultsAvailable = (marker?.version ?? 0) >= 153;
+  const initialDefaults =
+    workspaceId && sb && defaultsAvailable
+      ? await getLeadSharkAutomationDefaults(workspaceId, sb.raw)
+      : defaultLeadSharkAutomationDefaults();
 
   return (
     <PageShell width="wide">
@@ -40,7 +56,11 @@ export default async function IntegrationsPage() {
       />
 
       <div className="space-y-4">
-        <LeadSharkCard initial={initial} />
+        <LeadSharkCard
+          initial={initial}
+          initialDefaults={initialDefaults}
+          defaultsAvailable={defaultsAvailable}
+        />
 
         <p className="max-w-3xl text-xs text-muted-foreground">
           Looking for your LinkedIn publishing connection? That lives in{" "}
