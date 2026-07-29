@@ -77,6 +77,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     invalidatePostsSegment();
     return NextResponse.json({
       ok: true,
+      status: scheduled.status,
       scheduledAt: scheduled.scheduledAt,
       scheduleStatus: scheduled.scheduleStatus,
       planToPostOn: scheduled.planToPostOn,

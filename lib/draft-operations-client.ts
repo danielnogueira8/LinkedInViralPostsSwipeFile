@@ -2,10 +2,11 @@ import { z } from "zod";
 import { parseJsonResponse } from "@/lib/api-fetch";
 import type { ContentFormat } from "@/lib/markdown/mode";
 import type { PostMediaAttachment } from "@/lib/post-media";
-import type {
-  BoardDraftStatus,
-  DraftKind,
-  DraftStatus,
+import {
+  BOARD_DRAFT_STATUSES,
+  type BoardDraftStatus,
+  type DraftKind,
+  type DraftStatus,
 } from "@/lib/draft-lifecycle";
 import type { DraftViewRow } from "@/lib/draft-view";
 
@@ -52,6 +53,7 @@ export type DraftScheduleCommand = {
 };
 
 export type ScheduledDraftState = {
+  status: BoardDraftStatus;
   scheduledAt: string;
   scheduleStatus: "scheduled";
   planToPostOn: string;
@@ -81,7 +83,9 @@ export type QueuedDraftState = Omit<ScheduledDraftState, "scheduleStatus"> & {
   postingSlotOccurrenceDate: string;
 };
 
-export type MovedQueuedDraftState = QueuedDraftState & { id: string };
+export type MovedQueuedDraftState = Omit<QueuedDraftState, "status"> & {
+  id: string;
+};
 
 export type UnscheduledDraftState = {
   scheduledAt: null;
@@ -143,6 +147,7 @@ const scheduleResponseSchema = z.discriminatedUnion("ok", [
   errorSchema,
   z.object({
     ok: z.literal(true),
+    status: z.enum(BOARD_DRAFT_STATUSES),
     scheduledAt: z.string(),
     scheduleStatus: z.literal("scheduled"),
     planToPostOn: z.string(),
@@ -153,6 +158,7 @@ const queueResponseSchema = z.discriminatedUnion("ok", [
   errorSchema,
   z.object({
     ok: z.literal(true),
+    status: z.enum(BOARD_DRAFT_STATUSES),
     scheduledAt: z.string(),
     scheduleStatus: z.enum(["scheduled", "publishing"]),
     planToPostOn: z.string(),
@@ -317,6 +323,7 @@ export function createDraftOperationsClient(
         "Couldn't schedule.",
       );
       return {
+        status: value.status,
         scheduledAt: value.scheduledAt,
         scheduleStatus: value.scheduleStatus,
         planToPostOn: value.planToPostOn,
@@ -343,6 +350,7 @@ export function createDraftOperationsClient(
         "Couldn't add this post to the queue.",
       );
       return {
+        status: value.status,
         scheduledAt: value.scheduledAt,
         scheduleStatus: value.scheduleStatus,
         planToPostOn: value.planToPostOn,
@@ -372,6 +380,7 @@ export function createDraftOperationsClient(
         "Couldn't schedule this post in that queue slot.",
       );
       return {
+        status: value.status,
         scheduledAt: value.scheduledAt,
         scheduleStatus: value.scheduleStatus,
         planToPostOn: value.planToPostOn,

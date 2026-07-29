@@ -30,6 +30,7 @@ function draft(overrides: Partial<DraftRecord> = {}): DraftRecord {
 describe("posting queue request idempotency", () => {
   test("returns an existing scheduled queue booking", () => {
     expect(existingQueueBooking(draft())).toEqual({
+      status: "drafting",
       scheduledAt: "2026-07-27T08:00:00.000Z",
       scheduleStatus: "scheduled",
       planToPostOn: "2026-07-27",

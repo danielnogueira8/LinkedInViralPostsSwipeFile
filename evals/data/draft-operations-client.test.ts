@@ -134,6 +134,7 @@ describe("Draft operations client", () => {
     const fetcher = vi.fn(async () =>
       jsonResponse({
         ok: true,
+        status: "ready",
         scheduledAt: "2026-08-03T09:30:00.000Z",
         scheduleStatus: "scheduled",
         planToPostOn: "2026-08-03",
@@ -158,6 +159,7 @@ describe("Draft operations client", () => {
       }),
     });
     expect(scheduled).toEqual({
+      status: "ready",
       scheduledAt: "2026-08-03T09:30:00.000Z",
       scheduleStatus: "scheduled",
       planToPostOn: "2026-08-03",
@@ -169,6 +171,7 @@ describe("Draft operations client", () => {
     const fetcher = vi.fn(async () =>
       jsonResponse({
         ok: true,
+        status: "ready",
         scheduledAt: "2026-08-03T09:30:00.000Z",
         scheduleStatus: "scheduled",
         planToPostOn: "2026-08-03",
@@ -186,6 +189,7 @@ describe("Draft operations client", () => {
         timezone: "Europe/Lisbon",
       }),
     ).resolves.toEqual({
+      status: "ready",
       scheduledAt: "2026-08-03T09:30:00.000Z",
       scheduleStatus: "scheduled",
       planToPostOn: "2026-08-03",
@@ -208,6 +212,7 @@ describe("Draft operations client", () => {
     const fetcher = vi.fn(async () =>
       jsonResponse({
         ok: true,
+        status: "ready",
         scheduledAt: "2026-08-04T08:00:00.000Z",
         scheduleStatus: "scheduled",
         planToPostOn: "2026-08-04",
@@ -247,6 +252,7 @@ describe("Draft operations client", () => {
     const fetcher = vi.fn(async () =>
       jsonResponse({
         ok: true,
+        status: "ready",
         scheduledAt: "2026-08-04T10:30:00.000Z",
         scheduleStatus: "scheduled",
         planToPostOn: "2026-08-04",
@@ -353,6 +359,7 @@ describe("Draft operations client", () => {
     const fetcher = vi.fn(async () =>
       jsonResponse({
         ok: true,
+        status: "ready",
         scheduledAt: "2026-08-03T09:30:00.000Z",
         scheduleStatus: "publishing",
         planToPostOn: "2026-08-03",
