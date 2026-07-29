@@ -15,14 +15,14 @@ import { AiIcon } from "@/components/ai-icon";
 import { toast } from "sonner";
 import { fetchJson } from "@/lib/api-fetch";
 import { INTERVIEW_QUESTIONS } from "@/lib/voice-interview";
-import type { VoiceRow } from "./manager";
+import type { VoiceRow } from "../voice/manager";
 import type { WorkspaceKnowledgeItem } from "@/lib/content-learning/contracts";
 
 // The context interview: a short set of ghostwriter-style questions the user
 // answers to give the AI richer material. Answers are synthesized into
 // reviewable Workspace Knowledge proposals. Every question is skippable — a
 // blank answer is simply dropped.
-export function VoiceInterviewCard({
+export function ContextInterviewCard({
   row,
   onSaved,
   onKnowledgeSaved,
@@ -145,7 +145,7 @@ export function VoiceInterviewCard({
               ))}
             </ul>
             <p className="mt-2.5 text-xs text-muted-foreground">
-              Edit these anytime in the profile editor above, or re-answer below.
+              Re-answer the interview anytime to update this context.
             </p>
           </div>
         )}

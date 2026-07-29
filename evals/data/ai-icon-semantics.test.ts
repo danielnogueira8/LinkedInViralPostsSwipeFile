@@ -13,7 +13,7 @@ const AI_SURFACES = new Set([
   "app/(app)/dashboard/posts/drafts-list.tsx",
   "app/(app)/dashboard/voice/manager.tsx",
   "app/(app)/dashboard/voice/preferences.tsx",
-  "app/(app)/dashboard/voice/voice-interview-card.tsx",
+  "app/(app)/dashboard/knowledge/context-interview-card.tsx",
   "app/(marketing)/landing-client.tsx",
 ]);
 

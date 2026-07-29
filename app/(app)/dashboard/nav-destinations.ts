@@ -67,7 +67,7 @@ export const NAV_SECTIONS: NavSection[] = [
     label: "Train",
     items: [
       { href: "/dashboard/voice", label: "Voice", icon: AudioLines, tooltip: "Your writing profile and voice preferences." },
-      { href: "/dashboard/knowledge", label: "Knowledge", icon: LibraryBig, tooltip: "Your private source library for grounded writing." },
+      { href: "/dashboard/knowledge", label: "Knowledge", icon: LibraryBig, tooltip: "Your context interview and private sources for grounded writing." },
       { href: "/dashboard/creator-styles", label: "Creator Styles", icon: Fingerprint, tooltip: "Reusable writing-style profiles from creators you track." },
       { href: "/dashboard/templates", label: "Templates", icon: LayoutTemplate, tooltip: "Reusable content templates for posts and hooks." },
     ],

@@ -2,11 +2,11 @@ import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
 
 const source = readFileSync(
-  "app/(app)/dashboard/voice/knowledge-review.tsx",
+  "app/(app)/dashboard/knowledge/interview-knowledge-review.tsx",
   "utf8",
 );
 
-describe("Voice Knowledge review UI contract", () => {
+describe("Interview Knowledge review UI contract", () => {
   test("labels proposal provenance and exposes accessible review actions", () => {
     expect(source).toContain("From your Context interview");
     expect(source).toContain('aria-label={`Approve ${item.title}`}');

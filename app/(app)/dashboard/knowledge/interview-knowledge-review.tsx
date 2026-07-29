@@ -35,7 +35,7 @@ const kindLabel: Record<WorkspaceKnowledgeItem["kind"], string> = {
   prohibition: "Never claim",
 };
 
-export function KnowledgeReview({
+export function InterviewKnowledgeReview({
   proposals,
   verified,
   onProposalsChange,
