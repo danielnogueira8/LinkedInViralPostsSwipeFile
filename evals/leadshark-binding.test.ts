@@ -1,5 +1,6 @@
-import { describe, test, expect } from "vitest";
+import { afterEach, describe, test, expect, vi } from "vitest";
 import {
+  extractCanonicalLinkedInActivityUrn,
   extractPostNumericId,
   UrlMatchResolver,
   SnapshotDiffResolver,
@@ -82,6 +83,170 @@ describe("UrlMatchResolver.fromMatches (§6.3)", () => {
       post({ postId: "urn:li:activity:222" }),
     ]);
     expect(out.kind).toBe("ambiguous");
+  });
+});
+
+describe("UrlMatchResolver.resolve — production share/activity identity", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  test("matches the LeadShark activity record for the same LinkedIn share URL", async () => {
+    const shareUrl =
+      "https://www.linkedin.com/feed/update/urn:li:share:7488147705668550656/";
+    const activityUrn = "urn:li:activity:7488147707111600128";
+    const activityUrl =
+      "https://www.linkedin.com/posts/andre-nogueira-activity-7488147707111600128";
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.startsWith("https://apex.leadshark.io/")) {
+        return new Response(
+          JSON.stringify({
+            items: [
+              {
+                post_id: activityUrn,
+                share_url: activityUrl,
+              },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (url === shareUrl) {
+        return new Response(
+          `<html><head><meta property="lnkd:url" content="https://www.linkedin.com/feed/update/${activityUrn}"></head></html>`,
+          { status: 200, headers: { "Content-Type": "text/html" } },
+        );
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+    vi.stubGlobal(
+      "fetch",
+      fetchMock,
+    );
+
+    const out = await new UrlMatchResolver().resolve({
+      apiKey: "test-key",
+      zernioPostUrl: shareUrl,
+      zernioPostUrn: "urn:li:share:7488147705668550656",
+      urnSnapshot: null,
+    });
+
+    expect(out).toEqual({
+      kind: "resolved",
+      postId: activityUrn,
+      shareUrl: activityUrl,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  test("does not trust a canonical activity URN missing from LeadShark's list", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) => {
+        const url = String(input);
+        if (url.startsWith("https://apex.leadshark.io/")) {
+          return new Response(
+            JSON.stringify({
+              items: [
+                {
+                  post_id: "urn:li:activity:9999999999999999999",
+                  share_url:
+                    "https://www.linkedin.com/posts/someone-activity-9999999999999999999",
+                },
+              ],
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        return new Response(
+          '<meta property="lnkd:url" content="https://www.linkedin.com/feed/update/urn:li:activity:7488147707111600128">',
+          { status: 200, headers: { "Content-Type": "text/html" } },
+        );
+      }),
+    );
+
+    const out = await new UrlMatchResolver().resolve({
+      apiKey: "test-key",
+      zernioPostUrl:
+        "https://www.linkedin.com/feed/update/urn:li:share:7488147705668550656/",
+      zernioPostUrn: "urn:li:share:7488147705668550656",
+      urnSnapshot: null,
+    });
+
+    expect(out).toEqual({
+      kind: "pending",
+      reason: "LeadShark's post list hasn't caught up",
+    });
+  });
+
+  test("never fetches a non-LinkedIn URL while resolving the canonical identity", async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (!url.startsWith("https://apex.leadshark.io/")) {
+        throw new Error(`Unexpected outbound fetch: ${url}`);
+      }
+      return new Response(JSON.stringify({ items: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const out = await new UrlMatchResolver().resolve({
+      apiKey: "test-key",
+      zernioPostUrl: "https://example.com/feed/update/urn:li:share:7488147705668550656/",
+      zernioPostUrn: "urn:li:share:7488147705668550656",
+      urnSnapshot: null,
+    });
+
+    expect(out.kind).toBe("pending");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("keeps the existing one-request path when the numeric identity already matches", async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          items: [
+            {
+              post_id: "urn:li:activity:7488147705668550656",
+              share_url:
+                "https://www.linkedin.com/posts/andre-nogueira-activity-7488147705668550656",
+            },
+          ],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const out = await new UrlMatchResolver().resolve({
+      apiKey: "test-key",
+      zernioPostUrl:
+        "https://www.linkedin.com/feed/update/urn:li:share:7488147705668550656/",
+      zernioPostUrn: "urn:li:share:7488147705668550656",
+      urnSnapshot: null,
+    });
+
+    expect(out.kind).toBe("resolved");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("extractCanonicalLinkedInActivityUrn", () => {
+  test("reads LinkedIn's canonical activity URN from the lnkd:url metadata", () => {
+    expect(
+      extractCanonicalLinkedInActivityUrn(
+        '<meta content="https://www.linkedin.com/feed/update/urn:li:activity:7488147707111600128" property="lnkd:url">',
+      ),
+    ).toBe("urn:li:activity:7488147707111600128");
+  });
+
+  test("ignores activity URNs outside the canonical lnkd:url metadata", () => {
+    expect(
+      extractCanonicalLinkedInActivityUrn(
+        '<a data-comment-urn="urn:li:activity:7488147707111600128">comment</a>',
+      ),
+    ).toBeNull();
   });
 });
 

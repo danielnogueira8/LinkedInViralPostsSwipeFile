@@ -14,9 +14,12 @@ Run against a real LeadShark Pro key + a connected LinkedIn account. Results:
 - **Auth + API access:** `GET /api/automations?limit=1` → 200. A Pro plan
   includes API access.
 - **Post listing:** `GET /api/v1/posts` returns posts published OUTSIDE LeadShark,
-  each with `post_id` in the **`urn:li:activity:…`** namespace and a `share_url`
-  embedding the **same** numeric id. So the default `url_match` binding strategy
-  works — no need for `LEADSHARK_BINDING_STRATEGY=snapshot_diff`.
+  each with `post_id` in the **`urn:li:activity:…`** namespace. LinkedIn can use
+  a different numeric id in Zernio's `urn:li:share:…` permalink for that same
+  post. The default `url_match` strategy therefore tries the direct numeric join
+  first, then reads LinkedIn's canonical `lnkd:url` activity URN and confirms
+  that exact URN is present in LeadShark's authenticated post list. The public
+  page is never sufficient evidence on its own.
 - **Create:** `POST /api/automations` → 201, accepts the full field set we send
   (`keywords`, `dm_template`, `dm_templates`, `comment_reply_template`,
   `non_first_degree_reply_template`, `enable_follow_up` + the follow-up fields,
@@ -76,13 +79,21 @@ staging/probe base; leave unset in production.
 - `db/migration-120-integration-credentials.sql` — the encrypted-credential
   table. Generic by `provider` (first provider: `leadshark`). RLS-isolated;
   advances `app_schema_version` to 120.
+- `db/migration-151-retry-leadshark-activity-binding.sql` — a one-time recovery
+  for exhausted `share`-URN bindings that predate the canonical activity-URN
+  resolver. It resets only the exact affected failure shape and atomically
+  queues a fresh binding job.
 - Migrations are applied MANUALLY (see `docs/migrations.md`). Apply 120 in
   Supabase before or with this deploy — the app reads/writes this table on the
   Integrations page.
+- Migration 151 is an exception to the usual migrate-first order: deploy the
+  corrected resolver first, then apply 151. Otherwise an old worker can consume
+  the recovery job with the old resolver and exhaust it again.
 
 PR checklist (from `docs/migrations.md`):
 `npm run migrations:metadata` → `npm run migrations:check` → apply in Supabase →
-`npm run migrations:readiness` → deploy.
+`npm run migrations:readiness` → deploy. For migration 151 only, swap the last
+two steps: deploy → apply in Supabase → `npm run migrations:readiness`.
 
 ## Secret handling — invariants
 
