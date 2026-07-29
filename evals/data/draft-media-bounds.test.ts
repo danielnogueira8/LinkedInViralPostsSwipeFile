@@ -73,6 +73,16 @@ describe("draft image is bounded inside the card", () => {
     expect(editorSource).not.toMatch(/footer \? "overflow-y-auto" : ""/);
   });
 
+  test("the Cowork textarea keeps breathing room below its final line", () => {
+    // The editor's 13px type renders with a ~21px line box. The base py-2.5
+    // padding plus the autosize rounding buffer still left the last glyph
+    // cramped against the scroll boundary, so footer mode owns a larger
+    // bottom inset.
+    expect(editorSource).toMatch(
+      /footer\s*\?\s*"flex-none overflow-hidden pb-5"/,
+    );
+  });
+
   test("the card clips its own children, so a wide image can't escape it", () => {
     // overflow-hidden is the load-bearing part. The border/radius that used to
     // be asserted here is gone on desktop by design — the panel is the surface

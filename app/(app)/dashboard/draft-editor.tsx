@@ -720,8 +720,11 @@ export function DraftEditor({
           "w-full resize-none bg-transparent px-3 py-2.5 text-[13px] leading-relaxed text-foreground outline-none",
           // With a footer the card owns the border and the scroll, so the
           // textarea is a plain transparent surface that grows to its content.
+          // Keep a full visual line of clearance below the final glyph: the
+          // smaller base padding left the last line cramped against the
+          // Cowork preview's scroll boundary at desktop widths.
           footer
-            ? "flex-none overflow-hidden"
+            ? "flex-none overflow-hidden pb-5"
             : "rounded-lg border border-border bg-white focus-visible:border-border focus-visible:ring-2 focus-visible:ring-border",
           draggingMedia && "bg-primary/[0.04]",
           textareaClassName,
