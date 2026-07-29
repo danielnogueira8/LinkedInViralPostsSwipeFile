@@ -20,6 +20,7 @@ export const MOBILE_MORE_SECTIONS = [
     paths: [
       "/dashboard/lead-magnets",
       "/dashboard/voice",
+      "/dashboard/knowledge",
       "/dashboard/creator-styles",
       "/dashboard/claude",
     ],
