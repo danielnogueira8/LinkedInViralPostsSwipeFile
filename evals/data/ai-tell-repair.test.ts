@@ -58,6 +58,36 @@ describe("conditional AI-tell repair", () => {
     expect(completeChat.mock.calls[0][0].model).toBe(CHAT_MODEL);
   });
 
+  test("repairs an isolated repeated opener before delivery", async () => {
+    const body = [
+      "Your offer becomes easier to copy when it is invisible. Your price becomes easier to undercut without public proof. Your product becomes easier to clone than your reputation.",
+      "",
+      "A visible body of work gives buyers proof before they compare alternatives.",
+    ].join("\n");
+    const repairedBody = [
+      "An invisible offer is easier to copy. Without public proof, buyers compare the price alone.",
+      "",
+      "A reputation built in public remains harder to clone than the product.",
+    ].join("\n");
+    completeChat.mockResolvedValue({
+      text: "",
+      toolArgs: { body: repairedBody },
+      usage: { prompt_tokens: 20, completion_tokens: 10 },
+    });
+
+    const result = await repairAiTells({ body });
+
+    expect(result).toMatchObject({
+      body: repairedBody,
+      repaired: true,
+      detected: ["repeated-opener"],
+    });
+    expect(completeChat).toHaveBeenCalledTimes(1);
+    expect(
+      String(completeChat.mock.calls[0][0].messages[1].content),
+    ).toContain("repeated-opener");
+  });
+
   test("explains the newly enforced tells to the repair model", async () => {
     completeChat.mockResolvedValue({
       text: "",

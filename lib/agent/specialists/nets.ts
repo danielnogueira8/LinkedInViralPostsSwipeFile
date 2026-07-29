@@ -301,12 +301,39 @@ export function stripEmDashes(body: string): string {
     .replace(/[ \t]{2,}/g, " ");
 }
 
+export type AiTellMetric =
+  | "rule-of-three"
+  | "repeated-opener"
+  | "negative-parallelism"
+  | "dismissive-negation"
+  | "contrast-pivot"
+  | "chatbot-artifact"
+  | "vague-attribution"
+  | "formulaic-opener"
+  | "infomercial-hook"
+  | "generic-closer"
+  | "hedge-stack"
+  | "significance-inflation"
+  | "model-disclaimer"
+  | "unfilled-placeholder"
+  | "citation-markup-leak"
+  | "ai-vocabulary"
+  | "filler-phrase"
+  | "authority-trope"
+  | "signposting"
+  | "staccato-negation"
+  | "rhetorical-opener"
+  | "faux-insight-setup"
+  | "colon-reveal"
+  | "rhetorical-setup"
+  | "hashtag-stuffing";
+
 // Detect the structural AI tells that trigger the bounded rewrite and the
 // final delivery gate. Rephrasing these mechanically would risk changing the
 // writer's meaning, so the model repair handles the edit; this conservative
 // runtime mirror decides whether a candidate is clean enough to ship.
-export function aiTellMetrics(body: string): string[] {
-  const tells: string[] = [];
+export function aiTellMetrics(body: string): AiTellMetric[] {
+  const tells: AiTellMetric[] = [];
   // rule-of-three "a, b, c." cadence (1-4 short words each, no and/or) — the
   // headline AI tell. An Oxford "a, b, and c" is normal, so we exclude and/or.
   const three = body.match(
@@ -395,7 +422,7 @@ export function aiTellMetrics(body: string): string[] {
     tells.push("dismissive-negation");
   }
 
-  const patterns: Array<[string, RegExp]> = [
+  const patterns: Array<[AiTellMetric, RegExp]> = [
     ["contrast-pivot", /\b(?:it(?:'s| is)|this (?:is|isn't)|the point is) not\b[^.!?]{0,100}\b(?:it(?:'s| is)|but|the (?:real )?(?:point|story) is)\b/i],
     ["chatbot-artifact", /\b(?:I hope this helps|Great question|Certainly|Absolutely|feel free to reach out|let me know if you need anything else)\b/i],
     ["vague-attribution", /\b(?:experts believe|studies show|research suggests|industry leaders agree|analysts agree|independent testing confirms)\b/i],
