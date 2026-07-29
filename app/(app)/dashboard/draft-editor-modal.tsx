@@ -1267,7 +1267,7 @@ export function DraftEditorModal({
                             }
                           >
                             <SelectTrigger
-                              className="-ml-1 h-8 border-transparent px-1 hover:bg-accent focus-visible:bg-accent"
+                              className="-ml-1 h-8 max-w-full border-transparent px-1 hover:bg-accent focus-visible:bg-accent"
                               aria-label="Giveaway"
                               title="The lead magnet resource this post gives away."
                             >
@@ -1317,7 +1317,7 @@ export function DraftEditorModal({
                             }
                           >
                             <SelectTrigger
-                              className="-ml-1 h-8 border-transparent px-1 hover:bg-accent focus-visible:bg-accent"
+                              className="-ml-1 h-8 max-w-full border-transparent px-1 hover:bg-accent focus-visible:bg-accent"
                               aria-label="Giveaway"
                               title="The lead magnet resource this post gives away."
                             >
