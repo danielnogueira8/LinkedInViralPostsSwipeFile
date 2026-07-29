@@ -50,7 +50,11 @@ const POST = {
   media_urls: ["https://media.licdn.com/dms/image/post-image.jpg"],
   visual_kind: "screenshot",
   post_type: "regular",
-  accounts: [{ name: "Example Creator", niche: "Marketing" }],
+  accounts: [{
+    name: "Example Creator",
+    niche: "Marketing",
+    profile_pic_url: "https://media.licdn.com/dms/image/profile-photo.jpg",
+  }],
   workspace_post_classification: [{ is_viral: true }],
 };
 
@@ -86,6 +90,63 @@ afterEach(() => {
 });
 
 describe("MCP post visual assets", () => {
+  test("rotates repeated discovery searches but preserves explicit strict ranking", async () => {
+    const rows = Array.from({ length: 20 }, (_, index) => ({
+      ...POST,
+      id: `post-${index + 1}`,
+      account_id: `creator-${index + 1}`,
+      viral_score: 1_000 - index * 10,
+      reactions: 1_000 - index * 10,
+      accounts: [{
+        ...POST.accounts[0],
+        name: `Creator ${index + 1}`,
+      }],
+    }));
+
+    dbRef.current = makeFakeSupabase(
+      { posts: { rows } },
+      { claim_modeling_source_rotation_cursor: { data: 1 } },
+    );
+    const first = json(
+      await tools().search_viral_posts({ limit: 5, sort: "viral" }, extra()),
+    );
+    const firstIds = (first.posts as Array<{ id: string }>).map(
+      (post) => post.id,
+    );
+    expect(dbRef.current.rpcs).toContainEqual({
+      name: "claim_modeling_source_rotation_cursor",
+      args: { p_workspace_id: "workspace-1" },
+    });
+
+    dbRef.current = makeFakeSupabase(
+      { posts: { rows } },
+      { claim_modeling_source_rotation_cursor: { data: 2 } },
+    );
+    const second = json(
+      await tools().search_viral_posts({ limit: 5, sort: "viral" }, extra()),
+    );
+    const secondIds = (second.posts as Array<{ id: string }>).map(
+      (post) => post.id,
+    );
+    expect(secondIds).not.toEqual(firstIds);
+    expect(new Set([...firstIds, ...secondIds]).size).toBeGreaterThan(5);
+
+    dbRef.current = makeFakeSupabase({ posts: { rows } });
+    const strict = json(
+      await tools().search_viral_posts(
+        { limit: 5, sort: "viral", strict_ranking: true },
+        extra(),
+      ),
+    );
+    expect((strict.posts as Array<{ id: string }>).map((post) => post.id)).toEqual(
+      ["post-1", "post-2", "post-3", "post-4", "post-5"],
+    );
+    expect(dbRef.current.rpcs).not.toContainEqual({
+      name: "claim_modeling_source_rotation_cursor",
+      args: { p_workspace_id: "workspace-1" },
+    });
+  });
+
   test("diversifies comparably relevant results before creator repeats", async () => {
     const rows = [
       { ...POST, id: "a1", account_id: "a", reactions: 1_000 },
@@ -129,9 +190,15 @@ describe("MCP post visual assets", () => {
       result,
     );
     expect(queryFor(dbRef.current, "posts")?.selectArg).toContain("media_urls");
+    expect(queryFor(dbRef.current, "posts")?.selectArg).toContain(
+      "profile_pic_url",
+    );
     expect(returnedPost).toMatchObject({
       media_urls: POST.media_urls,
       visual_kind: POST.visual_kind,
+      accounts: {
+        profile_pic_url: POST.accounts[0].profile_pic_url,
+      },
     });
     expect(fetchImage).not.toHaveBeenCalled();
   });

@@ -31,8 +31,11 @@ import {
 import {
   rankIdeaPosts,
   rotateFreshBand,
-  shuffleFreshBand,
 } from "@/lib/idea-ranking";
+import {
+  isVariedDiscoverySearch,
+  variedDiscoveryOrder,
+} from "@/lib/discovery-selection";
 import {
   discoveryThresholdFilter,
   getDiscoveryThresholds,
@@ -312,15 +315,7 @@ async function trackedAccountIdsForTool(
 // request into strict analytical ranking, returning an identical top-N (and a
 // pool capped at the requested count, so there was nothing to vary) on every
 // single run. A time window is scope, not a ranking. Same for a topic query.
-export function isMimicSearch(args: Record<string, unknown>): boolean {
-  const strictRanking = args.strict_ranking === true;
-  const sort = args.sort;
-  const explicitSort = typeof sort === "string" && sort !== "viral"; // non-default
-  const explicitDir = args.dir === "asc"; // desc is the default; asc is deliberate
-  const hasThreshold =
-    typeof args.min_reactions === "number" || typeof args.min_comments === "number";
-  return !strictRanking && !explicitSort && !explicitDir && !hasThreshold;
-}
+export const isMimicSearch = isVariedDiscoverySearch;
 
 const searchViralPosts: ToolFn = async (args, workspaceId, signal, context) => {
   try {
@@ -444,7 +439,12 @@ const searchViralPosts: ToolFn = async (args, workspaceId, signal, context) => {
     const selected =
       modeledPool?.primaries ??
       (finalLimit > 1
-        ? shuffleFreshBand(ranked, cursor).slice(0, finalLimit)
+        ? variedDiscoveryOrder({
+            candidates,
+            usedIds,
+            surfacedIds,
+            cursor,
+          }).slice(0, finalLimit)
         : rotateFreshBand(ranked, cursor, finalLimit).slice(0, finalLimit));
     recordSurfaced(workspaceId, selected.map((post) => post.id));
     const posts = selected.map(wrapScrapedPostText);

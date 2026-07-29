@@ -66,6 +66,14 @@ import {
 import { mcpWorkspaceId } from "@/lib/mcp/context";
 import { confirmScheduleDraft } from "@/lib/mcp/schedule-confirmation";
 import { SWIPE_FILE_APP_TOOL_META } from "@/lib/mcp/swipe-file-app";
+import {
+  isVariedDiscoverySearch,
+  variedDiscoveryOrder,
+} from "@/lib/discovery-selection";
+import {
+  claimDiscoveryRotationCursor,
+  recentlyUsedDiscoverySourceIds,
+} from "@/lib/discovery-history";
 
 const POST_TYPES = ["regular", "lead_magnet"] as const;
 const SORT_COLUMN = {
@@ -103,7 +111,7 @@ const POST_COLS =
 // query. Fetch them only when the caller is looking at one post, or has
 // explicitly asked to see the post's visual asset.
 const POST_WITH_VISUAL_COLS =
-  "id, account_id, text, post_url, posted_at, reactions, comments, reposts, viral_score, media_type, post_type, media_urls, visual_kind, is_viral, accounts!inner(name, niche), workspace_post_classification(is_viral)";
+  "id, account_id, text, post_url, posted_at, reactions, comments, reposts, viral_score, media_type, post_type, media_urls, visual_kind, is_viral, accounts!inner(name, niche, profile_pic_url), workspace_post_classification(is_viral)";
 
 const NO_ROWS_SENTINEL = "00000000-0000-0000-0000-000000000000";
 
@@ -390,6 +398,10 @@ export function registerSwipeTools(server: McpServer) {
           .boolean()
           .optional()
           .describe("Embed rendered original images in the tool content. Visual asset URLs and metadata are always included for the interactive app. Image content is always embedded when limit is 1."),
+        strict_ranking: z
+          .boolean()
+          .optional()
+          .describe("Set true only when the user explicitly asks for an exact ranking. Normal discovery rotates among the most relevant eligible posts so repeated searches surface fresh examples."),
       },
       _meta: SWIPE_FILE_APP_TOOL_META,
     },
@@ -435,16 +447,24 @@ export function registerSwipeTools(server: McpServer) {
         const { data, error } = await q;
         if (error) return dbErrorContent("search_viral_posts", error);
         const candidates = (data ?? []).filter(passesWorkspaceViral);
-        const posts = diverseCreatorResults(
+        const creatorDiverseCandidates = diverseCreatorResults(
           candidates,
-          limit,
+          candidates.length,
           (post) => String(post.account_id ?? post.id),
           (best, alternative) =>
             comparableRelevance(best[sortCol], alternative[sortCol], {
               ascending,
               kind: sortKey === "posted" ? "posted" : "number",
             }),
-        )
+        );
+        const selected = isVariedDiscoverySearch(args)
+          ? variedDiscoveryOrder({
+              candidates: creatorDiverseCandidates,
+              usedIds: await recentlyUsedDiscoverySourceIds(workspaceId),
+              cursor: await claimDiscoveryRotationCursor(workspaceId),
+            }).slice(0, limit)
+          : creatorDiverseCandidates.slice(0, limit);
+        const posts = selected
           .map((post) => normalizeEmbed(post, includeVisualMetadata));
         const payload = { ok: true, count: posts.length, posts };
         return renderVisuals
