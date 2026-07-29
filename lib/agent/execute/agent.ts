@@ -5226,7 +5226,7 @@ async function* runReadOnlyOrchestratorCore(
   ) {
     steps = advancePlanStep(steps, {
         id: "filter_source_candidates",
-        label: "Filtering for relevant, model-ready posts",
+        label: "Selecting distinct, model-ready posts",
       });
     yield { type: "plan_update", steps };
     const availableSources = distinctGroundedSources(
@@ -5701,7 +5701,7 @@ async function* runReadOnlyOrchestratorCore(
           steps = advancePlanStep(steps, {
             id: `modeled_${batchProgressSequence}_${event.stage.id}`,
             label:
-              event.stage.id === "write_post"
+              event.stage.kind === "writing"
                 ? "Writing the next modeled draft"
                 : event.stage.label,
           });

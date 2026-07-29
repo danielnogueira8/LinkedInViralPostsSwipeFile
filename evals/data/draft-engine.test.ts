@@ -46,7 +46,11 @@ vi.mock("@/lib/agent/specialists/ai-tell-repair", async (importOriginal) => {
 import { UsagePersistenceError } from "@/lib/openrouter";
 import {
   GROUNDED_EVIDENCE_TEXT_BUDGET_CHARS,
+  runModeledDraftSlot,
   runWriterTurn,
+  type ModeledDraftBatchRepository,
+  type ModeledDraftSlotInput,
+  type ModeledPostArtifact,
   type WriterDependencies,
   type WriterInput,
 } from "@/lib/agent/execute/writer";
@@ -2941,6 +2945,260 @@ describe("writer plan narration (narratePlan)", () => {
     expect(planUpdates(events).at(-1)?.steps.every((step) => step.status === "done"))
       .toBe(true);
     expect(artifacts(events)).toHaveLength(2);
+  });
+
+  test("streams real quality phases from the durable multi-draft coordinator", async () => {
+    const acceptedBySlot = new Map<number, ModeledPostArtifact>();
+    const repository: ModeledDraftBatchRepository = {
+      acquire: vi.fn(async (
+        request: Parameters<ModeledDraftBatchRepository["acquire"]>[0],
+      ) => ({
+        kind: "acquired" as const,
+        checkpoint: {
+          batchId: "batch-progress",
+          leaseToken: "lease-progress",
+          requestHash: request.requestHash,
+          requestedCount: request.requestedCount,
+          sources: request.sources,
+          slots: request.sources.slice(0, request.requestedCount).map(
+            (_source, index) => ({
+              index,
+              state: "assigned" as const,
+              sourceIndex: index,
+              sourceHistory: [index],
+              replacements: 0,
+            }),
+          ),
+        },
+      })),
+      acceptSlot: vi.fn(async (
+        request: Parameters<ModeledDraftBatchRepository["acceptSlot"]>[0],
+      ) => {
+        acceptedBySlot.set(request.slotIndex, request.artifact);
+        return true;
+      }),
+      replaceSlotSource: vi.fn(async () => false),
+      complete: vi.fn(async () => ({
+        kind: "complete" as const,
+        artifacts: [...acceptedBySlot.entries()]
+          .sort(([left], [right]) => left - right)
+          .map(([, artifact]) => artifact),
+      })),
+      release: vi.fn(async () => {}),
+    };
+    const runSlot = vi.fn((slotInput: ModeledDraftSlotInput) =>
+      runModeledDraftSlot(slotInput, {
+        runSingleDraftTurn: (writerInput) =>
+          (async function* () {
+            writerInput.onProgressStage?.({
+              kind: "writing",
+              id: "write_post",
+              label: `Writing draft ${slotInput.slot.index + 1} of 2`,
+            });
+            writerInput.onProgressStage?.({
+              kind: "quality_check",
+              id: "check_ai_tells",
+              label: "Checking for AI tells",
+            });
+            const body =
+              slotInput.slot.index === 0 ? COMPLETE_POST : ANOTHER_POST;
+            yield {
+              type: "artifact" as const,
+              artifact: {
+                id: `artifact-${slotInput.slot.index}`,
+                kind: "post" as const,
+                title: `Draft ${slotInput.slot.index + 1}`,
+                body,
+              },
+            };
+            yield {
+              type: "done" as const,
+              terminalReason: "done" as const,
+              message: {
+                content: "Draft complete.",
+                tool_calls: null,
+                artifacts: [],
+                toolMessages: [],
+                inputTokens: 100,
+                outputTokens: 50,
+              },
+            };
+          })(),
+      }),
+    );
+    const { events } = await collect(
+      new ScriptedWriter([]),
+      {
+        narratePlan: true,
+        task: {
+          kind: "multi",
+          expectedCount: 2,
+          groundedSources: [
+            {
+              id: "durable-source-1",
+              kind: "workspace_post",
+              url: "https://linkedin.com/posts/durable-source-1",
+              text: "First durable source post.",
+            },
+            {
+              id: "durable-source-2",
+              kind: "workspace_post",
+              url: "https://linkedin.com/posts/durable-source-2",
+              text: "Second durable source post.",
+            },
+          ],
+        },
+      },
+      { repository, runSlot },
+    );
+
+    expect(activePlanLabels(events)).toEqual(
+      expect.arrayContaining([
+        "Applying your voice and content intelligence",
+        "Writing draft 1 of 2",
+        "Writing draft 2 of 2",
+        "Checking for AI tells",
+      ]),
+    );
+    expect(planUpdates(events).at(-1)?.steps.every((step) => step.status === "done"))
+      .toBe(true);
+    const durableStepIds =
+      planUpdates(events).at(-1)?.steps.map((step) => step.id) ?? [];
+    expect(new Set(durableStepIds).size).toBe(durableStepIds.length);
+    expect(artifacts(events)).toHaveLength(2);
+  });
+
+  test("does not claim new writing work when replaying a completed durable batch", async () => {
+    const replayArtifacts: ModeledPostArtifact[] = [
+      {
+        id: "replay-artifact-0",
+        kind: "post",
+        title: "Saved draft 1",
+        body: COMPLETE_POST,
+        meta: {
+          modeled_draft_slot_id: "batch-replay:slot-0",
+          modeled_draft_slot_index: 0,
+          source: "model_source",
+          source_post_id: "replay-source-1",
+          source_url: "https://linkedin.com/posts/replay-source-1",
+          research_provenance: {
+            route: "workspace_research",
+            sources: [
+              {
+                id: "replay-source-1",
+                kind: "workspace_post",
+                url: "https://linkedin.com/posts/replay-source-1",
+              },
+            ],
+          },
+        },
+      },
+      {
+        id: "replay-artifact-1",
+        kind: "post",
+        title: "Saved draft 2",
+        body: ANOTHER_POST,
+        meta: {
+          modeled_draft_slot_id: "batch-replay:slot-1",
+          modeled_draft_slot_index: 1,
+          source: "model_source",
+          source_post_id: "replay-source-2",
+          source_url: "https://linkedin.com/posts/replay-source-2",
+          research_provenance: {
+            route: "workspace_research",
+            sources: [
+              {
+                id: "replay-source-2",
+                kind: "workspace_post",
+                url: "https://linkedin.com/posts/replay-source-2",
+              },
+            ],
+          },
+        },
+      },
+    ];
+    const repository: ModeledDraftBatchRepository = {
+      acquire: vi.fn(async () => ({
+        kind: "complete" as const,
+        batchId: "batch-replay",
+        artifacts: replayArtifacts,
+      })),
+      acceptSlot: vi.fn(async () => false),
+      replaceSlotSource: vi.fn(async () => false),
+      complete: vi.fn(async () => ({ kind: "incomplete" as const })),
+      release: vi.fn(async () => {}),
+    };
+    const { events } = await collect(
+      new ScriptedWriter([]),
+      {
+        narratePlan: true,
+        task: {
+          kind: "multi",
+          expectedCount: 2,
+          groundedSources: [
+            {
+              id: "replay-source-1",
+              kind: "workspace_post",
+              url: "https://linkedin.com/posts/replay-source-1",
+              text: "First replay source post.",
+            },
+            {
+              id: "replay-source-2",
+              kind: "workspace_post",
+              url: "https://linkedin.com/posts/replay-source-2",
+              text: "Second replay source post.",
+            },
+          ],
+        },
+      },
+      { repository },
+    );
+
+    expect(activePlanLabels(events)).toEqual(["Checking saved draft progress"]);
+    expect(planUpdates(events).at(-1)?.steps.every((step) => step.status === "done"))
+      .toBe(true);
+    expect(artifacts(events)).toHaveLength(2);
+  });
+
+  test("does not announce intelligence work when the durable batch never starts a writer", async () => {
+    const runSlot = vi.fn();
+    const repository: ModeledDraftBatchRepository = {
+      acquire: vi.fn(async () => ({ kind: "unavailable" as const })),
+      acceptSlot: vi.fn(async () => false),
+      replaceSlotSource: vi.fn(async () => false),
+      complete: vi.fn(async () => ({ kind: "incomplete" as const })),
+      release: vi.fn(async () => {}),
+    };
+    const { events } = await collect(
+      new ScriptedWriter([]),
+      {
+        narratePlan: true,
+        task: {
+          kind: "multi",
+          expectedCount: 2,
+          groundedSources: [
+            {
+              id: "unavailable-source-1",
+              kind: "workspace_post",
+              url: "https://linkedin.com/posts/unavailable-source-1",
+              text: "First source post.",
+            },
+            {
+              id: "unavailable-source-2",
+              kind: "workspace_post",
+              url: "https://linkedin.com/posts/unavailable-source-2",
+              text: "Second source post.",
+            },
+          ],
+        },
+      },
+      { repository, runSlot },
+    );
+
+    expect(runSlot).not.toHaveBeenCalled();
+    expect(activePlanLabels(events)).not.toContain(
+      "Applying your voice and content intelligence",
+    );
   });
 
   test("leaves the step open when the write fails instead of marking it done", async () => {

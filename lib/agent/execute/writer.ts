@@ -268,6 +268,7 @@ export type WriterDependencies = {
 };
 
 export type WriterProgressStage = Readonly<{
+  kind: "context" | "writing" | "quality_check" | "finalizing";
   id: string;
   label: string;
 }>;
@@ -2596,9 +2597,15 @@ export async function runModeledDraftSlot(
     source: { id: input.source.id, text: input.source.text },
     ...(variation ? { variation } : {}),
   };
+  const reportSlotProgress = (stage: WriterProgressStage): void => {
+    input.engineInput.onProgressStage?.({
+      ...stage,
+      id: `slot_${input.slot.index}_${stage.id}`,
+    });
+  };
 
   try {
-    input.engineInput.onProgressStage?.(
+    reportSlotProgress(
       writerContextProgressStage({
         ...input.engineInput,
         task,
@@ -2609,6 +2616,7 @@ export async function runModeledDraftSlot(
       task,
       slotMode: true,
       deadlineAtMs: input.engineInput.deadlineAtMs,
+      onProgressStage: reportSlotProgress,
       onFinalizerDecision: (decision) => {
         finalizerDecision = decision;
         callerFinalizerDecision?.(decision);
@@ -3794,7 +3802,7 @@ async function* runLocalSlotBatch(
             if (event.type === "writer_progress") {
               if (input.narratePlan) {
                 const stage =
-                  event.stage.id === "write_post"
+                  event.stage.kind === "writing"
                     ? {
                         id: `write_draft_${index}_${slotAttempt}`,
                         label: `Writing draft ${index} of ${task.expectedCount}`,
@@ -4105,38 +4113,16 @@ async function* runDurableSlotBatch(
     return;
   }
 
-  let steps = advancePlanStep(
-    input.planPreambleSteps ?? [],
-    writerContextProgressStage(input),
-  );
-  yield { type: "plan_update", steps };
-
-  let failed = false;
-  for await (const event of streamWriterProgress(
+  yield* narrateWriterProgress(
     input,
     (streamInput) =>
       runDurableSlotBatchEvents(streamInput, task, sources, repository),
-  )) {
-    if (event.type === "writer_progress") {
-      const active = steps.find((step) => step.status === "active");
-      if (
-        active?.id === event.stage.id &&
-        active.label === event.stage.label
-      ) {
-        continue;
-      }
-      steps = advancePlanStep(steps, event.stage);
-      yield { type: "plan_update", steps };
-      continue;
-    }
-    if (event.type === "error") failed = true;
-    yield event;
-  }
-
-  if (!failed) {
-    steps = completeActivePlanSteps(steps);
-    yield { type: "plan_update", steps };
-  }
+    {
+      kind: "context",
+      id: "load_durable_draft_batch",
+      label: "Checking saved draft progress",
+    },
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -4211,7 +4197,7 @@ export function writerContextProgressStage(
         : hasVoice
           ? "Applying your voice and content intelligence"
           : "Applying content intelligence and writing rules";
-  return { id: "apply_writer_intelligence", label };
+  return { kind: "context", id: "apply_writer_intelligence", label };
 }
 
 function writerCallProgressStage(
@@ -4221,11 +4207,13 @@ function writerCallProgressStage(
 ): WriterProgressStage {
   if (stage === "primary") {
     return {
+      kind: "writing",
       id: "write_post",
       label: writerSingleStepLabel(task),
     };
   }
   return {
+    kind: "writing",
     id: `${stage}_post_${attempt}`,
     label:
       stage === "repair"
@@ -4240,27 +4228,32 @@ function writerFinalizerProgressStage(
 ): WriterProgressStage {
   const details: Record<
     DraftFinalizerStage,
-    { id: string; label: string }
+    WriterProgressStage
   > = {
     validation: {
+      kind: "quality_check",
       id: "validate_draft",
       label: "Checking structure and completeness",
     },
     source_fidelity: {
+      kind: "quality_check",
       id: "verify_source_fidelity",
       label: "Checking source fidelity",
     },
     ai_tell_check: {
+      kind: "quality_check",
       id: "check_ai_tells",
       label: "Checking for AI tells",
     },
     artifact: {
+      kind: "finalizing",
       id: "finalize_draft",
       label: "Finalizing your draft",
     },
   };
   const detail = details[stage];
   return {
+    kind: detail.kind,
     id: `${detail.id}_${attempt}`,
     label: detail.label,
   };
@@ -4348,6 +4341,43 @@ export async function* streamWriterProgress(
   }
 }
 
+async function* narrateWriterProgress(
+  input: WriterInput,
+  runner: (
+    observedInput: WriterInput,
+  ) => AsyncGenerator<AgentEvent> = runSingleDraftTurn,
+  initialStage: WriterProgressStage | null = writerContextProgressStage(input),
+): AsyncGenerator<AgentEvent> {
+  let steps = input.planPreambleSteps ?? [];
+  if (initialStage) {
+    steps = advancePlanStep(steps, initialStage);
+    yield { type: "plan_update", steps };
+  }
+
+  let failed = false;
+  for await (const event of streamWriterProgress(input, runner)) {
+    if (event.type === "writer_progress") {
+      const active = steps.find((step) => step.status === "active");
+      if (
+        active?.id === event.stage.id &&
+        active.label === event.stage.label
+      ) {
+        continue;
+      }
+      steps = advancePlanStep(steps, event.stage);
+      yield { type: "plan_update", steps };
+      continue;
+    }
+    if (event.type === "error") failed = true;
+    yield event;
+  }
+
+  if (!failed) {
+    steps = completeActivePlanSteps(steps);
+    yield { type: "plan_update", steps };
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------
@@ -4369,27 +4399,7 @@ export async function* runWriterTurn(
   // callbacks from the actual writer and finalizer work into the same async
   // event queue so the UI changes labels exactly when the backend changes
   // phases. This deliberately avoids timer-driven or guessed status copy.
-  let steps = advancePlanStep(
-    input.planPreambleSteps ?? [],
-    writerContextProgressStage(input),
-  );
-  yield { type: "plan_update", steps };
-
-  let failed = false;
-  for await (const event of streamWriterProgress(input)) {
-    if (event.type === "writer_progress") {
-      steps = advancePlanStep(steps, event.stage);
-      yield { type: "plan_update", steps };
-      continue;
-    }
-    if (event.type === "error") failed = true;
-    yield event;
-  }
-
-  if (!failed) {
-    steps = completeActivePlanSteps(steps);
-    yield { type: "plan_update", steps };
-  }
+  yield* narrateWriterProgress(input);
 }
 
 export const productionWriterDependencies = productionDependencies;

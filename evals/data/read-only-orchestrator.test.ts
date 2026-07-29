@@ -308,7 +308,7 @@ describe("read-only orchestrator plan contract", () => {
             .filter((step) => step.status === "active")
             .map((step) => step.label),
         ),
-    ).toContain("Filtering for relevant, model-ready posts");
+    ).toContain("Selecting distinct, model-ready posts");
 
     const done = result.events.findLast((event) => event.type === "done");
     expect(done).toMatchObject({
@@ -1841,6 +1841,62 @@ describe("read-only orchestrator execution", () => {
     });
   });
 
+  test("closes grounded synthesis progress when summarization fails", async () => {
+    const instruction =
+      "Find one top-performing post in my swipe file and summarize why it worked.";
+    const result = await collect(
+      input({
+        userInstruction: instruction,
+        route: {
+          kind: "workspace_research",
+          minimumSources: 1,
+          workspaceSearchMode: "strict_top",
+          outcome: {
+            kind: "grounded_answer",
+            format: "summary",
+            resultCount: 1,
+          },
+        },
+      }),
+      [],
+      async () => ({
+        ok: true,
+        posts: [{ id: "grounded-source", text: "A verified source post." }],
+      }),
+      {
+        synthesizeGroundedAnswer: vi.fn(async () => {
+          throw new Error("synthesis unavailable");
+        }),
+      },
+    );
+
+    const synthesisUpdates = result.events.filter(
+      (event): event is Extract<AgentEvent, { type: "plan_update" }> =>
+        event.type === "plan_update" &&
+        event.steps.some(
+          (step) => step.label === "Synthesizing the verified findings",
+        ),
+    );
+    expect(
+      synthesisUpdates.some((event) =>
+        event.steps.some(
+          (step) =>
+            step.status === "active" &&
+            step.label === "Synthesizing the verified findings",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      synthesisUpdates.at(-1)?.steps.every((step) => step.status === "done"),
+    ).toBe(true);
+    expect(result.events).toContainEqual(
+      expect.objectContaining({
+        type: "error",
+        code: "grounded_answer_failed",
+      }),
+    );
+  });
+
   test("fails a grounded answer honestly when verified workspace evidence is unavailable", async () => {
     const instruction =
       "Find one top-performing regular post in my swipe file about AI agents and summarize why it worked. Do not draft or rewrite.";
@@ -2782,10 +2838,12 @@ describe("read-only orchestrator execution", () => {
               : null;
           return (async function* () {
             draftInput.onProgressStage?.({
+              kind: "writing",
               id: "write_post",
               label: "Writing your post",
             });
             draftInput.onProgressStage?.({
+              kind: "quality_check",
               id: "check_ai_tells_1",
               label: "Checking for AI tells",
             });
@@ -2904,10 +2962,12 @@ describe("read-only orchestrator execution", () => {
         executeModeledDraftBatch: async (batchInput) => {
           batchInputs.push(batchInput);
           batchInput.engineInput.onProgressStage?.({
+            kind: "writing",
             id: "write_post",
             label: "Writing your post",
           });
           batchInput.engineInput.onProgressStage?.({
+            kind: "quality_check",
             id: "check_ai_tells_1",
             label: "Checking for AI tells",
           });
