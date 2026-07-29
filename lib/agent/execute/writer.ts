@@ -14,6 +14,10 @@ import {
 } from "@/lib/openrouter";
 import type { AgentEvent, Artifact, PlanStep } from "@/lib/agent/contracts";
 import type { GroundedSource } from "@/lib/agent/evidence";
+import {
+  advancePlanStep,
+  completeActivePlanSteps,
+} from "@/lib/agent/plan-progress";
 export type { GroundedSource } from "@/lib/agent/evidence";
 import {
   createDraftFinalizer,
@@ -3670,6 +3674,14 @@ async function* runLocalSlotBatch(
   let inputTokens = 0;
   let outputTokens = 0;
   const preamble = input.planPreambleSteps ?? [];
+  let narratedSteps = preamble;
+  if (input.narratePlan) {
+    narratedSteps = advancePlanStep(
+      narratedSteps,
+      writerContextProgressStage(input),
+    );
+    yield { type: "plan_update", steps: narratedSteps };
+  }
 
   // Slots retried against the duplicate guard, and how the last attempt for
   // the CURRENT slot failed. A duplicate-guard exhaustion is a qualitatively
@@ -3685,21 +3697,6 @@ async function* runLocalSlotBatch(
   try {
     for (let index = 1; index <= task.expectedCount; index += 1) {
       if (multiSignal.aborted) break;
-      if (input.narratePlan) {
-        // Reveal steps as they start (same contract as the read-only lane):
-        // previous drafts done, the current one active.
-        const steps: PlanStep[] = [...preamble];
-        for (let j = 1; j <= index; j += 1) {
-          steps.push(
-            writerSlotStep(
-              j,
-              task.expectedCount,
-              j < index ? "done" : "active",
-            ),
-          );
-        }
-        yield { type: "plan_update", steps };
-      }
       const previousBodies = accepted.map((artifact) => artifact.body);
       const variation: DraftVariation = {
         index,
@@ -3787,7 +3784,24 @@ async function* runLocalSlotBatch(
 
         const childEvents: AgentEvent[] = [];
         try {
-          for await (const event of runSingleDraftTurn(childInput)) {
+          for await (const event of streamWriterProgress(childInput)) {
+            if (event.type === "writer_progress") {
+              if (input.narratePlan) {
+                const stage =
+                  event.stage.id === "write_post"
+                    ? {
+                        id: `write_draft_${index}_${slotAttempt}`,
+                        label: `Writing draft ${index} of ${task.expectedCount}`,
+                      }
+                    : {
+                        ...event.stage,
+                        id: `draft_${index}_${slotAttempt}_${event.stage.id}`,
+                      };
+                narratedSteps = advancePlanStep(narratedSteps, stage);
+                yield { type: "plan_update", steps: narratedSteps };
+              }
+              continue;
+            }
             childEvents.push(event);
           }
         } catch (error) {
@@ -3961,12 +3975,7 @@ async function* runLocalSlotBatch(
     if (input.narratePlan) {
       yield {
         type: "plan_update",
-        steps: [
-          ...preamble,
-          ...Array.from({ length: task.expectedCount }, (_, i) =>
-            writerSlotStep(i + 1, task.expectedCount, "done"),
-          ),
-        ],
+        steps: completeActivePlanSteps(narratedSteps),
       };
     }
     for (const artifact of accepted) {
@@ -4120,18 +4129,6 @@ async function* runSlotBatchTurn(
 // Live plan narration (direct-writer lane only — see WriterInput.narratePlan)
 // ---------------------------------------------------------------------------
 
-function writerSlotStep(
-  index: number,
-  count: number,
-  status: PlanStep["status"],
-): PlanStep {
-  return {
-    id: `write_draft_${index}`,
-    label: count > 1 ? `Writing draft ${index} of ${count}` : "Writing your post",
-    status,
-  };
-}
-
 function writerSingleStepLabel(
   task: Exclude<WriterTask, { kind: "multi" }>,
 ): string {
@@ -4206,25 +4203,87 @@ function writerFinalizerProgressStage(
   };
 }
 
-function advanceWriterPlan(
-  steps: PlanStep[],
-  stage: WriterProgressStage,
-): PlanStep[] {
-  return [
-    ...steps.map((step) =>
-      step.status === "active"
-        ? { ...step, status: "done" as const }
-        : step,
-    ),
-    { ...stage, status: "active" as const },
-  ];
-}
-
 type WriterNarrationQueueItem =
   | { kind: "progress"; stage: WriterProgressStage }
   | { kind: "event"; event: AgentEvent }
   | { kind: "complete" }
   | { kind: "error"; error: unknown };
+
+export type WriterProgressEvent = {
+  type: "writer_progress";
+  stage: WriterProgressStage;
+};
+
+export async function* streamWriterProgress(
+  input: WriterInput,
+  runner: (
+    observedInput: WriterInput,
+  ) => AsyncGenerator<AgentEvent> = runSingleDraftTurn,
+): AsyncGenerator<AgentEvent | WriterProgressEvent> {
+  const ownership = new AbortController();
+  const signal = input.signal
+    ? AbortSignal.any([input.signal, ownership.signal])
+    : ownership.signal;
+  const queued: WriterNarrationQueueItem[] = [];
+  let wakeQueue: (() => void) | null = null;
+  let queueClosed = false;
+  const enqueue = (item: WriterNarrationQueueItem): void => {
+    if (queueClosed) return;
+    queued.push(item);
+    wakeQueue?.();
+    wakeQueue = null;
+  };
+  const waitForQueue = async (): Promise<void> => {
+    if (queued.length > 0) return;
+    await new Promise<void>((resolve) => {
+      wakeQueue = resolve;
+    });
+  };
+  const stream = runner({
+    ...input,
+    signal,
+    onProgressStage: (stage) => {
+      try {
+        input.onProgressStage?.(stage);
+      } catch {
+        // External narration observers must never be able to break delivery.
+      } finally {
+        enqueue({ kind: "progress", stage });
+      }
+    },
+  });
+  const pump = (async () => {
+    try {
+      for await (const event of stream) enqueue({ kind: "event", event });
+      enqueue({ kind: "complete" });
+    } catch (error) {
+      enqueue({ kind: "error", error });
+    }
+  })();
+
+  try {
+    let complete = false;
+    while (!complete) {
+      await waitForQueue();
+      const item = queued.shift();
+      if (!item) continue;
+      if (item.kind === "progress") {
+        yield { type: "writer_progress", stage: item.stage };
+        continue;
+      }
+      if (item.kind === "event") {
+        yield item.event;
+        continue;
+      }
+      if (item.kind === "error") throw item.error;
+      complete = true;
+    }
+  } finally {
+    queueClosed = true;
+    ownership.abort();
+    await pump;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Public entry point
@@ -4247,68 +4306,25 @@ export async function* runWriterTurn(
   // callbacks from the actual writer and finalizer work into the same async
   // event queue so the UI changes labels exactly when the backend changes
   // phases. This deliberately avoids timer-driven or guessed status copy.
-  let steps = advanceWriterPlan(
+  let steps = advancePlanStep(
     input.planPreambleSteps ?? [],
     writerContextProgressStage(input),
   );
   yield { type: "plan_update", steps };
 
-  const queued: WriterNarrationQueueItem[] = [];
-  let wakeQueue: (() => void) | null = null;
-  const enqueue = (item: WriterNarrationQueueItem): void => {
-    queued.push(item);
-    wakeQueue?.();
-    wakeQueue = null;
-  };
-  const waitForQueue = async (): Promise<void> => {
-    if (queued.length > 0) return;
-    await new Promise<void>((resolve) => {
-      wakeQueue = resolve;
-    });
-  };
-  const stream = runSingleDraftTurn({
-    ...input,
-    onProgressStage: (stage) => {
-      input.onProgressStage?.(stage);
-      enqueue({ kind: "progress", stage });
-    },
-  });
-  const pump = (async () => {
-    try {
-      for await (const event of stream) enqueue({ kind: "event", event });
-      enqueue({ kind: "complete" });
-    } catch (error) {
-      enqueue({ kind: "error", error });
-    }
-  })();
-
   let failed = false;
-  let complete = false;
-  while (!complete) {
-    await waitForQueue();
-    const item = queued.shift();
-    if (!item) continue;
-    if (item.kind === "progress") {
-      steps = advanceWriterPlan(steps, item.stage);
+  for await (const event of streamWriterProgress(input)) {
+    if (event.type === "writer_progress") {
+      steps = advancePlanStep(steps, event.stage);
       yield { type: "plan_update", steps };
       continue;
     }
-    if (item.kind === "event") {
-      if (item.event.type === "error") failed = true;
-      yield item.event;
-      continue;
-    }
-    if (item.kind === "error") throw item.error;
-    complete = true;
+    if (event.type === "error") failed = true;
+    yield event;
   }
-  await pump;
 
   if (!failed) {
-    steps = steps.map((step) =>
-      step.status === "active"
-        ? { ...step, status: "done" as const }
-        : step,
-    );
+    steps = completeActivePlanSteps(steps);
     yield { type: "plan_update", steps };
   }
 }

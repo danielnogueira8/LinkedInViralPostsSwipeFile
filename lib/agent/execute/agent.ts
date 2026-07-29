@@ -42,6 +42,7 @@ import { distinctFallbackModel } from "@/lib/agent/model-routing";
 // Writer / prose delegation
 import {
   runWriterTurn,
+  streamWriterProgress,
   WRITER_TURN_BUDGET_MS,
   type WriterInput,
   type WriterTask,
@@ -50,6 +51,10 @@ import {
   type ExecuteModeledDraftBatchInput,
   isCanonicalModeledSourceUrl,
 } from "@/lib/agent/execute/writer";
+import {
+  advancePlanStep,
+  completeActivePlanSteps,
+} from "@/lib/agent/plan-progress";
 
 // Read-only branch dependencies
 import {
@@ -5218,16 +5223,10 @@ async function* runReadOnlyOrchestratorCore(
     terminalAction?.type === "answer_from_evidence" &&
     input.route.outcome?.kind === "source_selection"
   ) {
-    steps = [
-      ...steps.map((step) =>
-        step.status === "active" ? { ...step, status: "done" as const } : step,
-      ),
-      {
+    steps = advancePlanStep(steps, {
         id: "filter_source_candidates",
         label: "Filtering for relevant, model-ready posts",
-        status: "active",
-      },
-    ];
+      });
     yield { type: "plan_update", steps };
     const availableSources = distinctGroundedSources(
       terminalAction.evidenceActionIds.flatMap(
@@ -5242,9 +5241,7 @@ async function* runReadOnlyOrchestratorCore(
           isModelableSourceText(source.text),
       )
       .slice(0, input.route.outcome.candidateCount);
-    steps = steps.map((step) =>
-      step.status === "active" ? { ...step, status: "done" as const } : step,
-    );
+    steps = completeActivePlanSteps(steps);
     yield { type: "plan_update", steps };
     const minimumSources = Math.max(3, input.route.minimumSources ?? 3);
     if (candidates.length < minimumSources) {
@@ -5426,6 +5423,11 @@ async function* runReadOnlyOrchestratorCore(
         });
       }
     };
+    steps = advancePlanStep(steps, {
+      id: "synthesize_grounded_answer",
+      label: "Synthesizing the verified findings",
+    });
+    yield { type: "plan_update", steps };
     try {
       const answer = await deps.synthesizeGroundedAnswer({
         instruction: authoritativeInstruction,
@@ -5450,6 +5452,8 @@ async function* runReadOnlyOrchestratorCore(
           },
         ],
       );
+      steps = completeActivePlanSteps(steps);
+      yield { type: "plan_update", steps };
       yield { type: "text", delta: answer.content };
       yield completedDone({
         content: answer.content,
@@ -5654,23 +5658,53 @@ async function* runReadOnlyOrchestratorCore(
     (resumingModeledBatch || canonicalPool.length >= expectedDrafts);
   if (modeledBatch) {
     if (deps.executeModeledDraftBatch) {
-      let batchResult: Awaited<ReturnType<typeof deps.executeModeledDraftBatch>>;
+      const executeBatch = deps.executeModeledDraftBatch;
+      const batchOutcome: {
+        value: Awaited<ReturnType<typeof executeBatch>> | null;
+      } = { value: null };
       try {
-        batchResult = await deps.executeModeledDraftBatch({
-          operationKey: input.turnMessageId,
-          workspaceId: input.workspaceId,
-          instruction: authoritativeInstruction,
-          count: expectedDrafts,
-          sources: canonicalPool,
-          engineInput: {
-            ...input.writerInput,
-            telemetry: input.telemetry ?? input.writerInput.telemetry,
-            userInstruction: authoritativeInstruction,
-            signal: input.signal,
-          },
-          deadlineAtMs: input.deadlineAtMs,
-          signal: input.signal,
+        steps = advancePlanStep(steps, {
+          id: "apply_modeled_intelligence",
+          label: "Applying your voice and content intelligence",
         });
+        yield { type: "plan_update", steps };
+        let batchProgressSequence = 0;
+        const batchEngineInput: WriterInput = {
+          ...input.writerInput,
+          telemetry: input.telemetry ?? input.writerInput.telemetry,
+          userInstruction: authoritativeInstruction,
+          signal: input.signal,
+        };
+        const batchProgress = streamWriterProgress(
+          batchEngineInput,
+          async function* (observedInput) {
+            batchOutcome.value = await executeBatch({
+              operationKey: input.turnMessageId,
+              workspaceId: input.workspaceId,
+              instruction: authoritativeInstruction,
+              count: expectedDrafts,
+              sources: canonicalPool,
+              engineInput: observedInput,
+              deadlineAtMs: input.deadlineAtMs,
+              signal: observedInput.signal,
+            });
+          },
+        );
+        for await (const event of batchProgress) {
+          if (event.type !== "writer_progress") continue;
+          batchProgressSequence += 1;
+          steps = advancePlanStep(steps, {
+            id: `modeled_${batchProgressSequence}_${event.stage.id}`,
+            label:
+              event.stage.id === "write_post"
+                ? "Writing the next modeled draft"
+                : event.stage.label,
+          });
+          yield { type: "plan_update", steps };
+        }
+        if (!batchOutcome.value) {
+          throw new Error("Modeled-draft coordinator returned no result.");
+        }
       } catch (error) {
         rethrowUsagePersistence(error);
         const interrupted = await input.cancellationBoundary();
@@ -5718,6 +5752,10 @@ async function* runReadOnlyOrchestratorCore(
         return;
       }
 
+      const batchResult = batchOutcome.value;
+      if (!batchResult) {
+        throw new Error("Modeled-draft coordinator returned no result.");
+      }
       inputTokens += batchResult.usage.inputTokens;
       outputTokens += batchResult.usage.outputTokens;
       if (batchResult.kind === "complete") {
@@ -5915,10 +5953,18 @@ async function* runReadOnlyOrchestratorCore(
       ...input.writerInput.dependencies,
     },
   };
-  const prose = deps.runProse(proseInput);
+  const prose = streamWriterProgress(proseInput, deps.runProse);
 
   try {
     for await (const event of prose) {
+      if (event.type === "writer_progress") {
+        steps = advancePlanStep(steps, {
+          ...event.stage,
+          id: `research_${event.stage.id}`,
+        });
+        yield { type: "plan_update", steps };
+        continue;
+      }
       if (event.type === "done") {
         childDone = event;
         continue;

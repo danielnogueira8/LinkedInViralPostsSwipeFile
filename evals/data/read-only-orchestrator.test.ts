@@ -1807,6 +1807,17 @@ describe("read-only orchestrator execution", () => {
     );
     expect(result.draftInputs).toHaveLength(0);
     expect(result.events.some((event) => event.type === "artifact")).toBe(false);
+    expect(
+      result.events.some(
+        (event) =>
+          event.type === "plan_update" &&
+          event.steps.some(
+            (step) =>
+              step.status === "active" &&
+              step.label === "Synthesizing the verified findings",
+          ),
+      ),
+    ).toBe(true);
     const done = result.events.find((event) => event.type === "done");
     expect(done).toMatchObject({
       type: "done",
@@ -2750,7 +2761,7 @@ describe("read-only orchestrator execution", () => {
     if (!route) return;
 
     let modeledSourceId: string | null = null;
-    await collect(
+    const result = await collect(
       input({ route, userInstruction }),
       [],
       async () => ({
@@ -2770,6 +2781,14 @@ describe("read-only orchestrator execution", () => {
               ? draftInput.task.source.id
               : null;
           return (async function* () {
+            draftInput.onProgressStage?.({
+              id: "write_post",
+              label: "Writing your post",
+            });
+            draftInput.onProgressStage?.({
+              id: "remove_ai_tells_1",
+              label: "Removing AI tells",
+            });
             yield {
               type: "artifact" as const,
               artifact: {
@@ -2797,6 +2816,16 @@ describe("read-only orchestrator execution", () => {
     );
 
     expect(modeledSourceId).toBe("best");
+    expect(
+      result.events.some(
+        (event) =>
+          event.type === "plan_update" &&
+          event.steps.some(
+            (step) =>
+              step.status === "active" && step.label === "Removing AI tells",
+          ),
+      ),
+    ).toBe(true);
   });
 
   test("turns four sources into four drafts and bounds an oversized reserve pool", async () => {
@@ -2874,6 +2903,14 @@ describe("read-only orchestrator execution", () => {
       {
         executeModeledDraftBatch: async (batchInput) => {
           batchInputs.push(batchInput);
+          batchInput.engineInput.onProgressStage?.({
+            id: "write_post",
+            label: "Writing your post",
+          });
+          batchInput.engineInput.onProgressStage?.({
+            id: "remove_ai_tells_1",
+            label: "Removing AI tells",
+          });
           return {
             kind: "complete" as const,
             batchId: "batch-1",
@@ -2948,6 +2985,16 @@ describe("read-only orchestrator execution", () => {
       (event) => event.type === "artifact",
     );
     expect(artifacts).toHaveLength(4);
+    expect(
+      result.events.some(
+        (event) =>
+          event.type === "plan_update" &&
+          event.steps.some(
+            (step) =>
+              step.status === "active" && step.label === "Removing AI tells",
+          ),
+      ),
+    ).toBe(true);
     expect(
       new Set(
         artifacts.map((event) =>

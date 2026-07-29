@@ -2861,6 +2861,39 @@ describe("writer plan narration (narratePlan)", () => {
     expect(artifacts(events)).toHaveLength(1);
   });
 
+  test("aborts in-flight writer work when the progress stream loses its consumer", async () => {
+    let writerWasAborted = false;
+    const writer = new ScriptedWriter([
+      (request) =>
+        new Promise<DraftWriterResponse>((_resolve, reject) => {
+          if (!request.signal) {
+            throw new Error("Expected the narrated writer to own an abort signal.");
+          }
+          request.signal.addEventListener(
+            "abort",
+            () => {
+              writerWasAborted = true;
+              reject(new DOMException("aborted", "AbortError"));
+            },
+            { once: true },
+          );
+        }),
+    ]);
+    const turn = runWriterTurn({
+      ...input({ narratePlan: true }),
+      dependencies: {
+        writer,
+        recordUsage: vi.fn(async () => {}),
+      },
+    });
+
+    await turn.next();
+    await turn.next();
+    await turn.return(undefined as never);
+
+    expect(writerWasAborted).toBe(true);
+  });
+
   test("stays silent by default so an outer lane keeps owning the plan", async () => {
     const writer = new ScriptedWriter([
       { text: COMPLETE_POST, finishReason: "stop", usage: usage(120, 80) },
@@ -2870,7 +2903,7 @@ describe("writer plan narration (narratePlan)", () => {
     expect(planUpdates(events)).toHaveLength(0);
   });
 
-  test("reveals one step per slot across a multi-draft turn", async () => {
+  test("narrates real quality phases for every draft in a multi-draft turn", async () => {
     const writer = new ScriptedWriter([
       { text: COMPLETE_POST, finishReason: "stop", usage: usage(120, 80) },
       { text: ANOTHER_POST, finishReason: "stop", usage: usage(140, 80) },
@@ -2880,36 +2913,19 @@ describe("writer plan narration (narratePlan)", () => {
       task: { kind: "multi", expectedCount: 2 },
     });
 
-    expect(planUpdates(events)).toEqual([
-      {
-        type: "plan_update",
-        steps: [
-          {
-            id: "write_draft_1",
-            label: "Writing draft 1 of 2",
-            status: "active",
-          },
-        ],
-      },
-      {
-        type: "plan_update",
-        steps: [
-          { id: "write_draft_1", label: "Writing draft 1 of 2", status: "done" },
-          {
-            id: "write_draft_2",
-            label: "Writing draft 2 of 2",
-            status: "active",
-          },
-        ],
-      },
-      {
-        type: "plan_update",
-        steps: [
-          { id: "write_draft_1", label: "Writing draft 1 of 2", status: "done" },
-          { id: "write_draft_2", label: "Writing draft 2 of 2", status: "done" },
-        ],
-      },
+    expect(activePlanLabels(events)).toEqual([
+      "Applying your voice and content intelligence",
+      "Writing draft 1 of 2",
+      "Checking structure and completeness",
+      "Removing AI tells",
+      "Finalizing your draft",
+      "Writing draft 2 of 2",
+      "Checking structure and completeness",
+      "Removing AI tells",
+      "Finalizing your draft",
     ]);
+    expect(planUpdates(events).at(-1)?.steps.every((step) => step.status === "done"))
+      .toBe(true);
     expect(artifacts(events)).toHaveLength(2);
   });
 
