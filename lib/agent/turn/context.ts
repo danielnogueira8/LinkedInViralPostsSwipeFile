@@ -105,6 +105,7 @@ import {
 } from "@/lib/image-analysis-cache";
 import { waitForChatSetup } from "@/lib/chat-stream-policy";
 import { retrieveKnowledgeSourceContext } from "@/lib/knowledge-sources/retrieval";
+import { originalTemplateMatch } from "@/lib/agent/original-template-reference";
 import {
   appliedKnowledgeSources,
   buildKnowledgeContextBlock,
@@ -1139,7 +1140,7 @@ export type TurnContext = {
   resolvedCustomSkills: FrozenCustomSkill[];
   customSkillBodies: string[];
   customSkillNames: string[];
-  /** Best template / swipe / built-in structure chosen by the deterministic matcher, if any. */
+  /** Best existing Content Template chosen for structure-only original-post guidance, if any. */
   structureMatch: StructureMatchResult | null;
   knowledgeSources: AppliedKnowledgeSource[];
   selectedKnowledgeSources: AppliedKnowledgeSource[];
@@ -1580,10 +1581,13 @@ export async function buildTurnContext(
     ? (sourcesById.get(effectiveModelSourceId) ?? null)
     : null;
 
-  // Server-side structure matching (PLAN-agent-loop Phase A4): only a current-
-  // turn POST deliverable may select a writing structure. Previously this ran
-  // for every message; a review, summary, board action, or ambiguous follow-up
-  // could therefore acquire a source and accidentally satisfy a writer lane.
+  // Server-side Content Template matching (PLAN-agent-loop Phase A4): only a
+  // current-turn POST deliverable may select a writing structure. The matcher
+  // already loads and ranks candidates for this turn; originalTemplateMatch
+  // narrows that existing result to Content Templates without another model or
+  // embedding call. The selected template remains reference data for an
+  // ORIGINAL task — it must never acquire Model Source provenance or route the
+  // turn through the source writer.
   const currentTurnRequestsPost =
     requestedBasePostCount(
       effectiveUserInstruction,
@@ -1606,29 +1610,18 @@ export async function buildTurnContext(
         workspaceId,
         setupSignal,
       ).catch(() => null);
-      structureMatch = await findBestStructureMatch({
-        sb: sbRaw,
-        workspaceId,
-        userText: effectiveUserInstruction,
-        brief,
-        recentDrafts: priorPostDrafts,
-        cooldownIds: new Set(),
-        includeBuiltins: true,
-        signal: setupSignal,
-      }).catch(() => null);
-      if (structureMatch) {
-        const candidate = structureMatch.candidate;
-        currentModelSource = {
-          id: candidate.id,
-          source:
-            candidate.kind === "template" || candidate.kind === "builtin"
-              ? "template"
-              : "swipe",
-          post_text: candidate.text,
-          source_post_id: candidate.id,
-          post_type: null,
-        };
-      }
+      structureMatch = originalTemplateMatch(
+        await findBestStructureMatch({
+          sb: sbRaw,
+          workspaceId,
+          userText: effectiveUserInstruction,
+          brief,
+          recentDrafts: priorPostDrafts,
+          cooldownIds: new Set(),
+          includeBuiltins: true,
+          signal: setupSignal,
+        }).catch(() => null),
+      );
     }
   }
 
@@ -1690,9 +1683,9 @@ export async function buildTurnContext(
   modelSourceImageSkipReason = modelSourceImageDecision.skipReason;
   modelSourceImageSourcePostId = modelSourceImageDecision.sourcePostId;
 
-  // No-model format router: when the user asked for a NEW post from scratch —
-  // no "Model this post" / template / refine source, and the message reads
-  // like a write-a-post request — silently pick a LinkedIn-native archetype,
+  // No-model format router: when the user asked for a NEW post from scratch,
+  // no Content Template reference was found, and the message reads like a
+  // write-a-post request — silently pick a LinkedIn-native archetype,
   // fetch 1-2 real exemplar posts from the DB, and inject the format rules +
   // examples so the writing agent has a concrete structural reference (the
   // thing the modeled flow gives it, that from-scratch posts lack). It does
@@ -1702,8 +1695,7 @@ export async function buildTurnContext(
   // but this is a cheap belt-and-suspenders. Fail-open: the loader never
   // throws, so a DB blip just yields format-rules-only or an empty block.
   hasModelSource = Boolean(
-    (modelSourceId && currentModelEnvelope) ||
-      (structureMatch && currentModelEnvelope),
+    modelSourceId && currentModelEnvelope,
   );
   const effectivePostTurn = Boolean(
     composerTaskContext?.kind === "post" ||
@@ -1739,6 +1731,7 @@ export async function buildTurnContext(
 
   if (
     !skipDecision &&
+    !structureMatch &&
     (composerTaskContext?.sourceMode === "original" ||
       isNoModelPostRequest(effectiveUserInstruction, hasModelSource))
   ) {
