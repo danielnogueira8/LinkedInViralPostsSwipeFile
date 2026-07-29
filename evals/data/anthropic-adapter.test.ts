@@ -519,13 +519,15 @@ describe("completeChatAnthropic (mocked SDK)", () => {
         ],
         maxTokens: 3_000,
         timeoutMs: 60_000,
-        reasoning: "none",
+        reasoning: "sonnet-low",
         cachePrompt: false,
       });
 
       expect(lastBody.current!["system"]).toBe(
         "unique variation system prompt",
       );
+      expect(lastBody.current!["thinking"]).toEqual({ type: "adaptive" });
+      expect(lastBody.current!["output_config"]).toEqual({ effort: "low" });
     } finally {
       if (previousProvider === undefined) delete process.env.AI_PROVIDER;
       else process.env.AI_PROVIDER = previousProvider;

@@ -446,6 +446,48 @@ describe("OpenRouter provider routing", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
+  test("initial Sonnet 5 drafts use low reasoning effort", async () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "test-key");
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      expect(body.model).toBe("anthropic/claude-sonnet-5");
+      expect(body.reasoning).toEqual({ effort: "low" });
+      return Response.json({
+        choices: [{ message: { content: "A real post body." }, finish_reason: "stop" }],
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await openRouterDraftWriter.write(
+      {
+        ...writerRequest("anthropic/claude-sonnet-5"),
+        reasoning: "sonnet-low",
+      },
+    );
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  test("Sonnet 5 repair drafts keep the default reasoning policy", async () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "test-key");
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      expect(body.model).toBe("anthropic/claude-sonnet-5");
+      expect(body.reasoning).toBeUndefined();
+      return Response.json({
+        choices: [{ message: { content: "A repaired post body." }, finish_reason: "stop" }],
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await openRouterDraftWriter.write({
+      ...writerRequest("anthropic/claude-sonnet-5"),
+      stage: "repair",
+    });
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   test("draft writer leaves GLM on its High policy for `none` (no regression)", async () => {
     vi.stubEnv("OPENROUTER_API_KEY", "test-key");
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {

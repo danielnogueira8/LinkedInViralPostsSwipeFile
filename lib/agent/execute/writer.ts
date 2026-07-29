@@ -1113,7 +1113,9 @@ function attemptRequest(opts: {
         : "none"
       : opts.input.lean
         ? "medium"
-        : "none",
+        : opts.stage === "primary"
+          ? "sonnet-low"
+          : "none",
   };
 }
 
