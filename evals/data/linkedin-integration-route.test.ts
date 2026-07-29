@@ -127,7 +127,7 @@ describe("POST /api/integrations/linkedin — already-connected guard", () => {
     expect(arg.redirectUrl).toContain("returnTo=integrations");
   });
 
-  test("an arbitrary returnTo is NOT reflected (defaults to Settings)", async () => {
+  test("an arbitrary returnTo is NOT reflected", async () => {
     getConnection.mockResolvedValue(null);
     canPublish.mockReturnValue(false);
 
@@ -170,7 +170,7 @@ describe("GET /api/integrations/linkedin/finalize — safe return destination", 
     );
   });
 
-  test("unknown destinations remain locked to Settings", async () => {
+  test("unknown destinations remain locked to Integrations", async () => {
     const res = await FINALIZE(
       new Request(
         "https://app.tryswipein.com/api/integrations/linkedin/finalize?returnTo=https://evil.example",
@@ -178,7 +178,7 @@ describe("GET /api/integrations/linkedin/finalize — safe return destination", 
     );
 
     expect(res.headers.get("location")).toBe(
-      "https://app.tryswipein.com/dashboard/settings?linkedin=connected",
+      "https://app.tryswipein.com/dashboard/integrations?linkedin=connected",
     );
   });
 });
