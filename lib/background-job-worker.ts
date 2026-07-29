@@ -38,6 +38,7 @@ import {
   failKnowledgeExtractionAfterRetries,
   runKnowledgeExtractionJob,
 } from "@/lib/knowledge-sources/extraction";
+import { runKnowledgeEmbeddingJob } from "@/lib/knowledge-sources/retrieval";
 import {
   claimWorkspaceCost,
   releaseWorkspaceCost,
@@ -173,6 +174,8 @@ async function runBackgroundJobClaimed(job: BackgroundJob): Promise<{
         return await runKnowledgeIngestionJob(job, sb);
       case "knowledge_extraction":
         return await runKnowledgeExtractionJob(job, sb);
+      case "knowledge_embedding":
+        return await runKnowledgeEmbeddingJob(job, sb);
       case "lead_magnet_resource":
         await markJobFailed(
           job,
