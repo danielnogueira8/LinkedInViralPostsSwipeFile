@@ -20,6 +20,7 @@ import {
   type LeadSharkError,
   type LeadSharkPost,
 } from "@/lib/leadshark";
+import { verifiedLinkedInSourceUrl } from "@/lib/linkedin-url";
 
 // ---------------------------------------------------------------------------
 // Numeric-id extraction — the join key. LinkedIn embeds the same post under
@@ -40,6 +41,8 @@ import {
 const URN_TAIL_RE = /urn:li:(?:activity|share|ugcPost):(\d{6,})/i;
 const ACTIVITY_SLUG_RE = /-activity-(\d{6,})/i;
 const BARE_TAIL_RE = /(\d{15,})/; // last-resort: a long numeric run
+const CANONICAL_ACTIVITY_URN_RE = /urn:li:activity:(\d{15,20})/i;
+const LINKEDIN_CANONICAL_FETCH_TIMEOUT_MS = 8_000;
 
 export function extractPostNumericId(input: string | null | undefined): string | null {
   if (!input) return null;
@@ -51,6 +54,67 @@ export function extractPostNumericId(input: string | null | undefined): string |
   const bare = BARE_TAIL_RE.exec(s);
   if (bare) return bare[1];
   return null;
+}
+
+/**
+ * LinkedIn's public post page publishes the canonical activity identity in a
+ * dedicated `lnkd:url` meta tag. Read only that tag: a page can also contain
+ * activity URNs for comments or related posts, and accepting an arbitrary
+ * occurrence could bind an automation to the wrong post.
+ */
+export function extractCanonicalLinkedInActivityUrn(html: string): string | null {
+  const metaTags = html.match(/<meta\b[^>]*>/gi) ?? [];
+  for (const tag of metaTags) {
+    if (!/\bproperty\s*=\s*["']lnkd:url["']/i.test(tag)) continue;
+    const match = CANONICAL_ACTIVITY_URN_RE.exec(tag);
+    if (match) return `urn:li:activity:${match[1]}`;
+  }
+  return null;
+}
+
+async function fetchCanonicalLinkedInActivityUrn(
+  postUrl: string | null,
+  signal?: AbortSignal,
+): Promise<string | null> {
+  const verifiedPostUrl = verifiedLinkedInSourceUrl(postUrl);
+  if (!verifiedPostUrl) return null;
+
+  try {
+    const timeoutSignal = AbortSignal.timeout(LINKEDIN_CANONICAL_FETCH_TIMEOUT_MS);
+    const requestSignal = signal
+      ? AbortSignal.any([signal, timeoutSignal])
+      : timeoutSignal;
+    const response = await fetch(verifiedPostUrl, {
+      headers: {
+        Accept: "text/html",
+        "User-Agent": "Mozilla/5.0 (compatible; SwipeInLeadSharkBinding/1.0)",
+      },
+      redirect: "follow",
+      cache: "no-store",
+      signal: requestSignal,
+    });
+    if (
+      !response.ok ||
+      !verifiedLinkedInSourceUrl(response.url || verifiedPostUrl)
+    ) {
+      return null;
+    }
+    return extractCanonicalLinkedInActivityUrn(await response.text());
+  } catch (error) {
+    if (signal?.aborted) {
+      throw error;
+    }
+    // LinkedIn's public page is a best-effort identity bridge. A transient
+    // fetch failure leaves the bind pending so the background job can retry.
+    return null;
+  }
+}
+
+function postMatchesNumericId(post: LeadSharkPost, numericId: string): boolean {
+  return (
+    extractPostNumericId(post.shareUrl) === numericId ||
+    extractPostNumericId(post.postId) === numericId
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -101,10 +165,31 @@ export class UrlMatchResolver implements UrnResolver {
     const listed = await listPosts(inputs.apiKey, { signal: inputs.signal });
     if (!listed.ok) return { kind: "error", error: listed.error };
 
-    const matches = listed.posts.filter(
-      (p) => extractPostNumericId(p.shareUrl ?? p.postId) === wantedId,
+    const directMatches = listed.posts.filter((post) =>
+      postMatchesNumericId(post, wantedId),
     );
-    return this.fromMatches(matches);
+    if (directMatches.length > 0) return this.fromMatches(directMatches);
+
+    // A LinkedIn share URN and the canonical activity URN for the same post can
+    // have DIFFERENT numeric tails. Zernio returns the former; LeadShark lists
+    // the latter. Resolve LinkedIn's canonical identity, then still require an
+    // exact match in LeadShark's authenticated post list before binding. The
+    // public page is never trusted as sufficient evidence on its own.
+    const canonicalUrn = await fetchCanonicalLinkedInActivityUrn(
+      inputs.zernioPostUrl,
+      inputs.signal,
+    );
+    if (canonicalUrn) {
+      const canonicalId = extractPostNumericId(canonicalUrn);
+      const canonicalMatches = listed.posts.filter(
+        (post) =>
+          post.postId === canonicalUrn ||
+          (canonicalId !== null && postMatchesNumericId(post, canonicalId)),
+      );
+      if (canonicalMatches.length > 0) return this.fromMatches(canonicalMatches);
+    }
+
+    return this.fromMatches([]);
   }
 
   // Exposed for direct unit testing without a live list call.
