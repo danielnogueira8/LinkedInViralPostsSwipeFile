@@ -201,6 +201,12 @@ export type DraftFinalizerDecision = {
   samenessRewrote: boolean;
 };
 
+export type DraftFinalizerStage =
+  | "validation"
+  | "source_fidelity"
+  | "ai_tell_check"
+  | "artifact";
+
 export type DraftFinalizerOptions = {
   workspaceId: string;
   policy?: DraftOutputPolicy;
@@ -215,6 +221,8 @@ export type DraftFinalizerOptions = {
   maxPostChars?: number;
   idFactory?: () => string;
   onDecision?: (decision: DraftFinalizerDecision) => void;
+  /** Reports the exact blocking stage currently running for live narration. */
+  onStage?: (stage: DraftFinalizerStage) => void;
   adapterHealth?: AdapterHealthRegistry;
   telemetry?: CoworkTurnTelemetry;
   // Voice-aware editor options, passed BY REFERENCE to every specialists.edit
@@ -279,6 +287,13 @@ export function createDraftFinalizer(
   const acceptedKeys = new Set<string>();
   const rejectedCandidateKeys = new Set<string>();
   let acceptedCount = 0;
+  const reportStage = (stage: DraftFinalizerStage): void => {
+    try {
+      options.onStage?.(stage);
+    } catch {
+      // Progress narration must never be able to break draft delivery.
+    }
+  };
 
   const candidateIdentity = (candidate: DraftCandidate): string | null => {
     const body = candidate.body.trim();
@@ -346,6 +361,7 @@ export function createDraftFinalizer(
         reject(candidate.origin, "cancelled", "Draft finalization was cancelled."),
       );
     }
+    reportStage("validation");
 
     // Gates 1-4 run as an ordered stage sequence (see finalizer-stages.ts).
     // Each stage assumes every earlier one already passed, so the runner
@@ -453,6 +469,7 @@ export function createDraftFinalizer(
     state = editResult.ok ? editResult.state : state;
 
     if (resolvedSourceRow && candidate.provenance) {
+      reportStage("source_fidelity");
       const fidelityResult = await sourceFidelityStage(ctx, state, resolvedSourceRow);
       if (!fidelityResult.ok) {
         return emit(
@@ -464,6 +481,7 @@ export function createDraftFinalizer(
       }
       state = fidelityResult.state;
     }
+    reportStage("ai_tell_check");
     const repairResult = await aiTellRepairStage(ctx, state);
     if (!repairResult.ok) {
       return emit(
@@ -496,6 +514,7 @@ export function createDraftFinalizer(
     // Security redaction is itself a body mutation. It must happen before the
     // artifact build so a prompt leak cannot be persisted as a broken
     // placeholder-only artifact.
+    reportStage("artifact");
     const body = redactHighConfidenceLeaks(state.body).text;
 
     // -------------------------------------------------------------------------

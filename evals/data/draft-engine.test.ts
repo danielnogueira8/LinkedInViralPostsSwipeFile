@@ -46,7 +46,11 @@ vi.mock("@/lib/agent/specialists/ai-tell-repair", async (importOriginal) => {
 import { UsagePersistenceError } from "@/lib/openrouter";
 import {
   GROUNDED_EVIDENCE_TEXT_BUDGET_CHARS,
+  runModeledDraftSlot,
   runWriterTurn,
+  type ModeledDraftBatchRepository,
+  type ModeledDraftSlotInput,
+  type ModeledPostArtifact,
   type WriterDependencies,
   type WriterInput,
 } from "@/lib/agent/execute/writer";
@@ -2790,25 +2794,122 @@ describe("writer plan narration (narratePlan)", () => {
         event.type === "plan_update",
     );
 
-  test("wraps a single-draft turn in an active → done step", async () => {
+  const activePlanLabels = (events: AgentEvent[]) =>
+    planUpdates(events).flatMap((event) =>
+      event.steps
+        .filter((step) => step.status === "active")
+        .map((step) => step.label),
+    );
+
+  test("narrates the real intelligence, writing, and finalizer phases", async () => {
     const writer = new ScriptedWriter([
       { text: COMPLETE_POST, finishReason: "stop", usage: usage(120, 80) },
     ]);
     const { events } = await collect(writer, { narratePlan: true });
 
-    expect(planUpdates(events)).toEqual([
-      {
-        type: "plan_update",
-        steps: [
-          { id: "write_post", label: "Writing your post", status: "active" },
-        ],
-      },
-      {
-        type: "plan_update",
-        steps: [{ id: "write_post", label: "Writing your post", status: "done" }],
-      },
+    expect(activePlanLabels(events)).toEqual([
+      "Applying your voice and content intelligence",
+      "Writing your post",
+      "Checking structure and completeness",
+      "Checking for AI tells",
+      "Finalizing your draft",
     ]);
+    expect(planUpdates(events).at(-1)?.steps.every((step) => step.status === "done"))
+      .toBe(true);
     expect(artifacts(events)).toHaveLength(1);
+  });
+
+  test("names a selected skill only when that skill is actually in the writer prompt", async () => {
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(120, 80) },
+    ]);
+    const { events } = await collect(writer, {
+      narratePlan: true,
+      customSkillBodies: ["Find the sharpest counterintuitive claim."],
+      customSkillNames: ["Contrarian Intelligence"],
+    });
+
+    expect(activePlanLabels(events)[0]).toBe(
+      "Applying Contrarian Intelligence skill",
+    );
+  });
+
+  test("does not claim to apply a voice profile when none is available", async () => {
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(120, 80) },
+    ]);
+    const { events } = await collect(writer, {
+      narratePlan: true,
+      voiceResult: { ok: false, error: "Voice profile unavailable" },
+    });
+
+    expect(activePlanLabels(events)[0]).toBe(
+      "Applying content intelligence and writing rules",
+    );
+  });
+
+  test("shows source-fidelity review only for a source-backed draft", async () => {
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(120, 80) },
+    ]);
+    const { events } = await collect(writer, {
+      narratePlan: true,
+      task: {
+        kind: "source",
+        source: {
+          id: "source-1",
+          text: "A source post with enough substance to model its argument without inventing a different premise.",
+        },
+      },
+    });
+
+    expect(activePlanLabels(events)).toContain("Checking source fidelity");
+  });
+
+  test("explains when a rejected candidate is being revised", async () => {
+    const writer = new ScriptedWriter([
+      { text: INCOMPLETE_POST, finishReason: "length", usage: usage(120, 80) },
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(130, 85) },
+    ]);
+    const { events } = await collect(writer, { narratePlan: true });
+
+    expect(activePlanLabels(events)).toContain(
+      "Refining the draft after quality checks",
+    );
+    expect(artifacts(events)).toHaveLength(1);
+  });
+
+  test("aborts in-flight writer work when the progress stream loses its consumer", async () => {
+    let writerWasAborted = false;
+    const writer = new ScriptedWriter([
+      (request) =>
+        new Promise<DraftWriterResponse>((_resolve, reject) => {
+          if (!request.signal) {
+            throw new Error("Expected the narrated writer to own an abort signal.");
+          }
+          request.signal.addEventListener(
+            "abort",
+            () => {
+              writerWasAborted = true;
+              reject(new DOMException("aborted", "AbortError"));
+            },
+            { once: true },
+          );
+        }),
+    ]);
+    const turn = runWriterTurn({
+      ...input({ narratePlan: true }),
+      dependencies: {
+        writer,
+        recordUsage: vi.fn(async () => {}),
+      },
+    });
+
+    await turn.next();
+    await turn.next();
+    await turn.return(undefined as never);
+
+    expect(writerWasAborted).toBe(true);
   });
 
   test("stays silent by default so an outer lane keeps owning the plan", async () => {
@@ -2820,7 +2921,7 @@ describe("writer plan narration (narratePlan)", () => {
     expect(planUpdates(events)).toHaveLength(0);
   });
 
-  test("reveals one step per slot across a multi-draft turn", async () => {
+  test("narrates real quality phases for every draft in a multi-draft turn", async () => {
     const writer = new ScriptedWriter([
       { text: COMPLETE_POST, finishReason: "stop", usage: usage(120, 80) },
       { text: ANOTHER_POST, finishReason: "stop", usage: usage(140, 80) },
@@ -2830,37 +2931,312 @@ describe("writer plan narration (narratePlan)", () => {
       task: { kind: "multi", expectedCount: 2 },
     });
 
-    expect(planUpdates(events)).toEqual([
-      {
-        type: "plan_update",
-        steps: [
-          {
-            id: "write_draft_1",
-            label: "Writing draft 1 of 2",
-            status: "active",
-          },
-        ],
-      },
-      {
-        type: "plan_update",
-        steps: [
-          { id: "write_draft_1", label: "Writing draft 1 of 2", status: "done" },
-          {
-            id: "write_draft_2",
-            label: "Writing draft 2 of 2",
-            status: "active",
-          },
-        ],
-      },
-      {
-        type: "plan_update",
-        steps: [
-          { id: "write_draft_1", label: "Writing draft 1 of 2", status: "done" },
-          { id: "write_draft_2", label: "Writing draft 2 of 2", status: "done" },
-        ],
-      },
+    expect(activePlanLabels(events)).toEqual([
+      "Applying your voice and content intelligence",
+      "Writing draft 1 of 2",
+      "Checking structure and completeness",
+      "Checking for AI tells",
+      "Finalizing your draft",
+      "Writing draft 2 of 2",
+      "Checking structure and completeness",
+      "Checking for AI tells",
+      "Finalizing your draft",
     ]);
+    expect(planUpdates(events).at(-1)?.steps.every((step) => step.status === "done"))
+      .toBe(true);
     expect(artifacts(events)).toHaveLength(2);
+  });
+
+  test("streams real quality phases from the durable multi-draft coordinator", async () => {
+    const acceptedBySlot = new Map<number, ModeledPostArtifact>();
+    const repository: ModeledDraftBatchRepository = {
+      acquire: vi.fn(async (
+        request: Parameters<ModeledDraftBatchRepository["acquire"]>[0],
+      ) => ({
+        kind: "acquired" as const,
+        checkpoint: {
+          batchId: "batch-progress",
+          leaseToken: "lease-progress",
+          requestHash: request.requestHash,
+          requestedCount: request.requestedCount,
+          sources: request.sources,
+          slots: request.sources.slice(0, request.requestedCount).map(
+            (_source, index) => ({
+              index,
+              state: "assigned" as const,
+              sourceIndex: index,
+              sourceHistory: [index],
+              replacements: 0,
+            }),
+          ),
+        },
+      })),
+      acceptSlot: vi.fn(async (
+        request: Parameters<ModeledDraftBatchRepository["acceptSlot"]>[0],
+      ) => {
+        acceptedBySlot.set(request.slotIndex, request.artifact);
+        return true;
+      }),
+      replaceSlotSource: vi.fn(async () => true),
+      complete: vi.fn(async () => ({
+        kind: "complete" as const,
+        artifacts: [...acceptedBySlot.entries()]
+          .sort(([left], [right]) => left - right)
+          .map(([, artifact]) => artifact),
+      })),
+      release: vi.fn(async () => {}),
+    };
+    const runSlot = vi.fn((slotInput: ModeledDraftSlotInput) =>
+      runModeledDraftSlot(slotInput, {
+        runSingleDraftTurn: (writerInput) =>
+          (async function* () {
+            writerInput.onProgressStage?.({
+              kind: "writing",
+              id: "write_post",
+              label: `Writing draft ${slotInput.slot.index + 1} of 2`,
+            });
+            writerInput.onProgressStage?.({
+              kind: "quality_check",
+              id: "check_ai_tells",
+              label: "Checking for AI tells",
+            });
+            if (slotInput.source.id === "durable-source-1") {
+              writerInput.onFinalizerDecision?.({
+                origin: "direct_writer",
+                outcome: "rejected",
+                rejectionCode: "too_short",
+                sourceVerified: true,
+                edited: false,
+                repaired: false,
+                samenessRewrote: false,
+              });
+              yield {
+                type: "error" as const,
+                code: "draft_engine_exhausted",
+                message: "The first source was not model-ready.",
+                recovery: "continue" as const,
+              };
+              yield {
+                type: "done" as const,
+                terminalReason: "error" as const,
+                message: {
+                  content: "Trying another verified source.",
+                  tool_calls: null,
+                  artifacts: [],
+                  toolMessages: [],
+                  inputTokens: 20,
+                  outputTokens: 10,
+                },
+              };
+              return;
+            }
+            const body =
+              slotInput.source.id === "durable-source-2"
+                ? ANOTHER_POST
+                : COMPLETE_POST;
+            yield {
+              type: "artifact" as const,
+              artifact: {
+                id: `artifact-${slotInput.slot.index}`,
+                kind: "post" as const,
+                title: `Draft ${slotInput.slot.index + 1}`,
+                body,
+              },
+            };
+            yield {
+              type: "done" as const,
+              terminalReason: "done" as const,
+              message: {
+                content: "Draft complete.",
+                tool_calls: null,
+                artifacts: [],
+                toolMessages: [],
+                inputTokens: 100,
+                outputTokens: 50,
+              },
+            };
+          })(),
+      }),
+    );
+    const { events } = await collect(
+      new ScriptedWriter([]),
+      {
+        narratePlan: true,
+        task: {
+          kind: "multi",
+          expectedCount: 2,
+          groundedSources: [
+            {
+              id: "durable-source-1",
+              kind: "workspace_post",
+              url: "https://linkedin.com/posts/durable-source-1",
+              text: "First durable source post.",
+            },
+            {
+              id: "durable-source-2",
+              kind: "workspace_post",
+              url: "https://linkedin.com/posts/durable-source-2",
+              text: "Second durable source post.",
+            },
+            {
+              id: "durable-source-3",
+              kind: "workspace_post",
+              url: "https://linkedin.com/posts/durable-source-3",
+              text: "Reserve durable source post.",
+            },
+          ],
+        },
+      },
+      { repository, runSlot },
+    );
+
+    expect(activePlanLabels(events)).toEqual(
+      expect.arrayContaining([
+        "Applying your voice and content intelligence",
+        "Writing draft 1 of 2",
+        "Writing draft 2 of 2",
+        "Checking for AI tells",
+      ]),
+    );
+    expect(planUpdates(events).at(-1)?.steps.every((step) => step.status === "done"))
+      .toBe(true);
+    const durableStepIds =
+      planUpdates(events).at(-1)?.steps.map((step) => step.id) ?? [];
+    expect(new Set(durableStepIds).size).toBe(durableStepIds.length);
+    expect(artifacts(events)).toHaveLength(2);
+  });
+
+  test("does not claim new writing work when replaying a completed durable batch", async () => {
+    const replayArtifacts: ModeledPostArtifact[] = [
+      {
+        id: "replay-artifact-0",
+        kind: "post",
+        title: "Saved draft 1",
+        body: COMPLETE_POST,
+        meta: {
+          modeled_draft_slot_id: "batch-replay:slot-0",
+          modeled_draft_slot_index: 0,
+          source: "model_source",
+          source_post_id: "replay-source-1",
+          source_url: "https://linkedin.com/posts/replay-source-1",
+          research_provenance: {
+            route: "workspace_research",
+            sources: [
+              {
+                id: "replay-source-1",
+                kind: "workspace_post",
+                url: "https://linkedin.com/posts/replay-source-1",
+              },
+            ],
+          },
+        },
+      },
+      {
+        id: "replay-artifact-1",
+        kind: "post",
+        title: "Saved draft 2",
+        body: ANOTHER_POST,
+        meta: {
+          modeled_draft_slot_id: "batch-replay:slot-1",
+          modeled_draft_slot_index: 1,
+          source: "model_source",
+          source_post_id: "replay-source-2",
+          source_url: "https://linkedin.com/posts/replay-source-2",
+          research_provenance: {
+            route: "workspace_research",
+            sources: [
+              {
+                id: "replay-source-2",
+                kind: "workspace_post",
+                url: "https://linkedin.com/posts/replay-source-2",
+              },
+            ],
+          },
+        },
+      },
+    ];
+    const repository: ModeledDraftBatchRepository = {
+      acquire: vi.fn(async () => ({
+        kind: "complete" as const,
+        batchId: "batch-replay",
+        artifacts: replayArtifacts,
+      })),
+      acceptSlot: vi.fn(async () => false),
+      replaceSlotSource: vi.fn(async () => false),
+      complete: vi.fn(async () => ({ kind: "incomplete" as const })),
+      release: vi.fn(async () => {}),
+    };
+    const { events } = await collect(
+      new ScriptedWriter([]),
+      {
+        narratePlan: true,
+        task: {
+          kind: "multi",
+          expectedCount: 2,
+          groundedSources: [
+            {
+              id: "replay-source-1",
+              kind: "workspace_post",
+              url: "https://linkedin.com/posts/replay-source-1",
+              text: "First replay source post.",
+            },
+            {
+              id: "replay-source-2",
+              kind: "workspace_post",
+              url: "https://linkedin.com/posts/replay-source-2",
+              text: "Second replay source post.",
+            },
+          ],
+        },
+      },
+      { repository },
+    );
+
+    expect(activePlanLabels(events)).toEqual(["Checking saved draft progress"]);
+    expect(planUpdates(events).at(-1)?.steps.every((step) => step.status === "done"))
+      .toBe(true);
+    expect(artifacts(events)).toHaveLength(2);
+  });
+
+  test("does not announce intelligence work when the durable batch never starts a writer", async () => {
+    const runSlot = vi.fn();
+    const repository: ModeledDraftBatchRepository = {
+      acquire: vi.fn(async () => ({ kind: "unavailable" as const })),
+      acceptSlot: vi.fn(async () => false),
+      replaceSlotSource: vi.fn(async () => false),
+      complete: vi.fn(async () => ({ kind: "incomplete" as const })),
+      release: vi.fn(async () => {}),
+    };
+    const { events } = await collect(
+      new ScriptedWriter([]),
+      {
+        narratePlan: true,
+        task: {
+          kind: "multi",
+          expectedCount: 2,
+          groundedSources: [
+            {
+              id: "unavailable-source-1",
+              kind: "workspace_post",
+              url: "https://linkedin.com/posts/unavailable-source-1",
+              text: "First source post.",
+            },
+            {
+              id: "unavailable-source-2",
+              kind: "workspace_post",
+              url: "https://linkedin.com/posts/unavailable-source-2",
+              text: "Second source post.",
+            },
+          ],
+        },
+      },
+      { repository, runSlot },
+    );
+
+    expect(runSlot).not.toHaveBeenCalled();
+    expect(activePlanLabels(events)).not.toContain(
+      "Applying your voice and content intelligence",
+    );
   });
 
   test("leaves the step open when the write fails instead of marking it done", async () => {
@@ -2871,14 +3247,9 @@ describe("writer plan narration (narratePlan)", () => {
     );
     const { events } = await collect(writer, { narratePlan: true });
 
-    expect(planUpdates(events)).toEqual([
-      {
-        type: "plan_update",
-        steps: [
-          { id: "write_post", label: "Writing your post", status: "active" },
-        ],
-      },
-    ]);
+    expect(activePlanLabels(events)).toContain("Writing your post");
+    expect(planUpdates(events).at(-1)?.steps.some((step) => step.status === "active"))
+      .toBe(true);
     expect(events.some((event) => event.type === "error")).toBe(true);
   });
 });
