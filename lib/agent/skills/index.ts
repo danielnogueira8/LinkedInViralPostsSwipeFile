@@ -1086,7 +1086,7 @@ function namesSkill(lowerText: string, id: string): boolean {
 
 export function selectSkills(userMessage: string, max = 3): Skill[] {
   const text = userMessage.toLowerCase();
-  const hits = SKILLS.filter((s) => {
+  let hits = SKILLS.filter((s) => {
     if (!s.triggers.some((t) => text.includes(t))) return false;
     // explicitOnly skills additionally require being NAMED — a slash command or
     // the bare id. Their triggers stay descriptive for discovery, but a
@@ -1094,6 +1094,13 @@ export function selectSkills(userMessage: string, max = 3): Skill[] {
     if (s.explicitOnly) return namesSkill(text, s.id);
     return true;
   });
+  // ORIGINAL_POST already carries a complete Voice section, and every writing
+  // path supplies the resolved voice profile separately. Keeping VOICE_MATCH
+  // beside it repeated the same guidance on the common original-post path
+  // without adding a capability. Other voice-only requests still keep it.
+  if (hits.some((skill) => skill.id === "original-post")) {
+    hits = hits.filter((skill) => skill.id !== "voice-match");
+  }
   // Stable partition: specialized skills first, generic after, each in registry
   // order. Array.prototype.sort is stable in modern JS/Node, so a boolean key is
   // enough — no need to thread the original index.

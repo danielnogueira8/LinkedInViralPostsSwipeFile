@@ -80,7 +80,13 @@ describe("selectSkills — specialized skills survive the cap", () => {
 
   test("an original-post request selects the original-post craft skill", () => {
     const got = ids("Write a post about why most onboarding flows lose users");
-    expect(got).toContain("original-post");
+    expect(got).toEqual(["original-post"]);
+  });
+
+  test("original-post absorbs the redundant voice-match skill but keeps other requested craft guidance", () => {
+    expect(
+      ids("Write a post about onboarding with a strong hook in my voice"),
+    ).toEqual(["hooks", "original-post"]);
   });
 
   test("original-post does NOT fire on modeling, refine, or newsjack phrasing", () => {
