@@ -64,6 +64,7 @@ type GetResponse = {
     leadMagnetId: string | null;
     leadMagnetTitle: string | null;
     leadMagnetUrl: string | null;
+    config: AutomationConfigDraft;
   } | null;
 };
 
@@ -253,8 +254,7 @@ export function LeadSharkPanel({ draftId }: { draftId: string }) {
         // Seed the form with prefills but keep the toggle off until the user opts in.
         setForm((f) => ({
           ...f,
-          keywords: res.prefill!.keyword ? [res.prefill!.keyword] : [],
-          dmTemplate: res.prefill!.dmTemplate,
+          ...res.prefill!.config,
           leadMagnetId: res.prefill!.leadMagnetId,
         }));
       }
