@@ -1,10 +1,8 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type {
   ImageContent,
-  ServerRequest,
-  ServerNotification,
-} from "@modelcontextprotocol/sdk/types.js";
+  McpServer,
+  ServerContext,
+} from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { supabaseAdmin } from "@/lib/supabase";
 import {
@@ -65,6 +63,7 @@ import {
   diverseCreatorResults,
   diversityCandidateLimit,
 } from "@/lib/mcp/creator-diversity";
+import { mcpWorkspaceId } from "@/lib/mcp/context";
 
 const POST_TYPES = ["regular", "lead_magnet"] as const;
 const SORT_COLUMN = {
@@ -295,13 +294,12 @@ async function postContentWithRenderedImages(payload: unknown, posts: unknown[])
  * Pull the workspace id stamped onto the auth token by `verifyToken`.
  * Returns the workspace id or null. Tool handlers should return `errorContent`
  * with a 401-equivalent message when this is null — that path means the
- * caller authenticated but isn't a member of any Clerk org.
+ * caller authenticated but the verified token did not carry a Clerk user.
  */
-type Extra = RequestHandlerExtra<ServerRequest, ServerNotification>;
+type Extra = ServerContext;
 
 function workspaceFromExtra(extra: Extra): string | null {
-  const wsId = extra.authInfo?.extra?.workspaceId;
-  return typeof wsId === "string" && wsId.length > 0 ? wsId : null;
+  return mcpWorkspaceId(extra);
 }
 
 const NO_WORKSPACE_MSG =
