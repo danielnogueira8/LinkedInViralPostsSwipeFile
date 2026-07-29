@@ -49,6 +49,7 @@ export type Message = {
   postFormat?: string;
   creatorStyle?: { name: string; creatorName: string | null };
   leadMagnet?: AppliedLeadMagnet;
+  knowledgeSources?: { id: string; title: string }[];
   modelSource?: ModelSourceAttachment;
   tools?: ToolChip[];
   plan?: PlanStep[];
@@ -321,6 +322,26 @@ function extractPersistedPostFormat(
   return isNoModelFormatId(args.id) ? noModelFormatLabel(args.id) : undefined;
 }
 
+export function extractPersistedKnowledgeSources(
+  input: HydrationInput,
+): { id: string; title: string }[] | undefined {
+  const source = normalizeHydrationSource(input);
+  const args = toolArgs(source.tool_calls, "_knowledge_sources_selected");
+  const rows = Array.isArray(args?.sources) ? args.sources : [];
+  const sources = rows
+    .filter(
+      (row): row is Record<string, unknown> =>
+        Boolean(row) && typeof row === "object",
+    )
+    .map((row) => ({
+      id: typeof row.sourceId === "string" ? row.sourceId : "",
+      title: typeof row.title === "string" ? row.title.trim() : "",
+    }))
+    .filter((row) => row.id && row.title)
+    .slice(0, 20);
+  return sources.length > 0 ? sources : undefined;
+}
+
 export function extractPersistedCreatorStyle(
   input: HydrationInput,
 ): { name: string; creatorName: string | null } | undefined {
@@ -436,6 +457,10 @@ export function hydrate(rows: RawDbMessage[]): Message[] {
       row.role === "user" ? extractPersistedCreatorStyle(row) : undefined;
     const leadMagnet =
       row.role === "user" ? extractPersistedLeadMagnet(row) : undefined;
+    const knowledgeSources =
+      row.role === "user"
+        ? extractPersistedKnowledgeSources(row)
+        : undefined;
     return {
       id: row.id,
       role: row.role as "user" | "assistant",
@@ -466,6 +491,7 @@ export function hydrate(rows: RawDbMessage[]): Message[] {
       ...(postFormat ? { postFormat } : {}),
       ...(creatorStyle ? { creatorStyle } : {}),
       ...(leadMagnet ? { leadMagnet } : {}),
+      ...(knowledgeSources?.length ? { knowledgeSources } : {}),
       ...(row.role === "user" && row.model_source_attachment
         ? { modelSource: row.model_source_attachment }
         : {}),

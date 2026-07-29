@@ -33,6 +33,7 @@ import type { NoModelFormat } from "@/lib/agent/no-model-formats";
 import type { NoModelFormatId } from "@/lib/agent/no-model-format-catalog";
 import type { Artifact, AskQuestion } from "@/lib/agent/contracts";
 import type { StructureMatchResult } from "@/lib/structure-match";
+import type { AppliedKnowledgeSource } from "@/lib/knowledge-sources/context";
 import type { ChatTurnOperation } from "@/lib/agent/turn/operation-marker";
 import type {
   ActionOrchestratorRoute,
@@ -58,6 +59,9 @@ export type TurnSetupState = {
   resolvedCustomSkills: FrozenCustomSkill[];
   forcedNoModelFormatId: NoModelFormatId | undefined;
   creatorStyleId: string | undefined;
+  knowledgeSourceIds: string[];
+  knowledgeSources: AppliedKnowledgeSource[];
+  selectedKnowledgeSources: AppliedKnowledgeSource[];
   creatorStyleRetryContext: CreatorStyleRetryContext | null;
   leadMagnetId: string | undefined;
   createLeadMagnet: z.infer<typeof leadMagnetGenerateSchema> | undefined;
@@ -222,6 +226,7 @@ export type TurnExecuteContext = Pick<
   | "customSkillNames"
   | "skillIds"
   | "modelSourceId"
+  | "knowledgeSources"
   | "structureMatch"
   | "imageGenerationAuthor"
   | "refineInstruction"

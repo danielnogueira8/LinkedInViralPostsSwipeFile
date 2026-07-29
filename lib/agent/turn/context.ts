@@ -104,6 +104,12 @@ import {
   writeImageAnalysisCache,
 } from "@/lib/image-analysis-cache";
 import { waitForChatSetup } from "@/lib/chat-stream-policy";
+import { retrieveKnowledgeSourceContext } from "@/lib/knowledge-sources/retrieval";
+import {
+  appliedKnowledgeSources,
+  buildKnowledgeContextBlock,
+  type AppliedKnowledgeSource,
+} from "@/lib/knowledge-sources/context";
 import { loadVoiceProfile, type ToolResult } from "@/lib/agent/tools";
 import { compileIdeaBrief } from "@/lib/agent/idea-brief";
 import {
@@ -1135,6 +1141,8 @@ export type TurnContext = {
   customSkillNames: string[];
   /** Best template / swipe / built-in structure chosen by the deterministic matcher, if any. */
   structureMatch: StructureMatchResult | null;
+  knowledgeSources: AppliedKnowledgeSource[];
+  selectedKnowledgeSources: AppliedKnowledgeSource[];
 };
 
 export type BuildTurnContextInput = {
@@ -1159,6 +1167,7 @@ export type BuildTurnContextInput = {
   /** Frozen skills from the persisted retry marker; bypasses the DB re-read. */
   customSkillRetryContext: CustomSkillRetryContext | null;
   skillIds: string[];
+  knowledgeSourceIds: string[];
   /** Pre-claim composer resolution; re-resolved inside from the post-clarification instruction. */
   composerTaskContext: ComposerTaskContext | null;
   composerTaskSelection: ComposerTaskSelection;
@@ -1203,6 +1212,7 @@ export async function buildTurnContext(
     creatorStyleRetryContext,
     customSkillRetryContext,
     skillIds,
+    knowledgeSourceIds,
     composerTaskSelection,
     resolvedGenerationConfig,
     hasAuthoritativeDraftCount,
@@ -1266,6 +1276,8 @@ export async function buildTurnContext(
   let customSkillNames: string[] = [];
   let postClarificationPostCount: number | null = null;
   let structureMatch: StructureMatchResult | null = null;
+  let knowledgeSources: AppliedKnowledgeSource[] = [];
+  let selectedKnowledgeSources: AppliedKnowledgeSource[] = [];
 
   // Load prior transcript (excluding the message we just inserted is fine —
   // include it; it's the latest user turn the agent should answer).
@@ -1472,6 +1484,23 @@ export async function buildTurnContext(
   // a long modeled post never hits the 8000-char message cap and a reloaded
   // transcript never shows the raw delimiter blob.
   const blocks: ContentBlock[] = [{ type: "text", text: userText }];
+  if (knowledgeSourceIds.length > 0) {
+    const retrieved = await waitForChatSetup(
+      retrieveKnowledgeSourceContext({
+        workspaceId,
+        sourceIds: knowledgeSourceIds,
+        query: effectiveUserInstruction,
+        db: sbRaw,
+      }),
+      setupSignal,
+    );
+    selectedKnowledgeSources = appliedKnowledgeSources([], retrieved.sources);
+    knowledgeSources = appliedKnowledgeSources(retrieved.chunks);
+    const knowledgeBlock = buildKnowledgeContextBlock(retrieved.chunks);
+    if (knowledgeBlock) {
+      blocks.push({ type: "text", text: knowledgeBlock });
+    }
+  }
 
   const variationSource = refineTargetId
     ? null
@@ -2067,5 +2096,7 @@ export async function buildTurnContext(
     customSkillBodies,
     customSkillNames,
     structureMatch,
+    knowledgeSources,
+    selectedKnowledgeSources,
   };
 }

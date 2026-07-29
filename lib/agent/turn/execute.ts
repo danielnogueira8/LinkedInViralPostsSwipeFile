@@ -60,6 +60,7 @@ import {
   withLeadMagnetImagePlanStep,
 } from "@/lib/agent/turn/artifact-tags";
 import { buildAnswerSystemPrompt } from "@/lib/agent/prompt-guidance";
+import { tagArtifactWithKnowledgeSources } from "@/lib/knowledge-sources/context";
 
 export type TurnExecuteDependencies = {
   runWriterTurn: typeof runWriterTurn;
@@ -152,6 +153,7 @@ async function* runTurnPlan(
     currentTurnOperation,
     trustedRefineTarget,
     structureMatch,
+    knowledgeSources,
   } = setup;
 
   let citedSourceImage = initialCitedSourceImage;
@@ -384,18 +386,21 @@ async function* runTurnPlan(
         // Stamp the active custom skills / format / source / lead magnet /
         // creator style into the artifact's meta. cite artifacts are passthrough
         // references and were handled above.
-        let tagged = tagArtifactWithCreatorStyle(
-          tagArtifactWithLeadMagnet(
-            tagArtifactWithModelSourceReference(
-              tagArtifactWithNoModelFormat(
-                tagArtifactWithSkills(ev.artifact, customSkillNames),
-                appliedNoModelFormat,
+        let tagged = tagArtifactWithKnowledgeSources(
+          tagArtifactWithCreatorStyle(
+            tagArtifactWithLeadMagnet(
+              tagArtifactWithModelSourceReference(
+                tagArtifactWithNoModelFormat(
+                  tagArtifactWithSkills(ev.artifact, customSkillNames),
+                  appliedNoModelFormat,
+                ),
+                modelSourceReference,
               ),
-              modelSourceReference,
+              appliedLeadMagnet,
             ),
-            appliedLeadMagnet,
+            appliedCreatorStyle,
           ),
-          appliedCreatorStyle,
+          knowledgeSources,
         );
         if (isDraftArtifact(tagged) && turnContract.kind === "post") {
           tagged = {
@@ -449,6 +454,11 @@ async function* runTurnPlan(
                 : null,
             generationModel: responseModel,
             generatedAt: claimedTurnStartedAt!,
+            knowledgeSources: knowledgeSources.map((source) => ({
+              sourceId: source.sourceId,
+              sourceRevisionId: source.sourceRevisionId,
+              chunkIds: source.chunkIds,
+            })),
           });
         }
 

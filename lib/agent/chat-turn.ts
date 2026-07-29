@@ -382,6 +382,9 @@ export const chatTurnRequestSchema = z.object({
   // mechanics-only block. Ignored when a model source is attached (the source
   // controls structure). Composes with a post format.
   creatorStyleId: z.string().uuid().optional(),
+  // Durable Knowledge is opt-in per turn. The server resolves every id against
+  // the current workspace and current ready revision before retrieving text.
+  knowledgeSourceIds: z.array(z.string().uuid()).max(20).optional(),
   // Context is current-turn-only by default. A client must explicitly opt in
   // to chat inheritance, and can persist a tombstone that prevents a later
   // opt-in from reviving context selected before the clear.

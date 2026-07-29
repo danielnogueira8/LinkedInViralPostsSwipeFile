@@ -28,6 +28,12 @@ export type RetrievedKnowledgeChunk = {
   score: number;
 };
 
+export type RetrievedKnowledgeSource = {
+  sourceId: string;
+  sourceRevisionId: string;
+  title: string;
+};
+
 export const KNOWLEDGE_RETRIEVAL_MAX_SOURCES = 20;
 export const KNOWLEDGE_RETRIEVAL_MAX_CHUNKS = 6;
 export const KNOWLEDGE_RETRIEVAL_MAX_CHARS = 12_000;
@@ -87,25 +93,15 @@ export function lexicalKnowledgeScore(query: string, content: string): number {
 
 async function lexicalFallback(input: {
   workspaceId: string;
-  sourceIds: string[];
+  sources: RetrievedKnowledgeSource[];
   query: string;
   db: Db;
 }): Promise<RetrievedKnowledgeChunk[]> {
-  const { data: sources, error: sourceError } = await input.db
-    .from("knowledge_sources")
-    .select("id,title,current_revision_id")
-    .eq("workspace_id", input.workspaceId)
-    .eq("status", "ready")
-    .in("id", input.sourceIds)
-    .limit(KNOWLEDGE_RETRIEVAL_MAX_SOURCES);
-  if (sourceError) throw sourceError;
   const byRevision = new Map(
-    (sources ?? [])
-      .filter((source) => typeof source.current_revision_id === "string")
-      .map((source) => [
-        source.current_revision_id as string,
-        { id: source.id as string, title: source.title as string },
-      ]),
+    input.sources.map((source) => [
+      source.sourceRevisionId,
+      { id: source.sourceId, title: source.title },
+    ]),
   );
   if (byRevision.size === 0) return [];
   const { data: chunks, error: chunkError } = await input.db
@@ -115,22 +111,21 @@ async function lexicalFallback(input: {
     .in("source_revision_id", [...byRevision.keys()])
     .limit(200);
   if (chunkError) throw chunkError;
-  return boundedResults(
-    ((chunks ?? []) as Chunk[])
-      .map((chunk) => {
-        const source = byRevision.get(chunk.source_revision_id)!;
-        return {
-          chunkId: chunk.id,
-          sourceId: source.id,
-          sourceRevisionId: chunk.source_revision_id,
-          sourceTitle: source.title,
-          content: chunk.content,
-          score: lexicalKnowledgeScore(input.query, chunk.content),
-        };
-      })
-      .filter((row) => row.score > 0)
-      .sort((left, right) => right.score - left.score),
-  );
+  const ranked = ((chunks ?? []) as Chunk[])
+    .map((chunk) => {
+      const source = byRevision.get(chunk.source_revision_id)!;
+      return {
+        chunkId: chunk.id,
+        sourceId: source.id,
+        sourceRevisionId: chunk.source_revision_id,
+        sourceTitle: source.title,
+        content: chunk.content,
+        score: lexicalKnowledgeScore(input.query, chunk.content),
+      };
+    })
+    .sort((left, right) => right.score - left.score);
+  const relevant = ranked.filter((row) => row.score > 0);
+  return boundedResults(relevant.length > 0 ? relevant : ranked);
 }
 
 export async function retrieveKnowledgeSourceContext(input: {
@@ -140,13 +135,38 @@ export async function retrieveKnowledgeSourceContext(input: {
   db: Db;
 }): Promise<{
   chunks: RetrievedKnowledgeChunk[];
+  sources: RetrievedKnowledgeSource[];
   mode: "semantic" | "lexical";
 }> {
   const sourceIds = uniqueSourceIds(input.sourceIds);
   const query = input.query.trim().slice(0, 12_000);
   if (!query || sourceIds.length === 0) {
-    return { chunks: [], mode: "lexical" };
+    return { chunks: [], sources: [], mode: "lexical" };
   }
+  const { data: sourceRows, error: sourceError } = await input.db
+    .from("knowledge_sources")
+    .select("id,title,current_revision_id")
+    .eq("workspace_id", input.workspaceId)
+    .eq("status", "ready")
+    .in("id", sourceIds)
+    .limit(KNOWLEDGE_RETRIEVAL_MAX_SOURCES);
+  if (sourceError) throw sourceError;
+  const sources: RetrievedKnowledgeSource[] = (sourceRows ?? [])
+    .filter(
+      (source) =>
+        typeof source.id === "string" &&
+        typeof source.title === "string" &&
+        typeof source.current_revision_id === "string",
+    )
+    .map((source) => ({
+      sourceId: source.id as string,
+      sourceRevisionId: source.current_revision_id as string,
+      title: source.title as string,
+    }));
+  if (sources.length === 0) {
+    return { chunks: [], sources: [], mode: "lexical" };
+  }
+  const resolvedSourceIds = sources.map((source) => source.sourceId);
   try {
     const embedded = await embedText([query], {
       model: EMBEDDING_MODEL,
@@ -156,7 +176,7 @@ export async function retrieveKnowledgeSourceContext(input: {
     if (!vector) throw new Error("missing_knowledge_query_embedding");
     const { data, error } = await input.db.rpc("match_knowledge_chunks", {
       p_workspace_id: input.workspaceId,
-      p_source_ids: sourceIds,
+      p_source_ids: resolvedSourceIds,
       p_query_embedding: toVectorLiteral(vector),
       p_limit: 24,
     });
@@ -180,7 +200,9 @@ export async function retrieveKnowledgeSourceContext(input: {
             row.score >= 0.15,
         ),
     );
-    if (semantic.length > 0) return { chunks: semantic, mode: "semantic" };
+    if (semantic.length > 0) {
+      return { chunks: semantic, sources, mode: "semantic" };
+    }
   } catch (error) {
     console.warn("knowledge_semantic_retrieval_fallback", {
       workspaceId: input.workspaceId,
@@ -188,7 +210,8 @@ export async function retrieveKnowledgeSourceContext(input: {
     });
   }
   return {
-    chunks: await lexicalFallback({ ...input, sourceIds, query }),
+    chunks: await lexicalFallback({ ...input, sources, query }),
+    sources,
     mode: "lexical",
   };
 }

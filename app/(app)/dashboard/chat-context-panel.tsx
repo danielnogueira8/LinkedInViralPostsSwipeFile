@@ -7,6 +7,7 @@ import {
   Fingerprint,
   Magnet,
   Layers,
+  BookOpenCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ChatContextSummary } from "@/lib/cowork-context-summary";
@@ -18,8 +19,15 @@ import type { ChatContextSummary } from "@/lib/cowork-context-summary";
 // for the chips. Every section is conditional — nothing renders when a chat has
 // no context yet (the parent already gates on isContextSummaryEmpty).
 export function ChatContextPanel({ summary }: { summary: ChatContextSummary }) {
-  const { sourcePost, skills, postFormats, creatorStyle, leadMagnet, files } =
-    summary;
+  const {
+    sourcePost,
+    skills,
+    postFormats,
+    creatorStyle,
+    leadMagnet,
+    files,
+    knowledgeSources,
+  } = summary;
 
   const sourceHeading =
     sourcePost?.kind === "draft"
@@ -84,6 +92,26 @@ export function ChatContextPanel({ summary }: { summary: ChatContextSummary }) {
               >
                 <Zap className="h-3 w-3 shrink-0" aria-hidden />
                 <span className="truncate">/{name}</span>
+              </span>
+            ))}
+          </div>
+        </Section>
+      )}
+
+      {knowledgeSources.length > 0 && (
+        <Section
+          label="Knowledge"
+          icon={<BookOpenCheck className="h-3.5 w-3.5" />}
+        >
+          <div className="flex flex-col gap-1.5">
+            {knowledgeSources.map((source) => (
+              <span
+                key={source.id}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-primary/25 bg-primary/[0.07] px-2.5 py-1.5 text-xs text-foreground"
+                title={`Knowledge source selected: ${source.title}`}
+              >
+                <BookOpenCheck className="h-3 w-3 shrink-0 text-primary" aria-hidden />
+                <span className="truncate">{source.title}</span>
               </span>
             ))}
           </div>
