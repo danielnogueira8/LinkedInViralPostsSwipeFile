@@ -347,6 +347,57 @@ describe("DraftEngine", () => {
     expect(prompt).not.toContain("CONVERSATION HISTORY DATA");
   });
 
+  test("supplies automatic Workspace Knowledge directly to the writer", async () => {
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(180, 90) },
+    ]);
+
+    await collect(writer, {
+      history: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "Write about weekly reporting." },
+            {
+              type: "text",
+              text: "KNOWLEDGE_SENTINEL_IN_TRAILING_USER_BLOCK",
+            },
+          ],
+        },
+      ],
+      workspaceKnowledgeBlock:
+        "KNOWLEDGE_SENTINEL_IN_EXPLICIT_WRITER_INPUT",
+    });
+
+    const prompt = JSON.stringify(writer.requests[0].messages);
+    expect(prompt).toContain(
+      "KNOWLEDGE_SENTINEL_IN_EXPLICIT_WRITER_INPUT",
+    );
+    expect(prompt).not.toContain(
+      "KNOWLEDGE_SENTINEL_IN_TRAILING_USER_BLOCK",
+    );
+  });
+
+  test("supplies automatic Workspace Knowledge directly to Edit workflows", async () => {
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(180, 90) },
+    ]);
+
+    await collect(writer, {
+      task: {
+        kind: "refine",
+        instruction: "Make the middle more specific.",
+        focus: "general",
+        target: REFINE_TARGET,
+      },
+      workspaceKnowledgeBlock: "EDIT_WORKSPACE_KNOWLEDGE_SENTINEL",
+    });
+
+    const prompt = JSON.stringify(writer.requests[0].messages);
+    expect(prompt).toContain("EDIT_WORKSPACE_KNOWLEDGE_SENTINEL");
+    expect(prompt).toContain("WORKSPACE KNOWLEDGE");
+  });
+
   test("writes a grounded research post with evidence in the tool-free writer prompt", async () => {
     const writer = new ScriptedWriter([
       { text: COMPLETE_POST, finishReason: "stop", usage: usage(180, 90) },

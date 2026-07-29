@@ -34,7 +34,6 @@ describe("chat context policy", () => {
       postTypeSelection: "auto",
       explorationLaneSelection: "auto",
       skillIds: [],
-      knowledgeSourceIds: [],
       hasPostFormat: false,
       hasCreatorStyle: false,
     });

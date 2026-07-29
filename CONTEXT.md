@@ -86,9 +86,11 @@ expertise, or prohibition that a Workspace can verify and use in Cowork.
 _Avoid_: Unverified memory, Voice Profile rule, generic context
 
 **Knowledge Source**:
-A durable, Workspace-owned note, document, or transcript from which reviewable
-Workspace Knowledge Items can be derived.
-_Avoid_: Knowledge Item, raw context, memory
+A durable, Workspace-owned note, document, or transcript that Cowork searches
+automatically for relevant evidence on every turn. Reviewable Workspace
+Knowledge Items can also be derived from it; retrieved source text remains
+untrusted evidence and does not make an unverified personal claim true.
+_Avoid_: Per-turn attachment, Knowledge Item, chat context, memory
 
 **Content Outcome**:
 Workspace-attributed business evidence connected to published content, such as

@@ -11,7 +11,6 @@ const baseInput: PrepareChatWorkspaceTurnInput = {
   explorationLaneSelection: "fresh",
   starterId: "write-original",
   skillIds: ["11111111-1111-4111-8111-111111111111"],
-  knowledgeSourceIds: ["22222222-2222-4222-8222-222222222222"],
   hasPostFormat: false,
   hasCreatorStyle: false,
 };
@@ -27,7 +26,6 @@ describe("ChatWorkspace controller", () => {
     expect(turn.requestFields).toEqual({
       command: { kind: "create", count: 2 },
       skillIds: ["11111111-1111-4111-8111-111111111111"],
-      knowledgeSourceIds: ["22222222-2222-4222-8222-222222222222"],
       contextPolicy: {
         clear: ["creator_style", "post_format"],
       },
@@ -52,7 +50,6 @@ describe("ChatWorkspace controller", () => {
     expect(turn.appliesComposerControls).toBe(false);
     expect(turn.requestFields).toEqual({
       skillIds: ["11111111-1111-4111-8111-111111111111"],
-      knowledgeSourceIds: ["22222222-2222-4222-8222-222222222222"],
     });
     expect(turn.explorationLaneToRestore).toBe("auto");
   });
@@ -115,11 +112,9 @@ describe("ChatWorkspace controller", () => {
     const turn = controller.prepareTurn({
       ...baseInput,
       skillIds: [],
-      knowledgeSourceIds: [],
     });
 
     expect(turn.requestFields).not.toHaveProperty("skillIds");
-    expect(turn.requestFields).not.toHaveProperty("knowledgeSourceIds");
     expect(turn.requestFields.contextPolicy).toEqual({
       clear: ["skills", "creator_style", "post_format"],
     });

@@ -35,7 +35,6 @@ describe("Cowork Exploration Lane control", () => {
       postTypeSelection: "auto",
       explorationLaneSelection: "experimental",
       skillIds: [],
-      knowledgeSourceIds: [],
       hasPostFormat: false,
       hasCreatorStyle: false,
     });

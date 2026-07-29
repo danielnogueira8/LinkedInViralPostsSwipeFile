@@ -26,7 +26,6 @@ type ComposerRequestFields = Pick<
   ChatTurnRequest,
   | "command"
   | "skillIds"
-  | "knowledgeSourceIds"
   | "contextPolicy"
   | "generationConfig"
   | "starterId"
@@ -39,7 +38,6 @@ export type PrepareChatWorkspaceTurnInput = {
   explorationLaneSelection: ExplorationLaneSelection;
   starterId?: ComposerStarterId;
   skillIds: string[];
-  knowledgeSourceIds: string[];
   hasPostFormat: boolean;
   hasCreatorStyle: boolean;
   askContextPostId?: string;
@@ -135,9 +133,6 @@ export function createChatWorkspaceController(
       const requestFields: ComposerRequestFields = {
         ...(command ? { command } : {}),
         ...(input.skillIds.length ? { skillIds: input.skillIds } : {}),
-        ...(input.knowledgeSourceIds.length
-          ? { knowledgeSourceIds: input.knowledgeSourceIds }
-          : {}),
         ...(appliesComposerControls
           ? {
               contextPolicy: {

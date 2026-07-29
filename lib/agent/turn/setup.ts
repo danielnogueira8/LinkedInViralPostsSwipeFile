@@ -42,7 +42,7 @@ import {
   type ModelSourceReference,
   type ModelSourceRow,
 } from "@/lib/agent/turn/context";
-import type { AppliedKnowledgeSource } from "@/lib/knowledge-sources/context";
+import type { AppliedWorkspaceKnowledge } from "@/lib/knowledge-sources/context";
 import {
   createCoworkTurnTelemetry,
   type CoworkTurnTelemetry,
@@ -129,49 +129,6 @@ const CUSTOM_SKILL_CONTEXT_PERSISTENCE_ERROR =
   "I couldn’t save the selected custom-skill context safely, so no draft was created. Send the request again to retry.";
 const GENERATION_CONFIG_CONTEXT_PERSISTENCE_ERROR =
   "I couldn’t save the draft-count setting safely, so no draft was created. Send the request again to retry.";
-const KNOWLEDGE_SELECTION_UNAVAILABLE_ERROR =
-  "One or more selected Knowledge sources are no longer ready. Review your Knowledge selection and send the request again.";
-const KNOWLEDGE_CONTEXT_PERSISTENCE_ERROR =
-  "I couldn’t save the selected Knowledge context safely, so no draft was created. Send the request again to retry.";
-
-function knowledgeSourceSelectionToolCall(
-  sources: AppliedKnowledgeSource[],
-): ToolCall {
-  return {
-    id: crypto.randomUUID(),
-    type: "function",
-    function: {
-      name: "_knowledge_sources_selected",
-      arguments: JSON.stringify({ sources }),
-    },
-  };
-}
-
-function knowledgeSourceIdsFromToolCalls(input: {
-  tool_calls?: ToolCall[] | null;
-} | null | undefined): string[] {
-  const marker = input?.tool_calls?.find(
-    (call) => call.function?.name === "_knowledge_sources_selected",
-  );
-  if (!marker) return [];
-  try {
-    const parsed = JSON.parse(marker.function.arguments) as {
-      sources?: Array<{ sourceId?: unknown }>;
-    };
-    return (parsed.sources ?? [])
-      .map((source) =>
-        typeof source.sourceId === "string" ? source.sourceId : "",
-      )
-      .filter((id) =>
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-          id,
-        ),
-      )
-      .slice(0, 20);
-  } catch {
-    return [];
-  }
-}
 const TURN_OPERATION_CONTEXT_PERSISTENCE_ERROR =
   "I couldn’t save the turn operation safely, so the request was not executed. Send it again as a new message.";
 
@@ -238,9 +195,10 @@ export async function setupChatTurn(
   let resolvedCustomSkills: FrozenCustomSkill[] = [];
   let forcedNoModelFormatId: NoModelFormatId | undefined;
   let creatorStyleId: string | undefined;
-  let knowledgeSourceIds: string[] = [];
-  let knowledgeSources: AppliedKnowledgeSource[] = [];
-  let selectedKnowledgeSources: AppliedKnowledgeSource[] = [];
+  let workspaceKnowledge: AppliedWorkspaceKnowledge = {
+    promptBlock: "",
+    sources: [],
+  };
   let creatorStyleRetryContext: CreatorStyleRetryContext | null = null;
   let leadMagnetId: string | undefined;
   let createLeadMagnet: z.infer<typeof leadMagnetGenerateSchema> | undefined;
@@ -369,7 +327,6 @@ export async function setupChatTurn(
     skillIds = body.skillIds ?? [];
     forcedNoModelFormatId = body.forcedNoModelFormatId;
     creatorStyleId = body.creatorStyleId;
-    knowledgeSourceIds = body.knowledgeSourceIds ?? [];
     leadMagnetId = body.leadMagnetId;
     createLeadMagnet = body.createLeadMagnet;
     requestedGenerationConfig =
@@ -691,21 +648,6 @@ export async function setupChatTurn(
         );
       }
       modelSourceId = frozenModelSourceId;
-      const frozenKnowledgeSourceIds =
-        knowledgeSourceIdsFromToolCalls(retryUser);
-      if (
-        knowledgeSourceIds.length > 0 &&
-        (knowledgeSourceIds.length !== frozenKnowledgeSourceIds.length ||
-          knowledgeSourceIds.some(
-            (id, index) => id !== frozenKnowledgeSourceIds[index],
-          ))
-      ) {
-        return turnError(
-          "That Retry no longer matches the Knowledge sources used by the original task. Send a new request instead.",
-          409,
-        );
-      }
-      knowledgeSourceIds = frozenKnowledgeSourceIds;
       const pairedCustomSkillMarker =
         deps.customSkillSelectionMarkerFromToolCalls(retryUser);
       if (pairedCustomSkillMarker.kind === "invalid") {
@@ -1412,7 +1354,6 @@ export async function setupChatTurn(
       creatorStyleRetryContext,
       customSkillRetryContext,
       skillIds,
-      knowledgeSourceIds,
       composerTaskContext,
       composerTaskSelection,
       activeDraftCountOverride,
@@ -1472,13 +1413,7 @@ export async function setupChatTurn(
     customSkillBodies = turnContext.customSkillBodies;
     customSkillNames = turnContext.customSkillNames;
     structureMatch = turnContext.structureMatch;
-    knowledgeSources = turnContext.knowledgeSources;
-    selectedKnowledgeSources = turnContext.selectedKnowledgeSources;
-    if (
-      new Set(knowledgeSourceIds).size !== selectedKnowledgeSources.length
-    ) {
-      throw new Error(KNOWLEDGE_SELECTION_UNAVAILABLE_ERROR);
-    }
+    workspaceKnowledge = turnContext.workspaceKnowledge;
 
     const userColumnPatch: Record<string, unknown> = {};
     const currentTurnMarkers: ToolCall[] = [];
@@ -1487,11 +1422,6 @@ export async function setupChatTurn(
     }
     if (body.contextPolicy) {
       currentTurnMarkers.push(chatContextPolicyToolCall(body.contextPolicy));
-    }
-    if (selectedKnowledgeSources.length > 0) {
-      currentTurnMarkers.push(
-        knowledgeSourceSelectionToolCall(selectedKnowledgeSources),
-      );
     }
     if (currentTurnMarkers.length > 0) {
       userColumnPatch.tool_calls = currentTurnMarkers;
@@ -1580,12 +1510,6 @@ export async function setupChatTurn(
     ) {
       throw new Error(GENERATION_CONFIG_CONTEXT_PERSISTENCE_ERROR);
     }
-    if (
-      selectedKnowledgeSources.length > 0 &&
-      (!claimedUserMessageId || userStateWriteFailed)
-    ) {
-      throw new Error(KNOWLEDGE_CONTEXT_PERSISTENCE_ERROR);
-    }
     if (turnContext.attachmentBlocks.length > 0 && claimedUserMessageId) {
       try {
         await waitForChatSetup(
@@ -1624,8 +1548,6 @@ export async function setupChatTurn(
       setupError === CREATOR_STYLE_CONTEXT_PERSISTENCE_ERROR ||
       setupError === CUSTOM_SKILL_CONTEXT_PERSISTENCE_ERROR ||
       setupError === GENERATION_CONFIG_CONTEXT_PERSISTENCE_ERROR ||
-      setupError === KNOWLEDGE_SELECTION_UNAVAILABLE_ERROR ||
-      setupError === KNOWLEDGE_CONTEXT_PERSISTENCE_ERROR ||
       setupError === TURN_OPERATION_CONTEXT_PERSISTENCE_ERROR
         ? setupError
         : "⚠️ Something went wrong starting this turn. Please try again.";
@@ -1666,13 +1588,11 @@ export async function setupChatTurn(
         : requestAborted
           ? 499
           : setupError === LEAD_MAGNET_SELECTION_REQUIRED_ERROR ||
-              setupError === CREATOR_STYLE_SELECTION_REQUIRED_ERROR ||
-              setupError === KNOWLEDGE_SELECTION_UNAVAILABLE_ERROR
+              setupError === CREATOR_STYLE_SELECTION_REQUIRED_ERROR
             ? 409
             : setupError === CREATOR_STYLE_CONTEXT_PERSISTENCE_ERROR ||
                 setupError === CUSTOM_SKILL_CONTEXT_PERSISTENCE_ERROR ||
                 setupError === GENERATION_CONFIG_CONTEXT_PERSISTENCE_ERROR ||
-                setupError === KNOWLEDGE_CONTEXT_PERSISTENCE_ERROR ||
                 setupError === TURN_OPERATION_CONTEXT_PERSISTENCE_ERROR
               ? 503
               : 500,
@@ -1733,9 +1653,7 @@ export async function setupChatTurn(
     resolvedCustomSkills,
     forcedNoModelFormatId,
     creatorStyleId,
-    knowledgeSourceIds,
-    knowledgeSources,
-    selectedKnowledgeSources,
+    workspaceKnowledge,
     creatorStyleRetryContext,
     leadMagnetId,
     createLeadMagnet,
