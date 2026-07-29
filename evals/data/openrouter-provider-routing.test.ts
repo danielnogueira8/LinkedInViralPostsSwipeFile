@@ -41,7 +41,7 @@ describe("OpenRouter provider routing", () => {
       );
 
       const error = await completeChat({
-        model: "anthropic/claude-sonnet-5",
+        model: "google/gemini-3.5-flash",
         messages: [{ role: "user", content: "private user prompt" }],
       }).catch((cause: unknown) => cause);
 
@@ -81,26 +81,15 @@ describe("OpenRouter provider routing", () => {
     ).toBe(0.15);
   });
 
-  test("BACKGROUND_MODEL runs on Haiku 4.5 under the Anthropic flag, CHAT_MODEL off it", async () => {
-    // The cheap forced-tool tier (idea briefs, lead-magnet setup, voice
-    // distillation, titles) must not ride openrouter/auto into GLM when the
-    // flag is on — it runs on the Anthropic key like everything else.
-    vi.stubEnv("AI_PROVIDER", "anthropic");
+  test("BACKGROUND_MODEL defaults to native Luna and accepts an explicit model pin", async () => {
     vi.resetModules();
-    const flagged = await import("@/lib/openrouter");
-    expect(flagged.BACKGROUND_MODEL).toBe("anthropic/claude-haiku-4.5");
+    const defaults = await import("@/lib/openrouter");
+    expect(defaults.BACKGROUND_MODEL).toBe("openai/gpt-5.6-luna");
 
-    // An explicit Anthropic-side pin wins over the default.
-    vi.stubEnv("ANTHROPIC_BACKGROUND_MODEL", "anthropic/claude-sonnet-5");
+    vi.stubEnv("OPENAI_BACKGROUND_MODEL", "openai/gpt-5.6-luna");
     vi.resetModules();
     const pinned = await import("@/lib/openrouter");
-    expect(pinned.BACKGROUND_MODEL).toBe("anthropic/claude-sonnet-5");
-
-    // Off the flag the tier follows CHAT_MODEL as before.
-    vi.unstubAllEnvs();
-    vi.resetModules();
-    const unflagged = await import("@/lib/openrouter");
-    expect(unflagged.BACKGROUND_MODEL).toBe(unflagged.CHAT_MODEL);
+    expect(pinned.BACKGROUND_MODEL).toBe("openai/gpt-5.6-luna");
   });
 
   test("by DEFAULT pins no provider (OpenRouter load-balances) but requires parameter support", () => {
@@ -125,7 +114,7 @@ describe("OpenRouter provider routing", () => {
     vi.stubEnv("OPENROUTER_API_KEY", "test-key");
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body));
-      expect(body.model).toBe("anthropic/claude-sonnet-5");
+      expect(body.model).toBe("google/gemini-3.5-flash");
       // No order pin by default; the capability guard is still sent.
       expect(body.provider).toEqual({
         allow_fallbacks: true,
@@ -140,7 +129,7 @@ describe("OpenRouter provider routing", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await completeChat({
-      model: "anthropic/claude-sonnet-5",
+      model: "google/gemini-3.5-flash",
       messages: [{ role: "user", content: "hello" }],
     });
 
@@ -171,7 +160,7 @@ describe("OpenRouter provider routing", () => {
     vi.stubEnv("OPENROUTER_API_KEY", "test-key");
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body));
-      expect(body.model).toBe("anthropic/claude-sonnet-5");
+      expect(body.model).toBe("google/gemini-3.5-flash");
       expect(body.reasoning).toEqual({ effort: "low" });
       return Response.json({
         choices: [{ message: { content: "ok" }, finish_reason: "stop" }],
@@ -180,7 +169,7 @@ describe("OpenRouter provider routing", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await completeChat({
-      model: "anthropic/claude-sonnet-5",
+      model: "google/gemini-3.5-flash",
       reasoningEffort: "low",
       messages: [{ role: "user", content: "plan this turn" }],
     });
@@ -235,7 +224,7 @@ describe("OpenRouter provider routing", () => {
     vi.stubEnv("OPENROUTER_API_KEY", "test-key");
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body));
-      expect(body.model).toBe("anthropic/claude-sonnet-5");
+      expect(body.model).toBe("google/gemini-3.5-flash");
       expect(body.reasoning).toBeUndefined();
       return Response.json({
         choices: [{ message: { content: "ok" }, finish_reason: "stop" }],
@@ -244,7 +233,7 @@ describe("OpenRouter provider routing", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await completeChat({
-      model: "anthropic/claude-sonnet-5",
+      model: "google/gemini-3.5-flash",
       glmReasoning: "none",
       messages: [{ role: "user", content: "hello" }],
     });
@@ -282,6 +271,7 @@ describe("OpenRouter provider routing", () => {
     );
 
     const result = await completeChat({
+      model: "some/future-chat-model",
       messages: [{ role: "user", content: "latest news" }],
       plugins: [{ id: "web" }],
     });
@@ -314,6 +304,7 @@ describe("OpenRouter provider routing", () => {
 
     await expect(
       completeChat({
+        model: "some/future-chat-model",
         messages: [{ role: "user", content: "hello" }],
         timeoutMs: 5,
       }),
@@ -361,7 +352,7 @@ describe("OpenRouter provider routing", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     for await (const delta of streamChat({
-      model: "openai/gpt-5.6-luna",
+      model: "some/future-chat-model",
       sessionId: "chat-123",
       messages: [{ role: "user", content: "refine this post" }],
     })) {
@@ -446,48 +437,6 @@ describe("OpenRouter provider routing", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
-  test("initial Sonnet 5 drafts use low reasoning effort", async () => {
-    vi.stubEnv("OPENROUTER_API_KEY", "test-key");
-    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
-      const body = JSON.parse(String(init?.body));
-      expect(body.model).toBe("anthropic/claude-sonnet-5");
-      expect(body.reasoning).toEqual({ effort: "low" });
-      return Response.json({
-        choices: [{ message: { content: "A real post body." }, finish_reason: "stop" }],
-      });
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    await openRouterDraftWriter.write(
-      {
-        ...writerRequest("anthropic/claude-sonnet-5"),
-        reasoning: "sonnet-low",
-      },
-    );
-
-    expect(fetchMock).toHaveBeenCalledOnce();
-  });
-
-  test("Sonnet 5 repair drafts keep the default reasoning policy", async () => {
-    vi.stubEnv("OPENROUTER_API_KEY", "test-key");
-    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
-      const body = JSON.parse(String(init?.body));
-      expect(body.model).toBe("anthropic/claude-sonnet-5");
-      expect(body.reasoning).toBeUndefined();
-      return Response.json({
-        choices: [{ message: { content: "A repaired post body." }, finish_reason: "stop" }],
-      });
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    await openRouterDraftWriter.write({
-      ...writerRequest("anthropic/claude-sonnet-5"),
-      stage: "repair",
-    });
-
-    expect(fetchMock).toHaveBeenCalledOnce();
-  });
-
   test("draft writer leaves GLM on its High policy for `none` (no regression)", async () => {
     vi.stubEnv("OPENROUTER_API_KEY", "test-key");
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
@@ -548,6 +497,7 @@ describe("OpenRouter provider routing", () => {
 
     const deltas = [];
     for await (const delta of streamChat({
+      model: "some/future-chat-model",
       messages: [
         {
           role: "user",

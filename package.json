@@ -23,7 +23,6 @@
     "mcp-app:build": "node scripts/build-mcp-swipe-app.mjs"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.114.0",
     "@base-ui/react": "^1.4.1",
     "@clerk/mcp-tools": "^0.6.0",
     "@clerk/nextjs": "^7.3.7",

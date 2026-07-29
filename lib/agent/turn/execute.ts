@@ -39,7 +39,7 @@ import {
   type ChatMessage,
   type Usage,
 } from "@/lib/openrouter";
-import { shouldUseAnthropic } from "@/lib/anthropic";
+import { routesToNativeOpenAI } from "@/lib/openai";
 import { stampDraftFormat } from "@/lib/markdown/mode";
 import {
   savedDraftParentId,
@@ -792,7 +792,7 @@ async function* executeAnswerTurn(
       stage: "answer",
       attempt: 1,
       model,
-      provider: shouldUseAnthropic(model) ? "anthropic" : "openrouter",
+      provider: routesToNativeOpenAI(model) ? "openai" : "openrouter",
       outcome: "failed",
       reasonCode:
         error instanceof Error
@@ -811,7 +811,7 @@ async function* executeAnswerTurn(
     stage: "answer",
     attempt: 1,
     model,
-    provider: shouldUseAnthropic(model) ? "anthropic" : "openrouter",
+    provider: routesToNativeOpenAI(model) ? "openai" : "openrouter",
     outcome: "accepted",
     latencyMs,
     usage,

@@ -115,7 +115,7 @@ describe("freshness constraint cache", () => {
     expect(sink.mock.calls[0][0].stage_attempts).toContainEqual(
       expect.objectContaining({
         stage: "legacy_freshness_prepass",
-        provider: "openrouter",
+        provider: "openai",
         outcome: "accepted",
         input_tokens: 100,
         output_tokens: 10,

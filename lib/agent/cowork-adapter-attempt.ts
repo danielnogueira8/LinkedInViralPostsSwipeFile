@@ -7,14 +7,14 @@ import {
 import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
 import type { WriterPromptCostProfile } from "@/lib/agent/prompt-cost-profile";
 import type { Usage } from "@/lib/openrouter";
-import { shouldUseAnthropic } from "@/lib/anthropic";
+import { routesToNativeOpenAI } from "@/lib/openai";
 
 // Attribute a per-attempt telemetry record to whoever actually served the model,
 // matching the authoritative usage_events.provider label (logOpenRouterUsage).
-// shouldUseAnthropic encodes the flag + model check, so a claude-* attempt run
-// while AI_PROVIDER=anthropic is "anthropic"; everything else is "openrouter".
-function providerFor(model: string): "anthropic" | "openrouter" {
-  return shouldUseAnthropic(model) ? "anthropic" : "openrouter";
+// OpenAI and legacy Claude slugs are served by the native OpenAI adapter;
+// explicitly configured non-OpenAI models remain on OpenRouter.
+function providerFor(model: string): "openai" | "openrouter" {
+  return routesToNativeOpenAI(model) ? "openai" : "openrouter";
 }
 
 export function providerModelAttribution(

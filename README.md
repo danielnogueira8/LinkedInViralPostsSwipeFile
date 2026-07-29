@@ -26,14 +26,17 @@ The schema is defined by **sequential migrations**, not a single dump — `db/sc
 Copy your keys into `.env.local`. The **required** variables (the app cannot function without them) are:
 
 - `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`
-- `OPENROUTER_API_KEY` — all LLM traffic routes through OpenRouter
+- `OPENAI_API_KEY` — Luna text generation and OpenAI embeddings
+- `OPENROUTER_API_KEY` — explicitly configured non-OpenAI models, including the default Gemini image paths
 - `CRON_SECRET` — Bearer secret guarding the cron endpoints (set to a random string)
 
-Other integrations are configured as needed: Clerk (`CLERK_*`), Apify (`APIFY_API_TOKEN`, `APIFY_ACTOR_ID`), Zernio (`ZERNIO_API_KEY`), and the optional `HEALTH_DIGEST_WEBHOOK` (Slack/Discord URL for the daily cost digest and cron-failure alerts). Many tuning knobs (`OPENROUTER_*_MODEL`, `AGENT_*`, `VIRAL_*`) have safe in-code defaults.
+Do not set the retired `AI_PROVIDER`, `ANTHROPIC_API_KEY`, or `SWIPE_ANTHROPIC_KEY` variables. Optional native model pins are `OPENAI_CHAT_MODEL`, `OPENAI_BACKGROUND_MODEL`, `OPENAI_WRITER_MODEL`, `OPENAI_EMBEDDING_MODEL`, `OPENAI_NEWS_MODEL`, `OPENAI_NEWS_FALLBACK_MODEL`, `OPENAI_READ_ONLY_ORCHESTRATOR_MODEL`, `OPENAI_DIRECT_WRITER_MODEL`, `OPENAI_DIRECT_WRITER_FALLBACK_MODEL`, `OPENAI_THIN_WRITER_MODEL`, and `OPENAI_THIN_WRITER_FALLBACK_MODEL`; all text pins default to `openai/gpt-5.6-luna`.
 
 Automatic source selection is enabled by default for single-post modeling requests. Set `MODEL_SOURCE_SELECTION_ENABLED=false` to temporarily restore immediate modeling during rollout.
 
-Newsjacking follows the app-wide chat model when it supports grounded discovery, otherwise it falls back to `anthropic/claude-haiku-4.5`. Set `OPENROUTER_NEWS_MODEL` to `openai/gpt-5.6-luna`, `google/gemini-3.1-flash-lite`, `anthropic/claude-haiku-4.5`, or `z-ai/glm-5.2` to override only that research pipeline without changing the main Cowork writer model.
+Other integrations are configured as needed: Clerk (`CLERK_*`), Apify (`APIFY_API_TOKEN`, `APIFY_ACTOR_ID`), Zernio (`ZERNIO_API_KEY`), and the optional `HEALTH_DIGEST_WEBHOOK` (Slack/Discord URL for the daily cost digest and cron-failure alerts). Many tuning knobs (`AGENT_*`, `VIRAL_*`) have safe in-code defaults.
+
+Newsjacking defaults to Luna through OpenAI's native web-search tool. `OPENROUTER_NEWS_MODEL` is retained as a backwards-compatible model pin; OpenAI slugs still route directly to OpenAI, while a non-OpenAI override routes through OpenRouter.
 
 ### 3. Local dev
 

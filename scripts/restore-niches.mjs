@@ -1,4 +1,4 @@
-// Restore accounts.niche for rows where it's NULL by asking Claude Haiku to
+// Restore accounts.niche for rows where it's NULL using GPT-5.6 Luna.
 // classify each account into one of the 9 canonical niches, based on the
 // account's name, headline, and a handful of recent post snippets.
 //
@@ -13,7 +13,6 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import Anthropic from "@anthropic-ai/sdk";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const envPath = resolve(__dirname, "..", ".env.local");
@@ -27,9 +26,9 @@ for (const line of readFileSync(envPath, "utf8").split("\n")) {
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SR = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const ANTHROPIC_KEY = process.env.SWIPE_ANTHROPIC_KEY || process.env.ANTHROPIC_API_KEY;
+const OPENAI_KEY = process.env.OPENAI_API_KEY;
 if (!SUPABASE_URL || !SR) { console.error("Supabase env missing"); process.exit(1); }
-if (!ANTHROPIC_KEY) { console.error("Anthropic key missing"); process.exit(1); }
+if (!OPENAI_KEY) { console.error("OpenAI key missing"); process.exit(1); }
 
 const apply = process.argv.includes("--apply");
 const limitIdx = process.argv.indexOf("--limit");
@@ -65,8 +64,6 @@ async function sb(method, path, body) {
   return res.json();
 }
 
-const anthropic = new Anthropic({ apiKey: ANTHROPIC_KEY });
-
 async function classify(account, posts) {
   const postSnippets = posts
     .slice(0, 3)
@@ -79,15 +76,26 @@ async function classify(account, posts) {
     postSnippets ? `Recent posts:\n${postSnippets}` : "Recent posts: (none available)",
   ].filter(Boolean).join("\n\n");
 
-  const res = await anthropic.messages.create({
-    model: "claude-haiku-4-5-20251001",
-    max_tokens: 32,
-    system: SYSTEM,
-    messages: [{ role: "user", content: userContent }],
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${OPENAI_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+    model: "gpt-5.6-luna",
+      max_output_tokens: 32,
+      reasoning: { effort: "none" },
+      store: false,
+      instructions: SYSTEM,
+      input: userContent,
+    }),
   });
-  const block = res.content[0];
-  if (block.type !== "text") return null;
-  const guess = block.text.trim();
+  if (!response.ok) {
+    throw new Error(`OpenAI ${response.status}: ${await response.text()}`);
+  }
+  const result = await response.json();
+  const guess = String(result.output_text || "").trim();
   return NICHES.includes(guess) ? guess : null;
 }
 

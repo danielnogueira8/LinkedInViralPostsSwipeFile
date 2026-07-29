@@ -28,7 +28,7 @@ export type ReasoningEffort = "minimal" | "low" | "medium" | "high";
 // if you want the thin writer on a different (e.g. stronger) model than the rest
 // of the app. Env-overridable so a retired preview slug is a one-line env change
 // (OpenRouter drops `-preview` slugs on graduation — see
-// lead-magnet-image-generation.ts). `anthropic/claude-sonnet-5` is the fallback.
+// lead-magnet-image-generation.ts). `openai/gpt-5.6-luna` is the fallback.
 
 export type DraftWriterStage = "primary" | "repair" | "fallback";
 
@@ -66,9 +66,9 @@ export interface DraftWriterAdapter {
   write(request: DraftWriterRequest): Promise<DraftWriterResponse>;
 }
 
-function isSonnet5(model: string): boolean {
-  return model.trim().toLowerCase().replace(/^anthropic\//, "") ===
-    "claude-sonnet-5";
+function isLuna(model: string): boolean {
+  return model.trim().toLowerCase().replace(/^openai\//, "") ===
+    "gpt-5.6-luna";
 }
 
 export const openRouterDraftWriter: DraftWriterAdapter = {
@@ -85,7 +85,7 @@ export const openRouterDraftWriter: DraftWriterAdapter = {
     // every primary attempt 400'd in ~145ms and fell back to Sonnet.
     const reasoningEffort =
       request.reasoning === "sonnet-low"
-        ? isSonnet5(request.model)
+        ? isLuna(request.model)
           ? "low"
           : undefined
         : request.reasoning === "none"

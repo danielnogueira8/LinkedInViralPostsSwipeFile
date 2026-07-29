@@ -29,7 +29,7 @@ export const SOURCE_FIDELITY_MODEL =
 export const SOURCE_FIDELITY_FALLBACK_MODEL = distinctFallbackModel(
   SOURCE_FIDELITY_MODEL,
   process.env.OPENROUTER_SOURCE_FIDELITY_FALLBACK_MODEL ||
-    "anthropic/claude-sonnet-5",
+    "openai/gpt-5.6-luna",
   ["google/gemini-3.5-flash"],
 );
 

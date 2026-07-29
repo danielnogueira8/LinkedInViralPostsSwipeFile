@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import {
-  setAnthropicKey,
   extractHookWithClaude,
 } from "@/lib/claude";
 import {
@@ -30,7 +29,6 @@ export async function POST(req: Request) {
   if (!(await isAdmin())) {
     return NextResponse.json({ ok: false, error: "Admin only." }, { status: 403 });
   }
-  setAnthropicKey(process.env.SWIPE_ANTHROPIC_KEY || process.env.ANTHROPIC_API_KEY);
 
   // Bounded batch per invocation (default 40, max 100) so a large hook backlog
   // can't run an unbounded Claude loop past maxDuration — which previously left

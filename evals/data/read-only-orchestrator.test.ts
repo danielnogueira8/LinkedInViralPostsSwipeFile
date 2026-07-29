@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { AgentEvent } from "@/lib/agent/contracts";
 
 // Freshness-relative fixture date for news results: the executor filters
@@ -62,6 +62,10 @@ type ReadOnlyOrchestratorAdapter = {
     model?: string;
   }>;
 };
+
+beforeEach(() => {
+  vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
+});
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -328,9 +332,16 @@ describe("read-only orchestrator plan contract", () => {
       "fetch",
       vi.fn(async (_url: string, init?: RequestInit) => {
         const body = JSON.parse(String(init?.body));
-        requestedModels.push(body.model);
+        const native = String(_url).includes("api.openai.com");
+        requestedModels.push(native ? `openai/${body.model}` : body.model);
         if (requestedModels.length === 1) {
-          return Response.json({
+          return Response.json(native ? {
+            model: body.model,
+            status: "completed",
+            output_text: "A plausible answer with no citation.",
+            output: [],
+            usage: { input_tokens: 20, output_tokens: 10 },
+          } : {
             choices: [
               {
                 message: { content: "A plausible answer with no citation." },
@@ -392,8 +403,27 @@ describe("read-only orchestrator plan contract", () => {
       "fetch",
       vi.fn(async (_url: string, init?: RequestInit) => {
         const body = JSON.parse(String(init?.body));
-        requestedModels.push(body.model);
-        return Response.json({
+        const native = String(_url).includes("api.openai.com");
+        requestedModels.push(native ? `openai/${body.model}` : body.model);
+        return Response.json(native ? {
+          model: body.model,
+          status: "completed",
+          output_text:
+            "Model Context Protocol is an open standard for connecting AI applications to external systems.",
+          output: [{
+            type: "message",
+            content: [{
+              type: "output_text",
+              text: "Model Context Protocol is an open standard for connecting AI applications to external systems.",
+              annotations: [{
+                type: "url_citation",
+                url: "https://modelcontextprotocol.io/docs/getting-started/intro",
+                title: "What is the Model Context Protocol?",
+              }],
+            }],
+          }],
+          usage: { input_tokens: 30, output_tokens: 12 },
+        } : {
           choices: [
             {
               message: {
@@ -440,7 +470,24 @@ describe("read-only orchestrator plan contract", () => {
       "fetch",
       vi.fn(async (_url: string, init?: RequestInit) => {
         requestBodies.push(JSON.parse(String(init?.body)));
-        return Response.json({
+        const native = String(_url).includes("api.openai.com");
+        return Response.json(native ? {
+          model: "gpt-5.6-luna",
+          status: "completed",
+          output_text: "Source A supports one claim. Source B supports another claim.",
+          output: [{
+            type: "message",
+            content: [{
+              type: "output_text",
+              text: "Source A supports one claim. Source B supports another claim.",
+              annotations: [
+                { type: "url_citation", url: "https://example.com/source-a", title: "Source A" },
+                { type: "url_citation", url: "https://example.com/source-b", title: "Source B" },
+              ],
+            }],
+          }],
+          usage: { input_tokens: 30, output_tokens: 12 },
+        } : {
           choices: [
             {
               message: {
@@ -689,8 +736,28 @@ describe("read-only orchestrator plan contract", () => {
 
   test("multi-file inspection falls back and remains incomplete unless every file is covered", async () => {
     vi.stubEnv("OPENROUTER_API_KEY", "test-key");
-    const fetchMock = vi.fn(async () =>
-      Response.json({
+    const fetchMock = vi.fn(async (url: string) => {
+      const args = JSON.stringify({
+        evidence: [
+          {
+            sourceName: "brief.pdf",
+            claim: "The brief names onboarding as the bottleneck.",
+            supportingExcerpt: "Onboarding remains the bottleneck.",
+          },
+        ],
+      });
+      return Response.json(String(url).includes("api.openai.com") ? {
+        model: "gpt-5.6-luna",
+        status: "completed",
+        output_text: "",
+        output: [{
+          type: "function_call",
+          call_id: "call_1",
+          name: "report_attachment_evidence",
+          arguments: args,
+        }],
+        usage: { input_tokens: 40, output_tokens: 15 },
+      } : {
         choices: [
           {
             message: {
@@ -699,15 +766,7 @@ describe("read-only orchestrator plan contract", () => {
                 {
                   function: {
                     name: "report_attachment_evidence",
-                    arguments: JSON.stringify({
-                      evidence: [
-                        {
-                          sourceName: "brief.pdf",
-                          claim: "The brief names onboarding as the bottleneck.",
-                          supportingExcerpt: "Onboarding remains the bottleneck.",
-                        },
-                      ],
-                    }),
+                    arguments: args,
                   },
                 },
               ],
@@ -716,8 +775,8 @@ describe("read-only orchestrator plan contract", () => {
           },
         ],
         usage: { prompt_tokens: 40, completion_tokens: 15 },
-      }),
-    );
+      });
+    });
     vi.stubGlobal("fetch", fetchMock);
 
     const result = await inspectAttachmentEvidence({
