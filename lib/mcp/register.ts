@@ -46,7 +46,8 @@ import {
   calendarDateSchema,
   timeZoneSchema,
 } from "@/lib/schedule-local-date";
-import { sanitizeVoiceProfile } from "@/lib/claude";
+import { ensureBiographicalFacts } from "@/lib/agent/specialists/backstory";
+import { readVoiceGuidance } from "@/lib/voice-profile-read";
 import { registerPublicResourceTools } from "./register-resources";
 import {
   findBookmarkResource,
@@ -980,38 +981,15 @@ export function registerSwipeTools(server: McpServer) {
       try {
         const workspaceId = workspaceFromExtra(extra);
         if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
-        const sb = supabaseAdmin();
-        const { data, error } = await sb
-          .from("voice_profiles")
-          .select(
-            "linkedin_handle, display_name, headline, profile, summary, source_post_count, status, model, generated_at",
-          )
-          .eq("workspace_id", workspaceId)
-          .maybeSingle();
-        if (error) return dbErrorContent("get_voice", error);
-        if (!data || data.status !== "ready" || !data.profile) {
-          return jsonContent({
-            ok: false,
-            error:
-              "No voice profile yet. Ask the user to generate one in the Voice tab (paste their LinkedIn profile URL).",
-            status: data?.status ?? null,
-          });
-        }
-        return jsonContent({
-          ok: true,
-          voice: {
-            linkedin_handle: data.linkedin_handle,
-            display_name: data.display_name,
-            headline: data.headline,
-            summary: data.summary,
-            profile: sanitizeVoiceProfile(data.profile),
-            source_post_count: data.source_post_count,
-            model: data.model,
-            generated_at: data.generated_at,
-          },
-        });
+        return jsonContent(
+          await readVoiceGuidance(workspaceId, {
+            client: supabaseAdmin(),
+            enrichProfile: ({ profile, signal }) =>
+              ensureBiographicalFacts({ workspaceId, profile, signal }),
+          }),
+        );
       } catch (e) {
-        return errorContent((e as Error).message);
+        return dbErrorContent("get_voice", e);
       }
     },
   );
