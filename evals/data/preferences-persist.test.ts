@@ -1,6 +1,5 @@
 import { describe, test, expect, vi, beforeEach } from "vitest";
 import { makeFakeSupabase, queryFor, type FakeDb } from "./fake-supabase";
-import { PREFS_PER_WORKSPACE_MAX } from "@/lib/preferences";
 
 // ---------------------------------------------------------------------------
 // persistLearnedPreference — the remember_preference write path.
@@ -8,7 +7,7 @@ import { PREFS_PER_WORKSPACE_MAX } from "@/lib/preferences";
 // This is the one place the AGENT writes a durable rule (source='learned'), so
 // the guards that keep it safe are exactly what we pin here: workspace-scoped
 // insert (no cross-workspace write), dedup against existing rules, the per-
-// workspace cap, empty-rule rejection, and fail-soft on a DB error. All below
+// unbounded growth, empty-rule rejection, and fail-soft on a DB error. All below
 // the model, deterministic. Mocks supabaseAdmin() with the recording fake.
 // ---------------------------------------------------------------------------
 
@@ -18,9 +17,8 @@ vi.mock("@/lib/supabase", () => ({
   supabaseAdmin: () => dbRef.current.client,
 }));
 
-const { persistLearnedPreference } = await import(
-  "@/lib/agent/learned-preference"
-);
+const { persistLearnedPreference } =
+  await import("@/lib/agent/learned-preference");
 
 beforeEach(() => {
   dbRef.current = makeFakeSupabase({});
@@ -33,7 +31,11 @@ describe("persistLearnedPreference", () => {
     dbRef.current = makeFakeSupabase({
       content_preferences: { single: { id: "pref-1" } },
     });
-    const out = await persistLearnedPreference(WS, "  Never use em-dashes ", []);
+    const out = await persistLearnedPreference(
+      WS,
+      "  Never use em-dashes ",
+      [],
+    );
     expect(out).toEqual({
       ok: true,
       saved: true,
@@ -95,14 +97,20 @@ describe("persistLearnedPreference", () => {
     expect(queryFor(dbRef.current, "content_preferences")).toBeUndefined();
   });
 
-  test("refuses politely at the per-workspace cap", async () => {
-    const existing = Array.from({ length: PREFS_PER_WORKSPACE_MAX }, (_, i) => ({
+  test("continues saving beyond the former 20-rule boundary", async () => {
+    dbRef.current = makeFakeSupabase({
+      content_preferences: { single: { id: "pref-21" } },
+    });
+    const existing = Array.from({ length: 20 }, (_, i) => ({
       rule: `Rule ${i}`,
     }));
-    const out = await persistLearnedPreference(WS, "A brand new rule", existing);
-    expect(out.ok).toBe(true);
-    expect(out).toMatchObject({ saved: false, reason: "cap" });
-    expect(queryFor(dbRef.current, "content_preferences")).toBeUndefined();
+    const out = await persistLearnedPreference(
+      WS,
+      "A brand new rule",
+      existing,
+    );
+    expect(out).toMatchObject({ ok: true, saved: true, id: "pref-21" });
+    expect(queryFor(dbRef.current, "content_preferences")).toBeDefined();
   });
 
   test("rejects an empty / non-string rule", async () => {

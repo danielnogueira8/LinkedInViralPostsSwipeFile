@@ -2,17 +2,12 @@ import type { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ResolvedGenerationConfig } from "@/lib/generation-config";
 import { trackedAccountIds } from "@/lib/supabase-scoped";
-import {
-  compileReadOnlyOrchestratorReserveRoute,
-} from "@/lib/agent/turn/compile";
+import { compileReadOnlyOrchestratorReserveRoute } from "@/lib/agent/turn/compile";
 import {
   compileDirectPartialTextSpec,
   requestedDirectPostCount,
 } from "@/lib/agent/direct-deliverable-policy";
-import {
-  ArtifactSchema,
-  type Artifact,
-} from "@/lib/agent/contracts";
+import { ArtifactSchema, type Artifact } from "@/lib/agent/contracts";
 import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
 import {
   runCoworkAdapterAttempt,
@@ -71,10 +66,7 @@ import {
   CONTENT_FEEDBACK_INJECTED_MAX,
   type ContentFeedback,
 } from "@/lib/content-feedback";
-import {
-  PREFS_PER_WORKSPACE_MAX,
-  type ContentPreference,
-} from "@/lib/preferences";
+import { PREFS_INJECTED_MAX, type ContentPreference } from "@/lib/preferences";
 import {
   getLeadMagnetResource,
   getSkillsByIds,
@@ -172,8 +164,8 @@ function renderBoundedChatPosts(entries: readonly ArtifactIndexEntry[]): {
   if (entries.length === 0) return { text: "", truncated: false };
   const headers = entries.map((entry) => `${entry.label}:\n`);
   const separatorChars = Math.max(0, entries.length - 1) * 2;
-  const fixedChars = headers.reduce((sum, header) => sum + header.length, 0) +
-    separatorChars;
+  const fixedChars =
+    headers.reduce((sum, header) => sum + header.length, 0) + separatorChars;
   if (fixedChars >= MAX_CHAT_POST_CONTEXT_CHARS) {
     return {
       text: `This chat contains ${entries.length} Posts and Hooks, which exceeds the safe context budget. Ask about a smaller selected set.`,
@@ -537,7 +529,10 @@ async function describeImageAttachment(
         return text;
       },
       persistUsage: (response) => {
-        const attribution = providerModelAttribution(VISION_MODEL, response.model);
+        const attribution = providerModelAttribution(
+          VISION_MODEL,
+          response.model,
+        );
         return logOpenRouterUsage(
           "chat_image_attachment_vision",
           attribution.model,
@@ -597,8 +592,13 @@ export function imageAttachmentAnalysisBlock(
 
 export function extractModelSourceId(
   input:
-    | ToolCall[] | null | undefined
-    | { model_source_id?: string | null; tool_calls?: ToolCall[] | null | undefined },
+    | ToolCall[]
+    | null
+    | undefined
+    | {
+        model_source_id?: string | null;
+        tool_calls?: ToolCall[] | null | undefined;
+      },
 ): string | null {
   if (
     !Array.isArray(input) &&
@@ -640,10 +640,7 @@ export function latestAttachedModelSourceId(
   for (let i = rowsAsc.length - 1; i >= 0; i--) {
     const row = rowsAsc[i];
     if (row.role !== "user") continue;
-    if (
-      typeof row.model_source_id === "string" &&
-      row.model_source_id.trim()
-    ) {
+    if (typeof row.model_source_id === "string" && row.model_source_id.trim()) {
       return row.model_source_id.trim();
     }
     const id = extractModelSourceId(row.tool_calls);
@@ -663,9 +660,7 @@ export function latestAttachedModelSourceId(
 export function modelSourceIdForTurn(input: {
   explicitId?: string;
   isRefine: boolean;
-  currentTurnSourceOwnership:
-    | "historical_continuation"
-    | "server_selected";
+  currentTurnSourceOwnership: "historical_continuation" | "server_selected";
   rows: readonly {
     role: string;
     tool_calls: ToolCall[] | null;
@@ -699,8 +694,13 @@ export function modelSourceIdForTurn(input: {
 
 export function extractLeadMagnetSelection(
   input:
-    | ToolCall[] | null | undefined
-    | { lead_magnet_id?: string | null; tool_calls?: ToolCall[] | null | undefined },
+    | ToolCall[]
+    | null
+    | undefined
+    | {
+        lead_magnet_id?: string | null;
+        tool_calls?: ToolCall[] | null | undefined;
+      },
 ): { id: string; title: string; selection: "manual" | "auto" } | null {
   const columnId =
     !Array.isArray(input) && input !== null && input !== undefined
@@ -1040,7 +1040,9 @@ export function chatHistoryWithModelSources(
         ];
         if (envelope) {
           content.push({ type: "text", text: envelope });
-          const structureBlock = source ? modelSourceStructureBlock(source) : "";
+          const structureBlock = source
+            ? modelSourceStructureBlock(source)
+            : "";
           if (structureBlock) {
             content.push({ type: "text", text: structureBlock });
           }
@@ -1177,8 +1179,7 @@ export type BuildTurnContextInput = {
   hasAuthoritativeDraftCount: boolean;
   resolvedActionInstruction: string | null;
   currentTurnModelSourceOwnership:
-    | "historical_continuation"
-    | "server_selected";
+    "historical_continuation" | "server_selected";
   /** Every read races this signal (claim's setup deadline ⊕ client abort). */
   setupSignal: AbortSignal;
   /** Distinguishes setup-deadline expiry from client cancellation for telemetry on paid vision/lead-magnet calls. */
@@ -1291,7 +1292,9 @@ export async function buildTurnContext(
   const historyPromise = waitForChatSetup(
     sbRaw
       .from("chat_messages")
-      .select("role, content, tool_calls, tool_call_id, artifacts, content_blocks")
+      .select(
+        "role, content, tool_calls, tool_call_id, artifacts, content_blocks",
+      )
       .eq("chat_id", chatId)
       .eq("workspace_id", workspaceId)
       .order("created_at", { ascending: false })
@@ -1333,7 +1336,7 @@ export async function buildTurnContext(
         listPreferenceResources({
           db: sbRaw,
           workspaceId,
-          limit: PREFS_PER_WORKSPACE_MAX,
+          limit: PREFS_INJECTED_MAX,
         }),
         setupSignal,
       );
@@ -1469,9 +1472,7 @@ export async function buildTurnContext(
     composerTaskContext.kind === "post"
       ? composerTaskContext.expectedDraftCount
       : null;
-  if (
-    hasAuthoritativeDraftCount && effectiveComposerPostCount !== null
-  ) {
+  if (hasAuthoritativeDraftCount && effectiveComposerPostCount !== null) {
     activeDraftCountOverride = resolvedGenerationConfig.draftCount;
   }
   // The single turn contract is resolved from this post-clarification count
@@ -1589,10 +1590,8 @@ export async function buildTurnContext(
   // ORIGINAL task — it must never acquire Model Source provenance or route the
   // turn through the source writer.
   const currentTurnRequestsPost =
-    requestedBasePostCount(
-      effectiveUserInstruction,
-      Boolean(modelSourceId),
-    ) !== null &&
+    requestedBasePostCount(effectiveUserInstruction, Boolean(modelSourceId)) !==
+      null &&
     !isOpinionOrQuestionAboutContent(effectiveUserInstruction) &&
     !requestsDurableOrAction(effectiveUserInstruction);
   if (
@@ -1815,8 +1814,7 @@ export async function buildTurnContext(
         } catch (error) {
           if (
             error instanceof UsagePersistenceError ||
-            (error instanceof Error &&
-              error.name === "UsagePersistenceError")
+            (error instanceof Error && error.name === "UsagePersistenceError")
           ) {
             throw error;
           }
@@ -1843,8 +1841,7 @@ export async function buildTurnContext(
       }
 
       if (selectedLeadMagnet) {
-        activeLeadMagnetCampaign =
-          buildLeadMagnetCampaign(selectedLeadMagnet);
+        activeLeadMagnetCampaign = buildLeadMagnetCampaign(selectedLeadMagnet);
         leadMagnetBlock = activeLeadMagnetCampaign.promptBlock;
         appliedLeadMagnet = appliedLeadMagnetFromResource(
           selectedLeadMagnet,
@@ -1866,8 +1863,7 @@ export async function buildTurnContext(
       setupSignal,
     );
     imageGenerationAuthor = {
-      name:
-        typeof voice?.display_name === "string" ? voice.display_name : null,
+      name: typeof voice?.display_name === "string" ? voice.display_name : null,
     };
   }
 
@@ -2018,9 +2014,7 @@ export async function buildTurnContext(
       setupSignal,
     );
     type Row = { id: string; name: string; body: string };
-    const byIdMap = new Map(
-      skillRows.map((r) => [r.id, r as Row]),
-    );
+    const byIdMap = new Map(skillRows.map((r) => [r.id, r as Row]));
     const resolved = skillIds
       .map((id) => byIdMap.get(id))
       .filter(

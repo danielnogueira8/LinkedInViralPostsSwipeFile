@@ -27,15 +27,12 @@ import { AiIcon } from "@/components/ai-icon";
 import { toast } from "sonner";
 import { fetchJson } from "@/lib/api-fetch";
 import { byId, removeById, reinsertById } from "@/lib/optimistic";
-import {
-  PREF_RULE_MAX,
-  PREF_DETAIL_MAX,
-  PREFS_PER_WORKSPACE_MAX,
-} from "@/lib/preferences";
+import { PREF_RULE_MAX, PREF_DETAIL_MAX } from "@/lib/preferences";
 import type {
   PreferenceEvidence,
   ReviewableContentPreference,
 } from "@/lib/preference-evidence";
+import { VoiceMemoryList } from "./memory-list";
 
 // -----------------------------------------------------------------------------
 // PreferencesManager — CRUD for the workspace's standing writing rules.
@@ -62,8 +59,6 @@ export function PreferencesManager({
   const [confirmDelete, setConfirmDelete] =
     useState<ReviewableContentPreference | null>(null);
 
-  const atCap = prefs.length >= PREFS_PER_WORKSPACE_MAX;
-
   const add = async () => {
     const rule = adding.trim();
     if (!rule || busy) return;
@@ -76,14 +71,14 @@ export function PreferencesManager({
       }>("/api/preferences", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ rule, detail: addingDetail.trim() || undefined }),
+        body: JSON.stringify({
+          rule,
+          detail: addingDetail.trim() || undefined,
+        }),
       });
       if (!data?.ok || !data.preference)
         throw new Error(data?.error || "Failed to add");
-      setPrefs((cur) => [
-        { ...data.preference!, evidence: [] },
-        ...cur,
-      ]);
+      setPrefs((cur) => [{ ...data.preference!, evidence: [] }, ...cur]);
       setAdding("");
       setAddingDetail("");
       setShowAddDetail(false);
@@ -122,15 +117,16 @@ export function PreferencesManager({
       }>(`/api/preferences/${id}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ rule: trimmed, detail: detail.trim() || undefined }),
+        body: JSON.stringify({
+          rule: trimmed,
+          detail: detail.trim() || undefined,
+        }),
       });
       if (!data?.ok || !data.preference)
         throw new Error(data?.error || "Failed to save");
       setPrefs((cur) =>
         cur.map((p) =>
-          p.id === id
-            ? { ...data.preference!, evidence: p.evidence }
-            : p,
+          p.id === id ? { ...data.preference!, evidence: p.evidence } : p,
         ),
       );
       setEditingId(null);
@@ -147,13 +143,11 @@ export function PreferencesManager({
           <div className="min-w-0 space-y-1">
             <CardTitle className="text-base">Memory rules</CardTitle>
             <CardDescription>
-              Hard rules Cowork remembers for every post it writes for you.
-              Add them here, or tell Cowork a lasting rule in chat.
+              Hard rules Cowork remembers for every post it writes for you. Add
+              them here, or tell Cowork a lasting rule in chat.
             </CardDescription>
           </div>
-          <StatusPill tone="neutral">
-            {prefs.length}/{PREFS_PER_WORKSPACE_MAX}
-          </StatusPill>
+          <StatusPill tone="neutral">{prefs.length}</StatusPill>
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -171,9 +165,9 @@ export function PreferencesManager({
               }}
               placeholder="e.g. Never use em-dashes"
               maxLength={PREF_RULE_MAX}
-              disabled={atCap || busy}
+              disabled={busy}
             />
-            <Button onClick={add} disabled={atCap || busy || !adding.trim()}>
+            <Button onClick={add} disabled={busy || !adding.trim()}>
               {busy ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
@@ -189,14 +183,14 @@ export function PreferencesManager({
               placeholder="Optional: the why, a number, a date, a caveat — real context Cowork should have alongside the rule above."
               maxLength={PREF_DETAIL_MAX}
               rows={2}
-              disabled={atCap || busy}
+              disabled={busy}
               className="text-sm"
             />
           ) : (
             <button
               type="button"
               onClick={() => setShowAddDetail(true)}
-              disabled={atCap || busy}
+              disabled={busy}
               className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
             >
               <NotebookText className="h-3.5 w-3.5" />
@@ -204,13 +198,6 @@ export function PreferencesManager({
             </button>
           )}
         </div>
-        {atCap && (
-          <p className="text-xs text-state-warning">
-            You&apos;ve reached the limit of {PREFS_PER_WORKSPACE_MAX} memory
-            rules. Remove one to add another.
-          </p>
-        )}
-
         {prefs.length === 0 ? (
           <div className="rounded-lg border border-dashed border-border/60 bg-background/45 px-4 py-8 text-center">
             <div className="mx-auto mb-3 grid h-10 w-10 place-items-center rounded-xl border border-primary/10 bg-primary/[0.07] text-primary">
@@ -220,12 +207,15 @@ export function PreferencesManager({
               No memory rules yet
             </div>
             <p className="mx-auto mt-1 max-w-md text-sm leading-6 text-muted-foreground">
-              Add a lasting rule here, or tell Cowork something like
-              &quot;Never say effortless again&quot; and review it on this page.
+              Add a lasting rule here, or tell Cowork something like &quot;Never
+              say effortless again&quot; and review it on this page.
             </p>
           </div>
         ) : (
-          <ul className="overflow-hidden rounded-lg border border-border/60 bg-background/45">
+          <VoiceMemoryList
+            label="Memory rules"
+            testId="memory-rules-scroll"
+          >
             {prefs.map((p) => (
               <PreferenceRow
                 key={p.id}
@@ -237,7 +227,7 @@ export function PreferencesManager({
                 onDelete={() => setConfirmDelete(p)}
               />
             ))}
-          </ul>
+          </VoiceMemoryList>
         )}
       </CardContent>
 

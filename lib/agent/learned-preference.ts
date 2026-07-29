@@ -1,5 +1,4 @@
 import {
-  PREFS_PER_WORKSPACE_MAX,
   isDuplicatePreference,
   normalizePreferenceRule,
   normalizePreferenceDetail,
@@ -15,7 +14,7 @@ export async function persistLearnedPreference(
   rawDetail?: unknown,
 ): Promise<
   | { ok: true; saved: true; id: string; rule: string }
-  | { ok: true; saved: false; reason: "duplicate" | "cap"; rule: string }
+  | { ok: true; saved: false; reason: "duplicate"; rule: string }
   | { ok: false; error: string }
 > {
   const rule = normalizePreferenceRule(
@@ -33,9 +32,6 @@ export async function persistLearnedPreference(
   );
   if (isDuplicatePreference(rule, existing)) {
     return { ok: true, saved: false, reason: "duplicate", rule };
-  }
-  if (existing.length >= PREFS_PER_WORKSPACE_MAX) {
-    return { ok: true, saved: false, reason: "cap", rule };
   }
   try {
     const { data, error } = await supabaseAdmin()

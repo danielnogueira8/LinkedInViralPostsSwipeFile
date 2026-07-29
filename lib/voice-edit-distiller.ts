@@ -11,7 +11,7 @@ import { parseJsonObject } from "@/lib/claude";
 import {
   normalizePreferenceRule,
   preferenceDedupKey,
-  PREFS_PER_WORKSPACE_MAX,
+  PREFS_INJECTED_MAX,
   type ContentPreference,
 } from "@/lib/preferences";
 import {
@@ -58,7 +58,10 @@ const SavedDistillerSchema = z.object({
     .array(
       z.object({
         rule: z.string().trim().min(1).max(RULE_MAX_CHARS),
-        evidenceEventIds: z.array(z.string().uuid()).min(1).max(MAX_EDIT_EVENTS),
+        evidenceEventIds: z
+          .array(z.string().uuid())
+          .min(1)
+          .max(MAX_EDIT_EVENTS),
       }),
     )
     .max(MAX_CANDIDATE_RULES),
@@ -100,7 +103,11 @@ export async function distillEditDeltaRules(
   sb: SupabaseClient,
   workspaceId: string,
   opts: { signal?: AbortSignal } = {},
-): Promise<{ inserted: number; skippedDuplicates: number; candidates: number }> {
+): Promise<{
+  inserted: number;
+  skippedDuplicates: number;
+  candidates: number;
+}> {
   const claim = await claimRevisionEventBatch(sb, workspaceId, {
     limit: MAX_EDIT_EVENTS,
   });
@@ -115,7 +122,7 @@ export async function distillEditDeltaRules(
       .select("id, workspace_id, rule, detail, source, created_at, updated_at")
       .eq("workspace_id", workspaceId)
       .order("created_at", { ascending: false })
-      .limit(PREFS_PER_WORKSPACE_MAX);
+      .limit(PREFS_INJECTED_MAX);
     if (prefsError) throw prefsError;
     const existingPrefs = (existing ?? []) as ContentPreference[];
 
@@ -143,7 +150,10 @@ export async function distillEditDeltaRules(
           ],
           signal: opts.signal,
         });
-        const attribution = providerModelAttribution(BACKGROUND_MODEL, res.model);
+        const attribution = providerModelAttribution(
+          BACKGROUND_MODEL,
+          res.model,
+        );
         try {
           await logOpenRouterUsage(
             "voice_edit_distiller",
@@ -217,7 +227,9 @@ export async function distillEditDeltaRules(
           { rules: candidates },
         );
         if (!persisted) {
-          throw new Error("Revision distillation result could not be persisted");
+          throw new Error(
+            "Revision distillation result could not be persisted",
+          );
         }
       } catch (error) {
         console.warn(
