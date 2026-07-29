@@ -447,6 +447,45 @@ describe("DraftEngine", () => {
     expect(result.recorded).toHaveLength(1);
   });
 
+  test("records a content-free prompt cost profile without changing the provider messages", async () => {
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(120, 80) },
+    ]);
+    const result = await collect(writer, {
+      userInstruction:
+        "Write an original post about the PROMPT_PROFILE_REQUEST_SENTINEL.",
+      workspaceLearningBlock: "PROMPT_PROFILE_WORKSPACE_SENTINEL",
+    });
+
+    const usageMeta = result.recorded[0][4] as Record<string, unknown>;
+    expect(usageMeta.input_profile).toMatchObject({
+      version: 1,
+      total_text_chars: expect.any(Number),
+      estimated_input_tokens: expect.any(Number),
+      cacheable_system_prefix_chars: expect.any(Number),
+      sections: {
+        request: {
+          text_chars: expect.any(Number),
+          estimated_tokens: expect.any(Number),
+        },
+        global_writing_rules: {
+          text_chars: expect.any(Number),
+          estimated_tokens: expect.any(Number),
+        },
+        workspace_learning: {
+          text_chars: expect.any(Number),
+          estimated_tokens: expect.any(Number),
+        },
+      },
+    });
+    expect(JSON.stringify(usageMeta.input_profile)).not.toContain(
+      "PROMPT_PROFILE",
+    );
+    expect(JSON.stringify(writer.requests[0].messages)).toContain(
+      "PROMPT_PROFILE_REQUEST_SENTINEL",
+    );
+  });
+
   test("accepts an incomplete primary candidate without repair", async () => {
     const writer = new ScriptedWriter([
       { text: INCOMPLETE_POST, finishReason: "stop", usage: usage(100, 70) },

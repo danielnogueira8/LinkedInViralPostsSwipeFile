@@ -8,6 +8,7 @@ import type {
 import type { TurnOutcome } from "@/lib/agent/turn/outcome";
 import type { TurnContract } from "@/lib/agent/turn/compile";
 import { isBoardMutationToolName } from "@/lib/agent/tool-capabilities";
+import type { WriterPromptCostProfile } from "@/lib/agent/prompt-cost-profile";
 
 export type CoworkRoute =
   | "setup"
@@ -48,6 +49,7 @@ export type CoworkTelemetryAttempt = {
   fallbackReason?: string;
   latencyMs: number;
   usage?: Usage;
+  promptProfile?: WriterPromptCostProfile;
 };
 
 type SafeAttempt = {
@@ -70,6 +72,7 @@ type SafeAttempt = {
   // actually landed.
   cache_write_tokens: number;
   charged_cost_usd: number;
+  input_profile?: WriterPromptCostProfile;
 };
 
 export type CoworkTurnTelemetryRecord = {
@@ -251,6 +254,9 @@ export function createCoworkTurnTelemetry(
         cached_input_tokens: usage.cachedInputTokens,
         cache_write_tokens: usage.cacheWriteTokens,
         charged_cost_usd: usage.costUsd,
+        ...(attempt.promptProfile
+          ? { input_profile: attempt.promptProfile }
+          : {}),
       });
     },
     snapshotUsage(): CoworkTurnUsageWire {
