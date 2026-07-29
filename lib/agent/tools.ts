@@ -8,22 +8,13 @@ import { wrapUntrustedXml } from "@/lib/agent/untrusted";
 import { UsagePersistenceError, type ToolDef } from "@/lib/openrouter";
 import type { AdapterHealthRegistry } from "@/lib/agent/adapter-health";
 import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
+import { ensureBiographicalFacts } from "@/lib/agent/specialists/backstory";
 import { searchNews, NEWS_MAX_AGE_DAYS } from "@/lib/news-search";
 import {
   checkChatCostAllowance,
   NEWS_SEARCH_COST_RESERVE_USD,
 } from "@/lib/agent/rate-limit";
-import { sanitizeVoiceProfile } from "@/lib/voice-generation";
-import {
-  ensureBiographicalFacts,
-  renderBackstoryBlock,
-} from "@/lib/agent/specialists/backstory";
-import {
-  mechanicsFingerprintToRules,
-  voiceKeepsEmDashes,
-} from "@/lib/voice-mechanics";
-import { createWorkspaceKnowledgeStore } from "@/lib/content-learning/workspace-knowledge";
-import { renderWorkspaceKnowledgeBlock } from "@/lib/content-learning/workspace-knowledge-presentation";
+import { readVoiceGuidance } from "@/lib/voice-profile-read";
 import { retryRead } from "@/lib/retry-read";
 import {
   selectModelingSourcePool,
@@ -862,94 +853,18 @@ export async function loadVoiceProfile(
   } = {},
 ): Promise<ToolResult> {
   try {
-    const sb = options.client ?? supabaseAdmin();
-    const { data, error } = await sb
-      .from("voice_profiles")
-      .select(
-        "linkedin_handle, display_name, headline, profile, summary, source_post_count, status, model, generated_at",
-      )
-      .eq("workspace_id", workspaceId)
-      .maybeSingle();
-    if (error) return err(error.message);
-    if (!data || data.status !== "ready" || !data.profile) {
-      return {
-        ok: false,
-        error:
-          "No voice profile yet. Ask the user to generate one in the Voice tab (paste their LinkedIn profile URL).",
-        status: data?.status ?? null,
-      };
-    }
-    // Backstory separation (PR A): lazily extract biographical facts out of the
-    // profile so the model treats them as a "use sparingly" library, not
-    // always-on identity context it recites to prove voice-match. The facts are
-    // stripped from the returned `profile` JSON and surfaced separately as
-    // `backstory_guidance` with the caveated framing. Provider/content failures
-    // fail open to today's profile behavior; usage-ledger failures propagate.
-    let profile = sanitizeVoiceProfile(data.profile);
-    profile = await ensureBiographicalFacts({
-      workspaceId,
-      profile,
+    return await readVoiceGuidance(workspaceId, {
+      client: options.client,
       signal: options.signal,
-      telemetry: options.telemetry,
-      adapterHealth: options.adapterHealth,
+      enrichProfile: ({ profile }) =>
+        ensureBiographicalFacts({
+          workspaceId,
+          profile,
+          signal: options.signal,
+          telemetry: options.telemetry,
+          adapterHealth: options.adapterHealth,
+        }),
     });
-    const backstoryGuidance = renderBackstoryBlock(profile.biographical_facts);
-    const workspaceKnowledgeGuidance = renderWorkspaceKnowledgeBlock(
-      await createWorkspaceKnowledgeStore(sb).listActive(workspaceId),
-    );
-    // Deterministic mechanics rules (capitalization, punctuation, emoji,
-    // paragraphing) rendered from the measured fingerprint (lib/voice-
-    // mechanics.ts) into imperative instructions the model can follow
-    // directly — sharper and non-hallucinating vs. the raw fingerprint
-    // numbers, which the model would otherwise have to interpret itself.
-    // Empty when there's no fingerprint yet or the sample was too thin.
-    const mechanicsRules = profile.mechanics_fingerprint
-      ? mechanicsFingerprintToRules(profile.mechanics_fingerprint)
-      : [];
-    // Strip facts (returned separately as retrieval guidance), the RAW
-    // interview_answers (source-of-truth for editing, not prompt input), and
-    // the raw fingerprint (returned separately, already rendered into rules)
-    // from the dump. Raw interview context is also excluded: interview-derived
-    // facts may reach drafting only through explicitly verified Workspace
-    // Knowledge, rendered separately below.
-    const profileForModel = {
-      ...profile,
-      biographical_facts: undefined,
-      interview_answers: undefined,
-      interview_context: undefined,
-      mechanics_fingerprint: undefined,
-    };
-    return {
-      ok: true,
-      voice: {
-        linkedin_handle: data.linkedin_handle,
-        display_name: data.display_name,
-        headline: data.headline,
-        summary: data.summary,
-        profile: profileForModel,
-        // Present ONLY when the profile has real biographical facts. The chat
-        // agent should treat this as retrieval guidance, not a checklist.
-        ...(backstoryGuidance ? { backstory_guidance: backstoryGuidance } : {}),
-        ...(workspaceKnowledgeGuidance
-          ? { workspace_knowledge_guidance: workspaceKnowledgeGuidance }
-          : {}),
-        // Present ONLY when the fingerprint yielded confident, measured
-        // rules. Treat these as HARD, non-negotiable mechanics — they're
-        // measured facts about how this person writes, not a style guess.
-        ...(mechanicsRules.length
-          ? { mechanics_rules: mechanicsRules }
-          : {}),
-        // Machine-readable flag for the agent loop's voice-aware editor: this
-        // writer genuinely uses em dashes, so the stripEmDashes anti-slop net
-        // must back off for their drafts. Only present when true.
-        ...(voiceKeepsEmDashes(profile.mechanics_fingerprint)
-          ? { keep_em_dashes: true }
-          : {}),
-        source_post_count: data.source_post_count,
-        model: data.model,
-        generated_at: data.generated_at,
-      },
-    };
   } catch (e) {
     if (
       e instanceof UsagePersistenceError ||
