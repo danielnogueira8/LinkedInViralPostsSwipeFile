@@ -1920,6 +1920,62 @@ export function ChatWorkspace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [modelParam, intentParam, handoffParam]);
 
+  // Agent inbox handoff. The Agent chooses an evidence-backed direction; the
+  // user still owns the creative act. Start a clean Cowork session with that
+  // direction prefilled in Create mode, but never auto-send it.
+  const agentIdeaParam = searchParams.get("agentIdea");
+  useEffect(() => {
+    if (!agentIdeaParam) return;
+    const prompt = sessionStorage.getItem(`agent-inbox-draft:${agentIdeaParam}`);
+    if (!prompt) return;
+    sessionStorage.removeItem(`agent-inbox-draft:${agentIdeaParam}`);
+    let cancelled = false;
+    (async () => {
+      try {
+        stashComposerDraft();
+        const response = await fetch("/api/chats", { method: "POST" });
+        const payload = await response.json();
+        if (!payload.ok || !payload.chat?.id) {
+          throw new Error(payload.error || "Couldn't start a new chat");
+        }
+        if (cancelled) return;
+        const id: string = payload.chat.id;
+        setChats((current) => prependChatIfMissing(current, payload.chat));
+        chatSession.ensureConversation(id);
+        writeDraft(id, prompt);
+        preserveCommandOnNextChatChangeRef.current = id;
+        setActiveId(id);
+        setInput(prompt);
+        setModelSource(null);
+        enterCreateCommand(1);
+        const url = new URL(window.location.href);
+        url.searchParams.set("chat", id);
+        url.searchParams.delete("new");
+        url.searchParams.delete("agentIdea");
+        router.replace(`${url.pathname}?${url.searchParams.toString()}`, {
+          scroll: false,
+        });
+        requestAnimationFrame(() => inputRef.current?.focus());
+      } catch (handoffError) {
+        toast.error(
+          handoffError instanceof Error
+            ? handoffError.message
+            : "Couldn't open this idea in Cowork",
+        );
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    agentIdeaParam,
+    chatSession,
+    enterCreateCommand,
+    router,
+    setActiveId,
+    stashComposerDraft,
+  ]);
+
   // (The Posts "Model in Chat" handoff now goes through the ?model= path above
   // with intent=refine — same source chip + clean composer as swipe/bookmark —
   // so there's no separate ?draft= effect anymore.)

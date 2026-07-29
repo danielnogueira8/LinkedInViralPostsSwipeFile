@@ -290,6 +290,15 @@ export async function purgeWorkspaceData(
       workspaceId,
     ),
   );
+  await wipe("agent_inbox_ideas", () =>
+    del("agent_inbox_ideas").eq("workspace_id", workspaceId),
+  );
+  await wipe("agent_inbox_runs", () =>
+    del("agent_inbox_runs").eq("workspace_id", workspaceId),
+  );
+  await wipe("agent_inbox_preferences", () =>
+    del("agent_inbox_preferences").eq("workspace_id", workspaceId),
+  );
   await wipe("workspace_learning_snapshots", async () => {
     const { data, error } = await sb.rpc("purge_workspace_learning", {
       p_workspace_id: workspaceId,

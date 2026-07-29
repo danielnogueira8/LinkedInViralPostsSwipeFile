@@ -51,7 +51,7 @@ function requestWindows() {
 export default async function ChatPage({
   searchParams,
 }: {
-  searchParams: Promise<{ chat?: string; model?: string; new?: string }>;
+  searchParams: Promise<{ chat?: string; model?: string; new?: string; agentIdea?: string }>;
 }) {
   const sb = await scopedSupabase();
 
