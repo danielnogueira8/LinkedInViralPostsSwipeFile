@@ -1,6 +1,7 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
-import type { ServerNotification, ServerRequest } from "@modelcontextprotocol/sdk/types.js";
+import type {
+  McpServer,
+  ServerContext,
+} from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { supabaseAdmin } from "@/lib/supabase";
 import { DraftLifecycle, draftRecordToApi } from "@/lib/draft-lifecycle";
@@ -32,8 +33,9 @@ import {
   listTemplateResources,
 } from "@/lib/content-resource-operations";
 import { dbErrorContent, errorContent, jsonContent, notFoundContent } from "./util";
+import { mcpAuthInfo } from "./context";
 
-type Extra = RequestHandlerExtra<ServerRequest, ServerNotification>;
+type Extra = ServerContext;
 type WorkspaceResolver = (extra: Extra) => string | null;
 
 const NO_WORKSPACE_MSG = "No workspace bound to this session. Join a workspace before using MCP tools.";
@@ -41,7 +43,7 @@ const STYLE_COLS = CREATOR_STYLE_COLS;
 
 function ids(extra: Extra, workspaceFromExtra: WorkspaceResolver) {
   const workspaceId = workspaceFromExtra(extra);
-  const rawUserId = extra.authInfo?.extra?.userId;
+  const rawUserId = mcpAuthInfo(extra)?.extra?.userId;
   return {
     workspaceId,
     userId: typeof rawUserId === "string" && rawUserId ? rawUserId : null,
