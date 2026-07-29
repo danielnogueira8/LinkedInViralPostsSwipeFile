@@ -16,8 +16,13 @@ type SwipePost = {
   comments?: number;
   reposts?: number;
   post_type?: string;
+  media_type?: string;
   media_urls?: string[];
-  accounts?: { name?: string; niche?: string } | null;
+  accounts?: {
+    name?: string;
+    niche?: string;
+    profile_pic_url?: string;
+  } | null;
 };
 
 type SwipeResult = {
@@ -67,13 +72,19 @@ button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-v
   overflow: hidden; border: 1px solid var(--border); border-radius: 14px;
   background: var(--surface); box-shadow: 0 5px 22px color-mix(in srgb, var(--text) 8%, transparent);
 }
-.card-body { padding: 16px 18px 14px; }
-.meta { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 14px; }
+.card-body { padding: 0 18px 14px; }
+.meta {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 10px;
+  margin: 0 -18px 16px; padding: 14px 18px; border-bottom: 1px solid var(--border);
+  background: var(--surface-soft);
+}
 .identity { display: flex; min-width: 0; align-items: center; gap: 10px; }
-.avatar {
+.avatar, .avatar-image {
   display: grid; width: 44px; height: 44px; flex: 0 0 44px; place-items: center;
   border-radius: 50%; color: white; background: var(--coral); font-weight: 750;
 }
+.avatar-image { object-fit: cover; }
+.avatar-fallback.is-hidden { display: none; }
 .author { overflow: hidden; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
 .byline, .metrics { color: var(--muted); font-size: 12px; }
 .kind { padding: 3px 7px; border-radius: 999px; background: var(--surface-soft); font-size: 11px; white-space: nowrap; }
@@ -86,6 +97,10 @@ summary { width: fit-content; margin-top: 10px; color: var(--muted); cursor: poi
   background: var(--surface-soft);
 }
 .media { display: block; width: 100%; max-height: 430px; object-fit: contain; }
+.media-error {
+  display: grid; min-height: 180px; place-items: center; padding: 20px;
+  color: var(--muted); text-align: center;
+}
 .metrics { display: flex; gap: 18px; padding: 11px 18px; }
 .actions { display: grid; grid-template-columns: 1fr 1.25fr; gap: 8px; padding: 0 18px 16px; }
 .secondary { background: var(--surface-soft); }
@@ -101,7 +116,8 @@ summary { width: fit-content; margin-top: 10px; color: var(--muted); cursor: poi
   #app { padding: 12px; }
   #filters { grid-template-columns: 1fr 1fr; }
   #filters label:first-child { grid-column: 1 / -1; }
-  .card-body { padding: 14px; }
+  .card-body { padding: 0 14px 14px; }
+  .meta { margin-inline: -14px; padding-inline: 14px; }
   .actions { padding: 0 14px 14px; }
   .metrics { padding-inline: 14px; }
   .media-frame, .media { max-height: 360px; }
@@ -223,7 +239,27 @@ function renderCard(post: SwipePost, position: number, total: number): HTMLEleme
         .join(" · "),
     ),
   );
-  identity.append(createText("div", "avatar", initials(author)), identityCopy);
+  const avatarFallback = createText(
+    "div",
+    "avatar avatar-fallback",
+    initials(author),
+  );
+  const profilePic = validLinkedInMedia(post.accounts?.profile_pic_url);
+  if (profilePic) {
+    const avatarImage = document.createElement("img");
+    avatarImage.className = "avatar-image";
+    avatarImage.src = profilePic;
+    avatarImage.alt = `${author}'s profile picture`;
+    avatarImage.loading = "lazy";
+    avatarImage.referrerPolicy = "no-referrer";
+    avatarFallback.classList.add("is-hidden");
+    avatarImage.addEventListener("error", () => {
+      avatarImage.remove();
+      avatarFallback.classList.remove("is-hidden");
+    });
+    identity.append(avatarImage);
+  }
+  identity.append(avatarFallback, identityCopy);
   meta.append(
     identity,
     createText(
@@ -253,6 +289,16 @@ function renderCard(post: SwipePost, position: number, total: number): HTMLEleme
     image.src = mediaUrl;
     image.alt = "Original post media";
     image.loading = "lazy";
+    image.referrerPolicy = "no-referrer";
+    image.addEventListener("error", () => {
+      frame.replaceChildren(
+        createText(
+          "div",
+          "media-error",
+          "Image unavailable. Open the original post to view its media.",
+        ),
+      );
+    });
     frame.append(image);
     card.append(frame);
   }

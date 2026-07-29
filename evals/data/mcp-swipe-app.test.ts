@@ -36,6 +36,7 @@ describe("Swipe File MCP App", () => {
         "ui/resourceUri": SWIPE_FILE_APP_RESOURCE_URI,
       },
     });
+    expect(SWIPE_FILE_APP_RESOURCE_URI).toContain("swipe-file-v2");
   });
 
   test("serves one self-contained, sandboxed HTML app resource", async () => {
@@ -80,6 +81,10 @@ describe("Swipe File MCP App", () => {
     expect(result.contents[0].text).toContain("aria-roledescription");
     expect(result.contents[0].text).toContain("carousel");
     expect(result.contents[0].text).toContain("Original post media");
+    expect(result.contents[0].text).toContain("profile_pic_url");
+    expect(result.contents[0].text).toContain("avatar-image");
+    expect(result.contents[0].text).toContain("Image unavailable");
+    expect(result.contents[0].text).toContain("carousel-position");
     expect(result.contents[0]._meta).toMatchObject({
       ui: {
         csp: {
