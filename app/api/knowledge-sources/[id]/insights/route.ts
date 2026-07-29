@@ -9,6 +9,73 @@ export const dynamic = "force-dynamic";
 
 const idSchema = z.string().uuid();
 
+export async function POST(
+  _request: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  try {
+    const parsedId = idSchema.safeParse((await params).id);
+    if (!parsedId.success) {
+      return NextResponse.json(
+        { ok: false, error: "Invalid knowledge source." },
+        { status: 400 },
+      );
+    }
+    const sb = await scopedSupabase();
+    const { data: marker, error: markerError } = await sb.raw
+      .from("app_schema_version")
+      .select("version")
+      .eq("singleton", true)
+      .maybeSingle();
+    if (markerError) throw markerError;
+    if ((marker?.version ?? 0) < 152) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Retry analysis is being prepared. Please try again soon.",
+        },
+        { status: 409 },
+      );
+    }
+
+    const { data, error } = await sb.raw.rpc(
+      "retry_knowledge_source_extraction",
+      {
+        p_workspace_id: sb.workspaceId,
+        p_source_id: parsedId.data,
+      },
+    );
+    if (error) {
+      if (error.code === "55000") {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "This source is no longer available to retry.",
+          },
+          { status: 409 },
+        );
+      }
+      throw error;
+    }
+    const job = (Array.isArray(data) ? data[0] : data) as {
+      id?: string;
+      status?: string;
+    } | null;
+    if (!job?.id) throw new Error("Knowledge extraction retry returned no job.");
+
+    return NextResponse.json(
+      {
+        ok: true,
+        jobId: job.id,
+        status: job.status ?? "queued",
+      },
+      { status: job.status === "queued" ? 202 : 200 },
+    );
+  } catch (error) {
+    return errorResponse(error);
+  }
+}
+
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ id: string }> },

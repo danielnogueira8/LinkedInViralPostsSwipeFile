@@ -1,5 +1,9 @@
 import { describe, expect, test } from "vitest";
 import {
+  KNOWLEDGE_EXTRACTION_BATCH_SIZE,
+  KNOWLEDGE_EXTRACTION_MAX_ITEMS,
+  KNOWLEDGE_EXTRACTION_MODEL,
+  extractionChunkBatches,
   knowledgeContentForExtraction,
   selectExtractionChunks,
   type ExtractedKnowledgeItem,
@@ -33,6 +37,19 @@ describe("Knowledge Source extraction", () => {
     expect(selected[0]?.ordinal).toBe(0);
     expect(selected.at(-1)?.ordinal).toBe(99);
     expect(new Set(selected.map((chunk) => chunk.ordinal)).size).toBe(10);
+  });
+
+  test("uses bounded Haiku batches that fit a complete structured response", () => {
+    const chunks = Array.from({ length: 15 }, (_, ordinal) => ({ ordinal }));
+
+    expect(KNOWLEDGE_EXTRACTION_MODEL).toBe(
+      "anthropic/claude-haiku-4.5",
+    );
+    expect(KNOWLEDGE_EXTRACTION_BATCH_SIZE).toBe(4);
+    expect(KNOWLEDGE_EXTRACTION_MAX_ITEMS).toBe(4);
+    expect(
+      extractionChunkBatches(chunks).map((batch) => batch.length),
+    ).toEqual([4, 4, 4, 3]);
   });
 
   test("maps every extraction kind to the existing reviewable knowledge schema", () => {

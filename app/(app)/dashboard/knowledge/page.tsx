@@ -21,6 +21,8 @@ export default async function KnowledgePage() {
     typeof marker?.version === "number" && marker.version >= 148;
   const extractionAvailable =
     typeof marker?.version === "number" && marker.version >= 149;
+  const retryAvailable =
+    typeof marker?.version === "number" && marker.version >= 152;
   let sources: KnowledgeSourceSummary[] = [];
   if (available) {
     const selection = extractionAvailable
@@ -49,6 +51,7 @@ export default async function KnowledgePage() {
         initialSources={sources}
         available={available}
         extractionAvailable={extractionAvailable}
+        retryAvailable={retryAvailable}
       />
     </PageShell>
   );
