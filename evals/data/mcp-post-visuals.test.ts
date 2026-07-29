@@ -125,6 +125,9 @@ describe("MCP post visual assets", () => {
     const result = json(rawResult);
     const returnedPost = (result.posts as Array<Record<string, unknown>>)[0];
 
+    expect((rawResult as { structuredContent?: unknown }).structuredContent).toEqual(
+      result,
+    );
     expect(queryFor(dbRef.current, "posts")?.selectArg).not.toContain("media_urls");
     expect(returnedPost).not.toHaveProperty("media_urls");
     expect(returnedPost).not.toHaveProperty("visual_kind");
@@ -138,6 +141,9 @@ describe("MCP post visual assets", () => {
     const rawResult = await tools().search_viral_posts({ limit: 1 }, extra());
     const result = json(rawResult);
 
+    expect((rawResult as { structuredContent?: unknown }).structuredContent).toEqual(
+      result,
+    );
     expect(queryFor(dbRef.current, "posts")?.selectArg).toContain("media_urls");
     expect(result.posts).toEqual([
       expect.objectContaining({
