@@ -3,6 +3,7 @@ import { scopedSupabase } from "@/lib/supabase-scoped";
 import { sanitizeVoiceProfile } from "@/lib/claude";
 import { createWorkspaceKnowledgeStore } from "@/lib/content-learning/workspace-knowledge";
 import { interviewKnowledgeSourcePrefix } from "@/lib/content-learning/interview-knowledge";
+import { chatInterviewKnowledgeSourcePrefix } from "@/lib/content-learning/chat-interview-knowledge";
 import {
   publicKnowledgeSource,
   type KnowledgeSourceSummary,
@@ -45,7 +46,7 @@ export default async function KnowledgePage() {
   const retryAvailable =
     typeof marker?.version === "number" && marker.version >= 152;
   const knowledgeStore = createWorkspaceKnowledgeStore(sb.raw);
-  const [sources, interviewKnowledge] = await Promise.all([
+  const [sources, formInterviewKnowledge, chatInterviewKnowledge] = await Promise.all([
     (async (): Promise<KnowledgeSourceSummary[]> => {
       if (!available) return [];
       const selection = extractionAvailable
@@ -70,7 +71,16 @@ export default async function KnowledgePage() {
           interviewKnowledgeSourcePrefix(String(voice.id)),
         )
       : Promise.resolve([]),
+    // Chat interviews ("Interview me" in Cowork) accumulate under a separate
+    // workspace-keyed prefix — they show up in the same review card, labelled
+    // by provenance.
+    knowledgeStore.listActiveBySource(
+      sb.workspaceId,
+      "interview",
+      chatInterviewKnowledgeSourcePrefix(sb.workspaceId),
+    ),
   ]);
+  const interviewKnowledge = [...formInterviewKnowledge, ...chatInterviewKnowledge];
   const knowledgeProposals = interviewKnowledge.filter(
     (item) => item.verification === "proposed",
   );

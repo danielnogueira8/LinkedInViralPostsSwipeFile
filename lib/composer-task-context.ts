@@ -18,6 +18,7 @@ export const composerStarterIdSchema = z.enum([
   "brandjack",
   "newsjack",
   "series",
+  "interview-me",
 ]);
 
 export type ComposerStarterId = z.infer<typeof composerStarterIdSchema>;
@@ -155,6 +156,10 @@ const STARTER_TASKS: Record<
   // doesn't read "3-part" as a number, so without this the turn collapsed to
   // ONE draft with all parts crammed in.
   series: { kind: "post", sourceMode: "original", defaultDraftCount: 3 },
+  // A conversation, not a generation: the agent interviews the user (see the
+  // interview-me skill) and saves answers as proposed Workspace Knowledge.
+  // No research lane, no drafts — the deliverable is knowledge.
+  "interview-me": { kind: "answer", sourceMode: "unspecified" },
 };
 
 type ComposerTaskContextBase = {

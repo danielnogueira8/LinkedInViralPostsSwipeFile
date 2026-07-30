@@ -906,6 +906,41 @@ first line works, the facts are true, and nothing is in there that isn't
 serving the point.`,
 };
 
+// The agent interviews the USER — the conversational sibling of the Context
+// interview form. Specialized so it survives the selection cap and is carried
+// across the interview's back-and-forth turns (skill-continuation), the same
+// way the jack skills persist across topic follow-ups.
+const INTERVIEW_ME: Skill = {
+  id: "interview-me",
+  specialized: true,
+  triggers: [
+    "interview me",
+    "interview myself",
+    "ask me questions about me",
+    "get to know me",
+    "know me better",
+  ],
+  body: `# Interview the user (learn who they are)
+The user asked YOU to interview them so you have fresher, deeper context for future posts. This is a conversation, not a form — your job is to surface stories, beliefs, proof, and audience insight that could become content angles, then save them. No drafts this turn; the deliverable is knowledge.
+
+## Step 1 — see what you already know
+Call get_interview_context FIRST. It lists the Context-interview topics already on file and every knowledge item already saved (verified or awaiting review). Never ask about covered ground — the whole point is NEW material. If nothing is covered yet, still skip the standard bio questions (what you do, who your audience is, your mission) — those belong to the Context interview form on the Knowledge page.
+
+## Step 2 — ask 3-5 questions, one or two at a time
+Use ask_user for every question. Each question should be specific and angle-hunting, not generic:
+- Stories with tension: a recent win, a failure that changed an approach, a time a client pushed back.
+- Beliefs worth posting: something they changed their mind about, common advice in their field they think is wrong.
+- Proof: a number, result, or receipt from the last few months they have never posted about.
+- Craft: how they actually work — a ritual, a setup, a decision framework.
+For each ask_user call, offer 2-4 short plausible example answers as options (they jog memory; the free-text box is there for the real answer), and make the LAST option "Skip this question" so the user always controls the pace. Never set doneOption during the interview. One question per ask_user call is ideal; two at most.
+
+## Step 3 — save what you learned
+When the user has answered your questions (or says they're done), call save_interview_answers ONCE with every answered question. For each: the question you asked, the user's answer distilled faithfully (their facts only — never invent specifics they didn't say), the best-fit knowledge kind (story, belief, proof, offer, audience_insight, topic_expertise, prohibition), and a short title (10 words max). If an answer is really a durable writing rule ("never call my clients customers"), save THAT with remember_preference instead — not as knowledge.
+
+## Step 4 — close the loop
+Tell the user their answers are saved as proposed knowledge on the Knowledge page, and that nothing reaches their drafts until they approve it there. Offer to draft a post from one of the new angles.`,
+};
+
 export const SKILLS: Skill[] = [
   HOOKS,
   LEAD_MAGNET,
@@ -916,6 +951,7 @@ export const SKILLS: Skill[] = [
   ANTI_AI,
   MODEL_FROM_SOURCE,
   ORIGINAL_POST,
+  INTERVIEW_ME,
 ];
 
 // ---------------------------------------------------------------------------

@@ -34,6 +34,13 @@ import {
   claimDiscoveryRotationCursor,
   recentlyUsedDiscoverySourceIds,
 } from "@/lib/discovery-history";
+import { INTERVIEW_QUESTIONS } from "@/lib/voice-interview";
+import { createWorkspaceKnowledgeStore } from "@/lib/content-learning/workspace-knowledge";
+import {
+  normalizeChatInterviewAnswers,
+  saveChatInterviewKnowledge,
+} from "@/lib/content-learning/chat-interview-knowledge";
+import { KNOWLEDGE_ITEM_KINDS } from "@/lib/content-learning/contracts";
 
 // ---------------------------------------------------------------------------
 // Agent tools — read-only swipe-file / voice / brand access for the chat agent.
@@ -1053,6 +1060,64 @@ const schedulePost: ToolFn = async (args, workspaceId) => {
 };
 
 // ---------------------------------------------------------------------------
+// Interview tools — the "Interview me" workflow (see the interview-me skill).
+// get_interview_context reads what the agent already knows so questions stay
+// fresh; save_interview_answers accumulates the user's answers as PROPOSED
+// Workspace Knowledge (reviewed on the Knowledge page before drafting sees
+// them). Both are workspace-scoped reads/writes on the knowledge store — no
+// LLM call, so no cost claim is needed.
+// ---------------------------------------------------------------------------
+
+const getInterviewContext: ToolFn = async (_args, workspaceId, signal) => {
+  try {
+    const store = createWorkspaceKnowledgeStore(supabaseAdmin());
+    const [verified, proposed] = await Promise.all([
+      store.listActive(workspaceId),
+      store.listProposed(workspaceId),
+    ]);
+    signal?.throwIfAborted();
+    return {
+      ok: true,
+      context_interview_topics: INTERVIEW_QUESTIONS.map((q) => q.prompt),
+      known: [...verified, ...proposed].map((item) => ({
+        kind: item.kind,
+        title: item.title,
+        status: item.verification,
+      })),
+      note: "Ask about things NOT covered here. Skip the Context-interview topics entirely — they belong to the form on the Knowledge page.",
+    };
+  } catch (e) {
+    return err((e as Error).message);
+  }
+};
+
+const saveInterviewAnswers: ToolFn = async (args, workspaceId) => {
+  const parsed = normalizeChatInterviewAnswers(args.answers);
+  if ("error" in parsed) return err(parsed.error);
+  try {
+    const store = createWorkspaceKnowledgeStore(supabaseAdmin());
+    const items = await saveChatInterviewKnowledge({
+      store,
+      workspaceId,
+      answers: parsed.answers,
+    });
+    if (items.length === 0) {
+      return err(
+        "Couldn't save the interview answers (a storage error). Nothing was lost — tell the user and offer to try again.",
+      );
+    }
+    return {
+      ok: true,
+      saved: items.length,
+      titles: items.map((item) => item.title),
+      note: "Saved as PROPOSED knowledge. Tell the user to review and approve it on the Knowledge page — drafts only use approved knowledge.",
+    };
+  } catch (e) {
+    return err((e as Error).message);
+  }
+};
+
+// ---------------------------------------------------------------------------
 // Registry: name -> fn, plus the OpenAI tool definitions sent to GLM-5.1.
 // ---------------------------------------------------------------------------
 
@@ -1067,6 +1132,8 @@ export const TOOL_FNS: Record<string, ToolFn> = {
   move_on_board: moveOnBoard,
   schedule_post: schedulePost,
   search_news: searchNewsTool,
+  get_interview_context: getInterviewContext,
+  save_interview_answers: saveInterviewAnswers,
 };
 
 export const TOOL_DEFS: ToolDef[] = [
@@ -1447,6 +1514,62 @@ export const TOOL_DEFS: ToolDef[] = [
           },
         },
         required: ["rule"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_interview_context",
+      description:
+        "See what you already know about the user BEFORE interviewing them: the topics the Context interview form already covers and every knowledge item already saved (verified or awaiting review). Always call this first in an 'Interview me' conversation so your questions cover new ground instead of repeating what's on file.",
+      parameters: { type: "object", properties: {} },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "save_interview_answers",
+      description:
+        "Save the answers from an 'Interview me' conversation as proposed Workspace Knowledge. Call ONCE at the end of the interview with every question the user actually answered. Answers accumulate across sessions (identical ones dedupe) and land on the user's Knowledge page as proposals — nothing reaches their drafts until they approve it there. Distill each answer faithfully: the user's facts only, never invented specifics.",
+      parameters: {
+        type: "object",
+        required: ["answers"],
+        properties: {
+          answers: {
+            type: "array",
+            minItems: 1,
+            maxItems: 8,
+            items: {
+              type: "object",
+              required: ["question", "answer", "kind", "title"],
+              properties: {
+                question: {
+                  type: "string",
+                  maxLength: 500,
+                  description: "The question you asked, one sentence.",
+                },
+                answer: {
+                  type: "string",
+                  maxLength: 2000,
+                  description:
+                    "The user's answer, distilled to its essence in their words — facts only.",
+                },
+                kind: {
+                  type: "string",
+                  enum: [...KNOWLEDGE_ITEM_KINDS],
+                  description:
+                    "Best-fit knowledge kind: story (an experience), belief (a conviction), proof (a result/receipt), offer (what they do/sell), audience_insight (about their reader), topic_expertise (a domain they know deeply), prohibition (something to never claim).",
+                },
+                title: {
+                  type: "string",
+                  maxLength: 240,
+                  description: "A short label for the item, 10 words max.",
+                },
+              },
+            },
+          },
+        },
       },
     },
   },
