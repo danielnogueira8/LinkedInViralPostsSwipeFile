@@ -86,7 +86,11 @@ describe("native OpenAI adapter", () => {
     expect(body.prompt_cache_options).toEqual({ mode: "explicit" });
     expect(body.input[0]).toEqual({
       role: "assistant",
-      content: [{ type: "input_text", text: "Earlier answer" }],
+      content: [{ type: "output_text", text: "Earlier answer" }],
+    });
+    expect(body.input[1]).toEqual({
+      role: "user",
+      content: [{ type: "input_text", text: "Find current news" }],
     });
     expect(body.tools).toEqual(
       expect.arrayContaining([
@@ -170,6 +174,43 @@ describe("native OpenAI adapter", () => {
         usage: expect.objectContaining({ prompt_tokens: 4, completion_tokens: 2 }),
         model: "openai/gpt-5.6-luna",
       },
+    ]);
+  });
+
+  test("replays multi-turn history with assistant content as output_text", async () => {
+    // Regression: the interview lane 400'd on every turn after the first
+    // ("Invalid value: 'input_text' ... param: input[4].content[0]") because
+    // assistant history was converted with the user-role content type.
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response('data: {"type":"response.completed","response":{"model":"gpt-5.6-luna","usage":{"input_tokens":1,"output_tokens":1}}}\n\n', { status: 200 }),
+    );
+
+    for await (const _ of streamChatOpenAI({
+      model: "openai/gpt-5.6-luna",
+      messages: [
+        { role: "system", content: "You run an interview." },
+        { role: "user", content: "Interview me." },
+        { role: "assistant", content: "Question 1: what do you do?" },
+        { role: "user", content: "I help founders with churn." },
+        { role: "assistant", content: [{ type: "text", text: "Question 2: a defining moment?" }] },
+        { role: "user", content: "We almost shut down in March." },
+      ],
+    })) {
+      // drain the stream
+    }
+
+    const [, request] = fetchMock.mock.calls[0];
+    const body = JSON.parse(String(request?.body));
+    const messageItems = body.input.filter(
+      (item: Record<string, unknown>) => item.role,
+    );
+    expect(messageItems).toEqual([
+      { role: "system", content: [{ type: "input_text", text: "You run an interview." }] },
+      { role: "user", content: [{ type: "input_text", text: "Interview me." }] },
+      { role: "assistant", content: [{ type: "output_text", text: "Question 1: what do you do?" }] },
+      { role: "user", content: [{ type: "input_text", text: "I help founders with churn." }] },
+      { role: "assistant", content: [{ type: "output_text", text: "Question 2: a defining moment?" }] },
+      { role: "user", content: [{ type: "input_text", text: "We almost shut down in March." }] },
     ]);
   });
 

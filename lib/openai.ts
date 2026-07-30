@@ -107,10 +107,15 @@ type ResponsesInputItem = Record<string, unknown>;
 function messageContent(
   message: ChatMessage,
 ): Array<Record<string, unknown>> {
+  // The Responses API rejects `input_text` on assistant input items ("Invalid
+  // value: 'input_text'. Supported values are: 'output_text' and 'refusal'") —
+  // prior assistant turns must be replayed as `output_text`. This 400'd every
+  // multi-turn conversation (e.g. the interview's second question onward).
+  const textType = message.role === "assistant" ? "output_text" : "input_text";
   if (typeof message.content === "string") {
     return [
       {
-        type: "input_text",
+        type: textType,
         text: message.content,
       },
     ];
@@ -119,7 +124,7 @@ function messageContent(
   return message.content.map((block) => {
     if (block.type === "text") {
       return {
-        type: "input_text",
+        type: textType,
         text: block.text,
       };
     }
