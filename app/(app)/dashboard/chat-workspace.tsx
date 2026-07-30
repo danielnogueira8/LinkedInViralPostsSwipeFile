@@ -466,6 +466,9 @@ type ModelSource = {
   postText: string;
   partial: boolean;
   postType: "regular" | "lead_magnet" | null;
+  // Canonical LinkedIn URL of the original post (null for drafts/templates or
+  // when the underlying row is gone). Drives the context card's link icon.
+  postUrl: string | null;
   // Provenance — drives the chip label: 'draft' (the user's own post being
   // refined) reads "Refining your post"; 'template' (a fill-in skeleton) reads
   // "Filling template"; swipe/bookmark read "Modeling after".
@@ -828,6 +831,7 @@ export function ChatWorkspace({
           partial: modelSource.partial,
           postType: modelSource.postType,
           kind: modelSource.kind,
+          postUrl: modelSource.postUrl,
         }
       : null,
   });
@@ -1878,6 +1882,7 @@ export function ChatWorkspace({
           postText: s.post_text,
           partial: !!s.partial,
           postType: s.post_type === "lead_magnet" ? "lead_magnet" : "regular",
+          postUrl: (s.post_url as string | null) ?? null,
           kind:
             s.source === "draft" || s.source === "bookmark" || s.source === "template"
               ? s.source

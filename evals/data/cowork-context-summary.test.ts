@@ -19,6 +19,7 @@ const source: ContextSourcePost = {
   partial: false,
   postType: "lead_magnet",
   kind: "swipe",
+  postUrl: null,
 };
 
 describe("summarizeChatContext", () => {
@@ -90,6 +91,7 @@ describe("summarizeChatContext", () => {
           postText: "A source post that must survive switching chats.",
           partial: false,
           postType: "regular",
+          postUrl: "https://www.linkedin.com/feed/update/urn:li:activity:7427236756741287936/",
         },
       },
     ]);
@@ -100,6 +102,7 @@ describe("summarizeChatContext", () => {
       kind: "swipe",
       authorName: "Ada",
       postText: "A source post that must survive switching chats.",
+      postUrl: "https://www.linkedin.com/feed/update/urn:li:activity:7427236756741287936/",
     });
     expect(isContextSummaryEmpty(summary)).toBe(false);
   });
@@ -122,6 +125,7 @@ describe("summarizeChatContext", () => {
             postText: `Post ${chat}`,
             partial: false,
             postType: "regular" as const,
+            postUrl: null,
           },
         },
       ]);

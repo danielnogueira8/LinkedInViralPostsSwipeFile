@@ -10,6 +10,10 @@ export type ContextSourcePost = {
   partial: boolean;
   postType: "regular" | "lead_magnet" | null;
   kind: "swipe" | "bookmark" | "draft" | "template";
+  // Canonical LinkedIn URL of the original post — null for drafts/templates
+  // (the user's own content, not a LinkedIn post) and for sources whose
+  // underlying post row is gone. Drives the "view on LinkedIn" link icon.
+  postUrl: string | null;
 };
 
 export type CreatorStyleContext = { name: string; creatorName: string | null };
@@ -113,6 +117,7 @@ export function summarizeChatContext(input: {
           partial: persistedModelSource.partial,
           postType: persistedModelSource.postType,
           kind: persistedModelSource.kind,
+          postUrl: persistedModelSource.postUrl,
         }
       : null;
 
