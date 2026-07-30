@@ -5191,6 +5191,7 @@ export function ChatWorkspace({
               <textarea
                 ref={inputRef}
                 value={input}
+                aria-label="Message Cowork"
                 onChange={(e) => {
                   setInput(e.target.value);
                   // A manual edit resets the placeholder-nudge state, so editing
