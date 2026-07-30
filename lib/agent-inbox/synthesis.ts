@@ -13,6 +13,7 @@ import {
   type ToolDef,
 } from "@/lib/openrouter";
 import { wrapUntrustedXml } from "@/lib/agent/untrusted";
+import { truncateAtWordBoundary } from "@/lib/text-truncate";
 
 const TOOL = "report_agent_opportunities";
 const OPPORTUNITY_TOOL: ToolDef = {
@@ -57,11 +58,12 @@ const OPPORTUNITY_TOOL: ToolDef = {
 };
 
 function normalize(value: unknown, max: number): string {
-  return String(value ?? "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, max)
-    .trim();
+  return truncateAtWordBoundary(
+    String(value ?? "")
+      .replace(/\s+/g, " ")
+      .trim(),
+    max,
+  );
 }
 
 export function agentIdeaFingerprint(

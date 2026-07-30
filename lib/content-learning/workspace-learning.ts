@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { truncateAtWordBoundary } from "@/lib/text-truncate";
 import { sanitizeVoiceProfile } from "@/lib/claude";
 import {
   clusterTopicTerms,
@@ -232,15 +233,6 @@ function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
-}
-
-function truncateAtWordBoundary(value: string, max: number): string {
-  if (value.length <= max) return value;
-  const cut = value.slice(0, max);
-  const lastSpace = cut.lastIndexOf(" ");
-  // Only honor the boundary when it keeps most of the budget; otherwise the
-  // word itself is longer than the cap and must be cut.
-  return (lastSpace > max * 0.6 ? cut.slice(0, lastSpace) : cut).trim();
 }
 
 function opening(body: string): string {

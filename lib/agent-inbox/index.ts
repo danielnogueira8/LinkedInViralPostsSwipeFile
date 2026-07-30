@@ -1,4 +1,5 @@
 import { localDateForInstant } from "@/lib/schedule-local-date";
+import { truncateAtWordBoundary } from "@/lib/text-truncate";
 
 export const AGENT_INBOX_LANES = ["now", "proven", "explore"] as const;
 export type AgentInboxLane = (typeof AGENT_INBOX_LANES)[number];
@@ -180,7 +181,10 @@ function ordered(ideas: AgentInboxIdea[]): AgentInboxIdea[] {
 
 function cleanError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
-  return message.replace(/\s+/g, " ").trim().slice(0, 240) || "Unknown failure";
+  return (
+    truncateAtWordBoundary(message.replace(/\s+/g, " ").trim(), 240) ||
+    "Unknown failure"
+  );
 }
 
 export function createAgentInbox(

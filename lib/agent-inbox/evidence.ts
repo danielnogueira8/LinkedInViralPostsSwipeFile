@@ -7,13 +7,34 @@ import type {
   AgentInboxPreferences,
 } from "@/lib/agent-inbox";
 import { searchNews, type NewsResult } from "@/lib/news-search";
+import {
+  firstSentence,
+  truncateAtSentenceBoundary,
+  truncateAtWordBoundary,
+} from "@/lib/text-truncate";
 
 const SENSITIVE_NEWS_RE =
   /\b(?:killed|death|dead|fatal|shooting|war|earthquake|flood|wildfire|hurricane|terror|assault|abuse|tragedy)\b/i;
 
+// Word-boundary cut: these strings land verbatim in the draft prompt, and a
+// raw slice leaves dangling fragments ("…before your content ge").
 function clean(value: unknown, max = 600): string | null {
   if (typeof value !== "string") return null;
-  const result = value.replace(/\s+/g, " ").trim().slice(0, max).trim();
+  const result = truncateAtWordBoundary(
+    value.replace(/\s+/g, " ").trim(),
+    max,
+  );
+  return result || null;
+}
+
+// Prose variant for multi-sentence details: cut at a sentence end so the
+// prompt never shows a thought that stops mid-clause ("…analytics. Here's").
+function cleanProse(value: unknown, max: number): string | null {
+  if (typeof value !== "string") return null;
+  const result = truncateAtSentenceBoundary(
+    value.replace(/\s+/g, " ").trim(),
+    max,
+  );
   return result || null;
 }
 
@@ -133,8 +154,8 @@ function learningEvidence(signals: unknown): AgentInboxEvidence[] {
             typeof signal.sampleSize === "number"
               ? `seen across ${signal.sampleSize} posts`
               : null,
-            clean(signal.representativeExample, 260)
-              ? `example: ${clean(signal.representativeExample, 260)}`
+            cleanProse(signal.representativeExample, 260)
+              ? `example: ${cleanProse(signal.representativeExample, 260)}`
               : null,
           ]
             .filter(Boolean)
@@ -173,11 +194,11 @@ function knowledgeDetail(kind: string, content: unknown): string {
     topic_expertise: ["topic", "basis"],
     prohibition: ["claim", "reason"],
   };
-  return (fields[kind] ?? Object.keys(value))
+  const joined = (fields[kind] ?? Object.keys(value))
     .map((field) => clean(value[field], 500))
     .filter(Boolean)
-    .join(" — ")
-    .slice(0, 900);
+    .join(" — ");
+  return truncateAtWordBoundary(joined, 900);
 }
 
 async function loadLearning(
@@ -238,15 +259,27 @@ async function loadRecentPosts(
     .limit(40);
   if (error) throw error;
   return (data ?? []).flatMap((row) => {
+    const storedTitle = clean(row.title, 240);
+    const flatBody = String(row.body ?? "")
+      .replace(/\s+/g, " ")
+      .trim();
+    const hook = firstSentence(flatBody, 240) || null;
+    // Legacy artifact titles were the body's first 60 chars sliced mid-word
+    // ("…before your content ge"). When the body starts with the stored
+    // title (ignoring its possibly-truncated last word), re-derive the label
+    // from the body's opening sentence so the prompt shows the complete
+    // thought instead of the dangling fragment.
+    const titleStem = storedTitle?.replace(/\s+\S*$/, "") ?? "";
     const label =
-      clean(row.title, 240) ??
-      clean(String(row.body ?? "").split(/\n/, 1)[0], 240);
+      storedTitle && titleStem && flatBody.startsWith(titleStem)
+        ? (hook ?? storedTitle)
+        : (storedTitle ?? hook);
     if (!label) return [];
     return [
       {
         kind: "source_post" as const,
         label,
-        detail: clean(row.body, 500) ?? "",
+        detail: cleanProse(row.body, 500) ?? "",
         ref: String(row.id),
       },
     ];

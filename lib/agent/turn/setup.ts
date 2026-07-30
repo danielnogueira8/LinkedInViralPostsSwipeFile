@@ -99,6 +99,7 @@ import type { ToolResult } from "@/lib/agent/tools";
 import type { NoModelFormat } from "@/lib/agent/no-model-formats";
 import type { NoModelFormatId } from "@/lib/agent/no-model-format-catalog";
 import type { Artifact, AskQuestion } from "@/lib/agent/contracts";
+import { truncateAtWordBoundary } from "@/lib/text-truncate";
 
 import type {
   ChatTurnDependencies,
@@ -1252,7 +1253,10 @@ export async function setupChatTurn(
     coworkTelemetry.configure({ traceId: claimedUserMessageId });
 
     if (chat.title === "New chat") {
-      const title = userText.replace(/\s+/g, " ").slice(0, 60).trim();
+      const title = truncateAtWordBoundary(
+        userText.replace(/\s+/g, " "),
+        60,
+      );
       if (title) {
         let titleUpdate = sbRaw
           .from("chats")
