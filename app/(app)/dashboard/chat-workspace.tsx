@@ -7762,9 +7762,19 @@ function ArtifactCard({
                       ? `${scheduleMediaAttachments.length} attachment${scheduleMediaAttachments.length === 1 ? "" : "s"}`
                       : "Add an image"}
                   </div>
-                  <div className="truncate text-muted-foreground">
-                    {scheduleMediaAttachments.map((item) => item.name).join(", ") || "Optional · saved safely in your media library"}
-                  </div>
+                  {uploadingScheduleImage ? (
+                    // Same beautiful-ui loading pattern as the editor's media
+                    // strip (pixel loader + shimmer label + ticking elapsed),
+                    // instead of the old plain "Uploading…" text.
+                    <TimedLoadingState
+                      label="Uploading image"
+                      className="mt-1 text-xs"
+                    />
+                  ) : (
+                    <div className="truncate text-muted-foreground">
+                      {scheduleMediaAttachments.map((item) => item.name).join(", ") || "Optional · saved safely in your media library"}
+                    </div>
+                  )}
                 </div>
                 <label className="inline-flex h-8 shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-border bg-card px-3 text-xs font-medium hover:bg-muted">
                   {uploadingScheduleImage ? (
