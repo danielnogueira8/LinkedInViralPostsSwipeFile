@@ -112,20 +112,28 @@ function formatDecisionDay(iso: string): string {
   });
 }
 
-function EvidenceChip({ entry }: { entry: AgentInboxEvidence }) {
+function EvidenceChip({
+  entry,
+  onOpen,
+}: {
+  entry: AgentInboxEvidence;
+  onOpen: () => void;
+}) {
   const meta = evidenceKindMeta[entry.kind] ?? evidenceKindMeta.knowledge;
   const Icon = meta.icon;
   return (
-    <span
-      className="inline-flex max-w-full items-center gap-1.5 rounded-lg border bg-muted/50 px-2 py-1 text-xs"
+    <button
+      type="button"
+      className="inline-flex max-w-full items-center gap-1.5 rounded-lg border bg-muted/50 px-2 py-1 text-xs transition-colors hover:border-foreground/30 hover:bg-muted"
       title={entry.detail || entry.label}
+      onClick={onOpen}
     >
       <Icon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
       <span className="shrink-0 font-mono text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
         {meta.tag}
       </span>
       <span className="truncate text-muted-foreground">{entry.label}</span>
-    </span>
+    </button>
   );
 }
 
@@ -160,6 +168,9 @@ function OpportunityCard({
 }) {
   const copy = laneCopy[lane];
   const Icon = copy.icon;
+  // Clicking any evidence chip (or "+N more") opens the full evidence list so
+  // users can read what each source actually says before trusting the idea.
+  const [evidenceOpen, setEvidenceOpen] = useState(false);
   return (
     <article
       className="flex min-h-[28rem] w-[min(86vw,24rem)] shrink-0 snap-center flex-col rounded-[1.75rem] border border-border bg-card p-5 shadow-sm sm:w-auto lg:min-h-[31rem]"
@@ -219,12 +230,20 @@ function OpportunityCard({
           <div className="mt-7 flex-1">
             <div className="flex flex-wrap gap-2">
               {idea.evidence.slice(0, 2).map((entry, index) => (
-                <EvidenceChip key={`${entry.label}-${index}`} entry={entry} />
+                <EvidenceChip
+                  key={`${entry.label}-${index}`}
+                  entry={entry}
+                  onOpen={() => setEvidenceOpen(true)}
+                />
               ))}
               {idea.evidence.length > 2 ? (
-                <span className="inline-flex items-center rounded-lg border border-dashed px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+                <button
+                  type="button"
+                  className="inline-flex items-center rounded-lg border border-dashed px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground transition-colors hover:border-foreground/30 hover:text-foreground"
+                  onClick={() => setEvidenceOpen(true)}
+                >
                   +{idea.evidence.length - 2} more
-                </span>
+                </button>
               ) : null}
             </div>
             <h2 className="mt-4 text-balance text-2xl font-semibold leading-tight">
@@ -301,6 +320,59 @@ function OpportunityCard({
           </div>
         </>
       )}
+      {idea ? (
+        <Dialog open={evidenceOpen} onOpenChange={setEvidenceOpen}>
+          <DialogContent className="sm:max-w-lg">
+            <DialogTitle>What&apos;s behind this idea</DialogTitle>
+            <DialogDescription>
+              The sources your Agent used for &ldquo;{idea.headline}&rdquo;.
+            </DialogDescription>
+            <ul className="mt-4 space-y-4">
+              {idea.evidence.map((entry, index) => {
+                const meta =
+                  evidenceKindMeta[entry.kind] ?? evidenceKindMeta.knowledge;
+                const EntryIcon = meta.icon;
+                return (
+                  <li
+                    key={`${entry.label}-${index}`}
+                    className="rounded-xl border p-3.5"
+                  >
+                    <p className="flex items-center gap-1.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                      <EntryIcon className="size-3.5" aria-hidden />
+                      {meta.full}
+                    </p>
+                    <p className="mt-1.5 text-sm font-medium">{entry.label}</p>
+                    {entry.detail ? (
+                      <p className="mt-1 text-sm leading-5 text-muted-foreground">
+                        {entry.detail}
+                      </p>
+                    ) : null}
+                    <p className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                      {entry.publishedAt ? (
+                        <span>
+                          Published {formatDecisionDay(entry.publishedAt)}
+                        </span>
+                      ) : null}
+                      {entry.ref ? <span>{entry.ref}</span> : null}
+                      {entry.url ? (
+                        <a
+                          href={entry.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 text-foreground underline-offset-4 hover:underline"
+                        >
+                          Read source{" "}
+                          <ExternalLink className="size-3" aria-hidden />
+                        </a>
+                      ) : null}
+                    </p>
+                  </li>
+                );
+              })}
+            </ul>
+          </DialogContent>
+        </Dialog>
+      ) : null}
     </article>
   );
 }
