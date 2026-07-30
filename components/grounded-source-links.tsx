@@ -89,26 +89,40 @@ function SourceChip({ href, label }: { href: string; label: string }) {
 
 const VISIBLE_SOURCES = 3;
 
-// Sliding-window carousel of source cards: always shows up to three cards and
-// each prev/next step moves the window by ONE card — never a page-sized jump —
-// so a trailing partial page can never leave empty slots. The window wraps at
-// the ends (last → first). Controls only render when the window can move.
+// The circular window of up to `size` cards whose leading card is `start`:
+// indices wrap around the end of the list, so the carousel loops infinitely
+// (e.g. start 4 of 5 shows cards 4, 0, 1). Assumes start < items.length.
+export function circularWindow<T>(
+  items: T[],
+  start: number,
+  size: number,
+): T[] {
+  const count = items.length;
+  return Array.from(
+    { length: Math.min(size, count) },
+    (_, i) => items[(start + i) % count],
+  );
+}
+
+// Infinite-loop carousel of source cards: always shows up to three cards and
+// each prev/next step shifts the window by ONE card — the middle card moves to
+// the left slot, the leading card wraps to the back — so it loops forever
+// instead of dead-ending or paging. Controls only render when more cards exist
+// than fit (4+).
 function SourceCarousel({ cards }: { cards: CitedPost[] }) {
   const [start, setStart] = useState(0);
   const count = cards.length;
-  const maxStart = Math.max(0, count - VISIBLE_SOURCES);
   const canMove = count > VISIBLE_SOURCES;
   // Clamp at render time (like DocumentLightbox) rather than via an effect, so
   // a shrunk card set — e.g. streaming cites that rehydrate to fewer cards —
   // can never index out of bounds and crash the cards below.
-  const safeStart = Math.min(start, maxStart);
-  const visibleCards = cards.slice(safeStart, safeStart + VISIBLE_SOURCES);
-  const lastVisible = safeStart + visibleCards.length;
+  const safeStart = Math.min(start, Math.max(0, count - 1));
+  const visibleCards = circularWindow(cards, safeStart, VISIBLE_SOURCES);
+  const lastVisible = ((safeStart + visibleCards.length - 1) % count) + 1;
   const go = (delta: number) =>
     setStart((current) => {
-      const clamped = Math.min(current, maxStart);
-      if (delta > 0) return clamped >= maxStart ? 0 : clamped + 1;
-      return clamped <= 0 ? maxStart : clamped - 1;
+      const clamped = Math.min(current, Math.max(0, count - 1));
+      return (((clamped + delta) % count) + count) % count;
     });
 
   if (count === 0) return null;
@@ -137,7 +151,7 @@ function SourceCarousel({ cards }: { cards: CitedPost[] }) {
               <ChevronLeft className="h-4 w-4" aria-hidden />
             </button>
             <div className="flex items-center gap-1.5" aria-hidden>
-              {Array.from({ length: maxStart + 1 }, (_, windowStart) => (
+              {Array.from({ length: count }, (_, windowStart) => (
                 <button
                   key={`source-window-${windowStart}`}
                   type="button"
