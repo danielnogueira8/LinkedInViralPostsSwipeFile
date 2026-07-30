@@ -321,6 +321,50 @@ async function topicQuery(
   return `${[...new Set(topics)].join(" OR ")} latest announcements, product changes, research, and industry developments`;
 }
 
+// The niche query above can only ever return trade press, because every path
+// that fills `topics` resolves to the user's own field and the trailing clause
+// pins it to industry developments. That makes the strongest newsjacking
+// framing structurally unreachable: the event a post borrows attention from
+// usually is NOT niche news — it is a moment the whole audience already has an
+// opinion about (a final, an awards night, a film, a platform change everyone
+// is arguing about). Adapting it to the niche is the creative work; finding it
+// is not something a niche-scoped search can do.
+//
+// So this runs as a SECOND, deliberately niche-free search. It carries no
+// workspace terms at all, which is also why it caches well: every workspace
+// normalizes to the same cluster key, so the whole product pays for one search
+// per 12-hour window rather than one per workspace.
+//
+// Deliberately excluded: politics, crime, disaster, and conflict. Those are
+// culturally loud and are exactly the events where borrowing attention reads
+// as opportunistic. SENSITIVE_NEWS_RE still filters results defensively, but
+// not asking is better than filtering after the fact.
+const CULTURAL_MOMENT_QUERY =
+  "major sports finals, awards shows, entertainment releases, and widely discussed technology or internet culture moments this week";
+
+export function culturalMomentQuery(): string {
+  return CULTURAL_MOMENT_QUERY;
+}
+
+// Two pools can legitimately surface the same story — a platform change is
+// both industry news and a moment everyone is discussing. Without this the
+// synthesizer would see one article twice and could build two cards on it,
+// the exact duplicate-pitch problem the source guard exists to prevent.
+// First occurrence wins, so the niche pool keeps precedence.
+export function dedupeNewsEvidence(
+  entries: AgentInboxEvidence[],
+): AgentInboxEvidence[] {
+  const seen = new Set<string>();
+  const out: AgentInboxEvidence[] = [];
+  for (const entry of entries) {
+    const key = entry.url ?? entry.ref ?? entry.label;
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(entry);
+  }
+  return out;
+}
+
 // A news story already pitched in the last few days must not come back as a
 // "fresh" opportunity — nothing makes the agent feel dumber than re-offering
 // the same article every morning. Matches the news eligibility window
@@ -372,24 +416,38 @@ export function createAgentInboxEvidenceLoader(db: SupabaseClient) {
           knowledge,
         )
       : null;
-    const news = input.missingLanes.includes("now")
-      ? await sharedNews(
-          db,
-          query,
-          input.workspaceId,
-          input.now,
-          input.preferences,
-        ).catch((error) => {
-          // Timely discovery is additive. A search-provider outage must not
-          // prevent the evidence already in this Workspace from producing the
-          // Proven and Explore lanes.
-          console.error("[agent-inbox:news]", {
-            workspaceId: input.workspaceId,
-            message: error instanceof Error ? error.message : "Search failed",
-          });
-          return [];
-        })
-      : [];
+    // Timely discovery is additive. A search-provider outage must not prevent
+    // the evidence already in this Workspace from producing the other lanes,
+    // and one failing query must not take the other down with it — so each
+    // search absorbs its own failure.
+    const searchNewsPool = (label: string, poolQuery: string | null) =>
+      sharedNews(
+        db,
+        poolQuery,
+        input.workspaceId,
+        input.now,
+        input.preferences,
+      ).catch((error) => {
+        console.error("[agent-inbox:news]", {
+          workspaceId: input.workspaceId,
+          query: label,
+          message: error instanceof Error ? error.message : "Search failed",
+        });
+        return [] as AgentInboxEvidence[];
+      });
+    // Niche trade press and culturally-relevant moments are two different
+    // pools, searched in parallel. The cultural one has no workspace terms, so
+    // it is the same cluster key for everyone and is usually a cache read.
+    const [nicheNews, culturalNews] = input.missingLanes.includes("now")
+      ? await Promise.all([
+          searchNewsPool("niche", query),
+          searchNewsPool("cultural", culturalMomentQuery()),
+        ])
+      : [[], []];
+    // Niche first: when both pools return, a story from the user's own field
+    // is the safer opening, and the cultural pool is the one that widens what
+    // is reachable rather than replacing what already worked.
+    const news = dedupeNewsEvidence([...nicheNews, ...culturalNews]);
     const freshNews = news.length
       ? await (async () => {
           const used = await loadUsedNewsSources(
