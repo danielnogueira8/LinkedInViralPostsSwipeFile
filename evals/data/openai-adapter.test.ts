@@ -313,4 +313,131 @@ describe("native OpenAI adapter", () => {
       { type: "output_text", text: "A chart." },
     ]);
   });
+
+  // Regression: app-internal bookkeeping markers (`_turn_operation`,
+  // `_model_source_attached`, …) are persisted onto chat rows as synthetic
+  // tool_calls that no tool ever answers. Replaying one returned
+  //   400 No tool output found for function call _turn_operation.
+  // Chat Completions tolerates an unanswered call, so this was invisible on
+  // OpenRouter and only surfaced once a turn replayed history — the interview.
+  test("drops persisted marker tool calls from the replayed transcript", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        output: [
+          { type: "message", content: [{ type: "output_text", text: "ok" }] },
+        ],
+        usage: { input_tokens: 1, output_tokens: 1 },
+      }),
+    );
+
+    await completeChatOpenAI({
+      model: "openai/gpt-5.6-luna",
+      messages: [
+        { role: "user", content: "Start the interview." },
+        {
+          role: "assistant",
+          content: "What does your team sell?",
+          tool_calls: [
+            {
+              id: "_turn_operation",
+              type: "function",
+              function: {
+                name: "_turn_operation",
+                arguments: '{"version":1,"kind":"ask"}',
+              },
+            },
+          ],
+        },
+        { role: "user", content: "Analytics for B2B SaaS." },
+      ],
+    });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(
+      body.input.filter(
+        (item: { type?: string }) => item.type === "function_call",
+      ),
+    ).toEqual([]);
+    // The assistant's prose still replays — only the marker is dropped.
+    expect(body.input.map((item: { role?: string }) => item.role)).toEqual([
+      "user",
+      "assistant",
+      "user",
+    ]);
+  });
+
+  test("still replays a real tool call paired with its output", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        output: [
+          { type: "message", content: [{ type: "output_text", text: "ok" }] },
+        ],
+        usage: { input_tokens: 1, output_tokens: 1 },
+      }),
+    );
+
+    await completeChatOpenAI({
+      model: "openai/gpt-5.6-luna",
+      messages: [
+        { role: "user", content: "Search for it." },
+        {
+          role: "assistant",
+          content: "",
+          tool_calls: [
+            {
+              id: "call_real_1",
+              type: "function",
+              function: { name: "search", arguments: '{"q":"x"}' },
+            },
+          ],
+        },
+        { role: "tool", tool_call_id: "call_real_1", content: "3 results" },
+      ],
+    });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(
+      body.input.filter((item: { type?: string }) =>
+        item.type?.startsWith("function_call"),
+      ),
+    ).toEqual([
+      {
+        type: "function_call",
+        call_id: "call_real_1",
+        name: "search",
+        arguments: '{"q":"x"}',
+      },
+      { type: "function_call_output", call_id: "call_real_1", output: "3 results" },
+    ]);
+  });
+
+  test("drops a tool result whose originating call is gone from history", async () => {
+    // The mirror 400: the Responses API rejects an unmatched
+    // `function_call_output` just as it rejects an unanswered call. A pruned
+    // or compacted transcript can leave a tool row behind on its own.
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        output: [
+          { type: "message", content: [{ type: "output_text", text: "ok" }] },
+        ],
+        usage: { input_tokens: 1, output_tokens: 1 },
+      }),
+    );
+
+    await completeChatOpenAI({
+      model: "openai/gpt-5.6-luna",
+      messages: [
+        { role: "tool", tool_call_id: "call_orphaned", content: "stale" },
+        { role: "user", content: "Continue." },
+      ],
+    });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(
+      body.input.filter((item: { type?: string }) =>
+        item.type?.startsWith("function_call"),
+      ),
+    ).toEqual([]);
+    expect(body.input).toHaveLength(1);
+  });
 });

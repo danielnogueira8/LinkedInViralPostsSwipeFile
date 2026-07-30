@@ -162,10 +162,33 @@ function messageContent(
   });
 }
 
+// App-internal bookkeeping markers are persisted onto chat rows as synthetic
+// `tool_calls` (`_turn_operation`, `_model_source_attached`, `_lead_magnet_
+// selected`, …). No tool ever runs for them, so no result is ever produced.
+//
+// Chat Completions tolerates an unanswered tool call, which is why this was
+// invisible on OpenRouter. The Responses API does not: every `function_call`
+// must be followed by a `function_call_output`, so replaying one 400s with
+//   No tool output found for function call _turn_operation.
+// The whole family shares the leading-underscore convention, so filter on that
+// rather than enumerating nine names that would drift out of sync.
+function isPersistedMarkerCall(call: { function: { name: string } }): boolean {
+  return call.function.name.startsWith("_");
+}
+
 function responsesInput(messages: ChatMessage[]): ResponsesInputItem[] {
   const input: ResponsesInputItem[] = [];
+  // The pairing runs both ways: the Responses API rejects a `function_call`
+  // with no output AND a `function_call_output` with no call. Emitting an
+  // output only for a call we actually kept covers the marker case above and
+  // any history where a tool row outlived its call (a pruned or compacted
+  // transcript), instead of trading one 400 for its mirror image.
+  const emittedCallIds = new Set<string>();
   for (const message of messages) {
     if (message.role === "tool") {
+      if (!message.tool_call_id || !emittedCallIds.has(message.tool_call_id)) {
+        continue;
+      }
       input.push({
         type: "function_call_output",
         call_id: message.tool_call_id,
@@ -181,6 +204,8 @@ function responsesInput(messages: ChatMessage[]): ResponsesInputItem[] {
       input.push({ role: message.role, content });
     }
     for (const toolCall of message.tool_calls ?? []) {
+      if (isPersistedMarkerCall(toolCall)) continue;
+      emittedCallIds.add(toolCall.id);
       input.push({
         type: "function_call",
         call_id: toolCall.id,
