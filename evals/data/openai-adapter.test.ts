@@ -84,9 +84,15 @@ describe("native OpenAI adapter", () => {
     expect(body.store).toBe(false);
     expect(body.reasoning).toEqual({ effort: "low" });
     expect(body.prompt_cache_options).toEqual({ mode: "explicit" });
+    // An assistant turn replayed as history must carry `output_text`; the
+    // Responses API rejects `input_text` on the assistant role outright.
     expect(body.input[0]).toEqual({
       role: "assistant",
-      content: [{ type: "input_text", text: "Earlier answer" }],
+      content: [{ type: "output_text", text: "Earlier answer" }],
+    });
+    expect(body.input[1]).toEqual({
+      role: "user",
+      content: [{ type: "input_text", text: "Find current news" }],
     });
     expect(body.tools).toEqual(
       expect.arrayContaining([
@@ -219,5 +225,92 @@ describe("native OpenAI adapter", () => {
     expect(request?.headers).toEqual({
       Authorization: "Bearer test-openai-key",
     });
+  });
+
+  // Regression: the interview lane accumulates a multi-turn transcript, so
+  // every turn after the first replays an assistant message. Stamping
+  // `input_text` on it returned
+  //   400 Invalid value: 'input_text'. Supported values are: 'output_text'
+  //   and 'refusal'  (param: input[N].content[0])
+  // A single-turn call never hits it, which is why this only showed up in
+  // the interview and only after the opening exchange.
+  test("types replayed content blocks by role across a multi-turn transcript", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        output: [
+          { type: "message", content: [{ type: "output_text", text: "ok" }] },
+        ],
+        usage: { input_tokens: 1, output_tokens: 1 },
+      }),
+    );
+
+    await completeChatOpenAI({
+      model: "openai/gpt-5.6-luna",
+      messages: [
+        { role: "system", content: "You interview the user." },
+        { role: "user", content: "Ready." },
+        { role: "assistant", content: "What does your team sell?" },
+        { role: "user", content: "Analytics for B2B SaaS." },
+        { role: "assistant", content: "Who is the buyer?" },
+        { role: "user", content: "Heads of growth." },
+      ],
+    });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    const typesByRole = body.input.map(
+      (item: { role: string; content: Array<{ type: string }> }) => [
+        item.role,
+        item.content[0].type,
+      ],
+    );
+    expect(typesByRole).toEqual([
+      ["system", "input_text"],
+      ["user", "input_text"],
+      ["assistant", "output_text"],
+      ["user", "input_text"],
+      ["assistant", "output_text"],
+      ["user", "input_text"],
+    ]);
+  });
+
+  test("keeps input-only media blocks off assistant turns", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        output: [
+          { type: "message", content: [{ type: "output_text", text: "ok" }] },
+        ],
+        usage: { input_tokens: 1, output_tokens: 1 },
+      }),
+    );
+
+    await completeChatOpenAI({
+      model: "openai/gpt-5.6-luna",
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "What is in this?" },
+            { type: "image_url", image_url: { url: "https://x.test/a.png" } },
+          ],
+        },
+        {
+          role: "assistant",
+          content: [
+            { type: "text", text: "A chart." },
+            // `input_image` is input-only; it must not be replayed here.
+            { type: "image_url", image_url: { url: "https://x.test/a.png" } },
+          ],
+        },
+      ],
+    });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(body.input[0].content).toEqual([
+      { type: "input_text", text: "What is in this?" },
+      { type: "input_image", image_url: "https://x.test/a.png", detail: "auto" },
+    ]);
+    expect(body.input[1].content).toEqual([
+      { type: "output_text", text: "A chart." },
+    ]);
   });
 });
