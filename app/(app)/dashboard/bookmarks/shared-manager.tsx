@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { invalidateNavBadges } from "../nav-badges";
+import { LoadingState } from "@/components/ui/loading-state";
 
 // Manages "your bookmarks library is shared with N people" + "N people
 // shared their library with you". Single modal so the user sees both
@@ -269,9 +270,8 @@ export function SharedBookmarksManager({
           </DialogHeader>
 
           {loading && !loaded && (
-            <div className="rounded-xl border border-border/70 bg-muted/30 p-4 text-sm text-muted-foreground">
-              <Loader2 className="mr-2 inline h-4 w-4 animate-spin" />
-              Loading sharing details…
+            <div className="rounded-xl border border-border/70 bg-muted/30 p-4">
+              <LoadingState label="Loading sharing details" />
             </div>
           )}
 

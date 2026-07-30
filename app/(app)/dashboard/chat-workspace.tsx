@@ -256,7 +256,7 @@ const DraftEditor = dynamic(
   {
     loading: () => (
       <div className="min-h-[15rem] rounded-2xl border border-border bg-card/70 p-3">
-        <div className="mb-3 h-8 w-56 animate-pulse rounded-full bg-muted" />
+        <TimedLoadingState label="Opening editor" className="mb-3" />
         <div className="space-y-2">
           <div className="h-4 w-full animate-pulse rounded bg-muted" />
           <div className="h-4 w-11/12 animate-pulse rounded bg-muted" />
@@ -8387,9 +8387,8 @@ const STARTER_LAYOUT = partitionCoworkStarters(STARTERS);
 // new/empty chat during the load gap after a sidebar click).
 function ChatLoading() {
   return (
-    <div className="h-full flex flex-col items-center justify-center text-center gap-3 px-6">
-      <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-      <p className="text-sm text-muted-foreground">Loading chat…</p>
+    <div className="flex h-full items-center justify-center px-6">
+      <TimedLoadingState label="Loading chat" />
     </div>
   );
 }

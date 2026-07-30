@@ -14,6 +14,7 @@ import {
   type WorkspaceLearningSignalView,
   type WorkspaceLearningSummaryView,
 } from "@/lib/content-learning/workspace-learning-presentation";
+import { TimedLoadingState } from "@/components/ui/timed-loading-state";
 
 const CATEGORY_DETAILS: Record<
   WorkspaceLearningDisplayKind,
@@ -89,6 +90,10 @@ export function AgentWorkingSummary() {
         aria-busy="true"
         className="mt-6 rounded-2xl border border-border bg-background p-4"
       >
+        <TimedLoadingState
+          label="Analyzing what's working for you"
+          className="mb-3"
+        />
         <div className="h-4 w-44 animate-pulse rounded bg-muted" />
         <div className="mt-3 grid gap-3 md:grid-cols-3">
           {WORKSPACE_LEARNING_DISPLAY_KINDS.map((category) => (

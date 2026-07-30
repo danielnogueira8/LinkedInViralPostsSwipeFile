@@ -9,6 +9,7 @@ import type {
   ContentOutcome,
   ContentOutcomeKind,
 } from "@/lib/content-learning/contracts";
+import { LoadingState } from "@/components/ui/loading-state";
 
 const OUTCOME_OPTIONS: Array<{
   value: ContentOutcomeKind;
@@ -307,10 +308,7 @@ export function PostOutcomes({ draftId }: { draftId: string }) {
 
       <div className="mt-3 space-y-2" aria-live="polite">
         {loading ? (
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            Loading outcomes…
-          </div>
+          <LoadingState label="Loading outcomes" className="text-xs" />
         ) : loadFailed ? (
           <p className="text-xs text-state-danger">
             Couldn&apos;t load outcomes. Reopen this post to try again.
