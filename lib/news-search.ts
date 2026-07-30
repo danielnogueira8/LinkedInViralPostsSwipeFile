@@ -55,9 +55,13 @@ export const NEWS_MAX_AGE_DAYS = (() => {
   return Number.isFinite(n) && n > 0 ? n : 14;
 })();
 
-// How many web results the plugin fetches (Exa bills per result: $4/1k, so 5
-// results ≈ $0.02/search). Also the max stories returned to the agent.
-export const NEWS_MAX_RESULTS = 5;
+// How many web results the plugin fetches (Exa bills per result: $4/1k, so 3
+// results ≈ $0.012/search). Also the max stories returned to the agent.
+// 3, not 5: the Exa fee and the injected page-content tokens (the bulk of the
+// discovery call's input) scale per result, and a 2026-07-30 review of
+// agent_news_pool showed searches almost never fill even 4 usable slots —
+// the 4th/5th story never fed an agent idea, so the extra spend bought nothing.
+export const NEWS_MAX_RESULTS = 3;
 
 // News search is a grounded-discovery + structured-normalization pipeline that
 // relies on OpenRouter's NATIVE web search, which only a
