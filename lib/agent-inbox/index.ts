@@ -4,6 +4,10 @@ import { truncateAtWordBoundary } from "@/lib/text-truncate";
 export const AGENT_INBOX_LANES = ["now", "proven", "explore"] as const;
 export type AgentInboxLane = (typeof AGENT_INBOX_LANES)[number];
 
+// Up to three active ideas per lane — quality-gated, so a lane may hold
+// fewer when the evidence is weak. Never pad a lane to reach this cap.
+export const AGENT_INBOX_ACTIVE_PER_LANE = 3;
+
 export const AGENT_INBOX_STATUSES = [
   "active",
   "acted",
@@ -213,9 +217,13 @@ export function createAgentInbox(
       }
       await repository.releaseDueSnoozed(workspaceId, now);
       const retained = ordered(await repository.readActive(workspaceId, now));
-      const occupied = new Set(retained.map((entry) => entry.lane));
+      const activeCounts = new Map<AgentInboxLane, number>();
+      for (const entry of retained) {
+        activeCounts.set(entry.lane, (activeCounts.get(entry.lane) ?? 0) + 1);
+      }
       let missingLanes = AGENT_INBOX_LANES.filter(
-        (lane) => !occupied.has(lane),
+        (lane) =>
+          (activeCounts.get(lane) ?? 0) < AGENT_INBOX_ACTIVE_PER_LANE,
       );
       if (missingLanes.length === 0) {
         return { created: [], retained, skipped: "full" };
@@ -263,14 +271,23 @@ export function createAgentInbox(
                 preferences,
                 now,
               });
-        const allowed = new Set(missingLanes);
+        // Each missing lane keeps only its remaining open slots: lanes that
+        // already hold active ideas top up, they never overflow the cap.
+        const openSlots = new Map(
+          missingLanes.map((lane) => [
+            lane,
+            AGENT_INBOX_ACTIVE_PER_LANE - (activeCounts.get(lane) ?? 0),
+          ]),
+        );
         const accepted: GeneratedAgentInboxIdea[] = [];
+        const acceptedCounts = new Map<AgentInboxLane, number>();
         const seen = new Set(recentFingerprints);
         for (const candidate of generated) {
+          const remaining = openSlots.get(candidate.lane);
           if (
-            !allowed.has(candidate.lane) ||
+            remaining === undefined ||
             seen.has(candidate.fingerprint) ||
-            accepted.some((entry) => entry.lane === candidate.lane)
+            (acceptedCounts.get(candidate.lane) ?? 0) >= remaining
           ) {
             continue;
           }
@@ -281,6 +298,10 @@ export function createAgentInbox(
             continue;
           }
           seen.add(candidate.fingerprint);
+          acceptedCounts.set(
+            candidate.lane,
+            (acceptedCounts.get(candidate.lane) ?? 0) + 1,
+          );
           accepted.push(candidate);
         }
 

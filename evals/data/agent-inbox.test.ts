@@ -144,26 +144,54 @@ function synthesis(): AgentInboxSynthesis {
   };
 }
 
+function multiSynthesis(ideasPerLane: number): AgentInboxSynthesis {
+  return {
+    async synthesize({ lanes, evidence }) {
+      return lanes.flatMap((lane) =>
+        Array.from({ length: ideasPerLane }, (_, index) => ({
+          lane,
+          headline: `${lane} generated ${index + 1}`,
+          angle: `A distinct ${lane} angle ${index + 1}`,
+          why: [`Evidence for ${lane}`],
+          evidence: lane === "now" ? evidence.news : [],
+          sourceKind: lane === "now" ? "news" : "workspace_learning",
+          sourceRef: null,
+          sourceUrl: null,
+          sourceTitle: null,
+          sourcePublishedAt: null,
+          score: 0.85,
+          fingerprint: `${lane}-new-${index + 1}`,
+          expiresAt: null,
+        })),
+      );
+    },
+  };
+}
+
+const NEWS_EVIDENCE = {
+  news: [
+    {
+      kind: "news" as const,
+      label: "Fresh announcement",
+      detail: "A verified story",
+      url: "https://example.com/story",
+      publishedAt: "2026-07-30",
+    },
+  ],
+  learning: [],
+  knowledge: [],
+};
+
+const NO_EVIDENCE = { news: [], learning: [], knowledge: [] };
+
 describe("AgentInbox", () => {
-  test("replenishes only empty lanes and preserves ideas the user has not handled", async () => {
+  test("tops up lanes below capacity and preserves ideas the user has not handled", async () => {
     const existing = idea("proven");
     const repo = repository([existing]);
     const inbox = createAgentInbox({
       repository: repo,
       synthesis: synthesis(),
-      loadEvidence: async () => ({
-        news: [
-          {
-            kind: "news",
-            label: "Fresh announcement",
-            detail: "A verified story",
-            url: "https://example.com/story",
-            publishedAt: "2026-07-30",
-          },
-        ],
-        learning: [],
-        knowledge: [],
-      }),
+      loadEvidence: async () => NEWS_EVIDENCE,
     });
 
     const result = await inbox.replenish({
@@ -174,12 +202,13 @@ describe("AgentInbox", () => {
 
     expect(result.created.map((entry) => entry.lane)).toEqual([
       "now",
+      "proven",
       "explore",
     ]);
     expect(repo.ideas.find((entry) => entry.id === existing.id)).toBe(existing);
     expect(
       repo.ideas.filter((entry) => entry.status === "active"),
-    ).toHaveLength(3);
+    ).toHaveLength(4);
   });
 
   test("runs at most once per workspace local day", async () => {
@@ -252,7 +281,7 @@ describe("AgentInbox", () => {
     expect(state.activity[0]?.status).toBe("acted");
   });
 
-  test("a due snoozed idea returns before a replacement is considered", async () => {
+  test("a due snoozed idea returns and its lane tops up around it", async () => {
     const snoozed = idea("explore", {
       status: "snoozed",
       snoozedUntil: "2026-07-30T07:00:00.000Z",
@@ -261,7 +290,154 @@ describe("AgentInbox", () => {
     const inbox = createAgentInbox({
       repository: repo,
       synthesis: synthesis(),
-      loadEvidence: async () => ({ news: [], learning: [], knowledge: [] }),
+      loadEvidence: async () => NO_EVIDENCE,
+    });
+
+    const result = await inbox.replenish({
+      workspaceId: "workspace-1",
+      now: NOW,
+      timezone: "UTC",
+    });
+
+    expect(result.created.map((entry) => entry.lane)).toEqual([
+      "proven",
+      "explore",
+    ]);
+    expect(snoozed.status).toBe("active");
+  });
+
+  test("reports full only when every lane holds three active ideas", async () => {
+    const repo = repository(
+      (["now", "proven", "explore"] as const).flatMap((lane) =>
+        [1, 2, 3].map((index) =>
+          idea(lane, {
+            id: `${lane}-${index}`,
+            fingerprint: `${lane}-fingerprint-${index}`,
+          }),
+        ),
+      ),
+    );
+    let syntheses = 0;
+    const inbox = createAgentInbox({
+      repository: repo,
+      synthesis: {
+        async synthesize(input) {
+          syntheses += 1;
+          return synthesis().synthesize(input);
+        },
+      },
+      loadEvidence: async () => NEWS_EVIDENCE,
+    });
+
+    const result = await inbox.replenish({
+      workspaceId: "workspace-1",
+      now: NOW,
+      timezone: "UTC",
+    });
+
+    expect(result).toMatchObject({ skipped: "full", created: [] });
+    expect(result.retained).toHaveLength(9);
+    expect(syntheses).toBe(0);
+  });
+
+  test("accepts three ideas for a lane when evidence supports them", async () => {
+    const repo = repository();
+    const inbox = createAgentInbox({
+      repository: repo,
+      synthesis: multiSynthesis(3),
+      loadEvidence: async () => NEWS_EVIDENCE,
+    });
+
+    const result = await inbox.replenish({
+      workspaceId: "workspace-1",
+      now: NOW,
+      timezone: "UTC",
+    });
+
+    expect(result.created).toHaveLength(9);
+    for (const lane of ["now", "proven", "explore"] as const) {
+      expect(
+        result.created.filter((entry) => entry.lane === lane),
+      ).toHaveLength(3);
+    }
+  });
+
+  test("caps a lane at three ideas even when synthesis returns more", async () => {
+    const repo = repository();
+    const inbox = createAgentInbox({
+      repository: repo,
+      synthesis: multiSynthesis(5),
+      loadEvidence: async () => NEWS_EVIDENCE,
+    });
+
+    const result = await inbox.replenish({
+      workspaceId: "workspace-1",
+      now: NOW,
+      timezone: "UTC",
+    });
+
+    expect(result.created).toHaveLength(9);
+    for (const lane of ["now", "proven", "explore"] as const) {
+      expect(
+        result.created.filter((entry) => entry.lane === lane),
+      ).toHaveLength(3);
+    }
+  });
+
+  test("tops up a lane with two active ideas by exactly one more", async () => {
+    const repo = repository([
+      idea("proven", { id: "proven-1", fingerprint: "proven-fp-1" }),
+      idea("proven", { id: "proven-2", fingerprint: "proven-fp-2" }),
+    ]);
+    const inbox = createAgentInbox({
+      repository: repo,
+      synthesis: multiSynthesis(3),
+      loadEvidence: async () => NO_EVIDENCE,
+    });
+
+    const result = await inbox.replenish({
+      workspaceId: "workspace-1",
+      now: NOW,
+      timezone: "UTC",
+    });
+
+    expect(result.created.filter((entry) => entry.lane === "proven"))
+      .toHaveLength(1);
+    expect(result.created.filter((entry) => entry.lane === "explore"))
+      .toHaveLength(3);
+    expect(
+      repo.ideas.filter(
+        (entry) => entry.lane === "proven" && entry.status === "active",
+      ),
+    ).toHaveLength(3);
+  });
+
+  test("accepts a single idea for a lane without padding to the cap", async () => {
+    const repo = repository();
+    const inbox = createAgentInbox({
+      repository: repo,
+      synthesis: {
+        async synthesize() {
+          return [
+            {
+              lane: "proven" as const,
+              headline: "One strong proven idea",
+              angle: "The only angle the evidence supports",
+              why: ["Grounded in the user's results"],
+              evidence: [],
+              sourceKind: "workspace_learning" as const,
+              sourceRef: null,
+              sourceUrl: null,
+              sourceTitle: null,
+              sourcePublishedAt: null,
+              score: 0.9,
+              fingerprint: "proven-only",
+              expiresAt: null,
+            },
+          ];
+        },
+      },
+      loadEvidence: async () => NO_EVIDENCE,
     });
 
     const result = await inbox.replenish({
@@ -271,6 +447,5 @@ describe("AgentInbox", () => {
     });
 
     expect(result.created.map((entry) => entry.lane)).toEqual(["proven"]);
-    expect(snoozed.status).toBe("active");
   });
 });
