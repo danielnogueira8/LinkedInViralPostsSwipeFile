@@ -64,6 +64,115 @@ export function Reveal({
   );
 }
 
+/* Interactive hero dot grid (reactbits DotGrid): a brighter copy of the dot
+   field wakes up in a small radius around the cursor. The effect is pure CSS
+   masking — this component only feeds --grid-x/y and data-active. Pointer
+   tracking is skipped entirely on touch devices and under reduced motion, so
+   the grid stays static in both cases. */
+export function DotGridField() {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    const section = el?.parentElement;
+    if (!el || !section) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    if (window.matchMedia("(pointer: coarse)").matches) return;
+    let raf = 0;
+    const onMove = (e: PointerEvent) => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        const rect = el.getBoundingClientRect();
+        el.style.setProperty("--grid-x", `${e.clientX - rect.left}px`);
+        el.style.setProperty("--grid-y", `${e.clientY - rect.top}px`);
+        el.dataset.active = "true";
+      });
+    };
+    const onLeave = () => {
+      cancelAnimationFrame(raf);
+      el.dataset.active = "false";
+    };
+    section.addEventListener("pointermove", onMove);
+    section.addEventListener("pointerleave", onLeave);
+    return () => {
+      cancelAnimationFrame(raf);
+      section.removeEventListener("pointermove", onMove);
+      section.removeEventListener("pointerleave", onLeave);
+    };
+  }, []);
+  return <div ref={ref} aria-hidden="true" className="hero-dot-grid absolute inset-0" />;
+}
+
+/* Word-by-word blur entrance for the hero headline (reactbits BlurText).
+   Each word rises out of a blur with a small stagger; the h1 keeps its
+   text-balance wrapping because words stay inline-level with real space text
+   nodes between them. Under reduced motion the CSS animation is disabled and
+   the words render statically. */
+export function BlurWords({
+  text,
+  baseDelay = 0,
+  step = 45,
+}: {
+  text: string;
+  baseDelay?: number;
+  step?: number;
+}) {
+  const parts: React.ReactNode[] = [];
+  text.split(" ").forEach((word, i) => {
+    if (i > 0) parts.push(" ");
+    parts.push(
+      <span
+        key={i}
+        className="blur-word"
+        style={{ "--reveal-delay": `${baseDelay + i * step}ms` } as React.CSSProperties}
+      >
+        {word}
+      </span>,
+    );
+  });
+  return <>{parts}</>;
+}
+
+/* Subtle magnetic pull on primary CTAs (reactbits Magnet): the button drifts
+   a few px toward the cursor and eases back on leave. Hover-activated only —
+   no proximity field — and skipped on touch and under reduced motion. */
+export function Magnetic({
+  children,
+  className = "",
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const onMouseMove = (e: React.MouseEvent) => {
+    const el = ref.current;
+    if (!el) return;
+    if (
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches ||
+      window.matchMedia("(pointer: coarse)").matches
+    ) {
+      return;
+    }
+    const rect = el.getBoundingClientRect();
+    const dx = e.clientX - (rect.left + rect.width / 2);
+    const dy = e.clientY - (rect.top + rect.height / 2);
+    el.style.transform = `translate(${dx * 0.18}px, ${dy * 0.28}px)`;
+  };
+  const onMouseLeave = () => {
+    const el = ref.current;
+    if (el) el.style.transform = "";
+  };
+  return (
+    <div
+      ref={ref}
+      onMouseMove={onMouseMove}
+      onMouseLeave={onMouseLeave}
+      className={`magnetic ${className}`}
+    >
+      {children}
+    </div>
+  );
+}
+
 /* Counts up from zero the first time it scrolls into view. */
 export function CountUp({ value }: { value: number }) {
   const reduced = usePrefersReducedMotion();

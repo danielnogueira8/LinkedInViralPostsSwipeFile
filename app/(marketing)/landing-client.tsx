@@ -22,7 +22,10 @@ import { AiIcon } from "@/components/ai-icon";
 import type { LandingStats, LandingTopCreator } from "@/lib/landing-stats";
 import {
   AgentTrace,
+  BlurWords,
   CountUp,
+  DotGridField,
+  Magnetic,
   Reveal,
   RotatingPhrases,
   SpotlightCard,
@@ -89,13 +92,15 @@ const AGENT_ROSTER = [
 
 function PrimaryLink({ children }: { children: React.ReactNode }) {
   return (
-    <Link
-      href="/sign-up"
-      className="group inline-flex h-11 items-center justify-center gap-2 rounded-[10px] bg-primary px-5 text-sm font-medium text-primary-foreground transition-[background-color,box-shadow,scale] hover:bg-primary/88 hover:shadow-[inset_0_1px_0_0_rgba(255,255,255,0.18)] focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/30 active:scale-[0.98]"
-    >
-      {children}
-      <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" />
-    </Link>
+    <Magnetic>
+      <Link
+        href="/sign-up"
+        className="group inline-flex h-11 items-center justify-center gap-2 rounded-[10px] bg-primary px-5 text-sm font-medium text-primary-foreground transition-[background-color,box-shadow,scale] hover:bg-primary/88 hover:shadow-[inset_0_1px_0_0_rgba(255,255,255,0.18)] focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/30 active:scale-[0.98]"
+      >
+        {children}
+        <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" />
+      </Link>
+    </Magnetic>
   );
 }
 
@@ -109,16 +114,16 @@ export default function LandingClient({
   return (
     <div className="overflow-x-hidden bg-background text-foreground">
       <section className="relative px-4 pb-14 pt-12 sm:px-6 sm:pt-16 lg:pb-24 lg:pt-20">
-        <div aria-hidden="true" className="hero-dot-grid absolute inset-0" />
+        <DotGridField />
         <div className="relative mx-auto max-w-[1180px]">
           {/* Centred hero copy block; the product shot anchors below. */}
           <div className="flex flex-col items-center text-center">
           <div className="reveal-up inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground shadow-soft" style={{ "--reveal-delay": "0ms" } as React.CSSProperties}>
             <span className="live-dot size-1.5 rounded-full bg-accent-brand" />
-            Your agent for research, writing, and publishing
+            <span className="shiny-text">Your agent for research, writing, and publishing</span>
           </div>
-          <h1 className="reveal-up mx-auto mt-6 max-w-[900px] text-balance text-[clamp(2.8rem,6vw,5rem)] font-medium leading-[0.98] tracking-[-0.04em]" style={{ "--reveal-delay": "60ms" } as React.CSSProperties}>
-            Your next LinkedIn post starts with proof.
+          <h1 className="mx-auto mt-6 max-w-[900px] text-balance text-[clamp(2.8rem,6vw,5rem)] font-medium leading-[0.98] tracking-[-0.04em]">
+            <BlurWords text="Your next LinkedIn post starts with proof." baseDelay={60} />
           </h1>
           <p className="reveal-up mx-auto mt-6 max-w-[650px] text-pretty text-base leading-7 text-muted-foreground sm:text-lg sm:leading-8" style={{ "--reveal-delay": "110ms" } as React.CSSProperties}>
             SwipeIn’s agent finds breakout posts from creators you trust, drafts them in your voice, and lines them up on your calendar. You approve every word.
