@@ -199,7 +199,7 @@ export function PostCard({
                 }}
               />
             ) : null}
-            {/* Missing/expired photo → a stable DiceBear glyphs avatar; the
+            {/* Missing/expired photo → a stable DiceBear shapes avatar; the
                 initials tile below is the last resort if that CDN fails too. */}
             {/* eslint-disable-next-line @next/next/no-img-element -- external SVG; next/image won't optimize it */}
             <img
@@ -212,6 +212,9 @@ export function PostCard({
               referrerPolicy="no-referrer"
               onError={(e) => {
                 const img = e.currentTarget;
+                // Still hidden behind a working photo: a background load
+                // failure here must not reveal the initials tile.
+                if (img.classList.contains("hidden")) return;
                 img.style.display = "none";
                 img.nextElementSibling?.classList.remove("hidden");
               }}

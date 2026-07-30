@@ -33,12 +33,14 @@ export function initialsForName(name: string): string {
 }
 
 // Fallback avatar for creators whose profile photo is missing or whose
-// LinkedIn CDN URL expired: a DiceBear "glyphs" avatar. Seeded by the author
+// LinkedIn CDN URL expired: a DiceBear "shapes" avatar (the glyphs style is
+// Pro-only and 404s on the free API; shapes is the closest free geometric
+// look). Seeded by the author
 // name so each creator keeps one stable glyph across renders while different
 // creators get different ones (no random flicker, CDN-cacheable). The initials
 // tile stays as the final fallback when the DiceBear CDN itself is unreachable.
 export function creatorAvatarFallback(name: string): string {
-  return `https://api.dicebear.com/9.x/glyphs/svg?seed=${encodeURIComponent(name.trim() || "?")}`;
+  return `https://api.dicebear.com/9.x/shapes/svg?seed=${encodeURIComponent(name.trim() || "?")}`;
 }
 
 export function timeAgo(iso: string | null): string | null {
