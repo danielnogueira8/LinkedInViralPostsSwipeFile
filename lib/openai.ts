@@ -42,8 +42,14 @@ function openAIHeaders(): Record<string, string> {
 }
 
 export class OpenAIHttpError extends Error {
-  constructor(readonly status: number, operation: string) {
-    super(`OpenAI ${operation} failed (${status})`);
+  constructor(
+    readonly status: number,
+    operation: string,
+    detail?: string,
+  ) {
+    super(
+      `OpenAI ${operation} failed (${status})${detail ? `: ${detail}` : ""}`,
+    );
     this.name = "OpenAIHttpError";
   }
 }
@@ -65,8 +71,17 @@ async function openAIFetch(
         headers: { ...openAIHeaders(), ...(init.headers ?? {}) },
       });
       if (response.ok) return response;
-      await response.body?.cancel().catch(() => undefined);
-      const error = new OpenAIHttpError(response.status, operation);
+      // Read the error body BEFORE discarding it — an OpenAI 400 names the
+      // exact invalid parameter, and cancel() alone throws that diagnosis away.
+      const detail = await response
+        .text()
+        .then((text) => text.replace(/\s+/g, " ").trim().slice(0, 500))
+        .catch(() => "");
+      const error = new OpenAIHttpError(
+        response.status,
+        operation,
+        detail || undefined,
+      );
       if (!isRetryableStatus(response.status) || attempt === 2) throw error;
       lastError = error;
     } catch (error) {
