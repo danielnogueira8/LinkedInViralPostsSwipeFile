@@ -138,7 +138,7 @@ function CreatorAvatar({ creator, size = "default" }: { creator: PickerCreator; 
           }}
         />
       ) : null}
-      {/* Missing/expired photo → a stable DiceBear shapes avatar; the
+      {/* Missing/expired photo → a stable DiceBear thumbs avatar; the
           initials tile below is the last resort if that CDN fails too. */}
       {/* eslint-disable-next-line @next/next/no-img-element -- external SVG; next/image won't optimize it */}
       <img
