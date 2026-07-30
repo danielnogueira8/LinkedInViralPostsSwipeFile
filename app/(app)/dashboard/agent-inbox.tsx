@@ -45,22 +45,32 @@ import {
 
 const laneCopy: Record<
   AgentInboxLane,
-  { label: string; description: string; icon: typeof Newspaper }
+  {
+    label: string;
+    description: string;
+    icon: typeof Newspaper;
+    // Avatar art slug from public/agents/ — the same DiceBear Bottts set the
+    // Claude Workflows page uses (see components/agent-avatar.tsx).
+    avatar: string;
+  }
 > = {
   now: {
-    label: "Now",
+    label: "News Agent",
     description: "A timely opening worth joining",
     icon: Newspaper,
+    avatar: "trend-radar",
   },
   proven: {
-    label: "Proven",
+    label: "Research Agent",
     description: "Grounded in what already works for you",
     icon: CheckCircle2,
+    avatar: "offer-hunter",
   },
   explore: {
-    label: "Explore",
+    label: "Explore Agent",
     description: "A fresh direction with evidence behind it",
     icon: Compass,
+    avatar: "hook-scout",
   },
 };
 
@@ -152,8 +162,18 @@ function OpportunityCard({
       data-testid={`agent-lane-${lane}`}
     >
       <div className="flex items-start gap-3">
-        <span className="grid size-11 place-items-center rounded-full bg-muted">
-          <Icon className="size-5" aria-hidden />
+        <span className="relative shrink-0">
+          {/* AgentAvatar's PNG-override check is server-only (node:fs); these
+              three slugs are known-bundled SVGs, so a plain img is fine. */}
+          {/* eslint-disable-next-line @next/next/no-img-element -- SVG avatar file; next/image adds nothing */}
+          <img
+            src={`/agents/${copy.avatar}.svg`}
+            alt=""
+            className="size-11 rounded-full border border-border/60 bg-muted object-cover"
+          />
+          <span className="absolute -bottom-1 -right-1 grid size-4 place-items-center rounded-full border border-border/60 bg-background text-muted-foreground">
+            <Icon className="size-2.5" aria-hidden />
+          </span>
         </span>
         <div>
           <p className="text-lg font-semibold">{copy.label}</p>
