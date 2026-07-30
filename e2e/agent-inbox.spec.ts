@@ -95,3 +95,40 @@ test("uses a swipeable one-card layout on mobile", async ({ page }) => {
   expect(nowBox?.width).toBeLessThan(390);
   expect(provenBox?.x).toBeGreaterThan(nowBox?.x ?? 0);
 });
+
+test("an acted lane says the draft started instead of claiming no strong fit", async ({
+  page,
+}) => {
+  const actedIdea = {
+    ...idea("proven", 2),
+    status: "acted",
+    actedAt: new Date().toISOString(),
+  };
+  await page.route("**/api/agent/inbox", async (route) => {
+    await route.fulfill({
+      json: {
+        ok: true,
+        active: [idea("now", 1), idea("explore", 3)],
+        activity: [actedIdea],
+        preferences: {
+          enabled: true,
+          timezone: "Europe/Lisbon",
+          deliveryLocalTime: "08:00",
+          topics: [],
+          newsSensitivity: "standard",
+        },
+      },
+    });
+  });
+  await page.goto("/dashboard/agent");
+  const proven = page.getByTestId("agent-lane-proven");
+  await expect(proven.getByText("Draft started")).toBeVisible();
+  await expect(
+    proven.getByText(/Turn your strongest topic into a practical teardown/),
+  ).toBeVisible();
+  await expect(proven.getByText("No strong fit today")).toHaveCount(0);
+  // The other two lanes still offer their ideas; the acted lane has no CTA.
+  await expect(page.getByRole("button", { name: "Start draft" })).toHaveCount(
+    2,
+  );
+});

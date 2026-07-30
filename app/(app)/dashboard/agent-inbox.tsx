@@ -148,15 +148,20 @@ function tomorrowIso(): string {
   return new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 }
 
-function OpportunityCard({
+// Exported for evals/data/agent-inbox-card.test.ts.
+export function OpportunityCard({
   lane,
   idea,
+  acted,
   snoozed,
   busy,
   onAction,
 }: {
   lane: AgentInboxLane;
   idea?: AgentInboxIdea;
+  // The idea the user acted on from this lane today, so the card can say the
+  // draft started instead of the misleading "no strong fit" empty state.
+  acted?: AgentInboxIdea;
   // The idea the user snoozed out of this lane (still due back), so the card
   // can say so instead of showing the misleading "no strong fit" empty state.
   snoozed?: AgentInboxIdea;
@@ -196,7 +201,21 @@ function OpportunityCard({
         </div>
       </div>
       {!idea ? (
-        snoozed ? (
+        acted ? (
+          <div className="flex flex-1 flex-col items-center justify-center px-4 text-center">
+            <span className="mb-4 grid size-11 place-items-center rounded-full bg-state-success-bg text-state-success">
+              <CheckCircle2 className="size-5" aria-hidden />
+            </span>
+            <p className="font-medium">Draft started</p>
+            <p className="mt-2 line-clamp-2 text-sm leading-6 text-muted-foreground">
+              &ldquo;{acted.headline}&rdquo;
+            </p>
+            <p className="mt-2 text-sm leading-6 text-muted-foreground">
+              You started a draft from this idea. A fresh idea lands in this
+              lane tomorrow.
+            </p>
+          </div>
+        ) : snoozed ? (
           <div className="flex flex-1 flex-col items-center justify-center px-4 text-center">
             <span className="mb-4 grid size-11 place-items-center rounded-full bg-muted">
               <Clock3
@@ -444,6 +463,22 @@ export function AgentInbox() {
     }
     return map;
   }, [data]);
+  // A lane with nothing active might be empty because the user already acted
+  // on today's idea — "No strong fit today" would claim the Agent found
+  // nothing when it actually delivered and the user took it. Only same-day
+  // decisions count: an idea acted yesterday must not shadow a lane the Agent
+  // genuinely left empty today.
+  const actedByLane = useMemo(() => {
+    const today = new Date().toDateString();
+    const map = new Map<AgentInboxLane, AgentInboxIdea>();
+    for (const idea of data?.activity ?? []) {
+      if (map.has(idea.lane) || idea.status !== "acted" || !idea.actedAt)
+        continue;
+      if (new Date(idea.actedAt).toDateString() !== today) continue;
+      map.set(idea.lane, idea);
+    }
+    return map;
+  }, [data]);
   const evidenceKinds = useMemo(() => {
     const kinds = new Set(
       data?.active.flatMap((idea) =>
@@ -582,6 +617,7 @@ export function AgentInbox() {
               key={lane}
               lane={lane}
               idea={byLane.get(lane)}
+              acted={byLane.has(lane) ? undefined : actedByLane.get(lane)}
               snoozed={
                 byLane.has(lane) ? undefined : snoozedByLane.get(lane)
               }
