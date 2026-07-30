@@ -37,6 +37,7 @@ import {
 } from "@/lib/agent/modeled-post-intent";
 import { wrapUntrustedXml } from "@/lib/agent/untrusted";
 import type { Artifact, AskQuestion } from "@/lib/agent/contracts";
+import { INTERVIEW_REQUEST_RE } from "@/lib/agent/turn/execute-interview";
 import type { PostType } from "@/lib/post-type";
 import type { ComposerTaskContext } from "@/lib/composer-task-context";
 import type { Source, WriterTask } from "@/lib/agent/execute/writer";
@@ -1888,6 +1889,10 @@ export type TurnPlan = TurnPlanCommon &
         ask: AskQuestion;
       }
     | {
+        kind: "interview";
+        route: "answer";
+      }
+    | {
         kind: "answer";
         route: "answer";
       }
@@ -1957,6 +1962,7 @@ export async function compileTurnPlan(
     actionRetryRepository,
     persistedActionContinuation,
     pendingAskOnly,
+    pendingInterviewAsk,
     artifactClarification,
     fallthroughClarification,
     modeledBatchContinuation,
@@ -2032,6 +2038,36 @@ export async function compileTurnPlan(
   // browser selects Ask, no wording, attachment, prior question, source, or
   // missing voice profile may promote the turn into writing or mutation.
   if (currentTurnOperation?.kind === "ask") {
+    // The interview lane. The interview-me starter, a pending interview card's
+    // follow-up, or an explicit free-text "interview me" all route to the
+    // dedicated executor (execute-interview.ts): the tool-less answer lane
+    // below can neither ask the structured question nor save the answers —
+    // the failure mode that produced free-text questions and no save.
+    // Outranks the research gate: an interview is never a workspace search.
+    if (
+      composerTaskContext?.starterId === "interview-me" ||
+      pendingInterviewAsk ||
+      INTERVIEW_REQUEST_RE.test(effectiveUserInstruction)
+    ) {
+      const contract: TurnContract = { kind: "answer", expectedCount: 1 };
+      coworkTelemetry.configure({
+        traceId: claimedUserMessageId ?? chatId,
+        route: "answer",
+        requestedContract: contract,
+      });
+      return {
+        contract,
+        existingArtifactIds,
+        atomicDraftSet,
+        modeledBatchContinuation,
+        activeModeledBatchContinuation: null,
+        modeledBatchRetryRootUserMessageId: undefined,
+        directPostCount,
+        modelSourceReference,
+        kind: "interview",
+        route: "answer",
+      };
+    }
     const missingContext = Boolean(
       currentTurnOperation.artifactId && !trustedRefineTarget,
     );

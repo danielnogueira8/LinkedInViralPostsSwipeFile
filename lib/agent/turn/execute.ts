@@ -17,6 +17,7 @@ import { isExclusiveHookRefine } from "@/lib/agent/direct-refine-policy";
 import { safeFilename } from "@/lib/agent/untrusted";
 import { loadCitedSwipePostImage } from "@/lib/agent/turn/context";
 import type { TurnPlan } from "@/lib/agent/turn/compile";
+import { executeInterviewTurn } from "@/lib/agent/turn/execute-interview";
 import type { TurnExecuteContext } from "@/lib/agent/turn/state";
 import { enforceTurnOutcome } from "@/lib/agent/turn/outcome-guard";
 import type { DraftFinalizerSpecialists } from "@/lib/agent/finalize/finalizer";
@@ -281,6 +282,14 @@ async function* runTurnPlan(
       break;
     case "clarify":
       rawStream = executeClarificationTurn(plan.ask);
+      break;
+    case "interview":
+      rawStream = executeInterviewTurn(
+        setup,
+        chatId,
+        handlers.signal,
+        recordResponseModel,
+      );
       break;
     case "answer":
       rawStream = executeAnswerTurn(

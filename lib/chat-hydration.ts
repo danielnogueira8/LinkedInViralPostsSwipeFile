@@ -229,6 +229,17 @@ function extractPersistedAsk(
     ...(optionIds.length === options.length ? { optionIds } : {}),
     ...(choiceIds.length === options.length ? { choiceIds } : {}),
     ...(doneOption ? { doneOption } : {}),
+    // Interview-lane cards round-trip their variant + progress so a reloaded
+    // chat renders the same interview chrome (see execute-interview.ts).
+    ...(args.variant === "interview" ? { variant: "interview" as const } : {}),
+    ...(typeof args.progress === "object" &&
+    args.progress !== null &&
+    typeof (args.progress as Record<string, unknown>).current === "number" &&
+    typeof (args.progress as Record<string, unknown>).total === "number"
+      ? {
+          progress: args.progress as { current: number; total: number },
+        }
+      : {}),
   };
 }
 
