@@ -195,6 +195,9 @@ describe("GroundedSourceLinks", () => {
     // carousel controls present
     expect(html).toContain('aria-label="Previous source"');
     expect(html).toContain('aria-label="Next source"');
+    // The window slides one card at a time, so there is one dot per possible
+    // window position (5 cards → 3 positions), not one dot per page of three.
+    expect(html.match(/aria-label="Go to source \d+"/g)).toHaveLength(3);
     // The initial carousel page contains exactly sources 1–3.
     expect(html).toContain("Sources 1–3 of 5");
     expect(html).toContain("Author 1");
@@ -202,6 +205,26 @@ describe("GroundedSourceLinks", () => {
     expect(html).toContain("Author 3");
     expect(html).not.toContain("Author 4");
     expect(html).not.toContain("Author 5");
+  });
+
+  test("exactly three cards all render at once with no carousel controls", () => {
+    const ids = Array.from(
+      { length: 3 },
+      (_, index) =>
+        `10000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+    );
+    const html = render(
+      ids.map((id, i) =>
+        citeWithCard(id, fullCard(id, { authorName: `Author ${i + 1}` })),
+      ),
+    );
+    // All three fit in the window, so nothing can move — no controls, no counter.
+    expect(html).toContain("Author 1");
+    expect(html).toContain("Author 2");
+    expect(html).toContain("Author 3");
+    expect(html).not.toContain('aria-label="Previous source"');
+    expect(html).not.toContain('aria-label="Next source"');
+    expect(html).not.toContain("of 3");
   });
 
   test("mixes: a resolvable full card carousels, an unresolved source keeps its chip", () => {
