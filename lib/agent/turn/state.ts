@@ -234,6 +234,9 @@ export type TurnExecuteContext = Pick<
   | "hookOnlyOriginalBody"
   | "currentTurnOperation"
   | "trustedRefineTarget"
+  // The interview executor's plan-vs-save switch: true only while the latest
+  // assistant message is an interview card still awaiting its answer.
+  | "pendingInterviewAsk"
 >;
 
 export type TurnFinalizeContext = Pick<

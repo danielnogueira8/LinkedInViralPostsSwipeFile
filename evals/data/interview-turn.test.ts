@@ -1,6 +1,5 @@
 import { describe, expect, test } from "vitest";
 import {
-  countInterviewQuestionsInRows,
   INTERVIEW_MAX_QUESTIONS,
   isInterviewAskArgs,
   parseInterviewOutput,
@@ -8,28 +7,6 @@ import {
 import { AskQuestionSchema, type AskQuestion } from "@/lib/agent/contracts";
 import { hydrate } from "@/lib/chat-hydration";
 import { composeInterviewAnswers } from "@/lib/chat-ask";
-
-function interviewRow(question: string) {
-  return {
-    tool_calls: [
-      {
-        id: "call-1",
-        type: "function" as const,
-        function: {
-          name: "ask_user",
-          arguments: JSON.stringify({
-            question,
-            options: [],
-            allowOther: true,
-            questions: [question, "Second?", "Third?"],
-            variant: "interview",
-            progress: { current: 1, total: 3 },
-          }),
-        },
-      },
-    ],
-  };
-}
 
 describe("parseInterviewOutput", () => {
   test("parses a plan carrying the whole question set", () => {
@@ -215,28 +192,49 @@ describe("interview card round-trip", () => {
   });
 });
 
-describe("countInterviewQuestionsInRows + isInterviewAskArgs", () => {
-  test("counts only interview-variant cards across persisted rows", () => {
-    const clarificationRow = {
-      tool_calls: [
-        {
-          id: "call-2",
-          type: "function" as const,
-          function: {
-            name: "ask_user",
-            arguments: JSON.stringify({ question: "Which?", options: ["a", "b"] }),
-          },
-        },
-      ],
-    };
-    const rows = [interviewRow("Q1"), { tool_calls: null }, interviewRow("Q2"), clarificationRow];
-    expect(countInterviewQuestionsInRows(rows)).toBe(2);
-  });
-
+// isInterviewAskArgs is what setup.ts uses to compute `pendingInterviewAsk`,
+// the signal that decides plan-vs-save. It stays live even though the old
+// per-turn question counter is gone.
+describe("isInterviewAskArgs", () => {
   test("detects the interview variant in persisted ask args", () => {
     expect(isInterviewAskArgs({ variant: "interview" })).toBe(true);
     expect(isInterviewAskArgs({ question: "Which?" })).toBe(false);
     expect(isInterviewAskArgs(null)).toBe(false);
+  });
+
+  test("only an UNANSWERED card marks the interview pending", () => {
+    // The executor's plan-vs-save switch reads setup.pendingInterviewAsk,
+    // which setup.ts derives from the LATEST assistant row. Deriving it from
+    // a count of interview cards in the chat instead would leave a completed
+    // interview's card counted forever, permanently refusing to start a
+    // second interview in the same chat.
+    const card = {
+      role: "assistant" as const,
+      tool_calls: [
+        {
+          function: {
+            name: "ask_user",
+            arguments: JSON.stringify({ variant: "interview" }),
+          },
+        },
+      ],
+    };
+    const latestIsCard = (rows: typeof card[]) => {
+      const latest = rows.find((row) => row.role === "assistant");
+      const ask = (latest?.tool_calls ?? []).find(
+        (call) => call.function.name === "ask_user",
+      );
+      if (!ask) return false;
+      return isInterviewAskArgs(
+        JSON.parse(ask.function.arguments) as Record<string, unknown>,
+      );
+    };
+    // Newest-first, as setup.ts reads it: card outstanding → pending.
+    expect(latestIsCard([card])).toBe(true);
+    // A finished interview: the save reply is now newest, so a fresh
+    // "interview me" plans again rather than trying to save nothing.
+    const savedReply = { role: "assistant" as const, tool_calls: [] };
+    expect(latestIsCard([savedReply, card])).toBe(false);
   });
 });
 
