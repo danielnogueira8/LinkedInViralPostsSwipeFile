@@ -21,6 +21,7 @@ import { SearchField } from "@/components/ui/search-field";
 import { StatusPill, Surface } from "@/components/app-surface";
 import { cn } from "@/lib/utils";
 import { fetchJson } from "@/lib/api-fetch";
+import { creatorAvatarFallback } from "@/lib/post-card-helpers";
 import {
   rankDiscoveryCreators,
   selectDisplayDiscoveryTags,
@@ -133,13 +134,29 @@ function CreatorAvatar({ creator, size = "default" }: { creator: PickerCreator; 
           }}
         />
       ) : null}
+      {/* Missing/expired photo → a stable DiceBear glyphs avatar; the
+          initials tile below is the last resort if that CDN fails too. */}
+      {/* eslint-disable-next-line @next/next/no-img-element -- external SVG; next/image won't optimize it */}
+      <img
+        src={creatorAvatarFallback(creator.name)}
+        alt=""
+        className={cn(
+          dimensions,
+          "rounded-full bg-muted object-cover",
+          creator.profile_pic_url && "hidden",
+        )}
+        referrerPolicy="no-referrer"
+        onError={(event) => {
+          event.currentTarget.style.display = "none";
+          event.currentTarget.nextElementSibling?.classList.remove("hidden");
+        }}
+      />
       <div
         className={cn(
           dimensions,
-          "grid place-items-center rounded-full font-semibold",
+          "grid place-items-center rounded-full font-semibold hidden",
           size === "small" ? "text-xs" : "text-base",
           tintFor(creator.name),
-          creator.profile_pic_url && "hidden",
         )}
       >
         {initialsFor(creator.name) || "?"}

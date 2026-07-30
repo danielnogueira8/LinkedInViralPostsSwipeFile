@@ -36,13 +36,12 @@ const RENDER_JS = String.raw`
   function avatarHtml(account, name) {
     var ui = window.swipeinUi;
     var tint = ui.tintFor(name);
-    var url = account.profile_pic_url;
+    var fallback = ui.avatarFallbackUrl(name);
+    var url = account.profile_pic_url || fallback;
     return (
       '<span class="avatar" style="background:' + tint[0] + ";color:" + tint[1] + '">' +
       "<span>" + ui.esc(ui.initialsForName(name) || "?") + "</span>" +
-      (url
-        ? '<img src="' + ui.esc(url) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()" />'
-        : "") +
+      '<img src="' + ui.esc(url) + '" data-fallback="' + ui.esc(fallback) + '" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="window.swipeinUi.avatarError(this)" />' +
       "</span>"
     );
   }

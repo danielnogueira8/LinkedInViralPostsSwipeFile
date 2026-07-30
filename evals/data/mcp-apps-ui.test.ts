@@ -223,12 +223,21 @@ describe("MCP Apps ui:// view resources", () => {
       expect(content.text).toContain("ui/notifications/size-changed");
       expect(content.text).toContain("ui/resource-teardown");
       expect(content.text).toContain("ui/open-link");
-      // LinkedIn CDN media needs the widened CSP (default is img-src 'self' data:).
+      // Creator avatars fall back to a seeded DiceBear glyph, then initials
+      // (bridge helpers inlined into every view).
+      expect(content.text).toContain("avatarFallbackUrl");
+      expect(content.text).toContain("api.dicebear.com");
+      // LinkedIn CDN media + the DiceBear avatar-fallback CDN need the
+      // widened CSP (default is img-src 'self' data:).
       expect(content._meta).toMatchObject({
         ui: {
           prefersBorder: false,
           csp: {
-            resourceDomains: ["https://media.licdn.com", "https://*.licdn.com"],
+            resourceDomains: [
+              "https://media.licdn.com",
+              "https://*.licdn.com",
+              "https://api.dicebear.com",
+            ],
           },
         },
       });

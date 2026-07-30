@@ -4,6 +4,7 @@ import { Card } from "@/components/ui/card";
 import { Flame, MessageCircle, ThumbsUp, Repeat, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { StatusPill } from "@/components/app-surface";
+import { creatorAvatarFallback } from "@/lib/post-card-helpers";
 
 type FeaturedPost = {
   id: string;
@@ -97,12 +98,33 @@ export function FeaturedPostCard({ post, rank, priority }: { post: FeaturedPost;
               sizes="28px"
               className="h-7 w-7 rounded-full object-cover shrink-0 bg-muted"
               referrerPolicy="no-referrer"
+              onError={(e) => {
+                const img = e.currentTarget;
+                img.style.display = "none";
+                img.nextElementSibling?.classList.remove("hidden");
+              }}
             />
-          ) : (
-            <div className={cn("h-7 w-7 rounded-full grid place-items-center text-[10px] font-semibold shrink-0", tintFor(name))}>
-              {initials || "?"}
-            </div>
-          )}
+          ) : null}
+          {/* Missing/expired photo → a stable DiceBear glyphs avatar; the
+              initials tile below is the last resort if that CDN fails too. */}
+          {/* eslint-disable-next-line @next/next/no-img-element -- external SVG; next/image won't optimize it */}
+          <img
+            src={creatorAvatarFallback(name)}
+            alt=""
+            className={cn(
+              "h-7 w-7 rounded-full object-cover shrink-0 bg-muted",
+              avatarUrl && "hidden",
+            )}
+            referrerPolicy="no-referrer"
+            onError={(e) => {
+              const img = e.currentTarget;
+              img.style.display = "none";
+              img.nextElementSibling?.classList.remove("hidden");
+            }}
+          />
+          <div className={cn("h-7 w-7 rounded-full grid place-items-center text-[10px] font-semibold shrink-0 hidden", tintFor(name))}>
+            {initials || "?"}
+          </div>
           <div className="truncate text-xs font-semibold" title={name}>{name}</div>
         </div>
         {img && hook && (

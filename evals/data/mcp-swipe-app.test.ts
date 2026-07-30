@@ -86,10 +86,15 @@ describe("Swipe File MCP App", () => {
     expect(result.contents[0].text).toContain("avatar-image");
     expect(result.contents[0].text).toContain("Image unavailable");
     expect(result.contents[0].text).toContain("carousel-position");
+    // LinkedIn CDN media + the DiceBear avatar-fallback CDN.
+    expect(result.contents[0].text).toContain("api.dicebear.com");
     expect(result.contents[0]._meta).toMatchObject({
       ui: {
         csp: {
-          resourceDomains: ["https://media.licdn.com"],
+          resourceDomains: [
+            "https://media.licdn.com",
+            "https://api.dicebear.com",
+          ],
         },
       },
     });

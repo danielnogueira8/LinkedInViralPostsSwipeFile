@@ -28,7 +28,7 @@ export function registerSwipeFileAppResource(server: McpServer) {
       _meta: {
         ui: {
           csp: {
-            resourceDomains: ["https://media.licdn.com"],
+            resourceDomains: ["https://media.licdn.com", "https://api.dicebear.com"],
           },
         },
       },
@@ -42,7 +42,7 @@ export function registerSwipeFileAppResource(server: McpServer) {
           _meta: {
             ui: {
               csp: {
-                resourceDomains: ["https://media.licdn.com"],
+                resourceDomains: ["https://media.licdn.com", "https://api.dicebear.com"],
               },
             },
           },
