@@ -17,6 +17,7 @@ import { RENDER_POST_MAX_CHARS } from "@/lib/agent/tools";
 import type { RecentDraft } from "@/lib/recent-drafts";
 import type { AdapterHealthRegistry } from "@/lib/agent/adapter-health";
 import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
+import { truncateAtWordBoundary } from "@/lib/text-truncate";
 import {
   aiTellRepairStage,
   contractStage,
@@ -533,7 +534,8 @@ export function createDraftFinalizer(
         { edited: edited.changed, repaired, samenessRewrote: false },
       );
     }
-    const title = body.split("\n", 1)[0].slice(0, 60).trim() || "Draft post";
+    const title =
+      truncateAtWordBoundary(body.split("\n", 1)[0] ?? "", 60) || "Draft post";
     const artifact = validateFinalArtifact({
       id: makeId(),
       kind: "post",

@@ -113,6 +113,7 @@ import {
   requestedExactFinalLine,
 } from "@/lib/agent/exact-output";
 import { createHash } from "node:crypto";
+import { truncateAtWordBoundary } from "@/lib/text-truncate";
 
 // Budget covers reasoning + visible output together (OpenRouter counts them as
 // one pool). A LinkedIn post is well under 1.5k tokens, but a reasoning-default
@@ -1573,7 +1574,9 @@ export async function* runSingleDraftTurn(
     if (copyGuardSource && areDraftsNearDuplicate(copyGuardSource, cleaned)) {
       return null;
     }
-    const title = cleaned.split("\n", 1)[0].slice(0, 60).trim() || "Draft post";
+    const title =
+      truncateAtWordBoundary(cleaned.split("\n", 1)[0] ?? "", 60) ||
+      "Draft post";
     return {
       id: `art_salvage_${writerAttempt}`,
       kind: "post",
