@@ -6825,6 +6825,12 @@ function ArtifactCard({
   const [scheduling, setScheduling] = useState(false);
   const [scheduleMediaAttachments, setScheduleMediaAttachments] = useState(mediaAttachments);
   const [uploadingScheduleImage, setUploadingScheduleImage] = useState(false);
+  // In-flight draft image uploads, shown as dimmed preview tiles with the
+  // pixel loader inside the editor's media strip so a drag/drop or paste is
+  // visibly working instead of silently doing nothing until the upload lands.
+  const [pendingDraftImages, setPendingDraftImages] = useState<
+    Array<{ id: string; name: string; previewUrl: string | null }>
+  >([]);
   const [nextOpenDay, setNextOpenDay] = useState<string | null>(null);
   const [loadingNextOpenDay, setLoadingNextOpenDay] = useState(false);
   // Local working copy of the post body. Seeded from the artifact and kept in
@@ -7165,6 +7171,25 @@ function ArtifactCard({
   const addDraftImages = async (files: File[]) => {
     if (!files.length || uploadingScheduleImage) return;
     setUploadingScheduleImage(true);
+    // Local previews up front — the tile renders immediately and swaps for the
+    // real attachment once the upload + persist completes.
+    const pendings = files.map((file) => ({
+      id: crypto.randomUUID(),
+      name: file.name,
+      previewUrl: file.type.startsWith("image/")
+        ? URL.createObjectURL(file)
+        : null,
+    }));
+    setPendingDraftImages((current) => [...current, ...pendings]);
+    const clearPendings = () => {
+      const pendingIds = new Set(pendings.map((entry) => entry.id));
+      setPendingDraftImages((current) =>
+        current.filter((entry) => !pendingIds.has(entry.id)),
+      );
+      for (const entry of pendings) {
+        if (entry.previewUrl) URL.revokeObjectURL(entry.previewUrl);
+      }
+    };
     try {
       const uploaded: PostMediaAttachment[] = [];
       for (const file of files) {
@@ -7189,6 +7214,7 @@ function ArtifactCard({
     } catch (error) {
       toast.error((error as Error).message);
     } finally {
+      clearPendings();
       setUploadingScheduleImage(false);
     }
   };
@@ -7475,6 +7501,7 @@ function ArtifactCard({
           footer={
             <DraftMediaPreview
               attachments={mediaAttachments}
+              pendingUploads={pendingDraftImages}
               generatedImageStatus={generatedImageStatus}
               onRemove={(id) => void removeDraftImage(id)}
             />
@@ -7882,17 +7909,22 @@ function mediaPreviewUrl(attachment: PostMediaAttachment): string | null {
 
 function DraftMediaPreview({
   attachments,
+  pendingUploads = [],
   generatedImageStatus,
   onRemove,
 }: {
   attachments: PostMediaAttachment[];
+  // In-flight uploads: dimmed local previews with the pixel loader on top, so
+  // a drag/drop or paste shows progress immediately. TimedLoadingState gives
+  // the shimmer label + elapsed seconds (the beautiful-ui loading pattern).
+  pendingUploads?: Array<{ id: string; name: string; previewUrl: string | null }>;
   generatedImageStatus: { status: string; reason?: string } | null;
   // When provided, each image gets a hover remove control. Omitted in
   // read-only contexts.
   onRemove?: (id: string) => void;
 }) {
   const images = attachments.filter((a) => a.type === "image");
-  if (images.length === 0) {
+  if (images.length === 0 && pendingUploads.length === 0) {
     if (generatedImageStatus?.status === "queued" || generatedImageStatus?.status === "running") {
       return (
         <div className="mb-3 rounded-xl border border-primary/20 bg-primary/5 px-3 py-2 text-[11px] leading-snug text-primary">
@@ -7959,6 +7991,28 @@ function DraftMediaPreview({
             </div>
           );
         })}
+        {pendingUploads.map((entry) => (
+          <div key={entry.id} className="relative" aria-busy="true">
+            {entry.previewUrl ? (
+              <>
+                {/* eslint-disable-next-line @next/next/no-img-element -- Local object URL for an in-flight upload; next/image cannot handle it. */}
+                <img
+                  src={entry.previewUrl}
+                  alt={entry.name}
+                  className="block max-h-56 w-full object-contain bg-foreground opacity-40"
+                />
+              </>
+            ) : (
+              <div className="h-24 w-full animate-pulse bg-muted" />
+            )}
+            <div className="absolute inset-0 grid place-items-center">
+              <TimedLoadingState
+                label="Uploading image"
+                className="rounded-full border border-border/60 bg-background/90 px-3 py-1.5 text-xs shadow-sm"
+              />
+            </div>
+          </div>
+        ))}
       </div>
       {generatedImageStatus?.status === "ready" && (
         <div className="inline-flex items-center gap-1.5 rounded-full border border-state-danger-border bg-state-danger-bg px-2.5 py-1 text-[10px] font-medium text-primary">

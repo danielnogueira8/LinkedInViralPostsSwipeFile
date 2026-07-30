@@ -84,6 +84,7 @@ import {
 } from "@/lib/content-feedback-catalog";
 import { PostOutcomes } from "./post-outcomes";
 import { LoadingState } from "@/components/ui/loading-state";
+import { TimedLoadingState } from "@/components/ui/timed-loading-state";
 
 const FEEDBACK_REASON_LIMIT = 4;
 // Vercel rejects multipart request bodies above its platform limit before our
@@ -1950,11 +1951,17 @@ function PostMediaSection({
               <span className="text-muted-foreground">{mediaIcon(attachment.type)}</span>
               <div className="min-w-0 flex-1">
                 <div className="truncate font-medium">{attachment.name}</div>
-                <div className="text-xs text-muted-foreground">
-                  {mediaTypeLabel(attachment.type)} · {formatBytes(attachment.size)}
-                  {pendingMediaIds.has(attachment.id) ? " · Uploading…" : ""}
-                  {attachment.source === "library" ? " · Library" : ""}
-                </div>
+                {pendingMediaIds.has(attachment.id) ? (
+                  <TimedLoadingState
+                    label="Uploading"
+                    className="mt-1 text-xs"
+                  />
+                ) : (
+                  <div className="text-xs text-muted-foreground">
+                    {mediaTypeLabel(attachment.type)} · {formatBytes(attachment.size)}
+                    {attachment.source === "library" ? " · Library" : ""}
+                  </div>
+                )}
               </div>
               <Button
                 size="sm"
