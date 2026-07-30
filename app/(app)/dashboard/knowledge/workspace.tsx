@@ -45,6 +45,7 @@ import {
   type KnowledgeSourceSummary,
   type KnowledgeProposalDetail,
 } from "@/lib/knowledge-sources/types";
+import { LoadingState } from "@/components/ui/loading-state";
 
 type Props = {
   initialSources: KnowledgeSourceSummary[];
@@ -590,7 +591,7 @@ export function KnowledgeLibrary({
           </DialogHeader>
           {insightsLoading ? (
             <div className="grid min-h-40 place-items-center">
-              <Loader2 className="size-5 animate-spin text-muted-foreground" />
+              <LoadingState label="Extracting insights" />
             </div>
           ) : insights.length === 0 ? (
             <EmptyState

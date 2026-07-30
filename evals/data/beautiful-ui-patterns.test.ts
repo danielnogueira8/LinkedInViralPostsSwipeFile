@@ -64,6 +64,7 @@ describe("shared Beautiful UI interaction patterns", () => {
       "app/(app)/dashboard/accounts/creator-picker.tsx",
       "app/(app)/dashboard/chat-workspace.tsx",
       "app/(app)/dashboard/swipe/filters.tsx",
+      "app/(app)/dashboard/creator-styles/manager.tsx",
     ]) {
       expect(source(path), path).toContain("<SearchField");
     }
@@ -71,11 +72,14 @@ describe("shared Beautiful UI interaction patterns", () => {
 
   test("route fallbacks share the same visible loading language", () => {
     for (const path of [
+      "app/(app)/dashboard/loading.tsx",
+      "app/(app)/dashboard/accounts/loading.tsx",
       "app/(app)/dashboard/agent/loading.tsx",
       "app/(app)/dashboard/analytics/loading.tsx",
       "app/(app)/dashboard/bookmarks/loading.tsx",
       "app/(app)/dashboard/claude/loading.tsx",
       "app/(app)/dashboard/creator-styles/loading.tsx",
+      "app/(app)/dashboard/home-legacy/loading.tsx",
       "app/(app)/dashboard/integrations/loading.tsx",
       "app/(app)/dashboard/knowledge/loading.tsx",
       "app/(app)/dashboard/lead-magnets/loading.tsx",

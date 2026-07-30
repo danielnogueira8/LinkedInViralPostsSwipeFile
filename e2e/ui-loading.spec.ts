@@ -48,7 +48,12 @@ test.describe("UI loading and performance guardrails", () => {
     await expect(page.getByRole("button", { name: /new session/i }).first()).toBeVisible({
       timeout: 5_000,
     });
-    await expect(page.getByPlaceholder("What do you want to write?")).toBeVisible({
+    // The composer placeholder is state-dependent ("Ask Cowork anything…" by
+    // default, other copy while sending or in a command mode), so assert the
+    // composer itself rather than one placeholder string.
+    await expect(
+      page.locator("textarea[placeholder]").first(),
+    ).toBeVisible({
       timeout: 5_000,
     });
     await expect(page.locator("main, [role=main]").first()).toBeVisible();

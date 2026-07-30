@@ -23,6 +23,7 @@ import {
 import { Loader2, CheckCircle2, AlertTriangle } from "lucide-react";
 import { fetchJson } from "@/lib/api-fetch";
 import { LINKEDIN_INTEGRATIONS_PATH } from "@/lib/linkedin-integration-destination";
+import { LoadingState } from "@/components/ui/loading-state";
 
 type ConnState = {
   status: "active" | "disconnected";
@@ -168,9 +169,7 @@ export function LinkedInPublishingCard() {
       </CardHeader>
       <CardContent>
         {!loaded ? (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" /> Checking connection…
-          </div>
+          <LoadingState label="Checking connection" />
         ) : connected ? (
           <div className="flex flex-col gap-3 rounded-lg border border-state-success-border bg-state-success-bg p-3 sm:flex-row sm:items-center">
             <CheckCircle2 className="h-5 w-5 shrink-0 text-state-success" />

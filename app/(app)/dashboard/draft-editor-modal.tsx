@@ -83,6 +83,7 @@ import {
   type ContentFeedbackReason,
 } from "@/lib/content-feedback-catalog";
 import { PostOutcomes } from "./post-outcomes";
+import { LoadingState } from "@/components/ui/loading-state";
 
 const FEEDBACK_REASON_LIMIT = 4;
 // Vercel rejects multipart request bodies above its platform limit before our
@@ -2176,9 +2177,8 @@ function MediaLibraryDialog({
 
         <div className="max-h-[68vh] min-h-[420px] overflow-y-auto px-6 py-5">
           {loading ? (
-            <div className="grid min-h-[420px] place-items-center text-sm text-muted-foreground">
-              <Loader2 className="mb-2 h-5 w-5 animate-spin" />
-              Loading media...
+            <div className="grid min-h-[420px] place-items-center">
+              <LoadingState label="Loading media" />
             </div>
           ) : assets.length === 0 ? (
             <div className="grid min-h-[420px] place-items-center rounded-2xl border border-dashed border-border/80 bg-card/60 text-center">
