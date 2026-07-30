@@ -53,13 +53,24 @@ export function isAskSelectionComplete(
   );
 }
 
-// Interview card: tapping an example-answer chip APPENDS it to whatever the
-// user already typed (never wipes their text), so a chip is a starting point
-// they can edit or build on before sending. Joined with a space; a trailing
-// whitespace run on the current text collapses first.
-export function appendExampleAnswer(current: string, example: string): string {
-  const trimmed = current.trimEnd();
-  return trimmed ? `${trimmed} ${example}` : example;
+// The interview card walks its questions locally and sends ONE message at the
+// end. This composes that message: every question paired with its answer, in
+// order, with unanswered ones marked so the executor can tell "passed on it"
+// from "answered briefly" when it distils them into knowledge.
+export const INTERVIEW_SKIPPED = "[skipped]";
+
+export function composeInterviewAnswers(
+  questions: string[],
+  answers: string[],
+): string {
+  return questions
+    .map(
+      (question, index) =>
+        `Q${index + 1}: ${question}\nA${index + 1}: ${
+          answers[index]?.trim() || INTERVIEW_SKIPPED
+        }`,
+    )
+    .join("\n\n");
 }
 
 export function toggleAskOption(

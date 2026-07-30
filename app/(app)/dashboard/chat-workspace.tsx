@@ -148,7 +148,7 @@ import {
   type ChatWorkspaceSendOptions,
 } from "@/lib/chat-workspace-controller";
 import {
-  appendExampleAnswer,
+  composeInterviewAnswers,
   isAskSelectionComplete,
   resolveAskSubmission,
   toggleAskOption,
@@ -6475,13 +6475,18 @@ function AskCard({
   );
 }
 
-// The "Interview me" lane's question card (ask.variant === "interview"):
-// a dedicated surface distinct from the clarification AskCard — progress
-// header, a real textarea for the answer, the model's example answers as
-// memory-jog chips, a Skip, and a "Done for now" exit that only appears from
-// question 3 onward so an interview can't end before it has any substance.
-// Skip/Done send fixed sentinel texts the interview executor understands
-// (see execute-interview.ts).
+// The "Interview me" lane's question card (ask.variant === "interview").
+//
+// The server plans the WHOLE question set in one call and hands it over on a
+// single card; this component walks it entirely client-side. Advancing a
+// question is local state — no request, no credit, no latency, and no second
+// card to render. Only when the last question is answered does it send ONE
+// message carrying every Q/A pair, which the interview executor saves as
+// knowledge (see execute-interview.ts).
+//
+// There are deliberately no example-answer chips: a suggested answer biases
+// what the user tells us, and their own unprompted wording is the material
+// we actually want.
 function InterviewCard({
   ask,
   onSubmit,
@@ -6494,44 +6499,62 @@ function InterviewCard({
     clarificationChoiceIndex?: number,
   ) => void;
 }) {
-  const [answer, setAnswer] = useState("");
-  const [submitted, setSubmitted] = useState<string | null>(null);
+  // Fall back to the single `question` for any card persisted before the
+  // batched shape shipped, so an in-flight interview still renders.
+  const questions = useMemo(
+    () => (ask.questions?.length ? ask.questions : [ask.question]),
+    [ask.questions, ask.question],
+  );
+  const [index, setIndex] = useState(0);
+  const [answers, setAnswers] = useState<string[]>(() =>
+    Array.from({ length: questions.length }, () => ""),
+  );
+  const [draft, setDraft] = useState("");
+  const [submitted, setSubmitted] = useState(false);
   const answerRef = useRef<HTMLTextAreaElement>(null);
-  const progress = ask.progress;
-  const canFinish = (progress?.current ?? 0) >= 3;
 
-  // Tapping an example chip appends it to the answer (never wipes what the
-  // user already typed) and lands the cursor at the end so they can keep
-  // editing or add more before sending.
-  const pickExample = (example: string) => {
-    setAnswer((current) => appendExampleAnswer(current, example));
-    requestAnimationFrame(() => {
-      const textarea = answerRef.current;
-      if (!textarea) return;
-      textarea.focus();
-      textarea.selectionStart = textarea.value.length;
-      textarea.selectionEnd = textarea.value.length;
-    });
+  const total = questions.length;
+  const isLast = index === total - 1;
+
+  // Record this question's answer and either advance locally or, on the last
+  // one, send the whole interview as a single message.
+  const commit = (text: string) => {
+    const collected = answers.map((entry, position) =>
+      position === index ? text : entry,
+    );
+    setAnswers(collected);
+    if (!isLast) {
+      setIndex(index + 1);
+      setDraft(collected[index + 1] ?? "");
+      requestAnimationFrame(() => answerRef.current?.focus());
+      return;
+    }
+    setSubmitted(true);
+    // One message, every pair, in order — the interview's only round-trip.
+    onSubmit(composeInterviewAnswers(questions, collected), ask, []);
   };
 
-  const send = (text: string) => {
-    setSubmitted(text);
-    onSubmit(text, ask, []);
+  const back = () => {
+    if (index === 0) return;
+    const collected = answers.map((entry, position) =>
+      position === index ? draft : entry,
+    );
+    setAnswers(collected);
+    setIndex(index - 1);
+    setDraft(collected[index - 1] ?? "");
+    requestAnimationFrame(() => answerRef.current?.focus());
   };
 
-  if (submitted !== null) {
+  if (submitted) {
+    const answered = answers.filter((entry) => entry.trim()).length;
     return (
       <div className="rounded-2xl border border-border bg-card/80 px-3.5 py-3 text-sm shadow-sm">
         <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-          {submitted === "[skipped]"
-            ? "Skipped"
-            : submitted === "[done with the interview]"
-              ? "Interview finished"
-              : "You answered"}
+          Interview finished
         </p>
-        {submitted !== "[skipped]" && submitted !== "[done with the interview]" && (
-          <p className="mt-1 text-foreground">{submitted}</p>
-        )}
+        <p className="mt-1 text-foreground">
+          {answered} of {total} answered
+        </p>
       </div>
     );
   }
@@ -6543,65 +6566,50 @@ function InterviewCard({
           <AiIcon className="h-3.5 w-3.5 shrink-0" />
           Interview
         </span>
-        {progress && (
-          <span className="text-[11px] font-medium tabular-nums text-muted-foreground/80">
-            Question {progress.current} of {progress.total}
-          </span>
-        )}
+        <span className="text-[11px] font-medium tabular-nums text-muted-foreground/80">
+          Question {index + 1} of {total}
+        </span>
       </div>
       <p className="mt-2 text-sm font-medium leading-6 text-foreground">
-        {ask.question}
+        {questions[index]}
       </p>
-      <div className="mt-2.5 flex flex-wrap gap-1.5">
-        {ask.options.map((example) => (
-          <button
-            key={example}
-            type="button"
-            onClick={() => pickExample(example)}
-            className="rounded-full border border-border bg-background px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
-            title="Add this to your answer — keep editing before sending"
-          >
-            {example}
-          </button>
-        ))}
-      </div>
       <textarea
         ref={answerRef}
-        value={answer}
-        onChange={(e) => setAnswer(e.target.value)}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
         rows={3}
-        placeholder="Type your answer, or tap an example to start…"
+        placeholder="Type your answer…"
         autoFocus
         className="mt-2.5 w-full resize-none rounded-xl border border-border bg-white px-3 py-2 text-sm leading-6 outline-none placeholder:text-muted-foreground/55 focus:border-primary/40 focus:ring-2 focus:ring-primary/15"
       />
       <div className="mt-2.5 flex items-center justify-between gap-2">
         <div className="flex items-center gap-1.5">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-8 text-muted-foreground"
-            onClick={() => send("[skipped]")}
-          >
-            Skip
-          </Button>
-          {canFinish && (
+          {index > 0 && (
             <Button
               variant="ghost"
               size="sm"
               className="h-8 text-muted-foreground"
-              onClick={() => send("[done with the interview]")}
+              onClick={back}
             >
-              Done for now
+              Back
             </Button>
           )}
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-8 text-muted-foreground"
+            onClick={() => commit("")}
+          >
+            Skip
+          </Button>
         </div>
         <Button
           size="sm"
           className="h-8"
-          disabled={!answer.trim()}
-          onClick={() => send(answer.trim())}
+          disabled={!draft.trim()}
+          onClick={() => commit(draft.trim())}
         >
-          Send answer
+          {isLast ? "Finish" : "Next"}
         </Button>
       </div>
     </div>
