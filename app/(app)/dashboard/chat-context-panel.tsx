@@ -7,6 +7,7 @@ import {
   Fingerprint,
   Magnet,
   Layers,
+  ExternalLink,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ChatContextSummary } from "@/lib/cowork-context-summary";
@@ -71,6 +72,18 @@ export function ChatContextPanel({ summary }: { summary: ChatContextSummary }) {
                   </span>
                 )}
               </div>
+              {sourcePost.postUrl && (
+                <a
+                  href={sourcePost.postUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  aria-label="View source post on LinkedIn"
+                  title="View source post on LinkedIn"
+                  className="ml-auto shrink-0 self-start rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" aria-hidden />
+                </a>
+              )}
             </div>
             <p className="mt-2 line-clamp-4 whitespace-pre-wrap text-[12px] leading-relaxed text-foreground/80">
               {sourcePost.postText}

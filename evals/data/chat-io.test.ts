@@ -249,6 +249,7 @@ describe("modeled-source message hydration", () => {
           postText: "A source post that survives a refresh.",
           partial: false,
           postType: "regular",
+          postUrl: null,
         },
       },
     ]);
