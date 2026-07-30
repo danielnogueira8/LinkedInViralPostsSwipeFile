@@ -1934,7 +1934,6 @@ export function ChatWorkspace({
     if (!agentIdeaParam) return;
     const prompt = sessionStorage.getItem(`agent-inbox-draft:${agentIdeaParam}`);
     if (!prompt) return;
-    sessionStorage.removeItem(`agent-inbox-draft:${agentIdeaParam}`);
     let cancelled = false;
     (async () => {
       try {
@@ -1945,6 +1944,11 @@ export function ChatWorkspace({
           throw new Error(payload.error || "Couldn't start a new chat");
         }
         if (cancelled) return;
+        // Only drop the stashed prompt once the chat exists to receive it.
+        // Clearing it up front meant a failed chat create — or a refresh
+        // mid-flight — silently lost the idea the user just acted on, with the
+        // inbox card already gone.
+        sessionStorage.removeItem(`agent-inbox-draft:${agentIdeaParam}`);
         const id: string = payload.chat.id;
         setChats((current) => prependChatIfMissing(current, payload.chat));
         chatSession.ensureConversation(id);
@@ -1963,6 +1967,18 @@ export function ChatWorkspace({
         });
         requestAnimationFrame(() => inputRef.current?.focus());
       } catch (handoffError) {
+        // The idea was already marked `acted` before the redirect, so a failed
+        // handoff would otherwise lose it from the board with no draft to show
+        // for it. Put it back so the user can try again.
+        try {
+          await fetch(`/api/agent/inbox/ideas/${agentIdeaParam}`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ kind: "restore" }),
+          });
+        } catch {
+          // Best effort: the toast below is what the user acts on.
+        }
         toast.error(
           handoffError instanceof Error
             ? handoffError.message

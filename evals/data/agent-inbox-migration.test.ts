@@ -9,6 +9,13 @@ const laneCapSql = readFileSync(
   new URL("../../db/migration-159-agent-inbox-lane-cap.sql", import.meta.url),
   "utf8",
 );
+const reclaimSql = readFileSync(
+  new URL(
+    "../../db/migration-160-agent-inbox-stale-run-reclaim.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
 
 describe("agent inbox migration", () => {
   test("stores active ideas per lane and idempotent daily runs", () => {
@@ -37,6 +44,53 @@ describe("agent inbox migration", () => {
     expect(sql).toContain("transition_agent_inbox_idea");
     expect(sql).toContain("release_due_agent_inbox_ideas");
     expect(sql).toContain("pg_advisory_xact_lock");
+  });
+
+  test("reclaims a run that died while still marked running", () => {
+    // Migration 158 refused any run already 'running', so a process that died
+    // between claiming and completing left the row 'running' until local
+    // midnight — the workspace silently got no inbox for the rest of the day,
+    // and the attempts cap could never absorb it because the 'running' check
+    // short-circuited first.
+    expect(sql).toContain("if existing.status in ('running', 'completed')");
+    expect(reclaimSql).toContain("stale_after constant interval");
+    expect(reclaimSql).toContain("if existing.status = 'completed'");
+    expect(reclaimSql).toContain("and existing.started_at > now() - stale_after");
+  });
+
+  test("checks the attempts ceiling before incrementing it", () => {
+    // agent_inbox_runs constrains `attempts between 1 and 5`, so a reclaim
+    // that incremented a 5th attempt would raise a check violation on the
+    // cron path instead of returning false.
+    const guard = reclaimSql.indexOf("if existing.attempts >= 5");
+    const update = reclaimSql.indexOf("attempts = run.attempts + 1");
+    expect(guard).toBeGreaterThan(-1);
+    expect(update).toBeGreaterThan(guard);
+  });
+
+  test("restore is narrow: recently acted, never discarded", () => {
+    // Acting was terminal, so a failed Cowork handoff lost the idea with no
+    // draft to show for it. Restore repairs that without becoming a general
+    // undo that could resurrect a deliberate rejection.
+    expect(reclaimSql).toContain("'act', 'discard', 'snooze', 'restore'");
+    expect(reclaimSql).toContain("restore_window constant interval");
+    expect(reclaimSql).toContain("and idea.status = 'acted'");
+    expect(reclaimSql).toContain("and idea.acted_at > now() - restore_window");
+    // An expired timely idea must not come back to the board.
+    expect(reclaimSql).toContain(
+      "and (idea.expires_at is null or idea.expires_at > now())",
+    );
+  });
+
+  test("advances the schema version and keeps grants service-owned", () => {
+    expect(reclaimSql).toContain("values (true, 160, now())");
+    expect(reclaimSql).toContain(
+      "grant execute on function public.claim_agent_inbox_run",
+    );
+    expect(reclaimSql).toContain(
+      "grant execute on function public.transition_agent_inbox_idea",
+    );
+    expect(reclaimSql).toContain("from public, anon, authenticated");
   });
 
   test("keeps writes service-owned and workspace reads isolated", () => {

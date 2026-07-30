@@ -57,6 +57,13 @@ function repository(initial: AgentInboxIdea[] = []): AgentInboxRepository & {
     async readRecentFingerprints() {
       return new Set(ideas.map((entry) => entry.fingerprint));
     },
+    async readRecentSources() {
+      return new Set(
+        ideas
+          .map((entry) => entry.sourceUrl ?? entry.sourceRef)
+          .filter((value): value is string => Boolean(value)),
+      );
+    },
     async releaseDueSnoozed(_workspaceId, now) {
       for (const entry of ideas) {
         if (
@@ -75,6 +82,10 @@ function repository(initial: AgentInboxIdea[] = []): AgentInboxRepository & {
       return true;
     },
     async completeDailyRun() {},
+    // Mirrors the SQL: the claim goes back so a later tick can retry the day.
+    async releaseDailyRun(_workspaceId, localDate) {
+      claims.delete(localDate);
+    },
     async failDailyRun() {},
     async insertIdeas(_workspaceId, generated) {
       const inserted = generated.map((entry, index) =>
@@ -96,7 +107,15 @@ function repository(initial: AgentInboxIdea[] = []): AgentInboxRepository & {
     },
     async transition(_workspaceId, id, action) {
       const entry = ideas.find((candidate) => candidate.id === id);
-      if (!entry || entry.status !== "active") return null;
+      if (!entry) return null;
+      // Restore is the one transition that starts from a non-active idea.
+      if (action.kind === "restore") {
+        if (entry.status !== "acted") return null;
+        entry.status = "active";
+        entry.actedAt = null;
+        return entry;
+      }
+      if (entry.status !== "active") return null;
       entry.status =
         action.kind === "act"
           ? "acted"
@@ -525,5 +544,138 @@ describe("AgentInbox", () => {
     });
 
     expect(result.created).toHaveLength(0);
+  });
+
+  test("a Now-only run with no news gives its claim back so news can land later", async () => {
+    // The other two lanes are already full, so `now` is the only outstanding
+    // work. Without releasing the claim the run marked the day done, and news
+    // breaking at midday could not reach the board until local midnight.
+    const full = [
+      ...Array.from({ length: 3 }, (_, i) =>
+        idea("proven", { id: `proven-${i}`, fingerprint: `proven-${i}` }),
+      ),
+      ...Array.from({ length: 3 }, (_, i) =>
+        idea("explore", { id: `explore-${i}`, fingerprint: `explore-${i}` }),
+      ),
+    ];
+    const repo = repository(full);
+    let newsAvailable = false;
+    const inbox = createAgentInbox({
+      repository: repo,
+      synthesis: synthesis(),
+      loadEvidence: async () =>
+        newsAvailable ? NEWS_EVIDENCE : { news: [], learning: [], knowledge: [] },
+    });
+
+    const morning = await inbox.replenish({
+      workspaceId: "workspace-1",
+      now: NOW,
+      timezone: "UTC",
+    });
+    expect(morning).toMatchObject({ skipped: "no_evidence", created: [] });
+
+    // Same local date: the retry must not be refused as already_ran.
+    newsAvailable = true;
+    const afternoon = await inbox.replenish({
+      workspaceId: "workspace-1",
+      now: NOW,
+      timezone: "UTC",
+    });
+    expect(afternoon.created.map((entry) => entry.lane)).toEqual(["now"]);
+  });
+
+  test("a source pitched on an earlier day is not pitched again", async () => {
+    // Fingerprints only block an identical idea. The same story re-angled
+    // under a new headline hashes differently, so without a source-level
+    // window it returned the next day as though it were new.
+    const yesterday = idea("proven", {
+      id: "yesterday",
+      status: "acted",
+      fingerprint: "yesterday-fingerprint",
+      sourceUrl: "https://example.com/same-story",
+    });
+    const repo = repository([yesterday]);
+    const inbox = createAgentInbox({
+      repository: repo,
+      synthesis: {
+        async synthesize({ lanes }) {
+          return lanes.map((lane) => ({
+            lane,
+            headline: `${lane} fresh angle`,
+            angle: `A different framing of the same story for ${lane}`,
+            why: ["Re-angled"],
+            evidence: [],
+            sourceKind: "workspace_learning" as const,
+            sourceRef: null,
+            sourceUrl: "https://example.com/same-story",
+            sourceTitle: "Same story",
+            sourcePublishedAt: null,
+            score: 0.9,
+            fingerprint: `${lane}-different-hash`,
+            expiresAt: null,
+          }));
+        },
+      },
+      loadEvidence: async () => NO_EVIDENCE,
+    });
+
+    const result = await inbox.replenish({
+      workspaceId: "workspace-1",
+      now: NOW,
+      timezone: "UTC",
+    });
+
+    expect(result.created).toHaveLength(0);
+  });
+
+  test("restore returns a just-acted idea to the board", async () => {
+    // The Cowork handoff can fail after the transition commits; without this
+    // the card is gone and no draft exists.
+    const active = idea("proven");
+    const repo = repository([active]);
+    const inbox = createAgentInbox({
+      repository: repo,
+      synthesis: synthesis(),
+      loadEvidence: async () => NO_EVIDENCE,
+    });
+
+    await inbox.transition({
+      workspaceId: "workspace-1",
+      ideaId: active.id,
+      action: { kind: "act" },
+    });
+    const restored = await inbox.transition({
+      workspaceId: "workspace-1",
+      ideaId: active.id,
+      action: { kind: "restore" },
+    });
+
+    expect(restored?.status).toBe("active");
+    expect(restored?.actedAt).toBeNull();
+    const state = await inbox.read("workspace-1", NOW);
+    expect(state.active.map((entry) => entry.id)).toContain(active.id);
+  });
+
+  test("restore does not resurrect a discarded idea", async () => {
+    const active = idea("proven");
+    const repo = repository([active]);
+    const inbox = createAgentInbox({
+      repository: repo,
+      synthesis: synthesis(),
+      loadEvidence: async () => NO_EVIDENCE,
+    });
+
+    await inbox.transition({
+      workspaceId: "workspace-1",
+      ideaId: active.id,
+      action: { kind: "discard", reason: "Not relevant" },
+    });
+    const restored = await inbox.transition({
+      workspaceId: "workspace-1",
+      ideaId: active.id,
+      action: { kind: "restore" },
+    });
+
+    expect(restored).toBeNull();
   });
 });

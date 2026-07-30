@@ -82,7 +82,10 @@ export type AgentInboxEvidenceBundle = {
 export type AgentInboxTransition =
   | { kind: "act" }
   | { kind: "discard"; reason?: string | null }
-  | { kind: "snooze"; until: Date };
+  | { kind: "snooze"; until: Date }
+  // Reverse a just-acted idea when the Cowork handoff failed. Bounded to a
+  // short window server-side, and never applies to a discarded idea.
+  | { kind: "restore" };
 
 export type AgentInboxRepository = {
   readActive(workspaceId: string, now: Date): Promise<AgentInboxIdea[]>;
@@ -94,6 +97,7 @@ export type AgentInboxRepository = {
     workspaceId: string,
     since: Date,
   ): Promise<Set<string>>;
+  readRecentSources(workspaceId: string, since: Date): Promise<Set<string>>;
   releaseDueSnoozed(workspaceId: string, now: Date): Promise<void>;
   claimDailyRun(
     workspaceId: string,
@@ -106,6 +110,9 @@ export type AgentInboxRepository = {
     localDate: string,
     ideaIds: string[],
   ): Promise<void>;
+  // Give a claim back without marking the day done, so a run that found no
+  // evidence to work with can be retried by a later tick.
+  releaseDailyRun(workspaceId: string, localDate: string): Promise<void>;
   failDailyRun(
     workspaceId: string,
     localDate: string,
@@ -151,7 +158,7 @@ export type AgentInbox = {
   }): Promise<{
     created: AgentInboxIdea[];
     retained: AgentInboxIdea[];
-    skipped: "disabled" | "already_ran" | "full" | null;
+    skipped: "disabled" | "already_ran" | "full" | "no_evidence" | null;
   }>;
   transition(input: {
     workspaceId: string;
@@ -170,6 +177,15 @@ type AgentInboxDependencies = {
     now: Date;
   }): Promise<AgentInboxEvidenceBundle>;
 };
+
+// A source is off-limits for a fortnight after it is pitched. Fingerprints
+// already block an identical idea for 90 days, but a story re-angled under a
+// new headline hashes differently — so without a source-level window the same
+// article can come back the next day as though it were new. Two weeks is short
+// enough that a genuinely evergreen source post can be revisited later.
+const RECENT_SOURCE_WINDOW_DAYS = 14;
+const RECENT_SOURCE_SINCE = (now: Date) =>
+  new Date(now.getTime() - RECENT_SOURCE_WINDOW_DAYS * 24 * 60 * 60 * 1000);
 
 function laneOrder(lane: AgentInboxLane): number {
   return AGENT_INBOX_LANES.indexOf(lane);
@@ -241,23 +257,33 @@ export function createAgentInbox(
       }
 
       try {
-        const [evidence, recentFingerprints] = await Promise.all([
-          loadEvidence({
-            workspaceId,
-            preferences,
-            missingLanes,
-            now,
-          }),
-          repository.readRecentFingerprints(
-            workspaceId,
-            new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000),
-          ),
-        ]);
+        const dedupeSince = new Date(
+          now.getTime() - 90 * 24 * 60 * 60 * 1000,
+        );
+        const [evidence, recentFingerprints, recentSources] = await Promise.all(
+          [
+            loadEvidence({
+              workspaceId,
+              preferences,
+              missingLanes,
+              now,
+            }),
+            repository.readRecentFingerprints(workspaceId, dedupeSince),
+            repository.readRecentSources(workspaceId, RECENT_SOURCE_SINCE(now)),
+          ],
+        );
 
         // "Now" is a promise of timeliness. Without verified, dated news it
         // remains honestly empty rather than turning into a generic idea.
         if (evidence.news.length === 0) {
           missingLanes = missingLanes.filter((lane) => lane !== "now");
+          // Nothing else was outstanding, so this run did no work. Releasing
+          // the claim lets a later tick try again once news breaks — holding it
+          // would mark the day done and leave `now` empty until local midnight.
+          if (missingLanes.length === 0) {
+            await repository.releaseDailyRun(workspaceId, localDate);
+            return { created: [], retained, skipped: "no_evidence" };
+          }
         }
 
         const generated =
@@ -284,13 +310,15 @@ export function createAgentInbox(
         const seen = new Set(recentFingerprints);
         // One idea per source per run: two cards built on the same news story
         // (or the same performance signal) read as the agent repeating itself.
-        // Seeded with the sources already on the board so a top-up run can't
-        // re-pitch what's already showing.
-        const usedSources = new Set(
-          retained
+        // Seeded with both the sources already on the board and those pitched
+        // in the recent past, so neither a top-up run nor tomorrow's run can
+        // re-pitch a story the user has already been shown.
+        const usedSources = new Set([
+          ...retained
             .map((entry) => entry.sourceUrl ?? entry.sourceRef)
             .filter((value): value is string => Boolean(value)),
-        );
+          ...recentSources,
+        ]);
         for (const candidate of generated) {
           const remaining = openSlots.get(candidate.lane);
           const sourceKey = candidate.sourceUrl ?? candidate.sourceRef;
