@@ -87,28 +87,29 @@ function SourceChip({ href, label }: { href: string; label: string }) {
   );
 }
 
-const SOURCES_PER_PAGE = 3;
+const VISIBLE_SOURCES = 3;
 
-// Three-at-a-time carousel of source cards that wraps (last page → first).
-// Prev/next retain the existing controls while each step advances one page.
+// Sliding-window carousel of source cards: always shows up to three cards and
+// each prev/next step moves the window by ONE card — never a page-sized jump —
+// so a trailing partial page can never leave empty slots. The window wraps at
+// the ends (last → first). Controls only render when the window can move.
 function SourceCarousel({ cards }: { cards: CitedPost[] }) {
-  const [page, setPage] = useState(0);
+  const [start, setStart] = useState(0);
   const count = cards.length;
-  const pageCount = Math.ceil(count / SOURCES_PER_PAGE);
+  const maxStart = Math.max(0, count - VISIBLE_SOURCES);
+  const canMove = count > VISIBLE_SOURCES;
   // Clamp at render time (like DocumentLightbox) rather than via an effect, so
   // a shrunk card set — e.g. streaming cites that rehydrate to fewer cards —
   // can never index out of bounds and crash the cards below.
-  const safePage = Math.min(page, Math.max(0, pageCount - 1));
-  const firstVisible = safePage * SOURCES_PER_PAGE;
-  const visibleCards = cards.slice(
-    firstVisible,
-    firstVisible + SOURCES_PER_PAGE,
-  );
-  const lastVisible = firstVisible + visibleCards.length;
+  const safeStart = Math.min(start, maxStart);
+  const visibleCards = cards.slice(safeStart, safeStart + VISIBLE_SOURCES);
+  const lastVisible = safeStart + visibleCards.length;
   const go = (delta: number) =>
-    setPage((current) =>
-      (((current + delta) % pageCount) + pageCount) % pageCount
-    );
+    setStart((current) => {
+      const clamped = Math.min(current, maxStart);
+      if (delta > 0) return clamped >= maxStart ? 0 : clamped + 1;
+      return clamped <= 0 ? maxStart : clamped - 1;
+    });
 
   if (count === 0) return null;
 
@@ -124,43 +125,47 @@ function SourceCarousel({ cards }: { cards: CitedPost[] }) {
           />
         ))}
       </div>
-      <div className="flex items-center justify-between gap-3">
-        <button
-          type="button"
-          onClick={() => go(-1)}
-          aria-label="Previous source"
-          className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-border bg-card text-foreground transition-colors hover:border-primary/40 hover:text-primary"
-        >
-          <ChevronLeft className="h-4 w-4" aria-hidden />
-        </button>
-        <div className="flex items-center gap-1.5" aria-hidden>
-          {Array.from({ length: pageCount }, (_, pageIndex) => (
+      {canMove && (
+        <>
+          <div className="flex items-center justify-between gap-3">
             <button
-              key={`source-page-${pageIndex}`}
               type="button"
-              onClick={() => setPage(pageIndex)}
-              aria-label={`Go to source group ${pageIndex + 1}`}
-              className={cn(
-                "h-1.5 rounded-full transition-all",
-                pageIndex === safePage
-                  ? "w-4 bg-primary"
-                  : "w-1.5 bg-border hover:bg-primary/40",
-              )}
-            />
-          ))}
-        </div>
-        <button
-          type="button"
-          onClick={() => go(1)}
-          aria-label="Next source"
-          className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-border bg-card text-foreground transition-colors hover:border-primary/40 hover:text-primary"
-        >
-          <ChevronRight className="h-4 w-4" aria-hidden />
-        </button>
-      </div>
-      <p className="text-center text-[11px] text-muted-foreground tabular-nums">
-        Sources {firstVisible + 1}–{lastVisible} of {count}
-      </p>
+              onClick={() => go(-1)}
+              aria-label="Previous source"
+              className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-border bg-card text-foreground transition-colors hover:border-primary/40 hover:text-primary"
+            >
+              <ChevronLeft className="h-4 w-4" aria-hidden />
+            </button>
+            <div className="flex items-center gap-1.5" aria-hidden>
+              {Array.from({ length: maxStart + 1 }, (_, windowStart) => (
+                <button
+                  key={`source-window-${windowStart}`}
+                  type="button"
+                  onClick={() => setStart(windowStart)}
+                  aria-label={`Go to source ${windowStart + 1}`}
+                  className={cn(
+                    "h-1.5 rounded-full transition-all",
+                    windowStart === safeStart
+                      ? "w-4 bg-primary"
+                      : "w-1.5 bg-border hover:bg-primary/40",
+                  )}
+                />
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={() => go(1)}
+              aria-label="Next source"
+              className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-border bg-card text-foreground transition-colors hover:border-primary/40 hover:text-primary"
+            >
+              <ChevronRight className="h-4 w-4" aria-hidden />
+            </button>
+          </div>
+          <p className="text-center text-[11px] text-muted-foreground tabular-nums">
+            Sources {safeStart + 1}–{lastVisible} of {count}
+          </p>
+        </>
+      )}
     </div>
   );
 }
