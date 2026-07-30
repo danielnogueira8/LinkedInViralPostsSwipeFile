@@ -2,10 +2,12 @@ import { describe, expect, test } from "vitest";
 import {
   countInterviewQuestionsInRows,
   INTERVIEW_MAX_QUESTIONS,
-  INTERVIEW_MIN_QUESTIONS,
   isInterviewAskArgs,
   parseInterviewOutput,
 } from "@/lib/agent/turn/execute-interview";
+import { AskQuestionSchema, type AskQuestion } from "@/lib/agent/contracts";
+import { hydrate } from "@/lib/chat-hydration";
+import { composeInterviewAnswers } from "@/lib/chat-ask";
 
 function interviewRow(question: string) {
   return {
@@ -17,10 +19,11 @@ function interviewRow(question: string) {
           name: "ask_user",
           arguments: JSON.stringify({
             question,
-            options: ["a", "b"],
+            options: [],
             allowOther: true,
+            questions: [question, "Second?", "Third?"],
             variant: "interview",
-            progress: { current: 1, total: 4 },
+            progress: { current: 1, total: 3 },
           }),
         },
       },
@@ -29,20 +32,43 @@ function interviewRow(question: string) {
 }
 
 describe("parseInterviewOutput", () => {
-  test("parses an ask with 2-4 examples and clamps the total into 3-5", () => {
+  test("parses a plan carrying the whole question set", () => {
     const output = parseInterviewOutput(
-      '{"action":"ask","question":"What changed your mind this year?","examples":["Stopped batching","Hired an editor"],"total":9}',
+      '{"action":"plan","questions":["What changed your mind this year?","Which result never made it into a post?","What advice do you think is wrong?"]}',
     );
     expect(output).toEqual({
-      action: "ask",
-      question: "What changed your mind this year?",
-      examples: ["Stopped batching", "Hired an editor"],
-      total: INTERVIEW_MAX_QUESTIONS,
+      action: "plan",
+      questions: [
+        "What changed your mind this year?",
+        "Which result never made it into a post?",
+        "What advice do you think is wrong?",
+      ],
     });
-    const low = parseInterviewOutput(
-      '{"action":"ask","question":"Q?","examples":["a","b"],"total":1}',
+  });
+
+  test("a runaway plan is truncated to the max rather than rejected", () => {
+    const questions = Array.from({ length: 12 }, (_, i) => `Question ${i + 1}?`);
+    const output = parseInterviewOutput(
+      JSON.stringify({ action: "plan", questions }),
     );
-    expect(low.action === "ask" && low.total).toBe(INTERVIEW_MIN_QUESTIONS);
+    expect(output.action === "plan" && output.questions).toHaveLength(
+      INTERVIEW_MAX_QUESTIONS,
+    );
+  });
+
+  test("a plan thinner than the minimum is invalid", () => {
+    expect(
+      parseInterviewOutput('{"action":"plan","questions":["Only one?"]}'),
+    ).toEqual({ action: "invalid" });
+  });
+
+  test("duplicate questions are dropped, and may drop the plan below the floor", () => {
+    // Case-insensitive dedupe: three entries, one distinct question left.
+    expect(
+      parseInterviewOutput(
+        '{"action":"plan","questions":["Same question?","same QUESTION?","Same question?"]}',
+      ),
+    ).toEqual({ action: "invalid" });
   });
 
   test("tolerates code fences and surrounding whitespace", () => {
@@ -55,9 +81,11 @@ describe("parseInterviewOutput", () => {
     });
   });
 
-  test("an ask without at least two examples is invalid (card needs 2+ chips)", () => {
+  test("the retired single-question ask shape no longer parses", () => {
     expect(
-      parseInterviewOutput('{"action":"ask","question":"Q?","examples":["only one"]}'),
+      parseInterviewOutput(
+        '{"action":"ask","question":"Q?","examples":["a","b"],"total":4}',
+      ),
     ).toEqual({ action: "invalid" });
   });
 
@@ -89,6 +117,101 @@ describe("parseInterviewOutput", () => {
         "Great — let's build from what's current.\n1. What are you working on?\n2. What changed your perspective?",
       ),
     ).toEqual({ action: "invalid" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The interview card's persisted shape. A reloaded card must hydrate to
+// EXACTLY the streamed card: any field the hydrator adds or drops is a field
+// that visibly changes under the user when the post-ask reload reconciles
+// (the "questions change a split second after the card appears" bug).
+// ---------------------------------------------------------------------------
+
+describe("interview card round-trip", () => {
+  const questions = ["What changed your mind?", "Which result?", "What's wrong?"];
+  const streamed: AskQuestion = {
+    question: questions[0],
+    options: [],
+    allowOther: true,
+    variant: "interview",
+    questions,
+    progress: { current: 1, total: 3 },
+  };
+
+  test("the card carries no options — no pre-filled example answers", () => {
+    expect(streamed.options).toEqual([]);
+    expect(AskQuestionSchema.safeParse(streamed).success).toBe(true);
+  });
+
+  test("hydrating the persisted card reproduces the streamed card exactly", () => {
+    const rows = [
+      {
+        id: "m1",
+        role: "assistant" as const,
+        content: questions[0],
+        tool_calls: [
+          {
+            id: "call-1",
+            type: "function" as const,
+            function: {
+              name: "ask_user",
+              arguments: JSON.stringify({
+                question: streamed.question,
+                options: [],
+                allowOther: true,
+                questions,
+                variant: "interview",
+                progress: streamed.progress,
+              }),
+            },
+          },
+        ],
+      },
+    ];
+    const [message] = hydrate(rows as unknown as Parameters<typeof hydrate>[0]);
+    // Deep equality, not a subset check: an injected doneOption or a
+    // recovered choiceIds array would remount the card mid-answer.
+    expect(message.ask).toEqual(streamed);
+  });
+
+  test("the card sends every Q/A pair as ONE message, marking passes", () => {
+    const composed = composeInterviewAnswers(questions, [
+      "I killed our best-performing lead magnet.",
+      "",
+      "  That you must post daily.  ",
+    ]);
+    expect(composed).toBe(
+      [
+        `Q1: ${questions[0]}\nA1: I killed our best-performing lead magnet.`,
+        `Q2: ${questions[1]}\nA2: [skipped]`,
+        `Q3: ${questions[2]}\nA3: That you must post daily.`,
+      ].join("\n\n"),
+    );
+    // Every question appears exactly once — the save turn sees the full set.
+    for (const question of questions) {
+      expect(composed.split(question)).toHaveLength(2);
+    }
+  });
+
+  test("a non-interview ask still requires two options to be a choice", () => {
+    expect(
+      AskQuestionSchema.safeParse({
+        question: "Which draft?",
+        options: ["only one"],
+        allowOther: true,
+      }).success,
+    ).toBe(false);
+  });
+
+  test("an interview card without its planned questions is rejected", () => {
+    expect(
+      AskQuestionSchema.safeParse({
+        question: "Q?",
+        options: [],
+        allowOther: true,
+        variant: "interview",
+      }).success,
+    ).toBe(false);
   });
 });
 

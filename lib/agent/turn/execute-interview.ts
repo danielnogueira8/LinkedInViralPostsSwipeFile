@@ -23,14 +23,18 @@ import type { TurnExecuteContext } from "@/lib/agent/turn/state";
 // the interview is a small state machine driven by this executor:
 //
 //   model reply (STRICT JSON) → server acts:
-//   {"action":"ask",  question, examples, total} → emit the interview AskCard
-//   {"action":"save", answers:[…]}               → accumulate Workspace Knowledge
-//   {"action":"chat", text}                      → ordinary reply (off-script)
+//   {"action":"plan", questions:[…]} → emit ONE interview card holding them all
+//   {"action":"save", answers:[…]}   → accumulate Workspace Knowledge
+//   {"action":"chat", text}          → ordinary reply (off-script)
 //
-// Progress (Question N of M) is counted from the persisted interview cards in
-// the chat history, and "what's already known" is injected server-side every
-// turn — the two things the shipped tool-prompt version could not do from the
-// tool-less answer lane.
+// The whole question set is planned in a single call, and the client card
+// walks it locally (see InterviewCard) — advancing a question costs no turn,
+// no credit and no latency. Only when the last answer lands does the client
+// send one message carrying every Q/A pair, which routes back here as "save".
+// So an interview is two model calls total, not one per question.
+//
+// "What's already known" is injected server-side so the planned questions
+// avoid ground the workspace already covers.
 // ---------------------------------------------------------------------------
 
 /** Free-text requests that route to the interview lane (starter not required). */
@@ -94,12 +98,7 @@ export const INTERVIEW_MIN_QUESTIONS = 3;
 export const INTERVIEW_MAX_QUESTIONS = 5;
 
 export type InterviewOutput =
-  | {
-      action: "ask";
-      question: string;
-      examples: string[];
-      total: number;
-    }
+  | { action: "plan"; questions: string[] }
   | { action: "save"; answers: ChatInterviewAnswer[] }
   | { action: "chat"; text: string }
   | { action: "invalid" };
@@ -116,28 +115,28 @@ function extractJson(text: string): unknown {
   }
 }
 
-function clampTotal(raw: unknown): number {
-  const total = typeof raw === "number" && Number.isFinite(raw) ? Math.round(raw) : INTERVIEW_MAX_QUESTIONS;
-  return Math.min(INTERVIEW_MAX_QUESTIONS, Math.max(INTERVIEW_MIN_QUESTIONS, total));
-}
-
 export function parseInterviewOutput(text: string): InterviewOutput {
   const parsed = extractJson(text);
   if (typeof parsed !== "object" || parsed === null) return { action: "invalid" };
   const record = parsed as Record<string, unknown>;
-  if (record.action === "ask") {
-    const question = typeof record.question === "string" ? record.question.trim() : "";
-    const examples = (Array.isArray(record.examples) ? record.examples : [])
-      .map((example) => (typeof example === "string" ? example.trim() : ""))
-      .filter((example) => example.length > 0)
-      .slice(0, 4);
-    if (!question || examples.length < 2) return { action: "invalid" };
-    return {
-      action: "ask",
-      question: question.slice(0, 500),
-      examples,
-      total: clampTotal(record.total),
-    };
+  if (record.action === "plan") {
+    // The model proposes the set, the server clamps it: a runaway "47
+    // questions" plan is truncated to the max, and a plan too thin to be
+    // worth a card is rejected outright.
+    const seen = new Set<string>();
+    const questions = (Array.isArray(record.questions) ? record.questions : [])
+      .map((question) => (typeof question === "string" ? question.trim() : ""))
+      .filter((question) => question.length > 0)
+      .map((question) => question.slice(0, 500))
+      .filter((question) => {
+        const key = question.toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .slice(0, INTERVIEW_MAX_QUESTIONS);
+    if (questions.length < INTERVIEW_MIN_QUESTIONS) return { action: "invalid" };
+    return { action: "plan", questions };
   }
   if (record.action === "save") {
     const answers = normalizeChatInterviewAnswers(record.answers);
@@ -153,7 +152,7 @@ export function parseInterviewOutput(text: string): InterviewOutput {
 }
 
 const OUTPUT_CONTRACT = `Reply with STRICT JSON only — no prose, no code fences — exactly one of:
-{"action":"ask","question":"<the ONE question>","examples":["<short plausible answer>","<another>"],"total":<3-5>}
+{"action":"plan","questions":["<question 1>","<question 2>","<question 3>"]}
 {"action":"save","answers":[{"question":"...","answer":"...","kind":"story|belief|proof|offer|audience_insight|topic_expertise|prohibition","title":"..."}]}
 {"action":"chat","text":"<a normal short reply>"}`;
 
@@ -193,12 +192,12 @@ function interviewAskEvents(ask: AskQuestion): AgentEvent[] {
   const askId = crypto.randomUUID();
   const args = JSON.stringify({
     question: ask.question,
-    options: ask.options,
+    // No options: an interview card offers no pre-filled example answers.
+    // Suggested answers bias what the user tells us, and biased source
+    // material is worse content downstream.
+    options: [],
     allowOther: ask.allowOther,
-    // Stable ids per option so a persisted interview card can validate a
-    // choice-index answer on a follow-up turn (the "stale choice" 409 fired
-    // when these were absent).
-    choiceIds: ask.options.map((_, index) => `ex.${index}`),
+    questions: ask.questions,
     variant: "interview",
     ...(ask.progress ? { progress: ask.progress } : {}),
   });
@@ -272,10 +271,12 @@ export async function* executeInterviewTurn(
   const knownLines = [...verified, ...proposed]
     .map((item) => `- (${item.kind}, ${item.verification}) ${item.title}`)
     .slice(0, 40);
-  const remaining = Math.max(1, INTERVIEW_MAX_QUESTIONS - priorCount);
+  // A card already stands in this chat, so this turn carries the user's
+  // answers back: the job is to save, not to plan another round.
+  const alreadyPlanned = priorCount > 0;
 
   const system = [
-    "You are Cowork's interviewer. The user asked you to interview them so you have fresher, deeper context for future LinkedIn posts. This is a conversation, not a form: your job is to surface stories, beliefs, proof, and audience insight that could become content angles — then save them.",
+    "You are Cowork's interviewer. The user asked you to interview them so you have fresher, deeper context for future LinkedIn posts. Your job is to surface stories, beliefs, proof, and audience insight that could become content angles — then save them.",
     "",
     "GROUND ALREADY COVERED — never ask about any of this:",
     ...INTERVIEW_QUESTIONS.map((question) => `- ${question.prompt}`),
@@ -283,16 +284,16 @@ export async function* executeInterviewTurn(
       ? ["- Saved knowledge:", ...knownLines]
       : ["- (No knowledge saved yet.)"]),
     "",
-    `You have already asked ${priorCount} question${priorCount === 1 ? "" : "s"} in this interview. Aim for ${INTERVIEW_MIN_QUESTIONS}-${INTERVIEW_MAX_QUESTIONS} total; you have at most ${remaining} left.`,
+    alreadyPlanned
+      ? 'You have ALREADY asked your questions and the user has now answered them (their message lists each question with its answer; "[skipped]" means they passed on it). Do not plan more questions. Reply with action "save" containing every question they actually answered, distilled faithfully — their facts only, never invented specifics. If they answered nothing at all, close gracefully with action "chat" instead.'
+      : `Plan the WHOLE interview in one go: ${INTERVIEW_MIN_QUESTIONS}-${INTERVIEW_MAX_QUESTIONS} questions, asked in order. The user answers them all before you hear back, so each question must stand on its own — never write one that depends on how they answered an earlier one ("you mentioned…", "which of those…").`,
     "",
     "Rules:",
-    "- ONE question per ask, specific and angle-hunting: stories with tension (a recent win, a failure that changed an approach, a client who pushed back), beliefs worth posting (a changed mind, common advice they think is wrong), proof (a number or receipt they never posted), craft (a ritual, setup, or decision framework).",
-    "- React to what they just said — the best next question usually follows their last answer.",
+    "- Every question is specific and angle-hunting: stories with tension (a recent win, a failure that changed an approach, a client who pushed back), beliefs worth posting (a changed mind, common advice they think is wrong), proof (a number or receipt they never posted), craft (a ritual, setup, or decision framework).",
+    "- Cover different ground with each one — do not ask the same thing twice in new words.",
     "- Skip the standard bio questions entirely (what they do, their audience, their mission) — the Context interview form on the Knowledge page owns those.",
-    "- examples must be 2-4 short, plausible answers that jog memory, never the 'right' answer.",
-    '- If the user\'s message is "[skipped]", drop that topic and ask about something else.',
-    '- If the user\'s message is "[done with the interview]", or they have answered your target, reply with action "save" containing every answered question, distilled faithfully — their facts only, never invented specifics. If they answered nothing at all, close gracefully with action "chat" instead.',
-    '- For anything off-script (they ask you something, want to stop before answering, or steer elsewhere) reply with action "chat".',
+    "- Ask the question and nothing else. Never suggest or list possible answers — the user's own unprompted wording is the whole point.",
+    '- For anything off-script (they ask you something, or steer elsewhere) reply with action "chat".',
     "- If an answer is really a durable writing rule (\"never call my clients customers\"), keep it in the answers with kind \"prohibition\".",
     "",
     OUTPUT_CONTRACT,
@@ -331,14 +332,18 @@ export async function* executeInterviewTurn(
     chat_id: chatId,
   });
 
-  if (output.action === "ask") {
+  // A plan is only meaningful as the interview's opening move. If the model
+  // proposes one when a card already stands (it ignored the save instruction),
+  // planning again would throw away the answers the user just typed — so fall
+  // through to the graceful close instead.
+  if (output.action === "plan" && !alreadyPlanned) {
     const ask: AskQuestion = {
-      question: output.question,
-      options: output.examples,
+      question: output.questions[0],
+      options: [],
       allowOther: true,
       variant: "interview",
-      choiceIds: output.examples.map((_, index) => `ex.${index}`),
-      progress: { current: priorCount + 1, total: output.total },
+      questions: output.questions,
+      progress: { current: 1, total: output.questions.length },
     };
     for (const event of interviewAskEvents(ask)) yield event;
     return;
@@ -358,12 +363,15 @@ export async function* executeInterviewTurn(
     return;
   }
 
-  // "chat", or an unparseable reply after the repair pass — show whatever the
-  // model said rather than erroring the turn.
+  // "chat", a stray re-plan, or an unparseable reply after the repair pass —
+  // say something useful rather than erroring the turn. A stray plan must not
+  // fall back to `result.text`: that would dump raw JSON into the chat.
   const fallbackText =
     output.action === "chat"
       ? output.text
-      : result.text.trim() ||
-        "I lost my thread for a second — what would you like to talk about?";
+      : output.action === "plan"
+        ? "Thanks — I've got your answers. I couldn't file them as knowledge just now; say the word and I'll try again."
+        : result.text.trim() ||
+          "I lost my thread for a second — what would you like to talk about?";
   for (const event of doneTextEvents(fallbackText, result.usage)) yield event;
 }
