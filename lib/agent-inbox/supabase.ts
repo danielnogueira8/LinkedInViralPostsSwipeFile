@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { selectAllRows } from "@/lib/db-paginate";
+import { AGENT_INBOX_LANES } from "@/lib/agent-inbox";
 import type {
   AgentInboxIdea,
   AgentInboxLane,
@@ -436,7 +437,7 @@ export async function listAgentInboxWorkspaces(
 
 export function lanesFromIdeas(ideas: AgentInboxIdea[]): AgentInboxLane[] {
   const occupied = new Set(ideas.map((idea) => idea.lane));
-  return (["now", "proven", "explore"] as const).filter(
+  return AGENT_INBOX_LANES.filter(
     (lane) => !occupied.has(lane),
   );
 }

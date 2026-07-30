@@ -1,7 +1,10 @@
 import { describe, expect, test } from "vitest";
 import {
   createAgentInbox,
+  type AgentInboxEvidence,
+  type AgentInboxEvidenceBundle,
   type AgentInboxIdea,
+  type AgentInboxLane,
   type AgentInboxRepository,
   type AgentInboxSynthesis,
 } from "@/lib/agent-inbox";
@@ -21,7 +24,7 @@ function idea(
     angle: `${lane} angle`,
     why: [`${lane} evidence`],
     evidence: [],
-    sourceKind: lane === "now" ? "news" : "workspace_learning",
+    sourceKind: lane === "newsjacking" ? "news" : "workspace_learning",
     sourceRef: null,
     sourceUrl: null,
     sourceTitle: null,
@@ -141,6 +144,18 @@ function repository(initial: AgentInboxIdea[] = []): AgentInboxRepository & {
   };
 }
 
+// Mirrors laneEvidenceSatisfied: each lane needs its own kind of raw material,
+// so the fake attaches what that lane actually requires instead of news-or-
+// nothing. A fake that ignores the gate would pass tests the product fails.
+function laneEvidence(
+  lane: AgentInboxLane,
+  bundle: AgentInboxEvidenceBundle,
+): AgentInboxEvidence[] {
+  if (lane === "newsjacking" || lane === "namejacking") return bundle.news;
+  if (lane === "personal_story") return bundle.knowledge;
+  return bundle.learning.length ? bundle.learning : bundle.knowledge;
+}
+
 function synthesis(): AgentInboxSynthesis {
   return {
     async synthesize({ lanes, evidence }) {
@@ -149,8 +164,8 @@ function synthesis(): AgentInboxSynthesis {
         headline: `${lane} generated`,
         angle: `A distinct ${lane} angle`,
         why: [`Evidence for ${lane}`],
-        evidence: lane === "now" ? evidence.news : [],
-        sourceKind: lane === "now" ? "news" : "workspace_learning",
+        evidence: laneEvidence(lane, evidence),
+        sourceKind: lane === "newsjacking" ? "news" : "workspace_learning",
         sourceRef: null,
         sourceUrl: null,
         sourceTitle: null,
@@ -172,8 +187,8 @@ function multiSynthesis(ideasPerLane: number): AgentInboxSynthesis {
           headline: `${lane} generated ${index + 1}`,
           angle: `A distinct ${lane} angle ${index + 1}`,
           why: [`Evidence for ${lane}`],
-          evidence: lane === "now" ? evidence.news : [],
-          sourceKind: lane === "now" ? "news" : "workspace_learning",
+          evidence: laneEvidence(lane, evidence),
+          sourceKind: lane === "newsjacking" ? "news" : "workspace_learning",
           sourceRef: null,
           sourceUrl: null,
           sourceTitle: null,
@@ -187,6 +202,8 @@ function multiSynthesis(ideasPerLane: number): AgentInboxSynthesis {
   };
 }
 
+// A full bundle: every lane needs its own kind of raw material now, so a
+// fixture carrying only news can only ever fill the news-backed lanes.
 const NEWS_EVIDENCE = {
   news: [
     {
@@ -197,15 +214,29 @@ const NEWS_EVIDENCE = {
       publishedAt: "2026-07-30",
     },
   ],
-  learning: [],
-  knowledge: [],
+  learning: [
+    {
+      kind: "performance" as const,
+      label: "Teardown posts outperform",
+      detail: "A measured result",
+      ref: "signal-1",
+    },
+  ],
+  knowledge: [
+    {
+      kind: "knowledge" as const,
+      label: "The client who fired us",
+      detail: "An approved story",
+      ref: "knowledge-1",
+    },
+  ],
 };
 
 const NO_EVIDENCE = { news: [], learning: [], knowledge: [] };
 
 describe("AgentInbox", () => {
   test("tops up lanes below capacity and preserves ideas the user has not handled", async () => {
-    const existing = idea("proven");
+    const existing = idea("educational");
     const repo = repository([existing]);
     const inbox = createAgentInbox({
       repository: repo,
@@ -220,14 +251,17 @@ describe("AgentInbox", () => {
     });
 
     expect(result.created.map((entry) => entry.lane)).toEqual([
-      "now",
-      "proven",
-      "explore",
+      "newsjacking",
+      "personal_story",
+      "namejacking",
+      "educational",
     ]);
     expect(repo.ideas.find((entry) => entry.id === existing.id)).toBe(existing);
+    // One pre-existing educational idea, plus one new idea in each of the four
+    // lanes (educational tops up from 1 toward the cap rather than resetting).
     expect(
       repo.ideas.filter((entry) => entry.status === "active"),
-    ).toHaveLength(4);
+    ).toHaveLength(5);
   });
 
   test("runs at most once per workspace local day", async () => {
@@ -273,14 +307,13 @@ describe("AgentInbox", () => {
       timezone: "UTC",
     });
 
-    expect(result.created.map((entry) => entry.lane)).toEqual([
-      "proven",
-      "explore",
-    ]);
+    // No evidence of any kind: every lane's requirement is unmet, so the
+    // board stays empty instead of filling with unfounded ideas.
+    expect(result.created).toEqual([]);
   });
 
   test("an acted-on idea leaves its lane empty until the next daily run", async () => {
-    const active = idea("proven");
+    const active = idea("educational");
     const repo = repository([active]);
     const inbox = createAgentInbox({
       repository: repo,
@@ -301,7 +334,7 @@ describe("AgentInbox", () => {
   });
 
   test("a due snoozed idea returns and its lane tops up around it", async () => {
-    const snoozed = idea("explore", {
+    const snoozed = idea("educational", {
       status: "snoozed",
       snoozedUntil: "2026-07-30T07:00:00.000Z",
     });
@@ -318,16 +351,15 @@ describe("AgentInbox", () => {
       timezone: "UTC",
     });
 
-    expect(result.created.map((entry) => entry.lane)).toEqual([
-      "proven",
-      "explore",
-    ]);
+    // No evidence of any kind: every lane's requirement is unmet, so the
+    // board stays empty instead of filling with unfounded ideas.
+    expect(result.created).toEqual([]);
     expect(snoozed.status).toBe("active");
   });
 
   test("reports full only when every lane holds three active ideas", async () => {
     const repo = repository(
-      (["now", "proven", "explore"] as const).flatMap((lane) =>
+      (["newsjacking", "personal_story", "namejacking", "educational"] as const).flatMap((lane) =>
         [1, 2, 3].map((index) =>
           idea(lane, {
             id: `${lane}-${index}`,
@@ -355,7 +387,7 @@ describe("AgentInbox", () => {
     });
 
     expect(result).toMatchObject({ skipped: "full", created: [] });
-    expect(result.retained).toHaveLength(9);
+    expect(result.retained).toHaveLength(12);
     expect(syntheses).toBe(0);
   });
 
@@ -373,8 +405,8 @@ describe("AgentInbox", () => {
       timezone: "UTC",
     });
 
-    expect(result.created).toHaveLength(9);
-    for (const lane of ["now", "proven", "explore"] as const) {
+    expect(result.created).toHaveLength(12);
+    for (const lane of ["newsjacking", "educational", "educational"] as const) {
       expect(
         result.created.filter((entry) => entry.lane === lane),
       ).toHaveLength(3);
@@ -395,8 +427,8 @@ describe("AgentInbox", () => {
       timezone: "UTC",
     });
 
-    expect(result.created).toHaveLength(9);
-    for (const lane of ["now", "proven", "explore"] as const) {
+    expect(result.created).toHaveLength(12);
+    for (const lane of ["newsjacking", "educational", "educational"] as const) {
       expect(
         result.created.filter((entry) => entry.lane === lane),
       ).toHaveLength(3);
@@ -405,13 +437,13 @@ describe("AgentInbox", () => {
 
   test("tops up a lane with two active ideas by exactly one more", async () => {
     const repo = repository([
-      idea("proven", { id: "proven-1", fingerprint: "proven-fp-1" }),
-      idea("proven", { id: "proven-2", fingerprint: "proven-fp-2" }),
+      idea("educational", { id: "proven-1", fingerprint: "proven-fp-1" }),
+      idea("educational", { id: "proven-2", fingerprint: "proven-fp-2" }),
     ]);
     const inbox = createAgentInbox({
       repository: repo,
       synthesis: multiSynthesis(3),
-      loadEvidence: async () => NO_EVIDENCE,
+      loadEvidence: async () => NEWS_EVIDENCE,
     });
 
     const result = await inbox.replenish({
@@ -420,13 +452,11 @@ describe("AgentInbox", () => {
       timezone: "UTC",
     });
 
-    expect(result.created.filter((entry) => entry.lane === "proven"))
+    expect(result.created.filter((entry) => entry.lane === "educational"))
       .toHaveLength(1);
-    expect(result.created.filter((entry) => entry.lane === "explore"))
-      .toHaveLength(3);
     expect(
       repo.ideas.filter(
-        (entry) => entry.lane === "proven" && entry.status === "active",
+        (entry) => entry.lane === "educational" && entry.status === "active",
       ),
     ).toHaveLength(3);
   });
@@ -439,11 +469,18 @@ describe("AgentInbox", () => {
         async synthesize() {
           return [
             {
-              lane: "proven" as const,
+              lane: "educational" as const,
               headline: "One strong proven idea",
               angle: "The only angle the evidence supports",
               why: ["Grounded in the user's results"],
-              evidence: [],
+              evidence: [
+                {
+                  kind: "performance" as const,
+                  label: "Teardown posts outperform",
+                  detail: "A measured result",
+                  ref: "signal-1",
+                },
+              ],
               sourceKind: "workspace_learning" as const,
               sourceRef: null,
               sourceUrl: null,
@@ -465,7 +502,7 @@ describe("AgentInbox", () => {
       timezone: "UTC",
     });
 
-    expect(result.created.map((entry) => entry.lane)).toEqual(["proven"]);
+    expect(result.created.map((entry) => entry.lane)).toEqual(["educational"]);
   });
 
   test("never accepts two ideas built on the same source in one run", async () => {
@@ -475,11 +512,18 @@ describe("AgentInbox", () => {
       synthesis: {
         async synthesize() {
           return [1, 2].map((index) => ({
-            lane: "proven" as const,
+            lane: "newsjacking" as const,
             headline: `Same-story idea ${index}`,
             angle: `Angle ${index} on the same story`,
             why: ["Same underlying source"],
-            evidence: [],
+            evidence: [
+              {
+                kind: "news" as const,
+                label: "Same story",
+                detail: "One article, two angles",
+                url: "https://example.com/same-story",
+              },
+            ],
             sourceKind: "news" as const,
             sourceRef: null,
             sourceUrl: "https://example.com/same-story",
@@ -491,7 +535,7 @@ describe("AgentInbox", () => {
           }));
         },
       },
-      loadEvidence: async () => NO_EVIDENCE,
+      loadEvidence: async () => NEWS_EVIDENCE,
     });
 
     const result = await inbox.replenish({
@@ -505,7 +549,7 @@ describe("AgentInbox", () => {
 
   test("a top-up run never re-pitches a source already on the board", async () => {
     const repo = repository([
-      idea("proven", {
+      idea("educational", {
         id: "proven-1",
         fingerprint: "proven-fp-1",
         sourceUrl: "https://example.com/already-live",
@@ -517,7 +561,7 @@ describe("AgentInbox", () => {
         async synthesize() {
           return [
             {
-              lane: "proven" as const,
+              lane: "educational" as const,
               headline: "New angle on the live story",
               angle: "Different angle, same source",
               why: ["Same underlying source"],
@@ -547,17 +591,17 @@ describe("AgentInbox", () => {
   });
 
   test("a Now-only run with no news gives its claim back so news can land later", async () => {
-    // The other two lanes are already full, so `now` is the only outstanding
-    // work. Without releasing the claim the run marked the day done, and news
-    // breaking at midday could not reach the board until local midnight.
-    const full = [
-      ...Array.from({ length: 3 }, (_, i) =>
-        idea("proven", { id: `proven-${i}`, fingerprint: `proven-${i}` }),
+    // Every non-news lane is already full, so newsjacking is the only
+    // outstanding work. Without releasing the claim the run marked the day
+    // done, and news breaking at midday could not reach the board until local
+    // midnight.
+    const full = (
+      ["personal_story", "namejacking", "educational"] as const
+    ).flatMap((lane) =>
+      Array.from({ length: 3 }, (_, i) =>
+        idea(lane, { id: `${lane}-${i}`, fingerprint: `${lane}-${i}` }),
       ),
-      ...Array.from({ length: 3 }, (_, i) =>
-        idea("explore", { id: `explore-${i}`, fingerprint: `explore-${i}` }),
-      ),
-    ];
+    );
     const repo = repository(full);
     let newsAvailable = false;
     const inbox = createAgentInbox({
@@ -581,14 +625,16 @@ describe("AgentInbox", () => {
       now: NOW,
       timezone: "UTC",
     });
-    expect(afternoon.created.map((entry) => entry.lane)).toEqual(["now"]);
+    expect(afternoon.created.map((entry) => entry.lane)).toEqual([
+      "newsjacking",
+    ]);
   });
 
   test("a source pitched on an earlier day is not pitched again", async () => {
     // Fingerprints only block an identical idea. The same story re-angled
     // under a new headline hashes differently, so without a source-level
     // window it returned the next day as though it were new.
-    const yesterday = idea("proven", {
+    const yesterday = idea("educational", {
       id: "yesterday",
       status: "acted",
       fingerprint: "yesterday-fingerprint",
@@ -631,7 +677,7 @@ describe("AgentInbox", () => {
   test("restore returns a just-acted idea to the board", async () => {
     // The Cowork handoff can fail after the transition commits; without this
     // the card is gone and no draft exists.
-    const active = idea("proven");
+    const active = idea("educational");
     const repo = repository([active]);
     const inbox = createAgentInbox({
       repository: repo,
@@ -657,7 +703,7 @@ describe("AgentInbox", () => {
   });
 
   test("restore does not resurrect a discarded idea", async () => {
-    const active = idea("proven");
+    const active = idea("educational");
     const repo = repository([active]);
     const inbox = createAgentInbox({
       repository: repo,

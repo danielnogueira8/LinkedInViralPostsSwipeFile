@@ -8,7 +8,7 @@ function idea(overrides: Partial<AgentInboxIdea> = {}): AgentInboxIdea {
   return {
     id: "idea-1",
     workspaceId: "test-workspace",
-    lane: "proven",
+    lane: "educational",
     status: "active",
     headline: "Turn your strongest topic into a practical teardown",
     angle: "A specific direction grounded in evidence.",

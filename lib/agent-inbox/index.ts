@@ -1,7 +1,17 @@
 import { localDateForInstant } from "@/lib/schedule-local-date";
 import { truncateAtWordBoundary } from "@/lib/text-truncate";
 
-export const AGENT_INBOX_LANES = ["now", "proven", "explore"] as const;
+// Lanes are POST FRAMEWORKS, not evidence sources. The old now/proven/explore
+// axis described where evidence came from, which let two cards share a
+// framework and read as near-duplicates while sitting in different lanes.
+// Naming the framework makes each lane a different KIND of post by
+// construction, and maps 1:1 onto the skills that already exist.
+export const AGENT_INBOX_LANES = [
+  "newsjacking",
+  "personal_story",
+  "namejacking",
+  "educational",
+] as const;
 export type AgentInboxLane = (typeof AGENT_INBOX_LANES)[number];
 
 // Up to three active ideas per lane — quality-gated, so a lane may hold
@@ -71,6 +81,46 @@ export type AgentInboxPreferences = {
   topics: string[];
   newsSensitivity: "low" | "standard" | "high";
 };
+
+// Each lane is a different KIND of post, so each needs a different kind of
+// raw material. This is the gate that keeps a lane honest: a "your story" card
+// built from a news article is not a personal story, it is a news card wearing
+// the wrong label — and shipping one teaches the user the lanes mean nothing.
+//
+// A lane whose requirement is unmet stays EMPTY. That mirrors the existing
+// newsjacking rule (no verified news → no card) and is the same trade
+// throughout: an empty lane is honest, a mislabelled card is not.
+export function laneEvidenceSatisfied(
+  lane: AgentInboxLane,
+  evidence: readonly AgentInboxEvidence[],
+): boolean {
+  switch (lane) {
+    // A timely pitch has to be anchored to a dated story — that is the whole
+    // claim it makes.
+    case "newsjacking":
+      return evidence.some((entry) => entry.kind === "news");
+    // The user's own material. `knowledge` is what the interview captured
+    // (story / proof / belief); `voice` is how they tell it. Without one of
+    // those there is no "your" in the story.
+    case "personal_story":
+      return evidence.some(
+        (entry) => entry.kind === "knowledge" || entry.kind === "voice",
+      );
+    // Borrowing attention needs someone to borrow it FROM, and the named
+    // person or company only ever arrives on a news item.
+    case "namejacking":
+      return evidence.some((entry) => entry.kind === "news");
+    // Expertise the user has actually demonstrated: measured performance, or
+    // knowledge they approved. Anything else is a generic explainer.
+    case "educational":
+      return evidence.some(
+        (entry) =>
+          entry.kind === "performance" ||
+          entry.kind === "knowledge" ||
+          entry.kind === "source_post",
+      );
+  }
+}
 
 export type AgentInboxEvidenceBundle = {
   news: AgentInboxEvidence[];
@@ -273,10 +323,12 @@ export function createAgentInbox(
           ],
         );
 
-        // "Now" is a promise of timeliness. Without verified, dated news it
-        // remains honestly empty rather than turning into a generic idea.
+        // Newsjacking is a promise of timeliness. Without verified, dated news
+        // it stays honestly empty rather than turning into a generic idea.
         if (evidence.news.length === 0) {
-          missingLanes = missingLanes.filter((lane) => lane !== "now");
+          missingLanes = missingLanes.filter(
+            (lane) => lane !== "newsjacking",
+          );
           // Nothing else was outstanding, so this run did no work. Releasing
           // the claim lets a later tick try again once news breaks — holding it
           // would mark the day done and leave `now` empty until local midnight.
@@ -331,8 +383,7 @@ export function createAgentInbox(
             continue;
           }
           if (
-            candidate.lane === "now" &&
-            !candidate.evidence.some((entry) => entry.kind === "news")
+            !laneEvidenceSatisfied(candidate.lane, candidate.evidence)
           ) {
             continue;
           }
