@@ -155,6 +155,7 @@ export function OpportunityCard({
   acted,
   snoozed,
   busy,
+  compact = false,
   onAction,
 }: {
   lane: AgentInboxLane;
@@ -166,6 +167,9 @@ export function OpportunityCard({
   // can say so instead of showing the misleading "no strong fit" empty state.
   snoozed?: AgentInboxIdea;
   busy: boolean;
+  // A lane holding several ideas stacks them, so each card trades the
+  // single-card min-height for a tighter stack.
+  compact?: boolean;
   onAction: (
     idea: AgentInboxIdea,
     action: "act" | "snooze" | "discard",
@@ -178,8 +182,10 @@ export function OpportunityCard({
   const [evidenceOpen, setEvidenceOpen] = useState(false);
   return (
     <article
-      className="flex min-h-[28rem] w-[min(86vw,24rem)] shrink-0 snap-center flex-col rounded-[1.75rem] border border-border bg-card p-5 shadow-sm sm:w-auto lg:min-h-[31rem]"
-      data-testid={`agent-lane-${lane}`}
+      className={cn(
+        "flex w-full flex-col rounded-[1.75rem] border border-border bg-card p-5 shadow-sm",
+        compact ? "" : "min-h-[28rem] lg:min-h-[31rem]",
+      )}
     >
       <div className="flex items-start gap-3">
         <span className="relative shrink-0">
@@ -246,7 +252,7 @@ export function OpportunityCard({
         )
       ) : (
         <>
-          <div className="mt-7 flex-1">
+          <div className={cn("flex-1", compact ? "mt-4" : "mt-7")}>
             <div className="flex flex-wrap gap-2">
               {idea.evidence.slice(0, 2).map((entry, index) => (
                 <EvidenceChip
@@ -446,15 +452,25 @@ export function AgentInbox() {
     };
   }, []);
 
-  const byLane = useMemo(
-    () => new Map(data?.active.map((idea) => [idea.lane, idea]) ?? []),
-    [data],
-  );
+  // Each lane can hold several active ideas (strongest first); the empty
+  // states below only apply when a lane has none at all.
+  const ideasByLane = useMemo(() => {
+    const map = new Map<AgentInboxLane, AgentInboxIdea[]>();
+    for (const idea of data?.active ?? []) {
+      const list = map.get(idea.lane) ?? [];
+      list.push(idea);
+      map.set(idea.lane, list);
+    }
+    for (const list of map.values()) {
+      list.sort((left, right) => right.score - left.score);
+    }
+    return map;
+  }, [data]);
   // A lane with nothing active might be empty because the user snoozed its
   // idea — the activity feed still carries that idea until it is due back.
   // (The server releases due snoozes before reading, so a "snoozed" entry
   // here is always still pending; an overdue one would be active again and
-  // occupy the lane, which suppresses this via byLane above.)
+  // occupy the lane, which suppresses this via ideasByLane above.)
   const snoozedByLane = useMemo(() => {
     const map = new Map<AgentInboxLane, AgentInboxIdea>();
     for (const idea of data?.activity ?? []) {
@@ -596,8 +612,8 @@ export function AgentInbox() {
             <div>
               <h2 className="text-xl font-semibold">Worth your attention</h2>
               <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-                Three evidence-backed directions. Nothing is drafted or
-                scheduled until you choose it.
+                Up to three evidence-backed directions per agent. Nothing is
+                drafted or scheduled until you choose it.
               </p>
             </div>
           </div>
@@ -612,22 +628,43 @@ export function AgentInbox() {
           </Button>
         </div>
         <div className="-mx-4 mt-6 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-3 sm:mx-0 sm:grid sm:grid-cols-2 sm:overflow-visible sm:px-0 lg:grid-cols-3">
-          {(["now", "proven", "explore"] as const).map((lane) => (
-            <OpportunityCard
-              key={lane}
-              lane={lane}
-              idea={byLane.get(lane)}
-              acted={byLane.has(lane) ? undefined : actedByLane.get(lane)}
-              snoozed={
-                byLane.has(lane) ? undefined : snoozedByLane.get(lane)
-              }
-              busy={busyId === byLane.get(lane)?.id}
-              onAction={(idea, action) => {
-                if (action === "discard") setPendingDiscard(idea);
-                else void act(idea, action);
-              }}
-            />
-          ))}
+          {(["now", "proven", "explore"] as const).map((lane) => {
+            const ideas = ideasByLane.get(lane) ?? [];
+            return (
+              <div
+                key={lane}
+                className="flex w-[min(86vw,24rem)] shrink-0 snap-center flex-col gap-3 sm:w-auto"
+                data-testid={`agent-lane-${lane}`}
+              >
+                {ideas.length === 0 ? (
+                  <OpportunityCard
+                    lane={lane}
+                    acted={actedByLane.get(lane)}
+                    snoozed={snoozedByLane.get(lane)}
+                    busy={false}
+                    onAction={(idea, action) => {
+                      if (action === "discard") setPendingDiscard(idea);
+                      else void act(idea, action);
+                    }}
+                  />
+                ) : (
+                  ideas.map((idea) => (
+                    <OpportunityCard
+                      key={idea.id}
+                      lane={lane}
+                      idea={idea}
+                      busy={busyId === idea.id}
+                      compact={ideas.length > 1}
+                      onAction={(target, action) => {
+                        if (action === "discard") setPendingDiscard(target);
+                        else void act(target, action);
+                      }}
+                    />
+                  ))
+                )}
+              </div>
+            );
+          })}
         </div>
       </section>
       <section className="mt-5 rounded-[1.75rem] border bg-card p-5">
