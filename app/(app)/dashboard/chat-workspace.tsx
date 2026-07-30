@@ -6261,7 +6261,11 @@ function MessageBubble({
           options + a free-text box. Shown once the turn settles; submitting
           sends the composed answer as the next message. */}
       {message.ask && !message.streaming && (
-        <AskCard ask={message.ask} onSubmit={onAnswer} />
+        message.ask.variant === "interview" ? (
+          <InterviewCard ask={message.ask} onSubmit={onAnswer} />
+        ) : (
+          <AskCard ask={message.ask} onSubmit={onAnswer} />
+        )
       )}
 
       {/* Recovery affordance for cut-off / tool-budget-exhausted turns. Retry
@@ -6448,6 +6452,124 @@ function AskCard({
           onClick={submit}
         >
           {isDoneOnly ? "Done" : "Send answer"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// The "Interview me" lane's question card (ask.variant === "interview"):
+// a dedicated surface distinct from the clarification AskCard — progress
+// header, a real textarea for the answer, the model's example answers as
+// memory-jog chips, a Skip, and a "Done for now" exit that only appears from
+// question 3 onward so an interview can't end before it has any substance.
+// Skip/Done send fixed sentinel texts the interview executor understands
+// (see execute-interview.ts).
+function InterviewCard({
+  ask,
+  onSubmit,
+}: {
+  ask: AskQuestion;
+  onSubmit: (
+    text: string,
+    ask: AskQuestion,
+    actionSelectionIds: string[],
+    clarificationChoiceIndex?: number,
+  ) => void;
+}) {
+  const [answer, setAnswer] = useState("");
+  const [submitted, setSubmitted] = useState<string | null>(null);
+  const progress = ask.progress;
+  const canFinish = (progress?.current ?? 0) >= 3;
+
+  const send = (text: string) => {
+    setSubmitted(text);
+    onSubmit(text, ask, []);
+  };
+
+  if (submitted !== null) {
+    return (
+      <div className="rounded-2xl border border-border bg-card/80 px-3.5 py-3 text-sm shadow-sm">
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+          {submitted === "[skipped]"
+            ? "Skipped"
+            : submitted === "[done with the interview]"
+              ? "Interview finished"
+              : "You answered"}
+        </p>
+        {submitted !== "[skipped]" && submitted !== "[done with the interview]" && (
+          <p className="mt-1 text-foreground">{submitted}</p>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="agent-card-in w-full max-w-2xl rounded-2xl border border-primary/15 bg-card/90 px-3.5 py-3 shadow-sm shadow-primary/5">
+      <div className="flex items-center justify-between gap-3">
+        <span className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-primary/85">
+          <AiIcon className="h-3.5 w-3.5 shrink-0" />
+          Interview
+        </span>
+        {progress && (
+          <span className="text-[11px] font-medium tabular-nums text-muted-foreground/80">
+            Question {progress.current} of {progress.total}
+          </span>
+        )}
+      </div>
+      <p className="mt-2 text-sm font-medium leading-6 text-foreground">
+        {ask.question}
+      </p>
+      <div className="mt-2.5 flex flex-wrap gap-1.5">
+        {ask.options.map((example) => (
+          <button
+            key={example}
+            type="button"
+            onClick={() => setAnswer(example)}
+            className="rounded-full border border-border bg-background px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
+            title="Use this as your answer — edit it before sending"
+          >
+            {example}
+          </button>
+        ))}
+      </div>
+      <textarea
+        value={answer}
+        onChange={(e) => setAnswer(e.target.value)}
+        rows={3}
+        placeholder="Type your answer…"
+        // eslint-disable-next-line jsx-a11y/no-autofocus -- The card IS the turn's deliverable; focus belongs here.
+        autoFocus
+        className="mt-2.5 w-full resize-none rounded-xl border border-border bg-white px-3 py-2 text-sm leading-6 outline-none placeholder:text-muted-foreground/55 focus:border-primary/40 focus:ring-2 focus:ring-primary/15"
+      />
+      <div className="mt-2.5 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-8 text-muted-foreground"
+            onClick={() => send("[skipped]")}
+          >
+            Skip
+          </Button>
+          {canFinish && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 text-muted-foreground"
+              onClick={() => send("[done with the interview]")}
+            >
+              Done for now
+            </Button>
+          )}
+        </div>
+        <Button
+          size="sm"
+          className="h-8"
+          disabled={!answer.trim()}
+          onClick={() => send(answer.trim())}
+        >
+          Send answer
         </Button>
       </div>
     </div>
@@ -8455,7 +8577,7 @@ const STARTERS: Starter[] = [
     icon: MessageCircleQuestionMark,
     label: "Interview me",
     prompt:
-      "Interview me so you always have fresh context and new content angles. Ask me 3-5 short questions, one or two at a time — things you don't already know about me — then save what you learn as knowledge for future posts.",
+      "Interview me so you always have fresh context and new content angles. Ask me questions one at a time — things you don't already know about me — then save what you learn as knowledge for future posts.",
   },
 ];
 

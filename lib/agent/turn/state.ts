@@ -88,6 +88,7 @@ export type TurnSetupState = {
   persistedActionContinuation: boolean;
   pendingActionAsk: boolean;
   pendingAskOnly: boolean;
+  pendingInterviewAsk: boolean;
   artifactClarification: AskQuestion | null;
   fallthroughClarification: AskQuestion | null;
   modeledBatchContinuation: ModeledDraftBatchContinuation | null;
@@ -162,6 +163,7 @@ export type TurnCompileContext = Pick<
   | "actionRetryRepository"
   | "persistedActionContinuation"
   | "pendingAskOnly"
+  | "pendingInterviewAsk"
   | "artifactClarification"
   | "fallthroughClarification"
   | "modeledBatchContinuation"

@@ -23,6 +23,15 @@ export const AskQuestionSchema = z
     optionIds: z.array(z.string().uuid()).min(2).max(5).optional(),
     choiceIds: z.array(z.string().min(1).max(64)).min(2).max(6).optional(),
     doneOption: z.string().min(1).optional(),
+    // The "Interview me" lane's cards: options are example-answer chips, and
+    // the card renders interview-specific chrome (progress, skip/done).
+    variant: z.literal("interview").optional(),
+    progress: z
+      .object({
+        current: z.number().int().min(1),
+        total: z.number().int().min(1),
+      })
+      .optional(),
   })
   .superRefine((question, ctx) => {
     if (new Set(question.options).size !== question.options.length) {

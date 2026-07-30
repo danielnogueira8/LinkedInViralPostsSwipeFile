@@ -29,6 +29,7 @@ import {
   hasUnsavedAssistantDraftReferent,
   validatePendingActionAnswer,
 } from "@/lib/agent/turn-policy";
+import { isInterviewAskArgs } from "@/lib/agent/turn/execute-interview";
 import {
   buildTurnContext,
   CREATOR_STYLE_CONTEXT_PERSISTENCE_ERROR,
@@ -229,6 +230,10 @@ export async function setupChatTurn(
   let persistedActionContinuation = false;
   let pendingActionAsk = false;
   let pendingAskOnly = false;
+  // True when the pending ask card belongs to the "Interview me" lane — its
+  // follow-up turns must route back to the interview executor, not the
+  // generic clarification continuation.
+  let pendingInterviewAsk = false;
   let usedLegacyCommandTransport = false;
   let artifactClarification: AskQuestion | null = null;
   let fallthroughClarification: AskQuestion | null = null;
@@ -458,6 +463,23 @@ export async function setupChatTurn(
     };
     pendingAskOnly = hasPendingAskOnly(recentMessageWindow);
     pendingActionAsk = hasPendingActionAsk(recentMessageWindow);
+    pendingInterviewAsk = (() => {
+      const latestNonTool = recentMessageWindow.find(
+        (message) => message.role !== "tool",
+      );
+      if (latestNonTool?.role !== "assistant") return false;
+      const ask = (latestNonTool.tool_calls ?? []).find(
+        (call) => call.function.name === "ask_user",
+      );
+      if (!ask) return false;
+      try {
+        return isInterviewAskArgs(
+          JSON.parse(ask.function.arguments) as Record<string, unknown>,
+        );
+      } catch {
+        return false;
+      }
+    })();
     const actionAnswer = validatePendingActionAnswer(
       recentMessageWindow,
       userText,
@@ -1732,6 +1754,7 @@ export async function setupChatTurn(
     persistedActionContinuation,
     pendingActionAsk,
     pendingAskOnly,
+    pendingInterviewAsk,
     artifactClarification,
     fallthroughClarification,
     modeledBatchContinuation,

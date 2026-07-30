@@ -147,25 +147,6 @@ describe("selectSkills — cap and ordering invariants", () => {
   });
 });
 
-describe("selectSkills — interview-me", () => {
-  test("a bare 'interview me' selects just the interview skill", () => {
-    expect(ids("interview me")).toEqual(["interview-me"]);
-  });
-
-  test("the Cowork Interview-me starter prompt selects the interview skill", () => {
-    const got = ids(
-      "Interview me so you always have fresh context and new content angles. Ask me 3-5 short questions, one or two at a time — things you don't already know about me — then save what you learn as knowledge for future posts.",
-    );
-    expect(got).toContain("interview-me");
-    expect(got[0]).toBe("interview-me");
-  });
-
-  test("the interview skill ranks ahead of generic craft skills", () => {
-    const got = ids("interview me — and ask about my hook style");
-    expect(got[0]).toBe("interview-me");
-  });
-});
-
 describe("selectSkills — registry integrity", () => {
   test("exactly the high-intent skills are flagged specialized", () => {
     // anti-ai joins the post-type skills as specialized: when the user names it
@@ -174,7 +155,7 @@ describe("selectSkills — registry integrity", () => {
     // explicitOnly (see skills-anti-ai-gate.test.ts).
     const specialized = SKILLS.filter((s) => s.specialized).map((s) => s.id).sort();
     expect(specialized).toEqual(
-      ["anti-ai", "brandjacking", "interview-me", "lead-magnet", "model-from-source", "namejacking", "newsjacking"].sort(),
+      ["anti-ai", "brandjacking", "lead-magnet", "model-from-source", "namejacking", "newsjacking"].sort(),
     );
   });
 
