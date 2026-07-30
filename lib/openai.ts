@@ -104,37 +104,61 @@ async function openAIFetch(
 
 type ResponsesInputItem = Record<string, unknown>;
 
+// The Responses API types a content block by which side of the conversation
+// produced it: input roles carry `input_text`, but an assistant turn replayed
+// as history must carry `output_text` (the only other accepted value being
+// `refusal`). Stamping `input_text` on every role 400s the moment a transcript
+// contains an assistant turn — which is why this only ever surfaced in the
+// interview lane, where history accumulates: a first turn has no assistant
+// message to replay, so it succeeds and every turn after it fails.
+function textBlockType(role: ChatMessage["role"]): "input_text" | "output_text" {
+  return role === "assistant" ? "output_text" : "input_text";
+}
+
 function messageContent(
   message: ChatMessage,
 ): Array<Record<string, unknown>> {
+  const textType = textBlockType(message.role);
   if (typeof message.content === "string") {
     return [
       {
-        type: "input_text",
+        type: textType,
         text: message.content,
       },
     ];
   }
   if (!Array.isArray(message.content)) return [];
-  return message.content.map((block) => {
+  return message.content.flatMap<Record<string, unknown>>((block) => {
     if (block.type === "text") {
-      return {
-        type: "input_text",
-        text: block.text,
-      };
+      return [
+        {
+          type: textType,
+          text: block.text,
+        },
+      ];
     }
+    // `input_image` / `input_file` are input-only block types, so an assistant
+    // turn carrying media would 400 the same way `input_text` did. Media only
+    // ever rides user turns today; dropping it on an assistant turn keeps a
+    // future caller from re-opening this bug in a shape that is harder to read
+    // (a 400 naming a block type nobody deliberately sent).
+    if (message.role === "assistant") return [];
     if (block.type === "image_url") {
-      return {
-        type: "input_image",
-        image_url: block.image_url.url,
-        detail: "auto",
-      };
+      return [
+        {
+          type: "input_image",
+          image_url: block.image_url.url,
+          detail: "auto",
+        },
+      ];
     }
-    return {
-      type: "input_file",
-      filename: block.file.filename,
-      file_data: block.file.file_data,
-    };
+    return [
+      {
+        type: "input_file",
+        filename: block.file.filename,
+        file_data: block.file.file_data,
+      },
+    ];
   });
 }
 
