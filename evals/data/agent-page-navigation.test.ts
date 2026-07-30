@@ -56,12 +56,17 @@ describe("Your Agent is a top-level dashboard page", () => {
 });
 
 describe("the standalone Agent page exposes the daily opportunity workflow", () => {
-  test("the wide page keeps three lanes and a mobile snap layout", () => {
+  test("each agent gets a full-width row with up to three idea cards", () => {
     const page = source(PAGE);
     const inbox = source(INBOX);
     expect(page).toContain('PageShell width="full"');
-    expect(inbox).toContain("lg:grid-cols-3");
-    expect(inbox).toContain("snap-mandatory");
+    // Row layout: lanes stack vertically, cards go three-across inside a lane.
+    expect(inbox).toContain("xl:grid-cols-3");
+    expect(inbox).toContain("data-testid={`agent-lane-${lane}`}");
+    expect(inbox).not.toContain("snap-mandatory");
+    // Every evidence chip renders — nothing collapses behind "+N more".
+    expect(inbox).toContain("idea.evidence.map");
+    expect(inbox).not.toContain("idea.evidence.slice");
     expect(inbox).toContain("scheduled until you choose it");
   });
 });

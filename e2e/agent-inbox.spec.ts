@@ -84,7 +84,7 @@ test("shows the three evidence-backed lanes without autonomous controls", async 
   await expect(page.getByRole("button", { name: /schedule/i })).toHaveCount(0);
 });
 
-test("uses a swipeable one-card layout on mobile", async ({ page }) => {
+test("stacks the agent rows vertically on mobile", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/dashboard/agent");
   const now = page.getByTestId("agent-lane-now");
@@ -93,7 +93,8 @@ test("uses a swipeable one-card layout on mobile", async ({ page }) => {
   const nowBox = await now.boundingBox();
   const provenBox = await proven.boundingBox();
   expect(nowBox?.width).toBeLessThan(390);
-  expect(provenBox?.x).toBeGreaterThan(nowBox?.x ?? 0);
+  // Rows (not columns): each agent's section sits BELOW the previous one.
+  expect(provenBox?.y).toBeGreaterThan(nowBox?.y ?? 0);
 });
 
 test("an acted lane says the draft started instead of claiming no strong fit", async ({

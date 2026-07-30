@@ -150,254 +150,216 @@ function tomorrowIso(): string {
 
 // Exported for evals/data/agent-inbox-card.test.ts.
 export function OpportunityCard({
-  lane,
   idea,
   acted,
   snoozed,
   busy,
-  compact = false,
   onAction,
 }: {
-  lane: AgentInboxLane;
   idea?: AgentInboxIdea;
   // The idea the user acted on from this lane today, so the card can say the
-  // draft started instead of the misleading "no strong fit" empty state.
+  // draft started instead of showing the misleading "no strong fit" empty state.
   acted?: AgentInboxIdea;
   // The idea the user snoozed out of this lane (still due back), so the card
   // can say so instead of showing the misleading "no strong fit" empty state.
   snoozed?: AgentInboxIdea;
   busy: boolean;
-  // A lane holding several ideas stacks them, so each card trades the
-  // single-card min-height for a tighter stack.
-  compact?: boolean;
   onAction: (
     idea: AgentInboxIdea,
     action: "act" | "snooze" | "discard",
   ) => void;
 }) {
-  const copy = laneCopy[lane];
-  const Icon = copy.icon;
-  // Clicking any evidence chip (or "+N more") opens the full evidence list so
-  // users can read what each source actually says before trusting the idea.
+  // Clicking any evidence chip opens the full evidence list so users can read
+  // what each source actually says before trusting the idea.
   const [evidenceOpen, setEvidenceOpen] = useState(false);
-  return (
-    <article
-      className={cn(
-        "flex w-full flex-col rounded-[1.75rem] border border-border bg-card p-5 shadow-sm",
-        compact ? "" : "min-h-[28rem] lg:min-h-[31rem]",
-      )}
-    >
-      <div className="flex items-start gap-3">
-        <span className="relative shrink-0">
-          {/* AgentAvatar's PNG-override check is server-only (node:fs); these
-              three slugs are known-bundled SVGs, so a plain img is fine. */}
-          {/* eslint-disable-next-line @next/next/no-img-element -- SVG avatar file; next/image adds nothing */}
-          <img
-            src={`/agents/${copy.avatar}.svg`}
-            alt=""
-            className="size-11 rounded-full border border-border/60 bg-muted object-cover"
-          />
-          <span className="absolute -bottom-1 -right-1 grid size-4 place-items-center rounded-full border border-border/60 bg-background text-muted-foreground">
-            <Icon className="size-2.5" aria-hidden />
-          </span>
-        </span>
-        <div>
-          <p className="text-lg font-semibold">{copy.label}</p>
-          <p className="text-sm text-muted-foreground">{copy.description}</p>
-        </div>
-      </div>
-      {!idea ? (
-        acted ? (
-          <div className="flex flex-1 flex-col items-center justify-center px-4 text-center">
-            <span className="mb-4 grid size-11 place-items-center rounded-full bg-state-success-bg text-state-success">
+  if (!idea) {
+    // Lane-empty placeholder (the lane header lives on the section above, so
+    // this is a slim dashed panel, not a full card).
+    return (
+      <div className="flex flex-col items-center justify-center rounded-[1.75rem] border border-dashed border-border px-4 py-10 text-center">
+        {acted ? (
+          <>
+            <span className="mb-3 grid size-10 place-items-center rounded-full bg-state-success-bg text-state-success">
               <CheckCircle2 className="size-5" aria-hidden />
             </span>
             <p className="font-medium">Draft started</p>
-            <p className="mt-2 line-clamp-2 text-sm leading-6 text-muted-foreground">
+            <p className="mt-1 line-clamp-2 text-sm leading-6 text-muted-foreground">
               &ldquo;{acted.headline}&rdquo;
             </p>
-            <p className="mt-2 text-sm leading-6 text-muted-foreground">
+            <p className="mt-1 text-sm leading-6 text-muted-foreground">
               You started a draft from this idea. A fresh idea lands in this
               lane tomorrow.
             </p>
-          </div>
+          </>
         ) : snoozed ? (
-          <div className="flex flex-1 flex-col items-center justify-center px-4 text-center">
-            <span className="mb-4 grid size-11 place-items-center rounded-full bg-muted">
+          <>
+            <span className="mb-3 grid size-10 place-items-center rounded-full bg-muted">
               <Clock3
                 className="size-5 text-muted-foreground"
                 aria-hidden
               />
             </span>
             <p className="font-medium">Back tomorrow</p>
-            <p className="mt-2 line-clamp-2 text-sm leading-6 text-muted-foreground">
+            <p className="mt-1 line-clamp-2 text-sm leading-6 text-muted-foreground">
               &ldquo;{snoozed.headline}&rdquo;
             </p>
-            <p className="mt-2 text-sm leading-6 text-muted-foreground">
+            <p className="mt-1 text-sm leading-6 text-muted-foreground">
               You skipped this for today. The same idea returns to this lane
               tomorrow — nothing new replaces it until then.
             </p>
-          </div>
+          </>
         ) : (
-          <div className="flex flex-1 flex-col items-center justify-center px-4 text-center">
+          <>
             <Lightbulb
-              className="mb-4 size-7 text-muted-foreground"
+              className="mb-3 size-6 text-muted-foreground"
               aria-hidden
             />
             <p className="font-medium">No strong fit today</p>
-            <p className="mt-2 text-sm leading-6 text-muted-foreground">
+            <p className="mt-1 text-sm leading-6 text-muted-foreground">
               Your Agent leaves a lane empty instead of forcing a weak idea.
             </p>
-          </div>
-        )
-      ) : (
-        <>
-          <div className={cn("flex-1", compact ? "mt-4" : "mt-7")}>
-            <div className="flex flex-wrap gap-2">
-              {idea.evidence.slice(0, 2).map((entry, index) => (
-                <EvidenceChip
-                  key={`${entry.label}-${index}`}
-                  entry={entry}
-                  onOpen={() => setEvidenceOpen(true)}
-                />
-              ))}
-              {idea.evidence.length > 2 ? (
-                <button
-                  type="button"
-                  className="inline-flex items-center rounded-lg border border-dashed px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground transition-colors hover:border-foreground/30 hover:text-foreground"
-                  onClick={() => setEvidenceOpen(true)}
-                >
-                  +{idea.evidence.length - 2} more
-                </button>
-              ) : null}
-            </div>
-            <h2 className="mt-4 text-balance text-2xl font-semibold leading-tight">
-              {idea.headline}
-            </h2>
-            <p className="mt-4 text-sm leading-6 text-muted-foreground">
-              {idea.angle}
-            </p>
-            <div className="mt-5 border-t pt-4">
-              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                Why this is worth your attention
-              </p>
-              <ul className="mt-2 space-y-2 text-sm leading-5">
-                {idea.why.map((reason) => (
-                  <li key={reason} className="flex gap-2">
-                    <span aria-hidden>•</span>
-                    <span>{reason}</span>
-                  </li>
-                ))}
-              </ul>
-              {idea.sourceUrl ? (
-                <a
-                  href={idea.sourceUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="mt-4 inline-flex items-center gap-1 text-sm underline-offset-4 hover:underline"
-                >
-                  Read source <ExternalLink className="size-3.5" aria-hidden />
-                </a>
-              ) : null}
-            </div>
-          </div>
-          <div className="mt-6">
-            <div className="flex items-baseline justify-between">
-              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                Evidence strength
-              </p>
-              <p className="font-mono text-xs tabular-nums text-muted-foreground">
-                {Math.round(idea.score * 100)}%
-              </p>
-            </div>
-            <Progress
-              value={Math.round(idea.score * 100)}
-              className="mt-2"
-              aria-label={`Evidence strength ${Math.round(idea.score * 100)} percent`}
+          </>
+        )}
+      </div>
+    );
+  }
+  return (
+    <article className="flex h-full w-full flex-col rounded-[1.75rem] border border-border bg-card p-5 shadow-sm">
+      <div className="flex-1">
+        {/* Every chip stays visible — the source mix is the reason to trust
+            the idea, so nothing collapses behind a "+N more". */}
+        <div className="flex flex-wrap gap-2">
+          {idea.evidence.map((entry, index) => (
+            <EvidenceChip
+              key={`${entry.label}-${index}`}
+              entry={entry}
+              onOpen={() => setEvidenceOpen(true)}
             />
-          </div>
-          <div className="mt-4 grid grid-cols-2 gap-2">
-            <Button
-              className="col-span-2 rounded-full"
-              disabled={busy}
-              onClick={() => onAction(idea, "act")}
+          ))}
+        </div>
+        <h2 className="mt-3 text-balance text-xl font-semibold leading-tight">
+          {idea.headline}
+        </h2>
+        <p className="mt-3 text-sm leading-6 text-muted-foreground">
+          {idea.angle}
+        </p>
+        <div className="mt-4 border-t pt-4">
+          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+            Why this is worth your attention
+          </p>
+          <ul className="mt-2 space-y-2 text-sm leading-5">
+            {idea.why.map((reason) => (
+              <li key={reason} className="flex gap-2">
+                <span aria-hidden>•</span>
+                <span>{reason}</span>
+              </li>
+            ))}
+          </ul>
+          {idea.sourceUrl ? (
+            <a
+              href={idea.sourceUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-4 inline-flex items-center gap-1 text-sm underline-offset-4 hover:underline"
             >
-              {busy ? <Loader2 className="animate-spin" /> : <AiIcon />}
-              Start draft
-            </Button>
-            <Button
-              variant="outline"
-              className="rounded-full"
-              disabled={busy}
-              title="Skip this for today — it comes back tomorrow"
-              onClick={() => onAction(idea, "snooze")}
-            >
-              <Clock3 /> Not today
-            </Button>
-            <Button
-              variant="ghost"
-              className="rounded-full"
-              disabled={busy}
-              onClick={() => onAction(idea, "discard")}
-            >
-              <X /> Discard
-            </Button>
-          </div>
-        </>
-      )}
-      {idea ? (
-        <Dialog open={evidenceOpen} onOpenChange={setEvidenceOpen}>
-          <DialogContent className="sm:max-w-lg">
-            <DialogTitle>What&apos;s behind this idea</DialogTitle>
-            <DialogDescription>
-              The sources your Agent used for &ldquo;{idea.headline}&rdquo;.
-            </DialogDescription>
-            <ul className="mt-4 space-y-4">
-              {idea.evidence.map((entry, index) => {
-                const meta =
-                  evidenceKindMeta[entry.kind] ?? evidenceKindMeta.knowledge;
-                const EntryIcon = meta.icon;
-                return (
-                  <li
-                    key={`${entry.label}-${index}`}
-                    className="rounded-xl border p-3.5"
-                  >
-                    <p className="flex items-center gap-1.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                      <EntryIcon className="size-3.5" aria-hidden />
-                      {meta.full}
+              Read source <ExternalLink className="size-3.5" aria-hidden />
+            </a>
+          ) : null}
+        </div>
+      </div>
+      <div className="mt-auto pt-5">
+        <div className="flex items-baseline justify-between">
+          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+            Evidence strength
+          </p>
+          <p className="font-mono text-xs tabular-nums text-muted-foreground">
+            {Math.round(idea.score * 100)}%
+          </p>
+        </div>
+        <Progress
+          value={Math.round(idea.score * 100)}
+          className="mt-2"
+          aria-label={`Evidence strength ${Math.round(idea.score * 100)} percent`}
+        />
+        <div className="mt-4 grid grid-cols-2 gap-2">
+          <Button
+            className="col-span-2 rounded-full"
+            disabled={busy}
+            onClick={() => onAction(idea, "act")}
+          >
+            {busy ? <Loader2 className="animate-spin" /> : <AiIcon />}
+            Start draft
+          </Button>
+          <Button
+            variant="outline"
+            className="rounded-full"
+            disabled={busy}
+            title="Skip this for today — it comes back tomorrow"
+            onClick={() => onAction(idea, "snooze")}
+          >
+            <Clock3 /> Not today
+          </Button>
+          <Button
+            variant="ghost"
+            className="rounded-full"
+            disabled={busy}
+            onClick={() => onAction(idea, "discard")}
+          >
+            <X /> Discard
+          </Button>
+        </div>
+      </div>
+      <Dialog open={evidenceOpen} onOpenChange={setEvidenceOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogTitle>What&apos;s behind this idea</DialogTitle>
+          <DialogDescription>
+            The sources your Agent used for &ldquo;{idea.headline}&rdquo;.
+          </DialogDescription>
+          <ul className="mt-4 space-y-4">
+            {idea.evidence.map((entry, index) => {
+              const meta =
+                evidenceKindMeta[entry.kind] ?? evidenceKindMeta.knowledge;
+              const EntryIcon = meta.icon;
+              return (
+                <li
+                  key={`${entry.label}-${index}`}
+                  className="rounded-xl border p-3.5"
+                >
+                  <p className="flex items-center gap-1.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    <EntryIcon className="size-3.5" aria-hidden />
+                    {meta.full}
+                  </p>
+                  <p className="mt-1.5 text-sm font-medium">{entry.label}</p>
+                  {entry.detail ? (
+                    <p className="mt-1 text-sm leading-5 text-muted-foreground">
+                      {entry.detail}
                     </p>
-                    <p className="mt-1.5 text-sm font-medium">{entry.label}</p>
-                    {entry.detail ? (
-                      <p className="mt-1 text-sm leading-5 text-muted-foreground">
-                        {entry.detail}
-                      </p>
+                  ) : null}
+                  <p className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                    {entry.publishedAt ? (
+                      <span>
+                        Published {formatDecisionDay(entry.publishedAt)}
+                      </span>
                     ) : null}
-                    <p className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                      {entry.publishedAt ? (
-                        <span>
-                          Published {formatDecisionDay(entry.publishedAt)}
-                        </span>
-                      ) : null}
-                      {entry.ref ? <span>{entry.ref}</span> : null}
-                      {entry.url ? (
-                        <a
-                          href={entry.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center gap-1 text-foreground underline-offset-4 hover:underline"
-                        >
-                          Read source{" "}
-                          <ExternalLink className="size-3" aria-hidden />
-                        </a>
-                      ) : null}
-                    </p>
-                  </li>
-                );
-              })}
-            </ul>
-          </DialogContent>
-        </Dialog>
-      ) : null}
+                    {entry.ref ? <span>{entry.ref}</span> : null}
+                    {entry.url ? (
+                      <a
+                        href={entry.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 text-foreground underline-offset-4 hover:underline"
+                      >
+                        Read source{" "}
+                        <ExternalLink className="size-3" aria-hidden />
+                      </a>
+                    ) : null}
+                  </p>
+                </li>
+              );
+            })}
+          </ul>
+        </DialogContent>
+      </Dialog>
     </article>
   );
 }
@@ -578,12 +540,19 @@ export function AgentInbox() {
         <TimedLoadingState label="Loading your agent" />
         <div className="mt-4 animate-pulse rounded-[1.75rem] border bg-card/60 p-4 sm:p-6">
           <div className="h-12 w-72 rounded-xl bg-muted" />
-          <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="mt-6 space-y-4">
             {Array.from({ length: 3 }).map((_, index) => (
               <div
                 key={index}
-                className="h-[30rem] rounded-[1.75rem] bg-muted/70"
-              />
+                className="rounded-[1.75rem] border bg-muted/30 p-4 sm:p-5"
+              >
+                <div className="h-10 w-64 rounded-xl bg-muted" />
+                <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+                  <div className="h-72 rounded-[1.75rem] bg-muted/70" />
+                  <div className="hidden h-72 rounded-[1.75rem] bg-muted/70 md:block" />
+                  <div className="hidden h-72 rounded-[1.75rem] bg-muted/70 xl:block" />
+                </div>
+              </div>
             ))}
           </div>
         </div>
@@ -627,42 +596,73 @@ export function AgentInbox() {
             <Settings2 />
           </Button>
         </div>
-        <div className="-mx-4 mt-6 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-3 sm:mx-0 sm:grid sm:grid-cols-2 sm:overflow-visible sm:px-0 lg:grid-cols-3">
+        {/* One full-width row per agent; each row holds up to three idea
+            cards side by side (stacking on narrow screens). */}
+        <div className="mt-6 space-y-4">
           {(["now", "proven", "explore"] as const).map((lane) => {
             const ideas = ideasByLane.get(lane) ?? [];
+            const copy = laneCopy[lane];
+            const LaneIcon = copy.icon;
             return (
-              <div
+              <section
                 key={lane}
-                className="flex w-[min(86vw,24rem)] shrink-0 snap-center flex-col gap-3 sm:w-auto"
+                className="rounded-[1.75rem] border border-border bg-card p-4 sm:p-5"
                 data-testid={`agent-lane-${lane}`}
               >
+                <header className="flex items-center gap-3">
+                  <span className="relative shrink-0">
+                    {/* AgentAvatar's PNG-override check is server-only (node:fs); these
+                        three slugs are known-bundled SVGs, so a plain img is fine. */}
+                    {/* eslint-disable-next-line @next/next/no-img-element -- SVG avatar file; next/image adds nothing */}
+                    <img
+                      src={`/agents/${copy.avatar}.svg`}
+                      alt=""
+                      className="size-10 rounded-full border border-border/60 bg-muted object-cover"
+                    />
+                    <span className="absolute -bottom-1 -right-1 grid size-4 place-items-center rounded-full border border-border/60 bg-background text-muted-foreground">
+                      <LaneIcon className="size-2.5" aria-hidden />
+                    </span>
+                  </span>
+                  <div className="min-w-0">
+                    <h3 className="font-semibold leading-tight">
+                      {copy.label}
+                    </h3>
+                    <p className="truncate text-sm text-muted-foreground">
+                      {copy.description}
+                    </p>
+                  </div>
+                  <span className="ml-auto shrink-0 rounded-full border border-border/70 px-2 py-0.5 font-mono text-[11px] tabular-nums text-muted-foreground">
+                    {ideas.length}/3
+                  </span>
+                </header>
                 {ideas.length === 0 ? (
-                  <OpportunityCard
-                    lane={lane}
-                    acted={actedByLane.get(lane)}
-                    snoozed={snoozedByLane.get(lane)}
-                    busy={false}
-                    onAction={(idea, action) => {
-                      if (action === "discard") setPendingDiscard(idea);
-                      else void act(idea, action);
-                    }}
-                  />
-                ) : (
-                  ideas.map((idea) => (
+                  <div className="mt-4">
                     <OpportunityCard
-                      key={idea.id}
-                      lane={lane}
-                      idea={idea}
-                      busy={busyId === idea.id}
-                      compact={ideas.length > 1}
-                      onAction={(target, action) => {
-                        if (action === "discard") setPendingDiscard(target);
-                        else void act(target, action);
+                      acted={actedByLane.get(lane)}
+                      snoozed={snoozedByLane.get(lane)}
+                      busy={false}
+                      onAction={(idea, action) => {
+                        if (action === "discard") setPendingDiscard(idea);
+                        else void act(idea, action);
                       }}
                     />
-                  ))
+                  </div>
+                ) : (
+                  <div className="mt-4 grid grid-cols-1 items-stretch gap-3 md:grid-cols-2 xl:grid-cols-3">
+                    {ideas.map((idea) => (
+                      <OpportunityCard
+                        key={idea.id}
+                        idea={idea}
+                        busy={busyId === idea.id}
+                        onAction={(target, action) => {
+                          if (action === "discard") setPendingDiscard(target);
+                          else void act(target, action);
+                        }}
+                      />
+                    ))}
+                  </div>
                 )}
-              </div>
+              </section>
             );
           })}
         </div>

@@ -39,7 +39,6 @@ function renderCard(props: {
 }): string {
   return renderToStaticMarkup(
     createElement(OpportunityCard, {
-      lane: "proven",
       busy: false,
       onAction: () => {},
       ...props,

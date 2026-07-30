@@ -29,7 +29,7 @@ function draft(p: Partial<Draft> & { id: string }): Draft {
     chatId: null,
     createdAt: "2026-06-01T00:00:00.000Z",
     ...p,
-  };
+  } as Draft;
 }
 
 const mondaySlot: PostingQueueSlot = {
