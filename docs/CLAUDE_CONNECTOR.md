@@ -68,7 +68,8 @@ Each tool declares its view via `_meta.ui.resourceUri` and returns
 extension ignore the metadata and keep working exactly as before. The views
 themselves are self-contained HTML resources (`lib/mcp/ui/*`) served with the
 `text/html;profile=mcp-app` MIME type and a CSP that allows LinkedIn CDN
-media.
+media plus the DiceBear CDN (`api.dicebear.com`) used for creator-avatar
+fallbacks.
 
 ## Security notes
 

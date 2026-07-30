@@ -12,7 +12,11 @@ import {
   ImageOff,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { tintFor, timeAgo } from "@/lib/post-card-helpers";
+import {
+  creatorAvatarFallback,
+  tintFor,
+  timeAgo,
+} from "@/lib/post-card-helpers";
 import type { CitedPost } from "@/lib/cite-resolve";
 
 // A read-only preview of a swipe-file post the agent cited in chat. Deliberately
@@ -81,11 +85,27 @@ export function InlineSourceCard({
               }}
             />
           ) : null}
+          {/* Missing/expired photo → a stable DiceBear glyphs avatar; the
+              initials tile below is the last resort if that CDN fails too. */}
+          {/* eslint-disable-next-line @next/next/no-img-element -- external SVG; next/image won't optimize it */}
+          <img
+            src={creatorAvatarFallback(name)}
+            alt=""
+            className={cn(
+              "h-9 w-9 rounded-full object-cover shrink-0 bg-muted",
+              post.authorAvatar && "hidden",
+            )}
+            referrerPolicy="no-referrer"
+            onError={(e) => {
+              const img = e.currentTarget;
+              img.style.display = "none";
+              img.nextElementSibling?.classList.remove("hidden");
+            }}
+          />
           <div
             className={cn(
-              "h-9 w-9 rounded-full grid place-items-center text-[11px] font-semibold shrink-0",
+              "h-9 w-9 rounded-full grid place-items-center text-[11px] font-semibold shrink-0 hidden",
               tintFor(name),
-              post.authorAvatar && "hidden",
             )}
           >
             {initials || "?"}

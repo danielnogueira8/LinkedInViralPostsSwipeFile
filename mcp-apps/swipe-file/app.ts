@@ -6,6 +6,7 @@ import {
   type McpUiHostContext,
 } from "@modelcontextprotocol/ext-apps";
 import type { CallToolResult } from "@modelcontextprotocol/server";
+import { creatorAvatarFallback } from "../../lib/post-card-helpers";
 
 type SwipePost = {
   id?: string;
@@ -245,20 +246,25 @@ function renderCard(post: SwipePost, position: number, total: number): HTMLEleme
     initials(author),
   );
   const profilePic = validLinkedInMedia(post.accounts?.profile_pic_url);
-  if (profilePic) {
-    const avatarImage = document.createElement("img");
-    avatarImage.className = "avatar-image";
-    avatarImage.src = profilePic;
-    avatarImage.alt = `${author}'s profile picture`;
-    avatarImage.loading = "lazy";
-    avatarImage.referrerPolicy = "no-referrer";
-    avatarFallback.classList.add("is-hidden");
-    avatarImage.addEventListener("error", () => {
-      avatarImage.remove();
-      avatarFallback.classList.remove("is-hidden");
-    });
-    identity.append(avatarImage);
-  }
+  // Missing/expired photo → a stable DiceBear glyphs avatar; the initials
+  // tile underneath is the last resort if that CDN fails too.
+  const glyphsUrl = creatorAvatarFallback(author);
+  const avatarImage = document.createElement("img");
+  avatarImage.className = "avatar-image";
+  avatarImage.src = profilePic ?? glyphsUrl;
+  avatarImage.alt = `${author}'s profile picture`;
+  avatarImage.loading = "lazy";
+  avatarImage.referrerPolicy = "no-referrer";
+  avatarFallback.classList.add("is-hidden");
+  avatarImage.addEventListener("error", () => {
+    if (avatarImage.src !== glyphsUrl) {
+      avatarImage.src = glyphsUrl;
+      return;
+    }
+    avatarImage.remove();
+    avatarFallback.classList.remove("is-hidden");
+  });
+  identity.append(avatarImage);
   identity.append(avatarFallback, identityCopy);
   meta.append(
     identity,

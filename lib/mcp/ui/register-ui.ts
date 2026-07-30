@@ -22,7 +22,11 @@ const VIEW_META = {
   ui: {
     prefersBorder: false,
     csp: {
-      resourceDomains: ["https://media.licdn.com", "https://*.licdn.com"],
+      resourceDomains: [
+        "https://media.licdn.com",
+        "https://*.licdn.com",
+        "https://api.dicebear.com",
+      ],
       connectDomains: [] as string[],
       frameDomains: [] as string[],
     },

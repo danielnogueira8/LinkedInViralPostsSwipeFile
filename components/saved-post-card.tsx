@@ -29,7 +29,10 @@ import { cn } from "@/lib/utils";
 import { AskAiMenu } from "@/components/ask-ai-menu";
 import { StatusPill } from "@/components/app-surface";
 import { ExpandTextButton } from "@/components/expand-text-button";
-import { initialsForName } from "@/lib/post-card-helpers";
+import {
+  creatorAvatarFallback,
+  initialsForName,
+} from "@/lib/post-card-helpers";
 
 export type SavedPostRow = {
   id: string;
@@ -240,11 +243,27 @@ export function SavedPostCard({
                     }}
                   />
                 ) : null}
+                {/* Missing/expired photo → a stable DiceBear glyphs avatar; the
+                    initials tile below is the last resort if that CDN fails too. */}
+                {/* eslint-disable-next-line @next/next/no-img-element -- external SVG; next/image won't optimize it */}
+                <img
+                  src={creatorAvatarFallback(name)}
+                  alt=""
+                  className={cn(
+                    "h-10 w-10 rounded-full object-cover shrink-0 bg-muted",
+                    avatarUrl && "hidden",
+                  )}
+                  referrerPolicy="no-referrer"
+                  onError={(e) => {
+                    const img = e.currentTarget;
+                    img.style.display = "none";
+                    img.nextElementSibling?.classList.remove("hidden");
+                  }}
+                />
                 <div
                   className={cn(
-                    "h-10 w-10 rounded-full grid place-items-center text-xs font-semibold shrink-0",
+                    "h-10 w-10 rounded-full grid place-items-center text-xs font-semibold shrink-0 hidden",
                     tintFor(name),
-                    avatarUrl && "hidden",
                   )}
                 >
                   {initials || "?"}
