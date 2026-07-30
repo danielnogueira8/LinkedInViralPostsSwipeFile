@@ -116,3 +116,76 @@ describe("countInterviewQuestionsInRows + isInterviewAskArgs", () => {
     expect(isInterviewAskArgs(null)).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// compileTurnPlan routing: the interview trigger must outrank every other ask
+// path (the coverage gate keeps this block honest — it is the only place the
+// interview branch in compile.ts is exercised).
+// ---------------------------------------------------------------------------
+
+import { compileTurnPlan } from "@/lib/agent/turn/compile";
+import type { TurnCompileContext } from "@/lib/agent/turn/state";
+
+function compileSetup(overrides: Record<string, unknown>): TurnCompileContext {
+  return {
+    workspaceId: "ws-1",
+    attachments: [],
+    modelSourceId: null,
+    existingArtifactIds: [],
+    confirmedActionTargetIds: [],
+    pendingInterviewAsk: false,
+    modeledBatchContinuation: null,
+    setupSignal: new AbortController().signal,
+    coworkTelemetry: { configure() {}, finish: async () => {} },
+    currentModelSource: null,
+    modelSourceReference: null,
+    currentTurnOperation: { kind: "ask" },
+    composerTaskContext: null,
+    effectiveUserInstruction: "Tell me about hooks",
+    turnError: (message: string, status: number) =>
+      new Response(message, { status }),
+    ...overrides,
+  } as unknown as TurnCompileContext;
+}
+
+const compileDeps = {
+  actionOrchestratorEnabledForWorkspace: () => false,
+  readOnlyOrchestratorEnabledForWorkspace: () => false,
+  releaseChatTurn: async () => {},
+  persistChatSetupFailure: async () => {},
+};
+
+describe("compileTurnPlan — interview routing", () => {
+  test("the interview-me starter routes the ask turn to the interview lane", async () => {
+    const plan = await compileTurnPlan(
+      compileSetup({
+        composerTaskContext: { starterId: "interview-me" },
+      }),
+      "chat-1",
+      compileDeps,
+    );
+    expect(plan).toMatchObject({
+      kind: "interview",
+      route: "answer",
+      contract: { kind: "answer", expectedCount: 1 },
+    });
+  });
+
+  test("a pending interview ask routes follow-up turns back to the lane", async () => {
+    const plan = await compileTurnPlan(
+      compileSetup({ pendingInterviewAsk: true }),
+      "chat-1",
+      compileDeps,
+    );
+    expect(plan).toMatchObject({ kind: "interview", route: "answer" });
+  });
+
+  test("an explicit free-text 'interview me' routes to the interview lane", async () => {
+    const plan = await compileTurnPlan(
+      compileSetup({ effectiveUserInstruction: "Can you interview me about my founder journey?" }),
+      "chat-1",
+      compileDeps,
+    );
+    expect(plan).toMatchObject({ kind: "interview", route: "answer" });
+  });
+});

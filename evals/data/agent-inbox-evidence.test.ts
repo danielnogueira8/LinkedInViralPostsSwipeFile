@@ -98,3 +98,59 @@ describe("agent inbox evidence — recent posts", () => {
     expect(entry.label).toBe("Short opening line.");
   });
 });
+
+describe("agent inbox evidence — fresh news only", () => {
+  const NEWS_NOW = new Date("2026-07-28T12:00:00Z");
+  const poolRow = (results: Array<Record<string, unknown>>) => ({
+    results,
+    expires_at: "2027-01-01T00:00:00Z",
+  });
+  const story = (title: string, url: string, publishedAt: string) => ({
+    title,
+    summary: `${title} summary`,
+    url,
+    source: "example.com",
+    published_at: publishedAt,
+  });
+
+  async function loadNews(
+    results: Array<Record<string, unknown>>,
+    usedIdeas: Array<Record<string, unknown>>,
+  ) {
+    const loader = createAgentInboxEvidenceLoader(
+      mockDb({
+        chat_artifacts: [],
+        workspace_learning_snapshots: [],
+        workspace_knowledge_items: [],
+        agent_news_pool: [poolRow(results)],
+        agent_inbox_ideas: usedIdeas,
+      }),
+    );
+    const bundle = await loader({
+      workspaceId: "ws-1",
+      preferences: { topics: ["AI"], newsSensitivity: "standard" } as never,
+      missingLanes: ["now"],
+      now: NEWS_NOW,
+    });
+    return bundle.news;
+  }
+
+  test("a story already pitched in the last days is excluded from the pool", async () => {
+    const news = await loadNews(
+      [
+        story("Already pitched story", "https://example.com/old", "2026-07-27T10:00:00Z"),
+        story("Fresh story", "https://example.com/fresh", "2026-07-27T11:00:00Z"),
+      ],
+      [{ source_url: "https://example.com/old", source_ref: null }],
+    );
+    expect(news.map((entry) => entry.label)).toEqual(["Fresh story"]);
+  });
+
+  test("a story already pitched by source ref is excluded too", async () => {
+    const news = await loadNews(
+      [story("Already pitched story", null as never, "2026-07-27T10:00:00Z")],
+      [{ source_url: null, source_ref: "example.com" }],
+    );
+    expect(news).toEqual([]);
+  });
+});

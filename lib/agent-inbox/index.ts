@@ -282,12 +282,23 @@ export function createAgentInbox(
         const accepted: GeneratedAgentInboxIdea[] = [];
         const acceptedCounts = new Map<AgentInboxLane, number>();
         const seen = new Set(recentFingerprints);
+        // One idea per source per run: two cards built on the same news story
+        // (or the same performance signal) read as the agent repeating itself.
+        // Seeded with the sources already on the board so a top-up run can't
+        // re-pitch what's already showing.
+        const usedSources = new Set(
+          retained
+            .map((entry) => entry.sourceUrl ?? entry.sourceRef)
+            .filter((value): value is string => Boolean(value)),
+        );
         for (const candidate of generated) {
           const remaining = openSlots.get(candidate.lane);
+          const sourceKey = candidate.sourceUrl ?? candidate.sourceRef;
           if (
             remaining === undefined ||
             seen.has(candidate.fingerprint) ||
-            (acceptedCounts.get(candidate.lane) ?? 0) >= remaining
+            (acceptedCounts.get(candidate.lane) ?? 0) >= remaining ||
+            (sourceKey !== null && usedSources.has(sourceKey))
           ) {
             continue;
           }
@@ -298,6 +309,7 @@ export function createAgentInbox(
             continue;
           }
           seen.add(candidate.fingerprint);
+          if (sourceKey !== null) usedSources.add(sourceKey);
           acceptedCounts.set(
             candidate.lane,
             (acceptedCounts.get(candidate.lane) ?? 0) + 1,
