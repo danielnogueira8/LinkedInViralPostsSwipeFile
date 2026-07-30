@@ -1,27 +1,18 @@
 import { describe, expect, test } from "vitest";
 import {
-  countInterviewQuestions,
+  countInterviewQuestionsInRows,
   INTERVIEW_MAX_QUESTIONS,
   INTERVIEW_MIN_QUESTIONS,
   isInterviewAskArgs,
   parseInterviewOutput,
 } from "@/lib/agent/turn/execute-interview";
-import type { ChatMessage } from "@/lib/openrouter";
 
-// ---------------------------------------------------------------------------
-// The interview lane's pure core: output parsing (the model's STRICT JSON
-// contract), progress counting from persisted interview cards, and the
-// pending-ask variant detection that routes follow-up turns back to the lane.
-// ---------------------------------------------------------------------------
-
-function interviewCall(question: string): ChatMessage {
+function interviewRow(question: string) {
   return {
-    role: "assistant",
-    content: question,
     tool_calls: [
       {
         id: "call-1",
-        type: "function",
+        type: "function" as const,
         function: {
           name: "ask_user",
           arguments: JSON.stringify({
@@ -34,7 +25,7 @@ function interviewCall(question: string): ChatMessage {
         },
       },
     ],
-  } as ChatMessage;
+  };
 }
 
 describe("parseInterviewOutput", () => {
@@ -101,29 +92,22 @@ describe("parseInterviewOutput", () => {
   });
 });
 
-describe("countInterviewQuestions + isInterviewAskArgs", () => {
-  test("counts only interview-variant cards in the history", () => {
-    const clarification: ChatMessage = {
-      role: "assistant",
-      content: "Which one?",
+describe("countInterviewQuestionsInRows + isInterviewAskArgs", () => {
+  test("counts only interview-variant cards across persisted rows", () => {
+    const clarificationRow = {
       tool_calls: [
         {
           id: "call-2",
-          type: "function",
+          type: "function" as const,
           function: {
             name: "ask_user",
             arguments: JSON.stringify({ question: "Which?", options: ["a", "b"] }),
           },
         },
       ],
-    } as ChatMessage;
-    const history: ChatMessage[] = [
-      interviewCall("Q1"),
-      { role: "user", content: "answer 1" },
-      interviewCall("Q2"),
-      clarification,
-    ];
-    expect(countInterviewQuestions(history)).toBe(2);
+    };
+    const rows = [interviewRow("Q1"), { tool_calls: null }, interviewRow("Q2"), clarificationRow];
+    expect(countInterviewQuestionsInRows(rows)).toBe(2);
   });
 
   test("detects the interview variant in persisted ask args", () => {

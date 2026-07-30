@@ -42,15 +42,21 @@ export function isInterviewAskArgs(args: Record<string, unknown> | null | undefi
   return args?.variant === "interview";
 }
 
-/** How many interview questions have already been asked in this chat. */
-export function countInterviewQuestions(history: ChatMessage[]): number {
+/**
+ * Count interview questions from raw persisted rows. This must NOT run on the
+ * turn's model history: sanitizeToolProtocolHistory strips tool_calls from
+ * ask-only assistant rows (they have no matching tool result), which reset
+ * the count to 0 every turn — the "always Question 1 of 4" bug.
+ */
+export function countInterviewQuestionsInRows(
+  rows: Array<{ tool_calls?: Array<{ function?: { name?: string; arguments?: string } }> | null }>,
+): number {
   let count = 0;
-  for (const message of history) {
-    if (message.role !== "assistant") continue;
-    for (const call of message.tool_calls ?? []) {
+  for (const row of rows) {
+    for (const call of row.tool_calls ?? []) {
       if (call.function?.name !== "ask_user") continue;
       try {
-        const args = JSON.parse(call.function.arguments) as Record<string, unknown>;
+        const args = JSON.parse(call.function.arguments ?? "") as Record<string, unknown>;
         if (isInterviewAskArgs(args)) count += 1;
       } catch {
         // A malformed persisted card can't advance the counter.
@@ -58,6 +64,28 @@ export function countInterviewQuestions(history: ChatMessage[]): number {
     }
   }
   return count;
+}
+
+/** How many interview questions have already been asked in this chat (DB truth). */
+async function countPersistedInterviewQuestions(
+  workspaceId: string,
+  chatId: string,
+): Promise<number> {
+  const { data, error } = await supabaseAdmin()
+    .from("chat_messages")
+    .select("tool_calls")
+    .eq("workspace_id", workspaceId)
+    .eq("chat_id", chatId)
+    .eq("role", "assistant")
+    .not("tool_calls", "is", null)
+    .limit(200);
+  if (error) {
+    console.warn("[interview] question count query failed", error.message);
+    return 0;
+  }
+  return countInterviewQuestionsInRows(
+    (data ?? []) as Array<{ tool_calls?: Array<{ function?: { name?: string; arguments?: string } }> | null }>,
+  );
 }
 
 // The interview's running question target. The model proposes, the server
@@ -167,6 +195,10 @@ function interviewAskEvents(ask: AskQuestion): AgentEvent[] {
     question: ask.question,
     options: ask.options,
     allowOther: ask.allowOther,
+    // Stable ids per option so a persisted interview card can validate a
+    // choice-index answer on a follow-up turn (the "stale choice" 409 fired
+    // when these were absent).
+    choiceIds: ask.options.map((_, index) => `ex.${index}`),
     variant: "interview",
     ...(ask.progress ? { progress: ask.progress } : {}),
   });
@@ -232,14 +264,14 @@ export async function* executeInterviewTurn(
   // What's already on file — injected server-side so questions stay fresh
   // without the model needing a tool to look it up.
   const store = createWorkspaceKnowledgeStore(supabaseAdmin());
-  const [verified, proposed] = await Promise.all([
+  const [verified, proposed, priorCount] = await Promise.all([
     store.listActive(setup.workspaceId),
     store.listProposed(setup.workspaceId),
+    countPersistedInterviewQuestions(setup.workspaceId, chatId),
   ]);
   const knownLines = [...verified, ...proposed]
     .map((item) => `- (${item.kind}, ${item.verification}) ${item.title}`)
     .slice(0, 40);
-  const priorCount = countInterviewQuestions(setup.history);
   const remaining = Math.max(1, INTERVIEW_MAX_QUESTIONS - priorCount);
 
   const system = [
@@ -305,6 +337,7 @@ export async function* executeInterviewTurn(
       options: output.examples,
       allowOther: true,
       variant: "interview",
+      choiceIds: output.examples.map((_, index) => `ex.${index}`),
       progress: { current: priorCount + 1, total: output.total },
     };
     for (const event of interviewAskEvents(ask)) yield event;
