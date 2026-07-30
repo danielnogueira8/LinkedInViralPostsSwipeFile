@@ -6,6 +6,7 @@ import {
 import type { AskQuestion } from "@/lib/agent/contracts";
 import { AskQuestionSchema } from "@/lib/agent/contracts";
 import {
+  appendExampleAnswer,
   composeAskAnswer,
   isAskSelectionComplete,
   resolveAskSubmission,
@@ -555,5 +556,33 @@ describe("explicitlyForbidsClarification — honor an explicit 'do not ask' (#11
     ]) {
       expect(explicitlyForbidsClarification(text)).toBe(false);
     }
+  });
+});
+
+describe("appendExampleAnswer — interview chips build on typed text", () => {
+  test("an empty answer takes the example as-is", () => {
+    expect(appendExampleAnswer("", "Stopped batching content")).toBe(
+      "Stopped batching content",
+    );
+  });
+
+  test("tapping a chip never wipes text the user already typed", () => {
+    expect(appendExampleAnswer("Honestly?", "Stopped batching content")).toBe(
+      "Honestly? Stopped batching content",
+    );
+  });
+
+  test("trailing whitespace collapses before the join", () => {
+    expect(appendExampleAnswer("My take:  ", "daily small bets")).toBe(
+      "My take: daily small bets",
+    );
+  });
+
+  test("multiple chips compose in tap order", () => {
+    const after = appendExampleAnswer(
+      appendExampleAnswer("", "Stopped batching"),
+      "Hired an editor",
+    );
+    expect(after).toBe("Stopped batching Hired an editor");
   });
 });

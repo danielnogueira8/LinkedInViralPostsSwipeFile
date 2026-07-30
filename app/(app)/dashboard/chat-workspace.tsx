@@ -148,6 +148,7 @@ import {
   type ChatWorkspaceSendOptions,
 } from "@/lib/chat-workspace-controller";
 import {
+  appendExampleAnswer,
   isAskSelectionComplete,
   resolveAskSubmission,
   toggleAskOption,
@@ -6479,8 +6480,23 @@ function InterviewCard({
 }) {
   const [answer, setAnswer] = useState("");
   const [submitted, setSubmitted] = useState<string | null>(null);
+  const answerRef = useRef<HTMLTextAreaElement>(null);
   const progress = ask.progress;
   const canFinish = (progress?.current ?? 0) >= 3;
+
+  // Tapping an example chip appends it to the answer (never wipes what the
+  // user already typed) and lands the cursor at the end so they can keep
+  // editing or add more before sending.
+  const pickExample = (example: string) => {
+    setAnswer((current) => appendExampleAnswer(current, example));
+    requestAnimationFrame(() => {
+      const textarea = answerRef.current;
+      if (!textarea) return;
+      textarea.focus();
+      textarea.selectionStart = textarea.value.length;
+      textarea.selectionEnd = textarea.value.length;
+    });
+  };
 
   const send = (text: string) => {
     setSubmitted(text);
@@ -6525,20 +6541,20 @@ function InterviewCard({
           <button
             key={example}
             type="button"
-            onClick={() => setAnswer(example)}
+            onClick={() => pickExample(example)}
             className="rounded-full border border-border bg-background px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
-            title="Use this as your answer — edit it before sending"
+            title="Add this to your answer — keep editing before sending"
           >
             {example}
           </button>
         ))}
       </div>
       <textarea
+        ref={answerRef}
         value={answer}
         onChange={(e) => setAnswer(e.target.value)}
         rows={3}
-        placeholder="Type your answer…"
-        // eslint-disable-next-line jsx-a11y/no-autofocus -- The card IS the turn's deliverable; focus belongs here.
+        placeholder="Type your answer, or tap an example to start…"
         autoFocus
         className="mt-2.5 w-full resize-none rounded-xl border border-border bg-white px-3 py-2 text-sm leading-6 outline-none placeholder:text-muted-foreground/55 focus:border-primary/40 focus:ring-2 focus:ring-primary/15"
       />
