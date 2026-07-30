@@ -130,7 +130,9 @@ export function InterviewKnowledgeReview({
                 <div className="flex flex-wrap items-center gap-1.5">
                   <Badge variant="outline">{kindLabel[item.kind]}</Badge>
                   <span className="text-[11px] text-muted-foreground">
-                    From your Context interview
+                    {item.sourceRef?.includes(":chat-interview:")
+                      ? "From an Interview me chat"
+                      : "From your Context interview"}
                   </span>
                 </div>
                 <div>

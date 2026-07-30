@@ -8360,7 +8360,7 @@ function scheduleMetaFromArtifact(artifact: Artifact): ArtifactScheduleMeta {
 // agent can actually execute, so a click leads somewhere useful rather than a
 // dead end. Prompts with a [placeholder] expect the user to fill a detail —
 // prefillPrompt selects that span on click.
-type StarterGroup = "explore" | "create" | "borrow-attention";
+type StarterGroup = "explore" | "create" | "borrow-attention" | "know-you";
 type Starter = {
   id: ComposerStarterId;
   group: StarterGroup;
@@ -8447,6 +8447,15 @@ const STARTERS: Starter[] = [
     prompt:
       "Newsjack a recent event about [topic]. Search for verified news from the last 14 days first, choose the most relevant story for my expertise, and write a timely LinkedIn post in my voice with an original insight. If nothing fresh and appropriate exists, tell me instead of using old or invented news.",
   },
+  {
+    id: "interview-me",
+    group: "know-you",
+    command: "ask",
+    icon: MessageCircleQuestionMark,
+    label: "Interview me",
+    prompt:
+      "Interview me so you always have fresh context and new content angles. Ask me 3-5 short questions, one or two at a time — things you don't already know about me — then save what you learn as knowledge for future posts.",
+  },
 ];
 
 const STARTER_LAYOUT = partitionCoworkStarters(STARTERS);
@@ -8494,6 +8503,13 @@ function EmptyState({
       description: "Build a post around a person, brand, or timely story.",
       starters: STARTER_LAYOUT.library.filter(
         (starter) => starter.group === "borrow-attention",
+      ),
+    },
+    {
+      title: "Know you",
+      description: "Teach Cowork who you are — fresh angles start here.",
+      starters: STARTER_LAYOUT.library.filter(
+        (starter) => starter.group === "know-you",
       ),
     },
   ];
@@ -8552,7 +8568,7 @@ function EmptyState({
           </span>
           <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-150 group-open:rotate-180 motion-reduce:transition-none" />
         </summary>
-        <div className="grid grid-cols-1 divide-y divide-border border-t border-border lg:grid-cols-3 lg:divide-x lg:divide-y-0">
+        <div className="grid grid-cols-1 divide-y divide-border border-t border-border lg:grid-cols-4 lg:divide-x lg:divide-y-0">
           {groups.map((group) => (
             <section key={group.title} className="py-5 md:px-5 first:md:pl-0 last:md:pr-0">
               <h3 className="text-sm font-semibold text-foreground">{group.title}</h3>
