@@ -448,4 +448,82 @@ describe("AgentInbox", () => {
 
     expect(result.created.map((entry) => entry.lane)).toEqual(["proven"]);
   });
+
+  test("never accepts two ideas built on the same source in one run", async () => {
+    const repo = repository();
+    const inbox = createAgentInbox({
+      repository: repo,
+      synthesis: {
+        async synthesize() {
+          return [1, 2].map((index) => ({
+            lane: "proven" as const,
+            headline: `Same-story idea ${index}`,
+            angle: `Angle ${index} on the same story`,
+            why: ["Same underlying source"],
+            evidence: [],
+            sourceKind: "news" as const,
+            sourceRef: null,
+            sourceUrl: "https://example.com/same-story",
+            sourceTitle: "Same story",
+            sourcePublishedAt: null,
+            score: 0.9,
+            fingerprint: `same-story-${index}`,
+            expiresAt: null,
+          }));
+        },
+      },
+      loadEvidence: async () => NO_EVIDENCE,
+    });
+
+    const result = await inbox.replenish({
+      workspaceId: "workspace-1",
+      now: NOW,
+      timezone: "UTC",
+    });
+
+    expect(result.created).toHaveLength(1);
+  });
+
+  test("a top-up run never re-pitches a source already on the board", async () => {
+    const repo = repository([
+      idea("proven", {
+        id: "proven-1",
+        fingerprint: "proven-fp-1",
+        sourceUrl: "https://example.com/already-live",
+      }),
+    ]);
+    const inbox = createAgentInbox({
+      repository: repo,
+      synthesis: {
+        async synthesize() {
+          return [
+            {
+              lane: "proven" as const,
+              headline: "New angle on the live story",
+              angle: "Different angle, same source",
+              why: ["Same underlying source"],
+              evidence: [],
+              sourceKind: "news" as const,
+              sourceRef: null,
+              sourceUrl: "https://example.com/already-live",
+              sourceTitle: "Already live",
+              sourcePublishedAt: null,
+              score: 0.9,
+              fingerprint: "already-live-new-angle",
+              expiresAt: null,
+            },
+          ];
+        },
+      },
+      loadEvidence: async () => NO_EVIDENCE,
+    });
+
+    const result = await inbox.replenish({
+      workspaceId: "workspace-1",
+      now: NOW,
+      timezone: "UTC",
+    });
+
+    expect(result.created).toHaveLength(0);
+  });
 });

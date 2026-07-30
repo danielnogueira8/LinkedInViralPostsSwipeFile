@@ -321,6 +321,36 @@ async function topicQuery(
   return `${[...new Set(topics)].join(" OR ")} latest announcements, product changes, research, and industry developments`;
 }
 
+// A news story already pitched in the last few days must not come back as a
+// "fresh" opportunity — nothing makes the agent feel dumber than re-offering
+// the same article every morning. Matches the news eligibility window
+// (standard sensitivity = 7 days), so a story can only return once it would
+// have aged out anyway.
+const NEWS_REUSE_WINDOW_MS = 7 * 86_400_000;
+
+async function loadUsedNewsSources(
+  db: SupabaseClient,
+  workspaceId: string,
+  now: Date,
+): Promise<Set<string>> {
+  const since = new Date(now.getTime() - NEWS_REUSE_WINDOW_MS).toISOString();
+  const { data, error } = await db
+    .from("agent_inbox_ideas")
+    .select("source_url, source_ref")
+    .eq("workspace_id", workspaceId)
+    .eq("source_kind", "news")
+    .gte("created_at", since);
+  if (error) throw error;
+  const used = new Set<string>();
+  for (const row of data ?? []) {
+    const url = (row as { source_url?: unknown }).source_url;
+    const ref = (row as { source_ref?: unknown }).source_ref;
+    if (typeof url === "string" && url) used.add(url);
+    if (typeof ref === "string" && ref) used.add(ref);
+  }
+  return used;
+}
+
 export function createAgentInboxEvidenceLoader(db: SupabaseClient) {
   return async (input: {
     workspaceId: string;
@@ -360,6 +390,20 @@ export function createAgentInboxEvidenceLoader(db: SupabaseClient) {
           return [];
         })
       : [];
-    return { news, learning, knowledge, recent };
+    const freshNews = news.length
+      ? await (async () => {
+          const used = await loadUsedNewsSources(
+            db,
+            input.workspaceId,
+            input.now,
+          );
+          return news.filter(
+            (item) =>
+              !(item.url && used.has(item.url)) &&
+              !(item.ref && used.has(item.ref)),
+          );
+        })()
+      : news;
+    return { news: freshNews, learning, knowledge, recent };
   };
 }

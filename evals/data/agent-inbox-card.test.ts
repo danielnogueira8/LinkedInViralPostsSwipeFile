@@ -83,4 +83,33 @@ describe("OpportunityCard lane states", () => {
     expect(html).not.toContain("Draft started");
     expect(html).not.toContain("No strong fit today");
   });
+
+  test("long cards collapse to two reasons behind a View more toggle", () => {
+    const html = renderCard({
+      idea: idea({
+        why: ["Reason one", "Reason two", "Reason three hidden until expanded"],
+      }),
+    });
+    expect(html).toContain("Reason one");
+    expect(html).toContain("Reason two");
+    expect(html).not.toContain("Reason three hidden until expanded");
+    expect(html).toContain("View more");
+  });
+
+  test("every evidence entry renders a chip (no +N more collapse)", () => {
+    const html = renderCard({
+      idea: idea({
+        evidence: [
+          { kind: "news", label: "Story one", detail: "d" },
+          { kind: "performance", label: "Signal two", detail: "d" },
+          { kind: "knowledge", label: "Knowledge three", detail: "d" },
+        ],
+      }),
+    });
+    expect(html).not.toMatch(/\+\d more</);
+    // Kind tags render once per chip, in document order.
+    expect(html).toContain("News");
+    expect(html).toContain("Posts");
+    expect(html).toContain("Knowledge");
+  });
 });

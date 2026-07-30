@@ -124,15 +124,16 @@ function EvidenceChip({
   return (
     <button
       type="button"
-      className="inline-flex max-w-full items-center gap-1.5 rounded-lg border bg-muted/50 px-2 py-1 text-xs transition-colors hover:border-foreground/30 hover:bg-muted"
+      // Kind tag only (icon + "News"/"Draft"/…) so the whole evidence row
+      // fits on one line; the label stays on the tooltip and in the dialog.
+      className="inline-flex shrink-0 items-center gap-1 rounded-md border bg-muted/50 px-1.5 py-0.5 transition-colors hover:border-foreground/30 hover:bg-muted"
       title={entry.detail || entry.label}
       onClick={onOpen}
     >
-      <Icon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+      <Icon className="size-3 shrink-0 text-muted-foreground" aria-hidden />
       <span className="shrink-0 font-mono text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
         {meta.tag}
       </span>
-      <span className="truncate text-muted-foreground">{entry.label}</span>
     </button>
   );
 }
@@ -172,6 +173,9 @@ export function OpportunityCard({
   // Clicking any evidence chip opens the full evidence list so users can read
   // what each source actually says before trusting the idea.
   const [evidenceOpen, setEvidenceOpen] = useState(false);
+  // Cards start collapsed (angle clamped, two why-bullets) so a row of three
+  // stays scannable; "View more" expands the full text in place.
+  const [expanded, setExpanded] = useState(false);
   if (!idea) {
     // Lane-empty placeholder (the lane header lives on the section above, so
     // this is a slim dashed panel, not a full card).
@@ -224,11 +228,12 @@ export function OpportunityCard({
     );
   }
   return (
-    <article className="flex h-full w-full flex-col rounded-[1.75rem] border border-border bg-card p-5 shadow-sm">
+    <article className="flex h-full w-full flex-col rounded-[1.75rem] border border-border bg-card p-4 shadow-sm">
       <div className="flex-1">
         {/* Every chip stays visible — the source mix is the reason to trust
-            the idea, so nothing collapses behind a "+N more". */}
-        <div className="flex flex-wrap gap-2">
+            the idea; the full label lives on the chip tooltip and in the
+            dialog, so the row stays on one line. */}
+        <div className="flex flex-nowrap gap-1.5 overflow-x-auto">
           {idea.evidence.map((entry, index) => (
             <EvidenceChip
               key={`${entry.label}-${index}`}
@@ -237,37 +242,49 @@ export function OpportunityCard({
             />
           ))}
         </div>
-        <h2 className="mt-3 text-balance text-xl font-semibold leading-tight">
+        <h2 className="mt-3 text-balance text-lg font-semibold leading-tight">
           {idea.headline}
         </h2>
-        <p className="mt-3 text-sm leading-6 text-muted-foreground">
+        <p
+          className={cn(
+            "mt-2 text-sm leading-6 text-muted-foreground",
+            !expanded && "line-clamp-3",
+          )}
+        >
           {idea.angle}
         </p>
-        <div className="mt-4 border-t pt-4">
+        <div className="mt-3 border-t pt-3">
           <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
             Why this is worth your attention
           </p>
-          <ul className="mt-2 space-y-2 text-sm leading-5">
-            {idea.why.map((reason) => (
+          <ul className="mt-2 space-y-1.5 text-sm leading-5">
+            {(expanded ? idea.why : idea.why.slice(0, 2)).map((reason) => (
               <li key={reason} className="flex gap-2">
                 <span aria-hidden>•</span>
                 <span>{reason}</span>
               </li>
             ))}
           </ul>
+          <button
+            type="button"
+            className="mt-2 text-xs font-medium text-primary underline-offset-4 hover:underline"
+            onClick={() => setExpanded((current) => !current)}
+          >
+            {expanded ? "Show less" : "View more"}
+          </button>
           {idea.sourceUrl ? (
             <a
               href={idea.sourceUrl}
               target="_blank"
               rel="noreferrer"
-              className="mt-4 inline-flex items-center gap-1 text-sm underline-offset-4 hover:underline"
+              className="ml-3 mt-2 inline-flex items-center gap-1 text-xs underline-offset-4 hover:underline"
             >
-              Read source <ExternalLink className="size-3.5" aria-hidden />
+              Read source <ExternalLink className="size-3" aria-hidden />
             </a>
           ) : null}
         </div>
       </div>
-      <div className="mt-auto pt-5">
+      <div className="mt-auto pt-4">
         <div className="flex items-baseline justify-between">
           <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
             Evidence strength
@@ -281,9 +298,9 @@ export function OpportunityCard({
           className="mt-2"
           aria-label={`Evidence strength ${Math.round(idea.score * 100)} percent`}
         />
-        <div className="mt-4 grid grid-cols-2 gap-2">
+        <div className="mt-3 flex items-center gap-2">
           <Button
-            className="col-span-2 rounded-full"
+            className="h-9 flex-1 rounded-full text-xs"
             disabled={busy}
             onClick={() => onAction(idea, "act")}
           >
@@ -292,7 +309,7 @@ export function OpportunityCard({
           </Button>
           <Button
             variant="outline"
-            className="rounded-full"
+            className="h-9 shrink-0 rounded-full px-3 text-xs"
             disabled={busy}
             title="Skip this for today — it comes back tomorrow"
             onClick={() => onAction(idea, "snooze")}
@@ -301,11 +318,14 @@ export function OpportunityCard({
           </Button>
           <Button
             variant="ghost"
-            className="rounded-full"
+            size="icon"
+            className="h-9 w-9 shrink-0 rounded-full"
             disabled={busy}
+            title="Discard this idea"
+            aria-label="Discard this idea"
             onClick={() => onAction(idea, "discard")}
           >
-            <X /> Discard
+            <X />
           </Button>
         </div>
       </div>
