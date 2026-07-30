@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { selectAllRows } from "@/lib/db-paginate";
 import type {
   AgentInboxIdea,
   AgentInboxLane,
@@ -110,17 +111,44 @@ export function createAgentInboxRepository(
     },
 
     async readRecentFingerprints(workspaceId, since) {
-      const { data, error } = await db
-        .from("agent_inbox_ideas")
-        .select("fingerprint")
-        .eq("workspace_id", workspaceId)
-        .gte("created_at", since.toISOString())
-        .limit(500);
-      if (error) throw error;
+      // Paged rather than `.limit(500)`: the window is 90 days and a workspace
+      // can produce up to nine ideas a day, so a fixed cap silently truncates
+      // and lets already-pitched ideas come back. Which rows a bare limit drops
+      // is also unordered, so the loss was arbitrary.
+      const rows = await selectAllRows<{ fingerprint: unknown }>(() =>
+        db
+          .from("agent_inbox_ideas")
+          .select("fingerprint")
+          .eq("workspace_id", workspaceId)
+          .gte("created_at", since.toISOString())
+          .order("created_at", { ascending: false }),
+      );
       return new Set(
-        (data ?? [])
+        rows
           .map((row) => row.fingerprint)
           .filter((value): value is string => typeof value === "string"),
+      );
+    },
+
+    async readRecentSources(workspaceId, since) {
+      // Same window as fingerprints, but keyed on the source. A story pitched
+      // yesterday under a different headline has a different fingerprint, so
+      // without this it could be re-pitched the next day as though it were new.
+      const rows = await selectAllRows<{
+        source_url: unknown;
+        source_ref: unknown;
+      }>(() =>
+        db
+          .from("agent_inbox_ideas")
+          .select("source_url, source_ref")
+          .eq("workspace_id", workspaceId)
+          .gte("created_at", since.toISOString())
+          .order("created_at", { ascending: false }),
+      );
+      return new Set(
+        rows
+          .map((row) => stringOrNull(row.source_url) ?? stringOrNull(row.source_ref))
+          .filter((value): value is string => Boolean(value)),
       );
     },
 
@@ -158,6 +186,24 @@ export function createAgentInboxRepository(
       if (error) throw error;
     },
 
+    async releaseDailyRun(workspaceId, localDate) {
+      // Hand the claim back as `failed` rather than deleting the row: the
+      // attempts counter is what stops an endlessly retrying workspace, and a
+      // delete would reset it. claim_agent_inbox_run treats `failed` as
+      // reclaimable, so the next tick can pick the day up again.
+      const { error } = await db
+        .from("agent_inbox_runs")
+        .update({
+          status: "failed",
+          error: "No evidence available for the requested lanes",
+          completed_at: new Date().toISOString(),
+        })
+        .eq("workspace_id", workspaceId)
+        .eq("local_date", localDate)
+        .eq("status", "running");
+      if (error) throw error;
+    },
+
     async failDailyRun(workspaceId, localDate, message) {
       const { error } = await db
         .from("agent_inbox_runs")
@@ -173,18 +219,24 @@ export function createAgentInboxRepository(
     },
 
     async insertIdeas(workspaceId, ideas, localDate) {
-      const inserted: AgentInboxIdea[] = [];
-      for (const idea of ideas) {
-        const { data, error } = await db
-          .from("agent_inbox_ideas")
-          .insert(generatedRow(workspaceId, idea, localDate))
-          .select(IDEA_COLUMNS)
-          .single();
-        if (error?.code === "23505") continue;
-        if (error) throw error;
-        inserted.push(ideaFromRow(data as IdeaRow));
-      }
-      return inserted;
+      // One statement per idea keeps the per-row unique-violation skip: a
+      // single batch insert would fail the whole set on one duplicate
+      // fingerprint. They run concurrently rather than sequentially so up to
+      // nine round-trips do not stretch the window in which a crash would
+      // strand the run as `running`.
+      const settled = await Promise.all(
+        ideas.map(async (idea) => {
+          const { data, error } = await db
+            .from("agent_inbox_ideas")
+            .insert(generatedRow(workspaceId, idea, localDate))
+            .select(IDEA_COLUMNS)
+            .single();
+          if (error?.code === "23505") return null;
+          if (error) throw error;
+          return ideaFromRow(data as IdeaRow);
+        }),
+      );
+      return settled.filter((row): row is AgentInboxIdea => row !== null);
     },
 
     async transition(workspaceId, ideaId, action) {

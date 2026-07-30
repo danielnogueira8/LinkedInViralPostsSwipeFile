@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
 import { createProductionAgentInbox } from "@/lib/agent-inbox/service";
+import {
+  MAX_WORKSPACES_PER_TICK,
+  isDueNow,
+  rotateForFairness,
+} from "@/lib/agent-inbox/schedule";
 import { listAgentInboxWorkspaces } from "@/lib/agent-inbox/supabase";
 import { supabaseAdmin } from "@/lib/supabase";
 
@@ -22,16 +27,21 @@ export async function GET(request: Request) {
   const workspaces = requested
     ? [{ workspaceId: requested, timezone: "UTC", deliveryLocalTime: "00:00" }]
     : await listAgentInboxWorkspaces(db);
+  // Filter to the workspaces actually due before capping. Slicing first spent
+  // slots on workspaces whose delivery time had not arrived, and the list is
+  // sorted by workspace id — so the same alphabetical tail was starved every
+  // tick rather than merely delayed.
+  const due = requested
+    ? workspaces
+    : workspaces.filter((workspace) =>
+        isDueNow(now, workspace.timezone, workspace.deliveryLocalTime),
+      );
+  const batch = requested
+    ? due
+    : rotateForFairness(due, now, MAX_WORKSPACES_PER_TICK);
   const results = [];
-  for (const workspace of workspaces.slice(0, 50)) {
+  for (const workspace of batch) {
     try {
-      const localTime = new Intl.DateTimeFormat("en-GB", {
-        timeZone: workspace.timezone,
-        hour: "2-digit",
-        minute: "2-digit",
-        hourCycle: "h23",
-      }).format(now);
-      if (!requested && localTime < workspace.deliveryLocalTime) continue;
       const result = await service.replenish({
         workspaceId: workspace.workspaceId,
         timezone: workspace.timezone,

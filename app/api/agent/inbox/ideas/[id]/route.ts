@@ -13,6 +13,7 @@ const actionSchema = z.discriminatedUnion("kind", [
     reason: z.string().trim().min(1).max(120),
   }),
   z.object({ kind: z.literal("snooze"), until: z.string().datetime() }),
+  z.object({ kind: z.literal("restore") }),
 ]);
 
 export async function GET(
