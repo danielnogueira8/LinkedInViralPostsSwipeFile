@@ -53,7 +53,6 @@ describe("OpportunityCard lane states", () => {
     });
     expect(html).toContain("Draft started");
     expect(html).toContain("Turn your strongest topic into a practical teardown");
-    expect(html).toContain("A fresh idea lands in this");
     expect(html).not.toContain("No strong fit today");
     // No actions on a lane whose idea was already taken.
     expect(html).not.toContain("Start draft");
@@ -77,26 +76,47 @@ describe("OpportunityCard lane states", () => {
     expect(html).not.toContain("Draft started");
   });
 
-  test("an active idea renders the full card with its actions", () => {
+  // A card is a pitch, not a report: collapsed it carries only what the triage
+  // decision needs. These tests render the initial (collapsed) state, which is
+  // exactly what a user sees before showing interest.
+  test("a collapsed card shows only the headline and angle", () => {
     const html = renderCard({ idea: idea() });
-    expect(html).toContain("Start draft");
+    expect(html).toContain("Turn your strongest topic into a practical teardown");
+    expect(html).toContain("A specific direction grounded in evidence.");
     expect(html).not.toContain("Draft started");
     expect(html).not.toContain("No strong fit today");
   });
 
-  test("long cards collapse to two reasons behind a View more toggle", () => {
+  test("a collapsed card defers the dossier and the actions to the expand", () => {
     const html = renderCard({
       idea: idea({
-        why: ["Reason one", "Reason two", "Reason three hidden until expanded"],
+        why: ["Reason one", "Reason two", "Reason three"],
+        sourceUrl: "https://example.test/story",
       }),
     });
-    expect(html).toContain("Reason one");
-    expect(html).toContain("Reason two");
-    expect(html).not.toContain("Reason three hidden until expanded");
-    expect(html).toContain("View more");
+    // The argument for the idea belongs to the expanded state — showing it up
+    // front is what made three cards fill a viewport.
+    expect(html).not.toContain("Why this is worth your attention");
+    expect(html).not.toContain("Reason one");
+    expect(html).not.toContain("Read source");
+    // Expanding is the signal of intent, so that is where actions live. Nine
+    // buttons across a collapsed row of three is the clutter this removes.
+    expect(html).not.toContain("Start draft");
+    expect(html).not.toContain("Not today");
+    // The card itself is the toggle, so triage is one click anywhere on it.
+    expect(html).toContain('aria-expanded="false"');
   });
 
-  test("every evidence entry renders a chip (no +N more collapse)", () => {
+  test("the evidence-strength bar is gone from the card", () => {
+    const html = renderCard({ idea: idea({ score: 0.94 }) });
+    // Every card scored in the same 94-95% band, so the readout discriminated
+    // nothing while costing a heading and a full-width bar. `score` still
+    // orders the lane; it just no longer renders.
+    expect(html).not.toContain("Evidence strength");
+    expect(html).not.toContain("94%");
+  });
+
+  test("evidence chips stay out of the collapsed card", () => {
     const html = renderCard({
       idea: idea({
         evidence: [
@@ -106,10 +126,9 @@ describe("OpportunityCard lane states", () => {
         ],
       }),
     });
+    // Chips move into the expanded state with the rest of the dossier; the
+    // no-"+N more" guarantee still holds once expanded (all chips render).
     expect(html).not.toMatch(/\+\d more</);
-    // Kind tags render once per chip, in document order.
-    expect(html).toContain("News");
-    expect(html).toContain("Posts");
-    expect(html).toContain("Knowledge");
+    expect(html).not.toContain("Posts");
   });
 });

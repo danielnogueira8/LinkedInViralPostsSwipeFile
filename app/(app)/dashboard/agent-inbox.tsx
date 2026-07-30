@@ -7,6 +7,7 @@ import {
   BellRing,
   BookOpen,
   CheckCircle2,
+  ChevronDown,
   Clock3,
   Compass,
   ExternalLink,
@@ -35,7 +36,6 @@ import {
   DialogDescription,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Progress } from "@/components/ui/progress";
 import { TimedLoadingState } from "@/components/ui/timed-loading-state";
 import {
   invalidateAgentInboxRequest,
@@ -173,54 +173,49 @@ export function OpportunityCard({
   // Clicking any evidence chip opens the full evidence list so users can read
   // what each source actually says before trusting the idea.
   const [evidenceOpen, setEvidenceOpen] = useState(false);
-  // Cards start collapsed (angle clamped, two why-bullets) so a row of three
-  // stays scannable; "View more" expands the full text in place.
+  // A card is a pitch, not a report. Collapsed shows only what the triage
+  // decision needs — headline plus one line of angle. Everything that argues
+  // the case (why-bullets, evidence chips, sources, actions) is deferred to
+  // the expand, so four lanes of three fit on screen instead of one and a
+  // half. Expanding is what signals interest, so that is where the full
+  // dossier and the action row belong.
   const [expanded, setExpanded] = useState(false);
   if (!idea) {
     // Lane-empty placeholder (the lane header lives on the section above, so
     // this is a slim dashed panel, not a full card).
     return (
-      <div className="flex flex-col items-center justify-center rounded-[1.75rem] border border-dashed border-border px-4 py-10 text-center">
+      <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-border px-4 py-5 text-center">
         {acted ? (
           <>
-            <span className="mb-3 grid size-10 place-items-center rounded-full bg-state-success-bg text-state-success">
-              <CheckCircle2 className="size-5" aria-hidden />
-            </span>
-            <p className="font-medium">Draft started</p>
-            <p className="mt-1 line-clamp-2 text-sm leading-6 text-muted-foreground">
-              &ldquo;{acted.headline}&rdquo;
+            <p className="flex items-center gap-1.5 text-sm font-medium">
+              <CheckCircle2
+                className="size-4 text-state-success"
+                aria-hidden
+              />
+              Draft started
             </p>
-            <p className="mt-1 text-sm leading-6 text-muted-foreground">
-              You started a draft from this idea. A fresh idea lands in this
-              lane tomorrow.
+            <p className="mt-1 line-clamp-1 text-sm text-muted-foreground">
+              &ldquo;{acted.headline}&rdquo;
             </p>
           </>
         ) : snoozed ? (
           <>
-            <span className="mb-3 grid size-10 place-items-center rounded-full bg-muted">
-              <Clock3
-                className="size-5 text-muted-foreground"
-                aria-hidden
-              />
-            </span>
-            <p className="font-medium">Back tomorrow</p>
-            <p className="mt-1 line-clamp-2 text-sm leading-6 text-muted-foreground">
-              &ldquo;{snoozed.headline}&rdquo;
+            <p className="flex items-center gap-1.5 text-sm font-medium">
+              <Clock3 className="size-4 text-muted-foreground" aria-hidden />
+              Back tomorrow
             </p>
-            <p className="mt-1 text-sm leading-6 text-muted-foreground">
-              You skipped this for today. The same idea returns to this lane
-              tomorrow — nothing new replaces it until then.
+            <p className="mt-1 line-clamp-1 text-sm text-muted-foreground">
+              &ldquo;{snoozed.headline}&rdquo;
             </p>
           </>
         ) : (
           <>
-            <Lightbulb
-              className="mb-3 size-6 text-muted-foreground"
-              aria-hidden
-            />
-            <p className="font-medium">No strong fit today</p>
-            <p className="mt-1 text-sm leading-6 text-muted-foreground">
-              Your Agent leaves a lane empty instead of forcing a weak idea.
+            <p className="flex items-center gap-1.5 text-sm font-medium">
+              <Lightbulb className="size-4 text-muted-foreground" aria-hidden />
+              No strong fit today
+            </p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Your Agent leaves a lane empty rather than force a weak idea.
             </p>
           </>
         )}
@@ -228,77 +223,90 @@ export function OpportunityCard({
     );
   }
   return (
-    <article className="flex h-full w-full flex-col rounded-[1.75rem] border border-border bg-card p-4 shadow-sm">
-      <div className="flex-1">
-        {/* Every chip stays visible — the source mix is the reason to trust
-            the idea; the full label lives on the chip tooltip and in the
-            dialog, so the row stays on one line. */}
-        <div className="flex flex-nowrap gap-1.5 overflow-x-auto">
-          {idea.evidence.map((entry, index) => (
-            <EvidenceChip
-              key={`${entry.label}-${index}`}
-              entry={entry}
-              onOpen={() => setEvidenceOpen(true)}
-            />
-          ))}
-        </div>
-        <h2 className="mt-3 text-balance text-lg font-semibold leading-tight">
-          {idea.headline}
-        </h2>
-        <p
+    <article
+      className={cn(
+        "flex w-full flex-col rounded-2xl border border-border bg-card p-3.5 transition-colors",
+        // Only the expanded card earns a shadow and a stronger edge; a
+        // collapsed row of three should read as quiet list items.
+        expanded ? "shadow-sm" : "hover:border-foreground/20",
+      )}
+      data-expanded={expanded}
+    >
+      {/* Collapsed surface: the whole card is the toggle, so triage is one
+          click anywhere rather than hunting a small "View more" link. */}
+      <button
+        type="button"
+        className="flex w-full flex-col items-start gap-1 text-left"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((current) => !current)}
+      >
+        <span className="flex w-full items-start gap-2">
+          <span className="text-balance text-sm font-semibold leading-snug">
+            {idea.headline}
+          </span>
+          <ChevronDown
+            className={cn(
+              "ml-auto mt-0.5 size-4 shrink-0 text-muted-foreground transition-transform",
+              expanded && "rotate-180",
+            )}
+            aria-hidden
+          />
+        </span>
+        <span
           className={cn(
-            "mt-2 text-sm leading-6 text-muted-foreground",
-            !expanded && "line-clamp-3",
+            "text-sm leading-6 text-muted-foreground",
+            !expanded && "line-clamp-1",
           )}
         >
           {idea.angle}
-        </p>
+        </span>
+      </button>
+      {expanded ? (
         <div className="mt-3 border-t pt-3">
-          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+          {/* Every chip stays visible — the source mix is the reason to trust
+              the idea; the full label lives on the chip tooltip and in the
+              dialog, so the row stays on one line. */}
+          <div className="flex flex-nowrap gap-1.5 overflow-x-auto">
+            {idea.evidence.map((entry, index) => (
+              <EvidenceChip
+                key={`${entry.label}-${index}`}
+                entry={entry}
+                onOpen={() => setEvidenceOpen(true)}
+              />
+            ))}
+          </div>
+          <p className="mt-3 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
             Why this is worth your attention
           </p>
           <ul className="mt-2 space-y-1.5 text-sm leading-5">
-            {(expanded ? idea.why : idea.why.slice(0, 2)).map((reason) => (
+            {idea.why.map((reason) => (
               <li key={reason} className="flex gap-2">
                 <span aria-hidden>•</span>
                 <span>{reason}</span>
               </li>
             ))}
           </ul>
-          <button
-            type="button"
-            className="mt-2 text-xs font-medium text-primary underline-offset-4 hover:underline"
-            onClick={() => setExpanded((current) => !current)}
-          >
-            {expanded ? "Show less" : "View more"}
-          </button>
           {idea.sourceUrl ? (
             <a
               href={idea.sourceUrl}
               target="_blank"
               rel="noreferrer"
-              className="ml-3 mt-2 inline-flex items-center gap-1 text-xs underline-offset-4 hover:underline"
+              className="mt-2 inline-flex items-center gap-1 text-xs underline-offset-4 hover:underline"
             >
               Read source <ExternalLink className="size-3" aria-hidden />
             </a>
           ) : null}
         </div>
-      </div>
-      <div className="mt-auto pt-4">
-        <div className="flex items-baseline justify-between">
-          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-            Evidence strength
-          </p>
-          <p className="font-mono text-xs tabular-nums text-muted-foreground">
-            {Math.round(idea.score * 100)}%
-          </p>
-        </div>
-        <Progress
-          value={Math.round(idea.score * 100)}
-          className="mt-2"
-          aria-label={`Evidence strength ${Math.round(idea.score * 100)} percent`}
-        />
-        <div className="mt-3 flex items-center gap-2">
+      ) : null}
+      {/* Actions ride the expanded state: expanding is the signal of intent,
+          and a collapsed row of three cards showing nine buttons is the
+          clutter this layout exists to remove. `score` still orders the
+          lane — it just no longer spends a heading and a full-width bar to
+          show a number the user cannot act on, and which in practice lands
+          in the same 94-95% band on every card. */}
+      {expanded ? (
+        <div className="mt-4">
+          <div className="flex items-center gap-2">
           <Button
             className="h-9 flex-1 rounded-full text-xs"
             disabled={busy}
@@ -327,8 +335,9 @@ export function OpportunityCard({
           >
             <X />
           </Button>
+          </div>
         </div>
-      </div>
+      ) : null}
       <Dialog open={evidenceOpen} onOpenChange={setEvidenceOpen}>
         <DialogContent className="sm:max-w-lg">
           <DialogTitle>What&apos;s behind this idea</DialogTitle>
@@ -560,7 +569,7 @@ export function AgentInbox() {
         <TimedLoadingState label="Loading your agent" />
         <div className="mt-4 animate-pulse rounded-[1.75rem] border bg-card/60 p-4 sm:p-6">
           <div className="h-12 w-72 rounded-xl bg-muted" />
-          <div className="mt-6 space-y-4">
+          <div className="mt-5 space-y-3">
             {Array.from({ length: 3 }).map((_, index) => (
               <div
                 key={index}
@@ -626,37 +635,40 @@ export function AgentInbox() {
             return (
               <section
                 key={lane}
-                className="rounded-[1.75rem] border border-border bg-card p-4 sm:p-5"
+                className="rounded-2xl border border-border bg-card p-3 sm:p-4"
                 data-testid={`agent-lane-${lane}`}
               >
-                <header className="flex items-center gap-3">
+                <header className="flex items-center gap-2.5">
                   <span className="relative shrink-0">
                     {/* AgentAvatar's PNG-override check is server-only (node:fs); these
-                        three slugs are known-bundled SVGs, so a plain img is fine. */}
+                        slugs are known-bundled SVGs, so a plain img is fine. */}
                     {/* eslint-disable-next-line @next/next/no-img-element -- SVG avatar file; next/image adds nothing */}
                     <img
                       src={`/agents/${copy.avatar}.svg`}
                       alt=""
-                      className="size-10 rounded-full border border-border/60 bg-muted object-cover"
+                      className="size-8 rounded-full border border-border/60 bg-muted object-cover"
                     />
-                    <span className="absolute -bottom-1 -right-1 grid size-4 place-items-center rounded-full border border-border/60 bg-background text-muted-foreground">
-                      <LaneIcon className="size-2.5" aria-hidden />
+                    <span className="absolute -bottom-0.5 -right-0.5 grid size-3.5 place-items-center rounded-full border border-border/60 bg-background text-muted-foreground">
+                      <LaneIcon className="size-2" aria-hidden />
                     </span>
                   </span>
-                  <div className="min-w-0">
-                    <h3 className="font-semibold leading-tight">
+                  {/* Label and description share one line: the description is
+                      standing copy that never changes, so it does not deserve
+                      a row of its own on every lane. */}
+                  <div className="flex min-w-0 flex-1 items-baseline gap-2">
+                    <h3 className="shrink-0 text-sm font-semibold leading-tight">
                       {copy.label}
                     </h3>
-                    <p className="truncate text-sm text-muted-foreground">
+                    <p className="truncate text-xs text-muted-foreground">
                       {copy.description}
                     </p>
                   </div>
-                  <span className="ml-auto shrink-0 rounded-full border border-border/70 px-2 py-0.5 font-mono text-[11px] tabular-nums text-muted-foreground">
+                  <span className="shrink-0 rounded-full border border-border/70 px-2 py-0.5 font-mono text-[11px] tabular-nums text-muted-foreground">
                     {ideas.length}/3
                   </span>
                 </header>
                 {ideas.length === 0 ? (
-                  <div className="mt-4">
+                  <div className="mt-3">
                     <OpportunityCard
                       acted={actedByLane.get(lane)}
                       snoozed={snoozedByLane.get(lane)}
@@ -668,7 +680,7 @@ export function AgentInbox() {
                     />
                   </div>
                 ) : (
-                  <div className="mt-4 grid grid-cols-1 items-stretch gap-3 md:grid-cols-2 xl:grid-cols-3">
+                  <div className="mt-3 grid grid-cols-1 items-start gap-2.5 md:grid-cols-2 xl:grid-cols-3">
                     {ideas.map((idea) => (
                       <OpportunityCard
                         key={idea.id}
