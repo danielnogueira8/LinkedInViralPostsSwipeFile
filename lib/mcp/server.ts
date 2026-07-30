@@ -9,6 +9,7 @@ import { mcpProtocolErrorLogLine } from "@/lib/mcp/observability";
 import { registerSwipeTools } from "@/lib/mcp/register";
 import { mcpRequestStateCodec } from "@/lib/mcp/request-state";
 import { registerSwipeFileAppResource } from "@/lib/mcp/swipe-file-app";
+import { registerUiViews } from "@/lib/mcp/ui/register-ui";
 
 const SERVER_INFO = {
   name: "linkedin-swipe-mcp",
@@ -38,6 +39,7 @@ export function createSwipeMcpServer(): McpServer {
   });
   registerSwipeTools(server);
   registerSwipeFileAppResource(server);
+  registerUiViews(server);
   return server;
 }
 

@@ -47,6 +47,29 @@ Clerk authorization server from SwipeIn's protected-resource metadata.
   tool request to the authenticated user's workspace.
 - The Supabase service role key is used server-side only — claude.ai never sees it.
 
+## Rich UI (MCP Apps)
+
+Hosts that support the MCP Apps extension (SEP-1865) — Claude, ChatGPT,
+VS Code — render the list/visual tools as interactive SwipeIn-styled cards
+instead of a wall of JSON:
+
+- `search_viral_posts` opens the full interactive Swipe File app
+  (`ui://swipein/swipe-file-v2.html`).
+- `get_post` and `get_top_from_batch` render post cards
+  (`ui://swipein/post-cards`) with author avatar, clamped body, media, and
+  engagement pills.
+- `list_saved_posts` renders bookmark cards (`ui://swipein/saved-posts`) with
+  category and note.
+- `list_drafts` renders Posts-board cards (`ui://swipein/drafts`) with status,
+  kind, and schedule chips.
+
+Each tool declares its view via `_meta.ui.resourceUri` and returns
+`structuredContent` alongside the unchanged text JSON — hosts without the
+extension ignore the metadata and keep working exactly as before. The views
+themselves are self-contained HTML resources (`lib/mcp/ui/*`) served with the
+`text/html;profile=mcp-app` MIME type and a CSP that allows LinkedIn CDN
+media.
+
 ## Security notes
 
 - The service role key has full DB access and remains server-side only. Every

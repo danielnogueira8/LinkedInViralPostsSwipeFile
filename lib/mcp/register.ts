@@ -29,7 +29,13 @@ import {
   parseDayEnd,
   parseDayStart,
   sinceCutoff,
+  uiJsonContent,
 } from "./util";
+import {
+  DRAFTS_RESOURCE_URI,
+  POST_CARDS_RESOURCE_URI,
+  SAVED_POSTS_RESOURCE_URI,
+} from "./ui/register-ui";
 import {
   authorHandleFromProfileUrl,
   authorHandleFromUrl,
@@ -54,6 +60,7 @@ import {
   listBookmarkResources,
   saveBookmarkResource,
   summarizeBookmarkResource,
+  type SavedBookmarkResource,
 } from "@/lib/content-resource-operations";
 import {
   discoverSourcePosts,
@@ -194,6 +201,67 @@ function postColumns(includeVisual: boolean): typeof POST_COLS {
   return (includeVisual ? POST_WITH_VISUAL_COLS : POST_COLS) as typeof POST_COLS;
 }
 
+// --- MCP Apps (SEP-1865) structured/view payloads ---------------------------
+// The model-facing text JSON stays byte-identical to the pre-MCP-Apps results;
+// the structured payload the ui:// card view renders may carry extra
+// view-only fields.
+
+// normalizeEmbed strips viral_score (the model never reasons over the raw
+// number); the card view uses it for the virality chip, so the view payload
+// re-attaches it.
+function withViralScore<T>(post: T, raw: unknown): T {
+  const score = (raw as { viral_score?: unknown } | null)?.viral_score;
+  return typeof score === "number" ? { ...post, viral_score: score } : post;
+}
+
+// The card view always queries the visual projection (avatars/media), but the
+// model-facing text must stay identical — when visuals weren't requested we
+// drop the profile_pic_url the wider accounts embed would otherwise add.
+function stripProfilePicUrl<T extends { accounts: unknown }>(post: T): T {
+  const accounts = post.accounts;
+  if (!accounts || typeof accounts !== "object" || Array.isArray(accounts)) return post;
+  if (!("profile_pic_url" in accounts)) return post;
+  const { profile_pic_url: _pic, ...rest } = accounts as Record<string, unknown>;
+  void _pic;
+  return { ...post, accounts: rest };
+}
+
+// The drafts view needs a body preview the text payload deliberately omits
+// (list_drafts documents "returns schedule fields but not the full post body").
+const DRAFT_SNIPPET_MAX = 200;
+
+function draftSnippet(body: string): string {
+  return body.length > DRAFT_SNIPPET_MAX
+    ? `${body.slice(0, DRAFT_SNIPPET_MAX).trimEnd()}…`
+    : body;
+}
+
+// The saved-posts view needs the scraped native fields (text, avatar, media,
+// engagement) that summarizeBookmarkResource strips from the model payload.
+function savedPostForView(bookmark: SavedBookmarkResource) {
+  return {
+    id: bookmark.id,
+    post_url: bookmark.post_url,
+    embed_urn: bookmark.embed_urn,
+    author_name: bookmark.author_name,
+    author_handle: bookmark.author_handle,
+    text_snippet: bookmark.text_snippet,
+    text: bookmark.text,
+    profile_pic_url: bookmark.profile_pic_url,
+    media_type: bookmark.media_type,
+    media_urls: Array.isArray(bookmark.media_urls)
+      ? bookmark.media_urls.filter((url): url is string => typeof url === "string")
+      : [],
+    reactions: bookmark.reactions,
+    comments: bookmark.comments,
+    note: bookmark.note,
+    category_id: bookmark.category_id,
+    post_type: bookmark.post_type,
+    posted_at: bookmark.posted_at,
+    saved_at: bookmark.saved_at,
+  };
+}
+
 function shouldIncludePostVisual(
   limit: number,
   includeVisual: boolean | undefined,
@@ -290,15 +358,25 @@ async function postContentWithRenderedImages(
   payload: Record<string, unknown>,
   posts: unknown[],
   includeStructuredContent = false,
+  structuredPayload?: unknown,
 ) {
   const urls = visualUrlsFromPosts(posts);
-  if (urls.length === 0) return jsonContent(payload);
+  if (urls.length === 0) {
+    // A view payload means an MCP Apps view is attached — always hand it the
+    // structured result, even when there were no embeddable images.
+    if (structuredPayload !== undefined) {
+      return uiJsonContent(payload, structuredPayload);
+    }
+    return includeStructuredContent ? uiJsonContent(payload) : jsonContent(payload);
+  }
   const images = (await Promise.all(urls.map(renderPostImage))).filter(
     (image): image is ImageContent => image !== null,
   );
   return {
     content: [...jsonContent(payload).content, ...images],
-    ...(includeStructuredContent ? { structuredContent: payload } : {}),
+    ...(includeStructuredContent
+      ? { structuredContent: structuredPayload ?? payload }
+      : {}),
   };
 }
 
@@ -488,6 +566,7 @@ export function registerSwipeTools(server: McpServer) {
       description:
         "Fetch a single post by id, including rendered original images, visual URLs, and visual metadata when available. Only returns posts from accounts your workspace tracks.",
       inputSchema: { id: z.string().uuid().describe("Post UUID.") },
+      _meta: { ui: { resourceUri: POST_CARDS_RESOURCE_URI } },
     },
     async ({ id }, extra) => {
       try {
@@ -506,7 +585,10 @@ export function registerSwipeTools(server: McpServer) {
         if (error) return notFoundContent("Post", id);
         if (!data) return notFoundContent("Post", id);
         const post = normalizeEmbed(data, true);
-        return postContentWithRenderedImages({ ok: true, post }, [post]);
+        return postContentWithRenderedImages({ ok: true, post }, [post], true, {
+          ok: true,
+          post: withViralScore(post, data),
+        });
       } catch (e) {
         return errorContent((e as Error).message);
       }
@@ -574,6 +656,7 @@ export function registerSwipeTools(server: McpServer) {
           .optional()
           .describe("Include rendered original images, visual asset URLs, and visual metadata. Use when the user asks to see a post's image or visual asset. Always included when limit is 1."),
       },
+      _meta: { ui: { resourceUri: POST_CARDS_RESOURCE_URI } },
     },
     async ({ limit, post_type, include_visual }, extra) => {
       try {
@@ -599,16 +682,22 @@ export function registerSwipeTools(server: McpServer) {
         ).toISOString();
         const resultLimit = limit ?? 5;
         const includeVisual = shouldIncludePostVisual(resultLimit, include_visual);
+        // Always select the visual projection: the attached MCP Apps card view
+        // renders avatars and media from it. The model-facing text strips those
+        // fields again (stripProfilePicUrl) unless visuals were requested, so
+        // the text result is unchanged from before.
         const discovery = await discoverSourcePosts(sb, {
           workspaceId,
-          columns: postColumns(includeVisual),
+          columns: postColumns(true),
           accountIds,
           filters: { since: sinceIso, postType: post_type },
           order: { column: "reactions", ascending: false },
           window: { kind: "limit", limit: resultLimit },
         });
-        const posts = discovery.rows
-          .map((post) => normalizeEmbed(post, includeVisual));
+        const posts = discovery.rows.map((row) => {
+          const post = normalizeEmbed(row, includeVisual);
+          return includeVisual ? post : stripProfilePicUrl(post);
+        });
         const payload = {
           ok: true,
           scrape: {
@@ -619,9 +708,15 @@ export function registerSwipeTools(server: McpServer) {
           count: posts.length,
           posts,
         };
+        const viewPayload = {
+          ...payload,
+          posts: discovery.rows.map((row) =>
+            withViralScore(normalizeEmbed(row, true), row),
+          ),
+        };
         return includeVisual
-          ? await postContentWithRenderedImages(payload, posts)
-          : jsonContent(payload);
+          ? await postContentWithRenderedImages(payload, posts, true, viewPayload)
+          : uiJsonContent(payload, viewPayload);
       } catch (e) {
         if (e instanceof SourcePostDiscoveryError) {
           return dbErrorContent("get_top_from_batch", e.readError);
@@ -853,6 +948,7 @@ export function registerSwipeTools(server: McpServer) {
           .describe("Filter by board status. Omit to include all board drafts."),
         limit: z.number().int().min(1).max(100).optional().describe("Default 50, max 100."),
       },
+      _meta: { ui: { resourceUri: DRAFTS_RESOURCE_URI } },
     },
     async ({ status, limit }, extra) => {
       try {
@@ -862,11 +958,24 @@ export function registerSwipeTools(server: McpServer) {
           status,
           limit: limit ?? 50,
         });
-        return jsonContent({
-          ok: true,
-          count: drafts.length,
-          drafts: drafts.map(draftForMcp),
-        });
+        // The view payload adds a short body preview per draft (the card needs
+        // something to show); the model-facing text keeps the body out, as the
+        // tool description promises.
+        return uiJsonContent(
+          {
+            ok: true,
+            count: drafts.length,
+            drafts: drafts.map(draftForMcp),
+          },
+          {
+            ok: true,
+            count: drafts.length,
+            drafts: drafts.map((draft) => ({
+              ...draftForMcp(draft),
+              body_snippet: draftSnippet(draft.body),
+            })),
+          },
+        );
       } catch (e) {
         return errorContent((e as Error).message);
       }
@@ -1170,6 +1279,7 @@ export function registerSwipeTools(server: McpServer) {
       inputSchema: {
         limit: z.number().int().min(1).max(100).optional().describe("Default 20, max 100."),
       },
+      _meta: { ui: { resourceUri: SAVED_POSTS_RESOURCE_URI } },
     },
     async (args, extra) => {
       try {
@@ -1182,11 +1292,21 @@ export function registerSwipeTools(server: McpServer) {
           workspaceId,
           limit,
         });
-        return jsonContent({
-          ok: true,
-          count: saved.length,
-          saved: saved.map(summarizeBookmarkResource),
-        });
+        // The view payload adds the scraped native fields (text, avatar, media,
+        // engagement) the card renders; the model-facing text keeps the
+        // trimmed summarizeBookmarkResource shape.
+        return uiJsonContent(
+          {
+            ok: true,
+            count: saved.length,
+            saved: saved.map(summarizeBookmarkResource),
+          },
+          {
+            ok: true,
+            count: saved.length,
+            saved: saved.map(savedPostForView),
+          },
+        );
       } catch (e) {
         return dbErrorContent("list_saved_posts", e);
       }
