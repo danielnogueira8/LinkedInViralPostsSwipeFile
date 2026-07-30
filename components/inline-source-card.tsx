@@ -31,10 +31,16 @@ export function InlineSourceCard({
   post,
   compact = false,
   mediaLoading = "lazy",
+  sourceNumber,
 }: {
   post: CitedPost;
   compact?: boolean;
   mediaLoading?: "eager" | "lazy";
+  // The source's 1-based position in the grounded answer's verified-source
+  // list. Rendered as a small chip in the header so the user can map the
+  // agent's "source 1 / 2 / 3" references onto the cards. Omitted when
+  // undefined (single-source answers, usages outside the carousel).
+  sourceNumber?: number;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [erroredThumb, setErroredThumb] = useState<string | null>(null);
@@ -101,6 +107,15 @@ export function InlineSourceCard({
             </div>
           </div>
         </div>
+        {sourceNumber != null && (
+          <span
+            className="inline-flex h-6 min-w-6 shrink-0 self-center items-center justify-center rounded-md border border-border bg-muted px-1.5 text-[11px] font-semibold tabular-nums text-muted-foreground"
+            title={`Source ${sourceNumber}`}
+            aria-label={`Source ${sourceNumber}`}
+          >
+            {sourceNumber}
+          </span>
+        )}
         {post.postUrl && (
           <a
             href={post.postUrl}

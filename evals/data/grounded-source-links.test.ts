@@ -263,6 +263,56 @@ describe("GroundedSourceLinks", () => {
     expect(html).toContain("on LinkedIn");
   });
 
+  test("numbers each carousel card with its absolute position in the source list", () => {
+    const ids = Array.from(
+      { length: 5 },
+      (_, index) =>
+        `10000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+    );
+    const html = render(
+      ids.map((id, i) =>
+        citeWithCard(id, fullCard(id, { authorName: `Author ${i + 1}` })),
+      ),
+    );
+    // The initial window shows sources 1–3, numbered so the user can map the
+    // agent's "source 1 / 2 / 3" references onto the cards.
+    expect(html).toContain('aria-label="Source 1"');
+    expect(html).toContain('aria-label="Source 2"');
+    expect(html).toContain('aria-label="Source 3"');
+    expect(html).not.toContain('aria-label="Source 4"');
+    expect(html).not.toContain('aria-label="Source 5"');
+  });
+
+  test("card numbers follow the full source list when an earlier source is chip-only", () => {
+    const id1 = "10000000-0000-4000-8000-000000000001";
+    const id2 = "10000000-0000-4000-8000-000000000002";
+    const html = render([
+      // first source has only a live URL, no full card → chip fallback
+      {
+        ...cite({ sourceUrl: "https://www.linkedin.com/posts/chip-only" }),
+        id: `grounded-source:${id1}`,
+        meta: {
+          postId: id1,
+          presentation: "grounded_answer_source",
+          sourceUrl: "https://www.linkedin.com/posts/chip-only",
+        },
+      },
+      citeWithCard(id2, fullCard(id2)),
+    ]);
+    // The card is source 2 in the agent's list even though it's the first card…
+    expect(html).toContain('aria-label="Source 2"');
+    expect(html).not.toContain('aria-label="Source 1"');
+    // …and the unresolved source's chip names its own position, not its index
+    // among chips.
+    expect(html).toContain("View source 1 on LinkedIn");
+  });
+
+  test("a lone source card renders without a number chip", () => {
+    const id = "10000000-0000-4000-8000-000000000001";
+    const html = render([citeWithCard(id, fullCard(id))]);
+    expect(html).not.toContain('aria-label="Source 1"');
+  });
+
   test("persistence keeps only the validated live URL fallback and presentation marker", () => {
     expect(
       persistedCiteMeta({

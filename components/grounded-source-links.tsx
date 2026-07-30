@@ -108,8 +108,14 @@ export function circularWindow<T>(
 // each prev/next step shifts the window by ONE card — the middle card moves to
 // the left slot, the leading card wraps to the back — so it loops forever
 // instead of dead-ending or paging. Controls only render when more cards exist
-// than fit (4+).
-function SourceCarousel({ cards }: { cards: CitedPost[] }) {
+// than fit (4+). Each entry carries its 1-based position in the FULL verified
+// source list, so the number chip matches the agent's "source N" references no
+// matter how the window is rotated.
+function SourceCarousel({
+  cards,
+}: {
+  cards: { card: CitedPost; sourceNumber: number }[];
+}) {
   const [start, setStart] = useState(0);
   const count = cards.length;
   const canMove = count > VISIBLE_SOURCES;
@@ -130,12 +136,13 @@ function SourceCarousel({ cards }: { cards: CitedPost[] }) {
   return (
     <div className="flex flex-col gap-2.5" aria-label="Verified sources">
       <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-        {visibleCards.map((card) => (
+        {visibleCards.map((entry) => (
           <InlineSourceCard
-            key={card.id}
-            post={card}
+            key={entry.card.id}
+            post={entry.card}
             compact
             mediaLoading="eager"
+            sourceNumber={entry.sourceNumber}
           />
         ))}
       </div>
@@ -188,14 +195,20 @@ export function GroundedSourceLinks({ artifacts }: { artifacts?: Artifact[] }) {
   const sources = groundedSources(artifacts ?? []);
   if (sources.length === 0) return null;
 
-  const cards = sources
-    .map((s) => s.card)
-    .filter((c): c is CitedPost => c !== null);
-  // Sources that couldn't resolve to a full card keep a chip so nothing is lost.
-  const chipOnly = sources.filter(
-    (source): source is { href: string; card: null } =>
-      source.card === null && source.href !== null,
+  // Keep every source's 1-based position in the FULL list: the agent's answer
+  // refers to sources by that number, so card chips and link chips must match
+  // it even when some sources fall back to chips and shift the card indices.
+  const cards = sources.flatMap((source, index) =>
+    source.card ? [{ card: source.card, sourceNumber: index + 1 }] : [],
   );
+  // Sources that couldn't resolve to a full card keep a chip so nothing is lost.
+  const chipOnly = sources.flatMap((source, index) =>
+    source.card === null && source.href !== null
+      ? [{ href: source.href, sourceNumber: index + 1 }]
+      : [],
+  );
+  // Numbering only helps when there is more than one source to tell apart.
+  const numbered = sources.length > 1;
 
   return (
     // Use the same width cap as the conversation so three compact source cards
@@ -221,18 +234,22 @@ export function GroundedSourceLinks({ artifacts }: { artifacts?: Artifact[] }) {
       {cards.length > 1 ? (
         <SourceCarousel cards={cards} />
       ) : cards.length === 1 ? (
-        <InlineSourceCard post={cards[0]} compact />
+        <InlineSourceCard
+          post={cards[0].card}
+          compact
+          sourceNumber={numbered ? cards[0].sourceNumber : undefined}
+        />
       ) : null}
       {chipOnly.length > 0 && (
         <div className="flex flex-wrap gap-2" aria-label="Verified sources">
-          {chipOnly.map((s, i) => (
+          {chipOnly.map((s) => (
             <SourceChip
               key={s.href}
               href={s.href}
               label={
-                sources.length === 1
+                s.sourceNumber === 1 && sources.length === 1
                   ? "View source post on LinkedIn"
-                  : `View source ${i + 1} on LinkedIn`
+                  : `View source ${s.sourceNumber} on LinkedIn`
               }
             />
           ))}
