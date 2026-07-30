@@ -407,7 +407,7 @@ export function createAgentInboxEvidenceLoader(db: SupabaseClient) {
       loadKnowledge(db, input.workspaceId),
       loadRecentPosts(db, input.workspaceId, input.now),
     ]);
-    const query = input.missingLanes.includes("now")
+    const query = input.missingLanes.includes("newsjacking")
       ? await topicQuery(
           db,
           input.workspaceId,
@@ -438,7 +438,7 @@ export function createAgentInboxEvidenceLoader(db: SupabaseClient) {
     // Niche trade press and culturally-relevant moments are two different
     // pools, searched in parallel. The cultural one has no workspace terms, so
     // it is the same cluster key for everyone and is usually a cache read.
-    const [nicheNews, culturalNews] = input.missingLanes.includes("now")
+    const [nicheNews, culturalNews] = input.missingLanes.includes("newsjacking")
       ? await Promise.all([
           searchNewsPool("niche", query),
           searchNewsPool("cultural", culturalMomentQuery()),

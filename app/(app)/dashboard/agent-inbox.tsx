@@ -6,12 +6,13 @@ import {
   AudioLines,
   BellRing,
   BookOpen,
+  AtSign,
   CheckCircle2,
   ChevronDown,
   Clock3,
-  Compass,
   ExternalLink,
   FileText,
+  GraduationCap,
   Lightbulb,
   Loader2,
   Newspaper,
@@ -21,6 +22,7 @@ import {
 } from "lucide-react";
 import { AiIcon } from "@/components/ai-icon";
 import { toast } from "sonner";
+import { AGENT_INBOX_LANES } from "@/lib/agent-inbox";
 import type {
   AgentInboxEvidence,
   AgentInboxIdea,
@@ -54,23 +56,29 @@ const laneCopy: Record<
     avatar: string;
   }
 > = {
-  now: {
-    label: "News Agent",
-    description: "A timely opening worth joining",
+  newsjacking: {
+    label: "Newsjacking",
+    description: "Join a moment your audience is already discussing",
     icon: Newspaper,
     avatar: "trend-radar",
   },
-  proven: {
-    label: "Research Agent",
-    description: "Grounded in what already works for you",
-    icon: CheckCircle2,
+  personal_story: {
+    label: "Your story",
+    description: "An achievement, a struggle, or something you lived",
+    icon: BookOpen,
+    avatar: "hook-scout",
+  },
+  namejacking: {
+    label: "Namejacking",
+    description: "Borrow attention from a name your audience follows",
+    icon: AtSign,
     avatar: "offer-hunter",
   },
-  explore: {
-    label: "Explore Agent",
-    description: "A fresh direction with evidence behind it",
-    icon: Compass,
-    avatar: "hook-scout",
+  educational: {
+    label: "Educational",
+    description: "Teach something you have proven works",
+    icon: GraduationCap,
+    avatar: "bulk-writer",
   },
 };
 
@@ -628,7 +636,7 @@ export function AgentInbox() {
         {/* One full-width row per agent; each row holds up to three idea
             cards side by side (stacking on narrow screens). */}
         <div className="mt-6 space-y-4">
-          {(["now", "proven", "explore"] as const).map((lane) => {
+          {AGENT_INBOX_LANES.map((lane) => {
             const ideas = ideasByLane.get(lane) ?? [];
             const copy = laneCopy[lane];
             const LaneIcon = copy.icon;

@@ -129,7 +129,7 @@ describe("agent inbox evidence — fresh news only", () => {
     const bundle = await loader({
       workspaceId: "ws-1",
       preferences: { topics: ["AI"], newsSensitivity: "standard" } as never,
-      missingLanes: ["now"],
+      missingLanes: ["newsjacking"],
       now: NEWS_NOW,
     });
     return bundle.news;

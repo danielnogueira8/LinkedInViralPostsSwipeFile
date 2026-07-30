@@ -1,7 +1,7 @@
 {
   "generatedBy": "npm run migrations:metadata",
-  "highest": 160,
-  "count": 160,
+  "highest": 161,
+  "count": 161,
   "files": [
     "migration-001-progress.sql",
     "migration-002-usage.sql",
@@ -162,6 +162,7 @@
     "migration-157-openai-usage-provider.sql",
     "migration-158-agent-inbox.sql",
     "migration-159-agent-inbox-lane-cap.sql",
-    "migration-160-agent-inbox-stale-run-reclaim.sql"
+    "migration-160-agent-inbox-stale-run-reclaim.sql",
+    "migration-161-agent-inbox-framework-lanes.sql"
   ]
 }
