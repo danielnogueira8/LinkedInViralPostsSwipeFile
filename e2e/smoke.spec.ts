@@ -53,8 +53,15 @@ test.describe("dashboard smoke — key pages render their content", () => {
   test("posts board renders", async ({ page }) => {
     await page.goto("/dashboard/posts");
     await expect(page.getByRole("heading", { name: /posts/i }).first()).toBeVisible();
-    // The pipeline board is the only view now (the Board/Calendar toggle is
-    // gone), so anchor on its stable chrome: the primary New post action.
+    // The Board/Calendar view toggle is stable chrome; Board is the default.
+    await expect(page.getByRole("button", { name: "Board", exact: true })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await expect(page.getByRole("button", { name: "Calendar", exact: true })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
     await expect(page.getByRole("button", { name: /new post/i })).toBeVisible();
   });
 

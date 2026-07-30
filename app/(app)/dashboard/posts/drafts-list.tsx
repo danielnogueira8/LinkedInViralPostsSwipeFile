@@ -5,8 +5,10 @@ import dynamic from "next/dynamic";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import {
+  Calendar,
   CalendarClock,
   AlertCircle,
+  LayoutGrid,
   Plus,
   Paperclip,
   Link as LinkIcon,
@@ -33,6 +35,7 @@ import { loadPostingQueueDraft } from "@/lib/posting-queue-draft";
 import {
   canDragDraftToPostingQueue,
   DRAFT_DRAG_MIME,
+  formatScheduleToast,
   type PostingQueueDropTarget,
 } from "@/lib/posting-queue";
 import type { PostPreviewAuthor } from "../draft-editor-modal";
@@ -50,6 +53,7 @@ import {
   segmentedItemClass,
 } from "@/components/app-surface";
 import { PostingQueueWidget } from "./posting-queue-widget";
+import { PostsCalendar } from "./posts-calendar";
 
 const DraftEditorModal = dynamic(
   () => import("../draft-editor-modal").then((mod) => mod.DraftEditorModal),
@@ -575,9 +579,63 @@ export function DraftsList({
       onToggleSelect={() => toggleSelect(d.id)}
     />
   );
+
+  // Board vs calendar view. Default to the board; the last choice is
+  // remembered in localStorage so a calendar user lands back on the calendar.
+  const [view, setView] = useState<"board" | "calendar">("board");
+  useEffect(() => {
+    const saved = window.localStorage.getItem("swipein-posts-view");
+    // Read the persisted view on mount (localStorage is external state; this
+    // effect owns that synchronization — same pattern as the queue widget).
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (saved === "calendar") setView("calendar");
+  }, []);
+  const chooseView = (next: "board" | "calendar") => {
+    setView(next);
+    window.localStorage.setItem("swipein-posts-view", next);
+  };
+  // Cross-surface refresh: calendar bookings remount the queue widget (it
+  // refetches on mount); queue-widget bookings bump the calendar's refetch key.
+  const [widgetVersion, setWidgetVersion] = useState(0);
+  const [calendarRefreshKey, setCalendarRefreshKey] = useState(0);
+
+  // One scheduling path for both the queue widget and the calendar: book a
+  // draft into a specific posting-slot occurrence.
+  const scheduleDraftInQueue = async (
+    draftId: string,
+    target: PostingQueueDropTarget & { localTime?: string },
+  ) => {
+    const draft = drafts.find((item) => item.id === draftId);
+    if (!draft || !canDragDraftToPostingQueue(draft)) {
+      throw new Error("This post can no longer be scheduled.");
+    }
+    const action: "scheduled" | "rescheduled" =
+      draft.scheduleStatus === "scheduled" ? "rescheduled" : "scheduled";
+    const next = await draftOperations.queueAt(draftId, {
+      firstComment: draft.firstComment ?? null,
+      timezone: target.timezone,
+      postingSlotId: target.postingSlotId,
+      postingSlotOccurrenceDate: target.postingSlotOccurrenceDate,
+      localTime: target.localTime,
+    });
+    applyMeta(draftId, next);
+    return {
+      action,
+      draft: {
+        id: draft.id,
+        title: draft.title,
+        scheduledAt: next.scheduledAt,
+        scheduleStatus: next.scheduleStatus,
+        postingSlotId: next.postingSlotId,
+        postingSlotOccurrenceDate: next.postingSlotOccurrenceDate,
+      },
+    };
+  };
+
   return (
     <div className="flex flex-col gap-4">
       <PostingQueueWidget
+        key={widgetVersion}
         onOpenDraft={(draftId) => void openQueueDraft(draftId)}
         onCreateDraftForSlot={(target) => {
           setNewPostQueueTarget(target);
@@ -593,44 +651,18 @@ export function DraftsList({
               draft.body.split("\n")[0]?.trim() ||
               "Untitled post",
           }))}
-        onScheduleDraftInQueue={async (
-          draftId: string,
-          target: PostingQueueDropTarget,
-        ) => {
-          const draft = drafts.find((item) => item.id === draftId);
-          if (!draft || !canDragDraftToPostingQueue(draft)) {
-            throw new Error("This post can no longer be scheduled.");
-          }
-          const action =
-            draft.scheduleStatus === "scheduled"
-              ? "rescheduled"
-              : "scheduled";
-          const next = await draftOperations.queueAt(draftId, {
-            firstComment: draft.firstComment ?? null,
-            timezone: target.timezone,
-            postingSlotId: target.postingSlotId,
-            postingSlotOccurrenceDate: target.postingSlotOccurrenceDate,
-            localTime: target.localTime,
-          });
-          applyMeta(draftId, next);
-          return {
-            action,
-            draft: {
-              id: draft.id,
-              title: draft.title,
-              scheduledAt: next.scheduledAt,
-              scheduleStatus: next.scheduleStatus,
-              postingSlotId: next.postingSlotId,
-              postingSlotOccurrenceDate:
-                next.postingSlotOccurrenceDate,
-            },
-          };
+        onScheduleDraftInQueue={async (draftId, target) => {
+          const result = await scheduleDraftInQueue(draftId, target);
+          setCalendarRefreshKey((key) => key + 1);
+          return result;
         }}
-        onDraftRemovedFromQueue={(draftId, next) =>
-          applyMeta(draftId, next)
-        }
+        onDraftRemovedFromQueue={(draftId, next) => {
+          applyMeta(draftId, next);
+          setCalendarRefreshKey((key) => key + 1);
+        }}
         onQueuedDraftsMoved={(movedDrafts) => {
           movedDrafts.forEach((draft) => applyMeta(draft.id, draft));
+          setCalendarRefreshKey((key) => key + 1);
         }}
         onQueueSnapshotLoaded={(queueDrafts) => {
           queueDrafts.forEach((draft) =>
@@ -668,11 +700,59 @@ export function DraftsList({
             </button>
           ))}
         </div>
+        {/* Board / Calendar view toggle. */}
+        <div className={segmentedControlClass()}>
+          <button
+            type="button"
+            onClick={() => chooseView("board")}
+            title="Show posts as a pipeline board."
+            className={segmentedItemClass(view === "board")}
+            aria-pressed={view === "board"}
+          >
+            <LayoutGrid className="h-3.5 w-3.5" /> Board
+          </button>
+          <button
+            type="button"
+            onClick={() => chooseView("calendar")}
+            title="Show queue bookings and scheduled posts on a calendar."
+            className={segmentedItemClass(view === "calendar")}
+            aria-pressed={view === "calendar"}
+          >
+            <Calendar className="h-3.5 w-3.5" /> Calendar
+          </button>
+        </div>
         <Button size="sm" className="gap-1.5 shrink-0" onClick={openNew}>
           <Plus className="h-4 w-4" /> New post
         </Button>
       </Toolbar>
 
+      {view === "calendar" && (
+        <PostsCalendar
+          drafts={drafts}
+          refreshKey={calendarRefreshKey}
+          onOpen={(draft) => openEdit(draft)}
+          onSchedule={async (draftId, target) => {
+            const result = await scheduleDraftInQueue(draftId, target);
+            setWidgetVersion((key) => key + 1);
+            toast.success(
+              formatScheduleToast({
+                scheduledAt: result.draft.scheduledAt,
+                accountTimezone: target.timezone,
+                action: result.action,
+              }),
+            );
+          }}
+          onUnschedule={async (draftId) => {
+            const next = await draftOperations.unschedule(draftId);
+            applyMeta(draftId, next);
+            setWidgetVersion((key) => key + 1);
+            toast.success("Removed from the posting queue.");
+          }}
+        />
+      )}
+
+      {view === "board" && (
+      <>
       {/* Mobile column selector (the full board doesn't fit a phone). */}
           <div className="flex lg:hidden items-center gap-1 overflow-x-auto -mx-1 px-1">
             {COLUMNS.map((c) => (
@@ -778,6 +858,8 @@ export function DraftsList({
               </div>
             ))}
           </div>
+      </>
+      )}
       <DraftEditorModal
         open={editorOpen}
         onOpenChange={(open) => {
