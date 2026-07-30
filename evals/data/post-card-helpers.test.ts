@@ -32,10 +32,10 @@ describe("tintFor — stable avatar tint from a name", () => {
   });
 });
 
-describe("creatorAvatarFallback — DiceBear glyphs URL for missing photos", () => {
-  test("points at the glyphs style on the DiceBear CDN", () => {
+describe("creatorAvatarFallback — DiceBear thumbs URL for missing photos", () => {
+  test("points at the thumbs style on the DiceBear CDN", () => {
     expect(creatorAvatarFallback("Alice")).toBe(
-      "https://api.dicebear.com/9.x/glyphs/svg?seed=Alice",
+      "https://api.dicebear.com/9.x/thumbs/svg?seed=Alice",
     );
   });
 

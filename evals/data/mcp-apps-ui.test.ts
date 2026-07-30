@@ -223,7 +223,7 @@ describe("MCP Apps ui:// view resources", () => {
       expect(content.text).toContain("ui/notifications/size-changed");
       expect(content.text).toContain("ui/resource-teardown");
       expect(content.text).toContain("ui/open-link");
-      // Creator avatars fall back to a seeded DiceBear glyph, then initials
+      // Creator avatars fall back to a seeded DiceBear thumbs avatar, then initials
       // (bridge helpers inlined into every view).
       expect(content.text).toContain("avatarFallbackUrl");
       expect(content.text).toContain("api.dicebear.com");

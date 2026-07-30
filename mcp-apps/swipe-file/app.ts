@@ -246,19 +246,19 @@ function renderCard(post: SwipePost, position: number, total: number): HTMLEleme
     initials(author),
   );
   const profilePic = validLinkedInMedia(post.accounts?.profile_pic_url);
-  // Missing/expired photo → a stable DiceBear glyphs avatar; the initials
+  // Missing/expired photo → a stable DiceBear thumbs avatar; the initials
   // tile underneath is the last resort if that CDN fails too.
-  const glyphsUrl = creatorAvatarFallback(author);
+  const thumbsUrl = creatorAvatarFallback(author);
   const avatarImage = document.createElement("img");
   avatarImage.className = "avatar-image";
-  avatarImage.src = profilePic ?? glyphsUrl;
+  avatarImage.src = profilePic ?? thumbsUrl;
   avatarImage.alt = `${author}'s profile picture`;
   avatarImage.loading = "lazy";
   avatarImage.referrerPolicy = "no-referrer";
   avatarFallback.classList.add("is-hidden");
   avatarImage.addEventListener("error", () => {
-    if (avatarImage.src !== glyphsUrl) {
-      avatarImage.src = glyphsUrl;
+    if (avatarImage.src !== thumbsUrl) {
+      avatarImage.src = thumbsUrl;
       return;
     }
     avatarImage.remove();

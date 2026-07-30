@@ -86,18 +86,19 @@ export const BRIDGE_JS = String.raw`
     return out.toUpperCase();
   }
 
-  // DiceBear "glyphs" fallback for creators without a usable profile photo
+  // DiceBear "thumbs" fallback for creators without a usable profile photo
+  // (glyphs is Pro-only and 404s on the free API).
   // (LinkedIn CDN URLs expire). Seeded by name: stable per creator, different
   // across creators. Mirrors creatorAvatarFallback in lib/post-card-helpers.ts.
   function avatarFallbackUrl(name) {
     return (
-      "https://api.dicebear.com/9.x/glyphs/svg?seed=" +
+      "https://api.dicebear.com/9.x/thumbs/svg?seed=" +
       encodeURIComponent(String(name || "").trim() || "?")
     );
   }
 
   // <img onerror> handler for creator avatars: the first failure swaps the
-  // (missing/expired) photo for the glyphs fallback carried in data-fallback;
+  // (missing/expired) photo for the thumbs fallback carried in data-fallback;
   // if that CDN also fails, drop the img and keep the initials tile beneath.
   function avatarError(img) {
     var fallback = img.getAttribute("data-fallback");
