@@ -1548,7 +1548,7 @@ describe("read-only orchestrator execution", () => {
             {
               title: "A verified AI product announcement",
               url: "https://example.com/verified-announcement",
-              published_at: "2026-07-16",
+              published_at: freshDate(),
               summary: "A current, verified product announcement.",
             },
           ],
