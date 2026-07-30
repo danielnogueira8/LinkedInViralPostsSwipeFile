@@ -3,24 +3,31 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
+  AudioLines,
   BellRing,
+  BookOpen,
   CheckCircle2,
   Clock3,
   Compass,
   ExternalLink,
+  FileText,
   Lightbulb,
   Loader2,
   Newspaper,
   Settings2,
+  TrendingUp,
   X,
 } from "lucide-react";
 import { AiIcon } from "@/components/ai-icon";
 import { toast } from "sonner";
 import type {
+  AgentInboxEvidence,
   AgentInboxIdea,
   AgentInboxLane,
   AgentInboxPreferences,
+  AgentInboxStatus,
 } from "@/lib/agent-inbox";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -28,6 +35,8 @@ import {
   DialogDescription,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Progress } from "@/components/ui/progress";
+import { TimedLoadingState } from "@/components/ui/timed-loading-state";
 import {
   invalidateAgentInboxRequest,
   loadAgentInbox,
@@ -54,6 +63,61 @@ const laneCopy: Record<
     icon: Compass,
   },
 };
+
+// Context-card pattern: every evidence chip carries a kind icon and a short
+// mono kind tag so the source of a claim is scannable at a glance.
+const evidenceKindMeta: Record<
+  AgentInboxEvidence["kind"],
+  { tag: string; full: string; icon: typeof Newspaper }
+> = {
+  news: { tag: "News", full: "Fresh verified news", icon: Newspaper },
+  performance: {
+    tag: "Posts",
+    full: "Recent post performance",
+    icon: TrendingUp,
+  },
+  knowledge: { tag: "Knowledge", full: "Approved knowledge", icon: BookOpen },
+  source_post: { tag: "Draft", full: "Your recent drafts", icon: FileText },
+  voice: { tag: "Voice", full: "Your voice", icon: AudioLines },
+};
+
+// Task-row pattern: recent decisions read as live agent task statuses.
+const statusMeta: Record<
+  AgentInboxStatus,
+  { dot: string; label: string }
+> = {
+  active: { dot: "bg-sky-500", label: "Active" },
+  acted: { dot: "bg-emerald-500", label: "Acted" },
+  snoozed: { dot: "bg-amber-500", label: "Snoozed" },
+  discarded: { dot: "bg-zinc-400", label: "Discarded" },
+  expired: { dot: "bg-zinc-300", label: "Expired" },
+};
+
+function formatDecisionDay(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
+}
+
+function EvidenceChip({ entry }: { entry: AgentInboxEvidence }) {
+  const meta = evidenceKindMeta[entry.kind] ?? evidenceKindMeta.knowledge;
+  const Icon = meta.icon;
+  return (
+    <span
+      className="inline-flex max-w-full items-center gap-1.5 rounded-lg border bg-muted/50 px-2 py-1 text-xs"
+      title={entry.detail || entry.label}
+    >
+      <Icon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+      <span className="shrink-0 font-mono text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+        {meta.tag}
+      </span>
+      <span className="truncate text-muted-foreground">{entry.label}</span>
+    </span>
+  );
+}
 
 async function jsonRequest(url: string, init?: RequestInit) {
   const response = await fetch(url, init);
@@ -112,18 +176,13 @@ function OpportunityCard({
           <div className="mt-7 flex-1">
             <div className="flex flex-wrap gap-2">
               {idea.evidence.slice(0, 2).map((entry, index) => (
-                <span
-                  key={`${entry.label}-${index}`}
-                  className="max-w-full truncate rounded-full border bg-muted/50 px-2.5 py-1 text-xs text-muted-foreground"
-                  title={entry.label}
-                >
-                  {entry.kind === "performance"
-                    ? "Your posts"
-                    : entry.kind === "knowledge"
-                      ? "Knowledge"
-                      : entry.label}
-                </span>
+                <EvidenceChip key={`${entry.label}-${index}`} entry={entry} />
               ))}
+              {idea.evidence.length > 2 ? (
+                <span className="inline-flex items-center rounded-lg border border-dashed px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+                  +{idea.evidence.length - 2} more
+                </span>
+              ) : null}
             </div>
             <h2 className="mt-4 text-balance text-2xl font-semibold leading-tight">
               {idea.headline}
@@ -155,7 +214,22 @@ function OpportunityCard({
               ) : null}
             </div>
           </div>
-          <div className="mt-6 grid grid-cols-2 gap-2">
+          <div className="mt-6">
+            <div className="flex items-baseline justify-between">
+              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                Evidence strength
+              </p>
+              <p className="font-mono text-xs tabular-nums text-muted-foreground">
+                {Math.round(idea.score * 100)}%
+              </p>
+            </div>
+            <Progress
+              value={Math.round(idea.score * 100)}
+              className="mt-2"
+              aria-label={`Evidence strength ${Math.round(idea.score * 100)} percent`}
+            />
+          </div>
+          <div className="mt-4 grid grid-cols-2 gap-2">
             <Button
               className="col-span-2 rounded-full"
               disabled={busy}
@@ -241,18 +315,15 @@ export function AgentInbox() {
     () => new Map(data?.active.map((idea) => [idea.lane, idea]) ?? []),
     [data],
   );
-  const evidenceLabels = useMemo(() => {
+  const evidenceKinds = useMemo(() => {
     const kinds = new Set(
       data?.active.flatMap((idea) =>
         idea.evidence.map((entry) => entry.kind),
       ) ?? [],
     );
-    return [
-      kinds.has("performance") ? "Recent post performance" : null,
-      kinds.has("knowledge") ? "Approved knowledge" : null,
-      kinds.has("news") ? "Fresh verified news" : null,
-      kinds.has("source_post") ? "Your recent drafts" : null,
-    ].filter((value): value is string => Boolean(value));
+    return (
+      ["performance", "knowledge", "news", "source_post"] as const
+    ).filter((kind) => kinds.has(kind));
   }, [data]);
 
   async function act(
@@ -321,10 +392,20 @@ export function AgentInbox() {
 
   if (!data && !error) {
     return (
-      <div
-        className="h-[32rem] animate-pulse rounded-[1.75rem] border bg-card"
-        aria-label="Loading your Agent"
-      />
+      <div aria-busy="true">
+        <TimedLoadingState label="Loading your agent" />
+        <div className="mt-4 animate-pulse rounded-[1.75rem] border bg-card/60 p-4 sm:p-6">
+          <div className="h-12 w-72 rounded-xl bg-muted" />
+          <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {Array.from({ length: 3 }).map((_, index) => (
+              <div
+                key={index}
+                className="h-[30rem] rounded-[1.75rem] bg-muted/70"
+              />
+            ))}
+          </div>
+        </div>
+      </div>
     );
   }
   if (error) {
@@ -391,17 +472,25 @@ export function AgentInbox() {
               verified current news.
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
-              {(evidenceLabels.length
-                ? evidenceLabels
-                : ["Your voice and approved knowledge"]
-              ).map((label) => (
-                <span
-                  key={label}
-                  className="rounded-full border bg-muted/50 px-3 py-1 text-xs"
-                >
-                  {label}
-                </span>
-              ))}
+              {(evidenceKinds.length
+                ? evidenceKinds
+                : (["voice", "knowledge"] as const)
+              ).map((kind) => {
+                const meta = evidenceKindMeta[kind];
+                const Icon = meta.icon;
+                return (
+                  <span
+                    key={kind}
+                    className="inline-flex items-center gap-1.5 rounded-full border bg-muted/50 px-3 py-1 text-xs"
+                  >
+                    <Icon
+                      className="size-3.5 text-muted-foreground"
+                      aria-hidden
+                    />
+                    {meta.full}
+                  </span>
+                );
+              })}
             </div>
           </div>
         </div>
@@ -410,17 +499,28 @@ export function AgentInbox() {
         <section className="mt-5 rounded-[1.75rem] border bg-card p-5">
           <h2 className="font-semibold">Recent decisions</h2>
           <div className="mt-3 divide-y">
-            {data.activity.slice(0, 5).map((idea) => (
-              <div
-                key={idea.id}
-                className="flex items-center justify-between gap-4 py-3 text-sm"
-              >
-                <span className="truncate">{idea.headline}</span>
-                <span className="shrink-0 capitalize text-muted-foreground">
-                  {idea.status}
-                </span>
-              </div>
-            ))}
+            {data.activity.slice(0, 5).map((idea) => {
+              const meta = statusMeta[idea.status] ?? statusMeta.expired;
+              return (
+                <div
+                  key={idea.id}
+                  className="flex items-center gap-3 py-3 text-sm"
+                  title={idea.discardReason ?? undefined}
+                >
+                  <span
+                    className={cn("size-2 shrink-0 rounded-full", meta.dot)}
+                    aria-hidden
+                  />
+                  <span className="truncate">{idea.headline}</span>
+                  <span className="ml-auto shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
+                    {formatDecisionDay(idea.updatedAt)}
+                  </span>
+                  <span className="shrink-0 rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
+                    {meta.label}
+                  </span>
+                </div>
+              );
+            })}
           </div>
         </section>
       ) : null}
@@ -524,10 +624,10 @@ export function AgentInbox() {
               "Too generic",
               "Not my point of view",
             ].map((reason) => (
-              <Button
+              <button
                 key={reason}
-                variant="outline"
-                className="justify-start rounded-xl"
+                type="button"
+                className="group flex items-center gap-3 rounded-xl border p-3.5 text-left text-sm transition-colors hover:border-foreground/30 hover:bg-muted/50"
                 onClick={() => {
                   if (!pendingDiscard) return;
                   const idea = pendingDiscard;
@@ -535,8 +635,14 @@ export function AgentInbox() {
                   void act(idea, "discard", reason);
                 }}
               >
+                <span
+                  className="grid size-4 shrink-0 place-items-center rounded-full border transition-colors group-hover:border-foreground/50"
+                  aria-hidden
+                >
+                  <span className="size-1.5 rounded-full bg-foreground opacity-0 transition-opacity group-hover:opacity-100" />
+                </span>
                 {reason}
-              </Button>
+              </button>
             ))}
           </div>
         </DialogContent>

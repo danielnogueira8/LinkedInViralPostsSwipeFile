@@ -1,5 +1,5 @@
 import { PageHeader, PageShell } from "@/components/app-surface";
-import { LoadingState } from "@/components/ui/loading-state";
+import { TimedLoadingState } from "@/components/ui/timed-loading-state";
 
 export default function AgentLoading() {
   return (
@@ -8,7 +8,7 @@ export default function AgentLoading() {
         title="Your Agent"
         description="Fresh, evidence-backed directions for what to write next."
       />
-      <LoadingState label="Loading your agent" />
+      <TimedLoadingState label="Loading your agent" />
       <div className="animate-pulse rounded-[1.75rem] border border-border bg-card/60 p-4 sm:p-6">
         <div className="h-12 w-72 rounded-xl bg-muted" />
         <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
