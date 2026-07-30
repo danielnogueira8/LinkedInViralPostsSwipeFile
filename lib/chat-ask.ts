@@ -53,6 +53,15 @@ export function isAskSelectionComplete(
   );
 }
 
+// Interview card: tapping an example-answer chip APPENDS it to whatever the
+// user already typed (never wipes their text), so a chip is a starting point
+// they can edit or build on before sending. Joined with a space; a trailing
+// whitespace run on the current text collapses first.
+export function appendExampleAnswer(current: string, example: string): string {
+  const trimmed = current.trimEnd();
+  return trimmed ? `${trimmed} ${example}` : example;
+}
+
 export function toggleAskOption(
   ask: AskQuestion,
   selected: string[],
