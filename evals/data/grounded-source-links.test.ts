@@ -1,7 +1,10 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test } from "vitest";
-import { GroundedSourceLinks } from "@/components/grounded-source-links";
+import {
+  GroundedSourceLinks,
+  circularWindow,
+} from "@/components/grounded-source-links";
 import type { Artifact } from "@/lib/agent/contracts";
 import { persistedCiteMeta } from "@/lib/agent/grounded-source-citations";
 
@@ -195,16 +198,25 @@ describe("GroundedSourceLinks", () => {
     // carousel controls present
     expect(html).toContain('aria-label="Previous source"');
     expect(html).toContain('aria-label="Next source"');
-    // The window slides one card at a time, so there is one dot per possible
-    // window position (5 cards → 3 positions), not one dot per page of three.
-    expect(html.match(/aria-label="Go to source \d+"/g)).toHaveLength(3);
-    // The initial carousel page contains exactly sources 1–3.
+    // The window loops infinitely one card at a time, so there is one dot per
+    // card (any card can lead the window), not one dot per page of three.
+    expect(html.match(/aria-label="Go to source \d+"/g)).toHaveLength(5);
+    // The initial carousel window contains exactly sources 1–3.
     expect(html).toContain("Sources 1–3 of 5");
     expect(html).toContain("Author 1");
     expect(html).toContain("Author 2");
     expect(html).toContain("Author 3");
     expect(html).not.toContain("Author 4");
     expect(html).not.toContain("Author 5");
+  });
+
+  test("the carousel window wraps around the end so it loops infinitely", () => {
+    const items = [1, 2, 3, 4, 5];
+    expect(circularWindow(items, 0, 3)).toEqual([1, 2, 3]);
+    expect(circularWindow(items, 3, 3)).toEqual([4, 5, 1]);
+    expect(circularWindow(items, 4, 3)).toEqual([5, 1, 2]);
+    // fewer items than the window size just shows all of them
+    expect(circularWindow(items, 0, 8)).toEqual([1, 2, 3, 4, 5]);
   });
 
   test("exactly three cards all render at once with no carousel controls", () => {
