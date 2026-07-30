@@ -143,11 +143,15 @@ function tomorrowIso(): string {
 function OpportunityCard({
   lane,
   idea,
+  snoozed,
   busy,
   onAction,
 }: {
   lane: AgentInboxLane;
   idea?: AgentInboxIdea;
+  // The idea the user snoozed out of this lane (still due back), so the card
+  // can say so instead of showing the misleading "no strong fit" empty state.
+  snoozed?: AgentInboxIdea;
   busy: boolean;
   onAction: (
     idea: AgentInboxIdea,
@@ -181,16 +185,35 @@ function OpportunityCard({
         </div>
       </div>
       {!idea ? (
-        <div className="flex flex-1 flex-col items-center justify-center px-4 text-center">
-          <Lightbulb
-            className="mb-4 size-7 text-muted-foreground"
-            aria-hidden
-          />
-          <p className="font-medium">No strong fit today</p>
-          <p className="mt-2 text-sm leading-6 text-muted-foreground">
-            Your Agent leaves a lane empty instead of forcing a weak idea.
-          </p>
-        </div>
+        snoozed ? (
+          <div className="flex flex-1 flex-col items-center justify-center px-4 text-center">
+            <span className="mb-4 grid size-11 place-items-center rounded-full bg-muted">
+              <Clock3
+                className="size-5 text-muted-foreground"
+                aria-hidden
+              />
+            </span>
+            <p className="font-medium">Back tomorrow</p>
+            <p className="mt-2 line-clamp-2 text-sm leading-6 text-muted-foreground">
+              &ldquo;{snoozed.headline}&rdquo;
+            </p>
+            <p className="mt-2 text-sm leading-6 text-muted-foreground">
+              You skipped this for today. The same idea returns to this lane
+              tomorrow — nothing new replaces it until then.
+            </p>
+          </div>
+        ) : (
+          <div className="flex flex-1 flex-col items-center justify-center px-4 text-center">
+            <Lightbulb
+              className="mb-4 size-7 text-muted-foreground"
+              aria-hidden
+            />
+            <p className="font-medium">No strong fit today</p>
+            <p className="mt-2 text-sm leading-6 text-muted-foreground">
+              Your Agent leaves a lane empty instead of forcing a weak idea.
+            </p>
+          </div>
+        )
       ) : (
         <>
           <div className="mt-7 flex-1">
@@ -262,9 +285,10 @@ function OpportunityCard({
               variant="outline"
               className="rounded-full"
               disabled={busy}
+              title="Skip this for today — it comes back tomorrow"
               onClick={() => onAction(idea, "snooze")}
             >
-              <Clock3 /> Snooze
+              <Clock3 /> Not today
             </Button>
             <Button
               variant="ghost"
@@ -335,6 +359,19 @@ export function AgentInbox() {
     () => new Map(data?.active.map((idea) => [idea.lane, idea]) ?? []),
     [data],
   );
+  // A lane with nothing active might be empty because the user snoozed its
+  // idea — the activity feed still carries that idea until it is due back.
+  // (The server releases due snoozes before reading, so a "snoozed" entry
+  // here is always still pending; an overdue one would be active again and
+  // occupy the lane, which suppresses this via byLane above.)
+  const snoozedByLane = useMemo(() => {
+    const map = new Map<AgentInboxLane, AgentInboxIdea>();
+    for (const idea of data?.activity ?? []) {
+      if (map.has(idea.lane) || idea.status !== "snoozed") continue;
+      if (idea.snoozedUntil) map.set(idea.lane, idea);
+    }
+    return map;
+  }, [data]);
   const evidenceKinds = useMemo(() => {
     const kinds = new Set(
       data?.active.flatMap((idea) =>
@@ -376,7 +413,9 @@ export function AgentInbox() {
         return;
       }
       toast.success(
-        action === "snooze" ? "Idea snoozed until tomorrow" : "Idea discarded",
+        action === "snooze"
+          ? "Skipped for today — back in this lane tomorrow"
+          : "Idea discarded",
       );
       await load();
     } catch (actionError) {
@@ -471,6 +510,9 @@ export function AgentInbox() {
               key={lane}
               lane={lane}
               idea={byLane.get(lane)}
+              snoozed={
+                byLane.has(lane) ? undefined : snoozedByLane.get(lane)
+              }
               busy={busyId === byLane.get(lane)?.id}
               onAction={(idea, action) => {
                 if (action === "discard") setPendingDiscard(idea);
@@ -525,7 +567,12 @@ export function AgentInbox() {
                 <div
                   key={idea.id}
                   className="flex items-center gap-3 py-3 text-sm"
-                  title={idea.discardReason ?? undefined}
+                  title={
+                    idea.discardReason ??
+                    (idea.status === "snoozed" && idea.snoozedUntil
+                      ? `Back ${formatDecisionDay(idea.snoozedUntil)}`
+                      : undefined)
+                  }
                 >
                   <span
                     className={cn("size-2 shrink-0 rounded-full", meta.dot)}

@@ -86,7 +86,9 @@ describe("shared Beautiful UI interaction patterns", () => {
       "app/(app)/dashboard/templates/loading.tsx",
       "app/(app)/dashboard/voice/loading.tsx",
     ]) {
-      expect(source(path), path).toContain("<LoadingState");
+      // TimedLoadingState renders the same LoadingState pixels + label with
+      // an elapsed timer, so both variants satisfy the shared language.
+      expect(source(path), path).toMatch(/<LoadingState|<TimedLoadingState/);
     }
   });
 });
