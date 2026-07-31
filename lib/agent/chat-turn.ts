@@ -106,6 +106,12 @@ import {
   composerStarterIdSchema,
 } from "@/lib/composer-task-context";
 import { stashWorkspacePostAsModelSource } from "@/lib/agent/model-source-choice";
+import {
+  candidateChoicesFromAsk,
+  hydrateModelSourceCandidates,
+  resolveModelSourceReference,
+  resolveModelSourceReferenceWithModel,
+} from "@/lib/agent/model-source-reference";
 
 import {
   NO_MODEL_FORMAT_IDS,
@@ -461,6 +467,10 @@ export type ChatTurnDependencies = {
   fetchRecentPostDrafts: typeof fetchRecentPostDrafts;
   generateLeadMagnetResource: typeof generateLeadMagnetResource;
   stashWorkspacePostAsModelSource: typeof stashWorkspacePostAsModelSource;
+  candidateChoicesFromAsk: typeof candidateChoicesFromAsk;
+  hydrateModelSourceCandidates: typeof hydrateModelSourceCandidates;
+  resolveModelSourceReference: typeof resolveModelSourceReference;
+  resolveModelSourceReferenceWithModel: typeof resolveModelSourceReferenceWithModel;
   now: () => Date;
   draftFinalizerSpecialists?: Partial<DraftFinalizerSpecialists>;
   /** Optional telemetry sink for tests/observers. Defaults to console logging. */
@@ -481,6 +491,10 @@ const productionChatTurnDependencies: ChatTurnDependencies = {
   fetchRecentPostDrafts,
   generateLeadMagnetResource,
   stashWorkspacePostAsModelSource,
+  candidateChoicesFromAsk,
+  hydrateModelSourceCandidates,
+  resolveModelSourceReference,
+  resolveModelSourceReferenceWithModel,
   now: () => new Date(),
 };
 
