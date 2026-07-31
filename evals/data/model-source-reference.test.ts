@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   candidateChoicesFromAsk,
+  latestModelSourceAskCall,
   candidateFromResolverPosition,
   modelSourceResolverMessages,
   resolveModelSourceReference,
@@ -313,5 +314,93 @@ describe("resolveModelSourceReferenceWithModel", () => {
         complete: complete(1),
       }),
     ).resolves.toBeNull();
+  });
+});
+
+describe("a source reference after the first draft has landed", () => {
+  // The real transcript: two source cards, a draft from card 2, then
+  // "Can we also model post 2 by Maria". The latest assistant message is a
+  // render_post, so the pending-ask path does not run — the card must still
+  // be reachable or the reference binds nothing and the writer reuses the
+  // previous source.
+  const askCall = (ids: string[]): ToolCall => ({
+    id: `ask-${ids[0]}`,
+    type: "function",
+    function: {
+      name: "ask_user",
+      arguments: JSON.stringify({
+        question: "Which post should I model?",
+        options: ids.map((_, i) => `Post ${i + 1}`),
+        choiceIds: ids.map(modelSourceChoiceId),
+        allowOther: false,
+      }),
+    },
+  });
+  const BATCH_1 = POST_IDS.slice(0, 3);
+  const BATCH_2 = POST_IDS.slice(2, 5);
+
+  // Newest-first, as the query returns it.
+  const windowAfterDraft = [
+    { role: "assistant", tool_calls: [{ id: "r", type: "function", function: { name: "render_post", arguments: "{}" } }] },
+    { role: "user", tool_calls: null },
+    { role: "assistant", tool_calls: [askCall(BATCH_2)] },
+    { role: "user", tool_calls: null },
+    { role: "assistant", tool_calls: [askCall(BATCH_1)] },
+  ] as never;
+
+  test("the card is still reachable once a draft is the latest message", () => {
+    const found = latestModelSourceAskCall(windowAfterDraft);
+    expect(candidateChoicesFromAsk(found).map((c) => c.postId)).toEqual(BATCH_2);
+  });
+
+  test("the NEWEST card wins when two batches are in the window", () => {
+    // Binding batch 1 here is the reported bug: the user is looking at the
+    // most recent five.
+    const found = latestModelSourceAskCall(windowAfterDraft);
+    expect(candidateChoicesFromAsk(found)[0].postId).not.toBe(BATCH_1[0]);
+  });
+
+  test("an ordinary clarification ask is not mistaken for a source card", () => {
+    const plainAsk = [
+      {
+        role: "assistant",
+        tool_calls: [{
+          id: "a", type: "function",
+          function: { name: "ask_user", arguments: JSON.stringify({ choiceIds: ["yes", "no"] }) },
+        }],
+      },
+    ] as never;
+    expect(latestModelSourceAskCall(plainAsk)).toBeUndefined();
+  });
+
+  test("a chat with no source card yields nothing to bind", () => {
+    expect(latestModelSourceAskCall([] as never)).toBeUndefined();
+  });
+
+  test('"post 2 by Maria" resolves against that recovered set', () => {
+    const candidates: ModelSourceCandidate[] = [
+      candidate(0, "Grace Andrews", "If you hired me to build your brand"),
+      candidate(1, "Maria Lopez", "The cold email that booked 40 meetings"),
+      candidate(2, "Dan Koe", "Deep work is a pricing decision"),
+    ];
+    const result = resolveModelSourceReference(
+      "Can we also model post 2 by Maria",
+      candidates,
+    );
+    expect(result.kind).toBe("resolved");
+    if (result.kind !== "resolved") return;
+    expect(result.candidate.authorName).toBe("Maria Lopez");
+  });
+
+  test("an ordinary follow-up must NOT bind a source", () => {
+    // "Ok let's do it" and "make it shorter" carry no reference. Binding here
+    // would hijack every post-draft turn into a re-model.
+    for (const text of ["Ok let's do it", "make it shorter", "punch up the hook"]) {
+      const result = resolveModelSourceReference(text, [
+        candidate(0, "Grace Andrews", "If you hired me to build your brand"),
+        candidate(1, "Maria Lopez", "The cold email that booked 40 meetings"),
+      ]);
+      expect(result.kind).toBe("unmatched");
+    }
   });
 });

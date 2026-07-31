@@ -753,6 +753,67 @@ export async function setupChatTurn(
         }
       }
     }
+
+    // A source reference AFTER the first draft has landed.
+    //
+    // Once "Your draft is ready" is the latest message, pendingAskOnly is
+    // false (the newest assistant turn is a render_post, not an ask), so the
+    // pending-ask resolution above never runs. But the user is still looking
+    // at the same five source cards and can reasonably say "also model post 2
+    // by Maria". That reference used to bind nothing: modelSourceId stayed
+    // null and the writer silently reused the PREVIOUS source, so the reply
+    // agreed to model Maria and then modelled Grace again.
+    //
+    // Resolve against the newest source card still in the window, using the
+    // same deterministic-then-model ladder as the pending-ask path. A stale
+    // card cannot leak in: the choice ids are re-resolved against current
+    // workspace scope before anything binds.
+    if (
+      !modelSourceId &&
+      !pendingAskOnly &&
+      !body.retryOfUserMessageId &&
+      !persistedActionContinuation
+    ) {
+      const followUpAsk = deps.latestModelSourceAskCall(recentMessageWindow);
+      const followUpChoices = deps.candidateChoicesFromAsk(followUpAsk);
+      if (followUpChoices.length > 0) {
+        const hydrated = await deps.hydrateModelSourceCandidates({
+          db: sbRaw,
+          workspaceId,
+          choices: followUpChoices,
+        });
+        const resolution = deps.resolveModelSourceReference(userText, hydrated);
+        let picked =
+          resolution.kind === "resolved" ? resolution.candidate : null;
+        // Only escalate when the user actually pointed at a source. Ordinary
+        // follow-ups ("make it shorter") must stay unbound, so an unmatched
+        // reference is left alone rather than sent to the resolver.
+        if (!picked && resolution.kind === "ambiguous") {
+          picked = await deps.resolveModelSourceReferenceWithModel({
+            text: userText,
+            candidates: resolution.candidates,
+            workspaceId,
+            signal: setupSignal,
+          });
+        }
+        if (picked) {
+          const stashedSourceId = await deps.stashWorkspacePostAsModelSource({
+            db: sbRaw,
+            workspaceId,
+            postId: picked.postId,
+            signal: setupSignal,
+          });
+          if (stashedSourceId) {
+            modelSourceId = stashedSourceId;
+            currentTurnModelSourceOwnership = "server_selected";
+            resolvedActionInstruction = [
+              userText,
+              `The user referred to a source Post they were already shown; it resolved to "Post ${picked.position}". Model THAT post, not any source used earlier in this chat.`,
+            ].join("\n\n");
+          }
+        }
+      }
+    }
     let preclaimInstruction = resolvedActionInstruction ?? userText;
     if (actionAnswer.cancelled && pendingActionAsk) {
       persistedActionContinuation = true;
