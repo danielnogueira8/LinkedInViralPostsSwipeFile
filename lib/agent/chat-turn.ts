@@ -110,6 +110,7 @@ import {
   candidateChoicesFromAsk,
   hydrateModelSourceCandidates,
   latestModelSourceAskCall,
+  releasesModelSource,
   resolveModelSourceReference,
   resolveModelSourceReferenceWithModel,
 } from "@/lib/agent/model-source-reference";
@@ -471,6 +472,7 @@ export type ChatTurnDependencies = {
   candidateChoicesFromAsk: typeof candidateChoicesFromAsk;
   hydrateModelSourceCandidates: typeof hydrateModelSourceCandidates;
   latestModelSourceAskCall: typeof latestModelSourceAskCall;
+  releasesModelSource: typeof releasesModelSource;
   resolveModelSourceReference: typeof resolveModelSourceReference;
   resolveModelSourceReferenceWithModel: typeof resolveModelSourceReferenceWithModel;
   now: () => Date;
@@ -496,6 +498,7 @@ const productionChatTurnDependencies: ChatTurnDependencies = {
   candidateChoicesFromAsk,
   hydrateModelSourceCandidates,
   latestModelSourceAskCall,
+  releasesModelSource,
   resolveModelSourceReference,
   resolveModelSourceReferenceWithModel,
   now: () => new Date(),

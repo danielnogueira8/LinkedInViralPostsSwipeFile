@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   candidateChoicesFromAsk,
   latestModelSourceAskCall,
+  releasesModelSource,
   candidateFromResolverPosition,
   modelSourceResolverMessages,
   resolveModelSourceReference,
@@ -453,5 +454,48 @@ describe("a chosen source stays chosen until a new one is picked", () => {
     expect(
       inherit([{ role: "assistant", model_source_id: "not-a-choice" }]),
     ).toBeUndefined();
+  });
+});
+
+describe("releasing an inherited modeling source", () => {
+  // A bound source now persists across turns, which is right for ordinary
+  // revision but left no way out: an unmatched reference falls through to the
+  // carry-forward, so "forget the source, write from scratch" was drafted
+  // FROM that source anyway.
+  test.each([
+    "write something new instead",
+    "forget the source, write from scratch",
+    "write a new post from scratch",
+    "don't model anything, just write about pricing",
+    "stop modeling that post",
+    "ignore the source post",
+    "start over with a fresh post",
+    "write it on my own",
+    "without a source, write about pricing",
+    "no source, just write",
+  ])("releases: %s", (text) => {
+    expect(releasesModelSource(text)).toBe(true);
+  });
+
+  // The dangerous direction. A false positive silently discards the source the
+  // user deliberately chose, so ordinary revision must never trip this.
+  test.each([
+    "make it shorter",
+    "punch up the hook",
+    "Ok let's model it",
+    "model post 2 by Maria",
+    "Can we also model Chris's post",
+    "rewrite this in my voice",
+    "make the ending stronger",
+    "add a stat about pricing",
+    "use a different hook",
+    "tighten the middle section",
+  ])("keeps the source: %s", (text) => {
+    expect(releasesModelSource(text)).toBe(false);
+  });
+
+  test("empty input is not a release", () => {
+    expect(releasesModelSource("")).toBe(false);
+    expect(releasesModelSource("   ")).toBe(false);
   });
 });
