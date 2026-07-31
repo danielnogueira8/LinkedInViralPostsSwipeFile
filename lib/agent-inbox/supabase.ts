@@ -351,42 +351,57 @@ export async function listAgentInboxWorkspaces(
   Array<{ workspaceId: string; timezone: string; deliveryLocalTime: string }>
 > {
   const activeSince = new Date(Date.now() - 30 * 86_400_000).toISOString();
+  // These five reads are CROSS-WORKSPACE, so they grow with total users rather
+  // than with one workspace's data — and together they decide which workspaces
+  // are eligible for inbox cards at all. `.limit(5000)` did not lift
+  // PostgREST's 1000-row cap, so once any of them passed 1000 rows the extra
+  // workspaces silently vanished from the eligibility list and stopped
+  // receiving cards, with no error: a short response is indistinguishable from
+  // "that is all there is". `chats` is the nearest ceiling — it counts CHATS
+  // updated in 30 days, not workspaces.
   const [preferences, voice, learning, recentChats, postingSlots] =
     await Promise.all([
-      db
-        .from("agent_inbox_preferences")
-        .select("workspace_id, timezone, delivery_local_time")
-        .eq("enabled", true)
-        .limit(5000),
-      db
-        .from("voice_profiles")
-        .select("workspace_id")
-        .eq("status", "ready")
-        .limit(5000),
-      db
-        .from("workspace_learning_snapshots")
-        .select("workspace_id")
-        .eq("status", "active")
-        .limit(5000),
-      db
-        .from("chats")
-        .select("workspace_id")
-        .gte("updated_at", activeSince)
-        .order("updated_at", { ascending: false })
-        .limit(5000),
-      db
-        .from("posting_slots")
-        .select("workspace_id, timezone")
-        .is("deleted_at", null)
-        .limit(5000),
+      selectAllRows<{
+        workspace_id: string | null;
+        timezone: string | null;
+        delivery_local_time: string | null;
+      }>(() =>
+        db
+          .from("agent_inbox_preferences")
+          .select("workspace_id, timezone, delivery_local_time")
+          .eq("enabled", true) as never,
+      ),
+      selectAllRows<{ workspace_id: string | null }>(() =>
+        db
+          .from("voice_profiles")
+          .select("workspace_id")
+          .eq("status", "ready") as never,
+      ),
+      selectAllRows<{ workspace_id: string | null }>(() =>
+        db
+          .from("workspace_learning_snapshots")
+          .select("workspace_id")
+          .eq("status", "active") as never,
+      ),
+      selectAllRows<{ workspace_id: string | null }>(() =>
+        db
+          .from("chats")
+          .select("workspace_id")
+          .gte("updated_at", activeSince)
+          .order("updated_at", { ascending: false }) as never,
+      ),
+      selectAllRows<{
+        workspace_id: string | null;
+        timezone: string | null;
+      }>(() =>
+        db
+          .from("posting_slots")
+          .select("workspace_id, timezone")
+          .is("deleted_at", null) as never,
+      ),
     ]);
-  if (preferences.error) throw preferences.error;
-  if (voice.error) throw voice.error;
-  if (learning.error) throw learning.error;
-  if (recentChats.error) throw recentChats.error;
-  if (postingSlots.error) throw postingSlots.error;
   const postingTimezone = new Map<string, string>();
-  for (const row of postingSlots.data ?? []) {
+  for (const row of postingSlots) {
     if (
       typeof row.workspace_id === "string" &&
       typeof row.timezone === "string" &&
@@ -396,13 +411,13 @@ export async function listAgentInboxWorkspaces(
     }
   }
   const recentlyActive = new Set(
-    (recentChats.data ?? [])
+    recentChats
       .map((row) => row.workspace_id)
       .filter((value): value is string => typeof value === "string"),
   );
   const timezoneByWorkspace = new Map<string, string>();
   const deliveryByWorkspace = new Map<string, string>();
-  for (const row of preferences.data ?? []) {
+  for (const row of preferences) {
     if (typeof row.workspace_id === "string") {
       timezoneByWorkspace.set(
         row.workspace_id,
@@ -414,7 +429,7 @@ export async function listAgentInboxWorkspaces(
       );
     }
   }
-  for (const row of [...(voice.data ?? []), ...(learning.data ?? [])]) {
+  for (const row of [...voice, ...learning]) {
     if (
       typeof row.workspace_id === "string" &&
       recentlyActive.has(row.workspace_id) &&
