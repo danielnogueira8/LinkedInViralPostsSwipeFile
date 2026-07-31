@@ -57,25 +57,35 @@ const laneCopy: Record<
   }
 > = {
   newsjacking: {
-    label: "Newsjacking",
+    // Named for what the agent finds, not the tactic it enables: since the
+    // cultural-moment search landed this lane covers finals, awards, and
+    // releases as well as trade news, and "newsjacking" is craft jargon for
+    // a label the user reads every morning.
+    label: "Moment Agent",
     description: "Join a moment your audience is already discussing",
     icon: Newspaper,
     avatar: "trend-radar",
   },
   personal_story: {
-    label: "Your story",
+    // Names the digging: the material already exists in the knowledge base,
+    // and the agent's job is to surface it rather than invent it.
+    label: "Story Miner Agent",
     description: "An achievement, a struggle, or something you lived",
     icon: BookOpen,
     avatar: "hook-scout",
   },
   namejacking: {
-    label: "Namejacking",
+    // Plainer than "namejacking", and honest that the lane covers companies
+    // as readily as people.
+    label: "Namedrop Agent",
     description: "Borrow attention from a name your audience follows",
     icon: AtSign,
     avatar: "offer-hunter",
   },
   educational: {
-    label: "Educational",
+    // "Educational" describes a format; this lane is gated on evidence the
+    // user has actually earned the right to teach from.
+    label: "Expertise Agent",
     description: "Teach something you have proven works",
     icon: GraduationCap,
     avatar: "bulk-writer",
