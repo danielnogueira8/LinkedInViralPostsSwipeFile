@@ -4246,7 +4246,7 @@ function writerFinalizerProgressStage(
     ai_tell_check: {
       kind: "quality_check",
       id: "check_ai_tells",
-      label: "Checking for AI tells",
+      label: "Removing AI slop",
     },
     artifact: {
       kind: "finalizing",

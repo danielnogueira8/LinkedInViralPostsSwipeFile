@@ -2811,7 +2811,7 @@ describe("writer plan narration (narratePlan)", () => {
       "Applying your voice and content intelligence",
       "Writing your post",
       "Checking structure and completeness",
-      "Checking for AI tells",
+      "Removing AI slop",
       "Finalizing your draft",
     ]);
     expect(planUpdates(events).at(-1)?.steps.every((step) => step.status === "done"))
@@ -2935,11 +2935,11 @@ describe("writer plan narration (narratePlan)", () => {
       "Applying your voice and content intelligence",
       "Writing draft 1 of 2",
       "Checking structure and completeness",
-      "Checking for AI tells",
+      "Removing AI slop",
       "Finalizing your draft",
       "Writing draft 2 of 2",
       "Checking structure and completeness",
-      "Checking for AI tells",
+      "Removing AI slop",
       "Finalizing your draft",
     ]);
     expect(planUpdates(events).at(-1)?.steps.every((step) => step.status === "done"))
@@ -2998,7 +2998,7 @@ describe("writer plan narration (narratePlan)", () => {
             writerInput.onProgressStage?.({
               kind: "quality_check",
               id: "check_ai_tells",
-              label: "Checking for AI tells",
+              label: "Removing AI slop",
             });
             if (slotInput.source.id === "durable-source-1") {
               writerInput.onFinalizerDecision?.({
@@ -3095,7 +3095,7 @@ describe("writer plan narration (narratePlan)", () => {
         "Applying your voice and content intelligence",
         "Writing draft 1 of 2",
         "Writing draft 2 of 2",
-        "Checking for AI tells",
+        "Removing AI slop",
       ]),
     );
     expect(planUpdates(events).at(-1)?.steps.every((step) => step.status === "done"))
