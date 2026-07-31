@@ -2845,7 +2845,7 @@ describe("read-only orchestrator execution", () => {
             draftInput.onProgressStage?.({
               kind: "quality_check",
               id: "check_ai_tells_1",
-              label: "Checking for AI tells",
+              label: "Removing AI slop",
             });
             yield {
               type: "artifact" as const,
@@ -2880,7 +2880,7 @@ describe("read-only orchestrator execution", () => {
           event.type === "plan_update" &&
           event.steps.some(
             (step) =>
-              step.status === "active" && step.label === "Checking for AI tells",
+              step.status === "active" && step.label === "Removing AI slop",
           ),
       ),
     ).toBe(true);
@@ -2969,7 +2969,7 @@ describe("read-only orchestrator execution", () => {
           batchInput.engineInput.onProgressStage?.({
             kind: "quality_check",
             id: "check_ai_tells_1",
-            label: "Checking for AI tells",
+            label: "Removing AI slop",
           });
           return {
             kind: "complete" as const,
@@ -3051,7 +3051,7 @@ describe("read-only orchestrator execution", () => {
           event.type === "plan_update" &&
           event.steps.some(
             (step) =>
-              step.status === "active" && step.label === "Checking for AI tells",
+              step.status === "active" && step.label === "Removing AI slop",
           ),
       ),
     ).toBe(true);
