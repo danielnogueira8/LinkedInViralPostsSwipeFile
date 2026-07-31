@@ -205,13 +205,10 @@ describe("agent names", () => {
   );
 
   test("every lane has a distinct agent name", () => {
-    // The label is what the user reads every morning, so it is named for what
-    // the agent finds rather than the craft term for the tactic: "Moment"
-    // because the lane now covers finals and releases as well as trade news,
-    // and "Expertise" because the lane is gated on demonstrated results
-    // rather than on a teaching format.
+    // "Expertise" rather than "Educational" because the lane is gated on
+    // demonstrated results rather than on a teaching format.
     for (const name of [
-      "Moment Agent",
+      "Newsjacking Agent",
       "Story Miner Agent",
       "Namedrop Agent",
       "Expertise Agent",

@@ -57,11 +57,11 @@ const laneCopy: Record<
   }
 > = {
   newsjacking: {
-    // Named for what the agent finds, not the tactic it enables: since the
-    // cultural-moment search landed this lane covers finals, awards, and
-    // releases as well as trade news, and "newsjacking" is craft jargon for
-    // a label the user reads every morning.
-    label: "Moment Agent",
+    // Note the lane is broader than trade news: since the cultural-moment
+    // search landed it also covers finals, awards, and releases. The label
+    // keeps the craft term anyway — it is the vocabulary the skills, the
+    // synthesis prompt, and the design doc all already use.
+    label: "Newsjacking Agent",
     description: "Join a moment your audience is already discussing",
     icon: Newspaper,
     avatar: "trend-radar",
