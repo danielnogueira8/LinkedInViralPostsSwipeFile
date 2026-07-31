@@ -817,6 +817,37 @@ const FULL_POST_REQUEST_RE =
 const NEWS_RE =
   /\b(?:news(?:jack(?:ing)?)?|breaking|trending|latest|today(?:'s)?|current|recent)\b[\s\S]{0,100}\b(?:announcement|launch|release|development|update|story|coverage|news|trend)|\b(?:announcement|launch|release|development|update|story|coverage|news|trend)\b[\s\S]{0,100}\b(?:latest|today(?:'s)?|current|recent|breaking|trending)\b/i;
 const EXPLICIT_NEWS_TOPIC_RE = /\b(?:news|newsjack(?:ing)?)\b/i;
+// Recency intent WITHOUT an explicit research verb.
+//
+// needsNews used to require either the literal word "news" or a recency word
+// plus an event noun plus a research verb ("research", "search", "look into").
+// Almost nobody phrases a question that way, so "What did Apple launch this
+// week?" missed the grounded lane entirely and got answered from training
+// data — a confidently stale answer about current events, which is worse than
+// saying nothing. These patterns catch the natural phrasings instead.
+//
+// Deliberately tight: a recency word alone is not enough, or "make this draft
+// feel current" would hit the web. It must be a recency word plus either a
+// current-events question or an event noun — or one of the few phrases that
+// are inherently about now.
+const SELF_EVIDENT_RECENCY_RE =
+  /\bcatch\s+me\s+up\b|\bwhat(?:'s|\s+is)\s+(?:new|happening|going\s+on)\b|\bany\s+news\b/i;
+const CURRENT_EVENTS_QUESTION_RE =
+  /\b(?:what|who|when|where|how)\b[\s\S]{0,80}\b(?:happen(?:ed|ing)|announce(?:d|ment)?|launch(?:ed)?|release(?:d)?|unveil(?:ed)?|said|going\s+on)\b/i;
+const RECENCY_SIGNAL_RE =
+  /\b(?:today|tonight|yesterday|this\s+(?:week|morning|month)|last\s+night|right\s+now|lately|currently|recent(?:ly)?|latest|breaking|trending)\b/i;
+const EVENT_NOUN_RE =
+  /\b(?:trend(?:ing|s)?|latest|breaking|development|announcement|launch|release|update|story|coverage|headline)s?\b/i;
+
+/** True when the message asks about current events in ordinary phrasing. */
+function asksAboutCurrentEvents(instruction: string): boolean {
+  if (SELF_EVIDENT_RECENCY_RE.test(instruction)) return true;
+  if (!RECENCY_SIGNAL_RE.test(instruction)) return false;
+  return (
+    CURRENT_EVENTS_QUESTION_RE.test(instruction) ||
+    EVENT_NOUN_RE.test(instruction)
+  );
+}
 const FIRST_PARTY_NEWS_CONTEXT_RE =
   /\b(?:our|my)(?:\s+(?:latest|recent|new|current))?(?:\s+(?:company|product|team|career|business))?\s+(?:news|announcement|launch|release|development|update)\b|\b(?:news|announcement|launch|release|development|update)\b(?:\s+[\p{L}\p{N}-]+){0,2}\s+(?:about|from|in|at)\s+(?:our|my)\s+(?:company|product|team|career|business)\b/iu;
 const RESEARCH_RE =
@@ -1483,9 +1514,18 @@ export function compileReadOnlyOrchestratorRoute(
     requestsModelingSourceSelection(instruction, input.composerTaskContext);
   const needsFileInspection =
     input.hasAttachments && FILE_INSPECTION_RE.test(instruction);
+  // A recency word inside a request to search the workspace's own collection
+  // ("find 4 top posts inspired by a recent launch") is about which SAVED
+  // posts to pick, not a request for outside news. Only the widened
+  // current-events branch defers here; the pre-existing signals are unchanged.
+  const currentEventsRequest =
+    asksAboutCurrentEvents(instruction) &&
+    !explicitlyRequestsSourceDiscovery(instruction) &&
+    !WORKSPACE_SEARCH_INTENT_RE.test(instruction);
   const needsNews =
     !FIRST_PARTY_NEWS_CONTEXT_RE.test(instruction) &&
     (EXPLICIT_NEWS_TOPIC_RE.test(instruction) ||
+      currentEventsRequest ||
       (NEWS_RE.test(instruction) && RESEARCH_RE.test(instruction)));
   // True when the message is an explicit search of the workspace's own
   // collection (discovery verb + swipe-file/bookmark/tracked-accounts noun).

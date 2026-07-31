@@ -2981,3 +2981,64 @@ describe("direct writer eligibility predicates", () => {
     });
   });
 });
+
+describe("current-events requests reach the grounded news lane", () => {
+  const route = (userInstruction: string) =>
+    compileReadOnlyOrchestratorRoute({ ...readOnlyBase, userInstruction });
+
+  // Before this, needsNews required the literal word "news", or a recency word
+  // AND an event noun AND a research verb ("research"/"search"/"look into").
+  // Nobody writes that way, so ordinary current-events phrasings were answered
+  // from training data — confidently stale, which is worse than not answering.
+  test.each([
+    "Tell me what happened at the Oscars last night",
+    "Tell me what Apple announced this week",
+    "Summarize the latest AI announcements",
+    "Show me what's trending in B2B SaaS right now",
+  ])("grounds: %s", (instruction) => {
+    expect(route(instruction)).toMatchObject({ kind: "news_research" });
+  });
+
+  test("a vague catch-up asks for a topic instead of guessing one", () => {
+    // Detected as a news request, but "marketing" is too broad to search
+    // usefully — one question beats a scattershot answer.
+    expect(
+      route("Catch me up on what's happening in marketing"),
+    ).toMatchObject({ kind: "ambiguous_read_only" });
+  });
+
+  test("a post about a current event is grounded too, not written blind", () => {
+    expect(
+      route("Write a post about the latest OpenAI announcement"),
+    ).toMatchObject({ kind: "news_research" });
+  });
+
+  // The tight version deliberately does NOT fire on a recency word alone,
+  // or the whole app would start hitting the web mid-edit.
+  test.each([
+    "make it shorter",
+    "punch up the hook",
+    "update the hook",
+    "rewrite this in my voice",
+    "make this draft feel more current",
+  ])("stays local: %s", (instruction) => {
+    const compiled = route(instruction);
+    if (compiled) expect(compiled.kind).not.toBe("news_research");
+  });
+
+  test("a first-party announcement is still the user's own news", () => {
+    // "our launch" is something only the user knows about — searching the web
+    // for it returns someone else's company.
+    const compiled = route("Write a post about our latest product launch");
+    if (compiled) expect(compiled.kind).not.toBe("news_research");
+  });
+
+  test("a recency word inside a swipe-file search stays a workspace search", () => {
+    // "recent" here selects which SAVED posts to use; it is not a request for
+    // outside news.
+    const compiled = route(
+      "Find 4 top posts inspired by a recent launch and summarize them.",
+    );
+    if (compiled) expect(compiled.kind).not.toBe("news_research");
+  });
+});
