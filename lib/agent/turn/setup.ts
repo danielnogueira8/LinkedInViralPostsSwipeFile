@@ -187,6 +187,9 @@ export async function setupChatTurn(
   let currentTurnOperation: ChatTurnOperation | null = null;
   let attachments: ChatTurnAttachment[] = [];
   let modelSourceId: string | undefined;
+  // A prose source reference the deterministic pass could not settle. Handed
+  // to the executor so it can escalate to the model resolver, and failing
+  // that, ask the user again — instead of writing from an unchosen source.
   let currentModelSource: ModelSourceRow | null = null;
   let skipDecision = false;
   let refineTargetId: string | undefined;
@@ -597,6 +600,86 @@ export async function setupChatTurn(
             originalInstruction || "Model the selected source Post in my voice.",
             "The user selected one of the server-presented source candidates.",
           ].join("\n\n");
+        }
+        // The user answered the source card in PROSE rather than clicking.
+        // Previously nothing bound: modelSourceId stayed undefined, the turn
+        // fell through to the write-from-scratch lane, and the user silently
+        // got a post modelled on nothing they picked. Resolve the reference
+        // against the exact candidate set the card offered.
+        //
+        // Deterministic only here — setup is synchronous routing and must not
+        // grow a network call. Anything ambiguous or unmatched is handed to
+        // the executor, which owns model calls and ask cards.
+        if (!modelSourceId && !selectedModelSource) {
+          const proseCandidates = deps.candidateChoicesFromAsk(pendingAskCall);
+          if (proseCandidates.length > 0) {
+            const hydrated = await deps.hydrateModelSourceCandidates({
+              db: sbRaw,
+              workspaceId,
+              choices: proseCandidates,
+            });
+            const resolution = deps.resolveModelSourceReference(
+              userText,
+              hydrated,
+            );
+            if (resolution.kind === "resolved") {
+              const stashedSourceId =
+                await deps.stashWorkspacePostAsModelSource({
+                  db: sbRaw,
+                  workspaceId,
+                  postId: resolution.candidate.postId,
+                  signal: setupSignal,
+                });
+              if (stashedSourceId) {
+                modelSourceId = stashedSourceId;
+                currentTurnModelSourceOwnership = "server_selected";
+                resolvedActionInstruction = [
+                  "Model the selected source Post in my voice.",
+                  `The user referred to the source by ${resolution.signal}; it resolved to the post they were shown as "Post ${resolution.candidate.position}".`,
+                ].join("\n\n");
+              }
+            } else if (hydrated.length > 0) {
+              // Ambiguous or unmatched — escalate to the model, over the
+              // NARROWED set when the deterministic pass got that far. The
+              // resolver returns a position within a closed candidate list, so
+              // it can neither invent a source nor reach outside what was
+              // offered, and it may answer "unclear".
+              //
+              // This is the only model call in setup, and it is reached only on
+              // an unresolved prose reference — the clear cases never touch it.
+              const narrowed =
+                resolution.kind === "ambiguous"
+                  ? resolution.candidates
+                  : hydrated;
+              const picked = await deps.resolveModelSourceReferenceWithModel({
+                text: userText,
+                candidates: narrowed,
+                workspaceId,
+                signal: setupSignal,
+              });
+              if (picked) {
+                const stashedSourceId =
+                  await deps.stashWorkspacePostAsModelSource({
+                    db: sbRaw,
+                    workspaceId,
+                    postId: picked.postId,
+                    signal: setupSignal,
+                  });
+                if (stashedSourceId) {
+                  modelSourceId = stashedSourceId;
+                  currentTurnModelSourceOwnership = "server_selected";
+                  resolvedActionInstruction = [
+                    "Model the selected source Post in my voice.",
+                    `The user named the source in their own words; it resolved to the post they were shown as "Post ${picked.position}".`,
+                  ].join("\n\n");
+                }
+              }
+              // Still unresolved: fall through as an Ask so the card is
+              // presented again. Asking is the correct last resort — the old
+              // behaviour drafted silently from an unchosen post.
+              if (!modelSourceId) applyTurnOperation({ kind: "ask" });
+            }
+          }
         }
         if (pendingOperation.operation.kind === "ask") {
           applyTurnOperation({ kind: "ask" });
