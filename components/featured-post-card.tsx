@@ -5,6 +5,7 @@ import { Flame, MessageCircle, ThumbsUp, Repeat, ExternalLink } from "lucide-rea
 import { cn } from "@/lib/utils";
 import { StatusPill } from "@/components/app-surface";
 import { creatorAvatarFallback } from "@/lib/post-card-helpers";
+import { AvatarImg } from "@/components/avatar-img";
 
 type FeaturedPost = {
   id: string;
@@ -89,45 +90,30 @@ export function FeaturedPostCard({ post, rank, priority }: { post: FeaturedPost;
 
       <div className="px-4 py-3 flex flex-col gap-2 flex-1">
         <div className="flex items-center gap-2 min-w-0">
-          {avatarUrl ? (
-            <Image
-              src={avatarUrl}
-              alt={name}
-              width={28}
-              height={28}
-              sizes="28px"
-              className="h-7 w-7 rounded-full object-cover shrink-0 bg-muted"
-              referrerPolicy="no-referrer"
-              onError={(e) => {
-                const img = e.currentTarget;
-                // Still hidden behind a working photo: a background load
-                // failure here must not reveal the initials tile.
-                if (img.classList.contains("hidden")) return;
-                img.style.display = "none";
-                img.nextElementSibling?.classList.remove("hidden");
-              }}
-            />
-          ) : null}
-          {/* Missing/expired photo → a stable DiceBear thumbs avatar; the
-              initials tile below is the last resort if that CDN fails too. */}
-          {/* eslint-disable-next-line @next/next/no-img-element -- external SVG; next/image won't optimize it */}
-          <img
-            src={creatorAvatarFallback(name)}
-            alt=""
-            className={cn(
-              "h-7 w-7 rounded-full object-cover shrink-0 bg-muted",
-              avatarUrl && "hidden",
-            )}
-            referrerPolicy="no-referrer"
-            onError={(e) => {
-              const img = e.currentTarget;
-              img.style.display = "none";
-              img.nextElementSibling?.classList.remove("hidden");
-            }}
+          {/* AvatarImg is a client component, and it has to be: this card is
+              rendered from the /dashboard/swipe SERVER component, where an
+              onError prop cannot cross the boundary — passing one threw
+              "Event handlers cannot be passed to Client Component props" on
+              every render of the page. It also replaces the old hide-and-
+              unhide-the-sibling DOM mutation with React state, so the fallback
+              chain (LinkedIn photo -> DiceBear -> initials) is the same but
+              expressed as rendering rather than imperative class toggling. */}
+          <AvatarImg
+            src={avatarUrl}
+            fallbackSrc={creatorAvatarFallback(name)}
+            alt={avatarUrl ? name : ""}
+            className="h-7 w-7 rounded-full object-cover shrink-0 bg-muted"
+            fallback={
+              <div
+                className={cn(
+                  "h-7 w-7 rounded-full grid place-items-center text-[10px] font-semibold shrink-0",
+                  tintFor(name),
+                )}
+              >
+                {initials || "?"}
+              </div>
+            }
           />
-          <div className={cn("h-7 w-7 rounded-full grid place-items-center text-[10px] font-semibold shrink-0 hidden", tintFor(name))}>
-            {initials || "?"}
-          </div>
           <div className="truncate text-xs font-semibold" title={name}>{name}</div>
         </div>
         {img && hook && (
