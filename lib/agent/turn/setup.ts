@@ -814,6 +814,33 @@ export async function setupChatTurn(
         }
       }
     }
+    // A chosen source stays chosen until the user picks a different one.
+    //
+    // model_source_id was written on the ONE user message that bound it, and
+    // never read again except on retry. So "Let's also model Chris's post"
+    // bound Chris, and the very next turn ("Ok let's model it", or the same
+    // request re-sent after switching Ask -> Create) bound nothing and drafted
+    // from the wrong source. Switching composer mode is not a decision to
+    // abandon the source — nothing in the UI says it is.
+    //
+    // Inherit the most recent source in the window instead. Anything that
+    // establishes a source this turn has already run above and short-circuits
+    // this, so an explicit new choice always wins over the inherited one.
+    if (
+      !modelSourceId &&
+      !body.retryOfUserMessageId &&
+      !persistedActionContinuation
+    ) {
+      const inherited = recentMessageWindow.find(
+        (message) =>
+          message.role === "user" &&
+          typeof message.model_source_id === "string",
+      )?.model_source_id;
+      if (inherited) {
+        modelSourceId = inherited;
+        currentTurnModelSourceOwnership = "server_selected";
+      }
+    }
     let preclaimInstruction = resolvedActionInstruction ?? userText;
     if (actionAnswer.cancelled && pendingActionAsk) {
       persistedActionContinuation = true;

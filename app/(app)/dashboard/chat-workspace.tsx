@@ -73,7 +73,6 @@ import { cn } from "@/lib/utils";
 import { ChatContextPanel } from "./chat-context-panel";
 import { LeadSharkPanel } from "./leadshark-panel";
 import {
-  latestPersistedModelSource,
   summarizeChatContext,
   isContextSummaryEmpty,
 } from "@/lib/cowork-context-summary";
@@ -596,13 +595,6 @@ export function ChatWorkspace({
   const [chatSearch, setChatSearch] = useState("");
   const [pendingModelSource, setModelSource] = useState<ModelSource | null>(null);
   const [modelSourceChatId, setModelSourceChatId] = useState<string | null>(null);
-  // A local per-chat override keeps the source visible immediately after send
-  // (before the persisted transcript is reloaded) and remembers an in-session
-  // dismissal. Outside that short-lived override, the transcript below is the
-  // durable source of truth.
-  const [consumedSourceByChat, setConsumedSourceByChat] = useState<
-    Record<string, ModelSource | null>
-  >({});
   const modelSource = modelSourceBelongsToChat(activeId, modelSourceChatId)
     ? pendingModelSource
     : null;
@@ -812,12 +804,6 @@ export function ChatWorkspace({
   const messages: Message[] = activeId
     ? [...activeBase, ...(activeRun ? runOverlay(activeRun, activeBase) : [])]
     : [];
-  const transcriptSource = latestPersistedModelSource(messages);
-  const consumedSource =
-    activeId &&
-    Object.prototype.hasOwnProperty.call(consumedSourceByChat, activeId)
-      ? (consumedSourceByChat[activeId] ?? null)
-      : transcriptSource;
   // Aggregate everything shaping this chat into one referenceable summary for the
   // context rail: the per-message context the transcript already carries + the
   // live source post being modeled. Pure fold — no new data. Empty until a chat
@@ -2965,13 +2951,10 @@ export function ChatWorkspace({
         }
         streamStarted = true;
         if (attached) {
-          // The staged chip is consumed — but the context isn't done. Keep it
-          // as this chat's working context so it stays visible for the rest
-          // of the conversation instead of disappearing when writing starts.
-          setConsumedSourceByChat((current) => ({
-            ...current,
-            [chatId]: attached,
-          }));
+          // The staged chip is consumed. The source itself is still this
+          // chat's context and remains in the context rail, which reads the
+          // transcript-persisted source — so nothing is lost by clearing the
+          // chip above the input.
           setModelSource((current) =>
             current?.id === attached.id ? null : current,
           );
@@ -5063,21 +5046,14 @@ export function ChatWorkspace({
               </div>
             )}
             <div className="flex flex-col gap-2 px-3 pt-3">
+              {/* Only the STAGED source shows in the composer. Once it has been
+                  used, the chip is clutter above the input — the source is
+                  still the chat's context and stays in the context rail, which
+                  falls back to the transcript-persisted source. */}
               {modelSource ? (
                 <SourcePostChip
                   source={modelSource}
                   onRemove={() => setModelSource(null)}
-                />
-              ) : consumedSource ? (
-                <SourcePostChip
-                  source={consumedSource}
-                  pinnedContext
-                  onRemove={() =>
-                    setConsumedSourceByChat((current) => {
-                      if (!activeId) return current;
-                      return { ...current, [activeId]: null };
-                    })
-                  }
                 />
               ) : null}
             {attachments.length > 0 && (
