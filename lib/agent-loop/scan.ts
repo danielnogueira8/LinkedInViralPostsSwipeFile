@@ -1,3 +1,4 @@
+import { selectAllRows, selectInChunks } from "@/lib/db-paginate";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   creatorBaselinesFromRows,
@@ -142,13 +143,24 @@ export async function scanAgentOpportunities(
   const baselineCutoff = new Date(
     Date.now() - BASELINE_WINDOW_DAYS * 24 * 60 * 60 * 1000,
   ).toISOString();
-  const { data: metricRows, error: metricsError } = await sb
-    .from("posts")
-    .select("account_id, reactions, comments")
-    .in("account_id", accountIds)
-    .gte("posted_at", baselineCutoff)
-    .limit(5000);
-  if (metricsError) throw metricsError;
+  // Two size-dependent failures at once. `.limit(5000)` did not lift
+  // PostgREST's 1000-row cap, and a long `.in(accountIds)` can exceed the URL
+  // length ceiling. A truncated read here does not error — it silently lowers
+  // the 90-day baseline, so ordinary posts start reading as outliers.
+  type BaselineRow = {
+    account_id: string;
+    reactions: number | null;
+    comments: number | null;
+  };
+  const metricRows = await selectInChunks<BaselineRow>(accountIds, (ids) =>
+    selectAllRows<BaselineRow>(() =>
+      sb
+        .from("posts")
+        .select("account_id, reactions, comments")
+        .in("account_id", ids)
+        .gte("posted_at", baselineCutoff) as never,
+    ).then((data) => ({ data, error: null as unknown })),
+  );
   const baselines = creatorBaselinesFromRows(
     (metricRows ?? []) as Array<{
       account_id: string;
