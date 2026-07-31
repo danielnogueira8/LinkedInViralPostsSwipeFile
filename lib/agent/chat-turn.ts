@@ -109,6 +109,7 @@ import { stashWorkspacePostAsModelSource } from "@/lib/agent/model-source-choice
 import {
   candidateChoicesFromAsk,
   hydrateModelSourceCandidates,
+  latestModelSourceAskCall,
   resolveModelSourceReference,
   resolveModelSourceReferenceWithModel,
 } from "@/lib/agent/model-source-reference";
@@ -469,6 +470,7 @@ export type ChatTurnDependencies = {
   stashWorkspacePostAsModelSource: typeof stashWorkspacePostAsModelSource;
   candidateChoicesFromAsk: typeof candidateChoicesFromAsk;
   hydrateModelSourceCandidates: typeof hydrateModelSourceCandidates;
+  latestModelSourceAskCall: typeof latestModelSourceAskCall;
   resolveModelSourceReference: typeof resolveModelSourceReference;
   resolveModelSourceReferenceWithModel: typeof resolveModelSourceReferenceWithModel;
   now: () => Date;
@@ -493,6 +495,7 @@ const productionChatTurnDependencies: ChatTurnDependencies = {
   stashWorkspacePostAsModelSource,
   candidateChoicesFromAsk,
   hydrateModelSourceCandidates,
+  latestModelSourceAskCall,
   resolveModelSourceReference,
   resolveModelSourceReferenceWithModel,
   now: () => new Date(),

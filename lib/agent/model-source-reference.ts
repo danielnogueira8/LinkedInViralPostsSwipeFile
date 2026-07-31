@@ -73,6 +73,37 @@ export function candidateChoicesFromAsk(
   return out;
 }
 
+/**
+ * Find the most recent source card in the window, even when it is no longer
+ * the pending message.
+ *
+ * A source reference does not expire when the first draft lands. After
+ * "Your draft is ready", the latest assistant message is a render_post, so
+ * pendingAskOnly is false and the pending-ask path never runs — yet the user
+ * can still say "also model post 2 by Maria" about the same five cards they
+ * are still looking at. Before this, that reference bound nothing and the
+ * writer silently reused the PREVIOUS source.
+ *
+ * The window is newest-first, so the first source card found is the newest.
+ * Only cards carrying model-source choices qualify; ordinary clarification
+ * asks are skipped rather than treated as an empty candidate set.
+ */
+export function latestModelSourceAskCall(
+  recentMessages: ReadonlyArray<{
+    role: string;
+    tool_calls?: ToolCall[] | null;
+  }>,
+): ToolCall | undefined {
+  for (const message of recentMessages) {
+    if (message.role !== "assistant") continue;
+    for (const call of message.tool_calls ?? []) {
+      if (call.function.name !== "ask_user") continue;
+      if (candidateChoicesFromAsk(call).length > 0) return call;
+    }
+  }
+  return undefined;
+}
+
 function normalize(value: string): string {
   return value
     .toLocaleLowerCase("en-US")
