@@ -404,3 +404,54 @@ describe("a source reference after the first draft has landed", () => {
     }
   });
 });
+
+describe("a chosen source stays chosen until a new one is picked", () => {
+  // The window is newest-first, so the FIRST user row carrying a source id is
+  // the most recently chosen one. Reproduces the reported chat: "Let's also
+  // model Chris's post" bound a source, then the next turn ("Ok let's model
+  // it", or the same text re-sent after switching Ask -> Create) carried none
+  // and drafted from the wrong source.
+  const inherit = (
+    window: Array<{ role: string; model_source_id?: string | null }>,
+  ) =>
+    window.find(
+      (m) => m.role === "user" && typeof m.model_source_id === "string",
+    )?.model_source_id;
+
+  test("a follow-up turn inherits the source bound one turn earlier", () => {
+    expect(
+      inherit([
+        { role: "assistant", model_source_id: null },
+        { role: "user", model_source_id: null }, // "Ok let's model it"
+        { role: "assistant", model_source_id: null },
+        { role: "user", model_source_id: "chris-source" },
+      ]),
+    ).toBe("chris-source");
+  });
+
+  test("the NEWEST chosen source wins over an earlier one", () => {
+    // Switching sources mid-chat must not resurrect the first pick.
+    expect(
+      inherit([
+        { role: "user", model_source_id: "chris-source" },
+        { role: "assistant", model_source_id: null },
+        { role: "user", model_source_id: "maria-source" },
+      ]),
+    ).toBe("chris-source");
+  });
+
+  test("a chat that never bound a source inherits nothing", () => {
+    expect(
+      inherit([
+        { role: "assistant", model_source_id: null },
+        { role: "user", model_source_id: null },
+      ]),
+    ).toBeUndefined();
+  });
+
+  test("an assistant row carrying an id is not a user's choice", () => {
+    expect(
+      inherit([{ role: "assistant", model_source_id: "not-a-choice" }]),
+    ).toBeUndefined();
+  });
+});
