@@ -826,10 +826,15 @@ export async function setupChatTurn(
     // Inherit the most recent source in the window instead. Anything that
     // establishes a source this turn has already run above and short-circuits
     // this, so an explicit new choice always wins over the inherited one.
+    // ...unless the user asks to stop modeling. Without this the carry-forward
+    // has no exit: "forget the source, write from scratch" resolves to no NEW
+    // source, so the previous one is inherited and the draft is modelled on it
+    // anyway — the exact opposite of the request.
     if (
       !modelSourceId &&
       !body.retryOfUserMessageId &&
-      !persistedActionContinuation
+      !persistedActionContinuation &&
+      !deps.releasesModelSource(userText)
     ) {
       const inherited = recentMessageWindow.find(
         (message) =>

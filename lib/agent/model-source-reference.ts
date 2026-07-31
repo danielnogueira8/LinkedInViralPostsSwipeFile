@@ -104,6 +104,40 @@ export function latestModelSourceAskCall(
   return undefined;
 }
 
+const RELEASE_INDEPENDENT_RE =
+  /\bfrom\s+scratch\b|\bon\s+my\s+own\b|\bwithout\s+(?:a\s+|any\s+)?(?:source|model|reference|template)\b|\bno\s+(?:source|model|reference)\b/i;
+const RELEASE_DISCARD_RE =
+  /\b(?:forget|ignore|drop|skip|remove|clear|unlink|detach)\b[\s\S]{0,30}?\b(?:the\s+)?(?:source|reference|model(?:ing)?|template)\b/i;
+const RELEASE_NEGATED_MODEL_RE =
+  /\b(?:do\s+not|don(?:'|’)?t|dont|stop|no\s+longer)\b[\s\S]{0,20}?\b(?:model(?:l?ing)?|copy(?:ing)?|mimic(?:king)?|imitat(?:e|ing)|base\s+it)\b/i;
+const RELEASE_FRESH_START_RE =
+  /\b(?:something|anything)\s+(?:new|different|original|else)\b|\bstart(?:ing)?\s+(?:over|fresh)\b|\b(?:new|fresh|original)\s+(?:linkedin\s+)?post\b/i;
+
+/**
+ * True when the user is asking to stop modeling and write independently.
+ *
+ * A bound source now persists across turns (it used to die after one), which
+ * is right for "make it punchier" but leaves no way out: "forget the source,
+ * write from scratch" resolves to no NEW source, so the previous one is
+ * inherited and the draft is modelled on it anyway — the opposite of the
+ * request.
+ *
+ * Deliberately narrow. It must fire only on an explicit release, never on
+ * ordinary revision, because a false positive silently drops the source the
+ * user carefully chose. `explicitlyForbidsSourceDiscovery` does not cover
+ * this: it disables SEARCHING for sources, not releasing a bound one, and
+ * matches only one of these phrasings.
+ */
+export function releasesModelSource(text: string): boolean {
+  if (!text.trim()) return false;
+  return (
+    RELEASE_INDEPENDENT_RE.test(text) ||
+    RELEASE_DISCARD_RE.test(text) ||
+    RELEASE_NEGATED_MODEL_RE.test(text) ||
+    RELEASE_FRESH_START_RE.test(text)
+  );
+}
+
 function normalize(value: string): string {
   return value
     .toLocaleLowerCase("en-US")
