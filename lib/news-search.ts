@@ -72,11 +72,11 @@ export const NEWS_MAX_RESULTS = 3;
 // this cheap, known-good default. Pin OPENROUTER_NEWS_MODEL to override.
 // Three bounded calls (primary discovery, fallback discovery, normalization)
 // must fit inside Cowork's route-wide deadline and still leave time to write.
-// 45s, not 20s: Anthropic's web_search server tool does real search round
-// trips (one per max_uses) and a 5-result discovery measures ~20-35s even
-// with reasoning disabled — 20s aborted nearly every Anthropic search at the
-// finish line. 2×45s discovery + normalize still fits the 120s tool budget
-// (RESEARCH_TOOL_BUDGET_MS) with room to write inside the 240s route budget.
+// 45s, not 20s: web-search server tools do real search round trips (one per
+// max_uses) and a 5-result discovery can measure ~20-35s. Native OpenAI
+// research runs at the centralized max/high policy; 2×45s discovery + normalize
+// still fits the 120s tool budget (RESEARCH_TOOL_BUDGET_MS) with room to write
+// inside the 240s route budget.
 const NEWS_STAGE_TIMEOUT_MS = 45_000;
 // A fallback is useful only if the route can still afford that discovery,
 // normalization, and a bounded writer window after it succeeds.
@@ -188,10 +188,9 @@ export async function searchNews(opts: {
           model,
           maxTokens: 1800,
           timeoutMs: NEWS_STAGE_TIMEOUT_MS,
-          // Grounded discovery is search-and-summarize, not deep reasoning —
-          // adaptive thinking on Sonnet pushes the round trip past the stage
-          // timeout, so run this call fast.
-          disableReasoning: true,
+          // OpenAI-backed research is intentionally run at the native model's
+          // max/high reasoning policy; non-OpenAI fallbacks keep their own
+          // provider-specific defaults in completeChat.
           plugins: [{ id: "web", max_results: NEWS_MAX_RESULTS }],
           signal: opts.signal,
           messages: [
@@ -299,9 +298,8 @@ export async function searchNews(opts: {
           model: discoveryModel,
           maxTokens: 1500,
           timeoutMs: NEWS_STAGE_TIMEOUT_MS,
-          // Structured extraction only — no reasoning, same latency guard as
-          // the discovery call above.
-          disableReasoning: true,
+          // Keep the normalization call on the same OpenAI max/high policy as
+          // discovery when Luna is serving it.
           tools: [NEWS_RESULTS_TOOL],
           forceTool: "report_news_results",
           signal: opts.signal,

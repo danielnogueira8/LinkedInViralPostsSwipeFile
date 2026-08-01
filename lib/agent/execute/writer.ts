@@ -115,14 +115,12 @@ import {
 import { createHash } from "node:crypto";
 import { truncateAtWordBoundary } from "@/lib/text-truncate";
 
-// Budget covers reasoning + visible output together (OpenRouter counts them as
-// one pool). A LinkedIn post is well under 1.5k tokens, but a reasoning-default
-// model that ignores our reasoning-off request (deepseek-v4-pro et al. under the
-// auto-router) can spend a chunk on a hidden trace first; the old 1.5k cap let it
-// exhaust the budget before writing a word ("empty_output"). Doubled to 6k so the
-// post still fits even behind a large reasoning trace, while the primary defense
-// stays turning reasoning OFF (see openRouterDraftWriter). max_tokens is only a
-// CEILING — a normal post that finishes early is unaffected and costs the same.
+// Budget covers reasoning + visible output together. A LinkedIn post is well
+// under 1.5k tokens, but a max/high reasoning request can spend a chunk on a
+// hidden trace first; the old 1.5k cap let it exhaust the budget before writing
+// a word ("empty_output"). Doubled to 6k so the post still fits behind a large
+// reasoning trace. max_tokens is only a CEILING — a normal post that finishes
+// early is unaffected and costs the same.
 const DIRECT_WRITER_MAX_TOKENS = 6_000;
 const THIN_WRITER_MAX_TOKENS = 4_000;
 const NARROW_REFINE_MAX_TOKENS = 512;

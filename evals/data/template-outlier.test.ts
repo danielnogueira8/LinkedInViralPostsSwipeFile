@@ -108,7 +108,7 @@ describe("templatizeOutlierPost", () => {
     expect(out.category).toBe("contrarian");
     expect(out.body).toContain("{common belief}");
     expect(completeChat).toHaveBeenCalledTimes(1);
-    expect(completeChat.mock.calls[0][0].glmReasoning).toBe("none");
+    expect(completeChat.mock.calls[0][0].glmReasoning).toBeUndefined();
     expect(logOpenRouterUsage).toHaveBeenCalledTimes(1);
     expect(logOpenRouterUsage.mock.calls[0][0]).toBe("templatize_post");
     expect(logOpenRouterUsage.mock.calls[0][3]).toBe(PLATFORM_WORKSPACE);

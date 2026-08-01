@@ -216,7 +216,6 @@ async function extractBatch(input: {
   const response = await completeChat({
     cachePrompt: false,
     model: KNOWLEDGE_EXTRACTION_MODEL,
-    disableReasoning: true,
     maxTokens: KNOWLEDGE_EXTRACTION_MAX_TOKENS,
     timeoutMs: 45_000,
     messages: [

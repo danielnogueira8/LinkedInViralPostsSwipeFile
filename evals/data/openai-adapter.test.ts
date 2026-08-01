@@ -24,7 +24,7 @@ describe("native OpenAI adapter", () => {
     expect(isOpenAIModel("google/gemini-3.5-flash")).toBe(false);
   });
 
-  test("maps messages, structured tools, low effort, and native web search to Responses", async () => {
+  test("maps messages, structured tools, and native web search to Responses at max effort", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -82,7 +82,7 @@ describe("native OpenAI adapter", () => {
     });
     expect(body.model).toBe("gpt-5.6-luna");
     expect(body.store).toBe(false);
-    expect(body.reasoning).toEqual({ effort: "low" });
+    expect(body.reasoning).toEqual({ effort: "max" });
     expect(body.prompt_cache_options).toEqual({ mode: "explicit" });
     // An assistant turn replayed as history must carry `output_text`; the
     // Responses API rejects `input_text` on the assistant role outright.
@@ -105,6 +105,62 @@ describe("native OpenAI adapter", () => {
     expect(result.model).toBe("openai/gpt-5.6-luna");
     expect(result.usage?.prompt_tokens_details?.cached_tokens).toBe(7);
     expect(result.usage?.prompt_tokens_details?.web_search_requests).toBe(1);
+  });
+
+  test("defaults GPT-5.6 Luna to max reasoning", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        model: "gpt-5.6-luna",
+        status: "completed",
+        output: [],
+      }),
+    );
+
+    await completeChatOpenAI({
+      model: "openai/gpt-5.6-luna",
+      messages: [{ role: "user", content: "write a post" }],
+    });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(body.reasoning).toEqual({ effort: "max" });
+  });
+
+  test("uses high for an older reasoning-capable OpenAI model", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        model: "o3-mini",
+        status: "completed",
+        output: [],
+      }),
+    );
+
+    await completeChatOpenAI({
+      model: "openai/o3-mini",
+      reasoningEffort: "low",
+      messages: [{ role: "user", content: "analyze this" }],
+    });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(body.reasoning).toEqual({ effort: "high" });
+  });
+
+  test("preserves explicit reasoning-off requests for mechanical calls", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        model: "gpt-5.6-luna",
+        status: "completed",
+        output: [],
+      }),
+    );
+
+    await completeChatOpenAI({
+      model: "openai/gpt-5.6-luna",
+      disableReasoning: true,
+      messages: [{ role: "user", content: "name this chat" }],
+    });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(body.reasoning).toEqual({ effort: "none" });
   });
 
   test("maps an incomplete response to the existing length recovery signal", async () => {
@@ -147,7 +203,7 @@ describe("native OpenAI adapter", () => {
     ]
       .map((event) => `data: ${JSON.stringify(event)}\n\n`)
       .join("");
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(frames, { status: 200 }),
     );
 
@@ -158,6 +214,8 @@ describe("native OpenAI adapter", () => {
     })) {
       deltas.push(delta);
     }
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(body.reasoning).toEqual({ effort: "max" });
     expect(deltas).toEqual([
       { toolCalls: [{ index: 0, id: "call_1", name: "draft" }] },
       {

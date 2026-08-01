@@ -130,9 +130,6 @@ export async function templatizeOutlierPost(
     // The body is a full post skeleton (bounded by TEMPLATE_BODY_MAX), so this
     // needs a much larger budget than hook extraction's 256.
     maxTokens: 4096,
-    // Mechanical structure extraction: preserve the output budget for the
-    // template JSON instead of spending it on GLM reasoning.
-    glmReasoning: "none",
     messages: [
       {
         role: "system",
