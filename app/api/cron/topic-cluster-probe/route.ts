@@ -23,6 +23,14 @@ import { EMBEDDING_MODEL } from "@/lib/openrouter";
 // filter, so the corpus needed here is already in post_embeddings and this is
 // a pure read. Cost is one set of queries.
 
+// Listed in vercel.json ONLY so it appears in the Vercel Cron Jobs UI, whose
+// "Run" button injects CRON_SECRET — the secret is never handled by hand.
+// Vercel requires a schedule, so it is registered as a single yearly run
+// (`0 0 1 1 *`): this is meant to be CLICKED, not scheduled. Being read-only,
+// an accidental firing costs one set of queries and changes nothing.
+//
+// Delete the route AND its vercel.json entry once the sub-threshold
+// clustering question is answered — this is a measurement, not a feature.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;

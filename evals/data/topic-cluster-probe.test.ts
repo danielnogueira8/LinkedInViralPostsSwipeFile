@@ -134,3 +134,33 @@ describe("topic-cluster probe: velocity classification", () => {
     expect(trend(40, 38)).toBe("flat");
   });
 });
+
+describe("topic-cluster probe: registered as manual-only", () => {
+  test("the cron entry is yearly, so it is clicked and never scheduled", async () => {
+    // It is listed in vercel.json ONLY to appear in the Cron Jobs UI, whose
+    // Run button injects CRON_SECRET so the secret is never handled by hand.
+    // Vercel demands a schedule; a yearly one means it effectively never
+    // self-fires. If someone gives this a real cadence, that is a decision to
+    // run a probe forever — fail here so it has to be deliberate.
+    const vercel = await import("../../vercel.json");
+    const crons = ((vercel as { default?: unknown }).default ?? vercel) as {
+      crons: Array<{ path: string; schedule: string }>;
+    };
+    const probe = crons.crons.find(
+      (entry) => entry.path === "/api/cron/topic-cluster-probe",
+    );
+    expect(probe?.schedule).toBe("0 0 1 1 *");
+  });
+
+  test("every cron entry carries only path and schedule", async () => {
+    // Vercel validates this schema strictly; a stray key (a JSON "comment",
+    // say) fails the deployment rather than being ignored.
+    const vercel = await import("../../vercel.json");
+    const crons = ((vercel as { default?: unknown }).default ?? vercel) as {
+      crons: Array<Record<string, unknown>>;
+    };
+    for (const entry of crons.crons) {
+      expect(Object.keys(entry).sort()).toEqual(["path", "schedule"]);
+    }
+  });
+});
