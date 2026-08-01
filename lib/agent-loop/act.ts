@@ -9,6 +9,7 @@ import { DraftLifecycle } from "@/lib/draft-lifecycle";
 import { createSupabaseDraftLifecycleRepository } from "@/lib/draft-lifecycle-supabase";
 import { AGENT_CHAT_TITLE, AGENT_SUGGESTED_BY } from "@/lib/agent-loop/constants";
 import { readOpportunityHeadline } from "@/lib/agent-loop/headline";
+import { updateManagedOpportunityStatus } from "@/lib/agent-loop/opportunity-claim";
 import {
   trendEvidenceText,
   type TrendOpportunityPayload,
@@ -57,14 +58,17 @@ async function updateOpportunityStatus(
   workspaceId: string,
   opportunityId: string,
   policy: OpportunityStatusPolicy,
+  expectedStatus: "proposed" | "drafting",
   values: Record<string, unknown>,
-): Promise<void> {
-  if (policy === "preserve") return;
-  await sb
-    .from("agent_opportunities")
-    .update(values)
-    .eq("id", opportunityId)
-    .eq("workspace_id", workspaceId);
+): Promise<boolean> {
+  if (policy === "preserve") return true;
+  return updateManagedOpportunityStatus(
+    sb,
+    workspaceId,
+    opportunityId,
+    expectedStatus,
+    values,
+  );
 }
 
 async function getOrCreateSystemChat(
@@ -85,9 +89,23 @@ async function getOrCreateSystemChat(
     .from("chats")
     .insert({ workspace_id: workspaceId, title: AGENT_CHAT_TITLE })
     .select("id")
-    .single();
-  if (createError) throw createError;
-  return created.id as string;
+    .maybeSingle();
+  if (!createError && created?.id) return created.id as string;
+  if (createError?.code !== "23505") {
+    if (createError) throw createError;
+    throw new Error("Agent chat was created without an id.");
+  }
+
+  const { data: raced, error: racedError } = await sb
+    .from("chats")
+    .select("id")
+    .eq("workspace_id", workspaceId)
+    .eq("title", AGENT_CHAT_TITLE)
+    .is("archived_at", null)
+    .maybeSingle();
+  if (racedError) throw racedError;
+  if (raced?.id) return raced.id as string;
+  throw createError;
 }
 
 async function createModelingSource(
@@ -344,13 +362,15 @@ export async function actOnOpportunity(
   }
 
   const statusPolicy = options?.statusPolicy ?? "manage";
-  await updateOpportunityStatus(
+  const claimed = await updateOpportunityStatus(
     sb,
     workspaceId,
     opportunity.id,
     statusPolicy,
+    "proposed",
     { status: "drafting" },
   );
+  if (!claimed) return { ok: false, reason: "already_handled" };
 
   try {
     const source = isTrend
@@ -417,17 +437,21 @@ export async function actOnOpportunity(
       opportunity.id,
       options?.weekPlanItemId,
     );
-    await updateOpportunityStatus(
+    const finalized = await updateOpportunityStatus(
       sb,
       workspaceId,
       opportunity.id,
       statusPolicy,
+      "drafting",
       {
         status: "drafted",
         drafted_artifact_id: draftIds[0],
         acted_at: new Date().toISOString(),
       },
     );
+    if (!finalized) {
+      throw new Error("Opportunity changed while drafting.");
+    }
     return { ok: true, draftIds };
   } catch (error) {
     // Managed feed work returns to proposed so it can retry. Cadence work
@@ -437,8 +461,16 @@ export async function actOnOpportunity(
       workspaceId,
       opportunity.id,
       statusPolicy,
+      "drafting",
       { status: "proposed" },
-    );
+    ).catch((resetError) => {
+      console.error("agent_opportunity_claim_reset_failed", {
+        workspace_id: workspaceId,
+        opportunity_id: opportunity.id,
+        message:
+          resetError instanceof Error ? resetError.message : String(resetError),
+      });
+    });
     return {
       ok: false,
       reason: error instanceof Error ? error.message : String(error),
