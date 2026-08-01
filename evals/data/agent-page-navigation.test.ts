@@ -79,6 +79,9 @@ describe("the standalone Agent page exposes the daily opportunity workflow", () 
     expect(inbox).toContain("LaneAvatar");
     expect(inbox).not.toContain("idea.evidence.slice(0, 2)");
     expect(inbox).toContain("selectedIdea");
+    expect(inbox).not.toContain("displayedIdeas[0]");
+    expect(inbox).toContain("border-l-violet-500");
+    expect(inbox).toContain('label: "Opened"');
     expect(inbox).toContain("Open in Cowork");
     expect(inbox).toContain("Unread");
     expect(inbox).toContain("Done");
