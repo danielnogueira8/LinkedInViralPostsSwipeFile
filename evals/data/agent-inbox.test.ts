@@ -220,6 +220,8 @@ const NEWS_EVIDENCE = {
       label: "Teardown posts outperform",
       detail: "A measured result",
       ref: "signal-1",
+      confidence: 0.8,
+      sampleSize: 12,
     },
   ],
   knowledge: [
@@ -228,6 +230,7 @@ const NEWS_EVIDENCE = {
       label: "The client who fired us",
       detail: "An approved story",
       ref: "knowledge-1",
+      subtype: "story",
     },
   ],
 };
@@ -289,8 +292,10 @@ describe("AgentInbox", () => {
       timezone: "UTC",
     });
 
-    expect(syntheses).toBe(1);
-    expect(duplicate).toMatchObject({ skipped: "already_ran", created: [] });
+    // A run that produces no surviving idea gives its claim back so a later
+    // cron tick can retry after evidence changes.
+    expect(syntheses).toBe(2);
+    expect(duplicate).toMatchObject({ skipped: "no_evidence", created: [] });
   });
 
   test("does not manufacture a Now idea when there is no verified fresh news", async () => {
@@ -522,6 +527,7 @@ describe("AgentInbox", () => {
                 label: "Same story",
                 detail: "One article, two angles",
                 url: "https://example.com/same-story",
+                publishedAt: "2026-07-30T07:00:00.000Z",
               },
             ],
             sourceKind: "news" as const,

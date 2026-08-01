@@ -34,6 +34,12 @@ export type AgentInboxEvidence = {
   url?: string | null;
   publishedAt?: string | null;
   ref?: string | null;
+  // Structured provenance lets the quality gate distinguish a verified story
+  // from a generic knowledge item, and a well-sampled performance signal from
+  // an attractive-looking single example.
+  subtype?: string | null;
+  confidence?: number | null;
+  sampleSize?: number | null;
 };
 
 export type AgentInboxIdea = {
@@ -60,6 +66,22 @@ export type AgentInboxIdea = {
   createdAt: string;
   updatedAt: string;
 };
+
+// Trend Radar is discovered by the creator-independent scanner rather than
+// the Agent Inbox replenishment run. It deliberately reuses the same card
+// contract so the UI does not teach users that one agent is a second-class
+// source with different controls.
+export type AgentRadarIdea = Omit<AgentInboxIdea, "lane"> & {
+  lane: "trend_radar";
+  radar: true;
+};
+
+export const AGENT_FEED_LANES = [
+  ...AGENT_INBOX_LANES,
+  "trend_radar",
+] as const;
+export type AgentFeedLane = (typeof AGENT_FEED_LANES)[number];
+export type AgentFeedIdea = AgentInboxIdea | AgentRadarIdea;
 
 export type GeneratedAgentInboxIdea = Omit<
   AgentInboxIdea,
@@ -120,30 +142,52 @@ export function laneEvidenceSatisfied(
   lane: AgentInboxLane,
   evidence: readonly AgentInboxEvidence[],
 ): boolean {
+  const datedNews = evidence.some(
+    (entry) =>
+      entry.kind === "news" &&
+      Boolean(entry.url) &&
+      Boolean(entry.publishedAt) &&
+      Number.isFinite(Date.parse(entry.publishedAt ?? "")),
+  );
   switch (lane) {
     // A timely pitch has to be anchored to a dated story — that is the whole
     // claim it makes.
     case "newsjacking":
-      return evidence.some((entry) => entry.kind === "news");
+      return datedNews;
     // The user's own material. `knowledge` is what the interview captured
     // (story / proof / belief); `voice` is how they tell it. Without one of
     // those there is no "your" in the story.
     case "personal_story":
       return evidence.some(
-        (entry) => entry.kind === "knowledge" || entry.kind === "voice",
+        (entry) =>
+          entry.kind === "voice" ||
+          (entry.kind === "knowledge" &&
+            // Rows created before the subtype field shipped are still
+            // verified knowledge. New rows always carry a subtype from the
+            // knowledge table, so they get the stricter lane-specific gate.
+            (!entry.subtype ||
+              ["story", "belief", "proof"].includes(entry.subtype))),
       );
     // Borrowing attention needs someone to borrow it FROM, and the named
     // person or company only ever arrives on a news item.
     case "namejacking":
-      return evidence.some((entry) => entry.kind === "news");
+      return datedNews;
     // Expertise the user has actually demonstrated: measured performance, or
     // knowledge they approved. Anything else is a generic explainer.
     case "educational":
       return evidence.some(
         (entry) =>
-          entry.kind === "performance" ||
-          entry.kind === "knowledge" ||
-          entry.kind === "source_post",
+          (entry.kind === "performance" &&
+            // Legacy performance evidence has no reliability metadata; keep
+            // it usable while enforcing both checks whenever the loader has
+            // supplied them.
+            (entry.confidence == null || entry.confidence >= 0.45) &&
+            (entry.sampleSize == null || entry.sampleSize >= 3)) ||
+          (entry.kind === "knowledge" &&
+            (!entry.subtype ||
+              ["proof", "topic_expertise", "offer"].includes(
+                entry.subtype,
+              ))),
       );
   }
 }
@@ -234,7 +278,13 @@ export type AgentInbox = {
   }): Promise<{
     created: AgentInboxIdea[];
     retained: AgentInboxIdea[];
-    skipped: "disabled" | "already_ran" | "full" | "no_evidence" | null;
+    skipped:
+      | "disabled"
+      | "already_ran"
+      | "full"
+      | "no_evidence"
+      | "no_quality"
+      | null;
   }>;
   transition(input: {
     workspaceId: string;
@@ -427,6 +477,19 @@ export function createAgentInbox(
           accepted,
           localDate,
         );
+        if (created.length === 0) {
+          // A model response can be syntactically valid yet fail the
+          // deterministic evidence/deduplication gates. Do not mark that as
+          // a successful daily run: the next cron tick should get another
+          // chance once a better source appears or the model returns a
+          // stronger lane-specific candidate.
+          await repository.releaseDailyRun(workspaceId, localDate);
+          return {
+            created: [],
+            retained,
+            skipped: accepted.length > 0 ? "no_quality" : "no_evidence",
+          };
+        }
         await repository.completeDailyRun(
           workspaceId,
           localDate,

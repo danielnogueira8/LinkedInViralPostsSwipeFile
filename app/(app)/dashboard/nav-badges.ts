@@ -30,7 +30,9 @@ function fetchNavBadges(): Promise<NavBadges> {
         next["/dashboard/swipe"] = shared.count;
       }
       if (agent?.ok) {
-        const count = Array.isArray(agent.active) ? agent.active.length : 0;
+        const count =
+          (Array.isArray(agent.active) ? agent.active.length : 0) +
+          (Array.isArray(agent.trends) ? agent.trends.length : 0);
         if (count > 0) next["/dashboard/agent"] = count;
       }
       return next;

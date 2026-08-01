@@ -1,5 +1,4 @@
 import { LoadingState } from "@/components/ui/loading-state";
-
 // Streams instantly on sidebar nav so the page feels responsive while the
 // server query runs (post_analytics scan + join). The real metrics replace
 // this once ready. Mirrors the sibling route skeletons.

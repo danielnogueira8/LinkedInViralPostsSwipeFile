@@ -4,7 +4,7 @@ import {
   citeEvidenceByName,
   createAgentInboxSynthesis,
 } from "@/lib/agent-inbox/synthesis";
-import type { AgentInboxEvidence } from "@/lib/agent-inbox";
+import type { AgentInboxEvidence, AgentInboxLane } from "@/lib/agent-inbox";
 
 const { completeChat } = vi.hoisted(() => ({ completeChat: vi.fn() }));
 
@@ -88,10 +88,18 @@ describe("createAgentInboxSynthesis lane capacity", () => {
         url: "https://example.com/news",
         publishedAt: "2026-07-29",
       },
-      { kind: "news", label: "Second story", detail: "Also dated" },
+      {
+        kind: "news",
+        label: "Second story",
+        detail: "Also dated",
+        url: "https://example.com/news-2",
+        publishedAt: "2026-07-29",
+      },
     ],
     learning: [
       { kind: "performance", label: "Top performing post", detail: "2x baseline" },
+      { kind: "performance", label: "Second performing post", detail: "3x baseline" },
+      { kind: "performance", label: "Third performing post", detail: "4x baseline" },
     ],
     knowledge: [
       { kind: "knowledge", label: "Approved belief", detail: "A core claim" },
@@ -108,6 +116,12 @@ describe("createAgentInboxSynthesis lane capacity", () => {
       lane,
       headline: `${lane} idea ${index}`,
       angle: `A specific angle for ${lane} idea ${index}`,
+      ...(lane === "newsjacking"
+        ? {
+            bridge:
+              "This current change gives the user's audience a concrete reason to rethink their work.",
+          }
+        : {}),
       why: [`Why ${lane} idea ${index} matters`],
       evidence_ids: evidenceIds,
       score: 0.8,
@@ -125,7 +139,7 @@ describe("createAgentInboxSynthesis lane capacity", () => {
     };
   }
 
-  function input(lanes: Array<"newsjacking" | "educational" | "educational">) {
+  function input(lanes: AgentInboxLane[]) {
     return {
       workspaceId: "workspace-1",
       lanes,
@@ -148,7 +162,11 @@ describe("createAgentInboxSynthesis lane capacity", () => {
 
   it("accepts up to three ideas per requested lane", async () => {
     completeChat.mockResolvedValue(
-      modelResponse([1, 2, 3].map((index) => rawIdea("educational", index, ["P1"]))),
+      modelResponse(
+        [1, 2, 3].map((index) =>
+          rawIdea("educational", index, [`P${index}`]),
+        ),
+      ),
     );
     const results = await createAgentInboxSynthesis().synthesize(
       input(["educational"]),
@@ -160,7 +178,9 @@ describe("createAgentInboxSynthesis lane capacity", () => {
   it("caps a lane at three ideas when the model returns more", async () => {
     completeChat.mockResolvedValue(
       modelResponse(
-        [1, 2, 3, 4, 5].map((index) => rawIdea("educational", index, ["K1"])),
+        [1, 2, 3, 4, 5].map((index) =>
+          rawIdea("educational", index, [`P${((index - 1) % 3) + 1}`]),
+        ),
       ),
     );
     const results = await createAgentInboxSynthesis().synthesize(
@@ -178,8 +198,8 @@ describe("createAgentInboxSynthesis lane capacity", () => {
     completeChat.mockResolvedValue(
       modelResponse([
         rawIdea("educational", 1, ["P1"]),
-        rawIdea("educational", 2, ["P1"], { angle: "" }),
-        rawIdea("educational", 3, ["P1"]),
+        rawIdea("educational", 2, ["P2"], { angle: "" }),
+        rawIdea("educational", 3, ["P3"]),
       ]),
     );
     const results = await createAgentInboxSynthesis().synthesize(
@@ -209,5 +229,50 @@ describe("createAgentInboxSynthesis lane capacity", () => {
         idea.evidence.some((entry) => entry.kind === "news"),
       ),
     ).toBe(true);
+  });
+
+  it("gives each requested lane its own model call and ignores the model score", async () => {
+    completeChat.mockResolvedValue(
+      modelResponse([
+        rawIdea("educational", 1, ["P1"], { score: 0.01 }),
+      ]),
+    );
+    const results = await createAgentInboxSynthesis().synthesize(
+      input(["educational", "newsjacking"]),
+    );
+    expect(completeChat).toHaveBeenCalledTimes(2);
+    expect(results[0]?.score).toBeGreaterThan(0.01);
+    expect(
+      completeChat.mock.calls.every(
+        ([options]) => options.tools[0].function.parameters.properties.ideas.maxItems === 3,
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects a newsjacking idea without an explicit bridge", async () => {
+    completeChat.mockResolvedValue(
+      modelResponse([
+        rawIdea("newsjacking", 1, ["N1"], { bridge: "Relevant." }),
+      ]),
+    );
+    const results = await createAgentInboxSynthesis().synthesize(
+      input(["newsjacking"]),
+    );
+    expect(results).toEqual([]);
+  });
+
+  it("requires a grounded named entity for namejacking", async () => {
+    completeChat.mockResolvedValue(
+      modelResponse([
+        rawIdea("namejacking", 1, ["N1"], {
+          headline: "LinkedIn changes the trust signal",
+          entity: "LinkedIn",
+        }),
+      ]),
+    );
+    const results = await createAgentInboxSynthesis().synthesize(
+      input(["namejacking"]),
+    );
+    expect(results).toEqual([]);
   });
 });

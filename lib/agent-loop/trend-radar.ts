@@ -353,7 +353,7 @@ export async function scanTrendOpportunities(
     .update({ status: "expired", acted_at: now.toISOString() })
     .eq("workspace_id", workspaceId)
     .eq("kind", "trend")
-    .in("status", ["proposed", "drafting"])
+    .in("status", ["proposed", "drafting", "snoozed"])
     .lt("created_at", expireCutoff)
     .select("id");
   if (expireError) throw expireError;

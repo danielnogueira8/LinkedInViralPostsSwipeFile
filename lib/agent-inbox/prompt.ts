@@ -21,7 +21,16 @@ const LANE_FRAMING: Record<AgentInboxLane, string> = {
 
 export function agentInboxDraftPrompt(idea: AgentInboxIdea): string {
   const evidence = idea.evidence
-    .map((entry) => `- ${entry.label}: ${entry.detail}`)
+    .map((entry) => {
+      const metadata = [
+        entry.publishedAt ? `published ${entry.publishedAt}` : null,
+        entry.url ? `source ${entry.url}` : null,
+        entry.ref ? `ref ${entry.ref}` : null,
+      ]
+        .filter(Boolean)
+        .join("; ");
+      return `- ${entry.label}: ${entry.detail}${metadata ? ` (${metadata})` : ""}`;
+    })
     .join("\n");
   return `Create one original LinkedIn post from this opportunity.
 

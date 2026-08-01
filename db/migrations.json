@@ -1,7 +1,7 @@
 {
   "generatedBy": "npm run migrations:metadata",
-  "highest": 163,
-  "count": 163,
+  "highest": 164,
+  "count": 164,
   "files": [
     "migration-001-progress.sql",
     "migration-002-usage.sql",
@@ -165,6 +165,7 @@
     "migration-160-agent-inbox-stale-run-reclaim.sql",
     "migration-161-agent-inbox-framework-lanes.sql",
     "migration-162-agent-inbox-lane-expiry.sql",
-    "migration-163-trend-radar.sql"
+    "migration-163-trend-radar.sql",
+    "migration-164-agent-opportunity-snooze.sql"
   ]
 }
