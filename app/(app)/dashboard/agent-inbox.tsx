@@ -1208,10 +1208,14 @@ export function AgentInbox() {
               <div className="mt-2 divide-y divide-border/70">
                 {feedActivity.slice(0, 5).map((idea) => {
                   const meta = statusMeta[idea.status] ?? statusMeta.expired;
+                  const stateCopy = messageStateCopy[agentMessageState(idea)];
                   return (
                     <div
                       key={idea.id}
-                      className="flex items-center gap-3 py-2.5 text-sm"
+                      className={cn(
+                        "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm",
+                        stateCopy.rowClassName,
+                      )}
                       title={idea.discardReason ?? undefined}
                     >
                       <MessageStateBadge idea={idea} compact />

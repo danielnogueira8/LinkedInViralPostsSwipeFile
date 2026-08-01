@@ -119,7 +119,7 @@
     {
       "id": "agent-inbox-review",
       "capability": "Your Agent",
-      "invariant": "Recommendations can be marked unread, read, or done without starting a Cowork draft; opening one only pre-fills an Ask-mode prompt and preserves the active idea until a terminal decision.",
+      "invariant": "Recommendations can be marked unread, read, or done without starting a Cowork draft; unread, opened, and done states remain visually distinct; opening one only pre-fills an Ask-mode prompt and preserves the active idea until a terminal decision; the details pane appears only after selection and closes when the agent filter changes.",
       "preferred_seam": "browser",
       "existing_coverage": [
         "evals/data/agent-page-navigation.test.ts",

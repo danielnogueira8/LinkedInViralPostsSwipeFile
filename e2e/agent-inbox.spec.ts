@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 const idea = (
   lane:
@@ -102,6 +102,11 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
+async function selectRecommendation(page: Page, headline: RegExp) {
+  await page.getByRole("button", { name: headline }).click();
+  await expect(page.getByRole("button", { name: "Open in Cowork" })).toHaveCount(1);
+}
+
 test("shows four equal agent filters with human approval controls", async ({
   page,
 }) => {
@@ -114,10 +119,7 @@ test("shows four equal agent filters with human approval controls", async ({
   // The detail panel is not mounted until the user chooses a recommendation.
   await expect(page.getByRole("button", { name: "Open in Cowork" })).toHaveCount(0);
   await expect(page.getByText(/Select a recommendation/)).toHaveCount(0);
-  await page
-    .getByRole("button", { name: /Newsjacking: A timely AI shift/ })
-    .click();
-  await expect(page.getByRole("button", { name: "Open in Cowork" })).toHaveCount(1);
+  await selectRecommendation(page, /Newsjacking: A timely AI shift/);
   await expect(
     page.getByText(/New ideas arrive every day/),
   ).toBeVisible();
@@ -166,6 +168,68 @@ test("keeps the recommendation list full width before selection on mobile", asyn
   await expect(page.getByRole("button", { name: "Open in Cowork" })).toHaveCount(0);
 });
 
+test("clears the detail pane when the agent filter changes", async ({ page }) => {
+  await page.goto("/dashboard/agent");
+  await selectRecommendation(page, /Newsjacking: A timely AI shift/);
+  await expect(page.getByText("Why it fits you", { exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: /Story Miner/ }).first().click();
+
+  await expect(page.getByRole("button", { name: "Open in Cowork" })).toHaveCount(0);
+  await expect(page.getByText("Why it fits you", { exact: true })).toHaveCount(0);
+});
+
+test("uses separate calm surfaces for unread, opened, and done states", async ({
+  page,
+}) => {
+  const openedIdea = {
+    ...idea("personal_story", 2),
+    readAt: new Date().toISOString(),
+  };
+  const doneIdea = {
+    ...idea("educational", 4),
+    status: "acted",
+    actedAt: new Date().toISOString(),
+    readAt: new Date().toISOString(),
+  };
+  await page.route("**/api/agent/inbox**", async (route) => {
+    await route.fulfill({
+      json: {
+        ok: true,
+        active: [idea("newsjacking", 1), openedIdea],
+        trends: [],
+        activity: [doneIdea],
+        trendActivity: [],
+        preferences: {
+          enabled: true,
+          timezone: "Europe/Lisbon",
+          deliveryLocalTime: "08:00",
+          topics: [],
+          newsSensitivity: "standard",
+        },
+      },
+    });
+  });
+
+  await page.goto("/dashboard/agent");
+
+  await expect(
+    page.getByRole("button", { name: /Newsjacking: A timely AI shift/ }),
+  ).toHaveClass(/bg-sky-50/);
+  await expect(
+    page.getByRole("button", {
+      name: /Story Miner: The hard-won lesson behind a client turnaround/,
+    }),
+  ).toHaveClass(/bg-stone-50/);
+  await expect(
+    page
+      .getByText("Turn your strongest topic into a practical teardown", {
+        exact: true,
+      })
+      .locator(".."),
+  ).toHaveClass(/bg-emerald-50/);
+});
+
 test("an acted idea stays in recent activity while fresh ideas remain actionable", async ({
   page,
 }) => {
@@ -199,9 +263,6 @@ test("an acted idea stays in recent activity while fresh ideas remain actionable
     page.getByText(/hard-won lesson behind a client turnaround/),
   ).toBeVisible();
   await expect(page.getByText("No strong fit today")).toHaveCount(0);
-  await page
-    .getByRole("button", { name: /Newsjacking: A timely AI shift/ })
-    .click();
+  await selectRecommendation(page, /Newsjacking: A timely AI shift/);
   // The inbox has one focused action surface after selecting an idea.
-  await expect(page.getByRole("button", { name: "Open in Cowork" })).toHaveCount(1);
 });
