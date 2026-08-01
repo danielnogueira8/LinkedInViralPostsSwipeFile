@@ -84,6 +84,34 @@ test("shows the three evidence-backed lanes without autonomous controls", async 
   await expect(page.getByRole("button", { name: /schedule/i })).toHaveCount(0);
 });
 
+test("keeps the Trend Radar lane visible without an active idea", async ({
+  page,
+}) => {
+  await page.route("**/api/agent/inbox", async (route) => {
+    await route.fulfill({
+      json: {
+        ok: true,
+        active: [],
+        activity: [],
+        preferences: {
+          enabled: true,
+          timezone: "Europe/Lisbon",
+          deliveryLocalTime: "08:00",
+          topics: [],
+          newsSensitivity: "standard",
+        },
+      },
+    });
+  });
+
+  await page.goto("/dashboard/agent");
+
+  const lane = page.getByTestId("agent-lane-newsjacking");
+  await expect(lane).toBeVisible();
+  await expect(lane.getByText("Trend Radar Agent", { exact: true })).toBeVisible();
+  await expect(lane.getByText("No strong fit today", { exact: true })).toBeVisible();
+});
+
 test("stacks the agent rows vertically on mobile", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/dashboard/agent");

@@ -208,7 +208,7 @@ describe("agent names", () => {
     // "Expertise" rather than "Educational" because the lane is gated on
     // demonstrated results rather than on a teaching format.
     for (const name of [
-      "Newsjacking Agent",
+      "Trend Radar Agent",
       "Story Miner Agent",
       "Namedrop Agent",
       "Expertise Agent",
