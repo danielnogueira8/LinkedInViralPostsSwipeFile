@@ -6,15 +6,16 @@ const ROOT = path.resolve(__dirname, "../..");
 const read = (file: string) => fs.readFileSync(path.join(ROOT, file), "utf8");
 
 describe("Your Agent page performance contracts", () => {
-  test("the page and navigation badge share one in-flight inbox request", () => {
+  test("the nav badge stays read-only while the Agent page can recover delivery", () => {
     const briefing = read("app/(app)/dashboard/agent-inbox.tsx");
     const badges = read("app/(app)/dashboard/nav-badges.ts");
     const client = read("app/(app)/dashboard/agent-inbox-client.ts");
 
-    expect(briefing).toContain("loadAgentInbox()");
+    expect(briefing).toContain("loadAgentInbox({ replenish: true })");
     expect(badges).toContain("loadAgentInbox()");
-    expect(client).toContain('fetch("/api/agent/inbox"');
-    expect(client).toContain("pendingAgentInboxPromise ??=");
+    expect(client).toContain('fetch(`/api/agent/inbox${query}`');
+    expect(client).toContain("pendingAgentInboxPromise = request");
+    expect(client).toContain("pendingAgentInboxRecoveryPromise");
     expect(briefing).not.toContain('fetch("/api/agent/inbox"');
     expect(badges).not.toContain('fetch("/api/agent/inbox"');
   });

@@ -59,21 +59,21 @@ describe("OpportunityCard lane states", () => {
     expect(html).not.toContain("Start draft");
   });
 
-  test("a snoozed idea still shows the back-tomorrow state", () => {
+  test("legacy snoozed activity does not expose a snooze decision", () => {
     const html = renderCard({
       snoozed: idea({
         status: "snoozed",
         snoozedUntil: "2026-07-31T08:00:00Z",
       }),
     });
-    expect(html).toContain("Back tomorrow");
-    expect(html).not.toContain("Draft started");
-    expect(html).not.toContain("No strong fit today");
+    expect(html).not.toContain("Back tomorrow");
+    expect(html).not.toContain("Not today");
+    expect(html).not.toContain("Snooze");
   });
 
-  test("a genuinely empty lane keeps the no-strong-fit copy", () => {
+  test("a genuinely empty lane keeps the daily-refresh copy", () => {
     const html = renderCard({});
-    expect(html).toContain("No strong fit today");
+    expect(html).toContain("New ideas arrive every day");
     expect(html).not.toContain("Draft started");
   });
 
@@ -86,6 +86,8 @@ describe("OpportunityCard lane states", () => {
     expect(html).toContain("/agents/bulk-writer.svg");
     expect(html).not.toContain("Why it fits you");
     expect(html).toContain("Use this idea");
+    expect(html).toContain("Discard");
+    expect(html).not.toContain("Not today");
     expect(html).not.toContain("Draft started");
     expect(html).not.toContain("No strong fit today");
   });
@@ -100,7 +102,8 @@ describe("OpportunityCard lane states", () => {
     expect(html).not.toContain("Why it fits you");
     expect(html).not.toContain("Reason one");
     expect(html).toContain("Use this idea");
-    expect(html).toContain("Not today");
+    expect(html).toContain("Discard");
+    expect(html).not.toContain("Not today");
     expect(html).not.toContain("Why this is worth your attention");
     expect(html).not.toContain("Start draft");
   });

@@ -334,13 +334,22 @@ export function createAgentInbox(
   return {
     async read(workspaceId, now) {
       await repository.releaseDueSnoozed(workspaceId, now);
-      const [active, activity, preferences] = await Promise.all([
+      const preferences = await repository.readPreferences(workspaceId);
+      const localDate = localDateForInstant(
+        now.toISOString(),
+        preferences.timezone,
+      );
+      const [active, activity] = await Promise.all([
         repository.readActive(workspaceId, now),
         repository.readRecentActivity(workspaceId, 12),
-        repository.readPreferences(workspaceId),
       ]);
       return {
-        active: ordered(active),
+        // The inbox is a daily review surface. Older untouched ideas remain
+        // persisted for deduplication and expiry, but they must not crowd out
+        // the fresh batch the user expects to see each day.
+        active: ordered(
+          active.filter((entry) => entry.availableOn === localDate),
+        ),
         activity,
         preferences,
       };
@@ -352,7 +361,11 @@ export function createAgentInbox(
         return { created: [], retained: [], skipped: "disabled" };
       }
       await repository.releaseDueSnoozed(workspaceId, now);
-      const retained = ordered(await repository.readActive(workspaceId, now));
+      const localDate = localDateForInstant(now.toISOString(), timezone);
+      const activeIdeas = await repository.readActive(workspaceId, now);
+      const retained = ordered(
+        activeIdeas.filter((entry) => entry.availableOn === localDate),
+      );
       const activeCounts = new Map<AgentInboxLane, number>();
       for (const entry of retained) {
         activeCounts.set(entry.lane, (activeCounts.get(entry.lane) ?? 0) + 1);
@@ -365,7 +378,6 @@ export function createAgentInbox(
         return { created: [], retained, skipped: "full" };
       }
 
-      const localDate = localDateForInstant(now.toISOString(), timezone);
       const claimed = await repository.claimDailyRun(
         workspaceId,
         localDate,
@@ -437,6 +449,9 @@ export function createAgentInbox(
         // re-pitch a story the user has already been shown.
         const usedSources = new Set([
           ...retained
+            .map((entry) => entry.sourceUrl ?? entry.sourceRef)
+            .filter((value): value is string => Boolean(value)),
+          ...activeIdeas
             .map((entry) => entry.sourceUrl ?? entry.sourceRef)
             .filter((value): value is string => Boolean(value)),
           ...recentSources,

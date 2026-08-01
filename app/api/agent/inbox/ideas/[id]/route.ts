@@ -12,7 +12,6 @@ const actionSchema = z.discriminatedUnion("kind", [
     kind: z.literal("discard"),
     reason: z.string().trim().min(1).max(120),
   }),
-  z.object({ kind: z.literal("snooze"), until: z.string().datetime() }),
   z.object({ kind: z.literal("restore") }),
 ]);
 
@@ -54,10 +53,7 @@ export async function POST(
         { status: 400 },
       );
     }
-    const action =
-      parsed.data.kind === "snooze"
-        ? { kind: "snooze" as const, until: new Date(parsed.data.until) }
-        : parsed.data;
+    const action = parsed.data;
     const idea = await createProductionAgentInbox(sb.raw).transition({
       workspaceId: sb.workspaceId,
       ideaId: id,

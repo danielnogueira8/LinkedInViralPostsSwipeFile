@@ -17,9 +17,11 @@ export type AgentInboxPayload = {
 };
 
 let pendingAgentInboxPromise: Promise<AgentInboxPayload> | null = null;
+let pendingAgentInboxRecoveryPromise: Promise<AgentInboxPayload> | null = null;
 
-function requestAgentInbox(): Promise<AgentInboxPayload> {
-  return fetch("/api/agent/inbox", { cache: "no-store" }).then(
+function requestAgentInbox(replenish: boolean): Promise<AgentInboxPayload> {
+  const query = replenish ? "?replenish=1" : "";
+  return fetch(`/api/agent/inbox${query}`, { cache: "no-store" }).then(
     async (response) => {
       const body = await response.json();
       if (!response.ok || !body.ok) {
@@ -30,14 +32,32 @@ function requestAgentInbox(): Promise<AgentInboxPayload> {
   );
 }
 
-export function loadAgentInbox(): Promise<AgentInboxPayload> {
-  pendingAgentInboxPromise ??= requestAgentInbox().catch((error) => {
-    pendingAgentInboxPromise = null;
+export function loadAgentInbox(options?: {
+  replenish?: boolean;
+}): Promise<AgentInboxPayload> {
+  const replenish = options?.replenish === true;
+  const pending = replenish
+    ? pendingAgentInboxRecoveryPromise
+    : pendingAgentInboxPromise;
+  if (pending) return pending;
+
+  const request = requestAgentInbox(replenish).catch((error) => {
+    if (replenish) {
+      pendingAgentInboxRecoveryPromise = null;
+    } else {
+      pendingAgentInboxPromise = null;
+    }
     throw error;
   });
-  return pendingAgentInboxPromise;
+  if (replenish) {
+    pendingAgentInboxRecoveryPromise = request;
+  } else {
+    pendingAgentInboxPromise = request;
+  }
+  return request;
 }
 
 export function invalidateAgentInboxRequest(): void {
   pendingAgentInboxPromise = null;
+  pendingAgentInboxRecoveryPromise = null;
 }
