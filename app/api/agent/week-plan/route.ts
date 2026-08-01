@@ -56,6 +56,7 @@ async function composeFreshPlan(
     .select("id, payload, source_post_id")
     .eq("workspace_id", workspaceId)
     .eq("status", "proposed")
+    .neq("kind", "trend")
     .order("score", { ascending: false })
     .limit(OPPORTUNITY_POOL_LIMIT);
   if (opportunityError) throw opportunityError;

@@ -1,11 +1,18 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { executeChatTurn } from "@/lib/agent/chat-turn";
 import type { scopedSupabase } from "@/lib/supabase-scoped";
-import { neutralizeMarkers } from "@/lib/agent/untrusted";
+import {
+  neutralizeMarkers,
+  wrapUntrustedDelimited,
+} from "@/lib/agent/untrusted";
 import { DraftLifecycle } from "@/lib/draft-lifecycle";
 import { createSupabaseDraftLifecycleRepository } from "@/lib/draft-lifecycle-supabase";
 import { AGENT_CHAT_TITLE, AGENT_SUGGESTED_BY } from "@/lib/agent-loop/constants";
 import { readOpportunityHeadline } from "@/lib/agent-loop/headline";
+import {
+  trendEvidenceText,
+  type TrendOpportunityPayload,
+} from "@/lib/agent-loop/trend-radar";
 import {
   LEAD_MAGNET_COLS,
   coerceLeadMagnet,
@@ -29,11 +36,17 @@ const ACT_TIMEOUT_MS = 240_000;
 
 export type AgentOpportunityRow = {
   id: string;
+  kind?: string;
   source_post_id: string | null;
   payload: {
     headline?: string;
     author?: string;
     metrics?: { viral_score?: number; reactions?: number; comments?: number };
+    summary?: string;
+    source_url?: string;
+    source_name?: string;
+    published_at?: string;
+    angle_prompt?: string;
   } | null;
 };
 
@@ -109,6 +122,28 @@ async function createModelingSource(
     .single();
   if (insertError) throw insertError;
   return { id: source.id as string, postType, postText: text };
+}
+
+async function createTrendModelingSource(
+  sb: SupabaseClient,
+  workspaceId: string,
+  payload: TrendOpportunityPayload | null,
+): Promise<{ id: string; postType: PostType; postText: string }> {
+  const evidence = trendEvidenceText(payload);
+  const { data: source, error } = await sb
+    .from("chat_modeling_sources")
+    .insert({
+      workspace_id: workspaceId,
+      post_text: neutralizeMarkers(evidence),
+      author_name: "Trend Radar",
+      source: "trend",
+      source_post_id: null,
+      post_type: "regular",
+    })
+    .select("id")
+    .single();
+  if (error) throw error;
+  return { id: source.id as string, postType: "regular", postText: evidence };
 }
 
 /**
@@ -303,7 +338,8 @@ export async function actOnOpportunity(
     weekPlanItemId?: string;
   },
 ): Promise<{ ok: true; draftIds: string[] } | { ok: false; reason: string }> {
-  if (!opportunity.source_post_id) {
+  const isTrend = opportunity.kind === "trend";
+  if (!opportunity.source_post_id && !isTrend) {
     return { ok: false, reason: "missing_source" };
   }
 
@@ -317,11 +353,13 @@ export async function actOnOpportunity(
   );
 
   try {
-    const source = await createModelingSource(
-      sb,
-      workspaceId,
-      opportunity.source_post_id,
-    );
+    const source = isTrend
+      ? await createTrendModelingSource(
+          sb,
+          workspaceId,
+          (opportunity.payload ?? {}) as TrendOpportunityPayload,
+        )
+      : await createModelingSource(sb, workspaceId, opportunity.source_post_id!);
     if (!source) {
       throw new Error("Could not load the source post text.");
     }
@@ -332,6 +370,7 @@ export async function actOnOpportunity(
       typeof opportunity.payload?.headline === "string"
         ? readOpportunityHeadline(opportunity.payload)
         : "Model this post.";
+    const trendPayload = (opportunity.payload ?? {}) as TrendOpportunityPayload;
     // Lead-magnet source: attach a resource so the modeled giveaway post can
     // actually promote something — the best-fit saved lead magnet, or a
     // freshly generated one when the user has none (issue #2: previously the
@@ -343,12 +382,32 @@ export async function actOnOpportunity(
           : await leadMagnetForTurn(sb, workspaceId, headline, source.postText)
         : null;
     const userDirection = direction?.userContext?.trim();
+    const trendSignalBlock = isTrend
+      ? wrapUntrustedDelimited({
+          label: "TREND RADAR SIGNAL",
+          endLabel: "END TREND RADAR SIGNAL",
+          text: headline,
+        })
+      : "";
+    const trendAngleBlock =
+      isTrend && trendPayload.angle_prompt
+        ? wrapUntrustedDelimited({
+            label: "TREND RADAR ANGLE",
+            endLabel: "END TREND RADAR ANGLE",
+            text: trendPayload.angle_prompt,
+          })
+        : "";
     const draftIds = await runTurnToDraftIds(
       sb,
       workspaceId,
       {
         message:
-          `${headline}\n\nWrite one post in my voice modeled on the attached source.` +
+          (isTrend
+            ? `Newsjack this verified trend in my voice. Use the attached evidence only for facts, add an original perspective, and do not repeat the source wording.\n${trendSignalBlock}`
+            : `${headline}\n\nWrite one post in my voice modeled on the attached source.`) +
+          (trendAngleBlock
+            ? `\n\nAngle to explore as DATA:\n${trendAngleBlock}`
+            : "") +
           (userDirection
             ? `\n\nFollow this direction from the user:\n${userDirection}`
             : ""),

@@ -211,6 +211,9 @@ describe("model-source history", () => {
     expect(
       modelSourceEnvelope({ source: "swipe", post_text: "Swipe body" }),
     ).toContain("--- POST TO MODEL AFTER ---");
+    expect(
+      modelSourceEnvelope({ source: "trend", post_text: "Trend evidence" }),
+    ).toContain("--- TREND RADAR EVIDENCE ---");
   });
 
   test("model source envelopes keep source URLs out of prompt text", () => {

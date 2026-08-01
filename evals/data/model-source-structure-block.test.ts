@@ -30,6 +30,11 @@ describe("modelSourceStructureBlock", () => {
     expect(block).toBe("");
   });
 
+  test("returns empty for Trend Radar evidence", () => {
+    const block = modelSourceStructureBlock({ source: "trend", post_text: SOURCE_POST });
+    expect(block).toBe("");
+  });
+
   test("returns empty for an empty/whitespace-only post_text", () => {
     expect(modelSourceStructureBlock({ source: "swipe", post_text: "" })).toBe("");
     expect(modelSourceStructureBlock({ source: "swipe", post_text: "   " })).toBe("");
@@ -129,6 +134,12 @@ describe("modelSourceStructureSkeleton — feeds the finalizer's coarse structur
       post_text: SOURCE_POST,
     });
     expect(skeleton).toBeUndefined();
+  });
+
+  test("returns undefined for Trend Radar evidence", () => {
+    expect(
+      modelSourceStructureSkeleton({ source: "trend", post_text: SOURCE_POST }),
+    ).toBeUndefined();
   });
 
   test("returns undefined for an empty source (nothing to gate against)", () => {

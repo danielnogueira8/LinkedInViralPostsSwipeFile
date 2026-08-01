@@ -31,7 +31,7 @@ export async function POST(
 
     const { data: opportunity, error } = await sb.raw
       .from("agent_opportunities")
-      .select("id, source_post_id, payload, status")
+      .select("id, kind, source_post_id, payload, status")
       .eq("id", id)
       .eq("workspace_id", sb.workspaceId)
       .maybeSingle();
