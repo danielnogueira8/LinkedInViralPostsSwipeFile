@@ -5,6 +5,13 @@ const scanAgentOpportunities = vi.fn(async (..._args: unknown[]) => ({
   inserted: 1,
   expired: 0,
 }));
+const scanTrendOpportunities = vi.fn(async (..._args: unknown[]) => ({
+  searched: 0,
+  fetched: 0,
+  inserted: 0,
+  expired: 0,
+  skipped: 0,
+}));
 const actOnOpportunity = vi.fn(async (..._args: unknown[]) => ({
   ok: true as const,
   draftIds: ["draft-1"],
@@ -52,6 +59,10 @@ vi.mock("@/lib/supabase", () => ({
 vi.mock("@/lib/agent-loop/scan", () => ({
   scanAgentOpportunities: (...args: unknown[]) =>
     scanAgentOpportunities(...args),
+}));
+vi.mock("@/lib/agent-loop/trend-radar", () => ({
+  scanTrendOpportunities: (...args: unknown[]) =>
+    scanTrendOpportunities(...args),
 }));
 vi.mock("@/lib/agent-loop/act", () => ({
   actOnOpportunity: (...args: unknown[]) => actOnOpportunity(...args),

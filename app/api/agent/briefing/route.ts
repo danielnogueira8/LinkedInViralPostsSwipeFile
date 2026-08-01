@@ -27,7 +27,7 @@ export async function GET() {
   try {
     const sb = await scopedSupabase();
 
-    const [draftResult, opportunityResult] = await Promise.all([
+    const [draftResult, opportunityResult, trendResult] = await Promise.all([
       sb.raw
         .from("chat_artifacts")
         .select("id, title, body, kind, status, created_at, meta")
@@ -46,14 +46,46 @@ export async function GET() {
         .select("id, kind, score, payload, created_at, source_post_id")
         .eq("workspace_id", sb.workspaceId)
         .eq("status", "proposed")
+        .neq("kind", "trend")
         .order("score", { ascending: false })
         .limit(WORKING_NOW_POOL_LIMIT),
+      // Keep a separate trend lane so a full source-post pool can never hide a
+      // creator-independent signal before the UI gets a chance to display it.
+      sb.raw
+        .from("agent_opportunities")
+        .select("id, kind, score, payload, created_at, source_post_id")
+        .eq("workspace_id", sb.workspaceId)
+        .eq("status", "proposed")
+        .eq("kind", "trend")
+        .order("score", { ascending: false })
+        .limit(3),
     ]);
     const { data: drafts, error: draftsError } = draftResult;
     if (draftsError) throw draftsError;
 
     const { data: opportunityPool, error: oppError } = opportunityResult;
     if (oppError) throw oppError;
+    const { data: trendPool, error: trendError } = trendResult;
+    if (trendError) throw trendError;
+
+    // Trend Radar rows are creator-independent and intentionally have no
+    // source_post_id. Keep them outside the source-post mixer so one fresh
+    // signal cannot displace the existing regular/lead-magnet balance.
+    const trendOpportunities = (trendPool ?? [])
+      .filter((opportunity) => opportunity.kind === "trend")
+      .map((opportunity) => {
+        const payload = (opportunity.payload ?? {}) as Record<string, unknown>;
+        return {
+          ...opportunity,
+          payload: { ...payload, headline: readOpportunityHeadline(payload) },
+          is_lead_magnet: false,
+          source_post: null,
+        };
+      })
+      .slice(0, 3);
+    const sourceOpportunityPool = (opportunityPool ?? []).filter(
+      (opportunity) => opportunity.kind !== "trend",
+    );
 
     // Which of these model a LEAD MAGNET post? `posts.post_type` is the
     // authoritative flag (stamped at scrape time, also what act.ts reads), and
@@ -64,6 +96,9 @@ export async function GET() {
     // no long post text), while the FULL source-post card (SWIPE_POST_COLS +
     // the accounts join) is fetched only for the handful of slots the mix
     // actually keeps — the pool is ~4× the visible set.
+    // Keep the full-pool source-id resolution contract: trend rows carry null,
+    // so they naturally contribute no post id while every source candidate is
+    // still considered for lead-magnet classification.
     const sourcePostIds = opportunitySourcePostIds(opportunityPool);
     let leadMagnetIds = new Set<string>();
     const existingSourceIds = new Set<string>();
@@ -82,7 +117,7 @@ export async function GET() {
     // payload.headline is persisted at scan time, so rows written before the
     // headline copy changed still carry the old "<creator> went N×" wording
     // (see lib/agent-loop/headline.ts). Normalise on the way out.
-    const normalisedPool = (opportunityPool ?? []).map((opportunity) => {
+    const normalisedPool = sourceOpportunityPool.map((opportunity) => {
       const payload = (opportunity.payload ?? {}) as Record<string, unknown>;
       const sourcePostId =
         typeof opportunity.source_post_id === "string"
@@ -139,7 +174,7 @@ export async function GET() {
     return NextResponse.json({
       ok: true,
       drafts: drafts ?? [],
-      opportunities: normalisedOpportunities,
+      opportunities: [...trendOpportunities, ...normalisedOpportunities],
     });
   } catch (e) {
     return errorResponse(e);

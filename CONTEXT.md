@@ -12,6 +12,22 @@ _Avoid_: Organization, team, account, tenant
 A LinkedIn author selected as an ongoing source of content inspiration.
 _Avoid_: Account, profile, tracked account
 
+**Trend Signal**:
+A fresh, web-grounded development that may be worth turning into an original
+LinkedIn post, whether or not a tracked Creator has covered it.
+_Avoid_: Source Post, viral post, generic news item
+
+**Trend Radar**:
+The creator-independent discovery lane that finds, deduplicates, and proposes
+Trend Signals for human review before drafting.
+_Avoid_: Newsjacking skill, publishing agent, automatic drafting
+
+**Creator Coverage**:
+Whether recent posts from the Workspace's tracked Creators appear to discuss a
+Trend Signal at detection time; this is an observation, not proof that nobody
+else on LinkedIn has discussed it.
+_Avoid_: Platform-wide coverage, Creator consensus
+
 ## Source Material
 
 **Source Post**:

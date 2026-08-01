@@ -25,6 +25,9 @@ vi.mock("@/lib/supabase-scoped", () => ({
           eq() {
             return chain;
           },
+          neq() {
+            return chain;
+          },
           is() {
             return chain;
           },
@@ -148,6 +151,42 @@ describe("GET /api/agent/briefing source-post contract", () => {
 
     expect(response.status).toBe(200);
     expect(body.opportunities).toEqual([]);
+  });
+
+  it("exposes creator-independent trend signals without a source post", async () => {
+    database.rows.agent_opportunities = [
+      {
+        id: "trend-1",
+        kind: "trend",
+        score: 8,
+        payload: {
+          headline: "LinkedIn introduces an AI slop label",
+          summary: "LinkedIn is changing how it handles low-effort AI content.",
+          source_url: "https://news.linkedin.com/2026/keeping-conversations-real",
+          source_name: "LinkedIn News",
+          creator_coverage: "none_observed",
+        },
+        created_at: "2026-08-01T10:00:00.000Z",
+        source_post_id: null,
+      },
+    ];
+    database.rows.posts = [];
+
+    const response = await GET();
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.opportunities).toHaveLength(1);
+    expect(body.opportunities[0]).toMatchObject({
+      id: "trend-1",
+      kind: "trend",
+      source_post: null,
+      payload: {
+        headline: "LinkedIn introduces an AI slop label",
+        creator_coverage: "none_observed",
+      },
+    });
+    expect(database.selects.some(({ table }) => table === "posts")).toBe(false);
   });
 
   it("starts independent draft and opportunity reads in parallel", async () => {
