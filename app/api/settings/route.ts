@@ -35,9 +35,10 @@ const bodySchema = z.object({
 export async function GET() {
   try {
     const sb = await scopedSupabase();
-    const { data } = await sb
+    const { data, error } = await sb
       .settings()
       .in("key", ["viral_thresholds", "template_thresholds", "discovery_thresholds"]);
+    if (error) throw error;
     const byKey = Object.fromEntries((data ?? []).map((r) => [r.key, r.value]));
     // Fallbacks must match DEFAULT_VIRAL / DEFAULT_TEMPLATE in lib/viral.ts so
     // a workspace that never changed its settings sees the SAME numbers here

@@ -22,19 +22,20 @@ export const runtime = "nodejs";
 const FETCH_TIMEOUT_MS = 6000;
 
 async function fetchJson(url: string): Promise<unknown | null> {
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    const controller = new AbortController();
-    const t = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
     const res = await fetch(url, {
       headers: { "User-Agent": "Mozilla/5.0 (compatible; LinkedInSwipeFile/1.0)" },
       signal: controller.signal,
       cache: "no-store",
     });
-    clearTimeout(t);
     if (!res.ok) return null;
     return await res.json();
   } catch {
     return null;
+  } finally {
+    clearTimeout(t);
   }
 }
 
@@ -51,12 +52,13 @@ export async function GET(req: Request) {
     if (trackedIds.length === 0) {
       return NextResponse.json({ ok: false, error: "Not found" }, { status: 404 });
     }
-    const { data: post } = await sb.raw
+    const { data: post, error: postError } = await sb.raw
       .from("posts")
       .select("id, account_id, document_manifest_url, media_urls")
       .eq("id", id)
       .in("account_id", trackedIds)
       .maybeSingle();
+    if (postError) throw postError;
     if (!post) {
       return NextResponse.json({ ok: false, error: "Not found" }, { status: 404 });
     }
@@ -94,9 +96,15 @@ export async function GET(req: Request) {
       | { pages?: unknown }
       | null;
     const pages = Array.isArray(imgManifest?.pages)
-      ? (imgManifest!.pages as unknown[]).filter(
-          (u): u is string => typeof u === "string" && u.startsWith("http"),
-        )
+      ? (imgManifest!.pages as unknown[]).filter((u): u is string => {
+          if (typeof u !== "string") return false;
+          try {
+            const parsed = new URL(u);
+            return parsed.protocol === "http:" || parsed.protocol === "https:";
+          } catch {
+            return false;
+          }
+        })
       : [];
     if (pages.length === 0) {
       return NextResponse.json({ ok: false, error: "no pages" }, { status: 200 });

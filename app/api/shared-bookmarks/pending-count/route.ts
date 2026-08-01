@@ -19,12 +19,13 @@ export async function POST() {
     const email = verifiedPrimaryEmail(user);
 
     if (email) {
-      await sb.raw
+      const { error } = await sb.raw
         .from("shared_bookmarks")
         .update({ recipient_user_id: userId })
         .eq("recipient_email", email)
         .eq("status", "pending")
         .is("recipient_user_id", null);
+      if (error) throw error;
     }
 
     const { count, error } = await sb.raw

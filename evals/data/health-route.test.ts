@@ -86,3 +86,19 @@ test("does not expose thrown infrastructure errors", async () => {
     expect.stringContaining("health_check_failed"),
   );
 });
+
+test("clears the database timeout when the query rejects", async () => {
+  vi.useFakeTimers();
+  const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout");
+  state.error = new Error("database request rejected");
+  state.throwOnQuery = true;
+
+  try {
+    const response = await GET();
+
+    expect(response.status).toBe(503);
+    expect(clearTimeoutSpy).toHaveBeenCalled();
+  } finally {
+    vi.useRealTimers();
+  }
+});

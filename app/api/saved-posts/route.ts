@@ -96,10 +96,11 @@ export async function GET(req: Request) {
     // the owner's custom category still resolve a chip label. Small table,
     // cheap to read.
     const sb = await scopedSupabase();
-    const { data: categoryRows } = await sb.raw
+    const { data: categoryRows, error: categoryError } = await sb.raw
       .from("categories")
       .select("id, label")
       .or(visibleCategoriesOr(active.workspaceId));
+    if (categoryError) throw categoryError;
     const categoryLabels = new Map(
       ((categoryRows ?? []) as Array<{ id: string; label: string }>).map((c) => [
         c.id,
@@ -559,12 +560,17 @@ export async function DELETE(req: Request) {
     // Look up the row first so we can authorize: in a shared library,
     // the recipient may only delete saves they added themselves
     // (created_by_user_id matches). The owner can always delete.
-    const { data: row } = await sb.raw
+    const parsedId = z.string().uuid().safeParse(id);
+    if (!parsedId.success) {
+      return NextResponse.json({ ok: false, error: "Invalid id" }, { status: 400 });
+    }
+    const { data: row, error: rowError } = await sb.raw
       .from("saved_posts")
       .select("id, workspace_id, created_by_user_id")
       .eq("id", id)
       .eq("workspace_id", active.workspaceId)
       .maybeSingle();
+    if (rowError) throw rowError;
     if (!row) {
       return NextResponse.json({ ok: false, error: "Not found" }, { status: 404 });
     }

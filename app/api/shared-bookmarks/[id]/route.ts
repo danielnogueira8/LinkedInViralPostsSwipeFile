@@ -1,15 +1,16 @@
 import { NextResponse } from "next/server";
 import { auth, currentUser } from "@clerk/nextjs/server";
+import { z } from "zod";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { verifiedPrimaryEmail } from "@/lib/shared-bookmarks";
 import { errorResponse } from "@/lib/workspace";
 
 export const runtime = "nodejs";
 
-type PatchBody = {
+const patchBodySchema = z.object({
   // "accept" or "decline" are recipient actions; "revoke" is the owner.
-  action?: "accept" | "decline" | "revoke";
-};
+  action: z.enum(["accept", "decline", "revoke"]),
+});
 
 // -----------------------------------------------------------------------------
 // PATCH /api/shared-bookmarks/:id  — accept, decline, or revoke an invite
@@ -28,14 +29,14 @@ export async function PATCH(
 ) {
   try {
     const { id } = await ctx.params;
-    const body = (await req.json()) as PatchBody;
-    const action = body.action;
-    if (!action || !["accept", "decline", "revoke"].includes(action)) {
+    const parsed = patchBodySchema.safeParse(await req.json().catch(() => null));
+    if (!parsed.success) {
       return NextResponse.json(
         { ok: false, error: "action must be accept | decline | revoke" },
         { status: 400 },
       );
     }
+    const action = parsed.data.action;
     const sb = await scopedSupabase();
     const { userId } = await auth();
 

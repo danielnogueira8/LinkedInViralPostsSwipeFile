@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
+import { z } from "zod";
 import { purgeWorkspaceData } from "@/lib/purge-workspace";
 import { errorResponse } from "@/lib/workspace";
 
@@ -22,6 +23,7 @@ export const runtime = "nodejs";
 //     account. The UI sends this after a typed confirmation.
 // -----------------------------------------------------------------------------
 type Body = { confirm?: string };
+const bodySchema = z.object({ confirm: z.string().optional() });
 
 export async function POST(req: Request) {
   try {
@@ -30,7 +32,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: "Not signed in" }, { status: 401 });
     }
 
-    const body = (await req.json().catch(() => ({}))) as Body;
+    const parsed = bodySchema.safeParse(await req.json().catch(() => null));
+    const body = parsed.success ? (parsed.data as Body) : {};
     if (body.confirm !== "DELETE") {
       return NextResponse.json(
         { ok: false, error: 'Confirmation required. Send { "confirm": "DELETE" }.' },
