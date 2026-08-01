@@ -31,12 +31,19 @@ describe("Cowork schedule image flow", () => {
       "const next = [...scheduleMediaAttachments, ...uploaded];",
     );
     expect(source).toContain(
-      "const next = scheduleMediaAttachments.filter((m) => m.id !== id);",
+      "const next = scheduleMediaAttachmentsRef.current.filter((m) => m.id !== id);",
     );
     expect(source).toContain("const dirty = bodyDirty || mediaDirty;");
     expect(source).toContain("mediaDirty ||\n    scheduleMediaAttachments");
     expect(source).toContain("const markMediaChanged = () => {");
     expect(source).toContain("const markMediaPersisted = (version: number) => {");
+    expect(source).toContain(
+      "const scheduleMediaAttachmentsRef = useRef(mediaAttachments);",
+    );
+    expect(source).toContain("const mediaMetaWriteRef = useRef(Promise.resolve());");
+    expect(source).toContain("const persistMediaMeta = (attachments: PostMediaAttachment[]) => {");
+    expect(source).toContain("media-only prop updates must not clobber local mutation state");
+    expect(source).toContain("scheduleMediaAttachmentsRef.current");
     expect(source).toContain(
       "disabled={automationOpening || uploadingScheduleImage}",
     );
