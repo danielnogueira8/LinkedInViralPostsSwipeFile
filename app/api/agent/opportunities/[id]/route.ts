@@ -108,10 +108,7 @@ export async function POST(
     );
     if (!result.ok) {
       if (result.reason === "already_handled") {
-        return NextResponse.json(
-          { ok: false, error: "This opportunity was already handled." },
-          { status: 409 },
-        );
+        return alreadyHandledResponse();
       }
       return errorResponse(new Error(result.reason));
     }
