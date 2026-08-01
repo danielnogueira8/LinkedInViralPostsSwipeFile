@@ -52,6 +52,7 @@ const laneCopy: Record<
     description: string;
     icon: typeof Newspaper;
     tone: string;
+    avatar: string;
   }
 > = {
   newsjacking: {
@@ -59,24 +60,28 @@ const laneCopy: Record<
     description: "React to a verified moment",
     icon: Newspaper,
     tone: "bg-amber-500/10 text-amber-700 dark:text-amber-300",
+    avatar: "timing-strategist",
   },
   personal_story: {
     label: "Story Miner",
     description: "Mine an experience you actually lived",
     icon: BookOpen,
     tone: "bg-violet-500/10 text-violet-700 dark:text-violet-300",
+    avatar: "remix",
   },
   educational: {
     label: "Expertise",
     description: "Teach something you have proven works",
     icon: GraduationCap,
     tone: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+    avatar: "bulk-writer",
   },
   trend_radar: {
     label: "Trend Radar",
     description: "Surface a fresh signal for review",
     icon: Radar,
     tone: "bg-rose-500/10 text-rose-700 dark:text-rose-300",
+    avatar: "trend-radar",
   },
 };
 
@@ -130,28 +135,29 @@ function ideaEvidenceDate(idea: AgentFeedIdea): string | null {
 
 type AgentLaneFilter = "all" | AgentFeedLane;
 
-function EvidencePreview({ entry }: { entry: AgentInboxEvidence }) {
-  const meta = evidenceKindMeta[entry.kind] ?? evidenceKindMeta.knowledge;
-  const Icon = meta.icon;
-  return (
-    <span
-      className="inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-full border bg-background/70 px-2.5 py-1 text-xs text-muted-foreground"
-      title={entry.detail || entry.label}
-    >
-      <Icon className="size-3 shrink-0" aria-hidden />
-      <span className="truncate">{entry.label || meta.tag}</span>
-    </span>
-  );
+function LaneAvatar({
+  lane,
+  className,
+}: {
+  lane: AgentFeedLane;
+  className?: string;
+}) {
+  const copy = laneCopy[lane];
+  // These bundled Bottts SVGs are the same agent avatars used by Claude
+  // Workflows. They are decorative because the lane name is rendered beside
+  // them, and keeping them as plain assets avoids a client/server boundary.
+  // eslint-disable-next-line @next/next/no-img-element -- bundled SVG avatar asset
+  return <img src={`/agents/${copy.avatar}.svg`} alt="" className={className} />;
 }
 
 function LanePill({ lane }: { lane: AgentFeedLane }) {
   const copy = laneCopy[lane];
-  const Icon = copy.icon;
   return (
     <span className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-background/70 px-2.5 py-1 text-xs font-semibold">
-      <span className={cn("grid size-5 place-items-center rounded-full", copy.tone)}>
-        <Icon className="size-3" aria-hidden />
-      </span>
+      <LaneAvatar
+        lane={lane}
+        className="size-5 shrink-0 rounded-full border border-border/60 object-cover"
+      />
       {copy.label}
     </span>
   );
@@ -323,7 +329,7 @@ export function OpportunityCard({
     );
   }
   return (
-    <article className="flex h-full w-full flex-col rounded-2xl border border-border bg-card p-5 shadow-soft transition-colors hover:border-foreground/20">
+    <article className="flex h-full w-full flex-col rounded-2xl border border-border bg-card p-4 shadow-soft transition-colors hover:border-foreground/20 sm:p-5">
       <header className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2.5">
           {copy ? <LanePill lane={idea.lane} /> : null}
@@ -339,46 +345,36 @@ export function OpportunityCard({
             className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
             onClick={onOpenDetails}
           >
-            Details <ChevronRight className="size-3.5" aria-hidden />
+            Details
+            {idea.evidence.length ? (
+              <span className="text-[11px] font-normal">
+                · {idea.evidence.length} source
+                {idea.evidence.length === 1 ? "" : "s"}
+              </span>
+            ) : null}
+            <ChevronRight className="size-3.5" aria-hidden />
           </button>
         ) : null}
       </header>
-      <div className="mt-5">
-        <h3 className="text-balance text-base font-semibold leading-snug">
+      <div className="mt-4">
+        <h3 className="line-clamp-2 text-balance text-base font-semibold leading-snug">
           {idea.headline}
         </h3>
-        <p className="mt-2 text-sm leading-6 text-muted-foreground">
+        <p className="mt-2 line-clamp-2 text-sm leading-5 text-muted-foreground">
           {idea.angle}
         </p>
       </div>
-      <div className="mt-4 rounded-xl bg-muted/40 p-3.5">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-          Why it fits you
-        </p>
-        <p className="mt-1.5 text-sm leading-5">
-          {idea.why[0] ?? "It is grounded in evidence from your workspace."}
-        </p>
-      </div>
-      <div className="mt-4 flex min-w-0 flex-wrap items-center gap-1.5">
-        <span className="mr-1 text-xs text-muted-foreground">Based on</span>
-        {idea.evidence.slice(0, 2).map((entry, index) => (
-          <EvidencePreview key={`${entry.label}-${index}`} entry={entry} />
-        ))}
-        {idea.evidence.length > 2 ? (
-          <span className="text-xs text-muted-foreground">
-            +{idea.evidence.length - 2} more
-          </span>
-        ) : null}
-      </div>
       {moreCount > 0 && onViewMore ? (
-        <button
-          type="button"
-          className="mt-3 inline-flex w-fit items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground"
-          onClick={() => onViewMore(idea.lane)}
-        >
-          See {moreCount} more from {copy?.label ?? "this agent"}
-          <ChevronRight className="size-3.5" aria-hidden />
-        </button>
+        <div className="mt-3">
+          <button
+            type="button"
+            className="inline-flex w-fit items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground"
+            onClick={() => onViewMore(idea.lane)}
+          >
+            See {moreCount} more from {copy?.label ?? "this agent"}
+            <ChevronRight className="size-3.5" aria-hidden />
+          </button>
+        </div>
       ) : null}
       <OpportunityActions idea={idea} busy={busy} onAction={onAction} />
     </article>
@@ -732,7 +728,14 @@ export function AgentInbox() {
                           isAll ? "bg-background/15" : laneMeta?.tone,
                         )}
                       >
-                        <Icon className="size-3" aria-hidden />
+                        {isAll ? (
+                          <Icon className="size-3" aria-hidden />
+                        ) : (
+                          <LaneAvatar
+                            lane={filter}
+                            className="size-5 rounded-full object-cover"
+                          />
+                        )}
                       </span>
                       {laneMeta?.label ?? "All ideas"}
                       <span
