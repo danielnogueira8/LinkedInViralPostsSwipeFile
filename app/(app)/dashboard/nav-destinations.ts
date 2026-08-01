@@ -1,4 +1,4 @@
-import type { ComponentType } from "react";
+import { createElement, type ComponentType } from "react";
 import {
   Handshake,
   FileText,
@@ -10,11 +10,19 @@ import {
   Fingerprint,
   ChartNoAxesColumn,
   LayoutTemplate,
+  LibraryBig,
   Plug,
 } from "lucide-react";
 import { ClaudeIcon } from "@/components/claude-icon";
 import { SwipeInIcon } from "@/components/swipein-icon";
 import { AiIcon } from "@/components/ai-icon";
+
+// The sidebar uses the COLORED Claude mark (brand orange), same as the
+// landing page and the Claude Workflows header — not the monochrome glyph.
+// createElement, not JSX: this is a .ts file (JSX only parses in .tsx).
+function ClaudeWorkflowsNavIcon({ className }: { className?: string }) {
+  return createElement(ClaudeIcon, { variant: "brand", className });
+}
 
 export type NavDestination = {
   href: string;
@@ -59,6 +67,7 @@ export const NAV_SECTIONS: NavSection[] = [
     label: "Train",
     items: [
       { href: "/dashboard/voice", label: "Voice", icon: AudioLines, tooltip: "Your writing profile and voice preferences." },
+      { href: "/dashboard/knowledge", label: "Knowledge", icon: LibraryBig, tooltip: "Your context interview and private sources for grounded writing." },
       { href: "/dashboard/creator-styles", label: "Creator Styles", icon: Fingerprint, tooltip: "Reusable writing-style profiles from creators you track." },
       { href: "/dashboard/templates", label: "Templates", icon: LayoutTemplate, tooltip: "Reusable content templates for posts and hooks." },
     ],
@@ -67,9 +76,9 @@ export const NAV_SECTIONS: NavSection[] = [
     label: "Tools",
     items: [
       { href: "/dashboard/analytics", label: "Analytics", icon: ChartNoAxesColumn, tooltip: "LinkedIn performance of posts published through SwipeIn." },
-      { href: "/dashboard/claude", label: "Claude Workflows", icon: ClaudeIcon, tooltip: "Reusable AI workflows for content tasks." },
-      { href: "/dashboard/integrations", label: "Integrations", icon: Plug, tooltip: "Connect third-party tools like LeadShark." },
-      { href: "/dashboard/settings", label: "Settings", icon: Settings, tooltip: "Workspace settings and publishing connections." },
+      { href: "/dashboard/claude", label: "Claude Workflows", icon: ClaudeWorkflowsNavIcon, tooltip: "Reusable AI workflows for content tasks." },
+      { href: "/dashboard/integrations", label: "Integrations", icon: Plug, tooltip: "Connect LinkedIn and automation tools." },
+      { href: "/dashboard/settings", label: "Settings", icon: Settings, tooltip: "Workspace discovery and account settings." },
     ],
   },
 ];

@@ -1,9 +1,12 @@
+import { LoadingState } from "@/components/ui/loading-state";
 // Streams instantly on sidebar nav so the page feels responsive while the
 // server query runs (post_analytics scan + join). The real metrics replace
 // this once ready. Mirrors the sibling route skeletons.
 export default function AnalyticsLoading() {
   return (
-    <div className="space-y-6 animate-pulse">
+    <div className="space-y-6">
+      <LoadingState label="Loading analytics" />
+      <div className="space-y-6 animate-pulse">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div className="space-y-2">
           <div className="h-9 w-40 rounded-md bg-muted" />
@@ -39,6 +42,7 @@ export default function AnalyticsLoading() {
             ))}
           </div>
         ))}
+      </div>
       </div>
     </div>
   );

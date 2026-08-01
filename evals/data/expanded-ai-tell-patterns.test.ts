@@ -16,6 +16,7 @@ describe("expanded high-confidence AI-tell patterns", () => {
     ["#AI #SaaS #Growth #Marketing #Sales #Future", "hashtag-stuffing"],
     // The 6 new patterns from the humanizer taxonomy.
     ["This is a testament to what happens when you delve into the data.", "ai-vocabulary"],
+    ["This framework elucidates an unyielding kaleidoscope of ideas.", "ai-vocabulary"],
     ["In order to grow, you have to ship.", "filler-phrase"],
     ["The hard truth is most founders never post consistently.", "authority-trope"],
     ["Let's dive in. Here is my framework.", "signposting"],

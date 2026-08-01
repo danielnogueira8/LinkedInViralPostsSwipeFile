@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { StatusPill } from "@/components/app-surface";
 import {
@@ -26,8 +27,15 @@ import {
   CheckCircle2,
   AlertTriangle,
   ExternalLink,
+  Save,
 } from "lucide-react";
 import { fetchJson } from "@/lib/api-fetch";
+import {
+  RESOURCE_NAME_TOKEN,
+  RESOURCE_URL_TOKEN,
+  validateLeadSharkAutomationDefaults,
+  type LeadSharkAutomationDefaults,
+} from "@/lib/leadshark-default-config";
 
 type CredentialSafe = {
   connected: boolean;
@@ -52,14 +60,96 @@ function relativeTime(iso: string | null): string {
 }
 
 // Integrations → LeadShark: connect a user-supplied LeadShark API key so
-// lead-magnet posts can auto-DM commenters. Three states mirror PublishingCard:
+// lead-magnet posts can auto-DM commenters. Three states mirror LinkedInPublishingCard:
 // not connected, connected, and invalid (reconnect). The key is write-only — it
 // is never returned by the API, so there is no "reveal key".
-export function LeadSharkCard({ initial }: { initial: CredentialSafe }) {
+function lines(value: string): string[] {
+  return value
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function DefaultsToggle({
+  checked,
+  onChange,
+  label,
+}: {
+  checked: boolean;
+  onChange: (value: boolean) => void;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      onClick={() => onChange(!checked)}
+      className="flex items-center gap-2 text-sm"
+    >
+      <span
+        aria-hidden
+        className={`relative h-6 w-11 rounded-full transition-colors ${
+          checked ? "bg-primary" : "bg-muted-foreground/25"
+        }`}
+      >
+        <span
+          className={`absolute left-0.5 top-0.5 size-5 rounded-full bg-white shadow transition-transform ${
+            checked ? "translate-x-5" : ""
+          }`}
+        />
+      </span>
+      {label}
+    </button>
+  );
+}
+
+export function LeadSharkCard({
+  initial,
+  initialDefaults,
+  defaultsAvailable,
+}: {
+  initial: CredentialSafe;
+  initialDefaults: LeadSharkAutomationDefaults;
+  defaultsAvailable: boolean;
+}) {
   const [cred, setCred] = useState<CredentialSafe>(initial);
   const [apiKey, setApiKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [defaults, setDefaults] =
+    useState<LeadSharkAutomationDefaults>(initialDefaults);
+  const [savingDefaults, setSavingDefaults] = useState(false);
+
+  const patchDefaults = (patch: Partial<LeadSharkAutomationDefaults>) =>
+    setDefaults((current) => ({ ...current, ...patch }));
+
+  const saveDefaults = async () => {
+    const issues = validateLeadSharkAutomationDefaults(defaults);
+    if (issues.length) {
+      toast.error(issues[0].message);
+      return;
+    }
+    setSavingDefaults(true);
+    try {
+      const data = await fetchJson<{
+        ok: boolean;
+        defaults?: LeadSharkAutomationDefaults;
+        error?: string;
+      }>("/api/integrations/leadshark/defaults", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(defaults),
+      });
+      if (!data.ok) throw new Error(data.error ?? "Couldn't save defaults.");
+      if (data.defaults) setDefaults(data.defaults);
+      toast.success("Automation defaults saved.");
+    } catch (error) {
+      toast.error((error as Error).message);
+    } finally {
+      setSavingDefaults(false);
+    }
+  };
 
   const connect = async () => {
     if (busy) return;
@@ -97,7 +187,9 @@ export function LeadSharkCard({ initial }: { initial: CredentialSafe }) {
     try {
       const data = await fetchJson<{ ok: boolean; error?: string }>(
         "/api/integrations/leadshark",
-        { method: "DELETE" },
+        {
+          method: "DELETE",
+        },
       );
       if (!data.ok) throw new Error(data.error || "Couldn't disconnect.");
       setCred({
@@ -137,7 +229,9 @@ export function LeadSharkCard({ initial }: { initial: CredentialSafe }) {
               </CardDescription>
             </div>
           </div>
-          <StatusPill tone={connected ? "success" : invalid ? "warning" : "neutral"}>
+          <StatusPill
+            tone={connected ? "success" : invalid ? "warning" : "neutral"}
+          >
             {connected ? "Connected" : invalid ? "Reconnect" : "Not connected"}
           </StatusPill>
         </div>
@@ -145,27 +239,186 @@ export function LeadSharkCard({ initial }: { initial: CredentialSafe }) {
 
       <CardContent className="space-y-4">
         {connected ? (
-          <div className="flex flex-col gap-3 rounded-lg border border-state-success-border bg-state-success-bg p-3 sm:flex-row sm:items-center">
-            <CheckCircle2 className="h-5 w-5 shrink-0 text-state-success" />
-            <div className="flex-1">
-              <div className="text-sm font-medium">
-                Connected{cred.keyHint ? ` · key ${cred.keyHint}` : ""}
+          <>
+            <div className="flex flex-col gap-3 rounded-lg border border-state-success-border bg-state-success-bg p-3 sm:flex-row sm:items-center">
+              <CheckCircle2 className="h-5 w-5 shrink-0 text-state-success" />
+              <div className="flex-1">
+                <div className="text-sm font-medium">
+                  Connected{cred.keyHint ? ` · key ${cred.keyHint}` : ""}
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  {cred.lastVerifiedAt
+                    ? `Last verified ${relativeTime(cred.lastVerifiedAt)}.`
+                    : "Ready to automate lead-magnet posts."}
+                </div>
               </div>
-              <div className="text-xs text-muted-foreground">
-                {cred.lastVerifiedAt
-                  ? `Last verified ${relativeTime(cred.lastVerifiedAt)}.`
-                  : "Ready to automate lead-magnet posts."}
-              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setConfirmOpen(true)}
+                disabled={busy}
+              >
+                Disconnect
+              </Button>
             </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setConfirmOpen(true)}
-              disabled={busy}
-            >
-              Disconnect
-            </Button>
-          </div>
+            <section className="space-y-4 rounded-xl border border-border/70 p-4">
+              <div>
+                <h3 className="text-sm font-semibold">Automation defaults</h3>
+                <p className="text-xs text-muted-foreground">
+                  Applied to each new lead-magnet automation. SwipeIn generates
+                  the trigger keyword from that post and replaces{" "}
+                  <code>{RESOURCE_NAME_TOKEN}</code> and{" "}
+                  <code>{RESOURCE_URL_TOKEN}</code> with its selected resource.
+                </p>
+              </div>
+              {!defaultsAvailable ? (
+                <p
+                  role="status"
+                  className="rounded-lg border border-state-warning-border bg-state-warning-bg p-3 text-xs text-state-warning"
+                >
+                  These are the defaults SwipeIn will use. Saving changes will
+                  be available after the Automation Defaults database update is
+                  installed.
+                </p>
+              ) : null}
+              <div className="space-y-1.5">
+                <Label htmlFor="leadshark-default-dm">Default DM</Label>
+                <Textarea
+                  id="leadshark-default-dm"
+                  value={defaults.dmTemplate}
+                  onChange={(event) =>
+                    patchDefaults({ dmTemplate: event.target.value })
+                  }
+                  rows={4}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Keep {RESOURCE_URL_TOKEN} in every DM so the right resource is
+                  always delivered. {RESOURCE_NAME_TOKEN} is optional.
+                </p>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="leadshark-default-dm-variations">
+                  DM variations (one per line)
+                </Label>
+                <Textarea
+                  id="leadshark-default-dm-variations"
+                  value={defaults.dmTemplateVariations.join("\n")}
+                  onChange={(event) =>
+                    patchDefaults({
+                      dmTemplateVariations: lines(event.target.value),
+                    })
+                  }
+                  rows={4}
+                  placeholder={`Every variation must include ${RESOURCE_URL_TOKEN}`}
+                />
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label htmlFor="leadshark-default-replies">
+                    Comment replies (one per line)
+                  </Label>
+                  <Textarea
+                    id="leadshark-default-replies"
+                    value={defaults.commentReplyTemplates.join("\n")}
+                    onChange={(event) =>
+                      patchDefaults({
+                        commentReplyTemplates: lines(event.target.value),
+                      })
+                    }
+                    rows={4}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="leadshark-default-nonconnection">
+                    Not connected replies (one per line)
+                  </Label>
+                  <Textarea
+                    id="leadshark-default-nonconnection"
+                    value={defaults.nonConnectionReplyTemplates.join("\n")}
+                    onChange={(event) =>
+                      patchDefaults({
+                        nonConnectionReplyTemplates: lines(event.target.value),
+                      })
+                    }
+                    rows={4}
+                  />
+                </div>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <DefaultsToggle
+                  checked={defaults.autoConnect}
+                  onChange={(autoConnect) => patchDefaults({ autoConnect })}
+                  label="Auto-connect"
+                />
+                <DefaultsToggle
+                  checked={defaults.autoLike}
+                  onChange={(autoLike) => patchDefaults({ autoLike })}
+                  label="Auto-like comments"
+                />
+                <DefaultsToggle
+                  checked={defaults.followUpEnabled}
+                  onChange={(followUpEnabled) =>
+                    patchDefaults({ followUpEnabled })
+                  }
+                  label="Send a follow-up DM"
+                />
+                <DefaultsToggle
+                  checked={defaults.followUpOnlyIfNoResponse}
+                  onChange={(followUpOnlyIfNoResponse) =>
+                    patchDefaults({ followUpOnlyIfNoResponse })
+                  }
+                  label="Follow up only if no reply"
+                />
+              </div>
+              {defaults.followUpEnabled ? (
+                <div className="grid gap-3 sm:grid-cols-[1fr_10rem]">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="leadshark-default-followup">
+                      Follow-up message
+                    </Label>
+                    <Textarea
+                      id="leadshark-default-followup"
+                      value={defaults.followUpTemplate ?? ""}
+                      onChange={(event) =>
+                        patchDefaults({
+                          followUpTemplate: event.target.value,
+                        })
+                      }
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="leadshark-default-delay">
+                      Delay (minutes)
+                    </Label>
+                    <Input
+                      id="leadshark-default-delay"
+                      type="number"
+                      min={1}
+                      max={43_200}
+                      value={defaults.followUpDelayMinutes}
+                      onChange={(event) =>
+                        patchDefaults({
+                          followUpDelayMinutes:
+                            Number(event.target.value) || 60,
+                        })
+                      }
+                    />
+                  </div>
+                </div>
+              ) : null}
+              <Button
+                onClick={() => void saveDefaults()}
+                disabled={savingDefaults || !defaultsAvailable}
+              >
+                {savingDefaults ? (
+                  <Loader2 className="animate-spin" />
+                ) : (
+                  <Save />
+                )}
+                Save automation defaults
+              </Button>
+            </section>
+          </>
         ) : (
           <>
             {invalid ? (
@@ -196,7 +449,11 @@ export function LeadSharkCard({ initial }: { initial: CredentialSafe }) {
                   disabled={busy}
                   className="flex-1"
                 />
-                <Button onClick={connect} disabled={busy || !apiKey.trim()} className="gap-2">
+                <Button
+                  onClick={connect}
+                  disabled={busy || !apiKey.trim()}
+                  className="gap-2"
+                >
                   {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                   {invalid ? "Reconnect" : "Connect"}
                 </Button>
@@ -239,17 +496,25 @@ export function LeadSharkCard({ initial }: { initial: CredentialSafe }) {
           <DialogHeader>
             <DialogTitle>Disconnect LeadShark?</DialogTitle>
             <DialogDescription>
-              We&apos;ll remove your stored API key. Automations already set up in
-              LeadShark keep running there, but SwipeIn won&apos;t create new ones
-              until you reconnect.
+              We&apos;ll remove your stored API key. Automations already set up
+              in LeadShark keep running there, but SwipeIn won&apos;t create new
+              ones until you reconnect.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setConfirmOpen(false)} disabled={busy}>
+            <Button
+              variant="outline"
+              onClick={() => setConfirmOpen(false)}
+              disabled={busy}
+            >
               Cancel
             </Button>
             <Button variant="destructive" onClick={disconnect} disabled={busy}>
-              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Disconnect"}
+              {busy ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                "Disconnect"
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

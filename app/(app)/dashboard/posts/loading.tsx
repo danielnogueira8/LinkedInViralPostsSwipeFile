@@ -1,9 +1,9 @@
-import { Loader2 } from "lucide-react";
 import { PageHeader, PageShell, Surface } from "@/components/app-surface";
+import { LoadingState } from "@/components/ui/loading-state";
 
 export default function PostsLoading() {
   return (
-    <PageShell width="wide" role="status" aria-live="polite">
+    <PageShell width="wide" aria-busy="true">
       <PageHeader
         title={<span className="block h-8 w-24 animate-pulse rounded-md bg-muted" />}
         description={<span className="block h-4 w-80 max-w-full animate-pulse rounded-md bg-muted" />}
@@ -11,10 +11,7 @@ export default function PostsLoading() {
       />
 
       <Surface>
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-          <span>Loading posts</span>
-        </div>
+        <LoadingState label="Loading posts" />
       </Surface>
 
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-5">

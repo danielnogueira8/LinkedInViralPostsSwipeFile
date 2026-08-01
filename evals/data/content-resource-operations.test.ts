@@ -99,6 +99,18 @@ describe("content resource read operations", () => {
     expect(calls).toContainEqual({ method: "limit", args: [20] });
   });
 
+  it("paginates the complete preference history for review surfaces", async () => {
+    const { db, calls } = queuedDb([{ data: [], error: null }]);
+
+    await listPreferenceResources({
+      db,
+      workspaceId: "workspace-1",
+    });
+
+    expect(calls).toContainEqual({ method: "range", args: [0, 999] });
+    expect(calls.some((call) => call.method === "limit")).toBe(false);
+  });
+
   it("does not send a non-UUID built-in-shaped template id to Postgres", async () => {
     const { db, calls } = queuedDb([]);
 
@@ -177,6 +189,36 @@ describe("bookmark resource persistence", () => {
 });
 
 describe("preference resource persistence", () => {
+  it("creates a distinct preference beyond the former 20-rule boundary", async () => {
+    const existing = Array.from({ length: 20 }, (_, index) => ({
+      id: `preference-${index}`,
+      workspace_id: "workspace-1",
+      rule: `Rule ${index}`,
+      detail: null,
+      source: "user",
+      created_at: "2026-07-29T00:00:00.000Z",
+      updated_at: "2026-07-29T00:00:00.000Z",
+    }));
+    const saved = {
+      ...existing[0],
+      id: "preference-21",
+      rule: "A brand new rule",
+    };
+    const { db, calls } = queuedDb([
+      { data: existing, error: null },
+      { data: saved, error: null },
+    ]);
+
+    await expect(
+      createPreferenceResource({
+        db,
+        workspaceId: "workspace-1",
+        data: { rule: saved.rule, detail: "" },
+      }),
+    ).resolves.toEqual({ ok: true, value: saved });
+    expect(calls.some((call) => call.method === "insert")).toBe(true);
+  });
+
   it("returns a duplicate conflict when the database wins a concurrent race", async () => {
     const { db } = queuedDb([
       { data: [], error: null },

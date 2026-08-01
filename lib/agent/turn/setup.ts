@@ -29,6 +29,7 @@ import {
   hasUnsavedAssistantDraftReferent,
   validatePendingActionAnswer,
 } from "@/lib/agent/turn-policy";
+import { isInterviewAskArgs } from "@/lib/agent/turn/execute-interview";
 import {
   buildTurnContext,
   CREATOR_STYLE_CONTEXT_PERSISTENCE_ERROR,
@@ -42,6 +43,7 @@ import {
   type ModelSourceReference,
   type ModelSourceRow,
 } from "@/lib/agent/turn/context";
+import type { AppliedWorkspaceKnowledge } from "@/lib/knowledge-sources/context";
 import {
   createCoworkTurnTelemetry,
   type CoworkTurnTelemetry,
@@ -74,6 +76,7 @@ import {
 } from "@/lib/chat-artifact-policy";
 import { resolveFreeTextArtifactIntent } from "@/lib/agent/turn/resolve-artifact-intent";
 import { turnOperationToolCall } from "@/lib/agent/turn/operation-marker";
+import { parseModelSourceChoiceId } from "@/lib/agent/model-source-choice";
 import { commandToTurnOperation } from "@/lib/cowork-command";
 import { getSkillsByNames } from "@/lib/content-resource-operations";
 import { SKILLS_PER_TURN_MAX } from "@/lib/custom-skills";
@@ -97,6 +100,7 @@ import type { ToolResult } from "@/lib/agent/tools";
 import type { NoModelFormat } from "@/lib/agent/no-model-formats";
 import type { NoModelFormatId } from "@/lib/agent/no-model-format-catalog";
 import type { Artifact, AskQuestion } from "@/lib/agent/contracts";
+import { truncateAtWordBoundary } from "@/lib/text-truncate";
 
 import type {
   ChatTurnDependencies,
@@ -183,6 +187,9 @@ export async function setupChatTurn(
   let currentTurnOperation: ChatTurnOperation | null = null;
   let attachments: ChatTurnAttachment[] = [];
   let modelSourceId: string | undefined;
+  // A prose source reference the deterministic pass could not settle. Handed
+  // to the executor so it can escalate to the model resolver, and failing
+  // that, ask the user again — instead of writing from an unchosen source.
   let currentModelSource: ModelSourceRow | null = null;
   let skipDecision = false;
   let refineTargetId: string | undefined;
@@ -194,6 +201,10 @@ export async function setupChatTurn(
   let resolvedCustomSkills: FrozenCustomSkill[] = [];
   let forcedNoModelFormatId: NoModelFormatId | undefined;
   let creatorStyleId: string | undefined;
+  let workspaceKnowledge: AppliedWorkspaceKnowledge = {
+    promptBlock: "",
+    sources: [],
+  };
   let creatorStyleRetryContext: CreatorStyleRetryContext | null = null;
   let leadMagnetId: string | undefined;
   let createLeadMagnet: z.infer<typeof leadMagnetGenerateSchema> | undefined;
@@ -222,6 +233,10 @@ export async function setupChatTurn(
   let persistedActionContinuation = false;
   let pendingActionAsk = false;
   let pendingAskOnly = false;
+  // True when the pending ask card belongs to the "Interview me" lane — its
+  // follow-up turns must route back to the interview executor, not the
+  // generic clarification continuation.
+  let pendingInterviewAsk = false;
   let usedLegacyCommandTransport = false;
   let artifactClarification: AskQuestion | null = null;
   let fallthroughClarification: AskQuestion | null = null;
@@ -326,7 +341,13 @@ export async function setupChatTurn(
     createLeadMagnet = body.createLeadMagnet;
     requestedGenerationConfig =
       body.command?.kind === "create"
-        ? { version: 1, draftCount: body.command.count }
+        ? {
+            version: 1,
+            draftCount: body.command.count,
+            ...(body.generationConfig?.explorationLane
+              ? { explorationLane: body.generationConfig.explorationLane }
+              : {}),
+          }
         : (body.generationConfig ?? null);
     composerStarterId = body.starterId;
     const { data: chat, error } = await sbRaw
@@ -394,6 +415,7 @@ export async function setupChatTurn(
     const recentMessageWindow = (recentMessages ?? []) as Array<{
       id: string;
       role: ChatMessage["role"];
+      content: unknown;
       tool_calls: ToolCall[] | null;
       artifacts: Artifact[] | null;
       terminal_reason:
@@ -444,6 +466,23 @@ export async function setupChatTurn(
     };
     pendingAskOnly = hasPendingAskOnly(recentMessageWindow);
     pendingActionAsk = hasPendingActionAsk(recentMessageWindow);
+    pendingInterviewAsk = (() => {
+      const latestNonTool = recentMessageWindow.find(
+        (message) => message.role !== "tool",
+      );
+      if (latestNonTool?.role !== "assistant") return false;
+      const ask = (latestNonTool.tool_calls ?? []).find(
+        (call) => call.function.name === "ask_user",
+      );
+      if (!ask) return false;
+      try {
+        return isInterviewAskArgs(
+          JSON.parse(ask.function.arguments) as Record<string, unknown>,
+        );
+      } catch {
+        return false;
+      }
+    })();
     const actionAnswer = validatePendingActionAnswer(
       recentMessageWindow,
       userText,
@@ -528,6 +567,120 @@ export async function setupChatTurn(
             );
           }
         }
+        const selectedModelSource = parseModelSourceChoiceId(
+          selectedClarificationChoiceId,
+        );
+        if (selectedModelSource) {
+          if (modelSourceId) {
+            return turnError(
+              "That source choice conflicts with another attached Post. Choose the source again.",
+              409,
+            );
+          }
+          const stashedSourceId =
+            await deps.stashWorkspacePostAsModelSource({
+              db: sbRaw,
+              workspaceId,
+              postId: selectedModelSource.postId,
+              signal: setupSignal,
+            });
+          if (!stashedSourceId) {
+            return turnError(
+              "That source Post is no longer available in this workspace. Run the search again to choose a current source.",
+              409,
+            );
+          }
+          modelSourceId = stashedSourceId;
+          currentTurnModelSourceOwnership = "server_selected";
+          const originalInstruction =
+            typeof pendingOperationOwner?.content === "string"
+              ? pendingOperationOwner.content.trim()
+              : "";
+          resolvedActionInstruction = [
+            originalInstruction || "Model the selected source Post in my voice.",
+            "The user selected one of the server-presented source candidates.",
+          ].join("\n\n");
+        }
+        // The user answered the source card in PROSE rather than clicking.
+        // Previously nothing bound: modelSourceId stayed undefined, the turn
+        // fell through to the write-from-scratch lane, and the user silently
+        // got a post modelled on nothing they picked. Resolve the reference
+        // against the exact candidate set the card offered.
+        //
+        // Deterministic only here — setup is synchronous routing and must not
+        // grow a network call. Anything ambiguous or unmatched is handed to
+        // the executor, which owns model calls and ask cards.
+        if (!modelSourceId && !selectedModelSource) {
+          const proseCandidates = deps.candidateChoicesFromAsk(pendingAskCall);
+          if (proseCandidates.length > 0) {
+            const hydrated = await deps.hydrateModelSourceCandidates({
+              db: sbRaw,
+              workspaceId,
+              choices: proseCandidates,
+            });
+            const resolution = deps.resolveModelSourceReference(
+              userText,
+              hydrated,
+            );
+            if (resolution.kind === "resolved") {
+              const stashedSourceId =
+                await deps.stashWorkspacePostAsModelSource({
+                  db: sbRaw,
+                  workspaceId,
+                  postId: resolution.candidate.postId,
+                  signal: setupSignal,
+                });
+              if (stashedSourceId) {
+                modelSourceId = stashedSourceId;
+                currentTurnModelSourceOwnership = "server_selected";
+                resolvedActionInstruction = [
+                  "Model the selected source Post in my voice.",
+                  `The user referred to the source by ${resolution.signal}; it resolved to the post they were shown as "Post ${resolution.candidate.position}".`,
+                ].join("\n\n");
+              }
+            } else if (hydrated.length > 0) {
+              // Ambiguous or unmatched — escalate to the model, over the
+              // NARROWED set when the deterministic pass got that far. The
+              // resolver returns a position within a closed candidate list, so
+              // it can neither invent a source nor reach outside what was
+              // offered, and it may answer "unclear".
+              //
+              // This is the only model call in setup, and it is reached only on
+              // an unresolved prose reference — the clear cases never touch it.
+              const narrowed =
+                resolution.kind === "ambiguous"
+                  ? resolution.candidates
+                  : hydrated;
+              const picked = await deps.resolveModelSourceReferenceWithModel({
+                text: userText,
+                candidates: narrowed,
+                workspaceId,
+                signal: setupSignal,
+              });
+              if (picked) {
+                const stashedSourceId =
+                  await deps.stashWorkspacePostAsModelSource({
+                    db: sbRaw,
+                    workspaceId,
+                    postId: picked.postId,
+                    signal: setupSignal,
+                  });
+                if (stashedSourceId) {
+                  modelSourceId = stashedSourceId;
+                  currentTurnModelSourceOwnership = "server_selected";
+                  resolvedActionInstruction = [
+                    "Model the selected source Post in my voice.",
+                    `The user named the source in their own words; it resolved to the post they were shown as "Post ${picked.position}".`,
+                  ].join("\n\n");
+                }
+              }
+              // Still unresolved: fall through as an Ask so the card is
+              // presented again. Asking is the correct last resort — the old
+              // behaviour drafted silently from an unchosen post.
+              if (!modelSourceId) applyTurnOperation({ kind: "ask" });
+            }
+          }
+        }
         if (pendingOperation.operation.kind === "ask") {
           applyTurnOperation({ kind: "ask" });
         } else if (pendingOperation.operation.kind === "edit_artifact") {
@@ -600,7 +753,100 @@ export async function setupChatTurn(
         }
       }
     }
-    let preclaimInstruction = userText;
+
+    // A source reference AFTER the first draft has landed.
+    //
+    // Once "Your draft is ready" is the latest message, pendingAskOnly is
+    // false (the newest assistant turn is a render_post, not an ask), so the
+    // pending-ask resolution above never runs. But the user is still looking
+    // at the same five source cards and can reasonably say "also model post 2
+    // by Maria". That reference used to bind nothing: modelSourceId stayed
+    // null and the writer silently reused the PREVIOUS source, so the reply
+    // agreed to model Maria and then modelled Grace again.
+    //
+    // Resolve against the newest source card still in the window, using the
+    // same deterministic-then-model ladder as the pending-ask path. A stale
+    // card cannot leak in: the choice ids are re-resolved against current
+    // workspace scope before anything binds.
+    if (
+      !modelSourceId &&
+      !pendingAskOnly &&
+      !body.retryOfUserMessageId &&
+      !persistedActionContinuation
+    ) {
+      const followUpAsk = deps.latestModelSourceAskCall(recentMessageWindow);
+      const followUpChoices = deps.candidateChoicesFromAsk(followUpAsk);
+      if (followUpChoices.length > 0) {
+        const hydrated = await deps.hydrateModelSourceCandidates({
+          db: sbRaw,
+          workspaceId,
+          choices: followUpChoices,
+        });
+        const resolution = deps.resolveModelSourceReference(userText, hydrated);
+        let picked =
+          resolution.kind === "resolved" ? resolution.candidate : null;
+        // Only escalate when the user actually pointed at a source. Ordinary
+        // follow-ups ("make it shorter") must stay unbound, so an unmatched
+        // reference is left alone rather than sent to the resolver.
+        if (!picked && resolution.kind === "ambiguous") {
+          picked = await deps.resolveModelSourceReferenceWithModel({
+            text: userText,
+            candidates: resolution.candidates,
+            workspaceId,
+            signal: setupSignal,
+          });
+        }
+        if (picked) {
+          const stashedSourceId = await deps.stashWorkspacePostAsModelSource({
+            db: sbRaw,
+            workspaceId,
+            postId: picked.postId,
+            signal: setupSignal,
+          });
+          if (stashedSourceId) {
+            modelSourceId = stashedSourceId;
+            currentTurnModelSourceOwnership = "server_selected";
+            resolvedActionInstruction = [
+              userText,
+              `The user referred to a source Post they were already shown; it resolved to "Post ${picked.position}". Model THAT post, not any source used earlier in this chat.`,
+            ].join("\n\n");
+          }
+        }
+      }
+    }
+    // A chosen source stays chosen until the user picks a different one.
+    //
+    // model_source_id was written on the ONE user message that bound it, and
+    // never read again except on retry. So "Let's also model Chris's post"
+    // bound Chris, and the very next turn ("Ok let's model it", or the same
+    // request re-sent after switching Ask -> Create) bound nothing and drafted
+    // from the wrong source. Switching composer mode is not a decision to
+    // abandon the source — nothing in the UI says it is.
+    //
+    // Inherit the most recent source in the window instead. Anything that
+    // establishes a source this turn has already run above and short-circuits
+    // this, so an explicit new choice always wins over the inherited one.
+    // ...unless the user asks to stop modeling. Without this the carry-forward
+    // has no exit: "forget the source, write from scratch" resolves to no NEW
+    // source, so the previous one is inherited and the draft is modelled on it
+    // anyway — the exact opposite of the request.
+    if (
+      !modelSourceId &&
+      !body.retryOfUserMessageId &&
+      !persistedActionContinuation &&
+      !deps.releasesModelSource(userText)
+    ) {
+      const inherited = recentMessageWindow.find(
+        (message) =>
+          message.role === "user" &&
+          typeof message.model_source_id === "string",
+      )?.model_source_id;
+      if (inherited) {
+        modelSourceId = inherited;
+        currentTurnModelSourceOwnership = "server_selected";
+      }
+    }
+    let preclaimInstruction = resolvedActionInstruction ?? userText;
     if (actionAnswer.cancelled && pendingActionAsk) {
       persistedActionContinuation = true;
       normalizedActionRoute = {
@@ -716,6 +962,31 @@ export async function setupChatTurn(
           requestedGenerationConfig &&
           requestedGenerationConfig.draftCount !==
             pairedGenerationConfigMarker.config.draftCount
+        ) {
+          return turnError(
+            "That Retry no longer matches the draft count used by the original task. Send a new request instead.",
+            409,
+          );
+        }
+        if (
+          requestedGenerationConfig?.explorationLane &&
+          requestedGenerationConfig.explorationLane !==
+            pairedGenerationConfigMarker.config.explorationLane
+        ) {
+          return turnError(
+            "That Retry no longer matches the exploration lane used by the original task. Send a new request instead.",
+            409,
+          );
+        }
+        // A retry that TYPES a different count in the message text (no chip):
+        // the frozen count would silently win over the fresh instruction —
+        // the user asks for 1 draft and watches 6 run. Same refusal as the
+        // chip mismatch above: send it as a new request instead of replaying
+        // the wrong task.
+        const retryTextCount = deps.explicitMessageDraftCount(userText);
+        if (
+          retryTextCount !== null &&
+          retryTextCount !== pairedGenerationConfigMarker.config.draftCount
         ) {
           return turnError(
             "That Retry no longer matches the draft count used by the original task. Send a new request instead.",
@@ -1060,6 +1331,16 @@ export async function setupChatTurn(
     hasAuthoritativeDraftCount = preclaim.hasAuthoritativeDraftCount;
     composerTaskSelection = preclaim.composerTaskSelection;
     composerTaskContext = preclaim.composerTaskContext;
+    // Candidate selection is the first half of a create operation even when
+    // the request arrived as starter/free text rather than a typed command.
+    // Persist that authority on the owner row so the answer to the ask card
+    // cannot degrade into a generic answer turn.
+    if (
+      !currentTurnOperation &&
+      preclaim.preclaimReadOnlyRoute?.outcome?.kind === "source_selection"
+    ) {
+      applyTurnOperation({ kind: "create_post", delivery: "atomic" });
+    }
     activeDraftCountOverride = preclaim.activeDraftCountOverride;
     normalizedActionRoute = preclaim.normalizedActionRoute;
     const preclaimReadOnlyRoute = preclaim.preclaimReadOnlyRoute;
@@ -1170,7 +1451,10 @@ export async function setupChatTurn(
     coworkTelemetry.configure({ traceId: claimedUserMessageId });
 
     if (chat.title === "New chat") {
-      const title = userText.replace(/\s+/g, " ").slice(0, 60).trim();
+      const title = truncateAtWordBoundary(
+        userText.replace(/\s+/g, " "),
+        60,
+      );
       if (title) {
         let titleUpdate = sbRaw
           .from("chats")
@@ -1377,6 +1661,7 @@ export async function setupChatTurn(
     customSkillBodies = turnContext.customSkillBodies;
     customSkillNames = turnContext.customSkillNames;
     structureMatch = turnContext.structureMatch;
+    workspaceKnowledge = turnContext.workspaceKnowledge;
 
     const userColumnPatch: Record<string, unknown> = {};
     const currentTurnMarkers: ToolCall[] = [];
@@ -1616,6 +1901,7 @@ export async function setupChatTurn(
     resolvedCustomSkills,
     forcedNoModelFormatId,
     creatorStyleId,
+    workspaceKnowledge,
     creatorStyleRetryContext,
     leadMagnetId,
     createLeadMagnet,
@@ -1644,6 +1930,7 @@ export async function setupChatTurn(
     persistedActionContinuation,
     pendingActionAsk,
     pendingAskOnly,
+    pendingInterviewAsk,
     artifactClarification,
     fallthroughClarification,
     modeledBatchContinuation,

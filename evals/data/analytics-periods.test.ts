@@ -160,7 +160,13 @@ describe("period analytics", () => {
 
   test("keeps measured posts whose cumulative metrics did not grow", () => {
     const posts = [post("steady", "2026-07-20T10:00:00Z")];
+    // Debut sits BEFORE the 7d window so this isolates the no-growth case:
+    // an in-window debut is itself a gain and would mask what is being tested.
     const snapshots = [
+      snapshot("steady", "2026-07-01", {
+        impressions: 100,
+        likes: 10,
+      }),
       snapshot("steady", "2026-07-26", {
         impressions: 100,
         likes: 10,
@@ -188,7 +194,15 @@ describe("period analytics", () => {
 
   test("calculates zero growth from available metrics without inventing saves", () => {
     const posts = [post("partial", "2026-07-20T10:00:00Z")];
+    // Debut before the window so the assertion measures growth-from-prior,
+    // which is what the null-preservation behavior is about.
     const snapshots = [
+      snapshot("partial", "2026-07-01", {
+        impressions: 100,
+        comments: 5,
+        shares: 2,
+        saves: null,
+      }),
       snapshot("partial", "2026-07-26", {
         impressions: 100,
         comments: 5,
@@ -241,7 +255,18 @@ describe("analytics overview trends", () => {
       }),
     ]);
 
+    // The debut day now appears (a first measurement is a gain from zero);
+    // the Jul 27 row is unchanged and is what this test is really about —
+    // deltas computed against the prior cumulative reading.
     expect(trend).toEqual([
+      {
+        date: "2026-07-26",
+        impressions: 100,
+        engagements: 13,
+        engagementRate: 13,
+        comments: 2,
+        savesAndShares: 1,
+      },
       {
         date: "2026-07-27",
         impressions: 50,
@@ -269,7 +294,14 @@ describe("analytics overview trends", () => {
       }),
     ]);
 
+    // The debut day is included now, and the null must survive it: a metric
+    // LinkedIn did not provide stays null rather than becoming a zero gain.
     expect(trend).toEqual([
+      expect.objectContaining({
+        date: "2026-07-25",
+        impressions: null,
+        comments: 1,
+      }),
       expect.objectContaining({
         date: "2026-07-26",
         impressions: null,
@@ -303,7 +335,10 @@ describe("analytics overview trends", () => {
       }),
     ]);
 
+    // Debut row precedes it; the Jul 27 rate is what this test asserts and
+    // is unchanged.
     expect(trend).toEqual([
+      expect.objectContaining({ date: "2026-07-26" }),
       expect.objectContaining({
         date: "2026-07-27",
         impressions: 50,
@@ -335,7 +370,10 @@ describe("analytics overview trends", () => {
       }),
     ]);
 
+    // Debut row precedes it. The Jul 27 assertion is the point: the
+    // interaction-less post contributes impressions but no engagements.
     expect(trend).toEqual([
+      expect.objectContaining({ date: "2026-07-26" }),
       expect.objectContaining({
         date: "2026-07-27",
         impressions: 900,

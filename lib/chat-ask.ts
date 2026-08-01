@@ -53,6 +53,26 @@ export function isAskSelectionComplete(
   );
 }
 
+// The interview card walks its questions locally and sends ONE message at the
+// end. This composes that message: every question paired with its answer, in
+// order, with unanswered ones marked so the executor can tell "passed on it"
+// from "answered briefly" when it distils them into knowledge.
+export const INTERVIEW_SKIPPED = "[skipped]";
+
+export function composeInterviewAnswers(
+  questions: string[],
+  answers: string[],
+): string {
+  return questions
+    .map(
+      (question, index) =>
+        `Q${index + 1}: ${question}\nA${index + 1}: ${
+          answers[index]?.trim() || INTERVIEW_SKIPPED
+        }`,
+    )
+    .join("\n\n");
+}
+
 export function toggleAskOption(
   ask: AskQuestion,
   selected: string[],

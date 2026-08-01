@@ -603,7 +603,7 @@ export function AgentBriefing() {
         ) : null}
 
         {planItems.length > 0 ? (
-          <ul className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-7">
+          <ul className="-mx-1 mt-2 flex snap-x snap-mandatory gap-2 overflow-x-auto px-1 pb-2 sm:mx-0 sm:grid sm:grid-cols-2 sm:overflow-visible sm:px-0 sm:pb-0 lg:grid-cols-7">
             {planItems.map((item) => {
               const busy = busyId === item.id;
               const readiness = itemDraftReadiness(item);
@@ -620,7 +620,7 @@ export function AgentBriefing() {
                 <li
                   key={item.id}
                   data-testid="weekly-cadence-card"
-                  className="flex min-h-56 min-w-0 flex-col rounded-xl border border-border bg-background p-3 shadow-sm"
+                  className="flex min-h-56 w-[82vw] max-w-[18rem] shrink-0 snap-start flex-col rounded-xl border border-border bg-background p-3 shadow-sm sm:w-auto sm:max-w-none"
                 >
                   <div className="flex items-start justify-between gap-1.5">
                     <div>

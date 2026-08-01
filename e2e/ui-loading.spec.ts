@@ -48,10 +48,45 @@ test.describe("UI loading and performance guardrails", () => {
     await expect(page.getByRole("button", { name: /new session/i }).first()).toBeVisible({
       timeout: 5_000,
     });
-    await expect(page.getByPlaceholder("What do you want to write?")).toBeVisible({
+    // The composer placeholder is state-dependent ("Ask Cowork anything…" by
+    // default, other copy while sending or in a command mode), so assert the
+    // composer itself rather than one placeholder string.
+    await expect(
+      page.locator("textarea[placeholder]").first(),
+    ).toBeVisible({
       timeout: 5_000,
     });
     await expect(page.locator("main, [role=main]").first()).toBeVisible();
+  });
+
+  test("workspace search opens from the keyboard shortcut", async ({ page }) => {
+    await page.goto("/dashboard/agent");
+
+    await page.keyboard.press("Control+k");
+    const palette = page.getByRole("dialog", { name: "Command palette" });
+    await expect(palette).toBeVisible();
+    await expect(palette.getByRole("combobox")).toBeFocused();
+
+    await page.keyboard.press("Escape");
+    await expect(palette).toBeHidden();
+
+    await page.keyboard.press("Control+k");
+    await expect(palette).toBeVisible();
+  });
+
+  test("workspace search remains available from the mobile header", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/dashboard/agent");
+
+    const search = page.getByRole("button", {
+      name: "Search the workspace",
+    });
+    await expect(search).toBeVisible();
+    await search.click();
+
+    const palette = page.getByRole("dialog", { name: "Command palette" });
+    await expect(palette).toBeVisible();
+    await expect(palette.getByRole("combobox")).toBeFocused();
   });
 
   test("lead magnets route shows useful content quickly", async ({ page }) => {

@@ -1,4 +1,5 @@
 import { scopedSupabase } from "@/lib/supabase-scoped";
+import { selectAllRows, selectInChunks } from "@/lib/db-paginate";
 import { getConnection, canPublish } from "@/lib/publishing";
 import { PageHeader, PageShell } from "@/components/app-surface";
 import { SurfaceHelp } from "@/components/surface-help";
@@ -18,6 +19,30 @@ import {
 
 export const dynamic = "force-dynamic";
 
+// Shapes of the two paged reads below. Declared locally (rather than threading
+// the generated Supabase generics) to keep the query builders from tripping
+// TS2589 "type instantiation is excessively deep".
+type AnalyticsSnapshotRow = {
+  artifact_id: string;
+  snapshot_date: string;
+  impressions: number | null;
+  reach: number | null;
+  likes: number | null;
+  comments: number | null;
+  shares: number | null;
+  saves: number | null;
+  sends: number | null;
+  video_views: number | null;
+  fetched_at: string | null;
+};
+type ArtifactRow = {
+  id: string;
+  title: string | null;
+  body: string | null;
+  published_at: string | null;
+  kind: string | null;
+};
+
 // Analytics — LinkedIn performance of posts published THROUGH SwipeIn.
 // Zernio only reports on posts it published, so posts published manually on
 // LinkedIn never appear here; the copy frames the page accordingly. Data
@@ -31,15 +56,21 @@ export default async function AnalyticsPage({
   const sb = await scopedSupabase();
   const filters = parseAnalyticsFilters(await searchParams);
 
-  const [snapshotsRes, connection, eligiblePostsRes] = await Promise.all([
-    sb.raw
-      .from("post_analytics")
-      .select(
-        "artifact_id, snapshot_date, impressions, reach, likes, comments, shares, saves, sends, video_views, fetched_at",
-      )
-      .eq("workspace_id", sb.workspaceId)
-      .order("snapshot_date", { ascending: true })
-      .limit(5000),
+  const [snapshotRows, connection, eligiblePostsRes] = await Promise.all([
+    // Page past PostgREST's 1000-row cap. `.limit(5000)` did NOT lift it: the
+    // response still stopped at 1000, and because the rows are date-ASCENDING
+    // the truncation dropped the NEWEST snapshots — analytics froze at an old
+    // date and silently stopped updating. One snapshot per published post per
+    // day reaches 1000 in about ten weeks at 14 posts.
+    selectAllRows<AnalyticsSnapshotRow>(() =>
+      sb.raw
+        .from("post_analytics")
+        .select(
+          "artifact_id, snapshot_date, impressions, reach, likes, comments, shares, saves, sends, video_views, fetched_at",
+        )
+        .eq("workspace_id", sb.workspaceId)
+        .order("snapshot_date", { ascending: true }) as never,
+    ),
     getConnection(sb.workspaceId, sb.raw),
     sb.raw
       .from("chat_artifacts")
@@ -48,7 +79,7 @@ export default async function AnalyticsPage({
       .eq("schedule_status", "published")
       .not("zernio_post_id", "is", null),
   ]);
-  const snapshots = snapshotsRes.data ?? [];
+  const snapshots = snapshotRows;
 
   // Latest snapshot per artifact = the post's current numbers (rows are
   // date-ascending, so the last write per artifact wins).
@@ -61,11 +92,15 @@ export default async function AnalyticsPage({
   const artifactIds = [...latestByArtifact.keys()];
   let posts: PostMetricsRow[] = [];
   if (artifactIds.length) {
-    const { data: artifacts } = await sb.raw
-      .from("chat_artifacts")
-      .select("id, title, body, published_at, kind")
-      .eq("workspace_id", sb.workspaceId)
-      .in("id", artifactIds);
+    // Chunk the id list: a long `.in(...)` makes PostgREST reject the request
+    // with 400 "URL too long", which would blank the whole page.
+    const artifacts = await selectInChunks<ArtifactRow>(artifactIds, (ids) =>
+      sb.raw
+        .from("chat_artifacts")
+        .select("id, title, body, published_at, kind")
+        .eq("workspace_id", sb.workspaceId)
+        .in("id", ids) as never,
+    );
     posts = (artifacts ?? [])
       .map((a) => {
         const m = latestByArtifact.get(a.id as string);

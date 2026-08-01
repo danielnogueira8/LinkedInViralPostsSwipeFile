@@ -853,19 +853,6 @@ function EditProfileForm({
         />
       </EditSection>
 
-      {(draft.interview_context?.length ?? 0) > 0 ? (
-        <EditSection title="Interview context">
-          <p className="text-xs text-muted-foreground">
-            Context distilled from your interview answers — used in every draft.
-            Edit or remove any line. (Re-answer the interview below to regenerate.)
-          </p>
-          <ExemplarEditor
-            items={draft.interview_context ?? []}
-            onChange={(items) => setField("interview_context", items)}
-          />
-        </EditSection>
-      ) : null}
-
       {draft.lead_magnet_style ? (
         <EditSection title="Lead magnet style">
           <p className="text-xs text-muted-foreground">

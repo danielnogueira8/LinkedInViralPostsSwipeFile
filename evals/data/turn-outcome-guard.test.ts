@@ -138,6 +138,52 @@ describe("turn outcome guard", () => {
     expect(output.map((event) => event.type)).toEqual(["artifact", "done"]);
   });
 
+  test("an ask may present verified citation cards but never a draft", async () => {
+    const plan: TurnPlan = {
+      ...common({ kind: "research", expectedCount: 1 }),
+      kind: "research",
+      route: "read_only_orchestrator",
+      researchRoute: {
+        kind: "workspace_research",
+        minimumSources: 3,
+        outcome: {
+          kind: "source_selection",
+          candidateCount: 5,
+          searchPoolSize: 10,
+        },
+      },
+    };
+    const cite: Artifact = {
+      id: "grounded-source:00000000-0000-4000-8000-000000000701",
+      kind: "cite",
+      title: "Verified source post",
+      body: "",
+      meta: { postId: "00000000-0000-4000-8000-000000000701" },
+    };
+    const output = await collect(
+      enforceTurnOutcome(
+        plan,
+        events({
+          type: "done",
+          terminalReason: "ask",
+          message: {
+            content: "Choose a source.",
+            tool_calls: null,
+            artifacts: [cite],
+            toolMessages: [],
+            inputTokens: 0,
+            outputTokens: 0,
+          },
+        }),
+      ),
+    );
+
+    expect(output.map((event) => event.type)).toEqual(["artifact", "done"]);
+    expect(
+      output.find((event) => event.type === "artifact"),
+    ).toMatchObject({ artifact: { kind: "cite", id: cite.id } });
+  });
+
   test("an explicit Create discards a recoverable partial set", async () => {
     const plan: TurnPlan = {
       ...common({ kind: "post", expectedCount: 2 }),

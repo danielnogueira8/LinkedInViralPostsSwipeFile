@@ -100,7 +100,6 @@ describe("editorNavigationDrafts — the posts the editor's up/down arrows walk"
   ];
   const nav = (over: Partial<Parameters<typeof editorNavigationDrafts>[0]>) =>
     editorNavigationDrafts({
-      view: "board",
       drafts,
       editingId: "drafting-1",
       query: "",
@@ -108,33 +107,31 @@ describe("editorNavigationDrafts — the posts the editor's up/down arrows walk"
       ...over,
     });
 
-  test("board view: stays inside the open post's OWN column", () => {
+  test("stays inside the open post's OWN column", () => {
     // The bug: arrows walked the raw drafts array, hopping a Drafting post
     // straight into Posted.
     expect(ids(nav({}))).toEqual(["drafting-1", "drafting-2"]);
     expect(ids(nav({ editingId: "posted-2" }))).toEqual(["posted-1", "posted-2"]);
   });
 
-  test("board view: column order follows the shown order (planned date, then recency)", () => {
-    const planned = [
-      draft({ id: "later", status: "drafting", planToPostOn: "2026-07-10" }),
-      draft({ id: "sooner", status: "drafting", planToPostOn: "2026-07-01" }),
-      draft({ id: "undated", status: "drafting" }),
+  test("column order follows the shown recency order", () => {
+    const ordered = [
+      draft({ id: "older", status: "drafting", createdAt: "2026-07-01T00:00:00.000Z" }),
+      draft({ id: "newer", status: "drafting", createdAt: "2026-07-02T00:00:00.000Z" }),
     ];
     expect(
       ids(
         editorNavigationDrafts({
-          view: "board",
-          drafts: planned,
-          editingId: "undated",
+          drafts: ordered,
+          editingId: "newer",
           query: "",
           kindFilter: "all",
         }),
       ),
-    ).toEqual(["sooner", "later", "undated"]);
+    ).toEqual(["newer", "older"]);
   });
 
-  test("board view: honors the search/kind filter (never lands on a hidden post)", () => {
+  test("honors the search/kind filter (never lands on a hidden post)", () => {
     const mixed = [
       draft({ id: "keep", status: "drafting", body: "launch recap" }),
       draft({ id: "hidden", status: "drafting", body: "unrelated" }),
@@ -142,7 +139,6 @@ describe("editorNavigationDrafts — the posts the editor's up/down arrows walk"
     expect(
       ids(
         editorNavigationDrafts({
-          view: "board",
           drafts: mixed,
           editingId: "keep",
           query: "launch",
@@ -152,19 +148,9 @@ describe("editorNavigationDrafts — the posts the editor's up/down arrows walk"
     ).toEqual(["keep"]);
   });
 
-  test("board view: open post missing or filtered out → nothing to walk", () => {
+  test("open post missing or filtered out → nothing to walk", () => {
     expect(ids(nav({ query: "no-such-post" }))).toEqual([]);
     expect(ids(nav({ editingId: null }))).toEqual([]);
-  });
-
-  test("calendar view: walks every filtered post in pipeline order", () => {
-    // The calendar mixes statuses by day, so there is no single lane to stay in.
-    expect(ids(nav({ view: "calendar" }))).toEqual([
-      "drafting-1",
-      "drafting-2",
-      "posted-1",
-      "posted-2",
-    ]);
   });
 });
 
@@ -320,17 +306,17 @@ describe("groupDraftsForBoard — filters", () => {
 });
 
 describe("groupDraftsForBoard — sort within a column", () => {
-  test("planned dates sort soonest-first, ahead of undated", () => {
+  test("newest first, always", () => {
     const g = groupDraftsForBoard(
       [
-        draft({ id: "undated" }),
-        draft({ id: "later", planToPostOn: "2026-07-10" }),
-        draft({ id: "soon", planToPostOn: "2026-06-28" }),
+        draft({ id: "old", createdAt: "2026-06-20T00:00:00.000Z" }),
+        draft({ id: "older", createdAt: "2026-06-01T00:00:00.000Z" }),
+        draft({ id: "fresh-mcp", createdAt: "2026-06-27T12:00:00.000Z" }),
       ],
       "",
       "all",
     );
-    expect(ids(g.drafting)).toEqual(["soon", "later", "undated"]);
+    expect(ids(g.drafting)).toEqual(["fresh-mcp", "old", "older"]);
   });
 
   test("undated cards fall back to recency (newest first)", () => {

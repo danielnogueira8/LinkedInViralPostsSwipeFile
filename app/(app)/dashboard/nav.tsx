@@ -53,7 +53,7 @@ export function SideNav({ badges: initialBadges }: { badges?: Record<string, num
   const effectivePath = pendingHref ?? pathname;
 
   return (
-    <nav className="flex flex-col gap-4">
+    <nav className="flex flex-col gap-4" aria-label="Workspace navigation">
       {NAV_SECTIONS.map((section) => (
         <div key={section.label}>
           <div className="px-3 pb-1 text-xs font-medium text-muted-foreground/70">

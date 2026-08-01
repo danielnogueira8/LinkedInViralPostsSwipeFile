@@ -66,6 +66,7 @@ export type PersistedHarnessDraft = {
 
 type Row = Record<string, unknown>;
 type TableName =
+  | "posts"
   | "chats"
   | "chat_action_checkpoints"
   | "chat_action_retry_contexts"
@@ -79,7 +80,8 @@ type TableName =
   | "custom_skills"
   | "saved_posts"
   | "usage_events"
-  | "voice_profiles";
+  | "voice_profiles"
+  | "workspace_accounts";
 
 type Filter =
   | { kind: "eq"; column: string; value: unknown }
@@ -122,6 +124,7 @@ export class CoworkHarnessStore {
   missCreatorStyleMarkerUpdateTarget = false;
   private readonly readCounts = new Map<TableName, number>();
   private readonly tables: Record<TableName, Row[]> = {
+    posts: [],
     chats: [],
     chat_action_checkpoints: [],
     chat_action_retry_contexts: [],
@@ -136,6 +139,7 @@ export class CoworkHarnessStore {
     saved_posts: [],
     usage_events: [],
     voice_profiles: [],
+    workspace_accounts: [],
   };
 
   constructor() {
@@ -285,6 +289,43 @@ export class CoworkHarnessStore {
       media_type: "none",
       media_urls: [],
     });
+  }
+
+  seedWorkspacePostCandidate(source: {
+    id: string;
+    postText: string;
+    postUrl: string;
+    postType?: "regular" | "lead_magnet";
+    authorName?: string;
+  }): void {
+    const accountId = "account_harness";
+    if (
+      !this.tables.workspace_accounts.some(
+        (row) =>
+          row.workspace_id === this.workspaceId &&
+          row.account_id === accountId,
+      )
+    ) {
+      this.insert("workspace_accounts", {
+        workspace_id: this.workspaceId,
+        account_id: accountId,
+      });
+    }
+    if (!this.tables.posts.some((row) => row.id === source.id)) {
+      this.insert("posts", {
+        id: source.id,
+        account_id: accountId,
+        text: source.postText,
+        post_url: source.postUrl,
+        post_type: source.postType ?? "regular",
+        media_type: "none",
+        media_urls: [],
+        accounts: {
+          name: source.authorName ?? "Fixture Creator",
+          profile_pic_url: null,
+        },
+      });
+    }
   }
 
   seedHistoricalBookmarkModelSource(source: {

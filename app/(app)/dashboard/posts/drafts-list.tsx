@@ -5,24 +5,23 @@ import dynamic from "next/dynamic";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import {
-  Search,
   Calendar,
   CalendarClock,
   AlertCircle,
-  Plus,
   LayoutGrid,
-  ChevronLeft,
-  ChevronRight,
+  Plus,
   Paperclip,
   Link as LinkIcon,
   MoreHorizontal,
   Check,
+  Clock,
   Trash2,
   X,
 } from "lucide-react";
 import { AiIcon } from "@/components/ai-icon";
 import { isAgentSuggestedMeta } from "@/lib/agent-loop/constants";
 import { Button } from "@/components/ui/button";
+import { SearchField } from "@/components/ui/search-field";
 import { cn } from "@/lib/utils";
 import {
   byId,
@@ -36,6 +35,7 @@ import { loadPostingQueueDraft } from "@/lib/posting-queue-draft";
 import {
   canDragDraftToPostingQueue,
   DRAFT_DRAG_MIME,
+  formatScheduleToast,
   type PostingQueueDropTarget,
 } from "@/lib/posting-queue";
 import type { PostPreviewAuthor } from "../draft-editor-modal";
@@ -48,12 +48,12 @@ export type { Draft, DraftKind, DraftStatus, ScheduleStatus } from "@/lib/draft-
 import { classifyPost } from "@/lib/post-type";
 import {
   StatusPill,
-  Surface,
   Toolbar,
   segmentedControlClass,
   segmentedItemClass,
 } from "@/components/app-surface";
 import { PostingQueueWidget } from "./posting-queue-widget";
+import { PostsCalendar } from "./posts-calendar";
 
 const DraftEditorModal = dynamic(
   () => import("../draft-editor-modal").then((mod) => mod.DraftEditorModal),
@@ -94,8 +94,26 @@ function kindBadge(kind: DraftKind): { label: string; cls: string } | null {
   return null;
 }
 
-// A committed, timed LinkedIn publish (distinct from planToPostOn, the soft
-// calendar date). Null scheduleStatus = planning-only. Lifecycle:
+// True for drafts created through the MCP connector (Claude) — the
+// create_draft tool stamps meta.created_via = "mcp" on every one.
+export function isMcpCreatedDraft(draft: Draft): boolean {
+  return (draft.meta as { created_via?: unknown } | null)?.created_via === "mcp";
+}
+
+// "Jul 27, 8:57 PM" — the created date+time stamp every board card shows, so
+// a freshly landed draft is visibly the newest thing in the lane.
+export function formatCreatedAt(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+// A committed, timed LinkedIn publish. Lifecycle:
 // scheduled → publishing → published | failed (set by the cron).
 
 // Reconcile a fresh server snapshot into the current client list — ADD-ONLY.
@@ -128,8 +146,9 @@ export function filterKindForDraft(draft: Draft): DraftKind {
 }
 
 // Pure board model: filter by search query + kind, group by status, sort each
-// column by planned date (soonest first, undated last) then recency. Extracted
-// + exported so it's unit-testable independent of the React component.
+// column by recency (newest first — a draft that just landed, e.g. via the MCP
+// connector, always surfaces at the top of its lane).
+// Extracted + exported so it's unit-testable independent of the React component.
 export function groupDraftsForBoard(
   drafts: Draft[],
   query: string,
@@ -154,13 +173,7 @@ export function groupDraftsForBoard(
     groups[boardColumnForDraft(d)].push(d);
   }
   for (const s of Object.keys(groups) as BoardColumnId[]) {
-    groups[s].sort((a, b) => {
-      if (a.planToPostOn && b.planToPostOn)
-        return a.planToPostOn.localeCompare(b.planToPostOn);
-      if (a.planToPostOn) return -1;
-      if (b.planToPostOn) return 1;
-      return b.createdAt.localeCompare(a.createdAt);
-    });
+    groups[s].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
   return groups;
 }
@@ -175,91 +188,21 @@ export function boardColumnForDraft(draft: Draft): BoardColumnId {
   return draft.status;
 }
 
-// The posts the editor's up/down arrows move through. Board view: ONLY the
-// posts in the open draft's own column, in the column's shown order — the
-// arrows walk the lane you're looking at and never hop a Drafting post into
-// Posted. Calendar view: every visible post in pipeline order (the calendar
-// mixes statuses by day, so there is no single lane to stay in). Both honor
-// the search/kind filter so navigation can't land on a hidden post.
+// The posts the editor's up/down arrows move through: ONLY the posts in the
+// open draft's own column, in the column's shown order. The arrows walk the
+// lane you're looking at and never hop a Drafting post into Posted. Search and
+// kind filters are honored so navigation can't land on a hidden post.
 export function editorNavigationDrafts(input: {
-  view: "board" | "calendar";
   drafts: Draft[];
   editingId: string | null;
   query: string;
   kindFilter: "all" | DraftKind;
 }): Draft[] {
   const groups = groupDraftsForBoard(input.drafts, input.query, input.kindFilter);
-  if (input.view === "calendar") {
-    return (Object.keys(groups) as BoardColumnId[]).flatMap((c) => groups[c]);
-  }
   const editing = input.drafts.find((d) => d.id === input.editingId);
   if (!editing) return [];
   return groups[boardColumnForDraft(editing)];
 }
-
-// ---------------------------------------------------------------------------
-// Calendar-view helpers (pure + exported so the month math is unit-tested).
-// ---------------------------------------------------------------------------
-
-// A local YYYY-MM-DD key for a Date (calendar day, local time).
-export function dayKey(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
-// Bucket posts by their plan_to_post_on day, and collect undated ones. Filtered
-// by the same search/kind filter as the board so the two views agree.
-export function groupPostsByDay(
-  drafts: Draft[],
-  query: string,
-  kindFilter: "all" | DraftKind,
-): { byDay: Record<string, Draft[]>; unscheduled: Draft[] } {
-  const q = query.trim().toLowerCase();
-  const byDay: Record<string, Draft[]> = {};
-  const unscheduled: Draft[] = [];
-  for (const d of drafts) {
-    if (kindFilter !== "all" && filterKindForDraft(d) !== kindFilter) continue;
-    if (
-      q &&
-      !(d.title ?? "").toLowerCase().includes(q) &&
-      !d.body.toLowerCase().includes(q)
-    )
-      continue;
-    if (d.planToPostOn) (byDay[d.planToPostOn] ??= []).push(d);
-    else unscheduled.push(d);
-  }
-  return { byDay, unscheduled };
-}
-
-// The 6-week (42-cell) grid for a month, Monday-first, including the leading/
-// trailing days from adjacent months so the grid is always full. Each cell
-// carries its date, dayKey, and whether it's in the displayed month.
-export function buildCalendarMonth(
-  year: number,
-  month: number, // 0-11
-): { date: Date; key: string; inMonth: boolean }[] {
-  const first = new Date(year, month, 1);
-  // Monday-first offset: getDay() is 0=Sun..6=Sat → shift so Monday=0.
-  const offset = (first.getDay() + 6) % 7;
-  const start = new Date(year, month, 1 - offset);
-  const cells: { date: Date; key: string; inMonth: boolean }[] = [];
-  for (let i = 0; i < 42; i++) {
-    const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
-    cells.push({ date: d, key: dayKey(d), inMonth: d.getMonth() === month });
-  }
-  return cells;
-}
-
-// Card background tint per status — same color language as the board's dots.
-// Used for the calendar day chips.
-export const STATUS_CHIP: Record<DraftStatus, string> = {
-  idea: "bg-state-warning-bg text-state-warning border-state-warning-border",
-  drafting: "bg-state-info-bg text-state-info border-state-info-border",
-  ready: "bg-state-success-bg text-state-success border-state-success-border",
-  posted: "bg-muted text-muted-foreground border-border/70",
-};
 
 // The columns, in pipeline order. `accent` tints the header so the stages read
 // as a progression. Scheduled is display-only: scheduling requires choosing a
@@ -372,27 +315,9 @@ export function DraftsList({
   // it. `editorOpen` drives the dialog so closing animates out before we drop
   // the target.
   const [editorOpen, setEditorOpen] = useState(false);
-  // Board vs calendar view. Default to Kanban; the last choice is remembered in
-  // localStorage so it sticks across visits. We MUST start at the SSR default
-  // ("board") so the server and first client render agree (a localStorage read
-  // in the initializer would mismatch and throw a hydration error). The saved
-  // choice is applied right after mount, before paint, via useLayoutEffect-like
-  // timing — using useEffect here is fine: the flash is one frame and only for a
-  // user who previously chose calendar.
-  const [view, setView] = useState<"board" | "calendar">("board");
-  useEffect(() => {
-    const saved = window.localStorage.getItem("swipein:posts-view");
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (saved === "calendar") setView("calendar");
-  }, []);
-  const chooseView = (v: "board" | "calendar") => {
-    setView(v);
-    try {
-      localStorage.setItem("swipein:posts-view", v);
-    } catch {
-      /* non-fatal */
-    }
-  };
+  const [newPostQueueTarget, setNewPostQueueTarget] = useState<
+    (PostingQueueDropTarget & { label: string }) | null
+  >(null);
   // Track the OPEN post by id (not a frozen copy) so the drawer always reflects
   // the live draft — optimistic title/status/date changes flow straight in.
   // `null` = the "new post" mode.
@@ -572,10 +497,12 @@ export function DraftsList({
   };
 
   const openNew = () => {
+    setNewPostQueueTarget(null);
     setEditingId(null);
     setEditorOpen(true);
   };
   const openEdit = (draft: Draft) => {
+    setNewPostQueueTarget(null);
     setEditingId(draft.id);
     setEditorOpen(true);
   };
@@ -595,13 +522,11 @@ export function DraftsList({
   // The live draft for the open drawer, derived from `drafts` by id (so meta
   // edits reflect instantly). null when creating a new post.
   const editing = editingId ? drafts.find((d) => d.id === editingId) ?? null : null;
-  // Prev/next walk the VISIBLE grouping, not the raw drafts array: on the board
-  // that's the open post's own column (in shown order), so the arrows can never
-  // hop lanes (a Drafting post straight into Posted); on the calendar it's the
-  // filtered list in pipeline order. See editorNavigationDrafts.
+  // Prev/next walk the open post's visible column in shown order, so the arrows
+  // can never hop lanes (for example, Drafting straight into Posted).
   const navDrafts = useMemo(
-    () => editorNavigationDrafts({ view, drafts, editingId, query, kindFilter }),
-    [view, drafts, editingId, query, kindFilter],
+    () => editorNavigationDrafts({ drafts, editingId, query, kindFilter }),
+    [drafts, editingId, query, kindFilter],
   );
   const { previousId, nextId } = adjacentDraftIds(navDrafts, editingId);
 
@@ -631,37 +556,9 @@ export function DraftsList({
     }
   };
 
-  // Set/clear a post's planned date (optimistic). Used by calendar drag-to-
-  // schedule (drop on a day) and the "remove from calendar" action.
-  const setDate = async (id: string, date: string | null) => {
-    const card = drafts.find((x) => x.id === id);
-    if (!card || (card.planToPostOn ?? null) === date) return;
-    // Reconcile-don't-restore (see moveTo): revert only planToPostOn on failure.
-    const priorDate = card.planToPostOn ?? null;
-    setDrafts((d) => patchById(d, id, { planToPostOn: date }));
-    try {
-      const res = await fetch(`/api/drafts/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ plan_to_post_on: date }),
-      });
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error || "Failed to schedule");
-      toast.success(date ? "Planning date set" : "Planning date cleared");
-    } catch (e) {
-      setDrafts((cur) => restoreFieldById(cur, id, "planToPostOn", priorDate));
-      toast.error((e as Error).message);
-    }
-  };
-
   // Filtered + grouped-by-status (pure helper, memoized).
   const byStatus = useMemo(
     () => groupDraftsForBoard(drafts, query, kindFilter),
-    [drafts, query, kindFilter],
-  );
-  // Filtered + grouped-by-day for the calendar view.
-  const calendar = useMemo(
-    () => groupPostsByDay(drafts, query, kindFilter),
     [drafts, query, kindFilter],
   );
   const onDrop = (e: DragEvent, status: DraftStatus) => {
@@ -682,10 +579,69 @@ export function DraftsList({
       onToggleSelect={() => toggleSelect(d.id)}
     />
   );
+
+  // Board vs calendar view. Default to the board; the last choice is
+  // remembered in localStorage so a calendar user lands back on the calendar.
+  const [view, setView] = useState<"board" | "calendar">("board");
+  useEffect(() => {
+    const saved = window.localStorage.getItem("swipein-posts-view");
+    // Read the persisted view on mount (localStorage is external state; this
+    // effect owns that synchronization — same pattern as the queue widget).
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (saved === "calendar") setView("calendar");
+  }, []);
+  const chooseView = (next: "board" | "calendar") => {
+    setView(next);
+    window.localStorage.setItem("swipein-posts-view", next);
+  };
+  // Cross-surface refresh: calendar bookings remount the queue widget (it
+  // refetches on mount); queue-widget bookings bump the calendar's refetch key.
+  const [widgetVersion, setWidgetVersion] = useState(0);
+  const [calendarRefreshKey, setCalendarRefreshKey] = useState(0);
+
+  // One scheduling path for both the queue widget and the calendar: book a
+  // draft into a specific posting-slot occurrence.
+  const scheduleDraftInQueue = async (
+    draftId: string,
+    target: PostingQueueDropTarget & { localTime?: string },
+  ) => {
+    const draft = drafts.find((item) => item.id === draftId);
+    if (!draft || !canDragDraftToPostingQueue(draft)) {
+      throw new Error("This post can no longer be scheduled.");
+    }
+    const action: "scheduled" | "rescheduled" =
+      draft.scheduleStatus === "scheduled" ? "rescheduled" : "scheduled";
+    const next = await draftOperations.queueAt(draftId, {
+      firstComment: draft.firstComment ?? null,
+      timezone: target.timezone,
+      postingSlotId: target.postingSlotId,
+      postingSlotOccurrenceDate: target.postingSlotOccurrenceDate,
+      localTime: target.localTime,
+    });
+    applyMeta(draftId, next);
+    return {
+      action,
+      draft: {
+        id: draft.id,
+        title: draft.title,
+        scheduledAt: next.scheduledAt,
+        scheduleStatus: next.scheduleStatus,
+        postingSlotId: next.postingSlotId,
+        postingSlotOccurrenceDate: next.postingSlotOccurrenceDate,
+      },
+    };
+  };
+
   return (
     <div className="flex flex-col gap-4">
       <PostingQueueWidget
+        key={widgetVersion}
         onOpenDraft={(draftId) => void openQueueDraft(draftId)}
+        onCreateDraftForSlot={(target) => {
+          setNewPostQueueTarget(target);
+          setEditingId(null);
+          setEditorOpen(true);
+        }}
         queueCandidates={drafts
           .filter(canDragDraftToPostingQueue)
           .map((draft) => ({
@@ -695,53 +651,42 @@ export function DraftsList({
               draft.body.split("\n")[0]?.trim() ||
               "Untitled post",
           }))}
-        onScheduleDraftInQueue={async (
-          draftId: string,
-          target: PostingQueueDropTarget,
-        ) => {
-          const draft = drafts.find((item) => item.id === draftId);
-          if (!draft || !canDragDraftToPostingQueue(draft)) {
-            throw new Error("This post can no longer be scheduled.");
-          }
-          const action =
-            draft.scheduleStatus === "scheduled"
-              ? "rescheduled"
-              : "scheduled";
-          const next = await draftOperations.queueAt(draftId, {
-            firstComment: draft.firstComment ?? null,
-            timezone: target.timezone,
-            postingSlotId: target.postingSlotId,
-            postingSlotOccurrenceDate: target.postingSlotOccurrenceDate,
-          });
-          applyMeta(draftId, next);
-          return {
-            action,
-            draft: {
-              id: draft.id,
-              title: draft.title,
-              scheduledAt: next.scheduledAt,
-              scheduleStatus: next.scheduleStatus,
-              postingSlotId: next.postingSlotId,
-              postingSlotOccurrenceDate:
-                next.postingSlotOccurrenceDate,
-            },
-          };
+        onScheduleDraftInQueue={async (draftId, target) => {
+          const result = await scheduleDraftInQueue(draftId, target);
+          setCalendarRefreshKey((key) => key + 1);
+          return result;
         }}
-        onDraftRemovedFromQueue={(draftId, next) =>
-          applyMeta(draftId, next)
-        }
+        onDraftRemovedFromQueue={(draftId, next) => {
+          applyMeta(draftId, next);
+          setCalendarRefreshKey((key) => key + 1);
+        }}
+        onQueuedDraftsMoved={(movedDrafts) => {
+          movedDrafts.forEach((draft) => applyMeta(draft.id, draft));
+          setCalendarRefreshKey((key) => key + 1);
+        }}
+        onQueueSnapshotLoaded={(queueDrafts) => {
+          queueDrafts.forEach((draft) =>
+            applyMeta(draft.id, {
+              scheduledAt: draft.scheduledAt,
+              scheduleStatus: draft.scheduleStatus,
+              postingSlotId: draft.postingSlotId,
+              postingSlotOccurrenceDate:
+                draft.postingSlotOccurrenceDate,
+            }),
+          );
+        }}
       />
       {/* Toolbar: search + kind filter */}
       <Toolbar className="flex flex-wrap items-center gap-2 p-2 sm:p-2.5">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search posts…"
-            className="h-9 w-full rounded-xl border border-transparent bg-background/80 pl-8 pr-3 text-sm shadow-soft outline-none transition-colors placeholder:text-muted-foreground/70 focus:border-primary/25 focus:ring-2 focus:ring-ring/25"
-          />
-        </div>
+        <SearchField
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          onClear={() => setQuery("")}
+          placeholder="Search posts…"
+          aria-label="Search posts"
+          containerClassName="min-w-[200px] flex-1"
+          className="h-9 border-transparent bg-background/80"
+        />
         <div className={segmentedControlClass()}>
           {KIND_FILTER_OPTIONS.map((k) => (
             <button
@@ -760,7 +705,7 @@ export function DraftsList({
           <button
             type="button"
             onClick={() => chooseView("board")}
-            title="Show posts grouped by pipeline status."
+            title="Show posts as a pipeline board."
             className={segmentedItemClass(view === "board")}
             aria-pressed={view === "board"}
           >
@@ -769,7 +714,7 @@ export function DraftsList({
           <button
             type="button"
             onClick={() => chooseView("calendar")}
-            title="Show planning dates and LinkedIn schedules on a calendar."
+            title="Show queue bookings and scheduled posts on a calendar."
             className={segmentedItemClass(view === "calendar")}
             aria-pressed={view === "calendar"}
           >
@@ -781,9 +726,34 @@ export function DraftsList({
         </Button>
       </Toolbar>
 
+      {view === "calendar" && (
+        <PostsCalendar
+          drafts={drafts}
+          refreshKey={calendarRefreshKey}
+          onOpen={(draft) => openEdit(draft)}
+          onSchedule={async (draftId, target) => {
+            const result = await scheduleDraftInQueue(draftId, target);
+            setWidgetVersion((key) => key + 1);
+            toast.success(
+              formatScheduleToast({
+                scheduledAt: result.draft.scheduledAt,
+                accountTimezone: target.timezone,
+                action: result.action,
+              }),
+            );
+          }}
+          onUnschedule={async (draftId) => {
+            const next = await draftOperations.unschedule(draftId);
+            applyMeta(draftId, next);
+            setWidgetVersion((key) => key + 1);
+            toast.success("Removed from the posting queue.");
+          }}
+        />
+      )}
+
       {view === "board" && (
-        <>
-          {/* Mobile column selector (the full board doesn't fit a phone). */}
+      <>
+      {/* Mobile column selector (the full board doesn't fit a phone). */}
           <div className="flex lg:hidden items-center gap-1 overflow-x-auto -mx-1 px-1">
             {COLUMNS.map((c) => (
               <button
@@ -888,23 +858,17 @@ export function DraftsList({
               </div>
             ))}
           </div>
-        </>
+      </>
       )}
-
-      {view === "calendar" && (
-        <CalendarView
-          byDay={calendar.byDay}
-          unscheduled={calendar.unscheduled}
-          onSchedule={setDate}
-          onOpen={openEdit}
-        />
-      )}
-
       <DraftEditorModal
         open={editorOpen}
-        onOpenChange={setEditorOpen}
+        onOpenChange={(open) => {
+          setEditorOpen(open);
+          if (!open) setNewPostQueueTarget(null);
+        }}
         draft={editing}
         author={author}
+        initialQueueTarget={newPostQueueTarget}
         onCreated={addDraft}
         onSaved={applyEdit}
         onMeta={applyMeta}
@@ -946,248 +910,6 @@ export function DraftsList({
 }
 
 // ---------------------------------------------------------------------------
-// Calendar view: a month grid of planning dates (status-colored chips) plus a
-// tray for posts with no planning date. Drag a chip from the tray onto a day to
-// plan it; drag a day chip onto another day to move it, or onto the tray to
-// clear the planning date.
-// ---------------------------------------------------------------------------
-const MONTH_NAMES = [
-  "January", "February", "March", "April", "May", "June",
-  "July", "August", "September", "October", "November", "December",
-];
-const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-
-function CalendarView({
-  byDay,
-  unscheduled,
-  onSchedule,
-  onOpen,
-}: {
-  byDay: Record<string, Draft[]>;
-  unscheduled: Draft[];
-  onSchedule: (id: string, date: string | null) => void;
-  onOpen: (draft: Draft) => void;
-}) {
-  // Start on the month of the soonest scheduled post, else today.
-  const [cursor, setCursor] = useState(() => {
-    const days = Object.keys(byDay).sort();
-    const base = days[0] ? new Date(`${days[0]}T00:00:00`) : new Date();
-    return { year: base.getFullYear(), month: base.getMonth() };
-  });
-  const [dragOverDay, setDragOverDay] = useState<string | null>(null);
-  const [overTray, setOverTray] = useState(false);
-  const todayKey = dayKey(new Date());
-  const cells = buildCalendarMonth(cursor.year, cursor.month);
-
-  const prevMonth = () =>
-    setCursor((c) =>
-      c.month === 0 ? { year: c.year - 1, month: 11 } : { ...c, month: c.month - 1 },
-    );
-  const nextMonth = () =>
-    setCursor((c) =>
-      c.month === 11 ? { year: c.year + 1, month: 0 } : { ...c, month: c.month + 1 },
-    );
-
-  const drag = (e: DragEvent, draft: Draft) => {
-    e.dataTransfer.setData(DRAFT_DRAG_MIME, draft.id);
-    if (draft.scheduleStatus !== "scheduled") {
-      e.dataTransfer.setData("text/plain", draft.id);
-    }
-    e.dataTransfer.effectAllowed = "move";
-  };
-
-  return (
-    <div className="flex flex-col gap-4 lg:flex-row">
-      {/* Calendar */}
-      <Surface className="flex-1 min-w-0" padding="sm">
-        <div className="mb-3 flex items-center gap-2">
-          <button
-            type="button"
-            onClick={prevMonth}
-            className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
-            aria-label="Previous month"
-          >
-            <ChevronLeft className="h-4 w-4" />
-          </button>
-          <span className="min-w-[140px] text-sm font-semibold">
-            {MONTH_NAMES[cursor.month]} {cursor.year}
-          </span>
-          <button
-            type="button"
-            onClick={nextMonth}
-            className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
-            aria-label="Next month"
-          >
-            <ChevronRight className="h-4 w-4" />
-          </button>
-        </div>
-
-        <div className="grid grid-cols-7 gap-px overflow-hidden rounded-xl border border-border/60 bg-border/60">
-          {WEEKDAYS.map((w) => (
-            <div
-              key={w}
-              className="bg-muted/40 px-2 py-1.5 text-center text-[11px] font-medium uppercase tracking-wide text-muted-foreground"
-            >
-              {w}
-            </div>
-          ))}
-          {cells.map((cell) => {
-            const posts = byDay[cell.key] ?? [];
-            return (
-              <div
-                key={cell.key}
-                onDragOver={(e) => {
-                  if (!e.dataTransfer.types.includes("text/plain")) return;
-                  e.preventDefault();
-                  if (dragOverDay !== cell.key) setDragOverDay(cell.key);
-                }}
-                onDragLeave={(e) => {
-                  if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
-                    setDragOverDay((d) => (d === cell.key ? null : d));
-                  }
-                }}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  setDragOverDay(null);
-                  const id = e.dataTransfer.getData("text/plain");
-                  if (id) onSchedule(id, cell.key);
-                }}
-                className={cn(
-                  "min-h-[96px] bg-background p-1.5 flex flex-col gap-1",
-                  !cell.inMonth && "bg-muted/20",
-                  dragOverDay === cell.key && "ring-2 ring-inset ring-primary/50",
-                )}
-              >
-                <span
-                  className={cn(
-                    "text-[11px] font-medium",
-                    cell.key === todayKey
-                      ? "inline-flex h-5 w-5 items-center justify-center rounded-full bg-primary text-primary-foreground"
-                      : cell.inMonth
-                        ? "text-foreground"
-                        : "text-muted-foreground/50",
-                  )}
-                >
-                  {cell.date.getDate()}
-                </span>
-                {posts.map((p) => {
-                  const onLinkedIn = boardColumnForDraft(p) === "scheduled";
-                  const StatusIcon = onLinkedIn ? CalendarClock : Calendar;
-                  return (
-                    <button
-                      key={p.id}
-                      type="button"
-                      draggable={canDragDraftToPostingQueue(p)}
-                      onDragStart={(e) => drag(e, p)}
-                      onClick={() => onOpen(p)}
-                      title={p.title ?? p.body.slice(0, 80)}
-                      className={cn(
-                        "flex items-center gap-1 rounded border px-1.5 py-0.5 text-left text-[11px] font-medium cursor-grab active:cursor-grabbing",
-                        STATUS_CHIP[p.status],
-                      )}
-                    >
-                      <StatusIcon
-                        className={cn(
-                          "h-3 w-3 shrink-0",
-                          onLinkedIn && "text-primary",
-                        )}
-                        aria-label={
-                          onLinkedIn ? "Scheduled on LinkedIn" : "Planned only"
-                        }
-                      />
-                      <span className="truncate">
-                        {(p.title ?? p.body.split("\n")[0]).slice(0, 40) ||
-                          "Untitled"}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            );
-          })}
-        </div>
-        <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-          <span>Drag posts here to set a planning date.</span>
-          <span className="inline-flex items-center gap-1">
-            <Calendar className="h-3.5 w-3.5" aria-hidden /> planned only
-          </span>
-          <span className="inline-flex items-center gap-1 text-primary">
-            <CalendarClock className="h-3.5 w-3.5" aria-hidden /> scheduled on LinkedIn
-          </span>
-        </div>
-      </Surface>
-
-      {/* Unscheduled tray */}
-      <div
-        onDragOver={(e) => {
-          if (!e.dataTransfer.types.includes("text/plain")) return;
-          e.preventDefault();
-          if (!overTray) setOverTray(true);
-        }}
-        onDragLeave={(e) => {
-          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOverTray(false);
-        }}
-        onDrop={(e) => {
-          e.preventDefault();
-          setOverTray(false);
-          const id = e.dataTransfer.getData("text/plain");
-          if (id) onSchedule(id, null); // drop on tray = clear the date
-        }}
-        className={cn(
-          "lg:w-72 shrink-0 rounded-xl border bg-card/70 p-2.5 flex flex-col gap-2 shadow-soft",
-          overTray ? "border-primary border-dashed bg-primary/5" : "border-border/60",
-        )}
-      >
-        <div className="rounded-xl border border-border/50 bg-background/55 px-3 py-2 text-xs">
-          <div className="font-semibold text-foreground">No planning date</div>
-          <div className="mt-0.5 text-muted-foreground tabular-nums">
-            {unscheduled.length} post{unscheduled.length === 1 ? "" : "s"}
-          </div>
-        </div>
-        {unscheduled.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-border/60 bg-background/45 px-3 py-8 text-center text-xs text-muted-foreground">
-            Every post has a planning date. Drag a post here to clear it.
-          </div>
-        ) : (
-          <div className="flex flex-col gap-1.5 max-h-[60vh] overflow-y-auto">
-            {unscheduled.map((p) => (
-              <button
-                key={p.id}
-                type="button"
-                draggable={canDragDraftToPostingQueue(p)}
-                onDragStart={(e) => drag(e, p)}
-                onClick={() => onOpen(p)}
-                className={cn(
-                  "flex items-center gap-2 rounded-lg border bg-card px-2.5 py-2 text-left text-[13px] font-medium cursor-grab active:cursor-grabbing hover:bg-accent/40",
-                  "border-border/60",
-                )}
-              >
-                <span
-                  className={cn(
-                    "h-1.5 w-1.5 shrink-0 rounded-full",
-                    STATUS_DOT[p.status],
-                  )}
-                />
-                <span className="min-w-0 flex-1 truncate">
-                  {(p.title ?? "").trim() || p.body.split("\n")[0].slice(0, 40) || "Untitled"}
-                </span>
-                {(() => {
-                  const b = kindBadge(p.kind);
-                  return b ? (
-                    <span className={cn("shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium", b.cls)}>
-                      {b.label}
-                    </span>
-                  ) : null;
-                })()}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
 // How many cards a column shows before collapsing the rest behind "Show more".
 // Keeps a busy column (e.g. 20 Ready posts) from becoming an endless scroll —
 // the Notion board pattern.
@@ -1348,7 +1070,6 @@ function DraftCard({
     .filter(Boolean)
     .slice(0, 2)
     .join(" ");
-  const plannedDate = formatShortDate(draft.planToPostOn);
   const scheduledDate = formatShortDate(draft.scheduledAt);
   const publishedDate = formatShortDate(draft.publishedAt);
   const mediaCount = draft.mediaAttachments?.length ?? 0;
@@ -1540,6 +1261,14 @@ function DraftCard({
                 Agent
               </span>
             )}
+            {isMcpCreatedDraft(draft) && (
+              <span
+                className="inline-flex shrink-0 items-center rounded-full border border-border/70 bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
+                title="Created via the MCP connector (a Claude-side workflow)."
+              >
+                MCP
+              </span>
+            )}
             {draft.scheduleStatus === "scheduled" || draft.scheduleStatus === "publishing" ? (
               <StatusPill tone="info" title="Scheduled to auto-publish on LinkedIn.">
                 <CalendarClock className="h-3 w-3" aria-hidden />
@@ -1555,11 +1284,6 @@ function DraftCard({
                 <AlertCircle className="h-3 w-3" aria-hidden />
                 Failed
               </StatusPill>
-            ) : plannedDate ? (
-              <StatusPill tone="neutral" title="Planning date only. Open the post to schedule publishing.">
-                <Calendar className="h-3 w-3" aria-hidden />
-                {plannedDate}
-              </StatusPill>
             ) : null}
             {mediaCount > 0 && (
               <StatusPill tone="neutral" title={`${mediaCount} media attachment${mediaCount === 1 ? "" : "s"}`}>
@@ -1573,6 +1297,10 @@ function DraftCard({
                 Source
               </StatusPill>
             )}
+            <StatusPill tone="neutral" title={`Created ${formatCreatedAt(draft.createdAt)}`}>
+              <Clock className="h-3 w-3" aria-hidden />
+              {formatCreatedAt(draft.createdAt)}
+            </StatusPill>
           </div>
         </div>
       </div>

@@ -19,16 +19,23 @@ import {
   INJECTION_GUARD,
   wrapUntrustedDelimited,
 } from "@/lib/agent/untrusted";
+import { REVIEW_COVERAGE_GUIDANCE } from "@/lib/agent/prompt-guidance";
+import { resolveNativeOpenAIPrimary } from "@/lib/model-provider-routing";
 
 // Defaults to the one app-wide chat model (OPENROUTER_CHAT_MODEL) so every
 // text-LLM call uses the SAME model unless pinned via
 // OPENROUTER_SOURCE_FIDELITY_MODEL.
-export const SOURCE_FIDELITY_MODEL =
-  process.env.OPENROUTER_SOURCE_FIDELITY_MODEL || CHAT_MODEL;
+export const SOURCE_FIDELITY_MODEL = resolveNativeOpenAIPrimary(
+  [
+    process.env.OPENAI_SOURCE_FIDELITY_MODEL,
+    process.env.OPENROUTER_SOURCE_FIDELITY_MODEL,
+  ],
+  CHAT_MODEL,
+);
 export const SOURCE_FIDELITY_FALLBACK_MODEL = distinctFallbackModel(
   SOURCE_FIDELITY_MODEL,
   process.env.OPENROUTER_SOURCE_FIDELITY_FALLBACK_MODEL ||
-    "anthropic/claude-sonnet-5",
+    "openai/gpt-5.6-luna",
   ["google/gemini-3.5-flash"],
 );
 
@@ -149,11 +156,13 @@ function partialFidelityInstructions(
 export function buildSourceFidelitySystemPrompt(
   deliverableKind: SourceFidelityDeliverableKind = "post",
 ): string {
-  return (
-    (deliverableKind === "post"
+  return [
+    deliverableKind === "post"
       ? POST_FIDELITY_INSTRUCTIONS
-      : partialFidelityInstructions(deliverableKind)) + INJECTION_GUARD
-  );
+      : partialFidelityInstructions(deliverableKind),
+    REVIEW_COVERAGE_GUIDANCE,
+    INJECTION_GUARD,
+  ].join("\n\n");
 }
 
 export const SOURCE_FIDELITY_SYSTEM_PROMPT =

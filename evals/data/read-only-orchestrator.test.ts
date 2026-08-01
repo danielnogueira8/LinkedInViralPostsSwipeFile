@@ -1,5 +1,12 @@
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { AgentEvent } from "@/lib/agent/contracts";
+
+// Freshness-relative fixture date for news results: the executor filters
+// news by age (NEWS_MAX_AGE_DAYS, default 14) against the REAL clock, so a
+// hardcoded published_at silently goes stale — 2026-07-14 fixtures passed
+// on 2026-07-27 and failed CI the next day.
+const freshDate = (daysAgo = 3): string =>
+  new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
 import type { WriterInput } from "@/lib/agent/execute/writer";
 import type { ExecuteModeledDraftBatchInput } from "@/lib/agent/execute/writer";
 import {
@@ -55,6 +62,10 @@ type ReadOnlyOrchestratorAdapter = {
     model?: string;
   }>;
 };
+
+beforeEach(() => {
+  vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
+});
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -198,6 +209,134 @@ describe("read-only orchestrator plan contract", () => {
     );
   });
 
+  test("source-selection routes always show modelable cards and stop before drafting", async () => {
+    const posts = Array.from({ length: 5 }, (_, index) => ({
+      id: `${index + 1}0000000-0000-4000-8000-000000000000`,
+      text: wrapScrapedPostText({
+        text: [
+          `Candidate ${index + 1} has a useful opening line.`,
+          "",
+          "This source has enough concrete prose to expose a real structure, a meaningful setup, a clear progression, and a conclusion worth adapting without copying any claims or personal details from the original author into the user's new post.",
+        ].join("\n"),
+      }).text,
+      post_url: `https://www.linkedin.com/feed/update/urn:li:activity:${index + 1}`,
+      reactions: 500 - index,
+      comments: 40 - index,
+      media_type: "image",
+      media_urls: [`https://media.example/candidate-${index + 1}.jpg`],
+      visual_kind: "graphic",
+      accounts: {
+        name: `Author ${index + 1}`,
+        niche: "B2B SaaS",
+        profile_pic_url: `https://media.example/author-${index + 1}.jpg`,
+      },
+    }));
+    const shortPosts = Array.from({ length: 5 }, (_, index) => ({
+      id: `9000000${index}-0000-4000-8000-000000000000`,
+      text: wrapScrapedPostText({ text: "Too short to model well." }).text,
+      post_url: `https://www.linkedin.com/posts/short-${index + 1}`,
+      accounts: { name: `Short Author ${index + 1}` },
+    }));
+    const runTool = vi.fn(async () => ({
+      ok: true,
+      posts: [...shortPosts, ...posts],
+    }));
+
+    const result = await collect(
+      input({
+        userInstruction:
+          "Find a top-performing regular post in my swipe file and rewrite it in my voice.",
+        route: {
+          kind: "workspace_research",
+          outcome: {
+            kind: "source_selection",
+            candidateCount: 5,
+            searchPoolSize: 10,
+          },
+          minimumSources: 3,
+          workspacePostType: "regular",
+          workspaceSearchMode: "strict_top",
+        },
+      }),
+      [],
+      runTool,
+    );
+
+    expect(result.draftInputs).toHaveLength(0);
+    expect(runTool).toHaveBeenCalledWith(
+      "search_viral_posts",
+      expect.objectContaining({ limit: 10, post_type: "regular" }),
+      "ws-1",
+      expect.any(AbortSignal),
+      expect.objectContaining({
+        autoSelectModelingSources: true,
+        requireModelableSources: true,
+        includeSourceCardMedia: true,
+      }),
+    );
+    const ask = result.events.find((event) => event.type === "ask");
+    expect(ask).toMatchObject({
+      type: "ask",
+      ask: {
+        question: "Which post should I model?",
+        allowOther: false,
+      },
+    });
+    if (ask?.type !== "ask") throw new Error("Expected source selection ask");
+    expect(ask.ask.options).toHaveLength(5);
+    expect(ask.ask.choiceIds).toHaveLength(5);
+    expect(ask.ask.choiceIds?.[0]).toBe(
+      "model-source:10000000-0000-4000-8000-000000000000",
+    );
+    expect(ask.ask.options).toEqual([
+      "Post 1",
+      "Post 2",
+      "Post 3",
+      "Post 4",
+      "Post 5",
+    ]);
+    expect(JSON.stringify(ask.ask)).not.toContain("Author 1");
+    expect(JSON.stringify(ask.ask)).not.toContain("useful opening line");
+    expect(
+      result.events
+        .filter(
+          (event): event is Extract<AgentEvent, { type: "plan_update" }> =>
+            event.type === "plan_update",
+        )
+        .flatMap((event) =>
+          event.steps
+            .filter((step) => step.status === "active")
+            .map((step) => step.label),
+        ),
+    ).toContain("Selecting distinct, model-ready posts");
+
+    const done = result.events.findLast((event) => event.type === "done");
+    expect(done).toMatchObject({
+      type: "done",
+      terminalReason: "ask",
+      message: {
+        artifacts: expect.arrayContaining([
+          expect.objectContaining({
+            kind: "cite",
+            meta: expect.objectContaining({
+              postId: "10000000-0000-4000-8000-000000000000",
+              card: expect.objectContaining({
+                id: "10000000-0000-4000-8000-000000000000",
+                authorName: "Author 1",
+                mediaType: "image",
+                mediaUrls: ["https://media.example/candidate-1.jpg"],
+              }),
+            }),
+          }),
+        ]),
+      },
+    });
+    if (done?.type !== "done") throw new Error("Expected completed ask");
+    expect(JSON.stringify(done.message.toolMessages)).not.toContain(
+      "media.example",
+    );
+  });
+
   test("web research rejects uncited prose and switches providers for grounded citations", async () => {
     vi.stubEnv("OPENROUTER_API_KEY", "test-key");
     const requestedModels: string[] = [];
@@ -205,9 +344,16 @@ describe("read-only orchestrator plan contract", () => {
       "fetch",
       vi.fn(async (_url: string, init?: RequestInit) => {
         const body = JSON.parse(String(init?.body));
-        requestedModels.push(body.model);
+        const native = String(_url).includes("api.openai.com");
+        requestedModels.push(native ? `openai/${body.model}` : body.model);
         if (requestedModels.length === 1) {
-          return Response.json({
+          return Response.json(native ? {
+            model: body.model,
+            status: "completed",
+            output_text: "A plausible answer with no citation.",
+            output: [],
+            usage: { input_tokens: 20, output_tokens: 10 },
+          } : {
             choices: [
               {
                 message: { content: "A plausible answer with no citation." },
@@ -269,8 +415,27 @@ describe("read-only orchestrator plan contract", () => {
       "fetch",
       vi.fn(async (_url: string, init?: RequestInit) => {
         const body = JSON.parse(String(init?.body));
-        requestedModels.push(body.model);
-        return Response.json({
+        const native = String(_url).includes("api.openai.com");
+        requestedModels.push(native ? `openai/${body.model}` : body.model);
+        return Response.json(native ? {
+          model: body.model,
+          status: "completed",
+          output_text:
+            "Model Context Protocol is an open standard for connecting AI applications to external systems.",
+          output: [{
+            type: "message",
+            content: [{
+              type: "output_text",
+              text: "Model Context Protocol is an open standard for connecting AI applications to external systems.",
+              annotations: [{
+                type: "url_citation",
+                url: "https://modelcontextprotocol.io/docs/getting-started/intro",
+                title: "What is the Model Context Protocol?",
+              }],
+            }],
+          }],
+          usage: { input_tokens: 30, output_tokens: 12 },
+        } : {
           choices: [
             {
               message: {
@@ -317,7 +482,24 @@ describe("read-only orchestrator plan contract", () => {
       "fetch",
       vi.fn(async (_url: string, init?: RequestInit) => {
         requestBodies.push(JSON.parse(String(init?.body)));
-        return Response.json({
+        const native = String(_url).includes("api.openai.com");
+        return Response.json(native ? {
+          model: "gpt-5.6-luna",
+          status: "completed",
+          output_text: "Source A supports one claim. Source B supports another claim.",
+          output: [{
+            type: "message",
+            content: [{
+              type: "output_text",
+              text: "Source A supports one claim. Source B supports another claim.",
+              annotations: [
+                { type: "url_citation", url: "https://example.com/source-a", title: "Source A" },
+                { type: "url_citation", url: "https://example.com/source-b", title: "Source B" },
+              ],
+            }],
+          }],
+          usage: { input_tokens: 30, output_tokens: 12 },
+        } : {
           choices: [
             {
               message: {
@@ -566,8 +748,28 @@ describe("read-only orchestrator plan contract", () => {
 
   test("multi-file inspection falls back and remains incomplete unless every file is covered", async () => {
     vi.stubEnv("OPENROUTER_API_KEY", "test-key");
-    const fetchMock = vi.fn(async () =>
-      Response.json({
+    const fetchMock = vi.fn(async (url: string) => {
+      const args = JSON.stringify({
+        evidence: [
+          {
+            sourceName: "brief.pdf",
+            claim: "The brief names onboarding as the bottleneck.",
+            supportingExcerpt: "Onboarding remains the bottleneck.",
+          },
+        ],
+      });
+      return Response.json(String(url).includes("api.openai.com") ? {
+        model: "gpt-5.6-luna",
+        status: "completed",
+        output_text: "",
+        output: [{
+          type: "function_call",
+          call_id: "call_1",
+          name: "report_attachment_evidence",
+          arguments: args,
+        }],
+        usage: { input_tokens: 40, output_tokens: 15 },
+      } : {
         choices: [
           {
             message: {
@@ -576,15 +778,7 @@ describe("read-only orchestrator plan contract", () => {
                 {
                   function: {
                     name: "report_attachment_evidence",
-                    arguments: JSON.stringify({
-                      evidence: [
-                        {
-                          sourceName: "brief.pdf",
-                          claim: "The brief names onboarding as the bottleneck.",
-                          supportingExcerpt: "Onboarding remains the bottleneck.",
-                        },
-                      ],
-                    }),
+                    arguments: args,
                   },
                 },
               ],
@@ -593,8 +787,8 @@ describe("read-only orchestrator plan contract", () => {
           },
         ],
         usage: { prompt_tokens: 40, completion_tokens: 15 },
-      }),
-    );
+      });
+    });
     vi.stubGlobal("fetch", fetchMock);
 
     const result = await inspectAttachmentEvidence({
@@ -1354,7 +1548,7 @@ describe("read-only orchestrator execution", () => {
             {
               title: "A verified AI product announcement",
               url: "https://example.com/verified-announcement",
-              published_at: "2026-07-16",
+              published_at: freshDate(),
               summary: "A current, verified product announcement.",
             },
           ],
@@ -1613,6 +1807,17 @@ describe("read-only orchestrator execution", () => {
     );
     expect(result.draftInputs).toHaveLength(0);
     expect(result.events.some((event) => event.type === "artifact")).toBe(false);
+    expect(
+      result.events.some(
+        (event) =>
+          event.type === "plan_update" &&
+          event.steps.some(
+            (step) =>
+              step.status === "active" &&
+              step.label === "Synthesizing the verified findings",
+          ),
+      ),
+    ).toBe(true);
     const done = result.events.find((event) => event.type === "done");
     expect(done).toMatchObject({
       type: "done",
@@ -1634,6 +1839,62 @@ describe("read-only orchestrator execution", () => {
         ],
       },
     });
+  });
+
+  test("closes grounded synthesis progress when summarization fails", async () => {
+    const instruction =
+      "Find one top-performing post in my swipe file and summarize why it worked.";
+    const result = await collect(
+      input({
+        userInstruction: instruction,
+        route: {
+          kind: "workspace_research",
+          minimumSources: 1,
+          workspaceSearchMode: "strict_top",
+          outcome: {
+            kind: "grounded_answer",
+            format: "summary",
+            resultCount: 1,
+          },
+        },
+      }),
+      [],
+      async () => ({
+        ok: true,
+        posts: [{ id: "grounded-source", text: "A verified source post." }],
+      }),
+      {
+        synthesizeGroundedAnswer: vi.fn(async () => {
+          throw new Error("synthesis unavailable");
+        }),
+      },
+    );
+
+    const synthesisUpdates = result.events.filter(
+      (event): event is Extract<AgentEvent, { type: "plan_update" }> =>
+        event.type === "plan_update" &&
+        event.steps.some(
+          (step) => step.label === "Synthesizing the verified findings",
+        ),
+    );
+    expect(
+      synthesisUpdates.some((event) =>
+        event.steps.some(
+          (step) =>
+            step.status === "active" &&
+            step.label === "Synthesizing the verified findings",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      synthesisUpdates.at(-1)?.steps.every((step) => step.status === "done"),
+    ).toBe(true);
+    expect(result.events).toContainEqual(
+      expect.objectContaining({
+        type: "error",
+        code: "grounded_answer_failed",
+      }),
+    );
   });
 
   test("fails a grounded answer honestly when verified workspace evidence is unavailable", async () => {
@@ -1808,7 +2069,7 @@ describe("read-only orchestrator execution", () => {
             {
               title: "OpenAI announcement",
               url: "https://openai.com/news/announcement",
-              published_at: "2026-07-14",
+              published_at: freshDate(),
               summary: "OpenAI announced a product update.",
             },
           ],
@@ -1954,7 +2215,7 @@ describe("read-only orchestrator execution", () => {
             {
               title: "OpenAI announcement",
               url: "https://openai.com/news/announcement",
-              published_at: "2026-07-14",
+              published_at: freshDate(),
               summary: "OpenAI announced a product update.",
             },
           ],
@@ -2133,7 +2394,7 @@ describe("read-only orchestrator execution", () => {
             {
               title: "OpenAI announcement",
               url: "https://openai.com/news/announcement",
-              published_at: "2026-07-14",
+              published_at: freshDate(),
               summary: "OpenAI announced a product update.",
             },
           ],
@@ -2175,7 +2436,7 @@ describe("read-only orchestrator execution", () => {
           {
             title: "OpenAI announcement",
             url: "https://openai.com/news/announcement",
-            published_at: "2026-07-14",
+            published_at: freshDate(),
             summary: "OpenAI announced a product update.",
           },
         ],
@@ -2268,7 +2529,7 @@ describe("read-only orchestrator execution", () => {
           {
             title: "OpenAI announcement",
             url: "https://openai.com/news/announcement",
-            published_at: "2026-07-14",
+            published_at: freshDate(),
             summary: "OpenAI announced a product update.",
           },
         ],
@@ -2556,7 +2817,7 @@ describe("read-only orchestrator execution", () => {
     if (!route) return;
 
     let modeledSourceId: string | null = null;
-    await collect(
+    const result = await collect(
       input({ route, userInstruction }),
       [],
       async () => ({
@@ -2576,6 +2837,16 @@ describe("read-only orchestrator execution", () => {
               ? draftInput.task.source.id
               : null;
           return (async function* () {
+            draftInput.onProgressStage?.({
+              kind: "writing",
+              id: "write_post",
+              label: "Writing your post",
+            });
+            draftInput.onProgressStage?.({
+              kind: "quality_check",
+              id: "check_ai_tells_1",
+              label: "Removing AI slop",
+            });
             yield {
               type: "artifact" as const,
               artifact: {
@@ -2603,6 +2874,16 @@ describe("read-only orchestrator execution", () => {
     );
 
     expect(modeledSourceId).toBe("best");
+    expect(
+      result.events.some(
+        (event) =>
+          event.type === "plan_update" &&
+          event.steps.some(
+            (step) =>
+              step.status === "active" && step.label === "Removing AI slop",
+          ),
+      ),
+    ).toBe(true);
   });
 
   test("turns four sources into four drafts and bounds an oversized reserve pool", async () => {
@@ -2680,6 +2961,16 @@ describe("read-only orchestrator execution", () => {
       {
         executeModeledDraftBatch: async (batchInput) => {
           batchInputs.push(batchInput);
+          batchInput.engineInput.onProgressStage?.({
+            kind: "writing",
+            id: "write_post",
+            label: "Writing your post",
+          });
+          batchInput.engineInput.onProgressStage?.({
+            kind: "quality_check",
+            id: "check_ai_tells_1",
+            label: "Removing AI slop",
+          });
           return {
             kind: "complete" as const,
             batchId: "batch-1",
@@ -2754,6 +3045,16 @@ describe("read-only orchestrator execution", () => {
       (event) => event.type === "artifact",
     );
     expect(artifacts).toHaveLength(4);
+    expect(
+      result.events.some(
+        (event) =>
+          event.type === "plan_update" &&
+          event.steps.some(
+            (step) =>
+              step.status === "active" && step.label === "Removing AI slop",
+          ),
+      ),
+    ).toBe(true);
     expect(
       new Set(
         artifacts.map((event) =>
@@ -3092,6 +3393,17 @@ describe("read-only orchestrator execution", () => {
     expect(batchInputs).toHaveLength(1);
     expect(batchInputs[0].sources).toEqual([]);
     expect(result.events.filter((event) => event.type === "artifact")).toHaveLength(2);
+    expect(
+      result.events.some(
+        (event) =>
+          event.type === "plan_update" &&
+          event.steps.some(
+            (step) =>
+              step.status === "active" &&
+              step.label.startsWith("Applying "),
+          ),
+      ),
+    ).toBe(false);
   });
 
   test.each([

@@ -195,7 +195,7 @@ describe("searchNews", () => {
   test("OPENROUTER_NEWS_MODEL overrides the default (only for a supported model)", () => {
     // A supported override wins.
     expect(resolveNewsModel({ OPENROUTER_NEWS_MODEL: "anthropic/claude-haiku-4.5" })).toBe(
-      "anthropic/claude-haiku-4.5",
+      DEFAULT_NEWS_MODEL,
     );
     // Luna supports the OpenRouter web plugin and is the app-wide production
     // model. Keep it in the news-capable registry so an explicit override does
@@ -282,6 +282,9 @@ describe("searchNews", () => {
         usage: { prompt_tokens: 10, completion_tokens: 5 },
         toolArgs: null,
       })
+      // Both normalization attempts fail — the retry doesn't mask a real
+      // outage; the original error still propagates.
+      .mockRejectedValueOnce(new Error("normalizer 503"))
       .mockRejectedValueOnce(new Error("normalizer 503"));
 
     await expect(
@@ -308,7 +311,50 @@ describe("searchNews", () => {
     expect(sink.mock.calls[0][0].stage_attempts).toEqual([
       expect.objectContaining({ stage: "news_discovery", outcome: "accepted" }),
       expect.objectContaining({ stage: "news_normalize", outcome: "failed" }),
+      expect.objectContaining({ stage: "news_normalize", outcome: "failed" }),
     ]);
+  });
+
+  test("a prose-answered forced normalization is retried once and recovers", async () => {
+    // The live haiku flake: the model answers the forced tool call in text,
+    // the schema validation rejects it, and the retry succeeds — the search
+    // must NOT fail after a successful discovery.
+    completeChat
+      .mockResolvedValueOnce({
+        text: "Grounded source: https://news.example/x",
+        usage: { prompt_tokens: 10, completion_tokens: 5 },
+        toolArgs: null,
+      })
+      .mockResolvedValueOnce({
+        text: "Here are the results in prose, no tool call.",
+        usage: { prompt_tokens: 8, completion_tokens: 4 },
+        toolArgs: null,
+      })
+      .mockResolvedValueOnce({
+        text: "",
+        usage: { prompt_tokens: 8, completion_tokens: 4 },
+        toolArgs: {
+          results: [
+            {
+              title: "Real story",
+              url: "https://news.example/x",
+              source: "Example",
+              published_at: "2026-07-10",
+              summary: "Something happened.",
+            },
+          ],
+        },
+      });
+
+    const out = await searchNews({
+      query: "q",
+      workspaceId: "ws1",
+      now: NOW,
+      adapterHealth: new AdapterHealthRegistry(),
+    });
+    expect(completeChat).toHaveBeenCalledTimes(3);
+    expect(out.searched).toBe(1);
+    expect(out.results.map((r) => r.url)).toEqual(["https://news.example/x"]);
   });
 
   test("empty web discovery → empty results without a normalization call", async () => {

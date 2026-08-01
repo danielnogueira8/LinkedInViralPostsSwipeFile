@@ -108,12 +108,15 @@ Proof required (only with a real user-supplied number):
 18. The Manual — role-specific guide + page count (1,504).
 2. BREAKING — hijack a real, current news event. Verify it with a tool; never from memory.
 
-## Structure (~80% of posts)
+## Structure precedence — a modeled source beats the house shape
+If a source post is attached for modeling, ITS build overrides the house structure below and every formatting default in your other instructions: mirror the source's architecture exactly — its numbered stages with their component sub-lines, its bolded labels, its CTA step style (emoji, numbers, arrows), its question line before the CTA, its P.S. — instead of forcing the arrow shape. A source built as five named stages with a roster line under each must come out as five named stages with a roster line under each, not as five arrow bullets. Everything from "## Structure" down applies only when writing a lead-magnet post from scratch.
+
+## Structure (~80% of from-scratch posts)
 Hook (1 line) → Re-hook (1 line) → Bridge (1 line) → 5-7 arrow deliverables → payoff line → CTA (2-3 lines) → P.S.
 
 Variations: drop re-hook and bridge when the deliverable explains itself; for frameworks 12 and 14 group deliverables under bold sub-headers (this is the only case that may exceed 7 items); open on the client metric when the metric IS the story.
 
-## Hard rules
+## Hard rules (from-scratch posts; a modeled source's build wins instead)
 - Hook is one line. Re-hook is one line. Needing more means the line isn't sharp.
 - 5-7 arrow (→) bullets, each an OUTCOME or asset, never a feature. Only the roster variation goes longer.
 - Every deliverable listed must exist in the resource actually being produced.
@@ -207,8 +210,68 @@ Worked patterns:
 - Underdog: "You don't need their $X tool." → what the tool actually does, the cheap substitute.`,
 };
 
-// Ported from the Claude `anti-ai` skill. Condensed to the field-tested rules;
-// the source carries a longer appendix of A/B transcripts.
+// Reader-facing rules shared by the explicit anti-ai rewrite and the copied
+// Claude workflow prompts. Keep detector-evasion mechanics OUT of this block:
+// normal Claude drafting should inherit the tell/word reference without being
+// told to discard source points, fracture discourse, or emit audit metadata.
+export const ANTI_AI_READER_TELL_RULES = `# Expanded reader-facing AI tell reference
+
+Apply these rules silently when drafting or editing. Evidence from the user's real voice still wins when it shows an intentional, repeated habit. Never invent a "voice quirk" to excuse generic model writing.
+
+## Constructions: spot them, then fix them
+
+- Negative parallelism ("It's not X, it's Y", "Not X. Not Y. Just Z."): say Y directly, unless the contrast is concrete and genuinely asymmetric.
+- Rule of three: keep the best item, use two, or use four with one oddly specific item.
+- Rhetorical Q&A ("The result? Devastating."): state it. Keep only a question the reader was genuinely asking.
+- Copula dodge ("serves as", "stands as", "marks", "represents", "boasts"): use "is" or "has".
+- Participial tail ("..., highlighting the importance of..."): delete it or promote it to a supported claim.
+- False range ("from X to Y" where no spectrum exists): name the actual items.
+- Hedge stack: commit. Keep at most one earned hedge.
+- Vague authority ("experts argue", "studies show"): name the source, own the claim, or cut it.
+- False suspense ("Here's the kicker", "The best part?"): deliver the content without a drumroll.
+- Analogy reflex: keep an analogy only when it is clearer than the thing itself.
+- Invented concept label: describe the mechanism in plain words.
+- Inspirational pivot or grandiosity: stay concrete and scale the claim to the evidence.
+- Repeated openers and dead metaphor flogging: vary the opener and use the metaphor once. Never run three consecutive sentences beginning with the same word, including direct-address runs such as "You... You... You..." or "Your... Your... Your...".
+
+## Word-bank reference
+
+Tier 1 must reach zero unless a term is literal, a real domain term or an evidenced part of the author's voice:
+
+- Verbs: delve, leverage, underscore, harness, foster, navigate (figurative), utilize, facilitate, streamline, bolster, illuminate, showcase, embark, elevate, empower, unleash, unlock (figurative), uncover, optimize, garner, resonate, revolutionize, shed light on, synthesize, elucidate, transcend, reimagine, intertwine, entwine, grapple with, espouse, exemplify, underpin.
+- Nouns: tapestry, landscape (figurative), realm, ecosystem (figurative), paradigm, synergy, testament, beacon, journey (figurative), interplay, intricacies, symphony (figurative), kaleidoscope, tempest, whimsy, quest (figurative), roadmap (figurative), endeavor, myriad, plethora, advancements, trajectory (figurative).
+- Modifiers: pivotal, crucial, seamless, robust, vibrant, intricate, meticulous, nuanced, cutting-edge, transformative, game-changing, groundbreaking, unparalleled, invaluable, multifaceted, commendable, indelible, poignant, profound, relentless, tireless, unwavering, unyielding, timeless, ever-evolving, fast-paced.
+- Stock phrases: "in today's fast-paced world", "it's important to note", "plays a pivotal role", "stands as a testament", "navigate the complexities", "in conclusion", "in summary", conclusion-opening "overall" or "ultimately", "at its core", "that being said", "a key takeaway", "paving the way", "valuable insights", "deeper understanding", "when it comes to", "not only... but also", "here's the kicker/thing/best part", "look no further", "let's explore/unpack/break down", sentence-opening "furthermore", "moreover" or "additionally".
+- Narrative clichés: "couldn't help but feel", "heart pounding", "a sense of X washed over", "found solace in", "the human spirit", "from that day on", "little did I know", "a stark reminder", "a cautionary tale", "newfound sense of purpose", "what lay ahead", "turn of events", "thick with tension", "stumbled upon", "nestled", "bustling", "enigmatic", "captivating", "glimpse into".
+
+Tier 2 is allowed alone but banned in clusters: comprehensive, significant, essential, critical, key, dynamic, innovative, powerful, notable, vital, vast, rich, deep, explore, enhance, ensure, highlight, reveal, engage, embrace, insights, perspective, framework, approach, strategy, challenges, opportunities, potential, impact, quietly, genuinely, truly, remarkably, arguably, generally speaking, typically, thought-provoking, well-being, resilience, perseverance, dedication, commitment, high-quality, step-by-step, sustainable. Replace until there are fewer than 2 in a sentence and fewer than 5 in the piece.
+
+Default swaps: leverage/utilize → use; delve/dive into → look at or get into; seamless → smooth or describe what did not break; robust → solid; navigate → handle; foster → build; facilitate → help or run; streamline → simplify; underscore/highlight/showcase → show; optimize → improve; empower → let; landscape/realm/space → name the field; tapestry/interplay → mix or back-and-forth; testament → proof; journey → name the actual period; myriad/plethora → the real number; transformative/game-changing → state what changed; comprehensive → full; furthermore/moreover/additionally → also or delete; valuable insights → what I learned. A concrete specific beats every default swap.
+
+## Formatting, structure and voice
+
+- Target no more than one em dash; also catch the double-hyphen variant.
+- Remove bold-first bullets, decorative/emoji bullets, title-case headings and raw markdown where the destination does not render it.
+- Break uniform 15–20-word sentences and rectangular paragraphs. Include one sentence of 6 words or fewer and one of 25+ words when the format has room, with uneven paragraphs.
+- Delete previews, recaps, signposted conclusions, pep-talk endings, prompt echoes and duplicated points.
+- The picture test: the first three sentences should evoke a supplied thing, place, number or name. Never invent one.
+- Restore contractions and ordinary colloquialisms from the author's register. Keep some friction instead of auto-balancing every claim or polishing every anecdote into a perfect lesson.
+- Always remove chatbot scaffolding, self-reference, knowledge-cutoff notes, unfilled placeholders, suspicious citations, AI tracking parameters and non-email sign-offs.
+
+## The rhythm trap
+
+Clipped, one-line-paragraph, fragment-heavy LinkedIn cadence is now a tell itself. "Same service. Different packaging." reads as AI-fluent, not human.
+
+- Do not add burstiness by breaking prose into staccato fragments.
+- Use at most one or two standalone single-sentence paragraphs in a short piece.
+- Humans write long sentences. Let some run.
+- If the source is already clipped, rejoin some lines into flowing sentences.
+- Do not thesaurus-swap into weirdness, scatter random typos or scrub personality along with the tells.`;
+
+// Combines the field-tested detector protocol from the Claude `anti-ai` skill
+// with the reader-facing audit workflow and reference taxonomy from `de-ai`.
+// The reference files are inlined in the shared block above because loose
+// markdown files are not guaranteed to ship in the Next.js serverless bundle.
 //
 // explicitOnly because the source skill demands it: it must fire on "/anti-ai",
 // never on "make this sound less AI". It licenses heavy rewriting, so a
@@ -224,38 +287,92 @@ const ANTI_AI: Skill = {
   specialized: true,
   explicitOnly: true,
   triggers: ["anti-ai", "anti ai"],
-  body: `# Anti-AI rewrite (make text read as genuinely human)
-You have full license to modify heavily — restructure, cut, reorder, roughen. Preserve only: the core message and facts, the author's intent and audience, and the format (a LinkedIn post stays a LinkedIn post).
+  body: `# Anti-AI rewrite: reader-clean and detector-aware
+Do two distinct jobs without confusing them:
 
-The target is not "sounds nicer". Statistical detectors don't read style — they detect PLANNED text, where every sentence advances a known arc. Clean, punchy, typo-ridden and rambling rewrites all failed testing equally. Surface mess is not the lever.
+1. Remove reader-facing tells: the visible wording, construction, rhythm and formatting patterns that make a person think "ChatGPT wrote this."
+2. Reduce statistical-detector signals: the planned-text fingerprint where every sentence advances a tidy arc.
 
-## If the user has their own rough draft (the reliable path)
-Interleave: keep THEIR sentences verbatim — never fix their grammar, typos or run-ons, those fractures are the human signal. Add your sentences BETWEEN theirs, never two of yours in a row, staying under ~40% added words. Keep their opening sentence exactly as written; first tokens set the frame. Tell them which lines are theirs so later edits don't paraphrase the signal away.
+A clean tell audit does NOT prove a detector pass. Pangram, GPTZero and Originality-style classifiers do not score the visible checklist directly, and no detector result can be guaranteed. Say this plainly only when the user asks about detector scores; otherwise do the work without a disclaimer preamble.
 
-## If only AI text exists — discourse fracture
-Write ONE meandering incident, not an argument. If each sentence advances a distinct point, it fails however it's dressed. Outline test: if it can be tidied into bullets, rewrite it.
-- interrupt yourself and abandon the plan mid-piece
-- leave a self-correction visible ("this was february, or march. february.")
-- repeat words because the writer is still annoyed, don't vary them
-- emotional punctuation at feeling spikes; lowercase in casual registers
-- leave domain/local vocabulary raw — prices, times, jargon as that world says them
-- report dialogue unquoted, with a name
-- end on a contradiction the writer notices and leaves; never a synthesis or recap
+## Choose the editing mode
 
-## The constraints that override all of the above
-These are where careful rewrites still fail:
-- NO punchlines. If a line would get a laugh read aloud, it's crafted — make it duller. Rants vent, they don't perform.
-- NO essay skeleton in disguise: no "week one… week two…", no "you know what actually worked?" pivot, no thesis sentence, no elegant callback ending.
-- Keep it SHORT (~160 words). Longer gives the classifier more evidence and lets structure creep back.
-- DROP most of the original's points — keep 2–3 and abandon the rest. Covering every argument IS the planning fingerprint.
-- At most ~4 named specifics, and re-hit them. One colleague mentioned three times beats three colleagues mentioned once.
-- NEVER write a sentence whose only job is to say what a moment MEANS. Banned: "that's the part that got me", "here's the thing", "which is exactly the problem", "let that sink in", "that's the [x] part honestly". This single pattern flipped a verified test from Human to 100% AI. If a moment matters, hit the detail again — never label it.
-- No soft framing adverbs stacked on: quietly, genuinely, truly, honestly-as-a-tag, literally-as-intensifier, actually-as-pivot, basically. At most one, inside a sentence doing real work.
+- Plain \`/anti-ai\`, or any request to pass a detector: use DETECTOR-FIRST mode. You may restructure, cut, reorder and roughen heavily. Preserve the core facts and message, the author's intent and audience, and the format. The detector protocol overrides the surgical-preservation rules below.
+- An explicit request to preserve the piece, keep its structure, or only remove reader-facing tells: use SURGICAL mode. Preserve every point in its original order, keep the format, stay within roughly ±15% of the original length, preserve the hook's and ending's jobs, and keep the author's voice.
 
-Invent fresh names, days and numbers every time — never reuse the examples' specifics.
+Never invent anecdotes, names, dates, numbers, quotes, studies or statistics in either mode. If a useful concrete detail is missing, insert a clearly marked placeholder and list it after the draft. Do not silently turn a hypothetical into a real event.
 
-## Before delivering, verify
-Is it ONE incident that can't be outlined? Is there a visible self-interruption and self-correction? Is it under the word cap? Are there ≤4 specifics, re-hit rather than accumulated? Is there ZERO significance-marking commentary? If the piece is formal (client docs, white papers) say plainly that this rewrite style doesn't fit, and offer a style-only pass instead.`,
+## Step 1: audit before editing
+
+Count actual hits in the source and write the total down as the before-score. One hit alone proves nothing; clusters are the signal. Audit all five groups:
+
+- Lexicon: tier-1 words; tier-2 clusters (2+ in one sentence or 5+ in the piece).
+- Constructions: negative parallelism, rule of three, rhetorical Q&A, copula dodges, participial tails, false ranges, hedge stacks, vague authority, false suspense, analogy reflexes, invented concept labels, inspirational pivots, grandiosity, repeated openers and flogged metaphors.
+- Punctuation and format: em dashes or double-hyphen pivots, bold-first bullets, emoji/decorative bullets, Title Case headings, colon-split titles and markdown residue.
+- Structure and rhythm: uniform sentence lengths, rectangular paragraphs, fractal summaries, signposted conclusions, pep-talk endings, prompt echoes, listicles in disguise, one-point dilution and uniform staccato.
+- Content and voice: no visible detail early, generic unnamed people/tools/places, narrative clichés, performed earnestness, uniform positivity, both-sidesing, suspiciously tidy anecdotes and scrubbed-away contractions or colloquialisms.
+
+## Step 2A: detector-first protocol
+
+### If the user supplied their own rough draft (the reliable path)
+
+Interleave. Keep THEIR sentences verbatim; never fix their grammar, typos or run-ons because those fractures are the human signal. Keep their opening sentence exactly as written. Add your sentences BETWEEN theirs, never two of yours in a row, and stay below roughly 40% added words. Tell the user which lines remain theirs so a later edit does not paraphrase the signal away.
+
+Run the reader-facing cleanup only on YOUR inserted sentences. A visible tell inside a genuine human sentence does not license changing that sentence in detector-first mode.
+
+### If only AI text exists: discourse fracture
+
+Write ONE meandering incident, not an argument. If each sentence advances a distinct point, it fails however it is dressed. Outline test: if the result can be tidied into bullets, rewrite it.
+
+- Interrupt yourself and visibly abandon the plan mid-piece.
+- Leave a self-correction visible ("this was February, or March. February.").
+- Repeat a plain word because the writer is still annoyed; do not rotate synonyms.
+- Let punctuation spike with the feeling; lowercase is fine in a casual register.
+- Leave domain/local vocabulary raw: actual prices, times and jargon as that world says them.
+- Report dialogue unquoted, with a real supplied name or a flagged placeholder.
+- End on a contradiction the writer notices and leaves. Never synthesize or recap.
+
+These constraints override the reader-cleanup workflow when they conflict:
+
+- NO punchlines. If a line would get a laugh read aloud, it is crafted; make it duller. Rants vent, they do not perform.
+- NO essay skeleton in disguise: no "week one… week two…", rhetorical pivot, thesis sentence, moral sentence or elegant callback.
+- Keep it short, around 160 words. More length lets structure creep back.
+- Drop most of the source's points. Keep 2–3 and abandon the rest; covering every argument is a planning fingerprint.
+- Use at most about 4 named specifics and re-hit them. One colleague mentioned three times beats three colleagues mentioned once.
+- NEVER add a sentence whose only job is to say what a moment MEANS. Ban "that's the part that got me", "here's the thing", "which is exactly the problem", "let that sink in" and "that's the [x] part honestly". Hit the detail again instead of labeling its significance.
+- Do not stack soft framing adverbs: quietly, genuinely, truly, honestly-as-a-tag, literally-as-intensifier, actually-as-pivot, basically. At most one, doing real work.
+
+Do not reuse the examples' fake specifics. Use only facts supplied by the user or flagged placeholders.
+
+## Step 2B: surgical tell-removal workflow
+
+Fix in this order:
+
+1. Cut restatement. AI often says the same thing about 1.5 times. Keep the strongest statement.
+2. Kill the constructions. Say the positive claim directly; break unnecessary triads; state rhetorical answers; change "serves as" to "is"; delete unsupported participial tails; name a source or own the claim.
+3. Replace flagged lexicon with the plain spoken word, then prefer a concrete noun from the text's world over any generic synonym.
+4. Ground it with a supplied number, day, price, name, brand or irrelevant-but-true detail. If none exists, use and flag a placeholder.
+5. Fix rhythm carefully: include genuine sentence-length spread, but do not manufacture it by chopping prose into fragments.
+6. Use no more than one em dash. Strip emoji bullets, bold-first bullets, title case and markdown residue unless the destination or established voice calls for them.
+7. Let something stay uneven: an admission, mild opinion, unresolved edge or aside with attitude.
+
+${ANTI_AI_READER_TELL_RULES}
+
+## Step 3: verify and deliver
+
+Check the mode first.
+
+For detector-first work: is it one incident that cannot be outlined? Does it contain a real self-interruption and self-correction? Is it around the word cap? Are there no more than about 4 supplied or flagged specifics, re-hit rather than accumulated? Is there zero significance-labeling commentary? If the piece is formal (client document, white paper), say plainly that discourse fracture does not fit and use the surgical pass instead.
+
+For surgical work: are all original points present in order? Is length within roughly 15%? Did tier 1 reach zero and tier 2 fall below cluster thresholds? Is there no negative parallelism, rule of three or rhetorical Q&A? Are em dashes at one or fewer? Did rhythm improve without fragmentation? Did the author's voice survive?
+
+Output:
+
+1. The edited text, ready to copy, with no inline annotations.
+2. \`Tells: N → M\` on one line.
+3. Three to six bullets naming the biggest changes, all placeholders that need real values, and—in interleave mode—which lines remain verbatim human text.
+
+No preamble, no permission question and no "I hope this helps."`,
 };
 
 const NEWSJACKING: Skill = {
@@ -298,6 +415,497 @@ Worked patterns (swap the event for whatever is actually breaking — confirm it
 - Outage: "Half the internet went down. The lesson isn't multi-cloud — it's smaller and cheaper."`,
 };
 
+// Pour the user's real facts into the exact shape of a specific post that
+// already worked. Fires when the user pairs a specific source post with
+// "do it for me" — the modeling lane's craft rules (hook mechanic kept,
+// structure mirrored line-for-line, only personal facts swapped, facts the
+// writer doesn't have become explicit placeholders, never inventions).
+// Specialized like the other post-type skills so it survives the selection
+// cap over generic craft skills.
+const MODEL_FROM_SOURCE: Skill = {
+  id: "model-from-source",
+  specialized: true,
+  triggers: [
+    "model this post",
+    "model this for me",
+    "model a post",
+    "model after",
+    "modeled after",
+    "my version of this post",
+    "same structure, my facts",
+    "make this one but for",
+    "rewrite this with my numbers",
+    "swipe this post",
+    "here's a post that worked",
+  ],
+  body: `# Modeling a post from a source (same build, your facts)
+
+The source post is a mold, not a topic. Your job is to pour the user's
+reality into the exact same shape. When this skill applies, structure wins
+over style: do NOT redesign the post, do NOT "improve" it, do NOT merge it
+with a different format.
+
+One source, one output, same build. The deliverable is a post, not an
+analysis. Don't explain the structure back to the user unless they ask.
+
+## Step 0 — Is this moldable at all
+
+Before pouring, ask one question: did this post work because of its
+structure, or because of who posted it and what they proved?
+
+A post that pulled 4,000 comments because a 200k-follower account gave
+away a $50k client roster is not moldable. You inherit the shape and none
+of the reach. The mold is still fine to use, but say so before writing:
+"This one leaned on [their audience / their specific proof]. Structure
+transfers, the result probably won't."
+
+One line. Then continue or suggest a different source. Don't turn this
+into an essay, and don't skip it silently.
+
+## Rule 1 — Hook: keep it nearly identical, change only the personal angle
+
+The hook keeps the source's construction, word pattern, and tension. You
+change ONLY the part that belongs to the author — their specific claim,
+number, role, or situation — with the user's equivalent.
+
+- SOURCE: "I built a Claude library with 10 AI prompts"
+  ADAPTED: "I built a Claude library with 10 prompts to write better content"
+  (same frame, same number — only the purpose becomes the user's)
+- SOURCE: "I quit my job at Google to write daily"
+  ADAPTED (user is a freelancer): "I quit freelancing to write daily"
+
+Never write a NEW hook. If the source hook is a number, keep a number. If
+it's a confession, confess the user's equivalent. If it's a contradiction,
+contradict the same way. The mechanic is always inherited.
+
+How tightly you copy the WORDS scales with how ownable they are.
+
+- Commodity frame — "I built X with 10 Y", "Most people get X wrong",
+  "X years ago I was broke. Today..." — nobody owns it. Copy the
+  construction almost word for word. That's the point of the mold.
+- Ownable line — a distinctive image, an unusual verb, a turn of phrase
+  the author is known for, anything that would be recognized on sight —
+  keep the mechanic, write a new line onto it. Same move, different words.
+
+Test: if the source hook got screenshotted next to your draft, does it read
+as "same format" or as "copied his post"? Same format is the job. Copied
+his post gets the user called out.
+
+## Rule 2 — Structure: identical, line for line
+
+Mirror the source's architecture exactly:
+
+- Same paragraph count and same approximate paragraph lengths.
+- Same list format: if the source is a 5-item numbered list with a bold
+  label per item, the draft is a 5-item numbered list with a bold label per
+  item. Not 4 items. Not 6. Not bullets instead of numbers.
+- Same formatting quirks: if line 2 is a sentence in parentheses, the draft
+  has a sentence in parentheses on line 2. If the source uses a one-word
+  paragraph, so does the draft. Arrows (→), dashes, blank lines, emoji
+  count — all preserved.
+- Same ending shape: if the source closes with a two-line CTA and a P.S.,
+  the draft closes with a two-line CTA and a P.S.
+
+Read the source as a skeleton first, then write onto that skeleton. Do not
+let "better writing" leak in — the source's shape is the reason the post
+worked.
+
+When the facts won't fill the shape. Source has a 7-item list, the user
+has 3 real items. Structure holds up to the placeholder cap in Rule 3: keep
+7 slots, fill 3, mark the rest. Past that cap, honesty wins and structure
+bends — cut the list to what's true, and say so in one line:
+"Source ran 7, you've got 4 real ones, so this is the 4-item version."
+Never pad a list with invented items to protect the count.
+
+## Rule 3 — Only the personalized facts change
+
+Swap the details that are specific to the original author for the user's
+equivalents, and nothing else:
+
+- Personal facts: "I'm 30 years old" → the user's real age ("I'm 28 years
+  old"). Job titles, company, niche, audience, product name, geography.
+- Their numbers → the user's real numbers. Keep the source's number TYPE
+  and magnitude — a count stays a count, a revenue figure stays a revenue
+  figure — but the value is the user's. NEVER carry the original author's
+  numbers over as if they were the user's.
+- Their story specifics (client names, tools, anecdotes) → the user's
+  equivalents.
+
+Where the user's facts come from, in this order: the voice profile for
+whoever the post is for, the brief, then earlier in this conversation.
+Workspace writing rules override all of them — banned figures and banned
+phrases stay banned inside a mold. A modeling pass is the single most
+likely place a retired number climbs back in.
+
+When a swap needs a fact you don't have — a number, a name, a specific
+story — do NOT invent one and do NOT keep the original author's version.
+Leave a clearly-marked placeholder the user can fill in without another
+round-trip: [your number], [your age], [your client name], [your result].
+Keep placeholders rare (at most 2-3 per post) and always specific about
+what belongs there — [your monthly recurring revenue], never [number].
+Tell the user about every placeholder in one line after the draft so they
+know exactly what to fill in.
+
+Everything else — the argument, the lesson, the sequence of points — stays.
+
+## Hard rules
+
+- Never invent a personal fact the user hasn't given you. A placeholder is
+  always better than a fabrication, and a fabrication is always worse than
+  asking.
+- The source author's identity disappears entirely: no leftover names,
+  companies, ages, or anecdotes that belong to them.
+- The user's voice profile still governs the sentences INSIDE the skeleton:
+  their word choice, their rhythm. The source supplies the shape; the voice
+  supplies the sound.
+- Anti-slop rules still apply to what you write — but they never override
+  the source's structure. A rule-of-three in the SOURCE's structure is kept
+  (it modeled a winner); a rule-of-three you invent is not.
+- The original post stays attached as the source link. Don't hide the mold.
+
+## Clean-up pass
+
+Before delivering, read the draft once for AI tells and once for leaked
+facts.
+
+- AI tells. Working from a skeleton pulls writing toward the generic, so
+  this draft is more prone to it than a net-new post. Cut the setup
+  phrases, the tidy symmetry you added, the words the user would never say.
+- Leaked facts. Any claim you can't trace to the user is a number or a
+  story that came over from the source. Check every one against the swap
+  list.
+
+This pass may change words. It may NOT change structure. Paragraph count,
+list count, quirks, and ending shape are locked from Rule 2. If the
+clean-up wants to merge two paragraphs or trim a list, it's wrong. The
+shape is the asset.
+
+Don't narrate the pass. Just deliver the cleaned result.
+
+## Output format
+
+**Swapped:** [source fact] → [user fact] · [source fact] → [user fact] · ...
+**Fill in:** [your number] in line 4 · [your client name] in the P.S.
+
+(then the finished post, ready to paste, no commentary inside it)
+
+Swap list first, in one or two lines, so every fact is auditable in five
+seconds. Skip the "Fill in" line when there are no placeholders. Skip the
+whole header when nothing was swapped — but if nothing was swapped, you
+didn't model anything.
+
+## Quick check before delivering
+
+Read source and draft side by side. Same hook shape with the user's angle?
+Same paragraph count, list format, quirks, ending? Only personal facts
+swapped — every swap true for the user or left as a marked placeholder?
+Placeholders listed for the user in one line? Nothing ownable copied
+verbatim? If a line could have been written without seeing the source,
+rewrite it onto the skeleton.`,
+};
+
+// Write an original post from scratch. Fires when the user asks for a new
+// post WITHOUT a source to model — the craft layer for the most common
+// request type: name the job the post is doing, keep one center of gravity,
+// make the first line work, let the shape follow, cut what doesn't serve.
+// Deliberately GENERIC (not specialized): selectTurnSkills drops an inferred
+// newsjack ("write a post about X's funding round") when another specialized
+// skill is present, and grounding current events always beats the generic
+// craft layer. Generic tier means the newsjack guidance wins that turn, and
+// this skill still injects on plain original requests.
+const ORIGINAL_POST: Skill = {
+  id: "original-post",
+  triggers: [
+    "write a post about",
+    "write a linkedin post",
+    "write an original post",
+    "write something about",
+    "post idea",
+    "give me a post",
+    "i want to post about",
+    "turn this into a post",
+    "draft a post about",
+  ],
+  body: `# Original posts
+
+One post, one job, done properly.
+
+Most posts fail for three reasons. They're doing two jobs at once. The
+first line clears its throat instead of doing work. Or the writer picked
+a format before they knew what the post was for. Everything below attacks
+those three.
+
+## This is not a template library
+
+Nothing here is a mold. No numbered post types to pick from, no
+fill-in-the-blank hooks, no required beat sequence. That's deliberate.
+Format-first writing produces posts that are structurally correct and
+completely forgettable, and a reader can feel the template through the
+words.
+
+What's fixed is the thinking: name the job, keep one center of gravity,
+make the first line work, let the shape follow, cut what doesn't serve
+the job. Everything else is open. If the post wants a shape nobody has
+described, write it. If it wants forty words, write forty. If it wants
+four hundred, write four hundred.
+
+These are constraints on rigor, not on creativity.
+
+When a Content Template is supplied, use it as evidence of what a complete
+post looks like, not as a form to fill. Study four things: what the hook does,
+how the idea progresses, where the proof appears, and how the post stops. Then
+write from the user's own thesis, facts, and voice. Do not inherit the
+template's wording, placeholders, anecdotes, numbers, or CTA. The template
+raises the execution bar; it never supplies the substance.
+
+## Step 1 — Name the job
+
+Before anything else, answer this: **what is this post for?**
+
+Not the topic. The job. Different jobs are graded on different things,
+and applying the wrong bar is how good posts get talked out of existing.
+
+Common jobs, non-exhaustive:
+
+- **Change how someone sees something.** An argument. Graded on whether
+  a smart reader could disagree, and whether the post survives it.
+- **Teach a move.** Tactical. Graded on whether the reader can run it
+  tomorrow without asking a follow-up question.
+- **Hand over something usable.** A resource, a list, a set of tells, a
+  stack. Graded on density and saveability. Length is a feature here,
+  not a bug.
+- **Say who you are.** Identity, faith, values, a line in the sand.
+  Graded on conviction and specificity, never on novelty. Nobody has to
+  disagree. The job is to be recognized by the people who share it.
+- **Share news.** A launch, a hire, a milestone, a move. Graded on
+  whether the reader gets why it matters to them.
+- **Make someone feel less alone.** Recognition. Graded on whether it
+  names something real that usually goes unsaid.
+- **Start a fight worth having.** Provocation. Graded on whether the
+  writer will actually defend it in the comments.
+
+Write the job as one sentence. Keep it visible while drafting. When you
+later ask whether a line stays or goes, this sentence is what you ask it
+against.
+
+A post can carry a secondary effect. It can only have one job. A launch
+post that teaches something on the way is a launch post. Grade it as one.
+
+## Step 2 — One center of gravity
+
+The old rule, "one idea per post," is nearly right and gets misapplied.
+A post with twelve items and eleven more after it can be perfectly
+focused, as long as every one of the twenty-three serves the same job.
+
+The real test: **could a reader say what this post was for, in one line,
+without re-reading it?**
+
+What breaks that:
+
+- Two jobs stapled together. A story about your childhood that turns
+  into a product launch halfway through is two posts, and the reader
+  feels the seam.
+- A middle that wanders. This is where a second idea sneaks in wearing
+  an "and another thing" costume. Cut it.
+- A close that answers a different question than the hook asked.
+
+What does not break it:
+
+- Length. A long post with one job is focused.
+- Many items. Twenty tells about the same problem is one center of
+  gravity.
+- Digressions and asides, as long as they orbit.
+
+## Step 3 — The first line does work
+
+Not "the first line is the point." That rule is too blunt, and it deletes
+good openers. The real rule is that the first line has to **do something**
+rather than warm up.
+
+Setup that opens a loop is work. "When I left Goldman Sachs in 2010, the
+first book I read was Rework" is setup, and it earns its place: the name
+carries weight and the sentence opens a question. Setup that clears the
+throat is not work. "I've been thinking a lot about hiring lately" gives
+the reader nothing and can be deleted with no loss.
+
+Test: cover the first line. Does the post lose anything? If not, it was
+a runway.
+
+Four things a first line can do. Pick whichever the post supports:
+
+- **Open a gap.** Something is missing and the reader wants it closed.
+- **Create friction.** Contradict something the reader believes. Only if
+  the post will defend it.
+- **Trigger recognition.** Name a thought the reader has had and never
+  said out loud.
+- **Land a surprise.** A fact that shouldn't be true but is.
+
+Rules that hold across all four:
+
+- **Specific beats abstract.** A number, a name, a date, a moment. "We
+  lost a client last Tuesday over a four-word email" stops people.
+  "Communication matters" does not.
+- **Don't oversell.** The first line writes a cheque the post has to
+  cash. Overpromising burns trust that took months to build.
+- **Short, usually.** Most good first lines are under fifteen words. Not
+  a law. If you're past twenty, check whether you're explaining.
+
+Write three or four before choosing. The first one is almost never the
+best one. The good version tends to show up after you've written the
+obvious version and gotten it out of the way.
+
+**One exception worth naming.** Identity and recognition posts often open
+warm and plain, and that's correct for the job. "My friends, I've got
+good news for you today" does no clever work and is exactly right,
+because the job is affiliation, not curiosity. Don't sharpen a post out
+of its own register.
+
+## Step 4 — Shape follows the job
+
+Now, and not before, ask what form this needs. Jobs pull toward shapes:
+
+- **Changing a mind** wants an argument: the claim, why people believe
+  otherwise, what changed, what to do about it.
+- **Teaching a move** wants a sequence, and only earns it if the steps
+  are something the reader couldn't have guessed.
+- **Handing over a resource** wants density: get to the goods fast, make
+  every item pull its weight, don't pad the intro.
+- **Saying who you are** wants a story or a plain statement. Both work.
+  Cleverness usually hurts here.
+- **Sharing news** wants context first, news second, and a clear line on
+  why the reader should care.
+- **Recognition** wants short and unadorned. Say the thing. Stop.
+
+These describe what tends to happen, not forms to fill. Build something
+else when the post calls for it.
+
+One rule holds across every shape: **give the reader something they
+couldn't have produced by thinking harder.** A number you have and they
+don't. A moment they weren't in. A tell they'd never noticed. An item
+they'd never have found. Without that, the post is a well-organized
+restatement of what the reader already suspected.
+
+## Step 5 — Facts and proof
+
+Concrete detail is what separates a real post from a plausible one. Pull
+it from the voice profile for whoever the post is for, then the brief,
+then earlier in this conversation. Workspace writing rules override all
+of them.
+
+**Never invent a fact.** Not a client result, not a revenue figure, not
+a headcount, not a timeline, not a story that didn't happen. Never round
+a real number up because it sounds better. Never attribute a belief or an
+experience to the writer that they haven't expressed.
+
+When a line needs a fact you don't have, leave a marked placeholder the
+user can fill without a round-trip: [your number], [your client name],
+[your result]. Be specific about what belongs there, so
+[your monthly recurring revenue], never [number]. Keep them rare, at most
+two or three, and list them in one line after the draft.
+
+A placeholder is always better than a fabrication. Asking is better than
+both when the whole post hangs on the missing fact.
+
+If the post rests on a claim with nothing behind it, say so in one line
+and offer the version that is backed. Don't refuse to write, and don't
+lecture. Just name the hole and hand over the alternative.
+
+## Step 6 — The close
+
+The close is one move, calibrated to the job.
+
+An argument closes on its sharpest restatement. A tactical post closes on
+the instruction. A resource post closes on the ask, and the ask can be
+direct, because the reader just got something. An identity post closes on
+the sentiment, and softness is correct there. A news post closes on the
+next step.
+
+Whatever it is, it stops. The most common failure is a post that reaches
+its point and keeps talking for three more lines, each softer than the
+last. Find the strongest line near the end and end there.
+
+On calls to action: match the ask to what the post gave. A post that
+handed over twenty-three usable things has earned a direct CTA and a
+repost line. A quiet story about a hard year has not, and stapling one on
+cheapens the whole thing.
+
+## Step 7 — Cut what doesn't serve the job
+
+Not "cut twenty percent." That's the right number for an argument and the
+wrong number for a resource post, where trimming items destroys the value.
+Cut against the job sentence from Step 1.
+
+Goes on sight, in every genre:
+
+- Any line that doesn't serve the job.
+- Throat-clearing before the first working line.
+- Hedges: "I think," "it seems like," "arguably," "in many ways."
+- Empty transitions: "Here's the thing." "But here's what's interesting."
+  "The bottom line?"
+- The explanation of the joke, the metaphor, or the point. If you made
+  it, trust it.
+- The second-best version of a line you already wrote better.
+- Symmetry added because three sounded nicer than two.
+
+**AI tells, specifically.** These make a post read as machine-written
+even when the content is good: em dashes, "it's not X, it's Y," tidy
+tricolons, "in today's landscape," starting sentences with "But here's
+the thing," and paragraphs of identical length. Vary the rhythm. Let a
+sentence run long, then cut one to three words.
+
+**Read it out loud.** Any line the writer would never say to a person in
+a room gets rewritten or removed.
+
+## Voice
+
+The voice profile governs the sentences. Word choice, sentence length,
+formality, whether they swear, whether they use lists, how they sign off.
+Match it.
+
+Voice is not tone adjectives. It's specific habits: the words this person
+reaches for, how they start sentences, what they'd never say. Apply those
+rather than writing generically-good prose and hoping it passes.
+
+Register matters as much as vocabulary. A faith post, a launch post, and
+a teardown from the same person sound different from each other and all
+sound like them. Don't flatten a post into house style.
+
+If the profile is thin, write plainly and say it needs more. Plain is
+recoverable. Wrong-voice is not.
+
+## Output
+
+Deliver the post alone, clean, ready to paste. No commentary inside it.
+
+Then, underneath, at most two short lines:
+
+**Job:** [the one sentence from Step 1]
+**Fill in:** [your number] in line 3 · [your client name] in the close
+
+Drop the "Fill in" line when there are no placeholders. Don't explain the
+structure, justify choices, or offer a menu of alternatives unless asked.
+
+## Final check
+
+Read it cold, as a stranger scrolling.
+
+- Is the job clear, and is there only one?
+- Does the first line do work, or is it a runway?
+- Is there something here the reader couldn't have produced by thinking
+  harder?
+- Is every fact true, or marked as a placeholder?
+- Does the ask match what the post gave?
+- Does it end at its strongest line, or three lines after it?
+- Does it sound like this person, in the right register for this job?
+
+Grade against the job, not against a house standard. An identity post
+that nobody could disagree with is doing its job. A resource post with
+twenty-three items is focused. A launch post is allowed to be a launch
+post. The bar moves. What doesn't move is that the post has one job, the
+first line works, the facts are true, and nothing is in there that isn't
+serving the point.`,
+};
+
 export const SKILLS: Skill[] = [
   HOOKS,
   LEAD_MAGNET,
@@ -306,6 +914,8 @@ export const SKILLS: Skill[] = [
   BRANDJACKING,
   NEWSJACKING,
   ANTI_AI,
+  MODEL_FROM_SOURCE,
+  ORIGINAL_POST,
 ];
 
 // ---------------------------------------------------------------------------
@@ -410,10 +1020,13 @@ delve/delves/delving, tapestry, landscape (figurative), realm, paradigm, embark,
 
 ## Formatting (LinkedIn / social)
 No markdown headers. No bolding random phrases for emphasis. No emoji-as-bullets (one or two emoji total is fine if it fits the voice). No "🧵"/"Thread:" openers. No hashtag stacks (zero to two, integrated naturally).
+Modeling exception: when you are adapting a specific source post, its formatting devices are part of the mold — mirror its bold list labels, its emoji-led CTA steps, its numbered stages with component sub-lines, its arrow markers, and its P.S. sign-off exactly as they appear. The bans in this section apply to devices YOU invent, never to ones the source you're modeling already uses.
 Paragraph spacing is not optional: use real blank lines (a double newline) between paragraphs exactly as they should appear in the LinkedIn composer. Match the voice profile's observed paragraph lengths and whitespace habits. When the profile is silent, default to short one-or-two-sentence paragraphs rather than one dense wall.
 Lists render one item per LINE. When a post enumerates items — whether with arrows (→ / ->), dashes, bullets, or numbers — put EACH item on its own line with a real newline before it, never as a run-on line like "here's what's inside: → a → b → c". If the source you're modeling lists items line-by-line, preserve that exact one-per-line shape; do not collapse its list into a paragraph.
 
-Final check before any draft: would this read as AI-written, or could any AI have written it for any person? If so, make it specific and human until the answer is no. Apply all of this silently — never reference these rules in your reply.`;
+Final check before any draft: would this read as AI-written, or could any AI have written it for any person? If so, make it specific and human until the answer is no. Apply all of this silently — never reference these rules in your reply.
+
+${ANTI_AI_READER_TELL_RULES}`;
 
 // GLOBAL structure-variety skill — always on, like GLOBAL_WRITING_SKILL, and it
 // rides the same cacheable prefix so a warm turn pays the discounted rate.
@@ -477,7 +1090,7 @@ function namesSkill(lowerText: string, id: string): boolean {
 
 export function selectSkills(userMessage: string, max = 3): Skill[] {
   const text = userMessage.toLowerCase();
-  const hits = SKILLS.filter((s) => {
+  let hits = SKILLS.filter((s) => {
     if (!s.triggers.some((t) => text.includes(t))) return false;
     // explicitOnly skills additionally require being NAMED — a slash command or
     // the bare id. Their triggers stay descriptive for discovery, but a
@@ -485,6 +1098,13 @@ export function selectSkills(userMessage: string, max = 3): Skill[] {
     if (s.explicitOnly) return namesSkill(text, s.id);
     return true;
   });
+  // ORIGINAL_POST already carries a complete Voice section, and every writing
+  // path supplies the resolved voice profile separately. Keeping VOICE_MATCH
+  // beside it repeated the same guidance on the common original-post path
+  // without adding a capability. Other voice-only requests still keep it.
+  if (hits.some((skill) => skill.id === "original-post")) {
+    hits = hits.filter((skill) => skill.id !== "voice-match");
+  }
   // Stable partition: specialized skills first, generic after, each in registry
   // order. Array.prototype.sort is stable in modern JS/Node, so a boolean key is
   // enough — no need to thread the original index.

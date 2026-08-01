@@ -32,6 +32,16 @@ export function initialsForName(name: string): string {
     .toUpperCase();
 }
 
+// Fallback avatar for creators whose profile photo is missing or whose
+// LinkedIn CDN URL expired: a DiceBear "thumbs" avatar (glyphs is Pro-only
+// and 404s on the free API). Seeded by the author
+// name so each creator keeps one stable glyph across renders while different
+// creators get different ones (no random flicker, CDN-cacheable). The initials
+// tile stays as the final fallback when the DiceBear CDN itself is unreachable.
+export function creatorAvatarFallback(name: string): string {
+  return `https://api.dicebear.com/9.x/thumbs/svg?seed=${encodeURIComponent(name.trim() || "?")}`;
+}
+
 export function timeAgo(iso: string | null): string | null {
   if (!iso) return null;
   const date = new Date(iso);

@@ -1,5 +1,9 @@
 import { describe, test, expect } from "vitest";
-import { tintFor, timeAgo } from "@/lib/post-card-helpers";
+import {
+  creatorAvatarFallback,
+  tintFor,
+  timeAgo,
+} from "@/lib/post-card-helpers";
 
 // ---------------------------------------------------------------------------
 // Presentation helpers shared by the swipe PostCard and the chat's inline
@@ -25,6 +29,30 @@ describe("tintFor — stable avatar tint from a name", () => {
 
   test("an empty name still yields a valid tint (no crash)", () => {
     expect(tintFor("")).toMatch(/^bg-/);
+  });
+});
+
+describe("creatorAvatarFallback — DiceBear thumbs URL for missing photos", () => {
+  test("points at the thumbs style on the DiceBear CDN", () => {
+    expect(creatorAvatarFallback("Alice")).toBe(
+      "https://api.dicebear.com/9.x/thumbs/svg?seed=Alice",
+    );
+  });
+
+  test("is deterministic per name but differs across names", () => {
+    expect(creatorAvatarFallback("Amos Bar Joseph")).toBe(
+      creatorAvatarFallback("Amos Bar Joseph"),
+    );
+    expect(creatorAvatarFallback("Amos Bar Joseph")).not.toBe(
+      creatorAvatarFallback("Dana Founder"),
+    );
+  });
+
+  test("URL-encodes the seed and survives an empty name", () => {
+    expect(creatorAvatarFallback("Amos Bar Joseph")).toContain(
+      "seed=Amos%20Bar%20Joseph",
+    );
+    expect(creatorAvatarFallback("  ")).toContain("seed=%3F");
   });
 });
 

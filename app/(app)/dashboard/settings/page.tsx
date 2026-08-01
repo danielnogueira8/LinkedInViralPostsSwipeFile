@@ -1,8 +1,6 @@
-import { Suspense } from "react";
 import { getThresholds, getTemplateThresholds } from "@/lib/viral";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { SettingsForm } from "./form";
-import { PublishingCard } from "./publishing-card";
 import { DangerZone } from "./danger-zone";
 import { PageHeader, PageShell } from "@/components/app-surface";
 import { getDiscoveryThresholds } from "@/lib/discovery-thresholds";
@@ -23,14 +21,9 @@ export default async function SettingsPage() {
     <PageShell>
       <PageHeader
         title="Settings"
-        description="Tune discovery thresholds, publishing, and workspace-level account controls."
+        description="Tune discovery thresholds and workspace-level account controls."
       />
       <SettingsForm initial={{ viral, template, discovery }} />
-
-      {/* Suspense: PublishingCard reads useSearchParams (?linkedin= callback). */}
-      <Suspense fallback={null}>
-        <PublishingCard />
-      </Suspense>
 
       <div className="pt-2">
         <DangerZone />

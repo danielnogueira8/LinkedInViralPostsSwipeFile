@@ -11,6 +11,8 @@ const SHOTS: { path: string; name: string; ready: RegExp }[] = [
   { path: "/dashboard", name: "dashboard-home", ready: /./ },
   { path: "/dashboard/swipe", name: "swipe-file", ready: /./ },
   { path: "/dashboard/voice", name: "voice", ready: /./ },
+  { path: "/dashboard/agent", name: "agent", ready: /your agent/i },
+  { path: "/dashboard/analytics", name: "analytics", ready: /analytics/i },
 ];
 
 for (const s of SHOTS) {

@@ -173,7 +173,11 @@ async function runPipeline(opts: {
     getThresholds: async () => ({ min_reactions: 50, min_comments: 50 }),
     classifyPostForAllWorkspaces: vi.fn(async () => undefined),
   }));
-  vi.doMock("@/lib/claude", () => ({ extractHookWithClaude, templatizeOutlierPost }));
+  vi.doMock("@/lib/claude", () => ({
+    extractHookWithClaude,
+    templatizeOutlierPost,
+    PLATFORM_WORKSPACE: "platform",
+  }));
   vi.doMock("@/lib/hooks", () => ({
     extractHookHeuristic,
     qualifiesForHookLibrary: () => true,

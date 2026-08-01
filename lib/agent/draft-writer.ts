@@ -28,7 +28,7 @@ export type ReasoningEffort = "minimal" | "low" | "medium" | "high";
 // if you want the thin writer on a different (e.g. stronger) model than the rest
 // of the app. Env-overridable so a retired preview slug is a one-line env change
 // (OpenRouter drops `-preview` slugs on graduation — see
-// lead-magnet-image-generation.ts). `anthropic/claude-sonnet-5` is the fallback.
+// lead-magnet-image-generation.ts). `openai/gpt-5.6-luna` is the fallback.
 
 export type DraftWriterStage = "primary" | "repair" | "fallback";
 
@@ -40,10 +40,19 @@ export type DraftWriterRequest = {
   timeoutMs: number;
   signal?: AbortSignal;
   sessionId?: string;
-  // "none" means no explicit reasoning override. This avoids excluding a
-  // provider that cannot accept OpenRouter's reasoning controls when the writer
-  // model changes. A ReasoningEffort explicitly opts the thin path into it.
-  reasoning: "none" | ReasoningEffort;
+  // Multi-draft slots add a version-specific system instruction and accepted
+  // prior drafts, so the full prompt is unique to that slot. Let those calls
+  // opt out of paying for a cache entry that another slot cannot reuse.
+  cachePrompt?: boolean;
+  // Character boundary for the invariant leading portion of the flattened
+  // system prompt. The Anthropic adapter can cache that prefix while leaving
+  // request-selected skills and workspace context outside the cache entry.
+  cacheSystemPrefixChars?: number;
+  // "none" means no writer-specific override. Native OpenAI calls still receive
+  // the centralized max/high policy in lib/openai.ts; fallback models retain
+  // their provider-specific defaults. "sonnet-low" remains a compatibility hint
+  // for the legacy Luna/OpenRouter route.
+  reasoning: "none" | "sonnet-low" | ReasoningEffort;
 };
 
 export type DraftWriterResponse = {
@@ -58,24 +67,26 @@ export interface DraftWriterAdapter {
   write(request: DraftWriterRequest): Promise<DraftWriterResponse>;
 }
 
+function isLuna(model: string): boolean {
+  return model.trim().toLowerCase().replace(/^openai\//, "") ===
+    "gpt-5.6-luna";
+}
+
 export const openRouterDraftWriter: DraftWriterAdapter = {
   async write(request) {
-    // reasoning === "none": send NO reasoning-related field at all. completeChat
-    // then applies its own per-model default (GLM → High, which GLM self-limits;
-    // everything else → nothing). We deliberately do NOT send
-    // `reasoning: { enabled: false }` for non-GLM models: the request also carries
-    // `provider: { require_parameters: true }`, so OpenRouter only routes to
-    // providers accepting EVERY parameter — and `enabled: false` is not a valid
-    // reasoning shape for some models (Gemini 3.x maps reasoning.effort →
-    // thinkingLevel and rejects enabled:false), which returns a 400 Bad Request.
-    // That 400 is exactly what broke google/gemini-3.6-flash as a writer model:
-    // every primary attempt 400'd in ~145ms and fell back to Sonnet. The
-    // reasoning-DEFAULT over-reasoning case (deepseek-v4-pro burning the whole
-    // budget) can only occur under the auto-router, where the writer already pins
-    // Sonnet→Luna (model-config writerPrimary), so no writer call runs a
-    // reasoning-default model; the 6k max_tokens ceiling is the remaining
-    // backstop. An explicit ReasoningEffort ("medium"/"minimal", thin path) is
-    // still passed through — those ARE valid across models.
+    // reasoning === "none" deliberately sends no reasoning-related field on
+    // the legacy OpenRouter route. Do not send `reasoning: { enabled: false }`:
+    // the request carries `provider.require_parameters`, and some fallback
+    // providers reject that shape. Native OpenAI calls apply their centralized
+    // max/high policy in lib/openai.ts before this transport is reached.
+    const reasoningEffort =
+      request.reasoning === "sonnet-low"
+        ? isLuna(request.model)
+          ? "low"
+          : undefined
+        : request.reasoning === "none"
+          ? undefined
+          : request.reasoning;
     const result = await completeChat({
       messages: request.messages,
       model: request.model,
@@ -83,9 +94,9 @@ export const openRouterDraftWriter: DraftWriterAdapter = {
       signal: request.signal,
       timeoutMs: request.timeoutMs,
       sessionId: request.sessionId,
-      ...(request.reasoning === "none"
-        ? {}
-        : { reasoningEffort: request.reasoning }),
+      cachePrompt: request.cachePrompt,
+      cacheSystemPrefixChars: request.cacheSystemPrefixChars,
+      ...(reasoningEffort ? { reasoningEffort } : {}),
     });
     return {
       text: result.text,

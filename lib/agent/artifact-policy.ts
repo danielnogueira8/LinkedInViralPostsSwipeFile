@@ -2,6 +2,7 @@ import type { Artifact } from "@/lib/agent/contracts";
 import { editDraftBodySync } from "@/lib/agent/specialists/editor";
 import { looksCorruptedDraft } from "@/lib/agent/specialists/nets";
 import { MAX_CITES } from "@/lib/cite-resolve";
+import { truncateAtWordBoundary } from "@/lib/text-truncate";
 
 let artifactSequence = 0;
 
@@ -67,7 +68,9 @@ export function extractArtifacts(text: string): Artifact[] {
     artifacts.push({
       id: `art_${Date.now()}_${artifactSequence++}`,
       kind: "post",
-      title: finalBody.split("\n", 1)[0].slice(0, 60).trim() || "Draft post",
+      title:
+        truncateAtWordBoundary(finalBody.split("\n", 1)[0] ?? "", 60) ||
+        "Draft post",
       body: finalBody,
     });
   }

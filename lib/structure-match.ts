@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { embedText, EMBEDDING_MODEL } from "@/lib/openrouter";
+import { PLATFORM_WORKSPACE } from "@/lib/claude";
 import { toVectorLiteral } from "@/lib/post-embeddings";
 import { computeStructureSkeleton } from "@/lib/post-structure-skeleton";
 import { BUILTIN_TEMPLATES } from "@/lib/templates-builtin";
@@ -324,6 +325,7 @@ async function ensureBuiltinEmbeddings(signal?: AbortSignal): Promise<Map<string
   const { embeddings } = await embedText(texts, {
     model: EMBEDDING_MODEL,
     signal,
+    workspaceId: PLATFORM_WORKSPACE,
   });
   const map = new Map<string, number[]>();
   for (let i = 0; i < BUILTIN_TEMPLATES.length; i += 1) {

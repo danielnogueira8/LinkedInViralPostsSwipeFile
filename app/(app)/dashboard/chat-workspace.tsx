@@ -32,6 +32,7 @@ import {
   Maximize2,
   Minimize2,
   PanelLeftOpen,
+  PanelLeftClose,
   Layers,
   MessageSquare,
   MessageCircleQuestionMark,
@@ -123,6 +124,11 @@ import { useCopiedFlag } from "@/lib/use-copied-flag";
 import { resolveIntent } from "@/lib/post-intents";
 import { AvatarImg } from "@/components/avatar-img";
 import { Button } from "@/components/ui/button";
+import { SearchField } from "@/components/ui/search-field";
+import {
+  LoadingPixels,
+} from "@/components/ui/loading-state";
+import { TimedLoadingState } from "@/components/ui/timed-loading-state";
 import { normalizePostBody } from "@/lib/post-body-normalize";
 import { looksCorruptedDraft } from "@/lib/agent/specialists/nets";
 import type {
@@ -131,15 +137,17 @@ import type {
   PlanStep,
 } from "@/lib/agent/contracts";
 import {
-  commandForComposer,
   initialCoworkComposerState,
   preservesCoworkCommandOnSessionChange,
-  resumesPersistedCoworkOperation,
-  type CoworkCommand,
   type CoworkComposerCommandKind,
   type CoworkComposerState,
 } from "@/lib/cowork-command";
 import {
+  createChatWorkspaceController,
+  type ChatWorkspaceSendOptions,
+} from "@/lib/chat-workspace-controller";
+import {
+  composeInterviewAnswers,
   isAskSelectionComplete,
   resolveAskSubmission,
   toggleAskOption,
@@ -157,6 +165,7 @@ import {
   readComposerDraft,
   readDraft,
   writeComposerDraft,
+  writeComposerExplorationLane,
   writeDraft,
 } from "@/lib/chat-draft-storage";
 import {
@@ -178,8 +187,9 @@ import { chatSetupDeadlines } from "@/lib/chat-stream-policy";
 import {
   DRAFT_COUNT_OPTIONS,
   POST_TYPE_OPTIONS,
-  generationConfigForSelection,
+  explorationLaneForComposer,
   type DraftCountSelection,
+  type ExplorationLaneSelection,
   type PostTypeSelection,
 } from "@/lib/generation-config";
 import type { DraftKind } from "@/lib/post-type";
@@ -246,7 +256,7 @@ const DraftEditor = dynamic(
   {
     loading: () => (
       <div className="min-h-[15rem] rounded-2xl border border-border bg-card/70 p-3">
-        <div className="mb-3 h-8 w-56 animate-pulse rounded-full bg-muted" />
+        <TimedLoadingState label="Opening editor" className="mb-3" />
         <div className="space-y-2">
           <div className="h-4 w-full animate-pulse rounded bg-muted" />
           <div className="h-4 w-11/12 animate-pulse rounded bg-muted" />
@@ -319,6 +329,28 @@ function writeDraftPanelWidth(width: number): void {
     );
   } catch {
     /* non-fatal */
+  }
+}
+
+function trapDialogFocus(event: KeyboardEvent<HTMLDivElement>): void {
+  if (event.key !== "Tab") return;
+  const focusable = Array.from(
+    event.currentTarget.querySelectorAll<HTMLElement>(
+      'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    ),
+  ).filter((element) => element.getAttribute("aria-hidden") !== "true");
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (!first || !last) {
+    event.preventDefault();
+    return;
+  }
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
   }
 }
 
@@ -434,6 +466,9 @@ type ModelSource = {
   postText: string;
   partial: boolean;
   postType: "regular" | "lead_magnet" | null;
+  // Canonical LinkedIn URL of the original post (null for drafts/templates or
+  // when the underlying row is gone). Drives the context card's link icon.
+  postUrl: string | null;
   // Provenance — drives the chip label: 'draft' (the user's own post being
   // refined) reads "Refining your post"; 'template' (a fill-in skeleton) reads
   // "Filling template"; swipe/bookmark read "Modeling after".
@@ -470,6 +505,7 @@ export function ChatWorkspace({
       initialArtifacts: initialMessages.flatMap((message) => message.artifacts ?? []),
     }),
   );
+  const [workspaceController] = useState(createChatWorkspaceController);
   const sessionSnapshot = useSyncExternalStore(
     chatSession.subscribe,
     chatSession.snapshot,
@@ -514,6 +550,8 @@ export function ChatWorkspace({
   // attention; opened from the header toggle. Mobile uses a bottom sheet.
   const [contextPanelOpen, setContextPanelOpen] = useState(false);
   const [mobileContextOpen, setMobileContextOpen] = useState(false);
+  const mobileContextTriggerRef = useRef<HTMLButtonElement>(null);
+  const mobileContextCloseRef = useRef<HTMLButtonElement>(null);
   const [draftPanelWidth, setDraftPanelWidth] = useState(DRAFT_PANEL_DEFAULT_WIDTH);
   const [draftPanelWidthReady, setDraftPanelWidthReady] = useState(false);
   const [resizingDraftPanel, setResizingDraftPanel] = useState(false);
@@ -525,11 +563,34 @@ export function ChatWorkspace({
   const [voiceWarningDismissed, setVoiceWarningDismissed] = useState(false);
   const voiceWarningShownRef = useRef(false);
   // Mobile only: the drafts panel is a bottom sheet (the desktop inline column is
-  // hidden below lg). Opened via the floating "Drafts (N)" pill above the composer.
+  // hidden below lg). Opened from the in-flow shortcut above the composer.
   const [mobileDraftsOpen, setMobileDraftsOpen] = useState(false);
+  const mobileDraftsTriggerRef = useRef<HTMLButtonElement>(null);
+  const mobileDraftsCloseRef = useRef<HTMLButtonElement>(null);
   // Mobile only: the chat-history sidebar is an off-canvas drawer (it's a fixed
   // inline column on md+). Closed by default so the conversation has full width.
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  // Desktop only: the inline chat-history column can be collapsed to give the
+  // conversation the full width. Persisted so the preference survives reloads.
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      return window.localStorage.getItem("coworkSidebarCollapsed") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const toggleSidebarCollapsed = () => {
+    setSidebarCollapsed((prev) => {
+      const next = !prev;
+      try {
+        window.localStorage.setItem("coworkSidebarCollapsed", next ? "1" : "0");
+      } catch {
+        // Storage unavailable (private mode) — the toggle still works in-memory.
+      }
+      return next;
+    });
+  };
   // Chat-history search query (filters the list by title, client-side).
   const [chatSearch, setChatSearch] = useState("");
   const [pendingModelSource, setModelSource] = useState<ModelSource | null>(null);
@@ -635,6 +696,19 @@ export function ChatWorkspace({
   // fallback). Same Auto/explicit shape and lifecycle as draftCountSelection.
   const [postTypeSelection, setPostTypeSelection] =
     useState<PostTypeSelection>("auto");
+  const [explorationLaneSelection, setExplorationLaneSelection] =
+    useState<ExplorationLaneSelection>("auto");
+  const chooseExplorationLane = useCallback(
+    (selection: ExplorationLaneSelection) => {
+      setExplorationLaneSelection(selection);
+      writeComposerExplorationLane(activeIdRef.current, selection);
+    },
+    [],
+  );
+  const effectiveExplorationLaneSelection = explorationLaneForComposer(
+    explorationLaneSelection,
+    Boolean(modelSource),
+  );
   // Close every composer picker when the active chat changes (switch OR the
   // active chat being deleted, which sets activeId to null). The pickers are
   // anchored to the always-mounted composer, so without this a picker opened in
@@ -744,6 +818,7 @@ export function ChatWorkspace({
           partial: modelSource.partial,
           postType: modelSource.postType,
           kind: modelSource.kind,
+          postUrl: modelSource.postUrl,
         }
       : null,
   });
@@ -1028,6 +1103,26 @@ export function ChatWorkspace({
     };
   }, [contextMenuOpen]);
 
+  useEffect(() => {
+    if (!mobileContextOpen && !mobileDraftsOpen) return;
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (mobileContextOpen) {
+        setMobileContextOpen(false);
+        requestAnimationFrame(() => mobileContextTriggerRef.current?.focus());
+      } else {
+        setMobileDraftsOpen(false);
+        requestAnimationFrame(() => mobileDraftsTriggerRef.current?.focus());
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    requestAnimationFrame(() => {
+      if (mobileContextOpen) mobileContextCloseRef.current?.focus();
+      else mobileDraftsCloseRef.current?.focus();
+    });
+    return () => document.removeEventListener("keydown", onKey);
+  }, [mobileContextOpen, mobileDraftsOpen]);
+
   // Reconcile the workspace's custom skills with the DB on mount (for the /
   // autocomplete + ⚡ picker). The list is SEEDED from the server prop above, so
   // the ⚡ button already paints on first render — this fetch just picks up any
@@ -1226,7 +1321,9 @@ export function ChatWorkspace({
   const [draftStoreReady, setDraftStoreReady] = useState(false);
   const [forcedDraftByChat, setForcedDraftByChat] = useState<Record<string, string>>({});
   useEffect(() => {
-    setInput(readDraft(activeIdRef.current));
+    const composerDraft = readComposerDraft(activeIdRef.current);
+    setInput(composerDraft.text);
+    setExplorationLaneSelection(composerDraft.explorationLane);
     setDraftActiveId(activeIdRef.current);
     setDraftStoreReady(true);
   }, []);
@@ -1245,8 +1342,13 @@ export function ChatWorkspace({
       });
       writeDraft(arrivingChatId, forcedDraft);
       setInput(forcedDraft);
+      setExplorationLaneSelection(
+        readComposerDraft(arrivingChatId).explorationLane,
+      );
     } else {
-      setInput(readDraft(arrivingChatId));
+      const arrivingDraft = readComposerDraft(arrivingChatId);
+      setInput(arrivingDraft.text);
+      setExplorationLaneSelection(arrivingDraft.explorationLane);
     }
     setDraftActiveId(arrivingChatId);
   }
@@ -1767,6 +1869,7 @@ export function ChatWorkspace({
           postText: s.post_text,
           partial: !!s.partial,
           postType: s.post_type === "lead_magnet" ? "lead_magnet" : "regular",
+          postUrl: (s.post_url as string | null) ?? null,
           kind:
             s.source === "draft" || s.source === "bookmark" || s.source === "template"
               ? s.source
@@ -1808,6 +1911,78 @@ export function ChatWorkspace({
     // Re-run when the source id, intent, or explicit handoff attempt changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [modelParam, intentParam, handoffParam]);
+
+  // Agent inbox handoff. The Agent chooses an evidence-backed direction; the
+  // user still owns the creative act. Start a clean Cowork session with that
+  // direction prefilled in Create mode, but never auto-send it.
+  const agentIdeaParam = searchParams.get("agentIdea");
+  useEffect(() => {
+    if (!agentIdeaParam) return;
+    const prompt = sessionStorage.getItem(`agent-inbox-draft:${agentIdeaParam}`);
+    if (!prompt) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        stashComposerDraft();
+        const response = await fetch("/api/chats", { method: "POST" });
+        const payload = await response.json();
+        if (!payload.ok || !payload.chat?.id) {
+          throw new Error(payload.error || "Couldn't start a new chat");
+        }
+        if (cancelled) return;
+        // Only drop the stashed prompt once the chat exists to receive it.
+        // Clearing it up front meant a failed chat create — or a refresh
+        // mid-flight — silently lost the idea the user just acted on, with the
+        // inbox card already gone.
+        sessionStorage.removeItem(`agent-inbox-draft:${agentIdeaParam}`);
+        const id: string = payload.chat.id;
+        setChats((current) => prependChatIfMissing(current, payload.chat));
+        chatSession.ensureConversation(id);
+        writeDraft(id, prompt);
+        preserveCommandOnNextChatChangeRef.current = id;
+        setActiveId(id);
+        setInput(prompt);
+        setModelSource(null);
+        enterCreateCommand(1);
+        const url = new URL(window.location.href);
+        url.searchParams.set("chat", id);
+        url.searchParams.delete("new");
+        url.searchParams.delete("agentIdea");
+        router.replace(`${url.pathname}?${url.searchParams.toString()}`, {
+          scroll: false,
+        });
+        requestAnimationFrame(() => inputRef.current?.focus());
+      } catch (handoffError) {
+        // The idea was already marked `acted` before the redirect, so a failed
+        // handoff would otherwise lose it from the board with no draft to show
+        // for it. Put it back so the user can try again.
+        try {
+          await fetch(`/api/agent/inbox/ideas/${agentIdeaParam}`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ kind: "restore" }),
+          });
+        } catch {
+          // Best effort: the toast below is what the user acts on.
+        }
+        toast.error(
+          handoffError instanceof Error
+            ? handoffError.message
+            : "Couldn't open this idea in Cowork",
+        );
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    agentIdeaParam,
+    chatSession,
+    enterCreateCommand,
+    router,
+    setActiveId,
+    stashComposerDraft,
+  ]);
 
   // (The Posts "Model in Chat" handoff now goes through the ?model= path above
   // with intent=refine — same source chip + clean composer as swipe/bookmark —
@@ -1865,7 +2040,11 @@ export function ChatWorkspace({
     if (starter.command === "create" && draftCountSelection === "auto") {
       setDraftCountSelection(1);
     }
-    writeComposerDraft(activeIdRef.current, { text: prompt, starterId: id });
+    writeComposerDraft(activeIdRef.current, {
+      text: prompt,
+      starterId: id,
+      explorationLane: readComposerDraft(activeIdRef.current).explorationLane,
+    });
     setInput(prompt);
     requestAnimationFrame(() => {
       const el = inputRef.current;
@@ -2271,13 +2450,7 @@ export function ChatWorkspace({
 
   const send = useCallback(async (
     overrideText?: string,
-    sendOpts?: {
-      command?: CoworkCommand;
-      retryOfUserMessageId?: string;
-      actionSelectionIds?: string[];
-      clarificationChoiceIndex?: number;
-      clarificationAssistantMessageId?: string;
-    },
+    sendOpts?: ChatWorkspaceSendOptions,
   ) => {
     // Caller passes overrideText to send a specific message without going
     // through the composer input — used by the "Continue" recovery button on
@@ -2428,56 +2601,34 @@ export function ChatWorkspace({
       // rule as Post Format — the badge + stream field are gated on it.
       const turnCreatorStyle = pendingCreatorStyle;
       const turnCreatorStyleApplies = !attached;
-      // The Ask-card submission callback always supplies this field, including
-      // an empty array for free-text/non-board answers. Presence means "resume
-      // the persisted pending operation"; checking length would accidentally
-      // compile an empty-selection answer as a brand-new Ask command.
-      const resumesPersistedOperation = resumesPersistedCoworkOperation({
-        ...(sendOpts?.retryOfUserMessageId
-          ? { retryOfUserMessageId: sendOpts.retryOfUserMessageId }
-          : {}),
-        ...(sendOpts?.actionSelectionIds !== undefined
-          ? { actionSelectionIds: sendOpts.actionSelectionIds }
-          : {}),
-        ...(sendOpts?.clarificationAssistantMessageId
-          ? {
-              clarificationAssistantMessageId:
-                sendOpts.clarificationAssistantMessageId,
-            }
-          : {}),
-      });
-      const appliesComposerControls =
-        overrideText === undefined &&
-        !resumesPersistedOperation &&
-        !sendOpts?.command;
-      const turnCommand =
-        resumesPersistedOperation
-          ? undefined
-          : sendOpts?.command ??
-            commandForComposer({
-              kind: composerCommandKind,
-              count:
-                draftCountSelection === "auto" ? 1 : draftCountSelection,
-              ...(composerCommandKind === "ask" && askContextPost
-                ? { contextPostId: askContextPost.artifactId }
-                : {}),
-              ...(effectiveCoworkComposer.kind === "edit" && editTargetPost
-                ? {
-                    targetPostId: editTargetPost.artifactId,
-                    scope: effectiveCoworkComposer.scope,
-                  }
-                : {}),
-            });
       const turnStarterOwnerId = targetChatId;
-      const turnStarterId = appliesComposerControls
-        ? readComposerDraft(turnStarterOwnerId).starterId ?? undefined
-        : undefined;
-      let turnGenerationConfig = appliesComposerControls
-        ? generationConfigForSelection(draftCountSelection, postTypeSelection)
-        : undefined;
-      // These are only the skills explicitly selected for this turn. Target
-      // skill inheritance is a server-owned operation rule.
-      const turnSkillIds = turnSkills.map((skill) => skill.id);
+      const turnPlan = workspaceController.prepareTurn({
+        composer:
+          effectiveCoworkComposer.kind === "edit" && editTargetPost
+            ? {
+                ...effectiveCoworkComposer,
+                targetPostId: editTargetPost.artifactId,
+              }
+            : effectiveCoworkComposer,
+        draftCountSelection,
+        postTypeSelection,
+        explorationLaneSelection: effectiveExplorationLaneSelection,
+        starterId:
+          readComposerDraft(turnStarterOwnerId).starterId ?? undefined,
+        skillIds: turnSkills.map((skill) => skill.id),
+        hasPostFormat: Boolean(turnPostFormat),
+        hasCreatorStyle: Boolean(
+          turnCreatorStyle && turnCreatorStyleApplies,
+        ),
+        ...(askContextPost
+          ? { askContextPostId: askContextPost.artifactId }
+          : {}),
+        ...(sendOpts ? { sendOptions: sendOpts } : {}),
+        isProgrammaticSend: overrideText !== undefined,
+      });
+      const { requestFields: turnRequestFields } = turnPlan;
+      const turnCommand = turnRequestFields.command;
+      const turnStarterId = turnRequestFields.starterId;
       setSkillPickerOpen(false);
       setPostFormatPickerOpen(false);
       setCreatorStylePickerOpen(false);
@@ -2603,7 +2754,6 @@ export function ChatWorkspace({
           });
         }
       }
-      if (refineThisTurn) turnGenerationConfig = undefined;
 
       // Only clear the composer when sending what the user actually typed —
       // a programmatic send (recovery button, etc.) shouldn't wipe their
@@ -2695,6 +2845,12 @@ export function ChatWorkspace({
       if (turnCommand) {
         setCoworkComposer({ kind: "ask" });
       }
+      const visibleLane = workspaceController.consumeExplorationLane(
+        turnPlan,
+        chatId,
+        activeIdRef.current,
+      );
+      if (visibleLane) setExplorationLaneSelection(visibleLane);
 
       // Optimistically title an untitled chat from this first message, matching
       // the server's auto-title (first 60 chars).
@@ -2740,8 +2896,7 @@ export function ChatWorkspace({
               : {}),
             ...(attached ? { modelSourceId: attached.id } : {}),
             ...(filePayload.length ? { attachments: filePayload } : {}),
-            ...(turnCommand ? { command: turnCommand } : {}),
-            ...(turnSkillIds.length ? { skillIds: turnSkillIds } : {}),
+            ...turnRequestFields,
             ...(turnPostFormat ? { forcedNoModelFormatId: turnPostFormat } : {}),
             ...(turnLeadMagnet &&
             turnLeadMagnetApplies &&
@@ -2766,26 +2921,6 @@ export function ChatWorkspace({
             ...(turnCreatorStyle && turnCreatorStyleApplies
               ? { creatorStyleId: turnCreatorStyle.id }
               : {}),
-            // Context is scoped to this turn. Stamp explicit clears for every
-            // unselected binding so a later opt-in cannot revive a stale skill,
-            // creator style, or format from behind this turn.
-            ...(appliesComposerControls
-              ? {
-                  contextPolicy: {
-                    clear: [
-                      ...(turnSkillIds.length ? [] : ["skills"]),
-                      ...(turnCreatorStyle && turnCreatorStyleApplies
-                        ? []
-                        : ["creator_style"]),
-                      ...(turnPostFormat ? [] : ["post_format"]),
-                    ],
-                  },
-                }
-              : {}),
-            ...(turnGenerationConfig
-              ? { generationConfig: turnGenerationConfig }
-              : {}),
-            ...(turnStarterId ? { starterId: turnStarterId } : {}),
           }),
         }, ctrl.signal, {
           timeoutMs: chatSetupDeadlines({
@@ -2816,6 +2951,10 @@ export function ChatWorkspace({
         }
         streamStarted = true;
         if (attached) {
+          // The staged chip is consumed. The source itself is still this
+          // chat's context and remains in the context rail, which reads the
+          // transcript-persisted source — so nothing is lost by clearing the
+          // chip above the input.
           setModelSource((current) =>
             current?.id === attached.id ? null : current,
           );
@@ -3091,7 +3230,11 @@ export function ChatWorkspace({
             if (turnCreatorStyle)
               setPendingCreatorStyle((cur) => cur ?? turnCreatorStyle);
             if (turnStarterId) {
-              writeComposerDraft(chatId, { text, starterId: turnStarterId });
+              writeComposerDraft(chatId, {
+                text,
+                starterId: turnStarterId,
+                explorationLane: turnPlan.explorationLaneToRestore,
+              });
             }
             if (turnCommand?.kind === "ask") {
               setCoworkComposer({
@@ -3102,6 +3245,7 @@ export function ChatWorkspace({
               });
             } else if (turnCommand?.kind === "create") {
               enterCreateCommand(turnCommand.count);
+              chooseExplorationLane(turnPlan.explorationLaneToRestore);
             } else if (turnCommand?.kind === "edit") {
               setCoworkComposer({
                 kind: "edit",
@@ -3347,6 +3491,8 @@ export function ChatWorkspace({
     effectiveCoworkComposer,
     draftCountSelection,
     postTypeSelection,
+    effectiveExplorationLaneSelection,
+    chooseExplorationLane,
     initialVoiceReady,
     router,
     maybeAutoTitle,
@@ -3355,6 +3501,7 @@ export function ChatWorkspace({
     setActiveId,
     writerContentFormat,
     enterCreateCommand,
+    workspaceController,
   ]);
 
   // Stop the active chat's in-flight run — really stop it, not just cancel
@@ -3766,20 +3913,26 @@ export function ChatWorkspace({
           aria-hidden="true"
         />
       )}
-      {/* Left: chat history. Inline column on md+, off-canvas drawer on mobile. */}
+      {/* Left: chat history. Inline column on md+ (collapsible to zero width),
+          off-canvas drawer on mobile. The inner wrapper keeps a fixed w-64 so
+          content never squishes during the desktop width transition. */}
       <aside
         className={cn(
-          "flex w-64 shrink-0 flex-col border-r border-border",
+          "flex shrink-0 flex-col overflow-hidden",
           // Mobile drawer must be OPAQUE so the conversation behind it doesn't
           // bleed through the list; the translucent sidebar tint is desktop-only.
           "bg-card md:bg-muted/90",
-          // Desktop: normal inline column.
-          "md:relative md:translate-x-0",
-          // Mobile: fixed drawer that slides in/out from the left.
-          "absolute inset-y-0 left-0 z-40 shadow-xl md:shadow-none transition-transform duration-200 md:transition-none",
+          // Desktop: inline column, animated between full width and collapsed.
+          "md:relative md:translate-x-0 md:transition-[width] md:duration-200",
+          sidebarCollapsed
+            ? "md:w-0 md:border-r-0"
+            : "md:w-64 md:border-r md:border-border",
+          // Mobile: fixed drawer that slides in/out from the left at full width.
+          "absolute inset-y-0 left-0 z-40 w-64 shadow-xl md:shadow-none transition-transform duration-200",
           sidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0",
         )}
       >
+        <div className="flex w-64 shrink-0 flex-1 min-h-0 flex-col">
         <div className="flex items-center gap-2 p-3 pb-2.5">
           <Button
             onClick={() => {
@@ -3791,6 +3944,16 @@ export function ChatWorkspace({
           >
             <Plus className="h-4 w-4" /> New session
           </Button>
+          {/* Collapse the column (desktop only; mobile uses the drawer close). */}
+          <button
+            type="button"
+            onClick={toggleSidebarCollapsed}
+            className="hidden md:inline-flex shrink-0 rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+            aria-label="Collapse chat history"
+            title="Collapse chat history"
+          >
+            <PanelLeftClose className="h-4 w-4" />
+          </button>
           {/* Close the drawer (mobile only). */}
           <button
             type="button"
@@ -3803,26 +3966,14 @@ export function ChatWorkspace({
         </div>
         {/* Search the history by title. */}
         <div className="px-3 pb-3">
-          <div className="relative">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-            <input
+          <SearchField
               value={chatSearch}
               onChange={(e) => setChatSearch(e.target.value)}
+              onClear={() => setChatSearch("")}
               placeholder="Search sessions…"
-              className="w-full rounded-xl border border-border bg-card/70 pl-8 pr-7 py-2 text-xs outline-none shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] transition focus:border-primary/40 focus:ring-2 focus:ring-primary/15"
               aria-label="Search chats"
+              className="h-9 border-border bg-card/70 text-xs"
             />
-            {chatSearch && (
-              <button
-                type="button"
-                onClick={() => setChatSearch("")}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                aria-label="Clear search"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            )}
-          </div>
         </div>
         <div className="flex-1 overflow-y-auto px-2.5 pb-3 flex flex-col gap-2">
           {chats.length === 0 ? (
@@ -3859,10 +4010,27 @@ export function ChatWorkspace({
             ))
           )}
         </div>
+        </div>
       </aside>
 
       {/* Center: conversation */}
       <section className="flex-1 min-w-0 flex flex-col relative bg-card">
+        {/* Desktop collapsed-sidebar bar: the only way back to the session list
+            once the column is collapsed. */}
+        {sidebarCollapsed && (
+          <div className="hidden md:flex items-center gap-2 border-b border-border bg-card/90 px-2 py-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={toggleSidebarCollapsed}
+              className="inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-muted-foreground hover:bg-accent hover:text-foreground"
+              aria-label="Show chat history"
+              title="Show chat history"
+            >
+              <PanelLeftOpen className="h-4 w-4" />
+              Sessions
+            </button>
+          </div>
+        )}
         {/* Mobile header: open chat history + new chat (the sidebar is a drawer
             on mobile, so these are the only way in). Hidden on md+ where the
             sidebar is always visible. */}
@@ -4188,7 +4356,7 @@ export function ChatWorkspace({
                       })}
                     </div>
                   </div>
-                  <div className="flex items-center justify-between gap-3 pt-3.5">
+                  <div className="flex items-center justify-between gap-3 py-3.5">
                     <div>
                       <p className="text-sm font-medium text-foreground">Post type</p>
                       <p className="mt-0.5 text-xs text-muted-foreground">
@@ -4219,6 +4387,65 @@ export function ChatWorkspace({
                             }}
                             className={cn(
                               "rounded-lg px-2 py-1.5 text-xs font-medium transition-colors",
+                              selected
+                                ? "bg-card text-primary shadow-sm"
+                                : "text-muted-foreground hover:bg-card/70 hover:text-foreground",
+                            )}
+                          >
+                            {label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-3 pt-3.5 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">
+                        Exploration lane
+                      </p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        {modelSource
+                          ? "Automatic while modeling a source Post."
+                          : effectiveExplorationLaneSelection === "familiar"
+                            ? "Stay close to proven subjects, with a new angle."
+                            : effectiveExplorationLaneSelection === "fresh"
+                              ? "Explore an adjacent question or use case."
+                              : effectiveExplorationLaneSelection === "experimental"
+                                ? "Try a bolder, evidence-backed framing."
+                                : "Automatically balances proven, adjacent, and bolder ideas."}
+                      </p>
+                    </div>
+                    <div
+                      role="group"
+                      aria-label="Exploration Lane"
+                      className="grid shrink-0 grid-cols-2 gap-1 rounded-xl border border-border bg-muted/50 p-1 sm:flex"
+                    >
+                      {(
+                        [
+                          "auto",
+                          "familiar",
+                          "fresh",
+                          "experimental",
+                        ] as const
+                      ).map((option) => {
+                        const selected =
+                          effectiveExplorationLaneSelection === option;
+                        const label =
+                          option === "auto"
+                            ? "Automatic"
+                            : option[0].toUpperCase() + option.slice(1);
+                        return (
+                          <button
+                            key={option}
+                            type="button"
+                            aria-pressed={selected}
+                            disabled={Boolean(modelSource)}
+                            onClick={() => {
+                              chooseExplorationLane(option);
+                              setGenerationSettingsOpen(false);
+                            }}
+                            className={cn(
+                              "rounded-lg px-2 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-45",
                               selected
                                 ? "bg-card text-primary shadow-sm"
                                 : "text-muted-foreground hover:bg-card/70 hover:text-foreground",
@@ -4710,6 +4937,48 @@ export function ChatWorkspace({
                 </div>
               </div>
             )}
+            {(hasContext || hasDraftPanel) && (
+              <div
+                data-testid="mobile-composer-panel-shortcuts"
+                className={cn(
+                  "grid gap-2 lg:hidden",
+                  hasContext && hasDraftPanel ? "grid-cols-2" : "grid-cols-1",
+                )}
+              >
+                {hasContext && (
+                  <button
+                    ref={mobileContextTriggerRef}
+                    type="button"
+                    onClick={() => setMobileContextOpen(true)}
+                    className="flex h-11 min-w-0 items-center gap-2 rounded-xl border border-border bg-card px-3 text-sm font-medium shadow-sm transition-colors hover:bg-muted"
+                    aria-label="Show chat context"
+                  >
+                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                      <Layers className="h-3.5 w-3.5" aria-hidden />
+                    </span>
+                    <span className="truncate">Context</span>
+                    <span className="ml-auto h-2 w-2 shrink-0 rounded-full bg-primary" aria-hidden />
+                  </button>
+                )}
+                {hasDraftPanel && (
+                  <button
+                    ref={mobileDraftsTriggerRef}
+                    type="button"
+                    onClick={() => setMobileDraftsOpen(true)}
+                    className="flex h-11 min-w-0 items-center gap-2 rounded-xl border border-border bg-card px-3 text-sm font-medium shadow-sm transition-colors hover:bg-muted"
+                    aria-label={`Show ${ARTIFACT_PANEL_TITLE.toLowerCase()}`}
+                  >
+                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                      <FileText className="h-3.5 w-3.5" aria-hidden />
+                    </span>
+                    <span className="truncate">{ARTIFACT_PANEL_TITLE}</span>
+                    <span className="ml-auto inline-flex min-w-5 shrink-0 items-center justify-center rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
+                      {artifacts.length}
+                    </span>
+                  </button>
+                )}
+              </div>
+            )}
             <div
               className={cn(
                 "relative overflow-hidden rounded-[1.35rem] border bg-card/90 shadow-[0_18px_60px_rgba(28,28,26,0.12)] ring-1 ring-white/70 backdrop-blur transition-colors",
@@ -4777,12 +5046,16 @@ export function ChatWorkspace({
               </div>
             )}
             <div className="flex flex-col gap-2 px-3 pt-3">
-              {modelSource && (
+              {/* Only the STAGED source shows in the composer. Once it has been
+                  used, the chip is clutter above the input — the source is
+                  still the chat's context and stays in the context rail, which
+                  falls back to the transcript-persisted source. */}
+              {modelSource ? (
                 <SourcePostChip
                   source={modelSource}
                   onRemove={() => setModelSource(null)}
                 />
-              )}
+              ) : null}
             {attachments.length > 0 && (
               <div className="flex flex-wrap gap-1.5">
                 {attachments.map((a) => (
@@ -4911,6 +5184,7 @@ export function ChatWorkspace({
               <textarea
                 ref={inputRef}
                 value={input}
+                aria-label="Message Cowork"
                 onChange={(e) => {
                   setInput(e.target.value);
                   // A manual edit resets the placeholder-nudge state, so editing
@@ -5080,7 +5354,8 @@ export function ChatWorkspace({
                   "h-9 shrink-0 gap-1.5 rounded-xl border-border bg-card px-2.5 hover:bg-muted",
                   (generationSettingsOpen ||
                     draftCountSelection !== "auto" ||
-                    postTypeSelection !== "auto") &&
+                    postTypeSelection !== "auto" ||
+                    effectiveExplorationLaneSelection !== "auto") &&
                     "border-primary/60 text-primary",
                 )}
                 aria-label={`Generation settings — Post count: ${
@@ -5093,9 +5368,13 @@ export function ChatWorkspace({
                     : postTypeSelection === "regular"
                       ? "Regular"
                       : "Lead magnet"
+                }, exploration lane: ${
+                  effectiveExplorationLaneSelection === "auto"
+                    ? "Automatic"
+                    : effectiveExplorationLaneSelection
                 }`}
                 aria-expanded={generationSettingsOpen}
-                title="Choose how many Posts to create and which post type to source"
+                title="Choose Post count, type, and exploration lane"
               >
                 <SlidersHorizontal className="h-4 w-4" aria-hidden />
                 <span className="text-xs font-medium tabular-nums">
@@ -5104,6 +5383,11 @@ export function ChatWorkspace({
                     : `${draftCountSelection} ${draftCountSelection === 1 ? "post" : "posts"}`}
                   {postTypeSelection !== "auto" &&
                     ` · ${postTypeSelection === "regular" ? "Regular" : "Lead magnet"}`}
+                  {effectiveExplorationLaneSelection !== "auto" &&
+                    ` · ${
+                      effectiveExplorationLaneSelection[0].toUpperCase() +
+                      effectiveExplorationLaneSelection.slice(1)
+                    }`}
                 </span>
               </Button>
               )}
@@ -5132,7 +5416,7 @@ export function ChatWorkspace({
                   )}
                   aria-label="Add context"
                   aria-expanded={contextMenuOpen}
-                  title="Attach files, apply skills, pick format, style, or lead magnet"
+                  title="Attach files or choose skills, format, style, or a lead magnet"
                 >
                   <Plus className="h-4 w-4" aria-hidden />
                   <span className="text-xs font-medium">Add context</span>
@@ -5333,28 +5617,23 @@ export function ChatWorkspace({
         </aside>
       )}
 
-      {/* Mobile: a floating "Context" pill that opens the context card as a
-          bottom sheet (the desktop rail is hidden below lg). Sits above the
-          drafts pill so the two don't stack on top of each other. */}
-      {hasContext && !mobileContextOpen && (
-        <button
-          type="button"
-          onClick={() => setMobileContextOpen(true)}
-          className={cn(
-            "lg:hidden absolute left-1/2 -translate-x-1/2 z-20 inline-flex items-center gap-1.5 rounded-full border border-border bg-card/90 px-3.5 py-2 text-xs font-medium shadow-md backdrop-blur hover:bg-card transition-colors",
-            hasDraftPanel ? "bottom-44" : "bottom-32",
-          )}
-          aria-label="Show chat context"
-        >
-          <Layers className="h-3.5 w-3.5" />
-          Context
-        </button>
-      )}
+      {/* Mobile context and posts open from the in-flow shortcut row above the
+          composer. Keeping these controls in normal layout flow prevents them
+          from obscuring source context on narrow screens. */}
       {mobileContextOpen && hasContext && (
-        <div className="lg:hidden absolute inset-0 z-40 flex flex-col justify-end" role="dialog" aria-modal="true">
+        <div
+          className="lg:hidden absolute inset-0 z-40 flex flex-col justify-end"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Chat context"
+          onKeyDown={trapDialogFocus}
+        >
           <div
             className="absolute inset-0 bg-black/40"
-            onClick={() => setMobileContextOpen(false)}
+            onClick={() => {
+              setMobileContextOpen(false);
+              requestAnimationFrame(() => mobileContextTriggerRef.current?.focus());
+            }}
             aria-hidden="true"
           />
           <div className="relative max-h-[80%] flex flex-col rounded-t-[1.35rem] border-t border-border bg-card shadow-xl animate-in slide-in-from-bottom duration-200">
@@ -5364,9 +5643,13 @@ export function ChatWorkspace({
                 Context
               </span>
               <button
+                ref={mobileContextCloseRef}
                 type="button"
-                onClick={() => setMobileContextOpen(false)}
-                className="rounded-lg p-1.5 text-muted-foreground hover:bg-card hover:text-foreground"
+                onClick={() => {
+                  setMobileContextOpen(false);
+                  requestAnimationFrame(() => mobileContextTriggerRef.current?.focus());
+                }}
+                className="flex h-11 w-11 items-center justify-center rounded-xl text-muted-foreground hover:bg-muted hover:text-foreground"
                 aria-label="Close context"
               >
                 <X className="h-4 w-4" />
@@ -5379,25 +5662,20 @@ export function ChatWorkspace({
         </div>
       )}
 
-      {/* Mobile: a floating "Drafts (N)" pill above the composer that opens the
-          drafts as a bottom sheet. The desktop panel is hidden below lg, so this
-          is the ONLY way to reach generated drafts on a phone. */}
-      {hasDraftPanel && !mobileDraftsOpen && (
-        <button
-          type="button"
-          onClick={() => setMobileDraftsOpen(true)}
-          className="lg:hidden absolute bottom-32 left-1/2 -translate-x-1/2 z-20 inline-flex items-center gap-1.5 rounded-full border border-border bg-card/90 px-3.5 py-2 text-xs font-medium shadow-md backdrop-blur hover:bg-card transition-colors"
-          aria-label={`Show ${ARTIFACT_PANEL_TITLE.toLowerCase()}`}
-        >
-          <FileText className="h-3.5 w-3.5" />
-          {ARTIFACT_PANEL_TITLE} ({artifacts.length})
-        </button>
-      )}
       {mobileDraftsOpen && hasDraftPanel && (
-        <div className="lg:hidden absolute inset-0 z-40 flex flex-col justify-end" role="dialog" aria-modal="true">
+        <div
+          className="lg:hidden absolute inset-0 z-40 flex flex-col justify-end"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`${ARTIFACT_PANEL_TITLE} panel`}
+          onKeyDown={trapDialogFocus}
+        >
           <div
             className="absolute inset-0 bg-black/40"
-            onClick={() => setMobileDraftsOpen(false)}
+            onClick={() => {
+              setMobileDraftsOpen(false);
+              requestAnimationFrame(() => mobileDraftsTriggerRef.current?.focus());
+            }}
             aria-hidden="true"
           />
           <div className="relative max-h-[80%] flex flex-col rounded-t-[1.35rem] border-t border-border bg-card shadow-xl animate-in slide-in-from-bottom duration-200">
@@ -5406,9 +5684,13 @@ export function ChatWorkspace({
                 {ARTIFACT_PANEL_TITLE} ({artifacts.length})
               </span>
               <button
+                ref={mobileDraftsCloseRef}
                 type="button"
-                onClick={() => setMobileDraftsOpen(false)}
-                className="rounded-lg p-1.5 text-muted-foreground hover:bg-card hover:text-foreground"
+                onClick={() => {
+                  setMobileDraftsOpen(false);
+                  requestAnimationFrame(() => mobileDraftsTriggerRef.current?.focus());
+                }}
+                className="flex h-11 w-11 items-center justify-center rounded-xl text-muted-foreground hover:bg-muted hover:text-foreground"
                 aria-label="Close drafts"
               >
                 <X className="h-4 w-4" />
@@ -5434,9 +5716,14 @@ export function ChatWorkspace({
 function SourcePostChip({
   source,
   onRemove,
+  pinnedContext = false,
 }: {
   source: ModelSource | ModelSourceAttachment;
   onRemove?: () => void;
+  // True when the chip is the chat's PERSISTENT context (the source this
+  // conversation is working from), not the about-to-send staging chip — the
+  // tag makes it recognizable as context rather than a pending attachment.
+  pinnedContext?: boolean;
 }) {
   if ("state" in source && source.state === "unavailable") {
     return (
@@ -5446,30 +5733,45 @@ function SourcePostChip({
       </div>
     );
   }
-  const preview = source.postText.replace(/\s+/g, " ").slice(0, 90).trim();
+  const normalizedPreview = source.postText.replace(/\s+/g, " ").trim();
+  const preview = normalizedPreview.slice(0, 90).trim();
+  const previewIsTruncated = normalizedPreview.length > preview.length;
+  const sourceCopy =
+    source.kind === "draft"
+      ? { label: "Editing source", title: "Refining your post" }
+      : source.kind === "template"
+        ? { label: "Template source", title: "Filling template" }
+        : {
+            label: "Modeling source",
+            title: source.authorName || "Original post",
+          };
   return (
-    <div className="flex items-start gap-2.5 rounded-2xl border border-border bg-card px-3 py-2.5">
+    <div
+      data-testid="composer-source-card"
+      className="flex items-start gap-2.5 rounded-xl border border-border bg-muted/35 px-3 py-2.5 sm:rounded-2xl sm:bg-card"
+    >
       {source.authorAvatar ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
           src={source.authorAvatar}
           alt=""
-          className="h-8 w-8 rounded-xl object-cover shrink-0 mt-0.5"
+          className="mt-0.5 h-9 w-9 shrink-0 rounded-full object-cover sm:h-8 sm:w-8 sm:rounded-xl"
         />
       ) : (
-        <div className="h-8 w-8 rounded-xl bg-white flex items-center justify-center shrink-0 mt-0.5">
+        <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-card lg:h-8 lg:w-8 lg:rounded-xl lg:bg-white">
           <FileText className="h-4 w-4 text-muted-foreground" />
         </div>
       )}
       <div className="min-w-0 flex-1">
-        <p className="text-xs font-semibold flex items-center gap-1.5">
-          {source.kind === "draft"
-            ? "Refining your post"
-            : source.kind === "template"
-              ? "Filling template"
-              : source.authorName
-                ? `Modeling after: ${source.authorName}`
-                : "Modeling after this post"}
+        <div className="mb-0.5 flex min-w-0 flex-wrap items-center gap-1.5">
+          {pinnedContext && (
+            <span className="inline-flex items-center rounded-full border border-primary/20 bg-primary/[0.07] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.1em] text-primary">
+              Context
+            </span>
+          )}
+          <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+            {sourceCopy.label}
+          </span>
           {source.partial && (
             <span className="text-[10px] font-normal text-state-warning bg-state-warning-bg rounded px-1.5 py-0.5">
               partial
@@ -5484,14 +5786,20 @@ function SourcePostChip({
               Lead Magnet: Auto
             </span>
           )}
-        </p>
-        <p className="text-xs text-muted-foreground truncate">{preview}…</p>
+        </div>
+        <p className="truncate text-xs font-semibold text-foreground">{sourceCopy.title}</p>
+        {preview && (
+          <p className="truncate text-xs text-muted-foreground">
+            {preview}
+            {previewIsTruncated ? "…" : ""}
+          </p>
+        )}
       </div>
       {onRemove && (
       <button
         type="button"
         onClick={onRemove}
-        className="rounded-lg p-1 text-muted-foreground hover:bg-card hover:text-foreground shrink-0"
+        className="-my-1 flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-muted-foreground hover:bg-card hover:text-foreground"
         aria-label="Remove source post"
       >
         <X className="h-4 w-4" />
@@ -5637,13 +5945,11 @@ function ReattachingIndicator({ steps }: { steps: PlanStep[] }) {
     return <PlanChecklist steps={steps} status="Working" />;
   }
   return (
-    <div className="flex items-center gap-2 px-1 py-2 text-sm text-muted-foreground">
-      <span className="inline-flex gap-0.5" aria-hidden>
-        <span className="working-dot h-1.5 w-1.5 rounded-full bg-primary" />
-        <span className="working-dot h-1.5 w-1.5 rounded-full bg-primary [animation-delay:0.2s]" />
-        <span className="working-dot h-1.5 w-1.5 rounded-full bg-primary [animation-delay:0.4s]" />
-      </span>
-      Cowork is still working on this…
+    <div className="px-1 py-2">
+      <TimedLoadingState
+        label="Cowork is still working on this"
+        variant="dots"
+      />
     </div>
   );
 }
@@ -5948,7 +6254,11 @@ function MessageBubble({
           options + a free-text box. Shown once the turn settles; submitting
           sends the composed answer as the next message. */}
       {message.ask && !message.streaming && (
-        <AskCard ask={message.ask} onSubmit={onAnswer} />
+        message.ask.variant === "interview" ? (
+          <InterviewCard ask={message.ask} onSubmit={onAnswer} />
+        ) : (
+          <AskCard ask={message.ask} onSubmit={onAnswer} />
+        )
       )}
 
       {/* Recovery affordance for cut-off / tool-budget-exhausted turns. Retry
@@ -6141,6 +6451,147 @@ function AskCard({
   );
 }
 
+// The "Interview me" lane's question card (ask.variant === "interview").
+//
+// The server plans the WHOLE question set in one call and hands it over on a
+// single card; this component walks it entirely client-side. Advancing a
+// question is local state — no request, no credit, no latency, and no second
+// card to render. Only when the last question is answered does it send ONE
+// message carrying every Q/A pair, which the interview executor saves as
+// knowledge (see execute-interview.ts).
+//
+// There are deliberately no example-answer chips: a suggested answer biases
+// what the user tells us, and their own unprompted wording is the material
+// we actually want.
+function InterviewCard({
+  ask,
+  onSubmit,
+}: {
+  ask: AskQuestion;
+  onSubmit: (
+    text: string,
+    ask: AskQuestion,
+    actionSelectionIds: string[],
+    clarificationChoiceIndex?: number,
+  ) => void;
+}) {
+  // Fall back to the single `question` for any card persisted before the
+  // batched shape shipped, so an in-flight interview still renders.
+  const questions = useMemo(
+    () => (ask.questions?.length ? ask.questions : [ask.question]),
+    [ask.questions, ask.question],
+  );
+  const [index, setIndex] = useState(0);
+  const [answers, setAnswers] = useState<string[]>(() =>
+    Array.from({ length: questions.length }, () => ""),
+  );
+  const [draft, setDraft] = useState("");
+  const [submitted, setSubmitted] = useState(false);
+  const answerRef = useRef<HTMLTextAreaElement>(null);
+
+  const total = questions.length;
+  const isLast = index === total - 1;
+
+  // Record this question's answer and either advance locally or, on the last
+  // one, send the whole interview as a single message.
+  const commit = (text: string) => {
+    const collected = answers.map((entry, position) =>
+      position === index ? text : entry,
+    );
+    setAnswers(collected);
+    if (!isLast) {
+      setIndex(index + 1);
+      setDraft(collected[index + 1] ?? "");
+      requestAnimationFrame(() => answerRef.current?.focus());
+      return;
+    }
+    setSubmitted(true);
+    // One message, every pair, in order — the interview's only round-trip.
+    onSubmit(composeInterviewAnswers(questions, collected), ask, []);
+  };
+
+  const back = () => {
+    if (index === 0) return;
+    const collected = answers.map((entry, position) =>
+      position === index ? draft : entry,
+    );
+    setAnswers(collected);
+    setIndex(index - 1);
+    setDraft(collected[index - 1] ?? "");
+    requestAnimationFrame(() => answerRef.current?.focus());
+  };
+
+  if (submitted) {
+    const answered = answers.filter((entry) => entry.trim()).length;
+    return (
+      <div className="rounded-2xl border border-border bg-card/80 px-3.5 py-3 text-sm shadow-sm">
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+          Interview finished
+        </p>
+        <p className="mt-1 text-foreground">
+          {answered} of {total} answered
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="agent-card-in w-full max-w-2xl rounded-2xl border border-primary/15 bg-card/90 px-3.5 py-3 shadow-sm shadow-primary/5">
+      <div className="flex items-center justify-between gap-3">
+        <span className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-primary/85">
+          <AiIcon className="h-3.5 w-3.5 shrink-0" />
+          Interview
+        </span>
+        <span className="text-[11px] font-medium tabular-nums text-muted-foreground/80">
+          Question {index + 1} of {total}
+        </span>
+      </div>
+      <p className="mt-2 text-sm font-medium leading-6 text-foreground">
+        {questions[index]}
+      </p>
+      <textarea
+        ref={answerRef}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        rows={3}
+        placeholder="Type your answer…"
+        autoFocus
+        className="mt-2.5 w-full resize-none rounded-xl border border-border bg-white px-3 py-2 text-sm leading-6 outline-none placeholder:text-muted-foreground/55 focus:border-primary/40 focus:ring-2 focus:ring-primary/15"
+      />
+      <div className="mt-2.5 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5">
+          {index > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 text-muted-foreground"
+              onClick={back}
+            >
+              Back
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-8 text-muted-foreground"
+            onClick={() => commit("")}
+          >
+            Skip
+          </Button>
+        </div>
+        <Button
+          size="sm"
+          className="h-8"
+          disabled={!draft.trim()}
+          onClick={() => commit(draft.trim())}
+        >
+          {isLast ? "Finish" : "Next"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 // Whether to render the per-tool activity rail under the message. When a plan
 // checklist is present it's the SOLE progress surface, so the rail is hidden to
 // avoid narrating the same work twice (the screenshot bug: plan card + rail,
@@ -6164,20 +6615,45 @@ function AgentProgressShell({
   count?: string;
   children: ReactNode;
 }) {
+  const [expanded, setExpanded] = useState(true);
+
   return (
     <div className="agent-card-in w-full max-w-2xl rounded-2xl border border-primary/15 bg-card/90 px-3.5 py-3 shadow-sm shadow-primary/5">
-      <div className="mb-2 flex items-center justify-between gap-3">
+      <button
+        type="button"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((current) => !current)}
+        className="-mx-1 flex w-[calc(100%+0.5rem)] items-center justify-between gap-3 rounded-lg px-1 py-0.5 text-left transition-colors hover:bg-muted/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/25"
+      >
         <span className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-primary/85">
           <AiIcon className="h-3.5 w-3.5 shrink-0" />
           <span className="agent-shimmer">{title}</span>
         </span>
-        {count && (
-          <span className="text-[11px] font-medium tabular-nums text-muted-foreground/80">
-            {count}
-          </span>
-        )}
+        <span className="inline-flex items-center gap-1.5">
+          {count && (
+            <span className="text-[11px] font-medium tabular-nums text-muted-foreground/80">
+              {count}
+            </span>
+          )}
+          <ChevronDown
+            className={cn(
+              "size-3.5 text-muted-foreground transition-transform duration-200 motion-reduce:transition-none",
+              expanded && "rotate-180",
+            )}
+            aria-hidden="true"
+          />
+        </span>
+      </button>
+      <div
+        className="grid transition-[grid-template-rows,opacity,margin] duration-200 motion-reduce:transition-none"
+        style={{
+          gridTemplateRows: expanded ? "1fr" : "0fr",
+          opacity: expanded ? 1 : 0,
+          marginTop: expanded ? "0.5rem" : 0,
+        }}
+      >
+        <div className="min-h-0 overflow-hidden">{children}</div>
       </div>
-      {children}
     </div>
   );
 }
@@ -6185,10 +6661,11 @@ function AgentProgressShell({
 function AgentProgressStatus({ status }: { status: string }) {
   return (
     <AgentProgressShell title="Working">
-      <div className="agent-step-in flex items-center gap-2 text-[13px] text-muted-foreground">
-        <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" />
-        <span>{status}</span>
-      </div>
+      <TimedLoadingState
+        label={status}
+        variant="dots"
+        className="agent-step-in text-[13px]"
+      />
     </AgentProgressShell>
   );
 }
@@ -6217,7 +6694,7 @@ function PlanChecklist({ steps, status }: { steps: PlanStep[]; status: string | 
             {s.status === "done" ? (
               <CheckCircle2 className="check-pop h-4 w-4 shrink-0 text-state-success" />
             ) : visuallyActive ? (
-              <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" />
+              <LoadingPixels variant="dots" />
             ) : (
               <Circle className="h-4 w-4 shrink-0 text-muted-foreground/40" />
             )}
@@ -6288,7 +6765,7 @@ function ActivityStream({
               className="agent-step-in flex items-center gap-2 text-[13px] text-muted-foreground"
             >
               {t.ok === undefined ? (
-                <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" />
+                <LoadingPixels variant="dots" />
               ) : recoveredLater ? (
                 // A self-corrected retry: a calm, non-alarming completed step.
                 <CheckCircle2 className="check-pop h-4 w-4 shrink-0 text-muted-foreground/60" />
@@ -6486,7 +6963,17 @@ function ArtifactCard({
   const [scheduleWhen, setScheduleWhen] = useState(isoToLocalInput(scheduleMeta.scheduledAt));
   const [scheduling, setScheduling] = useState(false);
   const [scheduleMediaAttachments, setScheduleMediaAttachments] = useState(mediaAttachments);
+  const scheduleMediaAttachmentsRef = useRef(mediaAttachments);
+  const mediaMetaWriteRef = useRef(Promise.resolve());
+  const [mediaDirty, setMediaDirty] = useState(false);
+  const mediaMutationVersionRef = useRef(0);
   const [uploadingScheduleImage, setUploadingScheduleImage] = useState(false);
+  // In-flight draft image uploads, shown as dimmed preview tiles with the
+  // pixel loader inside the editor's media strip so a drag/drop or paste is
+  // visibly working instead of silently doing nothing until the upload lands.
+  const [pendingDraftImages, setPendingDraftImages] = useState<
+    Array<{ id: string; name: string; previewUrl: string | null }>
+  >([]);
   const [nextOpenDay, setNextOpenDay] = useState<string | null>(null);
   const [loadingNextOpenDay, setLoadingNextOpenDay] = useState(false);
   // Local working copy of the post body. Seeded from the artifact and kept in
@@ -6521,12 +7008,42 @@ function ArtifactCard({
     setScheduleStatus(scheduleMeta.scheduleStatus);
     setFirstComment(scheduleMeta.firstComment ?? "");
     setScheduleWhen(isoToLocalInput(scheduleMeta.scheduledAt));
+    setMediaDirty(false);
     setScheduleMediaAttachments(mediaAttachments);
   }
-  const dirty = body !== artifactBody;
+  // A new artifact seed replaces the local attachment snapshot. Media-only
+  // parent updates intentionally do not: while a media mutation is in flight,
+  // the ref is the authoritative interleaving-safe state.
+  useEffect(() => {
+    scheduleMediaAttachmentsRef.current = mediaAttachments;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- media-only prop updates must not clobber local mutation state.
+  }, [seededId, seededBody]);
+  const bodyDirty = body !== artifactBody;
+  const dirty = bodyDirty || mediaDirty;
   const scheduleMediaChanged =
+    mediaDirty ||
     scheduleMediaAttachments.map((item) => item.id).join("\n") !==
     mediaAttachments.map((item) => item.id).join("\n");
+
+  const markMediaChanged = () => {
+    mediaMutationVersionRef.current += 1;
+    setMediaDirty(true);
+    return mediaMutationVersionRef.current;
+  };
+  const markMediaPersisted = (version: number) => {
+    if (version === mediaMutationVersionRef.current) setMediaDirty(false);
+  };
+  const setLocalScheduleMediaAttachments = (next: PostMediaAttachment[]) => {
+    scheduleMediaAttachmentsRef.current = next;
+    setScheduleMediaAttachments(next);
+  };
+  const persistMediaMeta = (attachments: PostMediaAttachment[]) => {
+    const write = mediaMetaWriteRef.current.then(() =>
+      onMetaChange?.({ media_attachments: attachments }),
+    );
+    mediaMetaWriteRef.current = write.catch(() => undefined);
+    return write;
+  };
 
   useEffect(() => {
     if (!scheduleOpen || scheduleStatus === "scheduled") return;
@@ -6605,7 +7122,8 @@ function ArtifactCard({
 
   // Save as a NEW chat_artifacts row (the original behavior).
   const saveAsNew = async () => {
-    if (!chatId || saving) return;
+    if (!chatId || saving || uploadingScheduleImage) return;
+    const mediaVersion = mediaMutationVersionRef.current;
     setSaving(true);
     try {
       const data = await draftOperations.saveFromChat(chatId, {
@@ -6614,9 +7132,12 @@ function ArtifactCard({
         body,
         ...(kindForSave() ? { kind: kindForSave() } : {}),
         ...(artifact.meta ? { meta: artifact.meta } : {}),
-        ...(mediaAttachments.length ? { media_attachments: mediaAttachments } : {}),
+        ...(scheduleMediaAttachments.length
+          ? { media_attachments: scheduleMediaAttachments }
+          : {}),
       });
       const savedDraftId = data.draft.id;
+      markMediaPersisted(mediaVersion);
 
       // The POST is the authoritative save. Record that success before the
       // follow-up chat metadata PATCH: if linking the board id back to the chat
@@ -6653,7 +7174,8 @@ function ArtifactCard({
   // UPDATE the original Posts-board post this chat is refining (PATCH the body),
   // so iterating on a post doesn't spawn a duplicate draft.
   const updateOriginal = async () => {
-    if (!refiningDraftId || saving) return;
+    if (!refiningDraftId || saving || uploadingScheduleImage) return;
+    const mediaVersion = mediaMutationVersionRef.current;
     setSaving(true);
     try {
       await draftOperations.update(
@@ -6663,9 +7185,13 @@ function ArtifactCard({
           content_format: draftMarkdownEnabled(artifact.meta)
             ? "markdown"
             : "plain",
+          ...(scheduleMediaChanged
+            ? { media_attachments: scheduleMediaAttachments }
+            : {}),
         },
         { fallbackError: "Failed to update post" },
       );
+      markMediaPersisted(mediaVersion);
       setSaved(true);
       toast.success("Post updated");
     } catch (e) {
@@ -6683,8 +7209,9 @@ function ArtifactCard({
     // A refine artifact is newer than the Posts row even when the user has not
     // edited it locally (`dirty` compares against the artifact, not the row).
     // Always carry its body + format back to the original before scheduling.
-    const shouldPersistBody = dirty || canUpdateOriginal;
+    const shouldPersistBody = bodyDirty || canUpdateOriginal;
     if (!shouldPersistBody && !scheduleMediaChanged) return;
+    const mediaVersion = mediaMutationVersionRef.current;
     await draftOperations.update(
       draftId,
       {
@@ -6700,6 +7227,7 @@ function ArtifactCard({
       },
       { fallbackError: errorMessage },
     );
+    markMediaPersisted(mediaVersion);
     if (shouldPersistBody) onBodyChange?.(body);
     setSaved(true);
   };
@@ -6717,6 +7245,7 @@ function ArtifactCard({
     }
 
     if (!chatId) throw new Error("Save the chat before scheduling this draft.");
+    const mediaVersion = mediaMutationVersionRef.current;
     const data = await draftOperations.saveFromChat(
       chatId,
       {
@@ -6728,6 +7257,7 @@ function ArtifactCard({
       },
       { fallbackError: "Failed to save draft before scheduling" },
     );
+    markMediaPersisted(mediaVersion);
     setBoardDraftId(data.draft.id);
     setSaved(true);
     await onMetaChange?.({ board_draft_id: data.draft.id });
@@ -6740,6 +7270,7 @@ function ArtifactCard({
   // the panel closed and surface why rather than mounting a panel that would
   // 404 on its own fetch.
   const toggleAutomation = async () => {
+    if (uploadingScheduleImage) return;
     if (automationOpen) {
       setAutomationOpen(false);
       return;
@@ -6776,7 +7307,7 @@ function ArtifactCard({
   //      reflect what we saved.
   // Returns true when the body is persisted (or there was nothing to persist).
   const persistBody = async (): Promise<boolean> => {
-    if (!dirty || !chatId) return true;
+    if (!bodyDirty || !chatId) return true;
     if (savingBodyRef.current) return true; // a save is already in flight
     savingBodyRef.current = true;
     setSavingBody(true);
@@ -6827,6 +7358,25 @@ function ArtifactCard({
   const addDraftImages = async (files: File[]) => {
     if (!files.length || uploadingScheduleImage) return;
     setUploadingScheduleImage(true);
+    // Local previews up front — the tile renders immediately and swaps for the
+    // real attachment once the upload + persist completes.
+    const pendings = files.map((file) => ({
+      id: crypto.randomUUID(),
+      name: file.name,
+      previewUrl: file.type.startsWith("image/")
+        ? URL.createObjectURL(file)
+        : null,
+    }));
+    setPendingDraftImages((current) => [...current, ...pendings]);
+    const clearPendings = () => {
+      const pendingIds = new Set(pendings.map((entry) => entry.id));
+      setPendingDraftImages((current) =>
+        current.filter((entry) => !pendingIds.has(entry.id)),
+      );
+      for (const entry of pendings) {
+        if (entry.previewUrl) URL.revokeObjectURL(entry.previewUrl);
+      }
+    };
     try {
       const uploaded: PostMediaAttachment[] = [];
       for (const file of files) {
@@ -6840,26 +7390,29 @@ function ArtifactCard({
         }
         uploaded.push(result.attachment);
       }
-      const next = [...mediaAttachments, ...uploaded];
+      const next = [...scheduleMediaAttachmentsRef.current, ...uploaded];
       // LinkedIn's own limits (max 20 images, no mixing types) — checked on the
       // COMBINED set, not per file, so adding a second batch can't slip past.
       const setError = validatePostMediaSet(next);
       if (setError) throw new Error(setError);
-      setScheduleMediaAttachments(next);
-      await onMetaChange?.({ media_attachments: next });
+      setLocalScheduleMediaAttachments(next);
+      markMediaChanged();
+      await persistMediaMeta(next);
       toast.success(uploaded.length > 1 ? "Images attached" : "Image attached");
     } catch (error) {
       toast.error((error as Error).message);
     } finally {
+      clearPendings();
       setUploadingScheduleImage(false);
     }
   };
 
   const removeDraftImage = async (id: string) => {
-    const next = mediaAttachments.filter((m) => m.id !== id);
-    setScheduleMediaAttachments(next);
+    const next = scheduleMediaAttachmentsRef.current.filter((m) => m.id !== id);
+    setLocalScheduleMediaAttachments(next);
+    markMediaChanged();
     try {
-      await onMetaChange?.({ media_attachments: next });
+      await persistMediaMeta(next);
     } catch {
       toast.error("Couldn't remove that image.");
     }
@@ -6879,7 +7432,7 @@ function ArtifactCard({
         );
       }
       const preflightError = validatePostMediaSet([
-        ...scheduleMediaAttachments,
+        ...scheduleMediaAttachmentsRef.current,
         {
           id: "pending-schedule-image",
           source: "library",
@@ -6900,10 +7453,11 @@ function ArtifactCard({
         throw new Error("Choose an image file.");
       }
       const attachment = result.attachment;
-      const next = [...scheduleMediaAttachments, attachment];
+      const next = [...scheduleMediaAttachmentsRef.current, attachment];
       const mediaError = validatePostMediaSet(next);
       if (mediaError) throw new Error(mediaError);
-      setScheduleMediaAttachments(next);
+      setLocalScheduleMediaAttachments(next);
+      markMediaChanged();
       toast.success("Image attached");
     } catch (error) {
       toast.error((error as Error).message);
@@ -7137,6 +7691,7 @@ function ArtifactCard({
           footer={
             <DraftMediaPreview
               attachments={mediaAttachments}
+              pendingUploads={pendingDraftImages}
               generatedImageStatus={generatedImageStatus}
               onRemove={(id) => void removeDraftImage(id)}
             />
@@ -7198,7 +7753,7 @@ function ArtifactCard({
           <span className="text-muted-foreground">
             {body.length <= LINKEDIN_SEE_MORE_CHARS
               ? `${LINKEDIN_SEE_MORE_CHARS - body.length} chars before “…see more”`
-              : `hook cut at ${LINKEDIN_SEE_MORE_CHARS} chars`}
+              : ""}
           </span>
           <span
             className={cn(
@@ -7248,7 +7803,12 @@ function ArtifactCard({
           onClick={save}
           // Re-enable once the draft has been edited since the last save, so an
           // edited-then-saved draft can be saved again after further edits.
-          disabled={saving || (saved && !dirty) || !chatId}
+          disabled={
+            saving ||
+            uploadingScheduleImage ||
+            (saved && !dirty) ||
+            !chatId
+          }
           title={
             canUpdateOriginal
               ? "Overwrite the post on your board with this version"
@@ -7284,7 +7844,7 @@ function ArtifactCard({
             variant="ghost"
             className="h-8 rounded-full px-2.5 text-xs font-medium text-muted-foreground hover:text-foreground"
             onClick={saveAsNew}
-            disabled={saving || !chatId}
+            disabled={saving || uploadingScheduleImage || !chatId}
             title="Keep the original and save this as a separate new draft"
           >
             Save as new
@@ -7340,7 +7900,9 @@ function ArtifactCard({
             }
             setScheduleOpen((v) => !v);
           }}
-          disabled={scheduling || artifact.kind === "hook"}
+          disabled={
+            scheduling || uploadingScheduleImage || artifact.kind === "hook"
+          }
           title={
             artifact.kind === "hook"
               ? "Hooks need to become full posts before scheduling"
@@ -7397,9 +7959,19 @@ function ArtifactCard({
                       ? `${scheduleMediaAttachments.length} attachment${scheduleMediaAttachments.length === 1 ? "" : "s"}`
                       : "Add an image"}
                   </div>
-                  <div className="truncate text-muted-foreground">
-                    {scheduleMediaAttachments.map((item) => item.name).join(", ") || "Optional · saved safely in your media library"}
-                  </div>
+                  {uploadingScheduleImage ? (
+                    // Same beautiful-ui loading pattern as the editor's media
+                    // strip (pixel loader + shimmer label + ticking elapsed),
+                    // instead of the old plain "Uploading…" text.
+                    <TimedLoadingState
+                      label="Uploading image"
+                      className="mt-1 text-xs"
+                    />
+                  ) : (
+                    <div className="truncate text-muted-foreground">
+                      {scheduleMediaAttachments.map((item) => item.name).join(", ") || "Optional · saved safely in your media library"}
+                    </div>
+                  )}
                 </div>
                 <label className="inline-flex h-8 shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-border bg-card px-3 text-xs font-medium hover:bg-muted">
                   {uploadingScheduleImage ? (
@@ -7429,15 +8001,6 @@ function ArtifactCard({
                       ? `Next open day: ${formatScheduleDay(nextOpenDay)}`
                       : "Choose any future date and time."}
                 </span>
-                {nextOpenDay && (
-                  <button
-                    type="button"
-                    className="font-medium text-primary hover:underline"
-                    onClick={() => setScheduleWhen(suggestedScheduleLocalInput(nextOpenDay))}
-                  >
-                    Use it
-                  </button>
-                )}
               </div>
               <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
                 <input
@@ -7503,7 +8066,7 @@ function ArtifactCard({
               <button
                 type="button"
                 onClick={() => void toggleAutomation()}
-                disabled={automationOpening}
+                disabled={automationOpening || uploadingScheduleImage}
                 className="flex items-center gap-2 text-left text-xs font-medium text-foreground transition-colors hover:text-primary disabled:opacity-60"
                 aria-expanded={automationOpen}
               >
@@ -7553,17 +8116,22 @@ function mediaPreviewUrl(attachment: PostMediaAttachment): string | null {
 
 function DraftMediaPreview({
   attachments,
+  pendingUploads = [],
   generatedImageStatus,
   onRemove,
 }: {
   attachments: PostMediaAttachment[];
+  // In-flight uploads: dimmed local previews with the pixel loader on top, so
+  // a drag/drop or paste shows progress immediately. TimedLoadingState gives
+  // the shimmer label + elapsed seconds (the beautiful-ui loading pattern).
+  pendingUploads?: Array<{ id: string; name: string; previewUrl: string | null }>;
   generatedImageStatus: { status: string; reason?: string } | null;
   // When provided, each image gets a hover remove control. Omitted in
   // read-only contexts.
   onRemove?: (id: string) => void;
 }) {
   const images = attachments.filter((a) => a.type === "image");
-  if (images.length === 0) {
+  if (images.length === 0 && pendingUploads.length === 0) {
     if (generatedImageStatus?.status === "queued" || generatedImageStatus?.status === "running") {
       return (
         <div className="mb-3 rounded-xl border border-primary/20 bg-primary/5 px-3 py-2 text-[11px] leading-snug text-primary">
@@ -7630,6 +8198,28 @@ function DraftMediaPreview({
             </div>
           );
         })}
+        {pendingUploads.map((entry) => (
+          <div key={entry.id} className="relative" aria-busy="true">
+            {entry.previewUrl ? (
+              <>
+                {/* eslint-disable-next-line @next/next/no-img-element -- Local object URL for an in-flight upload; next/image cannot handle it. */}
+                <img
+                  src={entry.previewUrl}
+                  alt={entry.name}
+                  className="block max-h-56 w-full object-contain bg-foreground opacity-40"
+                />
+              </>
+            ) : (
+              <div className="h-24 w-full animate-pulse bg-muted" />
+            )}
+            <div className="absolute inset-0 grid place-items-center">
+              <TimedLoadingState
+                label="Uploading image"
+                className="rounded-full border border-border/60 bg-background/90 px-3 py-1.5 text-xs shadow-sm"
+              />
+            </div>
+          </div>
+        ))}
       </div>
       {generatedImageStatus?.status === "ready" && (
         <div className="inline-flex items-center gap-1.5 rounded-full border border-state-danger-border bg-state-danger-bg px-2.5 py-1 text-[10px] font-medium text-primary">
@@ -7967,7 +8557,7 @@ function scheduleMetaFromArtifact(artifact: Artifact): ArtifactScheduleMeta {
 // agent can actually execute, so a click leads somewhere useful rather than a
 // dead end. Prompts with a [placeholder] expect the user to fill a detail —
 // prefillPrompt selects that span on click.
-type StarterGroup = "explore" | "create" | "borrow-attention";
+type StarterGroup = "explore" | "create" | "borrow-attention" | "know-you";
 type Starter = {
   id: ComposerStarterId;
   group: StarterGroup;
@@ -8054,6 +8644,15 @@ const STARTERS: Starter[] = [
     prompt:
       "Newsjack a recent event about [topic]. Search for verified news from the last 14 days first, choose the most relevant story for my expertise, and write a timely LinkedIn post in my voice with an original insight. If nothing fresh and appropriate exists, tell me instead of using old or invented news.",
   },
+  {
+    id: "interview-me",
+    group: "know-you",
+    command: "ask",
+    icon: MessageCircleQuestionMark,
+    label: "Interview me",
+    prompt:
+      "Interview me so you always have fresh context and new content angles. Ask me questions one at a time — things you don't already know about me — then save what you learn as knowledge for future posts.",
+  },
 ];
 
 const STARTER_LAYOUT = partitionCoworkStarters(STARTERS);
@@ -8063,9 +8662,8 @@ const STARTER_LAYOUT = partitionCoworkStarters(STARTERS);
 // new/empty chat during the load gap after a sidebar click).
 function ChatLoading() {
   return (
-    <div className="h-full flex flex-col items-center justify-center text-center gap-3 px-6">
-      <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-      <p className="text-sm text-muted-foreground">Loading chat…</p>
+    <div className="flex h-full items-center justify-center px-6">
+      <TimedLoadingState label="Loading chat" />
     </div>
   );
 }
@@ -8102,6 +8700,13 @@ function EmptyState({
       description: "Build a post around a person, brand, or timely story.",
       starters: STARTER_LAYOUT.library.filter(
         (starter) => starter.group === "borrow-attention",
+      ),
+    },
+    {
+      title: "Know you",
+      description: "Teach Cowork who you are — fresh angles start here.",
+      starters: STARTER_LAYOUT.library.filter(
+        (starter) => starter.group === "know-you",
       ),
     },
   ];
@@ -8160,7 +8765,7 @@ function EmptyState({
           </span>
           <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-150 group-open:rotate-180 motion-reduce:transition-none" />
         </summary>
-        <div className="grid grid-cols-1 divide-y divide-border border-t border-border lg:grid-cols-3 lg:divide-x lg:divide-y-0">
+        <div className="grid grid-cols-1 divide-y divide-border border-t border-border lg:grid-cols-4 lg:divide-x lg:divide-y-0">
           {groups.map((group) => (
             <section key={group.title} className="py-5 md:px-5 first:md:pl-0 last:md:pr-0">
               <h3 className="text-sm font-semibold text-foreground">{group.title}</h3>

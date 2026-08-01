@@ -1,9 +1,11 @@
 import { describe, expect, test } from "vitest";
 import {
   buildPostingQueueDays,
+  canReceiveQueuedDraft,
   canDragDraftToPostingQueue,
   formatScheduleToast,
   postingSlotHasActiveDraft,
+  type PostingQueueDraft,
   type PostingQueueSlot,
 } from "@/lib/posting-queue";
 
@@ -35,6 +37,14 @@ describe("posting queue drag eligibility", () => {
     { status: "posted", scheduleStatus: null },
   ] as const)("rejects locked or posted drafts", (draft) => {
     expect(canDragDraftToPostingQueue(draft)).toBe(false);
+  });
+
+  test("only open or scheduled occurrences accept queue moves", () => {
+    expect(canReceiveQueuedDraft(null)).toBe(true);
+    expect(canReceiveQueuedDraft("scheduled")).toBe(true);
+    expect(canReceiveQueuedDraft("publishing")).toBe(false);
+    expect(canReceiveQueuedDraft("failed")).toBe(false);
+    expect(canReceiveQueuedDraft("published")).toBe(false);
   });
 });
 
@@ -85,7 +95,9 @@ describe("buildPostingQueueDays", () => {
       new Date("2026-07-27T12:00:00.000Z"),
       "Europe/Lisbon",
     );
-    expect(days[0].occurrences.map((item) => item.slot.id)).toEqual(["monday-14"]);
+    expect(days[0].occurrences.map((item) => item.slot.id)).toEqual([
+      "monday-14",
+    ]);
     expect(days[0].noSlotsLeftToday).toBe(false);
 
     const late = buildPostingQueueDays(
@@ -126,6 +138,108 @@ describe("buildPostingQueueDays", () => {
     expect(days[0].occurrences[0].draft?.id).toBe("draft-1");
     expect(days[0].occurrences[1].draft).toBeNull();
   });
+
+  test("filters and orders an edited occurrence by its effective publishing time", () => {
+    const days = buildPostingQueueDays(
+      slots,
+      [
+        {
+          id: "edited",
+          title: "Edited to later",
+          scheduledAt: "2026-07-27T12:00:00.000Z",
+          scheduleStatus: "scheduled",
+          postingSlotId: "monday-9",
+          postingSlotOccurrenceDate: "2026-07-27",
+        },
+      ],
+      new Date("2026-07-27T10:00:00.000Z"),
+      "Europe/Lisbon",
+    );
+
+    expect(days[0].occurrences.map((item) => item.slot.id)).toEqual([
+      "monday-9",
+      "monday-14",
+    ]);
+    expect(days[0].occurrences[0].scheduledAt).toBe("2026-07-27T12:00:00.000Z");
+  });
+
+  test("shows one-off schedules on their account-local day without filling a slot", () => {
+    const days = buildPostingQueueDays(
+      slots,
+      [
+        {
+          id: "one-off",
+          title: "Specific-time post",
+          scheduledAt: "2026-07-28T20:30:00.000Z",
+          scheduleStatus: "scheduled",
+          postingSlotId: null,
+          postingSlotOccurrenceDate: null,
+        },
+      ],
+      new Date("2026-07-27T10:00:00.000Z"),
+      "Europe/Lisbon",
+    );
+
+    expect(days[1].oneOffDrafts.map((draft) => draft.id)).toEqual(["one-off"]);
+    expect(days[1].occurrences.every((item) => item.draft === null)).toBe(true);
+  });
+
+  test("orders one-off schedules and recurring occurrences chronologically", () => {
+    const days = buildPostingQueueDays(
+      slots,
+      [
+        {
+          id: "one-off",
+          title: "Early specific-time post",
+          scheduledAt: "2026-07-27T07:00:00.000Z",
+          scheduleStatus: "scheduled",
+          postingSlotId: null,
+          postingSlotOccurrenceDate: null,
+        },
+      ],
+      new Date("2026-07-27T06:00:00.000Z"),
+      "Europe/Lisbon",
+    );
+
+    expect(days[0].items.map((item) => item.kind)).toEqual([
+      "one_off",
+      "occurrence",
+      "occurrence",
+    ]);
+    expect(days[0].items.map((item) => item.scheduledAt)).toEqual([
+      "2026-07-27T07:00:00.000Z",
+      "2026-07-27T08:00:00.000Z",
+      "2026-07-27T13:00:00.000Z",
+    ]);
+  });
+
+  test("excludes past and published one-off schedules", () => {
+    const days = buildPostingQueueDays(
+      [],
+      [
+        {
+          id: "past",
+          title: "Past",
+          scheduledAt: "2026-07-27T09:00:00.000Z",
+          scheduleStatus: "scheduled",
+          postingSlotId: null,
+          postingSlotOccurrenceDate: null,
+        },
+        {
+          id: "published",
+          title: "Published",
+          scheduledAt: "2026-07-28T09:00:00.000Z",
+          scheduleStatus: "published",
+          postingSlotId: null,
+          postingSlotOccurrenceDate: null,
+        },
+      ],
+      new Date("2026-07-27T10:00:00.000Z"),
+      "Europe/Lisbon",
+    );
+
+    expect(days.flatMap((day) => day.oneOffDrafts)).toEqual([]);
+  });
 });
 
 describe("formatScheduleToast", () => {
@@ -149,12 +263,14 @@ describe("formatScheduleToast", () => {
         browserTimezone: "America/New_York",
         action: "rescheduled",
       }),
-    ).toMatch(/^Post rescheduled for Tomorrow, Jul 27 at 9:00 AM (GMT\+1|WEST)$/);
+    ).toMatch(
+      /^Post rescheduled for Tomorrow, Jul 27 at 9:00 AM (GMT\+1|WEST)$/,
+    );
   });
 });
 
 describe("postingSlotHasActiveDraft", () => {
-  const queuedDraft = {
+  const queuedDraft: PostingQueueDraft = {
     id: "draft-1",
     title: "Draft",
     scheduledAt: "2026-07-27T08:00:00.000Z",

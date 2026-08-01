@@ -445,7 +445,7 @@ export class DraftLifecycle {
     if (!(await this.dependencies.canPublish?.())) {
       return rejected(
         "not_connected",
-        "Connect your LinkedIn account in Settings to schedule posts.",
+        "Connect your LinkedIn account in Integrations to schedule posts.",
         409,
       );
     }

@@ -33,6 +33,17 @@ export function jsonContent(obj: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(obj, null, 2) }] };
 }
 
+// MCP Apps (SEP-1865): the model-facing text JSON stays byte-identical to
+// jsonContent(modelPayload), while structuredContent carries the (possibly
+// enriched) payload the ui:// card view renders. Hosts without the extension
+// ignore structuredContent entirely.
+export function uiJsonContent(modelPayload: unknown, viewPayload: unknown = modelPayload) {
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify(modelPayload, null, 2) }],
+    structuredContent: viewPayload,
+  };
+}
+
 export function errorContent(message: string) {
   return {
     content: [{ type: "text" as const, text: JSON.stringify({ ok: false, error: message }) }],

@@ -15,6 +15,31 @@ describe("SwipeIn MCP instructions", () => {
     expect(SWIPEIN_MCP_INSTRUCTIONS).not.toContain("workspace_id=");
   });
 
+  test("explains interactive search results and their safe text fallback", () => {
+    expect(SWIPEIN_MCP_INSTRUCTIONS).toContain(
+      "interactive Swipe File cards",
+    );
+    expect(SWIPEIN_MCP_INSTRUCTIONS).toContain("structured result");
+    expect(SWIPEIN_MCP_INSTRUCTIONS).toContain(
+      "Never claim that an interactive view rendered",
+    );
+    expect(SWIPEIN_MCP_INSTRUCTIONS).toContain(
+      "Do not repeat every full post body",
+    );
+  });
+
+  test("explains the confirmed scheduling round trip", () => {
+    expect(SWIPEIN_MCP_INSTRUCTIONS).toContain(
+      "requires explicit user confirmation",
+    );
+    expect(SWIPEIN_MCP_INSTRUCTIONS).toContain(
+      "Do not retry while confirmation is pending",
+    );
+    expect(SWIPEIN_MCP_INSTRUCTIONS).toContain(
+      "A declined or cancelled confirmation leaves the draft unchanged",
+    );
+  });
+
   test("starts a pasted instruction-only chat by verifying SwipeIn and offering choices", () => {
     expect(SWIPEIN_MCP_INSTRUCTIONS).toContain(
       "When these instructions are pasted without a specific task",

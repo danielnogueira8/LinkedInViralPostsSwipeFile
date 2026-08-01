@@ -7,9 +7,8 @@ const PAGE = "app/(app)/dashboard/agent/page.tsx";
 const COWORK_PAGE = "app/(app)/dashboard/page.tsx";
 const NAV = "app/(app)/dashboard/nav-destinations.ts";
 const WORKSPACE = "app/(app)/dashboard/chat-workspace.tsx";
-const BRIEFING = "app/(app)/dashboard/agent-briefing.tsx";
+const INBOX = "app/(app)/dashboard/agent-inbox.tsx";
 const NAV_BADGES = "app/(app)/dashboard/nav-badges.ts";
-const DRAFTS_LIST = "app/(app)/dashboard/posts/drafts-list.tsx";
 
 describe("Your Agent is a top-level dashboard page", () => {
   test("the Create navigation puts Your Agent immediately above Cowork", () => {
@@ -22,11 +21,11 @@ describe("Your Agent is a top-level dashboard page", () => {
     expect(nav.slice(agent, cowork)).toContain('label: "Your Agent"');
   });
 
-  test("the dedicated route renders the briefing with a page heading", () => {
+  test("the dedicated route renders the opportunity inbox with a page heading", () => {
     const page = source(PAGE);
     expect(page).toContain("export default function AgentPage");
     expect(page).toContain('title="Your Agent"');
-    expect(page).toContain("<AgentBriefing");
+    expect(page).toContain("<AgentInbox");
   });
 
   test("the Agent page keeps Cowork's new-session action out of its header", () => {
@@ -40,10 +39,10 @@ describe("Your Agent is a top-level dashboard page", () => {
 
   test("the top-level navigation preserves the Agent attention badge", () => {
     const badges = source(NAV_BADGES);
-    expect(badges).toContain("loadAgentBriefing()");
-    expect(source(BRIEFING)).toContain("loadAgentBriefing()");
+    expect(badges).toContain("loadAgentInbox()");
+    expect(source(INBOX)).toContain("loadAgentInbox()");
     expect(badges).toContain('next["/dashboard/agent"] = count');
-    expect(source(BRIEFING)).toContain("invalidateNavBadges()");
+    expect(source(INBOX)).toContain("Start draft");
   });
 
   test("Cowork no longer owns an embedded agent destination", () => {
@@ -56,21 +55,18 @@ describe("Your Agent is a top-level dashboard page", () => {
   });
 });
 
-describe("the standalone Agent page preserves briefing behavior", () => {
-  test("Review marks the draft reviewed and deep-links to the Posts board", () => {
-    const briefing = source(BRIEFING);
-    const drafts = source(DRAFTS_LIST);
-    expect(briefing).toContain("/api/agent/briefing/reviewed");
-    expect(briefing).toContain("/dashboard/posts?open=");
-    expect(drafts).toContain('searchParams.get("open")');
-    expect(drafts).toContain("openedDeepLinkRef");
-  });
-
-  test("the wide page keeps the seven-day row and responsive detail layout", () => {
+describe("the standalone Agent page exposes the daily opportunity workflow", () => {
+  test("each agent gets a full-width row with up to three idea cards", () => {
     const page = source(PAGE);
-    const briefing = source(BRIEFING);
+    const inbox = source(INBOX);
     expect(page).toContain('PageShell width="full"');
-    expect(briefing).toContain("lg:grid-cols-7");
-    expect(briefing).toContain("lg:grid-cols-2");
+    // Row layout: lanes stack vertically, cards go three-across inside a lane.
+    expect(inbox).toContain("xl:grid-cols-3");
+    expect(inbox).toContain("data-testid={`agent-lane-${lane}`}");
+    expect(inbox).not.toContain("snap-mandatory");
+    // Every evidence chip renders — nothing collapses behind "+N more".
+    expect(inbox).toContain("idea.evidence.map");
+    expect(inbox).not.toContain("idea.evidence.slice");
+    expect(inbox).toContain("scheduled until you choose it");
   });
 });

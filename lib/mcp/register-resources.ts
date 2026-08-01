@@ -1,6 +1,7 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
-import type { ServerNotification, ServerRequest } from "@modelcontextprotocol/sdk/types.js";
+import type {
+  McpServer,
+  ServerContext,
+} from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { supabaseAdmin } from "@/lib/supabase";
 import { DraftLifecycle, draftRecordToApi } from "@/lib/draft-lifecycle";
@@ -32,8 +33,9 @@ import {
   listTemplateResources,
 } from "@/lib/content-resource-operations";
 import { dbErrorContent, errorContent, jsonContent, notFoundContent } from "./util";
+import { mcpAuthInfo } from "./context";
 
-type Extra = RequestHandlerExtra<ServerRequest, ServerNotification>;
+type Extra = ServerContext;
 type WorkspaceResolver = (extra: Extra) => string | null;
 
 const NO_WORKSPACE_MSG = "No workspace bound to this session. Join a workspace before using MCP tools.";
@@ -41,7 +43,7 @@ const STYLE_COLS = CREATOR_STYLE_COLS;
 
 function ids(extra: Extra, workspaceFromExtra: WorkspaceResolver) {
   const workspaceId = workspaceFromExtra(extra);
-  const rawUserId = extra.authInfo?.extra?.userId;
+  const rawUserId = mcpAuthInfo(extra)?.extra?.userId;
   return {
     workspaceId,
     userId: typeof rawUserId === "string" && rawUserId ? rawUserId : null,
@@ -55,6 +57,40 @@ function drafts(workspaceId: string) {
 
 function exactlyOne(args: { id?: string; name?: string }) {
   return Number(Boolean(args.id)) + Number(Boolean(args.name)) === 1;
+}
+
+// The meta stamped on every MCP-created draft. `created_via` drives the
+// board's "MCP" indicator; a modeled draft ALSO carries the swipe-file source
+// (same meta.source_url contract as chat/batch drafts, so the existing
+// "Source" pill and sourceUrlFromMeta pick it up unchanged). Pure + exported
+// for tests.
+export function buildMcpDraftMeta(input: {
+  sourceUrl?: string | null;
+  sourcePostId?: string | null;
+}): Record<string, unknown> {
+  const url = input.sourceUrl?.trim();
+  return {
+    created_via: "mcp",
+    ...(input.sourcePostId ? { source_post_id: input.sourcePostId } : {}),
+    ...(url ? { source: "model_source", source_url: url } : {}),
+  };
+}
+
+// Resolve the source_url for a modeled draft when the caller only passed the
+// swipe-file post id — reads the tracked post's URL so the board can render
+// the Source link without the caller round-tripping it.
+async function sourceUrlForPostId(
+  db: ReturnType<typeof supabaseAdmin>,
+  sourcePostId: string,
+): Promise<string | null> {
+  const { data, error } = await db
+    .from("posts")
+    .select("post_url")
+    .eq("id", sourcePostId)
+    .maybeSingle();
+  if (error) throw error;
+  const url = data?.post_url;
+  return typeof url === "string" && url.trim() ? url.trim() : null;
 }
 
 export function registerPublicResourceTools(
@@ -76,7 +112,10 @@ export function registerPublicResourceTools(
 
   server.registerTool("create_draft", {
     title: "Create a post draft",
-    description: "Create a post, hook, or lead-magnet draft on the workspace Posts board.",
+    description:
+      "Create a post, hook, or lead-magnet draft on the workspace Posts board. " +
+      "When the draft is modeled on a swipe-file post, pass that post's id as source_post_id " +
+      "(or its LinkedIn URL as source_url) so the board can link the source.",
     inputSchema: {
       title: z.string().trim().max(200).optional(),
       body: z.string().trim().max(20_000).optional().default(""),
@@ -84,12 +123,19 @@ export function registerPublicResourceTools(
       status: z.enum(["idea", "drafting", "ready", "posted"]).optional(),
       plan_to_post_on: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
       media_attachments: postMediaAttachmentsSchema.optional(),
+      source_post_id: z.string().uuid().optional(),
+      source_url: z.string().url().optional(),
     },
   }, async (args, extra) => {
     try {
       const { workspaceId } = ids(extra, workspaceFromExtra);
       if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
       if (!args.title?.trim() && !args.body?.trim()) return errorContent("Give the post a name or some content.");
+      const sourceUrl =
+        args.source_url ??
+        (args.source_post_id
+          ? await sourceUrlForPostId(supabaseAdmin(), args.source_post_id)
+          : null);
       const result = await drafts(workspaceId).create({
         title: args.title,
         body: args.body ?? "",
@@ -97,6 +143,10 @@ export function registerPublicResourceTools(
         status: args.status,
         planToPostOn: args.plan_to_post_on,
         mediaAttachments: args.media_attachments,
+        meta: buildMcpDraftMeta({
+          sourceUrl,
+          sourcePostId: args.source_post_id ?? null,
+        }),
       });
       // A retried call (timeout, an LLM calling the tool twice) with the same
       // body returns the existing draft instead of inserting a duplicate —

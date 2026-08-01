@@ -116,6 +116,33 @@ describe("compileServerReadOnlyPlan — grounded answers keep verified evidence 
   );
 });
 
+describe("compileServerReadOnlyPlan — source selection is server-owned", () => {
+  test("compiles a five-candidate selection without a draft terminal", () => {
+    const route: ReadOnlyOrchestratorRoute = {
+      kind: "workspace_research",
+      outcome: {
+        kind: "source_selection",
+        candidateCount: 5,
+        searchPoolSize: 10,
+      },
+      minimumSources: 3,
+      workspacePostType: "regular",
+      workspaceSearchMode: "strict_top",
+    };
+
+    const plan = compileServerReadOnlyPlan(
+      route,
+      "Find a top-performing regular post in my swipe file and rewrite it in my voice.",
+    );
+
+    expect(plan?.actions).toMatchObject([
+      { type: "search_viral_posts", limit: 10, post_type: "regular" },
+      { type: "answer_from_evidence" },
+    ]);
+    expect(() => parseReadOnlyPlan(route, plan!)).not.toThrow();
+  });
+});
+
 describe("compileServerReadOnlyPlan — per-route shapes", () => {
   test("news_research → one search_news then draft_post", () => {
     const route: ReadOnlyOrchestratorRoute = {

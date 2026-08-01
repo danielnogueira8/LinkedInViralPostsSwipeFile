@@ -31,7 +31,9 @@ test.describe("dashboard smoke — key pages render their content", () => {
     // always present regardless of history.
     await expect(page.getByRole("button", { name: /new session/i }).first()).toBeVisible();
     await expect(page.getByPlaceholder(/search sessions/i)).toBeVisible();
-    await expect(page.getByPlaceholder("What do you want to write?")).toBeVisible();
+    // The composer textarea — asserted by its aria-label, not the placeholder
+    // copy (which changes with the Ask/Create/Edit command state).
+    await expect(page.getByRole("textbox", { name: "Message Cowork" })).toBeVisible();
     await page.keyboard.press(process.platform === "darwin" ? "Meta+K" : "Control+K");
     await expect(page.getByRole("dialog", { name: /command palette/i })).toBeVisible();
   });
@@ -51,10 +53,16 @@ test.describe("dashboard smoke — key pages render their content", () => {
   test("posts board renders", async ({ page }) => {
     await page.goto("/dashboard/posts");
     await expect(page.getByRole("heading", { name: /posts/i }).first()).toBeVisible();
+    // The Board/Calendar view toggle is stable chrome; Board is the default.
     await expect(page.getByRole("button", { name: "Board", exact: true })).toHaveAttribute(
       "aria-pressed",
       "true",
     );
+    await expect(page.getByRole("button", { name: "Calendar", exact: true })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    await expect(page.getByRole("button", { name: /new post/i })).toBeVisible();
   });
 
   test("lead magnets renders resource library or empty state", async ({ page }) => {
@@ -69,6 +77,18 @@ test.describe("dashboard smoke — key pages render their content", () => {
     await page.waitForLoadState("networkidle");
     // The shell rendered (not a Clerk redirect / error page).
     await expect(page.locator("main, [role=main]").first()).toBeVisible();
+    await expect(page.getByLabel("Context interview")).toHaveCount(0);
+  });
+
+  test("knowledge renders the context interview and private library", async ({
+    page,
+  }) => {
+    await page.goto("/dashboard/knowledge");
+    await expect(page).toHaveURL(/\/dashboard\/knowledge/);
+    await expect(page.getByLabel("Context interview")).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: /private source library/i }),
+    ).toBeVisible();
   });
 });
 
@@ -98,9 +118,9 @@ test.describe("templates page — the reworked library renders end to end", () =
 
   test("renders at least one template card with its actions", async ({ page }) => {
     // The built-ins guarantee ≥1 card, each with the primary Cowork modeling
-    // action and a "Copy" action. Proves the grid + card actually rendered.
+    // action. Proves the grid + card actually rendered. (The per-card Copy
+    // action was removed in d9576c2 — the modeling action is the stable one.)
     await expect(page.getByRole("button", { name: /model with cowork/i }).first()).toBeVisible();
-    await expect(page.getByRole("button", { name: /^Copy$/i }).first()).toBeVisible();
   });
 
   test("the category filter actually filters (client-side, no reload)", async ({ page }) => {

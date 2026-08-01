@@ -4,8 +4,9 @@ import { describe, expect, it } from "vitest";
 
 const AI_SURFACES = new Set([
   "app/(app)/dashboard/agent-briefing.tsx",
+  "app/(app)/dashboard/agent-inbox.tsx",
   "app/(app)/dashboard/chat-workspace.tsx",
-  "app/(app)/dashboard/claude/page.tsx",
+  "app/(app)/dashboard/claude/agents.ts",
   "app/(app)/dashboard/draft-editor.tsx",
   "app/(app)/dashboard/first-run-checklist.tsx",
   "app/(app)/dashboard/lead-magnets/manager.tsx",
@@ -13,7 +14,7 @@ const AI_SURFACES = new Set([
   "app/(app)/dashboard/posts/drafts-list.tsx",
   "app/(app)/dashboard/voice/manager.tsx",
   "app/(app)/dashboard/voice/preferences.tsx",
-  "app/(app)/dashboard/voice/voice-interview-card.tsx",
+  "app/(app)/dashboard/knowledge/context-interview-card.tsx",
   "app/(marketing)/landing-client.tsx",
 ]);
 
@@ -40,7 +41,8 @@ describe("AI icon semantics", () => {
   });
 
   it("does not use star-like or direct bot icons in UI source", () => {
-    const forbidden = /\b(?:BrainCircuit|Bot|Sparkle|Sparkles|Star|Stars|WandSparkles)\b/;
+    const forbidden =
+      /\b(?:BrainCircuit|Bot|Sparkle|Sparkles|Star|Stars|WandSparkles)\b/;
     const violations = uiFiles
       .filter((file) => file !== canonicalPath)
       .filter((file) => forbidden.test(readFileSync(file, "utf8")))

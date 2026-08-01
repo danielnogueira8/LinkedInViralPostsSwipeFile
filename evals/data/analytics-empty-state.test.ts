@@ -1,6 +1,8 @@
 import { describe, expect, test } from "vitest";
 import { getAnalyticsEmptyState } from "@/app/(app)/dashboard/analytics/view";
 import {
+  buildAnalyticsPeriodReport,
+  periodBounds,
   buildDailyImpressionGains,
   summarizePostMetrics,
   sortPostsByRecency,
@@ -182,7 +184,13 @@ describe("analytics snapshot math", () => {
 
     // The old calculation showed 200 on Jul 2 (130 + 70). These snapshots
     // are cumulative, so the actual observed gain is (130-100) + (70-50).
-    expect(trend).toEqual([{ date: "2026-07-02", impressions: 50 }]);
+    // Jul 1 is each post's FIRST measurement, which is a gain from zero
+    // rather than a baseline to discard — dropping it made a newly-tracked
+    // post invisible in every windowed period until a second day landed.
+    expect(trend).toEqual([
+      { date: "2026-07-01", impressions: 150 },
+      { date: "2026-07-02", impressions: 50 },
+    ]);
   });
 
   test("uses each post's own prior snapshot and does not mutate input order", () => {
@@ -195,8 +203,10 @@ describe("analytics snapshot math", () => {
     ];
     const before = [...snapshots];
 
+    // post-a debuts Jul 1 (100), post-b debuts Jul 2 (20 debut + a's 40 gain).
     expect(buildDailyImpressionGains(snapshots)).toEqual([
-      { date: "2026-07-02", impressions: 40 },
+      { date: "2026-07-01", impressions: 100 },
+      { date: "2026-07-02", impressions: 60 },
       { date: "2026-07-03", impressions: 55 },
     ]);
     expect(snapshots).toEqual(before);
@@ -210,6 +220,7 @@ describe("analytics snapshot math", () => {
         snapshot("post-a", "2026-07-03", 120),
       ]),
     ).toEqual([
+      { date: "2026-07-01", impressions: 100 },
       { date: "2026-07-02", impressions: 0 },
       { date: "2026-07-03", impressions: 20 },
     ]);
@@ -308,5 +319,116 @@ describe("analytics metric definitions", () => {
     ]);
 
     expect(summary.engagementRate).toBe(8.5);
+  });
+});
+
+describe("a freshly-tracked post is visible immediately", () => {
+  const post = (id: string): PostMetricsRow => ({
+    artifactId: id,
+    title: "T",
+    publishedAt: "2026-07-30T00:00:00Z",
+    contentType: "regular",
+    impressions: 0,
+    reach: 0,
+    likes: 0,
+    comments: 0,
+    shares: 0,
+    saves: 0,
+    sends: 0,
+  });
+  const snap = (
+    id: string,
+    date: string,
+    impressions: number,
+  ): AnalyticsSnapshot => ({
+    artifactId: id,
+    snapshotDate: date,
+    impressions,
+    reach: impressions,
+    likes: 0,
+    comments: 0,
+    shares: 0,
+    saves: 0,
+    sends: 0,
+  });
+
+  test("one snapshot per post still reports in a windowed period", () => {
+    // The reported bug: the daily refresh logged reported=14 matched=14
+    // upserted=14, and the page showed nothing. Every post had exactly one
+    // snapshot, which was consumed as a baseline — so the 30d default (and
+    // every other window) summed to zero while the data sat in the table.
+    const today = "2026-07-31";
+    const posts = [post("a"), post("b")];
+    const snapshots = posts.map((p) => snap(p.artifactId, today, 500));
+    const report = buildAnalyticsPeriodReport(
+      snapshots,
+      posts,
+      periodBounds("30d", today).current,
+    );
+    expect(report.posts).toHaveLength(2);
+    expect(report.summary.impressions).toBe(1000);
+  });
+
+  test("a debut outside the window does not inflate the period", () => {
+    // Seeding the first snapshot must not retroactively pull a post's whole
+    // lifetime into a recent window — only the in-window gain counts.
+    const today = "2026-07-31";
+    const posts = [post("a")];
+    const snapshots = [
+      snap("a", "2026-01-01", 5000),
+      snap("a", today, 5200),
+    ];
+    const report = buildAnalyticsPeriodReport(
+      snapshots,
+      posts,
+      periodBounds("30d", today).current,
+    );
+    expect(report.summary.impressions).toBe(200);
+  });
+});
+
+describe("empty state distinguishes no-data from no-data-here", () => {
+  const base = {
+    linkedInConnected: true,
+    hasEligiblePublishedPosts: true,
+  };
+
+  test("tracked posts with nothing in the window get their own state", () => {
+    // Previously this fell through to null and rendered an all-zero chart
+    // with no explanation — indistinguishable from analytics being broken.
+    expect(
+      getAnalyticsEmptyState({ ...base, postCount: 12, postsInPeriod: 0 }),
+    ).toBe("no_data_in_period");
+  });
+
+  test("data in the window renders the page normally", () => {
+    expect(
+      getAnalyticsEmptyState({ ...base, postCount: 12, postsInPeriod: 3 }),
+    ).toBeNull();
+  });
+
+  test("the pre-existing states are unchanged", () => {
+    expect(
+      getAnalyticsEmptyState({
+        ...base,
+        linkedInConnected: false,
+        postCount: 0,
+      }),
+    ).toBe("connect");
+    expect(getAnalyticsEmptyState({ ...base, postCount: 0 })).toBe(
+      "awaiting_first_fetch",
+    );
+    expect(
+      getAnalyticsEmptyState({
+        ...base,
+        postCount: 0,
+        hasEligiblePublishedPosts: false,
+      }),
+    ).toBe("no_posts");
+  });
+
+  test("omitting postsInPeriod keeps the old behavior", () => {
+    // The field is optional so existing callers are unaffected.
+    expect(getAnalyticsEmptyState({ ...base, postCount: 12 })).toBeNull();
   });
 });

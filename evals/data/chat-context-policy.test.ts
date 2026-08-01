@@ -1,6 +1,6 @@
-import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
 import { chatTurnRequestSchema } from "@/lib/agent/chat-turn";
+import { createChatWorkspaceController } from "@/lib/chat-workspace-controller";
 
 describe("chat context policy", () => {
   test("context inheritance is opt-in and typed", () => {
@@ -28,15 +28,19 @@ describe("chat context policy", () => {
   });
 
   test("the production composer stamps explicit clears for unselected context", () => {
-    const source = readFileSync(
-      "app/(app)/dashboard/chat-workspace.tsx",
-      "utf8",
-    );
+    const turn = createChatWorkspaceController().prepareTurn({
+      composer: { kind: "ask" },
+      draftCountSelection: "auto",
+      postTypeSelection: "auto",
+      explorationLaneSelection: "auto",
+      skillIds: [],
+      hasPostFormat: false,
+      hasCreatorStyle: false,
+    });
 
-    expect(source).toContain("contextPolicy: {");
-    expect(source).toContain('["skills"]');
-    expect(source).toContain('["creator_style"]');
-    expect(source).toContain('["post_format"]');
+    expect(turn.requestFields.contextPolicy).toEqual({
+      clear: ["skills", "creator_style", "post_format"],
+    });
   });
 });
 

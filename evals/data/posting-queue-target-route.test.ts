@@ -12,9 +12,11 @@ const targetSlot = {
 const state: {
   current: Record<string, unknown> | null;
   slot: typeof targetSlot | null;
+  variationEnabled: boolean;
 } = {
   current: null,
   slot: targetSlot,
+  variationEnabled: false,
 };
 
 const filters: Array<[string, unknown]> = [];
@@ -24,7 +26,7 @@ const find = vi.fn(async () => state.current);
 
 const raw = {
   rpc,
-  from: vi.fn(() => {
+  from: vi.fn((table: string) => {
     const chain: Record<string, unknown> = {};
     Object.assign(chain, {
       select: () => chain,
@@ -36,7 +38,13 @@ const raw = {
         filters.push([field, value]);
         return chain;
       },
-      maybeSingle: async () => ({ data: state.slot, error: null }),
+      maybeSingle: async () => ({
+        data:
+          table === "settings"
+            ? { value: state.variationEnabled }
+            : state.slot,
+        error: null,
+      }),
     });
     return chain;
   }),
@@ -75,7 +83,7 @@ vi.mock("@/lib/workspace", () => ({
 const { POST } = await import("@/app/api/drafts/[id]/queue/route");
 const context = { params: Promise.resolve({ id: "draft-1" }) };
 
-function request(date = "2099-08-04") {
+function request(date = "2099-08-04", localTime?: string) {
   return new Request("https://app.tryswipein.com/api/drafts/draft-1/queue", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -84,6 +92,18 @@ function request(date = "2099-08-04") {
       timezone: "Europe/Lisbon",
       postingSlotId: targetSlot.id,
       postingSlotOccurrenceDate: date,
+      ...(localTime ? { localTime } : {}),
+    }),
+  });
+}
+
+function automaticRequest() {
+  return new Request("https://app.tryswipein.com/api/drafts/draft-1/queue", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      firstComment: "Keep this comment",
+      timezone: "Europe/Lisbon",
     }),
   });
 }
@@ -91,6 +111,7 @@ function request(date = "2099-08-04") {
 beforeEach(() => {
   state.current = null;
   state.slot = targetSlot;
+  state.variationEnabled = false;
   filters.length = 0;
   rpc.mockReset();
   find.mockClear();
@@ -149,6 +170,189 @@ describe("targeted recurring queue scheduling", () => {
 
     expect(response.status).toBe(200);
     expect(schedule).toHaveBeenCalledOnce();
+  });
+
+  test("changes one queued occurrence's hour without detaching it from the slot", async () => {
+    state.variationEnabled = true;
+    state.current = {
+      scheduledAt: "2099-08-04T08:00:00.000Z",
+      scheduleStatus: "scheduled",
+      planToPostOn: "2099-08-04",
+      firstComment: "Keep this comment",
+      postingSlotId: targetSlot.id,
+      postingSlotOccurrenceDate: "2099-08-04",
+    };
+    const response = await POST(request("2099-08-04", "11:30"), context);
+
+    expect(response.status).toBe(200);
+    expect(schedule).toHaveBeenCalledWith(
+      "draft-1",
+      expect.objectContaining({
+        scheduledAt: "2099-08-04T10:30:00.000Z",
+        postingSlotId: targetSlot.id,
+        postingSlotOccurrenceDate: "2099-08-04",
+      }),
+    );
+  });
+
+  test("applies the saved timing window to a newly selected queue slot", async () => {
+    state.variationEnabled = true;
+    const random = vi.spyOn(Math, "random").mockReturnValue(1);
+
+    const response = await POST(request(), context);
+
+    expect(response.status).toBe(200);
+    expect(schedule).toHaveBeenCalledWith(
+      "draft-1",
+      expect.objectContaining({
+        scheduledAt: "2099-08-04T08:15:00.000Z",
+        postingSlotId: targetSlot.id,
+        postingSlotOccurrenceDate: "2099-08-04",
+      }),
+    );
+    random.mockRestore();
+  });
+
+  test("preserves the chosen variation when the same occurrence is retried", async () => {
+    state.variationEnabled = true;
+    const random = vi
+      .spyOn(Math, "random")
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(1);
+    schedule.mockImplementationOnce(
+      async (_id: string, input: Record<string, unknown>) => {
+        state.current = {
+          scheduledAt: input.scheduledAt,
+          scheduleStatus: "scheduled",
+          postingSlotId: input.postingSlotId,
+          postingSlotOccurrenceDate: input.postingSlotOccurrenceDate,
+        };
+        return {
+          ok: true,
+          value: state.current,
+        };
+      },
+    );
+
+    const first = await POST(request(), context);
+    const firstBody = await first.json();
+    const second = await POST(request(), context);
+    const secondBody = await second.json();
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(schedule).toHaveBeenCalledOnce();
+    expect(firstBody.scheduledAt).toBe("2099-08-04T07:45:00.000Z");
+    expect(secondBody.scheduledAt).toBe(firstBody.scheduledAt);
+    expect(random).toHaveBeenCalledOnce();
+    random.mockRestore();
+  });
+
+  test("falls back to the valid slot time when positive variation exceeds media expiry", async () => {
+    state.variationEnabled = true;
+    const random = vi.spyOn(Math, "random").mockReturnValue(1);
+    schedule
+      .mockResolvedValueOnce({
+        ok: false,
+        reason: "media_expiry",
+        message: "Schedule before the attachment expires.",
+        status: 400,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        value: {
+          scheduledAt: "2099-08-04T08:00:00.000Z",
+          scheduleStatus: "scheduled",
+          planToPostOn: "2099-08-04",
+          firstComment: "Keep this comment",
+          postingSlotId: targetSlot.id,
+          postingSlotOccurrenceDate: "2099-08-04",
+        },
+      });
+
+    const response = await POST(request(), context);
+
+    expect(response.status).toBe(200);
+    expect(schedule).toHaveBeenNthCalledWith(
+      1,
+      "draft-1",
+      expect.objectContaining({
+        scheduledAt: "2099-08-04T08:15:00.000Z",
+      }),
+    );
+    expect(schedule).toHaveBeenNthCalledWith(
+      2,
+      "draft-1",
+      expect.objectContaining({
+        scheduledAt: "2099-08-04T08:00:00.000Z",
+      }),
+    );
+    random.mockRestore();
+  });
+
+  test("keeps automatic queue scheduling valid when variation exceeds media expiry", async () => {
+    state.variationEnabled = true;
+    const random = vi.spyOn(Math, "random").mockReturnValue(1);
+    rpc.mockImplementation(async (name: string) =>
+      name === "next_posting_queue_occurrence"
+        ? {
+            data: [
+              {
+                slot_id: targetSlot.id,
+                occurrence_date: "2099-08-04",
+                scheduled_at: "2099-08-04T08:00:00.000Z",
+                timezone: "Europe/Lisbon",
+              },
+            ],
+            error: null,
+          }
+        : { data: null, error: null },
+    );
+    schedule
+      .mockResolvedValueOnce({
+        ok: false,
+        reason: "media_expiry",
+        message: "Schedule before the attachment expires.",
+        status: 400,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        value: {
+          scheduledAt: "2099-08-04T08:00:00.000Z",
+          scheduleStatus: "scheduled",
+          planToPostOn: "2099-08-04",
+          firstComment: "Keep this comment",
+          postingSlotId: targetSlot.id,
+          postingSlotOccurrenceDate: "2099-08-04",
+        },
+      });
+
+    const response = await POST(automaticRequest(), context);
+
+    expect(response.status).toBe(200);
+    expect(schedule).toHaveBeenNthCalledWith(
+      1,
+      "draft-1",
+      expect.objectContaining({
+        scheduledAt: "2099-08-04T08:15:00.000Z",
+      }),
+    );
+    expect(schedule).toHaveBeenNthCalledWith(
+      2,
+      "draft-1",
+      expect.objectContaining({
+        scheduledAt: "2099-08-04T08:00:00.000Z",
+      }),
+    );
+    random.mockRestore();
+  });
+
+  test("rejects an invalid queued occurrence hour", async () => {
+    const response = await POST(request("2099-08-04", "25:00"), context);
+
+    expect(response.status).toBe(400);
+    expect((await response.json()).error).toMatch(/valid posting queue time/i);
+    expect(schedule).not.toHaveBeenCalled();
   });
 
   test("reports a target conflict instead of silently choosing another slot", async () => {

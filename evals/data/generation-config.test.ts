@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   generationConfigForSelection,
   generationConfigV1Schema,
+  explorationLaneForComposer,
   resolveGenerationConfig,
   resolvedGenerationConfigSchema,
 } from "@/lib/generation-config";
@@ -42,6 +43,19 @@ describe("generation configuration", () => {
     });
   });
 
+  test("serializes an explicit Exploration Lane while Automatic stays absent", () => {
+    expect(
+      generationConfigForSelection("auto", "auto", "auto"),
+    ).toBeUndefined();
+    expect(
+      generationConfigForSelection("auto", "auto", "fresh"),
+    ).toEqual({
+      version: 1,
+      draftCount: 1,
+      explorationLane: "fresh",
+    });
+  });
+
   test.each([
     {},
     { version: 2, draftCount: 3 },
@@ -52,6 +66,7 @@ describe("generation configuration", () => {
     { version: 1, draftCount: 3, extra: true },
     { version: 1, draftCount: 3, postType: "regular_post" },
     { version: 1, draftCount: 3, postType: "" },
+    { version: 1, draftCount: 3, explorationLane: "wild" },
   ])("rejects malformed or unversioned wire input: %j", (value) => {
     expect(generationConfigV1Schema.safeParse(value).success).toBe(false);
   });
@@ -91,6 +106,27 @@ describe("generation configuration", () => {
       draftCountSource: "ui",
       postTypeSource: "default",
     });
+  });
+
+  test("carries a manually selected Exploration Lane into the frozen retry config", () => {
+    expect(
+      resolveGenerationConfig({
+        selected: {
+          version: 1,
+          draftCount: 1,
+          explorationLane: "experimental",
+        },
+        explicitMessageDraftCount: null,
+      }),
+    ).toMatchObject({
+      explorationLane: "experimental",
+    });
+  });
+
+  test("forces Automatic while modeling a source without mutating the selection", () => {
+    expect(explorationLaneForComposer("fresh", false)).toBe("fresh");
+    expect(explorationLaneForComposer("fresh", true)).toBe("auto");
+    expect(explorationLaneForComposer("auto", true)).toBe("auto");
   });
 
   test("makes an explicit UI selection authoritative over the message output count", () => {
@@ -259,6 +295,7 @@ describe("generation configuration", () => {
       draftCount: 4 as const,
       draftCountSource: "ui" as const,
       postTypeSource: "default" as const,
+      explorationLane: "fresh" as const,
     };
     expect(
       generationConfigSelectionMarkerFromToolCalls([

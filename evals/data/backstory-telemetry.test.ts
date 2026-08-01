@@ -85,7 +85,7 @@ describe("backstory paid-attempt boundary", () => {
     expect(sink.mock.calls[0][0].stage_attempts).toContainEqual(
       expect.objectContaining({
         stage: "legacy_backstory_prepass",
-        provider: "openrouter",
+        provider: "openai",
         outcome: "accepted",
         charged_cost_usd: 0.002,
       }),

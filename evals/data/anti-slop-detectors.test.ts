@@ -9,6 +9,8 @@ import {
   exceedsEmDashCap,
   findBannedWords,
   findDismissiveNegation,
+  findNegativeParallelism,
+  findRepeatedOpeners,
   structuralViolations,
 } from "../anti-slop-detectors";
 
@@ -213,6 +215,34 @@ describe("findDismissiveNegation — the 'No theory.' pattern", () => {
     expect(findDismissiveNegation("No idea why it went viral.")).toEqual([]);
     expect(findDismissiveNegation("No problem — happy to help.")).toEqual([]);
     expect(findDismissiveNegation("There's no shortcut to writing well.")).toEqual([]);
+  });
+});
+
+describe("direct-address repetition and negative parallelism", () => {
+  test("catches the You/Your runs from the flagged Cowork original", () => {
+    expect(
+      findRepeatedOpeners(
+        "You post for weeks. You write something useful. You start wondering if it matters.",
+      ),
+    ).toHaveLength(1);
+    expect(
+      findRepeatedOpeners(
+        "Your offer gets copied. Your price gets undercut. Your product gets cloned.",
+      ),
+    ).toHaveLength(1);
+  });
+
+  test("allows two repeated openers and resets at a paragraph break", () => {
+    expect(findRepeatedOpeners("You post. You learn. Then the work changes.")).toEqual([]);
+    expect(findRepeatedOpeners("Your offer works.\n\nYour buyers notice.")).toEqual([]);
+  });
+
+  test("catches a three-beat negative list", () => {
+    expect(
+      findNegativeParallelism(
+        "Trust is the lever. Not likes, not impressions, not follower count.",
+      ),
+    ).toEqual(["Not likes, not impressions, not follower count"]);
   });
 });
 

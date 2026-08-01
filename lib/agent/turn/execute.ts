@@ -17,6 +17,7 @@ import { isExclusiveHookRefine } from "@/lib/agent/direct-refine-policy";
 import { safeFilename } from "@/lib/agent/untrusted";
 import { loadCitedSwipePostImage } from "@/lib/agent/turn/context";
 import type { TurnPlan } from "@/lib/agent/turn/compile";
+import { executeInterviewTurn } from "@/lib/agent/turn/execute-interview";
 import type { TurnExecuteContext } from "@/lib/agent/turn/state";
 import { enforceTurnOutcome } from "@/lib/agent/turn/outcome-guard";
 import type { DraftFinalizerSpecialists } from "@/lib/agent/finalize/finalizer";
@@ -39,12 +40,13 @@ import {
   type ChatMessage,
   type Usage,
 } from "@/lib/openrouter";
-import { shouldUseAnthropic } from "@/lib/anthropic";
+import { routesToNativeOpenAI } from "@/lib/openai";
 import { stampDraftFormat } from "@/lib/markdown/mode";
 import {
   savedDraftParentId,
   tagArtifactWithGenerationLineage,
 } from "@/lib/content-learning/generation-lineage";
+import { explorationLaneSchema } from "@/lib/content-learning/contracts";
 import {
   applyCiteSourceToDraftArtifacts,
   isDraftArtifact,
@@ -58,6 +60,9 @@ import {
   withGeneratedImageMeta,
   withLeadMagnetImagePlanStep,
 } from "@/lib/agent/turn/artifact-tags";
+import { buildAnswerSystemPrompt } from "@/lib/agent/prompt-guidance";
+import { tagArtifactWithKnowledgeSources } from "@/lib/knowledge-sources/context";
+import { originalTemplateReferenceFromMatch } from "@/lib/agent/original-template-reference";
 
 export type TurnExecuteDependencies = {
   runWriterTurn: typeof runWriterTurn;
@@ -136,6 +141,7 @@ async function* runTurnPlan(
     workspaceLearningBlock,
     preferences,
     priorPostDrafts,
+    resolvedGenerationConfig,
     preloadedVoiceResult,
     claimedTurnStartedAt,
     claimedUserMessageId,
@@ -149,6 +155,7 @@ async function* runTurnPlan(
     currentTurnOperation,
     trustedRefineTarget,
     structureMatch,
+    workspaceKnowledge,
   } = setup;
 
   let citedSourceImage = initialCitedSourceImage;
@@ -194,7 +201,11 @@ async function* runTurnPlan(
     preferences,
     feedbackMemory,
     workspaceLearningBlock,
+    workspaceKnowledgeBlock: workspaceKnowledge.promptBlock,
     priorPostDrafts,
+    explorationLane: resolvedGenerationConfig?.explorationLane,
+    originalTemplateReference:
+      originalTemplateReferenceFromMatch(structureMatch) ?? undefined,
     format: selectedNoModelFormat,
     customSkillBodies,
     customSkillNames,
@@ -271,6 +282,14 @@ async function* runTurnPlan(
       break;
     case "clarify":
       rawStream = executeClarificationTurn(plan.ask);
+      break;
+    case "interview":
+      rawStream = executeInterviewTurn(
+        setup,
+        chatId,
+        handlers.signal,
+        recordResponseModel,
+      );
       break;
     case "answer":
       rawStream = executeAnswerTurn(
@@ -380,18 +399,21 @@ async function* runTurnPlan(
         // Stamp the active custom skills / format / source / lead magnet /
         // creator style into the artifact's meta. cite artifacts are passthrough
         // references and were handled above.
-        let tagged = tagArtifactWithCreatorStyle(
-          tagArtifactWithLeadMagnet(
-            tagArtifactWithModelSourceReference(
-              tagArtifactWithNoModelFormat(
-                tagArtifactWithSkills(ev.artifact, customSkillNames),
-                appliedNoModelFormat,
+        let tagged = tagArtifactWithKnowledgeSources(
+          tagArtifactWithCreatorStyle(
+            tagArtifactWithLeadMagnet(
+              tagArtifactWithModelSourceReference(
+                tagArtifactWithNoModelFormat(
+                  tagArtifactWithSkills(ev.artifact, customSkillNames),
+                  appliedNoModelFormat,
+                ),
+                modelSourceReference,
               ),
-              modelSourceReference,
+              appliedLeadMagnet,
             ),
-            appliedLeadMagnet,
+            appliedCreatorStyle,
           ),
-          appliedCreatorStyle,
+          workspaceKnowledge.sources,
         );
         if (isDraftArtifact(tagged) && turnContract.kind === "post") {
           tagged = {
@@ -437,8 +459,19 @@ async function* runTurnPlan(
                 ? voice.generated_at
                 : null;
             })(),
+            explorationLane:
+              currentTurnOperation?.kind !== "edit_artifact"
+                ? (explorationLaneSchema.safeParse(
+                    tagged.meta?.exploration_lane,
+                  ).data ?? null)
+                : null,
             generationModel: responseModel,
             generatedAt: claimedTurnStartedAt!,
+            knowledgeSources: workspaceKnowledge.sources.map((source) => ({
+              sourceId: source.sourceId,
+              sourceRevisionId: source.sourceRevisionId,
+              chunkIds: source.chunkIds,
+            })),
           });
         }
 
@@ -729,14 +762,13 @@ async function* executeAnswerTurn(
   // never compensate for a routing miss by returning draft-shaped text.
   const systemMessage: ChatMessage = {
     role: "system",
-    content: [
-      "You are Cowork, a LinkedIn content assistant. Answer the user's question or brainstorming request helpfully and concisely.",
+    content: buildAnswerSystemPrompt(
       setup.currentTurnOperation?.kind === "review_artifact" ||
       (setup.currentTurnOperation?.kind === "ask" &&
         setup.currentTurnOperation.artifactId)
-        ? "The authoritative typed operation is REVIEW. Give critique or feedback only. Do not rewrite the draft, even if the message itself sounds like an edit command."
-        : "This answer operation is not authorized to create or edit an artifact. Answer or brainstorm only; never return a replacement LinkedIn post draft.",
-    ].join("\n\n"),
+        ? "review"
+        : "answer",
+    ),
   };
   const messages: ChatMessage[] = [systemMessage, ...setup.history];
   const stream = streamChat({
@@ -769,7 +801,7 @@ async function* executeAnswerTurn(
       stage: "answer",
       attempt: 1,
       model,
-      provider: shouldUseAnthropic(model) ? "anthropic" : "openrouter",
+      provider: routesToNativeOpenAI(model) ? "openai" : "openrouter",
       outcome: "failed",
       reasonCode:
         error instanceof Error
@@ -788,7 +820,7 @@ async function* executeAnswerTurn(
     stage: "answer",
     attempt: 1,
     model,
-    provider: shouldUseAnthropic(model) ? "anthropic" : "openrouter",
+    provider: routesToNativeOpenAI(model) ? "openai" : "openrouter",
     outcome: "accepted",
     latencyMs,
     usage,

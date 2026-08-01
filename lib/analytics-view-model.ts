@@ -190,7 +190,20 @@ function buildMetricGains(
     if (current === null || current === undefined) continue;
     const highWater = highWaterByArtifact.get(snapshot.artifactId);
     if (highWater === undefined) {
+      // A post's FIRST snapshot is a gain from zero, not a baseline to be
+      // silently dropped. Consuming it made a freshly-tracked post
+      // indistinguishable from a post with no data: every windowed period
+      // (including the 30d default) rendered zero until a second day's
+      // snapshot existed, so the page looked broken for a full day after
+      // analytics started working. Emitting it keeps the cumulative-to-gain
+      // conversion correct — the first reading IS the growth so far — while
+      // making a single-snapshot post visible immediately.
       highWaterByArtifact.set(snapshot.artifactId, current);
+      gains.push({
+        artifactId: snapshot.artifactId,
+        date: snapshot.snapshotDate,
+        gain: Math.max(0, current),
+      });
       continue;
     }
     const gain = Math.max(0, current - highWater);

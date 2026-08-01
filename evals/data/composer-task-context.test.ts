@@ -181,6 +181,23 @@ describe("resolveComposerTaskContext", () => {
       sourceMode: "unspecified",
     });
   });
+
+  test("the interview-me starter is an answer task with no research lane", () => {
+    // The interview produces knowledge, not drafts: no post count, no source
+    // requirement — even though the card sends the "ask" command.
+    expect(
+      resolveComposerTaskContext({
+        starterId: "interview-me",
+        commandKind: "ask",
+        fallbackPostCount: 1,
+      }),
+    ).toEqual({
+      kind: "answer",
+      expectedDraftCount: null,
+      sourceMode: "unspecified",
+      starterId: "interview-me",
+    });
+  });
 });
 
 describe("composer starter persistence", () => {

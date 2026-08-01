@@ -26,6 +26,7 @@
 import {
   stripEmDashes,
   aiTellMetrics,
+  type AiTellMetric,
 } from "./nets";
 import { normalizePostBody } from "@/lib/post-body-normalize";
 import {
@@ -40,8 +41,10 @@ import {
 // direct model dependency and stays trivially testable.
 export type EditorModelRewrite = (args: {
   body: string;
-  // The unsafe tells detected, so the rewrite prompt can target them.
-  tells: AiTellCategory[];
+  // Preserve the detector's exact labels so the rewrite prompt can target
+  // every delivery-blocking pattern, including labels that do not have a
+  // one-to-one EditorResult reporting category.
+  tells: AiTellMetric[];
 }) => Promise<string | null>;
 
 export type EditDraftOptions = {
@@ -164,7 +167,8 @@ export async function editDraftBody(
 
   // Detect the UNSAFE tells that remain after the deterministic pass. These are
   // reported (and, only if the model pass is on, targeted for rewrite).
-  const remainingTells = aiTellMetrics(cleaned)
+  const detectedTells = aiTellMetrics(cleaned);
+  const remainingTells = detectedTells
     .map(toCategory)
     .filter((c): c is AiTellCategory => c !== null);
 
@@ -178,9 +182,12 @@ export async function editDraftBody(
 
   // Optional model rewrite: only when enabled, a rewrite fn is provided, AND
   // there are unsafe tells worth fixing. One attempt, fail-open.
-  if (modelEnabled(opts) && opts.modelRewrite && remainingTells.length > 0) {
+  if (modelEnabled(opts) && opts.modelRewrite && detectedTells.length > 0) {
     try {
-      const rewritten = await opts.modelRewrite({ body: cleaned, tells: remainingTells });
+      const rewritten = await opts.modelRewrite({
+        body: cleaned,
+        tells: detectedTells,
+      });
       // Guard: a usable rewrite is non-empty and not drastically shorter (a sign
       // the model dropped content). Anything else → keep the deterministic body.
       if (

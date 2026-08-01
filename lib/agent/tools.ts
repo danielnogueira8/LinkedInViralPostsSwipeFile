@@ -5,25 +5,18 @@ import { DraftLifecycle, type DraftRecord } from "@/lib/draft-lifecycle";
 import { createSupabaseDraftLifecycleRepository } from "@/lib/draft-lifecycle-supabase";
 import { parseDayStart, parseDayEnd, sinceCutoff } from "@/lib/mcp/util";
 import { wrapUntrustedXml } from "@/lib/agent/untrusted";
+import { canonicalScrapedPostText } from "@/lib/agent/scraped-post-text";
+import { isModelableSourceText } from "@/lib/agent/model-source-selection-policy";
 import { UsagePersistenceError, type ToolDef } from "@/lib/openrouter";
 import type { AdapterHealthRegistry } from "@/lib/agent/adapter-health";
 import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
+import { ensureBiographicalFacts } from "@/lib/agent/specialists/backstory";
 import { searchNews, NEWS_MAX_AGE_DAYS } from "@/lib/news-search";
 import {
   checkChatCostAllowance,
   NEWS_SEARCH_COST_RESERVE_USD,
 } from "@/lib/agent/rate-limit";
-import { sanitizeVoiceProfile } from "@/lib/voice-generation";
-import {
-  ensureBiographicalFacts,
-  renderBackstoryBlock,
-} from "@/lib/agent/specialists/backstory";
-import {
-  mechanicsFingerprintToRules,
-  voiceKeepsEmDashes,
-} from "@/lib/voice-mechanics";
-import { createWorkspaceKnowledgeStore } from "@/lib/content-learning/workspace-knowledge";
-import { renderWorkspaceKnowledgeBlock } from "@/lib/content-learning/workspace-knowledge-presentation";
+import { readVoiceGuidance } from "@/lib/voice-profile-read";
 import { retryRead } from "@/lib/retry-read";
 import {
   selectModelingSourcePool,
@@ -31,12 +24,16 @@ import {
 import {
   rankIdeaPosts,
   rotateFreshBand,
-  shuffleFreshBand,
 } from "@/lib/idea-ranking";
 import {
-  discoveryThresholdFilter,
-  getDiscoveryThresholds,
-} from "@/lib/discovery-thresholds";
+  isVariedDiscoverySearch,
+  variedDiscoveryOrder,
+} from "@/lib/discovery-selection";
+import { discoverSourcePosts } from "@/lib/source-post-discovery";
+import {
+  claimDiscoveryRotationCursor,
+  recentlyUsedDiscoverySourceIds,
+} from "@/lib/discovery-history";
 
 // ---------------------------------------------------------------------------
 // Agent tools — read-only swipe-file / voice / brand access for the chat agent.
@@ -47,9 +44,9 @@ import {
 // tool definitions. Write/mutation tools are intentionally NOT exposed here in
 // v1 — the chat can read the swipe file and draft, but not modify accounts.
 //
-// Kept deliberately close to register.ts so the two don't drift: same POST_COLS,
-// same filters, same normalizeEmbed. If the MCP query logic changes, mirror it
-// here.
+// Source-post discovery is shared with MCP and the web Swipe File through
+// lib/source-post-discovery.ts. This adapter owns only Cowork-specific result
+// shaping, ranking, and tool behavior.
 // ---------------------------------------------------------------------------
 
 // Hard caps on generated post/hook length. render_post's cap is well above the
@@ -145,8 +142,8 @@ export function normalizeToolCallArguments(name: string, raw: string): string {
 //     scrape date once at the top level (scrape.scraped_at).
 //   visual_kind — almost always null; the model never acts on it.
 //   is_viral — the model never reasons over it; normalizeEmbed strips it before
-//     the row is returned. It IS selected (below) because it is the resilient
-//     viral gate: see passesWorkspaceViral.
+//     the row is returned. It IS selected because the canonical source-post
+//     discovery operation uses it as the resilient global gate.
 // Keeps text + engagement + author name/niche + post_url/id (for citing). This
 // is the same "stop shipping fields the model never consumes" cut as #437.
 //
@@ -155,40 +152,14 @@ export function normalizeToolCallArguments(name: string, raw: string): string {
 // so the agent can never starve to empty while the dashboard is full — and
 // LEFT-embeds THIS workspace's per-workspace classification (default embed, NOT
 // !inner: a post with no classification row for this workspace is still
-// returned). passesWorkspaceViral then drops only the posts this workspace has
-// EXPLICITLY reclassified as non-viral (its own stricter thresholds). A missing
-// row falls back to the global verdict. The embed is filtered per query via
-// .eq("workspace_post_classification.workspace_id", workspaceId) so it carries
-// only this workspace's row. This ends the read/write split: the agent and the
-// Swipe File now agree for the same workspace/window.
+// returned). The canonical discovery operation drops only posts this workspace
+// EXPLICITLY reclassified as non-viral. A missing row falls back to the global
+// verdict, keeping Cowork and the Swipe File aligned.
 const POST_COLS =
   "id, text, post_url, posted_at, reactions, comments, reposts, media_type, post_type, is_viral, accounts!inner(name, niche), workspace_post_classification(is_viral)";
+const POST_SOURCE_CARD_COLS =
+  "id, text, post_url, posted_at, reactions, comments, reposts, media_type, media_urls, visual_kind, post_type, is_viral, accounts!inner(name, niche, profile_pic_url), workspace_post_classification(is_viral)";
 
-
-// Sentinel UUID that matches no rows, used so an `.in("account_id", [])` never
-// degenerates into "no filter" (which would leak other workspaces' posts).
-const NO_ROWS_SENTINEL = "00000000-0000-0000-0000-000000000000";
-
-// Resilient per-workspace viral eligibility (see POST_COLS). The query already
-// gates on the GLOBAL posts.is_viral=true (the Swipe File's set), then LEFT-
-// embeds this workspace's classification. Keep the post UNLESS this workspace
-// has an explicit row demoting it to non-viral. A MISSING row (the creator was
-// added after these posts were scraped, or the dual-write failed — the cause of
-// the "no verified evidence" starvation) falls back to the global verdict, so
-// the agent never returns empty while the dashboard is full.
-type WpcEmbed = {
-  workspace_post_classification?:
-    | Array<{ is_viral: boolean }>
-    | { is_viral: boolean }
-    | null;
-};
-function passesWorkspaceViral<T extends WpcEmbed>(row: T): boolean {
-  const wpc = row.workspace_post_classification;
-  const first = Array.isArray(wpc) ? wpc[0] : wpc;
-  // Row present → honor the workspace's own verdict. No row → keep (the query
-  // already gated to the global is_viral=true set).
-  return first ? first.is_viral === true : true;
-}
 
 // Drops the workspace_post_classification join wrapper and the global is_viral
 // gate column (both query filters, not fields the model needs) and unwraps the
@@ -199,14 +170,14 @@ function normalizeEmbed<
     workspace_post_classification?: unknown;
     is_viral?: unknown;
   },
->(p: T) {
+>(p: T): T & { accounts: unknown } {
   const { workspace_post_classification, is_viral, ...rest } = p;
   void workspace_post_classification;
   void is_viral;
   return {
     ...rest,
     accounts: Array.isArray(p.accounts) ? (p.accounts[0] ?? null) : p.accounts,
-  };
+  } as T & { accounts: unknown };
 }
 
 // Wrap the scraped post `text` field so the model sees it as DATA, not
@@ -243,6 +214,12 @@ export interface ToolExecutionContext {
   // Present only when the server has confirmed that these auto-selected posts
   // will be modeled. Analytical searches and explicit source ids never use it.
   autoSelectModelingSources?: boolean;
+  // Candidate-choice turns filter the full fetched pool before selecting the
+  // returned primaries, so short captions cannot hide usable posts behind them.
+  requireModelableSources?: boolean;
+  // Live source-selection cards need the same visual fields the canonical
+  // reload rehydrates. The executor strips these URLs from model history.
+  includeSourceCardMedia?: boolean;
   // Replacement sources are returned separately from the user-requested
   // primaries. Only the modeled-batch coordinator consumes them; analytical
   // searches and single-source modeling leave this at zero.
@@ -312,22 +289,13 @@ async function trackedAccountIdsForTool(
 // request into strict analytical ranking, returning an identical top-N (and a
 // pool capped at the requested count, so there was nothing to vary) on every
 // single run. A time window is scope, not a ranking. Same for a topic query.
-export function isMimicSearch(args: Record<string, unknown>): boolean {
-  const strictRanking = args.strict_ranking === true;
-  const sort = args.sort;
-  const explicitSort = typeof sort === "string" && sort !== "viral"; // non-default
-  const explicitDir = args.dir === "asc"; // desc is the default; asc is deliberate
-  const hasThreshold =
-    typeof args.min_reactions === "number" || typeof args.min_comments === "number";
-  return !strictRanking && !explicitSort && !explicitDir && !hasThreshold;
-}
+export const isMimicSearch = isVariedDiscoverySearch;
 
 const searchViralPosts: ToolFn = async (args, workspaceId, signal, context) => {
   try {
     const accountIds = await trackedAccountIdsForTool(workspaceId, signal);
     signal?.throwIfAborted();
     const sb = supabaseAdmin();
-    const discoveryThresholds = await getDiscoveryThresholds(workspaceId);
     const sortKey = (args.sort as keyof typeof SORT_COLUMN) ?? "viral";
     const sortCol = SORT_COLUMN[sortKey] ?? SORT_COLUMN.viral;
     const ascending = args.dir === "asc";
@@ -342,58 +310,56 @@ const searchViralPosts: ToolFn = async (args, workspaceId, signal, context) => {
       ? Math.min(finalLimit * 6, 120)
       : finalLimit;
 
-    let q = sb
-      .from("posts")
-      .select(POST_COLS)
-      .in("account_id", accountIds.length ? accountIds : [NO_ROWS_SENTINEL])
-      .eq("is_viral", true)
-      .or(discoveryThresholdFilter(discoveryThresholds))
-      .eq("workspace_post_classification.workspace_id", workspaceId)
-      .is("accounts.archived_at", null)
-      // Modeling selection ranks RECENCY-first: virality is already the
-      // eligibility gate (the is_viral gate above), and a pure viral-score
-      // ranking made every chat pick the same mega-viral posts. Analytical
-      // queries keep their explicit sort untouched.
-      .order(autoSelectModelingSources ? "posted_at" : sortCol, {
-        ascending: autoSelectModelingSources ? false : ascending,
-        nullsFirst: false,
-      })
-      .limit(fetchLimit);
-
-    // Niche names are categorical and user-entered prompts commonly vary only
-    // in casing ("saas" vs "SaaS"). `ilike` without wildcards preserves exact
-    // punctuation/spacing while making that identity comparison case-insensitive.
-    if (args.niche) q = q.ilike("accounts.niche", args.niche as string);
-    if (typeof args.query === "string" && args.query.trim()) {
-      q = q.textSearch("text", args.query.trim(), {
-        type: "websearch",
-        config: "english",
-      });
-    }
     const sinceIso = sinceCutoff(args.since as string | undefined);
     const fromIso = parseDayStart(args.from as string | undefined);
     const toIso = parseDayEnd(args.to as string | undefined);
-    if (sinceIso) q = q.gte("posted_at", sinceIso);
-    if (fromIso) q = q.gte("posted_at", fromIso);
-    if (toIso) q = q.lte("posted_at", toIso);
-    if (typeof args.min_reactions === "number")
-      q = q.gte("reactions", args.min_reactions);
-    if (typeof args.min_comments === "number")
-      q = q.gte("comments", args.min_comments);
-    if (args.post_type) q = q.eq("post_type", args.post_type as string);
-    if (signal) q = q.abortSignal(signal);
-
-    const { data, error } = await q;
-    if (error) return err(error.message);
-    // Resilient per-workspace viral gate: drop only posts THIS workspace has
-    // explicitly demoted; a missing classification row keeps the global verdict
-    // (never starve while the Swipe File is full). See passesWorkspaceViral.
-    const normalizedCandidates = (data ?? [])
-      .filter(passesWorkspaceViral)
-      .map(normalizeEmbed);
-    const candidates = autoSelectModelingSources
+    const discovery = await discoverSourcePosts(sb, {
+      workspaceId,
+      columns:
+        context?.includeSourceCardMedia === true
+          ? POST_SOURCE_CARD_COLS
+          : POST_COLS,
+      accountIds,
+      filters: {
+        niche:
+          typeof args.niche === "string" ? args.niche : undefined,
+        query:
+          typeof args.query === "string" ? args.query : undefined,
+        since: sinceIso,
+        from: fromIso,
+        to: toIso,
+        minReactions:
+          typeof args.min_reactions === "number"
+            ? args.min_reactions
+            : undefined,
+        minComments:
+          typeof args.min_comments === "number"
+            ? args.min_comments
+            : undefined,
+        postType:
+          typeof args.post_type === "string" ? args.post_type : undefined,
+      },
+      order: {
+        // Modeling selection ranks recency-first; analytical searches retain
+        // their requested sort.
+        column: autoSelectModelingSources ? "posted_at" : sortCol,
+        ascending: autoSelectModelingSources ? false : ascending,
+      },
+      window: { kind: "limit", limit: fetchLimit },
+      signal,
+    });
+    const normalizedCandidates = discovery.rows.map(normalizeEmbed);
+    const normalizedModelingCandidates = autoSelectModelingSources
       ? normalizedCandidates.map(withCanonicalModelingSourceUrl)
       : normalizedCandidates;
+    const candidates =
+      context?.requireModelableSources === true
+        ? normalizedModelingCandidates.filter((candidate) =>
+            isModelableSourceText(
+              canonicalScrapedPostText(candidate.text),
+            ),
+          )
+        : normalizedModelingCandidates;
 
     // Analytical query → return the strict ranking as-is (unchanged behavior).
     if (!autoSelectModelingSources && !rotateDefaultIdeas) {
@@ -401,16 +367,19 @@ const searchViralPosts: ToolFn = async (args, workspaceId, signal, context) => {
       return { ok: true, count: posts.length, posts };
     }
 
-    const usedIds = await recentlyUsedSourceIds(workspaceId, signal);
+    const usedIds = await recentlyUsedDiscoverySourceIds(workspaceId, {
+      client: sb,
+      signal,
+    });
     // Cross-chat cooldown for modeling: posts turned into a draft within the
     // last MODELING_SOURCE_COOLDOWN_DAYS are withheld while anything fresher
     // exists (selection keeps them as a last-resort top-up only).
     const cooldownIds = autoSelectModelingSources
-      ? await usedSourceIdsWithin(
-          workspaceId,
-          MODELING_SOURCE_COOLDOWN_DAYS,
+      ? await recentlyUsedDiscoverySourceIds(workspaceId, {
+          client: sb,
           signal,
-        )
+          horizonDays: MODELING_SOURCE_COOLDOWN_DAYS,
+        })
       : new Set<string>();
     const surfacedIds = getSurfacedIds(workspaceId);
     // Both branches below rotate the same durable per-workspace cursor: the
@@ -418,7 +387,10 @@ const searchViralPosts: ToolFn = async (args, workspaceId, signal, context) => {
     // start, see its own comment below), so without this the confirmed-
     // modeling branch returned the literal same top-ranked post on most real
     // requests — the durable claim below is what actually varies results.
-    const cursor = await nextRotationCursor(workspaceId, signal);
+    const cursor = await claimDiscoveryRotationCursor(workspaceId, {
+      client: sb,
+      signal,
+    });
     signal?.throwIfAborted();
     // Server-confirmed auto-modeling uses the single secure selection policy.
     // Ordinary idea discovery retains its pre-existing stable rank + rotation.
@@ -444,7 +416,12 @@ const searchViralPosts: ToolFn = async (args, workspaceId, signal, context) => {
     const selected =
       modeledPool?.primaries ??
       (finalLimit > 1
-        ? shuffleFreshBand(ranked, cursor).slice(0, finalLimit)
+        ? variedDiscoveryOrder({
+            candidates,
+            usedIds,
+            surfacedIds,
+            cursor,
+          }).slice(0, finalLimit)
         : rotateFreshBand(ranked, cursor, finalLimit).slice(0, finalLimit));
     recordSurfaced(workspaceId, selected.map((post) => post.id));
     const posts = selected.map(wrapScrapedPostText);
@@ -535,12 +512,6 @@ const TOP_BATCH_MAX_WINDOW_DAYS = 30;
 // widen to 30 days instead of presenting a thin week as "what's working".
 const TOP_BATCH_SPARSE_BELOW = 3;
 
-// How far back a source post counts as "recently used" for idea generation.
-// Matches the batch adapted-horizon (8 weeks): a post adapted within this window
-// should be deprioritized as an idea (avoid repeating yourself), but an older one
-// is fair to revisit for a fresh audience.
-const IDEA_USED_HORIZON_DAYS = 56;
-
 // Hard cooldown for AUTO-MODELING: once a source post has been turned into a
 // draft, it cannot be re-picked for this many days — on ANY chat — unless the
 // eligible pool literally can't fill the request (small swipe files never
@@ -583,102 +554,6 @@ function getSurfacedIds(workspaceId: string): Set<string> {
     (r) => r.at > cutoff,
   );
   return new Set(entries.map((r) => r.id));
-}
-
-// Atomically claim the current durable per-workspace cursor and advance it for
-// the next caller. The database RPC serializes concurrent claims; there is no
-// read/upsert window in which two requests can receive the same cursor.
-async function nextRotationCursor(
-  workspaceId: string,
-  signal?: AbortSignal,
-): Promise<number> {
-  try {
-    signal?.throwIfAborted();
-    const sb = supabaseAdmin();
-    let claim = sb.rpc("claim_modeling_source_rotation_cursor", {
-      p_workspace_id: workspaceId,
-    });
-    if (signal) claim = claim.abortSignal(signal);
-    const { data, error } = await claim;
-    if (error) {
-      console.warn(
-        JSON.stringify({
-          modeling_source_rotation_cursor_claim_failed: {
-            workspace_id: workspaceId,
-            message: error.message,
-          },
-        }),
-      );
-      return 0;
-    }
-    const numeric = typeof data === "string" ? Number(data) : data;
-    return typeof numeric === "number" && Number.isFinite(numeric)
-      ? Math.trunc(numeric)
-      : 0;
-  } catch (error) {
-    if (signal?.aborted) throw error;
-    console.warn(
-      JSON.stringify({
-        modeling_source_rotation_cursor_error: {
-          workspace_id: workspaceId,
-          message: (error as Error).message,
-        },
-      }),
-    );
-    return 0; // best-effort: no rotation on error, exactly today's behavior
-  }
-}
-
-// Source-post ids this workspace has ALREADY drafted from recently — across BOTH
-// modeled batches AND interactive Cowork drafts (both stash meta.source_post_id
-// when a draft is modeled from a source). Used to rank ideas: a post already
-// turned into a draft is "most-mentioned" and should fall behind fresh ones, so
-// the agent doesn't keep pitching the same idea. Best-effort: on any read error
-// we return an empty set (no dedup) rather than fail the tool.
-async function usedSourceIdsWithin(
-  workspaceId: string,
-  horizonDays: number,
-  signal?: AbortSignal,
-): Promise<Set<string>> {
-  const sinceIso = new Date(
-    Date.now() - horizonDays * 24 * 60 * 60 * 1000,
-  ).toISOString();
-  const ids = new Set<string>();
-  try {
-    signal?.throwIfAborted();
-    let query = supabaseAdmin()
-      .from("chat_artifacts")
-      .select("meta")
-      .eq("workspace_id", workspaceId)
-      // Any draft carrying a source_post_id counts — batch OR Cowork. (We can't
-      // filter on meta->>source_post_id IS NOT NULL cheaply across shapes, so
-      // over-fetch a bounded window and filter in JS.)
-      .gte("created_at", sinceIso)
-      // Newest first, so if a workspace exceeds the cap the 1000 rows we keep are
-      // the MOST-RECENT ones (the repeats we most want to avoid), not an
-      // arbitrary slice. Without the order the cap made "which used-ids survive"
-      // undefined, so a recent repeat could slip through.
-      .order("created_at", { ascending: false })
-      .limit(1000);
-    if (signal) query = query.abortSignal(signal);
-    const { data } = await query;
-    for (const row of data ?? []) {
-      const id = (row as { meta?: { source_post_id?: string | null } }).meta
-        ?.source_post_id;
-      if (id) ids.add(id);
-    }
-  } catch (error) {
-    if (signal?.aborted) throw error;
-    /* best-effort: no dedup signal on error */
-  }
-  return ids;
-}
-
-async function recentlyUsedSourceIds(
-  workspaceId: string,
-  signal?: AbortSignal,
-): Promise<Set<string>> {
-  return usedSourceIdsWithin(workspaceId, IDEA_USED_HORIZON_DAYS, signal);
 }
 
 function pickLegacyIdeas<T extends { accounts?: unknown }>(
@@ -752,28 +627,19 @@ const getTopFromBatch: ToolFn = async (args, workspaceId, _signal, context) => {
     // Bounded to a fixed, generous multiple so this stays one cheap query.
     const CANDIDATE_MULTIPLIER = 6;
     const candidateCap = Math.min(finalLimit * CANDIDATE_MULTIPLIER, 120);
-    let q = sb
-      .from("posts")
-      .select(POST_COLS)
-      .in("account_id", accountIds)
-      .eq("is_viral", true)
-      .eq("workspace_post_classification.workspace_id", workspaceId)
-      .is("accounts.archived_at", null)
-      .gte("posted_at", sinceIso)
-      .order("reactions", { ascending: false, nullsFirst: false })
-      .limit(candidateCap);
-    // Optional post-type filter (regular vs lead_magnet). Without it "top 5
-    // regular posts" would silently include lead-magnet posts, since the ranking
-    // is purely by reactions. Mirrors search_viral_posts's post_type filter.
-    if (args.post_type) q = q.eq("post_type", args.post_type as string);
-    const { data, error } = await q;
-    if (error) return err(error.message);
-    // Resilient per-workspace viral gate: drop only posts THIS workspace has
-    // explicitly demoted; a missing classification row keeps the global verdict
-    // (never starve while the Swipe File is full). See passesWorkspaceViral.
-    const normalizedCandidates = (data ?? [])
-      .filter(passesWorkspaceViral)
-      .map(normalizeEmbed);
+    const discovery = await discoverSourcePosts(sb, {
+      workspaceId,
+      columns: POST_COLS,
+      accountIds,
+      filters: {
+        since: sinceIso,
+        postType:
+          typeof args.post_type === "string" ? args.post_type : undefined,
+      },
+      order: { column: "reactions", ascending: false },
+      window: { kind: "limit", limit: candidateCap },
+    });
+    const normalizedCandidates = discovery.rows.map(normalizeEmbed);
     const autoSelectModelingSources = context?.autoSelectModelingSources === true;
     const candidates = autoSelectModelingSources
       ? normalizedCandidates.map(withCanonicalModelingSourceUrl)
@@ -785,7 +651,9 @@ const getTopFromBatch: ToolFn = async (args, workspaceId, _signal, context) => {
     // most recent posts" for ideation: recency now has real candidates to
     // rank, not just whichever 5 already won on reactions. Reactions still
     // breaks ties among equally-recent posts via the pre-sorted input.
-    const usedIds = await recentlyUsedSourceIds(workspaceId);
+    const usedIds = await recentlyUsedDiscoverySourceIds(workspaceId, {
+      client: sb,
+    });
     const surfacedIds = getSurfacedIds(workspaceId);
     const byRecency = [...candidates].sort(
       (a, b) =>
@@ -797,7 +665,9 @@ const getTopFromBatch: ToolFn = async (args, workspaceId, _signal, context) => {
     // to hardcode this to 0, which meant the in-memory-only surfacedIds map
     // (best-effort, resets on every cold start) was the sole rotation signal
     // on most real requests, producing the same top-ranked post every time.
-    const cursor = await nextRotationCursor(workspaceId);
+    const cursor = await claimDiscoveryRotationCursor(workspaceId, {
+      client: sb,
+    });
     const modeledPool = autoSelectModelingSources
       ? selectModelingSourcePool({
           candidates: byRecency,
@@ -862,94 +732,18 @@ export async function loadVoiceProfile(
   } = {},
 ): Promise<ToolResult> {
   try {
-    const sb = options.client ?? supabaseAdmin();
-    const { data, error } = await sb
-      .from("voice_profiles")
-      .select(
-        "linkedin_handle, display_name, headline, profile, summary, source_post_count, status, model, generated_at",
-      )
-      .eq("workspace_id", workspaceId)
-      .maybeSingle();
-    if (error) return err(error.message);
-    if (!data || data.status !== "ready" || !data.profile) {
-      return {
-        ok: false,
-        error:
-          "No voice profile yet. Ask the user to generate one in the Voice tab (paste their LinkedIn profile URL).",
-        status: data?.status ?? null,
-      };
-    }
-    // Backstory separation (PR A): lazily extract biographical facts out of the
-    // profile so the model treats them as a "use sparingly" library, not
-    // always-on identity context it recites to prove voice-match. The facts are
-    // stripped from the returned `profile` JSON and surfaced separately as
-    // `backstory_guidance` with the caveated framing. Provider/content failures
-    // fail open to today's profile behavior; usage-ledger failures propagate.
-    let profile = sanitizeVoiceProfile(data.profile);
-    profile = await ensureBiographicalFacts({
-      workspaceId,
-      profile,
+    return await readVoiceGuidance(workspaceId, {
+      client: options.client,
       signal: options.signal,
-      telemetry: options.telemetry,
-      adapterHealth: options.adapterHealth,
+      enrichProfile: ({ profile }) =>
+        ensureBiographicalFacts({
+          workspaceId,
+          profile,
+          signal: options.signal,
+          telemetry: options.telemetry,
+          adapterHealth: options.adapterHealth,
+        }),
     });
-    const backstoryGuidance = renderBackstoryBlock(profile.biographical_facts);
-    const workspaceKnowledgeGuidance = renderWorkspaceKnowledgeBlock(
-      await createWorkspaceKnowledgeStore(sb).listActive(workspaceId),
-    );
-    // Deterministic mechanics rules (capitalization, punctuation, emoji,
-    // paragraphing) rendered from the measured fingerprint (lib/voice-
-    // mechanics.ts) into imperative instructions the model can follow
-    // directly — sharper and non-hallucinating vs. the raw fingerprint
-    // numbers, which the model would otherwise have to interpret itself.
-    // Empty when there's no fingerprint yet or the sample was too thin.
-    const mechanicsRules = profile.mechanics_fingerprint
-      ? mechanicsFingerprintToRules(profile.mechanics_fingerprint)
-      : [];
-    // Strip facts (returned separately as retrieval guidance), the RAW
-    // interview_answers (source-of-truth for editing, not prompt input), and
-    // the raw fingerprint (returned separately, already rendered into rules)
-    // from the dump. Raw interview context is also excluded: interview-derived
-    // facts may reach drafting only through explicitly verified Workspace
-    // Knowledge, rendered separately below.
-    const profileForModel = {
-      ...profile,
-      biographical_facts: undefined,
-      interview_answers: undefined,
-      interview_context: undefined,
-      mechanics_fingerprint: undefined,
-    };
-    return {
-      ok: true,
-      voice: {
-        linkedin_handle: data.linkedin_handle,
-        display_name: data.display_name,
-        headline: data.headline,
-        summary: data.summary,
-        profile: profileForModel,
-        // Present ONLY when the profile has real biographical facts. The chat
-        // agent should treat this as retrieval guidance, not a checklist.
-        ...(backstoryGuidance ? { backstory_guidance: backstoryGuidance } : {}),
-        ...(workspaceKnowledgeGuidance
-          ? { workspace_knowledge_guidance: workspaceKnowledgeGuidance }
-          : {}),
-        // Present ONLY when the fingerprint yielded confident, measured
-        // rules. Treat these as HARD, non-negotiable mechanics — they're
-        // measured facts about how this person writes, not a style guess.
-        ...(mechanicsRules.length
-          ? { mechanics_rules: mechanicsRules }
-          : {}),
-        // Machine-readable flag for the agent loop's voice-aware editor: this
-        // writer genuinely uses em dashes, so the stripEmDashes anti-slop net
-        // must back off for their drafts. Only present when true.
-        ...(voiceKeepsEmDashes(profile.mechanics_fingerprint)
-          ? { keep_em_dashes: true }
-          : {}),
-        source_post_count: data.source_post_count,
-        model: data.model,
-        generated_at: data.generated_at,
-      },
-    };
   } catch (e) {
     if (
       e instanceof UsagePersistenceError ||
@@ -1089,8 +883,8 @@ const searchNewsTool: ToolFn = async (args, workspaceId, signal, context) => {
 
 // ---------------------------------------------------------------------------
 // Board tools — the FIRST agent WRITES. These let the agent operate the user's
-// OWN drafts board (chat_artifacts: status idea→drafting→ready→posted +
-// plan_to_post_on), mirroring PATCH /api/drafts/[id]. Only ever touch the user's
+// OWN drafts board (chat_artifacts: status idea→drafting→ready→posted),
+// mirroring PATCH /api/drafts/[id]. Only ever touch the user's
 // own saved drafts — nothing external is sent, nothing another workspace owns.
 //
 // SECURITY-CRITICAL: TOOL_FNS run on supabaseAdmin() (service-role, which
@@ -1100,12 +894,12 @@ const searchNewsTool: ToolFn = async (args, workspaceId, signal, context) => {
 // ---------------------------------------------------------------------------
 
 const DRAFT_STATUSES = ["idea", "drafting", "ready", "posted"] as const;
-type DraftStatus = (typeof DRAFT_STATUSES)[number];
 const DRAFT_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+type DraftStatus = (typeof DRAFT_STATUSES)[number];
 
 // The columns the agent reasons over for a draft — enough to identify + target
 // one, never the whole body (keeps the tool result small when listing many).
-const DRAFT_COLS = "id, title, kind, status, plan_to_post_on, created_at";
+const DRAFT_COLS = "id, title, kind, status, created_at";
 
 function draftLifecycleForAgent(workspaceId: string) {
   return new DraftLifecycle(
@@ -1119,8 +913,14 @@ function draftForAgent(draft: DraftRecord) {
     title: draft.title,
     kind: draft.kind,
     status: draft.status,
-    plan_to_post_on: draft.planToPostOn,
     created_at: draft.createdAt,
+  };
+}
+
+function legacyScheduledDraftForAgent(draft: DraftRecord) {
+  return {
+    ...draftForAgent(draft),
+    plan_to_post_on: draft.planToPostOn,
   };
 }
 
@@ -1170,7 +970,14 @@ const listDrafts: ToolFn = async (args, workspaceId, signal) => {
     if (signal) q = q.abortSignal(signal);
     const { data, error } = await q;
     if (error) return err(error.message);
-    return { ok: true, count: data?.length ?? 0, drafts: data ?? [] };
+    const drafts = (data ?? []).map((draft) => ({
+      id: draft.id,
+      title: draft.title,
+      kind: draft.kind,
+      status: draft.status,
+      created_at: draft.created_at,
+    }));
+    return { ok: true, count: drafts.length, drafts };
   } catch (e) {
     return err((e as Error).message);
   }
@@ -1210,20 +1017,18 @@ const moveOnBoard: ToolFn = async (args, workspaceId) => {
   }
 };
 
-// schedule_post — set (or clear) a saved draft's planned post date. Deterministic
-// validation: YYYY-MM-DD, not in the past (a past plan date is almost always a
-// GLM mistake). null clears the date. The user's own draft only.
+// Compatibility-only executor for action checkpoints created before
+// planning-only dates were retired. It is intentionally absent from TOOL_DEFS,
+// so no new model turn can request it.
 const schedulePost: ToolFn = async (args, workspaceId) => {
   try {
     const id = typeof args.id === "string" ? args.id.trim() : "";
     if (!id) return err("A draft id is required (call list_drafts to get one).");
     let date: string | null;
     if (args.date === null || args.date === undefined || args.date === "") {
-      date = null; // clear the planned date
+      date = null;
     } else if (typeof args.date === "string" && DRAFT_DATE_RE.test(args.date.trim())) {
       date = args.date.trim();
-      // Reject a past date (compared in UTC day terms). A plan for yesterday is a
-      // model error, not a real intent.
       const today = new Date().toISOString().slice(0, 10);
       if (date < today) {
         return err(`"${date}" is in the past. Pick today (${today}) or a future date.`);
@@ -1241,7 +1046,7 @@ const schedulePost: ToolFn = async (args, workspaceId) => {
           : outcome.message,
       );
     }
-    return { ok: true, draft: draftForAgent(outcome.value) };
+    return { ok: true, draft: legacyScheduledDraftForAgent(outcome.value) };
   } catch (e) {
     return err((e as Error).message);
   }
@@ -1415,7 +1220,7 @@ export const TOOL_DEFS: ToolDef[] = [
   },
   // -----------------------------------------------------------------------
   // Board tools — operate the user's OWN drafts pipeline (their saved posts).
-  // list_drafts is the id-space; move_on_board + schedule_post act on it. Only
+  // list_drafts is the id-space; move_on_board acts on it. Only
   // the user's own drafts; nothing external is sent.
   // -----------------------------------------------------------------------
   {
@@ -1423,7 +1228,7 @@ export const TOOL_DEFS: ToolDef[] = [
     function: {
       name: "list_drafts",
       description:
-        "List the user's SAVED drafts (their posts pipeline board) with each one's status and planned date. Use this to find the exact draft id before moving or scheduling one — never guess an id. Optionally filter by status or a case-insensitive title substring. Returns ids, titles, kinds, statuses, and planned dates (not the full body).",
+        "List the user's SAVED drafts (their posts pipeline board). Use this to find the exact draft id before moving one — never guess an id. Optionally filter by status or a case-insensitive title substring. Returns ids, titles, kinds, and statuses (not the full body).",
       parameters: {
         type: "object",
         properties: {
@@ -1463,26 +1268,6 @@ export const TOOL_DEFS: ToolDef[] = [
       },
     },
   },
-  {
-    type: "function",
-    function: {
-      name: "schedule_post",
-      description:
-        "Set (or clear) the planned post date on one of the user's saved drafts. Get the draft id from list_drafts first. The date must be today or in the future. Pass date: null to clear a planned date. This only plans it on the board — it does NOT publish anything.",
-      parameters: {
-        type: "object",
-        required: ["id"],
-        properties: {
-          id: { type: "string", description: "The saved draft's id (from list_drafts)." },
-          date: {
-            type: ["string", "null"],
-            description: "Planned post date as YYYY-MM-DD (today or later), or null to clear it.",
-          },
-        },
-      },
-    },
-  },
-
   // -----------------------------------------------------------------------
   // Render-artifact tools — STRUCTURED OUTPUT pattern.
   //

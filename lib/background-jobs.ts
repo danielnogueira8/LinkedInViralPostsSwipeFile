@@ -9,6 +9,9 @@ export const BACKGROUND_JOB_TYPES = [
   // LeadShark (migration 122). Keep in lockstep with the DB CHECK constraint.
   "leadshark_bind_automation",
   "leadshark_sync_stats",
+  "knowledge_ingestion",
+  "knowledge_extraction",
+  "knowledge_embedding",
 ] as const;
 
 export type BackgroundJobType = (typeof BACKGROUND_JOB_TYPES)[number];

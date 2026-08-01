@@ -62,6 +62,18 @@
       "follow_up_issue": 999
     },
     {
+      "id": "cowork-draft-preview-visibility",
+      "capability": "Cowork",
+      "invariant": "Generated posts remain fully visible and editable inside the Cowork preview: the final line has breathing room and typing in a scrolled long post keeps the caret in view.",
+      "preferred_seam": "browser",
+      "existing_coverage": [
+        "evals/data/draft-media-bounds.test.ts",
+        "e2e/cowork-preview-last-line.spec.ts"
+      ],
+      "status": "protected",
+      "follow_up_issue": 999
+    },
+    {
       "id": "cowork-modeled-source-selection",
       "capability": "Cowork",
       "invariant": "Server-selected modeled sources preserve retrieval order within stable freshness groups, are objectively usable, race-safe, exact in count, and preserve one-to-one source attribution on every resulting draft.",
@@ -220,6 +232,7 @@
         "evals/data/media-attachment-equality.test.ts",
         "evals/data/resource-mutation-contracts.test.ts",
         "evals/data/post-media.test.ts",
+        "evals/data/cowork-schedule-image-contract.test.ts",
         "e2e/media-lightbox-accessibility.spec.ts"
       ],
       "status": "protected",

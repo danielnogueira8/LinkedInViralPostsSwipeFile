@@ -33,7 +33,7 @@ function SiteFooter() {
       <div className="mx-auto flex w-full max-w-[1180px] flex-wrap items-center justify-between gap-x-8 gap-y-4 px-4 py-7 sm:px-6">
         <Link href="/" className="flex items-center gap-2.5" aria-label="SwipeIn home">
           <Image src="/swipeInIcon.png" alt="" width={24} height={24} className="size-6 rounded-[6px]" />
-          <span className="font-wordmark text-[15px] tracking-[-0.01em]">SwipeIn</span>
+          <span className="text-[15px] font-semibold tracking-[-0.01em]">SwipeIn</span>
         </Link>
         <nav aria-label="Footer" className="flex flex-wrap items-center gap-x-5 gap-y-2 text-[13px] font-medium text-muted-foreground">
           <Link href="/#features" className="whitespace-nowrap transition-colors hover:text-foreground">

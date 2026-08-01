@@ -66,6 +66,12 @@ export type DraftQueueCommand = {
 export type DraftQueueTargetCommand = DraftQueueCommand & {
   postingSlotId: string;
   postingSlotOccurrenceDate: string;
+  localTime?: string;
+};
+
+export type DraftQueueMoveCommand = {
+  postingSlotId: string;
+  postingSlotOccurrenceDate: string;
 };
 
 export type QueuedDraftState = Omit<ScheduledDraftState, "scheduleStatus"> & {
@@ -74,6 +80,8 @@ export type QueuedDraftState = Omit<ScheduledDraftState, "scheduleStatus"> & {
   postingSlotId: string;
   postingSlotOccurrenceDate: string;
 };
+
+export type MovedQueuedDraftState = QueuedDraftState & { id: string };
 
 export type UnscheduledDraftState = {
   scheduledAt: null;
@@ -152,6 +160,25 @@ const queueResponseSchema = z.discriminatedUnion("ok", [
     timezone: z.string(),
     postingSlotId: z.string(),
     postingSlotOccurrenceDate: z.string(),
+  }),
+]);
+const queueMoveResponseSchema = z.discriminatedUnion("ok", [
+  errorSchema,
+  z.object({
+    ok: z.literal(true),
+    swapped: z.boolean(),
+    timezone: z.string(),
+    drafts: z.array(
+      z.object({
+        id: z.string(),
+        scheduledAt: z.string(),
+        scheduleStatus: z.literal("scheduled"),
+        planToPostOn: z.string(),
+        firstComment: z.string().nullable(),
+        postingSlotId: z.string(),
+        postingSlotOccurrenceDate: z.string(),
+      }),
+    ),
   }),
 ]);
 const unscheduleResponseSchema = z.discriminatedUnion("ok", [
@@ -352,6 +379,41 @@ export function createDraftOperationsClient(
         timezone: value.timezone,
         postingSlotId: value.postingSlotId,
         postingSlotOccurrenceDate: value.postingSlotOccurrenceDate,
+      };
+    },
+
+    async moveQueue(
+      draftId: string,
+      command: DraftQueueMoveCommand,
+    ): Promise<{
+      swapped: boolean;
+      timezone: string;
+      drafts: MovedQueuedDraftState[];
+    }> {
+      // A swap can commit before its response is lost. It is not safe to
+      // blindly replay because the source already occupies the destination
+      // on the second request; the caller reloads queue state after an
+      // ambiguous transport failure instead.
+      const response = await fetcher(
+        `/api/drafts/${draftId}/queue/move`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(command),
+        },
+      );
+      const value = await readDraftOperationResponse(
+        response,
+        queueMoveResponseSchema,
+        "Couldn't move this queued post.",
+      );
+      return {
+        swapped: value.swapped,
+        timezone: value.timezone,
+        drafts: value.drafts.map((draft) => ({
+          ...draft,
+          timezone: value.timezone,
+        })),
       };
     },
 

@@ -11,11 +11,13 @@ import {
 } from "@/lib/chat-navigation";
 import {
   clearComposerStarter,
+  consumeComposerExplorationLane,
   draftKey,
   moveComposerDraft,
   readComposerDraft,
   readDraft,
   writeComposerDraft,
+  writeComposerExplorationLane,
   writeDraft,
 } from "@/lib/chat-draft-storage";
 
@@ -60,6 +62,7 @@ describe("readDraft / writeDraft round-trip", () => {
     expect(readComposerDraft("legacy")).toEqual({
       text: "old unsent text",
       starterId: null,
+      explorationLane: "auto",
     });
   });
 
@@ -67,11 +70,13 @@ describe("readDraft / writeDraft round-trip", () => {
     writeComposerDraft("a", {
       text: "Write an original post about AI slop.",
       starterId: "write-original",
+      explorationLane: "fresh",
     });
 
     expect(readComposerDraft("a")).toEqual({
       text: "Write an original post about AI slop.",
       starterId: "write-original",
+      explorationLane: "fresh",
     });
     expect(readDraft("a")).toBe("Write an original post about AI slop.");
   });
@@ -80,14 +85,20 @@ describe("readDraft / writeDraft round-trip", () => {
     writeComposerDraft(null, {
       text: "Write an original post about reliability.",
       starterId: "write-original",
+      explorationLane: "experimental",
     });
 
     moveComposerDraft(null, "created-chat");
 
-    expect(readComposerDraft(null)).toEqual({ text: "", starterId: null });
+    expect(readComposerDraft(null)).toEqual({
+      text: "",
+      starterId: null,
+      explorationLane: "auto",
+    });
     expect(readComposerDraft("created-chat")).toEqual({
       text: "Write an original post about reliability.",
       starterId: "write-original",
+      explorationLane: "experimental",
     });
   });
 
@@ -95,6 +106,7 @@ describe("readDraft / writeDraft round-trip", () => {
     writeComposerDraft("a", {
       text: "Write an original post about trust.",
       starterId: "write-original",
+      explorationLane: "auto",
     });
 
     clearComposerStarter("a");
@@ -102,7 +114,38 @@ describe("readDraft / writeDraft round-trip", () => {
     expect(readComposerDraft("a")).toEqual({
       text: "Write an original post about trust.",
       starterId: null,
+      explorationLane: "auto",
     });
+  });
+
+  test("persists a lane without text and scopes it to its chat", () => {
+    writeComposerExplorationLane("a", "fresh");
+
+    expect(readComposerDraft("a")).toEqual({
+      text: "",
+      starterId: null,
+      explorationLane: "fresh",
+    });
+    expect(readComposerDraft("b").explorationLane).toBe("auto");
+
+    writeComposerExplorationLane("a", "auto");
+    expect(readComposerDraft("a").explorationLane).toBe("auto");
+  });
+
+  test("consumes the sending chat's lane without clearing the chat viewed meanwhile", () => {
+    writeComposerExplorationLane("sending-chat", "experimental");
+    writeComposerExplorationLane("viewed-chat", "fresh");
+
+    expect(
+      consumeComposerExplorationLane("sending-chat", "viewed-chat"),
+    ).toBeNull();
+    expect(readComposerDraft("sending-chat").explorationLane).toBe("auto");
+    expect(readComposerDraft("viewed-chat").explorationLane).toBe("fresh");
+
+    writeComposerExplorationLane("sending-chat", "familiar");
+    expect(
+      consumeComposerExplorationLane("sending-chat", "sending-chat"),
+    ).toBe("auto");
   });
 
   test("writes then reads back the same text, scoped per chat", () => {

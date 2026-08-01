@@ -16,15 +16,49 @@ export type PlanStep = z.infer<typeof PlanStepSchema>;
 export const AskQuestionSchema = z
   .object({
     question: z.string().min(1),
-    options: z.array(z.string().min(1)).min(2),
+    // Clarification cards need 2+ choices to be a choice at all. Interview
+    // cards render no options (see `questions` below), so the floor is lifted
+    // for that variant only, in the superRefine.
+    options: z.array(z.string().min(1)),
     allowOther: z.boolean(),
     multiSelect: z.boolean().optional(),
     targetCount: z.number().int().min(2).max(5).optional(),
     optionIds: z.array(z.string().uuid()).min(2).max(5).optional(),
     choiceIds: z.array(z.string().min(1).max(64)).min(2).max(6).optional(),
     doneOption: z.string().min(1).optional(),
+    // The "Interview me" lane's card. The whole question set is planned in one
+    // model call and carried on a single card, which the client walks through
+    // locally — so an interview costs two turns (plan, then save) rather than
+    // one per question. `question` mirrors questions[0] so any consumer that
+    // only understands single-question asks still renders something sensible.
+    variant: z.literal("interview").optional(),
+    questions: z.array(z.string().min(1)).min(1).max(5).optional(),
+    progress: z
+      .object({
+        current: z.number().int().min(1),
+        total: z.number().int().min(1),
+      })
+      .optional(),
   })
   .superRefine((question, ctx) => {
+    const isInterview = question.variant === "interview";
+    // Interview cards carry `questions` and deliberately render no option
+    // chips (pre-filled examples bias the answer). Every other ask is a
+    // choice, and a choice needs at least two options.
+    if (!isInterview && question.options.length < 2) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "an ask must offer at least two options",
+        path: ["options"],
+      });
+    }
+    if (isInterview && !question.questions?.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "an interview card must carry its planned questions",
+        path: ["questions"],
+      });
+    }
     if (new Set(question.options).size !== question.options.length) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,

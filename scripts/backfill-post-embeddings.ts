@@ -16,6 +16,7 @@ import {
   embedAndStorePosts,
   EMBED_BATCH_SIZE,
 } from "../lib/post-embeddings";
+import { PLATFORM_WORKSPACE } from "../lib/claude";
 
 async function main() {
   const model = EMBEDDING_MODEL;
@@ -52,7 +53,10 @@ async function main() {
       posts.push(...((data ?? []) as Array<{ id: string; text: string | null }>));
     }
 
-    const embedded = await embedAndStorePosts(posts, { model });
+    const embedded = await embedAndStorePosts(posts, {
+      model,
+      workspaceId: PLATFORM_WORKSPACE,
+    });
     totalEmbedded += embedded;
     console.log(
       `  +${embedded} embedded (batch of ${ids.length}, ${EMBED_BATCH_SIZE}/call) — ${totalEmbedded} total`,

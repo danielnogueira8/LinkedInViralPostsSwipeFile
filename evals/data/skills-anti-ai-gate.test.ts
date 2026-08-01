@@ -1,5 +1,9 @@
 import { describe, expect, test } from "vitest";
-import { SKILLS, selectSkills } from "@/lib/agent/skills";
+import {
+  ANTI_AI_READER_TELL_RULES,
+  SKILLS,
+  selectSkills,
+} from "@/lib/agent/skills";
 
 // ---------------------------------------------------------------------------
 // anti-ai is imported from the Claude skill, which requires EXPLICIT invocation:
@@ -60,6 +64,29 @@ describe("imported skill content survived the port", () => {
     // passing rewrite into a 100%-AI verdict. If it's ever trimmed out, the
     // skill loses its most load-bearing rule.
     expect(body("anti-ai")).toMatch(/significance|what a moment MEANS|here's the thing/i);
+  });
+
+  test("anti-ai includes the de-ai reader-tell audit and word-bank references", () => {
+    const antiAi = body("anti-ai");
+
+    expect(antiAi).toContain(ANTI_AI_READER_TELL_RULES);
+    expect(antiAi).toMatch(/reader-facing tells/i);
+    expect(antiAi).toMatch(/negative parallelism/i);
+    expect(antiAi).toMatch(/participial tail/i);
+    expect(antiAi).toMatch(/bold-first bullets/i);
+    expect(antiAi).toMatch(/tier 1 must reach zero/i);
+    expect(antiAi).toMatch(/tier 2 is allowed alone but banned in clusters/i);
+    expect(antiAi).toMatch(/Tells: N → M/);
+  });
+
+  test("anti-ai keeps reader cleanup distinct from detector rewriting", () => {
+    const antiAi = body("anti-ai");
+
+    expect(antiAi).toMatch(/DETECTOR-FIRST mode/);
+    expect(antiAi).toMatch(/SURGICAL mode/);
+    expect(antiAi).toMatch(/does NOT prove a detector pass/i);
+    expect(antiAi).toMatch(/detector protocol overrides the surgical-preservation rules/i);
+    expect(antiAi).toMatch(/never invent anecdotes, names, dates, numbers/i);
   });
 
   test("the -jacking skills gained worked patterns", () => {

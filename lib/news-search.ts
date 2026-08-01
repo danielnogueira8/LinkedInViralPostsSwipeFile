@@ -55,9 +55,13 @@ export const NEWS_MAX_AGE_DAYS = (() => {
   return Number.isFinite(n) && n > 0 ? n : 14;
 })();
 
-// How many web results the plugin fetches (Exa bills per result: $4/1k, so 5
-// results ≈ $0.02/search). Also the max stories returned to the agent.
-export const NEWS_MAX_RESULTS = 5;
+// How many web results the plugin fetches (Exa bills per result: $4/1k, so 3
+// results ≈ $0.012/search). Also the max stories returned to the agent.
+// 3, not 5: the Exa fee and the injected page-content tokens (the bulk of the
+// discovery call's input) scale per result, and a 2026-07-30 review of
+// agent_news_pool showed searches almost never fill even 4 usable slots —
+// the 4th/5th story never fed an agent idea, so the extra spend bought nothing.
+export const NEWS_MAX_RESULTS = 3;
 
 // News search is a grounded-discovery + structured-normalization pipeline that
 // relies on OpenRouter's NATIVE web search, which only a
@@ -68,7 +72,12 @@ export const NEWS_MAX_RESULTS = 5;
 // this cheap, known-good default. Pin OPENROUTER_NEWS_MODEL to override.
 // Three bounded calls (primary discovery, fallback discovery, normalization)
 // must fit inside Cowork's route-wide deadline and still leave time to write.
-const NEWS_STAGE_TIMEOUT_MS = 20_000;
+// 45s, not 20s: web-search server tools do real search round trips (one per
+// max_uses) and a 5-result discovery can measure ~20-35s. Native OpenAI
+// research runs at the centralized max/high policy; 2×45s discovery + normalize
+// still fits the 120s tool budget (RESEARCH_TOOL_BUDGET_MS) with room to write
+// inside the 240s route budget.
+const NEWS_STAGE_TIMEOUT_MS = 45_000;
 // A fallback is useful only if the route can still afford that discovery,
 // normalization, and a bounded writer window after it succeeds.
 const NEWS_FALLBACK_MIN_REMAINING_MS =
@@ -179,6 +188,9 @@ export async function searchNews(opts: {
           model,
           maxTokens: 1800,
           timeoutMs: NEWS_STAGE_TIMEOUT_MS,
+          // OpenAI-backed research is intentionally run at the native model's
+          // max/high reasoning policy; non-OpenAI fallbacks keep their own
+          // provider-specific defaults in completeChat.
           plugins: [{ id: "web", max_results: NEWS_MAX_RESULTS }],
           signal: opts.signal,
           messages: [
@@ -271,59 +283,81 @@ export async function searchNews(opts: {
     .join("\n\n")
     .slice(0, 20_000);
 
-  const normalizationAttempt = await runCoworkAdapterAttempt({
-    registry,
-    adapterKey: `cowork_news_normalize:${discoveryModel}`,
-    signal: opts.signal,
-    call: () =>
-      completeChat({
-        model: discoveryModel,
-        maxTokens: 1500,
-        timeoutMs: NEWS_STAGE_TIMEOUT_MS,
-        tools: [NEWS_RESULTS_TOOL],
-        forceTool: "report_news_results",
-        signal: opts.signal,
-        messages: [
+  // Small models occasionally answer a forced tool call in prose ("Adapter
+  // response validation failed" — seen live on haiku normalization). That is
+  // a flake, not a real failure, so retry the normalization once before
+  // giving up the whole search (which would surface as a wrong "no fresh
+  // story" answer after a SUCCESSFUL discovery).
+  const runNormalization = (attempt: number, fallbackReason?: string) =>
+    runCoworkAdapterAttempt({
+      registry,
+      adapterKey: `cowork_news_normalize:${discoveryModel}`,
+      signal: opts.signal,
+      call: () =>
+        completeChat({
+          model: discoveryModel,
+          maxTokens: 1500,
+          timeoutMs: NEWS_STAGE_TIMEOUT_MS,
+          // Keep the normalization call on the same OpenAI max/high policy as
+          // discovery when Luna is serving it.
+          tools: [NEWS_RESULTS_TOOL],
+          forceTool: "report_news_results",
+          signal: opts.signal,
+          messages: [
+            {
+              role: "system",
+              content:
+                `Normalize the grounded web research into structured rows. Today is ${today}. ` +
+                `Use only sources and URLs present verbatim in the research. Never add a URL, fact, or date from memory. ` +
+                `Use the page's publication or last-updated date as YYYY-MM-DD. Omit candidates whose date cannot be determined.`,
+            },
+            { role: "user", content: groundedEvidence },
+          ],
+        }),
+      validate: (response) => {
+        if (!Array.isArray(response.toolArgs?.results)) {
+          throw new Error("News normalization was missing its required schema.");
+        }
+        return response;
+      },
+      persistUsage: (response) => {
+        const attribution = providerModelAttribution(
+          discoveryModel,
+          response.model,
+        );
+        return logOpenRouterUsage(
+            "news_search_normalize",
+            attribution.model,
+          response.usage,
+          opts.workspaceId,
           {
-            role: "system",
-            content:
-              `Normalize the grounded web research into structured rows. Today is ${today}. ` +
-              `Use only sources and URLs present verbatim in the research. Never add a URL, fact, or date from memory. ` +
-              `Use the page's publication or last-updated date as YYYY-MM-DD. Omit candidates whose date cannot be determined.`,
+            phase: "normalize",
+            ...attribution.metadata,
           },
-          { role: "user", content: groundedEvidence },
-        ],
-      }),
-    validate: (response) => {
-      if (!Array.isArray(response.toolArgs?.results)) {
-        throw new Error("News normalization was missing its required schema.");
-      }
-      return response;
-    },
-    persistUsage: (response) => {
-      const attribution = providerModelAttribution(
-        discoveryModel,
-        response.model,
-      );
-      return logOpenRouterUsage(
-          "news_search_normalize",
-          attribution.model,
-        response.usage,
-        opts.workspaceId,
-        {
-          phase: "normalize",
-          ...attribution.metadata,
-        },
-      );
-    },
-    usage: (response) => response.usage,
-    responseModel: (response) => response.model,
-    telemetry: opts.telemetry,
-    stage: "news_normalize",
-    attempt: 1,
-    model: discoveryModel,
-    rejectedReasonCode: "invalid_news_normalization",
-  });
+        );
+      },
+      usage: (response) => response.usage,
+      responseModel: (response) => response.model,
+      telemetry: opts.telemetry,
+      stage: "news_normalize",
+      attempt,
+      model: discoveryModel,
+      fallbackReason,
+      rejectedReasonCode: "invalid_news_normalization",
+    });
+
+  let normalizationAttempt;
+  try {
+    normalizationAttempt = await runNormalization(1);
+  } catch (error) {
+    if (opts.signal?.aborted || error instanceof UsagePersistenceError) {
+      throw error;
+    }
+    normalizationAttempt = await runNormalization(
+      2,
+      "primary_news_normalization_failed",
+    );
+  }
   const normalized = normalizationAttempt.value;
 
   // A structured row is still model output. Require its URL to appear in the

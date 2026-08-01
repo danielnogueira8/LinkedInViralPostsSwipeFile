@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>SwipeIn Swipe File</title>
+  </head>
+  <body>
+    <main id="app" aria-busy="true">
+      <header>
+        <div>
+          <p class="eyebrow">SWIPE FILE</p>
+          <h1>Posts worth modeling</h1>
+        </div>
+        <p id="result-count" class="muted" aria-live="polite">Loading…</p>
+      </header>
+
+      <form id="filters" aria-label="Filter swipe file">
+        <label>
+          <span>Topic</span>
+          <input id="query" name="query" placeholder="Search post copy" />
+        </label>
+        <label>
+          <span>Published</span>
+          <select id="since" name="since">
+            <option value="7d">Last 7 days</option>
+            <option value="30d">Last 30 days</option>
+            <option value="">Any time</option>
+          </select>
+        </label>
+        <label>
+          <span>Kind</span>
+          <select id="post-type" name="post_type">
+            <option value="">All posts</option>
+            <option value="regular">Regular posts</option>
+            <option value="lead_magnet">Lead magnets</option>
+          </select>
+        </label>
+        <button type="submit">Refresh</button>
+      </form>
+
+      <p id="status" class="status" role="status"></p>
+      <section
+        id="posts"
+        class="carousel"
+        aria-label="Swipe file posts"
+        aria-roledescription="carousel"
+      ></section>
+    </main>
+    <!-- APP_SCRIPT -->
+  </body>
+</html>

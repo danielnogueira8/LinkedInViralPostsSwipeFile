@@ -1,10 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Loader2, AlertCircle } from "lucide-react";
+import { AlertCircle } from "lucide-react";
 import { PostCard } from "@/components/post-card";
 import type { WritableLibrary } from "@/lib/shared-bookmarks";
 import type { SwipePost } from "@/lib/swipe-query";
+import { LoadingPixels } from "@/components/ui/loading-state";
 
 // Desktop infinite-scroll grid for the swipe feed. The server renders
 // page 0 and hands it here with the active filter query string (so the
@@ -105,7 +106,7 @@ export function SwipeGrid({
 
       {nextOffset !== null && (
         <div ref={sentinelRef} className="flex justify-center py-8">
-          {loading && <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />}
+          {loading && <LoadingPixels />}
           {failed && !loading && (
             <button
               type="button"

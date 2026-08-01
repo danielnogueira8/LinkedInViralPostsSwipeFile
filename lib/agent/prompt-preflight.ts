@@ -15,6 +15,15 @@ export type PromptPreflightResult =
     };
 
 const PLACEHOLDER_RE = /\[[a-z][a-z0-9 _/-]{1,48}\]/gi;
+
+// Bracketed markers the APP writes into a message on the user's behalf. The
+// placeholder guard exists to catch a half-filled template the user typed
+// ("write about [topic]"), but it cannot tell that from a marker the product
+// generated — so composeInterviewAnswers marking a passed question as
+// "[skipped]" tripped a guard telling the user to fill in a blank they never
+// wrote and cannot remove. Skipping a question is allowed, so the marker is
+// exempt rather than the guard being loosened for every bracketed word.
+const APP_AUTHORED_MARKERS = new Set(["[skipped]"]);
 const MEANINGFUL_WORD_RE = /[\p{L}\p{N}]{2,}/u;
 const INJECTION_ONLY_RE =
   /^(?:ignore|disregard|forget|override|reveal|print|show|dump|output|exfiltrate)\b[\s\S]{0,240}\b(?:previous|above|system|developer|instructions?|prompt|tools?|schemas?|secrets?|env|api keys?)\b[\s.!?]*$/i;
@@ -34,7 +43,13 @@ export const MAX_PROMPT_CHARS = 8000;
 
 export function findUnfilledPlaceholders(text: string): string[] {
   const matches = text.match(PLACEHOLDER_RE) ?? [];
-  return Array.from(new Set(matches.map((m) => m.trim()))).slice(0, 6);
+  return Array.from(
+    new Set(
+      matches
+        .map((m) => m.trim())
+        .filter((m) => !APP_AUTHORED_MARKERS.has(m.toLowerCase())),
+    ),
+  ).slice(0, 6);
 }
 
 export function preflightUserPrompt(input: string): PromptPreflightResult {

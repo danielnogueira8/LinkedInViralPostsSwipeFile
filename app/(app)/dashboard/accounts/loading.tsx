@@ -1,4 +1,5 @@
 import { PageShell } from "@/components/app-surface";
+import { LoadingState } from "@/components/ui/loading-state";
 import { CREATOR_CARD_GRID_CLASS } from "@/lib/discovery-display-policy";
 
 function CreatorCardSkeleton() {
@@ -42,11 +43,10 @@ export default function AccountsLoading() {
   return (
     <PageShell
       width="wide"
-      className="animate-pulse"
-      role="status"
-      aria-live="polite"
       aria-busy="true"
     >
+      <LoadingState label="Loading creators" />
+      <div className="flex flex-col gap-5 animate-pulse sm:gap-6">
       <div className="rounded-xl border border-border/60 bg-card/70 px-4 py-4 shadow-soft sm:px-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div className="space-y-2">
@@ -102,6 +102,7 @@ export default function AccountsLoading() {
         </div>
       </div>
       <span className="sr-only">Loading creators</span>
+      </div>
     </PageShell>
   );
 }

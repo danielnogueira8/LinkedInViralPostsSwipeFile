@@ -1,5 +1,6 @@
 // Structure skeleton — a deterministic measurement of a single source post's
-// FORMAT (paragraph shape, list usage, hook length, overall length), used
+// FORMAT (paragraph shape, list usage and grouped list items, P.S. sign-off,
+// hook length, overall length), used
 // exclusively on MODELING turns (the user asked to adapt an existing post's
 // structure). This is NOT the voice-mechanics fingerprint (lib/voice-
 // mechanics.ts, which profiles a CREATOR across many posts for their own
@@ -44,6 +45,9 @@ export type StructureListMarker =
 
 type StructuralLine = {
   marker: StructureListMarker | null;
+  // Which blank-line-separated paragraph this line belongs to, used to detect
+  // grouped list items (a marker line with a same-paragraph supporting line).
+  paragraphIndex: number;
 };
 
 function standardListMarkerOf(line: string): StructureListMarker | null {
@@ -89,6 +93,14 @@ export type StructureSkeleton = {
   listMarker: StructureListMarker | null;
   // Number of list items, or 0 when hasList is false.
   listItemCount: number;
+  // List items that span two lines — a marker/label line followed by a
+  // supporting line inside the same paragraph (e.g. a numbered framework
+  // stage with its component roster underneath). A distinct shape from a
+  // flat one-line-item list, and easy for a writer to wrongly flatten.
+  groupedListItemCount: number;
+  // Whether the source closes with a P.S. line — a deliberate sign-off beat
+  // the reference block tells the writer to keep.
+  hasPostScript: boolean;
   // Character length of the extracted hook (first ~1-2 sentences/lines).
   hookChars: number;
   // Total character length of the source body.
@@ -187,6 +199,7 @@ function parseStructuralLines(text: string): StructuralLine[] {
     marker:
       line.standardMarker ??
       (repeatedEmojiLines.has(index) ? { kind: "emoji" } : null),
+    paragraphIndex: line.paragraphIndex,
   }));
 }
 
@@ -265,6 +278,30 @@ function layoutOf(lines: StructuralLine[]): StructureLayoutBeat[] {
   return layout;
 }
 
+// A trailing sign-off paragraph: "P.S.", "PS:", "P.S. —", etc.
+const POST_SCRIPT_RE = /^p\.?\s*s\.?(?=[\s.:)—-]|$)/i;
+
+// Count list items whose marker line is immediately followed by a
+// non-marker supporting line inside the SAME paragraph — the "1. Stage name
+// / Component A, Component B, Component C." pattern framework posts use. A
+// lead-in line before a list is unaffected (it has no marker); a flat
+// one-line-item list scores 0.
+function groupedListItemCountOf(lines: StructuralLine[]): number {
+  let count = 0;
+  for (let index = 0; index < lines.length - 1; index++) {
+    const line = lines[index];
+    const next = lines[index + 1];
+    if (
+      line.marker &&
+      !next.marker &&
+      next.paragraphIndex === line.paragraphIndex
+    ) {
+      count++;
+    }
+  }
+  return count;
+}
+
 // Measure a single source post's structure. Pure, synchronous, no model
 // call. Never throws — an empty/whitespace-only input yields a zeroed
 // skeleton (callers should check totalChars > 0 before using it).
@@ -273,12 +310,16 @@ export function computeStructureSkeleton(sourceText: string): StructureSkeleton 
   const structuralLines = parseStructuralLines(text);
   const { hasList, marker, itemCount } = listStatsOf(structuralLines);
   const hook = extractHookHeuristic(text);
+  const paragraphs = paragraphsOf(text);
+  const lastParagraph = paragraphs[paragraphs.length - 1] ?? "";
   return {
-    paragraphCount: paragraphsOf(text).length,
+    paragraphCount: paragraphs.length,
     visualLineCount: structuralLines.length,
     hasList,
     listMarker: marker,
     listItemCount: itemCount,
+    groupedListItemCount: groupedListItemCountOf(structuralLines),
+    hasPostScript: POST_SCRIPT_RE.test(lastParagraph.trimStart()),
     hookChars: hook?.length ?? 0,
     totalChars: text.length,
     totalWords: wordCount(text),
@@ -309,6 +350,11 @@ export function renderStructureSkeletonReference(skeleton: StructureSkeleton): s
       `List: the source uses ${listStyleWithArticle(skeleton.listMarker)} list with ${skeleton.listItemCount} item${skeleton.listItemCount === 1 ? "" : "s"} — keep the list (same marker style), but the item count and each item's length can flex to fit your content.`,
     );
   }
+  if (skeleton.groupedListItemCount >= 2) {
+    beats.push(
+      `Grouped items: ${skeleton.groupedListItemCount} of the source's list items run two lines — a label line, then a supporting line underneath (for example a named stage with its component roster). Keep that two-line pattern per item; do not flatten each item into a single line.`,
+    );
+  }
   const layout = skeleton.layout
     .map((beat) =>
       beat.kind === "list" ? `${listStyle(beat.marker)} list` : "prose",
@@ -317,6 +363,11 @@ export function renderStructureSkeletonReference(skeleton: StructureSkeleton): s
   if (layout) {
     beats.push(
       `Layout: ${layout}. Keep this sequence: a list belongs in the same part of the post, and prose before or after it remains before or after it.`,
+    );
+  }
+  if (skeleton.hasPostScript) {
+    beats.push(
+      "P.S.: the source closes with a P.S. line — end your draft with a P.S. too. It is the final beat, not an optional extra.",
     );
   }
   beats.push(
