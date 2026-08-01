@@ -4,6 +4,7 @@ import {
   claimWorkspaceCost,
   releaseWorkspaceCost,
 } from "@/lib/workspace-cost-claims";
+import { costCapGraceUsd } from "@/lib/agent/rate-limit";
 
 describe("workspace cost claim client", () => {
   test("claims an estimated cost with a bounded operation key", async () => {
@@ -24,7 +25,25 @@ describe("workspace cost claim client", () => {
       p_estimated_cost_usd: 0.05,
       p_budget_usd: 5,
       p_ttl_seconds: 330,
+      p_grace_usd: costCapGraceUsd(),
     });
+  });
+
+  test("an explicit grace override wins over the monthly default", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: "claim-2", error: null });
+    await claimWorkspaceCost({
+      workspaceId: "ws-1",
+      operationKey: "op",
+      estimatedCostUsd: 0.05,
+      budgetUsd: 5,
+      ttlSeconds: 330,
+      graceUsd: 0,
+      sb: { rpc } as never,
+    });
+    expect(rpc).toHaveBeenCalledWith(
+      "claim_workspace_cost",
+      expect.objectContaining({ p_grace_usd: 0 }),
+    );
   });
 
   test("returns null on budget contention and fails closed on RPC errors", async () => {

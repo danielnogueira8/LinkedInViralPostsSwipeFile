@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 
 const NAV_LINKS = [
   { href: "/#features", label: "Features" },
+  { href: "/#agents", label: "Agents" },
   { href: "/#pricing", label: "Pricing" },
   { href: "/#faq", label: "FAQ" },
 ] as const;
@@ -62,7 +63,7 @@ export function SiteHeaderShell({ signedIn }: { signedIn: boolean }) {
               priority
               className="size-[30px] shrink-0 rounded-[8px]"
             />
-            <span className="font-wordmark text-[15px] tracking-[-0.01em]">SwipeIn</span>
+            <span className="text-[15px] font-semibold tracking-[-0.01em]">SwipeIn</span>
           </Link>
           <nav className="ml-8 hidden items-center gap-5 sm:flex" aria-label="Marketing navigation">
             {NAV_LINKS.map((link) => (

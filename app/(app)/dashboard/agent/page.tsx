@@ -1,14 +1,14 @@
 import { PageHeader, PageShell } from "@/components/app-surface";
-import { AgentBriefing } from "../agent-briefing";
+import { AgentInbox } from "../agent-inbox";
 
 export default function AgentPage() {
   return (
     <PageShell width="full">
       <PageHeader
         title="Your Agent"
-        description="Set this week's direction, review drafts, and act on opportunities your agent found."
+        description="Fresh, evidence-backed directions for what to write next."
       />
-      <AgentBriefing />
+      <AgentInbox />
     </PageShell>
   );
 }

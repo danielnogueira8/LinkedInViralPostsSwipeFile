@@ -3,15 +3,10 @@ import { sanitizeVoiceProfile, type VoiceProfile } from "@/lib/claude";
 import { recoverStalePending } from "@/lib/voice-recovery";
 import type { VoiceRow } from "./manager";
 import { VoiceWorkspace } from "./workspace";
-import {
-  PREFS_PER_WORKSPACE_MAX,
-  type ContentPreference,
-} from "@/lib/preferences";
+import { listPreferenceResources } from "@/lib/content-resource-operations";
 import { listReviewablePreferences } from "@/lib/preference-evidence";
 import type { ContentFeedback } from "@/lib/content-feedback";
 import { PageHeader, PageShell } from "@/components/app-surface";
-import { createWorkspaceKnowledgeStore } from "@/lib/content-learning/workspace-knowledge";
-import { interviewKnowledgeSourcePrefix } from "@/lib/content-learning/interview-knowledge";
 
 export const dynamic = "force-dynamic";
 
@@ -37,12 +32,10 @@ export default async function VoicePage() {
   // The workspace's standing writing preferences — durable rules the chat agent
   // applies to every post. Read here so the manager hydrates without a client
   // fetch flash. Workspace-scoped (scopedSupabase + RLS).
-  const preferencesPromise = sb.raw
-    .from("content_preferences")
-    .select("id, workspace_id, rule, detail, source, created_at, updated_at")
-    .eq("workspace_id", sb.workspaceId)
-    .order("created_at", { ascending: false })
-    .limit(PREFS_PER_WORKSPACE_MAX);
+  const preferencesPromise = listPreferenceResources({
+    db: sb.raw,
+    workspaceId: sb.workspaceId,
+  });
 
   const feedbackPromise = sb.raw
     .from("content_feedback")
@@ -51,7 +44,7 @@ export default async function VoicePage() {
     .order("created_at", { ascending: false })
     .limit(20);
 
-  const [{ data }, { data: prefData }, { data: feedbackData }] = await Promise.all([
+  const [{ data }, prefData, { data: feedbackData }] = await Promise.all([
     voicePromise,
     preferencesPromise,
     feedbackPromise,
@@ -61,7 +54,10 @@ export default async function VoicePage() {
   // before the first paint, so a hard reload onto a stuck `pending` row shows a
   // retryable error instead of an eternal "Analyzing…" spinner. The GET route
   // applies the same guard for the client poll.
-  const recoveredRow = await recoverStalePending(sb, (data ?? null) as VoiceRow | null);
+  const recoveredRow = await recoverStalePending(
+    sb,
+    (data ?? null) as VoiceRow | null,
+  );
   // Profiles generated before new writing-pattern fields were introduced are
   // normalized on read so the UI gets safe empty defaults until regeneration.
   const row = recoveredRow?.profile
@@ -72,32 +68,15 @@ export default async function VoicePage() {
   const preferences = await listReviewablePreferences({
     db: sb.raw,
     workspaceId: sb.workspaceId,
-    preferences: (prefData ?? []) as ContentPreference[],
+    preferences: prefData,
   });
   const feedback = (feedbackData ?? []) as ContentFeedback[];
-  const knowledgeStore = createWorkspaceKnowledgeStore(sb.raw);
-  // This review surface is specifically for facts sourced from the Context
-  // interview. Keep future knowledge sources off this page so the provenance
-  // label remains truthful and revisions only reconcile their own Voice row.
-  const interviewKnowledge = row?.id
-    ? await knowledgeStore.listActiveBySource(
-        sb.workspaceId,
-        "interview",
-        interviewKnowledgeSourcePrefix(String(row.id)),
-      )
-    : [];
-  const knowledgeProposals = interviewKnowledge.filter(
-    (item) => item.verification === "proposed",
-  );
-  const verifiedKnowledge = interviewKnowledge.filter(
-    (item) => item.verification === "verified",
-  );
 
   return (
     <PageShell width="wide">
       <PageHeader
         title="Voice"
-        description="Teach Cowork how you write — from your profile, an interview, and standing rules — all in one place."
+        description="Teach Cowork how you write—from your profile, exemplars, and standing rules."
       />
       <VoiceWorkspace
         initialRow={row}
@@ -106,8 +85,6 @@ export default async function VoicePage() {
         daysUntilRegen={cooldown.daysUntilRegen}
         preferences={preferences}
         feedback={feedback}
-        knowledgeProposals={knowledgeProposals}
-        verifiedKnowledge={verifiedKnowledge}
       />
     </PageShell>
   );

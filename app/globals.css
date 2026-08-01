@@ -10,13 +10,10 @@
   --font-sans: var(--font-geist), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
   --font-serif: var(--font-geist), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  /* Geist for body, headings, and display. Hierarchy comes from weight +
-     size + tracking; the single exception is the Fraunces wordmark below. */
+  /* Geist for body, headings, and display — the wordmark included. Hierarchy
+     comes from weight + size + tracking, not a second typeface. */
   --font-heading: var(--font-geist), ui-sans-serif, system-ui, sans-serif;
   --font-display: var(--font-geist), ui-sans-serif, system-ui, sans-serif;
-  /* Wordmark-only register: Fraunces 600, applied to "SwipeIn" in the header
-     and footer. Everything else on the page stays Geist. */
-  --font-wordmark: var(--font-fraunces), Georgia, "Times New Roman", serif;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -574,6 +571,66 @@
     to { visibility: hidden; }
   }
 
+  /* Interactive dot grid — DotGridField (landing-motion.tsx) feeds
+     --grid-x/y and data-active; a brighter copy of the dots wakes up around
+     the cursor while the base grid keeps its edge fade. */
+  .hero-dot-grid::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image: radial-gradient(rgb(28 28 26 / 0.16) 1px, transparent 1px);
+    background-size: 22px 22px;
+    mask-image: radial-gradient(170px circle at var(--grid-x, 50%) var(--grid-y, 35%), black, transparent 70%);
+    -webkit-mask-image: radial-gradient(170px circle at var(--grid-x, 50%) var(--grid-y, 35%), black, transparent 70%);
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    pointer-events: none;
+  }
+  .hero-dot-grid[data-active="true"]::before {
+    opacity: 1;
+  }
+
+  /* Word-by-word blur entrance for the hero headline — BlurWords sets the
+     stagger per word via the shared --reveal-delay var. */
+  .blur-word {
+    display: inline-block;
+    animation: blur-word-in 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
+    animation-delay: var(--reveal-delay, 0ms);
+  }
+  @keyframes blur-word-in {
+    from { opacity: 0; filter: blur(10px); transform: translateY(12px); }
+    to { opacity: 1; filter: blur(0); transform: translateY(0); }
+  }
+
+  /* Slow shine sweep across the hero badge — a band of foreground contrast
+     passing through the muted label. Stays monochrome via color-mix, so it
+     works in light and dark surfaces. */
+  .shiny-text {
+    background-image: linear-gradient(
+      110deg,
+      var(--muted-foreground) 42%,
+      color-mix(in oklab, var(--muted-foreground) 35%, var(--foreground)) 50%,
+      var(--muted-foreground) 58%
+    );
+    background-size: 220% 100%;
+    background-clip: text;
+    -webkit-background-clip: text;
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+    animation: shiny-sweep 3.4s linear infinite;
+  }
+  @keyframes shiny-sweep {
+    from { background-position: 180% 0; }
+    to { background-position: -120% 0; }
+  }
+
+  /* Magnetic wrapper for primary CTAs — the transform is set inline by the
+     Magnetic component (landing-motion.tsx); this only eases it. */
+  .magnetic {
+    display: inline-block;
+    transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .scroll-reveal {
       opacity: 1;
@@ -582,13 +639,23 @@
     }
     .live-dot::after,
     .marquee-track,
-    .trace-caret {
+    .trace-caret,
+    .blur-word,
+    .shiny-text {
       animation: none;
     }
     .live-dot::after {
       opacity: 0;
     }
-    .spotlight-card::before {
+    /* Drop the sweep but keep the badge legible in the muted color. */
+    .shiny-text {
+      background-image: none;
+      color: var(--muted-foreground);
+      -webkit-text-fill-color: var(--muted-foreground);
+    }
+    .spotlight-card::before,
+    .hero-dot-grid::before,
+    .magnetic {
       transition: none;
     }
   }

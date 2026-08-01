@@ -1,5 +1,9 @@
 import { CHAT_MODEL, SUPPORTED_NEWS_MODELS } from "@/lib/openrouter";
 import { distinctFallbackModel } from "@/lib/agent/model-routing";
+import {
+  resolveNativeOpenAIPrimary,
+  routesToNativeOpenAIModel,
+} from "@/lib/model-provider-routing";
 
 // OpenRouter's "auto" meta-model routes each request to whatever model is most
 // popular for the task — so the served model is non-deterministic and can rotate
@@ -14,93 +18,99 @@ export function isAutoRouterModel(model: string): boolean {
   return model.trim().toLowerCase().startsWith("openrouter/auto");
 }
 
-// The known-good writer used as PRIMARY when CHAT_MODEL is the auto-router.
-// Sonnet 5 is the reliable, deterministic primary; Luna (the most stable writer
-// for this app) is kept as the fallback below. Both are priced in
-// OPENROUTER_PRICING, so cost accounting stays exact. Env-overridable for a
-// one-line change if a better writer emerges.
-const PINNED_WRITER_WHEN_AUTO =
-  process.env.OPENROUTER_WRITER_WHEN_AUTO || "anthropic/claude-sonnet-5";
+// Luna is the validated native-OpenAI writer.
+const PINNED_WRITER_WHEN_AUTO = resolveNativeOpenAIPrimary([
+  process.env.OPENAI_WRITER_MODEL,
+  process.env.OPENROUTER_WRITER_WHEN_AUTO,
+]);
 
 // The writer's effective primary: an explicit writer pin, else a known-good model
 // when CHAT_MODEL is the router, else CHAT_MODEL itself (the "one model
 // everywhere" default for a normal pinned chat model).
 function writerPrimary(envPin: string | undefined): string {
-  const explicit = envPin?.trim();
-  if (explicit) return explicit;
-  return isAutoRouterModel(CHAT_MODEL) ? PINNED_WRITER_WHEN_AUTO : CHAT_MODEL;
+  return resolveNativeOpenAIPrimary(
+    [envPin],
+    isAutoRouterModel(CHAT_MODEL) ? PINNED_WRITER_WHEN_AUTO : CHAT_MODEL,
+  );
 }
 
-export const PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL =
-  process.env.OPENROUTER_READ_ONLY_ORCHESTRATOR_MODEL || CHAT_MODEL;
+export const PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL = resolveNativeOpenAIPrimary(
+  [
+    process.env.OPENAI_READ_ONLY_ORCHESTRATOR_MODEL,
+    process.env.OPENROUTER_READ_ONLY_ORCHESTRATOR_MODEL,
+  ],
+  CHAT_MODEL,
+);
 export const FALLBACK_READ_ONLY_ORCHESTRATOR_MODEL = distinctFallbackModel(
   PRIMARY_READ_ONLY_ORCHESTRATOR_MODEL,
   process.env.OPENROUTER_READ_ONLY_ORCHESTRATOR_FALLBACK_MODEL ||
     "google/gemini-3.5-flash",
-  ["anthropic/claude-sonnet-5"],
+  ["openai/gpt-5.6-luna"],
 );
 
-const SAFE_NEWS_DEFAULT = "anthropic/claude-haiku-4.5";
+const SAFE_NEWS_DEFAULT = "openai/gpt-5.6-luna";
 export const DEFAULT_NEWS_MODEL = SUPPORTED_NEWS_MODELS.includes(CHAT_MODEL)
   ? CHAT_MODEL
   : SAFE_NEWS_DEFAULT;
 
 export function resolveNewsModel(
-  env: { OPENROUTER_NEWS_MODEL?: string } = {
+  env: { OPENAI_NEWS_MODEL?: string; OPENROUTER_NEWS_MODEL?: string } = {
+    OPENAI_NEWS_MODEL: process.env.OPENAI_NEWS_MODEL,
     OPENROUTER_NEWS_MODEL: process.env.OPENROUTER_NEWS_MODEL,
   },
 ): string {
-  const configured = env.OPENROUTER_NEWS_MODEL?.trim();
-  return configured && SUPPORTED_NEWS_MODELS.includes(configured)
-    ? configured
-    : DEFAULT_NEWS_MODEL;
+  const configured =
+    env.OPENAI_NEWS_MODEL?.trim() || env.OPENROUTER_NEWS_MODEL?.trim();
+  return resolveNativeOpenAIPrimary(
+    [configured],
+    DEFAULT_NEWS_MODEL,
+    (model) =>
+      routesToNativeOpenAIModel(model) && SUPPORTED_NEWS_MODELS.includes(model),
+  );
 }
 
 export const PRIMARY_NEWS_MODEL = resolveNewsModel();
 const configuredNewsFallback =
+  process.env.OPENAI_NEWS_FALLBACK_MODEL?.trim() ||
   process.env.OPENROUTER_NEWS_FALLBACK_MODEL?.trim();
+const NEWS_FALLBACK_PREFERRED = SAFE_NEWS_DEFAULT;
 export const FALLBACK_NEWS_MODEL = distinctFallbackModel(
   PRIMARY_NEWS_MODEL,
   configuredNewsFallback &&
   SUPPORTED_NEWS_MODELS.includes(configuredNewsFallback)
     ? configuredNewsFallback
-    : SAFE_NEWS_DEFAULT,
+    : NEWS_FALLBACK_PREFERRED,
   ["openai/gpt-5.6-luna", "google/gemini-3.1-flash-lite", "z-ai/glm-5.2"].filter(
     (model) => SUPPORTED_NEWS_MODELS.includes(model),
   ),
 );
 
-// When the auto-router is active the writer pins a reliable primary (Sonnet 5)
-// and keeps Luna — the most stable writer for this app — as the cross-model
-// fallback, so neither the first nor the second attempt rides the router lottery.
-// With a normal pinned CHAT_MODEL, behavior is unchanged: primary inherits
-// CHAT_MODEL, fallback stays Sonnet 5. The alternates list gives
-// distinctFallbackModel an escape if a pin ever collides with the preferred
-// fallback, so it can never throw "no distinct fallback".
-const WRITER_FALLBACK_PREFERRED = isAutoRouterModel(CHAT_MODEL)
-  ? "openai/gpt-5.6-luna"
-  : "anthropic/claude-sonnet-5";
+const WRITER_FALLBACK_PREFERRED = "google/gemini-3.5-flash";
 const WRITER_FALLBACK_ALTERNATES = [
-  "anthropic/claude-sonnet-5",
   "openai/gpt-5.6-luna",
   "google/gemini-3.5-flash",
+  "z-ai/glm-5.2",
 ];
 
 export const PRIMARY_DRAFT_WRITER_MODEL = writerPrimary(
-  process.env.OPENROUTER_DIRECT_WRITER_MODEL,
+  process.env.OPENAI_DIRECT_WRITER_MODEL ||
+    process.env.OPENROUTER_DIRECT_WRITER_MODEL,
 );
 export const FALLBACK_DRAFT_WRITER_MODEL = distinctFallbackModel(
   PRIMARY_DRAFT_WRITER_MODEL,
-  process.env.OPENROUTER_DIRECT_WRITER_FALLBACK_MODEL ||
+  process.env.OPENAI_DIRECT_WRITER_FALLBACK_MODEL ||
+    process.env.OPENROUTER_DIRECT_WRITER_FALLBACK_MODEL ||
     WRITER_FALLBACK_PREFERRED,
   WRITER_FALLBACK_ALTERNATES,
 );
 export const THIN_DRAFT_WRITER_MODEL = writerPrimary(
-  process.env.OPENROUTER_THIN_WRITER_MODEL,
+  process.env.OPENAI_THIN_WRITER_MODEL ||
+    process.env.OPENROUTER_THIN_WRITER_MODEL,
 );
 export const THIN_DRAFT_WRITER_FALLBACK_MODEL = distinctFallbackModel(
   THIN_DRAFT_WRITER_MODEL,
-  process.env.OPENROUTER_THIN_WRITER_FALLBACK_MODEL ||
+  process.env.OPENAI_THIN_WRITER_FALLBACK_MODEL ||
+    process.env.OPENROUTER_THIN_WRITER_FALLBACK_MODEL ||
     WRITER_FALLBACK_PREFERRED,
   WRITER_FALLBACK_ALTERNATES,
 );

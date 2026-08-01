@@ -23,6 +23,7 @@ import {
   ALLOWED_TEMPLATE_VARS,
   type AutomationConfigDraft,
 } from "@/lib/leadshark-config";
+import { LoadingState } from "@/components/ui/loading-state";
 
 // Follow-up delay dropdown → minutes. Mirrors LeadShark's own presets so people
 // don't compute "2880" for two days.
@@ -64,6 +65,7 @@ type GetResponse = {
     leadMagnetId: string | null;
     leadMagnetTitle: string | null;
     leadMagnetUrl: string | null;
+    config: AutomationConfigDraft;
   } | null;
 };
 
@@ -253,8 +255,7 @@ export function LeadSharkPanel({ draftId }: { draftId: string }) {
         // Seed the form with prefills but keep the toggle off until the user opts in.
         setForm((f) => ({
           ...f,
-          keywords: res.prefill!.keyword ? [res.prefill!.keyword] : [],
-          dmTemplate: res.prefill!.dmTemplate,
+          ...res.prefill!.config,
           leadMagnetId: res.prefill!.leadMagnetId,
         }));
       }
@@ -325,11 +326,7 @@ export function LeadSharkPanel({ draftId }: { draftId: string }) {
   };
 
   if (!loaded) {
-    return (
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <Loader2 className="h-3.5 w-3.5 animate-spin" /> Checking LeadShark…
-      </div>
-    );
+    return <LoadingState label="Checking LeadShark" className="text-xs" />;
   }
   if (!data?.eligible) return null;
 

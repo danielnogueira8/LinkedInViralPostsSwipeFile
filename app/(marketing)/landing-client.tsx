@@ -22,13 +22,15 @@ import { AiIcon } from "@/components/ai-icon";
 import type { LandingStats, LandingTopCreator } from "@/lib/landing-stats";
 import {
   AgentTrace,
+  BlurWords,
   CountUp,
+  DotGridField,
+  Magnetic,
   Reveal,
   RotatingPhrases,
   SpotlightCard,
 } from "./landing-motion";
 import {
-  LandingPaperPanel,
   LandingPaperTexture,
   LANDING_SOURCE_MATERIAL_IMAGE,
 } from "./landing-print-treatments";
@@ -40,7 +42,7 @@ const faqs = [
   ],
   [
     "Can it publish to LinkedIn?",
-    "Yes. Connect LinkedIn in Settings and schedule approved drafts directly. You can also use the calendar as a planning-only workflow.",
+    "Yes. Connect LinkedIn in Integrations and schedule approved drafts directly. You can also use the calendar as a planning-only workflow.",
   ],
   [
     "Where do the source posts come from?",
@@ -74,15 +76,31 @@ const sampleCreators = [
   ["Leo Moreau", "Bootstrapping", "leo-moreau"],
 ] as const;
 
+// The agent roster shown in the "Meet the agents" section — same avatars as
+// the Claude Workflows page (public/agents/<slug>.svg). Lines are the
+// marketing one-liner; the full prompts live on the dashboard page.
+const AGENT_ROSTER = [
+  { slug: "bulk-writer", name: "Bulk Writer", line: "10 posts modeled on what's winning right now." },
+  { slug: "calendar-architect", name: "Calendar Architect", line: "A full week of content, no two posts alike." },
+  { slug: "remix", name: "Remix", line: "One viral post becomes three angles." },
+  { slug: "offer-hunter", name: "Offer Hunter", line: "Reverse-engineers the best lead magnets." },
+  { slug: "hook-scout", name: "Hook Scout", line: "5 hooks from what's pulling right now." },
+  { slug: "timing-strategist", name: "Timing Strategist", line: "Schedules around when big posts land." },
+  { slug: "trend-radar", name: "Trend Radar", line: "This week's best posts at a glance." },
+  { slug: "roster-manager", name: "Roster Manager", line: "Grows your swipe file in one line." },
+] as const;
+
 function PrimaryLink({ children }: { children: React.ReactNode }) {
   return (
-    <Link
-      href="/sign-up"
-      className="group inline-flex h-11 items-center justify-center gap-2 rounded-[10px] bg-primary px-5 text-sm font-medium text-primary-foreground transition-[background-color,box-shadow,scale] hover:bg-primary/88 hover:shadow-[inset_0_1px_0_0_rgba(255,255,255,0.18)] focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/30 active:scale-[0.98]"
-    >
-      {children}
-      <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" />
-    </Link>
+    <Magnetic>
+      <Link
+        href="/sign-up"
+        className="group inline-flex h-11 items-center justify-center gap-2 rounded-[10px] bg-primary px-5 text-sm font-medium text-primary-foreground transition-[background-color,box-shadow,scale] hover:bg-primary/88 hover:shadow-[inset_0_1px_0_0_rgba(255,255,255,0.18)] focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/30 active:scale-[0.98]"
+      >
+        {children}
+        <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" />
+      </Link>
+    </Magnetic>
   );
 }
 
@@ -96,21 +114,21 @@ export default function LandingClient({
   return (
     <div className="overflow-x-hidden bg-background text-foreground">
       <section className="relative px-4 pb-14 pt-12 sm:px-6 sm:pt-16 lg:pb-24 lg:pt-20">
-        <div aria-hidden="true" className="hero-dot-grid absolute inset-0" />
-        {/* Asymmetric hero: the copy block hangs on the left margin (no shared
-            centre axis on desktop), the product shot anchors below. */}
+        <DotGridField />
         <div className="relative mx-auto max-w-[1180px]">
+          {/* Centred hero copy block; the product shot anchors below. */}
+          <div className="flex flex-col items-center text-center">
           <div className="reveal-up inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground shadow-soft" style={{ "--reveal-delay": "0ms" } as React.CSSProperties}>
             <span className="live-dot size-1.5 rounded-full bg-accent-brand" />
-            Your agent for research, writing, and publishing
+            <span className="shiny-text">Your agent for research, writing, and publishing</span>
           </div>
-          <h1 className="reveal-up mt-6 max-w-[900px] text-balance text-[clamp(2.8rem,6vw,5rem)] font-medium leading-[0.98] tracking-[-0.04em]" style={{ "--reveal-delay": "60ms" } as React.CSSProperties}>
-            Your next LinkedIn post starts with proof.
+          <h1 className="mx-auto mt-6 max-w-[900px] text-balance text-[clamp(2.8rem,6vw,5rem)] font-medium leading-[0.98] tracking-[-0.04em]">
+            <BlurWords text="Your next LinkedIn post starts with proof." baseDelay={60} />
           </h1>
-          <p className="reveal-up mt-6 max-w-[650px] text-pretty text-base leading-7 text-muted-foreground sm:text-lg sm:leading-8" style={{ "--reveal-delay": "110ms" } as React.CSSProperties}>
+          <p className="reveal-up mx-auto mt-6 max-w-[650px] text-pretty text-base leading-7 text-muted-foreground sm:text-lg sm:leading-8" style={{ "--reveal-delay": "110ms" } as React.CSSProperties}>
             SwipeIn’s agent finds breakout posts from creators you trust, drafts them in your voice, and lines them up on your calendar. You approve every word.
           </p>
-          <div className="reveal-up mt-8 flex flex-wrap items-center gap-3" style={{ "--reveal-delay": "150ms" } as React.CSSProperties}>
+          <div className="reveal-up mt-8 flex flex-wrap items-center justify-center gap-3" style={{ "--reveal-delay": "150ms" } as React.CSSProperties}>
             <PrimaryLink>Start writing free</PrimaryLink>
             <Link
               href="#workflow"
@@ -120,6 +138,7 @@ export default function LandingClient({
             </Link>
           </div>
           <p className="mt-3 text-xs text-muted-foreground">7 days free. No credit card required.</p>
+          </div>
 
           <div className="reveal-up relative mt-12 lg:mt-16" style={{ "--reveal-delay": "210ms" } as React.CSSProperties}>
             <div className="relative overflow-hidden rounded-[14px] bg-paper-trail p-2 shadow-[0_8px_24px_-18px_rgba(28,28,26,0.4)] sm:p-3">
@@ -260,7 +279,7 @@ export default function LandingClient({
               number="04"
               actor="You approve"
               icon={<CalendarDays />}
-              title="Give it a next action"
+              title="Schedule on LinkedIn"
               copy="Review the draft, request changes or approve it, and schedule it to LinkedIn. The original source stays attached for traceability."
             >
               <CalendarPanel />
@@ -280,8 +299,6 @@ export default function LandingClient({
                 Good and Needs work are not throwaway reactions. Your feedback becomes durable guidance for the next draft.
               </p>
             </div>
-            {/* Asymmetric tile grid: the lead tile spans both columns so the
-                six cards don't read as one repeated template tile. */}
             <div className="grid gap-3 sm:grid-cols-2">
               {([
                 [<Mic2 key="i" />, "Voice profile", "Phrasing, rhythm, structure, and the language you avoid."],
@@ -289,29 +306,57 @@ export default function LandingClient({
                 [<ThumbsUp key="i" />, "Feedback memory", "Ratings and specific notes shape future generations."],
                 [<Palette key="i" />, "Creator styles", "Write in your own voice or choose the style of a creator you follow."],
                 [<Library key="i" />, "Proven frameworks", "Turn high-performing posts into reusable templates for new topics."],
-                // Claude is a labelled wordmark, not a raster logo in an icon
-                // slot — one icon voice (Lucide) across the grid.
-                [<span key="i" className="text-[13px] font-semibold leading-none tracking-[-0.01em]">Claude</span>, "Claude MCP connector", "Bring the same swipe file, creator styles, and proven templates into Claude through MCP."],
-              ] as const).map(([icon, title, copy], index) => (
-                <Feature key={title} icon={icon} title={title} copy={copy} className={index === 0 ? "sm:col-span-2" : undefined} />
+                [<Image key="i" src="/claude.svg" alt="" width={18} height={18} />, "Claude MCP connector", "Bring the same swipe file, creator styles, and proven templates into Claude through MCP."],
+              ] as const).map(([icon, title, copy]) => (
+                <Feature key={title} icon={icon} title={title} copy={copy} />
               ))}
             </div>
           </div>
         </div>
       </section>
 
-      <section className="px-4 py-20 sm:px-6 sm:py-28">
-        <div className="mx-auto grid max-w-[1000px] gap-10 lg:grid-cols-[0.8fr_1.2fr] lg:items-center lg:gap-20">
-          <div>
-            <p className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">A trace, not a template</p>
+      {/* Meet the agents — the specialist roster and how it works. */}
+      <section id="agents" className="border-b border-border px-4 py-20 sm:px-6 sm:py-24">
+        <div className="mx-auto max-w-[1180px]">
+          <div className="max-w-[680px]">
+            <p className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">Meet the agents</p>
             <h2 className="mt-4 text-balance text-[clamp(2.1rem,3.5vw,3.4rem)] leading-[1.05] tracking-[-0.035em]">
-              Source material, not source copy.
+              A team of specialists, each with one job.
             </h2>
-            <p className="mt-5 max-w-md text-pretty leading-7 text-muted-foreground">
-              The best ideas leave a trail. SwipeIn keeps the original signal close while your point of view does the writing.
+            <p className="mt-5 max-w-[620px] text-pretty leading-7 text-muted-foreground">
+              Every agent is a ready-made prompt that runs in Claude on your SwipeIn data — your voice, your swipe file, your calendar. Connect once, paste a prompt, and put a specialist to work.
             </p>
           </div>
-          <LandingPaperPanel />
+
+          <ol className="mt-10 grid gap-3 sm:grid-cols-3">
+            {([
+              ["Connect once", "Add the SwipeIn connector to Claude with one URL. Your voice profile, swipe file, and calendar come with it."],
+              ["Pick an agent", "Each one arrives knowing its craft: bulk drafts, newsjacking, calendars, hooks. Copy it in and put it to work."],
+              ["Approve the work", "Drafts land on your Posts board, grounded in real viral posts and written in your voice. Nothing ships without your yes."],
+            ] as const).map(([title, copy], i) => (
+              <li key={title} className="rounded-xl border border-border bg-card p-5">
+                <span className="text-[11px] font-semibold tabular-nums text-muted-foreground">0{i + 1}</span>
+                <p className="mt-2 text-sm font-semibold">{title}</p>
+                <p className="mt-1.5 text-[13px] leading-6 text-muted-foreground">{copy}</p>
+              </li>
+            ))}
+          </ol>
+
+          <div className="mt-10 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {AGENT_ROSTER.map((agent) => (
+              <div key={agent.slug} className="rounded-xl border border-border bg-card p-4">
+                <Image
+                  src={`/agents/${agent.slug}.svg`}
+                  alt=""
+                  width={40}
+                  height={40}
+                  className="size-10 rounded-xl border border-border/60 bg-muted object-cover"
+                />
+                <p className="mt-3 text-[13px] font-semibold leading-5">{agent.name}</p>
+                <p className="mt-1 text-[12px] leading-5 text-muted-foreground">{agent.line}</p>
+              </div>
+            ))}
+          </div>
         </div>
       </section>
 
@@ -514,17 +559,15 @@ function Feature({
   icon,
   title,
   copy,
-  className,
 }: {
   icon: React.ReactNode;
   title: string;
   copy: string;
-  className?: string;
 }) {
   // Icon sits inline with the heading (no rounded-square icon box), so the
   // tile leads with typography instead of the icon-tile template shape.
   return (
-    <SpotlightCard className={`h-full rounded-[10px] border border-border bg-background p-5 ${className ?? ""}`}>
+    <SpotlightCard className="h-full rounded-[10px] border border-border bg-background p-5">
       <h3 className="flex items-center gap-2.5 text-sm font-medium tracking-[0]">
         <span className="grid size-5 shrink-0 place-items-center text-muted-foreground [&_svg]:size-4">{icon}</span>
         {title}

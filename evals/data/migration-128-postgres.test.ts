@@ -550,6 +550,65 @@ describe("migration 128 PostgreSQL behavior", () => {
           `),
         ).toBe("1");
 
+        psqlFile(
+          join(root, "db/migration-155-unbounded-content-preferences.sql"),
+        );
+        query(`
+          insert into public.draft_edit_events (
+            id,
+            workspace_id,
+            source_artifact_id,
+            saved_artifact_id,
+            lineage_id,
+            before_body,
+            after_body,
+            edit_origin,
+            before_hash,
+            after_hash,
+            change_summary,
+            created_at
+          ) values (
+            '30000000-0000-4000-8000-000000000006',
+            'ws-1',
+            'art_1753000000000_6',
+            '10000000-0000-4000-8000-000000000004',
+            '20000000-0000-4000-8000-000000000004',
+            'Quite useful',
+            'Useful',
+            'posts_editor',
+            repeat('1', 64),
+            repeat('2', 64),
+            '{"beforeChars":12,"afterChars":6,"deltaChars":-6,"beforeLines":1,"afterLines":1,"deltaLines":0}'::jsonb,
+            '2026-07-20T14:00:00Z'
+          );
+          insert into public.content_learning_processing_cursors (
+            workspace_id,
+            processor,
+            event_id,
+            batch_id,
+            distillation_result
+          ) values (
+            'ws-1',
+            'voice_edit_distiller_v2',
+            '30000000-0000-4000-8000-000000000006',
+            '50000000-0000-4000-8000-000000000006',
+            '{"rules":[{"rule":"Rule learned beyond twenty","evidenceEventIds":["30000000-0000-4000-8000-000000000006"]}]}'::jsonb
+          )
+        `);
+        expect(
+          query(`
+            select outcome_kind || ':' || inserted_preference::text
+            from public.persist_content_preference_candidate(
+              'ws-1',
+              '50000000-0000-4000-8000-000000000006'::uuid,
+              0,
+              'Rule learned beyond twenty',
+              array['30000000-0000-4000-8000-000000000006'::uuid],
+              null
+            )
+          `),
+        ).toBe("created:true");
+
         const signature =
           "public.persist_content_preference_candidate(text,uuid,integer,text,uuid[],uuid)";
         expect(
@@ -581,7 +640,7 @@ describe("migration 128 PostgreSQL behavior", () => {
         ).toBe("t");
         expect(
           query("select version from public.app_schema_version where singleton"),
-        ).toBe("128");
+        ).toBe("155");
       } finally {
         if (started && existsSync(join(data, "postmaster.pid"))) {
           spawnSync("pg_ctl", ["-D", data, "-m", "fast", "stop"], {

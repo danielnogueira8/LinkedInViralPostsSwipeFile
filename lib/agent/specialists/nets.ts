@@ -73,6 +73,21 @@ export function looksCorruptedDraft(body: string): string | null {
   ) {
     return "tool-call XML leaked into body";
   }
+  // 5) A pseudo tool call emitted AS the body: [search_news(query="…")] or a
+  //    bare search_news(…) opener. A tool-less writer that "knows" it needs a
+  //    tool it doesn't have sometimes simulates the call in-band instead of
+  //    writing the post (observed in prod: the entire delivered draft body was
+  //    '[search_news(query="AI generated content LinkedIn")]', packaged as a
+  //    Post card). Real post prose never OPENS with function-call syntax, and
+  //    the known-tool-name requirement keeps bracketed prose like
+  //    "[read: the full story] …" clean.
+  if (
+    /^\s*\[?\s*(?:search_news|search_web|search_viral_posts|inspect_attachments|draft_post|render_post|render_hook|run_tool)\s*\(/i.test(
+      body,
+    )
+  ) {
+    return "simulated tool call emitted as draft body";
+  }
   return null;
 }
 
@@ -286,15 +301,39 @@ export function stripEmDashes(body: string): string {
     .replace(/[ \t]{2,}/g, " ");
 }
 
-// Detect-and-LOG the structural AI tells we DON'T auto-rewrite (rewriting a
-// staccato triad or a banned word means rephrasing — unsafe to do mechanically
-// without mangling a deliberate line). So instead of editing, we emit a metric
-// when a shipped draft trips one, giving observability ("how often does a draft
-// go out with a rule-of-three?") without the rewrite risk. The precise detector
-// library lives in evals/anti-slop-detectors.ts (and gates the live suite); this
-// is a deliberately tiny, conservative lib-side mirror for the runtime log only.
-export function aiTellMetrics(body: string): string[] {
-  const tells: string[] = [];
+export type AiTellMetric =
+  | "rule-of-three"
+  | "repeated-opener"
+  | "negative-parallelism"
+  | "dismissive-negation"
+  | "contrast-pivot"
+  | "chatbot-artifact"
+  | "vague-attribution"
+  | "formulaic-opener"
+  | "infomercial-hook"
+  | "generic-closer"
+  | "hedge-stack"
+  | "significance-inflation"
+  | "model-disclaimer"
+  | "unfilled-placeholder"
+  | "citation-markup-leak"
+  | "ai-vocabulary"
+  | "filler-phrase"
+  | "authority-trope"
+  | "signposting"
+  | "staccato-negation"
+  | "rhetorical-opener"
+  | "faux-insight-setup"
+  | "colon-reveal"
+  | "rhetorical-setup"
+  | "hashtag-stuffing";
+
+// Detect the structural AI tells that trigger the bounded rewrite and the
+// final delivery gate. Rephrasing these mechanically would risk changing the
+// writer's meaning, so the model repair handles the edit; this conservative
+// runtime mirror decides whether a candidate is clean enough to ship.
+export function aiTellMetrics(body: string): AiTellMetric[] {
+  const tells: AiTellMetric[] = [];
   // rule-of-three "a, b, c." cadence (1-4 short words each, no and/or) — the
   // headline AI tell. An Oxford "a, b, and c" is normal, so we exclude and/or.
   const three = body.match(
@@ -329,6 +368,50 @@ export function aiTellMetrics(body: string): string[] {
   if (hasShortSentenceTriad && !tells.includes("rule-of-three")) {
     tells.push("rule-of-three");
   }
+  // Repeated-opener staccato — "Same three-sentence hook. Same fake setup.
+  // Same generic list." Three or more consecutive sentences in one paragraph
+  // opening with the SAME content word is the AI rhythm readers now pattern-
+  // match on sight (the "same. same. same." tell). The shared opener must
+  // normally be a content word. "You" and "Your" are the deliberate exception:
+  // a three-beat direct-address run is a visible LinkedIn-AI cadence.
+  const OPENER_STOPWORDS = new Set([
+    "the", "a", "an", "and", "but", "so", "or", "if", "in", "on", "it",
+    "its", "this", "that", "these", "those", "we", "i", "he", "she",
+    "they", "to", "of", "for", "with", "as", "at", "by", "my",
+    "our", "their", "his", "her",
+  ]);
+  const hasRepeatedOpenerRun = body.split(/\n\s*\n/).some((paragraph) => {
+    const sentences = paragraph
+      .replace(/\s+/g, " ")
+      .trim()
+      .split(/(?<=[.!?])\s+/)
+      .filter(Boolean);
+    const openerOf = (sentence: string) =>
+      sentence.match(/^["'“”(\[]*([A-Za-z][\w'’-]*)/)?.[1]?.toLowerCase();
+    let run = 1;
+    for (let i = 1; i < sentences.length; i++) {
+      const prev = openerOf(sentences[i - 1]);
+      const curr = openerOf(sentences[i]);
+      if (curr && curr === prev && !OPENER_STOPWORDS.has(curr)) {
+        run += 1;
+        if (run >= 3) return true;
+      } else {
+        run = 1;
+      }
+    }
+    return false;
+  });
+  if (hasRepeatedOpenerRun) tells.push("repeated-opener");
+  // Negative parallelism — "Not likes, not impressions, not follower count."
+  // Keep this narrow: three comma-separated negative beats, with "just"
+  // allowed only in the final reveal position.
+  if (
+    /(?:^|[.!?]\s|\n)(?:not|no)\s+[^,.!?\n]{1,48},\s*(?:not|no)\s+[^,.!?\n]{1,48},\s*(?:not|no|just)\s+[^.!?\n]{1,64}(?=[.!?]|$)/i.test(
+      body,
+    )
+  ) {
+    tells.push("negative-parallelism");
+  }
   // "No fluff." / "Not another X." dismissive-negation pivot (exclude the
   // normal-speech "No one/idea/way…" openers).
   if (
@@ -339,7 +422,7 @@ export function aiTellMetrics(body: string): string[] {
     tells.push("dismissive-negation");
   }
 
-  const patterns: Array<[string, RegExp]> = [
+  const patterns: Array<[AiTellMetric, RegExp]> = [
     ["contrast-pivot", /\b(?:it(?:'s| is)|this (?:is|isn't)|the point is) not\b[^.!?]{0,100}\b(?:it(?:'s| is)|but|the (?:real )?(?:point|story) is)\b/i],
     ["chatbot-artifact", /\b(?:I hope this helps|Great question|Certainly|Absolutely|feel free to reach out|let me know if you need anything else)\b/i],
     ["vague-attribution", /\b(?:experts believe|studies show|research suggests|industry leaders agree|analysts agree|independent testing confirms)\b/i],
@@ -363,7 +446,7 @@ export function aiTellMetrics(body: string): string[] {
     // ones that are almost never natural in a founder's LinkedIn voice. "Delve",
     // "testament to", "at its core", "in today's fast-paced", "navigate the
     // complexities", "a game changer", "the landscape of".
-    ["ai-vocabulary", /\b(?:delve into|delving into|a testament to|at its core|in today'?s (?:fast-paced|digital|modern|ever-changing)|navigat(?:e|ing) the (?:complexit|landscape|nuance)|the (?:ever-evolving|ever-changing) landscape|underscor(?:e|es|ing) the importance|it'?s worth noting that|when it comes to)\b/i],
+    ["ai-vocabulary", /\b(?:delve into|delving into|elucidat(?:e|es|ed|ing)|kaleidoscop(?:e|ic)|unyielding|a testament to|at its core|in today'?s (?:fast-paced|digital|modern|ever-changing)|navigat(?:e|ing) the (?:complexit|landscape|nuance)|the (?:ever-evolving|ever-changing) landscape|underscor(?:e|es|ing) the importance|it'?s worth noting that|when it comes to)\b/i],
     // #23 filler phrases — wordy connectives a human tightens by reflex.
     ["filler-phrase", /\b(?:in order to\b|due to the fact that|for the (?:simple )?reason that|needless to say|it goes without saying|at the end of the day|when all is said and done)\b/i],
     // #27 persuasive authority tropes — the "trust me, here's the real truth"
@@ -373,7 +456,7 @@ export function aiTellMetrics(body: string): string[] {
     // #28 signposting announcements — "listen up, content incoming" preambles
     // that should just be cut. Bounded to the classic set so a real sentence
     // starting with "Here's" (fine) isn't grabbed.
-    ["signposting", /(?:^|[.!?]\s|\n)(?:Let'?s dive (?:in|into)|Buckle up|Here'?s what you need to know|Here'?s the (?:thing|deal|kicker)\b|Spoiler(?: alert)?\b|Without further ado)/i],
+    ["signposting", /(?:^|[.!?]\s|\n)(?:Let'?s dive (?:in|into)|Buckle up|Here'?s what you need to know|Here'?s the (?:thing|deal|kicker)\b|Here'?s what I mean\b|Spoiler(?: alert)?\b|Without further ado)/i],
     // #31 manufactured staccato drama — a RUN of ultra-short "No X. No Y."
     // fragments each leading with the same negation family ("No prior. No
     // nostalgia.", "Just ship. Just post."). The tell is two-in-a-row of these
@@ -388,7 +471,7 @@ export function aiTellMetrics(body: string): string[] {
     // High-signal no-ai-slop patterns: promotional setups that delay a claim
     // instead of making it. Kept narrow because these reach the repair pass.
     ["faux-insight-setup", /(?:^|[.!?]\s)(?:This is the part (?:most people|everyone) (?:skip|miss)|What (?:most people|everyone) (?:get wrong|miss)(?: is|:)|Here'?s what nobody tells you|The part everyone misses)\b/i],
-    ["colon-reveal", /(?:^|[.!?]\s)(?:The (?:detail|thing|part) that (?:makes it work|matters)|The (?:best|real) part)\s*:\s*[a-z]/i],
+    ["colon-reveal", /(?:^|[.!?]\s|\n)(?:The (?:detail|thing|part) that (?:makes it work|matters)|The (?:best|real) part|The (?:real|big|actual) (?:shift|difference|lesson|secret|reason|trick))\s*:\s*[a-z]/i],
     ["rhetorical-setup", /(?:^|[.!?]\s)(?:What if I told you\b|Think about it\s*:)/i],
   ];
   for (const [name, pattern] of patterns) {

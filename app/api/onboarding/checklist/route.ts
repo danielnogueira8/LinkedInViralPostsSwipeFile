@@ -40,6 +40,7 @@ export async function GET() {
       draftRes,
       assistantMsgRes,
       scheduledRes,
+      savedPostsRes,
       connection,
       dismissedRes,
     ] = await Promise.all([
@@ -69,6 +70,13 @@ export async function GET() {
         .select("id", { count: "exact", head: true })
         .eq("workspace_id", workspaceId)
         .or("schedule_status.in.(scheduled,publishing,published),status.eq.posted"),
+      // Bookmarking a post is also "filling inspiration" — the swipe file is
+      // scraped posts AND saved ones. Without this, a user who saves posts
+      // (including by URL, for accounts they don't track) never ticks the box.
+      sb
+        .from("saved_posts")
+        .select("id", { count: "exact", head: true })
+        .eq("workspace_id", workspaceId),
       getConnection(workspaceId, sb),
       sb
         .from("settings")
@@ -101,7 +109,8 @@ export async function GET() {
         voice: (voiceRes.count ?? 0) > 0,
         linkedin: canPublish(connection),
         creators: trackedCount > 0,
-        inspiration: (inspirationRes.count ?? 0) > 0,
+        inspiration:
+          (inspirationRes.count ?? 0) > 0 || (savedPostsRes.count ?? 0) > 0,
         batch: (draftRes.count ?? 0) > 0 || (assistantMsgRes.count ?? 0) > 0,
         scheduled: (scheduledRes.count ?? 0) > 0,
       },

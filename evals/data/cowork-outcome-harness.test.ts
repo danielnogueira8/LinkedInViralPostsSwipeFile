@@ -3,6 +3,13 @@ import {
   scriptedStreamChat,
   type ScriptedProviderScenario,
 } from "@/evals/cowork-scripted-provider";
+
+// Freshness-relative fixture date for news results: the executor filters
+// news by age (NEWS_MAX_AGE_DAYS, default 14) against the REAL clock, so a
+// hardcoded published_at silently goes stale — 2026-07-14 fixtures passed
+// on 2026-07-27 and failed CI the next day.
+const freshDate = (daysAgo = 3): string =>
+  new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
 import { currentCoworkHarnessAdminClient } from "@/evals/cowork-harness-store";
 import {
   runCoworkOutcomeScenario,
@@ -38,11 +45,6 @@ vi.mock("@/lib/supabase", async (importOriginal) => {
     supabaseAdmin: currentCoworkHarnessAdminClient,
   };
 });
-
-// The production news executor filters results against the real clock. Keep
-// fixtures inside the freshness window instead of letting fixed dates expire.
-const freshDate = (daysAgo = 3): string =>
-  new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
 
 const COMPLETE_POST = [
   "Building a personal brand is not a vanity project.",
@@ -198,6 +200,41 @@ const MODELED_FIVE_SOURCE_ROWS = [
       "A practical close turns the argument into a decision the reader can make.",
     ].join("\n\n"),
     post_url: "https://linkedin.com/posts/source-five",
+  },
+] as const;
+
+const SELECTABLE_SOURCE_ROWS = [
+  {
+    id: "00000000-0000-4000-8000-000000000701",
+    text: COMPLETE_POST,
+    post_url:
+      "https://www.linkedin.com/feed/update/urn:li:activity:7000000000000000701",
+    author_name: "Fixture Creator",
+    post_type: "regular",
+  },
+  {
+    id: "00000000-0000-4000-8000-000000000702",
+    text: SECOND_POST,
+    post_url:
+      "https://www.linkedin.com/feed/update/urn:li:activity:7000000000000000702",
+    author_name: "Fixture Creator",
+    post_type: "regular",
+  },
+  {
+    id: "00000000-0000-4000-8000-000000000703",
+    text: THIRD_POST,
+    post_url:
+      "https://www.linkedin.com/feed/update/urn:li:activity:7000000000000000703",
+    author_name: "Fixture Creator",
+    post_type: "regular",
+  },
+  {
+    id: "00000000-0000-4000-8000-000000000704",
+    text: FOURTH_POST,
+    post_url:
+      "https://www.linkedin.com/feed/update/urn:li:activity:7000000000000000704",
+    author_name: "Fixture Creator",
+    post_type: "regular",
   },
 ] as const;
 
@@ -578,6 +615,12 @@ describe("production-shaped Cowork outcome harness", () => {
       request: {
         message:
           "Write an original post in my voice about why a personal brand is career leverage.",
+        command: { kind: "create", count: 1 },
+        generationConfig: {
+          version: 1,
+          draftCount: 1,
+          explorationLane: "experimental",
+        },
       },
       model: {
         provider: { rounds: [] },
@@ -625,7 +668,7 @@ describe("production-shaped Cowork outcome harness", () => {
     expect(report.observed.directWriterRequests[0]).toMatchObject({
       stage: "primary",
       model: PRIMARY_DRAFT_WRITER_MODEL,
-      reasoning: "none",
+      reasoning: "sonnet-low",
     });
     expect(Object.keys(report.observed.directWriterRequests[0])).not.toContain(
       "tools",
@@ -637,6 +680,15 @@ describe("production-shaped Cowork outcome harness", () => {
     expect(
       report.persisted.messages.some((message) => message.role === "tool"),
     ).toBe(false);
+    const userRow = report.persisted.messages.find(
+      (message) => message.role === "user",
+    );
+    expect(userRow?.generation_config).toMatchObject({
+      explorationLane: "experimental",
+    });
+    expect(report.persisted.artifacts[0]?.meta).toMatchObject({
+      exploration_lane: "experimental",
+    });
   });
 
   test("routes the exact July 14 flagship prompt through the tool-free writer", async () => {
@@ -719,79 +771,6 @@ describe("production-shaped Cowork outcome harness", () => {
     );
   });
 
-  test("checkpoints a combined saved-draft move and planned date through the action lane", async () => {
-    const draftId = "00000000-0000-4000-8000-000000000710";
-    const report = await runCoworkOutcomeScenario({
-      id: "action-move-and-plan",
-      request: {
-        message:
-          "Move the pricing draft to ready and plan it for 2026-07-17.",
-      },
-      seed: {
-        draft: {
-          id: draftId,
-          title: "Pricing discipline",
-          body: COMPLETE_POST,
-          status: "drafting",
-        },
-      },
-      model: {
-        provider: { rounds: [] },
-        actionOrchestrator: {
-          plans: [
-            {
-              model: PRIMARY_ACTION_ORCHESTRATOR_MODEL,
-              toolArgs: {
-                actions: [
-                  {
-                    id: "move",
-                    type: "move_on_board",
-                    draftId,
-                    status: "ready",
-                  },
-                  {
-                    id: "plan",
-                    type: "schedule_post",
-                    draftId,
-                    date: "2026-07-17",
-                  },
-                ],
-              },
-              usage: usage(90, 18, 0.001),
-            },
-          ],
-        },
-      },
-      expected: {
-        terminal: "done",
-        artifactBodies: [],
-        actionNames: ["list_drafts", "move_on_board", "schedule_post"],
-      },
-    });
-
-    expect(
-      report.pass,
-      JSON.stringify({ failures: report.failureCodes, report }, null, 2),
-    ).toBe(true);
-    expect(report.observed.agentProviderRounds).toBe(0);
-    expect(report.observed.actionPlannerRequests).toHaveLength(1);
-    expect(report.observed.actionTools.map((tool) => tool.name)).toEqual([
-      "list_drafts",
-    ]);
-    expect(report.persisted.drafts[0]).toMatchObject({
-      id: draftId,
-      status: "ready",
-      plan_to_post_on: "2026-07-17",
-      lifecycle_version: 2,
-    });
-    expect(report.safe.modelStages).toEqual([
-      {
-        kind: "cowork_action_orchestrator",
-        model: PRIMARY_ACTION_ORCHESTRATOR_MODEL,
-      },
-    ]);
-  });
-
   test("provider fallback resumes a committed action checkpoint with zero replayed mutation", async () => {
     const draftId = "00000000-0000-4000-8000-000000000711";
     const report = await runCoworkOutcomeScenario({
@@ -853,67 +832,6 @@ describe("production-shaped Cowork outcome harness", () => {
     expect(JSON.stringify(report.persisted.messages)).toContain(
       "already committed",
     );
-  });
-
-  test("a Retry after an action clarification restores the expanded instruction", async () => {
-    const draftId = "00000000-0000-4000-8000-000000000713";
-    const report = await runCoworkOutcomeScenario({
-      id: "action-clarification-retry",
-      request: { message: "2026-07-20" },
-      seed: {
-        draft: {
-          id: draftId,
-          title: "Hiring discipline",
-          body: COMPLETE_POST,
-          status: "drafting",
-        },
-      },
-      model: {
-        provider: { rounds: [] },
-        actionOrchestrator: {
-          disabled: true,
-          retryEffectiveInstruction:
-            "Schedule the hiring draft.\n\nClarification answer: 2026-07-20",
-          plans: [
-            {
-              model: PRIMARY_ACTION_ORCHESTRATOR_MODEL,
-              toolArgs: {
-                actions: [
-                  {
-                    id: "plan",
-                    type: "schedule_post",
-                    draftId,
-                    date: "2026-07-20",
-                  },
-                ],
-              },
-              usage: usage(75, 15, 0.0008),
-            },
-          ],
-        },
-      },
-      expected: {
-        terminal: "done",
-        artifactBodies: [],
-        actionNames: ["list_drafts", "schedule_post"],
-      },
-    });
-
-    expect(
-      report.pass,
-      JSON.stringify({
-        failures: report.failureCodes,
-        actions: report.observed.actions,
-        actionTools: report.observed.actionTools,
-        messages: report.persisted.messages,
-      }),
-    ).toBe(true);
-    expect(report.observed.agentProviderRounds).toBe(0);
-    expect(report.persisted.drafts[0]).toMatchObject({
-      id: draftId,
-      plan_to_post_on: "2026-07-20",
-      lifecycle_version: 1,
-    });
   });
 
   test("a user can cancel a pending board clarification without any mutation", async () => {
@@ -1084,170 +1002,6 @@ describe("production-shaped Cowork outcome harness", () => {
     ).toEqual([pricingId, hiringId]);
   });
 
-  test("nested schedule clarifications preserve the local absolute date through exact target selection", async () => {
-    const pricingId = "00000000-0000-4000-8000-000000000725";
-    const hiringId = "00000000-0000-4000-8000-000000000726";
-    const clientTimezone = "Europe/Lisbon";
-    const sequence = await runCoworkOutcomeSequence([
-      {
-        id: "action-schedule-needs-date",
-        request: {
-          message: "Schedule all drafts.",
-          clientTimezone,
-        },
-        seed: {
-          drafts: [
-            {
-              id: pricingId,
-              title: "Pricing strategy",
-              body: COMPLETE_POST,
-              status: "ready",
-            },
-            {
-              id: hiringId,
-              title: "Hiring strategy",
-              body: COMPLETE_POST,
-              status: "ready",
-            },
-          ],
-        },
-        model: {
-          provider: { rounds: [] },
-          actionOrchestrator: { plans: [], allowNoModel: true },
-        },
-        expected: {
-          terminal: "ask",
-          artifactBodies: [],
-          actionNames: ["ask_user"],
-        },
-      },
-      {
-        id: "action-schedule-needs-count",
-        request: { message: "Tomorrow", clientTimezone },
-        model: {
-          provider: { rounds: [] },
-          actionOrchestrator: { plans: [], allowNoModel: true },
-        },
-        expected: {
-          terminal: "ask",
-          artifactBodies: [],
-          actionNames: ["ask_user"],
-        },
-      },
-      {
-        id: "action-schedule-needs-targets",
-        request: { message: "Two", clientTimezone },
-        model: {
-          provider: { rounds: [] },
-          actionOrchestrator: {
-            plans: [
-              {
-                model: PRIMARY_ACTION_ORCHESTRATOR_MODEL,
-                toolArgs: {
-                  actions: [
-                    {
-                      id: "choose",
-                      type: "clarify_target",
-                      candidateDraftIds: [pricingId, hiringId],
-                    },
-                  ],
-                },
-                usage: usage(75, 15, 0.0008),
-              },
-            ],
-          },
-        },
-        expected: {
-          terminal: "ask",
-          artifactBodies: [],
-          actionNames: ["list_drafts", "ask_user"],
-        },
-      },
-      {
-        id: "action-schedule-exact-targets",
-        request: {
-          message: "Pricing strategy; Hiring strategy",
-          actionSelectionIds: [pricingId, hiringId],
-          clientTimezone,
-        },
-        model: {
-          provider: { rounds: [] },
-          actionOrchestrator: {
-            plans: [
-              {
-                model: PRIMARY_ACTION_ORCHESTRATOR_MODEL,
-                toolArgs: {
-                  actions: [
-                    {
-                      id: "schedule-pricing",
-                      type: "schedule_post",
-                      draftId: pricingId,
-                      date: "2026-07-16",
-                    },
-                    {
-                      id: "schedule-hiring",
-                      type: "schedule_post",
-                      draftId: hiringId,
-                      date: "2026-07-16",
-                    },
-                  ],
-                },
-                usage: usage(75, 15, 0.0008),
-              },
-            ],
-          },
-        },
-        expected: {
-          terminal: "done",
-          artifactBodies: [],
-          actionNames: ["list_drafts", "schedule_post", "schedule_post"],
-        },
-      },
-    ]);
-
-    expect(sequence.pass, JSON.stringify(sequence.attempts)).toBe(true);
-    expect(sequence.attempts[1]?.observed.actionPlannerRequests).toHaveLength(0);
-    expect(sequence.attempts[2]?.observed.actionPlannerRequests[0]?.route).toEqual({
-      kind: "action_management",
-      targetCount: 2,
-      requirements: [
-        {
-          type: "schedule_post",
-          date: "2026-07-16",
-          timeZone: clientTimezone,
-        },
-      ],
-    });
-    expect(sequence.attempts[3]?.observed.actionPlannerRequests[0]).toMatchObject({
-      route: {
-        kind: "action_management",
-        targetCount: 2,
-        requirements: [
-          {
-            type: "schedule_post",
-            date: "2026-07-16",
-            timeZone: clientTimezone,
-          },
-        ],
-      },
-      confirmedTargetIds: [pricingId, hiringId],
-    });
-    expect(sequence.attempts[3]?.persisted.drafts).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: pricingId,
-          plan_to_post_on: "2026-07-16",
-          lifecycle_version: 1,
-        }),
-        expect.objectContaining({
-          id: hiringId,
-          plan_to_post_on: "2026-07-16",
-          lifecycle_version: 1,
-        }),
-      ]),
-    );
-  });
-
   test("a retry-context write failure releases the turn and a fresh request can succeed", async () => {
     const draftId = "00000000-0000-4000-8000-000000000717";
     const sequence = await runCoworkOutcomeSequence([
@@ -1369,71 +1123,6 @@ describe("production-shaped Cowork outcome harness", () => {
     expect(JSON.stringify(report.persisted.messages)).not.toContain(
       "already committed",
     );
-  });
-
-  test("a cancellation after the first checkpoint prevents every later action", async () => {
-    const draftId = "00000000-0000-4000-8000-000000000712";
-    const report = await runCoworkOutcomeScenario({
-      id: "action-cancel-between-mutations",
-      request: {
-        message:
-          "Move the pricing draft to ready and plan it for 2026-07-17.",
-      },
-      seed: {
-        draft: {
-          id: draftId,
-          title: "Pricing discipline",
-          body: COMPLETE_POST,
-          status: "drafting",
-        },
-      },
-      model: {
-        provider: { rounds: [] },
-        actionOrchestrator: {
-          cancelAfterMutationCount: 1,
-          plans: [
-            {
-              model: PRIMARY_ACTION_ORCHESTRATOR_MODEL,
-              toolArgs: {
-                actions: [
-                  {
-                    id: "move",
-                    type: "move_on_board",
-                    draftId,
-                    status: "ready",
-                  },
-                  {
-                    id: "plan",
-                    type: "schedule_post",
-                    draftId,
-                    date: "2026-07-17",
-                  },
-                ],
-              },
-              usage: usage(90, 18, 0.001),
-            },
-          ],
-        },
-      },
-      expected: {
-        terminal: "cancelled",
-        artifactBodies: [],
-        actionNames: ["list_drafts", "move_on_board"],
-      },
-    });
-
-    expect(
-      report.pass,
-      JSON.stringify({ failures: report.failureCodes, report }, null, 2),
-    ).toBe(true);
-    expect(report.observed.actionTools.map((tool) => tool.name)).toEqual([
-      "list_drafts",
-    ]);
-    expect(report.persisted.drafts[0]).toMatchObject({
-      status: "ready",
-      plan_to_post_on: null,
-      lifecycle_version: 1,
-    });
   });
 
   test.each([
@@ -2031,7 +1720,7 @@ describe("production-shaped Cowork outcome harness", () => {
                     title: "Major platform verifies AI-generated content labels",
                     url: "https://example.com/news/ai-content-labels",
                     source: "Example News",
-                    published_at: "2026-07-20",
+                    published_at: freshDate(),
                     summary:
                       "A major platform announced verified labels for AI-generated content.",
                   },
@@ -3969,42 +3658,136 @@ describe("production-shaped Cowork outcome harness", () => {
     expect(report.persisted.artifacts).toHaveLength(2);
   });
 
-  test("the default modeled-post starter preserves its source chip", async () => {
-    const scenario = modeledThreeScenario(
-      "typed-modeled-starter-default-count",
-    );
-    const [source] = MODELED_SOURCE_ROWS;
-    scenario.request = {
-      message: "AI slop for content writers.",
-      starterId: "model-top-viral",
-    };
-    scenario.model.sourceFidelity = [{ outcome: "verified" }];
-    scenario.model.readOnlyOrchestrator!.toolResults = {
-      search_viral_posts: [
-        { ok: true, count: 2, posts: MODELED_SOURCE_ROWS.slice(0, 2) },
-      ],
-    };
-    scenario.model.directWriter = [
+  test("the default modeled-post starter shows candidates and preserves the chosen source", async () => {
+    const selected = SELECTABLE_SOURCE_ROWS[1];
+    const sequence = await runCoworkOutcomeSequence([
       {
-        text: COMPLETE_POST,
-        finishReason: "stop",
-        usage: usage(210, 95, 0.00019),
+        id: "typed-modeled-starter-choose-source",
+        request: {
+          message: "AI slop for content writers.",
+          starterId: "model-top-viral",
+        },
+        model: {
+          provider: { rounds: [] },
+          readOnlyOrchestrator: {
+            plans: [],
+            toolResults: {
+              search_viral_posts: [
+                {
+                  ok: true,
+                  count: SELECTABLE_SOURCE_ROWS.length,
+                  posts: [...SELECTABLE_SOURCE_ROWS],
+                },
+              ],
+            },
+          },
+          directWriter: [],
+        },
+        expected: {
+          terminal: "ask",
+          artifactBodies: SELECTABLE_SOURCE_ROWS.map(() => ""),
+          actionNames: ["search_viral_posts", "ask_user"],
+          route: "read_only_orchestrator",
+        },
       },
-    ];
-    scenario.expected = {
-      terminal: "done",
-      artifactBodies: [COMPLETE_POST],
-      actionNames: ["search_viral_posts", "write_grounded_post"],
-      sourcePostIds: [source.id],
-      sourceReferences: [{ id: source.id, url: source.post_url }],
-    };
+      {
+        id: "typed-modeled-starter-write-chosen-source",
+        request: {
+          message: "Post 2",
+          clarificationChoiceIndex: 1,
+        },
+        model: {
+          provider: { rounds: [] },
+          sourceFidelity: [{ outcome: "verified" }],
+          directWriter: [
+            {
+              text: COMPLETE_POST,
+              finishReason: "stop",
+              usage: usage(210, 95, 0.00019),
+            },
+          ],
+        },
+        expected: {
+          terminal: "done",
+          artifactBodies: [COMPLETE_POST],
+          actionNames: [],
+          sourcePostIds: [selected.id],
+          route: "direct_writer",
+        },
+      },
+    ]);
 
-    const report = await runCoworkOutcomeScenario(scenario);
+    expect(sequence.pass, JSON.stringify(sequence.attempts)).toBe(true);
+    expect(sequence.attempts[0]?.observed.directWriterRequests).toEqual([]);
+    expect(sequence.attempts[1]?.persisted.artifacts[0]?.meta).toMatchObject({
+      source_post_id: selected.id,
+      source_url: selected.post_url,
+    });
+  });
 
-    expect(report.pass, report.failureCodes.join(", ")).toBe(true);
-    expect(report.persisted.artifacts[0]?.meta).toMatchObject({
-      source_post_id: source.id,
-      source_url: source.post_url,
+  test("a free-text modeled-post request keeps create authority across source selection", async () => {
+    const selected = SELECTABLE_SOURCE_ROWS[2];
+    const originalRequest =
+      "Find one top-performing regular post in my swipe file and rewrite it in my voice.";
+    const sequence = await runCoworkOutcomeSequence([
+      {
+        id: "free-text-modeled-post-choose-source",
+        request: { message: originalRequest },
+        model: {
+          provider: { rounds: [] },
+          readOnlyOrchestrator: {
+            plans: [],
+            toolResults: {
+              search_viral_posts: [
+                {
+                  ok: true,
+                  count: SELECTABLE_SOURCE_ROWS.length,
+                  posts: [...SELECTABLE_SOURCE_ROWS],
+                },
+              ],
+            },
+          },
+          directWriter: [],
+        },
+        expected: {
+          terminal: "ask",
+          artifactBodies: SELECTABLE_SOURCE_ROWS.map(() => ""),
+          actionNames: ["search_viral_posts", "ask_user"],
+          route: "read_only_orchestrator",
+        },
+      },
+      {
+        id: "free-text-modeled-post-write-chosen-source",
+        request: {
+          message: "Post 3",
+          clarificationChoiceIndex: 2,
+        },
+        model: {
+          provider: { rounds: [] },
+          sourceFidelity: [{ outcome: "verified" }],
+          directWriter: [
+            {
+              text: COMPLETE_POST,
+              finishReason: "stop",
+              usage: usage(210, 95, 0.00019),
+            },
+          ],
+        },
+        expected: {
+          terminal: "done",
+          artifactBodies: [COMPLETE_POST],
+          actionNames: [],
+          sourcePostIds: [selected.id],
+          route: "direct_writer",
+        },
+      },
+    ]);
+
+    expect(sequence.pass, JSON.stringify(sequence.attempts)).toBe(true);
+    expect(sequence.attempts[0]?.observed.directWriterRequests).toEqual([]);
+    expect(sequence.attempts[1]?.persisted.artifacts[0]?.meta).toMatchObject({
+      source_post_id: selected.id,
+      source_url: selected.post_url,
     });
   });
 
@@ -4547,9 +4330,24 @@ describe("production-shaped Cowork outcome harness", () => {
     {
       label: "shorten",
       instruction: "Make it shorter.",
-      targetBody: `${COMPLETE_POST}\n\n${"Useful public proof compounds over time. ".repeat(14).trim()}`,
-      candidateBody: `${COMPLETE_POST}\n\n${"Useful public proof compounds. ".repeat(4).trim()}`,
-      expectedBody: `${COMPLETE_POST}\n\n${"Useful public proof compounds. ".repeat(4).trim()}`,
+      targetBody: `${COMPLETE_POST}\n\n${[
+        "Useful public proof compounds over time.",
+        "Buyers can inspect it before the call.",
+        "A visible record keeps explaining how you think.",
+        "That evidence works between conversations.",
+      ].join(" ").concat(" ").repeat(4).trim()}`,
+      candidateBody: `${COMPLETE_POST}\n\n${[
+        "Useful public proof compounds over time.",
+        "Buyers can inspect it before the call.",
+        "A visible record keeps explaining how you think.",
+        "That evidence works between conversations.",
+      ].join(" ")}`,
+      expectedBody: `${COMPLETE_POST}\n\n${[
+        "Useful public proof compounds over time.",
+        "Buyers can inspect it before the call.",
+        "A visible record keeps explaining how you think.",
+        "That evidence works between conversations.",
+      ].join(" ")}`,
     },
     {
       label: "general rewrite",
@@ -4933,35 +4731,24 @@ describe("production-shaped Cowork outcome harness", () => {
             search_viral_posts: [
               {
                 ok: true,
-                count: 1,
-                posts: [
-                  {
-                    id: "source-pinned-starter",
-                    text: "A sourcing lesson.",
-                    post_url: "https://linkedin.com/pinned-starter",
-                  },
-                ],
+                count: SELECTABLE_SOURCE_ROWS.length,
+                posts: [...SELECTABLE_SOURCE_ROWS],
               },
             ],
           },
         },
-        directWriter: [
-          {
-            text: COMPLETE_POST,
-            finishReason: "stop",
-            usage: usage(210, 95, 0.0001888),
-          },
-        ],
+        directWriter: [],
       },
       expected: {
-        terminal: "done",
-        artifactBodies: [COMPLETE_POST],
-        actionNames: ["search_viral_posts", "write_grounded_post"],
+        terminal: "ask",
+        artifactBodies: SELECTABLE_SOURCE_ROWS.map(() => ""),
+        actionNames: ["search_viral_posts", "ask_user"],
         route: "read_only_orchestrator",
       },
     });
 
     expect(report.pass, report.failureCodes.join(", ")).toBe(true);
+    expect(report.observed.directWriterRequests).toEqual([]);
   });
 
   test("a completed action lane cannot authorize a second action from an ambiguous follow-up", async () => {

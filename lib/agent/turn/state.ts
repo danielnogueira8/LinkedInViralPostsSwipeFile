@@ -33,6 +33,7 @@ import type { NoModelFormat } from "@/lib/agent/no-model-formats";
 import type { NoModelFormatId } from "@/lib/agent/no-model-format-catalog";
 import type { Artifact, AskQuestion } from "@/lib/agent/contracts";
 import type { StructureMatchResult } from "@/lib/structure-match";
+import type { AppliedWorkspaceKnowledge } from "@/lib/knowledge-sources/context";
 import type { ChatTurnOperation } from "@/lib/agent/turn/operation-marker";
 import type {
   ActionOrchestratorRoute,
@@ -58,6 +59,7 @@ export type TurnSetupState = {
   resolvedCustomSkills: FrozenCustomSkill[];
   forcedNoModelFormatId: NoModelFormatId | undefined;
   creatorStyleId: string | undefined;
+  workspaceKnowledge: AppliedWorkspaceKnowledge;
   creatorStyleRetryContext: CreatorStyleRetryContext | null;
   leadMagnetId: string | undefined;
   createLeadMagnet: z.infer<typeof leadMagnetGenerateSchema> | undefined;
@@ -86,6 +88,7 @@ export type TurnSetupState = {
   persistedActionContinuation: boolean;
   pendingActionAsk: boolean;
   pendingAskOnly: boolean;
+  pendingInterviewAsk: boolean;
   artifactClarification: AskQuestion | null;
   fallthroughClarification: AskQuestion | null;
   modeledBatchContinuation: ModeledDraftBatchContinuation | null;
@@ -160,6 +163,7 @@ export type TurnCompileContext = Pick<
   | "actionRetryRepository"
   | "persistedActionContinuation"
   | "pendingAskOnly"
+  | "pendingInterviewAsk"
   | "artifactClarification"
   | "fallthroughClarification"
   | "modeledBatchContinuation"
@@ -211,6 +215,7 @@ export type TurnExecuteContext = Pick<
   | "workspaceLearningBlock"
   | "preferences"
   | "priorPostDrafts"
+  | "resolvedGenerationConfig"
   | "preloadedVoiceResult"
   | "claimedTurnStartedAt"
   | "claimedUserMessageId"
@@ -221,6 +226,7 @@ export type TurnExecuteContext = Pick<
   | "customSkillNames"
   | "skillIds"
   | "modelSourceId"
+  | "workspaceKnowledge"
   | "structureMatch"
   | "imageGenerationAuthor"
   | "refineInstruction"
@@ -228,6 +234,9 @@ export type TurnExecuteContext = Pick<
   | "hookOnlyOriginalBody"
   | "currentTurnOperation"
   | "trustedRefineTarget"
+  // The interview executor's plan-vs-save switch: true only while the latest
+  // assistant message is an interview card still awaiting its answer.
+  | "pendingInterviewAsk"
 >;
 
 export type TurnFinalizeContext = Pick<

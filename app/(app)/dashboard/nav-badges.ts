@@ -2,10 +2,9 @@
 
 import { useEffect, useState } from "react";
 import {
-  invalidateAgentBriefingRequest,
-  loadAgentBriefing,
-} from "./agent-briefing-client";
-
+  invalidateAgentInboxRequest,
+  loadAgentInbox,
+} from "./agent-inbox-client";
 type NavBadges = Record<string, number>;
 
 // Navigation badges are fetched client-side once and memoized at module scope
@@ -23,7 +22,7 @@ function fetchNavBadges(): Promise<NavBadges> {
     fetch("/api/shared-bookmarks/pending-count", { method: "POST" })
       .then((res) => res.json())
       .catch(() => ({})),
-    loadAgentBriefing(),
+    loadAgentInbox().catch(() => null),
   ])
     .then(([shared, agent]): NavBadges => {
       const next: NavBadges = {};
@@ -31,9 +30,7 @@ function fetchNavBadges(): Promise<NavBadges> {
         next["/dashboard/swipe"] = shared.count;
       }
       if (agent?.ok) {
-        const count =
-          (Array.isArray(agent.drafts) ? agent.drafts.length : 0) +
-          (Array.isArray(agent.opportunities) ? agent.opportunities.length : 0);
+        const count = Array.isArray(agent.active) ? agent.active.length : 0;
         if (count > 0) next["/dashboard/agent"] = count;
       }
       return next;
@@ -50,7 +47,7 @@ function loadNavBadges(): Promise<NavBadges> {
 // mutation changes one of them. Safe to call from any client component.
 export function invalidateNavBadges(): void {
   pendingBadgesPromise = null;
-  invalidateAgentBriefingRequest();
+  invalidateAgentInboxRequest();
   if (typeof window !== "undefined") {
     window.dispatchEvent(new Event(NAV_BADGES_INVALIDATE_EVENT));
   }

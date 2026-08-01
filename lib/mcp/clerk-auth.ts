@@ -1,6 +1,6 @@
 import { auth } from "@clerk/nextjs/server";
 import { verifyClerkToken } from "@clerk/mcp-tools/next";
-import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
+import type { AuthInfo } from "@modelcontextprotocol/server";
 
 /**
  * Verify a Clerk OAuth bearer token and attach the caller's workspace id.

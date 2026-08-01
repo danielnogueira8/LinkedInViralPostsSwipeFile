@@ -11,6 +11,9 @@ export type ModelSourceAttachment = {
   postText: string;
   partial: boolean;
   postType: PostType | null;
+  // Canonical LinkedIn URL of the original post — null for drafts/templates
+  // (no LinkedIn origin) and when the underlying post row is gone.
+  postUrl: string | null;
 };
 
 type SourceMessage = {
@@ -44,6 +47,7 @@ function unavailableAttachment(id: string): ModelSourceAttachment {
     postText: "",
     partial: false,
     postType: null,
+    postUrl: null,
   };
 }
 
@@ -91,10 +95,10 @@ export async function rehydrateModelSourceAttachments<T extends SourceMessage>(
     const accountIds = await trackedAccountIds(workspaceId);
     const [swipes, bookmarks] = await Promise.all([
       swipeIds.length
-        ? sb.from("posts").select("id, text, post_type, accounts!inner(name, profile_pic_url)").in("id", swipeIds).in("account_id", accountIds.length ? accountIds : [NO_ROWS_SENTINEL])
+        ? sb.from("posts").select("id, text, post_type, post_url, accounts!inner(name, profile_pic_url)").in("id", swipeIds).in("account_id", accountIds.length ? accountIds : [NO_ROWS_SENTINEL])
         : Promise.resolve({ data: [], error: null }),
       bookmarkIds.length
-        ? sb.from("saved_posts").select("id, text, text_snippet, author_name, profile_pic_url, post_type").eq("workspace_id", workspaceId).in("id", bookmarkIds)
+        ? sb.from("saved_posts").select("id, text, text_snippet, author_name, profile_pic_url, post_type, post_url").eq("workspace_id", workspaceId).in("id", bookmarkIds)
         : Promise.resolve({ data: [], error: null }),
     ]);
     if (swipes.error || bookmarks.error) return messages;
@@ -108,7 +112,7 @@ export async function rehydrateModelSourceAttachments<T extends SourceMessage>(
         : bookmarkById.get(source.source_post_id!);
       const kind = source.source as "swipe" | "bookmark";
       if (!current) {
-        attachments.set(source.id, { id: source.id, kind, state: "unavailable", authorName: null, authorAvatar: null, postText: "", partial: false, postType: null });
+        attachments.set(source.id, { id: source.id, kind, state: "unavailable", authorName: null, authorAvatar: null, postText: "", partial: false, postType: null, postUrl: null });
         continue;
       }
       const row = current as Record<string, unknown>;
@@ -126,6 +130,7 @@ export async function rehydrateModelSourceAttachments<T extends SourceMessage>(
         postText,
         partial: Boolean(source.partial),
         postType: resolveModelSourcePostType(row.post_type, postText),
+        postUrl: (row.post_url as string | null) ?? null,
       });
     }
     return messages.map((message) => {

@@ -1,51 +1,71 @@
-import { createMcpHandler, withMcpAuth } from "mcp-handler";
-import type { Implementation } from "@modelcontextprotocol/sdk/types.js";
-import { registerSwipeTools } from "@/lib/mcp/register";
+import type { AuthInfo } from "@modelcontextprotocol/server";
+import { createSwipeMcpHandler } from "@/lib/mcp/server";
 import { verifyToken } from "@/lib/mcp/clerk-auth";
+import { mcpRequestLogLine } from "@/lib/mcp/observability";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-// MCP tool calls can be long-running (DB queries against Supabase + future
-// LLM-touching tools). Bump past the 10s Vercel default.
 export const maxDuration = 60;
 
-const baseHandler = createMcpHandler(
-  (server) => {
-    registerSwipeTools(server);
-  },
-  {
-    // mcp-handler's own ServerOptions type declares serverInfo as only
-    // {name, version} — narrower than what it actually forwards at runtime
-    // (the wrapper destructures and passes the object straight through to
-    // the SDK's McpServer, which accepts the full Implementation shape).
-    // Spec-correct per MCP 2025-11-25 (serverInfo.icons), but Claude.ai's
-    // connector UI doesn't render it yet (tracked upstream as
-    // anthropics/claude-ai-mcp#152) — this is forward-compatible for when
-    // it does, and for any other MCP client that already supports it.
-    serverInfo: {
-      name: "linkedin-swipe-mcp",
-      version: "0.1.0",
-      title: "SwipeIn",
-      websiteUrl: "https://www.tryswipein.com",
-      icons: [
-        {
-          src: "https://www.tryswipein.com/swipeInIcon.png",
-          mimeType: "image/png",
-          sizes: ["1254x1254"],
-        },
-      ],
-    } as Implementation,
-  },
-  {
-    basePath: "/api",
-    maxDuration: 60,
-    verboseLogs: process.env.NODE_ENV !== "production",
-  },
-);
+const mcpHandler = createSwipeMcpHandler();
+const RESOURCE_METADATA_PATH = "/.well-known/oauth-protected-resource";
 
-const handler = withMcpAuth(baseHandler, verifyToken, {
-  required: true,
-  resourceMetadataPath: "/.well-known/oauth-protected-resource",
-});
+function bearerToken(request: Request): string | undefined {
+  const authorization = request.headers.get("authorization");
+  const match = authorization?.match(/^Bearer[ \t]+(.+)$/i);
+  return match?.[1]?.trim() || undefined;
+}
+
+function unauthorized(request: Request): Response {
+  const metadataUrl = new URL(RESOURCE_METADATA_PATH, request.url).toString();
+  return new Response("Unauthorized", {
+    status: 401,
+    headers: {
+      "WWW-Authenticate": `Bearer resource_metadata="${metadataUrl}"`,
+    },
+  });
+}
+
+async function authenticate(request: Request): Promise<AuthInfo | Response> {
+  const authInfo = await verifyToken(request, bearerToken(request));
+  return authInfo ?? unauthorized(request);
+}
+
+async function handler(request: Request): Promise<Response> {
+  const startedAt = performance.now();
+  let authenticated = false;
+  try {
+    const authInfo = await authenticate(request);
+    if (authInfo instanceof Response) {
+      console.info(
+        mcpRequestLogLine(request, {
+          status: authInfo.status,
+          durationMs: performance.now() - startedAt,
+          authenticated,
+        }),
+      );
+      return authInfo;
+    }
+    authenticated = true;
+    const response = await mcpHandler.fetch(request, { authInfo });
+    console.info(
+      mcpRequestLogLine(request, {
+        status: response.status,
+        durationMs: performance.now() - startedAt,
+        authenticated,
+      }),
+    );
+    return response;
+  } catch (error) {
+    console.info(
+      mcpRequestLogLine(request, {
+        status: 500,
+        durationMs: performance.now() - startedAt,
+        authenticated,
+      }),
+    );
+    throw error;
+  }
+}
 
 export { handler as GET, handler as POST, handler as DELETE };

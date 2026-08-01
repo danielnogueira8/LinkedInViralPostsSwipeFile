@@ -29,7 +29,12 @@ import {
 import Image from "next/image";
 import { cn } from "@/lib/utils";
 import { copyToClipboard } from "@/lib/clipboard";
-import { initialsForName, tintFor, timeAgo } from "@/lib/post-card-helpers";
+import {
+  creatorAvatarFallback,
+  initialsForName,
+  tintFor,
+  timeAgo,
+} from "@/lib/post-card-helpers";
 import type { PostCardRow } from "@/lib/post-card-row";
 export type { PostCardRow } from "@/lib/post-card-row";
 
@@ -194,11 +199,30 @@ export function PostCard({
                 }}
               />
             ) : null}
+            {/* Missing/expired photo → a stable DiceBear thumbs avatar; the
+                initials tile below is the last resort if that CDN fails too. */}
+            {/* eslint-disable-next-line @next/next/no-img-element -- external SVG; next/image won't optimize it */}
+            <img
+              src={creatorAvatarFallback(name)}
+              alt=""
+              className={cn(
+                "h-10 w-10 rounded-full object-cover shrink-0 bg-muted",
+                avatarUrl && "hidden",
+              )}
+              referrerPolicy="no-referrer"
+              onError={(e) => {
+                const img = e.currentTarget;
+                // Still hidden behind a working photo: a background load
+                // failure here must not reveal the initials tile.
+                if (img.classList.contains("hidden")) return;
+                img.style.display = "none";
+                img.nextElementSibling?.classList.remove("hidden");
+              }}
+            />
             <div
               className={cn(
-                "h-10 w-10 rounded-full grid place-items-center text-xs font-semibold shrink-0",
+                "h-10 w-10 rounded-full grid place-items-center text-xs font-semibold shrink-0 hidden",
                 tintFor(name),
-                avatarUrl && "hidden",
               )}
             >
               {initials || "?"}

@@ -105,6 +105,15 @@ import { compileModeledPostIntent } from "@/lib/agent/modeled-post-intent";
 import {
   composerStarterIdSchema,
 } from "@/lib/composer-task-context";
+import { stashWorkspacePostAsModelSource } from "@/lib/agent/model-source-choice";
+import {
+  candidateChoicesFromAsk,
+  hydrateModelSourceCandidates,
+  latestModelSourceAskCall,
+  releasesModelSource,
+  resolveModelSourceReference,
+  resolveModelSourceReferenceWithModel,
+} from "@/lib/agent/model-source-reference";
 
 import {
   NO_MODEL_FORMAT_IDS,
@@ -382,6 +391,9 @@ export const chatTurnRequestSchema = z.object({
   // mechanics-only block. Ignored when a model source is attached (the source
   // controls structure). Composes with a post format.
   creatorStyleId: z.string().uuid().optional(),
+  // Deprecated rolling-deploy field. Knowledge is Workspace-wide and automatic;
+  // the server accepts but intentionally ignores old client selections.
+  knowledgeSourceIds: z.array(z.string().uuid()).max(20).optional(),
   // Context is current-turn-only by default. A client must explicitly opt in
   // to chat inheritance, and can persist a tombstone that prevents a later
   // opt-in from reviving context selected before the clear.
@@ -456,6 +468,13 @@ export type ChatTurnDependencies = {
   completeChat: typeof completeChat;
   fetchRecentPostDrafts: typeof fetchRecentPostDrafts;
   generateLeadMagnetResource: typeof generateLeadMagnetResource;
+  stashWorkspacePostAsModelSource: typeof stashWorkspacePostAsModelSource;
+  candidateChoicesFromAsk: typeof candidateChoicesFromAsk;
+  hydrateModelSourceCandidates: typeof hydrateModelSourceCandidates;
+  latestModelSourceAskCall: typeof latestModelSourceAskCall;
+  releasesModelSource: typeof releasesModelSource;
+  resolveModelSourceReference: typeof resolveModelSourceReference;
+  resolveModelSourceReferenceWithModel: typeof resolveModelSourceReferenceWithModel;
   now: () => Date;
   draftFinalizerSpecialists?: Partial<DraftFinalizerSpecialists>;
   /** Optional telemetry sink for tests/observers. Defaults to console logging. */
@@ -475,6 +494,13 @@ const productionChatTurnDependencies: ChatTurnDependencies = {
   completeChat,
   fetchRecentPostDrafts,
   generateLeadMagnetResource,
+  stashWorkspacePostAsModelSource,
+  candidateChoicesFromAsk,
+  hydrateModelSourceCandidates,
+  latestModelSourceAskCall,
+  releasesModelSource,
+  resolveModelSourceReference,
+  resolveModelSourceReferenceWithModel,
   now: () => new Date(),
 };
 

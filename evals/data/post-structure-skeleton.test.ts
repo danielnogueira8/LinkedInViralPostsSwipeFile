@@ -154,6 +154,59 @@ describe("computeStructureSkeleton", () => {
     expect(s.totalWords).toBe(5);
     expect(s.totalChars).toBe(23);
   });
+
+  test("detects grouped two-line list items (a label line plus a supporting line)", () => {
+    const s = computeStructureSkeleton(
+      [
+        "The backbone: Diagnose, Analyze, Decide.",
+        "",
+        "1. Diagnose, four skills that find the real question",
+        "Problem Framer, Situation Assessor, Hypothesis Builder.",
+        "",
+        "2. Analyze, four skills that find where value sits",
+        "Market Sizer, Profit Pool Mapper, Competitor War-Gamer.",
+        "",
+        "3. Decide, four skills that pressure-test the call",
+        "Strategic Options Grid, Pricing Strategist.",
+      ].join("\n"),
+    );
+
+    expect(s.hasList).toBe(true);
+    expect(s.listMarker).toEqual({ kind: "ordered" });
+    expect(s.listItemCount).toBe(3);
+    expect(s.groupedListItemCount).toBe(3);
+  });
+
+  test("flat one-line-item lists and colon lead-ins are not grouped items", () => {
+    const flat = computeStructureSkeleton(
+      "The plan:\n→ ship it\n→ measure it\n→ iterate",
+    );
+    expect(flat.groupedListItemCount).toBe(0);
+
+    const numbered = computeStructureSkeleton("Steps:\n1. do this\n2. do that");
+    expect(numbered.groupedListItemCount).toBe(0);
+  });
+
+  test("a supporting line in a DIFFERENT paragraph does not count as grouped", () => {
+    const s = computeStructureSkeleton(
+      "1. First item.\n\nA supporting thought after a blank line.\n\n2. Second item.",
+    );
+    expect(s.groupedListItemCount).toBe(0);
+  });
+
+  test("detects a closing P.S. line", () => {
+    const s = computeStructureSkeleton(
+      "The body of the post lands here.\n\nP.S. Repost for priority access.",
+    );
+    expect(s.hasPostScript).toBe(true);
+  });
+
+  test("no P.S. when the post ends on ordinary prose", () => {
+    const s = computeStructureSkeleton(
+      "P.S. is mentioned mid-post as an example.\n\nBut the post ends on a plain closing line.",
+    );
+    expect(s.hasPostScript).toBe(false);
+  });
 });
 
 describe("renderStructureSkeletonReference", () => {
@@ -198,6 +251,41 @@ describe("renderStructureSkeletonReference", () => {
     const s = computeStructureSkeleton("Just prose here, nothing more, no list to speak of.");
     const ref = renderStructureSkeletonReference(s);
     expect(ref).not.toContain("List:");
+  });
+
+  test("names the grouped two-line item pattern when the source uses it", () => {
+    const s = computeStructureSkeleton(
+      "Stages:\n1. Diagnose, find the real question\nProblem Framer, Issue Tree Architect.\n2. Analyze, find where value sits\nMarket Sizer, Profit Pool Mapper.",
+    );
+    const ref = renderStructureSkeletonReference(s);
+
+    expect(ref).toContain("Grouped items:");
+    expect(ref.toLowerCase()).toContain("two-line pattern");
+  });
+
+  test("omits grouped-item guidance for a flat list", () => {
+    const s = computeStructureSkeleton("The plan:\n→ ship it\n→ measure it\n→ iterate");
+    const ref = renderStructureSkeletonReference(s);
+
+    expect(ref).not.toContain("Grouped items:");
+  });
+
+  test("tells the writer to keep a closing P.S. when the source has one", () => {
+    const s = computeStructureSkeleton(
+      "The body of the post lands here.\n\nP.S. Repost for priority access.",
+    );
+    const ref = renderStructureSkeletonReference(s);
+
+    expect(ref).toContain("P.S.:");
+  });
+
+  test("omits P.S. guidance when the source has none", () => {
+    const s = computeStructureSkeleton(
+      "A punchy hook line.\n\nSome body text explaining the idea in more depth here.",
+    );
+    const ref = renderStructureSkeletonReference(s);
+
+    expect(ref).not.toContain("P.S.:");
   });
 });
 

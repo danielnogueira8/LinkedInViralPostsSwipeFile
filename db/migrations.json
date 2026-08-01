@@ -1,7 +1,7 @@
 {
   "generatedBy": "npm run migrations:metadata",
-  "highest": 143,
-  "count": 143,
+  "highest": 162,
+  "count": 162,
   "files": [
     "migration-001-progress.sql",
     "migration-002-usage.sql",
@@ -145,6 +145,25 @@
     "migration-140-posting-queue-allocator.sql",
     "migration-141-atomic-posting-slot-creation.sql",
     "migration-142-publishing-slot-removal.sql",
-    "migration-143-posting-queue-slot-integrity.sql"
+    "migration-143-posting-queue-slot-integrity.sql",
+    "migration-144-cost-cap-grace.sql",
+    "migration-145-posting-queue-move-swap.sql",
+    "migration-146-posting-queue-schedule-lookup.sql",
+    "migration-147-knowledge-sources.sql",
+    "migration-148-knowledge-source-ingestion.sql",
+    "migration-149-knowledge-extraction.sql",
+    "migration-150-knowledge-retrieval.sql",
+    "migration-151-retry-leadshark-activity-binding.sql",
+    "migration-152-retry-knowledge-extraction.sql",
+    "migration-153-leadshark-automation-defaults.sql",
+    "migration-154-source-post-count.sql",
+    "migration-155-unbounded-content-preferences.sql",
+    "migration-156-automatic-workspace-knowledge.sql",
+    "migration-157-openai-usage-provider.sql",
+    "migration-158-agent-inbox.sql",
+    "migration-159-agent-inbox-lane-cap.sql",
+    "migration-160-agent-inbox-stale-run-reclaim.sql",
+    "migration-161-agent-inbox-framework-lanes.sql",
+    "migration-162-agent-inbox-lane-expiry.sql"
   ]
 }

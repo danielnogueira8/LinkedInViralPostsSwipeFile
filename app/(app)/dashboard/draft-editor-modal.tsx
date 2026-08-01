@@ -8,8 +8,12 @@ import { fetchJson } from "@/lib/api-fetch";
 import { copyToClipboard } from "@/lib/clipboard";
 import { draftEgressBody } from "@/lib/markdown/mode";
 import { LINKEDIN_MAX_CHARS } from "@/lib/linkedin-format";
+import { LINKEDIN_INTEGRATIONS_PATH } from "@/lib/linkedin-integration-destination";
 import { localDateFromDatetimeInput } from "@/lib/schedule-local-date";
-import { formatScheduleToast } from "@/lib/posting-queue";
+import {
+  formatScheduleToast,
+  type PostingQueueDropTarget,
+} from "@/lib/posting-queue";
 import { saveThenSchedule } from "@/lib/save-before-schedule";
 import {
   draftOperations,
@@ -25,7 +29,6 @@ import {
   Trash2,
   X,
   ListChecks,
-  Calendar,
   CalendarClock,
   Send,
   Type,
@@ -59,6 +62,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { DraftEditor } from "./draft-editor";
+import { titleFromNewDraftPaste } from "@/lib/draft-title";
 import { LeadSharkPanel } from "./leadshark-panel";
 import { cn } from "@/lib/utils";
 import { AvatarImg } from "@/components/avatar-img";
@@ -79,6 +83,8 @@ import {
   type ContentFeedbackReason,
 } from "@/lib/content-feedback-catalog";
 import { PostOutcomes } from "./post-outcomes";
+import { LoadingState } from "@/components/ui/loading-state";
+import { TimedLoadingState } from "@/components/ui/timed-loading-state";
 
 const FEEDBACK_REASON_LIMIT = 4;
 // Vercel rejects multipart request bodies above its platform limit before our
@@ -161,6 +167,7 @@ export function DraftEditorModal({
   onOpenChange,
   draft,
   author = DEFAULT_POST_PREVIEW_AUTHOR,
+  initialQueueTarget = null,
   onCreated,
   onSaved,
   onMeta,
@@ -173,6 +180,7 @@ export function DraftEditorModal({
   // null → creating a new post; otherwise editing this one.
   draft: Draft | null;
   author?: PostPreviewAuthor;
+  initialQueueTarget?: (PostingQueueDropTarget & { label: string }) | null;
   onCreated: (draft: Draft) => void;
   onSaved: (id: string, body: string) => void;
   // Optimistic property change on an existing post (title / status / date).
@@ -189,6 +197,10 @@ export function DraftEditorModal({
   // image worker can patch draft.mediaAttachments while a manual PATCH is in
   // flight, and a blind snapshot-restore would drop that image.
   const liveDraftRef = useRef(draft);
+  // A queue-targeted create may save successfully before the slot claim fails.
+  // Retain that canonical id so a retry updates and schedules the same row
+  // even if the parent draft prop has not reconciled yet.
+  const createdDraftIdRef = useRef<string | null>(null);
   const [body, setBody] = useState(draft?.body ?? "");
   const [saving, setSaving] = useState(false);
   const [copied, markCopied] = useCopiedFlag();
@@ -207,11 +219,10 @@ export function DraftEditorModal({
     liveDraftRef.current = draft;
   }, [draft]);
 
-  // NEW-POST form state — a new post can now set status + planned date up front
-  // (previously disabled until after create). Title uses titleDraft below. These
+  // NEW-POST form state — a new post can set its status up front. Title uses
+  // titleDraft below. These
   // seed to sensible defaults each time the "New post" panel opens.
   const [newStatus, setNewStatus] = useState<DraftStatus>("drafting");
-  const [newDate, setNewDate] = useState<string>("");
   // A new post's Kind. Empty (undefined) → the server auto-classifies from the
   // body; picking one makes it explicit (auto-classify then respects it).
   const [newKind, setNewKind] = useState<DraftKind | "">("");
@@ -289,7 +300,6 @@ export function DraftEditorModal({
       // Reset the new-post fields when the panel (re)opens onto a new post.
       if (!draft) {
         setNewStatus("drafting");
-        setNewDate("");
         setNewKind("");
         setNewLeadMagnetId("");
         setNewMedia([]);
@@ -302,6 +312,9 @@ export function DraftEditorModal({
   // session prevents it from attaching media to a fresh editor instance. This
   // runs after the open/draft transition commits, never while rendering.
   useEffect(() => {
+    if (seedKey === "open:__new__") {
+      createdDraftIdRef.current = null;
+    }
     for (const previewUrl of pendingPreviewUrls.current.values()) {
       URL.revokeObjectURL(previewUrl);
     }
@@ -333,7 +346,7 @@ export function DraftEditorModal({
   // null. Shared by Save and the Model-in-Chat handoff (which needs an id).
   const persistBody = async (): Promise<string | null> => {
     // A NEW post can be saved with an empty body as long as it has a name — you
-    // set the card up now (name/status/date) and write the body later. An
+    // set the card up now (name/status) and write the body later. An
     // existing post still needs content to save meaningfully.
     const newName = titleDraft.trim();
     if (isNew ? !trimmed && !newName : !trimmed) {
@@ -341,12 +354,33 @@ export function DraftEditorModal({
       return null;
     }
     try {
+      if (initialQueueTarget && createdDraftIdRef.current) {
+        const retryKind = draft?.kind ?? (newKind || undefined);
+        await draftOperations.update(
+          createdDraftIdRef.current,
+          {
+            body: trimmed,
+            title: newName || null,
+            status: draft?.status ?? newStatus,
+            ...(retryKind ? { kind: retryKind } : {}),
+            lead_magnet_id:
+              retryKind === "lead_magnet"
+                ? draft?.leadMagnet?.id ?? (newLeadMagnetId || null)
+                : null,
+            media_attachments: mediaAttachmentsForPersistence(
+              draft?.mediaAttachments ?? newMedia,
+            ),
+          },
+          { fallbackError: "Failed to save" },
+        );
+        onSaved(createdDraftIdRef.current, trimmed);
+        return createdDraftIdRef.current;
+      }
       if (isNew) {
         const data = await draftOperations.create({
           body: trimmed,
           ...(newName ? { title: newName } : {}),
           status: newStatus,
-          plan_to_post_on: newDate || null,
           // Only send an explicit kind when the user picked one; otherwise the
           // server auto-classifies (regular vs lead-magnet) from the body.
           ...(newKind ? { kind: newKind } : {}),
@@ -359,6 +393,7 @@ export function DraftEditorModal({
             ? { media_attachments: mediaAttachmentsForPersistence(newMedia) }
             : {}),
         });
+        createdDraftIdRef.current = data.draft.id;
         onCreated(normalizeDraft(data.draft));
         return data.draft.id;
       }
@@ -384,13 +419,54 @@ export function DraftEditorModal({
     }
     setSaving(true);
     const id = await persistBody();
-    setSaving(false);
-    if (id) {
-      toast.success(isNew ? "Post created" : "Post saved");
-      // Close on every successful save — new or existing — so the action has
-      // one consistent outcome (the board reflects the change immediately).
-      onOpenChange(false);
+    if (!id) {
+      setSaving(false);
+      return;
     }
+    if (initialQueueTarget) {
+      try {
+        const data = await draftOperations.queueAt(id, {
+          firstComment: null,
+          timezone: initialQueueTarget.timezone,
+          postingSlotId: initialQueueTarget.postingSlotId,
+          postingSlotOccurrenceDate:
+            initialQueueTarget.postingSlotOccurrenceDate,
+        });
+        onMeta(id, {
+          scheduledAt: data.scheduledAt,
+          scheduleStatus: data.scheduleStatus,
+          planToPostOn: data.planToPostOn,
+          firstComment: data.firstComment,
+          postingSlotId: data.postingSlotId,
+          postingSlotOccurrenceDate: data.postingSlotOccurrenceDate,
+          publishError: null,
+        });
+        window.dispatchEvent(new Event("posting-queue-updated"));
+        const browserTimezone =
+          Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+        toast.success(
+          formatScheduleToast({
+            scheduledAt: data.scheduledAt,
+            accountTimezone: data.timezone,
+            browserTimezone,
+            action: "scheduled",
+          }),
+        );
+        onOpenChange(false);
+      } catch (error) {
+        // Creation has already persisted. Keep both the editor and target open
+        // so the same action can retry scheduling without duplicating the post.
+        toast.error((error as Error).message);
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
+    setSaving(false);
+    toast.success(isNew ? "Post created" : "Post saved");
+    // Close on every successful save — new or existing — so the action has
+    // one consistent outcome (the board reflects the change immediately).
+    onOpenChange(false);
   };
 
   const createAndSchedule = async (input: ScheduleInput) => {
@@ -963,12 +1039,22 @@ export function DraftEditorModal({
             </Button>
           </div>
         </div>
+        {initialQueueTarget && (
+          <div
+            className="border-b border-accent-brand/20 bg-accent-brand/[0.06] px-4 py-2 text-xs text-foreground sm:px-5"
+            role="status"
+          >
+            This post will be scheduled for{" "}
+            <span className="font-semibold">{initialQueueTarget.label}</span>{" "}
+            when saved.
+          </div>
+        )}
 
         <DialogTitle className="sr-only">
           {isNew ? "New post" : "Edit post"}
         </DialogTitle>
         <DialogDescription className="sr-only">
-          Edit the post body, preview name, status, and planning date.
+          Edit the post body, preview name, status, kind, and publishing schedule.
         </DialogDescription>
 
         <div className="min-h-0 flex-1 overflow-y-auto lg:overflow-hidden">
@@ -1033,12 +1119,26 @@ export function DraftEditorModal({
                         key, prev/next navigation reuses the same instance and
                         ⌘Z on the new post would restore the PREVIOUS post's
                         text. Same pattern as PostOutcomes below. */}
+                    {/* toolbar="full": the same persistent editor chrome as the
+                        Cowork draft card (undo/redo, B/I/S, lists, special
+                        chars, image, emoji, clear formatting) instead of the
+                        selection-only floating toolbar. */}
                     <DraftEditor
                       key={draft?.id ?? "new"}
                       value={body}
                       onChange={setBody}
+                      onTextPaste={(pastedText) => {
+                        const nextTitle = titleFromNewDraftPaste({
+                          isNew,
+                          currentTitle: titleDraft,
+                          currentBody: body,
+                          pastedText,
+                        });
+                        if (nextTitle) setTitleDraft(nextTitle);
+                      }}
                       onMediaFiles={addMediaFiles}
                       allowImagePaste={isNew}
+                      toolbar="full"
                       rows={22}
                       textareaClassName="min-h-[52vh] rounded-xl border-transparent bg-transparent px-2 py-2 text-[15px] leading-8 shadow-none focus-visible:border-primary/20 focus-visible:ring-primary/10"
                     />
@@ -1060,7 +1160,7 @@ export function DraftEditorModal({
                     <div>
                       <h3 className="text-sm font-semibold tracking-tight">Post settings</h3>
                       <p className="text-xs text-muted-foreground">
-                        Board stage, calendar plan, and format.
+                        Board stage and format.
                       </p>
                     </div>
                   </div>
@@ -1091,21 +1191,6 @@ export function DraftEditorModal({
                           ))}
                         </SelectContent>
                       </Select>
-                    </PropRow>
-
-                    <PropRow icon={<Calendar className="h-4 w-4" />} label="Planning date">
-                      <input
-                        type="date"
-                        value={isNew ? newDate : (draft?.planToPostOn ?? "")}
-                        onChange={(e) => {
-                          const v = e.target.value || null;
-                          if (isNew) setNewDate(e.target.value);
-                          else patchMeta({ planToPostOn: v }, { plan_to_post_on: v });
-                        }}
-                        className="-ml-1 h-8 rounded-md bg-transparent px-1 text-sm text-muted-foreground outline-none hover:bg-accent focus:bg-accent disabled:opacity-60"
-                        aria-label="Planning date"
-                        title="A planning date for your content calendar. This does not publish to LinkedIn."
-                      />
                     </PropRow>
 
                     <PropRow icon={<Type className="h-4 w-4" />} label="Kind">
@@ -1294,16 +1379,18 @@ export function DraftEditorModal({
                   </div>
                 </section>
 
-                <ScheduleRow
-                  draft={draft}
-                  onMeta={onMeta}
-                  onCreateAndSchedule={isNew ? createAndSchedule : undefined}
-                  onCreateAndQueue={isNew ? createAndQueue : undefined}
-                  onSaveBeforeSchedule={!isNew ? saveBeforeScheduling : undefined}
-                  previewBody={body}
-                  previewMedia={isNew ? displayedMedia : undefined}
-                  mediaUploading={uploadingMedia}
-                />
+                {!initialQueueTarget && (
+                  <ScheduleRow
+                    draft={draft}
+                    onMeta={onMeta}
+                    onCreateAndSchedule={isNew ? createAndSchedule : undefined}
+                    onCreateAndQueue={isNew ? createAndQueue : undefined}
+                    onSaveBeforeSchedule={!isNew ? saveBeforeScheduling : undefined}
+                    previewBody={body}
+                    previewMedia={isNew ? displayedMedia : undefined}
+                    mediaUploading={uploadingMedia}
+                  />
+                )}
 
                 {!isNew && draft && draft.kind === "lead_magnet" && (
                   // Keyed on draft id so the automation form/enabled/saved state
@@ -1352,13 +1439,25 @@ export function DraftEditorModal({
               disabled={
                 busy ||
                 uploadingMedia ||
-                (isNew
+                (initialQueueTarget
+                  ? isNew && !trimmed && !titleDraft.trim()
+                  : isNew
                   ? !trimmed && !titleDraft.trim()
                   : !trimmed || !dirty)
               }
             >
               {saving || uploadingMedia ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-              {saving ? "Saving..." : uploadingMedia ? "Uploading media..." : isNew ? "Create post" : "Save"}
+              {saving
+                ? initialQueueTarget
+                  ? "Saving & scheduling..."
+                  : "Saving..."
+                : uploadingMedia
+                  ? "Uploading media..."
+                  : initialQueueTarget
+                    ? "Save & schedule"
+                    : isNew
+                      ? "Create post"
+                      : "Save"}
             </Button>
           </div>
         </div>
@@ -1852,11 +1951,17 @@ function PostMediaSection({
               <span className="text-muted-foreground">{mediaIcon(attachment.type)}</span>
               <div className="min-w-0 flex-1">
                 <div className="truncate font-medium">{attachment.name}</div>
-                <div className="text-xs text-muted-foreground">
-                  {mediaTypeLabel(attachment.type)} · {formatBytes(attachment.size)}
-                  {pendingMediaIds.has(attachment.id) ? " · Uploading…" : ""}
-                  {attachment.source === "library" ? " · Library" : ""}
-                </div>
+                {pendingMediaIds.has(attachment.id) ? (
+                  <TimedLoadingState
+                    label="Uploading"
+                    className="mt-1 text-xs"
+                  />
+                ) : (
+                  <div className="text-xs text-muted-foreground">
+                    {mediaTypeLabel(attachment.type)} · {formatBytes(attachment.size)}
+                    {attachment.source === "library" ? " · Library" : ""}
+                  </div>
+                )}
               </div>
               <Button
                 size="sm"
@@ -2079,9 +2184,8 @@ function MediaLibraryDialog({
 
         <div className="max-h-[68vh] min-h-[420px] overflow-y-auto px-6 py-5">
           {loading ? (
-            <div className="grid min-h-[420px] place-items-center text-sm text-muted-foreground">
-              <Loader2 className="mb-2 h-5 w-5 animate-spin" />
-              Loading media...
+            <div className="grid min-h-[420px] place-items-center">
+              <LoadingState label="Loading media" />
             </div>
           ) : assets.length === 0 ? (
             <div className="grid min-h-[420px] place-items-center rounded-2xl border border-dashed border-border/80 bg-card/60 text-center">
@@ -2328,7 +2432,7 @@ function localInputToIso(v: string): string | null {
 // The "Publish to LinkedIn" control in the draft editor. Turns the draft into a
 // real, timed auto-publish via the Zernio cron (POST /api/drafts/[id]/schedule),
 // or cancels one. Gates on the workspace's LinkedIn connection: with none, it
-// shows a "Connect in Settings" prompt instead of the picker (belt to the
+// shows a "Connect in Integrations" prompt instead of the picker (belt to the
 // endpoint's own 409). Optimistic — updates the draft via onMeta.
 type ScheduleInput = DraftScheduleCommand;
 
@@ -2590,7 +2694,11 @@ function ScheduleRow({
         <span className="flex-1 text-muted-foreground">
           Connect your LinkedIn account to schedule posts.
         </span>
-        <Button size="sm" variant="outline" onClick={() => router.push("/dashboard/settings")}>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => router.push(LINKEDIN_INTEGRATIONS_PATH)}
+        >
           Connect
         </Button>
       </div>
@@ -2634,8 +2742,7 @@ function ScheduleRow({
         Schedule on LinkedIn
       </div>
       <p className="mb-2 text-xs leading-snug text-muted-foreground">
-        This creates the real LinkedIn publishing schedule. The planning date above
-        is only for organizing your calendar.
+        This creates the real LinkedIn publishing schedule.
         {hasMedia ? " Media posts must publish within 7 days of upload." : ""}
       </p>
       {failed && draft.publishError && (

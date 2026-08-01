@@ -69,4 +69,31 @@ describe("public MCP contract", () => {
       expect(tool.description.trim().length).toBeGreaterThan(10);
     }
   });
+
+  test("advertises interactive discovery and confirmed scheduling semantics", () => {
+    const registered = new Map<string, { description?: string }>();
+    registerSwipeTools({
+      registerTool: (
+        name: string,
+        config: { description?: string },
+      ) => registered.set(name, config),
+    } as never);
+    const search = PUBLIC_MCP_TOOLS.find(
+      (tool) => tool.name === "search_viral_posts",
+    );
+    const schedule = PUBLIC_MCP_TOOLS.find(
+      (tool) => tool.name === "schedule_draft",
+    );
+
+    expect(search?.description).toContain("interactive Swipe File");
+    expect(search?.description).toContain("structured");
+    expect(schedule?.description).toContain("confirmation");
+    expect(schedule?.description).toContain("unchanged");
+    expect(registered.get("search_viral_posts")?.description).toContain(
+      "interactive Swipe File",
+    );
+    expect(registered.get("schedule_draft")?.description).toContain(
+      "confirmation",
+    );
+  });
 });

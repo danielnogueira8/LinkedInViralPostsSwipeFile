@@ -131,6 +131,7 @@ async function runPipeline(opts: {
   vi.doMock("@/lib/claude", () => ({
     extractHookWithClaude: vi.fn(),
     templatizeOutlierPost,
+    PLATFORM_WORKSPACE: "platform",
   }));
   vi.doMock("@/lib/template-embeddings", () => ({
     embedTemplateBody: vi.fn(async () => new Array(1536).fill(0)),

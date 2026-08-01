@@ -947,6 +947,68 @@ That gives the reader enough detail to apply the lesson without losing its nuanc
     ]);
   });
 
+  test("candidate-choice modeling filters short captions across the full fetched pool", async () => {
+    const structured = (label: string) => `${label} starts with a constraint the reader recognizes.
+
+The middle explains why the old approach fails, shows a concrete decision, and connects that decision to an observable result the reader can evaluate.
+
+The close turns the lesson into a practical next step without copying the source author's claims, identity, or personal experience.`;
+    dbRef.current = makeFakeSupabase({
+      posts: {
+        rows: [
+          ...Array.from({ length: 8 }, (_, index) => ({
+            id: `short-${index + 1}`,
+            text: "A high-engagement caption with no reusable structure.",
+            viral_score: 100 - index,
+            accounts: [{ name: `Short ${index + 1}` }],
+          })),
+          ...Array.from({ length: 5 }, (_, index) => ({
+            id: `modelable-${index + 1}`,
+            text: structured(`Candidate ${index + 1}`),
+            media_type: "image",
+            media_urls: [`https://media.example/modelable-${index + 1}.jpg`],
+            visual_kind: "graphic",
+            viral_score: 80 - index,
+            accounts: [
+              {
+                name: `Author ${index + 1}`,
+                profile_pic_url: `https://media.example/author-${index + 1}.jpg`,
+              },
+            ],
+          })),
+        ],
+      },
+    });
+
+    const result = (await runTool(
+      "search_viral_posts",
+      { sort: "viral", dir: "desc", strict_ranking: true, limit: 5 },
+      "ws-modelable-choice-pool",
+      undefined,
+      {
+        autoSelectModelingSources: true,
+        requireModelableSources: true,
+        includeSourceCardMedia: true,
+      },
+    )) as { posts: { id: string }[] };
+
+    expect(result.posts.map((post) => post.id)).toEqual([
+      "modelable-1",
+      "modelable-2",
+      "modelable-3",
+      "modelable-4",
+      "modelable-5",
+    ]);
+    expect(queryFor(dbRef.current, "posts")!.selectArg).toContain(
+      "media_urls",
+    );
+    expect(
+      queryFor(dbRef.current, "posts")!.filters.find(
+        (filter) => filter.method === "limit",
+      )?.args[0],
+    ).toBe(30);
+  });
+
   test("one-to-one auto-modeling keeps ranked sources when attribution URLs are missing", async () => {
     const structured = (topic: string) => `${topic} works better with a clear system.
 
@@ -1156,6 +1218,7 @@ describe("list_drafts — read the board, workspace-scoped", () => {
     const res = (await runTool("list_drafts", {}, "ws-1")) as { ok: boolean; count: number; drafts: unknown[] };
     expect(res.ok).toBe(true);
     expect(res.count).toBe(1);
+    expect(res.drafts[0]).not.toHaveProperty("plan_to_post_on");
     const q = queryFor(dbRef.current, "chat_artifacts")!;
     const wsFilter = q.filters.find((f) => f.method === "eq" && f.args[0] === "workspace_id");
     expect(wsFilter?.args[1]).toBe("ws-1"); // SECURITY: scoped
@@ -1223,10 +1286,11 @@ describe("move_on_board — set pipeline stage, workspace-scoped", () => {
     dbRef.current = makeFakeSupabase({ chat_artifacts: { single: { ...DRAFT, status: "ready" } } });
     const res = (await runTool("move_on_board", { id: "d1", status: "ready" }, "ws-1")) as {
       ok: boolean;
-      draft?: { status: string };
+      draft?: { status: string; plan_to_post_on?: string | null };
     };
     expect(res.ok).toBe(true);
     expect(res.draft?.status).toBe("ready");
+    expect(res.draft).not.toHaveProperty("plan_to_post_on");
     // SECURITY: the UPDATE is filtered by BOTH id AND workspace_id.
     const q = queryFor(dbRef.current, "chat_artifacts")!;
     expect(q.filters.find((f) => f.method === "eq" && f.args[0] === "id")?.args[1]).toBe("d1");

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
-import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
+import type { AuthInfo } from "@modelcontextprotocol/server";
 
 // ---------------------------------------------------------------------------
 // MCP Clerk auth: workspace_id == the Clerk USER id (1 user = 1 workspace, no

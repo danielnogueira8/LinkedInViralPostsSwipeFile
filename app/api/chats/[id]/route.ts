@@ -6,6 +6,7 @@ import { rehydrateCites } from "@/lib/cite-resolve";
 import { rehydrateDraftLifecycle } from "@/lib/draft-lifecycle-rehydrate";
 import { rehydrateModelSourceAttachments } from "@/lib/model-source-attachments";
 import { isTurnRunning } from "@/lib/agent/rate-limit";
+import { CHAT_MESSAGE_TRANSCRIPT_SELECT } from "@/lib/chat-transcript";
 
 export const runtime = "nodejs";
 
@@ -37,7 +38,7 @@ export async function GET(_req: Request, { params }: Ctx) {
 
     const { data: messages, error: msgErr } = await sb.raw
       .from("chat_messages")
-      .select("id, role, content, content_format, tool_calls, tool_call_id, artifacts, created_at, client_turn_id, transport_recovery_requested_at, user_stop_requested_at, terminal_reason, model_source_id")
+      .select(CHAT_MESSAGE_TRANSCRIPT_SELECT)
       .eq("chat_id", id)
       .eq("workspace_id", sb.workspaceId)
       .order("created_at", { ascending: true });

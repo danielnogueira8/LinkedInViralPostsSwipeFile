@@ -60,6 +60,13 @@ _Avoid_: Prompt, command, template
 The Workspace's durable description of its own writing tendencies.
 _Avoid_: Creator Style, tone prompt
 
+**Exploration Lane**:
+Per-turn guidance for how far an original Post should move from a Workspace's
+established content territory. Familiar stays close to proven subjects, Fresh
+extends them into an adjacent question or use case, and Experimental tries a
+bolder but still evidence-backed framing or structure.
+_Avoid_: Novelty Mode, creativity level
+
 **Creator Style**:
 A reusable description of how a selected external Creator writes.
 _Avoid_: Voice Profile, template
@@ -77,6 +84,13 @@ _Avoid_: Mutable Artifact metadata, analytics row, prompt log
 A source-backed story, belief, proof point, offer, audience insight, area of
 expertise, or prohibition that a Workspace can verify and use in Cowork.
 _Avoid_: Unverified memory, Voice Profile rule, generic context
+
+**Knowledge Source**:
+A durable, Workspace-owned note, document, or transcript that Cowork searches
+automatically for relevant evidence on every turn. Reviewable Workspace
+Knowledge Items can also be derived from it; retrieved source text remains
+untrusted evidence and does not make an unverified personal claim true.
+_Avoid_: Per-turn attachment, Knowledge Item, chat context, memory
 
 **Content Outcome**:
 Workspace-attributed business evidence connected to published content, such as

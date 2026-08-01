@@ -29,6 +29,13 @@ export const contentDescriptorSchema = z
   .strict();
 export type ContentDescriptor = z.infer<typeof contentDescriptorSchema>;
 
+export const explorationLaneSchema = z.enum([
+  "familiar",
+  "fresh",
+  "experimental",
+]);
+export type ExplorationLane = z.infer<typeof explorationLaneSchema>;
+
 export const contentLineageInputsSchema = z
   .object({
     modelSourceId: nullableIdSchema,
@@ -37,6 +44,19 @@ export const contentLineageInputsSchema = z
     customSkillIds: z.array(idSchema).max(20),
     leadMagnetId: nullableIdSchema,
     voiceProfileRevision: nullableIdSchema,
+    explorationLane: explorationLaneSchema.nullable().optional(),
+    knowledgeSources: z
+      .array(
+        z
+          .object({
+            sourceId: idSchema,
+            sourceRevisionId: idSchema,
+            chunkIds: z.array(idSchema).max(6),
+          })
+          .strict(),
+      )
+      .max(20)
+      .optional(),
   })
   .strict();
 export type ContentLineageInputs = z.infer<
@@ -159,6 +179,7 @@ export const knowledgeItemSourceSchema = z.enum([
   "voice_profile",
   "published_post",
   "cowork",
+  "knowledge_source",
 ]);
 export type KnowledgeItemSource = z.infer<
   typeof knowledgeItemSourceSchema

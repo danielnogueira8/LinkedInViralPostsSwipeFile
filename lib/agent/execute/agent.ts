@@ -3,6 +3,7 @@ import type { AgentEvent, Artifact, PlanStep } from "@/lib/agent/contracts";
 import {
   canonicalizeReadOnlyOrchestratorRoute,
   explicitBoardDestinationStatuses,
+  isModelableSourceText,
   type ActionOrchestratorRoute,
   type ActionRequirement,
 } from "@/lib/agent/turn/compile";
@@ -26,6 +27,7 @@ import {
   type ToolDef,
   type Usage,
 } from "@/lib/openrouter";
+import { resolveNativeOpenAIPrimary } from "@/lib/model-provider-routing";
 import {
   coworkAdapterHealth,
   type AdapterHealthRegistry,
@@ -40,6 +42,8 @@ import { distinctFallbackModel } from "@/lib/agent/model-routing";
 // Writer / prose delegation
 import {
   runWriterTurn,
+  streamWriterProgress,
+  writerContextProgressStage,
   WRITER_TURN_BUDGET_MS,
   type WriterInput,
   type WriterTask,
@@ -48,6 +52,10 @@ import {
   type ExecuteModeledDraftBatchInput,
   isCanonicalModeledSourceUrl,
 } from "@/lib/agent/execute/writer";
+import {
+  advancePlanStep,
+  completeActivePlanSteps,
+} from "@/lib/agent/plan-progress";
 
 // Read-only branch dependencies
 import {
@@ -74,6 +82,11 @@ import {
 } from "@/lib/agent/grounded-answer";
 import { groundedWorkspaceSourceArtifacts } from "@/lib/agent/grounded-source-citations";
 import { MAX_GROUNDED_ANSWER_RESULTS } from "@/lib/agent/evidence";
+import { workspaceRowToCitedPost } from "@/lib/cite-resolve";
+import {
+  isModelSourceChoicePostId,
+  modelSourceChoiceId,
+} from "@/lib/agent/model-source-choice";
 
 export {
   FALLBACK_READ_ONLY_ORCHESTRATOR_MODEL,
@@ -370,13 +383,18 @@ function withoutUndefined<T extends Record<string, unknown>>(
 // OPENROUTER_ACTION_ORCHESTRATOR_MODEL. The fallback stays independent (safety
 // net only). Note: the orchestrator plans multi-step tool actions — keep the
 // chat model tool-calling-capable, or pin a capable model here.
-export const PRIMARY_ACTION_ORCHESTRATOR_MODEL =
-  process.env.OPENROUTER_ACTION_ORCHESTRATOR_MODEL || CHAT_MODEL;
+export const PRIMARY_ACTION_ORCHESTRATOR_MODEL = resolveNativeOpenAIPrimary(
+  [
+    process.env.OPENAI_ACTION_ORCHESTRATOR_MODEL,
+    process.env.OPENROUTER_ACTION_ORCHESTRATOR_MODEL,
+  ],
+  CHAT_MODEL,
+);
 export const FALLBACK_ACTION_ORCHESTRATOR_MODEL = distinctFallbackModel(
   PRIMARY_ACTION_ORCHESTRATOR_MODEL,
   process.env.OPENROUTER_ACTION_ORCHESTRATOR_FALLBACK_MODEL ||
     "google/gemini-3.5-flash",
-  ["anthropic/claude-sonnet-5"],
+  ["openai/gpt-5.6-luna"],
 );
 export const ACTION_ORCHESTRATOR_DEADLINE_MS = 85_000;
 
@@ -756,17 +774,6 @@ const ACTION_PLAN_TOOL: ToolDef = {
                   },
                 },
                 required: ["id", "type", "draftId", "status"],
-              },
-              {
-                type: "object",
-                additionalProperties: false,
-                properties: {
-                  id: { type: "string" },
-                  type: { const: "schedule_post" },
-                  draftId: { type: "string" },
-                  date: { type: ["string", "null"] },
-                },
-                required: ["id", "type", "draftId", "date"],
               },
               {
                 type: "object",
@@ -2519,9 +2526,9 @@ export function parseReadOnlyPlan(
     return plan;
   }
   const expectedTerminal =
-    route.outcome?.kind === "grounded_answer"
-      ? "answer_from_evidence"
-      : "draft_post";
+    route.outcome?.kind === "draft"
+      ? "draft_post"
+      : "answer_from_evidence";
   if (terminal?.type !== expectedTerminal) {
     throw new Error(
       expectedTerminal === "draft_post"
@@ -3172,13 +3179,20 @@ function compiledResearchTerminal(
   route: ReadOnlyOrchestratorRoute,
   evidenceActionIds: string[],
 ): ReadOnlyAction {
-  if (route.outcome?.kind === "grounded_answer") {
+  if (
+    route.outcome?.kind === "grounded_answer" ||
+    route.outcome?.kind === "source_selection"
+  ) {
     return {
       id: "answer",
       type: "answer_from_evidence",
       evidenceActionIds,
-      format: route.outcome.format,
-      ...(route.outcome.resultCount
+      format:
+        route.outcome.kind === "grounded_answer"
+          ? route.outcome.format
+          : "summary",
+      ...(route.outcome.kind === "grounded_answer" &&
+      route.outcome.resultCount
         ? { resultCount: route.outcome.resultCount }
         : {}),
     };
@@ -3228,7 +3242,9 @@ export function compileServerReadOnlyPlan(
   }
   if (route.kind === "workspace_research") {
     const search = compiledWorkspaceSearchAction(
-      route.minimumSources,
+      route.outcome?.kind === "source_selection"
+        ? route.outcome.searchPoolSize
+        : route.minimumSources,
       authoritativeInstruction,
       "swipe",
       route.workspacePostType,
@@ -3436,9 +3452,11 @@ const READ_ONLY_PLAN_TOOL: ToolDef = {
 
 function readOnlyPlannerSystem(route: ReadOnlyOrchestratorRoute): string {
   const terminal =
-    route.outcome?.kind === "grounded_answer"
-      ? `answer_from_evidence using format ${route.outcome.format}`
-      : "draft_post";
+    route.outcome?.kind === "draft"
+      ? "draft_post"
+      : route.outcome?.kind === "grounded_answer"
+        ? `answer_from_evidence using format ${route.outcome.format}`
+        : "answer_from_evidence";
   return [
     "You are SwipeIn's read-only action planner.",
     "Return only a schema-valid action plan through return_read_only_plan.",
@@ -3562,13 +3580,18 @@ function safeHttpUrl(value: string): string | null {
 // OPENROUTER_WEB_RESEARCH_MODEL. This is a text LLM call that adds OpenRouter's
 // web plugin — keep the chat model web-grounding-capable, or pin a model here
 // (Haiku was the prior cheap default). The fallback stays independent.
-export const PRIMARY_WEB_RESEARCH_MODEL =
-  process.env.OPENROUTER_WEB_RESEARCH_MODEL || CHAT_MODEL;
+export const PRIMARY_WEB_RESEARCH_MODEL = resolveNativeOpenAIPrimary(
+  [
+    process.env.OPENAI_WEB_RESEARCH_MODEL,
+    process.env.OPENROUTER_WEB_RESEARCH_MODEL,
+  ],
+  CHAT_MODEL,
+);
 const FALLBACK_WEB_RESEARCH_MODEL = distinctFallbackModel(
   PRIMARY_WEB_RESEARCH_MODEL,
   process.env.OPENROUTER_WEB_RESEARCH_FALLBACK_MODEL ||
     FALLBACK_READ_ONLY_ORCHESTRATOR_MODEL,
-  ["anthropic/claude-sonnet-5", "google/gemini-3.5-flash"],
+  ["openai/gpt-5.6-luna", "google/gemini-3.5-flash"],
 );
 
 type WebResearchResult = {
@@ -4152,6 +4175,35 @@ function readOnlyToolMessage(
   };
 }
 
+function sourceSelectionTranscriptResult(
+  result: Record<string, unknown>,
+): Record<string, unknown> {
+  const posts = Array.isArray(result.posts)
+    ? result.posts.map((row) => {
+        if (!row || typeof row !== "object") return row;
+        const rest = { ...(row as Record<string, unknown>) };
+        const accounts = rest.accounts;
+        delete rest.media_urls;
+        delete rest.visual_kind;
+        const sanitizedAccounts =
+          accounts && typeof accounts === "object" && !Array.isArray(accounts)
+            ? (() => {
+                const account = {
+                  ...(accounts as Record<string, unknown>),
+                };
+                delete account.profile_pic_url;
+                return account;
+              })()
+            : accounts;
+        return { ...rest, accounts: sanitizedAccounts };
+      })
+    : result.posts;
+  return {
+    ...result,
+    ...(posts ? { posts } : {}),
+  };
+}
+
 function newsSources(
   result: Record<string, unknown>,
   now: Date,
@@ -4222,11 +4274,13 @@ function workspaceSources(
     const accountRow = Array.isArray(item.accounts)
       ? item.accounts[0]
       : item.accounts;
+    const account =
+      accountRow && typeof accountRow === "object"
+        ? (accountRow as Record<string, unknown>)
+        : undefined;
     const author =
-      accountRow &&
-      typeof accountRow === "object" &&
-      typeof (accountRow as Record<string, unknown>).name === "string"
-        ? String((accountRow as Record<string, unknown>).name).trim()
+      typeof account?.name === "string"
+        ? account.name.trim()
         : undefined;
     const metric = (key: "reactions" | "comments" | "reposts") => {
       const value = item[key];
@@ -4254,6 +4308,37 @@ function workspaceSources(
         ...(postedAt ? { publishedAt: postedAt } : {}),
         ...(author ? { author } : {}),
         ...(hasMetrics ? { metrics } : {}),
+        card: workspaceRowToCitedPost({
+          id: normalized.id,
+          text: normalized.text,
+          post_url: normalized.url ?? null,
+          posted_at: postedAt ?? null,
+          reactions: metrics.reactions ?? 0,
+          comments: metrics.comments ?? 0,
+          reposts: metrics.reposts ?? 0,
+          media_type:
+            typeof item.media_type === "string" ? item.media_type : null,
+          media_urls: Array.isArray(item.media_urls)
+            ? item.media_urls.filter(
+                (value): value is string => typeof value === "string",
+              )
+            : null,
+          visual_kind:
+            item.visual_kind === "photo" || item.visual_kind === "graphic"
+              ? item.visual_kind
+              : null,
+          accounts: account
+            ? {
+                name: author,
+                niche:
+                  typeof account.niche === "string" ? account.niche : null,
+                profile_pic_url:
+                  typeof account.profile_pic_url === "string"
+                    ? account.profile_pic_url
+                    : null,
+              }
+            : null,
+        }),
       },
     ];
   });
@@ -4936,7 +5021,12 @@ async function* runReadOnlyOrchestratorCore(
               input.signal,
               {
                 autoSelectModelingSources:
-                  input.route.outcome?.kind === "draft",
+                  input.route.outcome?.kind === "draft" ||
+                  input.route.outcome?.kind === "source_selection",
+                requireModelableSources:
+                  input.route.outcome?.kind === "source_selection",
+                includeSourceCardMedia:
+                  input.route.outcome?.kind === "source_selection",
                 modelingReserveCount:
                   input.route.workspaceDraftSourceMode === "one_to_one"
                     ? Math.min(
@@ -5050,7 +5140,10 @@ async function* runReadOnlyOrchestratorCore(
           ? { summary: toolSummary(call.function.name, result) ?? undefined }
           : {}),
       };
-      const transcriptResult = { ...result };
+      const transcriptResult =
+        input.route.outcome?.kind === "source_selection"
+          ? sourceSelectionTranscriptResult(result)
+          : { ...result };
       delete transcriptResult.reserve_posts;
       messages.push(readOnlyToolMessage(id, transcriptResult));
       yield completedDone({
@@ -5075,7 +5168,10 @@ async function* runReadOnlyOrchestratorCore(
         ? { summary: toolSummary(call.function.name, result) ?? undefined }
         : {}),
     };
-    const transcriptResult = { ...result };
+    const transcriptResult =
+      input.route.outcome?.kind === "source_selection"
+        ? sourceSelectionTranscriptResult(result)
+        : { ...result };
     delete transcriptResult.reserve_posts;
     messages.push(readOnlyToolMessage(id, transcriptResult));
     if (!ok) {
@@ -5124,6 +5220,121 @@ async function* runReadOnlyOrchestratorCore(
   }
 
   const terminalAction = plan.actions.at(-1);
+  if (
+    terminalAction?.type === "answer_from_evidence" &&
+    input.route.outcome?.kind === "source_selection"
+  ) {
+    steps = advancePlanStep(steps, {
+        id: "filter_source_candidates",
+        label: "Selecting distinct, model-ready posts",
+      });
+    yield { type: "plan_update", steps };
+    const availableSources = distinctGroundedSources(
+      terminalAction.evidenceActionIds.flatMap(
+        (id) => evidenceByAction.get(id) ?? [],
+      ),
+    );
+    const candidates = availableSources
+      .filter(
+        (source) =>
+          source.kind === "workspace_post" &&
+          isModelSourceChoicePostId(source.id) &&
+          isModelableSourceText(source.text),
+      )
+      .slice(0, input.route.outcome.candidateCount);
+    steps = completeActivePlanSteps(steps);
+    yield { type: "plan_update", steps };
+    const minimumSources = Math.max(3, input.route.minimumSources ?? 3);
+    if (candidates.length < minimumSources) {
+      const message = `I found only ${candidates.length} of the ${minimumSources} source posts needed to give you a useful choice, so I did not spend credits drafting from a weak default.`;
+      yield {
+        type: "error",
+        code: "orchestrator_modeling_candidates_insufficient",
+        message,
+        recovery: "continue",
+      };
+      yield completedDone({
+        content: message,
+        terminalReason: "error",
+        toolCalls: calls,
+        toolMessages: messages,
+        inputTokens,
+        outputTokens,
+      });
+      return;
+    }
+    if (await input.cancellationBoundary()) {
+      yield completedDone({
+        content: readOnlyInterruptionContent(
+          input,
+          "Stopped before the source choices were presented.",
+        ),
+        terminalReason: readOnlyInterruptionReason(input),
+        toolCalls: calls,
+        toolMessages: messages,
+        inputTokens,
+        outputTokens,
+      });
+      return;
+    }
+
+    // Keep third-party text out of persisted ask arguments. The verified cards
+    // immediately above the ask show the author, copy, media, and metrics; the
+    // choices bind only their stable carousel positions to server-owned ids.
+    const candidateOptions = candidates.map(
+      (_source, index) => `Post ${index + 1}`,
+    );
+    const options = candidateOptions;
+    const choiceIds = candidates.map((source) =>
+      modelSourceChoiceId(source.id),
+    );
+    const question = "Which post should I model?";
+    const askId = deps.idFactory();
+    const askArgs = JSON.stringify({
+      question,
+      options,
+      choiceIds,
+      allowOther: false,
+    });
+    const askCall: ToolCall = {
+      id: askId,
+      type: "function",
+      function: { name: "ask_user", arguments: askArgs },
+    };
+    calls.push(askCall);
+    yield {
+      type: "tool_start",
+      id: askId,
+      name: "ask_user",
+      args: askArgs,
+    };
+    yield {
+      type: "ask",
+      ask: {
+        question,
+        options,
+        choiceIds,
+        allowOther: false,
+      },
+    };
+    yield { type: "tool_end", id: askId, name: "ask_user", ok: true };
+    messages.push(
+      readOnlyToolMessage(askId, { ok: true, answer_pending: true }),
+    );
+    steps = steps.map((step) => ({ ...step, status: "done" as const }));
+    yield { type: "plan_update", steps };
+    yield completedDone({
+      content:
+        "I found these strong source posts. Choose one and I’ll model it in your voice.",
+      artifacts: groundedWorkspaceSourceArtifacts(candidates),
+      terminalReason: "ask",
+      toolCalls: calls,
+      toolMessages: messages,
+      inputTokens,
+      outputTokens,
+    });
+    return;
+  }
   if (terminalAction?.type === "answer_from_evidence") {
     const availableSources = distinctGroundedSources(
       terminalAction.evidenceActionIds.flatMap(
@@ -5213,6 +5424,11 @@ async function* runReadOnlyOrchestratorCore(
         });
       }
     };
+    steps = advancePlanStep(steps, {
+      id: "synthesize_grounded_answer",
+      label: "Synthesizing the verified findings",
+    });
+    yield { type: "plan_update", steps };
     try {
       const answer = await deps.synthesizeGroundedAnswer({
         instruction: authoritativeInstruction,
@@ -5237,6 +5453,8 @@ async function* runReadOnlyOrchestratorCore(
           },
         ],
       );
+      steps = completeActivePlanSteps(steps);
+      yield { type: "plan_update", steps };
       yield { type: "text", delta: answer.content };
       yield completedDone({
         content: answer.content,
@@ -5252,6 +5470,8 @@ async function* runReadOnlyOrchestratorCore(
       if (error instanceof GroundedAnswerSynthesisError) {
         await recordSynthesisAttempts(error.attempts);
       }
+      steps = completeActivePlanSteps(steps);
+      yield { type: "plan_update", steps };
       if (await input.cancellationBoundary()) {
         yield completedDone({
           content: readOnlyInterruptionContent(
@@ -5411,6 +5631,11 @@ async function* runReadOnlyOrchestratorCore(
   // one here dropped fully-modelable scraped posts whose url column is null
   // from the candidate pool for no modeling-quality reason. When a url IS
   // present it must still be genuinely canonical (not malformed/untrusted).
+  steps = advancePlanStep(steps, {
+    id: "filter_verified_draft_sources",
+    label: "Filtering the verified source set",
+  });
+  yield { type: "plan_update", steps };
   const canonicalPool = modeledSourcePool
     .flatMap((source) =>
       source.kind === "workspace_post" &&
@@ -5429,6 +5654,8 @@ async function* runReadOnlyOrchestratorCore(
         : [],
     )
     .slice(0, expectedDrafts + 5);
+  steps = completeActivePlanSteps(steps);
+  yield { type: "plan_update", steps };
   // The durable one-source-per-draft BATCH runs only when the workspace can
   // actually supply a distinct verified source for every requested draft.
   // When the chip asks for more drafts than there are distinct canonical
@@ -5441,23 +5668,48 @@ async function* runReadOnlyOrchestratorCore(
     (resumingModeledBatch || canonicalPool.length >= expectedDrafts);
   if (modeledBatch) {
     if (deps.executeModeledDraftBatch) {
-      let batchResult: Awaited<ReturnType<typeof deps.executeModeledDraftBatch>>;
+      const executeBatch = deps.executeModeledDraftBatch;
+      const batchOutcome: {
+        value: Awaited<ReturnType<typeof executeBatch>> | null;
+      } = { value: null };
       try {
-        batchResult = await deps.executeModeledDraftBatch({
-          operationKey: input.turnMessageId,
-          workspaceId: input.workspaceId,
-          instruction: authoritativeInstruction,
-          count: expectedDrafts,
-          sources: canonicalPool,
-          engineInput: {
-            ...input.writerInput,
-            telemetry: input.telemetry ?? input.writerInput.telemetry,
-            userInstruction: authoritativeInstruction,
-            signal: input.signal,
-          },
-          deadlineAtMs: input.deadlineAtMs,
+        let batchProgressSequence = 0;
+        const batchEngineInput: WriterInput = {
+          ...input.writerInput,
+          telemetry: input.telemetry ?? input.writerInput.telemetry,
+          userInstruction: authoritativeInstruction,
           signal: input.signal,
-        });
+        };
+        const batchProgress = streamWriterProgress(
+          batchEngineInput,
+          async function* (observedInput) {
+            batchOutcome.value = await executeBatch({
+              operationKey: input.turnMessageId,
+              workspaceId: input.workspaceId,
+              instruction: authoritativeInstruction,
+              count: expectedDrafts,
+              sources: canonicalPool,
+              engineInput: observedInput,
+              deadlineAtMs: input.deadlineAtMs,
+              signal: observedInput.signal,
+            });
+          },
+        );
+        for await (const event of batchProgress) {
+          if (event.type !== "writer_progress") continue;
+          batchProgressSequence += 1;
+          steps = advancePlanStep(steps, {
+            id: `modeled_${batchProgressSequence}_${event.stage.id}`,
+            label:
+              event.stage.kind === "writing"
+                ? "Writing the next modeled draft"
+                : event.stage.label,
+          });
+          yield { type: "plan_update", steps };
+        }
+        if (!batchOutcome.value) {
+          throw new Error("Modeled-draft coordinator returned no result.");
+        }
       } catch (error) {
         rethrowUsagePersistence(error);
         const interrupted = await input.cancellationBoundary();
@@ -5505,6 +5757,10 @@ async function* runReadOnlyOrchestratorCore(
         return;
       }
 
+      const batchResult = batchOutcome.value;
+      if (!batchResult) {
+        throw new Error("Modeled-draft coordinator returned no result.");
+      }
       inputTokens += batchResult.usage.inputTokens;
       outputTokens += batchResult.usage.outputTokens;
       if (batchResult.kind === "complete") {
@@ -5702,10 +5958,23 @@ async function* runReadOnlyOrchestratorCore(
       ...input.writerInput.dependencies,
     },
   };
-  const prose = deps.runProse(proseInput);
+  steps = advancePlanStep(steps, {
+    ...writerContextProgressStage(proseInput),
+    id: "apply_grounded_writer_intelligence",
+  });
+  yield { type: "plan_update", steps };
+  const prose = streamWriterProgress(proseInput, deps.runProse);
 
   try {
     for await (const event of prose) {
+      if (event.type === "writer_progress") {
+        steps = advancePlanStep(steps, {
+          ...event.stage,
+          id: `research_${event.stage.id}`,
+        });
+        yield { type: "plan_update", steps };
+        continue;
+      }
       if (event.type === "done") {
         childDone = event;
         continue;

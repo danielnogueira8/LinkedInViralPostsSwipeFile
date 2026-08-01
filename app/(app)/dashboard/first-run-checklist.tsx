@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import {
   AudioLines,
   CalendarCheck,
@@ -13,6 +14,7 @@ import {
 } from "lucide-react";
 import { AiIcon } from "@/components/ai-icon";
 import { cn } from "@/lib/utils";
+import { LINKEDIN_INTEGRATIONS_PATH } from "@/lib/linkedin-integration-destination";
 
 type ChecklistState = {
   voice: boolean;
@@ -35,7 +37,12 @@ const DEFAULT_STATE: ChecklistState = {
 const STEPS = [
   { key: "creators" as const, label: "Track creators", href: "/dashboard/accounts", icon: ListChecks },
   { key: "voice" as const, label: "Set up voice", href: "/dashboard/voice", icon: AudioLines },
-  { key: "linkedin" as const, label: "Connect LinkedIn", href: "/dashboard/settings", icon: Link2 },
+  {
+    key: "linkedin" as const,
+    label: "Connect LinkedIn",
+    href: LINKEDIN_INTEGRATIONS_PATH,
+    icon: Link2,
+  },
   { key: "inspiration" as const, label: "Fill inspiration", href: "/dashboard/swipe", icon: Search },
   { key: "batch" as const, label: "Generate a post", href: "/dashboard", icon: AiIcon },
   { key: "scheduled" as const, label: "Schedule a post", href: "/dashboard/posts", icon: CalendarCheck },
@@ -48,11 +55,20 @@ const STEPS = [
 // error. `forceShow` (dev/preview only) renders the card even when the API says
 // it's complete/dismissed, so the design can be reviewed without a fresh
 // account.
+//
+// The layout mounts this once and keeps it alive across client-side
+// navigation, so the checklist RE-FETCHES on every route change — a user who
+// tracks a creator or schedules a post sees the box tick as soon as they
+// navigate, without a hard refresh. Once the checklist is definitively done
+// (dismissed or every item complete — neither can regress) it stops asking.
 export function FirstRunChecklist({ forceShow = false }: { forceShow?: boolean }) {
   const [items, setItems] = useState<ChecklistState>(DEFAULT_STATE);
   const [state, setState] = useState<"loading" | "shown" | "hidden">("loading");
+  const pathname = usePathname();
+  const haltRef = useRef(false);
 
   useEffect(() => {
+    if (haltRef.current) return;
     let cancelled = false;
     fetch("/api/onboarding/checklist")
       .then((res) => res.json())
@@ -62,24 +78,30 @@ export function FirstRunChecklist({ forceShow = false }: { forceShow?: boolean }
         // checklist — hide like a fetch failure rather than render a bogus
         // "Setup 0/6" from the default state.
         if (!data?.ok || !data.items) {
+          haltRef.current = true;
           setState(forceShow ? "shown" : "hidden");
           return;
         }
         const next = { ...DEFAULT_STATE, ...data.items };
         setItems(next);
         const allDone = Object.values(next).every(Boolean);
+        if (data.dismissed || allDone) haltRef.current = true;
         // Auto-hide when dismissed or fully complete (unless forced for preview).
         setState(!forceShow && (data.dismissed || allDone) ? "hidden" : "shown");
       })
       .catch(() => {
-        if (!cancelled) setState(forceShow ? "shown" : "hidden");
+        if (!cancelled) {
+          haltRef.current = true;
+          setState(forceShow ? "shown" : "hidden");
+        }
       });
     return () => {
       cancelled = true;
     };
-  }, [forceShow]);
+  }, [forceShow, pathname]);
 
   async function dismiss() {
+    haltRef.current = true;
     setState("hidden");
     try {
       await fetch("/api/onboarding/checklist", { method: "POST" });

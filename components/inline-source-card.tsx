@@ -2,9 +2,21 @@
 
 import { useState } from "react";
 import Image from "next/image";
-import { ExternalLink, ThumbsUp, MessageCircle, Repeat, Play, FileText } from "lucide-react";
+import {
+  ExternalLink,
+  ThumbsUp,
+  MessageCircle,
+  Repeat,
+  Play,
+  FileText,
+  ImageOff,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
-import { tintFor, timeAgo } from "@/lib/post-card-helpers";
+import {
+  creatorAvatarFallback,
+  tintFor,
+  timeAgo,
+} from "@/lib/post-card-helpers";
 import type { CitedPost } from "@/lib/cite-resolve";
 
 // A read-only preview of a swipe-file post the agent cited in chat. Deliberately
@@ -22,11 +34,14 @@ import type { CitedPost } from "@/lib/cite-resolve";
 export function InlineSourceCard({
   post,
   compact = false,
+  mediaLoading = "lazy",
 }: {
   post: CitedPost;
   compact?: boolean;
+  mediaLoading?: "eager" | "lazy";
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [erroredThumb, setErroredThumb] = useState<string | null>(null);
   const name = post.authorName || "Unknown";
   const initials = name
     .split(" ")
@@ -49,9 +64,10 @@ export function InlineSourceCard({
     (post.mediaType === "image" ||
       post.mediaType === "document" ||
       post.mediaType === "video");
+  const thumbErrored = erroredThumb === thumb;
 
   return (
-    <div className="rounded-xl border border-border/60 bg-card text-card-foreground overflow-hidden">
+    <div className="overflow-hidden rounded-xl border border-border/70 bg-card text-card-foreground shadow-soft transition-[border-color,box-shadow] duration-200 hover:border-input hover:shadow-soft-lg motion-reduce:transition-none">
       {/* Header */}
       <div className="flex items-start justify-between gap-3 px-3.5 pt-3 pb-2">
         <div className="flex items-center gap-2.5 min-w-0">
@@ -64,16 +80,35 @@ export function InlineSourceCard({
               referrerPolicy="no-referrer"
               onError={(e) => {
                 const img = e.currentTarget;
+                // Still hidden behind a working photo: a background load
+                // failure here must not reveal the initials tile.
+                if (img.classList.contains("hidden")) return;
                 img.style.display = "none";
                 img.nextElementSibling?.classList.remove("hidden");
               }}
             />
           ) : null}
+          {/* Missing/expired photo → a stable DiceBear thumbs avatar; the
+              initials tile below is the last resort if that CDN fails too. */}
+          {/* eslint-disable-next-line @next/next/no-img-element -- external SVG; next/image won't optimize it */}
+          <img
+            src={creatorAvatarFallback(name)}
+            alt=""
+            className={cn(
+              "h-9 w-9 rounded-full object-cover shrink-0 bg-muted",
+              post.authorAvatar && "hidden",
+            )}
+            referrerPolicy="no-referrer"
+            onError={(e) => {
+              const img = e.currentTarget;
+              img.style.display = "none";
+              img.nextElementSibling?.classList.remove("hidden");
+            }}
+          />
           <div
             className={cn(
-              "h-9 w-9 rounded-full grid place-items-center text-[11px] font-semibold shrink-0",
+              "h-9 w-9 rounded-full grid place-items-center text-[11px] font-semibold shrink-0 hidden",
               tintFor(name),
-              post.authorAvatar && "hidden",
             )}
           >
             {initials || "?"}
@@ -146,19 +181,33 @@ export function InlineSourceCard({
               : "View on LinkedIn"
           }
         >
+          <span
+            className={cn(
+              "absolute inset-0 grid place-items-center text-muted-foreground transition-opacity",
+              thumbErrored ? "opacity-100" : "opacity-0",
+            )}
+            aria-hidden={!thumbErrored}
+          >
+            <span className="flex flex-col items-center gap-1">
+              <ImageOff className="h-6 w-6 opacity-60" aria-hidden />
+              <span className="text-[11px]">Image unavailable</span>
+            </span>
+          </span>
           <Image
             src={thumb}
             alt=""
             fill
             sizes={compact ? "340px" : "(min-width: 1024px) 360px, 100vw"}
-            className="object-cover"
+            className={cn(
+              "object-cover transition-opacity",
+              thumbErrored && "opacity-0",
+            )}
             referrerPolicy="no-referrer"
-            loading="lazy"
+            loading={mediaLoading}
             quality={70}
-            // Hide a broken image without collapsing the reserved box.
-            onError={(e) => {
-              (e.currentTarget as HTMLImageElement).style.visibility = "hidden";
-            }}
+            // Keep the reserved box, but replace a failed image with an
+            // intentional fallback instead of leaving an unexplained gray slab.
+            onError={() => setErroredThumb(thumb)}
           />
           {post.mediaType === "video" && (
             <span className="absolute inset-0 grid place-items-center bg-black/20">

@@ -52,6 +52,7 @@ export function DraftEditor({
   className,
   textareaClassName,
   onMediaFiles,
+  onTextPaste,
   allowImagePaste = false,
   toolbar = "floating",
   onBlur,
@@ -64,6 +65,7 @@ export function DraftEditor({
   className?: string;
   textareaClassName?: string;
   onMediaFiles?: (files: File[]) => void;
+  onTextPaste?: (text: string) => void;
   // Image paste belongs to the New Post flow. Drag/drop and the Attach control
   // remain available wherever this editor is used.
   allowImagePaste?: boolean;
@@ -132,8 +134,22 @@ export function DraftEditor({
     const ta = taRef.current;
     if (!ta) return;
     const fit = () => {
+      // This textarea grows inside a scrolling parent. Setting its height to
+      // "auto" briefly removes most of that parent's scrollable content, which
+      // makes the browser clamp scrollTop to 0. Restore the user's viewport
+      // after measuring so typing lower in a Cowork Post never jumps to the
+      // beginning of the draft.
+      const editorScroller = ta.parentElement;
+      const scrollTop = editorScroller?.scrollTop;
       ta.style.height = "auto";
-      ta.style.height = `${ta.scrollHeight}px`;
+      // scrollHeight rounds to whole pixels, which can land a fraction of a
+      // line short — the last line of the draft renders visibly clipped at
+      // the bottom of the Cowork card. The small buffer guarantees the final
+      // line always gets its full height.
+      ta.style.height = `${ta.scrollHeight + 4}px`;
+      if (editorScroller && scrollTop !== undefined) {
+        editorScroller.scrollTop = scrollTop;
+      }
     };
     fit();
     const ro = new ResizeObserver(fit);
@@ -674,6 +690,8 @@ export function DraftEditor({
           onBlur?.();
         }}
         onPaste={(event) => {
+          const pastedText = event.clipboardData.getData("text/plain");
+          if (pastedText) onTextPaste?.(pastedText);
           // Keep this on the editor rather than the document: image pastes are
           // only meaningful while this post editor is mounted, and a nested
           // image-aware control can opt out with preventDefault().
@@ -712,8 +730,11 @@ export function DraftEditor({
           "w-full resize-none bg-transparent px-3 py-2.5 text-[13px] leading-relaxed text-foreground outline-none",
           // With a footer the card owns the border and the scroll, so the
           // textarea is a plain transparent surface that grows to its content.
+          // Keep a full visual line of clearance below the final glyph: the
+          // smaller base padding left the last line cramped against the
+          // Cowork preview's scroll boundary at desktop widths.
           footer
-            ? "flex-none overflow-hidden"
+            ? "flex-none overflow-hidden pb-5"
             : "rounded-lg border border-border bg-white focus-visible:border-border focus-visible:ring-2 focus-visible:ring-border",
           draggingMedia && "bg-primary/[0.04]",
           textareaClassName,
@@ -780,11 +801,7 @@ export function DraftEditor({
             <span className="text-muted-foreground">
               {LINKEDIN_SEE_MORE_CHARS - count} chars before “…see more”
             </span>
-          ) : (
-            <span className="text-muted-foreground">
-              hook cut at {LINKEDIN_SEE_MORE_CHARS} chars
-            </span>
-          )}
+          ) : null}
         </span>
         <span className={cn("tabular-nums", over && "text-state-danger font-medium")}>
           {count.toLocaleString()} / {LINKEDIN_MAX_CHARS.toLocaleString()}

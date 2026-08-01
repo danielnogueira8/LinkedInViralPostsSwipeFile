@@ -5,6 +5,7 @@ import { Loader2, AlertCircle } from "lucide-react";
 import { SavedPostCard } from "@/components/saved-post-card";
 import type { BookmarkCard, BookmarkSortKey } from "@/lib/bookmarks-query";
 import type { PostType } from "@/lib/post-type";
+import { LoadingPixels } from "@/components/ui/loading-state";
 
 // Infinite-scroll grid. The server renders the first page and hands it
 // here along with the cursor + filter context. As the sentinel near the
@@ -147,9 +148,7 @@ export function BookmarksGrid({
 
       {nextOffset !== null && (
         <div ref={sentinelRef} className="flex justify-center py-8">
-          {loading && (
-            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-          )}
+          {loading && <LoadingPixels />}
           {failed && !loading && (
             <button
               type="button"

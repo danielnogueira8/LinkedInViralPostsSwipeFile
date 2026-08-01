@@ -405,7 +405,7 @@ export async function publishDueDrafts(nowIso: string): Promise<{
       continue;
     }
     if (!canPublish(conn) || !conn?.zernio_account_id) {
-      await failRow(currentRow, "Your LinkedIn connection isn't active. Reconnect it in Settings, then reschedule.");
+      await failRow(currentRow, "Your LinkedIn connection isn't active. Reconnect it in Integrations, then reschedule.");
       failed++;
       continue;
     }

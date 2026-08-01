@@ -9,14 +9,20 @@ vi.mock("@/lib/agent/tools", () => ({
   loadVoiceProfile: vi.fn(),
 }));
 
-import { resolveFindAndModelSource } from "@/lib/agent/turn/compile";
+import {
+  isModelableSourceText,
+  resolveFindAndModelSource,
+} from "@/lib/agent/turn/compile";
+
+const LONG_BODY =
+  "Most founders post every day and wonder why nothing moves. I did it for six months straight and the only thing that grew was my word count. Here is what actually changed when I cut to three posts a week and rewrote every hook twice.";
 
 beforeEach(() => {
   runTool.mockReset();
 });
 
 describe("resolveFindAndModelSource", () => {
-  test("returns the top post (raw body + url) with the <post> wrapper stripped", async () => {
+  test("returns the top modelable post (raw body + url) with the <post> wrapper stripped", async () => {
     // search_viral_posts wraps the body in untrusted-<post> XML; the lean engine
     // re-wraps, so we must hand it the RAW text (no double wrapping). The url is
     // carried through so the caller can stamp the "Source post" chip.
@@ -26,7 +32,7 @@ describe("resolveFindAndModelSource", () => {
       posts: [
         {
           id: "post-123",
-          text: "<post>\nHere is the actual post body.\nSecond line.\n</post>",
+          text: `<post>\n${LONG_BODY}\n</post>`,
           post_url: "https://linkedin.com/posts/post-123",
         },
       ],
@@ -37,7 +43,7 @@ describe("resolveFindAndModelSource", () => {
     expect(resolved).toEqual({
       source: {
         id: "post-123",
-        text: "Here is the actual post body.\nSecond line.",
+        text: LONG_BODY,
       },
       sourceUrl: "https://linkedin.com/posts/post-123",
     });
@@ -45,21 +51,59 @@ describe("resolveFindAndModelSource", () => {
     expect(runTool).toHaveBeenCalledTimes(1);
     expect(runTool).toHaveBeenCalledWith(
       "search_viral_posts",
-      { post_type: "regular", sort: "viral", dir: "desc", limit: 1 },
+      { post_type: "regular", sort: "viral", dir: "desc", limit: 8 },
       "ws-1",
       undefined,
       { autoSelectModelingSources: true },
     );
   });
 
+  test("skips a viral one-liner meme and models the next real post", async () => {
+    // The reported bug: the engagement-top "regular" post was a meme caption
+    // (~14 words + image). Nothing to mirror, so the draft read unmodeled.
+    runTool.mockResolvedValue({
+      ok: true,
+      count: 2,
+      posts: [
+        {
+          id: "meme",
+          text: ",but I don't think this gets us where we need to go. Have you considered…",
+          post_url: "https://linkedin.com/posts/meme",
+        },
+        {
+          id: "structured",
+          text: LONG_BODY,
+          post_url: "https://linkedin.com/posts/structured",
+        },
+      ],
+    });
+
+    const resolved = await resolveFindAndModelSource("ws-1");
+
+    expect(resolved?.source.id).toBe("structured");
+    expect(resolved?.sourceUrl).toBe("https://linkedin.com/posts/structured");
+  });
+
+  test("returns undefined when every candidate is too thin to model", async () => {
+    runTool.mockResolvedValue({
+      ok: true,
+      count: 2,
+      posts: [
+        { id: "a", text: "Born to ship." },
+        { id: "b", text: "Forced to write." },
+      ],
+    });
+    expect(await resolveFindAndModelSource("ws-1")).toBeUndefined();
+  });
+
   test("passes an unwrapped body through unchanged; null url when absent", async () => {
     runTool.mockResolvedValue({
       ok: true,
-      posts: [{ id: "p1", text: "Already raw, no wrapper." }],
+      posts: [{ id: "p1", text: LONG_BODY }],
     });
     const resolved = await resolveFindAndModelSource("ws-1");
     expect(resolved).toEqual({
-      source: { id: "p1", text: "Already raw, no wrapper." },
+      source: { id: "p1", text: LONG_BODY },
       sourceUrl: null,
     });
   });
@@ -67,7 +111,7 @@ describe("resolveFindAndModelSource", () => {
   test("ignores a non-http post_url (chip must not link to a bad url)", async () => {
     runTool.mockResolvedValue({
       ok: true,
-      posts: [{ id: "p1", text: "Body.", post_url: "javascript:alert(1)" }],
+      posts: [{ id: "p1", text: LONG_BODY, post_url: "javascript:alert(1)" }],
     });
     const resolved = await resolveFindAndModelSource("ws-1");
     expect(resolved?.sourceUrl).toBeNull();
@@ -94,5 +138,20 @@ describe("resolveFindAndModelSource", () => {
       posts: [{ id: "p1", text: "<post>\n\n</post>" }],
     });
     expect(await resolveFindAndModelSource("ws-1")).toBeUndefined();
+  });
+});
+
+describe("isModelableSourceText", () => {
+  test("a one-liner or meme caption is not modelable", () => {
+    expect(
+      isModelableSourceText(
+        ",but I don't think this gets us where we need to go. Have you considered…",
+      ),
+    ).toBe(false);
+    expect(isModelableSourceText("Born to ship.")).toBe(false);
+  });
+
+  test("a structured post body is modelable", () => {
+    expect(isModelableSourceText(LONG_BODY)).toBe(true);
   });
 });

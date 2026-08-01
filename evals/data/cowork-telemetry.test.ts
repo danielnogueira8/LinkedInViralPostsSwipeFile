@@ -35,6 +35,16 @@ describe("Cowork v2 structured telemetry", () => {
         completion_tokens_details: { reasoning_tokens: 12 },
         cost: 0.012,
       },
+      promptProfile: {
+        version: 1,
+        total_text_chars: 1_200,
+        estimated_input_tokens: 300,
+        cacheable_system_prefix_chars: 800,
+        sections: {
+          global_writing_rules: { text_chars: 600, estimated_tokens: 150 },
+          request: { text_chars: 80, estimated_tokens: 20 },
+        },
+      },
     });
     telemetry.recordAttempt({
       stage: "writer_fallback",
@@ -86,6 +96,16 @@ describe("Cowork v2 structured telemetry", () => {
       terminal_outcome: "delivered",
     });
     expect(sink.mock.calls[0][0].stage_attempts).toHaveLength(3);
+    expect(sink.mock.calls[0][0].stage_attempts[0].input_profile).toEqual({
+      version: 1,
+      total_text_chars: 1_200,
+      estimated_input_tokens: 300,
+      cacheable_system_prefix_chars: 800,
+      sections: {
+        global_writing_rules: { text_chars: 600, estimated_tokens: 150 },
+        request: { text_chars: 80, estimated_tokens: 20 },
+      },
+    });
   });
 
   test("is idempotent and never accepts prompt, draft, credential, or reasoning fields", () => {

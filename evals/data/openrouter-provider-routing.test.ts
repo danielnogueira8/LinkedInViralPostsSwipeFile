@@ -41,7 +41,7 @@ describe("OpenRouter provider routing", () => {
       );
 
       const error = await completeChat({
-        model: "anthropic/claude-sonnet-5",
+        model: "google/gemini-3.5-flash",
         messages: [{ role: "user", content: "private user prompt" }],
       }).catch((cause: unknown) => cause);
 
@@ -81,6 +81,17 @@ describe("OpenRouter provider routing", () => {
     ).toBe(0.15);
   });
 
+  test("BACKGROUND_MODEL defaults to native Luna and accepts an explicit model pin", async () => {
+    vi.resetModules();
+    const defaults = await import("@/lib/openrouter");
+    expect(defaults.BACKGROUND_MODEL).toBe("openai/gpt-5.6-luna");
+
+    vi.stubEnv("OPENAI_BACKGROUND_MODEL", "openai/gpt-5.6-luna");
+    vi.resetModules();
+    const pinned = await import("@/lib/openrouter");
+    expect(pinned.BACKGROUND_MODEL).toBe("openai/gpt-5.6-luna");
+  });
+
   test("by DEFAULT pins no provider (OpenRouter load-balances) but requires parameter support", () => {
     // No `order` key at all — that's the true "no pin" (an empty [] would still
     // signal a degenerate preference). require_parameters stays on so a swap
@@ -103,7 +114,7 @@ describe("OpenRouter provider routing", () => {
     vi.stubEnv("OPENROUTER_API_KEY", "test-key");
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body));
-      expect(body.model).toBe("anthropic/claude-sonnet-5");
+      expect(body.model).toBe("google/gemini-3.5-flash");
       // No order pin by default; the capability guard is still sent.
       expect(body.provider).toEqual({
         allow_fallbacks: true,
@@ -118,7 +129,7 @@ describe("OpenRouter provider routing", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await completeChat({
-      model: "anthropic/claude-sonnet-5",
+      model: "google/gemini-3.5-flash",
       messages: [{ role: "user", content: "hello" }],
     });
 
@@ -149,7 +160,7 @@ describe("OpenRouter provider routing", () => {
     vi.stubEnv("OPENROUTER_API_KEY", "test-key");
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body));
-      expect(body.model).toBe("anthropic/claude-sonnet-5");
+      expect(body.model).toBe("google/gemini-3.5-flash");
       expect(body.reasoning).toEqual({ effort: "low" });
       return Response.json({
         choices: [{ message: { content: "ok" }, finish_reason: "stop" }],
@@ -158,7 +169,7 @@ describe("OpenRouter provider routing", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await completeChat({
-      model: "anthropic/claude-sonnet-5",
+      model: "google/gemini-3.5-flash",
       reasoningEffort: "low",
       messages: [{ role: "user", content: "plan this turn" }],
     });
@@ -213,7 +224,7 @@ describe("OpenRouter provider routing", () => {
     vi.stubEnv("OPENROUTER_API_KEY", "test-key");
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body));
-      expect(body.model).toBe("anthropic/claude-sonnet-5");
+      expect(body.model).toBe("google/gemini-3.5-flash");
       expect(body.reasoning).toBeUndefined();
       return Response.json({
         choices: [{ message: { content: "ok" }, finish_reason: "stop" }],
@@ -222,7 +233,7 @@ describe("OpenRouter provider routing", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await completeChat({
-      model: "anthropic/claude-sonnet-5",
+      model: "google/gemini-3.5-flash",
       glmReasoning: "none",
       messages: [{ role: "user", content: "hello" }],
     });
@@ -260,6 +271,7 @@ describe("OpenRouter provider routing", () => {
     );
 
     const result = await completeChat({
+      model: "some/future-chat-model",
       messages: [{ role: "user", content: "latest news" }],
       plugins: [{ id: "web" }],
     });
@@ -292,6 +304,7 @@ describe("OpenRouter provider routing", () => {
 
     await expect(
       completeChat({
+        model: "some/future-chat-model",
         messages: [{ role: "user", content: "hello" }],
         timeoutMs: 5,
       }),
@@ -339,7 +352,7 @@ describe("OpenRouter provider routing", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     for await (const delta of streamChat({
-      model: "openai/gpt-5.6-luna",
+      model: "some/future-chat-model",
       sessionId: "chat-123",
       messages: [{ role: "user", content: "refine this post" }],
     })) {
@@ -484,6 +497,7 @@ describe("OpenRouter provider routing", () => {
 
     const deltas = [];
     for await (const delta of streamChat({
+      model: "some/future-chat-model",
       messages: [
         {
           role: "user",

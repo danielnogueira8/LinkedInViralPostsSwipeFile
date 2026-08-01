@@ -2,6 +2,8 @@ import {
   compileModeledPostIntent,
   explicitlyRequestsSourceDiscoveryIntent,
 } from "@/lib/agent/modeled-post-intent";
+import type { ComposerTaskContext } from "@/lib/composer-task-context";
+import { modelingSourceSelectionEnabled } from "@/lib/agent/model-source-selection-policy";
 
 export function explicitlyRequestsSourceDiscovery(text: string): boolean {
   return explicitlyRequestsSourceDiscoveryIntent(text);
@@ -17,6 +19,33 @@ export function requestsSourceModeling(text: string): boolean {
 
 /** A clear one-source modeling request can use the fast, focused agent lane. */
 export function requestsDirectSourceModeling(text: string): boolean {
+  if (explicitlyForbidsSourceDiscovery(text)) return false;
+  const intent = compileModeledPostIntent(text);
+  return (
+    intent.kind === "exact" &&
+    intent.relation === "one_to_one" &&
+    intent.expectedDrafts === 1 &&
+    intent.minimumSources === 1
+  );
+}
+
+/**
+ * True when Cowork must stop after discovery and let the user choose the exact
+ * source. Starter metadata is authoritative; free text covers the equivalent
+ * one-source automatic-modeling request.
+ */
+export function requestsModelingSourceSelection(
+  text: string,
+  context?: ComposerTaskContext | null,
+): boolean {
+  if (!modelingSourceSelectionEnabled()) return false;
+  if (
+    context?.sourceSelection &&
+    context.kind === "post" &&
+    context.expectedDraftCount === 1
+  ) {
+    return true;
+  }
   if (explicitlyForbidsSourceDiscovery(text)) return false;
   const intent = compileModeledPostIntent(text);
   return (

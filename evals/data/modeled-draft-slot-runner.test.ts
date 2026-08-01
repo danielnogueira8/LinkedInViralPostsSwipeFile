@@ -133,6 +133,30 @@ describe("runModeledDraftSlot", () => {
     });
   });
 
+  test("reports selected intelligence only when a modeled slot actually runs", async () => {
+    const progress: string[] = [];
+
+    await runModeledDraftSlot(
+      {
+        ...slotInput,
+        engineInput: {
+          ...slotInput.engineInput,
+          customSkillBodies: ["Find the sharpest counterintuitive claim."],
+          customSkillNames: ["Contrarian Intelligence"],
+          onProgressStage: (stage) => progress.push(stage.label),
+        },
+      },
+      {
+        runDraftEngine: scriptedRunner([
+          { type: "artifact", artifact: POST },
+          done(),
+        ]),
+      },
+    );
+
+    expect(progress[0]).toBe("Applying Contrarian Intelligence skill");
+  });
+
   test.each([
     ["a non-integer count", { count: 3.5, previousBodies: ["one", "two"] }],
     ["a count above the batch limit", { count: 7, previousBodies: ["one", "two"] }],

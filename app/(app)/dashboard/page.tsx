@@ -4,8 +4,9 @@ import { connection } from "next/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { rehydrateCites } from "@/lib/cite-resolve";
 import { rehydrateDraftLifecycle } from "@/lib/draft-lifecycle-rehydrate";
-import type { ModelSourceAttachment } from "@/lib/model-source-attachments";
 import { rehydrateModelSourceAttachments } from "@/lib/model-source-attachments";
+import type { RawDbMessage } from "@/lib/chat-hydration";
+import { CHAT_MESSAGE_TRANSCRIPT_SELECT } from "@/lib/chat-transcript";
 import type { CustomSkill } from "@/lib/custom-skills";
 import { CHAT_MODEL } from "@/lib/openrouter";
 import { contentFormatForModel } from "@/lib/markdown/mode";
@@ -38,18 +39,6 @@ type ChatRow = {
   updated_at: string;
 };
 
-type MessageRow = {
-  id: string;
-  role: "user" | "assistant" | "tool";
-  content: string;
-  content_format: "legacy" | "plain" | "markdown" | null;
-  tool_calls: unknown;
-  artifacts: unknown;
-  model_source_id?: string | null;
-  model_source_attachment?: ModelSourceAttachment | null;
-  created_at: string;
-};
-
 function requestWindows() {
   const now = Date.now();
   return {
@@ -62,7 +51,7 @@ function requestWindows() {
 export default async function ChatPage({
   searchParams,
 }: {
-  searchParams: Promise<{ chat?: string; model?: string; new?: string }>;
+  searchParams: Promise<{ chat?: string; model?: string; new?: string; agentIdea?: string }>;
 }) {
   const sb = await scopedSupabase();
 
@@ -225,17 +214,15 @@ export default async function ChatPage({
       chatList[0]?.id ??
       null);
 
-  let messages: MessageRow[] = [];
+  let messages: RawDbMessage[] = [];
   if (activeId) {
     const { data: msgs } = await sb.raw
       .from("chat_messages")
-      // tool_calls included so hydrate() can reconstruct an AskCard from a
-      // persisted ask_user tool call — survives a hard refresh (bug 1).
-      .select("id, role, content, content_format, tool_calls, artifacts, created_at, model_source_id")
+      .select(CHAT_MESSAGE_TRANSCRIPT_SELECT)
       .eq("chat_id", activeId)
       .eq("workspace_id", sb.workspaceId)
       .order("created_at", { ascending: true });
-    messages = (msgs ?? []) as MessageRow[];
+    messages = (msgs ?? []) as RawDbMessage[];
     // Re-resolve cited source-post cards (only the postId is persisted).
     messages = await rehydrateModelSourceAttachments(messages, sb.workspaceId);
     messages = await rehydrateCites(messages, sb.workspaceId);
@@ -272,24 +259,7 @@ export default async function ChatPage({
           initialVoiceReady={voiceReady}
           initialNextAction={initialNextAction}
           writerContentFormat={contentFormatForModel(CHAT_MODEL)}
-          initialMessages={messages.map((m) => ({
-            id: m.id,
-            role: m.role,
-            content: m.content,
-            content_format:
-              m.content_format === "markdown" || m.content_format === "plain"
-                ? m.content_format
-                : null,
-            // tool_calls MUST ride through to hydrate() — it reconstructs the
-            // ask_user checkboxes + the /skill bubble badge from the persisted
-            // synthetic tool calls. We SELECT it above, but the map used to
-            // drop it here, so on a FIRST page load (this path) those vanished
-            // and only reappeared after a chat-switch (the GET route kept it).
-            tool_calls: (m.tool_calls as never) ?? null,
-            artifacts: (m.artifacts as never) ?? null,
-            model_source_id: m.model_source_id ?? null,
-            model_source_attachment: m.model_source_attachment ?? null,
-          }))}
+          initialMessages={messages}
         />
       </Suspense>
     </>

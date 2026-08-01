@@ -1,7 +1,10 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test } from "vitest";
-import { GroundedSourceLinks } from "@/components/grounded-source-links";
+import {
+  GroundedSourceLinks,
+  circularWindow,
+} from "@/components/grounded-source-links";
 import type { Artifact } from "@/lib/agent/contracts";
 import { persistedCiteMeta } from "@/lib/agent/grounded-source-citations";
 
@@ -130,16 +133,34 @@ describe("GroundedSourceLinks", () => {
     const html = render([citeWithCard(id, fullCard(id))]);
     expect(html).toContain("Dana Founder"); // author from the card
     expect(html).toContain("founder-led sales"); // body from the card
+    expect(html).toContain("max-w-[360px]");
     // no carousel controls for a single card
     expect(html).not.toContain('aria-label="Next source"');
   });
 
-  test("sources are centered and width-capped (~a Swipe File card), not full width", () => {
+  test("a complete verified card still renders when the stored post has no LinkedIn URL", () => {
     const id = "10000000-0000-4000-8000-000000000001";
-    const html = render([citeWithCard(id, fullCard(id))]);
-    // centered + max-width constrained container (editorial, not full-bleed)
+    const html = render([
+      citeWithCard(id, fullCard(id, { postUrl: null })),
+    ]);
+
+    expect(html).toContain("Dana Founder");
+    expect(html).toContain("founder-led sales");
+    expect(html).not.toContain("<a ");
+  });
+
+  test("sources use the full chat width needed for a three-card carousel", () => {
+    const ids = [
+      "10000000-0000-4000-8000-000000000001",
+      "10000000-0000-4000-8000-000000000002",
+      "10000000-0000-4000-8000-000000000003",
+    ];
+    const html = render(
+      ids.map((id) => citeWithCard(id, fullCard(id))),
+    );
+    // Centered within the chat's own max-width, with room for three compact cards.
     expect(html).toContain("mx-auto");
-    expect(html).toContain("max-w-[360px]");
+    expect(html).toContain("max-w-4xl");
   });
 
   test("the carousel card renders compact (smaller media box)", () => {
@@ -157,14 +178,18 @@ describe("GroundedSourceLinks", () => {
     expect(html).toContain("aspect-[16/9]");
     expect(html).toContain("max-h-40");
     expect(html).not.toContain("aspect-[16/10]");
+    // Visible carousel media starts loading immediately and never degrades to a
+    // blank gray box when a remote image cannot be fetched.
+    expect(html.match(/loading="eager"/g)).toHaveLength(2);
+    expect(html).toContain("Image unavailable");
   });
 
-  test("multiple full cards render a carousel: one card + prev/next + a dot per source", () => {
-    const ids = [
-      "10000000-0000-4000-8000-000000000001",
-      "10000000-0000-4000-8000-000000000002",
-      "10000000-0000-4000-8000-000000000003",
-    ];
+  test("multiple full cards render three at a time with the existing prev/next controls", () => {
+    const ids = Array.from(
+      { length: 5 },
+      (_, index) =>
+        `10000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+    );
     const html = render(
       ids.map((id, i) =>
         citeWithCard(id, fullCard(id, { authorName: `Author ${i + 1}` })),
@@ -173,12 +198,45 @@ describe("GroundedSourceLinks", () => {
     // carousel controls present
     expect(html).toContain('aria-label="Previous source"');
     expect(html).toContain('aria-label="Next source"');
-    // one dot per source (3)
-    expect(html.match(/aria-label="Go to source \d+"/g)).toHaveLength(3);
-    // "Source 1 of 3" position label + only the FIRST card is rendered at a time
-    expect(html).toContain("Source 1 of 3");
+    // The window loops infinitely one card at a time, so there is one dot per
+    // card (any card can lead the window), not one dot per page of three.
+    expect(html.match(/aria-label="Go to source \d+"/g)).toHaveLength(5);
+    // The initial carousel window contains exactly sources 1–3.
+    expect(html).toContain("Sources 1–3 of 5");
     expect(html).toContain("Author 1");
-    expect(html).not.toContain("Author 2"); // one at a time
+    expect(html).toContain("Author 2");
+    expect(html).toContain("Author 3");
+    expect(html).not.toContain("Author 4");
+    expect(html).not.toContain("Author 5");
+  });
+
+  test("the carousel window wraps around the end so it loops infinitely", () => {
+    const items = [1, 2, 3, 4, 5];
+    expect(circularWindow(items, 0, 3)).toEqual([1, 2, 3]);
+    expect(circularWindow(items, 3, 3)).toEqual([4, 5, 1]);
+    expect(circularWindow(items, 4, 3)).toEqual([5, 1, 2]);
+    // fewer items than the window size just shows all of them
+    expect(circularWindow(items, 0, 8)).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  test("exactly three cards all render at once with no carousel controls", () => {
+    const ids = Array.from(
+      { length: 3 },
+      (_, index) =>
+        `10000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+    );
+    const html = render(
+      ids.map((id, i) =>
+        citeWithCard(id, fullCard(id, { authorName: `Author ${i + 1}` })),
+      ),
+    );
+    // All three fit in the window, so nothing can move — no controls, no counter.
+    expect(html).toContain("Author 1");
+    expect(html).toContain("Author 2");
+    expect(html).toContain("Author 3");
+    expect(html).not.toContain('aria-label="Previous source"');
+    expect(html).not.toContain('aria-label="Next source"');
+    expect(html).not.toContain("of 3");
   });
 
   test("mixes: a resolvable full card carousels, an unresolved source keeps its chip", () => {

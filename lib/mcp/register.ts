@@ -1,10 +1,8 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type {
   ImageContent,
-  ServerRequest,
-  ServerNotification,
-} from "@modelcontextprotocol/sdk/types.js";
+  McpServer,
+  ServerContext,
+} from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { supabaseAdmin } from "@/lib/supabase";
 import {
@@ -31,7 +29,13 @@ import {
   parseDayEnd,
   parseDayStart,
   sinceCutoff,
+  uiJsonContent,
 } from "./util";
+import {
+  DRAFTS_RESOURCE_URI,
+  POST_CARDS_RESOURCE_URI,
+  SAVED_POSTS_RESOURCE_URI,
+} from "./ui/register-ui";
 import {
   authorHandleFromProfileUrl,
   authorHandleFromUrl,
@@ -48,23 +52,36 @@ import {
   calendarDateSchema,
   timeZoneSchema,
 } from "@/lib/schedule-local-date";
-import { sanitizeVoiceProfile } from "@/lib/claude";
+import { ensureBiographicalFacts } from "@/lib/agent/specialists/backstory";
+import { readVoiceGuidance } from "@/lib/voice-profile-read";
 import { registerPublicResourceTools } from "./register-resources";
 import {
   findBookmarkResource,
   listBookmarkResources,
   saveBookmarkResource,
   summarizeBookmarkResource,
+  type SavedBookmarkResource,
 } from "@/lib/content-resource-operations";
 import {
-  discoveryThresholdFilter,
-  getDiscoveryThresholds,
-} from "@/lib/discovery-thresholds";
+  discoverSourcePosts,
+  SourcePostDiscoveryError,
+} from "@/lib/source-post-discovery";
 import {
   comparableRelevance,
   diverseCreatorResults,
   diversityCandidateLimit,
 } from "@/lib/mcp/creator-diversity";
+import { mcpWorkspaceId } from "@/lib/mcp/context";
+import { confirmScheduleDraft } from "@/lib/mcp/schedule-confirmation";
+import { SWIPE_FILE_APP_TOOL_META } from "@/lib/mcp/swipe-file-app";
+import {
+  isVariedDiscoverySearch,
+  variedDiscoveryOrder,
+} from "@/lib/discovery-selection";
+import {
+  claimDiscoveryRotationCursor,
+  recentlyUsedDiscoverySourceIds,
+} from "@/lib/discovery-history";
 
 const POST_TYPES = ["regular", "lead_magnet"] as const;
 const SORT_COLUMN = {
@@ -90,11 +107,9 @@ const SORT_COLUMN = {
 // so the agent can never starve to empty while the dashboard is full — and
 // LEFT-embeds this workspace's per-workspace classification (default embed, NOT
 // !inner: a post with no classification row for this workspace is still
-// returned). passesWorkspaceViral then drops only the posts this workspace has
-// EXPLICITLY reclassified non-viral; a missing row falls back to the global
-// verdict. Filtered per query via
-// .eq("workspace_post_classification.workspace_id", workspaceId). Kept in sync
-// with the in-app agent's POST_COLS (lib/agent/tools.ts).
+// returned). The canonical source-post discovery operation drops only posts
+// this workspace explicitly reclassified non-viral; a missing row falls back
+// to the global verdict.
 const POST_COLS =
   "id, account_id, text, post_url, posted_at, reactions, comments, reposts, viral_score, media_type, post_type, is_viral, accounts!inner(name, niche), workspace_post_classification(is_viral)";
 
@@ -102,9 +117,7 @@ const POST_COLS =
 // query. Fetch them only when the caller is looking at one post, or has
 // explicitly asked to see the post's visual asset.
 const POST_WITH_VISUAL_COLS =
-  "id, account_id, text, post_url, posted_at, reactions, comments, reposts, viral_score, media_type, post_type, media_urls, visual_kind, is_viral, accounts!inner(name, niche), workspace_post_classification(is_viral)";
-
-const NO_ROWS_SENTINEL = "00000000-0000-0000-0000-000000000000";
+  "id, account_id, text, post_url, posted_at, reactions, comments, reposts, viral_score, media_type, post_type, media_urls, visual_kind, is_viral, accounts!inner(name, niche, profile_pic_url), workspace_post_classification(is_viral)";
 
 // "Top from the latest scrape" = best posts PUBLISHED in this many days before
 // the most recent scrape run. 7 days ("this week" / what's working now), kept in
@@ -124,29 +137,19 @@ const SUPPORTED_IMAGE_MIME_TYPES = new Set([
   "image/webp",
 ]);
 
-// Resilient per-workspace viral eligibility (see POST_COLS). The query gates on
-// the GLOBAL posts.is_viral=true (the Swipe File's set), then LEFT-embeds this
-// workspace's classification. Keep the post UNLESS this workspace explicitly
-// demoted it; a MISSING row falls back to the global verdict so the agent never
-// starves while the dashboard is full. Kept in sync with lib/agent/tools.ts.
-type WpcEmbed = {
-  workspace_post_classification?:
-    | Array<{ is_viral: boolean }>
-    | { is_viral: boolean }
-    | null;
-};
-function passesWorkspaceViral<T extends WpcEmbed>(row: T): boolean {
-  const wpc = row.workspace_post_classification;
-  const first = Array.isArray(wpc) ? wpc[0] : wpc;
-  return first ? first.is_viral === true : true;
-}
-
 // Drops the workspace_post_classification join wrapper, account_id diversity
 // key, and is_viral gate column (all query internals, not fields the model
 // needs), then unwraps the accounts embed.
 function normalizeEmbed<
   T extends { accounts: unknown; workspace_post_classification?: unknown },
->(p: T, includeVisual = false) {
+>(
+  p: T,
+  includeVisual = false,
+): T & {
+  accounts: unknown;
+  media_urls?: string[];
+  visual_kind?: string | null;
+} {
   const {
     workspace_post_classification: _wpc,
     is_viral: _isViral,
@@ -170,7 +173,13 @@ function normalizeEmbed<
     ...rest,
     accounts: Array.isArray(p.accounts) ? (p.accounts[0] ?? null) : p.accounts,
   };
-  if (!includeVisual) return post;
+  if (!includeVisual) {
+    return post as T & {
+      accounts: unknown;
+      media_urls?: string[];
+      visual_kind?: string | null;
+    };
+  }
 
   return {
     ...post,
@@ -178,6 +187,10 @@ function normalizeEmbed<
       ? media_urls.filter((url): url is string => typeof url === "string")
       : [],
     visual_kind: typeof visual_kind === "string" ? visual_kind : null,
+  } as T & {
+    accounts: unknown;
+    media_urls?: string[];
+    visual_kind?: string | null;
   };
 }
 
@@ -186,6 +199,67 @@ function postColumns(includeVisual: boolean): typeof POST_COLS {
   // The visual projection is a strict superset of that shape, and
   // normalizeEmbed narrows those optional fields before exposing them.
   return (includeVisual ? POST_WITH_VISUAL_COLS : POST_COLS) as typeof POST_COLS;
+}
+
+// --- MCP Apps (SEP-1865) structured/view payloads ---------------------------
+// The model-facing text JSON stays byte-identical to the pre-MCP-Apps results;
+// the structured payload the ui:// card view renders may carry extra
+// view-only fields.
+
+// normalizeEmbed strips viral_score (the model never reasons over the raw
+// number); the card view uses it for the virality chip, so the view payload
+// re-attaches it.
+function withViralScore<T>(post: T, raw: unknown): T {
+  const score = (raw as { viral_score?: unknown } | null)?.viral_score;
+  return typeof score === "number" ? { ...post, viral_score: score } : post;
+}
+
+// The card view always queries the visual projection (avatars/media), but the
+// model-facing text must stay identical — when visuals weren't requested we
+// drop the profile_pic_url the wider accounts embed would otherwise add.
+function stripProfilePicUrl<T extends { accounts: unknown }>(post: T): T {
+  const accounts = post.accounts;
+  if (!accounts || typeof accounts !== "object" || Array.isArray(accounts)) return post;
+  if (!("profile_pic_url" in accounts)) return post;
+  const { profile_pic_url: _pic, ...rest } = accounts as Record<string, unknown>;
+  void _pic;
+  return { ...post, accounts: rest };
+}
+
+// The drafts view needs a body preview the text payload deliberately omits
+// (list_drafts documents "returns schedule fields but not the full post body").
+const DRAFT_SNIPPET_MAX = 200;
+
+function draftSnippet(body: string): string {
+  return body.length > DRAFT_SNIPPET_MAX
+    ? `${body.slice(0, DRAFT_SNIPPET_MAX).trimEnd()}…`
+    : body;
+}
+
+// The saved-posts view needs the scraped native fields (text, avatar, media,
+// engagement) that summarizeBookmarkResource strips from the model payload.
+function savedPostForView(bookmark: SavedBookmarkResource) {
+  return {
+    id: bookmark.id,
+    post_url: bookmark.post_url,
+    embed_urn: bookmark.embed_urn,
+    author_name: bookmark.author_name,
+    author_handle: bookmark.author_handle,
+    text_snippet: bookmark.text_snippet,
+    text: bookmark.text,
+    profile_pic_url: bookmark.profile_pic_url,
+    media_type: bookmark.media_type,
+    media_urls: Array.isArray(bookmark.media_urls)
+      ? bookmark.media_urls.filter((url): url is string => typeof url === "string")
+      : [],
+    reactions: bookmark.reactions,
+    comments: bookmark.comments,
+    note: bookmark.note,
+    category_id: bookmark.category_id,
+    post_type: bookmark.post_type,
+    posted_at: bookmark.posted_at,
+    saved_at: bookmark.saved_at,
+  };
 }
 
 function shouldIncludePostVisual(
@@ -280,14 +354,29 @@ async function renderPostImage(url: string): Promise<ImageContent | null> {
   }
 }
 
-async function postContentWithRenderedImages(payload: unknown, posts: unknown[]) {
+async function postContentWithRenderedImages(
+  payload: Record<string, unknown>,
+  posts: unknown[],
+  includeStructuredContent = false,
+  structuredPayload?: unknown,
+) {
   const urls = visualUrlsFromPosts(posts);
-  if (urls.length === 0) return jsonContent(payload);
+  if (urls.length === 0) {
+    // A view payload means an MCP Apps view is attached — always hand it the
+    // structured result, even when there were no embeddable images.
+    if (structuredPayload !== undefined) {
+      return uiJsonContent(payload, structuredPayload);
+    }
+    return includeStructuredContent ? uiJsonContent(payload) : jsonContent(payload);
+  }
   const images = (await Promise.all(urls.map(renderPostImage))).filter(
     (image): image is ImageContent => image !== null,
   );
   return {
     content: [...jsonContent(payload).content, ...images],
+    ...(includeStructuredContent
+      ? { structuredContent: structuredPayload ?? payload }
+      : {}),
   };
 }
 
@@ -295,13 +384,12 @@ async function postContentWithRenderedImages(payload: unknown, posts: unknown[])
  * Pull the workspace id stamped onto the auth token by `verifyToken`.
  * Returns the workspace id or null. Tool handlers should return `errorContent`
  * with a 401-equivalent message when this is null — that path means the
- * caller authenticated but isn't a member of any Clerk org.
+ * caller authenticated but the verified token did not carry a Clerk user.
  */
-type Extra = RequestHandlerExtra<ServerRequest, ServerNotification>;
+type Extra = ServerContext;
 
 function workspaceFromExtra(extra: Extra): string | null {
-  const wsId = extra.authInfo?.extra?.workspaceId;
-  return typeof wsId === "string" && wsId.length > 0 ? wsId : null;
+  return mcpWorkspaceId(extra);
 }
 
 const NO_WORKSPACE_MSG =
@@ -361,11 +449,18 @@ export function registerSwipeTools(server: McpServer) {
   server.registerTool(
     "search_viral_posts",
     {
-      title: "Search viral posts",
+      title: "Search Source Posts",
       description:
-        "Search the viral swipe file. Filter by niche, date range, engagement thresholds, and post type. Returns top matching posts from accounts your workspace tracks. A one-post search includes rendered original images when available; set include_visual to true for images in a larger result set.",
+        "Search the Source Posts in your Swipe File. Filter by post-copy topic, Creator niche, date range, engagement thresholds, and post type. Returns structured results with visual asset URLs from Creators in your workspace and renders an interactive Swipe File in supported clients. A one-post search embeds original images when available; set include_visual to true to embed images in a larger result set.",
       inputSchema: {
-        niche: z.string().optional().describe("Exact account niche, e.g. 'AI', 'SaaS'."),
+        niche: z
+          .string()
+          .optional()
+          .describe("Exact Creator niche, matched case-insensitively, e.g. 'AI', 'SaaS'."),
+        query: z
+          .string()
+          .optional()
+          .describe("Full-text topic search within post copy."),
         since: z
           .enum(["1d", "7d", "30d"])
           .optional()
@@ -384,8 +479,13 @@ export function registerSwipeTools(server: McpServer) {
         include_visual: z
           .boolean()
           .optional()
-          .describe("Include rendered original images, visual asset URLs, and visual metadata. Use when the user asks to see a post's image or visual asset. Always included when limit is 1."),
+          .describe("Embed rendered original images in the tool content. Visual asset URLs and metadata are always included for the interactive app. Image content is always embedded when limit is 1."),
+        strict_ranking: z
+          .boolean()
+          .optional()
+          .describe("Set true only when the user explicitly asks for an exact ranking. Normal discovery rotates among the most relevant eligible posts so repeated searches surface fresh examples."),
       },
+      _meta: SWIPE_FILE_APP_TOOL_META,
     },
     async (args, extra) => {
       try {
@@ -393,53 +493,67 @@ export function registerSwipeTools(server: McpServer) {
         if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
         const accountIds = await trackedAccountIdsForService(workspaceId);
         const sb = supabaseAdmin();
-        const discoveryThresholds = await getDiscoveryThresholds(workspaceId);
         const sortKey = args.sort ?? "viral";
         const sortCol = SORT_COLUMN[sortKey];
         const ascending = args.dir === "asc";
         const limit = args.limit ?? 10;
-        const includeVisual = shouldIncludePostVisual(limit, args.include_visual);
+        const renderVisuals = shouldIncludePostVisual(limit, args.include_visual);
+        // The attached MCP App renders post media directly from these URLs.
+        // Keep URL metadata in every search result, but only embed base64 image
+        // content for narrow or explicitly visual model requests.
+        const includeVisualMetadata = true;
 
-        let q = sb
-          .from("posts")
-          .select(postColumns(includeVisual))
-          .in("account_id", accountIds.length ? accountIds : [NO_ROWS_SENTINEL])
-          .eq("is_viral", true)
-          .or(discoveryThresholdFilter(discoveryThresholds))
-          .eq("workspace_post_classification.workspace_id", workspaceId)
-          .is("accounts.archived_at", null)
-          .order(sortCol, { ascending, nullsFirst: false })
-          .limit(diversityCandidateLimit(limit));
-
-        if (args.niche) q = q.eq("accounts.niche", args.niche);
         const sinceIso = sinceCutoff(args.since);
         const fromIso = parseDayStart(args.from);
         const toIso = parseDayEnd(args.to);
-        if (sinceIso) q = q.gte("posted_at", sinceIso);
-        if (fromIso) q = q.gte("posted_at", fromIso);
-        if (toIso) q = q.lte("posted_at", toIso);
-        if (args.min_reactions !== undefined) q = q.gte("reactions", args.min_reactions);
-        if (args.min_comments !== undefined) q = q.gte("comments", args.min_comments);
-        if (args.post_type) q = q.eq("post_type", args.post_type);
-
-        const { data, error } = await q;
-        if (error) return dbErrorContent("search_viral_posts", error);
-        const candidates = (data ?? []).filter(passesWorkspaceViral);
-        const posts = diverseCreatorResults(
+        const discovery = await discoverSourcePosts(sb, {
+          workspaceId,
+          columns: postColumns(includeVisualMetadata),
+          accountIds,
+          filters: {
+            niche: args.niche,
+            query: args.query,
+            since: sinceIso,
+            from: fromIso,
+            to: toIso,
+            minReactions: args.min_reactions,
+            minComments: args.min_comments,
+            postType: args.post_type,
+          },
+          order: { column: sortCol, ascending },
+          window: {
+            kind: "limit",
+            limit: diversityCandidateLimit(limit),
+          },
+        });
+        const candidates = discovery.rows;
+        const creatorDiverseCandidates = diverseCreatorResults(
           candidates,
-          limit,
+          candidates.length,
           (post) => String(post.account_id ?? post.id),
           (best, alternative) =>
             comparableRelevance(best[sortCol], alternative[sortCol], {
               ascending,
               kind: sortKey === "posted" ? "posted" : "number",
             }),
-        )
-          .map((post) => normalizeEmbed(post, includeVisual));
-        return includeVisual
-          ? await postContentWithRenderedImages({ ok: true, count: posts.length, posts }, posts)
-          : jsonContent({ ok: true, count: posts.length, posts });
+        );
+        const selected = isVariedDiscoverySearch(args)
+          ? variedDiscoveryOrder({
+              candidates: creatorDiverseCandidates,
+              usedIds: await recentlyUsedDiscoverySourceIds(workspaceId),
+              cursor: await claimDiscoveryRotationCursor(workspaceId),
+            }).slice(0, limit)
+          : creatorDiverseCandidates.slice(0, limit);
+        const posts = selected
+          .map((post) => normalizeEmbed(post, includeVisualMetadata));
+        const payload = { ok: true, count: posts.length, posts };
+        return renderVisuals
+          ? await postContentWithRenderedImages(payload, posts, true)
+          : { ...jsonContent(payload), structuredContent: payload };
       } catch (e) {
+        if (e instanceof SourcePostDiscoveryError) {
+          return dbErrorContent("search_viral_posts", e.readError);
+        }
         return errorContent((e as Error).message);
       }
     },
@@ -452,6 +566,7 @@ export function registerSwipeTools(server: McpServer) {
       description:
         "Fetch a single post by id, including rendered original images, visual URLs, and visual metadata when available. Only returns posts from accounts your workspace tracks.",
       inputSchema: { id: z.string().uuid().describe("Post UUID.") },
+      _meta: { ui: { resourceUri: POST_CARDS_RESOURCE_URI } },
     },
     async ({ id }, extra) => {
       try {
@@ -470,7 +585,10 @@ export function registerSwipeTools(server: McpServer) {
         if (error) return notFoundContent("Post", id);
         if (!data) return notFoundContent("Post", id);
         const post = normalizeEmbed(data, true);
-        return postContentWithRenderedImages({ ok: true, post }, [post]);
+        return postContentWithRenderedImages({ ok: true, post }, [post], true, {
+          ok: true,
+          post: withViralScore(post, data),
+        });
       } catch (e) {
         return errorContent((e as Error).message);
       }
@@ -538,6 +656,7 @@ export function registerSwipeTools(server: McpServer) {
           .optional()
           .describe("Include rendered original images, visual asset URLs, and visual metadata. Use when the user asks to see a post's image or visual asset. Always included when limit is 1."),
       },
+      _meta: { ui: { resourceUri: POST_CARDS_RESOURCE_URI } },
     },
     async ({ limit, post_type, include_visual }, extra) => {
       try {
@@ -563,24 +682,22 @@ export function registerSwipeTools(server: McpServer) {
         ).toISOString();
         const resultLimit = limit ?? 5;
         const includeVisual = shouldIncludePostVisual(resultLimit, include_visual);
-        let q = sb
-          .from("posts")
-          .select(postColumns(includeVisual))
-          .in("account_id", accountIds)
-          .eq("is_viral", true)
-          .eq("workspace_post_classification.workspace_id", workspaceId)
-          .is("accounts.archived_at", null)
-          .gte("posted_at", sinceIso)
-          .order("reactions", { ascending: false, nullsFirst: false })
-          .limit(resultLimit);
-        // Optional post-type filter (regular vs lead_magnet) so "top regular
-        // posts" doesn't silently include lead-magnet posts.
-        if (post_type) q = q.eq("post_type", post_type);
-        const { data, error } = await q;
-        if (error) return dbErrorContent("get_top_from_batch", error);
-        const posts = (data ?? [])
-          .filter(passesWorkspaceViral)
-          .map((post) => normalizeEmbed(post, includeVisual));
+        // Always select the visual projection: the attached MCP Apps card view
+        // renders avatars and media from it. The model-facing text strips those
+        // fields again (stripProfilePicUrl) unless visuals were requested, so
+        // the text result is unchanged from before.
+        const discovery = await discoverSourcePosts(sb, {
+          workspaceId,
+          columns: postColumns(true),
+          accountIds,
+          filters: { since: sinceIso, postType: post_type },
+          order: { column: "reactions", ascending: false },
+          window: { kind: "limit", limit: resultLimit },
+        });
+        const posts = discovery.rows.map((row) => {
+          const post = normalizeEmbed(row, includeVisual);
+          return includeVisual ? post : stripProfilePicUrl(post);
+        });
         const payload = {
           ok: true,
           scrape: {
@@ -591,10 +708,19 @@ export function registerSwipeTools(server: McpServer) {
           count: posts.length,
           posts,
         };
+        const viewPayload = {
+          ...payload,
+          posts: discovery.rows.map((row) =>
+            withViralScore(normalizeEmbed(row, true), row),
+          ),
+        };
         return includeVisual
-          ? await postContentWithRenderedImages(payload, posts)
-          : jsonContent(payload);
+          ? await postContentWithRenderedImages(payload, posts, true, viewPayload)
+          : uiJsonContent(payload, viewPayload);
       } catch (e) {
+        if (e instanceof SourcePostDiscoveryError) {
+          return dbErrorContent("get_top_from_batch", e.readError);
+        }
         return errorContent((e as Error).message);
       }
     },
@@ -822,6 +948,7 @@ export function registerSwipeTools(server: McpServer) {
           .describe("Filter by board status. Omit to include all board drafts."),
         limit: z.number().int().min(1).max(100).optional().describe("Default 50, max 100."),
       },
+      _meta: { ui: { resourceUri: DRAFTS_RESOURCE_URI } },
     },
     async ({ status, limit }, extra) => {
       try {
@@ -831,11 +958,24 @@ export function registerSwipeTools(server: McpServer) {
           status,
           limit: limit ?? 50,
         });
-        return jsonContent({
-          ok: true,
-          count: drafts.length,
-          drafts: drafts.map(draftForMcp),
-        });
+        // The view payload adds a short body preview per draft (the card needs
+        // something to show); the model-facing text keeps the body out, as the
+        // tool description promises.
+        return uiJsonContent(
+          {
+            ok: true,
+            count: drafts.length,
+            drafts: drafts.map(draftForMcp),
+          },
+          {
+            ok: true,
+            count: drafts.length,
+            drafts: drafts.map((draft) => ({
+              ...draftForMcp(draft),
+              body_snippet: draftSnippet(draft.body),
+            })),
+          },
+        );
       } catch (e) {
         return errorContent((e as Error).message);
       }
@@ -847,7 +987,7 @@ export function registerSwipeTools(server: McpServer) {
     {
       title: "Schedule a saved draft on LinkedIn",
       description:
-        "Create or update the real LinkedIn auto-publish schedule for one saved draft. The workspace must have LinkedIn connected. Use list_drafts first to get the draft id. scheduled_at must be an ISO datetime in the future.",
+        "Create or update the real LinkedIn auto-publish schedule for one saved draft after explicit user confirmation. Declining or cancelling leaves the draft unchanged. The workspace must have LinkedIn connected. Use list_drafts first to get the draft id. scheduled_at must be an ISO datetime in the future.",
       inputSchema: {
         id: z.string().uuid().describe("Draft UUID from list_drafts."),
         scheduled_at: z
@@ -876,12 +1016,27 @@ export function registerSwipeTools(server: McpServer) {
         const workspaceId = workspaceFromExtra(extra);
         if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
 
-        const outcome = await draftLifecycleForWorkspace(workspaceId).schedule(id, {
-          scheduledAt: scheduled_at,
-          planToPostOn: plan_to_post_on,
-          timezone,
-          firstComment: first_comment,
-        });
+        const confirmation = await confirmScheduleDraft(
+          {
+            id,
+            scheduled_at,
+            plan_to_post_on,
+            timezone,
+            first_comment,
+          },
+          extra,
+        );
+        if (!confirmation.confirmed) return confirmation.result;
+
+        const outcome = await draftLifecycleForWorkspace(workspaceId).schedule(
+          confirmation.input.id,
+          {
+            scheduledAt: confirmation.input.scheduled_at,
+            planToPostOn: confirmation.input.plan_to_post_on,
+            timezone: confirmation.input.timezone,
+            firstComment: confirmation.input.first_comment,
+          },
+        );
         if (!outcome.ok) return errorContent(outcome.message);
         return jsonContent({ ok: true, draft: draftForMcp(outcome.value) });
       } catch (e) {
@@ -934,38 +1089,15 @@ export function registerSwipeTools(server: McpServer) {
       try {
         const workspaceId = workspaceFromExtra(extra);
         if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
-        const sb = supabaseAdmin();
-        const { data, error } = await sb
-          .from("voice_profiles")
-          .select(
-            "linkedin_handle, display_name, headline, profile, summary, source_post_count, status, model, generated_at",
-          )
-          .eq("workspace_id", workspaceId)
-          .maybeSingle();
-        if (error) return dbErrorContent("get_voice", error);
-        if (!data || data.status !== "ready" || !data.profile) {
-          return jsonContent({
-            ok: false,
-            error:
-              "No voice profile yet. Ask the user to generate one in the Voice tab (paste their LinkedIn profile URL).",
-            status: data?.status ?? null,
-          });
-        }
-        return jsonContent({
-          ok: true,
-          voice: {
-            linkedin_handle: data.linkedin_handle,
-            display_name: data.display_name,
-            headline: data.headline,
-            summary: data.summary,
-            profile: sanitizeVoiceProfile(data.profile),
-            source_post_count: data.source_post_count,
-            model: data.model,
-            generated_at: data.generated_at,
-          },
-        });
+        return jsonContent(
+          await readVoiceGuidance(workspaceId, {
+            client: supabaseAdmin(),
+            enrichProfile: ({ profile, signal }) =>
+              ensureBiographicalFacts({ workspaceId, profile, signal }),
+          }),
+        );
       } catch (e) {
-        return errorContent((e as Error).message);
+        return dbErrorContent("get_voice", e);
       }
     },
   );
@@ -1147,6 +1279,7 @@ export function registerSwipeTools(server: McpServer) {
       inputSchema: {
         limit: z.number().int().min(1).max(100).optional().describe("Default 20, max 100."),
       },
+      _meta: { ui: { resourceUri: SAVED_POSTS_RESOURCE_URI } },
     },
     async (args, extra) => {
       try {
@@ -1159,11 +1292,21 @@ export function registerSwipeTools(server: McpServer) {
           workspaceId,
           limit,
         });
-        return jsonContent({
-          ok: true,
-          count: saved.length,
-          saved: saved.map(summarizeBookmarkResource),
-        });
+        // The view payload adds the scraped native fields (text, avatar, media,
+        // engagement) the card renders; the model-facing text keeps the
+        // trimmed summarizeBookmarkResource shape.
+        return uiJsonContent(
+          {
+            ok: true,
+            count: saved.length,
+            saved: saved.map(summarizeBookmarkResource),
+          },
+          {
+            ok: true,
+            count: saved.length,
+            saved: saved.map(savedPostForView),
+          },
+        );
       } catch (e) {
         return dbErrorContent("list_saved_posts", e);
       }

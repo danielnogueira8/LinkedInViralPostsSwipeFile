@@ -6,13 +6,13 @@ import { z } from "zod";
 //
 // The product is voice-matching, so an assistant that forgets a stated rule
 // ("never use em-dashes", "keep posts under 900 characters", "don't open with a
-// question") three chats later feels un-agentic. Preferences fix that: a small,
-// bounded set of rules injected into every turn as a trailing (uncached) system
-// block, persisted per workspace so they survive across chats and sessions.
+// question") three chats later feels un-agentic. Preferences fix that: an
+// evolving set of rules persisted per workspace so they survive across chats
+// and sessions. The newest subset is injected into each turn as a trailing
+// (uncached) system block.
 //
-// The caps here are the SINGLE SOURCE OF TRUTH for both the CRUD API (write-time
-// validation) and the agent injection (read-time safety) — so the injected
-// block can never balloon the prompt, and a rule can't be an unbounded blob.
+// The per-rule and injection caps here keep individual records and prompts
+// bounded without limiting how much durable memory the agent may accumulate.
 //
 // Two provenances:
 //   • 'user'    — the user typed it on the Voice tab. Authoritative.
@@ -47,16 +47,9 @@ export const PREF_RULE_MAX = 160;
 // more generously than the rule itself.
 export const PREF_DETAIL_MAX = 1_000;
 
-// Per-workspace ceiling on stored rules. Bounds storage AND — since every rule
-// is injected every turn — the worst-case prompt cost. 20 rules × 160 chars ≈
-// 3.2k chars ≈ 800 tokens added to the UNCACHED trailing block; trivial against
-// the ~14k cached prefix, and it leaves the cache breakpoint untouched.
-export const PREFS_PER_WORKSPACE_MAX = 20;
-
-// Hard ceiling on how many rules we INJECT into a turn, independent of how many
-// are stored (they can't exceed PREFS_PER_WORKSPACE_MAX anyway, but this is a
-// belt-and-suspenders bound the injection path owns so the block size is
-// guaranteed regardless of any future change to the storage cap). Newest first.
+// Hard ceiling on how many of the newest rules we INJECT into a turn. Storage
+// remains unbounded so the Voice review surface retains the user's complete
+// history while prompt size remains predictable.
 export const PREFS_INJECTED_MAX = 20;
 
 // Belt-and-suspenders total-char bound on the injected block's rule + detail
@@ -72,9 +65,7 @@ export const PREFS_INJECTED_CHARS_MAX = 24_000;
 // clamp to the cap. Deterministic — used by BOTH the API and remember_preference
 // so a stored rule and a learned rule are normalized identically.
 export function normalizePreferenceRule(raw: string): string {
-  const collapsed = raw
-    .replace(/\s+/g, " ")
-    .trim();
+  const collapsed = raw.replace(/\s+/g, " ").trim();
   return [...collapsed].slice(0, PREF_RULE_MAX).join("");
 }
 
@@ -83,7 +74,9 @@ export function normalizePreferenceRule(raw: string): string {
 // edges and clamp to the cap — never flatten it to one line. Empty input
 // (including whitespace-only) normalizes to "" so callers can treat that as
 // "no detail" uniformly.
-export function normalizePreferenceDetail(raw: string | null | undefined): string {
+export function normalizePreferenceDetail(
+  raw: string | null | undefined,
+): string {
   if (!raw) return "";
   return raw
     .replace(/[ \t]+/g, " ")
@@ -117,9 +110,7 @@ export function preferenceDedupKey(rule: string): string {
     .replace(/[。！？、，；：（）【】《》．؟]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-  return containsNonAscii
-    ? `u:${unicodeKey || normalized}`
-    : asciiKey;
+  return containsNonAscii ? `u:${unicodeKey || normalized}` : asciiKey;
 }
 
 // True when `rule` duplicates one already present (by dedup key). Lets the API
@@ -160,7 +151,8 @@ export type PreferenceInput = z.infer<typeof preferenceInputSchema>;
 // prompt is byte-identical to a turn without this feature (no empty block).
 // ---------------------------------------------------------------------------
 export function renderPreferencesBlock(
-  prefs: ReadonlyArray<{ rule: string; detail?: string | null }> | null | undefined,
+  prefs:
+    ReadonlyArray<{ rule: string; detail?: string | null }> | null | undefined,
 ): string {
   if (!prefs || prefs.length === 0) return "";
   const lines: string[] = [];

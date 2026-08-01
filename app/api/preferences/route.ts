@@ -1,14 +1,10 @@
 import { NextResponse } from "next/server";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
-import {
-  preferenceInputSchema,
-  PREFS_PER_WORKSPACE_MAX,
-  type ContentPreference,
-} from "@/lib/preferences";
+import { preferenceInputSchema } from "@/lib/preferences";
 import {
   createPreferenceResource,
-  PREF_COLS,
+  listPreferenceResources,
 } from "@/lib/content-resource-operations";
 import { listReviewablePreferences } from "@/lib/preference-evidence";
 
@@ -16,25 +12,21 @@ export const runtime = "nodejs";
 
 // -----------------------------------------------------------------------------
 // /api/preferences — list + create the workspace's standing writing rules.
-// Workspace-scoped via scopedSupabase (RLS also enforces it). The count cap +
-// rule validation are shared with the agent injection (lib/preferences), so the
-// injected block can't balloon and the rule count can't grow without limit.
+// Workspace-scoped via scopedSupabase (RLS also enforces it). Stored rules are
+// unbounded; the agent's prompt-loading path independently bounds injection.
 // -----------------------------------------------------------------------------
 
 export async function GET() {
   try {
     const sb = await scopedSupabase();
-    const { data, error } = await sb.raw
-      .from("content_preferences")
-      .select(PREF_COLS)
-      .eq("workspace_id", sb.workspaceId)
-      .order("created_at", { ascending: false })
-      .limit(PREFS_PER_WORKSPACE_MAX);
-    if (error) throw error;
+    const stored = await listPreferenceResources({
+      db: sb.raw,
+      workspaceId: sb.workspaceId,
+    });
     const preferences = await listReviewablePreferences({
       db: sb.raw,
       workspaceId: sb.workspaceId,
-      preferences: (data ?? []) as ContentPreference[],
+      preferences: stored,
     });
     return NextResponse.json({
       ok: true,
@@ -52,7 +44,10 @@ export async function POST(req: Request) {
     );
     if (!parsed.success) {
       return NextResponse.json(
-        { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" },
+        {
+          ok: false,
+          error: parsed.error.issues[0]?.message ?? "Invalid input",
+        },
         { status: 400 },
       );
     }
@@ -64,7 +59,10 @@ export async function POST(req: Request) {
       data: parsed.data,
     });
     if (!result.ok) {
-      return NextResponse.json({ ok: false, error: result.error }, { status: result.status });
+      return NextResponse.json(
+        { ok: false, error: result.error },
+        { status: result.status },
+      );
     }
     return NextResponse.json({ ok: true, preference: result.value });
   } catch (e) {

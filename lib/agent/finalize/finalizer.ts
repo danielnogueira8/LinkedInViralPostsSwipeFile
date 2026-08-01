@@ -17,6 +17,7 @@ import { RENDER_POST_MAX_CHARS } from "@/lib/agent/tools";
 import type { RecentDraft } from "@/lib/recent-drafts";
 import type { AdapterHealthRegistry } from "@/lib/agent/adapter-health";
 import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
+import { truncateAtWordBoundary } from "@/lib/text-truncate";
 import {
   aiTellRepairStage,
   contractStage,
@@ -201,6 +202,12 @@ export type DraftFinalizerDecision = {
   samenessRewrote: boolean;
 };
 
+export type DraftFinalizerStage =
+  | "validation"
+  | "source_fidelity"
+  | "ai_tell_check"
+  | "artifact";
+
 export type DraftFinalizerOptions = {
   workspaceId: string;
   policy?: DraftOutputPolicy;
@@ -215,6 +222,8 @@ export type DraftFinalizerOptions = {
   maxPostChars?: number;
   idFactory?: () => string;
   onDecision?: (decision: DraftFinalizerDecision) => void;
+  /** Reports the exact blocking stage currently running for live narration. */
+  onStage?: (stage: DraftFinalizerStage) => void;
   adapterHealth?: AdapterHealthRegistry;
   telemetry?: CoworkTurnTelemetry;
   // Voice-aware editor options, passed BY REFERENCE to every specialists.edit
@@ -279,6 +288,13 @@ export function createDraftFinalizer(
   const acceptedKeys = new Set<string>();
   const rejectedCandidateKeys = new Set<string>();
   let acceptedCount = 0;
+  const reportStage = (stage: DraftFinalizerStage): void => {
+    try {
+      options.onStage?.(stage);
+    } catch {
+      // Progress narration must never be able to break draft delivery.
+    }
+  };
 
   const candidateIdentity = (candidate: DraftCandidate): string | null => {
     const body = candidate.body.trim();
@@ -346,6 +362,7 @@ export function createDraftFinalizer(
         reject(candidate.origin, "cancelled", "Draft finalization was cancelled."),
       );
     }
+    reportStage("validation");
 
     // Gates 1-4 run as an ordered stage sequence (see finalizer-stages.ts).
     // Each stage assumes every earlier one already passed, so the runner
@@ -437,11 +454,15 @@ export function createDraftFinalizer(
     const sourceVerified = state.sourceVerified;
 
     // -------------------------------------------------------------------------
-    // Gate 4: Quality — deterministic edit, then ONE model specialist chosen by
-    // turn type. Source/modeled turns run source-fidelity review for telemetry
-    // only; the model-based verdict is no longer a hard rejection. Everything
-    // else runs AI-tell repair. Cross-slot sameness rewriting is intentionally
-    // off the blocking path.
+    // Gate 4: Quality — deterministic edit, then the model specialists.
+    // Source/modeled turns run source-fidelity review for telemetry only; the
+    // model-based verdict is no longer a hard rejection. AI-tell repair runs
+    // for EVERY draft, sourced or not — it was previously skipped on sourced
+    // turns, which let grounded drafts ship with classic AI tells (staccato
+    // triads, signposting) because only ungrounded originals were repaired.
+    // The repair pass itself short-circuits on clean bodies, so a tell-free
+    // draft pays no extra model call. Cross-slot sameness rewriting is
+    // intentionally off the blocking path.
     // -------------------------------------------------------------------------
     const editResult = editStage(ctx, state);
     // editStage never rejects (a pure body transform) but is typed as a
@@ -449,6 +470,7 @@ export function createDraftFinalizer(
     state = editResult.ok ? editResult.state : state;
 
     if (resolvedSourceRow && candidate.provenance) {
+      reportStage("source_fidelity");
       const fidelityResult = await sourceFidelityStage(ctx, state, resolvedSourceRow);
       if (!fidelityResult.ok) {
         return emit(
@@ -459,18 +481,18 @@ export function createDraftFinalizer(
         );
       }
       state = fidelityResult.state;
-    } else {
-      const repairResult = await aiTellRepairStage(ctx, state);
-      if (!repairResult.ok) {
-        return emit(
-          candidate,
-          reject(candidate.origin, repairResult.rejection.code, repairResult.rejection.message),
-          sourceVerified,
-          editsSoFar(),
-        );
-      }
-      state = repairResult.state;
     }
+    reportStage("ai_tell_check");
+    const repairResult = await aiTellRepairStage(ctx, state);
+    if (!repairResult.ok) {
+      return emit(
+        candidate,
+        reject(candidate.origin, repairResult.rejection.code, repairResult.rejection.message),
+        sourceVerified,
+        editsSoFar(),
+      );
+    }
+    state = repairResult.state;
 
     const finalTransformResult = finalTransformStage(ctx, state);
     if (!finalTransformResult.ok) {
@@ -493,6 +515,7 @@ export function createDraftFinalizer(
     // Security redaction is itself a body mutation. It must happen before the
     // artifact build so a prompt leak cannot be persisted as a broken
     // placeholder-only artifact.
+    reportStage("artifact");
     const body = redactHighConfidenceLeaks(state.body).text;
 
     // -------------------------------------------------------------------------
@@ -511,7 +534,8 @@ export function createDraftFinalizer(
         { edited: edited.changed, repaired, samenessRewrote: false },
       );
     }
-    const title = body.split("\n", 1)[0].slice(0, 60).trim() || "Draft post";
+    const title =
+      truncateAtWordBoundary(body.split("\n", 1)[0] ?? "", 60) || "Draft post";
     const artifact = validateFinalArtifact({
       id: makeId(),
       kind: "post",

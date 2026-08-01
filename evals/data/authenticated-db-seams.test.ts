@@ -11,9 +11,14 @@ const ALLOWED_ADMIN_APP_FILES = new Set([
   "app/api/backfill-post-types/route.ts",
   "app/api/backfill-status/route.ts",
   "app/api/cron/agent-loop/route.ts",
+  "app/api/cron/agent-inbox/route.ts", // service-only daily inbox generation
   "app/api/cron/daily-recovery/route.ts",
   "app/api/cron/daily/route.ts",
   "app/api/cron/edit-delta-distill/route.ts",
+  // Read-only probe over the GLOBAL posts corpus (cross-workspace by design:
+  // topic clusters are a per-niche signal, not a per-workspace one). Writes
+  // nothing and calls no model; CRON_SECRET-gated like the other cron routes.
+  "app/api/cron/topic-cluster-probe/route.ts",
   "app/api/health/route.ts",
   "app/api/internal/jobs/health/route.ts",
   "app/lm/[slug]/page.tsx", // intentionally public resource lookup
@@ -38,7 +43,10 @@ describe("authenticated database seams", () => {
   });
 
   test("the scoped client retains explicit workspace predicates", () => {
-    const source = readFileSync(resolve(ROOT, "lib/supabase-scoped.ts"), "utf8");
+    const source = readFileSync(
+      resolve(ROOT, "lib/supabase-scoped.ts"),
+      "utf8",
+    );
 
     expect(source).toContain('.eq("workspace_id", workspaceId)');
     expect(source).toContain("const sb = supabaseAdmin();");
@@ -58,7 +66,9 @@ describe("authenticated database seams", () => {
     const offenders = sourceFiles(APP).flatMap((path) => {
       const source = readFileSync(path, "utf8");
       if (!source.includes("getConnection(")) return [];
-      return /getConnection\([^,\n)]+\)/.test(source) ? [relative(ROOT, path)] : [];
+      return /getConnection\([^,\n)]+\)/.test(source)
+        ? [relative(ROOT, path)]
+        : [];
     });
 
     expect(offenders).toEqual([]);

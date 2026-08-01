@@ -8,12 +8,13 @@ import {
   canPublish,
 } from "@/lib/publishing";
 import { getConnectUrl, deleteAccount } from "@/lib/zernio";
+import { parseLinkedInOAuthReturnTo } from "@/lib/linkedin-integration-destination";
 
 export const runtime = "nodejs";
 
 // -----------------------------------------------------------------------------
 // The workspace's LinkedIn publishing connection (via Zernio).
-//   GET    → connection status for the Settings card + the schedule gate.
+//   GET    → connection status for the Integrations/Settings cards + schedule gate.
 //   POST   → start the hosted OAuth flow; returns { authUrl } to redirect to.
 //   DELETE → disconnect (best-effort on Zernio's side + mark our row).
 // All workspace-scoped; the Zernio account id is resolved from the workspace,
@@ -72,9 +73,12 @@ export async function POST(req: Request) {
     // Where to land the browser after OAuth. Zernio has no state-passthrough,
     // so we carry the return target IN the redirectUrl itself — Zernio redirects
     // to exactly this URL, so ?returnTo survives the round-trip and finalize
-    // reads it back. Allow-list only "welcome" (the onboarding wizard); anything
-    // else defaults to Settings. Never reflect an arbitrary target.
-    const returnTo = new URL(req.url).searchParams.get("returnTo") === "welcome" ? "welcome" : "";
+    // reads it back. The onboarding wizard and Integrations hub are explicit
+    // allow-list entries; anything else defaults to Settings. Never reflect an
+    // arbitrary target.
+    const returnTo = parseLinkedInOAuthReturnTo(
+      new URL(req.url).searchParams.get("returnTo"),
+    );
     const redirectUrl =
       `${originFrom(req)}/api/integrations/linkedin/finalize` +
       (returnTo ? `?returnTo=${returnTo}` : "");

@@ -39,6 +39,28 @@ const POSTS_HANDLE_RE = /\/posts\/([^_/?#]+)_/i;
 const PROFILE_HANDLE_RE = /linkedin\.com\/in\/([^/?#]+)/i;
 
 /**
+ * Accept only HTTPS URLs owned by LinkedIn and return their normalized form.
+ * Shared by every server path that persists or fetches a LinkedIn URL so the
+ * security boundary cannot drift between callers.
+ */
+export function verifiedLinkedInSourceUrl(value: unknown): string | undefined {
+  if (typeof value !== "string" || !value) return undefined;
+  try {
+    const url = new URL(value);
+    const hostname = url.hostname.toLowerCase();
+    if (
+      url.protocol !== "https:" ||
+      (hostname !== "linkedin.com" && !hostname.endsWith(".linkedin.com"))
+    ) {
+      return undefined;
+    }
+    return url.toString();
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Pull the activity id out of any LinkedIn post URL we accept.
  * Returns null if the URL doesn't look like one we can handle.
  */

@@ -6,7 +6,6 @@ import {
   X,
   MessageSquare,
   ExternalLink,
-  Loader2,
   ShieldCheck,
   AlertCircle,
 } from "lucide-react";
@@ -21,6 +20,7 @@ import {
   type CreatorStyleRow,
   type CreatorStyleProfile,
 } from "@/lib/creator-styles";
+import { LoadingState } from "@/components/ui/loading-state";
 
 type SourceRef = {
   id: string;
@@ -137,8 +137,8 @@ export function StyleDetailDrawer({
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-4 py-4">
           {loading ? (
-            <div className="flex items-center gap-2 py-10 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" /> Loading style…
+            <div className="py-10">
+              <LoadingState label="Loading style" />
             </div>
           ) : error ? (
             <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-3 text-sm text-destructive">

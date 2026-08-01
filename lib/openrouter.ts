@@ -1,6 +1,13 @@
 import { supabaseAdmin } from "./supabase";
 import { holdWorkspaceCostClaims } from "./workspace-cost-claims";
 import { providerModelAttribution } from "./agent/cowork-adapter-attempt";
+import {
+  isOpenAIEmbeddingModel,
+  isOpenAIImageModel,
+  OPENAI_EMBEDDING_MODEL,
+  OPENAI_IMAGE_MODEL,
+  resolveNativeOpenAIPrimary,
+} from "./model-provider-routing";
 export { providerModelAttribution } from "./agent/cowork-adapter-attempt";
 
 // ---------------------------------------------------------------------------
@@ -32,24 +39,23 @@ export { providerModelAttribution } from "./agent/cowork-adapter-attempt";
 //
 // Each is env-overridable for A/B or pinning (OPENROUTER_CHAT_MODEL etc.).
 //
-// Provider switch: when AI_PROVIDER=anthropic, the whole text surface defaults
-// to the Anthropic model (claude-sonnet-5) so one flag moves chat + writers +
-// gates + background onto one bill. An explicit OPENROUTER_CHAT_MODEL still wins
-// (for pinning/A-B). completeChat/streamChat delegate to lib/anthropic.ts when
-// the resolved model is claude-*. Embeddings + image gen never move.
-export const CHAT_MODEL =
-  process.env.OPENROUTER_CHAT_MODEL ||
-  (process.env.AI_PROVIDER === "anthropic"
-    ? process.env.ANTHROPIC_CHAT_MODEL || "claude-sonnet-5"
-    : "z-ai/glm-5.2");
+export const CHAT_MODEL = resolveNativeOpenAIPrimary([
+  process.env.OPENAI_CHAT_MODEL,
+  process.env.OPENROUTER_CHAT_MODEL,
+]);
 
-// Embedding model for the viral-learning retrieval loop. OpenRouter serves
-// OpenAI's embedding models via its GA /api/v1/embeddings endpoint, so we reuse
-// the same OPENROUTER_API_KEY — no new provider. text-embedding-3-small is
+// Embedding model for the viral-learning retrieval loop. OpenAI serves this
+// model directly. text-embedding-3-small is
 // 1536-dim (must match db/migration-088 `vector(1536)`); a model swap that
 // changes the width needs a matching migration + re-embed.
-export const EMBEDDING_MODEL =
-  process.env.OPENROUTER_EMBEDDING_MODEL || "openai/text-embedding-3-small";
+export const EMBEDDING_MODEL = resolveNativeOpenAIPrimary(
+  [
+    process.env.OPENAI_EMBEDDING_MODEL,
+    process.env.OPENROUTER_EMBEDDING_MODEL,
+  ],
+  OPENAI_EMBEDDING_MODEL,
+  isOpenAIEmbeddingModel,
+);
 export const EMBEDDING_DIM = 1536;
 
 const OPENROUTER_BASE_URL =
@@ -301,6 +307,28 @@ export async function embedText(
   const model = opts.model || EMBEDDING_MODEL;
   const deadline = AbortSignal.timeout(Math.max(1, opts.timeoutMs ?? EMBED_TIMEOUT_MS));
   const signal = opts.signal ? AbortSignal.any([opts.signal, deadline]) : deadline;
+  {
+    const { routesToNativeOpenAI, embedTextOpenAI } = await import("./openai");
+    if (routesToNativeOpenAI(model)) {
+      const result = await embedTextOpenAI(texts, { model, signal });
+      for (const [index, vector] of result.embeddings.entries()) {
+        if (vector.length !== EMBEDDING_DIM) {
+          throw new Error(
+            `OpenAI embeddings: vector ${index} has width ${vector.length}, expected ${EMBEDDING_DIM}`,
+          );
+        }
+      }
+      if (opts.workspaceId) {
+        await logOpenRouterUsage(
+          "embed_posts",
+          result.model,
+          { prompt_tokens: result.promptTokens },
+          opts.workspaceId,
+        );
+      }
+      return result;
+    }
+  }
   const res = await fetchWithRetry(
     `${OPENROUTER_BASE_URL}/embeddings`,
     {
@@ -460,6 +488,11 @@ export type Usage = {
   prompt_tokens_details?: {
     cached_tokens?: number;
     cache_write_tokens?: number;
+    cache_write_5m_tokens?: number;
+    cache_write_1h_tokens?: number;
+    // Anthropic web_search server-tool requests (billed per request, on top of
+    // token pricing — see ANTHROPIC_WEB_SEARCH_FEE_USD).
+    web_search_requests?: number;
   };
   // Numeric count only. Cowork never records provider reasoning text.
   completion_tokens_details?: { reasoning_tokens?: number };
@@ -486,12 +519,12 @@ export function estimatedUsage(promptText: string, outputText: string): Usage {
 // Reasoning tier — the chat agent and voice synthesis. Alias of CHAT_MODEL.
 export const REASONING_MODEL = CHAT_MODEL;
 
-// Background tier — templatize + hook extraction. Defaults to GLM-5.2 as well
-// (5.2 is both cheaper and stronger than 5.1, so there's no reason to keep the
-// mechanical tasks on the older model). Kept as a separate env knob in case you
-// ever want to point the cheap, high-volume tasks at a smaller/cheaper model.
-export const BACKGROUND_MODEL =
-  process.env.OPENROUTER_BACKGROUND_MODEL || CHAT_MODEL;
+// Background tier — templatize + hook extraction. Defaults to Luna so the
+// former Haiku jobs use the same native OpenAI transport and accounting path.
+export const BACKGROUND_MODEL = resolveNativeOpenAIPrimary(
+  [process.env.OPENAI_BACKGROUND_MODEL, process.env.OPENROUTER_BACKGROUND_MODEL],
+  CHAT_MODEL,
+);
 
 // GLM-5.2 reasoning policy. OpenRouter currently defaults this model to High,
 // but we send it explicitly so a provider/default change cannot silently alter
@@ -610,6 +643,9 @@ export async function completeChat(opts: {
   //
   // Defaults to caching ON, so every existing caller is unchanged.
   cachePrompt?: boolean;
+  // Direct-Anthropic only: cache exactly this many leading characters of the
+  // already-flattened system prompt. Omitted keeps whole-system caching.
+  cacheSystemPrefixChars?: number;
   signal?: AbortSignal;
   // One-shot completions must never inherit the route's full 300s ceiling.
   // Callers with tighter UX budgets (for example image preprocessing) can
@@ -619,13 +655,9 @@ export async function completeChat(opts: {
   sessionId?: string;
 }): Promise<CompleteResult> {
   const model = opts.model || BACKGROUND_MODEL;
-  // Provider seam: Anthropic serves Claude models when the flag is on — in
-  // BOTH the bare (`claude-sonnet-5`) and OpenRouter-prefixed
-  // (`anthropic/claude-sonnet-5`) forms, since the app's writer/fallback/vision
-  // defaults use the prefixed slug. Dynamic import keeps the graph acyclic.
   {
-    const { shouldUseAnthropic, completeChatAnthropic } = await import("./anthropic");
-    if (shouldUseAnthropic(model)) return completeChatAnthropic({ ...opts, model });
+    const { routesToNativeOpenAI, completeChatOpenAI } = await import("./openai");
+    if (routesToNativeOpenAI(model)) return completeChatOpenAI({ ...opts, model });
   }
   const body: Record<string, unknown> = {
     model,
@@ -713,8 +745,11 @@ export async function completeChat(opts: {
   };
 }
 
-export const IMAGE_GENERATION_MODEL =
-  process.env.OPENROUTER_IMAGE_MODEL || "google/gemini-3-pro-image";
+export const IMAGE_GENERATION_MODEL = resolveNativeOpenAIPrimary(
+  [process.env.OPENAI_IMAGE_MODEL, process.env.OPENROUTER_IMAGE_MODEL],
+  OPENAI_IMAGE_MODEL,
+  isOpenAIImageModel,
+);
 
 export type ImageGenerationResult = {
   b64Json: string;
@@ -735,6 +770,12 @@ export async function generateImage(opts: {
 }): Promise<ImageGenerationResult> {
   const outputFormat = opts.outputFormat ?? "png";
   const requestedModel = opts.model || IMAGE_GENERATION_MODEL;
+  {
+    const { routesToNativeOpenAI, generateImageOpenAI } = await import("./openai");
+    if (routesToNativeOpenAI(requestedModel)) {
+      return generateImageOpenAI({ ...opts, outputFormat, model: requestedModel });
+    }
+  }
   const body: Record<string, unknown> = {
     model: requestedModel,
     prompt: opts.prompt,
@@ -878,12 +919,10 @@ export async function* streamChat(opts: {
   sessionId?: string;
 }): AsyncGenerator<StreamDelta> {
   const model = opts.model || CHAT_MODEL;
-  // Provider seam (streaming): text-only Anthropic path for Claude models
-  // (bare or anthropic/-prefixed) when the flag is on.
   {
-    const { shouldUseAnthropic, streamChatAnthropic } = await import("./anthropic");
-    if (shouldUseAnthropic(model)) {
-      yield* streamChatAnthropic({ ...opts, model });
+    const { routesToNativeOpenAI, streamChatOpenAI } = await import("./openai");
+    if (routesToNativeOpenAI(model)) {
+      yield* streamChatOpenAI({ ...opts, model });
       return;
     }
   }
@@ -1091,45 +1130,96 @@ export async function* streamChat(opts: {
 // ---------------------------------------------------------------------------
 
 // USD per million tokens. Update if OpenRouter/Z.ai changes rates.
+// cacheWrite is the 1-hour-TTL rate; cacheWrite5m is the 5-minute rate.
+// Anthropic reports the two TTL buckets separately and openRouterUsageCost
+// preserves that split so mixed system/tool breakpoints bill exactly.
 export const NEWS_SEARCH_MODEL_PRICING = {
   "google/gemini-3.1-flash-lite": { input: 0.25, output: 1.5, cachedInput: 0.025 },
-  "anthropic/claude-haiku-4.5": { input: 1.0, output: 5.0, cachedInput: 0.1 },
-  "openai/gpt-5.6-luna": {
+  // Historical rows remain priced for cost-dashboard accuracy, but are
+  // excluded from SUPPORTED_NEWS_MODELS below and cannot be selected for new
+  // discovery calls.
+  "anthropic/claude-haiku-4.5": {
     input: 1.0,
-    output: 6.0,
+    output: 5.0,
     cachedInput: 0.1,
-    cacheWrite: 1.25,
+    cacheWrite: 2.0,
+    cacheWrite5m: 1.25,
+  },
+  "anthropic/claude-sonnet-5": {
+    input: 2.0,
+    output: 10.0,
+    cachedInput: 0.2,
+    cacheWrite: 4.0,
+    cacheWrite5m: 2.5,
+  },
+  // Luna's LAUNCH pricing was $1/M in, $6/M out. OpenAI cut it to $0.20/$1.20
+  // (developers.openai.com/api/docs/pricing), so the old row over-reported
+  // every Luna call by 5x and inflated the monthly cost cap. Cache reads are
+  // $0.02 = 0.1x input, matching this table's convention elsewhere.
+  //
+  // Bill from OPENAI's list price, not OpenRouter's: this app calls Luna with
+  // OPENAI_API_KEY. OpenRouter currently advertises $0.10/$0.60, but that is a
+  // temporary 50%-off promotion on the same standard rate and does not apply
+  // to direct OpenAI billing.
+  "openai/gpt-5.6-luna": {
+    input: 0.2,
+    output: 1.2,
+    cachedInput: 0.02,
+    cacheWrite: 0.25,
   },
   "z-ai/glm-5.2": { input: 0.93, output: 3.0, cachedInput: 0.18 },
 } as const;
 
-export const SUPPORTED_NEWS_MODELS = Object.keys(NEWS_SEARCH_MODEL_PRICING);
+export const SUPPORTED_NEWS_MODELS = Object.keys(NEWS_SEARCH_MODEL_PRICING).filter(
+  (model) => !model.startsWith("anthropic/"),
+);
 
 const OPENROUTER_PRICING: Record<
   string,
-  { input: number; output: number; cachedInput: number; cacheWrite?: number }
+  {
+    input: number;
+    output: number;
+    cachedInput: number;
+    cacheWrite?: number;
+    cacheWrite5m?: number;
+  }
 > = {
   ...NEWS_SEARCH_MODEL_PRICING,
   "qwen/qwen3.7-plus": { input: 0.32, output: 1.28, cachedInput: 0.064 },
   "z-ai/glm-5.1": { input: 1.4, output: 4.4, cachedInput: 0.26 },
   "z-ai/glm-5": { input: 1.0, output: 3.2, cachedInput: 0.2 },
   // Retained for historical usage rows and explicit env overrides.
-  "anthropic/claude-sonnet-4.6": { input: 3.0, output: 15.0, cachedInput: 0.3 },
+  "anthropic/claude-sonnet-4.6": {
+    input: 3.0,
+    output: 15.0,
+    cachedInput: 0.3,
+    cacheWrite: 6.0,
+    cacheWrite5m: 3.75,
+  },
   // Sonnet 5 is used as a fallback by the thin writer and orchestrators.
   // Without this entry openRouterCost would fall back to the GLM-5.1 rate and
   // under-count spend, so the monthly cost cap would be wrong. Sonnet 5 is
-  // currently $2 in / $10 out; cache-read is 0.1x input = $0.20.
-  "anthropic/claude-sonnet-5": { input: 2.0, output: 10.0, cachedInput: 0.2 },
+  // currently $2 in / $10 out; cache-read is 0.1x input = $0.20, cache-write
+  // (1h TTL) is 2x input = $4.00. (This literal overrides the spread
+  // NEWS_SEARCH_MODEL_PRICING row — keep them identical.)
+  "anthropic/claude-sonnet-5": {
+    input: 2.0,
+    output: 10.0,
+    cachedInput: 0.2,
+    cacheWrite: 4.0,
+    cacheWrite5m: 2.5,
+  },
   // Bare slug is what the Anthropic adapter sends (AI_PROVIDER=anthropic). The
   // adapter leaves usage.cost unset, so this table computes cost from tokens.
   // Sonnet 5 intro pricing: $2/M in, $10/M out; cache-read 0.1x input = $0.20,
-  // cache-write 1.25x input = $2.50. (Standard rates after the intro window are
-  // $3/$15 — bump these two lines when the intro ends 2026-08-31.)
+  // cache-write 1h TTL 2x input = $4.00; 5m is 1.25x = $2.50. (Standard rates after the intro
+  // window are $3/$15 — bump these lines when the intro ends 2026-08-31.)
   "claude-sonnet-5": {
     input: 2.0,
     output: 10.0,
     cachedInput: 0.2,
-    cacheWrite: 2.5,
+    cacheWrite: 4.0,
+    cacheWrite5m: 2.5,
   },
   // Cross-provider fallback for the read-only Cowork orchestrator. OpenRouter's
   // model catalog lists $1.50/M input, $9/M output, and $0.15/M cache reads.
@@ -1150,17 +1240,34 @@ const OPENROUTER_PRICING: Record<
 };
 
 // The pricing table is keyed by OpenRouter slugs (`anthropic/claude-...`), but
-// under AI_PROVIDER=anthropic the adapter returns Anthropic's BARE id
-// (`claude-haiku-4.5`), which then flows into cost lookup via the served model.
-// Map a bare Claude id back to its `anthropic/`-prefixed pricing key so every
-// bare Claude model (current and future) prices correctly instead of silently
-// falling back to the GLM-5.1 rate and mis-counting the monthly cost cap. Bare
-// `claude-sonnet-5` keeps its own explicit row; this only kicks in when the
-// exact key is absent.
+// under AI_PROVIDER=anthropic the adapter returns Anthropic's API id
+// (`claude-haiku-4-5-20251001`), which then flows into cost lookup via the
+// served model. Map a bare Claude id back to its `anthropic/`-prefixed pricing
+// key so every bare Claude model (current and future) prices correctly instead
+// of silently falling back to the GLM-5.1 rate and mis-counting the monthly
+// cost cap. Bare `claude-sonnet-5` keeps its own explicit row; this only kicks
+// in when the exact key is absent.
 function pricingKey(model: string): string {
   if (Object.hasOwn(OPENROUTER_PRICING, model)) return model;
   if (/^claude-/i.test(model)) {
     const prefixed = `anthropic/${model}`;
+    if (Object.hasOwn(OPENROUTER_PRICING, prefixed)) return prefixed;
+    // Anthropic API ids dash the minor version and may carry a date suffix
+    // (`claude-haiku-4-5-20251001`); OpenRouter pricing keys dot it
+    // (`anthropic/claude-haiku-4.5`). Normalize so adapter-served ids price at
+    // their true rate instead of falling back to the GLM-5.1 default.
+    const m = model.match(/^(claude-[a-z]+-\d+)-(\d+?)(?:-\d{8})?$/i);
+    if (m) {
+      const dotted = `anthropic/${m[1]}.${m[2]}`;
+      if (Object.hasOwn(OPENROUTER_PRICING, dotted)) return dotted;
+    }
+  }
+  // The OpenAI adapter serves bare ids (`gpt-5.6-luna`) while this table is
+  // keyed by OpenRouter slugs. Without this, a bare id missed every row and
+  // silently fell back to the GLM-5.1 rate ($1.40/$4.40) — pricing Luna as a
+  // different model entirely.
+  if (!/^[a-z0-9-]+\//i.test(model)) {
+    const prefixed = `openai/${model}`;
     if (Object.hasOwn(OPENROUTER_PRICING, prefixed)) return prefixed;
   }
   return model;
@@ -1176,6 +1283,7 @@ export function openRouterCost(
   outputTokens: number,
   cachedInputTokens = 0,
   cacheWriteTokens = 0,
+  cacheWrite5mTokens = 0,
 ): number {
   const p =
     OPENROUTER_PRICING[pricingKey(model)] ?? OPENROUTER_PRICING["z-ai/glm-5.1"];
@@ -1184,6 +1292,11 @@ export function openRouterCost(
     Math.max(0, cacheWriteTokens),
     Math.max(0, inputTokens - boundedCached),
   );
+  const boundedCacheWrite5m = Math.min(
+    Math.max(0, cacheWrite5mTokens),
+    boundedCacheWrite,
+  );
+  const boundedCacheWrite1h = boundedCacheWrite - boundedCacheWrite5m;
   const freshInput = Math.max(
     0,
     inputTokens - boundedCached - boundedCacheWrite,
@@ -1191,11 +1304,18 @@ export function openRouterCost(
   return (
     (freshInput * p.input +
       boundedCached * p.cachedInput +
-      boundedCacheWrite * (p.cacheWrite ?? p.input) +
+      boundedCacheWrite5m * (p.cacheWrite5m ?? p.cacheWrite ?? p.input) +
+      boundedCacheWrite1h * (p.cacheWrite ?? p.input) +
       outputTokens * p.output) /
     1_000_000
   );
 }
+
+// Anthropic's web_search server tool: $10 per 1,000 requests, billed on top of
+// token pricing. The OpenRouter web plugin bundled its fee into usage.cost, so
+// searches on the Anthropic path need this added explicitly or every grounded
+// search is free on the ledger.
+export const ANTHROPIC_WEB_SEARCH_FEE_USD = 0.01;
 
 export function openRouterUsageCost(
   model: string,
@@ -1213,8 +1333,12 @@ export function openRouterUsageCost(
   const cachedInputTokens = usage?.prompt_tokens_details?.cached_tokens ?? 0;
   const cacheWriteTokens =
     usage?.prompt_tokens_details?.cache_write_tokens ?? 0;
+  const cacheWrite5mTokens =
+    usage?.prompt_tokens_details?.cache_write_5m_tokens ?? 0;
   const reasoningTokens =
     usage?.completion_tokens_details?.reasoning_tokens ?? 0;
+  const webSearchRequests =
+    usage?.prompt_tokens_details?.web_search_requests ?? 0;
   const exactCost = typeof usage?.cost === "number" && Number.isFinite(usage.cost)
     ? usage.cost
     : null;
@@ -1225,14 +1349,19 @@ export function openRouterUsageCost(
     cachedInputTokens,
     cacheWriteTokens,
     costUsd:
-      exactCost ??
-      openRouterCost(
-        model,
-        inputTokens,
-        outputTokens,
-        cachedInputTokens,
-        cacheWriteTokens,
-      ),
+      (exactCost ??
+        openRouterCost(
+          model,
+          inputTokens,
+          outputTokens,
+          cachedInputTokens,
+          cacheWriteTokens,
+          cacheWrite5mTokens,
+        )) +
+      // Anthropic's web_search server tool bills per REQUEST on top of token
+      // pricing; the OpenRouter web plugin bundled its fee into usage.cost, so
+      // a news search on the Anthropic path was previously unbilled entirely.
+      webSearchRequests * ANTHROPIC_WEB_SEARCH_FEE_USD,
   };
 }
 
@@ -1242,8 +1371,7 @@ export async function logOpenRouterUsage(
   usage: Usage | undefined,
   workspaceId: string,
   meta?: Record<string, unknown>,
-): Promise<void> {
-  const {
+): Promise<void> {  const {
     inputTokens,
     outputTokens,
     reasoningTokens,
@@ -1251,12 +1379,8 @@ export async function logOpenRouterUsage(
     cacheWriteTokens: cacheWrite,
     costUsd,
   } = openRouterUsageCost(model, usage);
-  // Attribute spend to whoever actually served it. A Claude model (bare or
-  // anthropic/-prefixed) is served by Anthropic ONLY when the flag routes it
-  // there — with the flag off, anthropic/claude-* genuinely runs on OpenRouter,
-  // so it must stay labeled openrouter. shouldUseAnthropic encodes exactly that.
-  const { shouldUseAnthropic } = await import("./anthropic");
-  const provider = shouldUseAnthropic(model) ? "anthropic" : "openrouter";
+  const { routesToNativeOpenAI } = await import("./openai");
+  const provider = routesToNativeOpenAI(model) ? "openai" : "openrouter";
   try {
     const sb = supabaseAdmin();
     const { error } = await sb.from("usage_events").insert({
@@ -1271,6 +1395,15 @@ export async function logOpenRouterUsage(
         ...(meta ?? {}),
         cached_input_tokens: cached,
         cache_write_tokens: cacheWrite,
+        cache_write_5m_tokens:
+          usage?.prompt_tokens_details?.cache_write_5m_tokens ?? 0,
+        cache_write_1h_tokens:
+          usage?.prompt_tokens_details?.cache_write_1h_tokens ??
+          Math.max(
+            0,
+            cacheWrite -
+              (usage?.prompt_tokens_details?.cache_write_5m_tokens ?? 0),
+          ),
         reasoning_tokens: reasoningTokens,
       },
     });

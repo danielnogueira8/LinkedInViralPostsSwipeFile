@@ -5,15 +5,16 @@ import {
   type AdapterHealthRegistry,
 } from "@/lib/agent/adapter-health";
 import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
+import type { WriterPromptCostProfile } from "@/lib/agent/prompt-cost-profile";
 import type { Usage } from "@/lib/openrouter";
-import { shouldUseAnthropic } from "@/lib/anthropic";
+import { routesToNativeOpenAI } from "@/lib/openai";
 
 // Attribute a per-attempt telemetry record to whoever actually served the model,
 // matching the authoritative usage_events.provider label (logOpenRouterUsage).
-// shouldUseAnthropic encodes the flag + model check, so a claude-* attempt run
-// while AI_PROVIDER=anthropic is "anthropic"; everything else is "openrouter".
-function providerFor(model: string): "anthropic" | "openrouter" {
-  return shouldUseAnthropic(model) ? "anthropic" : "openrouter";
+// OpenAI and legacy Claude slugs are served by the native OpenAI adapter;
+// explicitly configured non-OpenAI models remain on OpenRouter.
+function providerFor(model: string): "openai" | "openrouter" {
+  return routesToNativeOpenAI(model) ? "openai" : "openrouter";
 }
 
 export function providerModelAttribution(
@@ -43,6 +44,7 @@ export type CoworkAdapterAttemptInput<TResponse, TValue> = {
   fallbackReason?: string;
   rejectedReasonCode: string;
   cancellationReason?: () => "cancelled" | "deadline";
+  promptProfile?: WriterPromptCostProfile;
   // When true, a validate() throw on this attempt is reported to the caller
   // (retry/fallback logic still runs) but does NOT count as a failure sample
   // on the adapter's health circuit. Use only where a malformed tool-call
@@ -139,6 +141,7 @@ export async function runCoworkAdapterAttempt<TResponse, TValue>(
         : {}),
       latencyMs: Date.now() - startedAt,
       usage: response ? input.usage(response) : undefined,
+      promptProfile: input.promptProfile,
     });
     // Record the paid provider response before authoritative usage persistence:
     // if the cost ledger fails closed, the operational attempt must still be
@@ -160,6 +163,7 @@ export async function runCoworkAdapterAttempt<TResponse, TValue>(
     ...(input.fallbackReason ? { fallbackReason: input.fallbackReason } : {}),
     latencyMs: result.latencyMs,
     usage: input.usage(response),
+    promptProfile: input.promptProfile,
   });
   await input.persistUsage(response);
   return { response, value: result.value, latencyMs: result.latencyMs };

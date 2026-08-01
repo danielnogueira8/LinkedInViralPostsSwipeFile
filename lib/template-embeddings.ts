@@ -1,4 +1,5 @@
 import { embedText, EMBEDDING_MODEL } from "./openrouter";
+import { PLATFORM_WORKSPACE } from "./claude";
 import { toVectorLiteral } from "./post-embeddings";
 import { selectAllRows } from "./db-paginate";
 import {
@@ -92,6 +93,9 @@ export async function backfillTemplateEmbeddings(
     const { embeddings } = await embedText(bodies, {
       model,
       signal: opts.signal,
+      // Platform batch job — attribute to the platform workspace so the
+      // ledger matches provider spend.
+      workspaceId: PLATFORM_WORKSPACE,
     });
 
     for (let j = 0; j < batch.length; j += 1) {

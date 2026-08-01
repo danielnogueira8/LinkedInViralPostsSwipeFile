@@ -5,6 +5,7 @@ const VALID = {
   NEXT_PUBLIC_SUPABASE_URL: "https://proj.supabase.co",
   NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key",
   SUPABASE_SERVICE_ROLE_KEY: "service-key",
+  OPENAI_API_KEY: "openai-key",
   OPENROUTER_API_KEY: "or-key",
   CRON_SECRET: "cron-secret",
 };
@@ -12,14 +13,14 @@ const VALID = {
 describe("validateEnv", () => {
   test("returns the parsed required env when all are present", () => {
     const out = validateEnv(VALID);
-    expect(out.OPENROUTER_API_KEY).toBe("or-key");
+    expect(out.OPENAI_API_KEY).toBe("openai-key");
     expect(out.NEXT_PUBLIC_SUPABASE_URL).toBe("https://proj.supabase.co");
   });
 
-  test("throws naming a single missing var", () => {
+  test("allows OpenRouter to be absent when only native primaries are available", () => {
     const rest = { ...VALID };
     delete (rest as Partial<typeof VALID>).OPENROUTER_API_KEY;
-    expect(() => validateEnv(rest)).toThrowError(/OPENROUTER_API_KEY: is required but not set/);
+    expect(() => validateEnv(rest)).not.toThrow();
   });
 
   test("aggregates every problem into one error", () => {
@@ -29,7 +30,7 @@ describe("validateEnv", () => {
     } catch (e) {
       msg = (e as Error).message;
     }
-    for (const key of Object.keys(VALID)) {
+    for (const key of Object.keys(VALID).filter((key) => key !== "OPENROUTER_API_KEY")) {
       expect(msg).toContain(key);
     }
     // A single throw, not one-per-var.
@@ -121,60 +122,23 @@ describe("validateEnv", () => {
     ).not.toThrow();
   });
 
-  // -------------------------------------------------------------------------
-  // AI_PROVIDER selection (boot-time validation of the active text provider).
-  // The runtime gate is an exact `AI_PROVIDER === "anthropic"` check, so the
-  // validation only demands an Anthropic key in exactly that configuration and
-  // leaves every currently-booting configuration (unset / openrouter / other)
-  // untouched.
-  // -------------------------------------------------------------------------
-
-  test("boots with AI_PROVIDER unset (default OpenRouter path) — no Anthropic key required", () => {
-    // The fresh-checkout / default deploy: unset flag runs GLM/OpenRouter.
+  test("boots with native OpenAI and OpenRouter keys", () => {
     expect(() => validateEnv(VALID)).not.toThrow();
   });
 
-  test("boots with AI_PROVIDER=openrouter and no Anthropic key", () => {
-    expect(() => validateEnv({ ...VALID, AI_PROVIDER: "openrouter" })).not.toThrow();
-  });
-
-  test("boots with an empty-string AI_PROVIDER (treated as unset → OpenRouter)", () => {
+  test("treats an empty AI_PROVIDER as unset", () => {
     expect(() => validateEnv({ ...VALID, AI_PROVIDER: "" })).not.toThrow();
   });
 
-  test("requires an Anthropic key when AI_PROVIDER=anthropic", () => {
+  test("rejects the obsolete AI_PROVIDER switch", () => {
     expect(() => validateEnv({ ...VALID, AI_PROVIDER: "anthropic" })).toThrowError(
-      /SWIPE_ANTHROPIC_KEY \(or ANTHROPIC_API_KEY\): is required when AI_PROVIDER=anthropic/,
+      /AI_PROVIDER: is obsolete/,
     );
   });
 
-  test("boots with AI_PROVIDER=anthropic when SWIPE_ANTHROPIC_KEY is present", () => {
-    expect(() =>
-      validateEnv({ ...VALID, AI_PROVIDER: "anthropic", SWIPE_ANTHROPIC_KEY: "sk-ant-1" }),
-    ).not.toThrow();
-  });
-
-  test("boots with AI_PROVIDER=anthropic when the fallback ANTHROPIC_API_KEY is present", () => {
-    expect(() =>
-      validateEnv({ ...VALID, AI_PROVIDER: "anthropic", ANTHROPIC_API_KEY: "sk-ant-2" }),
-    ).not.toThrow();
-  });
-
-  test("rejects an anthropic flag with a blank key value (present but empty)", () => {
-    expect(() =>
-      validateEnv({ ...VALID, AI_PROVIDER: "anthropic", SWIPE_ANTHROPIC_KEY: "" }),
-    ).toThrowError(/SWIPE_ANTHROPIC_KEY \(or ANTHROPIC_API_KEY\): is required when AI_PROVIDER=anthropic/);
-  });
-
-  test("rejects a typo'd / unrecognized AI_PROVIDER value", () => {
-    expect(() => validateEnv({ ...VALID, AI_PROVIDER: "Anthropic" })).toThrowError(
-      /AI_PROVIDER: must be one of anthropic, openrouter/,
-    );
-  });
-
-  test("still requires OPENROUTER_API_KEY even when AI_PROVIDER=anthropic (embeddings/images)", () => {
-    const rest = { ...VALID, AI_PROVIDER: "anthropic", SWIPE_ANTHROPIC_KEY: "sk-ant-1" };
+  test("does not make an optional fallback credential a boot dependency", () => {
+    const rest = { ...VALID };
     delete (rest as Partial<typeof rest>).OPENROUTER_API_KEY;
-    expect(() => validateEnv(rest)).toThrowError(/OPENROUTER_API_KEY: is required but not set/);
+    expect(() => validateEnv(rest)).not.toThrow();
   });
 });

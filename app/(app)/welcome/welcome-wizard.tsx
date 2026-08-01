@@ -43,7 +43,7 @@ export function WelcomeWizard({ categories }: { categories: WelcomeCategory[] })
     if (result === "connected") {
       toast.success("LinkedIn connected — you can schedule posts now.");
     } else if (result === "connect_failed") {
-      toast.error("Couldn't finish connecting LinkedIn. You can retry in Settings.");
+      toast.error("Couldn't finish connecting LinkedIn. You can retry in Integrations.");
     } else {
       return;
     }
@@ -369,7 +369,7 @@ export function WelcomeWizard({ categories }: { categories: WelcomeCategory[] })
               Link your LinkedIn account and SwipeIn can publish your approved
               drafts on schedule — no copy-pasting. Without it you can still
               draft and plan everything; you just publish by hand. You can
-              connect later from Settings.
+              connect later from Integrations.
             </p>
 
             <div className="flex justify-between gap-2 pt-2">

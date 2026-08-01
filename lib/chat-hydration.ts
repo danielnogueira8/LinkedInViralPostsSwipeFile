@@ -49,6 +49,7 @@ export type Message = {
   postFormat?: string;
   creatorStyle?: { name: string; creatorName: string | null };
   leadMagnet?: AppliedLeadMagnet;
+  knowledgeSources?: { id: string; title: string }[];
   modelSource?: ModelSourceAttachment;
   tools?: ToolChip[];
   plan?: PlanStep[];
@@ -199,7 +200,39 @@ function extractPersistedAsk(
   const options = Array.isArray(args.options)
     ? args.options.filter((option): option is string => typeof option === "string")
     : [];
-  if (!question || options.length < 2) return undefined;
+  if (!question) return undefined;
+
+  // Interview cards are their own shape: no options, a batched `questions`
+  // list the client walks locally, and none of the choice-card machinery
+  // below. Rebuilding one through that machinery is what made a reloaded
+  // card differ from the streamed card and visibly change under the user.
+  if (args.variant === "interview") {
+    const questions = Array.isArray(args.questions)
+      ? args.questions.filter((entry): entry is string => typeof entry === "string")
+      : [];
+    // A card persisted before batching has options-as-chips and no
+    // `questions`. Drop it rather than rehydrate a shape the card no longer
+    // renders: the chat still reads fine, the stale question just stops
+    // accepting an answer. Only reachable for an interview left mid-flight
+    // across this deploy.
+    if (questions.length === 0) return undefined;
+    const progress = args.progress as Record<string, unknown> | undefined;
+    return {
+      question,
+      options: [],
+      allowOther: args.allowOther !== false,
+      variant: "interview" as const,
+      questions,
+      ...(typeof progress === "object" &&
+      progress !== null &&
+      typeof progress.current === "number" &&
+      typeof progress.total === "number"
+        ? { progress: progress as { current: number; total: number } }
+        : {}),
+    };
+  }
+
+  if (options.length < 2) return undefined;
   const doneOption =
     args.actionLane === true
       ? typeof args.doneOption === "string"
@@ -228,6 +261,14 @@ function extractPersistedAsk(
     ...(optionIds.length === options.length ? { optionIds } : {}),
     ...(choiceIds.length === options.length ? { choiceIds } : {}),
     ...(doneOption ? { doneOption } : {}),
+    ...(typeof args.progress === "object" &&
+    args.progress !== null &&
+    typeof (args.progress as Record<string, unknown>).current === "number" &&
+    typeof (args.progress as Record<string, unknown>).total === "number"
+      ? {
+          progress: args.progress as { current: number; total: number },
+        }
+      : {}),
   };
 }
 
@@ -319,6 +360,26 @@ function extractPersistedPostFormat(
   if (!args) return undefined;
   if (typeof args.label === "string" && args.label.trim()) return args.label.trim();
   return isNoModelFormatId(args.id) ? noModelFormatLabel(args.id) : undefined;
+}
+
+export function extractPersistedKnowledgeSources(
+  input: HydrationInput,
+): { id: string; title: string }[] | undefined {
+  const source = normalizeHydrationSource(input);
+  const args = toolArgs(source.tool_calls, "_knowledge_sources_selected");
+  const rows = Array.isArray(args?.sources) ? args.sources : [];
+  const sources = rows
+    .filter(
+      (row): row is Record<string, unknown> =>
+        Boolean(row) && typeof row === "object",
+    )
+    .map((row) => ({
+      id: typeof row.sourceId === "string" ? row.sourceId : "",
+      title: typeof row.title === "string" ? row.title.trim() : "",
+    }))
+    .filter((row) => row.id && row.title)
+    .slice(0, 20);
+  return sources.length > 0 ? sources : undefined;
 }
 
 export function extractPersistedCreatorStyle(
@@ -436,6 +497,10 @@ export function hydrate(rows: RawDbMessage[]): Message[] {
       row.role === "user" ? extractPersistedCreatorStyle(row) : undefined;
     const leadMagnet =
       row.role === "user" ? extractPersistedLeadMagnet(row) : undefined;
+    const knowledgeSources =
+      row.role === "user"
+        ? extractPersistedKnowledgeSources(row)
+        : undefined;
     return {
       id: row.id,
       role: row.role as "user" | "assistant",
@@ -466,6 +531,7 @@ export function hydrate(rows: RawDbMessage[]): Message[] {
       ...(postFormat ? { postFormat } : {}),
       ...(creatorStyle ? { creatorStyle } : {}),
       ...(leadMagnet ? { leadMagnet } : {}),
+      ...(knowledgeSources?.length ? { knowledgeSources } : {}),
       ...(row.role === "user" && row.model_source_attachment
         ? { modelSource: row.model_source_attachment }
         : {}),

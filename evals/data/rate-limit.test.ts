@@ -7,6 +7,7 @@ import {
   sumUsageCost,
   isOverCostCap,
   hasCostAllowanceForEstimate,
+  costCapGraceUsd,
   costEquivalentCredits,
 } from "@/lib/agent/rate-limit";
 
@@ -22,58 +23,50 @@ import {
 // A bug in any of these is directly lost margin, so they're pinned here.
 // ---------------------------------------------------------------------------
 
-describe("projectMonthlyUsage — credits-pill arithmetic", () => {
+describe("projectMonthlyUsage — credits-pill arithmetic (cost-only)", () => {
   const LIMIT = 1000;
   const BUDGET = 5;
 
-  test("message-bound: more messages than cost projects → used = messages, boundBy messages", () => {
-    // 400 messages, $1 spent → costProjected = round(1/5*1000)=200 < 400.
-    const r = projectMonthlyUsage(400, 1, BUDGET, LIMIT);
-    expect(r.used).toBe(400);
-    expect(r.boundBy).toBe("messages");
-  });
-
-  test("cost-bound: a heavy multi-tool user hits $ before the message count", () => {
-    // 200 messages but $3 spent → costProjected = 600 > 200 → pill reads 600.
-    const r = projectMonthlyUsage(200, 3, BUDGET, LIMIT);
-    expect(r.used).toBe(600);
+  test("credits are spend projected onto the credit scale — never message count", () => {
+    // The reported bug: a workspace with hundreds of messages but cheap turns
+    // watched the pill tick 1 per post no matter the real cost. Message count
+    // no longer plays any role in `used`.
+    const r = projectMonthlyUsage(1, BUDGET, LIMIT);
+    expect(r.used).toBe(200); // round(1/5 × 1000)
     expect(r.boundBy).toBe("cost");
   });
 
+  test("a $0.05 turn at a $10 budget costs 5 credits", () => {
+    // The user's expectation: deduction tracks the actual charge.
+    const r = projectMonthlyUsage(0.05, 10, LIMIT);
+    expect(r.used).toBe(5);
+  });
+
   test("at the cost cap the pill reads FULL (used === limit) — blocks + pill agree", () => {
-    // Exactly $5 spent → costProjected = 1000 = limit.
-    const r = projectMonthlyUsage(50, BUDGET, BUDGET, LIMIT);
+    const r = projectMonthlyUsage(BUDGET, BUDGET, LIMIT);
     expect(r.used).toBe(LIMIT);
     expect(r.boundBy).toBe("cost");
   });
 
-  test("clamps used to limit even if projection/messages exceed it", () => {
-    // Over-budget ($6) would project 1200; must clamp to 1000.
-    expect(projectMonthlyUsage(50, 6, BUDGET, LIMIT).used).toBe(LIMIT);
-    // 1500 raw messages also clamps.
-    expect(projectMonthlyUsage(1500, 0, BUDGET, LIMIT).used).toBe(LIMIT);
+  test("clamps used to limit even if the projection exceeds it", () => {
+    // Over-budget ($6 on $5) would project 1200; must clamp to 1000.
+    expect(projectMonthlyUsage(6, BUDGET, LIMIT).used).toBe(LIMIT);
   });
 
-  test("zero usage → used 0, boundBy messages (a fresh workspace)", () => {
-    const r = projectMonthlyUsage(0, 0, BUDGET, LIMIT);
+  test("zero spend → used 0 (a fresh workspace)", () => {
+    const r = projectMonthlyUsage(0, BUDGET, LIMIT);
     expect(r.used).toBe(0);
-    expect(r.boundBy).toBe("messages");
+    expect(r.boundBy).toBe("cost");
   });
 
   test("budget <= 0 disables the cost projection (no divide-by-zero)", () => {
-    const r = projectMonthlyUsage(300, 999, 0, LIMIT);
-    expect(r.used).toBe(300); // only the message count counts
-    expect(r.boundBy).toBe("messages");
-  });
-
-  test("a tie (costProjected === messages) is reported as messages, not cost", () => {
-    // $1 → 200 projected; exactly 200 messages.
-    const r = projectMonthlyUsage(200, 1, BUDGET, LIMIT);
-    expect(r.boundBy).toBe("messages");
+    const r = projectMonthlyUsage(999, 0, LIMIT);
+    expect(r.used).toBe(0);
+    expect(r.boundBy).toBe("cost");
   });
 
   test("limit is echoed back unchanged", () => {
-    expect(projectMonthlyUsage(0, 0, BUDGET, 500).limit).toBe(500);
+    expect(projectMonthlyUsage(0, BUDGET, 500).limit).toBe(500);
   });
 });
 
@@ -271,5 +264,36 @@ describe("hasCostAllowanceForEstimate — preflight reserve for extra model work
 
   test("budget <= 0 disables the cost allowance gate", () => {
     expect(hasCostAllowanceForEstimate(999, 0, 10)).toBe(true);
+  });
+
+  test("grace lets a still-under-cap workspace finish work that tips past the budget", () => {
+    // $4.98 + $0.05 reserve = $5.03 — over budget but inside the $0.25 grace.
+    expect(hasCostAllowanceForEstimate(4.98, BUDGET, 0.05, 0.25)).toBe(true);
+  });
+
+  test("grace never helps a workspace already AT/OVER the cap", () => {
+    expect(hasCostAllowanceForEstimate(5, BUDGET, 0.01, 0.25)).toBe(false);
+    expect(hasCostAllowanceForEstimate(5.2, BUDGET, 0.01, 0.25)).toBe(false);
+  });
+
+  test("overshoot beyond the grace allowance still blocks", () => {
+    // $4.98 + $0.30 = $5.28 > $5 + $0.25 grace.
+    expect(hasCostAllowanceForEstimate(4.98, BUDGET, 0.3, 0.25)).toBe(false);
+  });
+});
+
+describe("costCapGraceUsd — the grace allowance in dollars", () => {
+  test("50 credits on the default 1000-credit / $5 scale is $0.25", () => {
+    expect(costCapGraceUsd(5, 1000)).toBeCloseTo(0.25);
+  });
+
+  test("tracks the credit limit and budget scale", () => {
+    expect(costCapGraceUsd(10, 1000)).toBeCloseTo(0.5);
+    expect(costCapGraceUsd(5, 2000)).toBeCloseTo(0.125);
+  });
+
+  test("a disabled cost cap (budget <= 0) has no grace", () => {
+    expect(costCapGraceUsd(0, 1000)).toBe(0);
+    expect(costCapGraceUsd(5, 0)).toBe(0);
   });
 });

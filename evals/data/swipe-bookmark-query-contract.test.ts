@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
+import { makeFakeSupabase } from "./fake-supabase";
 
 type Call = { table: string; method: string; args: unknown[] };
 
@@ -12,6 +13,7 @@ const state: {
 
 function builderFor(table: string) {
   const builder: Record<string, unknown> = {};
+  let range: [number, number] | null = null;
   const chain = (method: string) => (...args: unknown[]) => {
     state.calls.push({ table, method, args });
     return builder;
@@ -20,24 +22,38 @@ function builderFor(table: string) {
     "select",
     "in",
     "eq",
+    "is",
     "or",
+    "ilike",
+    "textSearch",
     "gte",
     "lte",
     "not",
     "gt",
     "order",
-    "range",
+    "limit",
+    "abortSignal",
   ]) {
     builder[method] = chain(method);
   }
+  builder.range = (from: number, to: number) => {
+    state.calls.push({ table, method: "range", args: [from, to] });
+    range = [from, to];
+    return builder;
+  };
   builder.then = (
     resolve: (value: { data: unknown[]; error: null }) => unknown,
-  ) => resolve({ data: state.rowsByTable[table] ?? [], error: null });
+  ) => {
+    const rows = state.rowsByTable[table] ?? [];
+    const data = range ? rows.slice(range[0], range[1] + 1) : rows;
+    return resolve({ data, error: null });
+  };
   return builder;
 }
 
 vi.mock("@/lib/supabase-scoped", () => ({
   scopedSupabase: async () => ({
+    workspaceId: "workspace-1",
     raw: { from: (table: string) => builderFor(table) },
   }),
 }));
@@ -48,6 +64,9 @@ vi.mock("@/lib/workspace-display", () => ({
 }));
 
 const { countSwipePosts, fetchSwipePage, SWIPE_POST_COLS } = await import("@/lib/swipe-query");
+const { countSourcePosts, discoverSourcePosts } = await import(
+  "@/lib/source-post-discovery"
+);
 const { fetchBookmarksPage } = await import("@/lib/bookmarks-query");
 const { canHardMutate } = await import("@/lib/shared-bookmarks");
 
@@ -63,6 +82,29 @@ beforeEach(() => {
   state.calls = [];
   state.rowsByTable = {};
 });
+
+function missingSourcePostCountRpcDb(
+  posts: Record<string, unknown>[] = [],
+) {
+  return makeFakeSupabase(
+    { posts: { rows: posts } },
+    {
+      get_discovery_thresholds: {
+        data: {
+          regular: { enabled: true, minLikes: 100 },
+          leadMagnet: { enabled: true, minComments: 100 },
+        },
+      },
+      count_source_posts: {
+        error: {
+          code: "PGRST202",
+          message:
+            "Could not find the function public.count_source_posts in the schema cache",
+        } as never,
+      },
+    },
+  );
+}
 
 describe("Swipe File query contract", () => {
   test("filters category feeds directly by workspace membership", async () => {
@@ -175,6 +217,251 @@ describe("Swipe File query contract", () => {
           entry.args[0] === "post_type",
       ),
     ).toBe(false);
+  });
+
+  test("honors explicit workspace demotions while retaining the global fallback", async () => {
+    state.rowsByTable.posts = [
+      {
+        id: "workspace-viral",
+        posted_at: "2026-07-12T12:00:00.000Z",
+        reactions: 42,
+        accounts: [{ name: "Creator" }],
+        workspace_post_classification: [{ is_viral: true }],
+      },
+      {
+        id: "workspace-demoted",
+        posted_at: "2026-07-11T12:00:00.000Z",
+        reactions: 41,
+        accounts: [{ name: "Creator" }],
+        workspace_post_classification: [{ is_viral: false }],
+      },
+      {
+        id: "global-fallback",
+        posted_at: "2026-07-10T12:00:00.000Z",
+        reactions: 40,
+        accounts: [{ name: "Creator" }],
+        workspace_post_classification: [],
+      },
+    ];
+
+    const result = await fetchSwipePage({
+      accountIds: ["account-1"],
+      filters: {},
+      offset: 0,
+    });
+
+    expect(result.posts.map((post) => post.id)).toEqual([
+      "workspace-viral",
+      "global-fallback",
+    ]);
+    expect(
+      state.calls.some(
+        (entry) =>
+          entry.table === "posts" &&
+          entry.method === "select" &&
+          String(entry.args[0]).includes(
+            "workspace_post_classification(is_viral)",
+          ),
+      ),
+    ).toBe(true);
+    expect(
+      call(
+        "posts",
+        "eq",
+        "workspace_post_classification.workspace_id",
+        "workspace-1",
+      ),
+    ).toBe(true);
+
+    const count = await countSwipePosts({
+      accountIds: ["account-1"],
+      filters: {},
+    });
+    expect(count).toBe(2);
+  });
+
+  test("the RPC-less test adapter count continues across every eligible page", async () => {
+    state.rowsByTable.posts = Array.from({ length: 1_005 }, (_, index) => ({
+      id: `post-${index}`,
+      workspace_post_classification:
+        index === 500 ? [{ is_viral: false }] : [],
+    }));
+
+    const count = await countSwipePosts({
+      accountIds: ["account-1"],
+      filters: {},
+    });
+
+    expect(count).toBe(1_004);
+    expect(call("posts", "range", 0, 100)).toBe(true);
+    expect(call("posts", "range", 1_001, 1_101)).toBe(true);
+  });
+
+  test("scans past a fully demoted raw page to fill the visible page", async () => {
+    state.rowsByTable.posts = [
+      ...Array.from({ length: 3 }, (_, index) => ({
+        id: `demoted-${index}`,
+        workspace_post_classification: [{ is_viral: false }],
+      })),
+      {
+        id: "eligible-fallback",
+        posted_at: "2026-07-12T12:00:00.000Z",
+        reactions: 42,
+        accounts: [{ name: "Creator" }],
+        workspace_post_classification: [],
+      },
+    ];
+
+    const result = await fetchSwipePage({
+      accountIds: ["account-1"],
+      filters: {},
+      offset: 0,
+      limit: 2,
+    });
+
+    expect(result.posts.map((post) => post.id)).toEqual([
+      "eligible-fallback",
+    ]);
+    expect(result.nextOffset).toBeNull();
+    expect(call("posts", "range", 0, 2)).toBe(true);
+    expect(call("posts", "range", 3, 5)).toBe(true);
+  });
+
+  test("the canonical operation owns limits and eligibility projections", async () => {
+    await discoverSourcePosts(
+      { from: (table: string) => builderFor(table) } as never,
+      {
+        workspaceId: "workspace-1",
+        columns: "id, accounts!inner(name)",
+        accountIds: ["account-1"],
+        order: { column: "posted_at", ascending: false },
+        window: { kind: "page", offset: -50, limit: 9_999 },
+      },
+    );
+
+    expect(call("posts", "range", 0, 100)).toBe(true);
+    expect(
+      state.calls.some(
+        (entry) =>
+          entry.table === "posts" &&
+          entry.method === "select" &&
+          String(entry.args[0]).includes(
+            "workspace_post_classification(is_viral)",
+          ),
+      ),
+    ).toBe(true);
+  });
+
+  test("production counts use one constant-size workspace-aware RPC", async () => {
+    const db = makeFakeSupabase(
+      {},
+      {
+        get_discovery_thresholds: {
+          data: {
+            regular: { enabled: true, minLikes: 125 },
+            leadMagnet: { enabled: true, minComments: 40 },
+          },
+        },
+        count_source_posts: { data: 1_234 },
+      },
+    );
+
+    const count = await countSourcePosts(db.client as never, {
+      workspaceId: "workspace-rpc-count",
+      accountIds: ["11111111-1111-4111-8111-111111111111"],
+      filters: { query: "pricing", minReactions: 200 },
+    });
+
+    expect(count).toBe(1_234);
+    expect(db.rpcs).toContainEqual({
+      name: "count_source_posts",
+      args: expect.objectContaining({
+        p_workspace_id: "workspace-rpc-count",
+        p_query: "pricing",
+        p_min_reactions: 200,
+        p_require_positive_baseline: false,
+        p_regular_min_likes: 125,
+        p_lead_magnet_min_comments: 40,
+      }),
+    });
+    expect(db.queries).toEqual([]);
+  });
+
+  test("falls back to the canonical scan when count_source_posts is absent from the schema cache", async () => {
+    const db = missingSourcePostCountRpcDb([
+      {
+        id: "source-1",
+        accounts: [{ archived_at: null }],
+        workspace_post_classification: [],
+      },
+      {
+        id: "source-2",
+        accounts: [{ archived_at: null }],
+        workspace_post_classification: [{ is_viral: true }],
+      },
+    ]);
+
+    await expect(
+      countSourcePosts(db.client as never, {
+        workspaceId: "workspace-with-stale-schema",
+        accountIds: ["11111111-1111-4111-8111-111111111111"],
+      }),
+    ).resolves.toBe(2);
+    expect(db.rpcs).toContainEqual({
+      name: "count_source_posts",
+      args: expect.any(Object),
+    });
+    expect(db.queries).toEqual([
+      expect.objectContaining({
+        table: "posts",
+        selectArg: expect.stringContaining("accounts!inner(id)"),
+      }),
+    ]);
+  });
+
+  test("does not hide unrelated count_source_posts failures", async () => {
+    const db = makeFakeSupabase(
+      {},
+      {
+        get_discovery_thresholds: {
+          data: {
+            regular: { enabled: true, minLikes: 100 },
+            leadMagnet: { enabled: true, minComments: 100 },
+          },
+        },
+        count_source_posts: {
+          error: {
+            code: "PGRST500",
+            message: "Database unavailable",
+          } as never,
+        },
+      },
+    );
+
+    await expect(
+      countSourcePosts(db.client as never, {
+        workspaceId: "workspace-with-read-failure",
+        accountIds: ["11111111-1111-4111-8111-111111111111"],
+      }),
+    ).rejects.toMatchObject({
+      name: "SourcePostDiscoveryError",
+      message: "Database unavailable",
+    });
+    expect(db.queries).toEqual([]);
+  });
+
+  test("the missing-RPC fallback preserves category workspace membership", async () => {
+    const db = missingSourcePostCountRpcDb();
+
+    await expect(
+      countSourcePosts(db.client as never, {
+        workspaceId: "workspace-with-stale-schema",
+        categoryId: "category-1",
+      }),
+    ).resolves.toBe(0);
+    expect(db.queries[0]?.selectArg).toContain(
+      "accounts!inner(id, workspace_accounts!inner())",
+    );
   });
 });
 

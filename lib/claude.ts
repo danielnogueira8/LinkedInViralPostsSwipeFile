@@ -38,15 +38,6 @@ export const VOICE_MODEL = REASONING_MODEL;
 // cost-cap or per-workspace cost query ever matches.
 export const PLATFORM_WORKSPACE = "platform";
 
-// Kept as a no-op for backward compatibility: callers used to inject the
-// Anthropic key per-request. The OpenRouter client reads OPENROUTER_API_KEY
-// from the environment directly, so there's nothing to set. Safe to remove the
-// call sites later.
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-export function setAnthropicKey(key?: string | undefined): void {
-  // intentionally empty — see comment above
-}
-
 // NOTE: the old templatizePost was removed here. It converted a viral post
 // into the old post-derived `templates` table via a paid Haiku call; that table
 // is no longer surfaced (the Templates page uses the generic content_templates
@@ -139,9 +130,6 @@ export async function templatizeOutlierPost(
     // The body is a full post skeleton (bounded by TEMPLATE_BODY_MAX), so this
     // needs a much larger budget than hook extraction's 256.
     maxTokens: 4096,
-    // Mechanical structure extraction: preserve the output budget for the
-    // template JSON instead of spending it on GLM reasoning.
-    glmReasoning: "none",
     messages: [
       {
         role: "system",

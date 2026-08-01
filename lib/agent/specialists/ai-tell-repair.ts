@@ -1,5 +1,5 @@
 import {
-  CHAT_MODEL,
+  BACKGROUND_MODEL,
   completeChat,
   logOpenRouterUsage,
   UsagePersistenceError,
@@ -16,15 +16,20 @@ import {
 import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
 import { editDraftBody, type EditorModelRewrite } from "./editor";
 import { aiTellMetrics, looksCorruptedDraft } from "./nets";
+import { resolveNativeOpenAIPrimary } from "@/lib/model-provider-routing";
 
-// Defaults to the one app-wide chat model (OPENROUTER_CHAT_MODEL) so every
-// text-LLM call uses the SAME model unless pinned via OPENROUTER_AI_TELL_MODEL.
-// (AI-tell repair is a narrow, forced-tool copy edit — a bounded rewrite, not
-// open judgment — so a cheaper pin here is reasonable if you want one.)
-const DEFAULT_AI_TELL_MODEL = CHAT_MODEL;
+// Defaults to the cheap background tier so a narrow, forced-tool copy edit
+// never pays writer-tier prices: Haiku 4.5 under the Anthropic flag (half the
+// writer's cost, and it never rides openrouter/auto into a slow/hanging GLM —
+// the 8s-timeout-every-repair bug), CHAT_MODEL off the flag. Pin
+// OPENROUTER_AI_TELL_MODEL to override.
+const DEFAULT_AI_TELL_MODEL = BACKGROUND_MODEL;
 
-export function resolveAiTellModel(value = process.env.OPENROUTER_AI_TELL_MODEL): string {
-  return value?.trim() || DEFAULT_AI_TELL_MODEL;
+export function resolveAiTellModel(
+  value =
+    process.env.OPENAI_AI_TELL_MODEL || process.env.OPENROUTER_AI_TELL_MODEL,
+): string {
+  return resolveNativeOpenAIPrimary([value], DEFAULT_AI_TELL_MODEL);
 }
 
 export function aiTellRepairEnabled(): boolean {
@@ -86,6 +91,9 @@ function buildRewrite(
                 role: "system",
                 content:
                   "You are a surgical copy editor. Fix only the listed AI-writing patterns. " +
+                  "For repeated-opener, rewrite any three-sentence run that starts with the same word, including You or Your. " +
+                  "For negative-parallelism, replace 'Not X, not Y, not Z' with the positive claim stated directly. " +
+                  "For rule-of-three, change an unnecessary three-beat list or cadence to natural prose, two beats, or four beats. " +
                   "Preserve every fact, claim, example, number, CTA, point of view, paragraph order, and the writer's voice. " +
                   "Do not add facts or generic polish. Keep roughly the same length. Return the entire post through the tool.",
               },

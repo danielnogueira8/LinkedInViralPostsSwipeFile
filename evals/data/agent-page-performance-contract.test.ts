@@ -3,21 +3,20 @@ import path from "node:path";
 import { describe, expect, test } from "vitest";
 
 const ROOT = path.resolve(__dirname, "../..");
-const read = (file: string) =>
-  fs.readFileSync(path.join(ROOT, file), "utf8");
+const read = (file: string) => fs.readFileSync(path.join(ROOT, file), "utf8");
 
 describe("Your Agent page performance contracts", () => {
-  test("the page and navigation badge share one in-flight briefing request", () => {
-    const briefing = read("app/(app)/dashboard/agent-briefing.tsx");
+  test("the page and navigation badge share one in-flight inbox request", () => {
+    const briefing = read("app/(app)/dashboard/agent-inbox.tsx");
     const badges = read("app/(app)/dashboard/nav-badges.ts");
-    const client = read("app/(app)/dashboard/agent-briefing-client.ts");
+    const client = read("app/(app)/dashboard/agent-inbox-client.ts");
 
-    expect(briefing).toContain("loadAgentBriefing()");
-    expect(badges).toContain("loadAgentBriefing()");
-    expect(client).toContain('fetch("/api/agent/briefing"');
-    expect(client).toContain("pendingBriefingPromise ??=");
-    expect(briefing).not.toContain('fetch("/api/agent/briefing"');
-    expect(badges).not.toContain('fetch("/api/agent/briefing"');
+    expect(briefing).toContain("loadAgentInbox()");
+    expect(badges).toContain("loadAgentInbox()");
+    expect(client).toContain('fetch("/api/agent/inbox"');
+    expect(client).toContain("pendingAgentInboxPromise ??=");
+    expect(briefing).not.toContain('fetch("/api/agent/inbox"');
+    expect(badges).not.toContain('fetch("/api/agent/inbox"');
   });
 
   test("the posting-gap read overlaps the plan chain instead of trailing it", () => {

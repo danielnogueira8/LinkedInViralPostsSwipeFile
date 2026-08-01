@@ -265,16 +265,17 @@ describe("extractCiteIds — UUID extraction from ```cite blocks", () => {
     expect(extractCiteIds(`\`\`\`cite\n${A}\n\`\`\`\n\`\`\`cite\n${A}\n\`\`\``)).toEqual([A]);
   });
 
-  test("caps at MAX_CITES (4)", () => {
+  test("caps at MAX_CITES (5)", () => {
     const ids = [
       "11111111-1111-4111-8111-111111111111",
       "22222222-2222-4222-8222-222222222222",
       "33333333-3333-4333-8333-333333333333",
       "44444444-4444-4444-8444-444444444444",
       "55555555-5555-4555-8555-555555555555",
+      "66666666-6666-4666-8666-666666666666",
     ];
     const text = ids.map((id) => `\`\`\`cite\n${id}\n\`\`\``).join("\n");
-    expect(extractCiteIds(text)).toHaveLength(4);
+    expect(extractCiteIds(text)).toHaveLength(5);
   });
 
   test("keeps distinct ids in order", () => {

@@ -185,6 +185,19 @@ test.describe("composer generation settings", () => {
       name: /Generation settings — Post count: 3, post type: Any/,
     });
     await expect(exactButton).toBeVisible();
+    await exactButton.click();
+    const explorationGroup = dialog.getByRole("group", {
+      name: "Exploration Lane",
+    });
+    await expect(
+      explorationGroup.getByRole("button", { name: "Automatic" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    await explorationGroup.getByRole("button", { name: "Fresh" }).click();
+    await expect(
+      page.getByRole("button", {
+        name: /Generation settings — Post count: 3, post type: Any, exploration lane: fresh/i,
+      }),
+    ).toBeVisible();
     const createComposer = page.getByPlaceholder(
       "What should the new post be about?",
     );
@@ -196,8 +209,19 @@ test.describe("composer generation settings", () => {
     expect(streamBodies[1]).toMatchObject({
       message: "Review my current post and give feedback only.",
       command: { kind: "create", count: 3 },
-      generationConfig: { version: 1, draftCount: 3 },
+      generationConfig: {
+        version: 1,
+        draftCount: 3,
+        explorationLane: "fresh",
+      },
     });
+    await createButton.click();
+    await expect(
+      page.getByRole("button", {
+        name: /Generation settings — Post count: 3, post type: Any, exploration lane: Automatic/,
+      }),
+    ).toBeVisible();
+    await askButton.click();
     await expect(editButton).toBeVisible();
     await editButton.click();
     const postPicker = page.getByLabel("Post to edit");

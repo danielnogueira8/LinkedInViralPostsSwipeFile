@@ -4,6 +4,10 @@ import {
   MAX_PROMPT_CHARS,
   preflightUserPrompt,
 } from "@/lib/agent/prompt-preflight";
+import {
+  composeInterviewAnswers,
+  INTERVIEW_SKIPPED,
+} from "@/lib/chat-ask";
 
 describe("preflightUserPrompt", () => {
   test("rejects empty and whitespace-only prompts", () => {
@@ -77,5 +81,41 @@ describe("preflightUserPrompt", () => {
     expect(
       preflightUserPrompt("Rewrite this to call out a competitor's weak positioning."),
     ).toEqual({ ok: true });
+  });
+
+  test("a skipped interview answer is not an unfilled placeholder", () => {
+    // Regression: composeInterviewAnswers marks a passed question "[skipped]",
+    // which the placeholder guard read as a half-filled template. The user was
+    // told to "replace the bracketed part" for a marker they never wrote and
+    // could not remove — so finishing an interview with any question skipped
+    // was impossible. Skipping is allowed.
+    const message = [
+      "Q1: What went better than expected?",
+      "A1: [skipped]",
+      "",
+      "Q2: What advice did you reject?",
+      "A2: Not every post has to be short.",
+    ].join("\n");
+    expect(preflightUserPrompt(message)).toEqual({ ok: true });
+    expect(findUnfilledPlaceholders(message)).toEqual([]);
+  });
+
+  test("the skip marker stays exempt regardless of casing", () => {
+    expect(findUnfilledPlaceholders("A1: [Skipped]")).toEqual([]);
+  });
+
+  test("the exemption matches the marker the interview actually writes", () => {
+    // Guards drift: renaming INTERVIEW_SKIPPED without updating the exemption
+    // would silently reintroduce the bug, and a whole-interview test would not
+    // necessarily catch it.
+    expect(findUnfilledPlaceholders(INTERVIEW_SKIPPED)).toEqual([]);
+    expect(composeInterviewAnswers(["Q"], [""])).toContain(INTERVIEW_SKIPPED);
+  });
+
+  test("still catches a real unfilled placeholder next to a skip marker", () => {
+    // The exemption is one exact marker, not "ignore brackets in interviews".
+    expect(
+      preflightUserPrompt("A1: [skipped]\nNow write about [topic]."),
+    ).toMatchObject({ ok: false, reason: "placeholder" });
   });
 });

@@ -4,160 +4,20 @@ import {
   Plug,
   Shield,
   Check,
-  CalendarDays,
-  Repeat2,
-  Magnet,
-  Lightbulb,
-  Clock,
-  Search,
-  UserPlus,
   BookOpenText,
   ExternalLink,
 } from "lucide-react";
-import { AiIcon } from "@/components/ai-icon";
-import type { ComponentType } from "react";
-import { ClaudeIcon } from "@/components/claude-icon";
+import { AgentAvatar } from "@/components/agent-avatar";
+import Image from "next/image";
 import { CopyAiInstructions, CopyConnectorUrl, CopyPrompt } from "./copy";
 import { requireWorkspaceId } from "@/lib/workspace";
 import { PUBLIC_MCP_TOOLS } from "@/lib/mcp/public-tools";
 import { SWIPEIN_MCP_INSTRUCTIONS } from "@/lib/mcp/llms-instructions";
+import { AGENTS, composePrompt, SKILL_CHIP_LABEL } from "./agents";
 
 // The apex domain 307-redirects to www; MCP clients don't follow redirects on
 // the initialize POST, so the connector URL must be the canonical www host.
 const CONNECTOR_URL_BASE = "https://www.tryswipein.com/api/mcp";
-
-const SETUP_STEPS: { title: string; body: React.ReactNode }[] = [
-  {
-    title: "Open Claude → Settings → Connectors",
-    body: (
-      <>
-        In <span className="font-medium text-foreground">claude.ai</span> (web or desktop),
-        go to your profile menu → <span className="font-medium text-foreground">Settings</span> →{" "}
-        <span className="font-medium text-foreground">Connectors</span>, then click{" "}
-        <span className="font-medium text-foreground">Add custom connector</span>.
-      </>
-    ),
-  },
-  {
-    title: "Paste the URL and name it SwipeIn",
-    body: (
-      <>
-        Paste the URL below into the <span className="font-medium text-foreground">MCP server URL</span>{" "}
-        field and name the connector{" "}
-        <span className="font-medium text-foreground">SwipeIn</span> — the workflow prompts below
-        reference it by that name. Leave the Advanced fields (Client ID / Secret) empty; Claude handles
-        registration automatically.
-      </>
-    ),
-  },
-  {
-    title: "Sign in with the email on your Swipe File account",
-    body: (
-      <>
-        Claude will open a sign-in screen. Use the same email you use here. The connector is locked to
-        allow-listed accounts only.
-      </>
-    ),
-  },
-  {
-    title: "Run a workflow",
-    body: (
-      <>
-        Open any chat. You&apos;ll see <span className="font-medium text-foreground">SwipeIn</span>{" "}
-        available as a tool source. Copy one of the agents below and paste it in.
-      </>
-    ),
-  },
-];
-
-// Workflows — copy-and-run agents. Each is framed as a named agent you put to
-// work: the `tag` is the agent's name (rendered as the card's chip), the title
-// is its concrete payoff, and the prompt is the brief you hand it. Every prompt
-// opens with "Use the SwipeIn connector" so it reads naturally AND quietly
-// reinforces the connector name from setup.
-type Agent = {
-  tag: string; // the agent's name — rendered as the card chip, e.g. "Batch Writer Agent"
-  title: string;
-  payoff: string; // what you walk away with — the incentive
-  prompt: string;
-  icon: ComponentType<{ className?: string }>;
-  time: string; // ~run + light-edit time
-};
-
-const AGENTS: Agent[] = [
-  {
-    tag: "Bulk Writer Agent",
-    title: "10 posts, modeled on what's winning right now",
-    payoff: "Walk away with 10 ready-to-edit posts in your voice — a full content pipeline in one run.",
-    time: "~3 min",
-    icon: AiIcon,
-    prompt:
-      "Use the SwipeIn connector. First call get_voice to load my writing voice, then fetch viral regular posts and write 10 adapted for me, modeled after stuff that went viral in the last 7 days. Match my voice, vary the hook patterns, and keep each under 1,500 characters.",
-  },
-  {
-    tag: "Calendar Architect Agent",
-    title: "A full week of content, no two posts alike",
-    payoff: "Get a 7-day calendar where every day uses a different proven hook pattern — no repeats, no blank-page mornings.",
-    time: "~4 min",
-    icon: CalendarDays,
-    prompt:
-      "Use the SwipeIn connector. Call get_voice first to load my writing voice. Then look at the top 20 viral posts from the last 14 days and group them by hook pattern. Build me a 7-day posting calendar — one post per day, each using a different pattern I haven't overused. Draft every post in my voice, under 1,500 characters, and label which pattern each one uses.",
-  },
-  {
-    tag: "Remix Agent",
-    title: "Turn one viral post into three angles",
-    payoff: "One proven post becomes three distinct posts — same winning structure, three different stories you can space out.",
-    time: "~2 min",
-    icon: Repeat2,
-    prompt:
-      "Use the SwipeIn connector. Call get_voice first to load my writing voice. Then find the single most viral post in the last 30 days, pull its template, and write me 3 different posts that keep the hook structure but tell 3 different stories from my world. Match my voice and flag the part of each that's doing the heavy lifting.",
-  },
-  {
-    tag: "Offer Hunter Agent",
-    title: "Reverse-engineer the best lead magnets",
-    payoff: "See exactly what's being given away to drive 500+ comments — and get an adapted offer you can run this week.",
-    time: "~3 min",
-    icon: Magnet,
-    prompt:
-      "Use the SwipeIn connector. Find lead-magnet posts (post_type = lead_magnet) from the last 30 days with more than 500 comments. For the top 3, tell me what they're giving away, the exact hook and CTA they used. Then call get_voice and write me an adapted version of the best one for my audience, in my voice.",
-  },
-  {
-    tag: "Hook Scout Agent",
-    title: "5 hooks to test, based on what's pulling now",
-    payoff: "Skip the guesswork — get 5 hooks tied to patterns that are actually pulling engagement this week, ranked by why.",
-    time: "~2 min",
-    icon: Lightbulb,
-    prompt:
-      "Use the SwipeIn connector. Call get_voice first to load my writing voice. Then look at every viral post from the last 7 days and rank the hook patterns by average engagement. Give me the top 5 patterns and write one fresh hook for each in my voice, with a one-line note on why that pattern is working right now.",
-  },
-  {
-    tag: "Timing Strategist Agent",
-    title: "Schedule around when big posts actually land",
-    payoff: "Stop guessing post times — get the day-and-hour windows where the creators you track land their biggest hits.",
-    time: "~2 min",
-    icon: Clock,
-    prompt:
-      "Use the SwipeIn connector. Across the viral posts from the last 30 days, tell me which days of the week and times of day produce the most viral posts for the creators I track. Then suggest a posting schedule for my 5 best drafts this week that lines up with those windows.",
-  },
-  {
-    tag: "Trend Radar Agent",
-    title: "See this week's best posts at a glance",
-    payoff: "A fast read on what's working in your niche right now — hooks, authors, and engagement, ranked.",
-    time: "~1 min",
-    icon: Search,
-    prompt:
-      "Use the SwipeIn connector. Pull the top 10 viral posts from the last 7 days in my niche, sorted by reactions. Give me the hook, the author, and engagement for each so I can see what's working at a glance.",
-  },
-  {
-    tag: "Roster Manager Agent",
-    title: "Add a creator to track",
-    payoff: "Grow your swipe file in one line — add a creator and instantly see who else you track in their niche.",
-    time: "~1 min",
-    icon: UserPlus,
-    prompt:
-      "Use the SwipeIn connector. Add linkedin.com/in/justinwelsh to my tracked accounts under niche 'solopreneur'. Then show me what other accounts I'm already tracking in that niche.",
-  },
-];
 
 export default async function ClaudePage() {
   const workspaceId = await requireWorkspaceId();
@@ -167,30 +27,14 @@ export default async function ClaudePage() {
     <div className="space-y-8">
       <PageHeader
         meta={
-          <span className="grid h-9 w-9 place-items-center rounded-lg bg-foreground text-background">
-            <ClaudeIcon className="h-4 w-4" />
+          <span className="grid h-9 w-9 place-items-center rounded-lg border border-border/60 bg-muted">
+            {/* The colored Claude mark, same as the landing features grid. */}
+            <Image src="/claude.svg" alt="" width={20} height={20} />
           </span>
         }
         title="Claude Workflows"
         description="Advanced, external workflow support for people who want to run SwipeIn data inside Claude. For day-to-day drafting and scheduling, Cowork is the simpler path."
       />
-
-      <div className="grid gap-3 rounded-xl border border-border/60 bg-muted/20 p-3 md:grid-cols-2">
-        <div className="rounded-lg bg-background px-3 py-2.5">
-          <div className="text-sm font-medium">Use Cowork inside SwipeIn</div>
-          <p className="mt-1 text-xs leading-snug text-muted-foreground">
-            Best for drafting, multi-draft runs, approving posts, and saving work
-            straight into your Posts board.
-          </p>
-        </div>
-        <div className="rounded-lg bg-background px-3 py-2.5">
-          <div className="text-sm font-medium">Use Claude Workflows</div>
-          <p className="mt-1 text-xs leading-snug text-muted-foreground">
-            Best when you intentionally want an advanced Claude-side workflow
-            using SwipeIn as a connected data source.
-          </p>
-        </div>
-      </div>
 
       <Card>
         <CardHeader>
@@ -215,6 +59,48 @@ export default async function ClaudePage() {
               Claude unless you explicitly call a tool.
             </span>
           </div>
+          {/* One-time setup, about a minute — everything you need is on this card. */}
+          <ol className="mt-4 space-y-3 border-t border-border/60 pt-4">
+            {(
+              [
+                [
+                  "Paste it in and name it SwipeIn",
+                  <>
+                    Drop the URL above into the{" "}
+                    <span className="font-medium text-foreground">MCP server URL</span> field and name
+                    the connector{" "}
+                    <span className="font-medium text-foreground">SwipeIn</span> — every prompt below
+                    references it by that name. Leave the Advanced fields (Client ID / Secret) empty;
+                    Claude handles registration automatically.
+                  </>,
+                ],
+                [
+                  "Sign in with your Swipe File email",
+                  <>
+                    Claude opens a sign-in screen. Use the{" "}
+                    <span className="font-medium text-foreground">same email you use here</span> — the
+                    connector is locked to allow-listed accounts.
+                  </>,
+                ],
+                [
+                  "Run a workflow",
+                  <>
+                    Open any chat and <span className="font-medium text-foreground">SwipeIn</span>{" "}
+                    shows up as a tool source. Copy one of the agents below and paste it in.
+                  </>,
+                ],
+              ] as const
+            ).map(([title, body], i) => (
+              <li key={title} className="flex items-start gap-3">
+                <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-foreground text-[10px] font-medium text-background">
+                  {i + 1}
+                </span>
+                <span className="text-[13px] leading-5 text-muted-foreground">
+                  <span className="font-medium text-foreground">{title}.</span> {body}
+                </span>
+              </li>
+            ))}
+          </ol>
         </CardContent>
       </Card>
 
@@ -249,31 +135,6 @@ export default async function ClaudePage() {
 
       <section className="space-y-4">
         <div className="space-y-1">
-          <h2 className="text-xl font-semibold tracking-tight">Setup — 4 steps</h2>
-          <p className="text-sm text-muted-foreground">Takes about a minute. One-time only.</p>
-        </div>
-        <ol className="grid gap-3 md:grid-cols-2">
-          {SETUP_STEPS.map((step, i) => (
-            <li
-              key={step.title}
-              className="rounded-xl border border-border/60 bg-card p-4 shadow-[0_1px_2px_0_rgba(15,23,42,0.04)]"
-            >
-              <div className="flex items-start gap-3">
-                <div className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-foreground text-[12px] font-medium text-background">
-                  {i + 1}
-                </div>
-                <div className="space-y-1">
-                  <div className="text-sm font-medium">{step.title}</div>
-                  <div className="text-sm text-muted-foreground leading-6">{step.body}</div>
-                </div>
-              </div>
-            </li>
-          ))}
-        </ol>
-      </section>
-
-      <section className="space-y-4">
-        <div className="space-y-1">
           <h2 className="text-xl font-semibold tracking-tight">Pick an Agent</h2>
           <p className="text-sm text-muted-foreground">
             Each agent is a ready-made prompt — copy it into any Claude chat where the SwipeIn
@@ -284,19 +145,26 @@ export default async function ClaudePage() {
         <div className="grid gap-3 md:grid-cols-2">
           {AGENTS.map((agent) => {
             const Icon = agent.icon;
+            const prompt = composePrompt(agent.brief, agent.skills);
             return (
               <div
                 key={agent.title}
                 className="flex flex-col gap-3 rounded-xl border border-border/60 bg-card p-4 shadow-[0_1px_2px_0_rgba(15,23,42,0.04)]"
               >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
-                    <Icon className="h-3 w-3" />
-                    {agent.tag}
-                  </span>
-                  <span className="flex items-center gap-1 text-[10px] tabular-nums text-muted-foreground">
-                    <Clock className="h-3 w-3" />
-                    {agent.time}
+                <div className="flex items-start justify-between gap-2">
+                  <span className="inline-flex items-center gap-2.5">
+                    <span className="relative shrink-0">
+                      <AgentAvatar
+                        slug={agent.slug}
+                        className="size-10 rounded-xl border border-border/60 bg-muted object-cover"
+                      />
+                      <span className="absolute -bottom-1 -right-1 grid size-4 place-items-center rounded-full border border-border/60 bg-background text-muted-foreground">
+                        <Icon className="h-2.5 w-2.5" />
+                      </span>
+                    </span>
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                      {agent.tag}
+                    </span>
                   </span>
                 </div>
 
@@ -306,16 +174,33 @@ export default async function ClaudePage() {
                   <p className="text-[13px] leading-6 text-foreground/80">{agent.payoff}</p>
                 </div>
 
-                <div className="mt-auto rounded-lg border border-border/60 bg-muted/30 p-3">
+                {/* Flows right after the payoff text — no mt-auto, so a short
+                    prompt never floats at the bottom of a stretched card. */}
+                <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
                   <div className="mb-2 flex items-center justify-between gap-2">
                     <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
                       Prompt
                     </span>
-                    <CopyPrompt prompt={agent.prompt} />
+                    <CopyPrompt prompt={prompt} />
                   </div>
-                  <p className="text-[13px] leading-6 text-muted-foreground whitespace-pre-wrap">
-                    {agent.prompt}
+                  <p className="max-h-48 overflow-y-auto whitespace-pre-wrap pr-1 text-[13px] leading-6 text-muted-foreground">
+                    {prompt}
                   </p>
+                  {agent.skills.length > 0 ? (
+                    <div className="mt-2 flex flex-wrap items-center gap-1 border-t border-border/60 pt-2">
+                      <span className="text-[9px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
+                        Skills
+                      </span>
+                      {agent.skills.map((skillId) => (
+                        <span
+                          key={skillId}
+                          className="rounded-full bg-background px-1.5 py-0.5 text-[9px] font-medium text-muted-foreground"
+                        >
+                          {SKILL_CHIP_LABEL[skillId] ?? skillId}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
               </div>
             );

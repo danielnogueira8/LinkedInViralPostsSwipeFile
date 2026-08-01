@@ -6,7 +6,7 @@ export type PublicMcpTool = {
 };
 
 export const PUBLIC_MCP_TOOLS = [
-  { name: "search_viral_posts", description: "Search viral posts with niche, date, engagement, and format filters; focused searches can render original images.", group: "Research", access: "Read" },
+  { name: "search_viral_posts", description: "Search viral posts with niche, date, engagement, and format filters. Supported clients render an interactive Swipe File; every client receives the same structured results for a text fallback.", group: "Research", access: "Read" },
   { name: "get_post", description: "Read one tracked viral post by its id, including rendered original images when available.", group: "Research", access: "Read" },
   { name: "list_niches", description: "List the niches represented by tracked creators.", group: "Research", access: "Read" },
   { name: "get_top_from_batch", description: "Read the strongest recently published posts from the latest scrape.", group: "Research", access: "Read" },
@@ -21,8 +21,8 @@ export const PUBLIC_MCP_TOOLS = [
   { name: "restore_account", description: "Resume tracking a previously removed creator.", group: "Creators", access: "Manage" },
   { name: "list_drafts", description: "List post drafts and their publishing state.", group: "Content", access: "Read" },
   { name: "get_draft", description: "Read one complete post draft, including its body and media references.", group: "Content", access: "Read" },
-  { name: "create_draft", description: "Create a post, hook, or lead-magnet draft on the Posts board.", group: "Content", access: "Create" },
-  { name: "schedule_draft", description: "Schedule a saved draft for LinkedIn publishing.", group: "Content", access: "Manage" },
+  { name: "create_draft", description: "Create a post, hook, or lead-magnet draft on the Posts board; pass source_post_id/source_url when the draft is modeled on a swipe-file post.", group: "Content", access: "Create" },
+  { name: "schedule_draft", description: "Schedule a saved draft for LinkedIn publishing after explicit user confirmation; declining or cancelling leaves the draft unchanged.", group: "Content", access: "Manage" },
   { name: "unschedule_draft", description: "Cancel a draft's pending LinkedIn schedule.", group: "Content", access: "Manage" },
   { name: "list_lead_magnets", description: "List the workspace's saved lead magnets.", group: "Content", access: "Read" },
   { name: "get_lead_magnet", description: "Read one lead magnet with its complete Markdown content.", group: "Content", access: "Read" },

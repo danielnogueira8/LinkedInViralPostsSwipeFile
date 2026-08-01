@@ -6,6 +6,7 @@ import {
   requestsDurableOrAction,
   requestsDirectSourceModeling,
   requestsFullPostDeliverable,
+  requestsModelingSourceSelection,
 } from "@/lib/agent/source-policy";
 import {
   compileDirectPartialTextSpec,
@@ -36,11 +37,17 @@ import {
 } from "@/lib/agent/modeled-post-intent";
 import { wrapUntrustedXml } from "@/lib/agent/untrusted";
 import type { Artifact, AskQuestion } from "@/lib/agent/contracts";
+import { INTERVIEW_REQUEST_RE } from "@/lib/agent/turn/execute-interview";
 import type { PostType } from "@/lib/post-type";
 import type { ComposerTaskContext } from "@/lib/composer-task-context";
 import type { Source, WriterTask } from "@/lib/agent/execute/writer";
 import type { CoworkRoute } from "@/lib/agent/cowork-telemetry";
 import type { ModelSourceReference } from "@/lib/agent/turn/context";
+import {
+  isModelableSourceText,
+  MODEL_SOURCE_SELECTION_POLICY,
+  modelingSourceSelectionEnabled,
+} from "@/lib/agent/model-source-selection-policy";
 import { MAX_GROUNDED_ANSWER_RESULTS } from "@/lib/agent/evidence";
 import type { TurnCompileContext } from "@/lib/agent/turn/state";
 import type {
@@ -242,15 +249,6 @@ function wantsSchedule(instruction: string): boolean {
   );
 }
 
-function isDateBearingSetPutSchedule(instruction: string): boolean {
-  return (
-    hasCommand(instruction, "set|put") &&
-    /\b(?:for|on)\s+(?:this\s+)?(?:\d{4}-\d{2}-\d{2}|today|tomorrow|sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/i.test(
-      instruction,
-    )
-  );
-}
-
 export function explicitBoardDestinationStatuses(
   instruction: string,
 ): Array<BoardMoveStatus | "posted"> {
@@ -264,7 +262,6 @@ export function explicitBoardDestinationStatuses(
     start: match.index ?? 0,
     end: (match.index ?? 0) + match[0].length,
   }));
-  const dateBearingSetPut = isDateBearingSetPutSchedule(instruction);
   const destinations = [
     ...beforeDate.matchAll(
       /\b(?:to|into|as)\s+(idea|drafting|ready|posted)\b/giu,
@@ -312,10 +309,7 @@ export function explicitBoardDestinationStatuses(
         const quotedTitle = /^["“][\s\S]*["”]$/u.test(titleOrSource);
         const explicitSourceStatus =
           /^from\s+(?:idea|drafting|ready|posted)$/i.test(titleOrSource);
-        if (
-          !quotedTitle &&
-          (dateBearingSetPut || !explicitSourceStatus)
-        ) {
+        if (!quotedTitle && !explicitSourceStatus) {
           return [];
         }
       }
@@ -336,10 +330,6 @@ export function explicitBoardDestinationStatuses(
         | "posted",
     ];
   });
-}
-
-function hasExplicitBoardDestination(instruction: string): boolean {
-  return explicitBoardDestinationStatuses(instruction).length > 0;
 }
 
 function changesPublishingSchedule(instruction: string): boolean {
@@ -480,106 +470,6 @@ function requestedMoveStatus(
       : undefined;
 }
 
-function isoDay(date: Date): string {
-  return date.toISOString().slice(0, 10);
-}
-
-function validTimeZone(value: string | undefined): string | undefined {
-  if (!value || value.length > 64) return undefined;
-  try {
-    new Intl.DateTimeFormat("en-US", { timeZone: value }).format(0);
-    return value;
-  } catch {
-    return undefined;
-  }
-}
-
-function localIsoDay(date: Date, timeZone: string | undefined): string {
-  const normalized = validTimeZone(timeZone);
-  if (!normalized) return isoDay(date);
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: normalized,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(date);
-  const part = (type: Intl.DateTimeFormatPartTypes) =>
-    parts.find((item) => item.type === type)?.value ?? "";
-  return `${part("year")}-${part("month")}-${part("day")}`;
-}
-
-function addUtcDays(date: Date, days: number): Date {
-  const next = new Date(date);
-  next.setUTCDate(next.getUTCDate() + days);
-  return next;
-}
-
-const WEEKDAY_INDEX: Record<string, number> = {
-  sunday: 0,
-  monday: 1,
-  tuesday: 2,
-  wednesday: 3,
-  thursday: 4,
-  friday: 5,
-  saturday: 6,
-};
-
-function scheduledDate(
-  instruction: string,
-  now: Date,
-  timeZone?: string,
-): string | null | undefined {
-  if (clearsSchedule(instruction)) return null;
-  const today = localIsoDay(now, timeZone);
-  const localNow = new Date(`${today}T00:00:00.000Z`);
-  const token =
-    "\\d{4}-\\d{2}-\\d{2}|today|tomorrow|sunday|monday|tuesday|wednesday|thursday|friday|saturday";
-  const clarification = instruction.match(
-    new RegExp(`\\bClarification answer:\\s*(${token})\\s*[.!?]?$`, "i"),
-  )?.[1];
-  const destinationMatches = clarification
-    ? [clarification]
-    : [
-        ...instruction.matchAll(
-          new RegExp(`\\b(?:for|on)\\s+(?:this\\s+)?(${token})\\b`, "giu"),
-        ),
-        ...instruction.matchAll(
-          new RegExp(
-            `\\b(?:draft|post|it|this|that|one)\\s+(${token})\\s*[.!?]?$`,
-            "giu",
-          ),
-        ),
-      ].map((match) => match[1]);
-  const normalized = [
-    ...new Set(
-      destinationMatches.map((value) => value.toLocaleLowerCase("en-US")),
-    ),
-  ];
-  if (normalized.length !== 1) return undefined;
-  const requested = normalized[0];
-  const explicit = requested?.match(/^\d{4}-\d{2}-\d{2}$/)?.[0];
-  if (explicit) {
-    const parsed = new Date(`${explicit}T00:00:00.000Z`);
-    if (
-      !Number.isNaN(parsed.getTime()) &&
-      isoDay(parsed) === explicit &&
-      explicit >= today
-    ) {
-      return explicit;
-    }
-    return undefined;
-  }
-  if (requested === "tomorrow") return isoDay(addUtcDays(localNow, 1));
-  if (requested === "today") return today;
-  const weekday = requested && requested in WEEKDAY_INDEX ? requested : undefined;
-  if (weekday) {
-    const target = WEEKDAY_INDEX[weekday];
-    const delta = (target - localNow.getUTCDay() + 7) % 7;
-    return isoDay(addUtcDays(localNow, delta));
-  }
-  return undefined;
-}
-
 type ClarificationReason = Extract<
   ActionOrchestratorRoute,
   { kind: "clarify_action" }
@@ -613,49 +503,14 @@ export function advanceActionOrchestratorClarification(
   let targetCount = route.partialTargetCount ?? null;
 
   if (current === "date") {
-    const date = scheduledDate(
-      `Schedule this draft for ${answer}`,
-      now,
-      clientTimezone,
-    );
-    if (date === undefined) return route;
-    requirements.push({
-      type: "schedule_post",
-      date,
-      ...(validTimeZone(clientTimezone)
-        ? { timeZone: clientTimezone }
-        : {}),
-    });
+    return { kind: "disallowed_action", disallowedReason: "publish" };
   } else if (current === "target_count") {
     const count = requestedTargetCount(`Move ${answer} drafts`);
     if (count.kind !== "ok") return route;
     targetCount = count.count;
   } else {
     if (wantsSchedule(answer)) {
-      const date = scheduledDate(answer, now, clientTimezone);
-      if (date === undefined) {
-        return clarificationRoute(
-          ["date", ...remaining.slice(1)],
-          requirements,
-          targetCount,
-        );
-      }
-      requirements.push({
-        type: "schedule_post",
-        date,
-        ...(validTimeZone(clientTimezone)
-          ? { timeZone: clientTimezone }
-          : {}),
-      });
-      remaining.shift();
-      if (remaining.length > 0) {
-        return clarificationRoute(remaining, requirements, targetCount);
-      }
-      return {
-        kind: "action_management",
-        targetCount: targetCount ?? 1,
-        requirements,
-      };
+      return { kind: "disallowed_action", disallowedReason: "publish" };
     }
     const status = requestedMoveStatus(answer);
     if (!status || status === "ambiguous") return route;
@@ -679,7 +534,7 @@ export function advanceActionOrchestratorClarification(
 
 export function compileActionOrchestratorRoute(
   input: ActionOrchestratorRoutingInput,
-  now: Date = new Date(),
+  _now: Date = new Date(),
 ): ActionOrchestratorRoute | null {
   const instruction = input.userInstruction.replace(/\s+/g, " ").trim();
   if (
@@ -725,8 +580,13 @@ export function compileActionOrchestratorRoute(
   if (changesPublishingSchedule(instruction)) {
     return { kind: "disallowed_action", disallowedReason: "publish" };
   }
-  const clearsPlannedDate = clearsSchedule(instruction);
-  if (hasCommand(instruction, "delete|remove") && !clearsPlannedDate) {
+  // Planning-only dates were removed from Posts. Cowork must not acknowledge a
+  // hidden board plan as if it scheduled publishing; real scheduling stays in
+  // the Posts queue/date-time flow.
+  if (wantsSchedule(instruction) || clearsSchedule(instruction)) {
+    return { kind: "disallowed_action", disallowedReason: "publish" };
+  }
+  if (hasCommand(instruction, "delete|remove")) {
     return { kind: "disallowed_action", disallowedReason: "delete" };
   }
 
@@ -735,23 +595,10 @@ export function compileActionOrchestratorRoute(
     "mark|move|set|put|change|advance|promote|shift|ready|push|take|send",
   );
   const likelyBoardMutation = hasLikelyBoardMoveCommand(instruction);
-  const hasSeparateMoveCommand = hasCommand(
-    instruction,
-    "mark|move|change|advance|promote|shift|ready|push|take|send",
-  );
-  const moveStatus =
-    isDateBearingSetPutSchedule(instruction) &&
-    !hasSeparateMoveCommand &&
-    !hasExplicitBoardDestination(instruction)
-      ? undefined
-      : requestedMoveStatus(instruction);
+  const moveStatus = requestedMoveStatus(instruction);
   if (moveStatus === "posted") {
     return { kind: "disallowed_action", disallowedReason: "posted" };
   }
-  const schedulesPost = wantsSchedule(instruction) || clearsPlannedDate;
-  const date = schedulesPost
-    ? scheduledDate(instruction, now, input.clientTimezone)
-    : undefined;
   const targetCount = requestedTargetCount(instruction);
   if (targetCount.kind === "mixed") {
     return { kind: "no_action", noActionReason: "mixed_count" };
@@ -763,25 +610,14 @@ export function compileActionOrchestratorRoute(
       status: moveStatus,
     });
   }
-  if (schedulesPost && date !== undefined) {
-    requirements.push({
-      type: "schedule_post",
-      date: date ?? null,
-      ...(validTimeZone(input.clientTimezone)
-        ? { timeZone: input.clientTimezone }
-        : {}),
-    });
-  }
   const remaining: ClarificationReason[] = [];
   if (
     moveStatus === "ambiguous" ||
     (!moveStatus &&
-      !schedulesPost &&
       (moveCommandRequested || likelyBoardMutation))
   ) {
     remaining.push("action");
   }
-  if (schedulesPost && date === undefined) remaining.push("date");
   // The board-action lane is for MOVING/SCHEDULING saved drafts. A bare count
   // ambiguity is only OUR concern when the turn actually wants a board action —
   // otherwise a pure content request like "find 4 top posts and rewrite them"
@@ -795,8 +631,7 @@ export function compileActionOrchestratorRoute(
     requirements.length > 0 ||
     remaining.length > 0 ||
     moveCommandRequested ||
-    likelyBoardMutation ||
-    schedulesPost;
+    likelyBoardMutation;
   if (targetCount.kind === "clarify" && hasBoardActionIntent) {
     remaining.push("target_count");
   }
@@ -834,6 +669,11 @@ export type ReadOnlyOrchestratorRoute = {
   expectedDrafts?: number;
   outcome?:
     | { kind: "draft"; expectedDrafts: number }
+    | {
+        kind: "source_selection";
+        candidateCount: 5;
+        searchPoolSize: 10;
+      }
     | {
         kind: "grounded_answer";
         format: "summary" | "takeaways" | "comparison" | "report";
@@ -928,7 +768,17 @@ function composerResearchRoute(
   const requirement = context?.researchRequirement;
   if (!context || !requirement) return null;
   const outcome =
-    context.kind === "post"
+    modelingSourceSelectionEnabled() &&
+    context.sourceSelection &&
+    context.kind === "post" &&
+    context.expectedDraftCount === 1 &&
+    requirement.lane === "workspace"
+      ? ({
+          kind: "source_selection",
+          candidateCount: context.sourceSelection.candidateCount,
+          searchPoolSize: context.sourceSelection.searchPoolSize,
+        } as const)
+      : context.kind === "post"
       ? ({ kind: "draft", expectedDrafts: context.expectedDraftCount } as const)
       : ({
           kind: "grounded_answer",
@@ -941,7 +791,11 @@ function composerResearchRoute(
     return {
       kind: "workspace_research",
       outcome,
-      minimumSources: requirement.minimumSources,
+      minimumSources:
+        outcome.kind === "source_selection"
+          ? (context.sourceSelection?.minimumSources ??
+            requirement.minimumSources)
+          : requirement.minimumSources,
       workspaceSearchMode: requirement.searchMode,
       ...(requirement.since ? { workspaceSince: requirement.since } : {}),
       ...(requirement.postType
@@ -963,6 +817,37 @@ const FULL_POST_REQUEST_RE =
 const NEWS_RE =
   /\b(?:news(?:jack(?:ing)?)?|breaking|trending|latest|today(?:'s)?|current|recent)\b[\s\S]{0,100}\b(?:announcement|launch|release|development|update|story|coverage|news|trend)|\b(?:announcement|launch|release|development|update|story|coverage|news|trend)\b[\s\S]{0,100}\b(?:latest|today(?:'s)?|current|recent|breaking|trending)\b/i;
 const EXPLICIT_NEWS_TOPIC_RE = /\b(?:news|newsjack(?:ing)?)\b/i;
+// Recency intent WITHOUT an explicit research verb.
+//
+// needsNews used to require either the literal word "news" or a recency word
+// plus an event noun plus a research verb ("research", "search", "look into").
+// Almost nobody phrases a question that way, so "What did Apple launch this
+// week?" missed the grounded lane entirely and got answered from training
+// data — a confidently stale answer about current events, which is worse than
+// saying nothing. These patterns catch the natural phrasings instead.
+//
+// Deliberately tight: a recency word alone is not enough, or "make this draft
+// feel current" would hit the web. It must be a recency word plus either a
+// current-events question or an event noun — or one of the few phrases that
+// are inherently about now.
+const SELF_EVIDENT_RECENCY_RE =
+  /\bcatch\s+me\s+up\b|\bwhat(?:'s|\s+is)\s+(?:new|happening|going\s+on)\b|\bany\s+news\b/i;
+const CURRENT_EVENTS_QUESTION_RE =
+  /\b(?:what|who|when|where|how)\b[\s\S]{0,80}\b(?:happen(?:ed|ing)|announce(?:d|ment)?|launch(?:ed)?|release(?:d)?|unveil(?:ed)?|said|going\s+on)\b/i;
+const RECENCY_SIGNAL_RE =
+  /\b(?:today|tonight|yesterday|this\s+(?:week|morning|month)|last\s+night|right\s+now|lately|currently|recent(?:ly)?|latest|breaking|trending)\b/i;
+const EVENT_NOUN_RE =
+  /\b(?:trend(?:ing|s)?|latest|breaking|development|announcement|launch|release|update|story|coverage|headline)s?\b/i;
+
+/** True when the message asks about current events in ordinary phrasing. */
+function asksAboutCurrentEvents(instruction: string): boolean {
+  if (SELF_EVIDENT_RECENCY_RE.test(instruction)) return true;
+  if (!RECENCY_SIGNAL_RE.test(instruction)) return false;
+  return (
+    CURRENT_EVENTS_QUESTION_RE.test(instruction) ||
+    EVENT_NOUN_RE.test(instruction)
+  );
+}
 const FIRST_PARTY_NEWS_CONTEXT_RE =
   /\b(?:our|my)(?:\s+(?:latest|recent|new|current))?(?:\s+(?:company|product|team|career|business))?\s+(?:news|announcement|launch|release|development|update)\b|\b(?:news|announcement|launch|release|development|update)\b(?:\s+[\p{L}\p{N}-]+){0,2}\s+(?:about|from|in|at)\s+(?:our|my)\s+(?:company|product|team|career|business)\b/iu;
 const RESEARCH_RE =
@@ -1624,11 +1509,23 @@ export function compileReadOnlyOrchestratorRoute(
     sourceModelingRequest
       ? modeledIntent.minimumSources
       : requestedSourceMinimum(researchClause, explicitSourceCount);
+  const selectSourceBeforeDraft =
+    sourceModelingRequest &&
+    requestsModelingSourceSelection(instruction, input.composerTaskContext);
   const needsFileInspection =
     input.hasAttachments && FILE_INSPECTION_RE.test(instruction);
+  // A recency word inside a request to search the workspace's own collection
+  // ("find 4 top posts inspired by a recent launch") is about which SAVED
+  // posts to pick, not a request for outside news. Only the widened
+  // current-events branch defers here; the pre-existing signals are unchanged.
+  const currentEventsRequest =
+    asksAboutCurrentEvents(instruction) &&
+    !explicitlyRequestsSourceDiscovery(instruction) &&
+    !WORKSPACE_SEARCH_INTENT_RE.test(instruction);
   const needsNews =
     !FIRST_PARTY_NEWS_CONTEXT_RE.test(instruction) &&
     (EXPLICIT_NEWS_TOPIC_RE.test(instruction) ||
+      currentEventsRequest ||
       (NEWS_RE.test(instruction) && RESEARCH_RE.test(instruction)));
   // True when the message is an explicit search of the workspace's own
   // collection (discovery verb + swipe-file/bookmark/tracked-accounts noun).
@@ -1855,8 +1752,16 @@ export function compileReadOnlyOrchestratorRoute(
   if (needsWorkspaceResearch) {
     return {
       kind: "workspace_research",
-      outcome: { kind: "draft", expectedDrafts },
-      minimumSources: workspaceMinimumSources,
+      outcome: selectSourceBeforeDraft
+        ? {
+            kind: "source_selection",
+            candidateCount: MODEL_SOURCE_SELECTION_POLICY.candidateCount,
+            searchPoolSize: MODEL_SOURCE_SELECTION_POLICY.searchPoolSize,
+          }
+        : { kind: "draft", expectedDrafts },
+      minimumSources: selectSourceBeforeDraft
+        ? MODEL_SOURCE_SELECTION_POLICY.minimumSources
+        : workspaceMinimumSources,
       workspaceSearchMode: STRICT_TOP_SOURCE_RE.test(researchClause)
         ? "strict_top"
         : "diverse",
@@ -1864,7 +1769,9 @@ export function compileReadOnlyOrchestratorRoute(
         ? { workspaceSince: requestedWorkspaceWindow(researchClause) }
         : {}),
       ...(workspacePostType ? { workspacePostType } : {}),
-      ...(workspaceDraftSourceMode ? { workspaceDraftSourceMode } : {}),
+      ...(!selectSourceBeforeDraft && workspaceDraftSourceMode
+        ? { workspaceDraftSourceMode }
+        : {}),
       ...(input.explicitPostType ? { explicitPostType: input.explicitPostType } : {}),
     };
   }
@@ -1915,13 +1822,26 @@ export type ResolvedFindAndModelSource = {
 };
 
 /**
+ * A modeling source must carry enough TEXT to mirror. Viral-sorted "regular"
+ * results can be topped by a meme or a one-line caption (high engagement, ~15
+ * words and an image — e.g. a "Born to / Forced to" meme post that was once
+ * the top result). There is no structure to model in that, so the writer
+ * freestyles and the draft reads as unmodeled even though the Source chip
+ * claims otherwise. Require a real body of prose before a post may be the
+ * model. Pure + exported for tests.
+ */
+export { isModelableSourceText } from "@/lib/agent/model-source-selection-policy";
+
+/**
  * THIN PATH find-and-model source resolver. Runs the SAME rotation-aware search
  * the heavy loop's directSourceModelingTurn prefetch uses (top viral REGULAR
- * post, limit 1), so "find a top post and rewrite it" resolves a source up
- * front and can take the lean direct route instead of the GLM render loop.
- * Returns the source body (for the engine) AND the post_url (for the source
- * chip). Fail-open: any error / empty result returns undefined and the caller
- * falls through to the heavy path unchanged.
+ * posts), then takes the FIRST candidate that is actually modelable (enough
+ * prose to mirror — see isModelableSourceText), so "find a top post and
+ * rewrite it" resolves a real source up front and can take the lean direct
+ * route instead of the GLM render loop. Returns the source body (for the
+ * engine) AND the post_url (for the source chip). Fail-open: any error, empty
+ * result, or no modelable candidate returns undefined and the caller falls
+ * through to the heavy path unchanged.
  */
 export async function resolveFindAndModelSource(
   workspaceId: string,
@@ -1930,7 +1850,7 @@ export async function resolveFindAndModelSource(
   try {
     const result = await runTool(
       "search_viral_posts",
-      { post_type: "regular", sort: "viral", dir: "desc", limit: 1 },
+      { post_type: "regular", sort: "viral", dir: "desc", limit: 8 },
       workspaceId,
       signal,
       { autoSelectModelingSources: true },
@@ -1943,17 +1863,20 @@ export async function resolveFindAndModelSource(
           post_url?: unknown;
         }>)
       : [];
-    const top = posts[0];
-    if (
-      !top ||
-      typeof top.id !== "string" ||
-      typeof top.text !== "string" ||
-      !top.text.trim()
-    ) {
-      return undefined;
+    let top: { id: string; text: string; post_url?: unknown } | undefined;
+    let body = "";
+    for (const candidate of posts) {
+      if (typeof candidate.id !== "string" || typeof candidate.text !== "string") {
+        continue;
+      }
+      const canonical = canonicalScrapedPostText(candidate.text);
+      if (canonical && isModelableSourceText(canonical)) {
+        top = { id: candidate.id, text: candidate.text, post_url: candidate.post_url };
+        body = canonical;
+        break;
+      }
     }
-    const body = canonicalScrapedPostText(top.text);
-    if (!body) return undefined;
+    if (!top) return undefined;
     const sourceUrl =
       typeof top.post_url === "string" && /^https?:\/\//i.test(top.post_url)
         ? top.post_url
@@ -2004,6 +1927,10 @@ export type TurnPlan = TurnPlanCommon &
         kind: "clarify";
         route: "answer";
         ask: AskQuestion;
+      }
+    | {
+        kind: "interview";
+        route: "answer";
       }
     | {
         kind: "answer";
@@ -2075,6 +2002,7 @@ export async function compileTurnPlan(
     actionRetryRepository,
     persistedActionContinuation,
     pendingAskOnly,
+    pendingInterviewAsk,
     artifactClarification,
     fallthroughClarification,
     modeledBatchContinuation,
@@ -2150,6 +2078,36 @@ export async function compileTurnPlan(
   // browser selects Ask, no wording, attachment, prior question, source, or
   // missing voice profile may promote the turn into writing or mutation.
   if (currentTurnOperation?.kind === "ask") {
+    // The interview lane. The interview-me starter, a pending interview card's
+    // follow-up, or an explicit free-text "interview me" all route to the
+    // dedicated executor (execute-interview.ts): the tool-less answer lane
+    // below can neither ask the structured question nor save the answers —
+    // the failure mode that produced free-text questions and no save.
+    // Outranks the research gate: an interview is never a workspace search.
+    if (
+      composerTaskContext?.starterId === "interview-me" ||
+      pendingInterviewAsk ||
+      INTERVIEW_REQUEST_RE.test(effectiveUserInstruction)
+    ) {
+      const contract: TurnContract = { kind: "answer", expectedCount: 1 };
+      coworkTelemetry.configure({
+        traceId: claimedUserMessageId ?? chatId,
+        route: "answer",
+        requestedContract: contract,
+      });
+      return {
+        contract,
+        existingArtifactIds,
+        atomicDraftSet,
+        modeledBatchContinuation,
+        activeModeledBatchContinuation: null,
+        modeledBatchRetryRootUserMessageId: undefined,
+        directPostCount,
+        modelSourceReference,
+        kind: "interview",
+        route: "answer",
+      };
+    }
     const missingContext = Boolean(
       currentTurnOperation.artifactId && !trustedRefineTarget,
     );
@@ -2157,14 +2115,30 @@ export async function compileTurnPlan(
     // search must ALWAYS run a real search, even on an Ask turn with no
     // starter-supplied researchRequirement. Without this the turn falls to the
     // tool-less answer lane below and the model hallucinates "I don't have
-    // access to a swipe file database." Compile the research route whenever the
-    // request either carries a research requirement OR is an explicit
-    // workspace-collection search.
+    // access to a swipe file database." The same applies to live news: a typed
+    // "search verified news about X…" Ask otherwise lands on the tool-less
+    // lane and the model can only reply "I don't have live web search access"
+    // — the exact refusal that prompted this gate. Compile the research route
+    // whenever the request carries a research requirement, is an explicit
+    // workspace-collection search, OR its wording demands live news/research.
+    // Ask still never WRITES: only grounded_answer outcomes are served below,
+    // so a "newsjack this and write a post" Ask keeps the answer lane (which
+    // can say it can't write on Ask) instead of sneaking a draft through.
     const askWantsWorkspaceSearch = WORKSPACE_SEARCH_INTENT_RE.test(
       effectiveUserInstruction,
     );
+    // Same news signals the route compiler applies below (needsNews): an
+    // explicit news mention, or news wording paired with a research verb.
+    // requiresLiveNewsOrResearch covers the newsjack/breaking-news shapes.
+    const askWantsLiveNews =
+      EXPLICIT_NEWS_TOPIC_RE.test(effectiveUserInstruction) ||
+      (NEWS_RE.test(effectiveUserInstruction) &&
+        RESEARCH_RE.test(effectiveUserInstruction)) ||
+      requiresLiveNewsOrResearch(effectiveUserInstruction);
     const askResearchRoute =
-      composerTaskContext?.researchRequirement || askWantsWorkspaceSearch
+      composerTaskContext?.researchRequirement ||
+      askWantsWorkspaceSearch ||
+      askWantsLiveNews
         ? compileReadOnlyOrchestratorRoute({
             userInstruction: effectiveUserInstruction,
             isRefine: false,
@@ -2263,6 +2237,10 @@ export async function compileTurnPlan(
   const wantsFindAndModel =
     !currentModelSource?.post_text.trim() &&
     !modelSourceId &&
+    !requestsModelingSourceSelection(
+      effectiveUserInstruction,
+      composerTaskContext,
+    ) &&
     requestsDirectSourceModeling(effectiveUserInstruction);
   const resolvedFindSource = wantsFindAndModel
     ? await resolveFindAndModelSource(workspaceId, setupSignal)
@@ -2386,6 +2364,12 @@ export async function compileTurnPlan(
         structureMatch &&
         directSource &&
         !isOpinionOrQuestionAboutContent(effectiveUserInstruction) &&
+        // Same live-news/research gate as commandCreateEligible above: the
+        // embedding structure matcher can auto-match a builtin template for a
+        // newsjack brief, and without this the tool-less writer claimed the
+        // turn and could only SIMULATE the search it needs — prod shipped a
+        // draft whose whole body was '[search_news(query="…")]'.
+        !requiresLiveNewsOrResearch(effectiveUserInstruction) &&
         (composerTaskContext?.kind === "post" ||
           requestsFullPostDeliverable(effectiveUserInstruction) ||
           directPostCount === 1),
@@ -2469,13 +2453,36 @@ export async function compileTurnPlan(
     useDirectPartial,
     useDirectMulti,
     useDirectSource,
+    useDirectOriginal,
     useDirectLeadMagnet,
     useDirectCreatorStyle,
   } = directWriterEligibility;
+  // CENTRAL GATE, by lane family. Every CREATE-family lane already applies
+  // the live-news/research gate individually (#1568, #1579) — the tool-less
+  // writer can never serve a newsjack/research brief, only simulate the
+  // search in-band. Those per-lane gates have been missed TWICE, so the
+  // invariant is now also enforced once here: when ONLY create lanes claim
+  // and the instruction demands live news/research, the direct writer loses
+  // and the grounded read-only route takes over. This is a deliberate no-op
+  // on every input reachable today (all create lanes already reject such
+  // instructions); it exists so the NEXT claim path added above inherits the
+  // gate instead of having to remember it. Refine lanes are untouched:
+  // editing an existing draft never needs a search.
+  const directRefineClaimed = useDirectRefine || useGeneralRefine;
+  const directCreateClaimed =
+    useDirectPartial ||
+    useDirectMulti ||
+    useDirectSource ||
+    useDirectOriginal ||
+    useDirectLeadMagnet ||
+    useDirectCreatorStyle;
   const useDirectWriter =
     !reviewOperation &&
     !modeledBatchContractRequested &&
-    directWriterEligibility.eligible;
+    directWriterEligibility.eligible &&
+    (directRefineClaimed ||
+      !directCreateClaimed ||
+      !requiresLiveNewsOrResearch(effectiveUserInstruction));
   const directWriterWouldBeEligibleWithVoice =
     compileDirectWriterEligibility(true).eligible;
   const actionOrchestratorRoute: ActionOrchestratorRoute | null = useDirectWriter
@@ -2601,15 +2608,18 @@ export async function compileTurnPlan(
           draftCountOverride: activeDraftCountOverride,
         }).kind !== "none"),
   );
+  const sourceSelectionOnly =
+    readOnlyOrchestratorRoute?.outcome?.kind === "source_selection";
   // Re-running the same eligibility compiler with only voice marked available
   // distinguishes a real writing request with a missing prerequisite from a
   // compound/brainstorm request intentionally left to the answer lane.
   const writingOperationRequested = Boolean(
-    directWriterWouldBeEligibleWithVoice ||
-      explicitCreateOperation ||
-      skipDecision ||
-      modeledBatchContractRequested ||
-      deterministicModeledRoute,
+    !sourceSelectionOnly &&
+      (directWriterWouldBeEligibleWithVoice ||
+        explicitCreateOperation ||
+        skipDecision ||
+        modeledBatchContractRequested ||
+        deterministicModeledRoute),
   );
   if (writingOperationRequested && preloadedVoiceResult?.ok !== true) {
     // A missing voice profile is never transient — retrying re-runs the exact

@@ -10,9 +10,10 @@ import {
   ExternalLink,
   Minus,
   RefreshCw,
-  Search,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { SearchField } from "@/components/ui/search-field";
+import { LINKEDIN_INTEGRATIONS_PATH } from "@/lib/linkedin-integration-destination";
 import {
   ANALYTICS_CONTENT_TYPE_OPTIONS,
   ANALYTICS_PERIOD_OPTIONS,
@@ -46,16 +47,30 @@ export {
   type AnalyticsTrendPoint,
 } from "@/lib/analytics-view-model";
 
-export type AnalyticsEmptyState = "connect" | "awaiting_first_fetch" | "no_posts" | null;
+export type AnalyticsEmptyState =
+  | "connect"
+  | "awaiting_first_fetch"
+  | "no_posts"
+  | "no_data_in_period"
+  | null;
 
 export function getAnalyticsEmptyState(opts: {
   linkedInConnected: boolean;
   postCount: number;
   hasEligiblePublishedPosts: boolean;
+  // Posts with measurements inside the SELECTED window. `postCount` is
+  // all-time, so without this a workspace with tracked posts but nothing in
+  // the current period fell through to `null` and rendered a chart of zeros
+  // with no explanation — indistinguishable from "analytics are broken".
+  postsInPeriod?: number;
 }): AnalyticsEmptyState {
-  if (opts.postCount > 0) return null;
-  if (!opts.linkedInConnected) return "connect";
-  return opts.hasEligiblePublishedPosts ? "awaiting_first_fetch" : "no_posts";
+  if (!opts.linkedInConnected && opts.postCount === 0) return "connect";
+  if (opts.postCount === 0) {
+    return opts.hasEligiblePublishedPosts ? "awaiting_first_fetch" : "no_posts";
+  }
+  // Tracked posts exist; this window just has no measured movement in it.
+  if (opts.postsInPeriod === 0) return "no_data_in_period";
+  return null;
 }
 
 function fmt(n: number | null): string {
@@ -154,6 +169,7 @@ export function AnalyticsView({
     linkedInConnected,
     postCount: analyticsPostCount,
     hasEligiblePublishedPosts,
+    postsInPeriod: posts.length,
   });
 
   // ---- Empty states -------------------------------------------------------
@@ -161,12 +177,15 @@ export function AnalyticsView({
     return (
       <EmptyCard
         title="Connect LinkedIn to see analytics"
-        body="Analytics covers posts published through SwipeIn. Connect your LinkedIn account in Settings, schedule a post, and metrics will start appearing here after it publishes."
-        cta={{ href: "/dashboard/settings", label: "Open Settings" }}
+        body="Analytics covers posts published through SwipeIn. Connect your LinkedIn account in Integrations, schedule a post, and metrics will start appearing here after it publishes."
+        cta={{ href: LINKEDIN_INTEGRATIONS_PATH, label: "Open Integrations" }}
       />
     );
   }
-  if (emptyState) {
+  // Deliberately NOT an EmptyCard: a full-page takeover would hide the period
+  // selector, and switching period is exactly what this user needs to do. The
+  // page renders normally with an inline explanation instead.
+  if (emptyState !== "no_data_in_period" && emptyState) {
     if (emptyState === "awaiting_first_fetch") {
       return (
         <EmptyCard
@@ -231,6 +250,30 @@ export function AnalyticsView({
           )}
         </div>
       </div>
+
+      {emptyState === "no_data_in_period" && (
+        // Says WHY the numbers are zero and offers the one click that fixes
+        // it. Without this the page renders an all-zero chart that is
+        // indistinguishable from analytics being broken — which is exactly
+        // how the "analytics aren't fetching" report started.
+        <div className="rounded-xl border border-border bg-muted/40 p-3 text-sm">
+          <p className="font-medium">
+            No measured change in this period
+          </p>
+          <p className="mt-1 text-muted-foreground">
+            {analyticsPostCount === 1
+              ? "1 post is tracked, but it recorded no movement in the selected window."
+              : `${analyticsPostCount} posts are tracked, but none recorded movement in the selected window.`}{" "}
+            Newly published posts appear once their first measurement lands.
+          </p>
+          <Link
+            href={analyticsHref("all", filters.contentType)}
+            className="mt-2 inline-block text-xs font-medium text-primary underline-offset-4 hover:underline"
+          >
+            View all time
+          </Link>
+        </div>
+      )}
 
       {/* Toolbar: freshness + manual refresh */}
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -467,20 +510,14 @@ export function PostPerformanceSection({
           role="group"
           aria-label="Post performance controls"
         >
-          <label className="relative min-w-0">
-            <span className="sr-only">Search posts</span>
-            <Search
-              aria-hidden="true"
-              className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
-            />
-            <input
-              type="search"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search posts"
-              className="h-10 w-full min-w-0 rounded-lg border border-border bg-background pl-9 pr-3 text-sm text-foreground outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
-            />
-          </label>
+          <SearchField
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            onClear={() => setQuery("")}
+            placeholder="Search posts"
+            aria-label="Search posts"
+            className="rounded-lg"
+          />
           <label className="min-w-0">
             <span className="sr-only">Sort posts</span>
             <select

@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { truncateAtWordBoundary } from "@/lib/text-truncate";
 import { sanitizeVoiceProfile } from "@/lib/claude";
+import {
+  clusterTopicTerms,
+  extractTopicCandidates,
+} from "@/lib/content-learning/topic-terms";
 import {
   CONTENT_LEARNING_SCHEMA_VERSION,
   workspaceLearningModelSchema,
@@ -231,14 +236,15 @@ function record(value: unknown): Record<string, unknown> {
 }
 
 function opening(body: string): string {
-  return (
+  const first =
     body
       .trim()
       .split(/\n\s*\n/, 1)[0]
       ?.replace(/\s+/g, " ")
-      .trim()
-      .slice(0, 180) ?? ""
-  );
+      .trim() ?? "";
+  // Word-boundary cut — the artifact title is the first 60 chars of the body
+  // sliced mid-word, and echoing it made topics read as broken headlines.
+  return truncateAtWordBoundary(first, 180);
 }
 
 function classifyHook(body: string): string {
@@ -252,6 +258,10 @@ function classifyHook(body: string): string {
   return "Direct claim";
 }
 
+// The format ARC, not just the layout: "List post"/"Media post" alone told
+// the user nothing (and its example was the label itself). Buckets mirror
+// the structure-matcher's taxonomy (templates.ts STRUCTURE_CONTENT_TYPES)
+// where the shape is detectable deterministically.
 function classifyStructure(post: PublishedRow): string {
   const attachments = Array.isArray(post.media_attachments)
     ? post.media_attachments
@@ -259,6 +269,33 @@ function classifyStructure(post: PublishedRow): string {
   if (attachments.length > 0) {
     const type = clean(record(attachments[0]).type, 40);
     return type ? `${type} post` : "Media post";
+  }
+  const first = opening(post.body);
+  const head = post.body.slice(0, 400);
+  if (
+    /^(?:stop|don't|never|quit)\b/i.test(first) ||
+    /\b(?:is|are|isn't|aren't|was)\s+(?:dead|dying|broken|killing|ruining|overrated|a lie)\b/i.test(first) ||
+    /\bwrong\b/i.test(first)
+  ) {
+    return "Contrarian take";
+  }
+  if (/\b(?:announcing|introducing|launching|just (?:launched|shipped|released))\b/i.test(first)) {
+    return "Announcement";
+  }
+  if (/\d/.test(first) && /(?:%|percent|\$|\b\d[\d,.]*\s?(?:k|m|x)\b)/i.test(first)) {
+    return "Metric-led post";
+  }
+  if (/^how (?:to|i|we)\b/i.test(first) || /\bsteps?\s+(?:to|i)\b/i.test(first)) {
+    return "How-to";
+  }
+  if (
+    /^(?:i|my|we|our)\b/i.test(first) &&
+    /\b(?:was|were|had|got|learned|realized|changed|stopped|started|told|asked|failed|built|made|quit|hired|fired)\b/i.test(head)
+  ) {
+    return "Story";
+  }
+  if (/\b(?:teardown|breakdown|why (?:this|it) works|analy[sz]ed)\b/i.test(first)) {
+    return "Teardown";
   }
   if (/^(?:\d+[.)]|[-•])\s/m.test(post.body)) return "List post";
   return "Text-only post";
@@ -476,15 +513,12 @@ function boundedEvidence(
     .map((index) => all[index]!);
 }
 
-function signalExample(
-  kind: LearningSignalKind,
-  sample: PublishedSample,
-): string | null {
-  if (kind === "hook") return clean(opening(sample.post.body), 2_000);
-  if (kind === "topic") {
-    return clean(sample.post.title) ?? clean(opening(sample.post.body), 2_000);
-  }
-  return clean(sample.descriptors[kind], 2_000);
+function signalExample(sample: PublishedSample): string | null {
+  // Every kind's example is the representative post's actual opening line —
+  // the old topic example echoed the mid-word-truncated artifact title, and
+  // the format example echoed the bucket label itself ("List post"), which
+  // told the user nothing.
+  return clean(opening(sample.post.body), 2_000);
 }
 
 export function calculatePublishedSignals(input: {
@@ -503,17 +537,46 @@ export function calculatePublishedSignals(input: {
   ];
   const signals: LearningSignal[] = [];
   for (const kind of kinds) {
-    const groups = new Map<string, SignalMember[]>();
-    for (const sample of samples) {
-      const key = clean(sample.descriptors[kind]);
-      if (!key) continue;
-      const normalized = key.toLowerCase();
-      groups.set(normalized, [
-        ...(groups.get(normalized) ?? []),
-        { sample, key },
-      ]);
+    const grouped: SignalMember[][] = [];
+    if (kind === "topic") {
+      // Topics cluster on shared thematic terms, not exact descriptor
+      // strings: most published posts have no lineage topic, and keying on
+      // the (mid-word-truncated) title made every post its own singleton
+      // "topic". Lineage topics still win when present — they join the
+      // clustering as a full-phrase term, so identical descriptors group
+      // exactly as before.
+      const clusters = clusterTopicTerms(samples, (sample) => {
+        const descriptorTopic = clean(sample.descriptors.topic);
+        if (descriptorTopic) {
+          return [
+            {
+              label: descriptorTopic,
+              normalized: descriptorTopic.toLowerCase(),
+              score: 10,
+            },
+          ];
+        }
+        return extractTopicCandidates(sample.post.body);
+      });
+      for (const cluster of clusters) {
+        grouped.push(
+          cluster.members.map((sample) => ({ sample, key: cluster.label })),
+        );
+      }
+    } else {
+      const groups = new Map<string, SignalMember[]>();
+      for (const sample of samples) {
+        const key = clean(sample.descriptors[kind]);
+        if (!key) continue;
+        const normalized = key.toLowerCase();
+        groups.set(normalized, [
+          ...(groups.get(normalized) ?? []),
+          { sample, key },
+        ]);
+      }
+      for (const members of groups.values()) grouped.push(members);
     }
-    for (const members of groups.values()) {
+    for (const members of grouped) {
       const group = members.map((member) => member.sample);
       const metrics = metricScore(group, samples);
       const evidence = boundedEvidence(group);
@@ -542,7 +605,7 @@ export function calculatePublishedSignals(input: {
         baseline: metrics.baseline,
         trend: signalTrend(group),
         evidence,
-        representativeExample: signalExample(kind, representative),
+        representativeExample: signalExample(representative),
         explanation: null,
         calculatedAt: input.calculatedAt,
       });

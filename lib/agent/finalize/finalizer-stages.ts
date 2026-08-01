@@ -18,7 +18,10 @@
 
 import { evaluateDeliverableArtifact } from "@/lib/agent/deliverable-contract";
 import type { DeliverableContract } from "@/lib/agent/deliverable-contract";
-import { looksCorruptedDraft } from "@/lib/agent/specialists/nets";
+import {
+  aiTellMetrics,
+  looksCorruptedDraft,
+} from "@/lib/agent/specialists/nets";
 import { sourceFidelityRejection } from "@/lib/agent/specialists/source-fidelity";
 import type { AdapterHealthRegistry } from "@/lib/agent/adapter-health";
 import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
@@ -309,6 +312,15 @@ export async function aiTellRepairStage(
   });
   if (ctx.aborted()) {
     return fail("cancelled", "Draft finalization was cancelled.");
+  }
+  const remaining = aiTellMetrics(repair.body);
+  if (remaining.length > 0) {
+    const labels = remaining.join(", ");
+    return fail(
+      "domain_constraint",
+      `The draft still contains blocked AI-writing patterns (${labels}). Rewrite those patterns before rendering the post again.`,
+      `Remove these AI-writing patterns while preserving the facts, meaning, paragraph order, and voice: ${labels}.`,
+    );
   }
   return pass({ ...state, body: repair.body, repaired: repair.repaired });
 }

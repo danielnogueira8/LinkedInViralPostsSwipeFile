@@ -547,7 +547,67 @@ test.describe("Cowork draft lifecycle", () => {
     expect(booking.postingSlotOccurrenceDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
-  test("drags idea, draft, ready, and scheduled posts into exact queue slots", async ({
+  test("shows a specific-time schedule in its queue day without filling a recurring slot", async ({
+    page,
+  }) => {
+    await page.goto("/dashboard/posts");
+    const title = `One-off queue fixture ${Date.now()}`;
+    const created = await page.request.post("/api/drafts", {
+      data: {
+        title,
+        body: "A post scheduled at a specific time outside the recurring queue.",
+        kind: "post",
+      },
+    });
+    expect(created.ok()).toBe(true);
+    const payload = (await created.json()) as {
+      draft?: { id?: string };
+    };
+    const draftId = payload.draft?.id;
+    if (!draftId) throw new Error("One-off queue fixture was not created");
+    draftsToDelete.push(draftId);
+    connectionRestorers.push(
+      await activateTestPublishingConnection(draftId),
+    );
+
+    const scheduledAt = new Date(
+      Date.now() + 36 * 60 * 60 * 1000,
+    ).toISOString();
+    const timezone = await page.evaluate(
+      () => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+    );
+    const scheduled = await page.request.post(
+      `/api/drafts/${draftId}/schedule`,
+      {
+        data: {
+          scheduledAt,
+          timezone,
+          firstComment: null,
+        },
+      },
+    );
+    expect(scheduled.ok()).toBe(true);
+
+    await page.goto("/dashboard/posts");
+    const queue = page.getByRole("region", { name: "Posting queue" });
+    const queueToggle = queue.getByRole("button", {
+      name: /^Posting queue/,
+    });
+    if ((await queueToggle.getAttribute("aria-expanded")) === "false") {
+      await queueToggle.click();
+    }
+    const oneOff = queue
+      .getByRole("group", { name: /one-off schedule$/ })
+      .filter({ hasText: title });
+    await expect(oneOff).toBeVisible();
+    await expect(oneOff).toContainText("One-off");
+    await oneOff.getByRole("button", { name: title }).click();
+    await expect(
+      page.getByRole("heading", { name: "Edit post" }),
+    ).toBeVisible();
+  });
+
+  test("drags posts into queue slots and swaps occupied occurrences", async ({
     page,
   }) => {
     await page.goto("/dashboard/posts");
@@ -593,7 +653,7 @@ test.describe("Cowork draft lifecycle", () => {
       await expect(card).toBeVisible();
       const target = queue
         .getByRole("group")
-        .filter({ hasText: /Open · Drop a post/ })
+        .filter({ hasText: /Open · Create or drop a post/ })
         .first();
       await expect(target).toBeVisible();
       const targetLabel = await target.getAttribute("aria-label");
@@ -603,28 +663,147 @@ test.describe("Cowork draft lifecycle", () => {
       await expect(fixedTarget).toContainText(fixture.title);
     }
 
-    const scheduledCard = page
-      .locator('[role="button"][draggable="true"]:visible')
-      .filter({ hasText: fixtures[0]!.title })
-      .first();
-    await expect(scheduledCard).toBeVisible();
-    const rescheduleTarget = queue
-      .getByRole("group")
-      .filter({ hasText: /Open · Drop a post/ })
-      .first();
-    const targetLabel = await rescheduleTarget.getAttribute("aria-label");
-    if (!targetLabel) throw new Error("Reschedule target has no label");
-    await scheduledCard.dragTo(
-      queue.getByRole("group", { name: targetLabel }),
+    const queueSnapshotResponse = await page.request.get(
+      `/api/posting-slots?timezone=${encodeURIComponent(
+        await page.evaluate(
+          () =>
+            Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+        ),
+      )}`,
     );
+    expect(queueSnapshotResponse.ok()).toBe(true);
+    const queueSnapshot = (await queueSnapshotResponse.json()) as {
+      drafts: Array<{
+        id: string;
+        scheduledAt: string;
+        scheduleStatus: "scheduled";
+        postingSlotId: string;
+        postingSlotOccurrenceDate: string;
+      }>;
+    };
+    const sourceBooking = queueSnapshot.drafts.find(
+      (draft) => draft.id === fixtures[0]!.id,
+    );
+    const targetBooking = queueSnapshot.drafts.find(
+      (draft) => draft.id === fixtures[1]!.id,
+    );
+    if (!sourceBooking || !targetBooking) {
+      throw new Error("Queue swap fixtures were not scheduled");
+    }
+    const sourceOccurrence = queue
+      .getByText(fixtures[0]!.title, { exact: true })
+      .locator("xpath=ancestor::*[@role='group'][1]");
+    const targetOccurrence = queue
+      .getByText(fixtures[1]!.title, { exact: true })
+      .locator("xpath=ancestor::*[@role='group'][1]");
+    const sourceOccurrenceLabel =
+      await sourceOccurrence.getAttribute("aria-label");
+    const targetOccurrenceLabel =
+      await targetOccurrence.getAttribute("aria-label");
+    if (!sourceOccurrenceLabel || !targetOccurrenceLabel) {
+      throw new Error("Queue swap occurrences have no accessible labels");
+    }
+    await expect(sourceOccurrence).toHaveAttribute("draggable", "true");
+    let movePayload: Record<string, unknown> | null = null;
+    await page.route(
+      `**/api/drafts/${fixtures[0]!.id}/queue/move`,
+      async (route) => {
+        movePayload = route.request().postDataJSON() as Record<
+          string,
+          unknown
+        >;
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            ok: true,
+            swapped: true,
+            timezone: "UTC",
+            drafts: [
+              {
+                id: fixtures[0]!.id,
+                scheduledAt: targetBooking.scheduledAt,
+                scheduleStatus: "scheduled",
+                planToPostOn:
+                  targetBooking.postingSlotOccurrenceDate,
+                firstComment: null,
+                postingSlotId: targetBooking.postingSlotId,
+                postingSlotOccurrenceDate:
+                  targetBooking.postingSlotOccurrenceDate,
+              },
+              {
+                id: fixtures[1]!.id,
+                scheduledAt: sourceBooking.scheduledAt,
+                scheduleStatus: "scheduled",
+                planToPostOn:
+                  sourceBooking.postingSlotOccurrenceDate,
+                firstComment: null,
+                postingSlotId: sourceBooking.postingSlotId,
+                postingSlotOccurrenceDate:
+                  sourceBooking.postingSlotOccurrenceDate,
+              },
+            ],
+          }),
+        });
+      },
+    );
+    const queueDragData = await page.evaluateHandle(
+      () => new DataTransfer(),
+    );
+    await sourceOccurrence.dispatchEvent("dragstart", {
+      dataTransfer: queueDragData,
+    });
+    await expect
+      .poll(() =>
+        queueDragData.evaluate((dataTransfer) =>
+          Array.from(dataTransfer.types),
+        ),
+      )
+      .toEqual(["application/x-swipein-queued-draft-id"]);
+    await targetOccurrence.dispatchEvent("dragenter", {
+      dataTransfer: queueDragData,
+    });
+    await targetOccurrence.dispatchEvent("dragover", {
+      dataTransfer: queueDragData,
+    });
+    await targetOccurrence.dispatchEvent("drop", {
+      dataTransfer: queueDragData,
+    });
+    await expect.poll(() => movePayload).toMatchObject({
+      postingSlotId: targetBooking.postingSlotId,
+      postingSlotOccurrenceDate:
+        targetBooking.postingSlotOccurrenceDate,
+    });
     await expect(
-      queue.getByRole("group", { name: targetLabel }),
+      queue.getByRole("group", { name: sourceOccurrenceLabel }),
+    ).toContainText(fixtures[1]!.title);
+    await expect(
+      queue.getByRole("group", { name: targetOccurrenceLabel }),
     ).toContainText(fixtures[0]!.title);
 
     await page.setViewportSize({ width: 390, height: 844 });
+    await queue
+      .getByRole("button", {
+        name: `Move ${fixtures[0]!.title} to another queue slot`,
+      })
+      .click();
+    const moveDialog = page.getByRole("dialog", {
+      name: "Move queued post",
+    });
+    await expect(moveDialog).toBeVisible();
+    await expect(
+      moveDialog.getByLabel("Destination"),
+    ).toBeEnabled();
+    movePayload = null;
+    await moveDialog
+      .getByRole("button", { name: "Move post" })
+      .click();
+    await expect.poll(() => movePayload).not.toBeNull();
+    await expect(moveDialog).toBeHidden();
+
     const pickerTarget = queue
       .getByRole("group")
-      .filter({ hasText: /Open · Drop a post/ })
+      .filter({ hasText: /Open · Create or drop a post/ })
       .first();
     const pickerTargetLabel = await pickerTarget.getAttribute("aria-label");
     if (!pickerTargetLabel) throw new Error("Picker target has no label");

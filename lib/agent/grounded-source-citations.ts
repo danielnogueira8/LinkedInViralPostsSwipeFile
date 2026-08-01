@@ -1,27 +1,13 @@
 import type { Artifact } from "@/lib/agent/contracts";
 import type { GroundedSource } from "@/lib/agent/evidence";
+import { verifiedLinkedInSourceUrl } from "@/lib/linkedin-url";
+
+export { verifiedLinkedInSourceUrl } from "@/lib/linkedin-url";
 
 export const GROUNDED_SOURCE_PRESENTATION = "grounded_answer_source";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-export function verifiedLinkedInSourceUrl(value: unknown): string | undefined {
-  if (typeof value !== "string" || !value) return undefined;
-  try {
-    const url = new URL(value);
-    const hostname = url.hostname.toLowerCase();
-    if (
-      url.protocol !== "https:" ||
-      (hostname !== "linkedin.com" && !hostname.endsWith(".linkedin.com"))
-    ) {
-      return undefined;
-    }
-    return url.toString();
-  } catch {
-    return undefined;
-  }
-}
 
 export function groundedWorkspaceSourceArtifacts(
   evidence: GroundedSource[],
@@ -47,6 +33,7 @@ export function groundedWorkspaceSourceArtifacts(
           postId: source.id,
           presentation: GROUNDED_SOURCE_PRESENTATION,
           ...(sourceUrl ? { sourceUrl } : {}),
+          ...(source.card?.id === source.id ? { card: source.card } : {}),
         },
       },
     ];
