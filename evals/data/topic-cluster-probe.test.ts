@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { readFileSync } from "node:fs";
 
 // The probe endpoint's clustering, extracted here so its parameters are
 // pinned by tests rather than trusted. A wrong threshold does not error — it
@@ -162,5 +163,39 @@ describe("topic-cluster probe: registered as manual-only", () => {
     for (const entry of crons.crons) {
       expect(Object.keys(entry).sort()).toEqual(["path", "schedule"]);
     }
+  });
+});
+
+describe("topic-cluster probe: results reach the log drain", () => {
+  const source = readFileSync(
+    "app/api/cron/topic-cluster-probe/route.ts",
+    "utf8",
+  );
+
+  test("every exit path logs its result", () => {
+    // The Vercel cron UI shows status codes, not response bodies. A run
+    // triggered from the dashboard reports NOTHING unless it logs — which is
+    // exactly what happened on the first real run: it executed and the JSON
+    // was unrecoverable. Each `return NextResponse.json` must be preceded by
+    // a log, or that path is silent.
+    const returns = source.match(/return NextResponse\.json\(/g) ?? [];
+    const logs = source.match(/console\.log\(/g) ?? [];
+    // 4 returns: the 401 (no result to report) + 3 result paths, each logged.
+    expect(returns.length).toBe(4);
+    expect(logs.length).toBe(returns.length - 1);
+  });
+
+  test("logs use the codebase's single-line JSON convention", () => {
+    // Vercel's drain splits on newlines; a pretty-printed object becomes many
+    // unparseable lines.
+    expect(source).toMatch(/console\.log\(\s*JSON\.stringify\(/);
+    expect(source).toContain("topic_cluster_probe");
+  });
+
+  test("the empty-result verdicts are logged too", () => {
+    // "Nothing found" is a real answer and must be as visible as a full one,
+    // otherwise a null result is indistinguishable from a broken run.
+    expect(source).toContain('verdict: "insufficient_data"');
+    expect(source).toContain('verdict: "insufficient_embeddings"');
   });
 });
