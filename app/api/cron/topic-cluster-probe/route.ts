@@ -215,6 +215,19 @@ export async function GET(request: Request) {
     .slice(0, MAX_POSTS);
 
   if (recent.length < minCreators * 2) {
+    console.log(
+      JSON.stringify({
+        topic_cluster_probe: {
+          verdict: "insufficient_data",
+          windowDays,
+          counts: {
+            postsInFullWindow: rows.length,
+            recentAll: recentAll.length,
+            recentSubThreshold: recent.length,
+          },
+        },
+      }),
+    );
     return NextResponse.json({
       ok: true,
       verdict: "insufficient_data",
@@ -251,6 +264,17 @@ export async function GET(request: Request) {
   const priorWithVec = prior.filter((row) => byId.has(row.id));
 
   if (recentWithVec.length < minCreators * 2) {
+    console.log(
+      JSON.stringify({
+        topic_cluster_probe: {
+          verdict: "insufficient_embeddings",
+          counts: {
+            recentSubThreshold: recent.length,
+            recentEmbedded: recentWithVec.length,
+          },
+        },
+      }),
+    );
     return NextResponse.json({
       ok: true,
       verdict: "insufficient_embeddings",
@@ -307,6 +331,26 @@ export async function GET(request: Request) {
         .map((i) => firstLine(recentWithVec[i].text).slice(0, 140)),
     };
   });
+
+  // The Vercel cron UI shows status codes, not response bodies — clicking Run
+  // executes this but the JSON goes nowhere readable. Log the result so it
+  // lands in the log drain and is retrievable from "View Logs", which is the
+  // only way a dashboard-triggered run can report anything back.
+  console.log(
+    JSON.stringify({
+      topic_cluster_probe: {
+        params: { windowDays, baselineDays, sim, minCreators },
+        counts: {
+          postsInFullWindow: rows.length,
+          recentAll: recentAll.length,
+          recentSubThreshold: recent.length,
+          recentEmbedded: recentWithVec.length,
+          priorEmbedded: priorWithVec.length,
+        },
+        clusters: report,
+      },
+    }),
+  );
 
   return NextResponse.json({
     ok: true,
