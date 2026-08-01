@@ -64,6 +64,7 @@ export type AgentInboxIdea = {
   snoozedUntil: string | null;
   actedAt: string | null;
   discardReason: string | null;
+  readAt: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -84,6 +85,40 @@ export const AGENT_FEED_LANES = [
 export type AgentFeedLane = (typeof AGENT_FEED_LANES)[number];
 export type AgentFeedIdea = AgentInboxIdea | AgentRadarIdea;
 
+// Message state is intentionally separate from the lifecycle status above.
+// Reading an idea must not consume it: an active idea can be unread or read,
+// while terminal outcomes retain their lifecycle label. Only an acted idea
+// is shown as Done; discarded, archived, and expired ideas stay distinguishable.
+export type AgentMessageState =
+  | "unread"
+  | "read"
+  | "done"
+  | "discarded"
+  | "archived"
+  | "expired";
+
+export function agentMessageState(
+  idea: Pick<AgentFeedIdea, "status" | "readAt">,
+): AgentMessageState {
+  if (idea.status === "active") return idea.readAt ? "read" : "unread";
+  switch (idea.status) {
+    case "acted":
+      return "done";
+    case "discarded":
+      return "discarded";
+    case "snoozed":
+      return "archived";
+    case "expired":
+      return "expired";
+  }
+}
+
+export function isAgentMessageUnread(
+  idea: Pick<AgentFeedIdea, "status" | "readAt">,
+): boolean {
+  return agentMessageState(idea) === "unread";
+}
+
 export type GeneratedAgentInboxIdea = Omit<
   AgentInboxIdea,
   | "id"
@@ -93,6 +128,7 @@ export type GeneratedAgentInboxIdea = Omit<
   | "snoozedUntil"
   | "actedAt"
   | "discardReason"
+  | "readAt"
   | "createdAt"
   | "updatedAt"
 >;
@@ -197,6 +233,8 @@ export type AgentInboxTransition =
   | { kind: "act" }
   | { kind: "discard"; reason?: string | null }
   | { kind: "snooze"; until: Date }
+  | { kind: "read" }
+  | { kind: "unread" }
   // Reverse a just-acted idea when the Cowork handoff failed. Bounded to a
   // short window server-side, and never applies to a discarded idea.
   | { kind: "restore" };

@@ -10,6 +10,7 @@ const WORKSPACE = "app/(app)/dashboard/chat-workspace.tsx";
 const INBOX = "app/(app)/dashboard/agent-inbox.tsx";
 const NAV_BADGES = "app/(app)/dashboard/nav-badges.ts";
 const INBOX_ROUTE = "app/api/agent/inbox/route.ts";
+const IDEA_ROUTE = "app/api/agent/inbox/ideas/[id]/route.ts";
 
 describe("Your Agent is a top-level dashboard page", () => {
   test("the Create navigation puts Your Agent immediately above Cowork", () => {
@@ -43,7 +44,10 @@ describe("Your Agent is a top-level dashboard page", () => {
     expect(badges).toContain("loadAgentInbox()");
     expect(source(INBOX)).toContain("loadAgentInbox({ replenish: true })");
     expect(badges).toContain('next["/dashboard/agent"] = count');
-    expect(source(INBOX)).toContain("Use this idea");
+    expect(source(INBOX)).toContain("Open in Cowork");
+    expect(source(INBOX)).toContain('body: JSON.stringify({ kind: next })');
+    expect(source(WORKSPACE)).toContain('setCoworkComposer({ kind: "ask" })');
+    expect(source(WORKSPACE)).not.toContain("enterCreateCommand(1)");
   });
 
   test("Cowork no longer owns an embedded agent destination", () => {
@@ -75,7 +79,10 @@ describe("the standalone Agent page exposes the daily opportunity workflow", () 
     expect(inbox).toContain("LaneAvatar");
     expect(inbox).not.toContain("idea.evidence.slice(0, 2)");
     expect(inbox).toContain("selectedIdea");
-    expect(inbox).toContain("Use this idea");
+    expect(inbox).toContain("Open in Cowork");
+    expect(inbox).toContain("Unread");
+    expect(inbox).toContain("Done");
+    expect(source(IDEA_ROUTE)).toContain('z.literal("done")');
     expect(inbox).toContain("Discard");
     expect(inbox).not.toContain("Not today");
     expect(inbox).not.toContain("Clock3");

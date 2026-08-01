@@ -5,6 +5,7 @@ import { errorResponse } from "@/lib/workspace";
 import { actOnOpportunity, type AgentOpportunityRow } from "@/lib/agent-loop/act";
 import {
   recoverStaleAgentOpportunityDrafts,
+  updateAgentOpportunityReadState,
   updateManagedOpportunityStatus,
 } from "@/lib/agent-loop/opportunity-claim";
 import { weekStart } from "@/lib/agent-loop/week-plan";
@@ -19,9 +20,10 @@ export const maxDuration = 300;
 // the "While you were away" section (Phase E2).
 //   { action: "draft" }   → run the normal grounded turn for this opportunity.
 //   { action: "dismiss" } → mark dismissed (trains the ranker out of it).
+//   { action: "read" | "unread" } → update message state without consuming it.
 // -----------------------------------------------------------------------------
 const actionSchema = z.object({
-  action: z.enum(["draft", "dismiss"]),
+  action: z.enum(["draft", "dismiss", "read", "unread"]),
 });
 
 function alreadyHandledResponse() {
@@ -45,7 +47,7 @@ export async function POST(
 
     const { data: opportunity, error } = await sb.raw
       .from("agent_opportunities")
-      .select("id, kind, source_post_id, payload, status")
+      .select("id, kind, source_post_id, payload, status, read_at")
       .eq("id", id)
       .eq("workspace_id", sb.workspaceId)
       .maybeSingle();
@@ -67,6 +69,23 @@ export async function POST(
       );
       if (!dismissed) return alreadyHandledResponse();
       return NextResponse.json({ ok: true, status: "dismissed" });
+    }
+
+    if (action === "read" || action === "unread") {
+      if (opportunity.status !== "proposed") {
+        return alreadyHandledResponse();
+      }
+      const changed = await updateAgentOpportunityReadState(
+        sb.raw,
+        sb.workspaceId,
+        id,
+        action === "read",
+      );
+      if (!changed) return alreadyHandledResponse();
+      return NextResponse.json({
+        ok: true,
+        status: action === "read" ? "read" : "unread",
+      });
     }
 
     if (opportunity.status !== "proposed") {

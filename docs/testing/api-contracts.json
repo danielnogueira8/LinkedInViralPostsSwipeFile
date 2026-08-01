@@ -122,6 +122,19 @@
       "failure_evidence": ["evals/data/leadshark-integration-route.test.ts"],
       "isolation_evidence": ["evals/data/leadshark-integration-route.test.ts"],
       "mutation_evidence": ["evals/data/leadshark-integration-route.test.ts"]
+    },
+    {
+      "id": "agent-inbox",
+      "success_evidence": [
+        "evals/data/agent-page-navigation.test.ts",
+        "evals/data/agent-inbox-message-state.test.ts"
+      ],
+      "failure_evidence": ["evals/data/agent-inbox-migration.test.ts"],
+      "isolation_evidence": ["evals/data/agent-opportunity-claim.test.ts"],
+      "mutation_evidence": [
+        "evals/data/agent-inbox.test.ts",
+        "evals/data/agent-opportunity-claim.test.ts"
+      ]
     }
   ]
 }

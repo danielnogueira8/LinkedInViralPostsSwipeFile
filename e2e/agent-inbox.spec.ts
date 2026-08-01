@@ -13,6 +13,7 @@ const idea = (
   lane,
   ...(lane === "trend_radar" ? { radar: true } : {}),
   status: "active",
+  readAt: null,
   headline:
     lane === "newsjacking"
       ? "A timely AI shift"
@@ -110,7 +111,7 @@ test("shows four equal agent filters with human approval controls", async ({
       page.getByRole("button", { name: new RegExp(label) }).first(),
     ).toBeVisible();
   }
-  await expect(page.getByRole("button", { name: "Use this idea" })).toHaveCount(1);
+  await expect(page.getByRole("button", { name: "Open in Cowork" })).toHaveCount(1);
   await expect(
     page.getByText(/New ideas arrive every day/),
   ).toBeVisible();
@@ -168,6 +169,7 @@ test("an acted idea stays in recent activity while fresh ideas remain actionable
     ...idea("personal_story", 2),
     status: "acted",
     actedAt: new Date().toISOString(),
+    readAt: new Date().toISOString(),
   };
   await page.route("**/api/agent/inbox**", async (route) => {
     await route.fulfill({
@@ -188,11 +190,11 @@ test("an acted idea stays in recent activity while fresh ideas remain actionable
     });
   });
   await page.goto("/dashboard/agent");
-  await expect(page.getByText("Acted", { exact: true })).toBeVisible();
+  await expect(page.getByText("Done", { exact: true })).toBeVisible();
   await expect(
     page.getByText(/hard-won lesson behind a client turnaround/),
   ).toBeVisible();
   await expect(page.getByText("No strong fit today")).toHaveCount(0);
   // The inbox has one focused action surface for the selected idea.
-  await expect(page.getByRole("button", { name: "Use this idea" })).toHaveCount(1);
+  await expect(page.getByRole("button", { name: "Open in Cowork" })).toHaveCount(1);
 });

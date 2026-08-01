@@ -26,6 +26,7 @@ function idea(overrides: Partial<AgentInboxIdea> = {}): AgentInboxIdea {
     snoozedUntil: null,
     actedAt: null,
     discardReason: null,
+    readAt: null,
     createdAt: "2026-07-30T08:00:00Z",
     updatedAt: "2026-07-30T08:00:00Z",
     ...overrides,
@@ -52,7 +53,7 @@ describe("OpportunityCard lane states", () => {
     const html = renderCard({
       acted: idea({ status: "acted", actedAt: "2026-07-30T09:00:00Z" }),
     });
-    expect(html).toContain("Draft started");
+    expect(html).toContain("Done");
     expect(html).toContain("Turn your strongest topic into a practical teardown");
     expect(html).not.toContain("No strong fit today");
     // No actions on a lane whose idea was already taken.
@@ -85,7 +86,7 @@ describe("OpportunityCard lane states", () => {
     expect(html).toContain("Details");
     expect(html).toContain("/agents/bulk-writer.svg");
     expect(html).not.toContain("Why it fits you");
-    expect(html).toContain("Use this idea");
+    expect(html).toContain("Open in Cowork");
     expect(html).toContain("Discard");
     expect(html).not.toContain("Not today");
     expect(html).not.toContain("Draft started");
@@ -101,7 +102,7 @@ describe("OpportunityCard lane states", () => {
     });
     expect(html).not.toContain("Why it fits you");
     expect(html).not.toContain("Reason one");
-    expect(html).toContain("Use this idea");
+    expect(html).toContain("Open in Cowork");
     expect(html).toContain("Discard");
     expect(html).not.toContain("Not today");
     expect(html).not.toContain("Why this is worth your attention");

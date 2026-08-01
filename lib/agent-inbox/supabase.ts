@@ -11,7 +11,7 @@ import type {
 } from "@/lib/agent-inbox";
 
 const IDEA_COLUMNS =
-  "id, workspace_id, lane, status, headline, angle, why, evidence, source_kind, source_ref, source_url, source_title, source_published_at, score, fingerprint, available_on, expires_at, snoozed_until, acted_at, discard_reason, created_at, updated_at";
+  "id, workspace_id, lane, status, headline, angle, why, evidence, source_kind, source_ref, source_url, source_title, source_published_at, score, fingerprint, available_on, expires_at, snoozed_until, acted_at, discard_reason, read_at, created_at, updated_at";
 
 type IdeaRow = Record<string, unknown>;
 
@@ -45,6 +45,7 @@ function ideaFromRow(row: IdeaRow): AgentInboxIdea {
     snoozedUntil: stringOrNull(row.snoozed_until),
     actedAt: stringOrNull(row.acted_at),
     discardReason: stringOrNull(row.discard_reason),
+    readAt: stringOrNull(row.read_at),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
   };

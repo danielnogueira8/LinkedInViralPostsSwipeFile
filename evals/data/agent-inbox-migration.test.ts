@@ -16,6 +16,13 @@ const reclaimSql = readFileSync(
   ),
   "utf8",
 );
+const messageStateSql = readFileSync(
+  new URL(
+    "../../db/migration-169-agent-message-state.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
 
 describe("agent inbox migration", () => {
   test("stores active ideas per lane and idempotent daily runs", () => {
@@ -102,5 +109,25 @@ describe("agent inbox migration", () => {
     expect(sql).toContain(
       "grant select on table public.agent_inbox_ideas to authenticated",
     );
+  });
+
+  test("adds read state without changing the lifecycle decision", () => {
+    expect(messageStateSql).toContain(
+      "alter table public.agent_inbox_ideas",
+    );
+    expect(messageStateSql).toContain(
+      "alter table public.agent_opportunities",
+    );
+    expect(messageStateSql).toContain("add column if not exists read_at");
+    expect(messageStateSql).toContain("'act', 'discard', 'snooze', 'restore', 'read', 'unread'");
+    expect(messageStateSql).toContain("if p_action in ('read', 'unread')");
+    expect(messageStateSql).toContain(
+      "app_deployment_readiness_base_169",
+    );
+    expect(messageStateSql).toContain("agent_inbox_unread_idx");
+    expect(messageStateSql).toContain(
+      "agent_opportunities_unread_trend_idx",
+    );
+    expect(messageStateSql).toContain("values (true, 169, now())");
   });
 });

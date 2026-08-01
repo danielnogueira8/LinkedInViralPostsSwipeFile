@@ -1,7 +1,10 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { updateManagedOpportunityStatus } from "@/lib/agent-loop/opportunity-claim";
+import {
+  updateAgentOpportunityReadState,
+  updateManagedOpportunityStatus,
+} from "@/lib/agent-loop/opportunity-claim";
 import { getOrCreateAgentSystemChat } from "@/lib/agent-loop/system-chat";
 
 const actSource = readFileSync("lib/agent-loop/act.ts", "utf8");
@@ -139,6 +142,21 @@ describe("agent opportunity claims", () => {
         { status: "drafting" },
       ),
     ).resolves.toBe(false);
+  });
+
+  test("updates Trend Radar message state through the shared opportunity seam", async () => {
+    const { client, calls } = fakeClient({ data: { id: "opp-1" }, error: null });
+
+    await expect(
+      updateAgentOpportunityReadState(client, "workspace-1", "opp-1", true),
+    ).resolves.toBe(true);
+    expect(calls.values).toEqual({ read_at: expect.any(String) });
+    expect(calls.filters).toEqual([
+      ["id", "opp-1"],
+      ["workspace_id", "workspace-1"],
+      ["kind", "trend"],
+      ["status", "proposed"],
+    ]);
   });
 
   test("concurrent claims have one winner and one loser", async () => {

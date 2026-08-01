@@ -498,6 +498,9 @@ export function ChatWorkspace({
   author: Author;
   writerContentFormat?: ContentFormat;
 }) {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const agentIdeaParam = searchParams.get("agentIdea");
   const [chats, setChats] = useState<ChatSummary[]>(initialChats);
   const [chatSession] = useState(() =>
     new ChatSession<Message, Artifact, ChatRun>({
@@ -536,7 +539,9 @@ export function ChatWorkspace({
   // one visible Post target and scope, so wording never has to identify what
   // may change.
   const [coworkComposer, setCoworkComposer] = useState<CoworkComposerState>(() =>
-    initialCoworkComposerState(initialChatId),
+    agentIdeaParam
+      ? { kind: "ask" }
+      : initialCoworkComposerState(initialChatId),
   );
   const askContextPostId =
     coworkComposer.kind === "ask" ? coworkComposer.contextPostId : undefined;
@@ -1482,9 +1487,6 @@ export function ChatWorkspace({
   // re-nudges. Null = nothing pending.
   const placeholderNudgedRef = useRef<string | null>(null);
 
-  const searchParams = useSearchParams();
-  const router = useRouter();
-
   // ----- file attachments -----
 
   const onPickFiles = useCallback(
@@ -1914,9 +1916,8 @@ export function ChatWorkspace({
   }, [modelParam, intentParam, handoffParam]);
 
   // Agent inbox handoff. The Agent chooses an evidence-backed direction; the
-  // user still owns the creative act. Start a clean Cowork session with that
-  // direction prefilled in Create mode, but never auto-send it.
-  const agentIdeaParam = searchParams.get("agentIdea");
+  // user still owns the creative act. Open a clean Cowork session with the
+  // prompt prefilled in Ask mode, but never auto-send it or enter Create mode.
   useEffect(() => {
     if (!agentIdeaParam) return;
     const prompt = sessionStorage.getItem(`agent-inbox-draft:${agentIdeaParam}`);
@@ -1932,9 +1933,8 @@ export function ChatWorkspace({
         }
         if (cancelled) return;
         // Only drop the stashed prompt once the chat exists to receive it.
-        // Clearing it up front meant a failed chat create — or a refresh
-        // mid-flight — silently lost the idea the user just acted on, with the
-        // inbox card already gone.
+        // Clearing it up front would make a failed chat create or refresh
+        // silently lose the prompt the user asked Cowork to open.
         sessionStorage.removeItem(`agent-inbox-draft:${agentIdeaParam}`);
         const id: string = payload.chat.id;
         setChats((current) => prependChatIfMissing(current, payload.chat));
@@ -1944,7 +1944,7 @@ export function ChatWorkspace({
         setActiveId(id);
         setInput(prompt);
         setModelSource(null);
-        enterCreateCommand(1);
+        setCoworkComposer({ kind: "ask" });
         const url = new URL(window.location.href);
         url.searchParams.set("chat", id);
         url.searchParams.delete("new");
@@ -1954,18 +1954,8 @@ export function ChatWorkspace({
         });
         requestAnimationFrame(() => inputRef.current?.focus());
       } catch (handoffError) {
-        // The idea was already marked `acted` before the redirect, so a failed
-        // handoff would otherwise lose it from the board with no draft to show
-        // for it. Put it back so the user can try again.
-        try {
-          await fetch(`/api/agent/inbox/ideas/${agentIdeaParam}`, {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ kind: "restore" }),
-          });
-        } catch {
-          // Best effort: the toast below is what the user acts on.
-        }
+        // Opening only marks the recommendation read, so a failed chat
+        // creation leaves it available in the inbox for another attempt.
         toast.error(
           handoffError instanceof Error
             ? handoffError.message
@@ -1979,9 +1969,9 @@ export function ChatWorkspace({
   }, [
     agentIdeaParam,
     chatSession,
-    enterCreateCommand,
     router,
     setActiveId,
+    setCoworkComposer,
     stashComposerDraft,
   ]);
 
