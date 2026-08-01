@@ -22,7 +22,10 @@ import {
 import { AiIcon } from "@/components/ai-icon";
 import { agentAvatarSvgSrc } from "@/components/agent-avatar-src";
 import { toast } from "sonner";
-import { AGENT_FEED_LANES } from "@/lib/agent-inbox";
+import {
+  AGENT_FEED_LANES,
+  isCurrentAgentInboxIdea,
+} from "@/lib/agent-inbox";
 import type {
   AgentFeedIdea,
   AgentFeedLane,
@@ -55,13 +58,6 @@ const laneCopy: Record<
     avatar: string;
   }
 > = {
-  newsjacking: {
-    label: "Newsjacking",
-    description: "React to a verified moment",
-    icon: Newspaper,
-    tone: "bg-amber-500/10 text-amber-700 dark:text-amber-300",
-    avatar: "timing-strategist",
-  },
   personal_story: {
     label: "Story Miner",
     description: "Mine an experience you actually lived",
@@ -582,7 +578,10 @@ export function AgentInbox() {
   }, []);
 
   const feedActive = useMemo(
-    () => [...(data?.active ?? []), ...(data?.trends ?? [])],
+    () => [
+      ...(data?.active ?? []).filter(isCurrentAgentInboxIdea),
+      ...(data?.trends ?? []),
+    ],
     [data],
   );
   const feedActivity = useMemo(

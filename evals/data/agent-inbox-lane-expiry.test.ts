@@ -79,14 +79,14 @@ describe("a full lane frees up on its own", () => {
     );
   });
 
-  test("newsjacking returns first, days before the evergreen lanes", () => {
+  test("current evergreen lanes stay full before their weekly expiry", () => {
     const created = new Date("2026-08-01T07:00:00Z");
     const board = AGENT_INBOX_LANES.flatMap((lane) =>
       Array.from({ length: 3 }, () => ({ lane, expiresAt: stamp(lane, created) })),
     );
-    // 4 days on: the timely lane is stale, the evergreen ones are not.
+    // 4 days on: neither current lane is stale yet, so neither is requested.
     const day4 = new Date("2026-08-05T08:00:00Z");
-    expect(missingLanes(board, day4)).toEqual(["newsjacking"]);
+    expect(missingLanes(board, day4)).toEqual([]);
   });
 
   test("a null-expiry idea still blocks its lane forever", () => {

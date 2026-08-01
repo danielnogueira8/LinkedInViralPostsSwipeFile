@@ -10,7 +10,7 @@ export type AgentInboxPayload = {
   activity: AgentInboxIdea[];
   // Trend Radar is persisted by the creator-independent scanner, but the
   // inbox intentionally exposes it through the same feed response and card
-  // contract as the four replenished lanes.
+  // contract as the other replenished lanes.
   trends: AgentRadarIdea[];
   trendActivity: AgentRadarIdea[];
   preferences: AgentInboxPreferences;

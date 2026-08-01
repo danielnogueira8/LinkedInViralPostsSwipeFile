@@ -72,21 +72,19 @@ function ev(kind: AgentInboxEvidence["kind"]): AgentInboxEvidence {
 }
 
 describe("framework lanes", () => {
-  test("the inbox has four distinct decisions including Trend Radar", () => {
+  test("the feed puts Trend Radar first and keeps only the current inbox lanes", () => {
     // The old now/proven/explore axis described where evidence came from, so
     // two cards could share a framework and read as near-duplicates while
     // sitting in different lanes. Naming the framework fixes that by
     // construction.
     expect([...AGENT_INBOX_LANES]).toEqual([
-      "newsjacking",
       "personal_story",
       "educational",
     ]);
     expect([...AGENT_FEED_LANES]).toEqual([
-      "newsjacking",
+      "trend_radar",
       "personal_story",
       "educational",
-      "trend_radar",
     ]);
   });
 });
@@ -152,11 +150,7 @@ describe("laneEvidenceSatisfied", () => {
 describe("synthesis prompt", () => {
   test("names each lane as a distinct kind of post", () => {
     expect(synthesisSource).toContain("Each lane is a DIFFERENT KIND of post");
-    for (const lane of [
-      "NEWSJACKING",
-      "PERSONAL_STORY",
-      "EDUCATIONAL",
-    ]) {
+    for (const lane of ["PERSONAL_STORY", "EDUCATIONAL"]) {
       expect(synthesisSource).toContain(lane);
     }
   });
@@ -170,16 +164,13 @@ describe("synthesis prompt", () => {
 
 describe("draft hand-off", () => {
   test("each lane frames the draft as its own kind of post", () => {
-    // The newsjacking prompt activates its authored skill by naming it, so
-    // acting on a card starts the draft with that framework's craft rules
-    // already applied. personal_story and educational carry explicit
-    // instructions instead.
+    // Newsjacking is no longer a daily inbox lane. The remaining lanes carry
+    // explicit instructions into Cowork instead.
     const framings = AGENT_INBOX_LANES.map((lane) =>
       agentInboxDraftPrompt({ ...baseIdea, lane }),
     );
-    expect(framings[0]).toContain("/newsjacking");
-    expect(framings[1]).toContain("never invent a story");
-    expect(framings[2]).toContain("educational post");
+    expect(framings[0]).toContain("never invent a story");
+    expect(framings[1]).toContain("educational post");
     // Every lane says something different about how to write.
     expect(new Set(framings).size).toBe(AGENT_INBOX_LANES.length);
   });
@@ -257,12 +248,7 @@ describe("agent names", () => {
   test("every lane has a distinct agent name", () => {
     // The UI labels are short outcomes, not repeated "Agent" suffixes. They
     // stay distinct so the filter bar remains scannable.
-    const laneLabels = [
-      "Trend Radar",
-      "Story Miner",
-      "Expertise",
-      "Newsjacking",
-    ];
+    const laneLabels = ["Trend Radar", "Story Miner", "Expertise"];
     for (const name of laneLabels) {
       expect(source).toContain(`label: "${name}"`);
     }

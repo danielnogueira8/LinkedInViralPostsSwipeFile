@@ -101,6 +101,16 @@ export type Agent = {
 
 export const AGENTS: Agent[] = [
   {
+    tag: "Trend Radar Agent",
+    slug: "trend-radar",
+    title: "See this week's best posts at a glance",
+    payoff: "A fast read on what's working in your niche right now — hooks, authors, and engagement, ranked.",
+    icon: Search,
+    skills: [],
+    brief:
+      "Use the SwipeIn connector. search_viral_posts for the top 10 viral posts from the last 7 days in my niche, sorted by reactions. Give me the hook, the author, and engagement for each so I can see what's working at a glance.",
+  },
+  {
     tag: "Bulk Writer Agent",
     slug: "bulk-writer",
     title: "10 posts, modeled on what's winning right now",
@@ -159,16 +169,6 @@ export const AGENTS: Agent[] = [
     skills: [],
     brief:
       "Use the SwipeIn connector. Call search_viral_posts for the viral posts from the last 30 days, then tell me which days of the week and times of day produce the most viral posts for the creators I track. Then list_drafts, pick my 5 strongest, and schedule them into those windows with schedule_draft.",
-  },
-  {
-    tag: "Trend Radar Agent",
-    slug: "trend-radar",
-    title: "See this week's best posts at a glance",
-    payoff: "A fast read on what's working in your niche right now — hooks, authors, and engagement, ranked.",
-    icon: Search,
-    skills: [],
-    brief:
-      "Use the SwipeIn connector. search_viral_posts for the top 10 viral posts from the last 7 days in my niche, sorted by reactions. Give me the hook, the author, and engagement for each so I can see what's working at a glance.",
   },
   {
     tag: "Roster Manager Agent",

@@ -331,7 +331,7 @@ export default function LandingClient({
           <ol className="mt-10 grid gap-3 sm:grid-cols-3">
             {([
               ["Connect once", "Add the SwipeIn connector to Claude with one URL. Your voice profile, swipe file, and calendar come with it."],
-              ["Pick an agent", "Each one arrives knowing its craft: bulk drafts, newsjacking, calendars, hooks. Copy it in and put it to work."],
+              ["Pick an agent", "Each one arrives knowing its craft: trend radar, bulk drafts, calendars, hooks. Copy it in and put it to work."],
               ["Approve the work", "Drafts land on your Posts board, grounded in real viral posts and written in your voice. Nothing ships without your yes."],
             ] as const).map(([title, copy], i) => (
               <li key={title} className="rounded-xl border border-border bg-card p-5">

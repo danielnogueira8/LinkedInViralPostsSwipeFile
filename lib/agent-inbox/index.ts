@@ -5,15 +5,18 @@ import { truncateAtWordBoundary } from "@/lib/text-truncate";
 // axis described where evidence came from, which let two cards share a
 // framework and read as near-duplicates while sitting in different lanes.
 // Naming the framework makes each lane a different KIND of post by
-// construction. Namejacking remains available as an intentional manual skill,
-// but it is not a daily inbox lane: it overlaps with timely newsjacking and
-// would make the review queue wider without adding a distinct decision.
+// construction. Newsjacking and namejacking remain available as intentional
+// manual Cowork skills, but neither is a daily inbox lane.
 export const AGENT_INBOX_LANES = [
-  "newsjacking",
   "personal_story",
   "educational",
 ] as const;
-export type AgentInboxLane = (typeof AGENT_INBOX_LANES)[number];
+export type AgentInboxLane =
+  | (typeof AGENT_INBOX_LANES)[number]
+  // Legacy rows remain in the database for history and deduplication, but are
+  // never generated or returned by the current inbox feed.
+  | "newsjacking";
+export type CurrentAgentInboxLane = (typeof AGENT_INBOX_LANES)[number];
 
 // Up to three active ideas per lane — quality-gated, so a lane may hold
 // fewer when the evidence is weak. Never pad a lane to reach this cap.
@@ -78,11 +81,26 @@ export type AgentRadarIdea = Omit<AgentInboxIdea, "lane"> & {
 };
 
 export const AGENT_FEED_LANES = [
-  ...AGENT_INBOX_LANES,
   "trend_radar",
+  ...AGENT_INBOX_LANES,
 ] as const;
 export type AgentFeedLane = (typeof AGENT_FEED_LANES)[number];
-export type AgentFeedIdea = AgentInboxIdea | AgentRadarIdea;
+export type CurrentAgentInboxIdea = Omit<AgentInboxIdea, "lane"> & {
+  lane: CurrentAgentInboxLane;
+};
+export type AgentFeedIdea = CurrentAgentInboxIdea | AgentRadarIdea;
+
+export function isCurrentAgentInboxLane(
+  lane: AgentInboxLane,
+): lane is CurrentAgentInboxLane {
+  return (AGENT_INBOX_LANES as readonly string[]).includes(lane);
+}
+
+export function isCurrentAgentInboxIdea(
+  idea: AgentInboxIdea,
+): idea is CurrentAgentInboxIdea {
+  return isCurrentAgentInboxLane(idea.lane);
+}
 
 export type GeneratedAgentInboxIdea = Omit<
   AgentInboxIdea,
@@ -107,7 +125,7 @@ export type AgentInboxPreferences = {
 
 // How long an idea stays on the board before it expires on its own.
 //
-// Every lane expires. Before this, only newsjacking did — the other three got
+// Every lane expires. Before this, only newsjacking did — the evergreen lanes got
 // a null expiry, so once a lane hit the 3-active cap it was permanently
 // "full", never requested again, and the board froze. The daily run kept
 // completing successfully while creating nothing, which is exactly what a
@@ -120,6 +138,8 @@ export type AgentInboxPreferences = {
 export function laneLifetimeHours(lane: AgentInboxLane): number {
   switch (lane) {
     case "newsjacking":
+      // Historical rows keep their original short expiry even though the lane
+      // is no longer generated or shown in the current inbox.
       return 72;
     case "educational":
     case "personal_story":
@@ -140,18 +160,18 @@ export function laneEvidenceSatisfied(
   lane: AgentInboxLane,
   evidence: readonly AgentInboxEvidence[],
 ): boolean {
-  const datedNews = evidence.some(
-    (entry) =>
-      entry.kind === "news" &&
-      Boolean(entry.url) &&
-      Boolean(entry.publishedAt) &&
-      Number.isFinite(Date.parse(entry.publishedAt ?? "")),
-  );
   switch (lane) {
-    // A timely pitch has to be anchored to a dated story — that is the whole
-    // claim it makes.
     case "newsjacking":
-      return datedNews;
+      // Keep the legacy gate for persisted/test data. New inbox runs never
+      // request this lane; direct Cowork newsjacking uses its own grounding
+      // policy instead.
+      return evidence.some(
+        (entry) =>
+          entry.kind === "news" &&
+          Boolean(entry.url) &&
+          Boolean(entry.publishedAt) &&
+          Number.isFinite(Date.parse(entry.publishedAt ?? "")),
+      );
     // The user's own material. `knowledge` is what the interview captured
     // (story / proof / belief); `voice` is how they tell it. Without one of
     // those there is no "your" in the story.
@@ -308,7 +328,8 @@ const RECENT_SOURCE_SINCE = (now: Date) =>
   new Date(now.getTime() - RECENT_SOURCE_WINDOW_DAYS * 24 * 60 * 60 * 1000);
 
 function laneOrder(lane: AgentInboxLane): number {
-  return AGENT_INBOX_LANES.indexOf(lane);
+  const index = AGENT_INBOX_LANES.indexOf(lane as CurrentAgentInboxLane);
+  return index === -1 ? Number.MAX_SAFE_INTEGER : index;
 }
 
 function ordered(ideas: AgentInboxIdea[]): AgentInboxIdea[] {
@@ -340,8 +361,12 @@ export function createAgentInbox(
         preferences.timezone,
       );
       const [active, activity] = await Promise.all([
-        repository.readActive(workspaceId, now),
-        repository.readRecentActivity(workspaceId, 12),
+        repository
+          .readActive(workspaceId, now)
+          .then((ideas) => ideas.filter(isCurrentAgentInboxIdea)),
+        repository
+          .readRecentActivity(workspaceId, 12)
+          .then((ideas) => ideas.filter(isCurrentAgentInboxIdea)),
       ]);
       return {
         // The inbox is a daily review surface. Older untouched ideas remain
@@ -362,7 +387,9 @@ export function createAgentInbox(
       }
       await repository.releaseDueSnoozed(workspaceId, now);
       const localDate = localDateForInstant(now.toISOString(), timezone);
-      const activeIdeas = await repository.readActive(workspaceId, now);
+      const activeIdeas = (await repository.readActive(workspaceId, now)).filter(
+        isCurrentAgentInboxIdea,
+      );
       const retained = ordered(
         activeIdeas.filter((entry) => entry.availableOn === localDate),
       );
@@ -370,7 +397,7 @@ export function createAgentInbox(
       for (const entry of retained) {
         activeCounts.set(entry.lane, (activeCounts.get(entry.lane) ?? 0) + 1);
       }
-      let missingLanes = AGENT_INBOX_LANES.filter(
+      const missingLanes = AGENT_INBOX_LANES.filter(
         (lane) =>
           (activeCounts.get(lane) ?? 0) < AGENT_INBOX_ACTIVE_PER_LANE,
       );
@@ -405,21 +432,6 @@ export function createAgentInbox(
           ],
         );
 
-        // Newsjacking is a promise of timeliness. Without verified, dated news
-        // it stays honestly empty rather than turning into a generic idea.
-        if (evidence.news.length === 0) {
-          missingLanes = missingLanes.filter(
-            (lane) => lane !== "newsjacking",
-          );
-          // Nothing else was outstanding, so this run did no work. Releasing
-          // the claim lets a later tick try again once news breaks — holding it
-          // would mark the day done and leave `now` empty until local midnight.
-          if (missingLanes.length === 0) {
-            await repository.releaseDailyRun(workspaceId, localDate);
-            return { created: [], retained, skipped: "no_evidence" };
-          }
-        }
-
         const generated =
           missingLanes.length === 0
             ? []
@@ -433,7 +445,7 @@ export function createAgentInbox(
               });
         // Each missing lane keeps only its remaining open slots: lanes that
         // already hold active ideas top up, they never overflow the cap.
-        const openSlots = new Map(
+        const openSlots = new Map<AgentInboxLane, number>(
           missingLanes.map((lane) => [
             lane,
             AGENT_INBOX_ACTIVE_PER_LANE - (activeCounts.get(lane) ?? 0),

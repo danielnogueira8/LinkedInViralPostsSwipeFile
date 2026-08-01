@@ -2,9 +2,11 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test } from "vitest";
 import { OpportunityCard } from "@/app/(app)/dashboard/agent-inbox";
-import type { AgentInboxIdea } from "@/lib/agent-inbox";
+import type { CurrentAgentInboxIdea } from "@/lib/agent-inbox";
 
-function idea(overrides: Partial<AgentInboxIdea> = {}): AgentInboxIdea {
+function idea(
+  overrides: Partial<CurrentAgentInboxIdea> = {},
+): CurrentAgentInboxIdea {
   return {
     id: "idea-1",
     workspaceId: "test-workspace",
@@ -33,9 +35,9 @@ function idea(overrides: Partial<AgentInboxIdea> = {}): AgentInboxIdea {
 }
 
 function renderCard(props: {
-  idea?: AgentInboxIdea;
-  acted?: AgentInboxIdea;
-  snoozed?: AgentInboxIdea;
+  idea?: CurrentAgentInboxIdea;
+  acted?: CurrentAgentInboxIdea;
+  snoozed?: CurrentAgentInboxIdea;
 }): string {
   return renderToStaticMarkup(
     createElement(OpportunityCard, {

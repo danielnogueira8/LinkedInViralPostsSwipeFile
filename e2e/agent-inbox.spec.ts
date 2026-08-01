@@ -2,7 +2,6 @@ import { expect, test } from "@playwright/test";
 
 const idea = (
   lane:
-    | "newsjacking"
     | "personal_story"
     | "educational"
     | "trend_radar",
@@ -14,13 +13,11 @@ const idea = (
   ...(lane === "trend_radar" ? { radar: true } : {}),
   status: "active",
   headline:
-    lane === "newsjacking"
-      ? "A timely AI shift"
-      : lane === "personal_story"
-        ? "The hard-won lesson behind a client turnaround"
-        : lane === "educational"
-          ? "Turn your strongest topic into a practical teardown"
-          : "A conversation your audience can join early",
+    lane === "personal_story"
+      ? "The hard-won lesson behind a client turnaround"
+      : lane === "educational"
+        ? "Turn your strongest topic into a practical teardown"
+        : "A conversation your audience can join early",
   angle: "A specific direction grounded in the evidence attached to this card.",
   why: [
     "It matches an active audience concern",
@@ -29,40 +26,40 @@ const idea = (
   evidence: [
     {
       kind:
-        lane === "newsjacking" || lane === "trend_radar"
+        lane === "trend_radar"
           ? "news"
           : lane === "educational"
             ? "performance"
             : "knowledge",
       label:
-        lane === "newsjacking" || lane === "trend_radar"
+        lane === "trend_radar"
           ? "Verified industry update"
           : "Workspace evidence",
       detail: "Evidence detail",
       url:
-        lane === "newsjacking" || lane === "trend_radar"
+        lane === "trend_radar"
           ? "https://example.com/news"
           : null,
       publishedAt:
-        lane === "newsjacking" || lane === "trend_radar"
+        lane === "trend_radar"
           ? new Date().toISOString()
           : null,
     },
   ],
   sourceKind:
-    lane === "newsjacking" || lane === "trend_radar"
+    lane === "trend_radar"
       ? "news"
       : lane === "educational"
         ? "workspace_learning"
         : "knowledge",
   sourceRef: `source-${index}`,
   sourceUrl:
-    lane === "newsjacking" || lane === "trend_radar"
+    lane === "trend_radar"
       ? "https://example.com/news"
       : null,
   sourceTitle: "Evidence",
   sourcePublishedAt:
-    lane === "newsjacking" || lane === "trend_radar"
+    lane === "trend_radar"
       ? new Date().toISOString()
       : null,
   score: 0.9,
@@ -85,7 +82,7 @@ test.beforeEach(async ({ page }) => {
     await route.fulfill({
       json: {
         ok: true,
-        active: [idea("newsjacking", 1), idea("personal_story", 2)],
+        active: [idea("personal_story", 1)],
         trends: [idea("trend_radar", 3)],
         activity: [],
         trendActivity: [],
@@ -101,15 +98,18 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test("shows four equal agent filters with human approval controls", async ({
+test("shows the visible agent filters with human approval controls", async ({
   page,
 }) => {
   await page.goto("/dashboard/agent");
-  for (const label of ["Newsjacking", "Story Miner", "Expertise", "Trend Radar"]) {
+  for (const label of ["Trend Radar", "Story Miner", "Expertise"]) {
     await expect(
       page.getByRole("button", { name: new RegExp(label) }).first(),
     ).toBeVisible();
   }
+  await expect(
+    page.locator('[aria-label="Filter opportunities by agent"] button'),
+  ).toHaveText([/All ideas/, /Trend Radar/, /Story Miner/, /Expertise/]);
   await expect(page.getByRole("button", { name: "Use this idea" })).toHaveCount(1);
   await expect(
     page.getByText(/New ideas arrive every day/),
@@ -173,7 +173,7 @@ test("an acted idea stays in recent activity while fresh ideas remain actionable
     await route.fulfill({
       json: {
         ok: true,
-        active: [idea("newsjacking", 1)],
+        active: [idea("personal_story", 1)],
         trends: [idea("trend_radar", 3)],
         activity: [actedIdea],
         trendActivity: [],

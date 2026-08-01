@@ -19,6 +19,10 @@ import {
 // ship the diluted version again.
 
 describe("workflow prompts carry the full skill text", () => {
+  test("puts Trend Radar first in the workflow list", () => {
+    expect(AGENTS[0]?.slug).toBe("trend-radar");
+  });
+
   test("every writing agent embeds both anti-slop rule sets verbatim", () => {
     const writingAgents = AGENTS.filter((agent) =>
       agent.skills.includes("anti-slop"),

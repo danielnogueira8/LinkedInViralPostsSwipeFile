@@ -254,16 +254,15 @@ describe("AgentInbox", () => {
     });
 
     expect(result.created.map((entry) => entry.lane)).toEqual([
-      "newsjacking",
       "personal_story",
       "educational",
     ]);
     expect(repo.ideas.find((entry) => entry.id === existing.id)).toBe(existing);
-    // One pre-existing educational idea, plus one new idea in each of the three
+    // One pre-existing educational idea, plus one new idea in each of the two
     // lanes (educational tops up from 1 toward the cap rather than resetting).
     expect(
       repo.ideas.filter((entry) => entry.status === "active"),
-    ).toHaveLength(4);
+    ).toHaveLength(3);
   });
 
   test("runs at most once per workspace local day", async () => {
@@ -297,7 +296,7 @@ describe("AgentInbox", () => {
     expect(duplicate).toMatchObject({ skipped: "no_evidence", created: [] });
   });
 
-  test("does not manufacture a Now idea when there is no verified fresh news", async () => {
+  test("does not manufacture an idea when there is no supporting evidence", async () => {
     const repo = repository();
     const inbox = createAgentInbox({
       repository: repo,
@@ -314,6 +313,23 @@ describe("AgentInbox", () => {
     // No evidence of any kind: every lane's requirement is unmet, so the
     // board stays empty instead of filling with unfounded ideas.
     expect(result.created).toEqual([]);
+  });
+
+  test("does not surface legacy newsjacking rows in the current feed", async () => {
+    const repo = repository([
+      idea("newsjacking"),
+      idea("newsjacking", { id: "old-acted", status: "acted" }),
+    ]);
+    const inbox = createAgentInbox({
+      repository: repo,
+      synthesis: synthesis(),
+      loadEvidence: async () => NO_EVIDENCE,
+    });
+
+    const state = await inbox.read("workspace-1", NOW);
+
+    expect(state.active).toEqual([]);
+    expect(state.activity).toEqual([]);
   });
 
   test("an acted-on idea leaves its lane empty until the next daily run", async () => {
@@ -363,7 +379,7 @@ describe("AgentInbox", () => {
 
   test("reports full only when every lane holds three active ideas", async () => {
     const repo = repository(
-      (["newsjacking", "personal_story", "educational"] as const).flatMap((lane) =>
+      (["personal_story", "educational"] as const).flatMap((lane) =>
         [1, 2, 3].map((index) =>
           idea(lane, {
             id: `${lane}-${index}`,
@@ -391,12 +407,12 @@ describe("AgentInbox", () => {
     });
 
     expect(result).toMatchObject({ skipped: "full", created: [] });
-    expect(result.retained).toHaveLength(9);
+    expect(result.retained).toHaveLength(6);
     expect(syntheses).toBe(0);
   });
 
   test("starts a fresh daily batch even when yesterday's ideas were untouched", async () => {
-    const yesterday = (['newsjacking', 'personal_story', 'educational'] as const).flatMap(
+    const yesterday = (["personal_story", "educational"] as const).flatMap(
       (lane) =>
         Array.from({ length: 3 }, (_, index) =>
           idea(lane, {
@@ -421,7 +437,6 @@ describe("AgentInbox", () => {
     });
 
     expect(result.created.map((entry) => entry.lane)).toEqual([
-      "newsjacking",
       "personal_story",
       "educational",
     ]);
@@ -444,8 +459,8 @@ describe("AgentInbox", () => {
       timezone: "UTC",
     });
 
-    expect(result.created).toHaveLength(9);
-    for (const lane of ["newsjacking", "personal_story", "educational"] as const) {
+    expect(result.created).toHaveLength(6);
+    for (const lane of ["personal_story", "educational"] as const) {
       expect(
         result.created.filter((entry) => entry.lane === lane),
       ).toHaveLength(3);
@@ -466,8 +481,8 @@ describe("AgentInbox", () => {
       timezone: "UTC",
     });
 
-    expect(result.created).toHaveLength(9);
-    for (const lane of ["newsjacking", "personal_story", "educational"] as const) {
+    expect(result.created).toHaveLength(6);
+    for (const lane of ["personal_story", "educational"] as const) {
       expect(
         result.created.filter((entry) => entry.lane === lane),
       ).toHaveLength(3);
@@ -551,22 +566,21 @@ describe("AgentInbox", () => {
       synthesis: {
         async synthesize() {
           return [1, 2].map((index) => ({
-            lane: "newsjacking" as const,
+            lane: "personal_story" as const,
             headline: `Same-story idea ${index}`,
             angle: `Angle ${index} on the same story`,
             why: ["Same underlying source"],
             evidence: [
               {
-                kind: "news" as const,
+                kind: "knowledge" as const,
                 label: "Same story",
                 detail: "One article, two angles",
-                url: "https://example.com/same-story",
-                publishedAt: "2026-07-30T07:00:00.000Z",
+                subtype: "story",
               },
             ],
-            sourceKind: "news" as const,
-            sourceRef: null,
-            sourceUrl: "https://example.com/same-story",
+            sourceKind: "knowledge" as const,
+            sourceRef: "same-story",
+            sourceUrl: null,
             sourceTitle: "Same story",
             sourcePublishedAt: null,
             score: 0.9,
@@ -628,46 +642,6 @@ describe("AgentInbox", () => {
     });
 
     expect(result.created).toHaveLength(0);
-  });
-
-  test("a Now-only run with no news gives its claim back so news can land later", async () => {
-    // Every non-news lane is already full, so newsjacking is the only
-    // outstanding work. Without releasing the claim the run marked the day
-    // done, and news breaking at midday could not reach the board until local
-    // midnight.
-    const full = (
-      ["personal_story", "educational"] as const
-    ).flatMap((lane) =>
-      Array.from({ length: 3 }, (_, i) =>
-        idea(lane, { id: `${lane}-${i}`, fingerprint: `${lane}-${i}` }),
-      ),
-    );
-    const repo = repository(full);
-    let newsAvailable = false;
-    const inbox = createAgentInbox({
-      repository: repo,
-      synthesis: synthesis(),
-      loadEvidence: async () =>
-        newsAvailable ? NEWS_EVIDENCE : { news: [], learning: [], knowledge: [] },
-    });
-
-    const morning = await inbox.replenish({
-      workspaceId: "workspace-1",
-      now: NOW,
-      timezone: "UTC",
-    });
-    expect(morning).toMatchObject({ skipped: "no_evidence", created: [] });
-
-    // Same local date: the retry must not be refused as already_ran.
-    newsAvailable = true;
-    const afternoon = await inbox.replenish({
-      workspaceId: "workspace-1",
-      now: NOW,
-      timezone: "UTC",
-    });
-    expect(afternoon.created.map((entry) => entry.lane)).toEqual([
-      "newsjacking",
-    ]);
   });
 
   test("a source pitched on an earlier day is not pitched again", async () => {
