@@ -66,7 +66,10 @@ export function PostOutcomes({ draftId }: { draftId: string }) {
       `/api/drafts/${encodeURIComponent(draftId)}/outcomes`,
     )
       .then((response) => {
-        if (!cancelled && response.ok) setOutcomes(response.outcomes ?? []);
+        if (!response.ok) {
+          throw new Error(response.error || "Couldn't load business outcomes.");
+        }
+        if (!cancelled) setOutcomes(response.outcomes ?? []);
       })
       .catch(() => {
         if (!cancelled) {

@@ -2,6 +2,13 @@
 
 import { useState } from "react";
 
+export function shouldRenderPublicLeadMagnetAvatar(
+  avatarUrl: string | null,
+  failedAvatarUrl: string | null,
+): boolean {
+  return Boolean(avatarUrl && avatarUrl !== failedAvatarUrl);
+}
+
 export function PublicLeadMagnetAvatar({
   name,
   avatarUrl,
@@ -9,7 +16,7 @@ export function PublicLeadMagnetAvatar({
   name: string | null;
   avatarUrl: string | null;
 }) {
-  const [broken, setBroken] = useState(false);
+  const [failedAvatarUrl, setFailedAvatarUrl] = useState<string | null>(null);
   const displayName = name?.trim() || "Creator";
   const initials = displayName
     .split(/\s+/)
@@ -17,14 +24,18 @@ export function PublicLeadMagnetAvatar({
     .slice(0, 2)
     .map((part) => part[0]?.toUpperCase())
     .join("");
+  const canRenderAvatar = shouldRenderPublicLeadMagnetAvatar(
+    avatarUrl,
+    failedAvatarUrl,
+  );
   return (
     <div className="shrink-0">
-      {avatarUrl && !broken ? (
+      {avatarUrl && canRenderAvatar ? (
         // eslint-disable-next-line @next/next/no-img-element -- LinkedIn profile photos are external and may expire; this component handles fallback.
         <img
           src={avatarUrl}
           alt={displayName}
-          onError={() => setBroken(true)}
+          onError={() => setFailedAvatarUrl(avatarUrl)}
           className="h-11 w-11 rounded-full border border-border/70 object-cover"
           loading="lazy"
         />

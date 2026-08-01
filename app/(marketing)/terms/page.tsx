@@ -1,8 +1,8 @@
 import Link from "next/link";
 
 export const metadata = {
-  title: "Terms of Service · Swipe File",
-  description: "The rules for using Swipe File.",
+  title: "Terms of Service · SwipeIn",
+  description: "The rules for using SwipeIn.",
 };
 
 const EFFECTIVE_DATE = "July 1, 2026";

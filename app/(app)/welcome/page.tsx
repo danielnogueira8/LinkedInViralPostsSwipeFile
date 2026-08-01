@@ -5,12 +5,19 @@ import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import { WelcomeWizard, type WelcomeCategory } from "./welcome-wizard";
 import { Toaster } from "@/components/ui/sonner";
+import { shouldRedirectFromWelcome } from "./oauth-return-policy";
 
 export const dynamic = "force-dynamic";
 
-export default async function WelcomePage() {
+export default async function WelcomePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ linkedin?: string }>;
+}) {
   const { userId } = await auth();
   if (!userId) redirect("/sign-in");
+
+  const { linkedin } = await searchParams;
 
   const sb = await scopedSupabase();
 
@@ -20,7 +27,9 @@ export default async function WelcomePage() {
     .settings()
     .eq("key", "onboarded_at")
     .maybeSingle();
-  if (onboardedRow) redirect("/dashboard");
+  if (shouldRedirectFromWelcome(Boolean(onboardedRow), linkedin)) {
+    redirect("/dashboard");
+  }
 
   const [catRes, catAccountsRes] = await Promise.all([
     sb.raw

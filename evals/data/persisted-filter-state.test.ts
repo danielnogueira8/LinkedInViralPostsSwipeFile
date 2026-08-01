@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   filterQueryForStorage,
   hrefWithStoredFilterQuery,
+  isSameNavigationTarget,
 } from "@/components/persisted-filter-state";
 
 describe("persisted dashboard filters", () => {
@@ -48,5 +49,18 @@ describe("persisted dashboard filters", () => {
         "swipein:filters:bookmarks",
       ),
     ).toBe("type=lead_magnet&sort=comments");
+  });
+
+  test("does not treat the Bookmarks tab as the same target as Swipe File", () => {
+    expect(
+      isSameNavigationTarget(
+        "/dashboard/swipe",
+        "/dashboard/swipe",
+        "tab=bookmarks",
+      ),
+    ).toBe(false);
+    expect(
+      isSameNavigationTarget("/dashboard/swipe", "/dashboard/swipe", ""),
+    ).toBe(true);
   });
 });

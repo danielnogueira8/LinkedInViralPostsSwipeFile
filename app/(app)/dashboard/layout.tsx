@@ -97,7 +97,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
           />
         </div>
         <div className="pt-2">
-          <UsagePill />
+          <UsagePill key={userId} workspaceId={userId} />
         </div>
       </aside>
       <main className="flex-1 min-w-0 pb-16 lg:pb-0">
@@ -113,7 +113,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
           />
           <div className="flex items-center gap-1">
             <WorkspaceSearchButton />
-            <UsagePill />
+            <UsagePill key={userId} workspaceId={userId} />
             <HydrationSafeUserButton
               fallbackClassName="h-8 w-8 rounded-full"
               appearance={{
