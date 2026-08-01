@@ -50,6 +50,18 @@ describe("retryDelayMs — backoff decision", () => {
     expect(retryDelayMs(0, 429, "9999", 0.5)).toBeLessThanOrEqual(4000);
   });
 
+  test("honors an HTTP-date Retry-After header", () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+      expect(
+        retryDelayMs(0, 429, "Thu, 01 Jan 2026 00:00:02 GMT", 0.5),
+      ).toBe(2000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test("jitter stays within the [base/2, base] band for a given exp", () => {
     // attempt 0, base 300 → exp=300 → delay in [150, 300).
     const low = retryDelayMs(0, 503, null, 0)!;

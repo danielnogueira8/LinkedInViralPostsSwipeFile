@@ -464,75 +464,80 @@ export async function* streamChatOpenAI(opts: {
   const calls = new Map<number, { id?: string; name?: string }>();
   let webSearchRequests = 0;
   let buffer = "";
-  while (true) {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const idle = new Promise<never>((_, reject) => {
-      timer = setTimeout(
-        () => reject(new Error("OpenAI stream stalled (no data).")),
-        45_000,
-      );
-    });
-    const { done, value } = await Promise.race([reader.read(), idle]).finally(
-      () => {
-        if (timer) clearTimeout(timer);
-      },
-    );
-    buffer += decoder.decode(value, { stream: !done });
-    const records = buffer.split(/\r?\n\r?\n/);
-    buffer = records.pop() ?? "";
-    for (const record of records) {
-      const data = record
-        .split(/\r?\n/)
-        .filter((line) => line.startsWith("data:"))
-        .map((line) => line.slice(5).trimStart())
-        .join("");
-      if (!data || data === "[DONE]") continue;
-      const event = JSON.parse(data) as Record<string, unknown>;
-      const type = String(event.type ?? "");
-      if (type === "response.output_text.delta" && typeof event.delta === "string") {
-        yield { text: event.delta };
-      } else if (type === "response.output_item.added") {
-        const item = event.item as Record<string, unknown> | undefined;
-        const index = Number(event.output_index ?? 0);
-        if (item?.type === "function_call") {
-          const current = {
-            id: typeof item.call_id === "string" ? item.call_id : undefined,
-            name: typeof item.name === "string" ? item.name : undefined,
-          };
-          calls.set(index, current);
-          yield { toolCalls: [{ index, ...current }] };
-        } else if (item?.type === "web_search_call") webSearchRequests += 1;
-      } else if (
-        type === "response.function_call_arguments.delta" &&
-        typeof event.delta === "string"
-      ) {
-        const index = Number(event.output_index ?? 0);
-        yield {
-          toolCalls: [
-            { index, ...calls.get(index), argumentsFragment: event.delta },
-          ],
-        };
-      } else if (type === "response.completed" || type === "response.incomplete") {
-        const final = event.response as Record<string, unknown> | undefined;
-        const usage = mapUsage(
-          final?.usage as Record<string, unknown> | undefined,
+  try {
+    while (true) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const idle = new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("OpenAI stream stalled (no data).")),
+          45_000,
         );
-        yield {
-          finishReason: type === "response.completed" ? "stop" : "length",
-          usage: {
-            ...(usage ?? {}),
-            prompt_tokens_details: {
-              ...(usage?.prompt_tokens_details ?? {}),
-              web_search_requests: webSearchRequests,
+      });
+      const { done, value } = await Promise.race([reader.read(), idle]).finally(
+        () => {
+          if (timer) clearTimeout(timer);
+        },
+      );
+      buffer += decoder.decode(value, { stream: !done });
+      const records = buffer.split(/\r?\n\r?\n/);
+      buffer = records.pop() ?? "";
+      for (const record of records) {
+        const data = record
+          .split(/\r?\n/)
+          .filter((line) => line.startsWith("data:"))
+          .map((line) => line.slice(5).trimStart())
+          .join("");
+        if (!data || data === "[DONE]") continue;
+        const event = JSON.parse(data) as Record<string, unknown>;
+        const type = String(event.type ?? "");
+        if (type === "response.output_text.delta" && typeof event.delta === "string") {
+          yield { text: event.delta };
+        } else if (type === "response.output_item.added") {
+          const item = event.item as Record<string, unknown> | undefined;
+          const index = Number(event.output_index ?? 0);
+          if (item?.type === "function_call") {
+            const current = {
+              id: typeof item.call_id === "string" ? item.call_id : undefined,
+              name: typeof item.name === "string" ? item.name : undefined,
+            };
+            calls.set(index, current);
+            yield { toolCalls: [{ index, ...current }] };
+          } else if (item?.type === "web_search_call") webSearchRequests += 1;
+        } else if (
+          type === "response.function_call_arguments.delta" &&
+          typeof event.delta === "string"
+        ) {
+          const index = Number(event.output_index ?? 0);
+          yield {
+            toolCalls: [
+              { index, ...calls.get(index), argumentsFragment: event.delta },
+            ],
+          };
+        } else if (type === "response.completed" || type === "response.incomplete") {
+          const final = event.response as Record<string, unknown> | undefined;
+          const usage = mapUsage(
+            final?.usage as Record<string, unknown> | undefined,
+          );
+          yield {
+            finishReason: type === "response.completed" ? "stop" : "length",
+            usage: {
+              ...(usage ?? {}),
+              prompt_tokens_details: {
+                ...(usage?.prompt_tokens_details ?? {}),
+                web_search_requests: webSearchRequests,
+              },
             },
-          },
-          model: qualifiedOpenAIModel(final?.model, opts.model),
-        };
-      } else if (type === "response.failed" || type === "error") {
-        throw new Error("OpenAI stream failed.");
+            model: qualifiedOpenAIModel(final?.model, opts.model),
+          };
+        } else if (type === "response.failed" || type === "error") {
+          throw new Error("OpenAI stream failed.");
+        }
       }
+      if (done) break;
     }
-    if (done) break;
+  } finally {
+    await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
   }
 }
 

@@ -102,6 +102,22 @@ describe("readDraft / writeDraft round-trip", () => {
     });
   });
 
+  test("moves starter intent even when the compose-ahead text is empty", () => {
+    writeComposerDraft(null, {
+      text: "",
+      starterId: "interview-me",
+      explorationLane: "auto",
+    });
+
+    moveComposerDraft(null, "created-chat");
+
+    expect(readComposerDraft("created-chat")).toEqual({
+      text: "",
+      starterId: "interview-me",
+      explorationLane: "auto",
+    });
+  });
+
   test("can consume starter metadata without deleting restored prompt text", () => {
     writeComposerDraft("a", {
       text: "Write an original post about trust.",
