@@ -6486,6 +6486,8 @@ function ArtifactCard({
   const [scheduleWhen, setScheduleWhen] = useState(isoToLocalInput(scheduleMeta.scheduledAt));
   const [scheduling, setScheduling] = useState(false);
   const [scheduleMediaAttachments, setScheduleMediaAttachments] = useState(mediaAttachments);
+  const scheduleMediaAttachmentsRef = useRef(mediaAttachments);
+  const mediaMetaWriteRef = useRef(Promise.resolve());
   const [mediaDirty, setMediaDirty] = useState(false);
   const mediaMutationVersionRef = useRef(0);
   const [uploadingScheduleImage, setUploadingScheduleImage] = useState(false);
@@ -6526,6 +6528,13 @@ function ArtifactCard({
     setMediaDirty(false);
     setScheduleMediaAttachments(mediaAttachments);
   }
+  // A new artifact seed replaces the local attachment snapshot. Media-only
+  // parent updates intentionally do not: while a media mutation is in flight,
+  // the ref is the authoritative interleaving-safe state.
+  useEffect(() => {
+    scheduleMediaAttachmentsRef.current = mediaAttachments;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- media-only prop updates must not clobber local mutation state.
+  }, [seededId, seededBody]);
   const bodyDirty = body !== artifactBody;
   const dirty = bodyDirty || mediaDirty;
   const scheduleMediaChanged =
@@ -6540,6 +6549,17 @@ function ArtifactCard({
   };
   const markMediaPersisted = (version: number) => {
     if (version === mediaMutationVersionRef.current) setMediaDirty(false);
+  };
+  const setLocalScheduleMediaAttachments = (next: PostMediaAttachment[]) => {
+    scheduleMediaAttachmentsRef.current = next;
+    setScheduleMediaAttachments(next);
+  };
+  const persistMediaMeta = (attachments: PostMediaAttachment[]) => {
+    const write = mediaMetaWriteRef.current.then(() =>
+      onMetaChange?.({ media_attachments: attachments }),
+    );
+    mediaMetaWriteRef.current = write.catch(() => undefined);
+    return write;
   };
 
   useEffect(() => {
@@ -6873,9 +6893,9 @@ function ArtifactCard({
       // COMBINED set, not per file, so adding a second batch can't slip past.
       const setError = validatePostMediaSet(next);
       if (setError) throw new Error(setError);
-      setScheduleMediaAttachments(next);
+      setLocalScheduleMediaAttachments(next);
       markMediaChanged();
-      await onMetaChange?.({ media_attachments: next });
+      await persistMediaMeta(next);
       toast.success(uploaded.length > 1 ? "Images attached" : "Image attached");
     } catch (error) {
       toast.error((error as Error).message);
@@ -6885,11 +6905,11 @@ function ArtifactCard({
   };
 
   const removeDraftImage = async (id: string) => {
-    const next = scheduleMediaAttachments.filter((m) => m.id !== id);
-    setScheduleMediaAttachments(next);
+    const next = scheduleMediaAttachmentsRef.current.filter((m) => m.id !== id);
+    setLocalScheduleMediaAttachments(next);
     markMediaChanged();
     try {
-      await onMetaChange?.({ media_attachments: next });
+      await persistMediaMeta(next);
     } catch {
       toast.error("Couldn't remove that image.");
     }
@@ -6909,7 +6929,7 @@ function ArtifactCard({
         );
       }
       const preflightError = validatePostMediaSet([
-        ...scheduleMediaAttachments,
+        ...scheduleMediaAttachmentsRef.current,
         {
           id: "pending-schedule-image",
           source: "library",
@@ -6930,10 +6950,10 @@ function ArtifactCard({
         throw new Error("Choose an image file.");
       }
       const attachment = result.attachment;
-      const next = [...scheduleMediaAttachments, attachment];
+      const next = [...scheduleMediaAttachmentsRef.current, attachment];
       const mediaError = validatePostMediaSet(next);
       if (mediaError) throw new Error(mediaError);
-      setScheduleMediaAttachments(next);
+      setLocalScheduleMediaAttachments(next);
       markMediaChanged();
       toast.success("Image attached");
     } catch (error) {
