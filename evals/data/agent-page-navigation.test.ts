@@ -24,7 +24,7 @@ describe("Your Agent is a top-level dashboard page", () => {
   test("the dedicated route renders the opportunity inbox with a page heading", () => {
     const page = source(PAGE);
     expect(page).toContain("export default function AgentPage");
-    expect(page).toContain('title="Your Agent"');
+    expect(page).toContain('title="Content opportunities"');
     expect(page).toContain("<AgentInbox");
   });
 
@@ -42,7 +42,7 @@ describe("Your Agent is a top-level dashboard page", () => {
     expect(badges).toContain("loadAgentInbox()");
     expect(source(INBOX)).toContain("loadAgentInbox()");
     expect(badges).toContain('next["/dashboard/agent"] = count');
-    expect(source(INBOX)).toContain("Start draft");
+    expect(source(INBOX)).toContain("Use this idea");
   });
 
   test("Cowork no longer owns an embedded agent destination", () => {
@@ -56,17 +56,20 @@ describe("Your Agent is a top-level dashboard page", () => {
 });
 
 describe("the standalone Agent page exposes the daily opportunity workflow", () => {
-  test("each agent gets a full-width row with up to three idea cards", () => {
+  test("the standalone page exposes a unified approval queue", () => {
     const page = source(PAGE);
     const inbox = source(INBOX);
     expect(page).toContain('PageShell width="full"');
-    // Row layout: lanes stack vertically, cards go three-across inside a lane.
-    expect(inbox).toContain("xl:grid-cols-3");
-    expect(inbox).toContain("data-testid={`agent-lane-${lane}`}");
+    expect(inbox).toContain('aria-label="Filter opportunities by agent"');
+    expect(inbox).toContain("aria-pressed");
+    expect(inbox).toContain("Recommended first");
+    expect(inbox).toContain("xl:grid-cols-2");
+    expect(inbox).toContain("selectedFilter");
     expect(inbox).not.toContain("snap-mandatory");
-    // Every evidence chip renders — nothing collapses behind "+N more".
-    expect(inbox).toContain("idea.evidence.map");
-    expect(inbox).not.toContain("idea.evidence.slice");
-    expect(inbox).toContain("scheduled until you choose it");
+    // The queue previews evidence and the detail drawer owns the full dossier.
+    expect(inbox).toContain("idea.evidence.slice(0, 2)");
+    expect(inbox).toContain("selectedIdea");
+    expect(inbox).toContain("Use this idea");
+    expect(inbox).toContain("scheduled automatically");
   });
 });

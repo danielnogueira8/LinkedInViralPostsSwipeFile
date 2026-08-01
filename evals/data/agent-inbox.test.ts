@@ -151,7 +151,7 @@ function laneEvidence(
   lane: AgentInboxLane,
   bundle: AgentInboxEvidenceBundle,
 ): AgentInboxEvidence[] {
-  if (lane === "newsjacking" || lane === "namejacking") return bundle.news;
+  if (lane === "newsjacking") return bundle.news;
   if (lane === "personal_story") return bundle.knowledge;
   return bundle.learning.length ? bundle.learning : bundle.knowledge;
 }
@@ -256,15 +256,14 @@ describe("AgentInbox", () => {
     expect(result.created.map((entry) => entry.lane)).toEqual([
       "newsjacking",
       "personal_story",
-      "namejacking",
       "educational",
     ]);
     expect(repo.ideas.find((entry) => entry.id === existing.id)).toBe(existing);
-    // One pre-existing educational idea, plus one new idea in each of the four
+    // One pre-existing educational idea, plus one new idea in each of the three
     // lanes (educational tops up from 1 toward the cap rather than resetting).
     expect(
       repo.ideas.filter((entry) => entry.status === "active"),
-    ).toHaveLength(5);
+    ).toHaveLength(4);
   });
 
   test("runs at most once per workspace local day", async () => {
@@ -364,7 +363,7 @@ describe("AgentInbox", () => {
 
   test("reports full only when every lane holds three active ideas", async () => {
     const repo = repository(
-      (["newsjacking", "personal_story", "namejacking", "educational"] as const).flatMap((lane) =>
+      (["newsjacking", "personal_story", "educational"] as const).flatMap((lane) =>
         [1, 2, 3].map((index) =>
           idea(lane, {
             id: `${lane}-${index}`,
@@ -392,7 +391,7 @@ describe("AgentInbox", () => {
     });
 
     expect(result).toMatchObject({ skipped: "full", created: [] });
-    expect(result.retained).toHaveLength(12);
+    expect(result.retained).toHaveLength(9);
     expect(syntheses).toBe(0);
   });
 
@@ -410,8 +409,8 @@ describe("AgentInbox", () => {
       timezone: "UTC",
     });
 
-    expect(result.created).toHaveLength(12);
-    for (const lane of ["newsjacking", "educational", "educational"] as const) {
+    expect(result.created).toHaveLength(9);
+    for (const lane of ["newsjacking", "personal_story", "educational"] as const) {
       expect(
         result.created.filter((entry) => entry.lane === lane),
       ).toHaveLength(3);
@@ -432,8 +431,8 @@ describe("AgentInbox", () => {
       timezone: "UTC",
     });
 
-    expect(result.created).toHaveLength(12);
-    for (const lane of ["newsjacking", "educational", "educational"] as const) {
+    expect(result.created).toHaveLength(9);
+    for (const lane of ["newsjacking", "personal_story", "educational"] as const) {
       expect(
         result.created.filter((entry) => entry.lane === lane),
       ).toHaveLength(3);
@@ -602,7 +601,7 @@ describe("AgentInbox", () => {
     // done, and news breaking at midday could not reach the board until local
     // midnight.
     const full = (
-      ["personal_story", "namejacking", "educational"] as const
+      ["personal_story", "educational"] as const
     ).flatMap((lane) =>
       Array.from({ length: 3 }, (_, i) =>
         idea(lane, { id: `${lane}-${i}`, fingerprint: `${lane}-${i}` }),

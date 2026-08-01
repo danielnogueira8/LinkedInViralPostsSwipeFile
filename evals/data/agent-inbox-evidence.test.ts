@@ -116,7 +116,7 @@ describe("agent inbox evidence — fresh news only", () => {
   async function loadNews(
     results: Array<Record<string, unknown>>,
     usedIdeas: Array<Record<string, unknown>>,
-    missingLanes: Array<"newsjacking" | "namejacking"> = ["newsjacking"],
+    missingLanes: Array<"newsjacking"> = ["newsjacking"],
   ) {
     const loader = createAgentInboxEvidenceLoader(
       mockDb({
@@ -155,14 +155,4 @@ describe("agent inbox evidence — fresh news only", () => {
     expect(news).toEqual([]);
   });
 
-  test("namejacking retrieves fresh news even when newsjacking is already full", async () => {
-    const news = await loadNews(
-      [story("A named company makes a change", "https://example.com/named", "2026-07-27T11:00:00Z")],
-      [],
-      ["namejacking"],
-    );
-    expect(news.map((entry) => entry.label)).toEqual([
-      "A named company makes a change",
-    ]);
-  });
 });

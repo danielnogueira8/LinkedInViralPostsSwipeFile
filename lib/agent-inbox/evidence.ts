@@ -415,9 +415,7 @@ export function createAgentInboxEvidenceLoader(db: SupabaseClient) {
       loadKnowledge(db, input.workspaceId),
       loadRecentPosts(db, input.workspaceId, input.now),
     ]);
-    const needsNews =
-      input.missingLanes.includes("newsjacking") ||
-      input.missingLanes.includes("namejacking");
+    const needsNews = input.missingLanes.includes("newsjacking");
     const query = needsNews
       ? await topicQuery(
           db,

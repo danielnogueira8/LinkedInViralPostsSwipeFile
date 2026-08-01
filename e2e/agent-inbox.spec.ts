@@ -4,7 +4,6 @@ const idea = (
   lane:
     | "newsjacking"
     | "personal_story"
-    | "namejacking"
     | "educational"
     | "trend_radar",
   index: number,
@@ -19,11 +18,9 @@ const idea = (
       ? "A timely AI shift"
       : lane === "personal_story"
         ? "The hard-won lesson behind a client turnaround"
-        : lane === "namejacking"
-          ? "What LinkedIn changed about creator trust"
-          : lane === "educational"
-            ? "Turn your strongest topic into a practical teardown"
-            : "A conversation your audience can join early",
+        : lane === "educational"
+          ? "Turn your strongest topic into a practical teardown"
+          : "A conversation your audience can join early",
   angle: "A specific direction grounded in the evidence attached to this card.",
   why: [
     "It matches an active audience concern",
@@ -32,40 +29,40 @@ const idea = (
   evidence: [
     {
       kind:
-        lane === "newsjacking" || lane === "namejacking" || lane === "trend_radar"
+        lane === "newsjacking" || lane === "trend_radar"
           ? "news"
           : lane === "educational"
             ? "performance"
             : "knowledge",
       label:
-        lane === "newsjacking" || lane === "namejacking" || lane === "trend_radar"
+        lane === "newsjacking" || lane === "trend_radar"
           ? "Verified industry update"
           : "Workspace evidence",
       detail: "Evidence detail",
       url:
-        lane === "newsjacking" || lane === "namejacking" || lane === "trend_radar"
+        lane === "newsjacking" || lane === "trend_radar"
           ? "https://example.com/news"
           : null,
       publishedAt:
-        lane === "newsjacking" || lane === "namejacking" || lane === "trend_radar"
+        lane === "newsjacking" || lane === "trend_radar"
           ? new Date().toISOString()
           : null,
     },
   ],
   sourceKind:
-    lane === "newsjacking" || lane === "namejacking" || lane === "trend_radar"
+    lane === "newsjacking" || lane === "trend_radar"
       ? "news"
       : lane === "educational"
         ? "workspace_learning"
         : "knowledge",
   sourceRef: `source-${index}`,
   sourceUrl:
-    lane === "newsjacking" || lane === "namejacking" || lane === "trend_radar"
+    lane === "newsjacking" || lane === "trend_radar"
       ? "https://example.com/news"
       : null,
   sourceTitle: "Evidence",
   sourcePublishedAt:
-    lane === "newsjacking" || lane === "namejacking" || lane === "trend_radar"
+    lane === "newsjacking" || lane === "trend_radar"
       ? new Date().toISOString()
       : null,
   score: 0.9,
@@ -104,24 +101,18 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test("shows all five equal agent lanes without autonomous controls", async ({
+test("shows four equal agent filters with human approval controls", async ({
   page,
 }) => {
   await page.goto("/dashboard/agent");
-  for (const lane of [
-    "newsjacking",
-    "personal_story",
-    "namejacking",
-    "educational",
-    "trend_radar",
-  ]) {
-    await expect(page.getByTestId(`agent-lane-${lane}`)).toBeVisible();
+  for (const label of ["Newsjacking", "Story Miner", "Expertise", "Trend Radar"]) {
+    await expect(
+      page.getByRole("button", { name: new RegExp(label) }).first(),
+    ).toBeVisible();
   }
-  // Cards are intentionally collapsed until the user shows interest, so no
-  // draft control is autonomous or visible before that decision.
-  await expect(page.getByRole("button", { name: "Start draft" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Use this idea" })).toHaveCount(3);
   await expect(
-    page.getByText(/Nothing is drafted or scheduled until you choose it/),
+    page.getByText(/Nothing is drafted or scheduled automatically/),
   ).toBeVisible();
   await expect(page.getByRole("button", { name: /schedule/i })).toHaveCount(0);
 });
@@ -150,22 +141,22 @@ test("keeps the Trend Radar lane visible without an active idea", async ({
 
   await page.goto("/dashboard/agent");
 
-  const lane = page.getByTestId("agent-lane-trend_radar");
-  await expect(lane).toBeVisible();
-  await expect(lane.getByText("Trend Radar Agent", { exact: true })).toBeVisible();
-  await expect(lane.getByText("No strong fit today", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Trend Radar/ })).toBeVisible();
+  const grid = page.locator("#agent-opportunity-grid");
+  await expect(grid.getByText("Trend Radar", { exact: true })).toBeVisible();
+  await expect(grid.getByText("No strong fit today", { exact: true })).toBeVisible();
 });
 
 test("stacks the agent rows vertically on mobile", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/dashboard/agent");
-  const now = page.getByTestId("agent-lane-newsjacking");
-  const proven = page.getByTestId("agent-lane-personal_story");
+  const now = page.locator("#agent-opportunity-grid > *").nth(0);
+  const proven = page.locator("#agent-opportunity-grid > *").nth(1);
   await expect(now).toBeVisible();
   const nowBox = await now.boundingBox();
   const provenBox = await proven.boundingBox();
   expect(nowBox?.width).toBeLessThan(390);
-  // Rows (not columns): each agent's section sits BELOW the previous one.
+  // At phone width the shared queue remains a readable single column.
   expect(provenBox?.y).toBeGreaterThan(nowBox?.y ?? 0);
 });
 
@@ -196,14 +187,12 @@ test("an acted lane says the draft started instead of claiming no strong fit", a
     });
   });
   await page.goto("/dashboard/agent");
-  const proven = page.getByTestId("agent-lane-personal_story");
-  await expect(proven.getByText("Draft started")).toBeVisible();
+  const grid = page.locator("#agent-opportunity-grid");
+  await expect(grid.getByText("Draft started")).toBeVisible();
   await expect(
-    proven.getByText(/hard-won lesson behind a client turnaround/),
+    grid.getByText(/hard-won lesson behind a client turnaround/),
   ).toBeVisible();
-  await expect(proven.getByText("No strong fit today")).toHaveCount(0);
-  // The other two lanes still offer their ideas; the acted lane has no CTA.
-  await expect(page.getByRole("button", { name: "Start draft" })).toHaveCount(
-    0,
-  );
+  await expect(grid.getByText("No strong fit today")).toHaveCount(1);
+  // The acted lane has no CTA; the remaining active cards still do.
+  await expect(page.getByRole("button", { name: "Use this idea" })).toHaveCount(2);
 });
