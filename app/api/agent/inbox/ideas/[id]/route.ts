@@ -8,6 +8,9 @@ import { errorResponse } from "@/lib/workspace";
 
 const actionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("act") }),
+  z.object({ kind: z.literal("done") }),
+  z.object({ kind: z.literal("read") }),
+  z.object({ kind: z.literal("unread") }),
   z.object({
     kind: z.literal("discard"),
     reason: z.string().trim().min(1).max(120),
@@ -54,10 +57,15 @@ export async function POST(
       );
     }
     const action = parsed.data;
+    // `done` is the user-facing terminal label. Keep the existing database
+    // lifecycle transition as the compatibility implementation so older
+    // deployments still close the idea atomically.
+    const transitionAction =
+      action.kind === "done" ? { kind: "act" as const } : action;
     const idea = await createProductionAgentInbox(sb.raw).transition({
       workspaceId: sb.workspaceId,
       ideaId: id,
-      action,
+      action: transitionAction,
     });
     if (!idea) {
       return NextResponse.json(

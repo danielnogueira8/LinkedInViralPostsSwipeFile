@@ -5,6 +5,7 @@ import {
   invalidateAgentInboxRequest,
   loadAgentInbox,
 } from "./agent-inbox-client";
+import { isAgentMessageUnread } from "@/lib/agent-inbox";
 type NavBadges = Record<string, number>;
 
 // Navigation badges are fetched client-side once and memoized at module scope
@@ -30,9 +31,10 @@ function fetchNavBadges(): Promise<NavBadges> {
         next["/dashboard/swipe"] = shared.count;
       }
       if (agent?.ok) {
-        const count =
-          (Array.isArray(agent.active) ? agent.active.length : 0) +
-          (Array.isArray(agent.trends) ? agent.trends.length : 0);
+        const count = [
+          ...(Array.isArray(agent.active) ? agent.active : []),
+          ...(Array.isArray(agent.trends) ? agent.trends : []),
+        ].filter(isAgentMessageUnread).length;
         if (count > 0) next["/dashboard/agent"] = count;
       }
       return next;

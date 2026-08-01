@@ -33,6 +33,30 @@ export async function updateManagedOpportunityStatus(
 }
 
 /**
+ * Mark a proposed Trend Radar message read or unread without consuming the
+ * opportunity. Keeping this write here means every delivery surface shares
+ * the same workspace, lane, and lifecycle fence.
+ */
+export async function updateAgentOpportunityReadState(
+  db: SupabaseClient,
+  workspaceId: string,
+  opportunityId: string,
+  read: boolean,
+): Promise<boolean> {
+  const { data, error } = await db
+    .from("agent_opportunities")
+    .update({ read_at: read ? new Date().toISOString() : null })
+    .eq("id", opportunityId)
+    .eq("workspace_id", workspaceId)
+    .eq("kind", "trend")
+    .eq("status", "proposed")
+    .select("id")
+    .maybeSingle();
+  if (error) throw error;
+  return Boolean(data?.id);
+}
+
+/**
  * Return abandoned managed opportunity claims to the review queue.
  *
  * The status-qualified update is the recovery fence: a late worker that

@@ -1,4 +1,4 @@
-import type { AgentInboxIdea, AgentInboxLane } from "@/lib/agent-inbox";
+import type { AgentFeedIdea, AgentFeedLane } from "@/lib/agent-inbox";
 
 // The lane already decided what kind of post this is, so the draft should not
 // re-derive it. Naming the framework here is also what activates the matching
@@ -9,16 +9,18 @@ import type { AgentInboxIdea, AgentInboxLane } from "@/lib/agent-inbox";
 //
 // personal_story and educational have no dedicated skill; they get an explicit
 // instruction instead, which is what the lane means in one line.
-const LANE_FRAMING: Record<AgentInboxLane, string> = {
+const LANE_FRAMING: Record<AgentFeedLane, string> = {
   newsjacking:
     "Write this as a /newsjacking post: open on the event, then land the point it proves about my work. Name the event plainly — no forced or punning tie-in.",
   personal_story:
     "Write this as a personal story: my own achievement, struggle, or lived experience, told concretely. Use only what the evidence below actually supports — never invent a story, a customer, or a result.",
   educational:
     "Write this as an educational post that teaches one thing I have demonstrably earned the right to teach, grounded in the evidence below.",
+  trend_radar:
+    "Treat this as a Trend Radar signal for review before writing: establish what is verified, explain what it could change for my audience, and add one original implication. Do not treat the signal itself as a finished post or merely repeat the announcement.",
 };
 
-export function agentInboxDraftPrompt(idea: AgentInboxIdea): string {
+export function agentInboxDraftPrompt(idea: AgentFeedIdea): string {
   const evidence = idea.evidence
     .map((entry) => {
       const metadata = [
