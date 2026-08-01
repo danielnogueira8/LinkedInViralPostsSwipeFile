@@ -3,6 +3,7 @@ import { z } from "zod";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
 import { actOnOpportunity, type AgentOpportunityRow } from "@/lib/agent-loop/act";
+import { updateManagedOpportunityStatus } from "@/lib/agent-loop/opportunity-claim";
 import { weekStart } from "@/lib/agent-loop/week-plan";
 import { markStoredOpportunityDrafted } from "@/lib/agent-loop/week-plan-store";
 
@@ -30,6 +31,13 @@ const actionSchema = z.object({
   }
 });
 
+function alreadyHandledResponse() {
+  return NextResponse.json(
+    { ok: false, error: "This opportunity was already handled." },
+    { status: 409 },
+  );
+}
+
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
@@ -54,12 +62,14 @@ export async function POST(
     }
 
     if (action === "dismiss") {
-      const { error: dismissError } = await sb.raw
-        .from("agent_opportunities")
-        .update({ status: "dismissed", acted_at: new Date().toISOString() })
-        .eq("id", id)
-        .eq("workspace_id", sb.workspaceId);
-      if (dismissError) throw dismissError;
+      const dismissed = await updateManagedOpportunityStatus(
+        sb.raw,
+        sb.workspaceId,
+        id,
+        "proposed",
+        { status: "dismissed", acted_at: new Date().toISOString() },
+      );
+      if (!dismissed) return alreadyHandledResponse();
       return NextResponse.json({ ok: true, status: "dismissed" });
     }
 
@@ -71,29 +81,24 @@ export async function POST(
         );
       }
       if (opportunity.status !== "proposed") {
-        return NextResponse.json(
-          { ok: false, error: "This opportunity was already handled." },
-          { status: 409 },
-        );
+        return alreadyHandledResponse();
       }
-      const { error: snoozeError } = await sb.raw
-        .from("agent_opportunities")
-        .update({
+      const snoozed = await updateManagedOpportunityStatus(
+        sb.raw,
+        sb.workspaceId,
+        id,
+        "proposed",
+        {
           status: "snoozed",
           snoozed_until: new Date(until).toISOString(),
-        })
-        .eq("id", id)
-        .eq("workspace_id", sb.workspaceId)
-        .eq("status", "proposed");
-      if (snoozeError) throw snoozeError;
+        },
+      );
+      if (!snoozed) return alreadyHandledResponse();
       return NextResponse.json({ ok: true, status: "snoozed" });
     }
 
     if (opportunity.status !== "proposed") {
-      return NextResponse.json(
-        { ok: false, error: "This opportunity was already handled." },
-        { status: 409 },
-      );
+      return alreadyHandledResponse();
     }
 
     const result = await actOnOpportunity(
@@ -103,10 +108,7 @@ export async function POST(
     );
     if (!result.ok) {
       if (result.reason === "already_handled") {
-        return NextResponse.json(
-          { ok: false, error: "This opportunity was already handled." },
-          { status: 409 },
-        );
+        return alreadyHandledResponse();
       }
       return errorResponse(new Error(result.reason));
     }

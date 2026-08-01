@@ -23,6 +23,7 @@ const required = [
   "cron-partial-failure-alert",
   "cowork-action-checkpoint",
   "agent-opportunity-draft-claim",
+  "agent-opportunity-action-transition",
 ];
 
 describe("operational invariant inventory", () => {
