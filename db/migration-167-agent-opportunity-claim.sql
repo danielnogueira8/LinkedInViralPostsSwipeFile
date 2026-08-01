@@ -82,7 +82,7 @@ as $$
         and regexp_replace(
           lower(coalesce(pg_get_expr(i.indpred, i.indrelid), '')),
           '[[:space:]]+', '', 'g'
-        ) = '((title=''your agent''::text)and(archived_atisnull))'
+        ) = '((title=''youragent''::text)and(archived_atisnull))'
         and (
           select opc.opcname
           from pg_opclass opc
