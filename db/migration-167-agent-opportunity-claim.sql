@@ -79,10 +79,15 @@ as $$
           where attrelid = table_class.oid
             and attname = 'workspace_id'
         )
-        and lower(coalesce(pg_get_expr(i.indpred, i.indrelid), ''))
-          like '%title = ''your agent''%'
-        and lower(coalesce(pg_get_expr(i.indpred, i.indrelid), ''))
-          like '%archived_at is null%'
+        and regexp_replace(
+          lower(coalesce(pg_get_expr(i.indpred, i.indrelid), '')),
+          '[[:space:]]+', '', 'g'
+        ) = '((title=''your agent''::text)and(archived_atisnull))'
+        and (
+          select opc.opcname
+          from pg_opclass opc
+          where opc.oid = i.indclass[0]
+        ) = 'text_ops'
     )
   ), all_missing as (
     select jsonb_array_elements_text(

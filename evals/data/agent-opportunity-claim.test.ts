@@ -190,5 +190,9 @@ describe("agent opportunity claims", () => {
     expect(systemChatSource).toContain('createError?.code !== "23505"');
     expect(systemChatSource).toContain("getOrCreateAgentSystemChat");
     expect(migrationSource).toContain("app_deployment_readiness_base");
+    expect(migrationSource).toContain(
+      "((title=''your agent''::text)and(archived_atisnull))",
+    );
+    expect(migrationSource).toContain("opc.opcname");
   });
 });
