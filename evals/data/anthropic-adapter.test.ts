@@ -149,6 +149,12 @@ describe("effortFor", () => {
       thinkingOff: true,
     });
   });
+  test("glmReasoning none turns thinking off at low effort", () => {
+    expect(effortFor({ glmReasoning: "none" })).toEqual({
+      effort: "low",
+      thinkingOff: true,
+    });
+  });
   test("maps reasoningEffort tiers, thinking stays on", () => {
     expect(effortFor({ reasoningEffort: "minimal" })).toEqual({ effort: "low", thinkingOff: false });
     expect(effortFor({ reasoningEffort: "low" })).toEqual({ effort: "low", thinkingOff: false });
@@ -394,6 +400,26 @@ describe("completeChatAnthropic (mocked SDK)", () => {
     expect(res.model).toBe("claude-sonnet-5");
     expect(res.usage?.prompt_tokens).toBe(10);
     expect(res.citations).toEqual([]);
+  });
+
+  test("glmReasoning none disables thinking and honors a small max-token budget", async () => {
+    finalMessage.mockResolvedValue({
+      content: [{ type: "text", text: "Title" }],
+      stop_reason: "end_turn",
+      model: "claude-sonnet-5",
+      usage: { input_tokens: 10, output_tokens: 2 },
+    });
+    const { completeChatAnthropic } = await import("@/lib/anthropic");
+    await completeChatAnthropic({
+      model: "claude-sonnet-5",
+      maxTokens: 24,
+      glmReasoning: "none",
+      messages: [{ role: "user", content: "Name this chat." }],
+    });
+    const body = lastBody.current!;
+    expect(body.max_tokens).toBe(24);
+    expect(body.thinking).toEqual({ type: "disabled" });
+    expect(body.output_config).toEqual({ effort: "low" });
   });
 
   test("caches the system prefix as a text block and marks the last tool", async () => {
