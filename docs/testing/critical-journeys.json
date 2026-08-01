@@ -220,6 +220,7 @@
         "evals/data/media-attachment-equality.test.ts",
         "evals/data/resource-mutation-contracts.test.ts",
         "evals/data/post-media.test.ts",
+        "evals/data/cowork-schedule-image-contract.test.ts",
         "e2e/media-lightbox-accessibility.spec.ts"
       ],
       "status": "protected",
