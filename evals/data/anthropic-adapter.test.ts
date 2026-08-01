@@ -422,6 +422,24 @@ describe("completeChatAnthropic (mocked SDK)", () => {
     expect(body.output_config).toEqual({ effort: "low" });
   });
 
+  test("disableReasoning preserves the existing 2048-token floor", async () => {
+    finalMessage.mockResolvedValue({
+      content: [{ type: "text", text: "Search summary" }],
+      stop_reason: "end_turn",
+      model: "claude-sonnet-5",
+      usage: { input_tokens: 10, output_tokens: 2 },
+    });
+    const { completeChatAnthropic } = await import("@/lib/anthropic");
+    await completeChatAnthropic({
+      model: "claude-sonnet-5",
+      maxTokens: 24,
+      disableReasoning: true,
+      messages: [{ role: "user", content: "Search the web." }],
+    });
+    expect(lastBody.current!.max_tokens).toBe(2048);
+    expect(lastBody.current!.thinking).toEqual({ type: "disabled" });
+  });
+
   test("caches the system prefix as a text block and marks the last tool", async () => {
     lastBody.current = null;
     finalMessage.mockResolvedValue({
