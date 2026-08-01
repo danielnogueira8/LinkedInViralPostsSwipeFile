@@ -1152,11 +1152,20 @@ export const NEWS_SEARCH_MODEL_PRICING = {
     cacheWrite: 4.0,
     cacheWrite5m: 2.5,
   },
+  // Luna's LAUNCH pricing was $1/M in, $6/M out. OpenAI cut it to $0.20/$1.20
+  // (developers.openai.com/api/docs/pricing), so the old row over-reported
+  // every Luna call by 5x and inflated the monthly cost cap. Cache reads are
+  // $0.02 = 0.1x input, matching this table's convention elsewhere.
+  //
+  // Bill from OPENAI's list price, not OpenRouter's: this app calls Luna with
+  // OPENAI_API_KEY. OpenRouter currently advertises $0.10/$0.60, but that is a
+  // temporary 50%-off promotion on the same standard rate and does not apply
+  // to direct OpenAI billing.
   "openai/gpt-5.6-luna": {
-    input: 1.0,
-    output: 6.0,
-    cachedInput: 0.1,
-    cacheWrite: 1.25,
+    input: 0.2,
+    output: 1.2,
+    cachedInput: 0.02,
+    cacheWrite: 0.25,
   },
   "z-ai/glm-5.2": { input: 0.93, output: 3.0, cachedInput: 0.18 },
 } as const;
@@ -1252,6 +1261,14 @@ function pricingKey(model: string): string {
       const dotted = `anthropic/${m[1]}.${m[2]}`;
       if (Object.hasOwn(OPENROUTER_PRICING, dotted)) return dotted;
     }
+  }
+  // The OpenAI adapter serves bare ids (`gpt-5.6-luna`) while this table is
+  // keyed by OpenRouter slugs. Without this, a bare id missed every row and
+  // silently fell back to the GLM-5.1 rate ($1.40/$4.40) — pricing Luna as a
+  // different model entirely.
+  if (!/^[a-z0-9-]+\//i.test(model)) {
+    const prefixed = `openai/${model}`;
+    if (Object.hasOwn(OPENROUTER_PRICING, prefixed)) return prefixed;
   }
   return model;
 }
