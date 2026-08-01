@@ -2278,6 +2278,16 @@ export async function compileTurnPlan(
   );
   const explicitCreateOperation = currentTurnOperation?.kind === "create_post";
   const explicitEditOperation = currentTurnOperation?.kind === "edit_artifact";
+  // Trend Radar has already verified the external signal before it creates the
+  // modeling source. Its server-side create turn may therefore use the
+  // tool-less writer even though the prompt names the newsjacking framework;
+  // ordinary attached sources still stay behind the live-news safety gate.
+  const hasVerifiedTrendSource =
+    currentModelSource?.source === "trend" &&
+    Boolean(currentModelSource.post_text.trim());
+  const directCreateFreshnessGatePasses =
+    !requiresLiveNewsOrResearch(effectiveUserInstruction) ||
+    hasVerifiedTrendSource;
 
   const compileDirectWriterEligibility = (voiceResolved: boolean) => {
     const context = {
@@ -2344,7 +2354,7 @@ export async function compileTurnPlan(
         voiceResolved &&
         attachments.length === 0 &&
         !composerTaskContext?.researchRequirement &&
-        !requiresLiveNewsOrResearch(effectiveUserInstruction),
+        directCreateFreshnessGatePasses,
     );
     const directMulti = Boolean(
       commandCreateEligible && (directPostCount ?? 1) > 1,
@@ -2482,7 +2492,7 @@ export async function compileTurnPlan(
     directWriterEligibility.eligible &&
     (directRefineClaimed ||
       !directCreateClaimed ||
-      !requiresLiveNewsOrResearch(effectiveUserInstruction));
+      directCreateFreshnessGatePasses);
   const directWriterWouldBeEligibleWithVoice =
     compileDirectWriterEligibility(true).eligible;
   const actionOrchestratorRoute: ActionOrchestratorRoute | null = useDirectWriter
