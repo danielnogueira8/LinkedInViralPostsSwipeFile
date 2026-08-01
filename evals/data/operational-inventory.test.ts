@@ -22,6 +22,7 @@ const required = [
   "posting-queue-slot-claim",
   "cron-partial-failure-alert",
   "cowork-action-checkpoint",
+  "agent-opportunity-draft-claim",
 ];
 
 describe("operational invariant inventory", () => {

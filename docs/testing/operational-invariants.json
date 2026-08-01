@@ -108,6 +108,15 @@
         { "path": "evals/data/action-orchestrator.test.ts", "test": "durable cancellation retries transient tombstone write failures" },
         { "path": "evals/data/cowork-outcome-harness.test.ts", "test": "provider fallback resumes a committed action checkpoint with zero replayed mutation" }
       ]
+    },
+    {
+      "id": "agent-opportunity-draft-claim",
+      "boundary": "agent opportunity and system chat singleton",
+      "invariant": "Concurrent agent drafting claims one proposed opportunity and one active system chat; losers create no duplicate draft and return a conflict.",
+      "evidence": [
+        { "path": "evals/data/agent-opportunity-claim.test.ts", "test": "concurrent claims have one winner and one loser" },
+        { "path": "evals/data/agent-opportunity-claim.test.ts", "test": "concurrent system-chat creation converges on one active chat" }
+      ]
     }
   ]
 }

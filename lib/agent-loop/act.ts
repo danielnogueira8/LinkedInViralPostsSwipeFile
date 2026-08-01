@@ -7,9 +7,10 @@ import {
 } from "@/lib/agent/untrusted";
 import { DraftLifecycle } from "@/lib/draft-lifecycle";
 import { createSupabaseDraftLifecycleRepository } from "@/lib/draft-lifecycle-supabase";
-import { AGENT_CHAT_TITLE, AGENT_SUGGESTED_BY } from "@/lib/agent-loop/constants";
+import { AGENT_SUGGESTED_BY } from "@/lib/agent-loop/constants";
 import { readOpportunityHeadline } from "@/lib/agent-loop/headline";
 import { updateManagedOpportunityStatus } from "@/lib/agent-loop/opportunity-claim";
+import { getOrCreateAgentSystemChat } from "@/lib/agent-loop/system-chat";
 import {
   trendEvidenceText,
   type TrendOpportunityPayload,
@@ -69,43 +70,6 @@ async function updateOpportunityStatus(
     expectedStatus,
     values,
   );
-}
-
-async function getOrCreateSystemChat(
-  sb: SupabaseClient,
-  workspaceId: string,
-): Promise<string> {
-  const { data: existing, error: existingError } = await sb
-    .from("chats")
-    .select("id")
-    .eq("workspace_id", workspaceId)
-    .eq("title", AGENT_CHAT_TITLE)
-    .is("archived_at", null)
-    .maybeSingle();
-  if (existingError) throw existingError;
-  if (existing?.id) return existing.id as string;
-
-  const { data: created, error: createError } = await sb
-    .from("chats")
-    .insert({ workspace_id: workspaceId, title: AGENT_CHAT_TITLE })
-    .select("id")
-    .maybeSingle();
-  if (!createError && created?.id) return created.id as string;
-  if (createError?.code !== "23505") {
-    if (createError) throw createError;
-    throw new Error("Agent chat was created without an id.");
-  }
-
-  const { data: raced, error: racedError } = await sb
-    .from("chats")
-    .select("id")
-    .eq("workspace_id", workspaceId)
-    .eq("title", AGENT_CHAT_TITLE)
-    .is("archived_at", null)
-    .maybeSingle();
-  if (racedError) throw racedError;
-  if (raced?.id) return raced.id as string;
-  throw createError;
 }
 
 async function createModelingSource(
@@ -281,7 +245,7 @@ async function runTurnToDraftIds(
   opportunityId?: string,
   weekPlanItemId?: string,
 ): Promise<string[]> {
-  const chatId = await getOrCreateSystemChat(sb, workspaceId);
+  const chatId = await getOrCreateAgentSystemChat(sb, workspaceId);
   const turnStartedAt = new Date().toISOString();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), ACT_TIMEOUT_MS);
