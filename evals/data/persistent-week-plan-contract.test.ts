@@ -77,6 +77,14 @@ describe("persistent weekly plan contract", () => {
     expect(briefing).toContain('role="alert"');
   });
 
+  test("the drafting endpoint can claim a card from either visible plan week", () => {
+    expect(draftRoute).toContain("rollingWindowWeekStarts");
+    expect(draftRoute).toContain("resolveStoredWeekPlanItemAcross");
+    expect(draftRoute).toContain("mutateStoredWeekPlanItemAcross");
+    expect(draftRoute).not.toContain("loadStoredWeekPlan(");
+    expect(draftRoute).not.toContain("mutateStoredWeekPlanItem(");
+  });
+
   test("a completed cadence card opens its exact saved draft on the Posts board", () => {
     expect(briefing).toContain('"See Draft"');
     expect(briefing).not.toContain('"Draft saved"');
