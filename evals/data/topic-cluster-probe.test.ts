@@ -199,3 +199,42 @@ describe("topic-cluster probe: results reach the log drain", () => {
     expect(source).toContain('verdict: "insufficient_embeddings"');
   });
 });
+
+describe("topic-cluster probe: threshold sweep", () => {
+  const source = readFileSync(
+    "app/api/cron/topic-cluster-probe/route.ts",
+    "utf8",
+  );
+
+  test("sweeps a range rather than trusting one threshold", () => {
+    // The first real run returned [] at sim=0.8, which is ambiguous: no
+    // concentrated conversation in the corpus, OR a threshold tuned on
+    // synthetic data that is too strict for real prose. A sweep separates
+    // those two in ONE run instead of another round of parameter guessing.
+    expect(source).toContain("SWEEP_THRESHOLDS");
+    const declared = /SWEEP_THRESHOLDS = \[([^\]]+)\]/.exec(source)?.[1] ?? "";
+    const values = declared
+      .split(",")
+      .map((v) => Number(v.trim()))
+      .filter((v) => Number.isFinite(v));
+    expect(values.length).toBeGreaterThanOrEqual(4);
+    // Must span both sides of the synthetic-tuned 0.8, or the sweep cannot
+    // show where signal actually starts.
+    expect(Math.min(...values)).toBeLessThan(0.7);
+    expect(Math.max(...values)).toBeGreaterThanOrEqual(0.8);
+  });
+
+  test("the sweep result is reported, not just computed", () => {
+    // A dashboard run reports only what it logs.
+    expect(source).toMatch(/sweep,/);
+  });
+
+  test("the strict synthetic finding still holds where it applies", () => {
+    // Loosening the probe's DEFAULT does not retract the measurement: on
+    // cleanly separated topics, 0.8 recovers them and looser values do not.
+    // Both remain true — they describe different corpora.
+    const { vectors } = plantedCorpus(1);
+    expect(sizesAtLeast3(vectors, 0.8)).toEqual([4, 4, 4]);
+    expect(sizesAtLeast3(vectors, 0.62)).not.toEqual([4, 4, 4]);
+  });
+});
