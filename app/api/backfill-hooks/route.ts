@@ -25,10 +25,11 @@ export const maxDuration = 800;
 // don't have one yet. Both respect the same gate + near-duplicate dedupe the
 // daily pipeline uses, so a manual run and a scrape converge on the same set.
 export async function POST(req: Request) {
-  await requireWorkspaceId();
-  if (!(await isAdmin())) {
-    return NextResponse.json({ ok: false, error: "Admin only." }, { status: 403 });
-  }
+  try {
+    await requireWorkspaceId();
+    if (!(await isAdmin())) {
+      return NextResponse.json({ ok: false, error: "Admin only." }, { status: 403 });
+    }
 
   // Bounded batch per invocation (default 40, max 100) so a large hook backlog
   // can't run an unbounded Claude loop past maxDuration — which previously left
@@ -143,7 +144,7 @@ export async function POST(req: Request) {
           deduped++;
           continue;
         }
-        await sb.from("hooks").insert({
+        await insertHook(sb, {
           post_id: p.id,
           hook_text: heuristic,
           extracted_via: "heuristic",
@@ -158,7 +159,7 @@ export async function POST(req: Request) {
           deduped++;
           continue;
         }
-        await sb.from("hooks").insert({
+        await insertHook(sb, {
           post_id: p.id,
           hook_text: hook,
           extracted_via: "claude",
@@ -177,9 +178,9 @@ export async function POST(req: Request) {
   // How many qualifying-but-hookless posts remain after this batch, so the
   // operator knows whether to re-invoke. (extracted + deduped were handled this
   // run; the rest of todoAll are still pending.)
-  const remaining = Math.max(0, todoAll.length - todo.length);
+  const remaining = Math.max(0, todoAll.length - extracted - deduped);
 
-  return NextResponse.json({
+    return NextResponse.json({
     ok: true,
     processed: todo.length,
     pending: todoAll.length,
@@ -190,5 +191,16 @@ export async function POST(req: Request) {
     deduped,
     purged,
     errors,
-  });
+    });
+  } catch (e) {
+    return errorResponse(e);
+  }
+}
+
+async function insertHook(
+  sb: ReturnType<typeof supabaseAdmin>,
+  values: Record<string, unknown>,
+): Promise<void> {
+  const { error } = await sb.from("hooks").insert(values);
+  if (error) throw error;
 }

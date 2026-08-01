@@ -24,11 +24,15 @@ export async function GET() {
     const sb = supabaseAdmin();
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), 4000);
-    const { error } = await sb
-      .from("settings")
-      .select("key", { count: "exact", head: true })
-      .abortSignal(ac.signal);
-    clearTimeout(timer);
+    let error: unknown;
+    try {
+      ({ error } = await sb
+        .from("settings")
+        .select("key", { count: "exact", head: true })
+        .abortSignal(ac.signal));
+    } finally {
+      clearTimeout(timer);
+    }
 
     if (error) {
       logHealthFailure(error);

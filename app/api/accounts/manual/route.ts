@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { displayNameFromHandle, fetchProfileMeta } from "@/lib/linkedin-url";
 import { TrackedCreatorError, TrackedCreators } from "@/lib/tracked-creators";
@@ -15,6 +16,14 @@ type Body = {
   name?: string;
   category_id?: string | null;
 };
+
+const bodySchema = z.object({
+  profile_url: z.string().optional(),
+  name: z.string().optional(),
+  category_id: z.string().nullable().optional(),
+});
+
+const patchBodySchema = bodySchema.extend({ id: z.string().optional() });
 
 async function creators() {
   const sb = await scopedSupabase();
@@ -60,7 +69,14 @@ function failure(error: unknown) {
 
 export async function POST(req: Request) {
   try {
-    const body = (await req.json()) as Body;
+    const parsed = bodySchema.safeParse(await req.json().catch(() => null));
+    if (!parsed.success) {
+      return NextResponse.json(
+        { ok: false, error: "Invalid JSON body" },
+        { status: 400 },
+      );
+    }
+    const body: Body = parsed.data;
     const result = await (
       await creators()
     ).add({
@@ -91,7 +107,14 @@ type PatchBody = {
 
 export async function PATCH(req: Request) {
   try {
-    const body = (await req.json()) as PatchBody;
+    const parsed = patchBodySchema.safeParse(await req.json().catch(() => null));
+    if (!parsed.success) {
+      return NextResponse.json(
+        { ok: false, error: "Invalid JSON body" },
+        { status: 400 },
+      );
+    }
+    const body: PatchBody = parsed.data;
     const id = body.id?.trim() ?? "";
     if (!id) {
       return NextResponse.json(

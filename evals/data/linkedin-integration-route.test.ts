@@ -51,7 +51,7 @@ vi.mock("@/lib/zernio", () => ({
   deleteAccount: (...a: unknown[]) => deleteAccount(...(a as [])),
 }));
 
-const { POST } = await import("@/app/api/integrations/linkedin/route");
+const { POST, DELETE } = await import("@/app/api/integrations/linkedin/route");
 const { GET: FINALIZE } = await import(
   "@/app/api/integrations/linkedin/finalize/route"
 );
@@ -180,5 +180,24 @@ describe("GET /api/integrations/linkedin/finalize — safe return destination", 
     expect(res.headers.get("location")).toBe(
       "https://app.tryswipein.com/dashboard/integrations?linkedin=connected",
     );
+  });
+});
+
+describe("DELETE /api/integrations/linkedin — local disconnect state", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    requireWorkspaceId.mockResolvedValue("user_1");
+    getConnection.mockResolvedValue({ zernio_account_id: "acct_1" });
+    deleteAccount.mockResolvedValue(true);
+    markDisconnected.mockResolvedValue();
+  });
+
+  test("marks the local connection disconnected when remote cleanup fails", async () => {
+    deleteAccount.mockRejectedValue(new Error("Zernio unavailable"));
+
+    const res = await DELETE();
+
+    expect(res.status).toBe(200);
+    expect(markDisconnected).toHaveBeenCalledWith("user_1", "Disconnected by user");
   });
 });

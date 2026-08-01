@@ -2,6 +2,10 @@ import { NextResponse } from "next/server";
 import { drainBackgroundJobs } from "@/lib/background-job-worker";
 import { postCronAlert } from "@/lib/cron-alert";
 import { errorResponse } from "@/lib/workspace";
+import {
+  cronAuthorizationResponse,
+  isCronAuthorized,
+} from "@/app/api/cron/_auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,11 +21,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 export async function GET(req: Request) {
-  const secret = process.env.CRON_SECRET;
-  const auth = req.headers.get("authorization");
-  if (!secret || auth !== `Bearer ${secret}`) {
-    return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
-  }
+  if (!isCronAuthorized(req)) return cronAuthorizationResponse();
 
   try {
     // Reduced default drain from 5 → 2. A heavy background job can consume most

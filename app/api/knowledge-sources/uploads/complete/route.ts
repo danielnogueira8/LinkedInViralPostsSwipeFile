@@ -7,6 +7,7 @@ import {
   matchesDeclaredKnowledgeSize,
   validateKnowledgeUpload,
 } from "@/lib/knowledge-sources/ingestion";
+import { failKnowledgeSourceUpload } from "@/app/api/knowledge-sources/_failure";
 
 export const runtime = "nodejs";
 
@@ -103,22 +104,15 @@ export async function POST(request: Request) {
       source.declared_size_bytes,
     );
     if (!validation.ok || !sizeMatchesReservation) {
-      const { error: removeError } = await sb.raw.storage
-        .from("knowledge-sources")
-        .remove([parsed.data.path]);
-      if (removeError) throw removeError;
-      const { error: failError } = await sb.raw.rpc(
-        "fail_knowledge_source_ingestion",
-        {
-          p_workspace_id: sb.workspaceId,
-          p_source_id: source.id,
-          p_error_code: sizeMatchesReservation
-            ? "invalid_uploaded_file"
-            : "uploaded_size_mismatch",
-          p_job_id: null,
-        },
-      );
-      if (failError) throw failError;
+      await failKnowledgeSourceUpload({
+        db: sb.raw,
+        workspaceId: sb.workspaceId,
+        sourceId: source.id,
+        storagePath: parsed.data.path,
+        errorCode: sizeMatchesReservation
+          ? "invalid_uploaded_file"
+          : "uploaded_size_mismatch",
+      });
       return NextResponse.json(
         {
           ok: false,

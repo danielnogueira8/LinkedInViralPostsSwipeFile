@@ -4,7 +4,11 @@ import { validatePostMediaFile } from "@/lib/post-media";
 import { getMediaPresignedUrl } from "@/lib/zernio";
 import { errorResponse } from "@/lib/workspace";
 import { scopedSupabase } from "@/lib/supabase-scoped";
-import { claimMediaQuota, ZERNIO_MEDIA_WINDOW_BYTES } from "@/lib/media-library";
+import {
+  claimMediaQuota,
+  settleMediaQuotaClaim,
+  ZERNIO_MEDIA_WINDOW_BYTES,
+} from "@/lib/media-library";
 
 export const runtime = "nodejs";
 
@@ -40,17 +44,28 @@ export async function POST(req: Request) {
       );
     }
 
-    const presign = await getMediaPresignedUrl({
-      filename: input.filename,
-      contentType: validation.normalizedContentType,
-    });
+    try {
+      const presign = await getMediaPresignedUrl({
+        filename: input.filename,
+        contentType: validation.normalizedContentType,
+      });
 
-    return NextResponse.json({
-      ok: true,
-      type: validation.type,
-      contentType: validation.normalizedContentType,
-      ...presign,
-    });
+      return NextResponse.json({
+        ok: true,
+        type: validation.type,
+        contentType: validation.normalizedContentType,
+        ...presign,
+      });
+    } catch (error) {
+      await settleMediaQuotaClaim(
+        sb.workspaceId,
+        reservation.claimId,
+        "released",
+      ).catch((releaseError) => {
+        console.error("Failed to release Zernio media quota claim", releaseError);
+      });
+      throw error;
+    }
   } catch (e) {
     return errorResponse(e);
   }

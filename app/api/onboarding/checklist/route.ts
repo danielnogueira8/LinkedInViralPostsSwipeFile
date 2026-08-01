@@ -85,6 +85,18 @@ export async function GET() {
         .eq("key", DISMISSED_KEY),
     ]);
 
+    for (const result of [
+      voiceRes,
+      trackedRes,
+      draftRes,
+      assistantMsgRes,
+      scheduledRes,
+      savedPostsRes,
+      dismissedRes,
+    ]) {
+      if (result.error) throw result.error;
+    }
+
     const trackedCount = trackedRes.count ?? 0;
     const trackedIds =
       trackedCount > 0
@@ -92,7 +104,8 @@ export async function GET() {
             .from("workspace_accounts")
             .select("account_id")
             .eq("workspace_id", workspaceId)
-        : { data: [] as Array<{ account_id: string }> };
+        : { data: [] as Array<{ account_id: string }>, error: null };
+    if (trackedIds.error) throw trackedIds.error;
     const accountIds = (trackedIds.data ?? []).map((row) => row.account_id);
     const inspirationRes =
       accountIds.length > 0
@@ -100,7 +113,8 @@ export async function GET() {
             .from("posts")
             .select("id", { count: "exact", head: true })
             .in("account_id", accountIds)
-        : { count: 0 };
+        : { count: 0, error: null };
+    if (inspirationRes.error) throw inspirationRes.error;
 
     return NextResponse.json({
       ok: true,

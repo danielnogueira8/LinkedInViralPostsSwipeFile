@@ -12,15 +12,16 @@ export const maxDuration = 300;
 // Safe to re-run. Globally scoped — admin only since the writes hit every
 // workspace's posts.
 export async function POST() {
-  await requireWorkspaceId();
-  if (!(await isAdmin())) {
-    return NextResponse.json({ ok: false, error: "Admin only." }, { status: 403 });
-  }
-  const sb = supabaseAdmin();
-  const pageSize = 1000;
-  let from = 0;
-  let scanned = 0;
-  let updated = 0;
+  try {
+    await requireWorkspaceId();
+    if (!(await isAdmin())) {
+      return NextResponse.json({ ok: false, error: "Admin only." }, { status: 403 });
+    }
+    const sb = supabaseAdmin();
+    const pageSize = 1000;
+    let from = 0;
+    let scanned = 0;
+    let updated = 0;
 
   while (true) {
     const { data, error } = await sb
@@ -39,7 +40,8 @@ export async function POST() {
           .from("posts")
           .update({ post_type, post_type_detected_via: detected_via })
           .eq("id", p.id);
-        if (!upErr) updated++;
+        if (upErr) return errorResponse(upErr);
+        updated++;
       }
     }
 
@@ -47,5 +49,8 @@ export async function POST() {
     from += pageSize;
   }
 
-  return NextResponse.json({ ok: true, scanned, updated });
+    return NextResponse.json({ ok: true, scanned, updated });
+  } catch (e) {
+    return errorResponse(e);
+  }
 }

@@ -49,12 +49,13 @@ export async function GET(
     }
     const style = await recoverStaleGeneratingStyle(sb, data as CreatorStyleRow);
 
-    const { data: srcRows } = await sb.raw
+    const { data: srcRows, error: srcError } = await sb.raw
       .from("creator_style_profile_sources")
       .select("id, source_first_line, source_url")
       .eq("profile_id", id)
       .eq("workspace_id", sb.workspaceId)
       .order("created_at", { ascending: false });
+    if (srcError) throw srcError;
     const sources = ((srcRows ?? []) as Array<Record<string, unknown>>).map((r) => ({
       id: String(r.id),
       source_first_line: (r.source_first_line as string | null) ?? null,

@@ -33,7 +33,7 @@ const stopRequestSchema = z
 export async function POST(req: Request, { params }: Ctx) {
   try {
     const { id } = await params;
-    const parsed = stopRequestSchema.safeParse(await req.json());
+    const parsed = stopRequestSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) {
       return NextResponse.json(
         { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid Stop request" },

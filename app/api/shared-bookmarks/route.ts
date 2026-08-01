@@ -106,13 +106,14 @@ export async function POST(req: Request) {
 
     // Idempotent: re-inviting the same email returns the existing
     // pending/accepted row rather than 409-ing.
-    const { data: existing } = await sb.raw
+    const { data: existing, error: existingError } = await sb.raw
       .from("shared_bookmarks")
       .select("id, status, created_at, recipient_email")
       .eq("owner_workspace_id", sb.workspaceId)
       .eq("recipient_email", rawEmail)
       .in("status", ["pending", "accepted"])
       .maybeSingle();
+    if (existingError) throw existingError;
     if (existing) {
       return NextResponse.json({ ok: true, share: existing, alreadyInvited: true });
     }
