@@ -6888,7 +6888,7 @@ function ArtifactCard({
         }
         uploaded.push(result.attachment);
       }
-      const next = [...scheduleMediaAttachments, ...uploaded];
+      const next = [...scheduleMediaAttachmentsRef.current, ...uploaded];
       // LinkedIn's own limits (max 20 images, no mixing types) — checked on the
       // COMBINED set, not per file, so adding a second batch can't slip past.
       const setError = validatePostMediaSet(next);

@@ -28,7 +28,7 @@ describe("Cowork schedule image flow", () => {
       "...(scheduleMediaAttachments.length\n          ? { media_attachments: scheduleMediaAttachments }\n          : {}),",
     );
     expect(source).toContain(
-      "const next = [...scheduleMediaAttachments, ...uploaded];",
+      "const next = [...scheduleMediaAttachmentsRef.current, ...uploaded];",
     );
     expect(source).toContain(
       "const next = scheduleMediaAttachmentsRef.current.filter((m) => m.id !== id);",
