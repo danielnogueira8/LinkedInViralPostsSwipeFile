@@ -2,7 +2,6 @@ import { expect, test, type Page } from "@playwright/test";
 
 const idea = (
   lane:
-    | "newsjacking"
     | "personal_story"
     | "educational"
     | "trend_radar",
@@ -15,13 +14,11 @@ const idea = (
   status: "active",
   readAt: null,
   headline:
-    lane === "newsjacking"
-      ? "A timely AI shift"
-      : lane === "personal_story"
-        ? "The hard-won lesson behind a client turnaround"
-        : lane === "educational"
-          ? "Turn your strongest topic into a practical teardown"
-          : "A conversation your audience can join early",
+    lane === "personal_story"
+      ? "The hard-won lesson behind a client turnaround"
+      : lane === "educational"
+        ? "Turn your strongest topic into a practical teardown"
+        : "A conversation your audience can join early",
   angle: "A specific direction grounded in the evidence attached to this card.",
   why: [
     "It matches an active audience concern",
@@ -30,40 +27,40 @@ const idea = (
   evidence: [
     {
       kind:
-        lane === "newsjacking" || lane === "trend_radar"
+        lane === "trend_radar"
           ? "news"
           : lane === "educational"
             ? "performance"
             : "knowledge",
       label:
-        lane === "newsjacking" || lane === "trend_radar"
+        lane === "trend_radar"
           ? "Verified industry update"
           : "Workspace evidence",
       detail: "Evidence detail",
       url:
-        lane === "newsjacking" || lane === "trend_radar"
+        lane === "trend_radar"
           ? "https://example.com/news"
           : null,
       publishedAt:
-        lane === "newsjacking" || lane === "trend_radar"
+        lane === "trend_radar"
           ? new Date().toISOString()
           : null,
     },
   ],
   sourceKind:
-    lane === "newsjacking" || lane === "trend_radar"
+    lane === "trend_radar"
       ? "news"
       : lane === "educational"
         ? "workspace_learning"
         : "knowledge",
   sourceRef: `source-${index}`,
   sourceUrl:
-    lane === "newsjacking" || lane === "trend_radar"
+    lane === "trend_radar"
       ? "https://example.com/news"
       : null,
   sourceTitle: "Evidence",
   sourcePublishedAt:
-    lane === "newsjacking" || lane === "trend_radar"
+    lane === "trend_radar"
       ? new Date().toISOString()
       : null,
   score: 0.9,
@@ -86,7 +83,7 @@ test.beforeEach(async ({ page }) => {
     await route.fulfill({
       json: {
         ok: true,
-        active: [idea("newsjacking", 1), idea("personal_story", 2)],
+        active: [idea("personal_story", 1), idea("educational", 2)],
         trends: [idea("trend_radar", 3)],
         activity: [],
         trendActivity: [],
@@ -107,19 +104,22 @@ async function selectRecommendation(page: Page, headline: RegExp) {
   await expect(page.getByRole("button", { name: "Open in Cowork" })).toHaveCount(1);
 }
 
-test("shows four equal agent filters with human approval controls", async ({
+test("shows the visible agent filters with human approval controls", async ({
   page,
 }) => {
   await page.goto("/dashboard/agent");
-  for (const label of ["Newsjacking", "Story Miner", "Expertise", "Trend Radar"]) {
+  for (const label of ["Trend Radar", "Story Miner", "Expertise"]) {
     await expect(
       page.getByRole("button", { name: new RegExp(label) }).first(),
     ).toBeVisible();
   }
+  await expect(
+    page.locator('[aria-label="Filter opportunities by agent"] button'),
+  ).toHaveText([/All ideas/, /Trend Radar/, /Story Miner/, /Expertise/]);
   // The detail panel is not mounted until the user chooses a recommendation.
   await expect(page.getByRole("button", { name: "Open in Cowork" })).toHaveCount(0);
   await expect(page.getByText(/Select a recommendation/)).toHaveCount(0);
-  await selectRecommendation(page, /Newsjacking: A timely AI shift/);
+  await selectRecommendation(page, /Story Miner: The hard-won lesson/);
   await expect(
     page.getByText(/New ideas arrive every day/),
   ).toBeVisible();
@@ -170,7 +170,7 @@ test("keeps the recommendation list full width before selection on mobile", asyn
 
 test("clears the detail pane when the agent filter changes", async ({ page }) => {
   await page.goto("/dashboard/agent");
-  await selectRecommendation(page, /Newsjacking: A timely AI shift/);
+  await selectRecommendation(page, /Story Miner: The hard-won lesson/);
   await expect(page.getByText("Why it fits you", { exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: /Story Miner/ }).first().click();
@@ -183,7 +183,7 @@ test("uses separate calm surfaces for unread, opened, and done states", async ({
   page,
 }) => {
   const openedIdea = {
-    ...idea("personal_story", 2),
+    ...idea("educational", 2),
     readAt: new Date().toISOString(),
   };
   const doneIdea = {
@@ -196,7 +196,7 @@ test("uses separate calm surfaces for unread, opened, and done states", async ({
     await route.fulfill({
       json: {
         ok: true,
-        active: [idea("newsjacking", 1), openedIdea],
+        active: [idea("personal_story", 1), openedIdea],
         trends: [],
         activity: [doneIdea],
         trendActivity: [],
@@ -214,11 +214,11 @@ test("uses separate calm surfaces for unread, opened, and done states", async ({
   await page.goto("/dashboard/agent");
 
   await expect(
-    page.getByRole("button", { name: /Newsjacking: A timely AI shift/ }),
+    page.getByRole("button", { name: /Story Miner: The hard-won lesson/ }),
   ).toHaveClass(/bg-sky-50/);
   await expect(
     page.getByRole("button", {
-      name: /Story Miner: The hard-won lesson behind a client turnaround/,
+      name: /Expertise: Turn your strongest topic into a practical teardown/,
     }),
   ).toHaveClass(/bg-stone-50/);
   await expect(
@@ -243,7 +243,7 @@ test("an acted idea stays in recent activity while fresh ideas remain actionable
     await route.fulfill({
       json: {
         ok: true,
-        active: [idea("newsjacking", 1)],
+        active: [idea("personal_story", 1)],
         trends: [idea("trend_radar", 3)],
         activity: [actedIdea],
         trendActivity: [],
@@ -263,6 +263,6 @@ test("an acted idea stays in recent activity while fresh ideas remain actionable
     page.getByText(/hard-won lesson behind a client turnaround/),
   ).toBeVisible();
   await expect(page.getByText("No strong fit today")).toHaveCount(0);
-  await selectRecommendation(page, /Newsjacking: A timely AI shift/);
+  await selectRecommendation(page, /Story Miner: The hard-won lesson/);
   // The inbox has one focused action surface after selecting an idea.
 });

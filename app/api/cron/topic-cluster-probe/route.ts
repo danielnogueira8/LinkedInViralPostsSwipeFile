@@ -6,7 +6,7 @@ import { EMBEDDING_MODEL } from "@/lib/openrouter";
 // PROBE — read-only. Answers one question before any feature is built:
 // do SUB-THRESHOLD posts contain real, nameable topic clusters?
 //
-// The agent inbox's newsjacking lane builds its search query from static
+// The historical agent-inbox newsjacking path built its search query from static
 // config (preferences -> learned topics -> account niches) plus the literal
 // suffix "latest announcements, product changes, research, and industry
 // developments". It can therefore only surface TRADE PRESS — it never knows

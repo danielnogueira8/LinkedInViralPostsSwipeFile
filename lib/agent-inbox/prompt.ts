@@ -10,8 +10,6 @@ import type { AgentFeedIdea, AgentFeedLane } from "@/lib/agent-inbox";
 // personal_story and educational have no dedicated skill; they get an explicit
 // instruction instead, which is what the lane means in one line.
 const LANE_FRAMING: Record<AgentFeedLane, string> = {
-  newsjacking:
-    "Write this as a /newsjacking post: open on the event, then land the point it proves about my work. Name the event plainly — no forced or punning tie-in.",
   personal_story:
     "Write this as a personal story: my own achievement, struggle, or lived experience, told concretely. Use only what the evidence below actually supports — never invent a story, a customer, or a result.",
   educational:

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { createProductionAgentInbox } from "@/lib/agent-inbox/service";
+import { isCurrentAgentInboxIdea } from "@/lib/agent-inbox";
 import { agentInboxDraftPrompt } from "@/lib/agent-inbox/prompt";
 import { readAgentInboxIdea } from "@/lib/agent-inbox/supabase";
 import { errorResponse } from "@/lib/workspace";
@@ -26,7 +27,7 @@ export async function GET(
     const sb = await scopedSupabase();
     const { id } = await context.params;
     const idea = await readAgentInboxIdea(sb.raw, sb.workspaceId, id);
-    if (!idea) {
+    if (!idea || !isCurrentAgentInboxIdea(idea)) {
       return NextResponse.json(
         { ok: false, error: "Idea not found." },
         { status: 404 },
@@ -67,7 +68,7 @@ export async function POST(
       ideaId: id,
       action: transitionAction,
     });
-    if (!idea) {
+    if (!idea || !isCurrentAgentInboxIdea(idea)) {
       return NextResponse.json(
         { ok: false, error: "This idea is no longer available." },
         { status: 409 },

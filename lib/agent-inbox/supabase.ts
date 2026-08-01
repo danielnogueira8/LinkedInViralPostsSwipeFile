@@ -94,6 +94,7 @@ export function createAgentInboxRepository(
         .select(IDEA_COLUMNS)
         .eq("workspace_id", workspaceId)
         .eq("status", "active")
+        .in("lane", [...AGENT_INBOX_LANES])
         .or(`expires_at.is.null,expires_at.gt.${now.toISOString()}`)
         .order("created_at", { ascending: false });
       if (error) throw error;
@@ -106,6 +107,7 @@ export function createAgentInboxRepository(
         .select(IDEA_COLUMNS)
         .eq("workspace_id", workspaceId)
         .neq("status", "active")
+        .in("lane", [...AGENT_INBOX_LANES])
         .order("updated_at", { ascending: false })
         .limit(limit);
       if (error) throw error;
@@ -341,6 +343,7 @@ export async function readAgentInboxIdea(
     .select(IDEA_COLUMNS)
     .eq("workspace_id", workspaceId)
     .eq("id", ideaId)
+    .in("lane", [...AGENT_INBOX_LANES])
     .maybeSingle();
   if (error) throw error;
   return data ? ideaFromRow(data as IdeaRow) : null;

@@ -27,13 +27,16 @@ import { toast } from "sonner";
 import {
   agentMessageState,
   AGENT_FEED_LANES,
+  isCurrentAgentInboxIdea,
 } from "@/lib/agent-inbox";
 import type {
   AgentFeedIdea,
   AgentFeedLane,
+  AgentInboxIdea,
   AgentInboxEvidence,
   AgentInboxPreferences,
   AgentInboxStatus,
+  AgentRadarIdea,
   AgentMessageState,
 } from "@/lib/agent-inbox";
 import { agentInboxDraftPrompt } from "@/lib/agent-inbox/prompt";
@@ -63,13 +66,6 @@ const laneCopy: Record<
     avatar: string;
   }
 > = {
-  newsjacking: {
-    label: "Newsjacking",
-    description: "React to a verified moment",
-    icon: Newspaper,
-    tone: "bg-amber-500/10 text-amber-700 dark:text-amber-300",
-    avatar: "timing-strategist",
-  },
   personal_story: {
     label: "Story Miner",
     description: "Mine an experience you actually lived",
@@ -744,14 +740,18 @@ export function AgentInbox() {
   }, []);
 
   const feedActive = useMemo(
-    () => [...(data?.active ?? []), ...(data?.trends ?? [])],
+    () => [
+      ...(data?.active ?? []).filter(isCurrentAgentInboxIdea),
+      ...(data?.trends ?? []),
+    ],
     [data],
   );
   const feedActivity = useMemo(
     () =>
-      [...(data?.activity ?? []), ...(data?.trendActivity ?? [])].sort((a, b) =>
-        b.updatedAt.localeCompare(a.updatedAt),
-      ),
+      [
+        ...(data?.activity ?? []).filter(isCurrentAgentInboxIdea),
+        ...(data?.trendActivity ?? []),
+      ].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
     [data],
   );
 
@@ -810,7 +810,7 @@ export function AgentInbox() {
   function patchReadAt(ideaId: string, readAt: string | null) {
     setData((current) => {
       if (!current) return current;
-      const patch = <T extends AgentFeedIdea>(ideas: T[]) =>
+      const patch = <T extends AgentInboxIdea | AgentRadarIdea>(ideas: T[]) =>
         ideas.map((idea) =>
           idea.id === ideaId ? ({ ...idea, readAt } as T) : idea,
         );

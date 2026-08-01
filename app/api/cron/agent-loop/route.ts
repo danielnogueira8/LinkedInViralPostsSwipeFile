@@ -211,8 +211,9 @@ export async function GET(req: Request) {
 
         // This lane deliberately does not depend on tracked creators or their
         // scrape freshness: it searches for timely developments in the wider
-        // web and proposes them as newsjacking candidates. Its rotating batch
-        // is prepared above so the cron remains bounded.
+        // web and proposes them as Trend Radar candidates. A user can turn one
+        // into a newsjacking post later from Cowork. Its rotating batch is
+        // prepared above so the cron remains bounded.
         const trendScan = trendScans.get(workspaceId);
         const trendError = trendErrors.get(workspaceId);
 
