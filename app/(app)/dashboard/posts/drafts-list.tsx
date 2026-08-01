@@ -641,6 +641,7 @@ export function DraftsList({
     <div className="flex flex-col gap-4">
       <PostingQueueWidget
         key={widgetVersion}
+        forceRefreshOnMount={widgetVersion > 0}
         onOpenDraft={(draftId) => void openQueueDraft(draftId)}
         onCreateDraftForSlot={(target) => {
           setNewPostQueueTarget(target);
@@ -739,6 +740,7 @@ export function DraftsList({
           onSchedule={async (draftId, target) => {
             const result = await scheduleDraftInQueue(draftId, target);
             setWidgetVersion((key) => key + 1);
+            setCalendarRefreshKey((key) => key + 1);
             toast.success(
               formatScheduleToast({
                 scheduledAt: result.draft.scheduledAt,
@@ -751,6 +753,7 @@ export function DraftsList({
             const next = await draftOperations.unschedule(draftId);
             applyMeta(draftId, next);
             setWidgetVersion((key) => key + 1);
+            setCalendarRefreshKey((key) => key + 1);
             toast.success("Removed from the posting queue.");
           }}
         />
