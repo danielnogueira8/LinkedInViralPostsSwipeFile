@@ -27,6 +27,7 @@ import { AiIcon } from "@/components/ai-icon";
 import { toast } from "sonner";
 import { fetchJson } from "@/lib/api-fetch";
 import type { VoiceProfile } from "@/lib/claude";
+import { isCurrentVoicePoll } from "./poll-ownership";
 
 // The persisted voice_profiles row, as returned by GET/POST /api/voice. The
 // `profile` jsonb is null while pending or after a failed run.
@@ -83,6 +84,10 @@ export function VoiceManager({
   // point the voice at a different profile.
   const [changingProfile, setChangingProfile] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Every generation owns a monotonically increasing poll id. Requests from a
+  // prior generation may still be in flight because the interval can overlap;
+  // they must never reconcile the newer Voice Profile row.
+  const pollGenerationRef = useRef(0);
   // Hard ceiling on poll attempts so a row that never settles can't spin the
   // loop (and the network) forever. The server flips a stuck `pending` row to
   // `failed` after STALE_PENDING_MS (5 min) on any GET, so in practice the poll
@@ -110,7 +115,8 @@ export function VoiceManager({
   // the async flow: the POST kicks off background work and returns immediately,
   // so this loop is what carries the UI from "Analyzing…" to the finished
   // profile (or a failure), and announces the transition.
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (requestId = pollGenerationRef.current) => {
+    if (!isCurrentVoicePoll(requestId, pollGenerationRef.current)) return;
     // Count this attempt first so a hung/never-settling run can't poll forever.
     // The server recovers a stuck `pending` row to `failed` within 5 min on any
     // GET, so this ceiling is only a backstop; on hit we stop and let the user
@@ -133,6 +139,7 @@ export function VoiceManager({
     }
     try {
       const data = await fetchJson<VoiceResponse>("/api/voice");
+      if (!isCurrentVoicePoll(requestId, pollGenerationRef.current)) return;
       if (!data.ok) return;
       setRow(data.voice);
       setCooldown({
@@ -162,12 +169,21 @@ export function VoiceManager({
       // Fresh polling session — reset the attempt budget so a prior settled run
       // doesn't eat into this one's ceiling.
       pollAttemptsRef.current = 0;
-      pollRef.current = setInterval(refresh, POLL_INTERVAL_MS);
+      const requestId = pollGenerationRef.current;
+      pollRef.current = setInterval(() => {
+        void refresh(requestId);
+      }, POLL_INTERVAL_MS);
     }
     return stopPolling;
   }, [row?.status, refresh, stopPolling]);
 
   async function generate() {
+    // Invalidate and clear any prior interval before this generation owns the
+    // row. Its in-flight request may still finish, but the generation guard
+    // below will prevent that response from reconciling this run.
+    stopPolling();
+    const requestId = pollGenerationRef.current + 1;
+    pollGenerationRef.current = requestId;
     setBusy(true);
     // Mark the baseline as pending so the first settling poll detects the
     // pending -> ready/failed transition and toasts (even on a first-ever run
@@ -199,7 +215,7 @@ export function VoiceManager({
       toast.error((e as Error).message);
       // Pull the real row back (e.g. a fast validation failure or an
       // already-in-progress conflict left the server row in a known state).
-      await refresh();
+      await refresh(requestId);
     }
     // The kickoff is done — hand off to the polling effect. isPending is driven
     // by the row's status from here, not `busy`.

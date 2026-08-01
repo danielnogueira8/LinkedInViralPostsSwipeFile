@@ -36,6 +36,7 @@ function idea(
     snoozedUntil: null,
     actedAt: null,
     discardReason: null,
+    readAt: null,
     createdAt: NOW.toISOString(),
     updatedAt: NOW.toISOString(),
     ...overrides,

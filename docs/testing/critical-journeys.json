@@ -117,6 +117,20 @@
       "follow_up_issue": 999
     },
     {
+      "id": "agent-inbox-review",
+      "capability": "Your Agent",
+      "invariant": "Recommendations can be marked unread, read, or done without starting a Cowork draft; unread, opened, and done states remain visually distinct; opening one only pre-fills an Ask-mode prompt and preserves the active idea until a terminal decision; the details pane appears only after selection and closes when the agent filter changes.",
+      "preferred_seam": "browser",
+      "existing_coverage": [
+        "evals/data/agent-page-navigation.test.ts",
+        "evals/data/agent-inbox-message-state.test.ts",
+        "evals/data/agent-inbox-migration.test.ts",
+        "e2e/agent-inbox.spec.ts"
+      ],
+      "status": "protected",
+      "follow_up_issue": 999
+    },
+    {
       "id": "swipe-discovery-actions",
       "capability": "Swipe File",
       "invariant": "Filtering, sorting, and saved post-type engagement thresholds apply consistently across the Swipe feed and featured rail; media actions, bookmarking, and modeling preserve the selected post and its metadata.",

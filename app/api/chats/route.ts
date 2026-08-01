@@ -49,7 +49,14 @@ const createSchema = z.object({
 export async function POST(req: Request) {
   try {
     const sb = await scopedSupabase();
-    const body = createSchema.parse(await req.json().catch(() => ({})));
+    const parsed = createSchema.safeParse(await req.json().catch(() => null));
+    if (!parsed.success) {
+      return NextResponse.json(
+        { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" },
+        { status: 400 },
+      );
+    }
+    const body = parsed.data;
 
     if (body.reuseEmpty) {
       // Newest still-untitled chat is the reuse candidate. Title alone isn't

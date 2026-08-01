@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type DragEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import {
   CalendarClock,
   ChevronDown,
@@ -39,15 +39,8 @@ import {
   type PostingQueueDraft,
   type PostingQueueSlot,
 } from "@/lib/posting-queue";
+import { fetchPostingQueueSnapshot } from "@/lib/posting-queue-client";
 import { cn } from "@/lib/utils";
-
-type QueueResponse = {
-  ok: true;
-  collapsed: boolean;
-  timeVariationEnabled: boolean;
-  slots: PostingQueueSlot[];
-  drafts: PostingQueueDraft[];
-};
 
 const SETTINGS_DAYS = [
   { dayOfWeek: 1, label: "Monday" },
@@ -67,6 +60,7 @@ export function PostingQueueWidget({
   onDraftRemovedFromQueue,
   onQueuedDraftsMoved,
   onQueueSnapshotLoaded,
+  forceRefreshOnMount = false,
 }: {
   onOpenDraft: (draftId: string) => void;
   onCreateDraftForSlot: (
@@ -86,6 +80,7 @@ export function PostingQueueWidget({
   ) => void;
   onQueuedDraftsMoved: (drafts: MovedQueuedDraftState[]) => void;
   onQueueSnapshotLoaded: (drafts: PostingQueueDraft[]) => void;
+  forceRefreshOnMount?: boolean;
 }) {
   const [slots, setSlots] = useState<PostingQueueSlot[]>([]);
   const [drafts, setDrafts] = useState<PostingQueueDraft[]>([]);
@@ -120,41 +115,63 @@ export function PostingQueueWidget({
     null,
   );
   const [time, setTime] = useState("09:00");
+  const mountedRef = useRef(false);
+  const loadGenerationRef = useRef(0);
   const timezone = useMemo(
     () => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
     [],
   );
 
-  const load = async () => {
-    const response = await fetch(
-      `/api/posting-slots?timezone=${encodeURIComponent(timezone)}`,
-      { cache: "no-store" },
-    );
-    const data = (await response.json()) as QueueResponse & { error?: string };
-    if (!response.ok || !data.ok)
-      throw new Error(data.error || "Couldn't load posting queue.");
-    setSlots(data.slots);
-    setDrafts(data.drafts);
-    onQueueSnapshotLoaded(data.drafts);
-    setCollapsed(data.collapsed);
-    setTimeVariationEnabled(data.timeVariationEnabled === true);
-    setLoaded(true);
+  const load = async (forceRefresh = false) => {
+    const generation = ++loadGenerationRef.current;
+    try {
+      const data = await fetchPostingQueueSnapshot(timezone, { forceRefresh });
+      if (
+        !mountedRef.current ||
+        generation !== loadGenerationRef.current
+      ) {
+        return;
+      }
+      setSlots(data.slots);
+      setDrafts(data.drafts);
+      onQueueSnapshotLoaded(data.drafts);
+      setCollapsed(data.collapsed);
+      setTimeVariationEnabled(data.timeVariationEnabled === true);
+      setLoaded(true);
+    } catch (error) {
+      if (
+        !mountedRef.current ||
+        generation !== loadGenerationRef.current
+      ) {
+        return;
+      }
+      throw error;
+    }
   };
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     // The response is external server state; loading it on mount is the
     // synchronization this effect owns.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    void load().catch((error: Error) => {
+    void load(forceRefreshOnMount).catch((error: Error) => {
+      if (!mountedRef.current) return;
       setLoaded(true);
       toast.error(error.message);
     });
-    // Timezone is stable for the mounted browser session.
+    // Timezone and the mount refresh flag are stable for this component
+    // instance.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [timezone]);
+  }, [timezone, forceRefreshOnMount]);
 
   useEffect(() => {
-    const refresh = () => void load().catch(() => undefined);
+    const refresh = () => void load(true).catch(() => undefined);
     window.addEventListener("posting-queue-updated", refresh);
     const interval = window.setInterval(refresh, 60_000);
     return () => {

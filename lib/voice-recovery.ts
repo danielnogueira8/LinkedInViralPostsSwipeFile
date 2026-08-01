@@ -35,7 +35,8 @@ type PendingRowFields = {
 // scoped to still-pending rows so we never clobber a concurrent success) and a
 // corrected copy is returned so the UI renders the failed state immediately —
 // even if the write itself fails. A non-pending or fresh-pending row is returned
-// untouched.
+// untouched. The stale timestamp is part of the update predicate so a read of
+// an older pending run cannot claim a newer run that replaced it meanwhile.
 export async function recoverStalePending<T extends PendingRowFields | null>(
   sb: { raw: SupabaseClient; workspaceId: string },
   row: T,
@@ -47,7 +48,7 @@ export async function recoverStalePending<T extends PendingRowFields | null>(
   if (!since) return row;
   if (Date.now() - new Date(since).getTime() < STALE_PENDING_MS) return row;
 
-  await sb.raw
+  let update = sb.raw
     .from("voice_profiles")
     .update({
       status: "failed",
@@ -59,6 +60,17 @@ export async function recoverStalePending<T extends PendingRowFields | null>(
     })
     .eq("workspace_id", sb.workspaceId)
     .eq("status", "pending");
+  if (row.pending_started_at !== null && row.pending_started_at !== undefined) {
+    update = update.eq("pending_started_at", since);
+  } else {
+    update = update.is("pending_started_at", null).eq("created_at", since);
+  }
+  const { data: recovered, error } = await update
+    .select("status")
+    .maybeSingle();
+  // A successful zero-row update means another run owns the row now. Preserve
+  // the caller's snapshot so the read path cannot display a failure for it.
+  if (!recovered && !error) return row;
   return {
     ...row,
     status: "failed",

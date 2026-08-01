@@ -126,7 +126,9 @@ export function selectExtractionChunks<T>(
   chunks: T[],
   limit = 24,
 ): T[] {
+  if (limit <= 0 || chunks.length === 0) return [];
   if (chunks.length <= limit) return chunks;
+  if (limit === 1) return [chunks[0]!];
   const selected: T[] = [];
   const used = new Set<number>();
   for (let index = 0; index < limit; index += 1) {

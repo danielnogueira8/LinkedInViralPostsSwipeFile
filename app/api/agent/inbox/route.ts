@@ -31,6 +31,7 @@ type TrendRow = {
   created_at: string;
   acted_at: string | null;
   snoozed_until: string | null;
+  read_at: string | null;
 };
 
 function trendStatus(status: string): AgentInboxStatus {
@@ -103,6 +104,7 @@ function trendIdeaFromRow(
     snoozedUntil: row.snoozed_until,
     actedAt: row.acted_at,
     discardReason: status === "discarded" ? "Dismissed from Trend Radar" : null,
+    readAt: row.read_at,
     createdAt,
     updatedAt: row.acted_at ?? row.snoozed_until ?? createdAt,
   };
@@ -123,7 +125,7 @@ async function readTrendRadar(
   if (releaseError) throw releaseError;
 
   const columns =
-    "id, kind, status, score, payload, trend_key, created_at, acted_at, snoozed_until";
+    "id, kind, status, score, payload, trend_key, created_at, acted_at, snoozed_until, read_at";
   const [activeResult, activityResult] = await Promise.all([
     db
       .from("agent_opportunities")

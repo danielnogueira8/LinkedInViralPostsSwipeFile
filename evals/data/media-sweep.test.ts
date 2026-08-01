@@ -94,9 +94,13 @@ describe("sweepDeletedMedia — orchestration", () => {
             return {
               select: () => ({
                 not: () => ({
-                  lte: async () => ({
-                    data: opts.candidatesError ? null : opts.candidates,
-                    error: opts.candidatesError ?? null,
+                  lte: () => ({
+                    range: async (from: number, to: number) => ({
+                      data: opts.candidatesError
+                        ? null
+                        : opts.candidates.slice(from, to + 1),
+                      error: opts.candidatesError ?? null,
+                    }),
                   }),
                 }),
               }),
@@ -208,6 +212,32 @@ describe("sweepDeletedMedia — orchestration", () => {
     expect(result).toEqual({ candidates: 1, purged: 0, stillReferenced: 1, errors: [] });
     expect(removeSpy).not.toHaveBeenCalled();
     expect(deletedIds).toEqual([]);
+  });
+
+  test("paginates expired media candidates past the PostgREST page cap", async () => {
+    const candidates = Array.from({ length: 1001 }, (_, index) => ({
+      id: `a${index}`,
+      storage_bucket: "media-assets",
+      storage_path: `ws/a${index}.png`,
+    }));
+    const { client, removeSpy, deletedIds } = fakeClient({
+      candidates,
+      drafts: [],
+    });
+
+    const result = await sweepDeletedMedia(
+      new Date("2026-02-01T00:00:00.000Z"),
+      client as never,
+    );
+
+    expect(result).toEqual({
+      candidates: 1001,
+      purged: 1001,
+      stillReferenced: 0,
+      errors: [],
+    });
+    expect(removeSpy).toHaveBeenCalledTimes(1001);
+    expect(deletedIds).toHaveLength(1001);
   });
 
   test("a drafts-query failure on a later page returns a clean error result, not a throw", async () => {

@@ -63,7 +63,14 @@ const NO_ROWS_SENTINEL = "00000000-0000-0000-0000-000000000000";
 export async function POST(req: Request) {
   try {
     const sb = await scopedSupabase();
-    const { source, postId, shareId } = bodySchema.parse(await req.json());
+    const parsed = bodySchema.safeParse(await req.json().catch(() => null));
+    if (!parsed.success) {
+      return NextResponse.json(
+        { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid request" },
+        { status: 400 },
+      );
+    }
+    const { source, postId, shareId } = parsed.data;
 
     let postText: string | null = null;
     let authorName: string | null = null;

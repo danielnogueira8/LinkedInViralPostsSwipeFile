@@ -62,6 +62,24 @@ describe("supabaseForRequest", () => {
 });
 
 describe("supabaseForWorkspaceRequest", () => {
+  test("does not require a service-role key for ordinary RLS requests", () => {
+    delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const requestFrom = vi.fn(() => "request-query");
+    createClient.mockReturnValueOnce({
+      from: requestFrom,
+      rpc: vi.fn(),
+      storage: { from: vi.fn() },
+    } as never);
+
+    const client = supabaseForWorkspaceRequest(
+      async () => "token",
+      "user_123",
+    );
+
+    expect(client.from("settings")).toBe("request-query");
+    expect(createClient).toHaveBeenCalledTimes(1);
+  });
+
   test("keeps ordinary tables on the RLS client", () => {
     const requestFrom = vi.fn(() => "request-query");
     const serviceFrom = vi.fn(() => "service-query");

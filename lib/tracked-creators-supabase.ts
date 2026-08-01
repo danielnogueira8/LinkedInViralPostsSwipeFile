@@ -81,8 +81,10 @@ function applyListFilters<
     q = q.or(`niche.eq.${niche},and(niche.is.null,accounts.niche.eq.${niche})`);
   }
   if (input.search) {
-    const search = input.search.replace(/[%_]/g, "");
-    q = q.or(`name.ilike.%${search}%,linkedin_handle.ilike.%${search}%`, {
+    const search = encodePostgrestValue(
+      `%${input.search.replace(/[%_]/g, "")}%`,
+    );
+    q = q.or(`name.ilike.${search},linkedin_handle.ilike.${search}`, {
       foreignTable: "accounts",
     });
   }

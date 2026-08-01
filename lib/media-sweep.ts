@@ -38,6 +38,14 @@ export type SweepResult = {
   errors: string[];
 };
 
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "object" && error && "message" in error) {
+    return String((error as { message: unknown }).message);
+  }
+  return String(error);
+}
+
 // Pure: given the sweep's candidate assets and EVERY still-live attachment
 // array pulled from chat_artifacts, split candidates into "safe to purge" vs
 // "still referenced, leave alone". Exported for unit tests — the DB I/O
@@ -72,15 +80,26 @@ export async function sweepDeletedMedia(
   const errors: string[] = [];
   const cutoff = new Date(now.getTime() - MEDIA_SWEEP_GRACE_MS).toISOString();
 
-  const { data: candidateRows, error: candidatesErr } = await sb
-    .from("media_assets")
-    .select("id, storage_bucket, storage_path")
-    .not("deleted_at", "is", null)
-    .lte("deleted_at", cutoff);
-  if (candidatesErr) {
-    return { candidates: 0, purged: 0, stillReferenced: 0, errors: [candidatesErr.message] };
+  // Candidate reads are also subject to PostgREST's 1000-row cap. If the
+  // sweep only sees the first page, old assets beyond that page leak forever
+  // because they are never considered for storage cleanup.
+  let candidates: SweepCandidate[];
+  try {
+    candidates = await selectAllRows(() =>
+      sb
+        .from("media_assets")
+        .select("id, storage_bucket, storage_path")
+        .not("deleted_at", "is", null)
+        .lte("deleted_at", cutoff) as unknown as {
+        range: (
+          from: number,
+          to: number,
+        ) => PromiseLike<{ data: SweepCandidate[] | null; error: unknown }>;
+      },
+    );
+  } catch (e) {
+    return { candidates: 0, purged: 0, stillReferenced: 0, errors: [errorMessage(e)] };
   }
-  const candidates = (candidateRows ?? []) as SweepCandidate[];
   if (candidates.length === 0) {
     return { candidates: 0, purged: 0, stillReferenced: 0, errors: [] };
   }
@@ -112,13 +131,12 @@ export async function sweepDeletedMedia(
     // selectAllRows re-throws PostgREST's raw error value, which is a plain
     // { message, ... } object, not an Error instance — extract .message
     // rather than letting it stringify to "[object Object]".
-    const message =
-      e instanceof Error
-        ? e.message
-        : typeof e === "object" && e && "message" in e
-          ? String((e as { message: unknown }).message)
-          : String(e);
-    return { candidates: candidates.length, purged: 0, stillReferenced: 0, errors: [message] };
+    return {
+      candidates: candidates.length,
+      purged: 0,
+      stillReferenced: 0,
+      errors: [errorMessage(e)],
+    };
   }
   const liveAttachmentArrays = draftRows.map((r) => r.media_attachments);
 

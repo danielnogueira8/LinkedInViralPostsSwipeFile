@@ -37,7 +37,7 @@ const bodySchema = z.object({ profile_url: z.string().trim().optional() });
 
 export async function POST(req: Request) {
   try {
-    const parsed = bodySchema.safeParse(await req.json().catch(() => ({})));
+    const parsed = bodySchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) {
       return NextResponse.json({ ok: false, error: parsed.error.message }, { status: 400 });
     }
@@ -115,9 +115,19 @@ export async function PATCH(req: Request) {
       .from("voice_profiles")
       .update({ profile, summary: profile.summary })
       .eq("workspace_id", sb.workspaceId)
+      // The readiness check above is only a preflight. Guard the write too so
+      // a generation that starts between the read and update cannot be
+      // overwritten by a stale manual edit.
+      .eq("status", "ready")
       .select(VOICE_PROFILE_COLS)
-      .single();
+      .maybeSingle();
     if (error) throw error;
+    if (!saved) {
+      return NextResponse.json(
+        { ok: false, error: "Voice generation started while you were editing. Try again when it is ready." },
+        { status: 409 },
+      );
+    }
     return NextResponse.json({
       ok: true,
       voice: saved,

@@ -76,7 +76,7 @@ export function supabaseForRequest(
 export function supabaseForWorkspaceRequest(
   getAccessToken: AccessTokenProvider,
   workspaceId: string,
-  serviceClient: SupabaseClient = supabaseAdmin(),
+  serviceClient?: SupabaseClient,
 ): SupabaseClient {
   const requestClient = supabaseForRequest(getAccessToken);
   return new Proxy(requestClient, {
@@ -98,7 +98,7 @@ export function supabaseForWorkspaceRequest(
           if (rpcWorkspaceId !== workspaceId) {
             throw new Error("Privileged RPC workspace mismatch");
           }
-          return serviceClient.rpc(fn, args, options);
+          return (serviceClient ?? supabaseAdmin()).rpc(fn, args, options);
         };
       }
       const value = Reflect.get(target, property, receiver);

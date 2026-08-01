@@ -12,6 +12,10 @@ import {
   formatDigest,
   type UsageRow,
 } from "@/lib/health-digest";
+import {
+  cronAuthorizationResponse,
+  isCronAuthorized,
+} from "@/app/api/cron/_auth";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -57,11 +61,7 @@ export async function GET(req: Request) {
   // wide open (the old guard only rejected when secret was *set and wrong*).
   // Anyone hitting this endpoint can trigger a full scrape, burning Apify
   // and Anthropic credits, so fail closed when the env var is missing.
-  const secret = process.env.CRON_SECRET;
-  const auth = req.headers.get("authorization");
-  if (!secret || auth !== `Bearer ${secret}`) {
-    return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
-  }
+  if (!isCronAuthorized(req)) return cronAuthorizationResponse();
   try {
     const sb = supabaseAdmin();
 
@@ -130,7 +130,7 @@ export async function GET(req: Request) {
     // that marks anything older than the window as `error` so future
     // crons aren't blocked forever after a crash.
     const cutoff = new Date(Date.now() - SCRAPE_ACTIVE_WINDOW_MS).toISOString();
-    await sb
+    const { error: staleSweepError } = await sb
       .from("runs")
       .update({
         status: "error",
@@ -140,14 +140,16 @@ export async function GET(req: Request) {
       .eq("status", "running")
       .is("workspace_id", null)
       .lt("started_at", cutoff);
+    if (staleSweepError) throw staleSweepError;
 
-    const { data: inflight } = await sb
+    const { data: inflight, error: inflightError } = await sb
       .from("runs")
       .select("id, started_at")
       .eq("status", "running")
       .is("workspace_id", null)
       .gte("started_at", cutoff)
       .limit(1);
+    if (inflightError) throw inflightError;
     if (inflight && inflight.length > 0) {
       return NextResponse.json({ ok: true, skipped: "run_in_progress", runId: inflight[0].id });
     }

@@ -30,6 +30,7 @@ const baseIdea: AgentInboxIdea = {
   snoozedUntil: null,
   actedAt: null,
   discardReason: null,
+  readAt: null,
   createdAt: "2026-07-30T08:00:00Z",
   updatedAt: "2026-07-30T08:00:00Z",
 };

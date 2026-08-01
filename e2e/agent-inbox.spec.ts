@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 const idea = (
   lane:
@@ -12,6 +12,7 @@ const idea = (
   lane,
   ...(lane === "trend_radar" ? { radar: true } : {}),
   status: "active",
+  readAt: null,
   headline:
     lane === "personal_story"
       ? "The hard-won lesson behind a client turnaround"
@@ -82,7 +83,7 @@ test.beforeEach(async ({ page }) => {
     await route.fulfill({
       json: {
         ok: true,
-        active: [idea("personal_story", 1)],
+        active: [idea("personal_story", 1), idea("educational", 2)],
         trends: [idea("trend_radar", 3)],
         activity: [],
         trendActivity: [],
@@ -98,6 +99,11 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
+async function selectRecommendation(page: Page, headline: RegExp) {
+  await page.getByRole("button", { name: headline }).click();
+  await expect(page.getByRole("button", { name: "Open in Cowork" })).toHaveCount(1);
+}
+
 test("shows the visible agent filters with human approval controls", async ({
   page,
 }) => {
@@ -110,7 +116,10 @@ test("shows the visible agent filters with human approval controls", async ({
   await expect(
     page.locator('[aria-label="Filter opportunities by agent"] button'),
   ).toHaveText([/All ideas/, /Trend Radar/, /Story Miner/, /Expertise/]);
-  await expect(page.getByRole("button", { name: "Use this idea" })).toHaveCount(1);
+  // The detail panel is not mounted until the user chooses a recommendation.
+  await expect(page.getByRole("button", { name: "Open in Cowork" })).toHaveCount(0);
+  await expect(page.getByText(/Select a recommendation/)).toHaveCount(0);
+  await selectRecommendation(page, /Story Miner: The hard-won lesson/);
   await expect(
     page.getByText(/New ideas arrive every day/),
   ).toBeVisible();
@@ -148,17 +157,77 @@ test("keeps the Trend Radar lane visible without an active idea", async ({
   await expect(grid.getByText("New ideas arrive every day", { exact: true })).toBeVisible();
 });
 
-test("stacks the agent rows vertically on mobile", async ({ page }) => {
+test("keeps the recommendation list full width before selection on mobile", async ({
+  page,
+}) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/dashboard/agent");
-  const now = page.locator("#agent-opportunity-grid > *").nth(0);
-  const proven = page.locator("#agent-opportunity-grid > *").nth(1);
-  await expect(now).toBeVisible();
-  const nowBox = await now.boundingBox();
-  const provenBox = await proven.boundingBox();
-  expect(nowBox?.width).toBeLessThan(390);
-  // At phone width the shared queue remains a readable single column.
-  expect(provenBox?.y).toBeGreaterThan(nowBox?.y ?? 0);
+  const grid = page.locator("#agent-opportunity-grid");
+  await expect(grid.locator(":scope > *")).toHaveCount(1);
+  await expect(page.getByText(/Select a recommendation/)).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Open in Cowork" })).toHaveCount(0);
+});
+
+test("clears the detail pane when the agent filter changes", async ({ page }) => {
+  await page.goto("/dashboard/agent");
+  await selectRecommendation(page, /Story Miner: The hard-won lesson/);
+  await expect(page.getByText("Why it fits you", { exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: /Story Miner/ }).first().click();
+
+  await expect(page.getByRole("button", { name: "Open in Cowork" })).toHaveCount(0);
+  await expect(page.getByText("Why it fits you", { exact: true })).toHaveCount(0);
+});
+
+test("uses separate calm surfaces for unread, opened, and done states", async ({
+  page,
+}) => {
+  const openedIdea = {
+    ...idea("educational", 2),
+    readAt: new Date().toISOString(),
+  };
+  const doneIdea = {
+    ...idea("educational", 4),
+    status: "acted",
+    actedAt: new Date().toISOString(),
+    readAt: new Date().toISOString(),
+  };
+  await page.route("**/api/agent/inbox**", async (route) => {
+    await route.fulfill({
+      json: {
+        ok: true,
+        active: [idea("personal_story", 1), openedIdea],
+        trends: [],
+        activity: [doneIdea],
+        trendActivity: [],
+        preferences: {
+          enabled: true,
+          timezone: "Europe/Lisbon",
+          deliveryLocalTime: "08:00",
+          topics: [],
+          newsSensitivity: "standard",
+        },
+      },
+    });
+  });
+
+  await page.goto("/dashboard/agent");
+
+  await expect(
+    page.getByRole("button", { name: /Story Miner: The hard-won lesson/ }),
+  ).toHaveClass(/bg-sky-50/);
+  await expect(
+    page.getByRole("button", {
+      name: /Expertise: Turn your strongest topic into a practical teardown/,
+    }),
+  ).toHaveClass(/bg-stone-50/);
+  await expect(
+    page
+      .getByText("Turn your strongest topic into a practical teardown", {
+        exact: true,
+      })
+      .locator(".."),
+  ).toHaveClass(/bg-emerald-50/);
 });
 
 test("an acted idea stays in recent activity while fresh ideas remain actionable", async ({
@@ -168,6 +237,7 @@ test("an acted idea stays in recent activity while fresh ideas remain actionable
     ...idea("personal_story", 2),
     status: "acted",
     actedAt: new Date().toISOString(),
+    readAt: new Date().toISOString(),
   };
   await page.route("**/api/agent/inbox**", async (route) => {
     await route.fulfill({
@@ -188,11 +258,11 @@ test("an acted idea stays in recent activity while fresh ideas remain actionable
     });
   });
   await page.goto("/dashboard/agent");
-  await expect(page.getByText("Acted", { exact: true })).toBeVisible();
+  await expect(page.getByText("Done", { exact: true })).toBeVisible();
   await expect(
     page.getByText(/hard-won lesson behind a client turnaround/),
   ).toBeVisible();
   await expect(page.getByText("No strong fit today")).toHaveCount(0);
-  // The inbox has one focused action surface for the selected idea.
-  await expect(page.getByRole("button", { name: "Use this idea" })).toHaveCount(1);
+  await selectRecommendation(page, /Story Miner: The hard-won lesson/);
+  // The inbox has one focused action surface after selecting an idea.
 });

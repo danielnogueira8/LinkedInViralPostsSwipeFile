@@ -104,6 +104,29 @@ export function circularWindow<T>(
   );
 }
 
+// Keep the current counter calculation behind a named seam so the carousel's
+// wrapped-window contract can be tested independently of the rendered cards.
+export function sourceWindowLabel(
+  start: number,
+  visibleCount: number,
+  total: number,
+): string {
+  if (total <= 0 || visibleCount <= 0) return `Sources 0 of ${Math.max(total, 0)}`;
+
+  const count = Math.min(visibleCount, total);
+  const first = ((start % total) + total) % total + 1;
+  const firstRangeCount = Math.min(count, total - first + 1);
+  const firstEnd = first + firstRangeCount - 1;
+  const ranges = [
+    firstRangeCount === 1 ? `${first}` : `${first}–${firstEnd}`,
+  ];
+  const wrappedCount = count - firstRangeCount;
+  if (wrappedCount > 0) {
+    ranges.push(wrappedCount === 1 ? "1" : `1–${wrappedCount}`);
+  }
+  return `Sources ${ranges.join(", ")} of ${total}`;
+}
+
 // Infinite-loop carousel of source cards: always shows up to three cards and
 // each prev/next step shifts the window by ONE card — the middle card moves to
 // the left slot, the leading card wraps to the back — so it loops forever
@@ -118,7 +141,6 @@ function SourceCarousel({ cards }: { cards: CitedPost[] }) {
   // can never index out of bounds and crash the cards below.
   const safeStart = Math.min(start, Math.max(0, count - 1));
   const visibleCards = circularWindow(cards, safeStart, VISIBLE_SOURCES);
-  const lastVisible = ((safeStart + visibleCards.length - 1) % count) + 1;
   const go = (delta: number) =>
     setStart((current) => {
       const clamped = Math.min(current, Math.max(0, count - 1));
@@ -150,7 +172,7 @@ function SourceCarousel({ cards }: { cards: CitedPost[] }) {
             >
               <ChevronLeft className="h-4 w-4" aria-hidden />
             </button>
-            <div className="flex items-center gap-1.5" aria-hidden>
+            <div className="flex items-center gap-1.5">
               {Array.from({ length: count }, (_, windowStart) => (
                 <button
                   key={`source-window-${windowStart}`}
@@ -176,7 +198,7 @@ function SourceCarousel({ cards }: { cards: CitedPost[] }) {
             </button>
           </div>
           <p className="text-center text-[11px] text-muted-foreground tabular-nums">
-            Sources {safeStart + 1}–{lastVisible} of {count}
+            {sourceWindowLabel(safeStart, visibleCards.length, count)}
           </p>
         </>
       )}

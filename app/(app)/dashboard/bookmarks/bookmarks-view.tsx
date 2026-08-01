@@ -24,12 +24,17 @@ import {
   PageHeader,
   PageShell,
   Toolbar,
-  segmentedControlClass,
-  segmentedItemClass,
 } from "@/components/app-surface";
 import { BookmarkFilterPersistence } from "@/components/persisted-filter-state";
 import { InspirationTabs } from "../swipe/inspiration-tabs";
 import { HorizontalCategoryRail } from "@/components/horizontal-category-rail";
+import {
+  filterDotClass,
+  filterInsetClass,
+  filterLabelClass,
+  filterPillClass,
+  filterSurfaceClass,
+} from "@/components/filter-ui";
 
 // Sharable bookmark libraries
 // ---------------------------
@@ -281,91 +286,119 @@ export async function BookmarksView({ searchParams }: { searchParams: SP }) {
       {/* Tab strip — own library + accepted shares. Hidden when there
           are zero shared libraries (no clutter for solo users). */}
       {(shares.length > 0 || activeShare) && (
-        <Toolbar className="flex gap-1 overflow-x-auto no-scrollbar p-1">
-          <TabLink href={hrefFor({}, { share: undefined })} active={isOwnView}>
-            <Bookmark className="h-3.5 w-3.5" /> My bookmarks
-          </TabLink>
-          {shares.map((s) => {
-            const d = displays.get(s.owner_workspace_id);
-            return (
-              <TabLink
-                key={s.id}
-                href={hrefFor({}, { share: s.id })}
-                active={sp.share === s.id}
-                title={d?.email ?? undefined}
-              >
-                <Users className="h-3.5 w-3.5" />
-                {d?.name ?? "Shared"}
-              </TabLink>
-            );
-          })}
+        <Toolbar className="overflow-hidden p-1.5">
+          <div className={filterInsetClass("flex gap-1 overflow-x-auto no-scrollbar p-1")}>
+            <TabLink href={hrefFor({}, { share: undefined })} active={isOwnView}>
+              <Bookmark className="h-3.5 w-3.5" /> My bookmarks
+            </TabLink>
+            {shares.map((s) => {
+              const d = displays.get(s.owner_workspace_id);
+              return (
+                <TabLink
+                  key={s.id}
+                  href={hrefFor({}, { share: s.id })}
+                  active={sp.share === s.id}
+                  title={d?.email ?? undefined}
+                >
+                  <Users className="h-3.5 w-3.5" />
+                  {d?.name ?? "Shared"}
+                </TabLink>
+              );
+            })}
+          </div>
         </Toolbar>
       )}
 
-      {categories.length > 0 && (
-        <Toolbar className="overflow-hidden">
-          <div className="px-4 sm:px-5 py-3 bg-background/40">
-            <div className="flex items-center gap-3">
-              <div className="text-xs font-medium text-muted-foreground shrink-0 hidden sm:block">
+      {/* Filter surface: category discovery stays above the compact type and
+          sort pills, matching the grouped treatment used by the Swipe File. */}
+      <div className={filterSurfaceClass("overflow-hidden")}>
+        {categories.length > 0 && (
+          <div className={filterInsetClass("px-2.5 py-2")}>
+            <div className="flex items-center gap-2">
+              <div className={filterLabelClass("hidden sm:inline-flex")}>
+                <span aria-hidden className="size-1.5 rounded-full bg-primary/45" />
                 Category
               </div>
-              <HorizontalCategoryRail>
-                  <FilterChip href={hrefFor(sp, { category: undefined })} active={!sp.category}>
-                    All
-                  </FilterChip>
-                  {categories.map((c) => (
+              <HorizontalCategoryRail className="gap-1">
+                <FilterChip href={hrefFor(sp, { category: undefined })} active={!sp.category}>
+                  <span aria-hidden className={filterDotClass(!sp.category)} />
+                  All
+                </FilterChip>
+                {categories.map((c) => {
+                  const active = sp.category === c.id;
+                  return (
                     <FilterChip
                       key={c.id}
                       href={hrefFor(sp, { category: c.id })}
-                      active={sp.category === c.id}
+                      active={active}
                     >
+                      <span aria-hidden className={filterDotClass(active)} />
                       {c.label}
                     </FilterChip>
-                  ))}
+                  );
+                })}
               </HorizontalCategoryRail>
             </div>
           </div>
-        </Toolbar>
-      )}
+        )}
 
-      {/* Type + Sort controls. Type (post_type) filter on the left, Sort
-          pushed right. Both are segmented controls that scroll horizontally on
-          mobile so they don't get clipped on narrow screens. */}
-      <Toolbar className="flex flex-wrap items-center gap-x-4 gap-y-2 p-2 sm:p-2.5">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="text-xs font-medium text-muted-foreground shrink-0">Type</span>
-          <div className="min-w-0 overflow-x-auto no-scrollbar -mx-0.5 px-0.5">
-            <div className={segmentedControlClass()}>
-              {POST_TYPE_FILTERS.map((t) => (
-                <SortTab
-                  key={t.key ?? "all"}
-                  href={hrefFor(sp, { type: t.key ?? undefined })}
-                  active={postType === t.key}
-                >
-                  {t.label}
-                </SortTab>
-              ))}
+        <div
+          className={filterInsetClass(
+            cn(
+              "flex flex-wrap items-center gap-x-4 gap-y-2 px-2.5 py-2",
+              categories.length > 0 && "mt-1.5",
+            ),
+          )}
+        >
+          <div className="flex min-w-0 items-center gap-2">
+            <span className={filterLabelClass()}>
+              <span aria-hidden className="size-1.5 rounded-full bg-primary/45" />
+              Type
+            </span>
+            <div className="min-w-0 overflow-x-auto no-scrollbar">
+              <div className="flex min-w-max items-center gap-1">
+                {POST_TYPE_FILTERS.map((t) => {
+                  const active = postType === t.key;
+                  return (
+                    <SortTab
+                      key={t.key ?? "all"}
+                      href={hrefFor(sp, { type: t.key ?? undefined })}
+                      active={active}
+                    >
+                      <span aria-hidden className={filterDotClass(active)} />
+                      {t.label}
+                    </SortTab>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex min-w-0 items-center gap-2 sm:ml-auto">
+            <span className={filterLabelClass()}>
+              <span aria-hidden className="size-1.5 rounded-full bg-primary/45" />
+              Sort
+            </span>
+            <div className="min-w-0 overflow-x-auto no-scrollbar">
+              <div className="flex min-w-max items-center gap-1">
+                {BOOKMARK_SORTS.map((s) => {
+                  const active = sortKey === s.key;
+                  return (
+                    <SortTab
+                      key={s.key}
+                      href={hrefFor(sp, { sort: s.key })}
+                      active={active}
+                    >
+                      <span aria-hidden className={filterDotClass(active)} />
+                      {s.label}
+                    </SortTab>
+                  );
+                })}
+              </div>
             </div>
           </div>
         </div>
-
-        <div className="flex items-center gap-2 min-w-0 sm:ml-auto">
-          <span className="text-xs font-medium text-muted-foreground shrink-0">Sort</span>
-          <div className="min-w-0 overflow-x-auto no-scrollbar -mx-0.5 px-0.5">
-            <div className={segmentedControlClass()}>
-              {BOOKMARK_SORTS.map((s) => (
-                <SortTab
-                  key={s.key}
-                  href={hrefFor(sp, { sort: s.key })}
-                  active={sortKey === s.key}
-                >
-                  {s.label}
-                </SortTab>
-              ))}
-            </div>
-          </div>
-        </div>
-      </Toolbar>
+      </div>
 
       <Suspense key={filterKey} fallback={<BookmarksSkeleton />}>
         <BookmarksSection
@@ -538,10 +571,8 @@ function TabLink({
       href={href}
       title={title}
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-sm font-medium transition-colors whitespace-nowrap",
-        active
-          ? "bg-foreground text-background shadow-soft"
-          : "text-muted-foreground hover:bg-muted hover:text-foreground",
+        filterPillClass(active),
+        "h-9 text-sm",
       )}
     >
       {children}
@@ -553,9 +584,7 @@ function SortTab({ href, active, children }: { href: string; active: boolean; ch
   return (
     <Link
       href={href}
-      className={cn(
-        segmentedItemClass(active),
-      )}
+      className={filterPillClass(active)}
     >
       {children}
     </Link>
@@ -566,9 +595,7 @@ function FilterChip({ href, active, children }: { href: string; active: boolean;
   return (
     <Link
       href={href}
-      className={cn(
-        segmentedItemClass(active),
-      )}
+      className={filterPillClass(active)}
     >
       {children}
     </Link>

@@ -14,6 +14,7 @@ import {
 import {
   composeWeekPlan,
   daysSince,
+  excludeWeekPlanOpportunities,
   GENERIC_WEEK_PROMPTS,
   postingGapNote,
   weekStart,
@@ -31,6 +32,7 @@ import {
   findLegacyGenericDraftId,
   loadStoredWeekPlan,
   mutateStoredWeekPlanItem,
+  recoverStaleWeekPlanDrafts,
   restoreLegacyDismissedOpportunityItems,
   type StoredWeekPlan,
 } from "@/lib/agent-loop/week-plan-store";
@@ -50,6 +52,7 @@ async function composeFreshPlan(
   workspaceId: string,
   currentWeek: string,
   learning: WorkspaceLearningModel | null,
+  excludedOpportunityIds: ReadonlySet<string> = new Set(),
 ): Promise<StoredWeekPlan> {
   const { data: opportunities, error: opportunityError } = await db
     .from("agent_opportunities")
@@ -58,10 +61,15 @@ async function composeFreshPlan(
     .eq("status", "proposed")
     .neq("kind", "trend")
     .order("score", { ascending: false })
-    .limit(OPPORTUNITY_POOL_LIMIT);
+    .limit(OPPORTUNITY_POOL_LIMIT + excludedOpportunityIds.size);
   if (opportunityError) throw opportunityError;
 
-  const sourcePostIds = opportunitySourcePostIds(opportunities);
+  const availableOpportunities = excludeWeekPlanOpportunities(
+    opportunities ?? [],
+    excludedOpportunityIds,
+    OPPORTUNITY_POOL_LIMIT,
+  );
+  const sourcePostIds = opportunitySourcePostIds(availableOpportunities);
   let leadMagnetPostIdSet = new Set<string>();
   const avatarByPostId = new Map<string, string>();
   const textByPostId = new Map<string, string>();
@@ -93,7 +101,7 @@ async function composeFreshPlan(
   }
 
   const rankedOpportunities = rankWeekPlanOpportunities(
-    (opportunities ?? []).map((opportunity) => {
+    availableOpportunities.map((opportunity) => {
       const payload = (opportunity.payload ?? {}) as Record<string, unknown>;
       const sourcePostId =
         typeof opportunity.source_post_id === "string"
@@ -168,6 +176,7 @@ async function composeFreshPlan(
             : null,
         status: "planned" as const,
         draftId: null,
+        draftingStartedAt: null,
       };
       if (slot.kind === "generic") {
         return { ...base, kind: "generic" as const };
@@ -429,6 +438,33 @@ export async function GET() {
       });
       return learningPromise;
     };
+    const laterWeeks = rollingWindowWeekStarts().filter((w) => w !== currentWeek);
+    const existingLaterPlans = await Promise.all(
+      laterWeeks.map(async (week) => {
+        try {
+          return await loadStoredWeekPlan(sb.raw, sb.workspaceId, week);
+        } catch (error) {
+          console.error("agent_week_plan_next_week_read_failed", {
+            workspace_id: sb.workspaceId,
+            week,
+            message: error instanceof Error ? error.message : String(error),
+          });
+          return null;
+        }
+      }),
+    );
+    const opportunityIdsInPlan = (candidate: StoredWeekPlan | null) =>
+      candidate?.items.flatMap((item) =>
+        item.opportunity?.id ? [item.opportunity.id] : [],
+      ) ?? [];
+    const reservedOpportunityIds = new Set(
+      existingLaterPlans.flatMap(opportunityIdsInPlan),
+    );
+    const reservePlanOpportunities = (candidate: StoredWeekPlan | null) => {
+      for (const opportunityId of opportunityIdsInPlan(candidate)) {
+        reservedOpportunityIds.add(opportunityId);
+      }
+    };
     let plan: StoredWeekPlan | null = null;
     try {
       plan = await loadStoredWeekPlan(sb.raw, sb.workspaceId, currentWeek);
@@ -444,6 +480,7 @@ export async function GET() {
         sb.workspaceId,
         currentWeek,
         await learningForPlan(),
+        reservedOpportunityIds,
       );
       plan = await createStoredWeekPlan(sb.raw, sb.workspaceId, plan);
     }
@@ -459,6 +496,13 @@ export async function GET() {
       currentWeek,
       plan,
     );
+    plan = await recoverStaleWeekPlanDrafts(
+      sb.raw,
+      sb.workspaceId,
+      currentWeek,
+      plan,
+    );
+    reservePlanOpportunities(plan);
     // The cadence strip shows a ROLLING window (today + the next 6 days), while
     // plans are still STORED per calendar week. Six days out of seven that
     // window crosses a Monday boundary, so the tail lives in the NEXT week's
@@ -470,31 +514,42 @@ export async function GET() {
     // reads plus deterministic slotting — no LLM call — and createStoredWeekPlan
     // is a no-op when a plan already exists, so concurrent requests converge on
     // one row rather than racing to overwrite each other.
-    const laterWeeks = rollingWindowWeekStarts().filter((w) => w !== currentWeek);
-    const laterPlans = await Promise.all(
-      laterWeeks.map(async (week) => {
-        try {
-          const existing = await loadStoredWeekPlan(sb.raw, sb.workspaceId, week);
-          if (existing) return existing;
-          const fresh = await composeFreshPlan(
-            sb.raw,
-            sb.workspaceId,
-            week,
-            await learningForPlan(),
-          );
-          return await createStoredWeekPlan(sb.raw, sb.workspaceId, fresh);
-        } catch (error) {
-          // Never fail the whole cadence because the NEXT week couldn't be
-          // built — the visible days from this week still render.
-          console.error("agent_week_plan_next_week_failed", {
-            workspace_id: sb.workspaceId,
-            week,
-            message: error instanceof Error ? error.message : String(error),
-          });
-          return null;
-        }
-      }),
-    );
+    const laterPlans: Array<StoredWeekPlan | null> = [];
+    for (const [index, week] of laterWeeks.entries()) {
+      const existing = existingLaterPlans[index];
+      if (existing) {
+        const recovered = await recoverStaleWeekPlanDrafts(
+          sb.raw,
+          sb.workspaceId,
+          week,
+          existing,
+        );
+        laterPlans.push(recovered);
+        reservePlanOpportunities(recovered);
+        continue;
+      }
+      try {
+        const fresh = await composeFreshPlan(
+          sb.raw,
+          sb.workspaceId,
+          week,
+          await learningForPlan(),
+          reservedOpportunityIds,
+        );
+        const stored = await createStoredWeekPlan(sb.raw, sb.workspaceId, fresh);
+        laterPlans.push(stored);
+        reservePlanOpportunities(stored);
+      } catch (error) {
+        // Never fail the whole cadence because the NEXT week couldn't be
+        // built — the visible days from this week still render.
+        console.error("agent_week_plan_next_week_failed", {
+          workspace_id: sb.workspaceId,
+          week,
+          message: error instanceof Error ? error.message : String(error),
+        });
+        laterPlans.push(null);
+      }
+    }
     const windowPlan: StoredWeekPlan = {
       ...plan,
       items: withinRollingWindow([

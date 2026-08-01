@@ -15,6 +15,13 @@ import { recordDraftEditEvent } from "@/lib/draft-edit-events";
 
 export const runtime = "nodejs";
 
+function invalidBody(error: z.ZodError): NextResponse {
+  return NextResponse.json(
+    { ok: false, error: error.issues[0]?.message ?? "Invalid input" },
+    { status: 400 },
+  );
+}
+
 // -----------------------------------------------------------------------------
 // POST /api/chats/[id]/artifacts — save a generated post out of a chat into
 // chat_artifacts (the artifact panel's "Save" action). Returns the saved row.
@@ -35,7 +42,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const { id: chatId } = await params;
     const sb = await scopedSupabase();
     const { userId } = await auth();
-    const input = saveSchema.parse(await req.json());
+    const parsed = saveSchema.safeParse(await req.json().catch(() => null));
+    if (!parsed.success) return invalidBody(parsed.error);
+    const input = parsed.data;
     const safeMeta = { ...(input.meta ?? {}) };
     delete safeMeta.content_lineage_origin;
     const outcome = await new DraftLifecycle(
@@ -87,7 +96,9 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   try {
     const { id: chatId } = await params;
     const sb = await scopedSupabase();
-    const { artifactId } = deleteSchema.parse(await req.json());
+    const parsed = deleteSchema.safeParse(await req.json().catch(() => null));
+    if (!parsed.success) return invalidBody(parsed.error);
+    const { artifactId } = parsed.data;
 
     // Confirm the chat belongs to this workspace (consistent with POST/GET).
     const { data: chat, error: chatErr } = await sb.raw
@@ -148,7 +159,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   try {
     const { id: chatId } = await params;
     const sb = await scopedSupabase();
-    const input = patchSchema.parse(await req.json());
+    const parsed = patchSchema.safeParse(await req.json().catch(() => null));
+    if (!parsed.success) return invalidBody(parsed.error);
+    const input = parsed.data;
 
     const { data: chat, error: chatErr } = await sb.raw
       .from("chats")

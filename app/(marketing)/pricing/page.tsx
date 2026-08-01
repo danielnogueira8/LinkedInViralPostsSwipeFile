@@ -12,9 +12,9 @@ import {
 } from "@/components/ui/card";
 
 export const metadata = {
-  title: "Pricing · Swipe File",
+  title: "Pricing · SwipeIn",
   description:
-    "One plan. Everything included. Launch offer: $79/month (normally $99), 7-day free trial, cancel anytime.",
+    "SwipeIn has one plan with everything included: $79/month on the launch offer, a 7-day free trial, and cancel-anytime billing.",
 };
 
 const PLAN_FEATURES = [

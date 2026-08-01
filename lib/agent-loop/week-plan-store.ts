@@ -15,6 +15,10 @@ const itemSchema = z.object({
   status: z.enum(["planned", "drafting", "drafted", "dismissed"]),
   // Optional keeps plans saved before this field was introduced readable.
   draftId: z.string().uuid().nullable().optional(),
+  // A hard-killed actor can leave a card in drafting. Optional keeps legacy
+  // JSON plans readable; recovery uses the settings updated_at as a safe
+  // rollout-era fallback when this field is missing.
+  draftingStartedAt: z.string().datetime().nullable().optional(),
   opportunity: z
     .object({
       id: z.string().nullable(),
@@ -34,6 +38,33 @@ const planSchema = z.object({
 
 export type StoredWeekPlanItem = z.infer<typeof itemSchema>;
 export type StoredWeekPlan = z.infer<typeof planSchema>;
+
+export const WEEK_PLAN_DRAFT_LEASE_MS = 15 * 60 * 1000;
+
+export function recoverStaleDraftingItems(
+  plan: StoredWeekPlan,
+  now = new Date(),
+  leaseMs = WEEK_PLAN_DRAFT_LEASE_MS,
+  legacyPlanUpdatedAt?: string,
+): { plan: StoredWeekPlan; recovered: boolean } {
+  const cutoff = now.getTime() - leaseMs;
+  let recovered = false;
+  const items = plan.items.map((item) => {
+    if (item.status !== "drafting") return item;
+    const startedAtValue = item.draftingStartedAt ?? legacyPlanUpdatedAt;
+    if (!startedAtValue) return item;
+    const startedAt = Date.parse(startedAtValue);
+    if (!Number.isFinite(startedAt) || startedAt > cutoff) return item;
+    recovered = true;
+    return {
+      ...item,
+      status: "planned" as const,
+      draftId: null,
+      draftingStartedAt: null,
+    };
+  });
+  return recovered ? { plan: { ...plan, items }, recovered } : { plan, recovered };
+}
 
 type LegacyWeekPlanMessage = {
   chat_id: string;
@@ -156,7 +187,10 @@ async function mutateStoredWeekPlan(
   db: SupabaseClient,
   workspaceId: string,
   weekStart: string,
-  mutate: (plan: StoredWeekPlan) => StoredWeekPlan | null,
+  mutate: (
+    plan: StoredWeekPlan,
+    updatedAt: string,
+  ) => StoredWeekPlan | null,
 ): Promise<StoredWeekPlan | null> {
   for (let attempt = 0; attempt < 4; attempt += 1) {
     const snapshot = await loadStoredWeekPlanSnapshot(
@@ -165,7 +199,7 @@ async function mutateStoredWeekPlan(
       weekStart,
     );
     if (!snapshot) return null;
-    const updated = mutate(snapshot.plan);
+    const updated = mutate(snapshot.plan, snapshot.updatedAt);
     if (!updated) return null;
     const nextUpdatedAt = new Date(
       Math.max(Date.now(), Date.parse(snapshot.updatedAt) + 1),
@@ -265,6 +299,59 @@ export async function mutateStoredWeekPlanItem(
   return plan ? updatedItem : null;
 }
 
+/** Persist stale-card recovery with the same optimistic settings lock used by
+ * every other weekly-plan mutation. */
+export async function recoverStaleWeekPlanDrafts(
+  db: SupabaseClient,
+  workspaceId: string,
+  weekStart: string,
+  plan: StoredWeekPlan,
+  now = new Date(),
+): Promise<StoredWeekPlan> {
+  const snapshot = await loadStoredWeekPlanSnapshot(
+    db,
+    workspaceId,
+    weekStart,
+  );
+  if (!snapshot) return plan;
+  const candidate = recoverStaleDraftingItems(
+    plan,
+    now,
+    WEEK_PLAN_DRAFT_LEASE_MS,
+    snapshot.updatedAt,
+  );
+  if (!candidate.recovered) return plan;
+  const persisted = await mutateStoredWeekPlan(
+    db,
+    workspaceId,
+    weekStart,
+    (current, updatedAt) => {
+      const next = recoverStaleDraftingItems(
+        current,
+        now,
+        WEEK_PLAN_DRAFT_LEASE_MS,
+        updatedAt,
+      );
+      return next.recovered ? next.plan : null;
+    },
+  );
+  if (persisted) return persisted;
+  return (await loadStoredWeekPlan(db, workspaceId, weekStart)) ?? plan;
+}
+
+export async function recoverStaleWeekPlanDraftsAcross(
+  db: SupabaseClient,
+  workspaceId: string,
+  weekStarts: readonly string[],
+  now = new Date(),
+): Promise<void> {
+  for (const week of weekStarts) {
+    const plan = await loadStoredWeekPlan(db, workspaceId, week);
+    if (!plan) continue;
+    await recoverStaleWeekPlanDrafts(db, workspaceId, week, plan, now);
+  }
+}
+
 export function reopenLegacyDismissedOpportunityItems(
   plan: StoredWeekPlan,
 ): StoredWeekPlan {
@@ -272,7 +359,12 @@ export function reopenLegacyDismissedOpportunityItems(
   const items = plan.items.map((item) => {
     if (item.kind !== "opportunity" || item.status !== "dismissed") return item;
     changed = true;
-    return { ...item, status: "planned" as const, draftId: null };
+    return {
+      ...item,
+      status: "planned" as const,
+      draftId: null,
+      draftingStartedAt: null,
+    };
   });
   return changed ? { ...plan, items } : plan;
 }
@@ -324,6 +416,7 @@ export async function markStoredOpportunityDrafted(
               ...item,
               status: "drafted",
               draftId,
+              draftingStartedAt: null,
             }
           : item,
       ),

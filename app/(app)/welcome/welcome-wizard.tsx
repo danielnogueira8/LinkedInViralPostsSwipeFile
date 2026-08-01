@@ -11,6 +11,7 @@ import { Flame, Check, ArrowRight, Loader2, AudioLines, Link2 } from "lucide-rea
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { fetchJson } from "@/lib/api-fetch";
+import { stepAfterAlreadyConnected } from "./oauth-return-policy";
 
 export type WelcomeCategory = {
   id: string;
@@ -127,8 +128,8 @@ export function WelcomeWizard({ categories }: { categories: WelcomeCategory[] })
 
   // Step 4 (LinkedIn). Start Zernio's hosted OAuth. The finalize callback needs
   // to bring the browser BACK to the wizard (not Settings), so we pass a
-  // `returnTo=/welcome` hint; on return, page.tsx already sees the connection
-  // and — since onboarding is complete — the user lands wherever they choose.
+  // `returnTo=/welcome` hint; on return, page.tsx preserves the callback result
+  // so this component can show the final step and its success/failure toast.
   // Skippable: connecting is optional here, just like voice. onboarded_at was
   // already written at the end of step 2.
   async function connectLinkedIn() {
@@ -144,6 +145,8 @@ export function WelcomeWizard({ categories }: { categories: WelcomeCategory[] })
       // don't start a new OAuth flow; just confirm and let the user move on.
       if (data.ok && data.alreadyConnected) {
         toast.success("LinkedIn is already connected.");
+        const nextStep = stepAfterAlreadyConnected(data.alreadyConnected);
+        if (nextStep) setStep(nextStep);
         setBusy(false);
         return;
       }

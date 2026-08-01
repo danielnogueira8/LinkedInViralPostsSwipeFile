@@ -440,6 +440,11 @@ describe("mcp/util: date parsing", () => {
     expect(parseDayEnd("2026-13-99")).toBeNull(); // regex passes shape, Date rejects
   });
 
+  test("rejects calendar-invalid days instead of normalizing them", () => {
+    expect(parseDayStart("2026-02-31")).toBeNull();
+    expect(parseDayEnd("2026-04-31")).toBeNull();
+  });
+
   test("sinceCutoff maps the enum to a past ISO timestamp; junk → null", () => {
     expect(sinceCutoff(undefined)).toBeNull();
     expect(sinceCutoff("99d")).toBeNull();

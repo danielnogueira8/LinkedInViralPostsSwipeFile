@@ -61,6 +61,29 @@ export function verifiedLinkedInSourceUrl(value: unknown): string | undefined {
 }
 
 /**
+ * Normalize a LinkedIn profile URL while accepting the bare host shape used by
+ * older MCP clients. Host and protocol validation happen before the profile
+ * path is interpreted, so a LinkedIn-looking path on another host cannot pass
+ * as a profile.
+ */
+export function normalizeLinkedInProfileUrl(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const raw = value.trim();
+  if (!raw) return null;
+
+  const candidate = /^[a-z][a-z\d+.-]*:\/\//i.test(raw)
+    ? raw
+    : `https://${raw}`;
+  const verified = verifiedLinkedInSourceUrl(candidate);
+  if (!verified) return null;
+
+  const pathname = new URL(verified).pathname;
+  const match = pathname.match(/^\/in\/([^/]+)\/?$/i);
+  if (!match) return null;
+  return `https://www.linkedin.com/in/${match[1].toLowerCase()}`;
+}
+
+/**
  * Pull the activity id out of any LinkedIn post URL we accept.
  * Returns null if the URL doesn't look like one we can handle.
  */
@@ -82,8 +105,8 @@ export type UrnType = "activity" | "share" | "ugcPost";
 export function extractUrnFromUrl(
   url: string,
 ): { id: string; type: UrnType } | null {
-  if (!url) return null;
-  const u = url.trim();
+  const u = verifiedLinkedInSourceUrl(url);
+  if (!u) return null;
   const m1 = u.match(ACTIVITY_URN_RE);
   if (m1) return { id: m1[1], type: "activity" };
   // Explicit share URN (e.g. harvestapi's /feed/update/urn:li:share:<id>).
@@ -129,9 +152,9 @@ export function embedUrlForUrn(type: UrnType, id: string): string {
 const PROBE_CANDIDATES = ["share", "activity", "ugcPost"] as const;
 
 async function probeOne(type: (typeof PROBE_CANDIDATES)[number], id: string): Promise<"hit" | "miss" | "throttled"> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 4000);
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 4000);
     // GET with Range: bytes=0-0 instead of HEAD. Some CDNs and edge configs
     // return 405 for HEAD on iframe endpoints; range-GET gives the same
     // status signal (200/206 vs 404) with an essentially empty body.
@@ -146,12 +169,13 @@ async function probeOne(type: (typeof PROBE_CANDIDATES)[number], id: string): Pr
       cache: "no-store",
     });
     await res.body?.cancel();
-    clearTimeout(timeout);
     if (res.ok) return "hit";
     if (res.status === 429) return "throttled";
     return "miss";
   } catch {
     return "miss";
+  } finally {
+    clearTimeout(timeout);
   }
 }
 

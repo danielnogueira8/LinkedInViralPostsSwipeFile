@@ -3,11 +3,16 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { postCronAlert } from "@/lib/cron-alert";
 import { scanAgentOpportunities } from "@/lib/agent-loop/scan";
 import { scanTrendOpportunities } from "@/lib/agent-loop/trend-radar";
+import { recoverStaleAgentOpportunityDrafts } from "@/lib/agent-loop/opportunity-claim";
 import { latestRelevantScrape } from "@/lib/supabase-scoped";
 import {
   scanFreshness,
   freshnessMessage,
 } from "@/lib/agent-loop/scan-freshness";
+import {
+  MAX_WORKSPACES_PER_TICK,
+  rotateForFairness,
+} from "@/lib/agent-inbox/schedule";
 import { errorResponse } from "@/lib/workspace";
 
 export const runtime = "nodejs";
@@ -42,7 +47,7 @@ async function discoverWorkspaceIds(
   // the old workspace_accounts pagination that protects creator coverage.
   const tables = ["workspace_accounts", "voice_profiles", "chats"] as const;
   for (const table of tables) {
-    for (let from = 0; from < 20 * PAGE; from += PAGE) {
+    for (let from = 0; ; from += PAGE) {
       const query =
         table === "chats"
           ? sb
@@ -66,7 +71,7 @@ async function discoverWorkspaceIds(
       if ((data ?? []).length < PAGE) break;
     }
   }
-  return [...discovered].sort().slice(0, 50);
+  return [...discovered].sort();
 }
 
 // Agent discovery loop (PLAN-agent-loop Phase D3). For every workspace, scan
@@ -92,9 +97,39 @@ export async function GET(req: Request) {
       workspaceIds = [workspaceParam];
     } else {
       // Workspaces are capped per run so a large fleet can't blow the cron
-      // budget; deterministic order keeps coverage stable run-over-run.
-      workspaceIds = await discoverWorkspaceIds(sb);
+      // budget. Rotate the sorted list so the cap is fair across the fleet.
+      workspaceIds = rotateForFairness(
+        await discoverWorkspaceIds(sb),
+        new Date(),
+        MAX_WORKSPACES_PER_TICK,
+      );
     }
+
+    // Reclaim before scanning. Recovery is a prerequisite for truthful agent
+    // state, so any schema/provider failure escapes to the outer handler and
+    // triggers the standard cron alert instead of returning partial success.
+    await Promise.all(
+      workspaceIds.map(async (workspaceId) => {
+        try {
+          const recovered = await recoverStaleAgentOpportunityDrafts(
+            sb,
+            workspaceId,
+          );
+          if (recovered > 0) {
+            console.info("agent_opportunity_stale_claims_recovered", {
+              workspace_id: workspaceId,
+              count: recovered,
+            });
+          }
+        } catch (error) {
+          throw new Error(
+            `Draft lease recovery failed for ${workspaceId}: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        }
+      }),
+    );
 
     const results: Array<{
       workspaceId: string;

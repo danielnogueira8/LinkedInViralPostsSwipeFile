@@ -95,7 +95,16 @@ export async function DELETE() {
     const conn = await getConnection(workspaceId, db);
     // Best-effort disconnect on Zernio's side; we mark our row regardless so the
     // Settings card reflects the user's intent even if the remote call fails.
-    if (conn?.zernio_account_id) await deleteAccount(conn.zernio_account_id);
+    if (conn?.zernio_account_id) {
+      try {
+        await deleteAccount(conn.zernio_account_id);
+      } catch {
+        // The local state is the source of truth for whether this workspace may
+        // publish. Do not leave a connected-looking row when the provider is
+        // temporarily unavailable.
+        console.warn("LinkedIn remote disconnect failed; updating local state");
+      }
+    }
     await markDisconnected(workspaceId, "Disconnected by user");
     return NextResponse.json({ ok: true });
   } catch (e) {

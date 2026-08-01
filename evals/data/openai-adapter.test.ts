@@ -237,6 +237,36 @@ describe("native OpenAI adapter", () => {
     ]);
   });
 
+  test("cancels a reader when the stream stalls", async () => {
+    vi.useFakeTimers();
+    try {
+      const reader = {
+        read: vi.fn(() => new Promise<never>(() => {})),
+        cancel: vi.fn(async () => {}),
+        releaseLock: vi.fn(),
+      };
+      vi.spyOn(globalThis, "fetch").mockResolvedValue({
+        ok: true,
+        body: { getReader: () => reader },
+      } as unknown as Response);
+
+      const pending = streamChatOpenAI({
+        model: "openai/gpt-5.6-luna",
+        messages: [{ role: "user", content: "stall" }],
+      }).next();
+      const failure = expect(pending).rejects.toThrow("OpenAI stream stalled");
+      await Promise.resolve();
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(45_001);
+
+      await failure;
+      expect(reader.cancel).toHaveBeenCalledOnce();
+      expect(reader.releaseLock).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test("keeps embedding vectors aligned by provider index", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(

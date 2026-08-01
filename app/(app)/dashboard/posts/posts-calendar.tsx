@@ -12,6 +12,10 @@ import {
   type PostingQueueDropTarget,
   type PostingQueueSlot,
 } from "@/lib/posting-queue";
+import {
+  fetchPostingQueueSnapshot,
+  type PostingQueueSnapshot,
+} from "@/lib/posting-queue-client";
 import type { Draft } from "@/lib/draft-view";
 
 // ---------------------------------------------------------------------------
@@ -134,7 +138,7 @@ const STATUS_DOT: Record<string, string> = {
   posted: "bg-[oklch(0.30_0.008_106)]",
 };
 
-type QueueSnapshot = { slots: PostingQueueSlot[]; drafts: PostingQueueDraft[] };
+type QueueSnapshot = Pick<PostingQueueSnapshot, "slots" | "drafts">;
 
 function draftLabel(draft: Draft | PostingQueueDraft): string {
   const title = "title" in draft && typeof draft.title === "string" ? draft.title.trim() : "";
@@ -177,10 +181,8 @@ export function PostsCalendar({
 
   useEffect(() => {
     let cancelled = false;
-    fetch(`/api/posting-slots?timezone=${encodeURIComponent(timezone)}`, { cache: "no-store" })
-      .then(async (response) => {
-        const data = (await response.json()) as { ok?: boolean; slots?: PostingQueueSlot[]; drafts?: PostingQueueDraft[]; error?: string };
-        if (!response.ok || !data.ok) throw new Error(data.error || "Couldn't load the posting queue.");
+    fetchPostingQueueSnapshot(timezone, { forceRefresh: refreshKey > 0 })
+      .then((data) => {
         if (!cancelled) setSnapshot({ slots: data.slots ?? [], drafts: data.drafts ?? [] });
       })
       .catch((error: Error) => {

@@ -6,9 +6,11 @@ import {
   Activity,
   AudioLines,
   BookOpen,
+  Check,
   CheckCircle2,
   ChevronRight,
   ExternalLink,
+  Eye,
   FileText,
   GraduationCap,
   Lightbulb,
@@ -23,16 +25,21 @@ import { AiIcon } from "@/components/ai-icon";
 import { agentAvatarSvgSrc } from "@/components/agent-avatar-src";
 import { toast } from "sonner";
 import {
+  agentMessageState,
   AGENT_FEED_LANES,
   isCurrentAgentInboxIdea,
 } from "@/lib/agent-inbox";
 import type {
   AgentFeedIdea,
   AgentFeedLane,
+  AgentInboxIdea,
   AgentInboxEvidence,
   AgentInboxPreferences,
   AgentInboxStatus,
+  AgentRadarIdea,
+  AgentMessageState,
 } from "@/lib/agent-inbox";
+import { agentInboxDraftPrompt } from "@/lib/agent-inbox/prompt";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -47,6 +54,7 @@ import {
   loadAgentInbox,
   type AgentInboxPayload,
 } from "./agent-inbox-client";
+import { invalidateNavBadges } from "./nav-badges";
 
 const laneCopy: Record<
   AgentFeedLane,
@@ -104,7 +112,7 @@ const statusMeta: Record<
   { dot: string; label: string }
 > = {
   active: { dot: "bg-sky-500", label: "Active" },
-  acted: { dot: "bg-emerald-500", label: "Acted" },
+  acted: { dot: "bg-emerald-500", label: "Done" },
   // Older rows may still carry the removed defer state. Keep them readable as
   // archived history without advertising a user-facing snooze workflow.
   snoozed: { dot: "bg-zinc-400", label: "Archived" },
@@ -161,7 +169,37 @@ function LanePill({ lane }: { lane: AgentFeedLane }) {
   );
 }
 
-type OpportunityAction = "act" | "discard";
+type OpportunityAction = "open" | "done" | "discard";
+
+function OpenInCoworkButton({
+  idea,
+  busy,
+  onAction,
+  drawer,
+}: {
+  idea: AgentFeedIdea;
+  busy: boolean;
+  onAction: (idea: AgentFeedIdea, action: OpportunityAction) => void;
+  drawer: boolean;
+}) {
+  return (
+    <Button
+      variant="outline"
+      size={drawer ? "sm" : undefined}
+      className={cn(
+        "rounded-lg",
+        drawer
+          ? undefined
+          : "h-10 flex-1 text-xs",
+      )}
+      disabled={busy}
+      onClick={() => onAction(idea, "open")}
+    >
+      {busy ? <Loader2 className="animate-spin" /> : <AiIcon />}
+      Open in Cowork
+    </Button>
+  );
+}
 
 function OpportunityActions({
   idea,
@@ -176,42 +214,48 @@ function OpportunityActions({
 }) {
   if (drawer) {
     return (
-      <>
-        <Button
-          className="w-full rounded-full"
-          disabled={busy}
-          onClick={() => onAction(idea, "act")}
-        >
-          {busy ? <Loader2 className="animate-spin" /> : <AiIcon />}
-          Use this idea
-        </Button>
-        <div className="flex gap-2">
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <OpenInCoworkButton
+          idea={idea}
+          busy={busy}
+          onAction={onAction}
+          drawer
+        />
+        {idea.lane !== "trend_radar" ? (
           <Button
-            variant="outline"
-            className="flex-1 rounded-full"
+            variant="ghost"
+            size="sm"
+            className="rounded-lg text-muted-foreground hover:text-foreground"
             disabled={busy}
-            onClick={() => onAction(idea, "discard")}
+            onClick={() => onAction(idea, "done")}
           >
-            <X /> Discard
+            <Check /> Done
           </Button>
-        </div>
-      </>
+        ) : null}
+        <Button
+          variant="ghost"
+          size="sm"
+          className="rounded-lg text-muted-foreground hover:text-foreground"
+          disabled={busy}
+          onClick={() => onAction(idea, "discard")}
+        >
+          <X /> Discard
+        </Button>
+      </div>
     );
   }
 
   return (
     <div className="mt-auto flex items-center gap-2 pt-5">
+      <OpenInCoworkButton
+        idea={idea}
+        busy={busy}
+        onAction={onAction}
+        drawer={false}
+      />
       <Button
-        className="h-10 flex-1 rounded-full text-xs"
-        disabled={busy}
-        onClick={() => onAction(idea, "act")}
-      >
-        {busy ? <Loader2 className="animate-spin" /> : <AiIcon />}
-        Use this idea
-      </Button>
-      <Button
-        variant="outline"
-        className="h-10 shrink-0 rounded-full px-3 text-xs"
+        variant="ghost"
+        className="h-10 shrink-0 rounded-lg px-3 text-xs text-muted-foreground hover:text-foreground"
         disabled={busy}
         title="Discard this idea"
         onClick={() => onAction(idea, "discard")}
@@ -243,8 +287,8 @@ export function OpportunityCard({
 }: {
   idea?: AgentFeedIdea;
   lane?: AgentFeedLane;
-  // The idea the user acted on from this lane today, so the card can say the
-  // draft started instead of showing the misleading "no strong fit" empty state.
+  // The idea the user completed from this lane today, so the card can show a
+  // terminal state instead of the misleading "no strong fit" empty state.
   acted?: AgentFeedIdea;
   // Legacy deferred rows are accepted so an older persisted activity item can
   // still render without bringing a defer action back into the UI.
@@ -252,7 +296,7 @@ export function OpportunityCard({
   busy: boolean;
   onAction: (
     idea: AgentFeedIdea,
-    action: "act" | "discard",
+    action: OpportunityAction,
   ) => void;
   onOpenDetails?: () => void;
   moreCount?: number;
@@ -272,7 +316,7 @@ export function OpportunityCard({
                   className="size-4 text-state-success"
                   aria-hidden
                 />
-                Draft started
+                Done
               </p>
               <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
                 &ldquo;{acted.headline}&rdquo;
@@ -360,6 +404,90 @@ export function OpportunityCard({
   );
 }
 
+const messageStatePresentation: Record<
+  AgentMessageState,
+  {
+    label: string;
+    className: string;
+    rowClassName: string;
+    titleClassName: string;
+  }
+> = {
+  unread: {
+    label: "Unread",
+    className: "text-sky-600 dark:text-sky-400",
+    rowClassName: "bg-sky-50/75 dark:bg-sky-950/20",
+    titleClassName: "font-semibold",
+  },
+  read: {
+    label: "Opened",
+    className: "text-stone-600 dark:text-stone-300",
+    rowClassName: "bg-stone-50/80 dark:bg-stone-950/20",
+    titleClassName: "font-medium",
+  },
+  done: {
+    label: "Done",
+    className: "text-emerald-600 dark:text-emerald-400",
+    rowClassName: "bg-emerald-50/70 dark:bg-emerald-950/20",
+    titleClassName: "font-medium",
+  },
+  discarded: {
+    label: "Discarded",
+    className: "text-muted-foreground",
+    rowClassName: "bg-muted/35",
+    titleClassName: "font-medium",
+  },
+  archived: {
+    label: "Archived",
+    className: "text-muted-foreground",
+    rowClassName: "bg-muted/35",
+    titleClassName: "font-medium",
+  },
+  expired: {
+    label: "Expired",
+    className: "text-muted-foreground",
+    rowClassName: "bg-muted/35",
+    titleClassName: "font-medium",
+  },
+};
+
+function messageStatePresentationFor(
+  idea: Pick<AgentFeedIdea, "status" | "readAt">,
+) {
+  const state = agentMessageState(idea);
+  return { state, ...messageStatePresentation[state] };
+}
+
+function MessageStateBadge({
+  idea,
+  compact = false,
+}: {
+  idea: AgentFeedIdea;
+  compact?: boolean;
+}) {
+  const { state, label, className } = messageStatePresentationFor(idea);
+  return (
+    <span
+      className={cn(
+        "inline-flex shrink-0 items-center gap-1 text-[11px] font-medium",
+        className,
+      )}
+      title={label}
+    >
+      {state === "unread" ? (
+        <span className="size-1.5 rounded-full bg-current" aria-hidden />
+      ) : state === "read" ? (
+        <Eye className="size-3.5" aria-hidden />
+      ) : state === "done" ? (
+        <CheckCircle2 className="size-3.5" aria-hidden />
+      ) : (
+        <X className="size-3.5" aria-hidden />
+      )}
+      <span className={compact ? "sr-only" : undefined}>{label}</span>
+    </span>
+  );
+}
+
 function RecommendationRow({
   idea,
   selected,
@@ -372,6 +500,7 @@ function RecommendationRow({
   onSelect: () => void;
 }) {
   const copy = laneCopy[idea.lane];
+  const { rowClassName, titleClassName } = messageStatePresentationFor(idea);
   return (
     <button
       type="button"
@@ -379,10 +508,11 @@ function RecommendationRow({
       aria-label={`${copy.label}: ${idea.headline}`}
       onClick={onSelect}
       className={cn(
-        "flex w-full items-start gap-3 border-l-2 px-4 py-4 text-left transition-colors hover:bg-muted/40",
+        "flex w-full items-start gap-3 border-l-2 px-4 py-4 text-left transition-[background-color,box-shadow,border-color] hover:ring-1 hover:ring-inset hover:ring-foreground/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/35",
+        rowClassName,
         selected
-          ? "border-primary bg-primary/5"
-          : "border-transparent bg-background",
+          ? "border-l-foreground/60 ring-1 ring-inset ring-foreground/15"
+          : "border-transparent",
       )}
     >
       <LaneAvatar
@@ -392,11 +522,17 @@ function RecommendationRow({
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-2 text-xs font-semibold">
           <span className="truncate">{copy.label}</span>
+          <MessageStateBadge idea={idea} compact />
           <span className="shrink-0 font-normal text-muted-foreground">
             {formatDecisionDay(idea.createdAt)}
           </span>
         </span>
-        <span className="mt-1 block line-clamp-2 text-sm font-semibold leading-5">
+        <span
+          className={cn(
+            "mt-1 block line-clamp-2 text-sm leading-5",
+            titleClassName,
+          )}
+        >
           {idea.headline}
         </span>
         <span className="mt-1 block line-clamp-1 text-xs leading-5 text-muted-foreground">
@@ -412,10 +548,12 @@ function RecommendationDetails({
   idea,
   busy,
   onAction,
+  onToggleRead,
 }: {
   idea: AgentFeedIdea;
   busy: boolean;
   onAction: (idea: AgentFeedIdea, action: OpportunityAction) => void;
+  onToggleRead: (idea: AgentFeedIdea) => void;
 }) {
   return (
     <div className="flex h-full min-h-[32rem] flex-col">
@@ -427,6 +565,7 @@ function RecommendationDetails({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <p className="font-semibold">{laneCopy[idea.lane].label}</p>
+            <MessageStateBadge idea={idea} />
             <span className="text-xs text-muted-foreground">
               {formatDecisionDay(idea.createdAt)} · Recommendation
             </span>
@@ -510,17 +649,40 @@ function RecommendationDetails({
       </div>
 
       <footer className="border-t border-border/70 pt-4">
-        <p className="mb-3 text-xs font-medium text-muted-foreground">
-          Choose what happens next
-        </p>
-        <OpportunityActions
-          idea={idea}
-          busy={busy}
-          onAction={onAction}
-          drawer
-        />
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-muted-foreground">
+              Open it when you&apos;re ready
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Cowork will wait for you to send the prompt.
+            </p>
+          </div>
+          <OpportunityActions
+            idea={idea}
+            busy={busy}
+            onAction={onAction}
+            drawer
+          />
+        </div>
+        {idea.status === "active" ? (
+          <button
+            type="button"
+            className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+            disabled={busy}
+            onClick={() => onToggleRead(idea)}
+          >
+            {agentMessageState(idea) === "unread" ? (
+              <>
+                <Check className="size-3.5" aria-hidden /> Mark as read
+              </>
+            ) : (
+              <>Mark as unread</>
+            )}
+          </button>
+        ) : null}
         <p className="mt-3 text-xs text-muted-foreground">
-          New ideas arrive every day, whether you use or discard this one.
+          New ideas arrive every day, whether you open or discard this one.
         </p>
       </footer>
     </div>
@@ -586,9 +748,10 @@ export function AgentInbox() {
   );
   const feedActivity = useMemo(
     () =>
-      [...(data?.activity ?? []), ...(data?.trendActivity ?? [])].sort((a, b) =>
-        b.updatedAt.localeCompare(a.updatedAt),
-      ),
+      [
+        ...(data?.activity ?? []).filter(isCurrentAgentInboxIdea),
+        ...(data?.trendActivity ?? []),
+      ].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
     [data],
   );
 
@@ -629,55 +792,147 @@ export function AgentInbox() {
     },
     [feedActive, ideasByLane, selectedFilter],
   );
+  const unreadCount = feedActive.filter(
+    (idea) => agentMessageState(idea) === "unread",
+  ).length;
+  const openedCount = feedActive.length - unreadCount;
   const queueSummary = feedActive.length
-    ? `${feedActive.length} fresh, evidence-backed ideas are ready. Use one or discard it.`
+    ? `${unreadCount} unread, evidence-backed idea${unreadCount === 1 ? "" : "s"} ${unreadCount === 1 ? "is" : "are"} ready. Open one in Cowork when you want to use it.`
     : "Your agents are looking for fresh opportunities. New ideas arrive every day.";
   const selectedVisibleIdea =
-    displayedIdeas.find((idea) => idea.id === selectedIdea?.id) ??
-    displayedIdeas[0] ??
-    null;
+    displayedIdeas.find((idea) => idea.id === selectedIdea?.id) ?? null;
 
-  async function act(
+  function handleFilterChange(filter: AgentLaneFilter) {
+    setSelectedFilter(filter);
+    setSelectedIdea(null);
+  }
+
+  function patchReadAt(ideaId: string, readAt: string | null) {
+    setData((current) => {
+      if (!current) return current;
+      const patch = <T extends AgentInboxIdea | AgentRadarIdea>(ideas: T[]) =>
+        ideas.map((idea) =>
+          idea.id === ideaId ? ({ ...idea, readAt } as T) : idea,
+        );
+      return {
+        ...current,
+        active: patch(current.active),
+        activity: patch(current.activity),
+        trends: patch(current.trends),
+        trendActivity: patch(current.trendActivity),
+      };
+    });
+  }
+
+  async function updateMessageState(
     idea: AgentFeedIdea,
-    action: "act" | "discard",
+    next: "read" | "unread",
+  ) {
+    if (idea.lane === "trend_radar") {
+      await jsonRequest(`/api/agent/opportunities/${idea.id}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: next }),
+      });
+      return;
+    }
+    await jsonRequest(`/api/agent/inbox/ideas/${idea.id}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ kind: next }),
+    });
+  }
+
+  async function markRead(idea: AgentFeedIdea) {
+    if (agentMessageState(idea) !== "unread") return;
+    setBusyId(idea.id);
+    try {
+      await updateMessageState(idea, "read");
+      patchReadAt(idea.id, new Date().toISOString());
+      invalidateNavBadges();
+    } catch (readError) {
+      toast.error(
+        readError instanceof Error
+          ? readError.message
+          : "Could not update this message.",
+      );
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  function handleSelectIdea(idea: AgentFeedIdea) {
+    setSelectedIdea(idea);
+    void markRead(idea);
+  }
+
+  async function toggleRead(idea: AgentFeedIdea) {
+    if (idea.status !== "active") return;
+    const state = agentMessageState(idea);
+    const next = state === "unread" ? "read" : "unread";
+    setBusyId(idea.id);
+    try {
+      await updateMessageState(idea, next);
+      patchReadAt(idea.id, next === "read" ? new Date().toISOString() : null);
+      invalidateNavBadges();
+    } catch (readError) {
+      toast.error(
+        readError instanceof Error
+          ? readError.message
+          : "Could not update this message.",
+      );
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function closeIdea(
+    idea: AgentFeedIdea,
+    action: "done" | "discard",
+    discardReason: string,
+  ) {
+    if (idea.lane === "trend_radar") {
+      await jsonRequest(`/api/agent/opportunities/${idea.id}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "dismiss" }),
+      });
+      return;
+    }
+    await jsonRequest(`/api/agent/inbox/ideas/${idea.id}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(
+        action === "done"
+          ? { kind: "done" }
+          : { kind: "discard", reason: discardReason },
+      ),
+    });
+  }
+
+  async function handleOpportunityAction(
+    idea: AgentFeedIdea,
+    action: OpportunityAction,
     discardReason = "Not relevant right now",
   ) {
     setBusyId(idea.id);
     try {
-      if (idea.lane === "trend_radar") {
-        await jsonRequest(`/api/agent/opportunities/${idea.id}`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(
-            action === "act"
-              ? { action: "draft" }
-              : { action: "dismiss" },
-          ),
-        });
-        toast.success(action === "act" ? "Draft started" : "Idea discarded");
-        setSelectedIdea(null);
-        await load();
-        return;
-      }
-      const body = await jsonRequest(`/api/agent/inbox/ideas/${idea.id}`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(
-          action === "act"
-            ? { kind: "act" }
-            : { kind: "discard", reason: discardReason },
-        ),
-      });
-      if (action === "act") {
+      if (action === "open") {
+        await updateMessageState(idea, "read");
+        patchReadAt(idea.id, new Date().toISOString());
+        invalidateNavBadges();
         sessionStorage.setItem(
           `agent-inbox-draft:${idea.id}`,
-          body.draftPrompt,
+          agentInboxDraftPrompt(idea),
         );
         setSelectedIdea(null);
         router.push(`/dashboard?new=1&agentIdea=${idea.id}`);
         return;
       }
-      toast.success("Idea discarded");
+      await closeIdea(idea, action, discardReason);
+      toast.success(action === "done" ? "Idea marked done" : "Idea discarded");
+      invalidateNavBadges();
+      setSelectedIdea(null);
       await load();
     } catch (actionError) {
       toast.error(
@@ -692,9 +947,9 @@ export function AgentInbox() {
 
   function handleAction(
     idea: AgentFeedIdea,
-    action: "act" | "discard",
+    action: OpportunityAction,
   ) {
-    void act(idea, action);
+    void handleOpportunityAction(idea, action);
   }
 
   async function saveSettings() {
@@ -765,8 +1020,8 @@ export function AgentInbox() {
                 Today&apos;s inbox
               </h2>
               <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">
-                {queueSummary} Use this idea starts a draft; Discard removes it
-                from the review queue.
+                {queueSummary} Open in Cowork prepares the prompt without
+                sending it; Discard closes it.
               </p>
             </div>
           </div>
@@ -803,7 +1058,7 @@ export function AgentInbox() {
                       key={filter}
                       type="button"
                       aria-pressed={selectedFilter === filter}
-                      onClick={() => setSelectedFilter(filter)}
+                      onClick={() => handleFilterChange(filter)}
                       className={cn(
                         "inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full px-3 text-xs font-medium transition-colors",
                         selectedFilter === filter
@@ -851,7 +1106,7 @@ export function AgentInbox() {
               <h3 className="font-semibold">Today&apos;s recommendations</h3>
               <p className="mt-1 text-sm text-muted-foreground">
                 {selectedFilter === "all"
-                  ? "Open one recommendation to see why it fits and choose what happens next."
+                  ? "Open one recommendation to see why it fits and choose the next step."
                   : laneCopy[selectedFilter].description}
               </p>
             </div>
@@ -862,14 +1117,21 @@ export function AgentInbox() {
           </div>
           <div
             id="agent-opportunity-grid"
-            className="mt-4 grid min-h-[32rem] grid-cols-1 items-stretch gap-4 xl:grid-cols-[minmax(17rem,0.82fr)_minmax(0,1.18fr)]"
+            className={cn(
+              "mt-4 items-stretch",
+              selectedVisibleIdea
+                ? "grid min-h-[32rem] grid-cols-1 gap-4 xl:grid-cols-[minmax(17rem,0.82fr)_minmax(0,1.18fr)]"
+                : "block",
+            )}
           >
             <div className="overflow-hidden rounded-2xl border bg-card">
               <div className="flex items-center justify-between border-b border-border/70 px-4 py-3">
                 <span className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
                   New today
                 </span>
-                <span className="text-xs text-muted-foreground">Newest first</span>
+                <span className="text-xs text-muted-foreground">
+                  {unreadCount} unread · {openedCount} opened
+                </span>
               </div>
               <div className="divide-y divide-border/70">
                 {displayedIdeas.length ? (
@@ -879,7 +1141,7 @@ export function AgentInbox() {
                       idea={idea}
                       selected={selectedVisibleIdea?.id === idea.id}
                       busy={busyId === idea.id}
-                      onSelect={() => setSelectedIdea(idea)}
+                      onSelect={() => handleSelectIdea(idea)}
                     />
                   ))
                 ) : (
@@ -896,21 +1158,16 @@ export function AgentInbox() {
                 )}
               </div>
             </div>
-            <div className="rounded-2xl border bg-card p-5 sm:p-6">
-              {selectedVisibleIdea ? (
+            {selectedVisibleIdea ? (
+              <div className="rounded-2xl border bg-card p-5 sm:p-6">
                 <RecommendationDetails
                   idea={selectedVisibleIdea}
                   busy={busyId === selectedVisibleIdea.id}
                   onAction={handleAction}
+                  onToggleRead={toggleRead}
                 />
-              ) : (
-                <div className="flex min-h-[27rem] items-center justify-center text-center">
-                  <p className="max-w-xs text-sm text-muted-foreground">
-                    Select a recommendation to review its angle and evidence.
-                  </p>
-                </div>
-              )}
-            </div>
+              </div>
+            ) : null}
           </div>
         </div>
 
@@ -956,16 +1213,17 @@ export function AgentInbox() {
               <div className="mt-2 divide-y divide-border/70">
                 {feedActivity.slice(0, 5).map((idea) => {
                   const meta = statusMeta[idea.status] ?? statusMeta.expired;
+                  const { rowClassName } = messageStatePresentationFor(idea);
                   return (
                     <div
                       key={idea.id}
-                      className="flex items-center gap-3 py-2.5 text-sm"
+                      className={cn(
+                        "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm",
+                        rowClassName,
+                      )}
                       title={idea.discardReason ?? undefined}
                     >
-                      <span
-                        className={cn("size-2 shrink-0 rounded-full", meta.dot)}
-                        aria-hidden
-                      />
+                      <MessageStateBadge idea={idea} compact />
                       <span className="truncate">{idea.headline}</span>
                       <span className="ml-auto shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
                         {formatDecisionDay(idea.updatedAt)}

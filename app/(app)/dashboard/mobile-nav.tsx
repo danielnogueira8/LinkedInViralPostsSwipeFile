@@ -5,7 +5,10 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useState, useTransition, useCallback } from "react";
 import { MoreHorizontal, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { hrefWithPersistedFilters } from "@/components/persisted-filter-state";
+import {
+  hrefWithPersistedFilters,
+  isSameNavigationTarget,
+} from "@/components/persisted-filter-state";
 import {
   MOBILE_MORE_SECTIONS,
   MOBILE_PRIMARY_PATHS,
@@ -45,15 +48,17 @@ export function MobileNav({ badges: initialBadges }: { badges?: Record<string, n
         return;
       }
       setMoreOpen(false);
-      if (href === pathname) return;
-      e.preventDefault();
       const targetHref = hrefWithPersistedFilters(href);
+      if (isSameNavigationTarget(targetHref, pathname, searchParams.toString())) {
+        return;
+      }
+      e.preventDefault();
       setPendingHref(href);
       startTransition(() => {
         router.push(targetHref);
       });
     },
-    [pathname, router],
+    [pathname, router, searchParams],
   );
 
   // Once the transition settles, clear the optimistic highlight — whether the
