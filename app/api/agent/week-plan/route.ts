@@ -32,6 +32,7 @@ import {
   findLegacyGenericDraftId,
   loadStoredWeekPlan,
   mutateStoredWeekPlanItem,
+  recoverStaleWeekPlanDrafts,
   restoreLegacyDismissedOpportunityItems,
   type StoredWeekPlan,
 } from "@/lib/agent-loop/week-plan-store";
@@ -175,6 +176,7 @@ async function composeFreshPlan(
             : null,
         status: "planned" as const,
         draftId: null,
+        draftingStartedAt: null,
       };
       if (slot.kind === "generic") {
         return { ...base, kind: "generic" as const };
@@ -494,6 +496,12 @@ export async function GET() {
       currentWeek,
       plan,
     );
+    plan = await recoverStaleWeekPlanDrafts(
+      sb.raw,
+      sb.workspaceId,
+      currentWeek,
+      plan,
+    );
     reservePlanOpportunities(plan);
     // The cadence strip shows a ROLLING window (today + the next 6 days), while
     // plans are still STORED per calendar week. Six days out of seven that
@@ -510,8 +518,14 @@ export async function GET() {
     for (const [index, week] of laterWeeks.entries()) {
       const existing = existingLaterPlans[index];
       if (existing) {
-        laterPlans.push(existing);
-        reservePlanOpportunities(existing);
+        const recovered = await recoverStaleWeekPlanDrafts(
+          sb.raw,
+          sb.workspaceId,
+          week,
+          existing,
+        );
+        laterPlans.push(recovered);
+        reservePlanOpportunities(recovered);
         continue;
       }
       try {

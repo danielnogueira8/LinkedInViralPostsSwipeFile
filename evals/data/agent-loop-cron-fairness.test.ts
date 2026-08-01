@@ -6,6 +6,8 @@ const mocked = vi.hoisted(() => ({
   db: null as unknown,
   ranges: [] as Array<[string, number]>,
   scan: vi.fn(),
+  recover: vi.fn(),
+  alert: vi.fn(),
 }));
 
 vi.mock("@/lib/supabase", () => ({
@@ -23,13 +25,19 @@ vi.mock("@/lib/agent-loop/trend-radar", () => ({
     skipped: 0,
   }),
 }));
+vi.mock("@/lib/agent-loop/opportunity-claim", () => ({
+  recoverStaleAgentOpportunityDrafts: (...args: unknown[]) =>
+    mocked.recover(...args),
+}));
 vi.mock("@/lib/supabase-scoped", () => ({
   latestRelevantScrape: async () => ({
     started_at: new Date().toISOString(),
     finished_at: new Date().toISOString(),
   }),
 }));
-vi.mock("@/lib/cron-alert", () => ({ postCronAlert: vi.fn() }));
+vi.mock("@/lib/cron-alert", () => ({
+  postCronAlert: (...args: unknown[]) => mocked.alert(...args),
+}));
 vi.mock("@/lib/workspace", () => ({
   errorResponse: () => Response.json({ ok: false }, { status: 500 }),
 }));
@@ -89,6 +97,9 @@ beforeEach(() => {
     expired: 0,
     workspaceId,
   }));
+  mocked.recover.mockReset();
+  mocked.recover.mockResolvedValue(0);
+  mocked.alert.mockReset();
   mocked.db = makePagedDb();
 });
 
@@ -139,5 +150,24 @@ describe("agent-loop cron workspace fairness", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  test("lease recovery failures alert and fail the cron", async () => {
+    mocked.recover.mockRejectedValueOnce(new Error("lease unavailable"));
+
+    const response = await GET(
+      new Request(
+        "https://app.tryswipein.com/api/cron/agent-loop?workspace=workspace-1",
+        { headers: { authorization: "Bearer test-secret" } },
+      ),
+    );
+
+    expect(response.status).toBe(500);
+    expect(mocked.alert).toHaveBeenCalledWith(
+      { cron: "agent-loop" },
+      expect.objectContaining({
+        message: "Draft lease recovery failed for workspace-1: lease unavailable",
+      }),
+    );
   });
 });
