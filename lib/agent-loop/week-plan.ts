@@ -428,6 +428,22 @@ export function rollingWindowWeekStarts(from: Date = new Date()): string[] {
 }
 
 /**
+ * Keep a fresh plan from reusing opportunities already reserved by another
+ * visible stored week. The caller fetches a slightly larger pool so filtering
+ * still fills the requested number of slots when the first rows are reserved.
+ */
+export function excludeWeekPlanOpportunities<T extends { id: string }>(
+  opportunities: readonly T[],
+  excludedOpportunityIds: ReadonlySet<string>,
+  limit: number,
+): T[] {
+  if (limit <= 0) return [];
+  return opportunities
+    .filter(({ id }) => !excludedOpportunityIds.has(id))
+    .slice(0, limit);
+}
+
+/**
  * Keep only items inside the rolling window, ordered today-first.
  *
  * Past days are DROPPED regardless of state: an undrafted slot for a day that

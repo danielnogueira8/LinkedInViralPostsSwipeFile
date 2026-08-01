@@ -5,6 +5,7 @@ import {
   rollingWindowWeekStarts,
   withinRollingWindow,
   weekStart,
+  excludeWeekPlanOpportunities,
 } from "@/lib/agent-loop/week-plan";
 
 // ---------------------------------------------------------------------------
@@ -112,7 +113,7 @@ describe("the next week is generated, not left blank", () => {
 
   test("the route composes + stores a missing tail week", () => {
     expect(routeSrc).toMatch(
-      /composeFreshPlan\(\s*sb\.raw,\s*sb\.workspaceId,\s*week,\s*await learningForPlan\(\),\s*\)/,
+      /composeFreshPlan\(\s*sb\.raw,\s*sb\.workspaceId,\s*week,\s*await learningForPlan\(\),\s*reservedOpportunityIds,\s*\)/,
     );
     expect(routeSrc).toMatch(/createStoredWeekPlan\(sb\.raw, sb\.workspaceId, fresh\)/);
   });
@@ -130,5 +131,23 @@ describe("the next week is generated, not left blank", () => {
     const planSrc = readFileSync("lib/agent-loop/week-plan.ts", "utf8");
     expect(routeSrc).not.toMatch(/completeChat|streamChat/);
     expect(planSrc).not.toMatch(/completeChat|streamChat/);
+  });
+});
+
+describe("fresh visible weeks do not reuse opportunities", () => {
+  const routeSrc = readFileSync("app/api/agent/week-plan/route.ts", "utf8");
+
+  test("filters reserved opportunities before filling the plan pool", () => {
+    const rows = [{ id: "already-used" }, { id: "keep-1" }, { id: "keep-2" }];
+    expect(
+      excludeWeekPlanOpportunities(rows, new Set(["already-used"]), 2),
+    ).toEqual([{ id: "keep-1" }, { id: "keep-2" }]);
+  });
+
+  test("the route carries reservations across the visible stored weeks", () => {
+    expect(routeSrc).toContain("excludeWeekPlanOpportunities");
+    expect(routeSrc).toContain("excludedOpportunityIds");
+    expect(routeSrc).toContain("reservedOpportunityIds");
+    expect(routeSrc).toContain("existingLaterPlans");
   });
 });
