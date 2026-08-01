@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 
 const mocked = vi.hoisted(() => ({
   raw: null as unknown,
+  recoverStaleAgentOpportunityDrafts: vi.fn(),
   updateManagedOpportunityStatus: vi.fn(),
   actOnOpportunity: vi.fn(),
   markStoredOpportunityDrafted: vi.fn(),
@@ -12,6 +13,7 @@ vi.mock("@/lib/supabase-scoped", () => ({
   scopedSupabase: async () => ({ workspaceId: "workspace-1", raw: mocked.raw }),
 }));
 vi.mock("@/lib/agent-loop/opportunity-claim", () => ({
+  recoverStaleAgentOpportunityDrafts: mocked.recoverStaleAgentOpportunityDrafts,
   updateManagedOpportunityStatus: mocked.updateManagedOpportunityStatus,
 }));
 vi.mock("@/lib/agent-loop/act", () => ({
@@ -70,6 +72,8 @@ async function post(body: Record<string, unknown>) {
 
 beforeEach(() => {
   mocked.raw = makeRaw();
+  mocked.recoverStaleAgentOpportunityDrafts.mockReset();
+  mocked.recoverStaleAgentOpportunityDrafts.mockResolvedValue(0);
   mocked.updateManagedOpportunityStatus.mockReset();
   mocked.actOnOpportunity.mockReset();
   mocked.markStoredOpportunityDrafted.mockReset();

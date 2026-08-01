@@ -3,6 +3,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { postCronAlert } from "@/lib/cron-alert";
 import { scanAgentOpportunities } from "@/lib/agent-loop/scan";
 import { scanTrendOpportunities } from "@/lib/agent-loop/trend-radar";
+import { recoverStaleAgentOpportunityDrafts } from "@/lib/agent-loop/opportunity-claim";
 import { latestRelevantScrape } from "@/lib/supabase-scoped";
 import {
   scanFreshness,
@@ -103,6 +104,32 @@ export async function GET(req: Request) {
         MAX_WORKSPACES_PER_TICK,
       );
     }
+
+    // Reclaim before scanning. Recovery is a prerequisite for truthful agent
+    // state, so any schema/provider failure escapes to the outer handler and
+    // triggers the standard cron alert instead of returning partial success.
+    await Promise.all(
+      workspaceIds.map(async (workspaceId) => {
+        try {
+          const recovered = await recoverStaleAgentOpportunityDrafts(
+            sb,
+            workspaceId,
+          );
+          if (recovered > 0) {
+            console.info("agent_opportunity_stale_claims_recovered", {
+              workspace_id: workspaceId,
+              count: recovered,
+            });
+          }
+        } catch (error) {
+          throw new Error(
+            `Draft lease recovery failed for ${workspaceId}: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        }
+      }),
+    );
 
     const results: Array<{
       workspaceId: string;

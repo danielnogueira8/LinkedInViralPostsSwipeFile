@@ -129,6 +129,17 @@
       ]
     },
     {
+      "id": "agent-drafting-lease-recovery",
+      "boundary": "agent drafting lease and recovery",
+      "invariant": "A hard-killed agent actor cannot strand an opportunity or weekly-plan card in drafting; expired claims return to a retryable state while fresh claims remain untouched.",
+      "evidence": [
+        { "path": "evals/data/agent-drafting-recovery.test.ts", "test": "returns stale opportunity claims to proposed atomically" },
+        { "path": "evals/data/agent-drafting-recovery.test.ts", "test": "a recovered worker cannot overwrite a newer drafting claim" },
+        { "path": "evals/data/agent-drafting-recovery.test.ts", "test": "reopens only expired weekly plan drafting items" },
+        { "path": "evals/data/agent-loop-cron-fairness.test.ts", "test": "lease recovery failures alert and fail the cron" }
+      ]
+    },
+    {
       "id": "agent-loop-workspace-fairness",
       "boundary": "agent-loop cron workspace batching",
       "invariant": "A capped agent-loop tick paginates all workspace identities and rotates the selected batch so no workspace is permanently starved.",

@@ -3,7 +3,10 @@ import { z } from "zod";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
 import { actOnOpportunity, type AgentOpportunityRow } from "@/lib/agent-loop/act";
-import { updateManagedOpportunityStatus } from "@/lib/agent-loop/opportunity-claim";
+import {
+  recoverStaleAgentOpportunityDrafts,
+  updateManagedOpportunityStatus,
+} from "@/lib/agent-loop/opportunity-claim";
 import { weekStart } from "@/lib/agent-loop/week-plan";
 import { markStoredOpportunityDrafted } from "@/lib/agent-loop/week-plan-store";
 
@@ -46,6 +49,9 @@ export async function POST(
     const { id } = await params;
     const { action, until } = actionSchema.parse(await req.json());
     const sb = await scopedSupabase();
+    // A killed actor can leave a managed opportunity in drafting forever.
+    // Reclaim expired leases before deciding whether this click is stale.
+    await recoverStaleAgentOpportunityDrafts(sb.raw, sb.workspaceId);
 
     const { data: opportunity, error } = await sb.raw
       .from("agent_opportunities")

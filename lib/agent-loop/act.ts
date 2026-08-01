@@ -61,6 +61,7 @@ async function updateOpportunityStatus(
   policy: OpportunityStatusPolicy,
   expectedStatus: "proposed" | "drafting",
   values: Record<string, unknown>,
+  expectedDraftingStartedAt?: string,
 ): Promise<boolean> {
   if (policy === "preserve") return true;
   return updateManagedOpportunityStatus(
@@ -69,6 +70,7 @@ async function updateOpportunityStatus(
     opportunityId,
     expectedStatus,
     values,
+    expectedDraftingStartedAt,
   );
 }
 
@@ -326,13 +328,17 @@ export async function actOnOpportunity(
   }
 
   const statusPolicy = options?.statusPolicy ?? "manage";
+  const draftingStartedAt = new Date().toISOString();
   const claimed = await updateOpportunityStatus(
     sb,
     workspaceId,
     opportunity.id,
     statusPolicy,
     "proposed",
-    { status: "drafting" },
+    {
+      status: "drafting",
+      drafting_started_at: draftingStartedAt,
+    },
   );
   if (!claimed) return { ok: false, reason: "already_handled" };
 
@@ -411,7 +417,9 @@ export async function actOnOpportunity(
         status: "drafted",
         drafted_artifact_id: draftIds[0],
         acted_at: new Date().toISOString(),
+        drafting_started_at: null,
       },
+      draftingStartedAt,
     );
     if (!finalized) {
       throw new Error("Opportunity changed while drafting.");
@@ -426,7 +434,8 @@ export async function actOnOpportunity(
       opportunity.id,
       statusPolicy,
       "drafting",
-      { status: "proposed" },
+      { status: "proposed", drafting_started_at: null },
+      draftingStartedAt,
     ).catch((resetError) => {
       console.error("agent_opportunity_claim_reset_failed", {
         workspace_id: workspaceId,

@@ -14,8 +14,10 @@ import {
 } from "@/lib/agent-loop/week-plan";
 import {
   mutateStoredWeekPlanItemAcross,
+  recoverStaleWeekPlanDraftsAcross,
   resolveStoredWeekPlanItemAcross,
 } from "@/lib/agent-loop/week-plan-store";
+import { recoverStaleAgentOpportunityDrafts } from "@/lib/agent-loop/opportunity-claim";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -31,6 +33,10 @@ export async function POST(req: Request) {
     const input = draftSchema.parse(await req.json());
     const sb = await scopedSupabase();
     const visibleWeeks = rollingWindowWeekStarts();
+    await Promise.all([
+      recoverStaleAgentOpportunityDrafts(sb.raw, sb.workspaceId),
+      recoverStaleWeekPlanDraftsAcross(sb.raw, sb.workspaceId, visibleWeeks),
+    ]);
     const resolved = await resolveStoredWeekPlanItemAcross(
       sb.raw,
       sb.workspaceId,
@@ -91,10 +97,12 @@ export async function POST(req: Request) {
       }
     }
 
+    const draftingStartedAt = new Date().toISOString();
     const updateStatus = async (
       status: "planned" | "drafting" | "drafted",
       expectedStatus: "planned" | "drafting",
       draftId: string | null = null,
+      expectedDraftingStartedAt?: string,
     ) =>
       Boolean(
         await mutateStoredWeekPlanItemAcross(
@@ -103,13 +111,17 @@ export async function POST(req: Request) {
           visibleWeeks,
           item.id,
           (current) =>
-            current.status === expectedStatus
+            current.status === expectedStatus &&
+            (!expectedDraftingStartedAt ||
+              current.draftingStartedAt === expectedDraftingStartedAt)
               ? {
                   ...current,
                   status,
                   userContext: item.kind === "generic" ? context : null,
                   selectedLeadMagnetId: isLeadMagnet ? leadMagnetId : null,
                   draftId: status === "drafted" ? draftId : null,
+                  draftingStartedAt:
+                    status === "drafting" ? draftingStartedAt : null,
                 }
               : null,
         ),
@@ -131,7 +143,22 @@ export async function POST(req: Request) {
           item.id,
         );
         if (!result.ok) throw new Error(result.reason);
-        await updateStatus("drafted", "drafting", result.draftIds[0]);
+        if (
+          !(await updateStatus(
+            "drafted",
+            "drafting",
+            result.draftIds[0],
+            draftingStartedAt,
+          ))
+        ) {
+          return NextResponse.json(
+            {
+              ok: false,
+              error: "This plan item changed while drafting. Refresh and try again.",
+            },
+            { status: 409 },
+          );
+        }
         return NextResponse.json({ ok: true, draftIds: result.draftIds });
       }
 
@@ -162,10 +189,25 @@ export async function POST(req: Request) {
         { statusPolicy, weekPlanItemId: item.id },
       );
       if (!result.ok) throw new Error(result.reason);
-      await updateStatus("drafted", "drafting", result.draftIds[0]);
+      if (
+        !(await updateStatus(
+          "drafted",
+          "drafting",
+          result.draftIds[0],
+          draftingStartedAt,
+        ))
+      ) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "This plan item changed while drafting. Refresh and try again.",
+          },
+          { status: 409 },
+        );
+      }
       return NextResponse.json({ ok: true, draftIds: result.draftIds });
     } catch (error) {
-      await updateStatus("planned", "drafting");
+      await updateStatus("planned", "drafting", null, draftingStartedAt);
       const reason =
         error instanceof Error &&
         error.message.includes("no draft artifact")

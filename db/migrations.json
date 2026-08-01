@@ -1,7 +1,7 @@
 {
   "generatedBy": "npm run migrations:metadata",
-  "highest": 167,
-  "count": 167,
+  "highest": 168,
+  "count": 168,
   "files": [
     "migration-001-progress.sql",
     "migration-002-usage.sql",
@@ -169,6 +169,7 @@
     "migration-164-agent-opportunity-snooze.sql",
     "migration-165-complete-interview-knowledge.sql",
     "migration-166-retire-namejacking-inbox-lane.sql",
-    "migration-167-agent-opportunity-claim.sql"
+    "migration-167-agent-opportunity-claim.sql",
+    "migration-168-agent-drafting-leases.sql"
   ]
 }
