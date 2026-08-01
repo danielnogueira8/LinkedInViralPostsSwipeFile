@@ -73,6 +73,19 @@ describe("tracked-creators-supabase — niche filter escaping (bug-hunt fix)", (
     );
   });
 
+  test("search quotes comma-bearing input as one PostgREST value", async () => {
+    const capture = { or: [] as string[] };
+    const repo = createSupabaseTrackedCreatorsRepository(
+      fakeDb(capture),
+      "ws-1",
+    );
+    await repo.list({ search: "Alice,accounts.archived_at.not.is.null" });
+
+    expect(capture.or[0]).toBe(
+      'name.ilike."%Alice,accounts.archivedat.not.is.null%",linkedin_handle.ilike."%Alice,accounts.archivedat.not.is.null%"',
+    );
+  });
+
   test("listTotal applies the SAME escaping as list (shared filter path)", async () => {
     const capture = { or: [] as string[] };
     const repo = createSupabaseTrackedCreatorsRepository(

@@ -180,12 +180,17 @@ export function retryDelayMs(
 ): number | null {
   if (attempt + 1 >= RETRY_MAX_ATTEMPTS) return null; // no tries left
   if (status !== null && !RETRYABLE_STATUS.has(status)) return null; // permanent
-  // Honor Retry-After (seconds, or an HTTP-date we approximate as seconds) when
-  // the server told us how long to wait — but cap it so we never block forever.
+  // Honor Retry-After (seconds or an HTTP-date) when the server told us how
+  // long to wait — but cap it so we never block forever.
   if (retryAfterHeader) {
-    const secs = Number(retryAfterHeader);
+    const header = retryAfterHeader.trim();
+    const secs = Number(header);
     if (Number.isFinite(secs) && secs >= 0) {
       return Math.min(secs * 1000, RETRY_CAP_MS);
+    }
+    const retryAtMs = Date.parse(header);
+    if (Number.isFinite(retryAtMs)) {
+      return Math.min(Math.max(0, retryAtMs - Date.now()), RETRY_CAP_MS);
     }
   }
   // Exponential backoff with full jitter: random in [base*2^n/2, base*2^n].

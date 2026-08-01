@@ -30,8 +30,8 @@ export function formatCronAlert(ctx: CronAlertContext, message: string): string 
 
 // Post a failure alert to the health webhook. Swallows every error (including a
 // non-2xx response) so callers can `await postCronAlert(...)` inside a catch
-// block without risk. Returns true if an alert was actually sent (webhook
-// configured + POST resolved), false otherwise — surfaced only for tests.
+// block without risk. Returns true only when the webhook accepts the POST,
+// false otherwise — surfaced only for tests.
 export async function postCronAlert(
   ctx: CronAlertContext,
   error: unknown,
@@ -40,11 +40,15 @@ export async function postCronAlert(
   if (!webhook) return false;
   const message = error instanceof Error ? error.message : String(error);
   try {
-    await fetch(webhook, {
+    const response = await fetch(webhook, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text: formatCronAlert(ctx, message) }),
     });
+    if (!response.ok) {
+      console.error(`cron-alert post rejected (${ctx.cron})`, response.status);
+      return false;
+    }
     return true;
   } catch (e) {
     // The alert itself failed — log locally and give up. Never rethrow.

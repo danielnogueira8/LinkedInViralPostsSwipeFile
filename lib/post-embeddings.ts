@@ -81,6 +81,9 @@ export async function postsNeedingEmbedding(
   limit: number,
   model: string = EMBEDDING_MODEL,
 ): Promise<string[]> {
+  const target = Number.isFinite(limit) ? Math.floor(limit) : 0;
+  if (target <= 0) return [];
+
   const sb = supabaseAdmin();
 
   // The set already embedded at the current model. Paginated — a corpus larger
@@ -118,7 +121,7 @@ export async function postsNeedingEmbedding(
     for (const row of rows) {
       if (typeof row.text !== "string" || row.text.trim().length === 0) continue;
       if (!embeddedIds.has(row.id)) need.push(row.id);
-      if (need.length >= limit) return need;
+      if (need.length >= target) return need;
     }
     if (rows.length < PAGE) break;
   }

@@ -26,7 +26,16 @@ describe("STALE_PENDING_MS — safely exceeds the worker's own lease", () => {
         from: () => ({
           update: (patch: Record<string, unknown>) => {
             updates.push(patch);
-            return { eq: () => ({ eq: async () => ({ data: null, error: null }) }) };
+            const updateQuery = {
+              eq: () => updateQuery,
+              is: () => updateQuery,
+              select: () => updateQuery,
+              maybeSingle: async () => ({
+                data: { status: "failed" },
+                error: null,
+              }),
+            };
+            return updateQuery;
           },
         }),
       } as never,
@@ -51,7 +60,16 @@ describe("STALE_PENDING_MS — safely exceeds the worker's own lease", () => {
         from: () => ({
           update: (patch: Record<string, unknown>) => {
             updates.push(patch);
-            return { eq: () => ({ eq: async () => ({ data: null, error: null }) }) };
+            const updateQuery = {
+              eq: () => updateQuery,
+              is: () => updateQuery,
+              select: () => updateQuery,
+              maybeSingle: async () => ({
+                data: { status: "failed" },
+                error: null,
+              }),
+            };
+            return updateQuery;
           },
         }),
       } as never,

@@ -39,6 +39,12 @@ describe("Knowledge Source extraction", () => {
     expect(new Set(selected.map((chunk) => chunk.ordinal)).size).toBe(10);
   });
 
+  test("selects the first chunk when the extraction sample is capped at one", () => {
+    const chunks = [{ ordinal: 0 }, { ordinal: 1 }, { ordinal: 2 }];
+
+    expect(selectExtractionChunks(chunks, 1)).toEqual([{ ordinal: 0 }]);
+  });
+
   test("uses bounded Haiku batches that fit a complete structured response", () => {
     const chunks = Array.from({ length: 15 }, (_, ordinal) => ({ ordinal }));
 

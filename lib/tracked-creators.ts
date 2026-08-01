@@ -3,6 +3,9 @@ import {
   MANUAL_ACCOUNT_LIMIT,
   MANUAL_ACCOUNT_LIMIT_MESSAGE,
 } from "@/lib/account-tracking";
+import { normalizeLinkedInProfileUrl } from "@/lib/linkedin-url";
+
+export { normalizeLinkedInProfileUrl } from "@/lib/linkedin-url";
 
 export type TrackedCreatorAccount = {
   id: string;
@@ -104,12 +107,6 @@ export class TrackedCreatorError extends Error {
     super(message);
     this.name = "TrackedCreatorError";
   }
-}
-
-export function normalizeLinkedInProfileUrl(raw: string): string | null {
-  const match = raw.trim().match(/linkedin\.com\/in\/([^/\?#]+)/i);
-  if (!match) return null;
-  return `https://www.linkedin.com/in/${match[1].toLowerCase()}`;
 }
 
 function handleFromProfileUrl(profileUrl: string): string {

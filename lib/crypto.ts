@@ -64,12 +64,22 @@ function loadKey(): Buffer {
     );
   }
 
+  const normalized = raw.trim();
+  // Buffer.from(..., "base64") silently ignores invalid characters. Validate
+  // the complete padded base64 shape before decoding so a typo cannot be
+  // accepted as a different key just because lenient decoding produced 32
+  // bytes.
+  if (
+    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
+      normalized,
+    )
+  ) {
+    throw new Error("CREDENTIAL_ENCRYPTION_KEY is not valid base64.");
+  }
+
   let decoded: Buffer;
   try {
-    // Node's base64 decoder is lenient (it silently drops invalid chars), so we
-    // can't rely on it to reject a malformed value. Validate the byte length
-    // AFTER decoding — that is the property we actually depend on.
-    decoded = Buffer.from(raw, "base64");
+    decoded = Buffer.from(normalized, "base64");
   } catch {
     throw new Error("CREDENTIAL_ENCRYPTION_KEY is not valid base64.");
   }
