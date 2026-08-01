@@ -24,6 +24,7 @@ const required = [
   "cowork-action-checkpoint",
   "agent-opportunity-draft-claim",
   "agent-opportunity-action-transition",
+  "agent-loop-workspace-fairness",
 ];
 
 describe("operational invariant inventory", () => {
