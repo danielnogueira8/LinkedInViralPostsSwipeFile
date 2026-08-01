@@ -6486,6 +6486,8 @@ function ArtifactCard({
   const [scheduleWhen, setScheduleWhen] = useState(isoToLocalInput(scheduleMeta.scheduledAt));
   const [scheduling, setScheduling] = useState(false);
   const [scheduleMediaAttachments, setScheduleMediaAttachments] = useState(mediaAttachments);
+  const [mediaDirty, setMediaDirty] = useState(false);
+  const mediaMutationVersionRef = useRef(0);
   const [uploadingScheduleImage, setUploadingScheduleImage] = useState(false);
   const [nextOpenDay, setNextOpenDay] = useState<string | null>(null);
   const [loadingNextOpenDay, setLoadingNextOpenDay] = useState(false);
@@ -6521,12 +6523,25 @@ function ArtifactCard({
     setScheduleStatus(scheduleMeta.scheduleStatus);
     setFirstComment(scheduleMeta.firstComment ?? "");
     setScheduleWhen(isoToLocalInput(scheduleMeta.scheduledAt));
+    mediaMutationVersionRef.current = 0;
+    setMediaDirty(false);
     setScheduleMediaAttachments(mediaAttachments);
   }
-  const dirty = body !== artifactBody;
+  const bodyDirty = body !== artifactBody;
+  const dirty = bodyDirty || mediaDirty;
   const scheduleMediaChanged =
+    mediaDirty ||
     scheduleMediaAttachments.map((item) => item.id).join("\n") !==
     mediaAttachments.map((item) => item.id).join("\n");
+
+  const markMediaChanged = () => {
+    mediaMutationVersionRef.current += 1;
+    setMediaDirty(true);
+    return mediaMutationVersionRef.current;
+  };
+  const markMediaPersisted = (version: number) => {
+    if (version === mediaMutationVersionRef.current) setMediaDirty(false);
+  };
 
   useEffect(() => {
     if (!scheduleOpen || scheduleStatus === "scheduled") return;
@@ -6606,6 +6621,7 @@ function ArtifactCard({
   // Save as a NEW chat_artifacts row (the original behavior).
   const saveAsNew = async () => {
     if (!chatId || saving || uploadingScheduleImage) return;
+    const mediaVersion = mediaMutationVersionRef.current;
     setSaving(true);
     try {
       const data = await draftOperations.saveFromChat(chatId, {
@@ -6619,6 +6635,7 @@ function ArtifactCard({
           : {}),
       });
       const savedDraftId = data.draft.id;
+      markMediaPersisted(mediaVersion);
 
       // The POST is the authoritative save. Record that success before the
       // follow-up chat metadata PATCH: if linking the board id back to the chat
@@ -6655,7 +6672,8 @@ function ArtifactCard({
   // UPDATE the original Posts-board post this chat is refining (PATCH the body),
   // so iterating on a post doesn't spawn a duplicate draft.
   const updateOriginal = async () => {
-    if (!refiningDraftId || saving) return;
+    if (!refiningDraftId || saving || uploadingScheduleImage) return;
+    const mediaVersion = mediaMutationVersionRef.current;
     setSaving(true);
     try {
       await draftOperations.update(
@@ -6671,6 +6689,7 @@ function ArtifactCard({
         },
         { fallbackError: "Failed to update post" },
       );
+      markMediaPersisted(mediaVersion);
       setSaved(true);
       toast.success("Post updated");
     } catch (e) {
@@ -6688,8 +6707,9 @@ function ArtifactCard({
     // A refine artifact is newer than the Posts row even when the user has not
     // edited it locally (`dirty` compares against the artifact, not the row).
     // Always carry its body + format back to the original before scheduling.
-    const shouldPersistBody = dirty || canUpdateOriginal;
+    const shouldPersistBody = bodyDirty || canUpdateOriginal;
     if (!shouldPersistBody && !scheduleMediaChanged) return;
+    const mediaVersion = mediaMutationVersionRef.current;
     await draftOperations.update(
       draftId,
       {
@@ -6705,6 +6725,7 @@ function ArtifactCard({
       },
       { fallbackError: errorMessage },
     );
+    markMediaPersisted(mediaVersion);
     if (shouldPersistBody) onBodyChange?.(body);
     setSaved(true);
   };
@@ -6722,6 +6743,7 @@ function ArtifactCard({
     }
 
     if (!chatId) throw new Error("Save the chat before scheduling this draft.");
+    const mediaVersion = mediaMutationVersionRef.current;
     const data = await draftOperations.saveFromChat(
       chatId,
       {
@@ -6733,6 +6755,7 @@ function ArtifactCard({
       },
       { fallbackError: "Failed to save draft before scheduling" },
     );
+    markMediaPersisted(mediaVersion);
     setBoardDraftId(data.draft.id);
     setSaved(true);
     await onMetaChange?.({ board_draft_id: data.draft.id });
@@ -6781,7 +6804,7 @@ function ArtifactCard({
   //      reflect what we saved.
   // Returns true when the body is persisted (or there was nothing to persist).
   const persistBody = async (): Promise<boolean> => {
-    if (!dirty || !chatId) return true;
+    if (!bodyDirty || !chatId) return true;
     if (savingBodyRef.current) return true; // a save is already in flight
     savingBodyRef.current = true;
     setSavingBody(true);
@@ -6851,6 +6874,7 @@ function ArtifactCard({
       const setError = validatePostMediaSet(next);
       if (setError) throw new Error(setError);
       setScheduleMediaAttachments(next);
+      markMediaChanged();
       await onMetaChange?.({ media_attachments: next });
       toast.success(uploaded.length > 1 ? "Images attached" : "Image attached");
     } catch (error) {
@@ -6863,6 +6887,7 @@ function ArtifactCard({
   const removeDraftImage = async (id: string) => {
     const next = scheduleMediaAttachments.filter((m) => m.id !== id);
     setScheduleMediaAttachments(next);
+    markMediaChanged();
     try {
       await onMetaChange?.({ media_attachments: next });
     } catch {
@@ -6909,6 +6934,7 @@ function ArtifactCard({
       const mediaError = validatePostMediaSet(next);
       if (mediaError) throw new Error(mediaError);
       setScheduleMediaAttachments(next);
+      markMediaChanged();
       toast.success("Image attached");
     } catch (error) {
       toast.error((error as Error).message);
