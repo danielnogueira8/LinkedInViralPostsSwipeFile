@@ -37,6 +37,9 @@ describe("Cowork schedule image flow", () => {
     expect(source).toContain("mediaDirty ||\n    scheduleMediaAttachments");
     expect(source).toContain("const markMediaChanged = () => {");
     expect(source).toContain("const markMediaPersisted = (version: number) => {");
+    expect(source).toContain(
+      "disabled={automationOpening || uploadingScheduleImage}",
+    );
     expect(source).toMatch(/saving \|\| uploadingScheduleImage/);
   });
 });

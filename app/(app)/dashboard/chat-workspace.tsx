@@ -6523,7 +6523,6 @@ function ArtifactCard({
     setScheduleStatus(scheduleMeta.scheduleStatus);
     setFirstComment(scheduleMeta.firstComment ?? "");
     setScheduleWhen(isoToLocalInput(scheduleMeta.scheduledAt));
-    mediaMutationVersionRef.current = 0;
     setMediaDirty(false);
     setScheduleMediaAttachments(mediaAttachments);
   }
@@ -6768,6 +6767,7 @@ function ArtifactCard({
   // the panel closed and surface why rather than mounting a panel that would
   // 404 on its own fetch.
   const toggleAutomation = async () => {
+    if (uploadingScheduleImage) return;
     if (automationOpen) {
       setAutomationOpen(false);
       return;
@@ -7541,7 +7541,7 @@ function ArtifactCard({
               <button
                 type="button"
                 onClick={() => void toggleAutomation()}
-                disabled={automationOpening}
+                disabled={automationOpening || uploadingScheduleImage}
                 className="flex items-center gap-2 text-left text-xs font-medium text-foreground transition-colors hover:text-primary disabled:opacity-60"
                 aria-expanded={automationOpen}
               >
