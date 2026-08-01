@@ -58,11 +58,11 @@ const laneCopy: Record<
 > = {
   newsjacking: {
     // Note the lane is broader than trade news: since the cultural-moment
-    // search landed it also covers finals, awards, and releases. The label
-    // keeps the craft term anyway — it is the vocabulary the skills, the
-    // synthesis prompt, and the design doc all already use.
-    label: "Newsjacking Agent",
-    description: "Join a moment your audience is already discussing",
+    // search landed it also covers finals, awards, and releases. The Trend
+    // Radar label makes this creator-independent discovery lane findable while
+    // the implementation continues to use the newsjacking framework.
+    label: "Trend Radar Agent",
+    description: "Find a fresh moment your audience can join",
     icon: Newspaper,
     avatar: "trend-radar",
   },
