@@ -231,18 +231,39 @@ describe("openRouterCost — Anthropic (bare) slug pricing", () => {
 });
 
 describe("openRouterCost — GPT-5.6 Luna pricing", () => {
-  test("prices Luna at $1 input / $6 output / $0.10 cache read", () => {
-    expect(openRouterCost("openai/gpt-5.6-luna", M, M)).toBeCloseTo(7, 6);
-    expect(openRouterCost("openai/gpt-5.6-luna", M, 0)).toBeCloseTo(1, 6);
-    expect(openRouterCost("openai/gpt-5.6-luna", 0, M)).toBeCloseTo(6, 6);
-    expect(openRouterCost("openai/gpt-5.6-luna", M, 0, M)).toBeCloseTo(0.1, 6);
+  // $1/$6 was Luna's LAUNCH pricing. OpenAI cut it to $0.20/$1.20, so the old
+  // table over-reported every Luna call by 5x and inflated the monthly cost
+  // cap. Billed from OpenAI's list price — this app calls Luna with
+  // OPENAI_API_KEY, so OpenRouter's promotional $0.10/$0.60 does not apply.
+  test("prices Luna at $0.20 input / $1.20 output / $0.02 cache read", () => {
+    expect(openRouterCost("openai/gpt-5.6-luna", M, M)).toBeCloseTo(1.4, 6);
+    expect(openRouterCost("openai/gpt-5.6-luna", M, 0)).toBeCloseTo(0.2, 6);
+    expect(openRouterCost("openai/gpt-5.6-luna", 0, M)).toBeCloseTo(1.2, 6);
+    expect(openRouterCost("openai/gpt-5.6-luna", M, 0, M)).toBeCloseTo(0.02, 6);
   });
 
-  test("prices Luna cache writes at $1.25/M when exact provider cost is absent", () => {
+  test("prices Luna cache writes at $0.25/M when exact provider cost is absent", () => {
     expect(openRouterCost("openai/gpt-5.6-luna", M, 0, 0, M)).toBeCloseTo(
-      1.25,
+      0.25,
       6,
     );
+  });
+
+  test("a BARE luna id prices as Luna, not as the GLM-5.1 fallback", () => {
+    // The OpenAI adapter serves bare ids. Before this, `gpt-5.6-luna` matched
+    // no row and silently fell through to GLM-5.1's $1.40/$4.40 — pricing
+    // Luna as a different model entirely.
+    expect(hasOpenRouterPricing("gpt-5.6-luna")).toBe(true);
+    expect(openRouterCost("gpt-5.6-luna", M, 0)).toBeCloseTo(0.2, 6);
+    expect(openRouterCost("gpt-5.6-luna", 0, M)).toBeCloseTo(1.2, 6);
+  });
+
+  test("bare-id resolution cannot capture a non-OpenAI slug", () => {
+    // It may only resolve when an `openai/`-prefixed row actually exists, so
+    // other providers' bare ids keep their previous fallback behaviour.
+    expect(hasOpenRouterPricing("glm-5.1")).toBe(false);
+    expect(hasOpenRouterPricing("gemini-3.6-flash")).toBe(false);
+    expect(hasOpenRouterPricing("unknown-model")).toBe(false);
   });
 });
 
@@ -291,7 +312,7 @@ describe("openRouterUsageCost — exact provider cost", () => {
       inputTokens: 1_000_000,
       cachedInputTokens: 0,
       cacheWriteTokens: 1_000_000,
-      costUsd: 1.25,
+      costUsd: 0.25,
     });
   });
 
