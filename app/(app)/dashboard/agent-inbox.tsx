@@ -512,10 +512,10 @@ function RecommendationRow({
       aria-label={`${copy.label}: ${idea.headline}`}
       onClick={onSelect}
       className={cn(
-        "flex w-full items-start gap-3 border-l-2 px-4 py-4 text-left transition-[background-color,box-shadow,border-color] hover:ring-1 hover:ring-inset hover:ring-foreground/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/50",
+        "flex w-full items-start gap-3 border-l-2 px-4 py-4 text-left transition-[background-color,box-shadow,border-color] hover:ring-1 hover:ring-inset hover:ring-foreground/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/35",
         rowClassName,
         selected
-          ? "border-l-violet-500 ring-1 ring-inset ring-violet-500/25"
+          ? "border-l-foreground/60 ring-1 ring-inset ring-foreground/15"
           : "border-transparent",
       )}
     >
