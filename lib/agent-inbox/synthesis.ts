@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+  laneLifetimeHours,
   AGENT_INBOX_ACTIVE_PER_LANE,
   laneEvidenceSatisfied,
   type AgentInboxEvidence,
@@ -203,10 +204,21 @@ ${wrapUntrustedXml("evidence", indexed.text)}`,
               .slice(0, 3)
           : [];
         if (why.length === 0) continue;
-        const expiresAt =
-          lane === "newsjacking"
-            ? new Date(input.now.getTime() + 72 * 60 * 60 * 1000).toISOString()
-            : null;
+        // EVERY lane expires, not just newsjacking.
+        //
+        // Previously only newsjacking carried an expiry; the other three got
+        // null and never aged out. Once a lane reached the 3-active cap it was
+        // permanently "full", so it was never requested again and the board
+        // froze — a user could see the same educational and personal_story
+        // cards for weeks while the run completed daily and created nothing.
+        //
+        // Newsjacking keeps its short fuse because a timely pitch really does
+        // go stale in days. The evergreen lanes get a longer one: long enough
+        // that a card the user meant to act on is still there tomorrow, short
+        // enough that the board turns over on its own.
+        const expiresAt = new Date(
+          input.now.getTime() + laneLifetimeHours(lane) * 60 * 60 * 1000,
+        ).toISOString();
         laneCounts.set(lane, (laneCounts.get(lane) ?? 0) + 1);
         results.push({
           lane,
