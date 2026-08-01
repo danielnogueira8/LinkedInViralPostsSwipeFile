@@ -419,9 +419,10 @@ export async function completeChatAnthropic(opts: {
   const model = toAnthropicModelId(requested);
   const { system, messages } = translateMessages(opts.messages);
   const { effort, thinkingOff } = effortFor(opts);
-  // Give Sonnet headroom when thinking is enabled, but honor small caller
-  // budgets for mechanical no-reasoning calls (titles, hooks, and extraction).
-  const maxTokens = thinkingOff
+  // Keep the existing headroom for the disableReasoning path, while honoring
+  // small caller budgets for explicit GLM no-reasoning calls (titles, hooks,
+  // and extraction).
+  const maxTokens = opts.glmReasoning === "none"
     ? Math.max(opts.maxTokens ?? 2048, 1)
     : Math.max(opts.maxTokens ?? 2048, 2048);
 
