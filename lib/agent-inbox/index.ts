@@ -82,6 +82,32 @@ export type AgentInboxPreferences = {
   newsSensitivity: "low" | "standard" | "high";
 };
 
+// How long an idea stays on the board before it expires on its own.
+//
+// Every lane expires. Before this, only newsjacking did — the other three got
+// a null expiry, so once a lane hit the 3-active cap it was permanently
+// "full", never requested again, and the board froze. The daily run kept
+// completing successfully while creating nothing, which is exactly what a
+// stale inbox looks like from the outside.
+//
+// Newsjacking keeps the shortest fuse because a timely pitch genuinely rots.
+// The evergreen lanes get longer ones — long enough that a card the user
+// meant to act on is still there the next day, short enough that the board
+// turns over without anyone having to clear it by hand.
+export function laneLifetimeHours(lane: AgentInboxLane): number {
+  switch (lane) {
+    case "newsjacking":
+      return 72;
+    case "namejacking":
+      // Also anchored to a named moment, but the name outlives the headline.
+      return 120;
+    case "educational":
+    case "personal_story":
+      // Evergreen material, but the POINT is a fresh angle on it each week.
+      return 168;
+  }
+}
+
 // Each lane is a different KIND of post, so each needs a different kind of
 // raw material. This is the gate that keeps a lane honest: a "your story" card
 // built from a news article is not a personal story, it is a news card wearing
