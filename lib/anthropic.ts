@@ -318,13 +318,17 @@ function cachedSystem(system: string): Anthropic.TextBlockParam[] {
 }
 
 // The app's reasoning knobs -> Anthropic effort. Sonnet has adaptive thinking on
-// by default; disableReasoning turns it off. We never send temperature/top_p.
+// by default; either no-reasoning flag turns it off. We never send
+// temperature/top_p.
 type Effort = "low" | "medium" | "high";
 export function effortFor(opts: {
+  glmReasoning?: "high" | "none";
   disableReasoning?: boolean;
   reasoningEffort?: "minimal" | "low" | "medium" | "high";
 }): { effort: Effort; thinkingOff: boolean } {
-  if (opts.disableReasoning) return { effort: "low", thinkingOff: true };
+  if (opts.disableReasoning || opts.glmReasoning === "none") {
+    return { effort: "low", thinkingOff: true };
+  }
   switch (opts.reasoningEffort) {
     case "minimal":
     case "low":
@@ -415,9 +419,11 @@ export async function completeChatAnthropic(opts: {
   const model = toAnthropicModelId(requested);
   const { system, messages } = translateMessages(opts.messages);
   const { effort, thinkingOff } = effortFor(opts);
-  // Give Sonnet headroom: heavier tokenizer + thinking. Floor at 2048 even when
-  // a legacy caller passes the old 1024 default.
-  const maxTokens = Math.max(opts.maxTokens ?? 2048, 2048);
+  // Give Sonnet headroom when thinking is enabled, but honor small caller
+  // budgets for mechanical no-reasoning calls (titles, hooks, and extraction).
+  const maxTokens = thinkingOff
+    ? Math.max(opts.maxTokens ?? 2048, 1)
+    : Math.max(opts.maxTokens ?? 2048, 2048);
 
   const body: Anthropic.MessageCreateParamsNonStreaming = {
     model,
