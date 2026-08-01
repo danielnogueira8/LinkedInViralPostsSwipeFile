@@ -7,8 +7,11 @@ import { readOpportunityHeadline } from "@/lib/agent-loop/headline";
 import type { TrendOpportunityPayload } from "@/lib/agent-loop/trend-radar";
 import { saveAgentInboxPreferences } from "@/lib/agent-inbox/supabase";
 import { errorResponse } from "@/lib/workspace";
+import { isDueNow } from "@/lib/agent-inbox/schedule";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const maxDuration = 300;
 
 const preferencesSchema = z.object({
   enabled: z.boolean(),
@@ -151,12 +154,33 @@ async function readTrendRadar(
   };
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const sb = await scopedSupabase();
     const inbox = createProductionAgentInbox(sb.raw);
+    const now = new Date();
+    const initial = await inbox.read(sb.workspaceId, now);
+    const wantsRecovery =
+      new URL(request.url).searchParams.get("replenish") === "1";
+    // The nav badge uses the plain read path. Only the Agent Inbox page opts
+    // into this recovery path, and only once the configured daily delivery
+    // time has arrived. The daily claim keeps refreshes idempotent.
+    if (
+      wantsRecovery &&
+      isDueNow(
+        now,
+        initial.preferences.timezone,
+        initial.preferences.deliveryLocalTime,
+      )
+    ) {
+      await inbox.replenish({
+        workspaceId: sb.workspaceId,
+        now,
+        timezone: initial.preferences.timezone,
+      });
+    }
     const [data, trendData] = await Promise.all([
-      inbox.read(sb.workspaceId, new Date()),
+      inbox.read(sb.workspaceId, now),
       readTrendRadar(sb.workspaceId, sb.raw),
     ]);
     return NextResponse.json({ ok: true, ...data, ...trendData });

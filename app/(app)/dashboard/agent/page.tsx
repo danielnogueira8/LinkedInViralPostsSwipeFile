@@ -5,8 +5,8 @@ export default function AgentPage() {
   return (
     <PageShell width="full">
       <PageHeader
-        title="Content opportunities"
-        description="Review evidence-backed directions and choose what deserves your point of view."
+        title="Agent Inbox"
+        description="Review today’s recommendations. New ideas arrive every day."
       />
       <AgentInbox />
     </PageShell>

@@ -77,7 +77,7 @@ const idea = (
 });
 
 test.beforeEach(async ({ page }) => {
-  await page.route("**/api/agent/inbox", async (route) => {
+  await page.route("**/api/agent/inbox**", async (route) => {
     if (route.request().method() === "PATCH") {
       await route.fulfill({ json: { ok: true } });
       return;
@@ -110,17 +110,19 @@ test("shows four equal agent filters with human approval controls", async ({
       page.getByRole("button", { name: new RegExp(label) }).first(),
     ).toBeVisible();
   }
-  await expect(page.getByRole("button", { name: "Use this idea" })).toHaveCount(3);
+  await expect(page.getByRole("button", { name: "Use this idea" })).toHaveCount(1);
   await expect(
-    page.getByText(/Nothing is drafted or scheduled automatically/),
+    page.getByText(/New ideas arrive every day/),
   ).toBeVisible();
+  await expect(page.getByRole("button", { name: /Discard/ })).toHaveCount(1);
+  await expect(page.getByRole("button", { name: /Not today|Snooze/ })).toHaveCount(0);
   await expect(page.getByRole("button", { name: /schedule/i })).toHaveCount(0);
 });
 
 test("keeps the Trend Radar lane visible without an active idea", async ({
   page,
 }) => {
-  await page.route("**/api/agent/inbox", async (route) => {
+  await page.route("**/api/agent/inbox**", async (route) => {
     await route.fulfill({
       json: {
         ok: true,
@@ -143,8 +145,7 @@ test("keeps the Trend Radar lane visible without an active idea", async ({
 
   await expect(page.getByRole("button", { name: /Trend Radar/ })).toBeVisible();
   const grid = page.locator("#agent-opportunity-grid");
-  await expect(grid.getByText("Trend Radar", { exact: true })).toBeVisible();
-  await expect(grid.getByText("No strong fit today", { exact: true })).toBeVisible();
+  await expect(grid.getByText("New ideas arrive every day", { exact: true })).toBeVisible();
 });
 
 test("stacks the agent rows vertically on mobile", async ({ page }) => {
@@ -160,7 +161,7 @@ test("stacks the agent rows vertically on mobile", async ({ page }) => {
   expect(provenBox?.y).toBeGreaterThan(nowBox?.y ?? 0);
 });
 
-test("an acted lane says the draft started instead of claiming no strong fit", async ({
+test("an acted idea stays in recent activity while fresh ideas remain actionable", async ({
   page,
 }) => {
   const actedIdea = {
@@ -168,7 +169,7 @@ test("an acted lane says the draft started instead of claiming no strong fit", a
     status: "acted",
     actedAt: new Date().toISOString(),
   };
-  await page.route("**/api/agent/inbox", async (route) => {
+  await page.route("**/api/agent/inbox**", async (route) => {
     await route.fulfill({
       json: {
         ok: true,
@@ -187,12 +188,11 @@ test("an acted lane says the draft started instead of claiming no strong fit", a
     });
   });
   await page.goto("/dashboard/agent");
-  const grid = page.locator("#agent-opportunity-grid");
-  await expect(grid.getByText("Draft started")).toBeVisible();
+  await expect(page.getByText("Acted", { exact: true })).toBeVisible();
   await expect(
-    grid.getByText(/hard-won lesson behind a client turnaround/),
+    page.getByText(/hard-won lesson behind a client turnaround/),
   ).toBeVisible();
-  await expect(grid.getByText("No strong fit today")).toHaveCount(1);
-  // The acted lane has no CTA; the remaining active cards still do.
-  await expect(page.getByRole("button", { name: "Use this idea" })).toHaveCount(2);
+  await expect(page.getByText("No strong fit today")).toHaveCount(0);
+  // The inbox has one focused action surface for the selected idea.
+  await expect(page.getByRole("button", { name: "Use this idea" })).toHaveCount(1);
 });

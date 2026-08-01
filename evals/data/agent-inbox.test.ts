@@ -395,6 +395,41 @@ describe("AgentInbox", () => {
     expect(syntheses).toBe(0);
   });
 
+  test("starts a fresh daily batch even when yesterday's ideas were untouched", async () => {
+    const yesterday = (['newsjacking', 'personal_story', 'educational'] as const).flatMap(
+      (lane) =>
+        Array.from({ length: 3 }, (_, index) =>
+          idea(lane, {
+            id: `${lane}-yesterday-${index}`,
+            availableOn: "2026-07-29",
+            createdAt: "2026-07-29T08:00:00.000Z",
+            updatedAt: "2026-07-29T08:00:00.000Z",
+          }),
+        ),
+    );
+    const repo = repository(yesterday);
+    const inbox = createAgentInbox({
+      repository: repo,
+      synthesis: synthesis(),
+      loadEvidence: async () => NEWS_EVIDENCE,
+    });
+
+    const result = await inbox.replenish({
+      workspaceId: "workspace-1",
+      now: NOW,
+      timezone: "UTC",
+    });
+
+    expect(result.created.map((entry) => entry.lane)).toEqual([
+      "newsjacking",
+      "personal_story",
+      "educational",
+    ]);
+    expect(result.created.every((entry) => entry.availableOn === "2026-07-30")).toBe(
+      true,
+    );
+  });
+
   test("accepts three ideas for a lane when evidence supports them", async () => {
     const repo = repository();
     const inbox = createAgentInbox({

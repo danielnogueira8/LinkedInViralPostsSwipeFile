@@ -8,7 +8,6 @@ import {
   BookOpen,
   CheckCircle2,
   ChevronRight,
-  Clock3,
   ExternalLink,
   FileText,
   GraduationCap,
@@ -110,7 +109,9 @@ const statusMeta: Record<
 > = {
   active: { dot: "bg-sky-500", label: "Active" },
   acted: { dot: "bg-emerald-500", label: "Acted" },
-  snoozed: { dot: "bg-amber-500", label: "Snoozed" },
+  // Older rows may still carry the removed defer state. Keep them readable as
+  // archived history without advertising a user-facing snooze workflow.
+  snoozed: { dot: "bg-zinc-400", label: "Archived" },
   discarded: { dot: "bg-zinc-400", label: "Discarded" },
   expired: { dot: "bg-zinc-300", label: "Expired" },
 };
@@ -164,7 +165,7 @@ function LanePill({ lane }: { lane: AgentFeedLane }) {
   );
 }
 
-type OpportunityAction = "act" | "snooze" | "discard";
+type OpportunityAction = "act" | "discard";
 
 function OpportunityActions({
   idea,
@@ -193,17 +194,9 @@ function OpportunityActions({
             variant="outline"
             className="flex-1 rounded-full"
             disabled={busy}
-            onClick={() => onAction(idea, "snooze")}
-          >
-            <Clock3 /> Not today
-          </Button>
-          <Button
-            variant="ghost"
-            className="rounded-full"
-            disabled={busy}
             onClick={() => onAction(idea, "discard")}
           >
-            <X /> Dismiss
+            <X /> Discard
           </Button>
         </div>
       </>
@@ -224,21 +217,10 @@ function OpportunityActions({
         variant="outline"
         className="h-10 shrink-0 rounded-full px-3 text-xs"
         disabled={busy}
-        title="Skip this for today — it comes back tomorrow"
-        onClick={() => onAction(idea, "snooze")}
-      >
-        <Clock3 /> Not today
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-10 w-10 shrink-0 rounded-full"
-        disabled={busy}
-        title="Dismiss this idea"
-        aria-label="Dismiss this idea"
+        title="Discard this idea"
         onClick={() => onAction(idea, "discard")}
       >
-        <X />
+        <X /> Discard
       </Button>
     </div>
   );
@@ -249,10 +231,6 @@ async function jsonRequest(url: string, init?: RequestInit) {
   const body = await response.json();
   if (!response.ok || !body.ok) throw new Error(body.error || "Request failed");
   return body;
-}
-
-function tomorrowIso(): string {
-  return new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 }
 
 // Exported for evals/data/agent-inbox-card.test.ts.
@@ -272,13 +250,13 @@ export function OpportunityCard({
   // The idea the user acted on from this lane today, so the card can say the
   // draft started instead of showing the misleading "no strong fit" empty state.
   acted?: AgentFeedIdea;
-  // The idea the user snoozed out of this lane (still due back), so the card
-  // can say so instead of showing the misleading "no strong fit" empty state.
+  // Legacy deferred rows are accepted so an older persisted activity item can
+  // still render without bringing a defer action back into the UI.
   snoozed?: AgentFeedIdea;
   busy: boolean;
   onAction: (
     idea: AgentFeedIdea,
-    action: "act" | "snooze" | "discard",
+    action: "act" | "discard",
   ) => void;
   onOpenDetails?: () => void;
   moreCount?: number;
@@ -307,21 +285,25 @@ export function OpportunityCard({
           ) : snoozed ? (
             <>
               <p className="flex items-center gap-1.5 text-sm font-medium">
-                <Clock3 className="size-4 text-muted-foreground" aria-hidden />
-                Back tomorrow
+                <Lightbulb
+                  className="size-4 text-muted-foreground"
+                  aria-hidden
+                />
+                New ideas arrive every day
               </p>
-              <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
-                &ldquo;{snoozed.headline}&rdquo;
+              <p className="mt-1 max-w-xs text-sm text-muted-foreground">
+                Fresh recommendations will replace this item in the next daily
+                review.
               </p>
             </>
           ) : (
             <>
               <p className="flex items-center gap-1.5 text-sm font-medium">
                 <Lightbulb className="size-4 text-muted-foreground" aria-hidden />
-                No strong fit today
+                New ideas arrive every day
               </p>
               <p className="mt-1 max-w-xs text-sm text-muted-foreground">
-                We leave this lane empty rather than force a weak idea.
+                Fresh recommendations will appear in the next daily review.
               </p>
             </>
           )}
@@ -382,14 +364,178 @@ export function OpportunityCard({
   );
 }
 
+function RecommendationRow({
+  idea,
+  selected,
+  busy,
+  onSelect,
+}: {
+  idea: AgentFeedIdea;
+  selected: boolean;
+  busy: boolean;
+  onSelect: () => void;
+}) {
+  const copy = laneCopy[idea.lane];
+  return (
+    <button
+      type="button"
+      aria-current={selected ? "true" : undefined}
+      aria-label={`${copy.label}: ${idea.headline}`}
+      onClick={onSelect}
+      className={cn(
+        "flex w-full items-start gap-3 border-l-2 px-4 py-4 text-left transition-colors hover:bg-muted/40",
+        selected
+          ? "border-primary bg-primary/5"
+          : "border-transparent bg-background",
+      )}
+    >
+      <LaneAvatar
+        lane={idea.lane}
+        className="mt-0.5 size-9 shrink-0 rounded-full border border-border/60 object-cover"
+      />
+      <span className="min-w-0 flex-1">
+        <span className="flex items-center gap-2 text-xs font-semibold">
+          <span className="truncate">{copy.label}</span>
+          <span className="shrink-0 font-normal text-muted-foreground">
+            {formatDecisionDay(idea.createdAt)}
+          </span>
+        </span>
+        <span className="mt-1 block line-clamp-2 text-sm font-semibold leading-5">
+          {idea.headline}
+        </span>
+        <span className="mt-1 block line-clamp-1 text-xs leading-5 text-muted-foreground">
+          {idea.angle}
+        </span>
+      </span>
+      {busy ? <Loader2 className="mt-1 size-4 animate-spin" /> : null}
+    </button>
+  );
+}
+
+function RecommendationDetails({
+  idea,
+  busy,
+  onAction,
+}: {
+  idea: AgentFeedIdea;
+  busy: boolean;
+  onAction: (idea: AgentFeedIdea, action: OpportunityAction) => void;
+}) {
+  return (
+    <div className="flex h-full min-h-[32rem] flex-col">
+      <header className="flex items-start gap-3 border-b border-border/70 pb-5">
+        <LaneAvatar
+          lane={idea.lane}
+          className="size-11 shrink-0 rounded-full border border-border/60 object-cover"
+        />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="font-semibold">{laneCopy[idea.lane].label}</p>
+            <span className="text-xs text-muted-foreground">
+              {formatDecisionDay(idea.createdAt)} · Recommendation
+            </span>
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            New idea for today&apos;s review
+          </p>
+        </div>
+      </header>
+
+      <div className="min-h-0 flex-1 space-y-6 overflow-y-auto py-6">
+        <div>
+          <h2 className="text-xl font-semibold leading-snug tracking-tight">
+            {idea.headline}
+          </h2>
+          <p className="mt-3 text-sm leading-6 text-muted-foreground">
+            {idea.angle}
+          </p>
+        </div>
+
+        <section>
+          <h3 className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+            Why it fits you
+          </h3>
+          <div className="mt-3 rounded-2xl bg-muted/35 p-4 text-sm leading-6">
+            {idea.why[0] ?? "Grounded in the evidence attached to this idea."}
+          </div>
+        </section>
+
+        <section>
+          <div className="flex items-center justify-between gap-3">
+            <h3 className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+              Evidence
+            </h3>
+            <span className="text-xs text-muted-foreground">
+              {idea.evidence.length} source
+              {idea.evidence.length === 1 ? "" : "s"}
+            </span>
+          </div>
+          <div className="mt-3 space-y-2">
+            {idea.evidence.length ? (
+              idea.evidence.map((entry, index) => {
+                const meta =
+                  evidenceKindMeta[entry.kind] ?? evidenceKindMeta.knowledge;
+                const EntryIcon = meta.icon;
+                const sourceUrl =
+                  entry.url ?? (index === 0 ? idea.sourceUrl : null);
+                return (
+                  <div
+                    key={`${entry.label}-${index}`}
+                    className="rounded-xl border bg-background px-3.5 py-3"
+                  >
+                    <p className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                      <EntryIcon className="size-3.5" aria-hidden />
+                      {entry.label}
+                    </p>
+                    {entry.detail ? (
+                      <p className="mt-1 text-sm leading-5">{entry.detail}</p>
+                    ) : null}
+                    {sourceUrl ? (
+                      <a
+                        href={sourceUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="mt-2 inline-flex items-center gap-1 text-xs font-medium underline-offset-4 hover:underline"
+                      >
+                        Open evidence
+                        <ExternalLink className="size-3" aria-hidden />
+                      </a>
+                    ) : null}
+                  </div>
+                );
+              })
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                Evidence will be attached when the daily report is refreshed.
+              </p>
+            )}
+          </div>
+        </section>
+      </div>
+
+      <footer className="border-t border-border/70 pt-4">
+        <p className="mb-3 text-xs font-medium text-muted-foreground">
+          Choose what happens next
+        </p>
+        <OpportunityActions
+          idea={idea}
+          busy={busy}
+          onAction={onAction}
+          drawer
+        />
+        <p className="mt-3 text-xs text-muted-foreground">
+          New ideas arrive every day, whether you use or discard this one.
+        </p>
+      </footer>
+    </div>
+  );
+}
+
 export function AgentInbox() {
   const router = useRouter();
   const [data, setData] = useState<AgentInboxPayload | null>(null);
   const [error, setError] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [pendingDiscard, setPendingDiscard] = useState<AgentFeedIdea | null>(
-    null,
-  );
   const [selectedIdea, setSelectedIdea] = useState<AgentFeedIdea | null>(null);
   const [selectedFilter, setSelectedFilter] =
     useState<AgentLaneFilter>("all");
@@ -400,7 +546,7 @@ export function AgentInbox() {
   const load = useCallback(async () => {
     try {
       invalidateAgentInboxRequest();
-      const body = await loadAgentInbox();
+      const body = await loadAgentInbox({ replenish: true });
       setData(body);
       setDraftPreferences(body.preferences);
       setError("");
@@ -414,7 +560,7 @@ export function AgentInbox() {
   }, []);
   useEffect(() => {
     let cancelled = false;
-    loadAgentInbox()
+    loadAgentInbox({ replenish: true })
       .then((body) => {
         if (cancelled) return;
         setData(body);
@@ -461,35 +607,6 @@ export function AgentInbox() {
     }
     return map;
   }, [feedActive]);
-  // A lane with nothing active might be empty because the user snoozed its
-  // idea — the activity feed still carries that idea until it is due back.
-  // (The server releases due snoozes before reading, so a "snoozed" entry
-  // here is always still pending; an overdue one would be active again and
-  // occupy the lane, which suppresses this via ideasByLane above.)
-  const snoozedByLane = useMemo(() => {
-    const map = new Map<AgentFeedLane, AgentFeedIdea>();
-    for (const idea of feedActivity) {
-      if (map.has(idea.lane) || idea.status !== "snoozed") continue;
-      if (idea.snoozedUntil) map.set(idea.lane, idea);
-    }
-    return map;
-  }, [feedActivity]);
-  // A lane with nothing active might be empty because the user already acted
-  // on today's idea — "No strong fit today" would claim the Agent found
-  // nothing when it actually delivered and the user took it. Only same-day
-  // decisions count: an idea acted yesterday must not shadow a lane the Agent
-  // genuinely left empty today.
-  const actedByLane = useMemo(() => {
-    const today = new Date().toDateString();
-    const map = new Map<AgentFeedLane, AgentFeedIdea>();
-    for (const idea of feedActivity) {
-      if (map.has(idea.lane) || idea.status !== "acted" || !idea.actedAt)
-        continue;
-      if (new Date(idea.actedAt).toDateString() !== today) continue;
-      map.set(idea.lane, idea);
-    }
-    return map;
-  }, [feedActivity]);
   const evidenceKinds = useMemo(() => {
     const kinds = new Set(
       feedActive.flatMap((idea) => idea.evidence.map((entry) => entry.kind)),
@@ -499,36 +616,31 @@ export function AgentInbox() {
     ).filter((kind) => kinds.has(kind));
   }, [feedActive]);
 
-  const recommendedIdeas = useMemo(
-    () =>
-      AGENT_FEED_LANES.flatMap((lane) => ideasByLane.get(lane)?.[0] ?? []),
-    [ideasByLane],
-  );
   const displayedIdeas = useMemo(
-    () =>
-      selectedFilter === "all"
-        ? recommendedIdeas
-        : ideasByLane.get(selectedFilter) ?? [],
-    [ideasByLane, recommendedIdeas, selectedFilter],
-  );
-  const emptyLanes = useMemo(
-    () =>
-      selectedFilter === "all"
-        ? AGENT_FEED_LANES.filter((lane) => !ideasByLane.get(lane)?.length)
-        : displayedIdeas.length === 0
-          ? [selectedFilter]
-          : [],
-    [displayedIdeas.length, ideasByLane, selectedFilter],
+    () => {
+      const ideas =
+        selectedFilter === "all"
+          ? feedActive
+          : ideasByLane.get(selectedFilter) ?? [];
+      return [...ideas].sort(
+        (left, right) =>
+          right.createdAt.localeCompare(left.createdAt) ||
+          right.score - left.score,
+      );
+    },
+    [feedActive, ideasByLane, selectedFilter],
   );
   const queueSummary = feedActive.length
-    ? `${feedActive.length} evidence-backed ideas are ready. Choose what deserves your point of view.`
-    : actedByLane.size || snoozedByLane.size
-      ? "You’ve reviewed today’s ideas. Nothing else is waiting for a decision."
-      : "Your agents found no strong opportunities today. That is better than forcing a weak idea.";
+    ? `${feedActive.length} fresh, evidence-backed ideas are ready. Use one or discard it.`
+    : "Your agents are looking for fresh opportunities. New ideas arrive every day.";
+  const selectedVisibleIdea =
+    displayedIdeas.find((idea) => idea.id === selectedIdea?.id) ??
+    displayedIdeas[0] ??
+    null;
 
   async function act(
     idea: AgentFeedIdea,
-    action: "act" | "snooze" | "discard",
+    action: "act" | "discard",
     discardReason = "Not relevant right now",
   ) {
     setBusyId(idea.id);
@@ -540,18 +652,10 @@ export function AgentInbox() {
           body: JSON.stringify(
             action === "act"
               ? { action: "draft" }
-              : action === "snooze"
-                ? { action: "snooze", until: tomorrowIso() }
-                : { action: "dismiss" },
+              : { action: "dismiss" },
           ),
         });
-        toast.success(
-          action === "act"
-            ? "Draft started"
-            : action === "snooze"
-              ? "Skipped for today — back in this lane tomorrow"
-              : "Idea discarded",
-        );
+        toast.success(action === "act" ? "Draft started" : "Idea discarded");
         setSelectedIdea(null);
         await load();
         return;
@@ -562,12 +666,7 @@ export function AgentInbox() {
         body: JSON.stringify(
           action === "act"
             ? { kind: "act" }
-            : action === "snooze"
-              ? {
-                  kind: "snooze",
-                  until: tomorrowIso(),
-                }
-              : { kind: "discard", reason: discardReason },
+            : { kind: "discard", reason: discardReason },
         ),
       });
       if (action === "act") {
@@ -579,12 +678,7 @@ export function AgentInbox() {
         router.push(`/dashboard?new=1&agentIdea=${idea.id}`);
         return;
       }
-      toast.success(
-        action === "snooze"
-          ? "Skipped for today — back in this lane tomorrow"
-          : "Idea discarded",
-      );
-      setSelectedIdea(null);
+      toast.success("Idea discarded");
       await load();
     } catch (actionError) {
       toast.error(
@@ -599,13 +693,8 @@ export function AgentInbox() {
 
   function handleAction(
     idea: AgentFeedIdea,
-    action: "act" | "snooze" | "discard",
+    action: "act" | "discard",
   ) {
-    if (action === "discard") {
-      setSelectedIdea(null);
-      setPendingDiscard(idea);
-      return;
-    }
     void act(idea, action);
   }
 
@@ -674,11 +763,11 @@ export function AgentInbox() {
                 Daily review
               </p>
               <h2 className="mt-1 text-xl font-semibold tracking-tight">
-                Today&apos;s opportunities
+                Today&apos;s inbox
               </h2>
               <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">
-                {queueSummary} Nothing is drafted or scheduled automatically.
-                A draft starts only when you choose an idea.
+                {queueSummary} Use this idea starts a draft; Discard removes it
+                from the review queue.
               </p>
             </div>
           </div>
@@ -760,55 +849,69 @@ export function AgentInbox() {
         <div className="mt-6">
           <div className="flex items-end justify-between gap-3">
             <div>
-              <h3 className="font-semibold">
-                {selectedFilter === "all"
-                  ? "Recommended first"
-                  : `Ideas from ${laneCopy[selectedFilter].label}`}
-              </h3>
+              <h3 className="font-semibold">Today&apos;s recommendations</h3>
               <p className="mt-1 text-sm text-muted-foreground">
                 {selectedFilter === "all"
-                  ? "One strongest direction from each agent. See more only when you want it."
+                  ? "Open one recommendation to see why it fits and choose what happens next."
                   : laneCopy[selectedFilter].description}
               </p>
             </div>
             <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-              {selectedFilter === "all"
-                ? `${displayedIdeas.length} agents`
-                : `${displayedIdeas.length} ideas`}
+              {displayedIdeas.length} recommendation
+              {displayedIdeas.length === 1 ? "" : "s"}
             </span>
           </div>
           <div
             id="agent-opportunity-grid"
-            className="mt-4 grid grid-cols-1 items-stretch gap-4 xl:grid-cols-2"
+            className="mt-4 grid min-h-[32rem] grid-cols-1 items-stretch gap-4 xl:grid-cols-[minmax(17rem,0.82fr)_minmax(0,1.18fr)]"
           >
-            {displayedIdeas.map((idea) => {
-              const laneIdeas = ideasByLane.get(idea.lane) ?? [];
-              return (
-                <OpportunityCard
-                  key={idea.id}
-                  idea={idea}
-                  moreCount={
-                    selectedFilter === "all"
-                      ? Math.max(0, laneIdeas.length - 1)
-                      : 0
-                  }
-                  onViewMore={(lane) => setSelectedFilter(lane)}
-                  busy={busyId === idea.id}
-                  onOpenDetails={() => setSelectedIdea(idea)}
+            <div className="overflow-hidden rounded-2xl border bg-card">
+              <div className="flex items-center justify-between border-b border-border/70 px-4 py-3">
+                <span className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                  New today
+                </span>
+                <span className="text-xs text-muted-foreground">Newest first</span>
+              </div>
+              <div className="divide-y divide-border/70">
+                {displayedIdeas.length ? (
+                  displayedIdeas.map((idea) => (
+                    <RecommendationRow
+                      key={idea.id}
+                      idea={idea}
+                      selected={selectedVisibleIdea?.id === idea.id}
+                      busy={busyId === idea.id}
+                      onSelect={() => setSelectedIdea(idea)}
+                    />
+                  ))
+                ) : (
+                  <div className="flex min-h-[27rem] flex-col items-center justify-center px-6 text-center">
+                    <Lightbulb className="size-5 text-muted-foreground" aria-hidden />
+                    <p className="mt-3 text-sm font-medium">
+                      New ideas arrive every day
+                    </p>
+                    <p className="mt-1 max-w-xs text-sm leading-5 text-muted-foreground">
+                      Your agents are looking for the next evidence-backed
+                      opportunity.
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="rounded-2xl border bg-card p-5 sm:p-6">
+              {selectedVisibleIdea ? (
+                <RecommendationDetails
+                  idea={selectedVisibleIdea}
+                  busy={busyId === selectedVisibleIdea.id}
                   onAction={handleAction}
                 />
-              );
-            })}
-            {emptyLanes.map((lane) => (
-              <OpportunityCard
-                key={`empty-${lane}`}
-                lane={lane}
-                acted={actedByLane.get(lane)}
-                snoozed={snoozedByLane.get(lane)}
-                busy={false}
-                onAction={handleAction}
-              />
-            ))}
+              ) : (
+                <div className="flex min-h-[27rem] items-center justify-center text-center">
+                  <p className="max-w-xs text-sm text-muted-foreground">
+                    Select a recommendation to review its angle and evidence.
+                  </p>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
@@ -858,12 +961,7 @@ export function AgentInbox() {
                     <div
                       key={idea.id}
                       className="flex items-center gap-3 py-2.5 text-sm"
-                      title={
-                        idea.discardReason ??
-                        (idea.status === "snoozed" && idea.snoozedUntil
-                          ? `Back ${formatDecisionDay(idea.snoozedUntil)}`
-                          : undefined)
-                      }
+                      title={idea.discardReason ?? undefined}
                     >
                       <span
                         className={cn("size-2 shrink-0 rounded-full", meta.dot)}
@@ -888,104 +986,6 @@ export function AgentInbox() {
           </div>
         </div>
       </section>
-      <Dialog
-        open={Boolean(selectedIdea)}
-        onOpenChange={(open) => {
-          if (!open) setSelectedIdea(null);
-        }}
-      >
-        <DialogContent className="left-auto right-0 top-0 h-full max-h-none w-full max-w-[min(100vw,36rem)] translate-x-0 translate-y-0 rounded-l-3xl rounded-r-none p-5 sm:max-w-[36rem] sm:p-6">
-          {selectedIdea ? (
-            <>
-              <div className="space-y-3 pr-8">
-                <LanePill lane={selectedIdea.lane} />
-                <DialogTitle className="text-xl leading-snug">
-                  {selectedIdea.headline}
-                </DialogTitle>
-                <DialogDescription className="text-sm leading-6">
-                  {selectedIdea.angle}
-                </DialogDescription>
-              </div>
-              <div className="mt-3 space-y-6 overflow-y-auto pr-1">
-                <section>
-                  <h3 className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                    Why this fits you
-                  </h3>
-                  <ul className="mt-3 space-y-2 text-sm leading-6">
-                    {selectedIdea.why.map((reason) => (
-                      <li key={reason} className="flex gap-2">
-                        <span className="mt-2 size-1.5 shrink-0 rounded-full bg-foreground" />
-                        <span>{reason}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </section>
-                <section>
-                  <h3 className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                    Evidence
-                  </h3>
-                  <ul className="mt-3 space-y-3">
-                    {selectedIdea.evidence.map((entry, index) => {
-                      const meta =
-                        evidenceKindMeta[entry.kind] ?? evidenceKindMeta.knowledge;
-                      const EntryIcon = meta.icon;
-                      const sourceUrl =
-                        entry.url ??
-                        (index === 0 ? selectedIdea.sourceUrl : null);
-                      return (
-                        <li
-                          key={`${entry.label}-${index}`}
-                          className="rounded-2xl border bg-muted/20 p-4"
-                        >
-                          <p className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
-                            <EntryIcon className="size-3.5" aria-hidden />
-                            {meta.full}
-                          </p>
-                          <p className="mt-2 text-sm font-medium">
-                            {entry.label}
-                          </p>
-                          {entry.detail ? (
-                            <p className="mt-1 text-sm leading-5 text-muted-foreground">
-                              {entry.detail}
-                            </p>
-                          ) : null}
-                          <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                            {entry.publishedAt ? (
-                              <span>
-                                Published {formatDecisionDay(entry.publishedAt)}
-                              </span>
-                            ) : null}
-                            {entry.ref ? <span>{entry.ref}</span> : null}
-                            {sourceUrl ? (
-                              <a
-                                href={sourceUrl}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="inline-flex items-center gap-1 text-foreground underline-offset-4 hover:underline"
-                              >
-                                Read source
-                                <ExternalLink className="size-3" aria-hidden />
-                              </a>
-                            ) : null}
-                          </div>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </section>
-              </div>
-              <div className="sticky bottom-0 -mx-5 mt-auto flex flex-col gap-2 border-t bg-popover pt-5 sm:-mx-6 sm:px-6">
-                <OpportunityActions
-                  idea={selectedIdea}
-                  busy={busyId === selectedIdea.id}
-                  onAction={handleAction}
-                  drawer
-                />
-              </div>
-            </>
-          ) : null}
-        </DialogContent>
-      </Dialog>
       <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
         <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg">
           <DialogTitle>Agent preferences</DialogTitle>
@@ -1066,47 +1066,6 @@ export function AgentInbox() {
               </Button>
             </div>
           ) : null}
-        </DialogContent>
-      </Dialog>
-      <Dialog
-        open={Boolean(pendingDiscard)}
-        onOpenChange={(open) => {
-          if (!open) setPendingDiscard(null);
-        }}
-      >
-        <DialogContent className="sm:max-w-md">
-          <DialogTitle>Why isn&apos;t this useful?</DialogTitle>
-          <DialogDescription>
-            This helps your Agent make tomorrow&apos;s choices less repetitive.
-          </DialogDescription>
-          <div className="mt-4 grid gap-2">
-            {[
-              "I already covered this",
-              "Not relevant to my audience",
-              "Too generic",
-              "Not my point of view",
-            ].map((reason) => (
-              <button
-                key={reason}
-                type="button"
-                className="group flex items-center gap-3 rounded-xl border p-3.5 text-left text-sm transition-colors hover:border-foreground/30 hover:bg-muted/50"
-                onClick={() => {
-                  if (!pendingDiscard) return;
-                  const idea = pendingDiscard;
-                  setPendingDiscard(null);
-                  void act(idea, "discard", reason);
-                }}
-              >
-                <span
-                  className="grid size-4 shrink-0 place-items-center rounded-full border transition-colors group-hover:border-foreground/50"
-                  aria-hidden
-                >
-                  <span className="size-1.5 rounded-full bg-foreground opacity-0 transition-opacity group-hover:opacity-100" />
-                </span>
-                {reason}
-              </button>
-            ))}
-          </div>
         </DialogContent>
       </Dialog>
     </>
