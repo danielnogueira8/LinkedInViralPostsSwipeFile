@@ -451,19 +451,16 @@ export async function GET() {
         }
       }),
     );
+    const opportunityIdsInPlan = (candidate: StoredWeekPlan | null) =>
+      candidate?.items.flatMap((item) =>
+        item.opportunity?.id ? [item.opportunity.id] : [],
+      ) ?? [];
     const reservedOpportunityIds = new Set(
-      existingLaterPlans.flatMap(
-        (candidate) =>
-          candidate?.items.flatMap((item) =>
-            item.opportunity?.id ? [item.opportunity.id] : [],
-          ) ?? [],
-      ),
+      existingLaterPlans.flatMap(opportunityIdsInPlan),
     );
     const reservePlanOpportunities = (candidate: StoredWeekPlan | null) => {
-      for (const item of candidate?.items ?? []) {
-        if (item.opportunity?.id) {
-          reservedOpportunityIds.add(item.opportunity.id);
-        }
+      for (const opportunityId of opportunityIdsInPlan(candidate)) {
+        reservedOpportunityIds.add(opportunityId);
       }
     };
     let plan: StoredWeekPlan | null = null;
