@@ -37,13 +37,19 @@ export const maxDuration = 300;
 
 // Cluster membership counts DISTINCT CREATORS, never posts: one person
 // posting six times about their own launch is not a trend.
-const MIN_CREATORS = 3;
+// 2, not 3. At 223 sub-threshold posts across 7 days, requiring three
+// distinct creators on one topic is a high bar; two is still a conversation
+// rather than one person talking to themselves, and the sweep reports what a
+// stricter bar would have found.
+const MIN_CREATORS = 2;
 // 0.80, verified on synthetic data with a known answer (3 planted topics + 2
 // deliberate outliers). At 0.62-0.75 the outliers are absorbed into whichever
 // cluster is nearest, inflating creator counts and blurring identity — which
 // reads as "the data is mush" when it is really the threshold. 0.80+ recovers
 // the planted topics exactly, 5/5 runs.
-const SIM_THRESHOLD = 0.8;
+const SIM_THRESHOLD = 0.72;
+// Where clusters first appear tells you whether the corpus has signal at all.
+const SWEEP_THRESHOLDS = [0.62, 0.68, 0.72, 0.76, 0.8, 0.85] as const;
 const MAX_POSTS = 1500;
 
 type PostRow = {
@@ -161,7 +167,7 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const windowDays = Math.min(
     30,
-    Math.max(1, Number(url.searchParams.get("days") ?? 7)),
+    Math.max(1, Number(url.searchParams.get("days") ?? 14)),
   );
   const baselineDays = Math.min(
     60,
@@ -289,6 +295,31 @@ export async function GET(request: Request) {
   const recentVecs = recentWithVec.map((row) => byId.get(row.id)!);
   const priorVecs = priorWithVec.map((row) => byId.get(row.id)!);
 
+  // A single threshold answers "are there clusters at 0.8?" — which came back
+  // empty, and that is ambiguous: it could mean the corpus has no concentrated
+  // conversation, OR that 0.8 is simply too strict for real prose. 0.8 was
+  // tuned on SYNTHETIC data with cleanly separated topics; two founders writing
+  // about pricing in different words sit well below it.
+  //
+  // So sweep. One run reports where clusters first appear, which distinguishes
+  // "no signal" from "wrong threshold" without another round of guessing.
+  const sweep = SWEEP_THRESHOLDS.map((threshold) => {
+    const found = clusterVectors(recentVecs, threshold)
+      .map((cluster) => ({
+        creators: new Set(
+          cluster.members.map((i) => recentWithVec[i].account_id),
+        ).size,
+        posts: cluster.members.length,
+      }))
+      .filter((entry) => entry.creators >= minCreators)
+      .sort((a, b) => b.creators - a.creators);
+    return {
+      sim: threshold,
+      clusters: found.length,
+      largestCreators: found[0]?.creators ?? 0,
+    };
+  });
+
   const clusters = clusterVectors(recentVecs, sim)
     .map((cluster) => ({
       cluster,
@@ -347,6 +378,7 @@ export async function GET(request: Request) {
           recentEmbedded: recentWithVec.length,
           priorEmbedded: priorWithVec.length,
         },
+        sweep,
         clusters: report,
       },
     }),
@@ -364,6 +396,7 @@ export async function GET(request: Request) {
       recentEmbedded: recentWithVec.length,
       priorEmbedded: priorWithVec.length,
     },
+    sweep,
     clusters: report,
     howToRead:
       "Are the top clusters recognizable topics you would have wanted to post about, or generic mush? Recognizable => the sub-threshold signal is real. Mush at sim=0.8 => the corpus is too thin for this window. 'rising' and 'new' are the ones worth posting into; 'flat' is a permanent topic, not news.",
