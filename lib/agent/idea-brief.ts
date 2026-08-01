@@ -71,7 +71,6 @@ export async function compileIdeaBrief(
       model: BACKGROUND_MODEL,
       maxTokens: IDEA_BRIEF_MAX_TOKENS,
       timeoutMs: IDEA_BRIEF_TIMEOUT_MS,
-      glmReasoning: "none",
       messages: [
         {
           role: "system",

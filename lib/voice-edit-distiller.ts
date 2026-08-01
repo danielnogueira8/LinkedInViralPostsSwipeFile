@@ -139,7 +139,6 @@ export async function distillEditDeltaRules(
           model: BACKGROUND_MODEL,
           maxTokens: DISTILLER_MAX_TOKENS,
           timeoutMs: DISTILLER_TIMEOUT_MS,
-          glmReasoning: "none",
           messages: [
             {
               role: "system",

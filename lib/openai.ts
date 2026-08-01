@@ -277,7 +277,7 @@ function responseBody(opts: {
   maxTokens?: number;
   disableReasoning?: boolean;
   glmReasoning?: "high" | "none";
-  reasoningEffort?: "minimal" | "low" | "medium" | "high";
+  reasoningEffort?: "minimal" | "low" | "medium" | "high" | "max";
   tools?: ToolDef[];
   forceTool?: string;
   toolChoice?: "auto" | "required" | "none";
@@ -287,15 +287,17 @@ function responseBody(opts: {
   stream?: boolean;
 }): Record<string, unknown> {
   const tools = responsesTools(opts.tools, opts.plugins);
+  const nativeEffort = nativeOpenAIReasoningEffort(opts.model);
   const effort =
     opts.disableReasoning
       ? "none"
       : opts.glmReasoning === "none"
         ? "none"
-      : opts.reasoningEffort === "minimal"
-        ? "low"
-        : opts.reasoningEffort ??
-          (opts.stream && opts.tools?.length ? "none" : "low");
+        : nativeEffort ??
+          (opts.reasoningEffort === "minimal"
+            ? "low"
+            : opts.reasoningEffort ??
+              (opts.stream && opts.tools?.length ? "none" : "low"));
   return {
     model: openAIModelId(opts.model),
     input: responsesInput(opts.messages),
@@ -320,6 +322,22 @@ function responseBody(opts: {
   };
 }
 
+/**
+ * Native OpenAI reasoning policy for substantive model calls.
+ *
+ * GPT-5.6 supports `max`; older reasoning-capable OpenAI families get `high`
+ * instead. The caller's low/medium hint is deliberately promoted here so a
+ * planner or writer cannot silently run below the product-wide quality bar.
+ * Explicit `disableReasoning` and `glmReasoning: "none"` still win for small
+ * mechanical calls such as title generation.
+ */
+function nativeOpenAIReasoningEffort(model: string): "max" | "high" | undefined {
+  const id = openAIModelId(model).toLowerCase();
+  if (/^gpt-5\.6(?:-|$)/.test(id)) return "max";
+  if (/^(?:gpt-5(?:\.\d+)?|o[134])(?:-|$)/.test(id)) return "high";
+  return undefined;
+}
+
 function responseOutputText(output: Array<Record<string, unknown>>): string {
   return output
     .filter((item) => item.type === "message" && Array.isArray(item.content))
@@ -335,7 +353,7 @@ export async function completeChatOpenAI(opts: {
   maxTokens?: number;
   disableReasoning?: boolean;
   glmReasoning?: "high" | "none";
-  reasoningEffort?: "minimal" | "low" | "medium" | "high";
+  reasoningEffort?: "minimal" | "low" | "medium" | "high" | "max";
   tools?: ToolDef[];
   forceTool?: string;
   plugins?: Array<Record<string, unknown>>;

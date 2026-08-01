@@ -48,9 +48,10 @@ export type DraftWriterRequest = {
   // system prompt. The Anthropic adapter can cache that prefix while leaving
   // request-selected skills and workspace context outside the cache entry.
   cacheSystemPrefixChars?: number;
-  // "none" means no explicit reasoning override. "sonnet-low" requests low
-  // effort only when the selected model is Sonnet 5, preserving the provider
-  // default for fallback models that may not accept this reasoning control.
+  // "none" means no writer-specific override. Native OpenAI calls still receive
+  // the centralized max/high policy in lib/openai.ts; fallback models retain
+  // their provider-specific defaults. "sonnet-low" remains a compatibility hint
+  // for the legacy Luna/OpenRouter route.
   reasoning: "none" | "sonnet-low" | ReasoningEffort;
 };
 
@@ -73,16 +74,11 @@ function isLuna(model: string): boolean {
 
 export const openRouterDraftWriter: DraftWriterAdapter = {
   async write(request) {
-    // reasoning === "none": send NO reasoning-related field at all. completeChat
-    // then applies its own per-model default (GLM → High, which GLM self-limits;
-    // everything else → nothing). We deliberately do NOT send
-    // `reasoning: { enabled: false }` for non-GLM models: the request also carries
-    // `provider: { require_parameters: true }`, so OpenRouter only routes to
-    // providers accepting EVERY parameter — and `enabled: false` is not a valid
-    // reasoning shape for some models (Gemini 3.x maps reasoning.effort →
-    // thinkingLevel and rejects enabled:false), which returns a 400 Bad Request.
-    // That 400 is exactly what broke google/gemini-3.6-flash as a writer model:
-    // every primary attempt 400'd in ~145ms and fell back to Sonnet.
+    // reasoning === "none" deliberately sends no reasoning-related field on
+    // the legacy OpenRouter route. Do not send `reasoning: { enabled: false }`:
+    // the request carries `provider.require_parameters`, and some fallback
+    // providers reject that shape. Native OpenAI calls apply their centralized
+    // max/high policy in lib/openai.ts before this transport is reached.
     const reasoningEffort =
       request.reasoning === "sonnet-low"
         ? isLuna(request.model)
