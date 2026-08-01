@@ -191,39 +191,43 @@ export function InterviewKnowledgeReview({
                   : `Show approved (${verified.length})`}
               </Button>
             </div>
-            {showVerified ? (
-              <div id="verified-knowledge-items" className="space-y-2.5">
-                {verified.map((item) => (
-                  <div
-                    key={item.id}
-                    className="flex items-start justify-between gap-3 rounded-xl border border-state-success-border bg-state-success/[0.04] p-3"
-                  >
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-1.5 text-sm font-medium text-foreground">
-                        <Check className="h-3.5 w-3.5 shrink-0 text-state-success" />
-                        {item.title}
-                      </div>
-                      <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                        {workspaceKnowledgeDisplayText(item)}
-                      </p>
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      disabled={busyId !== null}
-                      aria-label={`Remove ${item.title}`}
-                      onClick={() => mutate(item, "archive")}
+            <div
+              id="verified-knowledge-items"
+              hidden={!showVerified}
+              className="space-y-2.5"
+            >
+              {showVerified
+                ? verified.map((item) => (
+                    <div
+                      key={item.id}
+                      className="flex items-start justify-between gap-3 rounded-xl border border-state-success-border bg-state-success/[0.04] p-3"
                     >
-                      {busyId === item.id ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <Archive className="h-3.5 w-3.5" />
-                      )}
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            ) : null}
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+                          <Check className="h-3.5 w-3.5 shrink-0 text-state-success" />
+                          {item.title}
+                        </div>
+                        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                          {workspaceKnowledgeDisplayText(item)}
+                        </p>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        disabled={busyId !== null}
+                        aria-label={`Remove ${item.title}`}
+                        onClick={() => mutate(item, "archive")}
+                      >
+                        {busyId === item.id ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Archive className="h-3.5 w-3.5" />
+                        )}
+                      </Button>
+                    </div>
+                  ))
+                : null}
+            </div>
           </section>
         ) : null}
       </CardContent>

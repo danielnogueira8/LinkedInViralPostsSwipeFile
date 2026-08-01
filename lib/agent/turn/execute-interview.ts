@@ -10,6 +10,7 @@ import { routesToNativeOpenAI } from "@/lib/openai";
 import { createWorkspaceKnowledgeStore } from "@/lib/content-learning/workspace-knowledge";
 import {
   CHAT_INTERVIEW_MAX_ANSWER_CHARS,
+  CHAT_INTERVIEW_MAX_QUESTION_CHARS,
   normalizeChatInterviewAnswers,
   saveChatInterviewKnowledge,
   type ChatInterviewAnswer,
@@ -79,14 +80,22 @@ export function parseInterviewOutput(text: string): InterviewOutput {
   if (typeof parsed !== "object" || parsed === null) return { action: "invalid" };
   const record = parsed as Record<string, unknown>;
   if (record.action === "plan") {
-    // The model proposes the set, the server clamps it: a runaway "47
-    // questions" plan is truncated to the max, and a plan too thin to be
-    // worth a card is rejected outright.
-    const seen = new Set<string>();
-    const questions = (Array.isArray(record.questions) ? record.questions : [])
+    // The model proposes the set, the server validates its bounds: a runaway
+    // "47 questions" plan is truncated to the max, while malformed or
+    // overlong questions are rejected instead of being silently shortened.
+    const rawQuestions = (Array.isArray(record.questions) ? record.questions : [])
       .map((question) => (typeof question === "string" ? question.trim() : ""))
-      .filter((question) => question.length > 0)
-      .map((question) => question.slice(0, 500))
+      .filter((question) => question.length > 0);
+    if (
+      rawQuestions.some(
+        (question) =>
+          Array.from(question).length > CHAT_INTERVIEW_MAX_QUESTION_CHARS,
+      )
+    ) {
+      return { action: "invalid" };
+    }
+    const seen = new Set<string>();
+    const questions = rawQuestions
       .filter((question) => {
         const key = question.toLowerCase();
         if (seen.has(key)) return false;
@@ -115,10 +124,45 @@ export type RawInterviewAnswer = {
   answer: string;
 };
 
+export type RawInterviewAnswerExtraction = {
+  answers: RawInterviewAnswer[];
+  complete: boolean;
+};
+
 function messageText(message: ChatMessage): string {
   if (typeof message.content === "string") return message.content;
   if (!Array.isArray(message.content)) return "";
   return message.content.find((block) => block.type === "text")?.text ?? "";
+}
+
+function plannedInterviewQuestions(history: ChatMessage[]): string[] {
+  for (const message of [...history].reverse()) {
+    const call = message.tool_calls?.find(
+      (candidate) => candidate.function.name === "ask_user",
+    );
+    if (!call) continue;
+    try {
+      const args = JSON.parse(call.function.arguments) as Record<string, unknown>;
+      if (args.variant !== "interview") continue;
+      const questions = Array.isArray(args.questions)
+        ? args.questions.filter(
+            (question): question is string =>
+              typeof question === "string" && question.trim().length > 0,
+          )
+        : [];
+      if (questions.length > 0) return questions.map((question) => question.trim());
+      // Cards written before the batched interview shape carry one question
+      // instead. Treat that as a one-question plan so the original answer can
+      // still be recovered after a reload or deploy.
+      const legacyQuestion =
+        typeof args.question === "string" ? args.question.trim() : "";
+      if (legacyQuestion) return [legacyQuestion];
+      continue;
+    } catch {
+      // A malformed historical ask should not prevent a best-effort parse.
+    }
+  }
+  return [];
 }
 
 /**
@@ -127,29 +171,92 @@ function messageText(message: ChatMessage): string {
  * become the source of truth for the answer itself: a summary here would lose
  * the steps, caveats, names, or numbers the user actually supplied.
  */
-export function extractInterviewAnswersFromHistory(
+export function extractInterviewAnswerSubmissionFromHistory(
   history: ChatMessage[],
-): RawInterviewAnswer[] {
+): RawInterviewAnswerExtraction {
   const currentUserMessage = [...history]
     .reverse()
     .find((message) => message.role === "user");
   const text = currentUserMessage ? messageText(currentUserMessage) : "";
-  if (!text) return [];
+  if (!text) return { answers: [], complete: false };
+
+  const plannedQuestions = plannedInterviewQuestions(history);
+  const markerPattern = /(?:^|\n)Q(\d+): ([^\n]+)\nA\1: /g;
+  const markers: Array<{
+    questionIndex: number;
+    question: string;
+    answerStart: number;
+    markerStart: number;
+  }> = [];
+  if (plannedQuestions.length > 0) {
+    // Use the persisted card text as the delimiter when it is available. The
+    // generic one-line regex cannot parse a question that itself contains a
+    // newline, and silently shortening that question would lose provenance.
+    let searchFrom = 0;
+    for (const [questionIndex, plannedQuestion] of plannedQuestions.entries()) {
+      const marker = `Q${questionIndex + 1}: ${plannedQuestion}\nA${questionIndex + 1}: `;
+      let markerStart = text.indexOf(marker, searchFrom);
+      while (
+        markerStart >= 0 &&
+        markerStart !== 0 &&
+        text.slice(markerStart - 2, markerStart) !== "\n\n"
+      ) {
+        markerStart = text.indexOf(marker, markerStart + marker.length);
+      }
+      if (markerStart < 0) continue;
+      markers.push({
+        questionIndex,
+        question: plannedQuestion,
+        answerStart: markerStart + marker.length,
+        markerStart,
+      });
+      searchFrom = markerStart + marker.length;
+    }
+  } else {
+    for (const match of text.matchAll(markerPattern)) {
+      const questionNumber = Number(match[1]);
+      const questionIndex = questionNumber - 1;
+      const question = match[2]?.trim() ?? "";
+      const markerStart = match.index ?? 0;
+      markers.push({
+        questionIndex,
+        question,
+        answerStart: markerStart + match[0].length,
+        markerStart,
+      });
+    }
+  }
 
   const answers: RawInterviewAnswer[] = [];
-  const pairPattern = /(?:^|\n)Q\d+: ([^\n]+)\nA\d+: ([\s\S]*?)(?=\n\nQ\d+: |$)/g;
-  for (const match of text.matchAll(pairPattern)) {
-    const question = match[1]?.trim() ?? "";
-    const answer = match[2]?.trim() ?? "";
+  let answerOverflowed = false;
+  for (const [index, marker] of markers.entries()) {
+    const answerEnd = markers[index + 1]?.markerStart ?? text.length;
+    const answer = text.slice(marker.answerStart, answerEnd).trim();
+    const question = marker.question;
     if (!question || !answer || /^\[skipped\]$/i.test(answer)) continue;
+    if (Array.from(answer).length > CHAT_INTERVIEW_MAX_ANSWER_CHARS) {
+      answerOverflowed = true;
+    }
     answers.push({
       question,
-      answer: Array.from(answer)
-        .slice(0, CHAT_INTERVIEW_MAX_ANSWER_CHARS)
-        .join(""),
+      answer,
     });
   }
-  return answers;
+  const questionIndexes = new Set(markers.map((marker) => marker.questionIndex));
+  return {
+    answers,
+    complete:
+      plannedQuestions.length > 0 &&
+      !answerOverflowed &&
+      markers.length === plannedQuestions.length &&
+      questionIndexes.size === plannedQuestions.length,
+  };
+}
+
+export function extractInterviewAnswersFromHistory(
+  history: ChatMessage[],
+): RawInterviewAnswer[] {
+  return extractInterviewAnswerSubmissionFromHistory(history).answers;
 }
 
 function comparableQuestion(value: string): string {
@@ -227,6 +334,45 @@ export function reconcileInterviewAnswers(
           title: fallbackTitleForInterviewAnswer(source.question),
         };
   });
+}
+
+/**
+ * Keep the card submission authoritative even when the save model returns
+ * malformed JSON or no classifications. An answered card is already an
+ * explicit save intent; the model only adds labels around that source text.
+ */
+export function recoverInterviewAnswers(
+  output: InterviewOutput,
+  rawAnswers: RawInterviewAnswer[],
+  rawAnswersComplete = rawAnswers.length > 0,
+): InterviewOutput {
+  if (!rawAnswersComplete) {
+    return {
+      action: "chat",
+      text:
+        rawAnswers.length > 0
+          ? "I couldn't reliably read every interview answer, so I didn't save a partial result. Please send the answers again and I'll keep them intact."
+          : "I couldn't reliably read the interview card, so I didn't save anything. Please send the answers again and I'll keep them intact.",
+    };
+  }
+  if (rawAnswers.length === 0) {
+    return output.action === "chat"
+      ? output
+      : {
+          action: "chat",
+          text: "No worries — we can try another interview whenever you're ready.",
+        };
+  }
+  if (rawAnswers.length > 0) {
+    return {
+      action: "save",
+      answers: reconcileInterviewAnswers(
+        output.action === "save" ? output.answers : [],
+        rawAnswers,
+      ),
+    };
+  }
+  return output;
 }
 
 const OUTPUT_CONTRACT = `Reply with STRICT JSON only — no prose, no code fences — exactly one of:
@@ -357,6 +503,9 @@ export async function* executeInterviewTurn(
   // same chat. `pendingInterviewAsk` is true only while the latest assistant
   // message is an interview card awaiting its answer.
   const alreadyPlanned = setup.pendingInterviewAsk;
+  const rawInterview = alreadyPlanned
+    ? extractInterviewAnswerSubmissionFromHistory(setup.history)
+    : { answers: [], complete: false };
 
   const system = [
     "You are Cowork's interviewer. The user asked you to interview them so you have fresher, deeper context for future LinkedIn posts. Your job is to surface stories, beliefs, proof, and audience insight that could become content angles — then save them.",
@@ -401,14 +550,12 @@ export async function* executeInterviewTurn(
     output = parseInterviewOutput(result.text);
   }
 
-  if (output.action === "save") {
-    const rawAnswers = extractInterviewAnswersFromHistory(setup.history);
-    if (rawAnswers.length > 0) {
-      output = {
-        action: "save",
-        answers: reconcileInterviewAnswers(output.answers, rawAnswers),
-      };
-    }
+  if (alreadyPlanned) {
+    output = recoverInterviewAnswers(
+      output,
+      rawInterview.answers,
+      rawInterview.complete,
+    );
   }
 
   const latencyMs = Date.now() - startedAt;

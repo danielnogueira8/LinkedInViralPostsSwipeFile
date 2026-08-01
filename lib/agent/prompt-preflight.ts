@@ -52,13 +52,16 @@ export function findUnfilledPlaceholders(text: string): string[] {
   ).slice(0, 6);
 }
 
-export function preflightUserPrompt(input: string): PromptPreflightResult {
+export function preflightUserPrompt(
+  input: string,
+  maxChars = MAX_PROMPT_CHARS,
+): PromptPreflightResult {
   const text = input.trim();
   if (!text) {
     return { ok: false, reason: "empty", message: FRIENDLY.empty, status: 400 };
   }
 
-  if (text.length > MAX_PROMPT_CHARS) {
+  if (text.length > maxChars) {
     return {
       ok: false,
       reason: "overlong",

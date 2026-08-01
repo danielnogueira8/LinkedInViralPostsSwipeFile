@@ -59,6 +59,35 @@ describe("normalizeChatInterviewAnswers", () => {
     expect(result).toEqual({ error: "Every answer was blank — nothing to save." });
   });
 
+  test("preserves an answer longer than the old 2,000-character field limit", () => {
+    const answer = "A".repeat(2_500);
+    const question = "Q".repeat(600);
+    const result = normalizeChatInterviewAnswers([
+      {
+        question,
+        answer,
+        kind: "topic_expertise",
+        title: "Process",
+      },
+    ]);
+    expect("answers" in result && result.answers[0]?.answer).toBe(answer);
+    expect("answers" in result && result.answers[0]?.question).toBe(question);
+  });
+
+  test("rejects an answer beyond the chat boundary instead of shortening it", () => {
+    const result = normalizeChatInterviewAnswers([
+      {
+        question: "What is your process?",
+        answer: "A".repeat(8_001),
+        kind: "topic_expertise",
+        title: "Process",
+      },
+    ]);
+    expect(result).toEqual({
+      error: "Each answer must be 8,000 characters or fewer.",
+    });
+  });
+
   test("caps a session at the max answer count", () => {
     const tooMany = Array.from(
       { length: CHAT_INTERVIEW_MAX_ANSWERS + 1 },
@@ -93,14 +122,17 @@ describe("buildChatInterviewKnowledgeProposals", () => {
     expect(belief?.content).toEqual({
       statement: sampleAnswers[0].answer,
       rationale: null,
+      sourceQuestion: sampleAnswers[0].question,
     });
     expect(proof?.content).toEqual({
       claim: sampleAnswers[1].answer,
       evidence: "Shared in an Interview me chat.",
+      sourceQuestion: sampleAnswers[1].question,
     });
     expect(story?.content).toEqual({
       summary: sampleAnswers[2].answer,
       details: null,
+      sourceQuestion: sampleAnswers[2].question,
     });
   });
 
@@ -122,6 +154,28 @@ describe("buildChatInterviewKnowledgeProposals", () => {
     expect(proposal?.content).toEqual({
       topic: "The three-step process for turning an idea into a post",
       basis: answer,
+      sourceQuestion: "What exact process turns a raw idea into a finished post?",
+    });
+  });
+
+  test("builds a proposal without shortening a long answer", () => {
+    const answer = "A".repeat(2_500);
+    const [proposal] = buildChatInterviewKnowledgeProposals({
+      workspaceId: "workspace-1",
+      answers: [
+        {
+          question: "What is your process?",
+          answer,
+          kind: "topic_expertise",
+          title: "Process",
+        },
+      ],
+    });
+
+    expect(proposal?.content).toEqual({
+      topic: "Process",
+      basis: answer,
+      sourceQuestion: "What is your process?",
     });
   });
 
