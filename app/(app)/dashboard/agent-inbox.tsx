@@ -10,6 +10,7 @@ import {
   CheckCircle2,
   ChevronRight,
   ExternalLink,
+  Eye,
   FileText,
   GraduationCap,
   Lightbulb,
@@ -407,17 +408,59 @@ export function OpportunityCard({
   );
 }
 
-const messageStateCopy: Record<
+const messageStatePresentation: Record<
   AgentMessageState,
-  { label: string; className: string }
+  {
+    label: string;
+    className: string;
+    rowClassName: string;
+    titleClassName: string;
+  }
 > = {
-  unread: { label: "Unread", className: "text-sky-600 dark:text-sky-400" },
-  read: { label: "Read", className: "text-muted-foreground" },
-  done: { label: "Done", className: "text-emerald-600 dark:text-emerald-400" },
-  discarded: { label: "Discarded", className: "text-muted-foreground" },
-  archived: { label: "Archived", className: "text-muted-foreground" },
-  expired: { label: "Expired", className: "text-muted-foreground" },
+  unread: {
+    label: "Unread",
+    className: "text-sky-600 dark:text-sky-400",
+    rowClassName: "bg-sky-50/75 dark:bg-sky-950/20",
+    titleClassName: "font-semibold",
+  },
+  read: {
+    label: "Opened",
+    className: "text-stone-600 dark:text-stone-300",
+    rowClassName: "bg-stone-50/80 dark:bg-stone-950/20",
+    titleClassName: "font-medium",
+  },
+  done: {
+    label: "Done",
+    className: "text-emerald-600 dark:text-emerald-400",
+    rowClassName: "bg-emerald-50/70 dark:bg-emerald-950/20",
+    titleClassName: "font-medium",
+  },
+  discarded: {
+    label: "Discarded",
+    className: "text-muted-foreground",
+    rowClassName: "bg-muted/35",
+    titleClassName: "font-medium",
+  },
+  archived: {
+    label: "Archived",
+    className: "text-muted-foreground",
+    rowClassName: "bg-muted/35",
+    titleClassName: "font-medium",
+  },
+  expired: {
+    label: "Expired",
+    className: "text-muted-foreground",
+    rowClassName: "bg-muted/35",
+    titleClassName: "font-medium",
+  },
 };
+
+function messageStatePresentationFor(
+  idea: Pick<AgentFeedIdea, "status" | "readAt">,
+) {
+  const state = agentMessageState(idea);
+  return { state, ...messageStatePresentation[state] };
+}
 
 function MessageStateBadge({
   idea,
@@ -426,26 +469,25 @@ function MessageStateBadge({
   idea: AgentFeedIdea;
   compact?: boolean;
 }) {
-  const state = agentMessageState(idea);
-  const copy = messageStateCopy[state];
+  const { state, label, className } = messageStatePresentationFor(idea);
   return (
     <span
       className={cn(
         "inline-flex shrink-0 items-center gap-1 text-[11px] font-medium",
-        copy.className,
+        className,
       )}
-      title={copy.label}
+      title={label}
     >
       {state === "unread" ? (
         <span className="size-1.5 rounded-full bg-current" aria-hidden />
       ) : state === "read" ? (
-        <Check className="size-3.5" aria-hidden />
+        <Eye className="size-3.5" aria-hidden />
       ) : state === "done" ? (
         <CheckCircle2 className="size-3.5" aria-hidden />
       ) : (
         <X className="size-3.5" aria-hidden />
       )}
-      <span className={compact ? "sr-only" : undefined}>{copy.label}</span>
+      <span className={compact ? "sr-only" : undefined}>{label}</span>
     </span>
   );
 }
@@ -462,6 +504,7 @@ function RecommendationRow({
   onSelect: () => void;
 }) {
   const copy = laneCopy[idea.lane];
+  const { rowClassName, titleClassName } = messageStatePresentationFor(idea);
   return (
     <button
       type="button"
@@ -469,10 +512,11 @@ function RecommendationRow({
       aria-label={`${copy.label}: ${idea.headline}`}
       onClick={onSelect}
       className={cn(
-        "flex w-full items-start gap-3 border-l-2 px-4 py-4 text-left transition-colors hover:bg-muted/40",
+        "flex w-full items-start gap-3 border-l-2 px-4 py-4 text-left transition-[background-color,box-shadow,border-color] hover:ring-1 hover:ring-inset hover:ring-foreground/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/50",
+        rowClassName,
         selected
-          ? "border-primary bg-primary/5"
-          : "border-transparent bg-background",
+          ? "border-l-violet-500 ring-1 ring-inset ring-violet-500/25"
+          : "border-transparent",
       )}
     >
       <LaneAvatar
@@ -487,7 +531,12 @@ function RecommendationRow({
             {formatDecisionDay(idea.createdAt)}
           </span>
         </span>
-        <span className="mt-1 block line-clamp-2 text-sm font-semibold leading-5">
+        <span
+          className={cn(
+            "mt-1 block line-clamp-2 text-sm leading-5",
+            titleClassName,
+          )}
+        >
           {idea.headline}
         </span>
         <span className="mt-1 block line-clamp-1 text-xs leading-5 text-muted-foreground">
@@ -746,14 +795,17 @@ export function AgentInbox() {
   const unreadCount = feedActive.filter(
     (idea) => agentMessageState(idea) === "unread",
   ).length;
-  const readCount = feedActive.length - unreadCount;
+  const openedCount = feedActive.length - unreadCount;
   const queueSummary = feedActive.length
     ? `${unreadCount} unread, evidence-backed idea${unreadCount === 1 ? "" : "s"} ${unreadCount === 1 ? "is" : "are"} ready. Open one in Cowork when you want to use it.`
     : "Your agents are looking for fresh opportunities. New ideas arrive every day.";
   const selectedVisibleIdea =
-    displayedIdeas.find((idea) => idea.id === selectedIdea?.id) ??
-    displayedIdeas[0] ??
-    null;
+    displayedIdeas.find((idea) => idea.id === selectedIdea?.id) ?? null;
+
+  function handleFilterChange(filter: AgentLaneFilter) {
+    setSelectedFilter(filter);
+    setSelectedIdea(null);
+  }
 
   function patchReadAt(ideaId: string, readAt: string | null) {
     setData((current) => {
@@ -1006,7 +1058,7 @@ export function AgentInbox() {
                       key={filter}
                       type="button"
                       aria-pressed={selectedFilter === filter}
-                      onClick={() => setSelectedFilter(filter)}
+                      onClick={() => handleFilterChange(filter)}
                       className={cn(
                         "inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full px-3 text-xs font-medium transition-colors",
                         selectedFilter === filter
@@ -1065,7 +1117,12 @@ export function AgentInbox() {
           </div>
           <div
             id="agent-opportunity-grid"
-            className="mt-4 grid min-h-[32rem] grid-cols-1 items-stretch gap-4 xl:grid-cols-[minmax(17rem,0.82fr)_minmax(0,1.18fr)]"
+            className={cn(
+              "mt-4 items-stretch",
+              selectedVisibleIdea
+                ? "grid min-h-[32rem] grid-cols-1 gap-4 xl:grid-cols-[minmax(17rem,0.82fr)_minmax(0,1.18fr)]"
+                : "block",
+            )}
           >
             <div className="overflow-hidden rounded-2xl border bg-card">
               <div className="flex items-center justify-between border-b border-border/70 px-4 py-3">
@@ -1073,7 +1130,7 @@ export function AgentInbox() {
                   New today
                 </span>
                 <span className="text-xs text-muted-foreground">
-                  {unreadCount} unread · {readCount} read
+                  {unreadCount} unread · {openedCount} opened
                 </span>
               </div>
               <div className="divide-y divide-border/70">
@@ -1101,22 +1158,16 @@ export function AgentInbox() {
                 )}
               </div>
             </div>
-            <div className="rounded-2xl border bg-card p-5 sm:p-6">
-              {selectedVisibleIdea ? (
+            {selectedVisibleIdea ? (
+              <div className="rounded-2xl border bg-card p-5 sm:p-6">
                 <RecommendationDetails
                   idea={selectedVisibleIdea}
                   busy={busyId === selectedVisibleIdea.id}
                   onAction={handleAction}
                   onToggleRead={toggleRead}
                 />
-              ) : (
-                <div className="flex min-h-[27rem] items-center justify-center text-center">
-                  <p className="max-w-xs text-sm text-muted-foreground">
-                    Select a recommendation to review its angle and evidence.
-                  </p>
-                </div>
-              )}
-            </div>
+              </div>
+            ) : null}
           </div>
         </div>
 
@@ -1162,10 +1213,14 @@ export function AgentInbox() {
               <div className="mt-2 divide-y divide-border/70">
                 {feedActivity.slice(0, 5).map((idea) => {
                   const meta = statusMeta[idea.status] ?? statusMeta.expired;
+                  const { rowClassName } = messageStatePresentationFor(idea);
                   return (
                     <div
                       key={idea.id}
-                      className="flex items-center gap-3 py-2.5 text-sm"
+                      className={cn(
+                        "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm",
+                        rowClassName,
+                      )}
                       title={idea.discardReason ?? undefined}
                     >
                       <MessageStateBadge idea={idea} compact />
