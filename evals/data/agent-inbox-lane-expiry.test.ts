@@ -9,7 +9,7 @@ import { readFileSync } from "node:fs";
 
 describe("every lane expires", () => {
   test("no lane has an unbounded lifetime", () => {
-    // The bug: only newsjacking set expires_at. The other three stored NULL,
+    // The bug: only newsjacking set expires_at. The other two stored NULL,
     // so their ideas never aged out, the lane sat permanently at the cap, and
     // replenish() stopped requesting it — the board froze while the daily run
     // kept completing "successfully" with zero cards created.
@@ -23,9 +23,6 @@ describe("every lane expires", () => {
   test("a timely lane rots faster than an evergreen one", () => {
     expect(laneLifetimeHours("newsjacking")).toBeLessThan(
       laneLifetimeHours("educational"),
-    );
-    expect(laneLifetimeHours("namejacking")).toBeLessThan(
-      laneLifetimeHours("personal_story"),
     );
   });
 
@@ -132,7 +129,6 @@ describe("migration 162 backfills the stranded rows", () => {
     // The two are separate sources of truth; a drift here means the backfill
     // and the synthesizer disagree about when a lane turns over.
     expect(sql).toContain(`interval '${laneLifetimeHours("newsjacking")} hours'`);
-    expect(sql).toContain(`interval '${laneLifetimeHours("namejacking")} hours'`);
     expect(sql).toContain(`interval '${laneLifetimeHours("educational")} hours'`);
   });
 

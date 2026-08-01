@@ -76,35 +76,30 @@ describe("OpportunityCard lane states", () => {
     expect(html).not.toContain("Draft started");
   });
 
-  // A card is a pitch, not a report: collapsed it carries only what the triage
-  // decision needs. These tests render the initial (collapsed) state, which is
-  // exactly what a user sees before showing interest.
-  test("a collapsed card shows only the headline and angle", () => {
+  test("a card shows the lane, headline, angle, and approval context", () => {
     const html = renderCard({ idea: idea() });
     expect(html).toContain("Turn your strongest topic into a practical teardown");
     expect(html).toContain("A specific direction grounded in evidence.");
+    expect(html).toContain("Expertise");
+    expect(html).toContain("Why it fits you");
+    expect(html).toContain("Use this idea");
     expect(html).not.toContain("Draft started");
     expect(html).not.toContain("No strong fit today");
   });
 
-  test("a collapsed card defers the dossier and the actions to the expand", () => {
+  test("a card keeps the primary decision in the queue", () => {
     const html = renderCard({
       idea: idea({
         why: ["Reason one", "Reason two", "Reason three"],
         sourceUrl: "https://example.test/story",
       }),
     });
-    // The argument for the idea belongs to the expanded state — showing it up
-    // front is what made three cards fill a viewport.
+    expect(html).toContain("Why it fits you");
+    expect(html).toContain("Reason one");
+    expect(html).toContain("Use this idea");
+    expect(html).toContain("Not today");
     expect(html).not.toContain("Why this is worth your attention");
-    expect(html).not.toContain("Reason one");
-    expect(html).not.toContain("Read source");
-    // Expanding is the signal of intent, so that is where actions live. Nine
-    // buttons across a collapsed row of three is the clutter this removes.
     expect(html).not.toContain("Start draft");
-    expect(html).not.toContain("Not today");
-    // The card itself is the toggle, so triage is one click anywhere on it.
-    expect(html).toContain('aria-expanded="false"');
   });
 
   test("the evidence-strength bar is gone from the card", () => {
@@ -116,7 +111,7 @@ describe("OpportunityCard lane states", () => {
     expect(html).not.toContain("94%");
   });
 
-  test("evidence chips stay out of the collapsed card", () => {
+  test("the card previews evidence and leaves the full dossier to details", () => {
     const html = renderCard({
       idea: idea({
         evidence: [
@@ -126,9 +121,9 @@ describe("OpportunityCard lane states", () => {
         ],
       }),
     });
-    // Chips move into the expanded state with the rest of the dossier; the
-    // no-"+N more" guarantee still holds once expanded (all chips render).
-    expect(html).not.toMatch(/\+\d more</);
+    expect(html).toContain("Story one");
+    expect(html).toContain("Signal two");
+    expect(html).toContain("+1 more");
     expect(html).not.toContain("Posts");
   });
 });

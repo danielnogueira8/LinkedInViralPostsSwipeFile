@@ -5,11 +5,12 @@ import { truncateAtWordBoundary } from "@/lib/text-truncate";
 // axis described where evidence came from, which let two cards share a
 // framework and read as near-duplicates while sitting in different lanes.
 // Naming the framework makes each lane a different KIND of post by
-// construction, and maps 1:1 onto the skills that already exist.
+// construction. Namejacking remains available as an intentional manual skill,
+// but it is not a daily inbox lane: it overlaps with timely newsjacking and
+// would make the review queue wider without adding a distinct decision.
 export const AGENT_INBOX_LANES = [
   "newsjacking",
   "personal_story",
-  "namejacking",
   "educational",
 ] as const;
 export type AgentInboxLane = (typeof AGENT_INBOX_LANES)[number];
@@ -120,9 +121,6 @@ export function laneLifetimeHours(lane: AgentInboxLane): number {
   switch (lane) {
     case "newsjacking":
       return 72;
-    case "namejacking":
-      // Also anchored to a named moment, but the name outlives the headline.
-      return 120;
     case "educational":
     case "personal_story":
       // Evergreen material, but the POINT is a fresh angle on it each week.
@@ -168,10 +166,6 @@ export function laneEvidenceSatisfied(
             (!entry.subtype ||
               ["story", "belief", "proof"].includes(entry.subtype))),
       );
-    // Borrowing attention needs someone to borrow it FROM, and the named
-    // person or company only ever arrives on a news item.
-    case "namejacking":
-      return datedNews;
     // Expertise the user has actually demonstrated: measured performance, or
     // knowledge they approved. Anything else is a generic explainer.
     case "educational":

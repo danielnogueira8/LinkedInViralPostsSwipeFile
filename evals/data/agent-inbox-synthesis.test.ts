@@ -261,18 +261,4 @@ describe("createAgentInboxSynthesis lane capacity", () => {
     expect(results).toEqual([]);
   });
 
-  it("requires a grounded named entity for namejacking", async () => {
-    completeChat.mockResolvedValue(
-      modelResponse([
-        rawIdea("namejacking", 1, ["N1"], {
-          headline: "LinkedIn changes the trust signal",
-          entity: "LinkedIn",
-        }),
-      ]),
-    );
-    const results = await createAgentInboxSynthesis().synthesize(
-      input(["namejacking"]),
-    );
-    expect(results).toEqual([]);
-  });
 });

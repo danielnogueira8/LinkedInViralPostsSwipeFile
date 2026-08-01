@@ -41,6 +41,13 @@ const migration = readFileSync(
   ),
   "utf8",
 );
+const retirementMigration = readFileSync(
+  new URL(
+    "../../db/migration-165-retire-namejacking-inbox-lane.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
 const synthesisSource = readFileSync(
   new URL("../../lib/agent-inbox/synthesis.ts", import.meta.url),
   "utf8",
@@ -65,7 +72,7 @@ function ev(kind: AgentInboxEvidence["kind"]): AgentInboxEvidence {
 }
 
 describe("framework lanes", () => {
-  test("the lanes are the four post frameworks", () => {
+  test("the inbox has four distinct decisions including Trend Radar", () => {
     // The old now/proven/explore axis described where evidence came from, so
     // two cards could share a framework and read as near-duplicates while
     // sitting in different lanes. Naming the framework fixes that by
@@ -73,22 +80,23 @@ describe("framework lanes", () => {
     expect([...AGENT_INBOX_LANES]).toEqual([
       "newsjacking",
       "personal_story",
-      "namejacking",
       "educational",
+    ]);
+    expect([...AGENT_FEED_LANES]).toEqual([
+      "newsjacking",
+      "personal_story",
+      "educational",
+      "trend_radar",
     ]);
   });
 });
 
 describe("laneEvidenceSatisfied", () => {
-  test("newsjacking and namejacking both require a dated story", () => {
-    // Timeliness is the claim newsjacking makes; namejacking needs a named
-    // person or company, which only ever arrives on a news item.
-    for (const lane of ["newsjacking", "namejacking"] as const) {
-      expect(laneEvidenceSatisfied(lane, [ev("news")])).toBe(true);
-      expect(laneEvidenceSatisfied(lane, [ev("knowledge")])).toBe(false);
-      expect(laneEvidenceSatisfied(lane, [ev("performance")])).toBe(false);
-      expect(laneEvidenceSatisfied(lane, [])).toBe(false);
-    }
+  test("newsjacking requires a dated story", () => {
+    expect(laneEvidenceSatisfied("newsjacking", [ev("news")])).toBe(true);
+    expect(laneEvidenceSatisfied("newsjacking", [ev("knowledge")])).toBe(false);
+    expect(laneEvidenceSatisfied("newsjacking", [ev("performance")])).toBe(false);
+    expect(laneEvidenceSatisfied("newsjacking", [])).toBe(false);
   });
 
   test("personal_story requires the user's own material", () => {
@@ -147,7 +155,6 @@ describe("synthesis prompt", () => {
     for (const lane of [
       "NEWSJACKING",
       "PERSONAL_STORY",
-      "NAMEJACKING",
       "EDUCATIONAL",
     ]) {
       expect(synthesisSource).toContain(lane);
@@ -159,26 +166,20 @@ describe("synthesis prompt", () => {
     expect(synthesisSource).toContain("Never invent one");
   });
 
-  test("requires namejacking to name someone and not disparage them", () => {
-    expect(synthesisSource).toContain("SPECIFIC named person or company");
-    expect(synthesisSource).toContain("Never disparage a named person");
-  });
 });
 
 describe("draft hand-off", () => {
   test("each lane frames the draft as its own kind of post", () => {
-    // Verified against selectSkills(): the newsjacking and namejacking prompts
-    // activate their authored skills by naming them, so acting on a card
-    // starts the draft with that framework's craft rules already applied.
-    // personal_story and educational have no dedicated skill and carry an
-    // explicit instruction instead.
+    // The newsjacking prompt activates its authored skill by naming it, so
+    // acting on a card starts the draft with that framework's craft rules
+    // already applied. personal_story and educational carry explicit
+    // instructions instead.
     const framings = AGENT_INBOX_LANES.map((lane) =>
       agentInboxDraftPrompt({ ...baseIdea, lane }),
     );
     expect(framings[0]).toContain("/newsjacking");
     expect(framings[1]).toContain("never invent a story");
-    expect(framings[2]).toContain("/namejacking");
-    expect(framings[3]).toContain("educational post");
+    expect(framings[2]).toContain("educational post");
     // Every lane says something different about how to write.
     expect(new Set(framings).size).toBe(AGENT_INBOX_LANES.length);
   });
@@ -222,6 +223,31 @@ describe("migration 161", () => {
   });
 });
 
+describe("migration 165", () => {
+  test("preserves Namedrop history by remapping it to Newsjacking", () => {
+    expect(retirementMigration).toContain(
+      "set lane = 'newsjacking'",
+    );
+    expect(retirementMigration).toContain("where lane = 'namejacking'");
+    expect(retirementMigration).toContain(
+      "when lane = 'namejacking' then 'newsjacking'",
+    );
+  });
+
+  test("removes the retired lane from the database allow-lists", () => {
+    expect(retirementMigration).toContain(
+      "check (lane in ('newsjacking', 'personal_story', 'educational'))",
+    );
+    expect(retirementMigration).toContain(
+      "where lane not in ('newsjacking', 'personal_story', 'educational')",
+    );
+  });
+
+  test("advances the schema version", () => {
+    expect(retirementMigration).toContain("values (true, 165, now())");
+  });
+});
+
 describe("agent names", () => {
   const source = readFileSync(
     new URL("../../app/(app)/dashboard/agent-inbox.tsx", import.meta.url),
@@ -229,19 +255,17 @@ describe("agent names", () => {
   );
 
   test("every lane has a distinct agent name", () => {
-    // "Expertise" rather than "Educational" because the lane is gated on
-    // demonstrated results rather than on a teaching format.
-    for (const name of [
-      "Trend Radar Agent",
-      "Story Miner Agent",
-      "Namedrop Agent",
-      "Expertise Agent",
-    ]) {
+    // The UI labels are short outcomes, not repeated "Agent" suffixes. They
+    // stay distinct so the filter bar remains scannable.
+    const laneLabels = [
+      "Trend Radar",
+      "Story Miner",
+      "Expertise",
+      "Newsjacking",
+    ];
+    for (const name of laneLabels) {
       expect(source).toContain(`label: "${name}"`);
     }
-    // Guards a rename that collapses two lanes onto one label.
-    expect(source.match(/label: "[^"]*Agent"/g)).toHaveLength(
-      AGENT_FEED_LANES.length,
-    );
+    expect(new Set(laneLabels).size).toBe(AGENT_FEED_LANES.length);
   });
 });

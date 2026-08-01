@@ -3,12 +3,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
+  Activity,
   AudioLines,
-  BellRing,
   BookOpen,
-  AtSign,
   CheckCircle2,
-  ChevronDown,
+  ChevronRight,
   Clock3,
   ExternalLink,
   FileText,
@@ -52,51 +51,37 @@ const laneCopy: Record<
     label: string;
     description: string;
     icon: typeof Newspaper;
-    // Avatar art slug from public/agents/ — the same DiceBear Bottts set the
-    // Claude Workflows page uses (see components/agent-avatar.tsx).
-    avatar: string;
+    tone: string;
   }
 > = {
   newsjacking: {
-    label: "Newsjacking Agent",
-    description: "Turn a verified current story into your point of view",
+    label: "Newsjacking",
+    description: "React to a verified moment",
     icon: Newspaper,
-    avatar: "timing-strategist",
+    tone: "bg-amber-500/10 text-amber-700 dark:text-amber-300",
   },
   personal_story: {
-    // Names the digging: the material already exists in the knowledge base,
-    // and the agent's job is to surface it rather than invent it.
-    label: "Story Miner Agent",
-    description: "An achievement, a struggle, or something you lived",
+    label: "Story Miner",
+    description: "Mine an experience you actually lived",
     icon: BookOpen,
-    avatar: "hook-scout",
-  },
-  namejacking: {
-    // Plainer than "namejacking", and honest that the lane covers companies
-    // as readily as people.
-    label: "Namedrop Agent",
-    description: "Borrow attention from a name your audience follows",
-    icon: AtSign,
-    avatar: "offer-hunter",
+    tone: "bg-violet-500/10 text-violet-700 dark:text-violet-300",
   },
   educational: {
-    // "Educational" describes a format; this lane is gated on evidence the
-    // user has actually earned the right to teach from.
-    label: "Expertise Agent",
+    label: "Expertise",
     description: "Teach something you have proven works",
     icon: GraduationCap,
-    avatar: "bulk-writer",
+    tone: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
   },
   trend_radar: {
-    label: "Trend Radar Agent",
-    description: "Find a conversation before tracked creators do",
+    label: "Trend Radar",
+    description: "Surface a fresh signal for review",
     icon: Radar,
-    avatar: "trend-radar",
+    tone: "bg-rose-500/10 text-rose-700 dark:text-rose-300",
   },
 };
 
-// Context-card pattern: every evidence chip carries a kind icon and a short
-// mono kind tag so the source of a claim is scannable at a glance.
+// Evidence metadata keeps the source of a claim scannable in both the queue
+// preview and the full detail drawer.
 const evidenceKindMeta: Record<
   AgentInboxEvidence["kind"],
   { tag: string; full: string; icon: typeof Newspaper }
@@ -133,29 +118,122 @@ function formatDecisionDay(iso: string): string {
   });
 }
 
-function EvidenceChip({
-  entry,
-  onOpen,
-}: {
-  entry: AgentInboxEvidence;
-  onOpen: () => void;
-}) {
+function ideaEvidenceDate(idea: AgentFeedIdea): string | null {
+  const iso =
+    idea.sourcePublishedAt ??
+    idea.evidence.find((entry) => entry.publishedAt)?.publishedAt ??
+    null;
+  if (!iso) return null;
+  const formatted = formatDecisionDay(iso);
+  return formatted || null;
+}
+
+type AgentLaneFilter = "all" | AgentFeedLane;
+
+function EvidencePreview({ entry }: { entry: AgentInboxEvidence }) {
   const meta = evidenceKindMeta[entry.kind] ?? evidenceKindMeta.knowledge;
   const Icon = meta.icon;
   return (
-    <button
-      type="button"
-      // Kind tag only (icon + "News"/"Draft"/…) so the whole evidence row
-      // fits on one line; the label stays on the tooltip and in the dialog.
-      className="inline-flex shrink-0 items-center gap-1 rounded-md border bg-muted/50 px-1.5 py-0.5 transition-colors hover:border-foreground/30 hover:bg-muted"
+    <span
+      className="inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-full border bg-background/70 px-2.5 py-1 text-xs text-muted-foreground"
       title={entry.detail || entry.label}
-      onClick={onOpen}
     >
-      <Icon className="size-3 shrink-0 text-muted-foreground" aria-hidden />
-      <span className="shrink-0 font-mono text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-        {meta.tag}
+      <Icon className="size-3 shrink-0" aria-hidden />
+      <span className="truncate">{entry.label || meta.tag}</span>
+    </span>
+  );
+}
+
+function LanePill({ lane }: { lane: AgentFeedLane }) {
+  const copy = laneCopy[lane];
+  const Icon = copy.icon;
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-background/70 px-2.5 py-1 text-xs font-semibold">
+      <span className={cn("grid size-5 place-items-center rounded-full", copy.tone)}>
+        <Icon className="size-3" aria-hidden />
       </span>
-    </button>
+      {copy.label}
+    </span>
+  );
+}
+
+type OpportunityAction = "act" | "snooze" | "discard";
+
+function OpportunityActions({
+  idea,
+  busy,
+  onAction,
+  drawer = false,
+}: {
+  idea: AgentFeedIdea;
+  busy: boolean;
+  onAction: (idea: AgentFeedIdea, action: OpportunityAction) => void;
+  drawer?: boolean;
+}) {
+  if (drawer) {
+    return (
+      <>
+        <Button
+          className="w-full rounded-full"
+          disabled={busy}
+          onClick={() => onAction(idea, "act")}
+        >
+          {busy ? <Loader2 className="animate-spin" /> : <AiIcon />}
+          Use this idea
+        </Button>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            className="flex-1 rounded-full"
+            disabled={busy}
+            onClick={() => onAction(idea, "snooze")}
+          >
+            <Clock3 /> Not today
+          </Button>
+          <Button
+            variant="ghost"
+            className="rounded-full"
+            disabled={busy}
+            onClick={() => onAction(idea, "discard")}
+          >
+            <X /> Dismiss
+          </Button>
+        </div>
+      </>
+    );
+  }
+
+  return (
+    <div className="mt-auto flex items-center gap-2 pt-5">
+      <Button
+        className="h-10 flex-1 rounded-full text-xs"
+        disabled={busy}
+        onClick={() => onAction(idea, "act")}
+      >
+        {busy ? <Loader2 className="animate-spin" /> : <AiIcon />}
+        Use this idea
+      </Button>
+      <Button
+        variant="outline"
+        className="h-10 shrink-0 rounded-full px-3 text-xs"
+        disabled={busy}
+        title="Skip this for today — it comes back tomorrow"
+        onClick={() => onAction(idea, "snooze")}
+      >
+        <Clock3 /> Not today
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="h-10 w-10 shrink-0 rounded-full"
+        disabled={busy}
+        title="Dismiss this idea"
+        aria-label="Dismiss this idea"
+        onClick={() => onAction(idea, "discard")}
+      >
+        <X />
+      </Button>
+    </div>
   );
 }
 
@@ -173,12 +251,17 @@ function tomorrowIso(): string {
 // Exported for evals/data/agent-inbox-card.test.ts.
 export function OpportunityCard({
   idea,
+  lane,
   acted,
   snoozed,
   busy,
   onAction,
+  onOpenDetails,
+  moreCount = 0,
+  onViewMore,
 }: {
   idea?: AgentFeedIdea;
+  lane?: AgentFeedLane;
   // The idea the user acted on from this lane today, so the card can say the
   // draft started instead of showing the misleading "no strong fit" empty state.
   acted?: AgentFeedIdea;
@@ -190,226 +273,114 @@ export function OpportunityCard({
     idea: AgentFeedIdea,
     action: "act" | "snooze" | "discard",
   ) => void;
+  onOpenDetails?: () => void;
+  moreCount?: number;
+  onViewMore?: (lane: AgentFeedLane) => void;
 }) {
-  // Clicking any evidence chip opens the full evidence list so users can read
-  // what each source actually says before trusting the idea.
-  const [evidenceOpen, setEvidenceOpen] = useState(false);
-  // A card is a pitch, not a report. Collapsed shows only what the triage
-  // decision needs — headline plus one line of angle. Everything that argues
-  // the case (why-bullets, evidence chips, sources, actions) is deferred to
-  // the expand, so four lanes of three fit on screen instead of one and a
-  // half. Expanding is what signals interest, so that is where the full
-  // dossier and the action row belong.
-  const [expanded, setExpanded] = useState(false);
+  const cardLane = idea?.lane ?? lane ?? acted?.lane ?? snoozed?.lane;
+  const copy = cardLane ? laneCopy[cardLane] : null;
   if (!idea) {
-    // Lane-empty placeholder (the lane header lives on the section above, so
-    // this is a slim dashed panel, not a full card).
     return (
-      <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-border px-4 py-5 text-center">
-        {acted ? (
-          <>
-            <p className="flex items-center gap-1.5 text-sm font-medium">
-              <CheckCircle2
-                className="size-4 text-state-success"
-                aria-hidden
-              />
-              Draft started
-            </p>
-            <p className="mt-1 line-clamp-1 text-sm text-muted-foreground">
-              &ldquo;{acted.headline}&rdquo;
-            </p>
-          </>
-        ) : snoozed ? (
-          <>
-            <p className="flex items-center gap-1.5 text-sm font-medium">
-              <Clock3 className="size-4 text-muted-foreground" aria-hidden />
-              Back tomorrow
-            </p>
-            <p className="mt-1 line-clamp-1 text-sm text-muted-foreground">
-              &ldquo;{snoozed.headline}&rdquo;
-            </p>
-          </>
-        ) : (
-          <>
-            <p className="flex items-center gap-1.5 text-sm font-medium">
-              <Lightbulb className="size-4 text-muted-foreground" aria-hidden />
-              No strong fit today
-            </p>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Your Agent leaves a lane empty rather than force a weak idea.
-            </p>
-          </>
-        )}
+      <div className="flex min-h-56 flex-col rounded-2xl border border-dashed border-border bg-muted/20 p-5">
+        {cardLane ? <LanePill lane={cardLane} /> : null}
+        <div className="flex flex-1 flex-col items-center justify-center text-center">
+          {acted ? (
+            <>
+              <p className="flex items-center gap-1.5 text-sm font-medium">
+                <CheckCircle2
+                  className="size-4 text-state-success"
+                  aria-hidden
+                />
+                Draft started
+              </p>
+              <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
+                &ldquo;{acted.headline}&rdquo;
+              </p>
+            </>
+          ) : snoozed ? (
+            <>
+              <p className="flex items-center gap-1.5 text-sm font-medium">
+                <Clock3 className="size-4 text-muted-foreground" aria-hidden />
+                Back tomorrow
+              </p>
+              <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
+                &ldquo;{snoozed.headline}&rdquo;
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="flex items-center gap-1.5 text-sm font-medium">
+                <Lightbulb className="size-4 text-muted-foreground" aria-hidden />
+                No strong fit today
+              </p>
+              <p className="mt-1 max-w-xs text-sm text-muted-foreground">
+                We leave this lane empty rather than force a weak idea.
+              </p>
+            </>
+          )}
+        </div>
       </div>
     );
   }
   return (
-    <article
-      className={cn(
-        "flex w-full flex-col rounded-2xl border border-border bg-card p-3.5 transition-colors",
-        // Only the expanded card earns a shadow and a stronger edge; a
-        // collapsed row of three should read as quiet list items.
-        expanded ? "shadow-sm" : "hover:border-foreground/20",
-      )}
-      data-expanded={expanded}
-    >
-      {/* Collapsed surface: the whole card is the toggle, so triage is one
-          click anywhere rather than hunting a small "View more" link. */}
-      <button
-        type="button"
-        className="flex w-full flex-col items-start gap-1 text-left"
-        aria-expanded={expanded}
-        onClick={() => setExpanded((current) => !current)}
-      >
-        <span className="flex w-full items-start gap-2">
-          <span className="text-balance text-sm font-semibold leading-snug">
-            {idea.headline}
+    <article className="flex h-full w-full flex-col rounded-2xl border border-border bg-card p-5 shadow-soft transition-colors hover:border-foreground/20">
+      <header className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2.5">
+          {copy ? <LanePill lane={idea.lane} /> : null}
+          <span className="min-w-0 truncate text-xs text-muted-foreground">
+            {ideaEvidenceDate(idea)
+              ? `Published ${ideaEvidenceDate(idea)}`
+              : "Ready to review"}
           </span>
-          <ChevronDown
-            className={cn(
-              "ml-auto mt-0.5 size-4 shrink-0 text-muted-foreground transition-transform",
-              expanded && "rotate-180",
-            )}
-            aria-hidden
-          />
-        </span>
-        <span
-          className={cn(
-            "text-sm leading-6 text-muted-foreground",
-            !expanded && "line-clamp-1",
-          )}
-        >
+        </div>
+        {onOpenDetails ? (
+          <button
+            type="button"
+            className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+            onClick={onOpenDetails}
+          >
+            Details <ChevronRight className="size-3.5" aria-hidden />
+          </button>
+        ) : null}
+      </header>
+      <div className="mt-5">
+        <h3 className="text-balance text-base font-semibold leading-snug">
+          {idea.headline}
+        </h3>
+        <p className="mt-2 text-sm leading-6 text-muted-foreground">
           {idea.angle}
-        </span>
-      </button>
-      {expanded ? (
-        <div className="mt-3 border-t pt-3">
-          {/* Every chip stays visible — the source mix is the reason to trust
-              the idea; the full label lives on the chip tooltip and in the
-              dialog, so the row stays on one line. */}
-          <div className="flex flex-nowrap gap-1.5 overflow-x-auto">
-            {idea.evidence.map((entry, index) => (
-              <EvidenceChip
-                key={`${entry.label}-${index}`}
-                entry={entry}
-                onOpen={() => setEvidenceOpen(true)}
-              />
-            ))}
-          </div>
-          <p className="mt-3 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-            Why this is worth your attention
-          </p>
-          <ul className="mt-2 space-y-1.5 text-sm leading-5">
-            {idea.why.map((reason) => (
-              <li key={reason} className="flex gap-2">
-                <span aria-hidden>•</span>
-                <span>{reason}</span>
-              </li>
-            ))}
-          </ul>
-          {idea.sourceUrl ? (
-            <a
-              href={idea.sourceUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="mt-2 inline-flex items-center gap-1 text-xs underline-offset-4 hover:underline"
-            >
-              Read source <ExternalLink className="size-3" aria-hidden />
-            </a>
-          ) : null}
-        </div>
+        </p>
+      </div>
+      <div className="mt-4 rounded-xl bg-muted/40 p-3.5">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+          Why it fits you
+        </p>
+        <p className="mt-1.5 text-sm leading-5">
+          {idea.why[0] ?? "It is grounded in evidence from your workspace."}
+        </p>
+      </div>
+      <div className="mt-4 flex min-w-0 flex-wrap items-center gap-1.5">
+        <span className="mr-1 text-xs text-muted-foreground">Based on</span>
+        {idea.evidence.slice(0, 2).map((entry, index) => (
+          <EvidencePreview key={`${entry.label}-${index}`} entry={entry} />
+        ))}
+        {idea.evidence.length > 2 ? (
+          <span className="text-xs text-muted-foreground">
+            +{idea.evidence.length - 2} more
+          </span>
+        ) : null}
+      </div>
+      {moreCount > 0 && onViewMore ? (
+        <button
+          type="button"
+          className="mt-3 inline-flex w-fit items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground"
+          onClick={() => onViewMore(idea.lane)}
+        >
+          See {moreCount} more from {copy?.label ?? "this agent"}
+          <ChevronRight className="size-3.5" aria-hidden />
+        </button>
       ) : null}
-      {/* Actions ride the expanded state: expanding is the signal of intent,
-          and a collapsed row of three cards showing nine buttons is the
-          clutter this layout exists to remove. `score` still orders the
-          lane — it just no longer spends a heading and a full-width bar to
-          show a number the user cannot act on, and which in practice lands
-          in the same 94-95% band on every card. */}
-      {expanded ? (
-        <div className="mt-4">
-          <div className="flex items-center gap-2">
-          <Button
-            className="h-9 flex-1 rounded-full text-xs"
-            disabled={busy}
-            onClick={() => onAction(idea, "act")}
-          >
-            {busy ? <Loader2 className="animate-spin" /> : <AiIcon />}
-            Start draft
-          </Button>
-          <Button
-            variant="outline"
-            className="h-9 shrink-0 rounded-full px-3 text-xs"
-            disabled={busy}
-            title="Skip this for today — it comes back tomorrow"
-            onClick={() => onAction(idea, "snooze")}
-          >
-            <Clock3 /> Not today
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-9 w-9 shrink-0 rounded-full"
-            disabled={busy}
-            title="Discard this idea"
-            aria-label="Discard this idea"
-            onClick={() => onAction(idea, "discard")}
-          >
-            <X />
-          </Button>
-          </div>
-        </div>
-      ) : null}
-      <Dialog open={evidenceOpen} onOpenChange={setEvidenceOpen}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogTitle>What&apos;s behind this idea</DialogTitle>
-          <DialogDescription>
-            The sources your Agent used for &ldquo;{idea.headline}&rdquo;.
-          </DialogDescription>
-          <ul className="mt-4 space-y-4">
-            {idea.evidence.map((entry, index) => {
-              const meta =
-                evidenceKindMeta[entry.kind] ?? evidenceKindMeta.knowledge;
-              const EntryIcon = meta.icon;
-              return (
-                <li
-                  key={`${entry.label}-${index}`}
-                  className="rounded-xl border p-3.5"
-                >
-                  <p className="flex items-center gap-1.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                    <EntryIcon className="size-3.5" aria-hidden />
-                    {meta.full}
-                  </p>
-                  <p className="mt-1.5 text-sm font-medium">{entry.label}</p>
-                  {entry.detail ? (
-                    <p className="mt-1 text-sm leading-5 text-muted-foreground">
-                      {entry.detail}
-                    </p>
-                  ) : null}
-                  <p className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                    {entry.publishedAt ? (
-                      <span>
-                        Published {formatDecisionDay(entry.publishedAt)}
-                      </span>
-                    ) : null}
-                    {entry.ref ? <span>{entry.ref}</span> : null}
-                    {entry.url ? (
-                      <a
-                        href={entry.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center gap-1 text-foreground underline-offset-4 hover:underline"
-                      >
-                        Read source{" "}
-                        <ExternalLink className="size-3" aria-hidden />
-                      </a>
-                    ) : null}
-                  </p>
-                </li>
-              );
-            })}
-          </ul>
-        </DialogContent>
-      </Dialog>
+      <OpportunityActions idea={idea} busy={busy} onAction={onAction} />
     </article>
   );
 }
@@ -422,6 +393,9 @@ export function AgentInbox() {
   const [pendingDiscard, setPendingDiscard] = useState<AgentFeedIdea | null>(
     null,
   );
+  const [selectedIdea, setSelectedIdea] = useState<AgentFeedIdea | null>(null);
+  const [selectedFilter, setSelectedFilter] =
+    useState<AgentLaneFilter>("all");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [draftPreferences, setDraftPreferences] =
     useState<AgentInboxPreferences | null>(null);
@@ -528,6 +502,33 @@ export function AgentInbox() {
     ).filter((kind) => kinds.has(kind));
   }, [feedActive]);
 
+  const recommendedIdeas = useMemo(
+    () =>
+      AGENT_FEED_LANES.flatMap((lane) => ideasByLane.get(lane)?.[0] ?? []),
+    [ideasByLane],
+  );
+  const displayedIdeas = useMemo(
+    () =>
+      selectedFilter === "all"
+        ? recommendedIdeas
+        : ideasByLane.get(selectedFilter) ?? [],
+    [ideasByLane, recommendedIdeas, selectedFilter],
+  );
+  const emptyLanes = useMemo(
+    () =>
+      selectedFilter === "all"
+        ? AGENT_FEED_LANES.filter((lane) => !ideasByLane.get(lane)?.length)
+        : displayedIdeas.length === 0
+          ? [selectedFilter]
+          : [],
+    [displayedIdeas.length, ideasByLane, selectedFilter],
+  );
+  const queueSummary = feedActive.length
+    ? `${feedActive.length} evidence-backed ideas are ready. Choose what deserves your point of view.`
+    : actedByLane.size || snoozedByLane.size
+      ? "You’ve reviewed today’s ideas. Nothing else is waiting for a decision."
+      : "Your agents found no strong opportunities today. That is better than forcing a weak idea.";
+
   async function act(
     idea: AgentFeedIdea,
     action: "act" | "snooze" | "discard",
@@ -554,6 +555,7 @@ export function AgentInbox() {
               ? "Skipped for today — back in this lane tomorrow"
               : "Idea discarded",
         );
+        setSelectedIdea(null);
         await load();
         return;
       }
@@ -576,6 +578,7 @@ export function AgentInbox() {
           `agent-inbox-draft:${idea.id}`,
           body.draftPrompt,
         );
+        setSelectedIdea(null);
         router.push(`/dashboard?new=1&agentIdea=${idea.id}`);
         return;
       }
@@ -584,6 +587,7 @@ export function AgentInbox() {
           ? "Skipped for today — back in this lane tomorrow"
           : "Idea discarded",
       );
+      setSelectedIdea(null);
       await load();
     } catch (actionError) {
       toast.error(
@@ -594,6 +598,18 @@ export function AgentInbox() {
     } finally {
       setBusyId(null);
     }
+  }
+
+  function handleAction(
+    idea: AgentFeedIdea,
+    action: "act" | "snooze" | "discard",
+  ) {
+    if (action === "discard") {
+      setSelectedIdea(null);
+      setPendingDiscard(idea);
+      return;
+    }
+    void act(idea, action);
   }
 
   async function saveSettings() {
@@ -621,21 +637,17 @@ export function AgentInbox() {
       <div aria-busy="true">
         <TimedLoadingState label="Loading your agent" />
         <div className="mt-4 animate-pulse rounded-[1.75rem] border bg-card/60 p-4 sm:p-6">
-          <div className="h-12 w-72 rounded-xl bg-muted" />
-          <div className="mt-5 space-y-3">
-            {Array.from({ length: AGENT_FEED_LANES.length }).map((_, index) => (
-              <div
-                key={index}
-                className="rounded-[1.75rem] border bg-muted/30 p-4 sm:p-5"
-              >
-                <div className="h-10 w-64 rounded-xl bg-muted" />
-                <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-                  <div className="h-72 rounded-[1.75rem] bg-muted/70" />
-                  <div className="hidden h-72 rounded-[1.75rem] bg-muted/70 md:block" />
-                  <div className="hidden h-72 rounded-[1.75rem] bg-muted/70 xl:block" />
-                </div>
-              </div>
-            ))}
+          <div className="h-16 w-80 rounded-xl bg-muted" />
+          <div className="mt-6 h-12 rounded-xl bg-muted/70" />
+          <div className="mt-6 grid grid-cols-1 gap-4 xl:grid-cols-2">
+            {Array.from({ length: Math.max(4, AGENT_FEED_LANES.length) }).map(
+              (_, index) => (
+                <div
+                  key={index}
+                  className="h-80 rounded-2xl border bg-muted/70"
+                />
+              ),
+            )}
           </div>
         </div>
       </div>
@@ -655,16 +667,21 @@ export function AgentInbox() {
   return (
     <>
       <section className="rounded-[1.75rem] border bg-card/70 p-4 sm:p-6">
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex gap-3">
-            <span className="grid size-11 place-items-center rounded-full bg-primary/10 text-primary">
-              <BellRing className="size-5" />
+        <header className="flex items-start justify-between gap-4">
+          <div className="flex min-w-0 gap-3">
+            <span className="grid size-11 shrink-0 place-items-center rounded-full bg-primary/10 text-primary">
+              <Lightbulb className="size-5" aria-hidden />
             </span>
-            <div>
-              <h2 className="text-xl font-semibold">Worth your attention</h2>
-              <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-                Up to three evidence-backed directions per agent. Nothing is
-                drafted or scheduled until you choose it.
+            <div className="min-w-0">
+              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                Daily review
+              </p>
+              <h2 className="mt-1 text-xl font-semibold tracking-tight">
+                Today&apos;s opportunities
+              </h2>
+              <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">
+                {queueSummary} Nothing is drafted or scheduled automatically.
+                A draft starts only when you choose an idea.
               </p>
             </div>
           </div>
@@ -677,92 +694,134 @@ export function AgentInbox() {
           >
             <Settings2 />
           </Button>
+        </header>
+
+        <div className="mt-6 border-y border-border/70 py-3">
+          <div className="flex items-center gap-2 overflow-x-auto">
+            <span className="mr-1 shrink-0 text-xs font-medium text-muted-foreground">
+              Review by agent
+            </span>
+            <div
+              className="flex min-w-max items-center gap-1"
+              aria-label="Filter opportunities by agent"
+            >
+              {(["all", ...AGENT_FEED_LANES] as AgentLaneFilter[]).map(
+                (filter) => {
+                  const isAll = filter === "all";
+                  const laneMeta = isAll ? undefined : laneCopy[filter];
+                  const Icon = laneMeta?.icon ?? Lightbulb;
+                  const count = isAll
+                    ? feedActive.length
+                    : ideasByLane.get(filter)?.length ?? 0;
+                  return (
+                    <button
+                      key={filter}
+                      type="button"
+                      aria-pressed={selectedFilter === filter}
+                      onClick={() => setSelectedFilter(filter)}
+                      className={cn(
+                        "inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full px-3 text-xs font-medium transition-colors",
+                        selectedFilter === filter
+                          ? "bg-foreground text-background"
+                          : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          "grid size-5 place-items-center rounded-full",
+                          isAll ? "bg-background/15" : laneMeta?.tone,
+                        )}
+                      >
+                        <Icon className="size-3" aria-hidden />
+                      </span>
+                      {laneMeta?.label ?? "All ideas"}
+                      <span
+                        className={cn(
+                          "rounded-full px-1.5 py-0.5 text-[10px] tabular-nums",
+                          selectedFilter === filter
+                            ? "bg-background/15"
+                            : "bg-muted",
+                        )}
+                      >
+                        {count}
+                      </span>
+                    </button>
+                  );
+                },
+              )}
+            </div>
+          </div>
         </div>
-        {/* One full-width row per agent; each row holds up to three idea
-            cards side by side (stacking on narrow screens). */}
-        <div className="mt-6 space-y-4">
-          {AGENT_FEED_LANES.map((lane) => {
-            const ideas = ideasByLane.get(lane) ?? [];
-            const copy = laneCopy[lane];
-            const LaneIcon = copy.icon;
-            return (
-              <section
-                key={lane}
-                className="rounded-2xl border border-border bg-card p-3 sm:p-4"
-                data-testid={`agent-lane-${lane}`}
-              >
-                <header className="flex items-center gap-2.5">
-                  <span className="relative shrink-0">
-                    {/* AgentAvatar's PNG-override check is server-only (node:fs); these
-                        slugs are known-bundled SVGs, so a plain img is fine. */}
-                    {/* eslint-disable-next-line @next/next/no-img-element -- SVG avatar file; next/image adds nothing */}
-                    <img
-                      src={`/agents/${copy.avatar}.svg`}
-                      alt=""
-                      className="size-8 rounded-full border border-border/60 bg-muted object-cover"
-                    />
-                    <span className="absolute -bottom-0.5 -right-0.5 grid size-3.5 place-items-center rounded-full border border-border/60 bg-background text-muted-foreground">
-                      <LaneIcon className="size-2" aria-hidden />
-                    </span>
-                  </span>
-                  {/* Label and description share one line: the description is
-                      standing copy that never changes, so it does not deserve
-                      a row of its own on every lane. */}
-                  <div className="flex min-w-0 flex-1 items-baseline gap-2">
-                    <h3 className="shrink-0 text-sm font-semibold leading-tight">
-                      {copy.label}
-                    </h3>
-                    <p className="truncate text-xs text-muted-foreground">
-                      {copy.description}
-                    </p>
-                  </div>
-                  <span className="shrink-0 rounded-full border border-border/70 px-2 py-0.5 font-mono text-[11px] tabular-nums text-muted-foreground">
-                    {ideas.length}/3
-                  </span>
-                </header>
-                {ideas.length === 0 ? (
-                  <div className="mt-3">
-                    <OpportunityCard
-                      acted={actedByLane.get(lane)}
-                      snoozed={snoozedByLane.get(lane)}
-                      busy={false}
-                      onAction={(idea, action) => {
-                        if (action === "discard") setPendingDiscard(idea);
-                        else void act(idea, action);
-                      }}
-                    />
-                  </div>
-                ) : (
-                  <div className="mt-3 grid grid-cols-1 items-start gap-2.5 md:grid-cols-2 xl:grid-cols-3">
-                    {ideas.map((idea) => (
-                      <OpportunityCard
-                        key={idea.id}
-                        idea={idea}
-                        busy={busyId === idea.id}
-                        onAction={(target, action) => {
-                          if (action === "discard") setPendingDiscard(target);
-                          else void act(target, action);
-                        }}
-                      />
-                    ))}
-                  </div>
-                )}
-              </section>
-            );
-          })}
+
+        <div className="mt-6">
+          <div className="flex items-end justify-between gap-3">
+            <div>
+              <h3 className="font-semibold">
+                {selectedFilter === "all"
+                  ? "Recommended first"
+                  : `Ideas from ${laneCopy[selectedFilter].label}`}
+              </h3>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {selectedFilter === "all"
+                  ? "One strongest direction from each agent. See more only when you want it."
+                  : laneCopy[selectedFilter].description}
+              </p>
+            </div>
+            <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+              {selectedFilter === "all"
+                ? `${displayedIdeas.length} agents`
+                : `${displayedIdeas.length} ideas`}
+            </span>
+          </div>
+          <div
+            id="agent-opportunity-grid"
+            className="mt-4 grid grid-cols-1 items-stretch gap-4 xl:grid-cols-2"
+          >
+            {displayedIdeas.map((idea) => {
+              const laneIdeas = ideasByLane.get(idea.lane) ?? [];
+              return (
+                <OpportunityCard
+                  key={idea.id}
+                  idea={idea}
+                  moreCount={
+                    selectedFilter === "all"
+                      ? Math.max(0, laneIdeas.length - 1)
+                      : 0
+                  }
+                  onViewMore={(lane) => setSelectedFilter(lane)}
+                  busy={busyId === idea.id}
+                  onOpenDetails={() => setSelectedIdea(idea)}
+                  onAction={handleAction}
+                />
+              );
+            })}
+            {emptyLanes.map((lane) => (
+              <OpportunityCard
+                key={`empty-${lane}`}
+                lane={lane}
+                acted={actedByLane.get(lane)}
+                snoozed={snoozedByLane.get(lane)}
+                busy={false}
+                onAction={handleAction}
+              />
+            ))}
+          </div>
         </div>
-      </section>
-      <section className="mt-5 rounded-[1.75rem] border bg-card p-5">
-        <div className="flex items-start gap-3">
-          <span className="grid size-10 shrink-0 place-items-center rounded-full bg-muted">
-            <AiIcon className="size-4" aria-hidden />
-          </span>
+
+        <div className="mt-8 grid gap-8 border-t border-border/70 pt-6 lg:grid-cols-[0.9fr_1.1fr]">
           <div>
-            <h2 className="font-semibold">What your Agent is using</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Every direction is grounded in sources from your Workspace or
-              verified current news.
-            </p>
+            <div className="flex items-start gap-3">
+              <span className="grid size-9 shrink-0 place-items-center rounded-full bg-muted">
+                <FileText className="size-4" aria-hidden />
+              </span>
+              <div>
+                <h3 className="font-semibold">Evidence behind the queue</h3>
+                <p className="mt-1 text-sm leading-5 text-muted-foreground">
+                  Every idea is grounded in workspace material or verified
+                  current news.
+                </p>
+              </div>
+            </div>
             <div className="mt-3 flex flex-wrap gap-2">
               {(evidenceKinds.length
                 ? evidenceKinds
@@ -773,54 +832,156 @@ export function AgentInbox() {
                 return (
                   <span
                     key={kind}
-                    className="inline-flex items-center gap-1.5 rounded-full border bg-muted/50 px-3 py-1 text-xs"
+                    className="inline-flex items-center gap-1.5 rounded-full border bg-muted/50 px-2.5 py-1 text-xs text-muted-foreground"
                   >
-                    <Icon
-                      className="size-3.5 text-muted-foreground"
-                      aria-hidden
-                    />
+                    <Icon className="size-3.5" aria-hidden />
                     {meta.full}
                   </span>
                 );
               })}
             </div>
           </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <Activity className="size-4 text-muted-foreground" aria-hidden />
+              <h3 className="font-semibold">Recent activity</h3>
+            </div>
+            {feedActivity.length ? (
+              <div className="mt-2 divide-y divide-border/70">
+                {feedActivity.slice(0, 5).map((idea) => {
+                  const meta = statusMeta[idea.status] ?? statusMeta.expired;
+                  return (
+                    <div
+                      key={idea.id}
+                      className="flex items-center gap-3 py-2.5 text-sm"
+                      title={
+                        idea.discardReason ??
+                        (idea.status === "snoozed" && idea.snoozedUntil
+                          ? `Back ${formatDecisionDay(idea.snoozedUntil)}`
+                          : undefined)
+                      }
+                    >
+                      <span
+                        className={cn("size-2 shrink-0 rounded-full", meta.dot)}
+                        aria-hidden
+                      />
+                      <span className="truncate">{idea.headline}</span>
+                      <span className="ml-auto shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
+                        {formatDecisionDay(idea.updatedAt)}
+                      </span>
+                      <span className="shrink-0 rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
+                        {meta.label}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="mt-2 text-sm text-muted-foreground">
+                Your decisions will appear here as you review ideas.
+              </p>
+            )}
+          </div>
         </div>
       </section>
-      {feedActivity.length ? (
-        <section className="mt-5 rounded-[1.75rem] border bg-card p-5">
-          <h2 className="font-semibold">Recent decisions</h2>
-          <div className="mt-3 divide-y">
-            {feedActivity.slice(0, 5).map((idea) => {
-              const meta = statusMeta[idea.status] ?? statusMeta.expired;
-              return (
-                <div
-                  key={idea.id}
-                  className="flex items-center gap-3 py-3 text-sm"
-                  title={
-                    idea.discardReason ??
-                    (idea.status === "snoozed" && idea.snoozedUntil
-                      ? `Back ${formatDecisionDay(idea.snoozedUntil)}`
-                      : undefined)
-                  }
-                >
-                  <span
-                    className={cn("size-2 shrink-0 rounded-full", meta.dot)}
-                    aria-hidden
-                  />
-                  <span className="truncate">{idea.headline}</span>
-                  <span className="ml-auto shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
-                    {formatDecisionDay(idea.updatedAt)}
-                  </span>
-                  <span className="shrink-0 rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
-                    {meta.label}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      ) : null}
+      <Dialog
+        open={Boolean(selectedIdea)}
+        onOpenChange={(open) => {
+          if (!open) setSelectedIdea(null);
+        }}
+      >
+        <DialogContent className="left-auto right-0 top-0 h-full max-h-none w-full max-w-[min(100vw,36rem)] translate-x-0 translate-y-0 rounded-l-3xl rounded-r-none p-5 sm:max-w-[36rem] sm:p-6">
+          {selectedIdea ? (
+            <>
+              <div className="space-y-3 pr-8">
+                <LanePill lane={selectedIdea.lane} />
+                <DialogTitle className="text-xl leading-snug">
+                  {selectedIdea.headline}
+                </DialogTitle>
+                <DialogDescription className="text-sm leading-6">
+                  {selectedIdea.angle}
+                </DialogDescription>
+              </div>
+              <div className="mt-3 space-y-6 overflow-y-auto pr-1">
+                <section>
+                  <h3 className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                    Why this fits you
+                  </h3>
+                  <ul className="mt-3 space-y-2 text-sm leading-6">
+                    {selectedIdea.why.map((reason) => (
+                      <li key={reason} className="flex gap-2">
+                        <span className="mt-2 size-1.5 shrink-0 rounded-full bg-foreground" />
+                        <span>{reason}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+                <section>
+                  <h3 className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                    Evidence
+                  </h3>
+                  <ul className="mt-3 space-y-3">
+                    {selectedIdea.evidence.map((entry, index) => {
+                      const meta =
+                        evidenceKindMeta[entry.kind] ?? evidenceKindMeta.knowledge;
+                      const EntryIcon = meta.icon;
+                      const sourceUrl =
+                        entry.url ??
+                        (index === 0 ? selectedIdea.sourceUrl : null);
+                      return (
+                        <li
+                          key={`${entry.label}-${index}`}
+                          className="rounded-2xl border bg-muted/20 p-4"
+                        >
+                          <p className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
+                            <EntryIcon className="size-3.5" aria-hidden />
+                            {meta.full}
+                          </p>
+                          <p className="mt-2 text-sm font-medium">
+                            {entry.label}
+                          </p>
+                          {entry.detail ? (
+                            <p className="mt-1 text-sm leading-5 text-muted-foreground">
+                              {entry.detail}
+                            </p>
+                          ) : null}
+                          <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                            {entry.publishedAt ? (
+                              <span>
+                                Published {formatDecisionDay(entry.publishedAt)}
+                              </span>
+                            ) : null}
+                            {entry.ref ? <span>{entry.ref}</span> : null}
+                            {sourceUrl ? (
+                              <a
+                                href={sourceUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-1 text-foreground underline-offset-4 hover:underline"
+                              >
+                                Read source
+                                <ExternalLink className="size-3" aria-hidden />
+                              </a>
+                            ) : null}
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </section>
+              </div>
+              <div className="sticky bottom-0 -mx-5 mt-auto flex flex-col gap-2 border-t bg-popover pt-5 sm:-mx-6 sm:px-6">
+                <OpportunityActions
+                  idea={selectedIdea}
+                  busy={busyId === selectedIdea.id}
+                  onAction={handleAction}
+                  drawer
+                />
+              </div>
+            </>
+          ) : null}
+        </DialogContent>
+      </Dialog>
       <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
         <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg">
           <DialogTitle>Agent preferences</DialogTitle>
