@@ -39,6 +39,11 @@ vi.mock("@/lib/supabase", async (importOriginal) => {
   };
 });
 
+// The production news executor filters results against the real clock. Keep
+// fixtures inside the freshness window instead of letting fixed dates expire.
+const freshDate = (daysAgo = 3): string =>
+  new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
+
 const COMPLETE_POST = [
   "Building a personal brand is not a vanity project.",
   "It is career leverage you keep when your title, company, or market changes.",
@@ -500,7 +505,7 @@ describe("production-shaped Cowork outcome harness", () => {
                     title: "OpenAI launches a verified product",
                     url: "https://openai.com/news/product",
                     source: "OpenAI",
-                    published_at: "2026-07-14",
+                    published_at: freshDate(),
                     summary: "OpenAI announced a verified product update.",
                   },
                 ],
@@ -1936,7 +1941,7 @@ describe("production-shaped Cowork outcome harness", () => {
                     title: "OpenAI launches a verified product",
                     url: "https://openai.com/news/product",
                     source: "OpenAI",
-                    published_at: "2026-07-14",
+                    published_at: freshDate(),
                     summary:
                       "OpenAI announced a product that makes workflow automation faster.",
                   },
@@ -2143,7 +2148,7 @@ describe("production-shaped Cowork outcome harness", () => {
                     title: "OpenAI launches a verified product",
                     url: "https://openai.com/news/product",
                     source: "OpenAI",
-                    published_at: "2026-07-14",
+                    published_at: freshDate(),
                     summary: "OpenAI announced a verified product update.",
                   },
                 ],
@@ -3385,7 +3390,7 @@ describe("production-shaped Cowork outcome harness", () => {
                     {
                       title: "OpenAI verified update",
                       url: "https://openai.com/news/update",
-                      published_at: "2026-07-14",
+                      published_at: freshDate(),
                       summary: "OpenAI announced a verified update.",
                     },
                   ],
@@ -4045,7 +4050,7 @@ describe("production-shaped Cowork outcome harness", () => {
                     title: "OpenAI launches a verified agent product",
                     url: "https://openai.com/news/agents",
                     source: "OpenAI",
-                    published_at: "2026-07-14",
+                    published_at: freshDate(),
                     summary:
                       "OpenAI announced agent tooling for small teams.",
                   },
