@@ -408,7 +408,7 @@ export function OpportunityCard({
   );
 }
 
-const messageStateCopy: Record<
+const messageStatePresentation: Record<
   AgentMessageState,
   {
     label: string;
@@ -455,6 +455,13 @@ const messageStateCopy: Record<
   },
 };
 
+function messageStatePresentationFor(
+  idea: Pick<AgentFeedIdea, "status" | "readAt">,
+) {
+  const state = agentMessageState(idea);
+  return { state, ...messageStatePresentation[state] };
+}
+
 function MessageStateBadge({
   idea,
   compact = false,
@@ -462,15 +469,14 @@ function MessageStateBadge({
   idea: AgentFeedIdea;
   compact?: boolean;
 }) {
-  const state = agentMessageState(idea);
-  const copy = messageStateCopy[state];
+  const { state, label, className } = messageStatePresentationFor(idea);
   return (
     <span
       className={cn(
         "inline-flex shrink-0 items-center gap-1 text-[11px] font-medium",
-        copy.className,
+        className,
       )}
-      title={copy.label}
+      title={label}
     >
       {state === "unread" ? (
         <span className="size-1.5 rounded-full bg-current" aria-hidden />
@@ -481,7 +487,7 @@ function MessageStateBadge({
       ) : (
         <X className="size-3.5" aria-hidden />
       )}
-      <span className={compact ? "sr-only" : undefined}>{copy.label}</span>
+      <span className={compact ? "sr-only" : undefined}>{label}</span>
     </span>
   );
 }
@@ -498,8 +504,7 @@ function RecommendationRow({
   onSelect: () => void;
 }) {
   const copy = laneCopy[idea.lane];
-  const state = agentMessageState(idea);
-  const stateCopy = messageStateCopy[state];
+  const { rowClassName, titleClassName } = messageStatePresentationFor(idea);
   return (
     <button
       type="button"
@@ -508,7 +513,7 @@ function RecommendationRow({
       onClick={onSelect}
       className={cn(
         "flex w-full items-start gap-3 border-l-2 px-4 py-4 text-left transition-[background-color,box-shadow,border-color] hover:ring-1 hover:ring-inset hover:ring-foreground/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/50",
-        stateCopy.rowClassName,
+        rowClassName,
         selected
           ? "border-l-violet-500 ring-1 ring-inset ring-violet-500/25"
           : "border-transparent",
@@ -529,7 +534,7 @@ function RecommendationRow({
         <span
           className={cn(
             "mt-1 block line-clamp-2 text-sm leading-5",
-            stateCopy.titleClassName,
+            titleClassName,
           )}
         >
           {idea.headline}
@@ -1208,13 +1213,13 @@ export function AgentInbox() {
               <div className="mt-2 divide-y divide-border/70">
                 {feedActivity.slice(0, 5).map((idea) => {
                   const meta = statusMeta[idea.status] ?? statusMeta.expired;
-                  const stateCopy = messageStateCopy[agentMessageState(idea)];
+                  const { rowClassName } = messageStatePresentationFor(idea);
                   return (
                     <div
                       key={idea.id}
                       className={cn(
                         "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm",
-                        stateCopy.rowClassName,
+                        rowClassName,
                       )}
                       title={idea.discardReason ?? undefined}
                     >
