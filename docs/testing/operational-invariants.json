@@ -127,6 +127,15 @@
         { "path": "evals/data/agent-opportunity-transitions.test.ts", "test": "snooze executes a conditional transition and returns success only after a row changes" },
         { "path": "evals/data/agent-opportunity-transitions.test.ts", "test": "draft success still marks the matching cadence opportunity" }
       ]
+    },
+    {
+      "id": "agent-loop-workspace-fairness",
+      "boundary": "agent-loop cron workspace batching",
+      "invariant": "A capped agent-loop tick paginates all workspace identities and rotates the selected batch so no workspace is permanently starved.",
+      "evidence": [
+        { "path": "evals/data/agent-loop-cron-fairness.test.ts", "test": "GET discovers past the old page cap and processes one fair batch" },
+        { "path": "evals/data/agent-loop-cron-fairness.test.ts", "test": "rotates an oversized workspace list across ticks" }
+      ]
     }
   ]
 }
