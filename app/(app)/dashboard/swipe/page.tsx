@@ -21,7 +21,6 @@ import {
   EmptyState,
   PageHeader,
   PageShell,
-  Toolbar,
 } from "@/components/app-surface";
 import { SwipeFilterPersistence } from "@/components/persisted-filter-state";
 import { BookmarksView, type BookmarksSearchParams } from "../bookmarks/bookmarks-view";
@@ -34,6 +33,7 @@ import {
   isDefaultSwipeSort,
 } from "@/lib/swipe-filter-policy";
 import { CategoryFilterRail } from "./category-filter-rail";
+import { filterInsetClass, filterLabelClass, filterSurfaceClass } from "@/components/filter-ui";
 import {
   discoveryThresholdFilter,
   discoveryThresholdChips,
@@ -264,8 +264,8 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
         }
       />
 
-      {/* Toolbar card: category rail + filter chips, grouped */}
-      <Toolbar className="overflow-hidden">
+      {/* Compact filter surface: category discovery above the active controls. */}
+      <div className={filterSurfaceClass("overflow-hidden")}>
         {/* Category rail — lists categories the workspace's tracked
             accounts belong to. Hidden when no tracked accounts have a
             category (uncategorized creators land in the empty state). */}
@@ -274,13 +274,13 @@ export default async function SwipePage({ searchParams }: { searchParams: Promis
         </Suspense>
 
         {/* Filters */}
-        <div className="px-4 sm:px-5 py-3">
+        <div className="mt-1.5 rounded-xl border border-border/60 bg-background/55 px-2.5 py-2">
           <SwipeFilters />
           <Suspense fallback={null}>
             <ActiveDiscoveryThresholds />
           </Suspense>
         </div>
-      </Toolbar>
+      </div>
 
       <Suspense key={filterKey} fallback={<PostsSkeleton />}>
         <PostsSection sp={sp} filtersActive={filtersActive} />
@@ -354,9 +354,10 @@ async function SwipeCategoryRail({
   if (trackedCategories.length === 0) return null;
 
   return (
-    <div className="border-b border-border/60 bg-background/40 px-4 py-3 sm:px-5">
+    <div className={filterInsetClass("px-2.5 py-2")}>
       <div className="flex items-center gap-3">
-        <div className="hidden shrink-0 text-xs font-medium text-muted-foreground sm:block">
+        <div className={filterLabelClass("hidden sm:inline-flex")}>
+          <span aria-hidden className="size-1.5 rounded-full bg-primary/45" />
           Category
         </div>
         <CategoryFilterRail
@@ -373,7 +374,7 @@ async function SwipeCategoryRail({
 }
 
 function CategoryRailSkeleton() {
-  return <div className="h-[69px] animate-pulse border-b border-border/60 bg-background/40" />;
+  return <div className="h-11 animate-pulse rounded-xl border border-border/60 bg-background/55" />;
 }
 
 async function PostsSection({ sp, filtersActive }: { sp: SP; filtersActive: boolean }) {
