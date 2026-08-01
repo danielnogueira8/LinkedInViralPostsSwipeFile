@@ -1,7 +1,7 @@
 # Agent inbox — framework-driven redesign
 
 Status: **implemented.** Captured 2026-07-30; the queue and framework lanes are
-now implemented through migration 165.
+now implemented through migration 166.
 
 ## The premise
 

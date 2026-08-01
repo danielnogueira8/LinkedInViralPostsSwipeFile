@@ -20,6 +20,7 @@ export type ChatWorkspaceSendOptions = {
   actionSelectionIds?: string[];
   clarificationChoiceIndex?: number;
   clarificationAssistantMessageId?: string;
+  isInterviewSubmission?: boolean;
 };
 
 type ComposerRequestFields = Pick<
@@ -29,6 +30,7 @@ type ComposerRequestFields = Pick<
   | "contextPolicy"
   | "generationConfig"
   | "starterId"
+  | "isInterviewSubmission"
 >;
 
 export type PrepareChatWorkspaceTurnInput = {
@@ -149,6 +151,9 @@ export function createChatWorkspaceController(
         ...(generationConfig ? { generationConfig } : {}),
         ...(appliesComposerControls && input.starterId
           ? { starterId: input.starterId }
+          : {}),
+        ...(sendOptions?.isInterviewSubmission
+          ? { isInterviewSubmission: true }
           : {}),
       };
 

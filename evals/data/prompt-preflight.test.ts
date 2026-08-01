@@ -6,6 +6,7 @@ import {
 } from "@/lib/agent/prompt-preflight";
 import {
   composeInterviewAnswers,
+  INTERVIEW_SUBMISSION_MAX_CHARS,
   INTERVIEW_SKIPPED,
 } from "@/lib/chat-ask";
 
@@ -31,6 +32,15 @@ describe("preflightUserPrompt", () => {
       ok: false,
       reason: "overlong",
       status: 413,
+    });
+  });
+
+  test("allows the larger bounded payload used by an interview card", () => {
+    const submission = "answer ".repeat(10_000);
+    expect(submission.length).toBeGreaterThan(MAX_PROMPT_CHARS);
+    expect(submission.length).toBeLessThan(INTERVIEW_SUBMISSION_MAX_CHARS);
+    expect(preflightUserPrompt(submission, INTERVIEW_SUBMISSION_MAX_CHARS)).toEqual({
+      ok: true,
     });
   });
 

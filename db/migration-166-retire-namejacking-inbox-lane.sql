@@ -1,4 +1,4 @@
--- Migration 165: retire the overlapping Namedrop inbox lane.
+-- Migration 166: retire the overlapping Namedrop inbox lane.
 --
 -- Namejacking remains available as a manual writing skill, but the daily
 -- opportunity queue now has four distinct decisions: Newsjacking, Story
@@ -123,7 +123,7 @@ grant execute on function public.claim_agent_inbox_run(
 ) to service_role;
 
 insert into public.app_schema_version (singleton, version, updated_at)
-values (true, 165, now())
+values (true, 166, now())
 on conflict (singleton) do update
 set version = excluded.version, updated_at = excluded.updated_at;
 

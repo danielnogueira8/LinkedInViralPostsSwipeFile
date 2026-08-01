@@ -1,9 +1,14 @@
 import { describe, expect, test } from "vitest";
 import {
+  extractInterviewAnswersFromHistory,
+  extractInterviewAnswerSubmissionFromHistory,
   INTERVIEW_MAX_QUESTIONS,
   isInterviewAskArgs,
   parseInterviewOutput,
+  recoverInterviewAnswers,
+  reconcileInterviewAnswers,
 } from "@/lib/agent/turn/execute-interview";
+import type { ChatMessage } from "@/lib/openrouter";
 import { AskQuestionSchema, type AskQuestion } from "@/lib/agent/contracts";
 import { hydrate } from "@/lib/chat-hydration";
 import { composeInterviewAnswers } from "@/lib/chat-ask";
@@ -97,6 +102,298 @@ describe("parseInterviewOutput", () => {
   });
 });
 
+describe("interview answer fidelity", () => {
+  test("recovers every non-skipped answer from the submitted card message", () => {
+    const history: ChatMessage[] = [
+      {
+        role: "assistant",
+        content: "What changed your mind?",
+        tool_calls: [
+          {
+            id: "ask-1",
+            type: "function",
+            function: {
+              name: "ask_user",
+              arguments: JSON.stringify({
+                variant: "interview",
+                questions: [
+                  "What changed your mind?",
+                  "Which result?",
+                  "What is your process?",
+                ],
+              }),
+            },
+          },
+        ],
+      } as unknown as ChatMessage,
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: [
+              "Q1: What changed your mind?",
+              "A1: I stopped batching content. Small daily bets compound harder.",
+              "",
+              "Q2: This is part of the first answer, not the card question",
+              "A2: Keep this multiline detail too.",
+              "",
+              "Q2: Which result?",
+              "A2: [skipped]",
+              "",
+              "Q3: What is your process?",
+              "A3: I ask for three hook angles, then verify every fact.",
+            ].join("\n"),
+          },
+        ],
+      },
+    ];
+
+    expect(extractInterviewAnswersFromHistory(history)).toEqual([
+      {
+        question: "What changed your mind?",
+        answer: [
+          "I stopped batching content. Small daily bets compound harder.",
+          "",
+          "Q2: This is part of the first answer, not the card question",
+          "A2: Keep this multiline detail too.",
+        ].join("\n"),
+      },
+      {
+        question: "What is your process?",
+        answer: "I ask for three hook angles, then verify every fact.",
+      },
+    ]);
+    expect(extractInterviewAnswerSubmissionFromHistory(history).complete).toBe(true);
+  });
+
+  test("keeps multiline planned questions intact", () => {
+    const questions = [
+      "What changed your mind?\nWhat made the evidence convincing?",
+      "Which result are you proud of?",
+      "What is your process?",
+    ];
+    const history: ChatMessage[] = [
+      {
+        role: "assistant",
+        content: questions[0],
+        tool_calls: [
+          {
+            id: "ask-multiline",
+            type: "function",
+            function: {
+              name: "ask_user",
+              arguments: JSON.stringify({
+                variant: "interview",
+                questions,
+              }),
+            },
+          },
+        ],
+      } as unknown as ChatMessage,
+      {
+        role: "user",
+        content: composeInterviewAnswers(questions, [
+          "I changed the launch plan after the first test.",
+          "15,000 LinkedIn followers in four months.",
+          "I ask for three angles, then verify every fact.",
+        ]),
+      },
+    ];
+
+    expect(extractInterviewAnswerSubmissionFromHistory(history)).toEqual({
+      answers: [
+        {
+          question: questions[0],
+          answer: "I changed the launch plan after the first test.",
+        },
+        {
+          question: questions[1],
+          answer: "15,000 LinkedIn followers in four months.",
+        },
+        {
+          question: questions[2],
+          answer: "I ask for three angles, then verify every fact.",
+        },
+      ],
+      complete: true,
+    });
+  });
+
+  test("recovers an answer from a legacy single-question interview card", () => {
+    const history: ChatMessage[] = [
+      {
+        role: "assistant",
+        content: "What changed your mind?",
+        tool_calls: [
+          {
+            id: "ask-legacy",
+            type: "function",
+            function: {
+              name: "ask_user",
+              arguments: JSON.stringify({
+                question: "What changed your mind?",
+                variant: "interview",
+              }),
+            },
+          },
+        ],
+      } as unknown as ChatMessage,
+      {
+        role: "user",
+        content: "Q1: What changed your mind?\nA1: I stopped chasing vanity metrics.",
+      },
+    ];
+
+    expect(extractInterviewAnswerSubmissionFromHistory(history)).toEqual({
+      answers: [
+        {
+          question: "What changed your mind?",
+          answer: "I stopped chasing vanity metrics.",
+        },
+      ],
+      complete: true,
+    });
+  });
+
+  test("uses the original answer even when the model summarizes it", () => {
+    const raw = [
+      {
+        question: "What is your process?",
+        answer: "I ask for three hook angles, then verify every fact.",
+      },
+    ];
+    expect(
+      reconcileInterviewAnswers(
+        [
+          {
+            question: "What is your process?",
+            answer: "A three-step process.",
+            kind: "topic_expertise",
+            title: "The process",
+          },
+        ],
+        raw,
+      ),
+    ).toEqual([
+      {
+        question: "What is your process?",
+        answer: "I ask for three hook angles, then verify every fact.",
+        kind: "topic_expertise",
+        title: "The process",
+      },
+    ]);
+  });
+
+  test("creates a conservative item when the model omitted an answered question", () => {
+    expect(
+      reconcileInterviewAnswers(
+        [],
+        [{ question: "What result are you proud of?", answer: "15,000 followers." }],
+      ),
+    ).toEqual([
+      {
+        question: "What result are you proud of?",
+        answer: "15,000 followers.",
+        kind: "proof",
+        title: "What result are you proud of",
+      },
+    ]);
+  });
+
+  test("recovers every answer when the save model returns no usable JSON", () => {
+    expect(
+      recoverInterviewAnswers(
+        { action: "invalid" },
+        [{ question: "What changed?", answer: "I changed the launch plan." }],
+      ),
+    ).toEqual({
+      action: "save",
+      answers: [
+        {
+          question: "What changed?",
+          answer: "I changed the launch plan.",
+          kind: "story",
+          title: "What changed",
+        },
+      ],
+    });
+  });
+
+  test("closes cleanly when every interview question was skipped", () => {
+    expect(
+      recoverInterviewAnswers({ action: "save", answers: [] }, [], true),
+    ).toEqual({
+      action: "chat",
+      text: "No worries — we can try another interview whenever you're ready.",
+    });
+  });
+
+  test("does not save invented answers when every card question was skipped", () => {
+    expect(
+      recoverInterviewAnswers(
+        {
+          action: "save",
+          answers: [
+            {
+              question: "Invented",
+              answer: "The model made this up.",
+              kind: "story",
+              title: "Invented",
+            },
+          ],
+        },
+        [],
+        true,
+      ),
+    ).toEqual({
+      action: "chat",
+      text: "No worries — we can try another interview whenever you're ready.",
+    });
+  });
+
+  test("fails closed when the raw card parser has no pairs", () => {
+    const output = {
+      action: "save" as const,
+      answers: [
+        {
+          question: "What changed?",
+          answer: "The launch plan.",
+          kind: "story" as const,
+          title: "The launch plan",
+        },
+      ],
+    };
+    expect(recoverInterviewAnswers(output, [])).toEqual({
+      action: "chat",
+      text: "I couldn't reliably read the interview card, so I didn't save anything. Please send the answers again and I'll keep them intact.",
+    });
+  });
+
+  test("fails closed instead of saving a partially parsed card", () => {
+    expect(
+      recoverInterviewAnswers(
+        {
+          action: "save",
+          answers: [
+            {
+              question: "Q1",
+              answer: "A summarized answer",
+              kind: "story",
+              title: "Summary",
+            },
+          ],
+        },
+        [{ question: "Q1", answer: "The complete answer" }],
+        false,
+      ),
+    ).toEqual({
+      action: "chat",
+      text: "I couldn't reliably read every interview answer, so I didn't save a partial result. Please send the answers again and I'll keep them intact.",
+    });
+  });
+});
+
 // ---------------------------------------------------------------------------
 // The interview card's persisted shape. A reloaded card must hydrate to
 // EXACTLY the streamed card: any field the hydrator adds or drops is a field
@@ -149,6 +446,40 @@ describe("interview card round-trip", () => {
     // Deep equality, not a subset check: an injected doneOption or a
     // recovered choiceIds array would remount the card mid-answer.
     expect(message.ask).toEqual(streamed);
+  });
+
+  test("hydrating a legacy single-question card keeps it answerable", () => {
+    const rows = [
+      {
+        id: "legacy-1",
+        role: "assistant" as const,
+        content: "What changed your mind?",
+        tool_calls: [
+          {
+            id: "legacy-call",
+            type: "function" as const,
+            function: {
+              name: "ask_user",
+              arguments: JSON.stringify({
+                question: "What changed your mind?",
+                options: [],
+                allowOther: true,
+                variant: "interview",
+              }),
+            },
+          },
+        ],
+      },
+    ];
+
+    const [message] = hydrate(rows as unknown as Parameters<typeof hydrate>[0]);
+    expect(message.ask).toEqual({
+      question: "What changed your mind?",
+      options: [],
+      allowOther: true,
+      variant: "interview",
+      questions: ["What changed your mind?"],
+    });
   });
 
   test("the card sends every Q/A pair as ONE message, marking passes", () => {

@@ -43,7 +43,7 @@ const migration = readFileSync(
 );
 const retirementMigration = readFileSync(
   new URL(
-    "../../db/migration-165-retire-namejacking-inbox-lane.sql",
+    "../../db/migration-166-retire-namejacking-inbox-lane.sql",
     import.meta.url,
   ),
   "utf8",
@@ -223,7 +223,7 @@ describe("migration 161", () => {
   });
 });
 
-describe("migration 165", () => {
+describe("migration 166", () => {
   test("preserves Namedrop history by remapping it to Newsjacking", () => {
     expect(retirementMigration).toContain(
       "set lane = 'newsjacking'",
@@ -244,7 +244,7 @@ describe("migration 165", () => {
   });
 
   test("advances the schema version", () => {
-    expect(retirementMigration).toContain("values (true, 165, now())");
+    expect(retirementMigration).toContain("values (true, 166, now())");
   });
 });
 

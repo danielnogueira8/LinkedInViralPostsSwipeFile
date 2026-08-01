@@ -340,6 +340,10 @@ export const chatTurnRequestSchema = z.object({
   // Empty/overlong/junk user text is handled by preflightUserPrompt below so
   // the user gets a friendly, specific rejection and no turn is claimed.
   message: z.string(),
+  // A client hint for a structured interview-card submission. Setup still
+  // verifies the latest persisted ask_user card before honoring the larger
+  // source-material bound; this flag only lets that payload reach setup.
+  isInterviewSubmission: z.boolean().optional(),
   // The current browser sends exactly one explicit Cowork Command per turn.
   // `operation` remains below only for rolling compatibility with cached
   // clients and explicit card actions during the migration.

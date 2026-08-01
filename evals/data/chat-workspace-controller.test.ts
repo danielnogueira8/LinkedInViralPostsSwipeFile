@@ -54,6 +54,15 @@ describe("ChatWorkspace controller", () => {
     expect(turn.explorationLaneToRestore).toBe("auto");
   });
 
+  test("forwards the interview transport hint with a card submission", () => {
+    const turn = controller.prepareTurn({
+      ...baseInput,
+      sendOptions: { isInterviewSubmission: true },
+    });
+
+    expect(turn.requestFields.isInterviewSubmission).toBe(true);
+  });
+
   test("suppresses generation settings for an edit command", () => {
     const turn = controller.prepareTurn({
       ...baseInput,

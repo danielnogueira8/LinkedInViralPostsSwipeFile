@@ -32,8 +32,11 @@ export type ChatInterviewAnswer = {
 // The save tool accepts at most this many answers per call — one interview
 // session's worth. A model that collected more should call again.
 export const CHAT_INTERVIEW_MAX_ANSWERS = 8;
-const MAX_QUESTION_CHARS = 500;
-const MAX_ANSWER_CHARS = 2_000;
+export const CHAT_INTERVIEW_MAX_QUESTION_CHARS = 8_000;
+// The Cowork composer rejects messages over 8,000 characters. Keep one answer
+// within that same bound, but do not impose the old 2,000-character knowledge
+// field limit on an interview answer.
+export const CHAT_INTERVIEW_MAX_ANSWER_CHARS = 8_000;
 const MAX_TITLE_CHARS = 240;
 
 function cut(value: string, max: number): string {
@@ -91,11 +94,21 @@ export function normalizeChatInterviewAnswers(
       return { error: "Each answer must be an object with question, answer, kind, and title." };
     }
     const candidate = entry as Record<string, unknown>;
-    const question = typeof candidate.question === "string" ? cut(candidate.question, MAX_QUESTION_CHARS) : "";
-    const answer = typeof candidate.answer === "string" ? cut(candidate.answer, MAX_ANSWER_CHARS) : "";
+    const question = typeof candidate.question === "string" ? candidate.question.trim() : "";
+    const answer = typeof candidate.answer === "string" ? candidate.answer.trim() : "";
     const title = typeof candidate.title === "string" ? cut(candidate.title, MAX_TITLE_CHARS) : "";
     const kind = typeof candidate.kind === "string" ? candidate.kind.trim() : "";
     if (!question || !answer) continue; // blank answers are skipped, not stored
+    if (Array.from(question).length > CHAT_INTERVIEW_MAX_QUESTION_CHARS) {
+      return {
+        error: `Each question must be ${CHAT_INTERVIEW_MAX_QUESTION_CHARS.toLocaleString()} characters or fewer.`,
+      };
+    }
+    if (Array.from(answer).length > CHAT_INTERVIEW_MAX_ANSWER_CHARS) {
+      return {
+        error: `Each answer must be ${CHAT_INTERVIEW_MAX_ANSWER_CHARS.toLocaleString()} characters or fewer.`,
+      };
+    }
     if (!(KNOWLEDGE_ITEM_KINDS as readonly string[]).includes(kind)) {
       return {
         error: `Unknown knowledge kind "${kind}". Use one of: ${KNOWLEDGE_ITEM_KINDS.join(", ")}.`,
@@ -117,28 +130,46 @@ export function normalizeChatInterviewAnswers(
 // Map a free-form answer onto the fixed content shape of its kind (the shapes
 // are trigger-validated in the DB — see migration-129 — so they must match
 // exactly). Unlike the form interview's proposalShape, the question is not
-// from a fixed catalog: the answer text fills the primary field and the title
-// carries the topic.
+// from a fixed catalog: the answer text fills the primary field, the title
+// carries the topic, and sourceQuestion preserves the original prompt.
 function contentFor(
   kind: KnowledgeItemKind,
   title: string,
   answer: string,
+  question: string,
 ): WorkspaceKnowledgeProposal["content"] {
+  const sourceQuestion = question.trim();
   switch (kind) {
     case "story":
-      return { summary: answer, details: null };
+      return { summary: answer, details: null, sourceQuestion };
     case "belief":
-      return { statement: answer, rationale: null };
+      return { statement: answer, rationale: null, sourceQuestion };
     case "proof":
-      return { claim: answer, evidence: "Shared in an Interview me chat." };
+      return {
+        claim: answer,
+        evidence: "Shared in an Interview me chat.",
+        sourceQuestion,
+      };
     case "offer":
-      return { name: cut(title, MAX_TITLE_CHARS), promise: answer };
+      return {
+        name: cut(title, MAX_TITLE_CHARS),
+        promise: answer,
+        sourceQuestion,
+      };
     case "audience_insight":
-      return { audience: cut(title, MAX_TITLE_CHARS), insight: answer };
+      return {
+        audience: cut(title, MAX_TITLE_CHARS),
+        insight: answer,
+        sourceQuestion,
+      };
     case "topic_expertise":
-      return { topic: cut(title, MAX_TITLE_CHARS), basis: answer };
+      return {
+        topic: cut(title, MAX_TITLE_CHARS),
+        basis: answer,
+        sourceQuestion,
+      };
     case "prohibition":
-      return { claim: answer, reason: null };
+      return { claim: answer, reason: null, sourceQuestion };
   }
 }
 
@@ -153,7 +184,12 @@ export function buildChatInterviewKnowledgeProposals(input: {
       workspaceId: input.workspaceId,
       kind: answer.kind,
       title: answer.title,
-      content: contentFor(answer.kind, answer.title, answer.answer),
+      content: contentFor(
+        answer.kind,
+        answer.title,
+        answer.answer,
+        answer.question,
+      ),
       source: "interview" as const,
       sourceRef: `${prefix}${answerRef(answer.question, answer.answer)}`,
       confidence: 1,

@@ -148,6 +148,7 @@ import {
 } from "@/lib/chat-workspace-controller";
 import {
   composeInterviewAnswers,
+  INTERVIEW_SUBMISSION_MAX_CHARS,
   isAskSelectionComplete,
   resolveAskSubmission,
   toggleAskOption,
@@ -2520,11 +2521,15 @@ export function ChatWorkspace({
     // but Enter / Cmd+Enter call send() directly and a programmatic send (e.g. the
     // ?draft= refine prefill, which embeds the full draft body) can also exceed
     // the cap — so enforce it HERE against the resolved text, not just on the
-    // button. The server would 400 a >8000-char message; catch it client-side
-    // with a clear message instead of an opaque "Stream failed (400)".
-    if (text.length > MAX_MESSAGE_LEN) {
+    // button. The server applies the same ordinary/interview cap; catch an
+    // over-limit submission here with a clear message instead of an opaque
+    // "Stream failed (400)".
+    const messageLimit = sendOpts?.isInterviewSubmission
+      ? INTERVIEW_SUBMISSION_MAX_CHARS
+      : MAX_MESSAGE_LEN;
+    if (text.length > messageLimit) {
       toast.error(
-        `Message is too long — ${text.length.toLocaleString()} / ${MAX_MESSAGE_LEN.toLocaleString()} characters. Trim it and try again.`,
+        `Message is too long — ${text.length.toLocaleString()} / ${messageLimit.toLocaleString()} characters. Trim it and try again.`,
       );
       return;
     }
@@ -4204,6 +4209,9 @@ export function ChatWorkspace({
                       clarificationAssistantMessageId: m.id,
                       ...(clarificationChoiceIndex !== undefined
                         ? { clarificationChoiceIndex }
+                        : {}),
+                      ...(_ask.variant === "interview"
+                        ? { isInterviewSubmission: true }
                         : {}),
                     });
                   }}
