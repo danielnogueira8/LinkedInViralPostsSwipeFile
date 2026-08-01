@@ -9,6 +9,7 @@ import {
 import { routesToNativeOpenAI } from "@/lib/openai";
 import { createWorkspaceKnowledgeStore } from "@/lib/content-learning/workspace-knowledge";
 import {
+  CHAT_INTERVIEW_MAX_ANSWER_CHARS,
   normalizeChatInterviewAnswers,
   saveChatInterviewKnowledge,
   type ChatInterviewAnswer,
@@ -107,6 +108,125 @@ export function parseInterviewOutput(text: string): InterviewOutput {
     return { action: "chat", text: chatText.slice(0, 4_000) };
   }
   return { action: "invalid" };
+}
+
+export type RawInterviewAnswer = {
+  question: string;
+  answer: string;
+};
+
+function messageText(message: ChatMessage): string {
+  if (typeof message.content === "string") return message.content;
+  if (!Array.isArray(message.content)) return "";
+  return message.content.find((block) => block.type === "text")?.text ?? "";
+}
+
+/**
+ * Recover the user's original Q/A pairs from the interview card submission.
+ * The save model still chooses the knowledge kind and title, but it must not
+ * become the source of truth for the answer itself: a summary here would lose
+ * the steps, caveats, names, or numbers the user actually supplied.
+ */
+export function extractInterviewAnswersFromHistory(
+  history: ChatMessage[],
+): RawInterviewAnswer[] {
+  const currentUserMessage = [...history]
+    .reverse()
+    .find((message) => message.role === "user");
+  const text = currentUserMessage ? messageText(currentUserMessage) : "";
+  if (!text) return [];
+
+  const answers: RawInterviewAnswer[] = [];
+  const pairPattern = /(?:^|\n)Q\d+: ([^\n]+)\nA\d+: ([\s\S]*?)(?=\n\nQ\d+: |$)/g;
+  for (const match of text.matchAll(pairPattern)) {
+    const question = match[1]?.trim() ?? "";
+    const answer = match[2]?.trim() ?? "";
+    if (!question || !answer || /^\[skipped\]$/i.test(answer)) continue;
+    answers.push({
+      question,
+      answer: Array.from(answer)
+        .slice(0, CHAT_INTERVIEW_MAX_ANSWER_CHARS)
+        .join(""),
+    });
+  }
+  return answers;
+}
+
+function comparableQuestion(value: string): string {
+  return value.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function fallbackKindForInterviewAnswer(
+  source: RawInterviewAnswer,
+): ChatInterviewAnswer["kind"] {
+  const text = `${source.question} ${source.answer}`.toLowerCase();
+  if (/\b(result|proof|metric|number|followers?|revenue|grew|growth|client win)\b/.test(text)) {
+    return "proof";
+  }
+  if (/\b(audience|reader|customer|who do you write for|keeps? them up)\b/.test(text)) {
+    return "audience_insight";
+  }
+  if (/\b(never|don't|do not|refuse|avoid|must not)\b/.test(text)) {
+    return "prohibition";
+  }
+  if (/\b(offer|help|service|sell|work with)\b/.test(text)) return "offer";
+  if (/\b(belief|advice|wrong|disagree|opinion|think)\b/.test(text)) {
+    return "belief";
+  }
+  if (/\b(process|how|ritual|rule|step|system|framework)\b/.test(text)) {
+    return "topic_expertise";
+  }
+  return "story";
+}
+
+function fallbackTitleForInterviewAnswer(question: string): string {
+  return Array.from(question.replace(/[?!.]+$/, "").trim())
+    .slice(0, 240)
+    .join("") || "Interview answer";
+}
+
+/**
+ * Replace model-distilled answer text with the original card submission and
+ * drop any model-only claims. Missing classifications get a conservative
+ * deterministic kind/title so an answered question is never silently lost.
+ */
+export function reconcileInterviewAnswers(
+  modelAnswers: ChatInterviewAnswer[],
+  rawAnswers: RawInterviewAnswer[],
+): ChatInterviewAnswer[] {
+  const remaining = [...modelAnswers];
+  const modelCountMatches = modelAnswers.length === rawAnswers.length;
+  return rawAnswers.map((source, index) => {
+    const comparable = comparableQuestion(source.question);
+    const exactIndex = remaining.findIndex(
+      (candidate) => comparableQuestion(candidate.question) === comparable,
+    );
+    const fuzzyIndex =
+      exactIndex >= 0
+        ? exactIndex
+        : remaining.findIndex((candidate) => {
+            const candidateQuestion = comparableQuestion(candidate.question);
+            return (
+              candidateQuestion.includes(comparable) ||
+              comparable.includes(candidateQuestion)
+            );
+    });
+    const candidateIndex =
+      fuzzyIndex >= 0
+        ? fuzzyIndex
+        : modelCountMatches && index < remaining.length
+          ? index
+          : -1;
+    const candidate = candidateIndex >= 0 ? remaining.splice(candidateIndex, 1)[0] : null;
+    return candidate
+      ? { ...candidate, question: source.question, answer: source.answer }
+      : {
+          question: source.question,
+          answer: source.answer,
+          kind: fallbackKindForInterviewAnswer(source),
+          title: fallbackTitleForInterviewAnswer(source.question),
+        };
+  });
 }
 
 const OUTPUT_CONTRACT = `Reply with STRICT JSON only — no prose, no code fences — exactly one of:
@@ -248,7 +368,7 @@ export async function* executeInterviewTurn(
       : ["- (No knowledge saved yet.)"]),
     "",
     alreadyPlanned
-      ? 'You have ALREADY asked your questions and the user has now answered them (their message lists each question with its answer; "[skipped]" means they passed on it). Do not plan more questions. Reply with action "save" containing every question they actually answered, distilled faithfully — their facts only, never invented specifics. If they answered nothing at all, close gracefully with action "chat" instead.'
+      ? 'You have ALREADY asked your questions and the user has now answered them (their message lists each question with its answer; "[skipped]" means they passed on it). Do not plan more questions. Reply with action "save" containing exactly one entry for every question they actually answered. Copy each complete answer into the entry\'s "answer" field — do not summarize, shorten, merge, clean up, or replace it with a title. Preserve every step, qualifier, name, number, and caveat; use only the user\'s facts. The "title" is only a short label and must never stand in for the answer. If they answered nothing at all, close gracefully with action "chat" instead.'
       : `Plan the WHOLE interview in one go: ${INTERVIEW_MIN_QUESTIONS}-${INTERVIEW_MAX_QUESTIONS} questions, asked in order. The user answers them all before you hear back, so each question must stand on its own — never write one that depends on how they answered an earlier one ("you mentioned…", "which of those…").`,
     "",
     "Rules:",
@@ -279,6 +399,16 @@ export async function* executeInterviewTurn(
       "Your previous reply was not valid. Reply with STRICT JSON only, matching the contract exactly.",
     );
     output = parseInterviewOutput(result.text);
+  }
+
+  if (output.action === "save") {
+    const rawAnswers = extractInterviewAnswersFromHistory(setup.history);
+    if (rawAnswers.length > 0) {
+      output = {
+        action: "save",
+        answers: reconcileInterviewAnswers(output.answers, rawAnswers),
+      };
+    }
   }
 
   const latencyMs = Date.now() - startedAt;

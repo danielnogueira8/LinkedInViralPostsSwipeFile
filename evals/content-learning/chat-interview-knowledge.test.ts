@@ -104,6 +104,27 @@ describe("buildChatInterviewKnowledgeProposals", () => {
     });
   });
 
+  test("keeps a complete topic answer in basis instead of the short title", () => {
+    const answer =
+      "I ask Claude for different hook angles, format the post for readability, and verify every fact before publishing.";
+    const [proposal] = buildChatInterviewKnowledgeProposals({
+      workspaceId: "workspace-1",
+      answers: [
+        {
+          question: "What exact process turns a raw idea into a finished post?",
+          answer,
+          kind: "topic_expertise",
+          title: "The three-step process for turning an idea into a post",
+        },
+      ],
+    });
+
+    expect(proposal?.content).toEqual({
+      topic: "The three-step process for turning an idea into a post",
+      basis: answer,
+    });
+  });
+
   test("tags proposals with the interview source and the chat prefix", () => {
     const prefix = chatInterviewKnowledgeSourcePrefix("workspace-1");
     expect(prefix).toBe("workspace-1:chat-interview:");

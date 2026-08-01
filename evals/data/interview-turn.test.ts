@@ -1,9 +1,12 @@
 import { describe, expect, test } from "vitest";
 import {
+  extractInterviewAnswersFromHistory,
   INTERVIEW_MAX_QUESTIONS,
   isInterviewAskArgs,
   parseInterviewOutput,
+  reconcileInterviewAnswers,
 } from "@/lib/agent/turn/execute-interview";
+import type { ChatMessage } from "@/lib/openrouter";
 import { AskQuestionSchema, type AskQuestion } from "@/lib/agent/contracts";
 import { hydrate } from "@/lib/chat-hydration";
 import { composeInterviewAnswers } from "@/lib/chat-ask";
@@ -94,6 +97,87 @@ describe("parseInterviewOutput", () => {
         "Great — let's build from what's current.\n1. What are you working on?\n2. What changed your perspective?",
       ),
     ).toEqual({ action: "invalid" });
+  });
+});
+
+describe("interview answer fidelity", () => {
+  test("recovers every non-skipped answer from the submitted card message", () => {
+    const history: ChatMessage[] = [
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: [
+              "Q1: What changed your mind?",
+              "A1: I stopped batching content. Small daily bets compound harder.",
+              "",
+              "Q2: Which result?",
+              "A2: [skipped]",
+              "",
+              "Q3: What is your process?",
+              "A3: I ask for three hook angles, then verify every fact.",
+            ].join("\n"),
+          },
+        ],
+      },
+    ];
+
+    expect(extractInterviewAnswersFromHistory(history)).toEqual([
+      {
+        question: "What changed your mind?",
+        answer: "I stopped batching content. Small daily bets compound harder.",
+      },
+      {
+        question: "What is your process?",
+        answer: "I ask for three hook angles, then verify every fact.",
+      },
+    ]);
+  });
+
+  test("uses the original answer even when the model summarizes it", () => {
+    const raw = [
+      {
+        question: "What is your process?",
+        answer: "I ask for three hook angles, then verify every fact.",
+      },
+    ];
+    expect(
+      reconcileInterviewAnswers(
+        [
+          {
+            question: "What is your process?",
+            answer: "A three-step process.",
+            kind: "topic_expertise",
+            title: "The process",
+          },
+        ],
+        raw,
+      ),
+    ).toEqual([
+      {
+        question: "What is your process?",
+        answer: "I ask for three hook angles, then verify every fact.",
+        kind: "topic_expertise",
+        title: "The process",
+      },
+    ]);
+  });
+
+  test("creates a conservative item when the model omitted an answered question", () => {
+    expect(
+      reconcileInterviewAnswers(
+        [],
+        [{ question: "What result are you proud of?", answer: "15,000 followers." }],
+      ),
+    ).toEqual([
+      {
+        question: "What result are you proud of?",
+        answer: "15,000 followers.",
+        kind: "proof",
+        title: "What result are you proud of",
+      },
+    ]);
   });
 });
 

@@ -33,7 +33,7 @@ export type ChatInterviewAnswer = {
 // session's worth. A model that collected more should call again.
 export const CHAT_INTERVIEW_MAX_ANSWERS = 8;
 const MAX_QUESTION_CHARS = 500;
-const MAX_ANSWER_CHARS = 2_000;
+export const CHAT_INTERVIEW_MAX_ANSWER_CHARS = 2_000;
 const MAX_TITLE_CHARS = 240;
 
 function cut(value: string, max: number): string {
@@ -92,7 +92,7 @@ export function normalizeChatInterviewAnswers(
     }
     const candidate = entry as Record<string, unknown>;
     const question = typeof candidate.question === "string" ? cut(candidate.question, MAX_QUESTION_CHARS) : "";
-    const answer = typeof candidate.answer === "string" ? cut(candidate.answer, MAX_ANSWER_CHARS) : "";
+    const answer = typeof candidate.answer === "string" ? cut(candidate.answer, CHAT_INTERVIEW_MAX_ANSWER_CHARS) : "";
     const title = typeof candidate.title === "string" ? cut(candidate.title, MAX_TITLE_CHARS) : "";
     const kind = typeof candidate.kind === "string" ? candidate.kind.trim() : "";
     if (!question || !answer) continue; // blank answers are skipped, not stored
