@@ -4,6 +4,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useState, useTransition, useMemo, memo, useRef, useEffect } from "react";
 import { ArrowDown, ArrowUp, ArrowUpDown, X, CalendarRange, FileType2, Heart, MessageCircle, SlidersHorizontal } from "lucide-react";
 import { SearchField } from "@/components/ui/search-field";
+import { filterInsetClass } from "@/components/filter-ui";
 import { cn } from "@/lib/utils";
 import {
   countAdvancedSwipeFilters,
@@ -233,7 +234,7 @@ export function SwipeFilters() {
   }
 
   return (
-    <div className={cn("flex flex-wrap items-center gap-1.5 text-xs", isPending && "opacity-90")}>
+    <div className={cn("flex min-w-0 flex-wrap items-center gap-1.5 text-xs", isPending && "opacity-90")}>
       {/* Creator search — matches against accounts.name / linkedin_handle.
           Live: 300ms after the user stops typing, the URL updates and the
           server re-queries. Enter/blur flush immediately. */}
@@ -274,10 +275,10 @@ export function SwipeFilters() {
         aria-controls="advanced-swipe-filters"
         onClick={() => setAdvancedOpen((current) => !current)}
         className={cn(
-          "inline-flex h-8 items-center gap-2 rounded-full border bg-card px-3 font-medium transition-colors",
+          "inline-flex h-8 items-center gap-2 rounded-xl border px-3 font-medium transition-[color,background-color,border-color,box-shadow]",
           advancedOpen || advancedFilterCount > 0
-            ? "border-primary/40 text-primary ring-1 ring-primary/15"
-            : "border-border/60 text-muted-foreground hover:border-border hover:text-foreground",
+            ? "border-primary/35 bg-primary/[0.06] text-primary ring-1 ring-primary/15"
+            : "border-transparent text-muted-foreground hover:border-border/60 hover:bg-muted/80 hover:text-foreground",
         )}
       >
         <SlidersHorizontal className="h-3.5 w-3.5" />
@@ -293,7 +294,7 @@ export function SwipeFilters() {
         <button
           type="button"
           onClick={reset}
-          className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground px-2 py-1.5 rounded-md hover:bg-muted/70 transition-colors ml-auto"
+          className="ml-auto inline-flex h-8 items-center gap-1 rounded-xl px-2.5 text-muted-foreground transition-colors hover:bg-muted/80 hover:text-foreground"
         >
           <X className="h-3 w-3" /> Reset
         </button>
@@ -302,9 +303,9 @@ export function SwipeFilters() {
       {advancedOpen && (
         <div
           id="advanced-swipe-filters"
-          className="flex basis-full flex-wrap items-center gap-1.5 border-t border-border/60 pt-2.5"
+          className={filterInsetClass("mt-1.5 flex basis-full flex-wrap items-center gap-1.5 p-2")}
         >
-          <span className="mr-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+          <span className="mr-1 px-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
             Refine results
           </span>
           <DateRangeChip
@@ -356,7 +357,7 @@ const SelectChip = memo(function SelectChip({
   return (
     <div
       className={cn(
-        "inline-flex items-center rounded-full border bg-card overflow-hidden transition-[color,background-color,border-color,box-shadow,opacity] duration-150 ease-[cubic-bezier(0.25,1,0.5,1)] h-8",
+        "inline-flex h-8 items-center overflow-hidden rounded-xl border bg-background/75 transition-[color,background-color,border-color,box-shadow,opacity] duration-150 ease-[cubic-bezier(0.25,1,0.5,1)]",
         active ? "border-primary/40 ring-1 ring-primary/15" : "border-border/60 hover:border-border",
       )}
     >
@@ -385,7 +386,7 @@ const DateRangeChip = memo(function DateRangeChip({
   return (
     <div
       className={cn(
-        "inline-flex items-center rounded-full border bg-card overflow-hidden transition-[color,background-color,border-color,box-shadow,opacity] duration-150 ease-[cubic-bezier(0.25,1,0.5,1)] h-8",
+        "inline-flex h-8 items-center overflow-hidden rounded-xl border bg-background/75 transition-[color,background-color,border-color,box-shadow,opacity] duration-150 ease-[cubic-bezier(0.25,1,0.5,1)]",
         active ? "border-primary/40 ring-1 ring-primary/15" : "border-border/60 hover:border-border",
       )}
     >
@@ -427,7 +428,7 @@ const SearchChip = memo(function SearchChip({
     <SearchField
       containerClassName="shrink-0"
       className={cn(
-        "h-8 rounded-full bg-card text-xs font-medium shadow-none",
+        "h-8 rounded-xl bg-background/75 text-xs font-medium shadow-none",
         active
           ? "w-44 border-primary/40 ring-1 ring-primary/15"
           : "w-48 border-border/60 hover:border-border",
@@ -453,7 +454,7 @@ const NumericChip = memo(function NumericChip({
   return (
     <div
       className={cn(
-        "inline-flex items-center rounded-full border bg-card overflow-hidden transition-[color,background-color,border-color,box-shadow,opacity] duration-150 ease-[cubic-bezier(0.25,1,0.5,1)] h-8",
+        "inline-flex h-8 items-center overflow-hidden rounded-xl border bg-background/75 transition-[color,background-color,border-color,box-shadow,opacity] duration-150 ease-[cubic-bezier(0.25,1,0.5,1)]",
         active ? "border-primary/40 ring-1 ring-primary/15" : "border-border/60 hover:border-border",
       )}
     >

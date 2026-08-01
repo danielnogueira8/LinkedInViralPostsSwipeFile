@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { Loader2 } from "lucide-react";
 import { HorizontalCategoryRail } from "@/components/horizontal-category-rail";
-import { segmentedItemClass } from "@/components/app-surface";
+import { filterDotClass, filterPillClass } from "@/components/filter-ui";
 
 type CategoryLink = {
   href: string;
@@ -72,9 +72,10 @@ export function CategoryFilterRail({
         scroll={false}
         aria-current={assumed ? "page" : undefined}
         aria-busy={loading || undefined}
-        className={segmentedItemClass(assumed)}
+        className={filterPillClass(assumed)}
         onNavigate={(event) => navigate(event, { href, id })}
       >
+        <span aria-hidden className={filterDotClass(assumed)} />
         {label}
         {loading && <Loader2 className="h-3 w-3 animate-spin" aria-hidden />}
       </Link>
