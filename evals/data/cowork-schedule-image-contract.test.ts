@@ -19,4 +19,34 @@ describe("Cowork schedule image flow", () => {
   test("persists the selected image before scheduling", () => {
     expect(source).toContain("media_attachments: scheduleMediaAttachments");
   });
+
+  test("keeps draft saves and removals on the local attachment snapshot", () => {
+    // The artifact prop can lag one render behind an upload. Save, append, and
+    // remove must all use the local schedule state that includes completed
+    // uploads, and the state-changing buttons must wait for an upload to land.
+    expect(source).toContain(
+      "...(scheduleMediaAttachments.length\n          ? { media_attachments: scheduleMediaAttachments }\n          : {}),",
+    );
+    expect(source).toContain(
+      "const next = [...scheduleMediaAttachmentsRef.current, ...uploaded];",
+    );
+    expect(source).toContain(
+      "const next = scheduleMediaAttachmentsRef.current.filter((m) => m.id !== id);",
+    );
+    expect(source).toContain("const dirty = bodyDirty || mediaDirty;");
+    expect(source).toContain("mediaDirty ||\n    scheduleMediaAttachments");
+    expect(source).toContain("const markMediaChanged = () => {");
+    expect(source).toContain("const markMediaPersisted = (version: number) => {");
+    expect(source).toContain(
+      "const scheduleMediaAttachmentsRef = useRef(mediaAttachments);",
+    );
+    expect(source).toContain("const mediaMetaWriteRef = useRef(Promise.resolve());");
+    expect(source).toContain("const persistMediaMeta = (attachments: PostMediaAttachment[]) => {");
+    expect(source).toContain("media-only prop updates must not clobber local mutation state");
+    expect(source).toContain("scheduleMediaAttachmentsRef.current");
+    expect(source).toContain(
+      "disabled={automationOpening || uploadingScheduleImage}",
+    );
+    expect(source).toMatch(/saving \|\| uploadingScheduleImage/);
+  });
 });

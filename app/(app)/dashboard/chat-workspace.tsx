@@ -6963,6 +6963,10 @@ function ArtifactCard({
   const [scheduleWhen, setScheduleWhen] = useState(isoToLocalInput(scheduleMeta.scheduledAt));
   const [scheduling, setScheduling] = useState(false);
   const [scheduleMediaAttachments, setScheduleMediaAttachments] = useState(mediaAttachments);
+  const scheduleMediaAttachmentsRef = useRef(mediaAttachments);
+  const mediaMetaWriteRef = useRef(Promise.resolve());
+  const [mediaDirty, setMediaDirty] = useState(false);
+  const mediaMutationVersionRef = useRef(0);
   const [uploadingScheduleImage, setUploadingScheduleImage] = useState(false);
   // In-flight draft image uploads, shown as dimmed preview tiles with the
   // pixel loader inside the editor's media strip so a drag/drop or paste is
@@ -7004,12 +7008,42 @@ function ArtifactCard({
     setScheduleStatus(scheduleMeta.scheduleStatus);
     setFirstComment(scheduleMeta.firstComment ?? "");
     setScheduleWhen(isoToLocalInput(scheduleMeta.scheduledAt));
+    setMediaDirty(false);
     setScheduleMediaAttachments(mediaAttachments);
   }
-  const dirty = body !== artifactBody;
+  // A new artifact seed replaces the local attachment snapshot. Media-only
+  // parent updates intentionally do not: while a media mutation is in flight,
+  // the ref is the authoritative interleaving-safe state.
+  useEffect(() => {
+    scheduleMediaAttachmentsRef.current = mediaAttachments;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- media-only prop updates must not clobber local mutation state.
+  }, [seededId, seededBody]);
+  const bodyDirty = body !== artifactBody;
+  const dirty = bodyDirty || mediaDirty;
   const scheduleMediaChanged =
+    mediaDirty ||
     scheduleMediaAttachments.map((item) => item.id).join("\n") !==
     mediaAttachments.map((item) => item.id).join("\n");
+
+  const markMediaChanged = () => {
+    mediaMutationVersionRef.current += 1;
+    setMediaDirty(true);
+    return mediaMutationVersionRef.current;
+  };
+  const markMediaPersisted = (version: number) => {
+    if (version === mediaMutationVersionRef.current) setMediaDirty(false);
+  };
+  const setLocalScheduleMediaAttachments = (next: PostMediaAttachment[]) => {
+    scheduleMediaAttachmentsRef.current = next;
+    setScheduleMediaAttachments(next);
+  };
+  const persistMediaMeta = (attachments: PostMediaAttachment[]) => {
+    const write = mediaMetaWriteRef.current.then(() =>
+      onMetaChange?.({ media_attachments: attachments }),
+    );
+    mediaMetaWriteRef.current = write.catch(() => undefined);
+    return write;
+  };
 
   useEffect(() => {
     if (!scheduleOpen || scheduleStatus === "scheduled") return;
@@ -7088,7 +7122,8 @@ function ArtifactCard({
 
   // Save as a NEW chat_artifacts row (the original behavior).
   const saveAsNew = async () => {
-    if (!chatId || saving) return;
+    if (!chatId || saving || uploadingScheduleImage) return;
+    const mediaVersion = mediaMutationVersionRef.current;
     setSaving(true);
     try {
       const data = await draftOperations.saveFromChat(chatId, {
@@ -7097,9 +7132,12 @@ function ArtifactCard({
         body,
         ...(kindForSave() ? { kind: kindForSave() } : {}),
         ...(artifact.meta ? { meta: artifact.meta } : {}),
-        ...(mediaAttachments.length ? { media_attachments: mediaAttachments } : {}),
+        ...(scheduleMediaAttachments.length
+          ? { media_attachments: scheduleMediaAttachments }
+          : {}),
       });
       const savedDraftId = data.draft.id;
+      markMediaPersisted(mediaVersion);
 
       // The POST is the authoritative save. Record that success before the
       // follow-up chat metadata PATCH: if linking the board id back to the chat
@@ -7136,7 +7174,8 @@ function ArtifactCard({
   // UPDATE the original Posts-board post this chat is refining (PATCH the body),
   // so iterating on a post doesn't spawn a duplicate draft.
   const updateOriginal = async () => {
-    if (!refiningDraftId || saving) return;
+    if (!refiningDraftId || saving || uploadingScheduleImage) return;
+    const mediaVersion = mediaMutationVersionRef.current;
     setSaving(true);
     try {
       await draftOperations.update(
@@ -7146,9 +7185,13 @@ function ArtifactCard({
           content_format: draftMarkdownEnabled(artifact.meta)
             ? "markdown"
             : "plain",
+          ...(scheduleMediaChanged
+            ? { media_attachments: scheduleMediaAttachments }
+            : {}),
         },
         { fallbackError: "Failed to update post" },
       );
+      markMediaPersisted(mediaVersion);
       setSaved(true);
       toast.success("Post updated");
     } catch (e) {
@@ -7166,8 +7209,9 @@ function ArtifactCard({
     // A refine artifact is newer than the Posts row even when the user has not
     // edited it locally (`dirty` compares against the artifact, not the row).
     // Always carry its body + format back to the original before scheduling.
-    const shouldPersistBody = dirty || canUpdateOriginal;
+    const shouldPersistBody = bodyDirty || canUpdateOriginal;
     if (!shouldPersistBody && !scheduleMediaChanged) return;
+    const mediaVersion = mediaMutationVersionRef.current;
     await draftOperations.update(
       draftId,
       {
@@ -7183,6 +7227,7 @@ function ArtifactCard({
       },
       { fallbackError: errorMessage },
     );
+    markMediaPersisted(mediaVersion);
     if (shouldPersistBody) onBodyChange?.(body);
     setSaved(true);
   };
@@ -7200,6 +7245,7 @@ function ArtifactCard({
     }
 
     if (!chatId) throw new Error("Save the chat before scheduling this draft.");
+    const mediaVersion = mediaMutationVersionRef.current;
     const data = await draftOperations.saveFromChat(
       chatId,
       {
@@ -7211,6 +7257,7 @@ function ArtifactCard({
       },
       { fallbackError: "Failed to save draft before scheduling" },
     );
+    markMediaPersisted(mediaVersion);
     setBoardDraftId(data.draft.id);
     setSaved(true);
     await onMetaChange?.({ board_draft_id: data.draft.id });
@@ -7223,6 +7270,7 @@ function ArtifactCard({
   // the panel closed and surface why rather than mounting a panel that would
   // 404 on its own fetch.
   const toggleAutomation = async () => {
+    if (uploadingScheduleImage) return;
     if (automationOpen) {
       setAutomationOpen(false);
       return;
@@ -7259,7 +7307,7 @@ function ArtifactCard({
   //      reflect what we saved.
   // Returns true when the body is persisted (or there was nothing to persist).
   const persistBody = async (): Promise<boolean> => {
-    if (!dirty || !chatId) return true;
+    if (!bodyDirty || !chatId) return true;
     if (savingBodyRef.current) return true; // a save is already in flight
     savingBodyRef.current = true;
     setSavingBody(true);
@@ -7342,13 +7390,14 @@ function ArtifactCard({
         }
         uploaded.push(result.attachment);
       }
-      const next = [...mediaAttachments, ...uploaded];
+      const next = [...scheduleMediaAttachmentsRef.current, ...uploaded];
       // LinkedIn's own limits (max 20 images, no mixing types) — checked on the
       // COMBINED set, not per file, so adding a second batch can't slip past.
       const setError = validatePostMediaSet(next);
       if (setError) throw new Error(setError);
-      setScheduleMediaAttachments(next);
-      await onMetaChange?.({ media_attachments: next });
+      setLocalScheduleMediaAttachments(next);
+      markMediaChanged();
+      await persistMediaMeta(next);
       toast.success(uploaded.length > 1 ? "Images attached" : "Image attached");
     } catch (error) {
       toast.error((error as Error).message);
@@ -7359,10 +7408,11 @@ function ArtifactCard({
   };
 
   const removeDraftImage = async (id: string) => {
-    const next = mediaAttachments.filter((m) => m.id !== id);
-    setScheduleMediaAttachments(next);
+    const next = scheduleMediaAttachmentsRef.current.filter((m) => m.id !== id);
+    setLocalScheduleMediaAttachments(next);
+    markMediaChanged();
     try {
-      await onMetaChange?.({ media_attachments: next });
+      await persistMediaMeta(next);
     } catch {
       toast.error("Couldn't remove that image.");
     }
@@ -7382,7 +7432,7 @@ function ArtifactCard({
         );
       }
       const preflightError = validatePostMediaSet([
-        ...scheduleMediaAttachments,
+        ...scheduleMediaAttachmentsRef.current,
         {
           id: "pending-schedule-image",
           source: "library",
@@ -7403,10 +7453,11 @@ function ArtifactCard({
         throw new Error("Choose an image file.");
       }
       const attachment = result.attachment;
-      const next = [...scheduleMediaAttachments, attachment];
+      const next = [...scheduleMediaAttachmentsRef.current, attachment];
       const mediaError = validatePostMediaSet(next);
       if (mediaError) throw new Error(mediaError);
-      setScheduleMediaAttachments(next);
+      setLocalScheduleMediaAttachments(next);
+      markMediaChanged();
       toast.success("Image attached");
     } catch (error) {
       toast.error((error as Error).message);
@@ -7752,7 +7803,12 @@ function ArtifactCard({
           onClick={save}
           // Re-enable once the draft has been edited since the last save, so an
           // edited-then-saved draft can be saved again after further edits.
-          disabled={saving || (saved && !dirty) || !chatId}
+          disabled={
+            saving ||
+            uploadingScheduleImage ||
+            (saved && !dirty) ||
+            !chatId
+          }
           title={
             canUpdateOriginal
               ? "Overwrite the post on your board with this version"
@@ -7788,7 +7844,7 @@ function ArtifactCard({
             variant="ghost"
             className="h-8 rounded-full px-2.5 text-xs font-medium text-muted-foreground hover:text-foreground"
             onClick={saveAsNew}
-            disabled={saving || !chatId}
+            disabled={saving || uploadingScheduleImage || !chatId}
             title="Keep the original and save this as a separate new draft"
           >
             Save as new
@@ -7844,7 +7900,9 @@ function ArtifactCard({
             }
             setScheduleOpen((v) => !v);
           }}
-          disabled={scheduling || artifact.kind === "hook"}
+          disabled={
+            scheduling || uploadingScheduleImage || artifact.kind === "hook"
+          }
           title={
             artifact.kind === "hook"
               ? "Hooks need to become full posts before scheduling"
@@ -8008,7 +8066,7 @@ function ArtifactCard({
               <button
                 type="button"
                 onClick={() => void toggleAutomation()}
-                disabled={automationOpening}
+                disabled={automationOpening || uploadingScheduleImage}
                 className="flex items-center gap-2 text-left text-xs font-medium text-foreground transition-colors hover:text-primary disabled:opacity-60"
                 aria-expanded={automationOpen}
               >
