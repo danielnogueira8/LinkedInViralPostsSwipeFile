@@ -15,6 +15,10 @@ const ALLOWED_ADMIN_APP_FILES = new Set([
   "app/api/cron/daily-recovery/route.ts",
   "app/api/cron/daily/route.ts",
   "app/api/cron/edit-delta-distill/route.ts",
+  // Read-only probe over the GLOBAL posts corpus (cross-workspace by design:
+  // topic clusters are a per-niche signal, not a per-workspace one). Writes
+  // nothing and calls no model; CRON_SECRET-gated like the other cron routes.
+  "app/api/cron/topic-cluster-probe/route.ts",
   "app/api/health/route.ts",
   "app/api/internal/jobs/health/route.ts",
   "app/lm/[slug]/page.tsx", // intentionally public resource lookup
