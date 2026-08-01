@@ -6605,7 +6605,7 @@ function ArtifactCard({
 
   // Save as a NEW chat_artifacts row (the original behavior).
   const saveAsNew = async () => {
-    if (!chatId || saving) return;
+    if (!chatId || saving || uploadingScheduleImage) return;
     setSaving(true);
     try {
       const data = await draftOperations.saveFromChat(chatId, {
@@ -6614,7 +6614,9 @@ function ArtifactCard({
         body,
         ...(kindForSave() ? { kind: kindForSave() } : {}),
         ...(artifact.meta ? { meta: artifact.meta } : {}),
-        ...(mediaAttachments.length ? { media_attachments: mediaAttachments } : {}),
+        ...(scheduleMediaAttachments.length
+          ? { media_attachments: scheduleMediaAttachments }
+          : {}),
       });
       const savedDraftId = data.draft.id;
 
@@ -6663,6 +6665,9 @@ function ArtifactCard({
           content_format: draftMarkdownEnabled(artifact.meta)
             ? "markdown"
             : "plain",
+          ...(scheduleMediaChanged
+            ? { media_attachments: scheduleMediaAttachments }
+            : {}),
         },
         { fallbackError: "Failed to update post" },
       );
@@ -6840,7 +6845,7 @@ function ArtifactCard({
         }
         uploaded.push(result.attachment);
       }
-      const next = [...mediaAttachments, ...uploaded];
+      const next = [...scheduleMediaAttachments, ...uploaded];
       // LinkedIn's own limits (max 20 images, no mixing types) — checked on the
       // COMBINED set, not per file, so adding a second batch can't slip past.
       const setError = validatePostMediaSet(next);
@@ -6856,7 +6861,7 @@ function ArtifactCard({
   };
 
   const removeDraftImage = async (id: string) => {
-    const next = mediaAttachments.filter((m) => m.id !== id);
+    const next = scheduleMediaAttachments.filter((m) => m.id !== id);
     setScheduleMediaAttachments(next);
     try {
       await onMetaChange?.({ media_attachments: next });
@@ -7248,7 +7253,12 @@ function ArtifactCard({
           onClick={save}
           // Re-enable once the draft has been edited since the last save, so an
           // edited-then-saved draft can be saved again after further edits.
-          disabled={saving || (saved && !dirty) || !chatId}
+          disabled={
+            saving ||
+            uploadingScheduleImage ||
+            (saved && !dirty) ||
+            !chatId
+          }
           title={
             canUpdateOriginal
               ? "Overwrite the post on your board with this version"
@@ -7284,7 +7294,7 @@ function ArtifactCard({
             variant="ghost"
             className="h-8 rounded-full px-2.5 text-xs font-medium text-muted-foreground hover:text-foreground"
             onClick={saveAsNew}
-            disabled={saving || !chatId}
+            disabled={saving || uploadingScheduleImage || !chatId}
             title="Keep the original and save this as a separate new draft"
           >
             Save as new
@@ -7340,7 +7350,9 @@ function ArtifactCard({
             }
             setScheduleOpen((v) => !v);
           }}
-          disabled={scheduling || artifact.kind === "hook"}
+          disabled={
+            scheduling || uploadingScheduleImage || artifact.kind === "hook"
+          }
           title={
             artifact.kind === "hook"
               ? "Hooks need to become full posts before scheduling"
