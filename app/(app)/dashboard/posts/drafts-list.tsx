@@ -322,6 +322,9 @@ export function DraftsList({
   // the live draft — optimistic title/status/date changes flow straight in.
   // `null` = the "new post" mode.
   const [editingId, setEditingId] = useState<string | null>(null);
+  // Keep the last rendered column for the open draft so async metadata updates
+  // can move the mobile lane after React has committed the new draft state.
+  const editingColumnRef = useRef<BoardColumnId | null>(null);
   // Which column a dragged card is hovering, for the drop highlight.
   const [dragOver, setDragOver] = useState<DraftStatus | null>(null);
   // Mobile: the board is one column at a time, selected by a tab strip. Default
@@ -464,27 +467,15 @@ export function DraftsList({
 
   // Optimistic merge of a property change (title / status / date) from the
   // detail drawer. The drawer fires the PATCH itself; this just keeps the board
-  // in sync so the card name / dot / column update instantly. Also re-points the
-  // mobile column when status changes so the moved card stays visible.
+  // in sync so the card name / dot / column update instantly.
   const applyMeta = (id: string, patch: Partial<Draft>) => {
-    // Derive the mobile column from the MERGED draft (via boardColumnForDraft
-    // — the single source of truth this file already uses for the desktop
-    // column grouping and the status dot), read out of the SAME functional
-    // update as the patch itself — never the `drafts` closure. That closure
-    // can be stale by the time an async caller's response lands (e.g.
-    // ScheduleRow's cancel() captures onMeta before an overlapping
-    // Status-dropdown change re-renders with a newer closure), which used to
-    // snap the mobile tab back to a status the draft no longer has.
-    let nextColumn: BoardColumnId | undefined;
     setDrafts((d) =>
       d.map((x) => {
         if (x.id !== id) return x;
         const merged = { ...x, ...patch };
-        nextColumn = boardColumnForDraft(merged);
         return merged;
       }),
     );
-    if (nextColumn) setMobileCol(nextColumn);
   };
 
   // A draft created on the board (via the modal). Prepend it so it's visible
@@ -522,6 +513,20 @@ export function DraftsList({
   // The live draft for the open drawer, derived from `drafts` by id (so meta
   // edits reflect instantly). null when creating a new post.
   const editing = editingId ? drafts.find((d) => d.id === editingId) ?? null : null;
+  // Reconcile the mobile lane from committed draft state. React functional
+  // state updaters run later, so reading a local variable immediately after
+  // setDrafts cannot reliably observe the merged draft.
+  useEffect(() => {
+    const currentColumn = editorOpen && editing ? boardColumnForDraft(editing) : null;
+    const previousColumn = editingColumnRef.current;
+    editingColumnRef.current = currentColumn;
+    if (previousColumn !== null && currentColumn !== null && previousColumn !== currentColumn) {
+      // This is a derived UI projection of the committed draft state, not an
+      // input event; keep it in the reconciliation effect rather than the
+      // functional state updater.
+      setMobileCol(currentColumn);
+    }
+  }, [editorOpen, editing]);
   // Prev/next walk the open post's visible column in shown order, so the arrows
   // can never hop lanes (for example, Drafting straight into Posted).
   const navDrafts = useMemo(

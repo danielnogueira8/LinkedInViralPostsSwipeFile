@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 //
 // Fetches from /api/usage after mount so dashboard navigation does not block on
 // usage accounting. The pill renders in two places at once (sidebar + mobile
-// bar), so the request is deduped module-wide and the result cached — the
+// bar), so the request is deduped per Workspace and the result cached — the
 // second instance reuses the first instance's fetch instead of firing its own.
 // The chat workspace dispatches "swipein:usage-changed" after a turn so the
 // count stays live without polling.
@@ -23,11 +23,17 @@ type UsageData = {
   boundBy: "messages" | "cost";
 };
 
-let usageCache: UsageData | null = null;
-let usageInflight: Promise<UsageData | null> | null = null;
+const usageCache = new Map<string, UsageData>();
+const usageInflight = new Map<string, Promise<UsageData | null>>();
 
-function fetchUsage(): Promise<UsageData | null> {
-  usageInflight ??= fetch("/api/usage")
+export function fetchUsageForWorkspace(workspaceId: string): Promise<UsageData | null> {
+  const cached = usageCache.get(workspaceId);
+  if (cached) return Promise.resolve(cached);
+
+  const inflight = usageInflight.get(workspaceId);
+  if (inflight) return inflight;
+
+  const request = fetch("/api/usage")
     .then((res) => res.json())
     .then((data): UsageData | null =>
       data?.ok && typeof data.used === "number"
@@ -40,26 +46,30 @@ function fetchUsage(): Promise<UsageData | null> {
     )
     .catch(() => null)
     .then((result) => {
-      usageInflight = null;
-      if (result) usageCache = result;
+      usageInflight.delete(workspaceId);
+      if (result) usageCache.set(workspaceId, result);
       return result;
     });
-  return usageInflight;
+  usageInflight.set(workspaceId, request);
+  return request;
 }
 
 export function UsagePill({
+  workspaceId,
   initialUsed,
   limit,
   initialBoundBy = "messages",
 }: {
+  workspaceId: string;
   initialUsed?: number;
   limit?: number;
   initialBoundBy?: "messages" | "cost";
 }) {
-  const [used, setUsed] = useState(usageCache?.used ?? initialUsed ?? 0);
-  const [resolvedLimit, setResolvedLimit] = useState(usageCache?.limit ?? limit ?? 0);
+  const cached = usageCache.get(workspaceId);
+  const [used, setUsed] = useState(cached?.used ?? initialUsed ?? 0);
+  const [resolvedLimit, setResolvedLimit] = useState(cached?.limit ?? limit ?? 0);
   const [ready, setReady] = useState(
-    usageCache !== null ||
+    cached !== undefined ||
       (typeof initialUsed === "number" && typeof limit === "number"),
   );
   // Which ceiling is currently driving the number — the message count or the
@@ -67,11 +77,11 @@ export function UsagePill({
   // projected onto the message scale, so the pill stays honest for heavy users
   // who hit the cost cap before the message cap.
   const [boundBy, setBoundBy] = useState<"messages" | "cost">(
-    usageCache?.boundBy ?? initialBoundBy,
+    cached?.boundBy ?? initialBoundBy,
   );
 
   const refetch = useCallback(async () => {
-    const data = await fetchUsage();
+    const data = await fetchUsageForWorkspace(workspaceId);
     if (data) {
       setUsed(data.used);
       setResolvedLimit(data.limit);
@@ -79,7 +89,7 @@ export function UsagePill({
       setReady(true);
     }
     // Best-effort — leave the last known value on a transient failure.
-  }, []);
+  }, [workspaceId]);
 
   useEffect(() => {
     const timer = ready ? null : window.setTimeout(() => void refetch(), 0);

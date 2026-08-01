@@ -1,11 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Loader2, AlertCircle } from "lucide-react";
+import { AlertCircle } from "lucide-react";
 import { SavedPostCard } from "@/components/saved-post-card";
 import type { BookmarkCard, BookmarkSortKey } from "@/lib/bookmarks-query";
 import type { PostType } from "@/lib/post-type";
 import { LoadingPixels } from "@/components/ui/loading-state";
+import { reconcileBookmarkGridPage } from "./bookmarks-grid-state";
 
 // Infinite-scroll grid. The server renders the first page and hands it
 // here along with the cursor + filter context. As the sentinel near the
@@ -57,12 +58,16 @@ export function BookmarksGrid({
     // it doesn't re-render if nothing new arrived.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setCards((prev) => {
-      const known = new Set(prev.map((c) => c.row.id));
-      const fresh = initialCards.filter((c) => !known.has(c.row.id));
-      if (fresh.length === 0) return prev; // no-op → no re-render
-      return [...fresh, ...prev];
+      return reconcileBookmarkGridPage({
+        currentCards: prev,
+        serverCards: initialCards,
+        serverNextOffset: initialNextOffset,
+      }).cards;
     });
-  }, [initialCards]);
+    // Keep the load-more cursor aligned with the refreshed server page. The
+    // server's first page is authoritative for whether another page exists.
+    setNextOffset(initialNextOffset);
+  }, [initialCards, initialNextOffset]);
 
   const loadMore = useCallback(async () => {
     if (loadingRef.current || nextOffset === null) return;

@@ -128,8 +128,6 @@ export default async function AnalyticsPage({
     // Most recent posts on top (was impressions-desc, which read as arbitrary).
     posts = sortPostsByRecency(posts);
   }
-  const analyticsPostCount = posts.length;
-
   // Snapshots are cumulative per post. Show the observed gains between
   // snapshots rather than summing cumulative account totals for each date.
   const metricSnapshots = snapshots.map(
@@ -151,6 +149,10 @@ export default async function AnalyticsPage({
     metricSnapshots,
     filters.contentType,
   );
+  // Empty-state copy and connection gating must use the same content-type
+  // scope as the report. Counting before this filter made a lead-magnet-only
+  // view claim that regular posts were tracked too.
+  const analyticsPostCount = scoped.posts.length;
   const today = new Date().toISOString().slice(0, 10);
   const bounds = periodBounds(filters.period, today);
   const currentReport = buildAnalyticsPeriodReport(

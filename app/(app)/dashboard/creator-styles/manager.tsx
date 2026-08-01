@@ -141,15 +141,20 @@ export function CreatorStylesManager({
   const failToastShownRef = useRef(false);
   const refetch = useCallback(async () => {
     try {
-      const data = await fetchJson<{ ok: boolean; styles?: CreatorStyleRow[] }>(
+      const data = await fetchJson<{
+        ok: boolean;
+        styles?: CreatorStyleRow[];
+        error?: string;
+      }>(
         "/api/creator-styles",
         { cache: "no-store" },
       );
-      if (data?.ok && Array.isArray(data.styles)) {
-        setStyles(data.styles);
-        pollFailuresRef.current = 0;
-        failToastShownRef.current = false;
+      if (!data?.ok || !Array.isArray(data.styles)) {
+        throw new Error(data?.error || "Couldn't refresh creator styles.");
       }
+      setStyles(data.styles);
+      pollFailuresRef.current = 0;
+      failToastShownRef.current = false;
     } catch {
       // Surface a single toast after several consecutive failures — enough to
       // ride out a transient blip, but not so many that a stuck style spins
@@ -370,6 +375,7 @@ function StyleCard({
         onKeyDown={
           clickable
             ? (e) => {
+                if (e.target !== e.currentTarget) return;
                 if (e.key === "Enter" || e.key === " ") {
                   e.preventDefault();
                   onOpenDetail();

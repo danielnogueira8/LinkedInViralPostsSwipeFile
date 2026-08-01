@@ -58,6 +58,22 @@ export function hrefWithStoredFilterQuery(
     : `${path}?${stored}`;
 }
 
+// The mobile bar has two destinations that intentionally share a pathname:
+// Swipe File and its Bookmarks tab. Keep URL equality behind a small seam so a
+// query-only navigation is not mistaken for a no-op.
+export function isSameNavigationTarget(
+  targetHref: string,
+  pathname: string,
+  search: string,
+): boolean {
+  const currentHref = search ? `${pathname}?${search}` : pathname;
+  const canonicalHref = (href: string) => {
+    const url = new URL(href, "https://swipein.local");
+    return `${url.pathname}${url.search}${url.hash}`;
+  };
+  return canonicalHref(targetHref) === canonicalHref(currentHref);
+}
+
 export function filterQueryForStorage(query: string, storageKey: string): string {
   if (!query || storageKey !== BOOKMARK_FILTERS_KEY) return query;
   const params = new URLSearchParams(query);
