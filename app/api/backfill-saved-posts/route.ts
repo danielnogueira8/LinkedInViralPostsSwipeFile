@@ -26,17 +26,17 @@ function serviceClient() {
 }
 
 export async function POST(req: Request) {
-  await requireWorkspaceId();
-  if (!(await isAdmin())) {
-    return NextResponse.json({ ok: false, error: "Admin only." }, { status: 403 });
-  }
+  try {
+    await requireWorkspaceId();
+    if (!(await isAdmin())) {
+      return NextResponse.json({ ok: false, error: "Admin only." }, { status: 403 });
+    }
 
   const batch = Math.min(
     100,
     Math.max(1, parseInt(new URL(req.url).searchParams.get("batch") ?? "40", 10) || 40),
   );
 
-  try {
     const sb = serviceClient();
 
     // Rows still on the old shape: no native text yet.
@@ -89,10 +89,11 @@ export async function POST(req: Request) {
     }
 
     // How many still need backfilling after this batch.
-    const { count: remaining } = await sb
+    const { count: remaining, error: remainingError } = await sb
       .from("saved_posts")
       .select("id", { count: "exact", head: true })
       .is("text", null);
+    if (remainingError) return errorResponse(remainingError);
 
     return NextResponse.json({
       ok: true,

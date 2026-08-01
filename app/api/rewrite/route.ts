@@ -27,8 +27,8 @@ export const runtime = "nodejs";
 
 // Best-effort per-instance dedupe for accidental double-submits. A rewrite has
 // no persisted row to check against (unlike chat's chat_messages guard), so we
-// keep a small in-memory map of recently-seen (workspace + selection +
-// instruction) hashes. This catches the common case — a double-click landing on
+// keep a small in-memory map of recently-seen (workspace + full draft +
+// selection + instruction) hashes. This catches the common case — a double-click landing on
 // the same warm serverless instance within a couple seconds — without a DB
 // round-trip. It's intentionally NOT a hard cross-instance guarantee (the
 // monthly cost cap remains the real ceiling); it just stops the cheap, frequent
@@ -39,12 +39,13 @@ const recentRewrites = new Map<string, number>();
 
 function rewriteDedupeKey(
   workspaceId: string,
+  fullDraft: string | undefined,
   selection: string,
   instruction: string,
 ): string {
   // Cheap, collision-tolerant hash — a false collision only costs a spurious
   // 409 on a genuinely-distinct rewrite within 5s, which is acceptable.
-  const raw = `${workspaceId}\0${selection}\0${instruction}`;
+  const raw = `${workspaceId}\0${fullDraft ?? ""}\0${selection}\0${instruction}`;
   let h = 5381;
   for (let i = 0; i < raw.length; i++)
     h = ((h << 5) + h + raw.charCodeAt(i)) | 0;
@@ -150,6 +151,7 @@ export async function POST(req: Request) {
     // isn't billed twice. Best-effort per-instance; see the map above.
     const dedupeKey = rewriteDedupeKey(
       workspaceId,
+      input.fullDraft,
       input.selection,
       input.instruction,
     );

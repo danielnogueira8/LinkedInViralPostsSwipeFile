@@ -48,6 +48,28 @@ const STEPS = [
   { key: "scheduled" as const, label: "Schedule a post", href: "/dashboard/posts", icon: CalendarCheck },
 ];
 
+// Only a dismissed or fully completed checklist is terminal. Invalid/error
+// responses remain retryable because the layout survives client navigation and
+// a transient outage should not hide setup for the rest of the session.
+export function shouldHaltChecklist(data: unknown): boolean {
+  if (!data || typeof data !== "object") return false;
+  const response = data as {
+    ok?: boolean;
+    items?: unknown;
+    dismissed?: boolean;
+  };
+  if (
+    !response.ok ||
+    !response.items ||
+    typeof response.items !== "object" ||
+    Array.isArray(response.items)
+  ) {
+    return false;
+  }
+  const next = { ...DEFAULT_STATE, ...(response.items as Partial<ChecklistState>) };
+  return Boolean(response.dismissed) || Object.values(next).every(Boolean);
+}
+
 // Compact first-run setup checklist for the LEFT SIDEBAR (sits between the nav
 // and the user card). Persists until the user dismisses it (permanent,
 // workspace-scoped via POST /api/onboarding/checklist) OR every item is done
@@ -78,20 +100,18 @@ export function FirstRunChecklist({ forceShow = false }: { forceShow?: boolean }
         // checklist — hide like a fetch failure rather than render a bogus
         // "Setup 0/6" from the default state.
         if (!data?.ok || !data.items) {
-          haltRef.current = true;
           setState(forceShow ? "shown" : "hidden");
           return;
         }
         const next = { ...DEFAULT_STATE, ...data.items };
         setItems(next);
         const allDone = Object.values(next).every(Boolean);
-        if (data.dismissed || allDone) haltRef.current = true;
+        if (shouldHaltChecklist(data)) haltRef.current = true;
         // Auto-hide when dismissed or fully complete (unless forced for preview).
         setState(!forceShow && (data.dismissed || allDone) ? "hidden" : "shown");
       })
       .catch(() => {
         if (!cancelled) {
-          haltRef.current = true;
           setState(forceShow ? "shown" : "hidden");
         }
       });

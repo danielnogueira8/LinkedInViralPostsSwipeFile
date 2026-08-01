@@ -56,6 +56,15 @@ describe("postCronAlert", () => {
     expect(body.text).toContain("kaboom");
   });
 
+  test("returns false when the webhook rejects the alert with a non-2xx status", async () => {
+    process.env.HEALTH_DIGEST_WEBHOOK = "https://hook.example/x";
+    fetchMock.mockResolvedValue({ ok: false, status: 503 });
+
+    await expect(
+      postCronAlert({ cron: "publish-scheduled" }, new Error("kaboom")),
+    ).resolves.toBe(false);
+  });
+
   test("swallows a webhook failure and returns false (never throws)", async () => {
     process.env.HEALTH_DIGEST_WEBHOOK = "https://hook.example/x";
     fetchMock.mockRejectedValue(new Error("network down"));

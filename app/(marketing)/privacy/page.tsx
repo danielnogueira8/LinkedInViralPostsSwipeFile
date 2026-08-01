@@ -1,9 +1,9 @@
 import Link from "next/link";
 
 export const metadata = {
-  title: "Privacy Policy · Swipe File",
+  title: "Privacy Policy · SwipeIn",
   description:
-    "How Swipe File collects, uses, and protects your information.",
+    "How SwipeIn collects, uses, and protects your information.",
 };
 
 const EFFECTIVE_DATE = "July 1, 2026";

@@ -64,17 +64,26 @@ describe("persistent weekly plan contract", () => {
     expect(draftRoute).toContain("readiness.needsContext");
     expect(draftRoute).toContain("draftFromPrompt");
     expect(draftRoute).toContain("actOnOpportunity");
-    expect(draftRoute).toContain('await updateStatus("planned", "drafting")');
+    expect(draftRoute).toContain(
+      'updateStatus("planned", "drafting", null, draftingStartedAt)',
+    );
     expect(draftRoute).toContain('updateStatus("drafting", "planned")');
     expect(draftRoute).toContain("leadMagnetId");
-    expect(draftRoute).toContain(
-      'updateStatus("drafted", "drafting", result.draftIds[0])',
-    );
+    expect(draftRoute).toContain("draftingStartedAt");
+    expect(draftRoute).toContain("This plan item changed while drafting");
     expect(store).toContain("draftId: z.string().uuid().nullable().optional()");
     expect(act).toContain('command: { kind: "create", count: 1 }');
     expect(draftRoute).toContain("Your direction is saved");
     expect(draftRoute).toContain("{ status: 502 }");
     expect(briefing).toContain('role="alert"');
+  });
+
+  test("the drafting endpoint can claim a card from either visible plan week", () => {
+    expect(draftRoute).toContain("rollingWindowWeekStarts");
+    expect(draftRoute).toContain("resolveStoredWeekPlanItemAcross");
+    expect(draftRoute).toContain("mutateStoredWeekPlanItemAcross");
+    expect(draftRoute).not.toContain("loadStoredWeekPlan(");
+    expect(draftRoute).not.toContain("mutateStoredWeekPlanItem(");
   });
 
   test("a completed cadence card opens its exact saved draft on the Posts board", () => {

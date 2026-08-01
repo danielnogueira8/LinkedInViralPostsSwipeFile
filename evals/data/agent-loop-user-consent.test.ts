@@ -64,6 +64,9 @@ vi.mock("@/lib/agent-loop/trend-radar", () => ({
   scanTrendOpportunities: (...args: unknown[]) =>
     scanTrendOpportunities(...args),
 }));
+vi.mock("@/lib/agent-loop/opportunity-claim", () => ({
+  recoverStaleAgentOpportunityDrafts: async () => 0,
+}));
 vi.mock("@/lib/agent-loop/act", () => ({
   actOnOpportunity: (...args: unknown[]) => actOnOpportunity(...args),
 }));

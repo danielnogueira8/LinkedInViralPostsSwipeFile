@@ -4,6 +4,7 @@ import { describe, expect, test } from "vitest";
 import {
   GroundedSourceLinks,
   circularWindow,
+  sourceWindowLabel,
 } from "@/components/grounded-source-links";
 import type { Artifact } from "@/lib/agent/contracts";
 import { persistedCiteMeta } from "@/lib/agent/grounded-source-citations";
@@ -210,6 +211,21 @@ describe("GroundedSourceLinks", () => {
     expect(html).not.toContain("Author 5");
   });
 
+  test("carousel pagination buttons remain visible to assistive technology", () => {
+    const ids = Array.from(
+      { length: 5 },
+      (_, index) =>
+        `10000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+    );
+    const html = render(
+      ids.map((id, i) =>
+        citeWithCard(id, fullCard(id, { authorName: `Author ${i + 1}` })),
+      ),
+    );
+
+    expect(html).not.toContain('aria-hidden="true"><button');
+  });
+
   test("the carousel window wraps around the end so it loops infinitely", () => {
     const items = [1, 2, 3, 4, 5];
     expect(circularWindow(items, 0, 3)).toEqual([1, 2, 3]);
@@ -217,6 +233,10 @@ describe("GroundedSourceLinks", () => {
     expect(circularWindow(items, 4, 3)).toEqual([5, 1, 2]);
     // fewer items than the window size just shows all of them
     expect(circularWindow(items, 0, 8)).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  test("the wrapped carousel counter names both visible ranges", () => {
+    expect(sourceWindowLabel(4, 3, 5)).toBe("Sources 5, 1–2 of 5");
   });
 
   test("exactly three cards all render at once with no carousel controls", () => {

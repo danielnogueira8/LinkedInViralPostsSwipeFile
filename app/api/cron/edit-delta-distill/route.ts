@@ -4,6 +4,10 @@ import { postCronAlert } from "@/lib/cron-alert";
 import { distillEditDeltaRules } from "@/lib/voice-edit-distiller";
 import { errorResponse } from "@/lib/workspace";
 import { listWorkspacesWithPendingRevisionEvents } from "@/lib/content-learning/revision-events";
+import {
+  cronAuthorizationResponse,
+  isCronAuthorized,
+} from "@/app/api/cron/_auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,11 +18,7 @@ export const maxDuration = 300;
 // BACKGROUND_MODEL call per workspace; the only state written is new
 // content_preferences rows (source "edit_delta"). Best-effort per workspace.
 export async function GET(req: Request) {
-  const secret = process.env.CRON_SECRET;
-  const auth = req.headers.get("authorization");
-  if (!secret || auth !== `Bearer ${secret}`) {
-    return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
-  }
+  if (!isCronAuthorized(req)) return cronAuthorizationResponse();
 
   try {
     const sb = supabaseAdmin();

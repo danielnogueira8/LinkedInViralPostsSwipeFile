@@ -11,6 +11,7 @@ import {
   knowledgeUploadPath,
   prepareKnowledgeSourceUpload,
 } from "@/lib/knowledge-sources/operations";
+import { failKnowledgeSourceUpload } from "@/app/api/knowledge-sources/_failure";
 
 export const runtime = "nodejs";
 
@@ -76,20 +77,13 @@ export async function POST(request: Request) {
       .from(KNOWLEDGE_SOURCE_BUCKET)
       .createSignedUploadUrl(path);
     if (error) {
-      const { error: removeError } = await sb.raw.storage
-        .from(KNOWLEDGE_SOURCE_BUCKET)
-        .remove([path]);
-      if (removeError) throw removeError;
-      const { error: failError } = await sb.raw.rpc(
-        "fail_knowledge_source_ingestion",
-        {
-        p_workspace_id: sb.workspaceId,
-        p_source_id: source.id,
-        p_error_code: "upload_initialization_failed",
-        p_job_id: null,
-        },
-      );
-      if (failError) throw failError;
+      await failKnowledgeSourceUpload({
+        db: sb.raw,
+        workspaceId: sb.workspaceId,
+        sourceId: source.id,
+        storagePath: path,
+        errorCode: "upload_initialization_failed",
+      });
       throw error;
     }
     return NextResponse.json({

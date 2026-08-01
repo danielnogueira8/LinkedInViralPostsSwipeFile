@@ -3,6 +3,10 @@ import { sweepDeletedMedia } from "@/lib/media-sweep";
 import { purgeExpiredModeledDraftBatches } from "@/lib/modeled-draft-batch-retention";
 import { postCronAlert } from "@/lib/cron-alert";
 import { errorResponse } from "@/lib/workspace";
+import {
+  cronAuthorizationResponse,
+  isCronAuthorized,
+} from "@/app/api/cron/_auth";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -17,11 +21,7 @@ export const maxDuration = 60;
 // Same CRON_SECRET Bearer auth as the other cron routes.
 // -----------------------------------------------------------------------------
 export async function GET(req: Request) {
-  const secret = process.env.CRON_SECRET;
-  const auth = req.headers.get("authorization");
-  if (!secret || auth !== `Bearer ${secret}`) {
-    return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
-  }
+  if (!isCronAuthorized(req)) return cronAuthorizationResponse();
   try {
     const [mediaSweep, modeledBatchSweep] = await Promise.allSettled([
       sweepDeletedMedia(),

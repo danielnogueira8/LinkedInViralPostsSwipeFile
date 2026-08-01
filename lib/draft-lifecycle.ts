@@ -397,6 +397,11 @@ export class DraftLifecycle {
         else if (input.leadMagnet !== undefined) meta.lead_magnet = input.leadMagnet;
         patch.meta = meta;
       }
+      const effectiveMeta = patch.meta !== undefined ? patch.meta : current.meta;
+      const effectiveKind = resolveDraftKind(input.kind ?? current.kind, input.body ?? current.body, {
+        hasLeadMagnet: leadMagnetContextFromMeta(effectiveMeta) !== null,
+      });
+      if (effectiveKind !== current.kind) patch.kind = effectiveKind;
       if (input.title !== undefined) {
         patch.title = input.title?.trim() || deriveDraftTitle(input.body ?? current.body);
       } else if (

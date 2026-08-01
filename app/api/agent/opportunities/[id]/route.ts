@@ -3,6 +3,10 @@ import { z } from "zod";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
 import { actOnOpportunity, type AgentOpportunityRow } from "@/lib/agent-loop/act";
+import {
+  recoverStaleAgentOpportunityDrafts,
+  updateManagedOpportunityStatus,
+} from "@/lib/agent-loop/opportunity-claim";
 import { weekStart } from "@/lib/agent-loop/week-plan";
 import { markStoredOpportunityDrafted } from "@/lib/agent-loop/week-plan-store";
 
@@ -20,6 +24,13 @@ const actionSchema = z.object({
   action: z.enum(["draft", "dismiss"]),
 });
 
+function alreadyHandledResponse() {
+  return NextResponse.json(
+    { ok: false, error: "This opportunity was already handled." },
+    { status: 409 },
+  );
+}
+
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
@@ -28,6 +39,9 @@ export async function POST(
     const { id } = await params;
     const { action } = actionSchema.parse(await req.json());
     const sb = await scopedSupabase();
+    // A killed actor can leave a managed opportunity in drafting forever.
+    // Reclaim expired leases before deciding whether this click is stale.
+    await recoverStaleAgentOpportunityDrafts(sb.raw, sb.workspaceId);
 
     const { data: opportunity, error } = await sb.raw
       .from("agent_opportunities")
@@ -44,20 +58,19 @@ export async function POST(
     }
 
     if (action === "dismiss") {
-      const { error: dismissError } = await sb.raw
-        .from("agent_opportunities")
-        .update({ status: "dismissed", acted_at: new Date().toISOString() })
-        .eq("id", id)
-        .eq("workspace_id", sb.workspaceId);
-      if (dismissError) throw dismissError;
+      const dismissed = await updateManagedOpportunityStatus(
+        sb.raw,
+        sb.workspaceId,
+        id,
+        "proposed",
+        { status: "dismissed", acted_at: new Date().toISOString() },
+      );
+      if (!dismissed) return alreadyHandledResponse();
       return NextResponse.json({ ok: true, status: "dismissed" });
     }
 
     if (opportunity.status !== "proposed") {
-      return NextResponse.json(
-        { ok: false, error: "This opportunity was already handled." },
-        { status: 409 },
-      );
+      return alreadyHandledResponse();
     }
 
     const result = await actOnOpportunity(
@@ -66,6 +79,9 @@ export async function POST(
       opportunity as AgentOpportunityRow,
     );
     if (!result.ok) {
+      if (result.reason === "already_handled") {
+        return alreadyHandledResponse();
+      }
       return errorResponse(new Error(result.reason));
     }
     await markStoredOpportunityDrafted(

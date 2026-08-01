@@ -35,12 +35,13 @@ export async function POST(
     const sb = await scopedSupabase();
 
     // Load the row (scoped) — its source, status, and last-generated time.
-    const { data: rowRaw } = await sb.raw
+    const { data: rowRaw, error: rowError } = await sb.raw
       .from("creator_style_profiles")
       .select("id, source_account_id, status, generated_at, generating_started_at, created_at")
       .eq("id", id)
       .eq("workspace_id", sb.workspaceId)
       .maybeSingle();
+    if (rowError) throw rowError;
     if (!rowRaw) {
       return NextResponse.json({ ok: false, error: "Style not found" }, { status: 404 });
     }
@@ -86,12 +87,13 @@ export async function POST(
     const sourceAccountId = (row.source_account_id as string | null) ?? null;
     let savedPostIds: string[] | null = null;
     if (!sourceAccountId) {
-      const { data: srcs } = await sb.raw
+      const { data: srcs, error: sourceError } = await sb.raw
         .from("creator_style_profile_sources")
         .select("saved_post_id")
         .eq("profile_id", id)
         .eq("workspace_id", sb.workspaceId)
         .not("saved_post_id", "is", null);
+      if (sourceError) throw sourceError;
       savedPostIds = ((srcs ?? []) as Array<{ saved_post_id: string | null }>)
         .map((s) => s.saved_post_id)
         .filter((x): x is string => !!x);
@@ -102,7 +104,7 @@ export async function POST(
     // a compare-and-swap: only ONE of two racing regenerates wins the flip, so
     // even a sub-millisecond double-POST can't launch two background jobs.
     const runToken = new Date().toISOString();
-    const { data: claimed } = await sb.raw
+    const { data: claimed, error: claimError } = await sb.raw
       .from("creator_style_profiles")
       .update({
         status: "generating",
@@ -115,6 +117,7 @@ export async function POST(
       .neq("status", "generating")
       .select("id")
       .maybeSingle();
+    if (claimError) throw claimError;
     if (!claimed) {
       // Lost the race to a concurrent regenerate — it owns the run.
       return NextResponse.json(
@@ -151,7 +154,7 @@ async function markCreatorStyleQueueFailed(
   sb: Awaited<ReturnType<typeof scopedSupabase>>,
   profileId: string,
 ): Promise<void> {
-  await sb.raw
+  const { error } = await sb.raw
     .from("creator_style_profiles")
     .update({
       status: "failed",
@@ -162,4 +165,5 @@ async function markCreatorStyleQueueFailed(
     .eq("id", profileId)
     .eq("workspace_id", sb.workspaceId)
     .eq("status", "generating");
+  if (error) throw error;
 }

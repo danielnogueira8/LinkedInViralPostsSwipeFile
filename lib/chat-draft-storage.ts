@@ -97,7 +97,11 @@ export function moveComposerDraft(
       ...source,
       ...(textOverride === undefined ? {} : { text: textOverride }),
     };
-    if (moved.text.trim()) {
+    if (
+      moved.text.trim() ||
+      moved.starterId !== null ||
+      moved.explorationLane !== "auto"
+    ) {
       localStorage.setItem(draftKey(toId), serializeComposerDraft(moved));
     } else {
       localStorage.removeItem(draftKey(toId));

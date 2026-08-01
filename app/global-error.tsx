@@ -3,6 +3,17 @@
 import { useEffect } from "react";
 import * as Sentry from "@sentry/nextjs";
 
+export function runGlobalErrorRetry(
+  unstableRetry: () => void,
+  reload: () => void,
+): void {
+  try {
+    unstableRetry();
+  } finally {
+    reload();
+  }
+}
+
 // Root-level error boundary. Segment boundaries (app/(app)/error.tsx and
 // app/(app)/dashboard/error.tsx) catch errors WITHIN the authenticated shell,
 // but an error thrown by the ROOT layout itself — a Clerk provider failure, a
@@ -16,10 +27,10 @@ import * as Sentry from "@sentry/nextjs";
 // dependency-free, guaranteed to render no matter what failed above it.
 export default function GlobalError({
   error,
-  reset,
+  unstable_retry,
 }: {
   error: Error & { digest?: string };
-  reset: () => void;
+  unstable_retry: () => void;
 }) {
   useEffect(() => {
     Sentry.captureException(error);
@@ -53,10 +64,11 @@ export default function GlobalError({
           <button
             type="button"
             onClick={() => {
-              // reset() retries the failed render; if the root itself is wedged,
-              // a hard reload is the reliable escape, so do both.
-              reset();
-              if (typeof window !== "undefined") window.location.reload();
+              // Retry the failed render; if the root itself is wedged, a hard
+              // reload is the reliable escape, so do both.
+              runGlobalErrorRetry(unstable_retry, () => {
+                if (typeof window !== "undefined") window.location.reload();
+              });
             }}
             style={{
               appearance: "none",

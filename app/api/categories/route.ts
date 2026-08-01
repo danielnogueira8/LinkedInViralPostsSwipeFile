@@ -22,7 +22,7 @@ const bodySchema = z.object({
 // app-layer filter both enforce that).
 export async function POST(req: Request) {
   try {
-    const parsed = bodySchema.safeParse(await req.json());
+    const parsed = bodySchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) {
       return NextResponse.json(
         { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid request" },

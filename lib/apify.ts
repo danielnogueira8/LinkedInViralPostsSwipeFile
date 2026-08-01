@@ -180,6 +180,8 @@ export async function runProfileHistory(
   options: { includeMetadataOnly?: boolean } = {},
 ): Promise<ScrapedPost[]> {
   const handle = username.toLowerCase();
+  const limit = Number.isFinite(maxPosts) ? Math.max(0, Math.floor(maxPosts)) : 0;
+  if (limit === 0) return [];
   const url = `https://api.apify.com/v2/acts/${ACTOR}/run-sync-get-dataset-items?token=${token()}`;
 
   // harvestapi honors maxPosts in a single run; apimaestro is paginated.
@@ -188,7 +190,7 @@ export async function runProfileHistory(
   if (isHarvestApi()) {
     const body = {
       targetUrls: [`https://www.linkedin.com/in/${handle}/`],
-      maxPosts,
+      maxPosts: limit,
       includeReposts: false,
       includeQuotePosts: false,
       scrapeReactions: false,
@@ -201,14 +203,14 @@ export async function runProfileHistory(
     }
     const arr = await apifyItems(res);
     rawCount = arr.length;
-    rawPosts = dropErrorItems(arr);
+    rawPosts = dropErrorItems(arr).slice(0, limit);
   } else {
     // apimaestro: page through until we have maxPosts, a page returns nothing,
     // or we hit the page ceiling. `limit` is the per-page size.
     const collected: unknown[] = [];
     rawCount = 0;
-    for (let page = 1; page <= APIMAESTRO_MAX_PAGES && collected.length < maxPosts; page++) {
-      const body = { username: handle, limit: maxPosts, page_number: page };
+    for (let page = 1; page <= APIMAESTRO_MAX_PAGES && collected.length < limit; page++) {
+      const body = { username: handle, limit, page_number: page };
       const res = await apifyPost(url, body, HISTORY_TIMEOUT_MS);
       if (!res.ok) {
         // First page failing is a hard error; a later page failing just stops
@@ -226,13 +228,13 @@ export async function runProfileHistory(
       // A short/empty page means we've reached the end of the history.
       if (cleaned.length === 0) break;
     }
-    rawPosts = collected.slice(0, maxPosts);
+    rawPosts = collected.slice(0, limit);
   }
 
   // Bill every result the actor returned (pay-per-result), before filtering
   // down to text-bearing posts — Apify charges for what it scraped.
-  await logApifyUsage("voice_history", rawPosts.length, {
-    username: handle, items: rawPosts.length, raw_items: rawCount,
+  await logApifyUsage("voice_history", rawCount, {
+    username: handle, items: rawCount, raw_items: rawCount,
   });
   const normalized: ScrapedPost[] = [];
   for (const it of rawPosts) {

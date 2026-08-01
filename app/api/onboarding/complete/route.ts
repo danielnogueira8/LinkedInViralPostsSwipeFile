@@ -4,6 +4,8 @@ import { z } from "zod";
 import { errorResponse } from "@/lib/workspace";
 import { enqueueScrapeJob } from "@/lib/scrape-jobs";
 import { timeZoneSchema } from "@/lib/schedule-local-date";
+import { TrackedCreatorError, TrackedCreators } from "@/lib/tracked-creators";
+import { createSupabaseTrackedCreatorsRepository } from "@/lib/tracked-creators-supabase";
 
 export const runtime = "nodejs";
 
@@ -24,27 +26,14 @@ export async function POST(req: Request) {
     let tracked = 0;
     let scrape: { runId: string; alreadyRunning: boolean } | null = null;
     if (category_ids.length > 0) {
-      const { data: rows, error: selErr } = await sb.raw
-        .from("accounts")
-        .select("id")
-        .in("category_id", category_ids)
-        // Skip soft-deleted creators — tracking an archived account would
-        // create a dangling membership that renders nowhere (every read path
-        // filters `archived_at is null`).
-        .is("archived_at", null);
-      if (selErr) throw selErr;
-      const accountIds = (rows ?? []).map((r) => r.id as string);
-      if (accountIds.length > 0) {
-        const upserts = accountIds.map((account_id) => ({
-          workspace_id: sb.workspaceId,
-          account_id,
-          niche: null,
-        }));
-        const { error: trackErr } = await sb.raw
-          .from("workspace_accounts")
-          .upsert(upserts, { onConflict: "workspace_id,account_id" });
-        if (trackErr) throw trackErr;
-        tracked = accountIds.length;
+      const creators = new TrackedCreators(
+        createSupabaseTrackedCreatorsRepository(sb.raw, sb.workspaceId),
+      );
+      tracked = await creators.setCategoriesTracked({
+        categoryIds: category_ids,
+        tracked: true,
+      });
+      if (tracked > 0) {
         // Tracking is only the ownership association. Queue the workspace
         // scrape immediately so the same scoped Swipefile used by modeling and
         // weekly planning receives posts without waiting for the daily cron.
@@ -69,6 +58,12 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ ok: true, tracked, scrape });
   } catch (e) {
+    if (e instanceof TrackedCreatorError) {
+      return NextResponse.json(
+        { ok: false, error: e.message, code: e.code },
+        { status: e.status },
+      );
+    }
     return errorResponse(e);
   }
 }

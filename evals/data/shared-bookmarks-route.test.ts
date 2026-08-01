@@ -13,6 +13,7 @@ const state: {
   updates: Record<string, unknown>[];
   updateFilters: Array<Array<[string, unknown]>>;
   rejectConditionalUpdate: boolean;
+  updateError: { message: string } | null;
 } = {
   userId: "user_1",
   email: "recipient@example.com",
@@ -20,11 +21,13 @@ const state: {
   updates: [],
   updateFilters: [],
   rejectConditionalUpdate: false,
+  updateError: null,
 };
 
 const fakeRaw = {
   from: () => {
     const chain: Record<string, unknown> = {};
+    let didUpdate = false;
     Object.assign(chain, {
       select: () => chain,
       eq: (column: string, value: unknown) => {
@@ -33,6 +36,7 @@ const fakeRaw = {
       },
       is: () => chain,
       update: (patch: Record<string, unknown>) => {
+        didUpdate = true;
         state.updates.push(patch);
         state.updateFilters.push([]);
         return chain;
@@ -56,8 +60,8 @@ const fakeRaw = {
         }
         return { data: state.share, error: null };
       },
-      then: (resolve: (value: { error: null }) => unknown) =>
-        Promise.resolve({ error: null }).then(resolve),
+      then: (resolve: (value: { error: { message: string } | null }) => unknown) =>
+        Promise.resolve({ error: didUpdate ? state.updateError : null }).then(resolve),
     });
     return chain;
   },
@@ -112,6 +116,7 @@ beforeEach(() => {
   state.updates = [];
   state.updateFilters = [];
   state.rejectConditionalUpdate = false;
+  state.updateError = null;
 });
 
 describe("PATCH /api/shared-bookmarks/[id]", () => {
@@ -190,5 +195,15 @@ describe("POST /api/shared-bookmarks/pending-count", () => {
         ["status", "pending"],
       ]),
     );
+  });
+
+  test("returns an error when binding the invite fails", async () => {
+    state.updateError = { message: "invite binding failed" };
+
+    const res = await pendingCountRoute.POST();
+    const data = await res.json();
+
+    expect(res.status).toBe(500);
+    expect(data.ok).toBe(false);
   });
 });

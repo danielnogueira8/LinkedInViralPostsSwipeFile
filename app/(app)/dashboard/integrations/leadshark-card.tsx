@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 import {
   Card,
@@ -45,11 +45,15 @@ type CredentialSafe = {
   lastError: string | null;
 };
 
-function relativeTime(iso: string | null): string {
+const subscribeHydration = () => () => {};
+const getHydratedSnapshot = () => true;
+const getServerHydratedSnapshot = () => false;
+
+export function relativeTime(iso: string | null, now = Date.now()): string {
   if (!iso) return "";
   const then = new Date(iso).getTime();
   if (Number.isNaN(then)) return "";
-  const diffSec = Math.round((Date.now() - then) / 1000);
+  const diffSec = Math.round((now - then) / 1000);
   if (diffSec < 60) return "just now";
   const mins = Math.round(diffSec / 60);
   if (mins < 60) return `${mins} minute${mins === 1 ? "" : "s"} ago`;
@@ -57,6 +61,17 @@ function relativeTime(iso: string | null): string {
   if (hrs < 24) return `${hrs} hour${hrs === 1 ? "" : "s"} ago`;
   const days = Math.round(hrs / 24);
   return `${days} day${days === 1 ? "" : "s"} ago`;
+}
+
+export function verificationLabel(
+  lastVerifiedAt: string | null,
+  hydrated: boolean,
+  now = Date.now(),
+): string {
+  if (!lastVerifiedAt) return "Ready to automate lead-magnet posts.";
+  if (!hydrated) return "Last verified.";
+  const relative = relativeTime(lastVerifiedAt, now);
+  return relative ? `Last verified ${relative}.` : "Last verified.";
 }
 
 // Integrations → LeadShark: connect a user-supplied LeadShark API key so
@@ -113,6 +128,11 @@ export function LeadSharkCard({
   initialDefaults: LeadSharkAutomationDefaults;
   defaultsAvailable: boolean;
 }) {
+  const hydrated = useSyncExternalStore(
+    subscribeHydration,
+    getHydratedSnapshot,
+    getServerHydratedSnapshot,
+  );
   const [cred, setCred] = useState<CredentialSafe>(initial);
   const [apiKey, setApiKey] = useState("");
   const [busy, setBusy] = useState(false);
@@ -247,9 +267,7 @@ export function LeadSharkCard({
                   Connected{cred.keyHint ? ` · key ${cred.keyHint}` : ""}
                 </div>
                 <div className="text-xs text-muted-foreground">
-                  {cred.lastVerifiedAt
-                    ? `Last verified ${relativeTime(cred.lastVerifiedAt)}.`
-                    : "Ready to automate lead-magnet posts."}
+                  {verificationLabel(cred.lastVerifiedAt, hydrated)}
                 </div>
               </div>
               <Button

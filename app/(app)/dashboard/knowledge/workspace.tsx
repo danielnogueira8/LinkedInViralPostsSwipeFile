@@ -46,6 +46,7 @@ import {
   type KnowledgeProposalDetail,
 } from "@/lib/knowledge-sources/types";
 import { LoadingState } from "@/components/ui/loading-state";
+import { isCurrentKnowledgeRequest } from "./request-ownership";
 
 type Props = {
   initialSources: KnowledgeSourceSummary[];
@@ -150,6 +151,8 @@ export function KnowledgeLibrary({
   const [busyInsightId, setBusyInsightId] = useState<string | null>(null);
   const [retryingSourceId, setRetryingSourceId] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const sourceRefreshRequestRef = useRef(0);
+  const insightsRequestRef = useRef(0);
 
   const processing = sources.some(
     (source) =>
@@ -160,10 +163,17 @@ export function KnowledgeLibrary({
   );
 
   async function refreshSources() {
+    const requestId = sourceRefreshRequestRef.current + 1;
+    sourceRefreshRequestRef.current = requestId;
     const result = await jsonResponse(
       await fetch("/api/knowledge-sources", { cache: "no-store" }),
     );
-    if (result.sources) setSources(result.sources);
+    if (
+      result.sources &&
+      isCurrentKnowledgeRequest(requestId, sourceRefreshRequestRef.current)
+    ) {
+      setSources(result.sources);
+    }
   }
 
   useEffect(() => {
@@ -274,6 +284,11 @@ export function KnowledgeLibrary({
   }
 
   async function archiveSource(source: KnowledgeSourceSummary) {
+    // Invalidate a refresh that may have started before the archive. Without
+    // this, its older snapshot can resurrect the source after the optimistic
+    // removal below.
+    const requestId = sourceRefreshRequestRef.current + 1;
+    sourceRefreshRequestRef.current = requestId;
     try {
       await jsonResponse(
         await fetch("/api/knowledge-sources", {
@@ -288,6 +303,9 @@ export function KnowledgeLibrary({
       setSources((current) =>
         current.filter((candidate) => candidate.id !== source.id),
       );
+      // Reconcile with the server after the mutation so any refresh that began
+      // while DELETE was in flight cannot leave a stale row visible.
+      await refreshSources().catch(() => undefined);
       toast.success("Source archived");
     } catch (error) {
       toast.error(
@@ -297,6 +315,8 @@ export function KnowledgeLibrary({
   }
 
   async function openInsights(source: KnowledgeSourceSummary) {
+    const requestId = insightsRequestRef.current + 1;
+    insightsRequestRef.current = requestId;
     setReviewSource(source);
     setInsights([]);
     setInsightsLoading(true);
@@ -307,13 +327,19 @@ export function KnowledgeLibrary({
           { cache: "no-store" },
         ),
       );
-      setInsights(result.items ?? []);
+      if (isCurrentKnowledgeRequest(requestId, insightsRequestRef.current)) {
+        setInsights(result.items ?? []);
+      }
     } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "Could not load insights.",
-      );
+      if (isCurrentKnowledgeRequest(requestId, insightsRequestRef.current)) {
+        toast.error(
+          error instanceof Error ? error.message : "Could not load insights.",
+        );
+      }
     } finally {
-      setInsightsLoading(false);
+      if (isCurrentKnowledgeRequest(requestId, insightsRequestRef.current)) {
+        setInsightsLoading(false);
+      }
     }
   }
 
@@ -345,6 +371,7 @@ export function KnowledgeLibrary({
     action: "approve" | "reject",
   ) {
     if (busyInsightId) return;
+    const requestId = insightsRequestRef.current;
     setBusyInsightId(item.id);
     try {
       const response = await fetch(
@@ -359,26 +386,32 @@ export function KnowledgeLibrary({
         },
       );
       await jsonResponse(response);
-      setInsights((current) =>
-        action === "reject"
-          ? current.filter((candidate) => candidate.id !== item.id)
-          : current.map((candidate) =>
-              candidate.id === item.id
-                ? { ...candidate, verification: "verified" }
-                : candidate,
-            ),
-      );
-      toast.success(
-        action === "approve"
-          ? "Approved for Cowork"
-          : "Insight dismissed",
-      );
+      if (isCurrentKnowledgeRequest(requestId, insightsRequestRef.current)) {
+        setInsights((current) =>
+          action === "reject"
+            ? current.filter((candidate) => candidate.id !== item.id)
+            : current.map((candidate) =>
+                candidate.id === item.id
+                  ? { ...candidate, verification: "verified" }
+                  : candidate,
+              ),
+        );
+        toast.success(
+          action === "approve"
+            ? "Approved for Cowork"
+            : "Insight dismissed",
+        );
+      }
     } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "Could not review insight.",
-      );
+      if (isCurrentKnowledgeRequest(requestId, insightsRequestRef.current)) {
+        toast.error(
+          error instanceof Error ? error.message : "Could not review insight.",
+        );
+      }
     } finally {
-      setBusyInsightId(null);
+      if (isCurrentKnowledgeRequest(requestId, insightsRequestRef.current)) {
+        setBusyInsightId(null);
+      }
     }
   }
 
@@ -578,7 +611,12 @@ export function KnowledgeLibrary({
       <Dialog
         open={reviewSource !== null}
         onOpenChange={(open) => {
-          if (!open) setReviewSource(null);
+          if (!open) {
+            insightsRequestRef.current += 1;
+            setReviewSource(null);
+            setInsightsLoading(false);
+            setBusyInsightId(null);
+          }
         }}
       >
         <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-2xl">

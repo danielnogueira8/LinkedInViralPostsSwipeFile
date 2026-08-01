@@ -3,7 +3,11 @@ import { validatePostMediaFile } from "@/lib/post-media";
 import { getMediaPresignedUrl, mapZernioError } from "@/lib/zernio";
 import { errorResponse } from "@/lib/workspace";
 import { scopedSupabase } from "@/lib/supabase-scoped";
-import { claimMediaQuota, ZERNIO_MEDIA_WINDOW_BYTES } from "@/lib/media-library";
+import {
+  claimMediaQuota,
+  settleMediaQuotaClaim,
+  ZERNIO_MEDIA_WINDOW_BYTES,
+} from "@/lib/media-library";
 
 export const runtime = "nodejs";
 
@@ -54,29 +58,47 @@ export async function POST(req: Request) {
       );
     }
 
-    const presign = await getMediaPresignedUrl({
-      filename: file.name,
-      contentType: validation.normalizedContentType,
-    });
-    const upload = await fetch(presign.uploadUrl, {
-      method: "PUT",
-      headers: { "Content-Type": validation.normalizedContentType },
-      body: new Blob([await file.arrayBuffer()], {
-        type: validation.normalizedContentType,
-      }),
-    });
-    if (!upload.ok) {
-      const text = await upload.text().catch(() => "");
-      const err = mapZernioError(upload.status, text);
-      return NextResponse.json({ ok: false, error: err.message }, { status: 502 });
-    }
+    try {
+      const presign = await getMediaPresignedUrl({
+        filename: file.name,
+        contentType: validation.normalizedContentType,
+      });
+      const upload = await fetch(presign.uploadUrl, {
+        method: "PUT",
+        headers: { "Content-Type": validation.normalizedContentType },
+        body: new Blob([await file.arrayBuffer()], {
+          type: validation.normalizedContentType,
+        }),
+      });
+      if (!upload.ok) {
+        const text = await upload.text().catch(() => "");
+        const err = mapZernioError(upload.status, text);
+        await settleMediaQuotaClaim(
+          sb.workspaceId,
+          reservation.claimId,
+          "released",
+        ).catch((releaseError) => {
+          console.error("Failed to release Zernio media quota claim", releaseError);
+        });
+        return NextResponse.json({ ok: false, error: err.message }, { status: 502 });
+      }
 
-    return NextResponse.json({
-      ok: true,
-      type: validation.type,
-      contentType: validation.normalizedContentType,
-      ...presign,
-    });
+      return NextResponse.json({
+        ok: true,
+        type: validation.type,
+        contentType: validation.normalizedContentType,
+        ...presign,
+      });
+    } catch (error) {
+      await settleMediaQuotaClaim(
+        sb.workspaceId,
+        reservation.claimId,
+        "released",
+      ).catch((releaseError) => {
+        console.error("Failed to release Zernio media quota claim", releaseError);
+      });
+      throw error;
+    }
   } catch (e) {
     return errorResponse(e);
   }
