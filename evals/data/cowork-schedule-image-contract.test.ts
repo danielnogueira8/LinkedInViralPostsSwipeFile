@@ -33,6 +33,10 @@ describe("Cowork schedule image flow", () => {
     expect(source).toContain(
       "const next = scheduleMediaAttachments.filter((m) => m.id !== id);",
     );
+    expect(source).toContain("const dirty = bodyDirty || mediaDirty;");
+    expect(source).toContain("mediaDirty ||\n    scheduleMediaAttachments");
+    expect(source).toContain("const markMediaChanged = () => {");
+    expect(source).toContain("const markMediaPersisted = (version: number) => {");
     expect(source).toMatch(/saving \|\| uploadingScheduleImage/);
   });
 });
