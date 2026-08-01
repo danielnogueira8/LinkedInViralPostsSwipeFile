@@ -7,8 +7,10 @@ import {
 } from "@/lib/agent/untrusted";
 import { DraftLifecycle } from "@/lib/draft-lifecycle";
 import { createSupabaseDraftLifecycleRepository } from "@/lib/draft-lifecycle-supabase";
-import { AGENT_CHAT_TITLE, AGENT_SUGGESTED_BY } from "@/lib/agent-loop/constants";
+import { AGENT_SUGGESTED_BY } from "@/lib/agent-loop/constants";
 import { readOpportunityHeadline } from "@/lib/agent-loop/headline";
+import { updateManagedOpportunityStatus } from "@/lib/agent-loop/opportunity-claim";
+import { getOrCreateAgentSystemChat } from "@/lib/agent-loop/system-chat";
 import {
   trendEvidenceText,
   type TrendOpportunityPayload,
@@ -57,37 +59,17 @@ async function updateOpportunityStatus(
   workspaceId: string,
   opportunityId: string,
   policy: OpportunityStatusPolicy,
+  expectedStatus: "proposed" | "drafting",
   values: Record<string, unknown>,
-): Promise<void> {
-  if (policy === "preserve") return;
-  await sb
-    .from("agent_opportunities")
-    .update(values)
-    .eq("id", opportunityId)
-    .eq("workspace_id", workspaceId);
-}
-
-async function getOrCreateSystemChat(
-  sb: SupabaseClient,
-  workspaceId: string,
-): Promise<string> {
-  const { data: existing, error: existingError } = await sb
-    .from("chats")
-    .select("id")
-    .eq("workspace_id", workspaceId)
-    .eq("title", AGENT_CHAT_TITLE)
-    .is("archived_at", null)
-    .maybeSingle();
-  if (existingError) throw existingError;
-  if (existing?.id) return existing.id as string;
-
-  const { data: created, error: createError } = await sb
-    .from("chats")
-    .insert({ workspace_id: workspaceId, title: AGENT_CHAT_TITLE })
-    .select("id")
-    .single();
-  if (createError) throw createError;
-  return created.id as string;
+): Promise<boolean> {
+  if (policy === "preserve") return true;
+  return updateManagedOpportunityStatus(
+    sb,
+    workspaceId,
+    opportunityId,
+    expectedStatus,
+    values,
+  );
 }
 
 async function createModelingSource(
@@ -263,7 +245,7 @@ async function runTurnToDraftIds(
   opportunityId?: string,
   weekPlanItemId?: string,
 ): Promise<string[]> {
-  const chatId = await getOrCreateSystemChat(sb, workspaceId);
+  const chatId = await getOrCreateAgentSystemChat(sb, workspaceId);
   const turnStartedAt = new Date().toISOString();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), ACT_TIMEOUT_MS);
@@ -344,13 +326,15 @@ export async function actOnOpportunity(
   }
 
   const statusPolicy = options?.statusPolicy ?? "manage";
-  await updateOpportunityStatus(
+  const claimed = await updateOpportunityStatus(
     sb,
     workspaceId,
     opportunity.id,
     statusPolicy,
+    "proposed",
     { status: "drafting" },
   );
+  if (!claimed) return { ok: false, reason: "already_handled" };
 
   try {
     const source = isTrend
@@ -417,17 +401,21 @@ export async function actOnOpportunity(
       opportunity.id,
       options?.weekPlanItemId,
     );
-    await updateOpportunityStatus(
+    const finalized = await updateOpportunityStatus(
       sb,
       workspaceId,
       opportunity.id,
       statusPolicy,
+      "drafting",
       {
         status: "drafted",
         drafted_artifact_id: draftIds[0],
         acted_at: new Date().toISOString(),
       },
     );
+    if (!finalized) {
+      throw new Error("Opportunity changed while drafting.");
+    }
     return { ok: true, draftIds };
   } catch (error) {
     // Managed feed work returns to proposed so it can retry. Cadence work
@@ -437,8 +425,16 @@ export async function actOnOpportunity(
       workspaceId,
       opportunity.id,
       statusPolicy,
+      "drafting",
       { status: "proposed" },
-    );
+    ).catch((resetError) => {
+      console.error("agent_opportunity_claim_reset_failed", {
+        workspace_id: workspaceId,
+        opportunity_id: opportunity.id,
+        message:
+          resetError instanceof Error ? resetError.message : String(resetError),
+      });
+    });
     return {
       ok: false,
       reason: error instanceof Error ? error.message : String(error),

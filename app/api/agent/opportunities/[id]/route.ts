@@ -102,6 +102,12 @@ export async function POST(
       opportunity as AgentOpportunityRow,
     );
     if (!result.ok) {
+      if (result.reason === "already_handled") {
+        return NextResponse.json(
+          { ok: false, error: "This opportunity was already handled." },
+          { status: 409 },
+        );
+      }
       return errorResponse(new Error(result.reason));
     }
     await markStoredOpportunityDrafted(
