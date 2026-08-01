@@ -209,46 +209,60 @@ const knowledgeItemBaseShape = {
   updatedAt: timestampSchema,
 };
 
+// Interview answers are source material, not short labels. The Cowork
+// composer caps one submitted message at 8,000 characters, so the primary
+// prose fields need to accept that complete answer instead of silently losing
+// everything after the former 2,000-character boundary.
+const knowledgeAnswerSchema = z.string().trim().min(1).max(8_000);
+const sourceQuestionSchema = z.string().trim().min(1).max(8_000).nullable().optional();
+
 const storyContentSchema = z
   .object({
-    summary: z.string().trim().min(1).max(2_000),
+    summary: knowledgeAnswerSchema,
     details: z.string().trim().min(1).max(12_000).nullable(),
+    sourceQuestion: sourceQuestionSchema,
   })
   .strict();
 const beliefContentSchema = z
   .object({
-    statement: z.string().trim().min(1).max(2_000),
+    statement: knowledgeAnswerSchema,
     rationale: z.string().trim().min(1).max(6_000).nullable(),
+    sourceQuestion: sourceQuestionSchema,
   })
   .strict();
 const proofContentSchema = z
   .object({
-    claim: z.string().trim().min(1).max(2_000),
+    claim: knowledgeAnswerSchema,
     evidence: z.string().trim().min(1).max(6_000).nullable(),
+    sourceQuestion: sourceQuestionSchema,
   })
   .strict();
 const offerContentSchema = z
   .object({
     name: shortTextSchema,
-    promise: z.string().trim().min(1).max(2_000).nullable(),
+    promise: knowledgeAnswerSchema.nullable(),
+    sourceQuestion: sourceQuestionSchema,
   })
   .strict();
 const audienceInsightContentSchema = z
   .object({
     audience: shortTextSchema,
-    insight: z.string().trim().min(1).max(2_000),
+    insight: knowledgeAnswerSchema,
+    sourceQuestion: sourceQuestionSchema,
   })
   .strict();
 const topicExpertiseContentSchema = z
   .object({
     topic: shortTextSchema,
-    basis: z.string().trim().min(1).max(2_000).nullable(),
+    basis: knowledgeAnswerSchema.nullable(),
+    sourceQuestion: sourceQuestionSchema,
   })
   .strict();
 const prohibitionContentSchema = z
   .object({
-    claim: z.string().trim().min(1).max(2_000),
+    claim: knowledgeAnswerSchema,
     reason: z.string().trim().min(1).max(2_000).nullable(),
+    sourceQuestion: sourceQuestionSchema,
   })
   .strict();
 

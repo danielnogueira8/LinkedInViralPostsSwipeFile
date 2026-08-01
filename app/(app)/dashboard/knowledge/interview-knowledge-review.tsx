@@ -14,16 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { fetchJson } from "@/lib/api-fetch";
 import type { WorkspaceKnowledgeItem } from "@/lib/content-learning/contracts";
-
-function knowledgeText(item: WorkspaceKnowledgeItem): string {
-  const content = item.content;
-  if ("summary" in content) return content.summary;
-  if ("statement" in content) return content.statement;
-  if ("claim" in content) return content.claim;
-  if ("name" in content) return content.promise ?? content.name;
-  if ("insight" in content) return content.insight;
-  return content.topic;
-}
+import { workspaceKnowledgeDisplayText } from "@/lib/content-learning/workspace-knowledge-presentation";
 
 const kindLabel: Record<WorkspaceKnowledgeItem["kind"], string> = {
   story: "Story",
@@ -47,6 +38,7 @@ export function InterviewKnowledgeReview({
   onVerifiedChange: (items: WorkspaceKnowledgeItem[]) => void;
 }) {
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [showVerified, setShowVerified] = useState(false);
 
   async function mutate(
     item: WorkspaceKnowledgeItem,
@@ -140,7 +132,7 @@ export function InterviewKnowledgeReview({
                     {item.title}
                   </div>
                   <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-                    {knowledgeText(item)}
+                    {workspaceKnowledgeDisplayText(item)}
                   </p>
                 </div>
                 <div className="flex flex-wrap justify-end gap-2">
@@ -183,38 +175,59 @@ export function InterviewKnowledgeReview({
 
         {verified.length > 0 ? (
           <section aria-label="Verified knowledge" className="space-y-2.5">
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Approved
-            </h3>
-            {verified.map((item) => (
-              <div
-                key={item.id}
-                className="flex items-start justify-between gap-3 rounded-xl border border-state-success-border bg-state-success/[0.04] p-3"
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Approved
+              </h3>
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-expanded={showVerified}
+                aria-controls="verified-knowledge-items"
+                onClick={() => setShowVerified((current) => !current)}
               >
-                <div className="min-w-0">
-                  <div className="flex items-center gap-1.5 text-sm font-medium text-foreground">
-                    <Check className="h-3.5 w-3.5 shrink-0 text-state-success" />
-                    {item.title}
-                  </div>
-                  <p className="mt-1 line-clamp-3 text-xs leading-relaxed text-muted-foreground">
-                    {knowledgeText(item)}
-                  </p>
-                </div>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  disabled={busyId !== null}
-                  aria-label={`Remove ${item.title}`}
-                  onClick={() => mutate(item, "archive")}
-                >
-                  {busyId === item.id ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Archive className="h-3.5 w-3.5" />
-                  )}
-                </Button>
-              </div>
-            ))}
+                {showVerified
+                  ? "Hide approved"
+                  : `Show approved (${verified.length})`}
+              </Button>
+            </div>
+            <div
+              id="verified-knowledge-items"
+              hidden={!showVerified}
+              className="space-y-2.5"
+            >
+              {showVerified
+                ? verified.map((item) => (
+                    <div
+                      key={item.id}
+                      className="flex items-start justify-between gap-3 rounded-xl border border-state-success-border bg-state-success/[0.04] p-3"
+                    >
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+                          <Check className="h-3.5 w-3.5 shrink-0 text-state-success" />
+                          {item.title}
+                        </div>
+                        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                          {workspaceKnowledgeDisplayText(item)}
+                        </p>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        disabled={busyId !== null}
+                        aria-label={`Remove ${item.title}`}
+                        onClick={() => mutate(item, "archive")}
+                      >
+                        {busyId === item.id ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Archive className="h-3.5 w-3.5" />
+                        )}
+                      </Button>
+                    </div>
+                  ))
+                : null}
+            </div>
           </section>
         ) : null}
       </CardContent>

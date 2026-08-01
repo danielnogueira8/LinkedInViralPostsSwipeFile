@@ -19,4 +19,12 @@ describe("Interview Knowledge review UI contract", () => {
     expect(source).toContain('aria-label={`Remove ${item.title}`}');
     expect(source).toContain("Approved");
   });
+
+  test("collapses approved facts until the user asks to see them", () => {
+    expect(source).toContain("const [showVerified, setShowVerified] = useState(false)");
+    expect(source).toContain("Show approved (${verified.length})");
+    expect(source).toContain('aria-controls="verified-knowledge-items"');
+    expect(source).toContain("workspaceKnowledgeDisplayText(item)");
+    expect(source).not.toContain("line-clamp-3");
+  });
 });

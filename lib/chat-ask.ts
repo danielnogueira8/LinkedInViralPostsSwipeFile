@@ -58,6 +58,10 @@ export function isAskSelectionComplete(
 // order, with unanswered ones marked so the executor can tell "passed on it"
 // from "answered briefly" when it distils them into knowledge.
 export const INTERVIEW_SKIPPED = "[skipped]";
+// A completed interview can contain up to five answers. Ordinary Cowork
+// messages stay capped at 8,000 characters, but the card submission is a
+// structured source-material payload and needs room for all of its answers.
+export const INTERVIEW_SUBMISSION_MAX_CHARS = 80_000;
 
 export function composeInterviewAnswers(
   questions: string[],

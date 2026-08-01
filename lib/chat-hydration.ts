@@ -210,19 +210,17 @@ function extractPersistedAsk(
     const questions = Array.isArray(args.questions)
       ? args.questions.filter((entry): entry is string => typeof entry === "string")
       : [];
-    // A card persisted before batching has options-as-chips and no
-    // `questions`. Drop it rather than rehydrate a shape the card no longer
-    // renders: the chat still reads fine, the stale question just stops
-    // accepting an answer. Only reachable for an interview left mid-flight
-    // across this deploy.
-    if (questions.length === 0) return undefined;
+    // A card persisted before batching has one `question` and no `questions`.
+    // Promote it to a one-question batch so an in-flight interview remains
+    // answerable across the deploy that introduced the batched card shape.
+    const plannedQuestions = questions.length > 0 ? questions : [question];
     const progress = args.progress as Record<string, unknown> | undefined;
     return {
       question,
       options: [],
       allowOther: args.allowOther !== false,
       variant: "interview" as const,
-      questions,
+      questions: plannedQuestions,
       ...(typeof progress === "object" &&
       progress !== null &&
       typeof progress.current === "number" &&

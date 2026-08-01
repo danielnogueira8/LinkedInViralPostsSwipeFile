@@ -23,6 +23,7 @@ import {
 } from "@/lib/agent/modeled-draft-continuation";
 import { safeFilename } from "@/lib/agent/untrusted";
 import { preflightUserPrompt } from "@/lib/agent/prompt-preflight";
+import { INTERVIEW_SUBMISSION_MAX_CHARS } from "@/lib/chat-ask";
 import {
   hasPendingAskOnly,
   hasPendingActionAsk,
@@ -361,29 +362,19 @@ export async function setupChatTurn(
     if (!chat) {
       return turnError("Chat not found", 404);
     }
-    const promptCheck = preflightUserPrompt(userText);
-    if (!promptCheck.ok) {
+    const initialPromptCheck = preflightUserPrompt(
+      userText,
+      body.isInterviewSubmission ? INTERVIEW_SUBMISSION_MAX_CHARS : undefined,
+    );
+    if (!initialPromptCheck.ok) {
       deps.logChatReject(
         workspaceId,
         chatId,
-        `prompt_${promptCheck.reason}`,
-        promptCheck.status,
+        `prompt_${initialPromptCheck.reason}`,
+        initialPromptCheck.status,
       );
-      return turnError(promptCheck.message, promptCheck.status);
+      return turnError(initialPromptCheck.message, initialPromptCheck.status);
     }
-
-    const cost = await deps.checkChatRateLimit(workspaceId);
-    if (!cost.ok) {
-      deps.logChatReject(workspaceId, chatId, cost.reason ?? "cost_cap", 429);
-      return turnError(
-        cost.message,
-        429,
-        cost.retryAfterSec
-          ? { "Retry-After": String(cost.retryAfterSec) }
-          : undefined,
-      );
-    }
-
     const fileNote = attachments.length
       ? `\n\n📎 Attached: ${attachments.map((a) => safeFilename(a.filename)).join(", ")}`
       : "";
@@ -483,6 +474,34 @@ export async function setupChatTurn(
         return false;
       }
     })();
+    // Interview cards are structured source material rather than ordinary
+    // prompts. They can contain several complete answers, so apply the larger
+    // bound only when the server has verified that the latest message is an
+    // unanswered interview card. Never trust a client-side flag for this.
+    const promptCheck = preflightUserPrompt(
+      userText,
+      pendingInterviewAsk ? INTERVIEW_SUBMISSION_MAX_CHARS : undefined,
+    );
+    if (!promptCheck.ok) {
+      deps.logChatReject(
+        workspaceId,
+        chatId,
+        `prompt_${promptCheck.reason}`,
+        promptCheck.status,
+      );
+      return turnError(promptCheck.message, promptCheck.status);
+    }
+    const cost = await deps.checkChatRateLimit(workspaceId);
+    if (!cost.ok) {
+      deps.logChatReject(workspaceId, chatId, cost.reason ?? "cost_cap", 429);
+      return turnError(
+        cost.message,
+        429,
+        cost.retryAfterSec
+          ? { "Retry-After": String(cost.retryAfterSec) }
+          : undefined,
+      );
+    }
     const actionAnswer = validatePendingActionAnswer(
       recentMessageWindow,
       userText,
