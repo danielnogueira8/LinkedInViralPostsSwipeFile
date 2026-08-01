@@ -10,11 +10,11 @@ import {
 import {
   getWeekPlanDraftReadiness,
   resolveWeekPlanLeadMagnetId,
-  weekStart,
+  rollingWindowWeekStarts,
 } from "@/lib/agent-loop/week-plan";
 import {
-  loadStoredWeekPlan,
-  mutateStoredWeekPlanItem,
+  mutateStoredWeekPlanItemAcross,
+  resolveStoredWeekPlanItemAcross,
 } from "@/lib/agent-loop/week-plan-store";
 
 export const runtime = "nodejs";
@@ -30,13 +30,14 @@ export async function POST(req: Request) {
   try {
     const input = draftSchema.parse(await req.json());
     const sb = await scopedSupabase();
-    const currentWeek = weekStart();
-    const plan = await loadStoredWeekPlan(
+    const visibleWeeks = rollingWindowWeekStarts();
+    const resolved = await resolveStoredWeekPlanItemAcross(
       sb.raw,
       sb.workspaceId,
-      currentWeek,
+      visibleWeeks,
+      input.itemId,
     );
-    const item = plan?.items.find((candidate) => candidate.id === input.itemId);
+    const item = resolved?.item;
     if (!item) {
       return NextResponse.json(
         { ok: false, error: "Plan item not found." },
@@ -96,10 +97,10 @@ export async function POST(req: Request) {
       draftId: string | null = null,
     ) =>
       Boolean(
-        await mutateStoredWeekPlanItem(
+        await mutateStoredWeekPlanItemAcross(
           sb.raw,
           sb.workspaceId,
-          currentWeek,
+          visibleWeeks,
           item.id,
           (current) =>
             current.status === expectedStatus
