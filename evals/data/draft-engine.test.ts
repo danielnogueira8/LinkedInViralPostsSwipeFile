@@ -2808,7 +2808,7 @@ describe("writer plan narration (narratePlan)", () => {
     const { events } = await collect(writer, { narratePlan: true });
 
     expect(activePlanLabels(events)).toEqual([
-      "Applying your voice and content intelligence",
+      "Applying your voice",
       "Writing your post",
       "Checking structure and completeness",
       "Removing AI slop",
@@ -2932,7 +2932,7 @@ describe("writer plan narration (narratePlan)", () => {
     });
 
     expect(activePlanLabels(events)).toEqual([
-      "Applying your voice and content intelligence",
+      "Applying your voice",
       "Writing draft 1 of 2",
       "Checking structure and completeness",
       "Removing AI slop",
@@ -3092,7 +3092,7 @@ describe("writer plan narration (narratePlan)", () => {
 
     expect(activePlanLabels(events)).toEqual(
       expect.arrayContaining([
-        "Applying your voice and content intelligence",
+        "Applying your voice",
         "Writing draft 1 of 2",
         "Writing draft 2 of 2",
         "Removing AI slop",
@@ -3235,7 +3235,7 @@ describe("writer plan narration (narratePlan)", () => {
 
     expect(runSlot).not.toHaveBeenCalled();
     expect(activePlanLabels(events)).not.toContain(
-      "Applying your voice and content intelligence",
+      "Applying your voice",
     );
   });
 

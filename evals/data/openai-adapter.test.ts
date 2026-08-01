@@ -24,7 +24,7 @@ describe("native OpenAI adapter", () => {
     expect(isOpenAIModel("google/gemini-3.5-flash")).toBe(false);
   });
 
-  test("maps messages, structured tools, and native web search to Responses at max effort", async () => {
+  test("maps messages, structured tools, and native web search to Responses at high effort", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -82,7 +82,7 @@ describe("native OpenAI adapter", () => {
     });
     expect(body.model).toBe("gpt-5.6-luna");
     expect(body.store).toBe(false);
-    expect(body.reasoning).toEqual({ effort: "max" });
+    expect(body.reasoning).toEqual({ effort: "high" });
     expect(body.prompt_cache_options).toEqual({ mode: "explicit" });
     // An assistant turn replayed as history must carry `output_text`; the
     // Responses API rejects `input_text` on the assistant role outright.
@@ -107,7 +107,7 @@ describe("native OpenAI adapter", () => {
     expect(result.usage?.prompt_tokens_details?.web_search_requests).toBe(1);
   });
 
-  test("defaults GPT-5.6 Luna to max reasoning", async () => {
+  test("defaults GPT-5.6 Luna to high reasoning", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       Response.json({
         model: "gpt-5.6-luna",
@@ -122,7 +122,7 @@ describe("native OpenAI adapter", () => {
     });
 
     const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
-    expect(body.reasoning).toEqual({ effort: "max" });
+    expect(body.reasoning).toEqual({ effort: "high" });
   });
 
   test("uses high for an older reasoning-capable OpenAI model", async () => {
@@ -215,7 +215,7 @@ describe("native OpenAI adapter", () => {
       deltas.push(delta);
     }
     const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
-    expect(body.reasoning).toEqual({ effort: "max" });
+    expect(body.reasoning).toEqual({ effort: "high" });
     expect(deltas).toEqual([
       { toolCalls: [{ index: 0, id: "call_1", name: "draft" }] },
       {

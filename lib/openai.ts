@@ -277,7 +277,7 @@ function responseBody(opts: {
   maxTokens?: number;
   disableReasoning?: boolean;
   glmReasoning?: "high" | "none";
-  reasoningEffort?: "minimal" | "low" | "medium" | "high" | "max";
+  reasoningEffort?: "minimal" | "low" | "medium" | "high";
   tools?: ToolDef[];
   forceTool?: string;
   toolChoice?: "auto" | "required" | "none";
@@ -325,15 +325,14 @@ function responseBody(opts: {
 /**
  * Native OpenAI reasoning policy for substantive model calls.
  *
- * GPT-5.6 supports `max`; older reasoning-capable OpenAI families get `high`
- * instead. The caller's low/medium hint is deliberately promoted here so a
- * planner or writer cannot silently run below the product-wide quality bar.
+ * Native OpenAI writing and research use high reasoning. The caller's
+ * low/medium hint is deliberately promoted here so a planner or writer cannot
+ * silently run below the product-wide quality bar.
  * Explicit `disableReasoning` and `glmReasoning: "none"` still win for small
  * mechanical calls such as title generation.
  */
-function nativeOpenAIReasoningEffort(model: string): "max" | "high" | undefined {
+function nativeOpenAIReasoningEffort(model: string): "high" | undefined {
   const id = openAIModelId(model).toLowerCase();
-  if (/^gpt-5\.6(?:-|$)/.test(id)) return "max";
   if (/^(?:gpt-5(?:\.\d+)?|o[134])(?:-|$)/.test(id)) return "high";
   return undefined;
 }
@@ -353,7 +352,7 @@ export async function completeChatOpenAI(opts: {
   maxTokens?: number;
   disableReasoning?: boolean;
   glmReasoning?: "high" | "none";
-  reasoningEffort?: "minimal" | "low" | "medium" | "high" | "max";
+  reasoningEffort?: "minimal" | "low" | "medium" | "high";
   tools?: ToolDef[];
   forceTool?: string;
   plugins?: Array<Record<string, unknown>>;

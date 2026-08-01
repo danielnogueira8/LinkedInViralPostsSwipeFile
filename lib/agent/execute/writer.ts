@@ -116,7 +116,7 @@ import { createHash } from "node:crypto";
 import { truncateAtWordBoundary } from "@/lib/text-truncate";
 
 // Budget covers reasoning + visible output together. A LinkedIn post is well
-// under 1.5k tokens, but a max/high reasoning request can spend a chunk on a
+// under 1.5k tokens, but a high reasoning request can spend a chunk on a
 // hidden trace first; the old 1.5k cap let it exhaust the budget before writing
 // a word ("empty_output"). Doubled to 6k so the post still fits behind a large
 // reasoning trace. max_tokens is only a CEILING — a normal post that finishes
@@ -4196,7 +4196,7 @@ export function writerContextProgressStage(
       : appliedSkillNames.length > 1
         ? `Applying ${appliedSkillNames.length} selected skills`
         : hasVoice
-          ? "Applying your voice and content intelligence"
+          ? "Applying your voice"
           : "Applying content intelligence and writing rules";
   return { kind: "context", id: "apply_writer_intelligence", label };
 }
