@@ -72,14 +72,24 @@ type BriefingOpportunity = {
   id: string;
   kind: string;
   score: number;
-  payload: { headline?: string; author?: string } | null;
+  payload: {
+    headline?: string;
+    author?: string;
+    summary?: string;
+    source_url?: string;
+    source_name?: string;
+    published_at?: string;
+    signal_state?: string;
+    creator_coverage?: string;
+    angle_prompt?: string;
+  } | null;
   created_at: string;
   // Resolved server-side from posts.post_type on the opportunity's source
   // post (see lib/agent-loop/opportunity-post-type.ts). Optional so a stale
   // client against an older payload just renders no badge.
   is_lead_magnet?: boolean;
   /** Complete source, shaped exactly like the cards on the Swipe File. */
-  source_post: PostCardRow;
+  source_post: PostCardRow | null;
 };
 
 /** Tiny creator avatar for opportunity rows. LinkedIn CDN URLs expire, so this
@@ -494,6 +504,12 @@ export function AgentBriefing() {
   };
 
   const { drafts, opportunities } = briefing;
+  const trendOpportunities = opportunities.filter(
+    (opportunity) => opportunity.kind === "trend",
+  );
+  const sourceOpportunities = opportunities.filter(
+    (opportunity) => opportunity.kind !== "trend",
+  );
   const isEmpty = drafts.length === 0 && opportunities.length === 0;
   const planItems = weekPlan?.items ?? [];
   const activePlanItems = planItems.filter(
@@ -806,8 +822,8 @@ export function AgentBriefing() {
 
       {isEmpty && (
         <p className="mt-4 rounded-xl border border-dashed border-border bg-background/60 px-3 py-4 text-center text-xs text-muted-foreground">
-          Nothing to review right now. When your agent spots a strong post from a
-          tracked creator, drafts and opportunities show up here.
+          Nothing to review right now. When your agent spots an emerging signal,
+          a strong tracked-creator post, or a new draft, it will show up here.
         </p>
       )}
 
@@ -852,7 +868,91 @@ export function AgentBriefing() {
         </div>
       )}
 
-      {opportunities.length > 0 && (
+      {trendOpportunities.length > 0 && (
+        <div className="min-w-0 rounded-2xl border border-accent-brand/20 bg-accent-brand/[0.04] p-4">
+          <p className="text-xs font-medium uppercase tracking-wide text-accent-brand">
+            Emerging signals
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            These came from fresh platform and web signals, even when no tracked
+            creator has posted about them yet. Review the evidence before you
+            ask the agent to draft.
+          </p>
+          <ul className="mt-3 grid min-w-0 grid-cols-1 gap-3 lg:grid-cols-2 xl:grid-cols-3">
+            {trendOpportunities.map((opportunity) => (
+              <li
+                key={opportunity.id}
+                data-testid="agent-trend-signal-card"
+                className="min-w-0 rounded-xl border border-border bg-card p-4 shadow-sm"
+              >
+                <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide">
+                  <span className="rounded-full bg-accent-brand/10 px-2 py-1 text-accent-brand">
+                    Early signal
+                  </span>
+                  <span className="rounded-full bg-muted px-2 py-1 text-muted-foreground">
+                    {opportunity.payload?.creator_coverage === "observed"
+                      ? "Tracked creator coverage observed"
+                      : "No tracked creator coverage observed"}
+                  </span>
+                </div>
+                <h3 className="mt-3 text-sm font-semibold leading-5 text-foreground">
+                  {opportunity.payload?.headline ?? "Emerging topic"}
+                </h3>
+                {opportunity.payload?.summary ? (
+                  <p className="mt-2 line-clamp-4 text-xs leading-5 text-muted-foreground">
+                    {opportunity.payload.summary}
+                  </p>
+                ) : null}
+                {opportunity.payload?.source_url ? (
+                  <a
+                    href={opportunity.payload.source_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-3 block truncate text-[11px] font-medium text-primary underline-offset-2 hover:underline"
+                  >
+                    {opportunity.payload.source_name ?? "Open source"}
+                  </a>
+                ) : null}
+                {opportunity.payload?.angle_prompt ? (
+                  <p className="mt-3 rounded-lg bg-muted/60 px-2.5 py-2 text-[11px] leading-4 text-foreground">
+                    <span className="font-semibold">Possible angle:</span>{" "}
+                    {opportunity.payload.angle_prompt}
+                  </p>
+                ) : null}
+                <div className="mt-4 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={busyId !== null}
+                    onClick={() => void act(opportunity.id, "draft")}
+                    className={cn(
+                      "inline-flex shrink-0 items-center gap-1 rounded-full bg-accent-brand px-3 py-1.5 text-xs font-medium text-accent-brand-foreground",
+                      "transition-opacity hover:opacity-90 disabled:opacity-50",
+                    )}
+                  >
+                    {busyId === opportunity.id ? (
+                      <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+                    ) : (
+                      <AiIcon className="h-3 w-3" aria-hidden />
+                    )}
+                    Draft this
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busyId !== null}
+                    onClick={() => void act(opportunity.id, "dismiss")}
+                    className="inline-flex shrink-0 items-center rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:border-destructive/30 hover:text-destructive disabled:opacity-50"
+                    title="Discard this suggestion"
+                  >
+                    Discard
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {sourceOpportunities.length > 0 && (
         <div className="min-w-0">
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
             Model recently viral posts
@@ -862,14 +962,16 @@ export function AgentBriefing() {
             choose whether your agent should model it.
           </p>
           <ul className="mt-3 grid min-w-0 grid-cols-1 items-start gap-4 lg:grid-cols-2 xl:grid-cols-3">
-            {opportunities.map((opportunity) => (
-              <li
-                key={opportunity.id}
-                data-testid="agent-model-post-card"
-                className="min-w-0"
-              >
-                <PostCard
-                  post={opportunity.source_post}
+            {sourceOpportunities.map((opportunity) => {
+              if (!opportunity.source_post) return null;
+              return (
+                <li
+                  key={opportunity.id}
+                  data-testid="agent-model-post-card"
+                  className="min-w-0"
+                >
+                  <PostCard
+                    post={opportunity.source_post}
                   clients={[]}
                   showDefaultActions={false}
                   footerActions={
@@ -906,9 +1008,10 @@ export function AgentBriefing() {
                       </button>
                     </>
                   }
-                />
-              </li>
-            ))}
+                  />
+                </li>
+              );
+            })}
           </ul>
         </div>
       )}

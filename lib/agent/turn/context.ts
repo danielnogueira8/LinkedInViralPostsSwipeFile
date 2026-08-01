@@ -357,6 +357,13 @@ export function modelSourceEnvelope(
       text: clean,
     });
   }
+  if (src.source === "trend") {
+    return wrapUntrustedDelimited({
+      label: "TREND RADAR EVIDENCE",
+      endLabel: "END TREND RADAR EVIDENCE",
+      text: clean,
+    });
+  }
   return wrapUntrustedDelimited({
     label: "POST TO MODEL AFTER",
     endLabel: "END POST",
@@ -374,7 +381,13 @@ export function modelSourceEnvelope(
 export function modelSourceStructureBlock(
   src: Pick<ModelSourceRow, "post_text" | "source">,
 ): string {
-  if (src.source === "draft" || src.source === "template") return "";
+  if (
+    src.source === "draft" ||
+    src.source === "template" ||
+    src.source === "trend"
+  ) {
+    return "";
+  }
   const clean = src.post_text.trim();
   if (!clean) return "";
   const skeleton = computeStructureSkeleton(clean);
@@ -1659,7 +1672,7 @@ export async function buildTurnContext(
     ]);
   modelSourceReference =
     resolvedModelSourceReference ??
-    (currentModelSource
+    (currentModelSource && currentModelSource.source !== "trend"
       ? {
           source_post_id:
             currentModelSource.source_post_id ?? currentModelSource.id,

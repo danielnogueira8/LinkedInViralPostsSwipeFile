@@ -42,7 +42,13 @@ export function withGeneratedImageMeta(
 export function modelSourceStructureSkeleton(
   src: Pick<ModelSourceRow, "post_text" | "source">,
 ): StructureSkeleton | undefined {
-  if (src.source === "draft" || src.source === "template") return undefined;
+  if (
+    src.source === "draft" ||
+    src.source === "template" ||
+    src.source === "trend"
+  ) {
+    return undefined;
+  }
   const clean = src.post_text.trim();
   if (!clean) return undefined;
   return computeStructureSkeleton(clean);
