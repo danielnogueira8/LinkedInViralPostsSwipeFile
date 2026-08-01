@@ -21,6 +21,7 @@ import {
   X,
 } from "lucide-react";
 import { AiIcon } from "@/components/ai-icon";
+import { agentAvatarSvgSrc } from "@/components/agent-avatar-src";
 import { toast } from "sonner";
 import { AGENT_FEED_LANES } from "@/lib/agent-inbox";
 import type {
@@ -147,7 +148,7 @@ function LaneAvatar({
   // Workflows. They are decorative because the lane name is rendered beside
   // them, and keeping them as plain assets avoids a client/server boundary.
   // eslint-disable-next-line @next/next/no-img-element -- bundled SVG avatar asset
-  return <img src={`/agents/${copy.avatar}.svg`} alt="" className={className} />;
+  return <img src={agentAvatarSvgSrc(copy.avatar)} alt="" className={className} />;
 }
 
 function LanePill({ lane }: { lane: AgentFeedLane }) {

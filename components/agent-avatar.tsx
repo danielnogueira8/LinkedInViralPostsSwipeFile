@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { agentAvatarSvgSrc } from "./agent-avatar-src";
 
 // Agent avatars on the Claude Workflows page. The bundled art is DiceBear
 // "Bottts Neutral" (Pablo Stanley — free for personal and commercial use), one SVG
@@ -10,7 +11,7 @@ import { join } from "node:path";
 export function agentAvatarSrc(slug: string): string {
   return existsSync(join(process.cwd(), "public", "agents", `${slug}.png`))
     ? `/agents/${slug}.png`
-    : `/agents/${slug}.svg`;
+    : agentAvatarSvgSrc(slug);
 }
 
 export function AgentAvatar({
