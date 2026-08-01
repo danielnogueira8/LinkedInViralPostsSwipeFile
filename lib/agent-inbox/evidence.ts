@@ -166,13 +166,17 @@ function learningEvidence(signals: unknown): AgentInboxEvidence[] {
               ? signal.score
               : Number.NEGATIVE_INFINITY,
           confidence:
-            typeof signal.confidence === "number" ? signal.confidence : 0,
+            typeof signal.confidence === "number" ? signal.confidence : null,
+          sampleSize:
+            typeof signal.sampleSize === "number" ? signal.sampleSize : null,
+          subtype: clean(signal.kind, 80),
         },
       ];
     })
     .sort(
       (left, right) =>
-        right.score - left.score || right.confidence - left.confidence,
+        right.score - left.score ||
+        (right.confidence ?? 0) - (left.confidence ?? 0),
     )
     .slice(0, 8)
     .map((entry) => ({
@@ -180,6 +184,9 @@ function learningEvidence(signals: unknown): AgentInboxEvidence[] {
       label: entry.label,
       detail: entry.detail,
       ref: entry.ref,
+      subtype: entry.subtype,
+      confidence: entry.confidence,
+      sampleSize: entry.sampleSize,
     }));
 }
 
@@ -239,6 +246,7 @@ async function loadKnowledge(
         label,
         detail,
         ref: String(row.id),
+        subtype: String(row.kind),
       },
     ];
   });
@@ -407,7 +415,10 @@ export function createAgentInboxEvidenceLoader(db: SupabaseClient) {
       loadKnowledge(db, input.workspaceId),
       loadRecentPosts(db, input.workspaceId, input.now),
     ]);
-    const query = input.missingLanes.includes("newsjacking")
+    const needsNews =
+      input.missingLanes.includes("newsjacking") ||
+      input.missingLanes.includes("namejacking");
+    const query = needsNews
       ? await topicQuery(
           db,
           input.workspaceId,
@@ -438,7 +449,7 @@ export function createAgentInboxEvidenceLoader(db: SupabaseClient) {
     // Niche trade press and culturally-relevant moments are two different
     // pools, searched in parallel. The cultural one has no workspace terms, so
     // it is the same cluster key for everyone and is usually a cache read.
-    const [nicheNews, culturalNews] = input.missingLanes.includes("newsjacking")
+    const [nicheNews, culturalNews] = needsNews
       ? await Promise.all([
           searchNewsPool("niche", query),
           searchNewsPool("cultural", culturalMomentQuery()),

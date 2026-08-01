@@ -1,9 +1,18 @@
-import type { AgentInboxIdea, AgentInboxPreferences } from "@/lib/agent-inbox";
+import type {
+  AgentInboxIdea,
+  AgentInboxPreferences,
+  AgentRadarIdea,
+} from "@/lib/agent-inbox";
 
 export type AgentInboxPayload = {
   ok: true;
   active: AgentInboxIdea[];
   activity: AgentInboxIdea[];
+  // Trend Radar is persisted by the creator-independent scanner, but the
+  // inbox intentionally exposes it through the same feed response and card
+  // contract as the four replenished lanes.
+  trends: AgentRadarIdea[];
+  trendActivity: AgentRadarIdea[];
   preferences: AgentInboxPreferences;
 };
 

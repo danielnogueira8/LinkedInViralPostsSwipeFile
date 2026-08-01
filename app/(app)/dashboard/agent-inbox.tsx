@@ -16,17 +16,18 @@ import {
   Lightbulb,
   Loader2,
   Newspaper,
+  Radar,
   Settings2,
   TrendingUp,
   X,
 } from "lucide-react";
 import { AiIcon } from "@/components/ai-icon";
 import { toast } from "sonner";
-import { AGENT_INBOX_LANES } from "@/lib/agent-inbox";
+import { AGENT_FEED_LANES } from "@/lib/agent-inbox";
 import type {
+  AgentFeedIdea,
+  AgentFeedLane,
   AgentInboxEvidence,
-  AgentInboxIdea,
-  AgentInboxLane,
   AgentInboxPreferences,
   AgentInboxStatus,
 } from "@/lib/agent-inbox";
@@ -46,7 +47,7 @@ import {
 } from "./agent-inbox-client";
 
 const laneCopy: Record<
-  AgentInboxLane,
+  AgentFeedLane,
   {
     label: string;
     description: string;
@@ -57,14 +58,10 @@ const laneCopy: Record<
   }
 > = {
   newsjacking: {
-    // Note the lane is broader than trade news: since the cultural-moment
-    // search landed it also covers finals, awards, and releases. The Trend
-    // Radar label makes this creator-independent discovery lane findable while
-    // the implementation continues to use the newsjacking framework.
-    label: "Trend Radar Agent",
-    description: "Find a fresh moment your audience can join",
+    label: "Newsjacking Agent",
+    description: "Turn a verified current story into your point of view",
     icon: Newspaper,
-    avatar: "trend-radar",
+    avatar: "timing-strategist",
   },
   personal_story: {
     // Names the digging: the material already exists in the knowledge base,
@@ -89,6 +86,12 @@ const laneCopy: Record<
     description: "Teach something you have proven works",
     icon: GraduationCap,
     avatar: "bulk-writer",
+  },
+  trend_radar: {
+    label: "Trend Radar Agent",
+    description: "Find a conversation before tracked creators do",
+    icon: Radar,
+    avatar: "trend-radar",
   },
 };
 
@@ -175,16 +178,16 @@ export function OpportunityCard({
   busy,
   onAction,
 }: {
-  idea?: AgentInboxIdea;
+  idea?: AgentFeedIdea;
   // The idea the user acted on from this lane today, so the card can say the
   // draft started instead of showing the misleading "no strong fit" empty state.
-  acted?: AgentInboxIdea;
+  acted?: AgentFeedIdea;
   // The idea the user snoozed out of this lane (still due back), so the card
   // can say so instead of showing the misleading "no strong fit" empty state.
-  snoozed?: AgentInboxIdea;
+  snoozed?: AgentFeedIdea;
   busy: boolean;
   onAction: (
-    idea: AgentInboxIdea,
+    idea: AgentFeedIdea,
     action: "act" | "snooze" | "discard",
   ) => void;
 }) {
@@ -416,7 +419,7 @@ export function AgentInbox() {
   const [data, setData] = useState<AgentInboxPayload | null>(null);
   const [error, setError] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [pendingDiscard, setPendingDiscard] = useState<AgentInboxIdea | null>(
+  const [pendingDiscard, setPendingDiscard] = useState<AgentFeedIdea | null>(
     null,
   );
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -461,11 +464,23 @@ export function AgentInbox() {
     };
   }, []);
 
+  const feedActive = useMemo(
+    () => [...(data?.active ?? []), ...(data?.trends ?? [])],
+    [data],
+  );
+  const feedActivity = useMemo(
+    () =>
+      [...(data?.activity ?? []), ...(data?.trendActivity ?? [])].sort((a, b) =>
+        b.updatedAt.localeCompare(a.updatedAt),
+      ),
+    [data],
+  );
+
   // Each lane can hold several active ideas (strongest first); the empty
   // states below only apply when a lane has none at all.
   const ideasByLane = useMemo(() => {
-    const map = new Map<AgentInboxLane, AgentInboxIdea[]>();
-    for (const idea of data?.active ?? []) {
+    const map = new Map<AgentFeedLane, AgentFeedIdea[]>();
+    for (const idea of feedActive) {
       const list = map.get(idea.lane) ?? [];
       list.push(idea);
       map.set(idea.lane, list);
@@ -474,20 +489,20 @@ export function AgentInbox() {
       list.sort((left, right) => right.score - left.score);
     }
     return map;
-  }, [data]);
+  }, [feedActive]);
   // A lane with nothing active might be empty because the user snoozed its
   // idea — the activity feed still carries that idea until it is due back.
   // (The server releases due snoozes before reading, so a "snoozed" entry
   // here is always still pending; an overdue one would be active again and
   // occupy the lane, which suppresses this via ideasByLane above.)
   const snoozedByLane = useMemo(() => {
-    const map = new Map<AgentInboxLane, AgentInboxIdea>();
-    for (const idea of data?.activity ?? []) {
+    const map = new Map<AgentFeedLane, AgentFeedIdea>();
+    for (const idea of feedActivity) {
       if (map.has(idea.lane) || idea.status !== "snoozed") continue;
       if (idea.snoozedUntil) map.set(idea.lane, idea);
     }
     return map;
-  }, [data]);
+  }, [feedActivity]);
   // A lane with nothing active might be empty because the user already acted
   // on today's idea — "No strong fit today" would claim the Agent found
   // nothing when it actually delivered and the user took it. Only same-day
@@ -495,33 +510,53 @@ export function AgentInbox() {
   // genuinely left empty today.
   const actedByLane = useMemo(() => {
     const today = new Date().toDateString();
-    const map = new Map<AgentInboxLane, AgentInboxIdea>();
-    for (const idea of data?.activity ?? []) {
+    const map = new Map<AgentFeedLane, AgentFeedIdea>();
+    for (const idea of feedActivity) {
       if (map.has(idea.lane) || idea.status !== "acted" || !idea.actedAt)
         continue;
       if (new Date(idea.actedAt).toDateString() !== today) continue;
       map.set(idea.lane, idea);
     }
     return map;
-  }, [data]);
+  }, [feedActivity]);
   const evidenceKinds = useMemo(() => {
     const kinds = new Set(
-      data?.active.flatMap((idea) =>
-        idea.evidence.map((entry) => entry.kind),
-      ) ?? [],
+      feedActive.flatMap((idea) => idea.evidence.map((entry) => entry.kind)),
     );
     return (
       ["performance", "knowledge", "news", "source_post"] as const
     ).filter((kind) => kinds.has(kind));
-  }, [data]);
+  }, [feedActive]);
 
   async function act(
-    idea: AgentInboxIdea,
+    idea: AgentFeedIdea,
     action: "act" | "snooze" | "discard",
     discardReason = "Not relevant right now",
   ) {
     setBusyId(idea.id);
     try {
+      if (idea.lane === "trend_radar") {
+        await jsonRequest(`/api/agent/opportunities/${idea.id}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(
+            action === "act"
+              ? { action: "draft" }
+              : action === "snooze"
+                ? { action: "snooze", until: tomorrowIso() }
+                : { action: "dismiss" },
+          ),
+        });
+        toast.success(
+          action === "act"
+            ? "Draft started"
+            : action === "snooze"
+              ? "Skipped for today — back in this lane tomorrow"
+              : "Idea discarded",
+        );
+        await load();
+        return;
+      }
       const body = await jsonRequest(`/api/agent/inbox/ideas/${idea.id}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -588,7 +623,7 @@ export function AgentInbox() {
         <div className="mt-4 animate-pulse rounded-[1.75rem] border bg-card/60 p-4 sm:p-6">
           <div className="h-12 w-72 rounded-xl bg-muted" />
           <div className="mt-5 space-y-3">
-            {Array.from({ length: 3 }).map((_, index) => (
+            {Array.from({ length: AGENT_FEED_LANES.length }).map((_, index) => (
               <div
                 key={index}
                 className="rounded-[1.75rem] border bg-muted/30 p-4 sm:p-5"
@@ -646,7 +681,7 @@ export function AgentInbox() {
         {/* One full-width row per agent; each row holds up to three idea
             cards side by side (stacking on narrow screens). */}
         <div className="mt-6 space-y-4">
-          {AGENT_INBOX_LANES.map((lane) => {
+          {AGENT_FEED_LANES.map((lane) => {
             const ideas = ideasByLane.get(lane) ?? [];
             const copy = laneCopy[lane];
             const LaneIcon = copy.icon;
@@ -752,11 +787,11 @@ export function AgentInbox() {
           </div>
         </div>
       </section>
-      {data?.activity.length ? (
+      {feedActivity.length ? (
         <section className="mt-5 rounded-[1.75rem] border bg-card p-5">
           <h2 className="font-semibold">Recent decisions</h2>
           <div className="mt-3 divide-y">
-            {data.activity.slice(0, 5).map((idea) => {
+            {feedActivity.slice(0, 5).map((idea) => {
               const meta = statusMeta[idea.status] ?? statusMeta.expired;
               return (
                 <div

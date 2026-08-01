@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
 import {
+  AGENT_FEED_LANES,
   AGENT_INBOX_LANES,
   laneEvidenceSatisfied,
   type AgentInboxEvidence,
@@ -46,7 +47,21 @@ const synthesisSource = readFileSync(
 );
 
 function ev(kind: AgentInboxEvidence["kind"]): AgentInboxEvidence {
-  return { kind, label: `${kind} label`, detail: "detail" };
+  return {
+    kind,
+    label: kind === "news" ? "LinkedIn announces a new feature" : `${kind} label`,
+    detail: "detail",
+    ...(kind === "news"
+      ? {
+          url: "https://example.com/news",
+          publishedAt: "2026-07-30T07:00:00.000Z",
+        }
+      : {}),
+    ...(kind === "performance"
+      ? { confidence: 0.8, sampleSize: 12 }
+      : {}),
+    ...(kind === "knowledge" ? { subtype: "proof" } : {}),
+  };
 }
 
 describe("framework lanes", () => {
@@ -95,10 +110,19 @@ describe("laneEvidenceSatisfied", () => {
     );
     expect(laneEvidenceSatisfied("educational", [ev("knowledge")])).toBe(true);
     expect(laneEvidenceSatisfied("educational", [ev("source_post")])).toBe(
-      true,
+      false,
     );
     // Anything else would be a generic explainer with a headline.
     expect(laneEvidenceSatisfied("educational", [ev("news")])).toBe(false);
+    expect(
+      laneEvidenceSatisfied("educational", [
+        {
+          ...ev("performance"),
+          confidence: 0.2,
+          sampleSize: 1,
+        },
+      ]),
+    ).toBe(false);
   });
 
   test("every lane rejects an empty evidence list", () => {
@@ -217,7 +241,7 @@ describe("agent names", () => {
     }
     // Guards a rename that collapses two lanes onto one label.
     expect(source.match(/label: "[^"]*Agent"/g)).toHaveLength(
-      AGENT_INBOX_LANES.length,
+      AGENT_FEED_LANES.length,
     );
   });
 });
