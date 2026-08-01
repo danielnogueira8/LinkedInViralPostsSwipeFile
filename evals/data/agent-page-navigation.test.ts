@@ -66,8 +66,12 @@ describe("the standalone Agent page exposes the daily opportunity workflow", () 
     expect(inbox).toContain("xl:grid-cols-2");
     expect(inbox).toContain("selectedFilter");
     expect(inbox).not.toContain("snap-mandatory");
-    // The queue previews evidence and the detail drawer owns the full dossier.
-    expect(inbox).toContain("idea.evidence.slice(0, 2)");
+    // The queue keeps a compact source count and the detail drawer owns the
+    // full dossier; long card copy is visually capped at two lines.
+    expect(inbox).toContain("idea.evidence.length");
+    expect(inbox).toContain("line-clamp-2");
+    expect(inbox).toContain("LaneAvatar");
+    expect(inbox).not.toContain("idea.evidence.slice(0, 2)");
     expect(inbox).toContain("selectedIdea");
     expect(inbox).toContain("Use this idea");
     expect(inbox).toContain("scheduled automatically");

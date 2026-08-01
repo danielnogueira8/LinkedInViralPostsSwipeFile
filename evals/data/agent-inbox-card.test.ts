@@ -41,6 +41,7 @@ function renderCard(props: {
     createElement(OpportunityCard, {
       busy: false,
       onAction: () => {},
+      onOpenDetails: () => {},
       ...props,
     }),
   );
@@ -76,26 +77,28 @@ describe("OpportunityCard lane states", () => {
     expect(html).not.toContain("Draft started");
   });
 
-  test("a card shows the lane, headline, angle, and approval context", () => {
+  test("a card shows only the decision-critical summary", () => {
     const html = renderCard({ idea: idea() });
     expect(html).toContain("Turn your strongest topic into a practical teardown");
     expect(html).toContain("A specific direction grounded in evidence.");
     expect(html).toContain("Expertise");
-    expect(html).toContain("Why it fits you");
+    expect(html).toContain("Details");
+    expect(html).toContain("/agents/bulk-writer.svg");
+    expect(html).not.toContain("Why it fits you");
     expect(html).toContain("Use this idea");
     expect(html).not.toContain("Draft started");
     expect(html).not.toContain("No strong fit today");
   });
 
-  test("a card keeps the primary decision in the queue", () => {
+  test("a card keeps actions while moving rationale out of the summary", () => {
     const html = renderCard({
       idea: idea({
         why: ["Reason one", "Reason two", "Reason three"],
         sourceUrl: "https://example.test/story",
       }),
     });
-    expect(html).toContain("Why it fits you");
-    expect(html).toContain("Reason one");
+    expect(html).not.toContain("Why it fits you");
+    expect(html).not.toContain("Reason one");
     expect(html).toContain("Use this idea");
     expect(html).toContain("Not today");
     expect(html).not.toContain("Why this is worth your attention");
@@ -111,7 +114,7 @@ describe("OpportunityCard lane states", () => {
     expect(html).not.toContain("94%");
   });
 
-  test("the card previews evidence and leaves the full dossier to details", () => {
+  test("the card shows only an evidence count and leaves the dossier to details", () => {
     const html = renderCard({
       idea: idea({
         evidence: [
@@ -121,9 +124,10 @@ describe("OpportunityCard lane states", () => {
         ],
       }),
     });
-    expect(html).toContain("Story one");
-    expect(html).toContain("Signal two");
-    expect(html).toContain("+1 more");
+    expect(html).toContain("3 sources");
+    expect(html).not.toContain("Story one");
+    expect(html).not.toContain("Signal two");
+    expect(html).not.toContain("+1 more");
     expect(html).not.toContain("Posts");
   });
 });
