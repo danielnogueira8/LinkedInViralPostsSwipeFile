@@ -888,15 +888,6 @@ export function AgentInbox() {
     }
     return map;
   }, [feedActive]);
-  const evidenceKinds = useMemo(() => {
-    const kinds = new Set(
-      feedActive.flatMap((idea) => idea.evidence.map((entry) => entry.kind)),
-    );
-    return (
-      ["performance", "knowledge", "news", "source_post"] as const
-    ).filter((kind) => kinds.has(kind));
-  }, [feedActive]);
-
   const displayedIdeas = useMemo(
     () => {
       const ideas =
@@ -1331,76 +1322,42 @@ export function AgentInbox() {
           </div>
         </div>
 
-        <div className="mt-8 grid gap-8 border-t border-border/70 pt-6 lg:grid-cols-[0.9fr_1.1fr]">
-          <div>
-            <div className="flex items-start gap-3">
-              <span className="grid size-9 shrink-0 place-items-center rounded-full bg-muted">
-                <FileText className="size-4" aria-hidden />
-              </span>
-              <div>
-                <h3 className="font-semibold">Evidence behind the queue</h3>
-                <p className="mt-1 text-sm leading-5 text-muted-foreground">
-                  Every idea is grounded in workspace material or verified
-                  current news.
-                </p>
-              </div>
-            </div>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {(evidenceKinds.length
-                ? evidenceKinds
-                : (["voice", "knowledge"] as const)
-              ).map((kind) => {
-                const meta = evidenceKindMeta[kind];
-                const Icon = meta.icon;
+        <div className="mt-8 border-t border-border/70 pt-6">
+          <div className="flex items-center gap-2">
+            <Activity className="size-4 text-muted-foreground" aria-hidden />
+            <h3 className="font-semibold">Recent activity</h3>
+          </div>
+          {feedActivity.length ? (
+            <div className="mt-2 divide-y divide-border/70">
+              {feedActivity.slice(0, 5).map((idea) => {
+                const meta = statusMeta[idea.status] ?? statusMeta.expired;
+                const { rowClassName } = messageStatePresentationFor(idea);
                 return (
-                  <span
-                    key={kind}
-                    className="inline-flex items-center gap-1.5 rounded-full border bg-muted/50 px-2.5 py-1 text-xs text-muted-foreground"
+                  <div
+                    key={idea.id}
+                    className={cn(
+                      "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm",
+                      rowClassName,
+                    )}
+                    title={idea.discardReason ?? undefined}
                   >
-                    <Icon className="size-3.5" aria-hidden />
-                    {meta.full}
-                  </span>
+                    <MessageStateBadge idea={idea} compact />
+                    <span className="truncate">{idea.headline}</span>
+                    <span className="ml-auto shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
+                      {formatDecisionDay(idea.updatedAt)}
+                    </span>
+                    <span className="shrink-0 rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
+                      {meta.label}
+                    </span>
+                  </div>
                 );
               })}
             </div>
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <Activity className="size-4 text-muted-foreground" aria-hidden />
-              <h3 className="font-semibold">Recent activity</h3>
-            </div>
-            {feedActivity.length ? (
-              <div className="mt-2 divide-y divide-border/70">
-                {feedActivity.slice(0, 5).map((idea) => {
-                  const meta = statusMeta[idea.status] ?? statusMeta.expired;
-                  const { rowClassName } = messageStatePresentationFor(idea);
-                  return (
-                    <div
-                      key={idea.id}
-                      className={cn(
-                        "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm",
-                        rowClassName,
-                      )}
-                      title={idea.discardReason ?? undefined}
-                    >
-                      <MessageStateBadge idea={idea} compact />
-                      <span className="truncate">{idea.headline}</span>
-                      <span className="ml-auto shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
-                        {formatDecisionDay(idea.updatedAt)}
-                      </span>
-                      <span className="shrink-0 rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
-                        {meta.label}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <p className="mt-2 text-sm text-muted-foreground">
-                Your decisions will appear here as you review ideas.
-              </p>
-            )}
-          </div>
+          ) : (
+            <p className="mt-2 text-sm text-muted-foreground">
+              Your decisions will appear here as you review ideas.
+            </p>
+          )}
         </div>
       </section>
       <Dialog
