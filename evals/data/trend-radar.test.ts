@@ -45,11 +45,20 @@ describe("Newsjacking discovery contract", () => {
             "LinkedIn explains how it will identify low-effort AI content.",
         },
         {
-          title: "LinkedIn introduces an AI slop label",
+          title: "This changes what creators should publish",
           url: "https://x.com/creator/status/123",
           source: "X",
           published_at: "2026-08-01",
-          summary: "A second article covers the same development.",
+          summary:
+            "A creator reacts to LinkedIn's new label for low-effort AI content.",
+        },
+        {
+          title: "Another reaction to the new creator label",
+          url: "https://x.com/creator/status/123",
+          source: "X",
+          published_at: "2026-08-01",
+          summary:
+            "LinkedIn's low-effort AI content label has changed publishing incentives.",
         },
         {
           title: "A stale story",
@@ -75,6 +84,7 @@ describe("Newsjacking discovery contract", () => {
       "https://news.linkedin.com/2026/keeping-conversations-real",
     );
     expect(candidates[0].score).toBeGreaterThan(0);
+    expect(candidates[0].corroboratingResults).toHaveLength(1);
     expect(candidates[0].corroboratingResults?.[0]?.url).toContain("x.com");
   });
 
@@ -93,6 +103,129 @@ describe("Newsjacking discovery contract", () => {
       ["creator marketing"],
     );
     expect(candidates).toEqual([]);
+  });
+
+  test("preserves exact-title social corroboration for short event names", () => {
+    const candidates = rankNewsjackingCandidates(
+      [
+        {
+          title: "LinkedIn announces Atlas",
+          url: "https://news.linkedin.com/atlas",
+          source: "LinkedIn News",
+          published_at: "2026-08-01",
+          summary: "LinkedIn announces its Atlas product.",
+        },
+        {
+          title: "LinkedIn announces Atlas",
+          url: "https://x.com/creator/status/atlas",
+          source: "X",
+          published_at: "2026-08-01",
+          summary: "A creator reacts to the Atlas announcement.",
+        },
+      ],
+      NOW,
+      [],
+    );
+
+    expect(candidates[0]?.corroboratingResults?.[0]?.url).toContain("x.com");
+  });
+
+  test("assigns a duplicated social URL to only one exact-title event", () => {
+    const sharedSocialUrl = "https://x.com/creator/status/shared";
+    const candidates = rankNewsjackingCandidates(
+      [
+        {
+          title: "LinkedIn announces Atlas",
+          url: "https://news.linkedin.com/atlas",
+          source: "LinkedIn News",
+          published_at: "2026-08-01",
+          summary: "LinkedIn announces its Atlas product.",
+        },
+        {
+          title: "LinkedIn announces Atlas",
+          url: sharedSocialUrl,
+          source: "X",
+          published_at: "2026-08-01",
+          summary: "A creator reacts to Atlas.",
+        },
+        {
+          title: "OpenAI announces Nova",
+          url: "https://openai.com/nova",
+          source: "OpenAI",
+          published_at: "2026-08-01",
+          summary: "OpenAI announces its Nova product.",
+        },
+        {
+          title: "OpenAI announces Nova",
+          url: sharedSocialUrl,
+          source: "X",
+          published_at: "2026-08-01",
+          summary: "A creator reacts to Nova.",
+        },
+      ],
+      NOW,
+      [],
+    );
+
+    const attachedUrls = candidates.flatMap((candidate) =>
+      (candidate.corroboratingResults ?? []).map((entry) => entry.url),
+    );
+    expect(attachedUrls.filter((url) => url === sharedSocialUrl)).toHaveLength(1);
+  });
+
+  test("does not attach an unrelated social conversation to verified news", () => {
+    const candidates = rankNewsjackingCandidates(
+      [
+        {
+          title: "LinkedIn introduces an AI slop label",
+          url: "https://news.linkedin.com/2026/keeping-conversations-real",
+          source: "LinkedIn News",
+          published_at: "2026-08-01",
+          summary:
+            "LinkedIn explains how it will identify low-effort AI content.",
+        },
+        {
+          title: "Three ways to schedule LinkedIn AI content",
+          url: "https://x.com/creator/status/456",
+          source: "X",
+          published_at: "2026-08-01",
+          summary:
+            "A creator explains how to use AI content in a LinkedIn posting calendar.",
+        },
+      ],
+      NOW,
+      ["LinkedIn writing"],
+    );
+
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].corroboratingResults).toEqual([]);
+  });
+
+  test("does not confuse an evergreen topical guide with a current event", () => {
+    const candidates = rankNewsjackingCandidates(
+      [
+        {
+          title: "OpenAI announces pricing changes",
+          url: "https://openai.com/pricing-update",
+          source: "OpenAI",
+          published_at: "2026-08-01",
+          summary: "OpenAI will change pricing for several models.",
+        },
+        {
+          title: "We are launching OpenAI pricing guides",
+          url: "https://x.com/creator/status/pricing-guide",
+          source: "X",
+          published_at: "2026-08-01",
+          summary:
+            "These OpenAI pricing how-to guides help startup teams estimate costs.",
+        },
+      ],
+      NOW,
+      ["AI startups"],
+    );
+
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].corroboratingResults).toEqual([]);
   });
 
   test("does not treat an arbitrary non-social blog as authoritative proof", () => {
