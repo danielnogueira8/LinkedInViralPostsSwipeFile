@@ -260,8 +260,11 @@ async function loadSourcePosts(
   now: Date,
   topics: readonly string[],
 ): Promise<AgentInboxEvidence[]> {
+  let trackedFailure: unknown = null;
+  let bookmarkFailure: unknown = null;
   const [tracked, bookmarks] = await Promise.all([
     loadTrackedSourcePostCandidates(db, workspaceId).catch((error) => {
+      trackedFailure = error;
       console.error("[agent-inbox:source-posts] tracked source read failed", {
         workspaceId,
         message: error instanceof Error ? error.message : String(error),
@@ -269,6 +272,7 @@ async function loadSourcePosts(
       return [] as AgentInboxSourcePostCandidate[];
     }),
     loadBookmarkSourcePostCandidates(db, workspaceId).catch((error) => {
+      bookmarkFailure = error;
       console.error("[agent-inbox:source-posts] bookmark read failed", {
         workspaceId,
         message: error instanceof Error ? error.message : String(error),
@@ -276,6 +280,11 @@ async function loadSourcePosts(
       return [] as AgentInboxSourcePostCandidate[];
     }),
   ]);
+  if (trackedFailure && bookmarkFailure) {
+    throw new Error(
+      "Agent source posts could not be loaded from the Swipe File or bookmarks.",
+    );
+  }
   const evidence = [...tracked, ...bookmarks]
     .map(sourcePostEvidenceFromCandidate)
     .filter((entry): entry is AgentInboxEvidence => Boolean(entry));
@@ -659,19 +668,26 @@ export function createAgentInboxEvidenceLoader(db: SupabaseClient) {
     const needsSourcePosts = input.missingLanes.some(
       (lane) => lane === "personal_story" || lane === "educational",
     );
-    const [learning, knowledge, recent, sourcePosts] = await Promise.all([
+    const [learning, knowledge, recent] = await Promise.all([
       loadLearning(db, input.workspaceId),
       loadKnowledge(db, input.workspaceId),
       loadRecentPosts(db, input.workspaceId, input.now),
-      needsSourcePosts
-        ? loadSourcePosts(
-            db,
-            input.workspaceId,
-            input.now,
-            input.preferences.topics,
-          )
-        : Promise.resolve([] as AgentInboxEvidence[]),
     ]);
+    const sourceTopics = [
+      ...input.preferences.topics,
+      ...learning.map((entry) => entry.label),
+      ...knowledge.map((entry) => entry.label),
+    ]
+      .filter(Boolean)
+      .slice(0, 12);
+    const sourcePosts = needsSourcePosts
+      ? await loadSourcePosts(
+          db,
+          input.workspaceId,
+          input.now,
+          sourceTopics,
+        )
+      : [];
     const needsNews = input.missingLanes.includes("newsjacking");
     const query = needsNews
       ? await topicQuery(

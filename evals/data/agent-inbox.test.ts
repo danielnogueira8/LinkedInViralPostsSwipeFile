@@ -249,6 +249,7 @@ const NEWS_EVIDENCE = {
       detail: "A reusable source structure.",
       ref: "source-post-1",
       url: "https://example.com/source-post-1",
+      sourceOrigin: "swipe" as const,
     },
   ],
 };
@@ -568,6 +569,7 @@ describe("AgentInbox", () => {
                   detail: "A reusable source structure",
                   ref: "source-1",
                   url: "https://example.com/source-1",
+                  sourceOrigin: "swipe",
                 },
                 {
                   kind: "performance" as const,
@@ -620,6 +622,7 @@ describe("AgentInbox", () => {
                 detail: "One source post, two angles",
                 ref: "same-source",
                 url: "https://example.com/same-source",
+                sourceOrigin: "swipe",
               },
               {
                 kind: "knowledge" as const,

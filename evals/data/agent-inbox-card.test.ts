@@ -136,4 +136,33 @@ describe("OpportunityCard lane states", () => {
     expect(html).not.toContain("+1 more");
     expect(html).not.toContain("Posts");
   });
+
+  test("shows compact source provenance without expanding the card dossier", () => {
+    const html = renderCard({
+      idea: idea({
+        evidence: [
+          {
+            kind: "source_post",
+            role: "inspiration",
+            label: "Alex's source post",
+            authorName: "Alex Founder",
+            detail: "A reusable teaching structure.",
+            ref: "source-1",
+            sourceOrigin: "swipe",
+          },
+          {
+            kind: "knowledge",
+            role: "anchor",
+            subtype: "proof",
+            label: "Verified customer proof",
+            detail: "A result from this workspace.",
+            ref: "knowledge-1",
+          },
+        ],
+      }),
+    });
+    expect(html).toContain("Modeled from Alex Founder");
+    expect(html).toContain("Grounded in Verified customer proof");
+    expect(html).not.toContain("A reusable teaching structure.");
+  });
 });

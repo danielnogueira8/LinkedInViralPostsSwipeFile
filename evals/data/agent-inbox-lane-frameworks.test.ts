@@ -75,6 +75,7 @@ function ev(kind: AgentInboxEvidence["kind"]): AgentInboxEvidence {
       ? {
           ref: "source-post-1",
           url: "https://example.com/source-post-1",
+          sourceOrigin: "swipe" as const,
         }
       : {}),
     ...(kind === "performance"
@@ -125,6 +126,12 @@ describe("laneEvidenceSatisfied", () => {
     expect(laneEvidenceSatisfied("personal_story", [ev("source_post")])).toBe(
       false,
     );
+    expect(
+      laneEvidenceSatisfied("personal_story", [
+        { ...ev("source_post"), sourceOrigin: null },
+        { ...ev("knowledge"), subtype: "story" },
+      ]),
+    ).toBe(false);
     expect(laneEvidenceSatisfied("personal_story", [ev("news")])).toBe(false);
     expect(laneEvidenceSatisfied("personal_story", [ev("performance")])).toBe(
       false,
@@ -150,6 +157,12 @@ describe("laneEvidenceSatisfied", () => {
     expect(laneEvidenceSatisfied("educational", [ev("source_post")])).toBe(
       false,
     );
+    expect(
+      laneEvidenceSatisfied("educational", [
+        ev("source_post"),
+        { ...ev("draft"), role: "anchor" },
+      ]),
+    ).toBe(false);
     // Anything else would be a generic explainer with a headline.
     expect(laneEvidenceSatisfied("educational", [ev("news")])).toBe(false);
     expect(
@@ -210,6 +223,66 @@ describe("draft hand-off", () => {
     expect(framings[1]).toContain("educational post");
     // Every lane says something different about how to write.
     expect(new Set(framings).size).toBe(AGENT_INBOX_LANES.length);
+  });
+
+  test("separates source structure from the user's anchor and wraps evidence", () => {
+    const prompt = agentInboxDraftPrompt({
+      ...baseIdea,
+      lane: "educational",
+      sourceKind: "source_post",
+      sourceRef: "source-post-1",
+      sourceUrl: "https://example.com/source-post-1",
+      sourceTitle: "Alex's source post",
+      evidence: [
+        {
+          kind: "source_post",
+          role: "inspiration",
+          label: "Alex's source post",
+          detail: "A source structure that should never become a copied claim.",
+          ref: "source-post-1",
+          url: "https://example.com/source-post-1",
+          sourceOrigin: "swipe",
+        },
+        {
+          kind: "performance",
+          role: "anchor",
+          label: "Specific hooks outperform generic openings",
+          detail: "This workspace saw the pattern across eight posts.",
+        },
+      ],
+    });
+    expect(prompt).toContain("Source Post — structure only");
+    expect(prompt).toContain("Workspace anchors — original substance");
+    expect(prompt).toContain("<agent-opportunity>");
+    expect(prompt).toContain("<post>");
+    expect(prompt).toContain("<workspace-learning-evidence>");
+    expect(prompt).toContain("attached to this Cowork session");
+    expect(prompt).toContain("never copy");
+
+    const legacyPrompt = agentInboxDraftPrompt({
+      ...baseIdea,
+      lane: "educational",
+      evidence: [
+        {
+          kind: "source_post",
+          role: "inspiration",
+          label: "Legacy source row",
+          detail: "Historical source material without an origin discriminator.",
+          ref: "legacy-source",
+        },
+        {
+          kind: "performance",
+          role: "anchor",
+          label: "Verified result",
+          detail: "A workspace result.",
+        },
+      ],
+    });
+    expect(legacyPrompt).toContain("no source attachment was recorded");
+    expect(legacyPrompt).not.toContain(
+      "already attached to this Cowork session",
+    );
+    expect(legacyPrompt).not.toContain("Use the attached Source Post only");
   });
 });
 

@@ -119,9 +119,10 @@ function evidenceMap(bundle: AgentInboxEvidenceBundle) {
 }
 
 function isAnchorEvidence(entry: AgentInboxEvidence): boolean {
+  if (entry.kind === "source_post" || entry.kind === "draft") return false;
   return (
     entry.role === "anchor" ||
-    (!entry.role && entry.kind !== "source_post" && entry.kind !== "draft")
+    !entry.role
   );
 }
 
@@ -250,7 +251,7 @@ const COMMON_SYSTEM_PROMPT =
 function laneInstruction(lane: AgentInboxLane): string {
   switch (lane) {
     case "newsjacking":
-      return "You are the NEWSJACKING agent for this call. Return only newsjacking ideas. Every idea needs a `bridge` of at least one complete sentence that explicitly connects the dated event to the user's work. Do not use a generic angle in place of the bridge.";
+      return "You are the NEWSJACKING agent for this call. Return only newsjacking ideas. A cultural moment may be not about their field at all, but every idea needs a `bridge` of at least one complete sentence that explicitly connects the dated event to the user's work. state the bridge to this user's work; if you cannot, DO NOT return the idea. Do not use a generic angle in place of the bridge.";
     case "personal_story":
       return "You are the PERSONAL_STORY agent for this call. Return only personal-story ideas. Select one S source post for its narrative shape and one K anchor for the user's concrete achievement, struggle, belief, or lived experience. Every idea needs a `story_fact` naming the user's anchor. Do not turn the source post into the user's story.";
     case "educational":
@@ -258,7 +259,7 @@ function laneInstruction(lane: AgentInboxLane): string {
   }
 }
 
-// The model sees evidence as "N1 | kind | label | detail" rows and tends to
+// The model sees evidence as "N1 | role | kind | label | detail" rows and tends to
 // write those opaque IDs into the user-facing `why` bullets ("N1 says …").
 // Users never see the ID list, so rewrite any cited ID to the source's title.
 export function citeEvidenceByName(

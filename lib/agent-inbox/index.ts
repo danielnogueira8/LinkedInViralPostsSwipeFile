@@ -207,12 +207,17 @@ function isSourceInspiration(entry: AgentInboxEvidence): boolean {
     entry.kind === "source_post" &&
     entry.role === "inspiration" &&
     Boolean(entry.ref) &&
-    Boolean(entry.detail)
+    Boolean(entry.detail) &&
+    (entry.sourceOrigin === "swipe" || entry.sourceOrigin === "bookmark")
   );
 }
 
 function isUserAnchor(entry: AgentInboxEvidence): boolean {
-  return entry.role === "anchor";
+  return (
+    entry.role === "anchor" &&
+    entry.kind !== "draft" &&
+    entry.kind !== "source_post"
+  );
 }
 
 // Each lane is a different KIND of post, so each needs a different kind of

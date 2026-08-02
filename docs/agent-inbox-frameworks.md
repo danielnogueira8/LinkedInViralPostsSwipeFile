@@ -56,8 +56,10 @@ the lane stays empty instead of producing a generic or fabricated idea.
 Source posts are loaded from both canonical tracked-account discovery and the
 Workspace's `saved_posts`, then canonical-URL deduplicated and ranked by topic
 fit, freshness, engagement, and bookmark curation. The evidence contract stores
-the source post id and URL so the eventual Cowork prompt can preserve exact
-provenance.
+the source post id and URL. Opening an evergreen idea first creates the normal
+scoped Cowork modeling-source record, so the composer can show the source chip
+and submitted turns retain structured `source_post_id` attribution rather than
+relying on a pasted URL or a generic text reference.
 
 Trend Radar is persisted by its creator-independent scanner and exposed through
 the same feed/card contract as the other lanes. It is the first filter in the

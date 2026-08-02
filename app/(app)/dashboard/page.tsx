@@ -57,6 +57,8 @@ export default async function ChatPage({
     new?: string;
     agentIdea?: string;
     agentLane?: string;
+    agentSource?: string;
+    agentSourceChat?: string;
   }>;
 }) {
   const sb = await scopedSupabase();
