@@ -188,6 +188,8 @@ const REJECTION_REASON_CLAUSES: Record<string, string> = {
   structure_mismatch:
     "the draft's structure kept drifting too far from what you asked to keep",
   duplicate: "the draft kept staying too close to the original wording",
+  source_topic_mismatch:
+    "the draft kept using the source author's topic instead of one that fits your work",
   source_fidelity:
     "the draft kept drifting from the source post's structure and hook style",
   provenance_missing: "the draft kept losing track of the source it should model",
@@ -657,7 +659,11 @@ function messageContainsSourceData(
 export function modelSourceClarificationContext(
   history: ChatMessage[],
   source: Source,
-): { alreadyAsked: boolean; promptBlock: string } {
+): {
+  alreadyAsked: boolean;
+  promptBlock: string;
+  originalInstruction?: string;
+} {
   const currentUserIndex =
     history.at(-1)?.role === "user" ? history.length - 1 : history.length;
   const latestCompletedDraftIndex = history.findLastIndex(
@@ -705,7 +711,14 @@ export function modelSourceClarificationContext(
         text: answers.join("\n\n"),
       })
     : "";
-  return { alreadyAsked: true, promptBlock };
+  const originalInstruction = historyMessageText(
+    history[clarificationIndex - 1],
+  ).trim();
+  return {
+    alreadyAsked: true,
+    promptBlock,
+    ...(originalInstruction ? { originalInstruction } : {}),
+  };
 }
 
 export function writerHistoryDigest(history: ChatMessage[]): string {
@@ -805,6 +818,7 @@ function compileMessages(
     ModelSourcePreparation,
     { outcome: "unavailable" }
   > | null = null,
+  modelSourceClarificationAlreadyAsked = false,
 ): CompiledWriterPrompt {
   const instruction =
     task.kind === "refine" ? task.instruction : input.userInstruction;  const selectedSkills = selectSkills(instruction);
@@ -1038,6 +1052,7 @@ function compileMessages(
           "You are SwipeIn's direct fixed-source LinkedIn post writer.",
           "Return exactly one complete post as plain text. No preamble, labels, analysis, markdown fences, citations, or tool calls.",
           "The authoritative current request controls the topic. If it asks for a topic that fits the user, choose that topic from the voice/profile context and treat the source subject matter as irrelevant.",
+          "When the server-prepared blueprint names a Destination topic, that topic is binding. Center the entire post on it. Do not keep the source author's products, industry, examples, audience, or subject merely because you are preserving the source's structure.",
           "Preserve the same communicative move: the source's overarching theme, communicative job, reader effect, hook function, evidence type, and semantic progression in original language. Preserve its supporting structural mechanics and progression where they carry those semantic roles. Reuse its literal subject only when the authoritative request asks for it.",
           "Semantic fidelity outranks visual similarity. A duration cannot replace an achievement, effort cannot replace a result, expertise cannot replace client proof, and an educational argument cannot replace a celebration, confession, or case study merely because the paragraph count matches.",
           SOURCE_STRUCTURE_REFERENCE_POLICY,
@@ -1076,7 +1091,7 @@ function compileMessages(
                 semanticBlueprint,
               ]
             : []),
-          ...(modelSourcePreparation?.outcome === "needs_input"
+          ...(modelSourceClarificationAlreadyAsked
             ? [
                 "The single clarification budget has already been used. Treat clearly stated first-person facts in the current request and conversation history as the user's answers, omit optional details that remain unknown, and write the complete post now. Do not ask another question or return an outline.",
               ]
@@ -1273,6 +1288,38 @@ type DraftEngineRejection = {
   message: string;
   repairInstruction?: string;
 };
+
+function looksLikeAdditionalModelSourceClarification(
+  body: string,
+): string | null {
+  const text = body.trim();
+  if (
+    !text ||
+    text.length > 600 ||
+    /\n\s*\n/.test(text) ||
+    !/\?\s*$/.test(text)
+  ) {
+    return null;
+  }
+
+  const lastSentence = text.split(/(?<=[.!?])\s+/).pop() ?? "";
+  if (!/\b(?:you|your|which|what|how|can you|could you)\b/i.test(lastSentence)) {
+    return null;
+  }
+
+  const acknowledgesAnswer =
+    /^(?:great|thanks|thank you|got it|perfect|okay|understood|sounds good)(?:\b|[!,—-])/i.test(
+      text,
+    );
+  const requestsMoreEvidence =
+    /\b(?:can|could) you\b[^?]{0,200}\b(?:share|provide|vouch|name|describe|quantify|tell me)\b/i.test(
+      lastSentence,
+    );
+
+  return acknowledgesAnswer || requestsMoreEvidence
+    ? "additional Model Source clarification after the question budget was used"
+    : null;
+}
 
 type FinalizedDraftEngineResult =
   | {
@@ -1503,16 +1550,25 @@ export async function* runSingleDraftTurn(
     ModelSourcePreparation,
     { outcome: "unavailable" }
   > | null = null;
+  let modelSourceClarificationAlreadyAsked = false;
+  let modelSourceUserRequest = input.userInstruction;
   if (task.kind === "source") {
     const clarification = modelSourceClarificationContext(
       input.history ?? [],
       task.source,
     );
+    modelSourceClarificationAlreadyAsked = clarification.alreadyAsked;
+    if (clarification.originalInstruction) {
+      modelSourceUserRequest = [
+        clarification.originalInstruction,
+        `Clarification answer: ${input.userInstruction}`,
+      ].join("\n\n");
+    }
     let prepared: ModelSourcePreparation;
     try {
       prepared = await deps.prepareModelSource({
         sourceText: task.source.text,
-        userRequest: input.userInstruction,
+        userRequest: modelSourceUserRequest,
         verifiedContext: verifiedModelSourceContext(
           input,
           clarification.promptBlock,
@@ -1541,15 +1597,18 @@ export async function* runSingleDraftTurn(
     }
   }
   const compiledPrompt = compileMessages(
-    input,
+    modelSourceUserRequest === input.userInstruction
+      ? input
+      : { ...input, userInstruction: modelSourceUserRequest },
     task,
     variation,
     explorationLane,
     modelSourcePreparation,
+    modelSourceClarificationAlreadyAsked,
   );
   const baseMessages = compiledPrompt.messages;
   const policyInstruction =
-    task.kind === "refine" ? task.instruction : input.userInstruction;
+    task.kind === "refine" ? task.instruction : modelSourceUserRequest;
   const claimGroundingInstruction =
     withoutOutputControlQuantities(policyInstruction);
   const range = requestedCharacterRange(policyInstruction);
@@ -1708,13 +1767,15 @@ export async function* runSingleDraftTurn(
   // can name WHICH gate kept rejecting the draft (see rejectionSummary).
   let lastRejectionCode: string | null = null;
 
-  // Best-effort salvage. Two turn shapes would otherwise dead-end even though
+  // Best-effort salvage. Three turn shapes would otherwise dead-end even though
   // the writer produced a usable draft:
   //   • grounded/news — every attempt fails the (kept-on) grounding gate;
   //   • a TRUSTED source-modeling turn whose only failure was the source-
   //     fidelity REVIEWER being unavailable (both reviewer LLMs timed out /
-  //     errored — an infrastructure blip, NOT evidence the draft is unfaithful).
-  // In both cases we run the last drafted body through the CORRUPTION-only nets
+  //     errored — an infrastructure blip, NOT evidence the draft is unfaithful);
+  //   • a prepared Model Source turn that spent its bounded repair attempts but
+  //     kept missing the reviewer's semantic-structure preference.
+  // In these cases we run the last drafted body through the CORRUPTION-only nets
   // (em-dash strip + normalize) and, unless it's genuinely broken or too long,
   // deliver it flagged for verification — a usable draft the user can check
   // beats an opaque "retry" with no post at all.
@@ -1942,6 +2003,22 @@ export async function* runSingleDraftTurn(
     // deliberately high-precision (two independent signals, or an opening
     // incapability statement), so a genuine post is never rerouted by this.
     const refusal = looksLikeRefusalOrClarification(response.text);
+    const repeatedModelSourceClarification =
+      task.kind === "source" && modelSourceClarificationAlreadyAsked
+        ? looksLikeAdditionalModelSourceClarification(response.text) ?? refusal
+        : null;
+    if (repeatedModelSourceClarification) {
+      return {
+        ok: false,
+        origin: "direct_writer",
+        rejection: {
+          code: "clarification_budget_exhausted",
+          message: repeatedModelSourceClarification,
+          repairInstruction:
+            "The user already answered the one permitted clarification. Use that answer and the verified context, omit optional unknown details, and return the complete post now. Do not ask another question.",
+        },
+      };
+    }
     if (refusal) {
       return {
         ok: true,
@@ -1982,7 +2059,7 @@ export async function* runSingleDraftTurn(
                 required: true,
                 requestedSourceId: task.source.id,
                 discoveredSources: [task.source],
-                userRequest: input.userInstruction,
+                userRequest: modelSourceUserRequest,
                 verifiedContext: verifiedModelSourceContext(input),
                 ...(modelSourcePreparation
                   ? { modelingBlueprint: modelSourcePreparation.blueprint }
@@ -2340,6 +2417,17 @@ export async function* runSingleDraftTurn(
         return;
       }
       noteWriterStageFailure("chain", error);
+    }
+
+    if (task.kind === "source" && lastRejectionCode === "source_fidelity") {
+      const salvaged = salvageUnverifiedDraft(task.source.text);
+      if (salvaged && !(await cancellationRequestedNow())) {
+        yield { type: "artifact", artifact: deliveredArtifact(salvaged) };
+        yield finish(
+          `${DRAFT_READY_TEXT} I couldn’t fully match every source-structure detail after several passes, so give the shape a quick review against the original.`,
+        );
+        return;
+      }
     }
 
     if (task.kind === "grounded") {

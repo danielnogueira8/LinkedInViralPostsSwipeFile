@@ -26,7 +26,9 @@ vi.mock("@/lib/openrouter", async (orig) => {
     completeChat: openRouterMocks.completeChat,
   };
 });
-const { reviewModeledDraft } = await import("@/lib/agent/specialists/source-fidelity");
+const { reviewModeledDraft, sourceFidelityRejection } = await import(
+  "@/lib/agent/specialists/source-fidelity"
+);
 
 describe("reviewModeledDraft outcomes", () => {
   beforeEach(() => {
@@ -134,7 +136,12 @@ describe("reviewModeledDraft outcomes", () => {
     openRouterMocks.completeChat.mockReset();
     openRouterMocks.completeChat.mockResolvedValue({
       text: "",
-      toolArgs: { pass: true, reasons: [], retry_instruction: "" },
+      toolArgs: {
+        pass: true,
+        failure_kind: "none",
+        reasons: [],
+        retry_instruction: "",
+      },
       finishReason: "tool_calls",
       usage: undefined,
       citations: [],
@@ -162,7 +169,12 @@ describe("reviewModeledDraft outcomes", () => {
       .mockRejectedValueOnce(new Error("primary reviewer unavailable"))
       .mockResolvedValueOnce({
         text: "",
-        toolArgs: { pass: true, reasons: [], retry_instruction: "" },
+        toolArgs: {
+          pass: true,
+          failure_kind: "none",
+          reasons: [],
+          retry_instruction: "",
+        },
         finishReason: "tool_calls",
         usage: undefined,
         citations: [],
@@ -218,7 +230,12 @@ describe("reviewModeledDraft outcomes", () => {
   test("a valid source-based partial can pass under its own prompt contract", async () => {
     openRouterMocks.completeChat.mockResolvedValue({
       text: "",
-      toolArgs: { pass: true, reasons: [], retry_instruction: "" },
+      toolArgs: {
+        pass: true,
+        failure_kind: "none",
+        reasons: [],
+        retry_instruction: "",
+      },
       finishReason: "tool_calls",
       usage: undefined,
       citations: [],
@@ -243,7 +260,12 @@ describe("reviewModeledDraft outcomes", () => {
   test("records the paid source-fidelity stage with model, tokens, and cost", async () => {
     openRouterMocks.completeChat.mockResolvedValue({
       text: "",
-      toolArgs: { pass: true, reasons: [], retry_instruction: "" },
+      toolArgs: {
+        pass: true,
+        failure_kind: "none",
+        reasons: [],
+        retry_instruction: "",
+      },
       finishReason: "tool_calls",
       usage: { prompt_tokens: 30, completion_tokens: 5, cost: 0.002 },
       citations: [],
@@ -293,6 +315,7 @@ describe("reviewModeledDraft outcomes", () => {
       text: "",
       toolArgs: {
         pass: false,
+        failure_kind: "fidelity_mismatch",
         reasons: ["The hooks are unrelated to the source cues."],
         retry_instruction: "Use the source contrast mechanic.",
       },
@@ -319,10 +342,68 @@ describe("reviewModeledDraft outcomes", () => {
     expect(openRouterMocks.completeChat).toHaveBeenCalledTimes(1);
   });
 
+  test("labels retention of the source subject as a destination-topic mismatch", async () => {
+    openRouterMocks.completeChat.mockResolvedValue({
+      text: "",
+      toolArgs: {
+        pass: false,
+        failure_kind: "topic_mismatch",
+        reasons: [
+          "The draft stays on AI tools instead of the destination topic of founder-led LinkedIn content systems.",
+        ],
+        retry_instruction:
+          "Keep the source's sequence, but rewrite every example around founder positioning, writing, and audience growth.",
+      },
+      finishReason: "tool_calls",
+      usage: undefined,
+      citations: [],
+    });
+
+    const verdict = await reviewModeledDraft({
+      sourceText: "Nine AI tool swaps for CEOs.",
+      draftBody: "Here are nine AI tools every CEO should use.",
+      userRequest:
+        "Pick a topic that fits my niche. Clarification answer: 50K+ followers across all clients.",
+      verifiedContext:
+        "I help founders build personal brands through LinkedIn content.",
+      blueprint: {
+        schemaVersion: 1,
+        coreTheme: "Choose the method after defining the job.",
+        destinationTopic:
+          "Founder-led LinkedIn content systems and audience growth.",
+        communicativeJob: "Replace random tactic collecting with a practical map.",
+        readerEffect: "Confidence applying a clearer workflow.",
+        hook: {
+          function: "Challenge the reader's order of operations.",
+          evidenceType: "verified client outcome",
+        },
+        emotionalArc: ["tension", "clarity"],
+        beats: [{ role: "mistake", purpose: "Name the wrong order." }],
+        requiredEvidence: [],
+      },
+      workspaceId: "ws-topic-fit",
+      adapterHealth: new AdapterHealthRegistry(),
+    });
+
+    expect(verdict).toMatchObject({
+      outcome: "rejected",
+      failureKind: "topic_mismatch",
+    });
+    expect(sourceFidelityRejection(verdict)).toMatchObject({
+      code: "source_topic_mismatch",
+    });
+    expect(SOURCE_FIDELITY_SYSTEM_PROMPT).toContain("destinationTopic");
+  });
+
   test("empty partial-verdict fields receive partial-specific repair guidance", async () => {
     openRouterMocks.completeChat.mockResolvedValue({
       text: "",
-      toolArgs: { pass: false, reasons: [], retry_instruction: "" },
+      toolArgs: {
+        pass: false,
+        failure_kind: "fidelity_mismatch",
+        reasons: [],
+        retry_instruction: "",
+      },
       finishReason: "tool_calls",
       usage: undefined,
       citations: [],
@@ -348,7 +429,12 @@ describe("reviewModeledDraft outcomes", () => {
   test("usage persistence failure is fatal instead of triggering billed content retries", async () => {
     openRouterMocks.completeChat.mockResolvedValue({
       text: "",
-      toolArgs: { pass: true, reasons: [], retry_instruction: "" },
+      toolArgs: {
+        pass: true,
+        failure_kind: "none",
+        reasons: [],
+        retry_instruction: "",
+      },
       finishReason: "tool_calls",
       usage: {
         prompt_tokens: 100,

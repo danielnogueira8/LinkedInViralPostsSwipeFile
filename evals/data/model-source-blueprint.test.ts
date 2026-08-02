@@ -35,6 +35,7 @@ describe("prepareModelSource", () => {
         status: "ready",
         core_theme:
           "A numerical milestone matters because of the human opportunities behind it.",
+        destination_topic: "Helping founders publish consistently.",
         communicative_job:
           "Celebrate an achievement, humanize it, express gratitude, and recommit to the mission.",
         reader_effect: "Shared pride and trust in the author's continued mission.",
@@ -118,6 +119,7 @@ describe("prepareModelSource", () => {
         status: "needs_input",
         core_theme:
           "A numerical milestone matters because of the human opportunities behind it.",
+        destination_topic: "A verified milestone from the user's work.",
         communicative_job:
           "Celebrate an achievement and recommit to the mission.",
         reader_effect: "Shared pride and trust.",
@@ -163,12 +165,71 @@ describe("prepareModelSource", () => {
     );
   });
 
+  test("an open-topic modeling request never asks the user to reproduce the source niche", async () => {
+    openRouterMocks.completeChat.mockResolvedValue({
+      text: "",
+      toolArgs: {
+        status: "needs_input",
+        core_theme: "Choose AI tools by role before buying products.",
+        destination_topic: "A real result or lesson from the user's work.",
+        communicative_job: "Replace random tool collecting with a practical role-based map.",
+        reader_effect: "Confidence choosing a smaller AI stack.",
+        hook_function: "Challenge the reader's order of operations.",
+        hook_evidence_type: "personally tested tools and measurable results",
+        emotional_arc: ["contrarian tension", "clarity", "confidence"],
+        beats: [
+          { role: "mistake", purpose: "Name the wrong buying behavior." },
+          { role: "map", purpose: "List old-to-new tool swaps." },
+          { role: "lesson", purpose: "Start with the job, then choose the tool." },
+        ],
+        required_evidence: [
+          {
+            role: "proof",
+            semantic_requirement:
+              "AI tools personally tested and a measurable result from each.",
+            source_example: "A role-by-role AI tool list.",
+          },
+        ],
+        user_mappings: [],
+        missing_evidence: [
+          "AI tools personally tested and measurable results from each",
+        ],
+        question:
+          "What AI-tool categories or specific tools have you personally tested, and what measurable result did they produce?",
+      },
+      finishReason: "tool_calls",
+      usage: undefined,
+      model: "openai/gpt-5.6-luna",
+      citations: [],
+    });
+
+    const prepared = await prepareModelSource({
+      sourceText:
+        "Most CEOs learn AI tools in the wrong order. Here are nine old-tool to new-tool swaps.",
+      userRequest:
+        "Model this in my voice, but make the content mine and pick a topic that fits my voice and niche.",
+      verifiedContext:
+        "I am a ghostwriter who helps founders build personal brands through LinkedIn content.",
+      workspaceId: "ws-open-topic",
+    });
+
+    expect(prepared).toMatchObject({
+      outcome: "needs_input",
+      question:
+        "What real result, lesson, experience, or belief from your work should this post center on?",
+    });
+    expect(
+      prepared.outcome === "needs_input" ? prepared.question : "",
+    ).not.toMatch(/AI tools?|tool categories/i);
+  });
+
   test("reuses the same prepared source and user mapping within the bounded cache", async () => {
     openRouterMocks.completeChat.mockResolvedValue({
       text: "",
       toolArgs: {
         status: "ready",
         core_theme: "Teach a counterintuitive lesson from direct experience.",
+        destination_topic: "A lesson from the user's own work.",
         communicative_job: "Challenge an assumption and replace it with a practical rule.",
         reader_effect: "Confidence to apply the replacement rule.",
         hook_function: "Open with the learned contradiction.",
@@ -204,6 +265,7 @@ describe("prepareModelSource", () => {
       toolArgs: {
         status: "ready",
         core_theme: "A milestone matters because of the people behind it.",
+        destination_topic: "A verified milestone from the user's work.",
         communicative_job: "Celebrate and humanize an achieved milestone.",
         reader_effect: "Shared pride.",
         hook_function: "Lead with a completed outcome.",
@@ -249,6 +311,7 @@ describe("prepareModelSource", () => {
       toolArgs: {
         status: "ready",
         core_theme: "Teach an earned lesson.",
+        destination_topic: "A lesson grounded in the user's work.",
         communicative_job: "Replace an assumption with a practical rule.",
         reader_effect: "Confidence to apply the rule.",
         hook_function: "Open with the contradiction.",

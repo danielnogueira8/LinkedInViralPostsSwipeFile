@@ -45,6 +45,7 @@ export const DRAFT_FINALIZER_REJECTION_CODES = [
   "provenance_missing",
   "provenance_unverified",
   "source_unavailable",
+  "source_topic_mismatch",
   "source_fidelity",
   "source_fidelity_unavailable",
   "structure_mismatch",

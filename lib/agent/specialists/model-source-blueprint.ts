@@ -26,6 +26,7 @@ import {
 export type ModelSourceBlueprint = Readonly<{
   schemaVersion: 1;
   coreTheme: string;
+  destinationTopic?: string;
   communicativeJob: string;
   readerEffect: string;
   hook: Readonly<{
@@ -110,6 +111,7 @@ const BLUEPRINT_TOOL: ToolDef = {
       required: [
         "status",
         "core_theme",
+        "destination_topic",
         "communicative_job",
         "reader_effect",
         "hook_function",
@@ -124,6 +126,7 @@ const BLUEPRINT_TOOL: ToolDef = {
       properties: {
         status: { type: "string", enum: ["ready", "needs_input"] },
         core_theme: { type: "string" },
+        destination_topic: { type: "string" },
         communicative_job: { type: "string" },
         reader_effect: { type: "string" },
         hook_function: { type: "string" },
@@ -190,6 +193,8 @@ export const MODEL_SOURCE_BLUEPRINT_SYSTEM_PROMPT = [
   "You analyze a selected LinkedIn Model Source before another model writes from it.",
   "Extract the post's semantic blueprint: its overarching theme as a mechanism, its communicative job, intended reader effect, hook function, proof/evidence type, emotional or logical arc, and the ordered semantic role of every major beat.",
   "The communicative job is what the post DOES (celebrate and humanize a milestone, teach a counterintuitive lesson, confess a mistake and extract a lesson, prove a method through a case study), not its broad topic or formatting.",
+  "Choose one destination_topic for the new post. The source's literal subject is never the default destination. If the authoritative request names a topic, use it. If it asks for a topic that fits the user's voice, niche, or work, choose only from VERIFIED USER CONTEXT or a first-person clarification answer. If that context cannot support a clear destination topic, use needs_input.",
+  "For open-topic adaptations, ask about a real result, lesson, experience, belief, or recurring problem from the user's own work. Never ask the user to supply tools, examples, expertise, or proof merely because those belong to the source author's subject matter.",
   "Map source-specific evidence only to VERIFIED USER CONTEXT, clearly stated first-person facts in the AUTHORITATIVE USER REQUEST, or clearly stated first-person answers inside MODEL SOURCE CLARIFICATION DATA, with the same semantic role. Never treat quoted posts, examples, hypotheticals, or third-party facts as the user's. A duration is not an achieved outcome; effort is not a result; expertise is not a client proof point; a generic opinion is not a personal transformation.",
   "Return user_mappings in the same order as the required_evidence items they satisfy. Add no optional mapping before all required items are mapped.",
   "Use status ready only when the source's central communicative move can be reproduced honestly from the verified context. Use needs_input when a central proof, experience, relationship, result, or milestone has no true semantic equivalent. Ask exactly one concise question that would unlock the adaptation.",
@@ -229,6 +234,7 @@ function parsePreparation(value: unknown): Exclude<
   const raw = value as Record<string, unknown>;
   const status = raw.status;
   const coreTheme = bounded(raw.core_theme);
+  const destinationTopic = bounded(raw.destination_topic);
   const communicativeJob = bounded(raw.communicative_job);
   const readerEffect = bounded(raw.reader_effect);
   const hookFunction = bounded(raw.hook_function);
@@ -243,6 +249,7 @@ function parsePreparation(value: unknown): Exclude<
   if (
     (status !== "ready" && status !== "needs_input") ||
     !coreTheme ||
+    !destinationTopic ||
     !communicativeJob ||
     !readerEffect ||
     !hookFunction ||
@@ -255,6 +262,7 @@ function parsePreparation(value: unknown): Exclude<
   const blueprint: ModelSourceBlueprint = {
     schemaVersion: 1,
     coreTheme,
+    destinationTopic,
     communicativeJob,
     readerEffect,
     hook: {
@@ -356,6 +364,25 @@ export function buildModelSourceBlueprintUserContent(
   ].join("\n\n");
 }
 
+const OPEN_TOPIC_TRANSFER_RE =
+  /\bmake (?:the )?content mine\b|\bpick (?:a )?topic\b[\s\S]{0,100}\b(?:fits?|matches?)\b[\s\S]{0,60}\b(?:me|my voice|my niche|my work)\b|\btopic that fits (?:me|my voice|my niche|my work)\b/i;
+
+const OPEN_TOPIC_QUESTION =
+  "What real result, lesson, experience, or belief from your work should this post center on?";
+
+function enforceOpenTopicQuestion(
+  preparation: Exclude<ModelSourcePreparation, { outcome: "unavailable" }>,
+  userRequest: string,
+): Exclude<ModelSourcePreparation, { outcome: "unavailable" }> {
+  if (
+    preparation.outcome !== "needs_input" ||
+    !OPEN_TOPIC_TRANSFER_RE.test(userRequest)
+  ) {
+    return preparation;
+  }
+  return { ...preparation, question: OPEN_TOPIC_QUESTION };
+}
+
 function cacheKey(input: PrepareModelSourceInput): string {
   return createHash("sha256")
     .update(input.workspaceId)
@@ -418,7 +445,11 @@ async function runAttempt(
           { role: "user", content: buildModelSourceBlueprintUserContent(input) },
         ],
       }),
-    validate: (response) => parsePreparation(response.toolArgs),
+    validate: (response) =>
+      enforceOpenTopicQuestion(
+        parsePreparation(response.toolArgs),
+        input.userRequest,
+      ),
     persistUsage: (response) => {
       const attribution = providerModelAttribution(model, response.model);
       return logOpenRouterUsage(
@@ -505,6 +536,9 @@ export function renderModelSourceBlueprint(
   const semanticData = [
     "MODEL SOURCE SEMANTIC BLUEPRINT (server-prepared; preserve this before surface formatting):",
     `Core theme: ${blueprint.coreTheme}`,
+    ...(blueprint.destinationTopic
+      ? [`Destination topic: ${blueprint.destinationTopic}`]
+      : []),
     `Communicative job: ${blueprint.communicativeJob}`,
     `Intended reader effect: ${blueprint.readerEffect}`,
     `Hook function: ${blueprint.hook.function}`,
@@ -518,7 +552,7 @@ export function renderModelSourceBlueprint(
     ),
     "Verified user mappings:",
     ...mappings,
-    "Priority: preserve the same communicative move, hook function, evidence type, and semantic beat progression. Then preserve the source's pacing and formatting. Use original wording.",
+    "Priority: center the draft on the Destination topic, not the source's literal subject. Preserve the same communicative move, hook function, evidence type, and semantic beat progression. Then preserve the source's pacing and formatting. Use original wording.",
   ]
     .filter(Boolean)
     .join("\n");
