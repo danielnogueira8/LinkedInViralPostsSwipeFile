@@ -105,6 +105,12 @@ export const AGENT_FEED_LANES = [
   ...AGENT_INBOX_LANES,
 ] as const;
 export type AgentFeedLane = (typeof AGENT_FEED_LANES)[number];
+export function isAgentFeedLane(value: unknown): value is AgentFeedLane {
+  return (
+    typeof value === "string" &&
+    (AGENT_FEED_LANES as readonly string[]).includes(value)
+  );
+}
 export type CurrentAgentInboxIdea = Omit<AgentInboxIdea, "lane"> & {
   lane: CurrentAgentInboxLane;
 };

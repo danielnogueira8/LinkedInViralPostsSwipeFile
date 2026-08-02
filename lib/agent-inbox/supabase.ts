@@ -3,7 +3,6 @@ import { selectAllRows } from "@/lib/db-paginate";
 import { AGENT_INBOX_LANES } from "@/lib/agent-inbox";
 import { loadAgentDismissalFeedback } from "@/lib/agent-inbox/feedback";
 import type {
-  AgentInboxFeedback,
   AgentInboxIdea,
   AgentInboxLane,
   AgentInboxPreferences,
@@ -159,12 +158,7 @@ export function createAgentInboxRepository(
     },
 
     async readRecentFeedback(workspaceId) {
-      return (await loadAgentDismissalFeedback(db, workspaceId)).map(
-        (entry) => ({
-          ...entry,
-          lane: entry.lane as AgentInboxFeedback["lane"],
-        }),
-      );
+      return loadAgentDismissalFeedback(db, workspaceId);
     },
 
     async releaseDueSnoozed(workspaceId, now) {

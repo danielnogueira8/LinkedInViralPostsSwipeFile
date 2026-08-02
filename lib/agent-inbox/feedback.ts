@@ -1,4 +1,13 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import {
+  isAgentFeedLane,
+  type AgentFeedLane,
+} from "@/lib/agent-inbox";
+import {
+  discoveryAgentForOpportunity,
+  EXTERNAL_OPPORTUNITY_KINDS,
+  isExternalOpportunityKind,
+} from "@/lib/agent-loop/opportunity-signal";
 
 export const AGENT_DISCARD_REASONS = [
   "Not relevant to me",
@@ -12,7 +21,7 @@ export const AGENT_DISCARD_REASONS = [
 export type AgentDiscardReason = (typeof AGENT_DISCARD_REASONS)[number];
 
 export type AgentDismissalFeedback = {
-  lane: string;
+  lane: AgentFeedLane;
   headline: string;
   reason: string;
 };
@@ -46,6 +55,7 @@ export async function loadAgentDismissalFeedback(
       .select("kind, payload")
       .eq("workspace_id", workspaceId)
       .eq("status", "dismissed")
+      .in("kind", [...EXTERNAL_OPPORTUNITY_KINDS])
       .order("acted_at", { ascending: false })
       .limit(30),
   ]);
@@ -53,19 +63,22 @@ export async function loadAgentDismissalFeedback(
   if (external.error) throw external.error;
 
   const inboxFeedback = (inbox.data ?? []).flatMap((row) => {
+    if (!isAgentFeedLane(row.lane)) return [];
     const headline = text(row.headline);
     const reason = text(row.discard_reason);
     if (!headline || !reason) return [];
-    return [{ lane: text(row.lane) ?? "agent", headline, reason }];
+    return [{ lane: row.lane, headline, reason }];
   });
   const externalFeedback = (external.data ?? []).flatMap((row) => {
+    if (!isExternalOpportunityKind(row.kind)) return [];
     const value = payload(row.payload);
+    const lane = discoveryAgentForOpportunity(row.kind, value);
     const headline = text(value.headline);
     const reason = text(value.dismiss_reason);
     if (!headline || !reason) return [];
     return [
       {
-        lane: row.kind === "trend" ? "trend_radar" : "newsjacking",
+        lane,
         headline,
         reason,
       },
