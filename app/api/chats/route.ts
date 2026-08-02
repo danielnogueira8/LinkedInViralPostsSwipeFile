@@ -49,7 +49,17 @@ const createSchema = z.object({
 export async function POST(req: Request) {
   try {
     const sb = await scopedSupabase();
-    const parsed = createSchema.safeParse(await req.json().catch(() => null));
+    // Creating a chat has no required options. The Cowork handoff therefore
+    // sends a bodyless POST; treat an absent body like the documented empty
+    // options object instead of passing null to the object schema.
+    let requestBody: unknown;
+    try {
+      const rawBody = await req.text();
+      requestBody = rawBody === "" ? {} : JSON.parse(rawBody);
+    } catch {
+      requestBody = null;
+    }
+    const parsed = createSchema.safeParse(requestBody);
     if (!parsed.success) {
       return NextResponse.json(
         { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" },

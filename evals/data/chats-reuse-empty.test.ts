@@ -70,12 +70,23 @@ vi.mock("@/lib/supabase-scoped", () => ({
 
 const { POST } = await import("@/app/api/chats/route");
 
-function post(body?: Record<string, unknown>): Request {
-  return new Request("http://t/api/chats", {
+function postRequest(body?: string): Request {
+  const init: RequestInit = {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body ?? {}),
+  };
+  if (body !== undefined) init.body = body;
+  return new Request("http://t/api/chats", {
+    ...init,
   });
+}
+
+function post(body?: Record<string, unknown>): Request {
+  return postRequest(body === undefined ? undefined : JSON.stringify(body));
+}
+
+function postRaw(body: string): Request {
+  return postRequest(body);
 }
 
 beforeEach(() => {
@@ -125,5 +136,22 @@ describe("POST /api/chats — reuseEmpty", () => {
     expect(data.reused).toBeUndefined();
     expect(data.chat.id).toBe("fresh-1");
     expect(state.insertCalled).toBe(true);
+  });
+
+  test("a POST with no body creates a chat for the Cowork handoff", async () => {
+    const res = await POST(post());
+    const data = await res.json();
+    expect(data.error).not.toBe("Invalid input: expected object, received null");
+    expect(data.ok).toBe(true);
+    expect(data.chat.id).toBe("fresh-1");
+    expect(state.insertCalled).toBe(true);
+  });
+
+  test("a whitespace-only body remains invalid JSON", async () => {
+    const res = await POST(postRaw(" \n"));
+    const data = await res.json();
+    expect(res.status).toBe(400);
+    expect(data.ok).toBe(false);
+    expect(state.insertCalled).toBe(false);
   });
 });
