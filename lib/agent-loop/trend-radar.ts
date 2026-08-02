@@ -146,14 +146,31 @@ function uniqueCreators(
   ];
 }
 
-function stableTrendKey(terms: string, members: readonly number[]): string {
+function stableHash(value: string): string {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36).padStart(7, "0");
+}
+
+function stableTrendKey(
+  terms: string,
+  centroid: readonly number[],
+): string {
   const normalized = terms
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
-    .slice(0, 140);
-  if (normalized) return "cluster:" + normalized;
-  return "cluster:members-" + [...members].sort((a, b) => a - b).join("-");
+    .slice(0, 120);
+  // The label is useful to humans but is not unique: two unrelated clusters
+  // can share the same top words. A coarse centroid fingerprint stays stable
+  // across small membership changes while keeping those clusters separate.
+  const centroidFingerprint = centroid
+    .map((value) => Math.round(value * 100))
+    .join(",");
+  return `cluster:${normalized || "conversation"}:${stableHash(centroidFingerprint)}`;
 }
 
 function candidateScore(
@@ -241,7 +258,7 @@ export function rankTrendClusters(
         cluster.members.length,
         priorCreators.size,
       ),
-      trendKey: stableTrendKey(terms, cluster.members),
+      trendKey: stableTrendKey(terms, cluster.centroid),
       latestPostAt,
       representativePosts,
     });
@@ -514,13 +531,17 @@ export async function scanTrendOpportunities(
   const cooldownCutoff = new Date(
     now.getTime() - TREND_COOLDOWN_DAYS * 86_400_000,
   ).toISOString();
-  const { data: recentOpportunities, error: recentError } = await db
-    .from("agent_opportunities")
-    .select("trend_key, payload")
-    .eq("workspace_id", workspaceId)
-    .eq("kind", "trend")
-    .gte("created_at", cooldownCutoff);
-  if (recentError) throw recentError;
+  const recentOpportunities = await selectAllRows<{
+    trend_key: string | null;
+    payload: TrendOpportunityPayload | null;
+  }>(() =>
+    db
+      .from("agent_opportunities")
+      .select("trend_key, payload")
+      .eq("workspace_id", workspaceId)
+      .eq("kind", "trend")
+      .gte("created_at", cooldownCutoff) as never,
+  );
   const recentKeys = new Set(
     (recentOpportunities ?? [])
       .map((row) => {
