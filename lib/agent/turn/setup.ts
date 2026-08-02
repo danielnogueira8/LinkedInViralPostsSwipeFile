@@ -28,6 +28,7 @@ import {
   hasPendingAskOnly,
   hasPendingActionAsk,
   hasUnsavedAssistantDraftReferent,
+  isPendingAskMessage,
   validatePendingActionAnswer,
 } from "@/lib/agent/turn-policy";
 import { isInterviewAskArgs } from "@/lib/agent/turn/execute-interview";
@@ -515,11 +516,7 @@ export async function setupChatTurn(
       );
     }
     const pendingAssistantIndex = recentMessageWindow.findIndex(
-      (message) =>
-        message.role === "assistant" &&
-        message.tool_calls?.some(
-          (call) => call.function.name === "ask_user",
-        ),
+      (message) => isPendingAskMessage(message),
     );
     const pendingAssistant =
       pendingAssistantIndex >= 0

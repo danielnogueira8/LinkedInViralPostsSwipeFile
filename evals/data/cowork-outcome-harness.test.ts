@@ -3391,7 +3391,7 @@ describe("production-shaped Cowork outcome harness", () => {
     expect(JSON.stringify(report.persisted.messages)).not.toContain(COMPLETE_POST);
   });
 
-  test("a Model Source clarification is consumed once and an explicit Create continuation cannot restart questioning", async () => {
+  test("a Model Source clarification answer resumes Create without another command", async () => {
     const modelSourceId = "00000000-0000-4000-8000-000000000241";
     const sourcePostId = "00000000-0000-4000-8000-000000000242";
     const question =
@@ -3456,11 +3456,10 @@ describe("production-shaped Cowork outcome harness", () => {
         },
       },
       {
-        id: "modeled-source-create-after-clarification",
+        id: "modeled-source-answer-auto-resumes-create",
         request: {
           message:
-            "I reached 2,000 followers through content writing and it has brought me clients. Create it now.",
-          command: { kind: "create", count: 1 },
+            "I reached 2,000 followers through content writing and it has brought me clients.",
           modelSourceId,
         },
         model: {
