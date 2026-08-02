@@ -12,6 +12,7 @@ import {
   claimWorkspaceCost,
   releaseWorkspaceCost,
 } from "@/lib/workspace-cost-claims";
+import { claimAgentLoopDailyRun } from "@/lib/agent-loop/daily-run";
 
 // Trend Radar is deliberately broader than the tracked-creator scanner. It
 // looks for fresh, web-grounded developments that could become a post idea
@@ -20,7 +21,10 @@ export const TREND_MAX_AGE_DAYS = 7;
 const TREND_EXPIRE_AFTER_DAYS = 5;
 const TREND_COOLDOWN_DAYS = 30;
 const MAX_TREND_OPPORTUNITIES_PER_RUN = 3;
-const TREND_SEARCH_BUCKET_MS = 60 * 60 * 1000;
+// Trend Radar is a daily paid discovery pass. Keep the operation key aligned
+// with that cadence so usage reservations and diagnostics cannot imply an
+// hourly search budget if another caller reaches this function.
+const TREND_SEARCH_BUCKET_MS = 24 * 60 * 60 * 1000;
 
 const QUERY_LANE =
   "LinkedIn platform changes, official announcements, AI-generated content and AI slop, creator economy, work, technology, and notable cultural conversations";
@@ -51,6 +55,20 @@ export type ScanTrendRadarResult = {
   expired: number;
   skipped: number;
 };
+
+export type ScanTrendRadarOptions = {
+  /** Explicit maintenance/manual triggers may intentionally rerun a pass. */
+  allowRepeat?: boolean;
+};
+
+export function trendRadarOperationKey(
+  workspaceId: string,
+  now = new Date(),
+): string {
+  return `trend-radar:${workspaceId}:${Math.floor(
+    now.getTime() / TREND_SEARCH_BUCKET_MS,
+  )}`;
+}
 
 const TREND_STOP_WORDS = new Set([
   "a",
@@ -344,7 +362,21 @@ export async function scanTrendOpportunities(
   sb: SupabaseClient,
   workspaceId: string,
   now = new Date(),
+  options: ScanTrendRadarOptions = {},
 ): Promise<ScanTrendRadarResult> {
+  if (!options.allowRepeat) {
+    const claimed = await claimAgentLoopDailyRun(sb, workspaceId, now);
+    if (!claimed) {
+      return {
+        searched: 0,
+        fetched: 0,
+        inserted: 0,
+        expired: 0,
+        skipped: 1,
+      };
+    }
+  }
+
   const expireCutoff = new Date(
     now.getTime() - TREND_EXPIRE_AFTER_DAYS * 24 * 60 * 60 * 1000,
   ).toISOString();
@@ -381,9 +413,7 @@ export async function scanTrendOpportunities(
   );
 
   const query = buildTrendRadarQuery(topics);
-  const operationKey = `trend-radar:${workspaceId}:${Math.floor(
-    now.getTime() / TREND_SEARCH_BUCKET_MS,
-  )}`;
+  const operationKey = trendRadarOperationKey(workspaceId, now);
   const costClaim = await claimWorkspaceCost({
     workspaceId,
     operationKey,

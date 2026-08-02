@@ -25,7 +25,7 @@ export const maxDuration = 300;
 const TREND_RADAR_BATCH_SIZE = 6;
 const TREND_RADAR_ROTATION_MS = 60 * 60 * 1000;
 
-function trendRadarWorkspaceIds(
+export function trendRadarWorkspaceIds(
   workspaceIds: readonly string[],
   now = new Date(),
 ): Set<string> {
@@ -155,7 +155,9 @@ export async function GET(req: Request) {
         try {
           trendScans.set(
             workspaceId,
-            await scanTrendOpportunities(sb, workspaceId),
+            await scanTrendOpportunities(sb, workspaceId, new Date(), {
+              allowRepeat: Boolean(workspaceParam),
+            }),
           );
         } catch (error) {
           trendErrors.set(

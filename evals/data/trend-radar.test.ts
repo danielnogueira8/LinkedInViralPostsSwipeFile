@@ -3,12 +3,26 @@ import {
   buildTrendRadarQuery,
   hasCreatorCoverage,
   rankTrendCandidates,
+  trendRadarOperationKey,
   trendOpportunityPayload,
 } from "@/lib/agent-loop/trend-radar";
 
 const NOW = new Date("2026-08-01T12:00:00.000Z");
 
 describe("Trend Radar discovery contract", () => {
+  test("uses one stable operation bucket for the whole day", () => {
+    expect(
+      trendRadarOperationKey("workspace-1", new Date("2026-08-01T06:00:00Z")),
+    ).toBe(
+      trendRadarOperationKey("workspace-1", new Date("2026-08-01T23:59:59Z")),
+    );
+    expect(
+      trendRadarOperationKey("workspace-1", new Date("2026-08-02T00:00:00Z")),
+    ).not.toBe(
+      trendRadarOperationKey("workspace-1", new Date("2026-08-01T23:59:59Z")),
+    );
+  });
+
   test("builds a creator-independent query with platform and workspace lanes", () => {
     const query = buildTrendRadarQuery(["B2B SaaS", "founder-led marketing"]);
 

@@ -29,10 +29,16 @@ const { scanTrendOpportunities } = await import("@/lib/agent-loop/trend-radar");
 
 const NOW = new Date("2026-08-01T12:00:00.000Z");
 
-function fakeDb() {
+function fakeDb(dailyClaims = [true]) {
   const inserts: unknown[] = [];
+  const rpcs: string[] = [];
   return {
     inserts,
+    rpcs,
+    rpc(name: string) {
+      rpcs.push(name);
+      return Promise.resolve({ data: dailyClaims.shift() ?? false, error: null });
+    },
     from(table: string) {
       let mode = "select";
       const chain: Record<string, unknown> = {};
@@ -117,5 +123,25 @@ describe("scanTrendOpportunities persistence seam", () => {
         reason: "creator_independent",
       },
     });
+  });
+
+  test("does not pay for a second Trend Radar search on the same day", async () => {
+    const db = fakeDb([true, false]);
+
+    await scanTrendOpportunities(db as never, "workspace-1", NOW);
+    const second = await scanTrendOpportunities(db as never, "workspace-1", NOW);
+
+    expect(second).toEqual({
+      searched: 0,
+      fetched: 0,
+      inserted: 0,
+      expired: 0,
+      skipped: 1,
+    });
+    expect(searchNews).toHaveBeenCalledOnce();
+    expect(db.rpcs).toEqual([
+      "claim_agent_loop_daily_run",
+      "claim_agent_loop_daily_run",
+    ]);
   });
 });
