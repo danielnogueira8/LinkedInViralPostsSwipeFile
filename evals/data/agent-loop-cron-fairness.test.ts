@@ -172,6 +172,51 @@ describe("agent-loop cron workspace fairness", () => {
     }
   });
 
+  test("runs Newsjacking and Trend Radar concurrently for each target", async () => {
+    const started: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    mocked.newsjacking.mockImplementationOnce(async () => {
+      started.push("newsjacking");
+      await gate;
+      return {
+        searched: 0,
+        fetched: 0,
+        inserted: 0,
+        expired: 0,
+        skipped: 0,
+      };
+    });
+    mocked.trend.mockImplementationOnce(async () => {
+      started.push("trend");
+      await gate;
+      return {
+        scanned: 0,
+        eligible: 0,
+        embedded: 0,
+        clusters: 0,
+        inserted: 0,
+        expired: 0,
+        skipped: 0,
+      };
+    });
+
+    const responsePromise = GET(
+      new Request(
+        "https://app.tryswipein.com/api/cron/agent-loop?workspace=workspace-1",
+        { headers: { authorization: "Bearer test-secret" } },
+      ),
+    );
+    await vi.waitFor(() => expect(started).toHaveLength(2));
+    expect(new Set(started)).toEqual(new Set(["newsjacking", "trend"]));
+    release();
+
+    const response = await responsePromise;
+    expect(response.status).toBe(200);
+  });
+
   test("lease recovery failures alert and fail the cron", async () => {
     mocked.recover.mockRejectedValueOnce(new Error("lease unavailable"));
 

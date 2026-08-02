@@ -25,19 +25,25 @@ export const maxDuration = 300;
 // external-discovery batch so one large fleet cannot make this cron exceed its
 // 300s budget. Newsjacking and Trend Radar share the target set but execute
 // independently and in parallel.
-const NEWSJACKING_BATCH_SIZE = 6;
-const NEWSJACKING_ROTATION_MS = 60 * 60 * 1000;
+const EXTERNAL_DISCOVERY_BATCH_SIZE = 6;
+const EXTERNAL_DISCOVERY_ROTATION_MS = 60 * 60 * 1000;
 
-function newsjackingWorkspaceIds(
+function externalDiscoveryWorkspaceIds(
   workspaceIds: readonly string[],
   now = new Date(),
 ): Set<string> {
-  if (workspaceIds.length <= NEWSJACKING_BATCH_SIZE) return new Set(workspaceIds);
-  const bucketCount = Math.ceil(workspaceIds.length / NEWSJACKING_BATCH_SIZE);
+  if (workspaceIds.length <= EXTERNAL_DISCOVERY_BATCH_SIZE) {
+    return new Set(workspaceIds);
+  }
+  const bucketCount = Math.ceil(
+    workspaceIds.length / EXTERNAL_DISCOVERY_BATCH_SIZE,
+  );
   const bucket =
-    Math.floor(now.getTime() / NEWSJACKING_ROTATION_MS) % bucketCount;
-  const start = bucket * NEWSJACKING_BATCH_SIZE;
-  return new Set(workspaceIds.slice(start, start + NEWSJACKING_BATCH_SIZE));
+    Math.floor(now.getTime() / EXTERNAL_DISCOVERY_ROTATION_MS) % bucketCount;
+  const start = bucket * EXTERNAL_DISCOVERY_BATCH_SIZE;
+  return new Set(
+    workspaceIds.slice(start, start + EXTERNAL_DISCOVERY_BATCH_SIZE),
+  );
 }
 
 async function discoverWorkspaceIds(
@@ -147,7 +153,7 @@ export async function GET(req: Request) {
       error?: string;
     }> = [];
 
-    const externalTargets = newsjackingWorkspaceIds(workspaceIds);
+    const externalTargets = externalDiscoveryWorkspaceIds(workspaceIds);
     const newsjackingScans = new Map<
       string,
       Awaited<ReturnType<typeof scanNewsjackingOpportunities>>

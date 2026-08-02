@@ -95,6 +95,34 @@ describe("Trend Radar creator-cluster ranking", () => {
     expect(candidates).toEqual([]);
   });
 
+  test("keeps same-label clusters on separate cooldown keys", () => {
+    const recent = [
+      post("x-1", "creator-x-1", "AI agents are changing how teams work"),
+      post("x-2", "creator-x-2", "AI agents are changing how teams work"),
+      post("x-3", "creator-x-3", "AI agents are changing how teams work"),
+      post("y-1", "creator-y-1", "AI agents are changing how teams work"),
+      post("y-2", "creator-y-2", "AI agents are changing how teams work"),
+      post("y-3", "creator-y-3", "AI agents are changing how teams work"),
+    ];
+    const candidates = rankTrendClusters(
+      recent,
+      [
+        [1, 0, 0],
+        [0.99, 0.01, 0],
+        [0.98, 0.02, 0],
+        [0, 1, 0],
+        [0.01, 0.99, 0],
+        [0.02, 0.98, 0],
+      ],
+      [],
+      [],
+    );
+
+    expect(candidates).toHaveLength(2);
+    expect(new Set(candidates.map((candidate) => candidate.terms)).size).toBe(1);
+    expect(new Set(candidates.map((candidate) => candidate.trendKey)).size).toBe(2);
+  });
+
   test("serializes the cluster evidence for the Agent Inbox", () => {
     const recent = [
       post("recent-1", "creator-1", "AI agents are changing how teams work"),
