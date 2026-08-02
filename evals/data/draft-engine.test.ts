@@ -2545,6 +2545,96 @@ describe("DraftEngine — thin path (lean mode)", () => {
     ]);
   });
 
+  test("delivers the best safe modeled draft when fidelity repairs exhaust", async () => {
+    const blueprint = {
+      schemaVersion: 1 as const,
+      coreTheme: "Use a concrete result to establish practical expertise.",
+      communicativeJob: "Lead with proof, explain the method, and teach the reader.",
+      readerEffect: "Trust grounded in demonstrated experience.",
+      hook: {
+        function: "Lead with a measurable completed result.",
+        evidenceType: "verified client outcome",
+      },
+      emotionalArc: ["proof", "explanation", "confidence"],
+      beats: [
+        { role: "proof", purpose: "State the verified result." },
+        { role: "method", purpose: "Explain what produced it." },
+        { role: "lesson", purpose: "Give the reader a useful takeaway." },
+      ],
+      requiredEvidence: [
+        {
+          role: "anchor result",
+          semanticRequirement: "A measurable completed client outcome.",
+          sourceExample: "A measurable audience result.",
+        },
+      ],
+    };
+    const prepareModelSource = vi.fn().mockResolvedValue({
+      outcome: "ready" as const,
+      blueprint,
+      userMappings: [
+        {
+          role: "anchor result",
+          evidence: "50K+ followers across all clients.",
+          evidenceSource: "authoritative request",
+        },
+      ],
+    });
+    const reviewSourceFidelity = vi.fn().mockResolvedValue({
+      outcome: "rejected" as const,
+      reasons: ["The structure is not an exact enough match."],
+      retryInstruction: "Match every source beat more literally.",
+    });
+    const candidates = [
+      `${COMPLETE_POST}\n\nThat process helped my clients reach more than 50,000 followers.`,
+      `${DISTINCT_COMPLETE_POST}\n\nAcross my clients, the result passed 50,000 followers.`,
+      `${COMPLETE_POST}\n\nThe work has now produced 50K+ followers across client accounts.`,
+      `${DISTINCT_COMPLETE_POST}\n\nThe verified result is 50K+ followers across all clients.`,
+    ];
+    const writer = new ScriptedWriter(
+      candidates.map((text) => ({
+        text,
+        finishReason: "stop" as const,
+        usage: usage(180, 90),
+      })),
+    );
+
+    const result = await collect(
+      writer,
+      {
+        userInstruction:
+          "Model this source using my verified result: 50K+ followers across all clients.",
+        task: {
+          kind: "source",
+          source: {
+            id: "src-paid-fidelity-exhaustion",
+            text: "A source post that teaches CEOs which AI tools matter through a concise proof-led list.",
+          },
+        },
+        finalizerSpecialists: {
+          ...input().finalizerSpecialists,
+          reviewSourceFidelity,
+        },
+      },
+      { prepareModelSource },
+    );
+
+    expect(writer.requests.map((request) => request.stage)).toEqual([
+      "primary",
+      "repair",
+      "fallback",
+      "repair",
+    ]);
+    expect(reviewSourceFidelity).toHaveBeenCalledTimes(4);
+    expect(artifacts(result.events)).toHaveLength(1);
+    expect(artifacts(result.events)[0]).toMatchObject({
+      body: candidates.at(-1),
+      meta: { needs_verification: true },
+    });
+    expect(done(result.events)?.terminalReason).toBe("done");
+    expect(result.events.some((event) => event.type === "error")).toBe(false);
+  });
+
   test("a GROUNDED (research) turn writes with the thin model", async () => {
     const writer = new ScriptedWriter([
       { text: COMPLETE_POST, finishReason: "stop", usage: usage(200, 120) },
@@ -2695,32 +2785,51 @@ describe("DraftEngine — thin path (lean mode)", () => {
     expect(artifacts(result.events)[0].body).toBe(sourceText);
   });
 
-  test("SOURCE turn: a genuine fidelity REJECTION is a quality failure and is NOT salvaged", async () => {
-    // The salvage is strictly for reviewer UNAVAILABILITY. A reviewer that IS
-    // reachable and returns a real "this doesn't adapt the source" verdict is a
-    // content failure — it must still drive a retry / dead-end, never ship.
-    const sourceText =
-      "Your resume lists the tasks you were handed. What they remember is public work.";
+  test("SOURCE turn never salvages a near-copy after fidelity repairs exhaust", async () => {
+    const sourceText = DISTINCT_COMPLETE_POST;
+    const prepareModelSource = vi.fn().mockResolvedValue({
+      outcome: "ready" as const,
+      blueprint: {
+        schemaVersion: 1 as const,
+        coreTheme: "Show practical expertise through a concrete result.",
+        communicativeJob: "Establish proof and teach the method.",
+        readerEffect: "Trust grounded in experience.",
+        hook: {
+          function: "Lead with a completed result.",
+          evidenceType: "verified outcome",
+        },
+        emotionalArc: ["proof", "confidence"],
+        beats: [{ role: "proof", purpose: "State the result." }],
+        requiredEvidence: [],
+      },
+      userMappings: [],
+    });
     const reviewSourceFidelity = vi.fn().mockResolvedValue({
       outcome: "rejected",
       reasons: ["The draft ignores the source's structure entirely."],
       retryInstruction: "Reuse the source's hook-to-ending sequence.",
     });
-    const writer = new ScriptedWriter([
-      { text: DISTINCT_COMPLETE_POST, finishReason: "stop", usage: usage(200, 120) },
-      { text: DISTINCT_COMPLETE_POST, finishReason: "stop", usage: usage(200, 120) },
-    ]);
-    const result = await collect(writer, {
-      task: { kind: "source", source: { id: "source-1", text: sourceText } },
-      finalizerSpecialists: {
-        ...input().finalizerSpecialists,
-        reviewSourceFidelity,
+    const writer = new ScriptedWriter(
+      ["First", "Second", "Third", "Fourth"].map((label) => ({
+        text: `${sourceText}\n\n${label} pass.`,
+        finishReason: "stop" as const,
+        usage: usage(200, 120),
+      })),
+    );
+    const result = await collect(
+      writer,
+      {
+        task: { kind: "source", source: { id: "source-1", text: sourceText } },
+        finalizerSpecialists: {
+          ...input().finalizerSpecialists,
+          reviewSourceFidelity,
+        },
       },
-    });
-    // No salvaged artifact for a genuine quality rejection.
-    expect(
-      artifacts(result.events).some((a) => a.id.startsWith("art_salvage_")),
-    ).toBe(false);
+      { prepareModelSource },
+    );
+
+    expect(artifacts(result.events)).toHaveLength(0);
+    expect(done(result.events)?.terminalReason).toBe("error");
   });
 
   test("a lead-magnet turn injects the leadMagnetBlock into the writer prompt", async () => {

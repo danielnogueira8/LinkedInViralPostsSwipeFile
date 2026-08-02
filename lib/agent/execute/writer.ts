@@ -1744,13 +1744,15 @@ export async function* runSingleDraftTurn(
   // can name WHICH gate kept rejecting the draft (see rejectionSummary).
   let lastRejectionCode: string | null = null;
 
-  // Best-effort salvage. Two turn shapes would otherwise dead-end even though
+  // Best-effort salvage. Three turn shapes would otherwise dead-end even though
   // the writer produced a usable draft:
   //   • grounded/news — every attempt fails the (kept-on) grounding gate;
   //   • a TRUSTED source-modeling turn whose only failure was the source-
   //     fidelity REVIEWER being unavailable (both reviewer LLMs timed out /
-  //     errored — an infrastructure blip, NOT evidence the draft is unfaithful).
-  // In both cases we run the last drafted body through the CORRUPTION-only nets
+  //     errored — an infrastructure blip, NOT evidence the draft is unfaithful);
+  //   • a prepared Model Source turn that spent its bounded repair attempts but
+  //     kept missing the reviewer's semantic-structure preference.
+  // In these cases we run the last drafted body through the CORRUPTION-only nets
   // (em-dash strip + normalize) and, unless it's genuinely broken or too long,
   // deliver it flagged for verification — a usable draft the user can check
   // beats an opaque "retry" with no post at all.
@@ -2392,6 +2394,17 @@ export async function* runSingleDraftTurn(
         return;
       }
       noteWriterStageFailure("chain", error);
+    }
+
+    if (task.kind === "source" && lastRejectionCode === "source_fidelity") {
+      const salvaged = salvageUnverifiedDraft(task.source.text);
+      if (salvaged && !(await cancellationRequestedNow())) {
+        yield { type: "artifact", artifact: deliveredArtifact(salvaged) };
+        yield finish(
+          `${DRAFT_READY_TEXT} I couldn’t fully match every source-structure detail after several passes, so give the shape a quick review against the original.`,
+        );
+        return;
+      }
     }
 
     if (task.kind === "grounded") {
