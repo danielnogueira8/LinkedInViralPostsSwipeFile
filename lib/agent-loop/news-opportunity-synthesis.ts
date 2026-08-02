@@ -1,9 +1,4 @@
-import {
-  BACKGROUND_MODEL,
-  completeChat,
-  logOpenRouterUsage,
-  type ToolDef,
-} from "@/lib/openrouter";
+import type { ToolDef } from "@/lib/openrouter";
 import { wrapUntrustedXml } from "@/lib/agent/untrusted";
 import {
   collectDistinctRefinedOpportunities,
@@ -15,6 +10,7 @@ import {
   topicRelevance,
 } from "@/lib/agent-inbox/opportunity-quality";
 import type { NewsjackingCandidate } from "@/lib/agent-loop/newsjacking";
+import { createOpportunitySynthesizer } from "@/lib/agent-loop/opportunity-synthesis";
 
 const TOOL = "rank_newsjacking_opportunities";
 
@@ -73,41 +69,33 @@ const tool: ToolDef = {
   },
 };
 
-export const synthesizeNewsOpportunities: NewsOpportunitySynthesis = async ({
-  workspaceId,
-  topics,
-  candidates,
-  feedback = [],
-}) => {
-  if (candidates.length === 0) {
-    return { available: true, opportunities: new Map() };
-  }
-  try {
-    const evidence = candidates
-      .map(({ result, trendKey, corroboratingResults = [] }) =>
-        [
-          `ID: ${trendKey}`,
-          `Headline: ${result.title}`,
-          `Summary: ${result.summary}`,
-          `Source: ${result.source}`,
-          `Published: ${result.published_at}`,
-          `URL: ${result.url}`,
-          ...corroboratingResults.map(
-            (entry) =>
-              `Corroboration: ${entry.source} | ${entry.title} | ${entry.url}`,
-          ),
-        ].join("\n"),
-      )
-      .join("\n\n");
-    const response = await completeChat({
-      model: BACKGROUND_MODEL,
-      reasoningEffort: "high",
-      cachePrompt: false,
-      maxTokens: 2200,
-      timeoutMs: 45_000,
-      tools: [tool],
-      forceTool: TOOL,
-      messages: [
+export const synthesizeNewsOpportunities: NewsOpportunitySynthesis =
+  createOpportunitySynthesizer<
+    NewsjackingCandidate,
+    SynthesizedNewsOpportunity,
+    Parameters<NewsOpportunitySynthesis>[0]
+  >({
+    tool,
+    usageKind: "newsjacking_opportunity_synthesis",
+    failureTag: "[newsjacking:synthesis] failed",
+    messages: ({ topics, candidates, feedback = [] }) => {
+      const evidence = candidates
+        .map(({ result, trendKey, corroboratingResults = [] }) =>
+          [
+            `ID: ${trendKey}`,
+            `Headline: ${result.title}`,
+            `Summary: ${result.summary}`,
+            `Source: ${result.source}`,
+            `Published: ${result.published_at}`,
+            `URL: ${result.url}`,
+            ...corroboratingResults.map(
+              (entry) =>
+                `Corroboration: ${entry.source} | ${entry.title} | ${entry.url}`,
+            ),
+          ].join("\n"),
+        )
+        .join("\n\n");
+      return [
         {
           role: "system",
           content:
@@ -122,45 +110,32 @@ export const synthesizeNewsOpportunities: NewsOpportunitySynthesis = async ({
             `Recent dismissal reasons: ${feedback.join(", ") || "none yet"}\n` +
             wrapUntrustedXml("verified_news", evidence),
         },
-      ],
-    });
-    await logOpenRouterUsage(
-      "newsjacking_opportunity_synthesis",
-      response.model,
-      response.usage,
-      workspaceId,
-    );
-    const byId = new Map(
-      candidates.map((candidate) => [candidate.trendKey, candidate]),
-    );
-    const rows = response.toolArgs?.opportunities;
-    if (hasInvalidRefinedAngleCategories({ rows, candidates: byId })) {
-      throw new Error("Invalid angle category in Newsjacking synthesis output");
-    }
-    const opportunities = collectDistinctRefinedOpportunities({
-      rows,
-      candidates: byId,
-      qualityFor: ({ candidate, headline, angle, model }) =>
-        evaluateModelOpportunityQuality({
-          model,
-          evidence: Math.min(1, candidate.score / 9),
-          topicFit: topicRelevance(
-            topics,
-            headline,
-            angle,
-            candidate.result.title,
-            candidate.result.summary,
-          ),
-        }),
-    });
-    return { available: true, opportunities };
-  } catch (error) {
-    console.error("[newsjacking:synthesis] failed", {
-      workspaceId,
-      message: error instanceof Error ? error.message : String(error),
-    });
-    // Keep the verified event eligible for a later pass; do not consume its
-    // cooldown with an unrefined announcement summary.
-    return { available: false, opportunities: new Map() };
-  }
-};
+      ];
+    },
+    refine: ({ topics, candidates }, rows) => {
+      const byId = new Map(
+        candidates.map((candidate) => [candidate.trendKey, candidate]),
+      );
+      if (hasInvalidRefinedAngleCategories({ rows, candidates: byId })) {
+        throw new Error(
+          "Invalid angle category in Newsjacking synthesis output",
+        );
+      }
+      return collectDistinctRefinedOpportunities({
+        rows,
+        candidates: byId,
+        qualityFor: ({ candidate, headline, angle, model }) =>
+          evaluateModelOpportunityQuality({
+            model,
+            evidence: Math.min(1, candidate.score / 9),
+            topicFit: topicRelevance(
+              topics,
+              headline,
+              angle,
+              candidate.result.title,
+              candidate.result.summary,
+            ),
+          }),
+      });
+    },
+  });
