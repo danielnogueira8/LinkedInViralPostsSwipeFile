@@ -76,7 +76,7 @@ export type StructureLayoutBeat = {
 // supplies the concrete layout; this policy explains how to use it without
 // assuming every source has the same hook/body/list/close arrangement.
 export const SOURCE_STRUCTURE_REFERENCE_POLICY =
-  "A SOURCE STRUCTURE REFERENCE may follow the source data. It names the source's detected beats, their order, and approximate sizes. Reproduce that detected sequence; treat sizes as a reference point, not a limit, and deviate freely when the user's content genuinely needs it. Keep a list in the same position and use the same marker style when present. Never drop, add, or reorder a beat to compensate for a size change.";
+  "A SOURCE STRUCTURE REFERENCE may follow the source data. It describes visual beats, their order, and approximate sizes. It is secondary to the MODEL SOURCE BLUEPRINT: use the visual sequence when it carries the same semantic roles, treat sizes as a reference point, not a limit, and deviate freely when truthful user evidence needs it. Keep list placement and marker style when practical, but never preserve a visual beat by changing the source's communicative job or inventing evidence.";
 
 export type StructureSkeleton = {
   // Number of paragraphs (blank-line-separated blocks), matching the

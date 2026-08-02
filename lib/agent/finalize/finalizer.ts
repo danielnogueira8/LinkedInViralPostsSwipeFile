@@ -17,6 +17,7 @@ import { RENDER_POST_MAX_CHARS } from "@/lib/agent/tools";
 import type { RecentDraft } from "@/lib/recent-drafts";
 import type { AdapterHealthRegistry } from "@/lib/agent/adapter-health";
 import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
+import type { ModelSourceBlueprint } from "@/lib/agent/specialists/model-source-blueprint";
 import { truncateAtWordBoundary } from "@/lib/text-truncate";
 import {
   aiTellRepairStage,
@@ -75,6 +76,8 @@ export type DraftProvenance = {
   discoveredSources: DraftSource[];
   userRequest: string;
   verifiedContext: string;
+  /** Present only when the modeled turn completed semantic source preparation. */
+  modelingBlueprint?: ModelSourceBlueprint;
 };
 
 export type DraftCandidate = {
@@ -118,6 +121,7 @@ export type DraftFinalizerSpecialists = {
     draftBody: string;
     userRequest: string;
     verifiedContext: string;
+    blueprint?: ModelSourceBlueprint;
     workspaceId: string;
     deliverableKind?:
       | "post"
@@ -455,11 +459,12 @@ export function createDraftFinalizer(
 
     // -------------------------------------------------------------------------
     // Gate 4: Quality — deterministic edit, then the model specialists.
-    // Source/modeled turns run source-fidelity review for telemetry only; the
-    // model-based verdict is no longer a hard rejection. AI-tell repair runs
-    // for EVERY draft, sourced or not — it was previously skipped on sourced
-    // turns, which let grounded drafts ship with classic AI tells (staccato
-    // triads, signposting) because only ungrounded originals were repaired.
+    // Source/modeled turns run source-fidelity review. Legacy sourced turns
+    // record the verdict for telemetry; a turn carrying a server-validated
+    // semantic blueprint rejects mismatches into the bounded repair chain.
+    // AI-tell repair runs for EVERY draft, sourced or not — it was previously
+    // skipped on sourced turns, which let grounded drafts ship with classic AI
+    // tells because only ungrounded originals were repaired.
     // The repair pass itself short-circuits on clean bodies, so a tell-free
     // draft pays no extra model call. Cross-slot sameness rewriting is
     // intentionally off the blocking path.
@@ -475,7 +480,12 @@ export function createDraftFinalizer(
       if (!fidelityResult.ok) {
         return emit(
           candidate,
-          reject(candidate.origin, fidelityResult.rejection.code, fidelityResult.rejection.message),
+          reject(
+            candidate.origin,
+            fidelityResult.rejection.code,
+            fidelityResult.rejection.message,
+            fidelityResult.rejection.repairInstruction,
+          ),
           sourceVerified,
           editsSoFar(),
         );
