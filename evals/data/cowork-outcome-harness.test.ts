@@ -3396,6 +3396,8 @@ describe("production-shaped Cowork outcome harness", () => {
     const sourcePostId = "00000000-0000-4000-8000-000000000242";
     const question =
       "What milestone and meaningful outcome should anchor your version?";
+    const secondQuestion =
+      "Great—I’ll build around Claude, ChatGPT, and SwipeIn. What specific use case and measurable result can you vouch for with each?";
     const needsInput = {
       outcome: "needs_input" as const,
       blueprint: {
@@ -3464,10 +3466,16 @@ describe("production-shaped Cowork outcome harness", () => {
         },
         model: {
           provider: { rounds: [] },
-          // Reproduce an over-strict analyzer asking again. The server must
-          // consume the prior clarification and continue autonomously.
+          // Reproduce the writer ignoring its no-more-questions prompt after
+          // the analyzer's one clarification. The server must reject that
+          // second question internally and continue autonomously.
           modelSourcePreparation: needsInput,
           directWriter: [
+            {
+              text: secondQuestion,
+              finishReason: "stop",
+              usage: usage(180, 40, 0.00014),
+            },
             {
               text: SECOND_POST,
               finishReason: "stop",
@@ -3491,10 +3499,13 @@ describe("production-shaped Cowork outcome harness", () => {
     expect(
       sequence.attempts[0]?.persisted.messages.at(-1)?.terminal_reason,
     ).toBe("ask");
-    expect(sequence.attempts[1]?.observed.directWriterRequests).toHaveLength(1);
+    expect(sequence.attempts[1]?.observed.directWriterRequests).toHaveLength(2);
     expect(sequence.attempts[1]?.persisted.artifacts).toHaveLength(1);
     expect(sequence.attempts[1]?.persisted.messages.at(-1)?.content).not.toBe(
       question,
+    );
+    expect(JSON.stringify(sequence.attempts[1]?.persisted.messages)).not.toContain(
+      secondQuestion,
     );
   });
 

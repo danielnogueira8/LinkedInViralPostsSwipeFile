@@ -805,6 +805,7 @@ function compileMessages(
     ModelSourcePreparation,
     { outcome: "unavailable" }
   > | null = null,
+  modelSourceClarificationAlreadyAsked = false,
 ): CompiledWriterPrompt {
   const instruction =
     task.kind === "refine" ? task.instruction : input.userInstruction;  const selectedSkills = selectSkills(instruction);
@@ -1076,7 +1077,7 @@ function compileMessages(
                 semanticBlueprint,
               ]
             : []),
-          ...(modelSourcePreparation?.outcome === "needs_input"
+          ...(modelSourceClarificationAlreadyAsked
             ? [
                 "The single clarification budget has already been used. Treat clearly stated first-person facts in the current request and conversation history as the user's answers, omit optional details that remain unknown, and write the complete post now. Do not ask another question or return an outline.",
               ]
@@ -1273,6 +1274,38 @@ type DraftEngineRejection = {
   message: string;
   repairInstruction?: string;
 };
+
+function looksLikeAdditionalModelSourceClarification(
+  body: string,
+): string | null {
+  const text = body.trim();
+  if (
+    !text ||
+    text.length > 600 ||
+    /\n\s*\n/.test(text) ||
+    !/\?\s*$/.test(text)
+  ) {
+    return null;
+  }
+
+  const lastSentence = text.split(/(?<=[.!?])\s+/).pop() ?? "";
+  if (!/\b(?:you|your|which|what|how|can you|could you)\b/i.test(lastSentence)) {
+    return null;
+  }
+
+  const acknowledgesAnswer =
+    /^(?:great|thanks|thank you|got it|perfect|okay|understood|sounds good)(?:\b|[!,—-])/i.test(
+      text,
+    );
+  const requestsMoreEvidence =
+    /\b(?:can|could) you\b[^?]{0,200}\b(?:share|provide|vouch|name|describe|quantify|tell me)\b/i.test(
+      lastSentence,
+    );
+
+  return acknowledgesAnswer || requestsMoreEvidence
+    ? "additional Model Source clarification after the question budget was used"
+    : null;
+}
 
 type FinalizedDraftEngineResult =
   | {
@@ -1503,11 +1536,13 @@ export async function* runSingleDraftTurn(
     ModelSourcePreparation,
     { outcome: "unavailable" }
   > | null = null;
+  let modelSourceClarificationAlreadyAsked = false;
   if (task.kind === "source") {
     const clarification = modelSourceClarificationContext(
       input.history ?? [],
       task.source,
     );
+    modelSourceClarificationAlreadyAsked = clarification.alreadyAsked;
     let prepared: ModelSourcePreparation;
     try {
       prepared = await deps.prepareModelSource({
@@ -1546,6 +1581,7 @@ export async function* runSingleDraftTurn(
     variation,
     explorationLane,
     modelSourcePreparation,
+    modelSourceClarificationAlreadyAsked,
   );
   const baseMessages = compiledPrompt.messages;
   const policyInstruction =
@@ -1942,6 +1978,22 @@ export async function* runSingleDraftTurn(
     // deliberately high-precision (two independent signals, or an opening
     // incapability statement), so a genuine post is never rerouted by this.
     const refusal = looksLikeRefusalOrClarification(response.text);
+    const repeatedModelSourceClarification =
+      task.kind === "source" && modelSourceClarificationAlreadyAsked
+        ? looksLikeAdditionalModelSourceClarification(response.text) ?? refusal
+        : null;
+    if (repeatedModelSourceClarification) {
+      return {
+        ok: false,
+        origin: "direct_writer",
+        rejection: {
+          code: "clarification_budget_exhausted",
+          message: repeatedModelSourceClarification,
+          repairInstruction:
+            "The user already answered the one permitted clarification. Use that answer and the verified context, omit optional unknown details, and return the complete post now. Do not ask another question.",
+        },
+      };
+    }
     if (refusal) {
       return {
         ok: true,
