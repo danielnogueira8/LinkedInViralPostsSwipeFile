@@ -12,6 +12,15 @@ const scanNewsjackingOpportunities = vi.fn(async (..._args: unknown[]) => ({
   expired: 0,
   skipped: 0,
 }));
+const scanTrendOpportunities = vi.fn(async (..._args: unknown[]) => ({
+  scanned: 0,
+  eligible: 0,
+  embedded: 0,
+  clusters: 0,
+  inserted: 0,
+  expired: 0,
+  skipped: 0,
+}));
 const actOnOpportunity = vi.fn(async (..._args: unknown[]) => ({
   ok: true as const,
   draftIds: ["draft-1"],
@@ -63,6 +72,10 @@ vi.mock("@/lib/agent-loop/scan", () => ({
 vi.mock("@/lib/agent-loop/newsjacking", () => ({
   scanNewsjackingOpportunities: (...args: unknown[]) =>
     scanNewsjackingOpportunities(...args),
+}));
+vi.mock("@/lib/agent-loop/trend-radar", () => ({
+  scanTrendOpportunities: (...args: unknown[]) =>
+    scanTrendOpportunities(...args),
 }));
 vi.mock("@/lib/agent-loop/opportunity-claim", () => ({
   recoverStaleAgentOpportunityDrafts: async () => 0,

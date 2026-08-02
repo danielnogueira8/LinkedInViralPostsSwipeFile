@@ -9,7 +9,11 @@ begin;
 
 update public.agent_opportunities
 set kind = 'news'
-where kind = 'trend';
+where kind = 'trend'
+  and (
+    payload->>'reason' = 'creator_independent'
+    or payload->>'signal_type' = 'newsjacking'
+  );
 
 create unique index if not exists agent_opportunities_live_news_idx
   on public.agent_opportunities (workspace_id, trend_key)

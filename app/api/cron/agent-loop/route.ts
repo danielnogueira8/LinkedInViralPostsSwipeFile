@@ -3,6 +3,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { postCronAlert } from "@/lib/cron-alert";
 import { scanAgentOpportunities } from "@/lib/agent-loop/scan";
 import { scanNewsjackingOpportunities } from "@/lib/agent-loop/newsjacking";
+import { scanTrendOpportunities } from "@/lib/agent-loop/trend-radar";
 import { recoverStaleAgentOpportunityDrafts } from "@/lib/agent-loop/opportunity-claim";
 import { latestRelevantScrape } from "@/lib/supabase-scoped";
 import {
@@ -21,8 +22,9 @@ export const maxDuration = 300;
 
 // Web-grounded discovery is materially slower than the local creator scan.
 // Keep the existing all-workspace creator coverage, but rotate a small
-// Newsjacking batch so one large fleet cannot make this cron exceed its 300s
-// budget.
+// external-discovery batch so one large fleet cannot make this cron exceed its
+// 300s budget. Newsjacking and Trend Radar share the target set but execute
+// independently and in parallel.
 const NEWSJACKING_BATCH_SIZE = 6;
 const NEWSJACKING_ROTATION_MS = 60 * 60 * 1000;
 
@@ -76,10 +78,10 @@ async function discoverWorkspaceIds(
 }
 
 // Agent discovery loop (PLAN-agent-loop Phase D3). For every workspace, scan
-// both tracked-creator outliers and web-grounded Newsjacking signals, leaving
-// both proposed for the user to review. Drafting is deliberately user-triggered
-// via the Agent feed or weekly cadence; a scheduled job must never create
-// content the user did not request.
+// both tracked-creator outliers and the two external discovery agents, leaving
+// all proposals for the user to review. Drafting is deliberately
+// user-triggered via the Agent feed or weekly cadence; a scheduled job must
+// never create content the user did not request.
 export async function GET(req: Request) {
   const secret = process.env.CRON_SECRET;
   const auth = req.headers.get("authorization");
@@ -140,30 +142,51 @@ export async function GET(req: Request) {
       skipped?: string;
       newsjacking?: Awaited<ReturnType<typeof scanNewsjackingOpportunities>>;
       newsjacking_skipped?: string;
+      trend?: Awaited<ReturnType<typeof scanTrendOpportunities>>;
+      trend_skipped?: string;
       error?: string;
     }> = [];
 
-    const newsjackingTargets = newsjackingWorkspaceIds(workspaceIds);
+    const externalTargets = newsjackingWorkspaceIds(workspaceIds);
     const newsjackingScans = new Map<
       string,
       Awaited<ReturnType<typeof scanNewsjackingOpportunities>>
     >();
     const newsjackingErrors = new Map<string, string>();
-    // Keep the batch concurrent: each search has a bounded provider timeout,
-    // while the batch itself remains capped at six workspaces.
+    const trendScans = new Map<
+      string,
+      Awaited<ReturnType<typeof scanTrendOpportunities>>
+    >();
+    const trendErrors = new Map<string, string>();
+    // Keep both discovery agents concurrent: Newsjacking has a bounded
+    // provider timeout, while Trend Radar is read-only database work. The
+    // shared batch remains capped at six workspaces.
     await Promise.all(
-      [...newsjackingTargets].map(async (workspaceId) => {
-        try {
-          newsjackingScans.set(
-            workspaceId,
-            await scanNewsjackingOpportunities(sb, workspaceId, new Date(), {
-              allowRepeat: Boolean(workspaceParam),
-            }),
-          );
-        } catch (error) {
+      [...externalTargets].map(async (workspaceId) => {
+        const [newsjackingResult, trendResult] = await Promise.allSettled([
+          scanNewsjackingOpportunities(sb, workspaceId, new Date(), {
+            allowRepeat: Boolean(workspaceParam),
+          }),
+          scanTrendOpportunities(sb, workspaceId),
+        ]);
+        if (newsjackingResult.status === "fulfilled") {
+          newsjackingScans.set(workspaceId, newsjackingResult.value);
+        } else {
           newsjackingErrors.set(
             workspaceId,
-            error instanceof Error ? error.message : String(error),
+            newsjackingResult.reason instanceof Error
+              ? newsjackingResult.reason.message
+              : String(newsjackingResult.reason),
+          );
+        }
+        if (trendResult.status === "fulfilled") {
+          trendScans.set(workspaceId, trendResult.value);
+        } else {
+          trendErrors.set(
+            workspaceId,
+            trendResult.reason instanceof Error
+              ? trendResult.reason.message
+              : String(trendResult.reason),
           );
         }
       }),
@@ -212,12 +235,14 @@ export async function GET(req: Request) {
           creatorError = error instanceof Error ? error.message : String(error);
         }
 
-        // This lane deliberately does not depend on tracked creators or their
-        // scrape freshness: it searches for timely developments in the wider
-        // web and proposes them as Newsjacking candidates. Its rotating batch
-        // is prepared above so the cron remains bounded.
+        // External discovery deliberately does not depend on the creator
+        // scrape freshness gate. Newsjacking searches the wider web, while
+        // Trend Radar reads the tracked creators' embedding corpus. Their
+        // rotating batch is prepared above so the cron remains bounded.
         const newsjackingScan = newsjackingScans.get(workspaceId);
         const newsjackingError = newsjackingErrors.get(workspaceId);
+        const trendScan = trendScans.get(workspaceId);
+        const trendError = trendErrors.get(workspaceId);
 
         results.push({
           workspaceId,
@@ -229,13 +254,18 @@ export async function GET(req: Request) {
           ...(!newsjackingScan && !newsjackingError
             ? { newsjacking_skipped: "rotating_batch" }
             : {}),
-          ...(creatorError || newsjackingError
+          ...(trendScan ? { trend: trendScan } : {}),
+          ...(!trendScan && !trendError
+            ? { trend_skipped: "rotating_batch" }
+            : {}),
+          ...(creatorError || newsjackingError || trendError
             ? {
                 error: [
                   creatorError ? `creator scan: ${creatorError}` : null,
                   newsjackingError
                     ? `newsjacking scan: ${newsjackingError}`
                     : null,
+                  trendError ? `trend scan: ${trendError}` : null,
                 ]
                   .filter(Boolean)
                   .join("; "),
