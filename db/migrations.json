@@ -1,7 +1,7 @@
 {
   "generatedBy": "npm run migrations:metadata",
-  "highest": 173,
-  "count": 173,
+  "highest": 174,
+  "count": 174,
   "files": [
     "migration-001-progress.sql",
     "migration-002-usage.sql",
@@ -175,6 +175,7 @@
     "migration-170-agent-opportunity-handled.sql",
     "migration-171-agent-loop-daily-claim.sql",
     "migration-172-parallel-discovery-agents.sql",
-    "migration-173-reclassify-legacy-newsjacking.sql"
+    "migration-173-reclassify-legacy-newsjacking.sql",
+    "migration-174-agent-loop-search-cache.sql"
   ]
 }
