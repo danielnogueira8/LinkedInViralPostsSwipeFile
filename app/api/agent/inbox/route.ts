@@ -36,6 +36,8 @@ type TrendRow = {
 
 function trendStatus(status: string): AgentInboxStatus {
   switch (status) {
+    case "handled":
+      return "acted";
     case "drafted":
       return "acted";
     case "dismissed":
@@ -140,7 +142,7 @@ async function readTrendRadar(
       .select(columns)
       .eq("workspace_id", workspaceId)
       .eq("kind", "trend")
-      .in("status", ["drafted", "dismissed", "snoozed", "expired"])
+      .in("status", ["handled", "drafted", "dismissed", "snoozed", "expired"])
       .order("created_at", { ascending: false })
       .limit(12),
   ]);

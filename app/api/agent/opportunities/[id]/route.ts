@@ -20,10 +20,11 @@ export const maxDuration = 300;
 // the "While you were away" section (Phase E2).
 //   { action: "draft" }   → run the normal grounded turn for this opportunity.
 //   { action: "dismiss" } → mark dismissed (trains the ranker out of it).
+//   { action: "handled" } → mark taken to Cowork without generating a draft.
 //   { action: "read" | "unread" } → update message state without consuming it.
 // -----------------------------------------------------------------------------
 const actionSchema = z.object({
-  action: z.enum(["draft", "dismiss", "read", "unread"]),
+  action: z.enum(["draft", "dismiss", "handled", "read", "unread"]),
 });
 
 function alreadyHandledResponse() {
@@ -57,6 +58,23 @@ export async function POST(
         { ok: false, error: "Opportunity not found" },
         { status: 404 },
       );
+    }
+
+    if (action === "handled") {
+      if (opportunity.kind !== "trend" || opportunity.status !== "proposed") {
+        return alreadyHandledResponse();
+      }
+      // Keep a Cowork handoff distinct from a generated draft. The inbox maps
+      // this terminal state to its existing green Done indicator.
+      const handled = await updateManagedOpportunityStatus(
+        sb.raw,
+        sb.workspaceId,
+        id,
+        "proposed",
+        { status: "handled", acted_at: new Date().toISOString() },
+      );
+      if (!handled) return alreadyHandledResponse();
+      return NextResponse.json({ ok: true, status: "handled" });
     }
 
     if (action === "dismiss") {

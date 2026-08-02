@@ -1,4 +1,5 @@
 import type {
+  AgentFeedLane,
   AgentInboxIdea,
   AgentInboxPreferences,
   AgentRadarIdea,
@@ -30,6 +31,32 @@ function requestAgentInbox(replenish: boolean): Promise<AgentInboxPayload> {
       return body as AgentInboxPayload;
     },
   );
+}
+
+export async function completeAgentInboxHandoff(
+  ideaId: string,
+  lane: AgentFeedLane,
+): Promise<void> {
+  const trendRadar = lane === "trend_radar";
+  const response = await fetch(
+    trendRadar
+      ? `/api/agent/opportunities/${ideaId}`
+      : `/api/agent/inbox/ideas/${ideaId}`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(
+        trendRadar ? { action: "handled" } : { kind: "done" },
+      ),
+    },
+  );
+  const body = (await response.json()) as {
+    ok?: boolean;
+    error?: string;
+  };
+  if (!response.ok || body.ok !== true) {
+    throw new Error(body.error || "Could not mark this recommendation done.");
+  }
 }
 
 export function loadAgentInbox(options?: {

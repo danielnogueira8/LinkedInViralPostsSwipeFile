@@ -8,6 +8,7 @@ const COWORK_PAGE = "app/(app)/dashboard/page.tsx";
 const NAV = "app/(app)/dashboard/nav-destinations.ts";
 const WORKSPACE = "app/(app)/dashboard/chat-workspace.tsx";
 const INBOX = "app/(app)/dashboard/agent-inbox.tsx";
+const INBOX_CLIENT = "app/(app)/dashboard/agent-inbox-client.ts";
 const NAV_BADGES = "app/(app)/dashboard/nav-badges.ts";
 const INBOX_ROUTE = "app/api/agent/inbox/route.ts";
 const IDEA_ROUTE = "app/api/agent/inbox/ideas/[id]/route.ts";
@@ -100,11 +101,32 @@ describe("the standalone Agent page exposes the daily opportunity workflow", () 
     expect(inbox).toContain("Open in Cowork");
     expect(inbox).toContain("Unread");
     expect(inbox).toContain("Done");
+    expect(inbox).toContain('state === "done"');
+    expect(inbox).toContain('<CheckCircle2 className="size-3.5"');
     expect(source(IDEA_ROUTE)).toContain('z.literal("done")');
     expect(inbox).toContain("Discard");
     expect(inbox).not.toContain("Not today");
     expect(inbox).not.toContain("Clock3");
     expect(inbox).toContain("New ideas arrive every day");
+  });
+
+  test("taking an Agent recommendation to Cowork marks it complete", () => {
+    const inbox = source(INBOX);
+    const inboxClient = source(INBOX_CLIENT);
+    const workspace = source(WORKSPACE);
+    const openStart = inbox.indexOf('if (action === "open")');
+    const openEnd = inbox.indexOf("await closeIdea", openStart);
+    const openBranch = inbox.slice(openStart, openEnd);
+
+    expect(openStart).toBeGreaterThan(-1);
+    expect(openBranch).toContain("agent-inbox-lane");
+    expect(openBranch).not.toContain("completeAgentInboxHandoff");
+    expect(openBranch).not.toContain('updateMessageState(idea, "read")');
+    expect(openBranch).toContain("agentLane=");
+    expect(workspace).toContain("completeAgentInboxHandoff");
+    expect(workspace).toContain("invalidateNavBadges()");
+    expect(inboxClient).toContain('{ kind: "done" }');
+    expect(inboxClient).toContain('{ action: "handled" }');
   });
 
   test("the inbox read path can recover a missed daily delivery", () => {

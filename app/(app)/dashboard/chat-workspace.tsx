@@ -67,6 +67,10 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { AiIcon } from "@/components/ai-icon";
+import {
+  AGENT_FEED_LANES,
+  type AgentFeedLane,
+} from "@/lib/agent-inbox";
 import { renderRichText } from "@/components/chat-rich-text";
 import { GroundedSourceLinks } from "@/components/grounded-source-links";
 import { cn } from "@/lib/utils";
@@ -105,6 +109,8 @@ import {
   buildHookOnlyRefineMessage,
 } from "@/lib/hook-splice";
 import { copyToClipboard } from "@/lib/clipboard";
+import { completeAgentInboxHandoff } from "./agent-inbox-client";
+import { invalidateNavBadges } from "./nav-badges";
 import {
   contentBodyForFormat,
   draftEgressBody,
@@ -251,6 +257,13 @@ import { modeledSourceAttribution } from "@/lib/model-source-attribution";
 import { ResearchSources, TaskUsageSummary } from "./cowork-trust-details";
 
 export type { Artifact } from "@/lib/agent/contracts";
+
+function isAgentFeedLane(value: string | null): value is AgentFeedLane {
+  return (
+    value !== null &&
+    (AGENT_FEED_LANES as readonly string[]).includes(value)
+  );
+}
 
 const DraftEditor = dynamic(
   () => import("./draft-editor").then((mod) => mod.DraftEditor),
@@ -501,6 +514,7 @@ export function ChatWorkspace({
   const searchParams = useSearchParams();
   const router = useRouter();
   const agentIdeaParam = searchParams.get("agentIdea");
+  const agentLaneParam = searchParams.get("agentLane");
   const [chats, setChats] = useState<ChatSummary[]>(initialChats);
   const [chatSession] = useState(() =>
     new ChatSession<Message, Artifact, ChatRun>({
@@ -1932,10 +1946,39 @@ export function ChatWorkspace({
           throw new Error(payload.error || "Couldn't start a new chat");
         }
         if (cancelled) return;
+        const storedAgentLane = sessionStorage.getItem(
+          `agent-inbox-lane:${agentIdeaParam}`,
+        );
+        const agentLane = isAgentFeedLane(agentLaneParam)
+          ? agentLaneParam
+          : isAgentFeedLane(storedAgentLane)
+            ? storedAgentLane
+            : null;
+        if (agentLane) {
+          try {
+            await completeAgentInboxHandoff(agentIdeaParam, agentLane);
+          } catch (completionError) {
+            toast.error(
+              completionError instanceof Error
+                ? completionError.message
+                : "Cowork opened, but the Agent recommendation could not be marked done.",
+            );
+          } finally {
+            // A resolved request may still have been stale when the handoff
+            // began. Force the Agent page to fetch its terminal state next time.
+            invalidateNavBadges();
+          }
+        } else {
+          invalidateNavBadges();
+          toast.error(
+            "Cowork opened, but the Agent recommendation could not be identified.",
+          );
+        }
         // Only drop the stashed prompt once the chat exists to receive it.
         // Clearing it up front would make a failed chat create or refresh
         // silently lose the prompt the user asked Cowork to open.
         sessionStorage.removeItem(`agent-inbox-draft:${agentIdeaParam}`);
+        sessionStorage.removeItem(`agent-inbox-lane:${agentIdeaParam}`);
         const id: string = payload.chat.id;
         setChats((current) => prependChatIfMissing(current, payload.chat));
         chatSession.ensureConversation(id);
@@ -1949,13 +1992,14 @@ export function ChatWorkspace({
         url.searchParams.set("chat", id);
         url.searchParams.delete("new");
         url.searchParams.delete("agentIdea");
+        url.searchParams.delete("agentLane");
         router.replace(`${url.pathname}?${url.searchParams.toString()}`, {
           scroll: false,
         });
         requestAnimationFrame(() => inputRef.current?.focus());
       } catch (handoffError) {
-        // Opening only marks the recommendation read, so a failed chat
-        // creation leaves it available in the inbox for another attempt.
+        // Keep the prompt in sessionStorage until chat creation succeeds so a
+        // failed request does not lose the content the user asked Cowork to open.
         toast.error(
           handoffError instanceof Error
             ? handoffError.message
@@ -1968,6 +2012,7 @@ export function ChatWorkspace({
     };
   }, [
     agentIdeaParam,
+    agentLaneParam,
     chatSession,
     enterCreateCommand,
     router,
