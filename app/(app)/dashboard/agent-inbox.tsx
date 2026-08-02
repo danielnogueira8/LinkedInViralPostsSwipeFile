@@ -41,6 +41,7 @@ import type {
 } from "@/lib/agent-inbox";
 import { agentInboxDraftPrompt } from "@/lib/agent-inbox/prompt";
 import { cn } from "@/lib/utils";
+import { AGENT_DISCARD_REASONS } from "@/lib/agent-inbox/feedback";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -407,10 +408,14 @@ export function OpportunityCard({
             <>
               <p className="flex items-center gap-1.5 text-sm font-medium">
                 <Lightbulb className="size-4 text-muted-foreground" aria-hidden />
-                New ideas arrive every day
+                {cardLane === "trend_radar"
+                  ? "No trend signal is ready yet"
+                  : "New ideas arrive every day"}
               </p>
               <p className="mt-1 max-w-xs text-sm text-muted-foreground">
-                Fresh recommendations will appear in the next daily review.
+                {cardLane === "trend_radar"
+                  ? "Radar is still gathering enough recent creator evidence for a confirmed, emerging, or breakout watchlist signal."
+                  : "Fresh recommendations will appear in the next daily review."}
               </p>
             </>
           )}
@@ -776,6 +781,8 @@ export function AgentInbox() {
   const [selectedFilter, setSelectedFilter] =
     useState<AgentLaneFilter>("all");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [pendingDiscard, setPendingDiscard] =
+    useState<AgentFeedIdea | null>(null);
   const [draftPreferences, setDraftPreferences] =
     useState<AgentInboxPreferences | null>(null);
 
@@ -977,7 +984,7 @@ export function AgentInbox() {
       await jsonRequest(`/api/agent/opportunities/${idea.id}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ action: "dismiss" }),
+        body: JSON.stringify({ action: "dismiss", reason: discardReason }),
       });
       return;
     }
@@ -1050,6 +1057,7 @@ export function AgentInbox() {
       toast.success(action === "done" ? "Idea marked done" : "Idea discarded");
       invalidateNavBadges();
       setSelectedIdea(null);
+      setPendingDiscard(null);
       await load();
     } catch (actionError) {
       toast.error(
@@ -1066,6 +1074,10 @@ export function AgentInbox() {
     idea: AgentFeedIdea,
     action: OpportunityAction,
   ) {
+    if (action === "discard") {
+      setPendingDiscard(idea);
+      return;
+    }
     void handleOpportunityAction(idea, action);
   }
 
@@ -1265,11 +1277,14 @@ export function AgentInbox() {
                   <div className="flex min-h-[27rem] flex-col items-center justify-center px-6 text-center">
                     <Lightbulb className="size-5 text-muted-foreground" aria-hidden />
                     <p className="mt-3 text-sm font-medium">
-                      New ideas arrive every day
+                      {selectedFilter === "trend_radar"
+                        ? "No qualified trend signal today"
+                        : "New ideas arrive every day"}
                     </p>
                     <p className="mt-1 max-w-xs text-sm leading-5 text-muted-foreground">
-                      Your agents are looking for the next evidence-backed
-                      opportunity.
+                      {selectedFilter === "trend_radar"
+                        ? "Radar may still be gathering enough recent creator evidence, or no confirmed, emerging, or breakout watchlist signal passed the quality checks."
+                        : "Your agents are looking for the next evidence-backed opportunity."}
                     </p>
                   </div>
                 )}
@@ -1360,6 +1375,44 @@ export function AgentInbox() {
           </div>
         </div>
       </section>
+      <Dialog
+        open={Boolean(pendingDiscard)}
+        onOpenChange={(open) => {
+          if (!open && !busyId) setPendingDiscard(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogTitle>Why isn&apos;t this idea useful?</DialogTitle>
+          <DialogDescription>
+            Your answer helps every agent rank future recommendations.
+          </DialogDescription>
+          <div className="mt-4 grid gap-2">
+            {AGENT_DISCARD_REASONS.map((reason) => (
+              <Button
+                key={reason}
+                type="button"
+                variant="outline"
+                className="h-auto justify-start rounded-xl px-4 py-3 text-left"
+                disabled={!pendingDiscard || busyId === pendingDiscard.id}
+                onClick={() => {
+                  if (pendingDiscard) {
+                    void handleOpportunityAction(
+                      pendingDiscard,
+                      "discard",
+                      reason,
+                    );
+                  }
+                }}
+              >
+                {busyId === pendingDiscard?.id ? (
+                  <Loader2 className="animate-spin" />
+                ) : null}
+                {reason}
+              </Button>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
       <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
         <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg">
           <DialogTitle>Agent preferences</DialogTitle>

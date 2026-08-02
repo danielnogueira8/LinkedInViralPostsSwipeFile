@@ -1,7 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { selectAllRows } from "@/lib/db-paginate";
 import { AGENT_INBOX_LANES } from "@/lib/agent-inbox";
+import { loadAgentDismissalFeedback } from "@/lib/agent-inbox/feedback";
 import type {
+  AgentInboxFeedback,
   AgentInboxIdea,
   AgentInboxLane,
   AgentInboxPreferences,
@@ -153,6 +155,15 @@ export function createAgentInboxRepository(
         rows
           .map((row) => stringOrNull(row.source_url) ?? stringOrNull(row.source_ref))
           .filter((value): value is string => Boolean(value)),
+      );
+    },
+
+    async readRecentFeedback(workspaceId) {
+      return (await loadAgentDismissalFeedback(db, workspaceId)).map(
+        (entry) => ({
+          ...entry,
+          lane: entry.lane as AgentInboxFeedback["lane"],
+        }),
       );
     },
 

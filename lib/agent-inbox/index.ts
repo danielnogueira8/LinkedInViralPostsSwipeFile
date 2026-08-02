@@ -307,6 +307,12 @@ export type AgentInboxTransition =
   // short window server-side, and never applies to a discarded idea.
   | { kind: "restore" };
 
+export type AgentInboxFeedback = {
+  lane: AgentFeedLane;
+  headline: string;
+  reason: string;
+};
+
 export type AgentInboxRepository = {
   readActive(workspaceId: string, now: Date): Promise<AgentInboxIdea[]>;
   readRecentActivity(
@@ -318,6 +324,7 @@ export type AgentInboxRepository = {
     since: Date,
   ): Promise<Set<string>>;
   readRecentSources(workspaceId: string, since: Date): Promise<Set<string>>;
+  readRecentFeedback(workspaceId: string): Promise<AgentInboxFeedback[]>;
   releaseDueSnoozed(workspaceId: string, now: Date): Promise<void>;
   claimDailyRun(
     workspaceId: string,
@@ -357,6 +364,7 @@ export type AgentInboxSynthesis = {
     lanes: AgentInboxLane[];
     evidence: AgentInboxEvidenceBundle;
     recentFingerprints: Set<string>;
+    feedback: AgentInboxFeedback[];
     preferences: AgentInboxPreferences;
     now: Date;
   }): Promise<GeneratedAgentInboxIdea[]>;
@@ -505,7 +513,8 @@ export function createAgentInbox(
         const dedupeSince = new Date(
           now.getTime() - 90 * 24 * 60 * 60 * 1000,
         );
-        const [evidence, recentFingerprints, recentSources] = await Promise.all(
+        const [evidence, recentFingerprints, recentSources, feedback] =
+          await Promise.all(
           [
             loadEvidence({
               workspaceId,
@@ -515,6 +524,7 @@ export function createAgentInbox(
             }),
             repository.readRecentFingerprints(workspaceId, dedupeSince),
             repository.readRecentSources(workspaceId, RECENT_SOURCE_SINCE(now)),
+            repository.readRecentFeedback(workspaceId),
           ],
         );
 
@@ -526,6 +536,7 @@ export function createAgentInbox(
                 lanes: missingLanes,
                 evidence,
                 recentFingerprints,
+                feedback,
                 preferences,
                 now,
               });

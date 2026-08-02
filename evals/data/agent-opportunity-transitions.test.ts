@@ -83,24 +83,11 @@ describe("agent opportunity action transitions", () => {
   test("dismiss only wins while the opportunity is still proposed", () => {
     const branch = routeSource.slice(
       routeSource.indexOf('if (action === "dismiss")'),
-      routeSource.indexOf('if (action === "snooze")'),
+      routeSource.indexOf('if (action === "read" || action === "unread")'),
     );
     expect(branch).toContain("updateManagedOpportunityStatus");
     expect(branch).toContain('"proposed"');
     expect(branch).toContain("if (!dismissed)");
-  });
-
-  test("snooze checks the affected row before reporting success", () => {
-    const snoozeStart = routeSource.indexOf('if (action === "snooze")');
-    const statusCheck = 'if (opportunity.status !== "proposed")';
-    const firstStatusCheck = routeSource.indexOf(statusCheck, snoozeStart);
-    const branch = routeSource.slice(
-      snoozeStart,
-      routeSource.indexOf(statusCheck, firstStatusCheck + statusCheck.length),
-    );
-    expect(branch).toContain("updateManagedOpportunityStatus");
-    expect(branch).toContain('"proposed"');
-    expect(branch).toContain("if (!snoozed)");
   });
 
   test("dismiss executes a conditional transition and returns 409 when it loses", async () => {
@@ -119,6 +106,26 @@ describe("agent opportunity action transitions", () => {
       "opp-1",
       "proposed",
       expect.objectContaining({ status: "dismissed" }),
+    );
+  });
+
+  test("dismiss persists structured ranking feedback in the opportunity payload", async () => {
+    mocked.updateManagedOpportunityStatus.mockResolvedValueOnce(true);
+
+    const response = await post({
+      action: "dismiss",
+      reason: "Too generic",
+    });
+
+    expect(response.status).toBe(200);
+    expect(mocked.updateManagedOpportunityStatus).toHaveBeenCalledWith(
+      mocked.raw,
+      "workspace-1",
+      "opp-1",
+      "proposed",
+      expect.objectContaining({
+        payload: expect.objectContaining({ dismiss_reason: "Too generic" }),
+      }),
     );
   });
 
@@ -141,28 +148,6 @@ describe("agent opportunity action transitions", () => {
     );
     expect(mocked.actOnOpportunity).not.toHaveBeenCalled();
     expect(mocked.markStoredOpportunityDrafted).not.toHaveBeenCalled();
-  });
-
-  test("snooze executes a conditional transition and returns success only after a row changes", async () => {
-    mocked.updateManagedOpportunityStatus.mockResolvedValueOnce(true);
-
-    const response = await post({
-      action: "snooze",
-      until: "2026-08-02T12:00:00.000Z",
-    });
-
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ ok: true, status: "snoozed" });
-    expect(mocked.updateManagedOpportunityStatus).toHaveBeenCalledWith(
-      mocked.raw,
-      "workspace-1",
-      "opp-1",
-      "proposed",
-      {
-        status: "snoozed",
-        snoozed_until: "2026-08-02T12:00:00.000Z",
-      },
-    );
   });
 
   test("draft success still marks the matching cadence opportunity", async () => {

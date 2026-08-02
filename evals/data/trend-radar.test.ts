@@ -41,12 +41,13 @@ describe("Newsjacking discovery contract", () => {
           url: "https://news.linkedin.com/2026/keeping-conversations-real",
           source: "LinkedIn News",
           published_at: "2026-08-01",
-          summary: "LinkedIn explains how it will identify low-effort AI content.",
+          summary:
+            "LinkedIn explains how it will identify low-effort AI content.",
         },
         {
           title: "LinkedIn introduces an AI slop label",
-          url: "https://example.com/duplicate-ai-slop-story",
-          source: "Example",
+          url: "https://x.com/creator/status/123",
+          source: "X",
           published_at: "2026-08-01",
           summary: "A second article covers the same development.",
         },
@@ -74,6 +75,59 @@ describe("Newsjacking discovery contract", () => {
       "https://news.linkedin.com/2026/keeping-conversations-real",
     );
     expect(candidates[0].score).toBeGreaterThan(0);
+    expect(candidates[0].corroboratingResults?.[0]?.url).toContain("x.com");
+  });
+
+  test("uses social posts as corroboration, never as the only event proof", () => {
+    const candidates = rankNewsjackingCandidates(
+      [
+        {
+          title: "Creators discuss a rumored platform change",
+          url: "https://x.com/creator/status/999",
+          source: "X",
+          published_at: "2026-08-01",
+          summary: "A creator says the platform may change its feed.",
+        },
+      ],
+      NOW,
+      ["creator marketing"],
+    );
+    expect(candidates).toEqual([]);
+  });
+
+  test("does not treat an arbitrary non-social blog as authoritative proof", () => {
+    const candidates = rankNewsjackingCandidates(
+      [
+        {
+          title:
+            "LinkedIn reportedly changes how the feed works — LinkedIn Updates",
+          url: "https://linkedin-updates.com/linkedin-feed-rumor",
+          source: "LinkedIn Updates",
+          published_at: "2026-08-01",
+          summary: "An unverified blog claims LinkedIn changed its feed.",
+        },
+      ],
+      NOW,
+      ["LinkedIn writing"],
+    );
+    expect(candidates).toEqual([]);
+  });
+
+  test("does not trust user-controlled subdomains of an approved platform", () => {
+    const candidates = rankNewsjackingCandidates(
+      [
+        {
+          title: "LinkedIn reportedly changes how the feed works",
+          url: "https://sites.google.com/view/linkedin-feed-rumor",
+          source: "Google Sites",
+          published_at: "2026-08-01",
+          summary: "A user-created page claims LinkedIn changed its feed.",
+        },
+      ],
+      NOW,
+      ["LinkedIn writing"],
+    );
+    expect(candidates).toEqual([]);
   });
 
   test("persists a signal as an explicit verified Newsjacking opportunity", () => {
@@ -122,9 +176,9 @@ describe("Newsjacking discovery contract", () => {
       published_at: "2026-08-01",
       summary: "LinkedIn explains how it will identify low-effort AI content.",
     };
-    expect(hasCreatorCoverage(signal, ["We discussed AI slop in our team."])).toBe(
-      true,
-    );
+    expect(
+      hasCreatorCoverage(signal, ["We discussed AI slop in our team."]),
+    ).toBe(true);
     expect(hasCreatorCoverage(signal, ["A post about hiring managers."])).toBe(
       false,
     );

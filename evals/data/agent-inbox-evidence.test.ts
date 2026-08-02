@@ -1,6 +1,10 @@
 import { describe, test, expect, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { createAgentInboxEvidenceLoader } from "@/lib/agent-inbox/evidence";
+import {
+  createAgentInboxEvidenceLoader,
+  rankKnowledgeEvidence,
+  rankSourcePostEvidence,
+} from "@/lib/agent-inbox/evidence";
 
 const { trackedAccountIds, discoverSourcePosts } = vi.hoisted(() => ({
   trackedAccountIds: vi.fn(),
@@ -166,6 +170,65 @@ describe("agent inbox evidence — fresh news only", () => {
 });
 
 describe("agent inbox evidence — Source Posts", () => {
+  test("retrieves source structures that are compatible with the strongest anchor", () => {
+    const now = new Date("2026-08-01T12:00:00Z");
+    const ranked = rankSourcePostEvidence(
+      [
+        {
+          kind: "source_post",
+          role: "inspiration",
+          label: "Recent generic post",
+          detail: "A broad post about productivity and meetings at work.",
+          ref: "generic",
+          publishedAt: "2026-08-01T10:00:00Z",
+        },
+        {
+          kind: "source_post",
+          role: "inspiration",
+          label: "Customer-loss story",
+          detail:
+            "A customer chose a cheaper product after an unclear sales pitch, changing the buying decision.",
+          ref: "matched",
+          publishedAt: "2026-07-20T10:00:00Z",
+        },
+      ],
+      now,
+      ["founder content"],
+      [
+        {
+          kind: "knowledge",
+          role: "anchor",
+          label: "A verified customer loss",
+          detail:
+            "A customer chose a cheaper tool after our unclear pitch. The loss changed how we explain the buying decision.",
+          subtype: "story",
+        },
+      ],
+    );
+    expect(ranked[0].ref).toBe("matched");
+  });
+
+  test("prefers complete proof and story anchors over short generic beliefs", () => {
+    const ranked = rankKnowledgeEvidence([
+      {
+        kind: "knowledge",
+        role: "anchor",
+        label: "Generic belief",
+        detail: "Consistency matters.",
+        subtype: "belief",
+      },
+      {
+        kind: "knowledge",
+        role: "anchor",
+        label: "Measured result",
+        detail:
+          "We changed the client onboarding decision after three failed launches, then reduced setup time by 40% across 12 customers because the new process exposed the missing approval step.",
+        subtype: "proof",
+      },
+    ]);
+    expect(ranked[0].label).toBe("Measured result");
+  });
+
   test("loads tracked and bookmarked posts as inspiration while keeping drafts as context", async () => {
     trackedAccountIds.mockResolvedValue(["account-1"]);
     discoverSourcePosts.mockResolvedValue({

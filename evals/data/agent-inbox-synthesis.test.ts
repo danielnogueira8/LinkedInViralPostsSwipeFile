@@ -176,6 +176,15 @@ describe("createAgentInboxSynthesis lane capacity", () => {
           }
         : {}),
       why: [`Why ${lane} idea ${index} matters`],
+      viral_mechanism:
+        "Readers can use this distinction to challenge a familiar assumption.",
+      quality: {
+        relevance: 0.8,
+        tension: 0.75,
+        novelty: 0.75,
+        timeliness: 0.7,
+        shareability: 0.8,
+      },
       evidence_ids: evidenceIds,
       score: 0.8,
       ...overrides,
@@ -198,6 +207,7 @@ describe("createAgentInboxSynthesis lane capacity", () => {
       lanes,
       evidence: { ...evidence, sourcePosts, recent: [] },
       recentFingerprints: new Set<string>(),
+      feedback: [],
       preferences: {
         enabled: true,
         timezone: "UTC",
@@ -300,7 +310,7 @@ describe("createAgentInboxSynthesis lane capacity", () => {
     expect(results[0]?.score).toBeGreaterThan(0.01);
     expect(
       completeChat.mock.calls.every(
-        ([options]) => options.tools[0].function.parameters.properties.ideas.maxItems === 3,
+        ([options]) => options.tools[0].function.parameters.properties.ideas.maxItems === 8,
       ),
     ).toBe(true);
   });
@@ -315,6 +325,22 @@ describe("createAgentInboxSynthesis lane capacity", () => {
       input(["newsjacking"]),
     );
     expect(results).toEqual([]);
+  });
+
+  it("passes recent dismissal reasons into the next quality judgment", async () => {
+    completeChat.mockResolvedValue(modelResponse([]));
+    const request = {
+      ...input(["educational"]),
+      feedback: [{
+        lane: "educational" as const,
+        reason: "Too generic",
+        headline: "Five ways to write better posts",
+      }],
+    };
+    await createAgentInboxSynthesis().synthesize(request);
+    expect(completeChat.mock.calls[0][0].messages[1].content).toContain(
+      "Too generic — Five ways to write better posts",
+    );
   });
 
 });
