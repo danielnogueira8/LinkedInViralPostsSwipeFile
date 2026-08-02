@@ -23,10 +23,7 @@ export const maxDuration = 300;
 // Keep the existing all-workspace creator coverage, but rotate a small trend
 // batch so one large fleet cannot make this cron exceed its 300s budget.
 const TREND_RADAR_BATCH_SIZE = 6;
-// The agent loop now runs once per day. Advance the fair trend batch once per
-// day too, otherwise an hourly rotation sampled at a fixed daily time can
-// revisit the same batch forever when the bucket count divides 24.
-const TREND_RADAR_ROTATION_MS = 24 * 60 * 60 * 1000;
+const TREND_RADAR_ROTATION_MS = 60 * 60 * 1000;
 
 export function trendRadarWorkspaceIds(
   workspaceIds: readonly string[],
@@ -158,7 +155,9 @@ export async function GET(req: Request) {
         try {
           trendScans.set(
             workspaceId,
-            await scanTrendOpportunities(sb, workspaceId),
+            await scanTrendOpportunities(sb, workspaceId, new Date(), {
+              allowRepeat: Boolean(workspaceParam),
+            }),
           );
         } catch (error) {
           trendErrors.set(

@@ -104,28 +104,27 @@ describe("freshnessMessage", () => {
 });
 
 // ---------------------------------------------------------------------------
-// The cron schedule is part of this fix: the agent loop owns paid Trend Radar
-// discovery, so it must run once per day after the daily scrape has landed.
-// Pin the cadence here so a future feature cannot accidentally turn the paid
-// discovery path back into an hourly search multiplier.
+// The creator scan remains hourly because a daily scrape can finish after the
+// 06:00 window. Paid Trend Radar has its own per-workspace daily claim, so the
+// hourly wake-up does not multiply web searches.
 // ---------------------------------------------------------------------------
 
-describe("daily agent-loop safety invariants", () => {
-  test("the agent-loop cron is scheduled once per day", async () => {
+describe("agent-loop safety invariants", () => {
+  test("the agent-loop cron remains hourly for freshness recovery", async () => {
     const vercel = await import("../../vercel.json");
     const crons = (vercel.default ?? vercel).crons as Array<{
       path: string;
       schedule: string;
     }>;
     const loop = crons.find((c) => c.path === "/api/cron/agent-loop");
-    expect(loop?.schedule).toBe("0 6 * * *");
+    expect(loop?.schedule).toBe("0 * * * *");
   });
 
   test("the scan's own guardrails bound a repeat run", async () => {
     const src = await import("node:fs").then((fs) =>
       fs.readFileSync("lib/agent-loop/scan.ts", "utf8"),
     );
-    // A source proposed today is in cooldown for 30 days, so a repeat run
+    // A source proposed today is in cooldown for 30 days, so an hourly repeat run
     // re-pitches nothing...
     expect(src).toMatch(/SOURCE_COOLDOWN_DAYS\s*=\s*30/);
     // ...and each run can only ever add a small, bounded number.
