@@ -3162,6 +3162,57 @@ describe("production-shaped Cowork outcome harness", () => {
     expect(sequence.attempts[1]?.safe.terminal).not.toBe("ask");
   });
 
+  test("consumes a custom Trend Radar topic instead of asking the same question twice", async () => {
+    const sequence = await runCoworkOutcomeSequence([
+      {
+        id: "trend-radar-custom-topic-question",
+        request: {
+          message:
+            "Create one original LinkedIn post from this Trend Radar opportunity. Use the newsjacking framework: establish what is verified, explain what it could change for my audience, and add one original implication.",
+          command: { kind: "create", count: 1 },
+        },
+        model: {
+          provider: { rounds: [] },
+          directWriter: [],
+          readOnlyOrchestrator: { plans: [], disabled: true },
+        },
+        expected: {
+          terminal: "ask",
+          artifactBodies: [],
+          actionNames: ["ask_user"],
+          assistantContents: ["What topic or angle should the new post cover?"],
+          route: "answer",
+        },
+      },
+      {
+        id: "trend-radar-custom-topic-answer",
+        request: {
+          message: "Founder-led sales lessons from losing a client",
+        },
+        model: {
+          provider: { rounds: [] },
+          readOnlyOrchestrator: { plans: [], disabled: true },
+          directWriter: [
+            {
+              text: COMPLETE_POST,
+              finishReason: "stop",
+              usage: usage(200, 90, 0.00018),
+            },
+          ],
+        },
+        expected: {
+          terminal: "done",
+          artifactBodies: [COMPLETE_POST],
+          actionNames: [],
+          route: "direct_writer",
+        },
+      },
+    ]);
+
+    expect(sequence.pass, JSON.stringify(sequence.attempts)).toBe(true);
+    expect(sequence.attempts[1]?.safe.terminal).not.toBe("ask");
+  });
+
   test("persists a typed direct-writer failure and succeeds on a same-chat retry", async () => {
     const message =
       "Write an original post in my voice about why a personal brand is career leverage.";

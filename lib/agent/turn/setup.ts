@@ -561,22 +561,29 @@ export async function setupChatTurn(
               )
             : undefined;
         let selectedClarificationChoiceId: string | undefined;
-        if (body.clarificationChoiceIndex !== undefined) {
-          try {
-            const args = pendingAskCall
-              ? JSON.parse(pendingAskCall.function.arguments)
-              : null;
-            const choiceIds = Array.isArray(args?.choiceIds)
-              ? args.choiceIds.filter(
-                  (choiceId: unknown): choiceId is string =>
-                    typeof choiceId === "string",
-                )
-              : [];
+        let pendingClarificationChoiceIds: string[] = [];
+        let pendingClarificationAllowsOther = false;
+        try {
+          const args = pendingAskCall
+            ? JSON.parse(pendingAskCall.function.arguments)
+            : null;
+          pendingClarificationChoiceIds = Array.isArray(args?.choiceIds)
+            ? args.choiceIds.filter(
+                (choiceId: unknown): choiceId is string =>
+                  typeof choiceId === "string",
+              )
+            : [];
+          pendingClarificationAllowsOther = args?.allowOther === true;
+          if (body.clarificationChoiceIndex !== undefined) {
             selectedClarificationChoiceId =
-              choiceIds[body.clarificationChoiceIndex];
-          } catch {
-            selectedClarificationChoiceId = undefined;
+              pendingClarificationChoiceIds[body.clarificationChoiceIndex];
           }
+        } catch {
+          pendingClarificationChoiceIds = [];
+          pendingClarificationAllowsOther = false;
+          selectedClarificationChoiceId = undefined;
+        }
+        if (body.clarificationChoiceIndex !== undefined) {
           if (!selectedClarificationChoiceId) {
             return turnError(
               "That clarification choice is stale. Answer the latest question again.",
@@ -598,6 +605,21 @@ export async function setupChatTurn(
           // clarification forever.
           resolvedActionInstruction =
             "Choose a relevant topic from my Voice Profile and create the requested original LinkedIn post with a useful angle for my audience.";
+        } else if (
+          body.clarificationChoiceIndex === undefined &&
+          pendingOperation.operation.kind === "create_post" &&
+          pendingClarificationAllowsOther &&
+          pendingClarificationChoiceIds.includes("create.profile_topic")
+        ) {
+          // `allowOther` answers carry no choice index. The answer itself is
+          // the resolved topic, so do not prepend the unresolved research
+          // request and trip the same freshness clarification again. A custom
+          // topic that independently asks for fresh research still retains its
+          // own research wording and remains behind the normal safety gate.
+          resolvedActionInstruction = [
+            "Create the requested original LinkedIn post.",
+            `Use this user-selected topic or angle: ${userText}`,
+          ].join("\n\n");
         }
         if (selectedModelSource) {
           if (modelSourceId) {
