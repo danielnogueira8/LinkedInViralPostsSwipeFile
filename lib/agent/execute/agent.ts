@@ -80,6 +80,11 @@ import {
   type GroundedAnswerAttempt,
   type SynthesizeGroundedAnswer,
 } from "@/lib/agent/grounded-answer";
+import {
+  BrainstormIdeasSynthesisError,
+  synthesizeBrainstormIdeas,
+  type SynthesizeBrainstormIdeas,
+} from "@/lib/agent/brainstorm-ideas";
 import { groundedWorkspaceSourceArtifacts } from "@/lib/agent/grounded-source-citations";
 import { MAX_GROUNDED_ANSWER_RESULTS } from "@/lib/agent/evidence";
 import { workspaceRowToCitedPost } from "@/lib/cite-resolve";
@@ -133,6 +138,7 @@ export type AgentDependencies = {
   runWebResearch?: RunWebResearch;
   inspectAttachments?: InspectAttachments;
   synthesizeGroundedAnswer?: SynthesizeGroundedAnswer;
+  synthesizeBrainstormIdeas?: SynthesizeBrainstormIdeas;
   now?: () => Date;
   // Prose delegation (research only). Defaults to runWriterTurn.
   runProse?: (input: WriterInput) => AsyncGenerator<AgentEvent>;
@@ -233,6 +239,8 @@ export async function* runAgentTurn(
       input.dependencies?.inspectAttachments ?? inspectAttachmentEvidence,
     synthesizeGroundedAnswer:
       input.dependencies?.synthesizeGroundedAnswer ?? synthesizeGroundedAnswer,
+    synthesizeBrainstormIdeas:
+      input.dependencies?.synthesizeBrainstormIdeas ?? synthesizeBrainstormIdeas,
     now: input.dependencies?.now ?? (() => new Date()),
     turnDeadlineMs:
       input.dependencies?.turnDeadlineMs ?? researchTurnDeadlineMs,
@@ -2325,6 +2333,7 @@ async function* executeActionOrchestrator(
 // OPENROUTER_READ_ONLY_ORCHESTRATOR_MODEL. The fallback stays independent.
 // Research/tool work is capped so the remaining budget can be passed to prose.
 const RESEARCH_TOOL_BUDGET_MS = 120_000;
+const MAX_WORKSPACE_SEARCH_RESULTS = 20;
 
 const ReadOnlyActionIdSchema = z
   .string()
@@ -2353,7 +2362,7 @@ const SearchViralPostsActionSchema = z
     type: z.literal("search_viral_posts"),
     niche: z.string().trim().min(1).max(100).optional(),
     query: z.string().trim().min(1).max(160).optional(),
-    limit: z.number().int().min(2).max(10),
+    limit: z.number().int().min(2).max(MAX_WORKSPACE_SEARCH_RESULTS),
     since: z.enum(["1d", "7d", "30d"]).optional(),
     post_type: z.enum(["regular", "lead_magnet"]).optional(),
   })
@@ -2376,7 +2385,7 @@ const AnswerFromEvidenceActionSchema = z
     id: ReadOnlyActionIdSchema,
     type: z.literal("answer_from_evidence"),
     evidenceActionIds: z.array(ReadOnlyActionIdSchema).min(1).max(4),
-    format: z.enum(["summary", "takeaways", "comparison", "report"]),
+    format: z.enum(["summary", "takeaways", "comparison", "report", "ideas"]),
     resultCount: z
       .number()
       .int()
@@ -3165,10 +3174,7 @@ function compiledWorkspaceSearchAction(
   return {
     id,
     type: "search_viral_posts",
-    limit: Math.min(
-      Math.max(minimumSources, 2),
-      MAX_GROUNDED_ANSWER_RESULTS,
-    ),
+    limit: Math.min(Math.max(minimumSources, 2), MAX_WORKSPACE_SEARCH_RESULTS),
     ...(niche ? { niche } : {}),
     ...(query ? { query } : {}),
     ...(postType ? { post_type: postType } : {}),
@@ -3181,7 +3187,8 @@ function compiledResearchTerminal(
 ): ReadOnlyAction {
   if (
     route.outcome?.kind === "grounded_answer" ||
-    route.outcome?.kind === "source_selection"
+    route.outcome?.kind === "source_selection" ||
+    route.outcome?.kind === "brainstorm_ideas"
   ) {
     return {
       id: "answer",
@@ -3190,10 +3197,14 @@ function compiledResearchTerminal(
       format:
         route.outcome.kind === "grounded_answer"
           ? route.outcome.format
+          : route.outcome.kind === "brainstorm_ideas"
+          ? "ideas"
           : "summary",
       ...(route.outcome.kind === "grounded_answer" &&
       route.outcome.resultCount
         ? { resultCount: route.outcome.resultCount }
+        : route.outcome.kind === "brainstorm_ideas"
+        ? { resultCount: route.outcome.ideaCount }
         : {}),
     };
   }
@@ -3242,9 +3253,13 @@ export function compileServerReadOnlyPlan(
   }
   if (route.kind === "workspace_research") {
     const search = compiledWorkspaceSearchAction(
-      route.outcome?.kind === "source_selection"
+      route.outcome?.kind === "source_selection" ||
+        route.outcome?.kind === "brainstorm_ideas"
         ? route.outcome.searchPoolSize
-        : route.minimumSources,
+        : Math.min(
+            route.minimumSources ?? 2,
+            MAX_GROUNDED_ANSWER_RESULTS,
+          ),
       authoritativeInstruction,
       "swipe",
       route.workspacePostType,
@@ -3368,7 +3383,11 @@ const READ_ONLY_PLAN_TOOL: ToolDef = {
                   type: { const: "search_viral_posts" },
                   niche: { type: "string" },
                   query: { type: "string" },
-                  limit: { type: "integer", minimum: 2, maximum: 10 },
+                  limit: {
+                    type: "integer",
+                    minimum: 2,
+                    maximum: MAX_WORKSPACE_SEARCH_RESULTS,
+                  },
                   since: { type: "string", enum: ["1d", "7d", "30d"] },
                   post_type: {
                     type: "string",
@@ -3415,7 +3434,13 @@ const READ_ONLY_PLAN_TOOL: ToolDef = {
                   },
                   format: {
                     type: "string",
-                    enum: ["summary", "takeaways", "comparison", "report"],
+                    enum: [
+                      "summary",
+                      "takeaways",
+                      "comparison",
+                      "report",
+                      "ideas",
+                    ],
                   },
                   resultCount: {
                     type: "integer",
@@ -4000,6 +4025,7 @@ export type ReadOnlyOrchestratorDependencies = {
   runWebResearch: RunWebResearch;
   inspectAttachments: InspectAttachments;
   synthesizeGroundedAnswer: SynthesizeGroundedAnswer;
+  synthesizeBrainstormIdeas: SynthesizeBrainstormIdeas;
   recordUsage: typeof logOpenRouterUsage;
   idFactory: () => string;
   now: () => Date;
@@ -4058,6 +4084,7 @@ const readOnlyProductionDependencies: Omit<
   runWebResearch: runGroundedWebResearch,
   inspectAttachments: inspectAttachmentEvidence,
   synthesizeGroundedAnswer,
+  synthesizeBrainstormIdeas,
   recordUsage: logOpenRouterUsage,
   idFactory: () => crypto.randomUUID(),
   now: () => new Date(),
@@ -5336,6 +5363,12 @@ async function* runReadOnlyOrchestratorCore(
     return;
   }
   if (terminalAction?.type === "answer_from_evidence") {
+    const brainstormOutcome =
+      input.route.outcome?.kind === "brainstorm_ideas"
+        ? input.route.outcome
+        : null;
+    const isBrainstormIdeas =
+      terminalAction.format === "ideas" && brainstormOutcome !== null;
     const availableSources = distinctGroundedSources(
       terminalAction.evidenceActionIds.flatMap(
         (id) => evidenceByAction.get(id) ?? [],
@@ -5363,16 +5396,14 @@ async function* runReadOnlyOrchestratorCore(
       });
       return;
     }
-    const groundedSources = availableSources.slice(
-      0,
-      requestedResultCount ?? undefined,
-    );
+    // Brainstorming needs a broad internal pool to find transferable patterns;
+    // resultCount is the number of ideas, not the number of sources to retain.
+    const groundedSources = isBrainstormIdeas
+      ? availableSources.slice(0, brainstormOutcome.searchPoolSize)
+      : availableSources.slice(0, requestedResultCount ?? undefined);
     if (groundedSources.length === 0) {
       throw new Error("Validated grounded-answer plan produced no evidence.");
     }
-    const sourceArtifacts = groundedWorkspaceSourceArtifacts(groundedSources);
-    const hasStructuredWorkspaceSources =
-      sourceArtifacts.length === groundedSources.length;
     if (await input.cancellationBoundary()) {
       yield completedDone({
         content: readOnlyInterruptionContent(
@@ -5398,7 +5429,9 @@ async function* runReadOnlyOrchestratorCore(
         input.onModelUsed?.(attempt.model);
         if (attempt.usage) {
           await deps.recordUsage(
-            "cowork_grounded_answer",
+            isBrainstormIdeas
+              ? "cowork_brainstorm_ideas"
+              : "cowork_grounded_answer",
             attempt.model,
             attempt.usage,
             input.workspaceId,
@@ -5410,8 +5443,11 @@ async function* runReadOnlyOrchestratorCore(
           );
         }
         input.telemetry?.recordAttempt({
-          stage:
-            attempt.stage === "primary"
+          stage: isBrainstormIdeas
+            ? attempt.stage === "primary"
+              ? "brainstorm_ideas_primary"
+              : "brainstorm_ideas_fallback"
+            : attempt.stage === "primary"
               ? "grounded_answer_primary"
               : "grounded_answer_fallback",
           attempt: index + 1,
@@ -5425,20 +5461,37 @@ async function* runReadOnlyOrchestratorCore(
       }
     };
     steps = advancePlanStep(steps, {
-      id: "synthesize_grounded_answer",
-      label: "Synthesizing the verified findings",
+      id: isBrainstormIdeas
+        ? "synthesize_brainstorm_ideas"
+        : "synthesize_grounded_answer",
+      label: isBrainstormIdeas
+        ? "Turning viral signals into relevant ideas"
+        : "Synthesizing the verified findings",
     });
     yield { type: "plan_update", steps };
     try {
-      const answer = await deps.synthesizeGroundedAnswer({
-        instruction: authoritativeInstruction,
-        format: terminalAction.format,
-        evidence: groundedSources,
-        ...(hasStructuredWorkspaceSources
-          ? { sourcePresentation: "structured_workspace" as const }
-          : {}),
-        signal: input.signal,
-      });
+      let answer;
+      if (isBrainstormIdeas && brainstormOutcome) {
+        answer = await deps.synthesizeBrainstormIdeas({
+          instruction: authoritativeInstruction,
+          ideaCount: brainstormOutcome.ideaCount,
+          evidence: groundedSources,
+          voiceResult: input.writerInput.voiceResult,
+          preferences: input.writerInput.preferences,
+          workspaceLearningBlock: input.writerInput.workspaceLearningBlock,
+          signal: input.signal,
+        });
+      } else {
+        if (terminalAction.format === "ideas") {
+          throw new Error("Ideas terminal requires a brainstorm route.");
+        }
+        answer = await deps.synthesizeGroundedAnswer({
+          instruction: authoritativeInstruction,
+          format: terminalAction.format,
+          evidence: groundedSources,
+          signal: input.signal,
+        });
+      }
       await recordSynthesisAttempts(
         answer.attempts ?? [
           {
@@ -5458,7 +5511,7 @@ async function* runReadOnlyOrchestratorCore(
       yield { type: "text", delta: answer.content };
       yield completedDone({
         content: answer.content,
-        artifacts: hasStructuredWorkspaceSources ? sourceArtifacts : [],
+        artifacts: [],
         toolCalls: calls,
         toolMessages: messages,
         inputTokens,
@@ -5467,7 +5520,10 @@ async function* runReadOnlyOrchestratorCore(
       return;
     } catch (error) {
       rethrowUsagePersistence(error);
-      if (error instanceof GroundedAnswerSynthesisError) {
+      if (
+        error instanceof GroundedAnswerSynthesisError ||
+        error instanceof BrainstormIdeasSynthesisError
+      ) {
         await recordSynthesisAttempts(error.attempts);
       }
       steps = completeActivePlanSteps(steps);

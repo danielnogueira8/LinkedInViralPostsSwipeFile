@@ -96,7 +96,7 @@ const STARTER_TASKS: Record<
     research: {
       lane: "workspace",
       minimumSources: 5,
-      searchMode: "strict_top",
+      searchMode: "diverse",
       since: "30d",
     },
   },

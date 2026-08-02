@@ -230,6 +230,25 @@ describe("compileServerReadOnlyPlan — per-route shapes", () => {
     expect(planSearchQueriesMatchInstruction(plan!, instruction)).toBe(true);
   });
 
+  test("non-brainstorm workspace research keeps the previous ten-source cap", () => {
+    const route: ReadOnlyOrchestratorRoute = {
+      kind: "workspace_research",
+      minimumSources: 20,
+      workspaceSearchMode: "diverse",
+      outcome: { kind: "grounded_answer", format: "report" },
+    };
+
+    const plan = compileServerReadOnlyPlan(
+      route,
+      "Compare the strongest saved posts and report the findings.",
+    );
+
+    expect(plan?.actions[0]).toMatchObject({
+      type: "search_viral_posts",
+      limit: 10,
+    });
+  });
+
   // Regression: a live production turn for the "Brainstorm new post ideas"
   // starter (chat-workspace.tsx's STARTERS.brainstorm) delivered zero
   // sources — search_viral_posts_candidates_dropped logged
@@ -258,12 +277,12 @@ describe("compileServerReadOnlyPlan — per-route shapes", () => {
     const route: ReadOnlyOrchestratorRoute = {
       kind: "workspace_research",
       minimumSources: 5,
-      workspaceSearchMode: "strict_top",
+      workspaceSearchMode: "diverse",
       workspaceSince: "30d",
       outcome: {
-        kind: "grounded_answer",
-        format: "takeaways",
-        resultCount: 5,
+        kind: "brainstorm_ideas",
+        ideaCount: 5,
+        searchPoolSize: 20,
       },
     };
     const instruction =
@@ -275,6 +294,12 @@ describe("compileServerReadOnlyPlan — per-route shapes", () => {
     );
     expect(search).not.toHaveProperty("niche");
     expect(search).not.toHaveProperty("query");
+    expect(search).toMatchObject({ limit: 20 });
+    expect(plan?.actions.at(-1)).toMatchObject({
+      type: "answer_from_evidence",
+      format: "ideas",
+      resultCount: 5,
+    });
     expect(() => parseReadOnlyPlan(route, plan!)).not.toThrow();
     expect(planSearchQueriesMatchInstruction(plan!, instruction)).toBe(true);
   });

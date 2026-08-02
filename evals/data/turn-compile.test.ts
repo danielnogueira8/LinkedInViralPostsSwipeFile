@@ -833,31 +833,47 @@ describe("compileReadOnlyOrchestratorRoute", () => {
     });
   });
 
-  test.each(["brainstorm", "working-this-week"] as const)(
-    "routes the non-draft %s starter through a grounded-answer orchestrator",
-    (starterId) => {
-      const composerTaskContext = resolveComposerTaskContext({
-        starterId,
-        fallbackPostCount: null,
-      });
-      const route =
-        compileReadOnlyOrchestratorRoute({
-          ...readOnlyBase,
-          userInstruction: "A terse subject.",
-          composerTaskContext,
-        });
-      expect(route).toMatchObject({
-        kind: "workspace_research",
-        outcome: {
-          kind: "grounded_answer",
-          format: starterId === "brainstorm" ? "takeaways" : "summary",
-        },
-        minimumSources: starterId === "brainstorm" ? 5 : 1,
-        workspaceSearchMode: "strict_top",
-        workspaceSince: starterId === "brainstorm" ? "30d" : "7d",
-      });
-    },
-  );
+  test("routes the brainstorm starter through a dedicated diverse idea outcome", () => {
+    const composerTaskContext = resolveComposerTaskContext({
+      starterId: "brainstorm",
+      fallbackPostCount: null,
+    });
+    const route = compileReadOnlyOrchestratorRoute({
+      ...readOnlyBase,
+      userInstruction: "A terse subject.",
+      composerTaskContext,
+    });
+    expect(route).toMatchObject({
+      kind: "workspace_research",
+      outcome: {
+        kind: "brainstorm_ideas",
+        ideaCount: 5,
+        searchPoolSize: 20,
+      },
+      minimumSources: 5,
+      workspaceSearchMode: "diverse",
+      workspaceSince: "30d",
+    });
+  });
+
+  test("routes the non-draft working-this-week starter through a grounded answer", () => {
+    const composerTaskContext = resolveComposerTaskContext({
+      starterId: "working-this-week",
+      fallbackPostCount: null,
+    });
+    const route = compileReadOnlyOrchestratorRoute({
+      ...readOnlyBase,
+      userInstruction: "A terse subject.",
+      composerTaskContext,
+    });
+    expect(route).toMatchObject({
+      kind: "workspace_research",
+      outcome: { kind: "grounded_answer", format: "summary" },
+      minimumSources: 1,
+      workspaceSearchMode: "strict_top",
+      workspaceSince: "7d",
+    });
+  });
 
   test.each([
     ["namejack", "web_research"],
