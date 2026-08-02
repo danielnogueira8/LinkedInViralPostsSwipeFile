@@ -3304,7 +3304,7 @@ describe("production-shaped Cowork outcome harness", () => {
     );
   });
 
-  test("preserves verified provenance for an attached fixed source", async () => {
+  test("persists only the repaired draft when a prepared Model Source fails semantic fidelity", async () => {
     const modelSourceId = "00000000-0000-4000-8000-000000000201";
     const sourcePostId = "00000000-0000-4000-8000-000000000202";
     const report = await runCoworkOutcomeScenario({
@@ -3323,9 +3323,48 @@ describe("production-shaped Cowork outcome harness", () => {
         },
       },
       model: {
-        sourceFidelity: [{ outcome: "verified" }, { outcome: "verified" }],
+        modelSourcePreparation: {
+          outcome: "ready",
+          blueprint: {
+            schemaVersion: 1,
+            coreTheme: "Public proof compounds across career changes.",
+            communicativeJob: "Prove a durable career principle through experience.",
+            readerEffect: "Confidence to publish useful work.",
+            hook: {
+              function: "Contrast temporary titles with durable proof.",
+              evidenceType: "verified experience",
+            },
+            emotionalArc: ["risk", "clarity", "agency"],
+            beats: [
+              {
+                role: "contrast",
+                purpose: "Contrast a temporary role with durable public proof.",
+              },
+              {
+                role: "action",
+                purpose: "Give the reader a concrete publishing action.",
+              },
+            ],
+            requiredEvidence: [],
+          },
+          userMappings: [],
+        },
+        sourceFidelity: [
+          {
+            outcome: "rejected",
+            reasons: ["The first draft performs a different communicative job."],
+            retryInstruction:
+              "Restore the temporary-title versus durable-proof contrast.",
+          },
+          { outcome: "verified" },
+        ],
         provider: { rounds: [] },
         directWriter: [
+          {
+            text: COMPLETE_POST,
+            finishReason: "stop",
+            usage: usage(220, 100, 0.0002),
+          },
           {
             text: SECOND_POST,
             finishReason: "stop",
@@ -3345,7 +3384,11 @@ describe("production-shaped Cowork outcome harness", () => {
     expect(report.observed.agentProviderRounds).toBe(0);
     expect(
       report.observed.directWriterRequests.map((request) => request.stage),
-    ).toEqual(["primary"]);
+    ).toEqual(["primary", "repair"]);
+    expect(report.persisted.artifacts.map((artifact) => artifact.body)).toEqual([
+      SECOND_POST,
+    ]);
+    expect(JSON.stringify(report.persisted.messages)).not.toContain(COMPLETE_POST);
   });
 
   test("routes exact partial text through the tool-free writer and repairs its shape", async () => {

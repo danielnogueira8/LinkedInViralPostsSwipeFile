@@ -16,6 +16,7 @@ boundary neutralization.
 | Grounded research answers | swipe-file, web, news, and attachment evidence summarized as chat text | static `wrapUntrustedDelimited` evidence blocks + shared `INJECTION_GUARD` |
 | Chat title generation | first user/assistant snippets | `neutralizeMarkers` |
 | Model-source staging | post/template/draft text saved for later chat modeling | `neutralizeMarkers` before insert |
+| Model Source semantic blueprint | forced-tool analysis derived from selected source and user text | `wrapUntrustedDelimited` in `renderModelSourceBlueprint` + shared `INJECTION_GUARD` |
 
 Notes:
 

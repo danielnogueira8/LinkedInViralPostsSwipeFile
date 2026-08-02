@@ -224,7 +224,8 @@ describe("renderStructureSkeletonReference", () => {
     expect(ref.toLowerCase()).toContain("reference point");
     expect(ref.toLowerCase()).toContain("not a limit");
     expect(ref.toLowerCase()).toContain("deviate freely");
-    expect(ref).toContain("Never drop, add, or reorder a beat");
+    expect(ref).toContain("secondary to the MODEL SOURCE BLUEPRINT");
+    expect(ref).toContain("never preserve a visual beat");
   });
 
   test("includes the list marker + item count guidance when the source has a list", () => {

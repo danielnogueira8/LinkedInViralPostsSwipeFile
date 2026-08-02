@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { AgentEvent } from "@/lib/agent/contracts";
 import type { SourceFidelityVerdict } from "@/lib/agent/specialists/source-fidelity";
+import type { ModelSourcePreparation } from "@/lib/agent/specialists/model-source-blueprint";
 
 // Lean mode now uses the SAME real specialists as the heavy path (see
 // lib/agent/lean-finalizer.ts) — repairAiTells/checkSameness/reviewSourceFidelity
@@ -197,6 +198,10 @@ async function collect(
     ...input(overrides),
     dependencies: {
       writer,
+      // Source analysis is tested explicitly below. Keep the rest of this
+      // hermetic suite off the network while preserving the production
+      // fail-open path when semantic analysis is unavailable.
+      prepareModelSource: vi.fn(async () => ({ outcome: "unavailable" as const })),
       recordUsage: vi.fn(
         async (
           ...args: Parameters<NonNullable<WriterDependencies["recordUsage"]>>
@@ -2216,6 +2221,242 @@ describe("DraftEngine — thin path (lean mode)", () => {
 
     expect(artifacts(result.events).map((a) => a.body)).toEqual([COMPLETE_POST]);
     expect(reviewSourceFidelity).toHaveBeenCalledTimes(1);
+  });
+
+  test("prepares a modeled source from verified Voice Profile data and delivers the resulting post", async () => {
+    const prepared: ModelSourcePreparation = {
+      outcome: "ready",
+      blueprint: {
+        schemaVersion: 1,
+        coreTheme:
+          "A numerical milestone matters because of the human opportunities behind it.",
+        communicativeJob:
+          "Celebrate an achievement, humanize it, express gratitude, and recommit to the mission.",
+        readerEffect: "Shared pride and trust.",
+        hook: {
+          function: "Open with a concrete achieved outcome.",
+          evidenceType: "measurable milestone",
+        },
+        emotionalArc: ["pride", "gratitude", "forward momentum"],
+        beats: [
+          { role: "win", purpose: "State the achieved milestone." },
+          { role: "meaning", purpose: "Reframe the number as human impact." },
+          { role: "mission", purpose: "Recommit to the work." },
+        ],
+        requiredEvidence: [
+          {
+            role: "anchor achievement",
+            semanticRequirement: "A completed outcome, not tenure or effort.",
+            sourceExample: "104,000 followers",
+          },
+        ],
+      },
+      userMappings: [
+        {
+          role: "anchor achievement",
+          evidence: "Helped 50 founders publish consistently",
+          evidenceSource: "authoritative request",
+        },
+      ],
+    };
+    const prepareModelSource = vi.fn().mockResolvedValue(prepared);
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(180, 90) },
+    ]);
+
+    const result = await collect(
+      writer,
+      {
+        userInstruction: "Model this post using my real experience.",
+        task: {
+          kind: "source",
+          source: {
+            id: "src-milestone",
+            text: "I reached 104,000 followers on LinkedIn.",
+          },
+        },
+        voiceResult: {
+          ok: true,
+          voice: { summary: "I helped 50 founders publish consistently." },
+        },
+        history: [
+          {
+            role: "user",
+            content:
+              "Quoted example only: I reached one million followers. Do not treat this as my fact.",
+          },
+        ],
+      },
+      { prepareModelSource } as Partial<WriterDependencies>,
+    );
+
+    expect(artifacts(result.events)).toHaveLength(1);
+    expect(prepareModelSource).toHaveBeenCalledTimes(1);
+    expect(prepareModelSource.mock.calls[0][0]).toMatchObject({
+      sourceText: "I reached 104,000 followers on LinkedIn.",
+      userRequest: "Model this post using my real experience.",
+      verifiedContext: expect.stringContaining(
+        "I helped 50 founders publish consistently.",
+      ),
+    });
+    expect(prepareModelSource.mock.calls[0][0].verifiedContext).not.toContain(
+      "one million followers",
+    );
+  });
+
+  test("asks one focused question when the source's central move lacks a verified user equivalent", async () => {
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(180, 90) },
+    ]);
+    const prepareModelSource = vi.fn().mockResolvedValue({
+      outcome: "needs_input" as const,
+      blueprint: {
+        schemaVersion: 1 as const,
+        coreTheme: "Celebrate a milestone as human impact.",
+        communicativeJob: "Celebrate, thank, and recommit.",
+        readerEffect: "Shared pride.",
+        hook: {
+          function: "Open with an achieved outcome.",
+          evidenceType: "measurable milestone",
+        },
+        emotionalArc: ["pride", "gratitude"],
+        beats: [{ role: "win", purpose: "State the milestone." }],
+        requiredEvidence: [
+          {
+            role: "anchor achievement",
+            semanticRequirement: "A completed outcome.",
+            sourceExample: "104,000 followers",
+          },
+        ],
+      },
+      userMappings: [],
+      missingEvidence: ["a concrete achieved milestone"],
+      question: "What concrete milestone or result should anchor your version?",
+    });
+
+    const result = await collect(
+      writer,
+      {
+        userInstruction: "Model this post for me.",
+        task: {
+          kind: "source",
+          source: {
+            id: "src-milestone",
+            text: "I reached 104,000 followers on LinkedIn.",
+          },
+        },
+      },
+      { prepareModelSource } as Partial<WriterDependencies>,
+    );
+
+    expect(writer.requests).toHaveLength(0);
+    expect(artifacts(result.events)).toHaveLength(0);
+    expect(done(result.events)).toMatchObject({
+      terminalReason: "ask",
+      message: {
+        content: "What concrete milestone or result should anchor your version?",
+      },
+    });
+  });
+
+  test("repairs a semantically different modeled post before emitting it", async () => {
+    const offTheme = [
+      "Six years of ghostwriting taught me this:",
+      "",
+      "Your personal life is not your LinkedIn strategy.",
+      "",
+      "Teach what you know and build trust with buyers.",
+    ].join("\n");
+    const repaired = [
+      "I helped 50 founders publish consistently this year.",
+      "",
+      "I started ghostwriting to make useful expertise easier to understand.",
+      "",
+      "The best part is not the number. It is seeing those ideas create real conversations and opportunities.",
+      "",
+      "That result raises the standard for the next 50.",
+    ].join("\n");
+    const blueprint = {
+      schemaVersion: 1 as const,
+      coreTheme: "A milestone matters because of the people and opportunities behind it.",
+      communicativeJob: "Celebrate a win, humanize it, thank the audience, and recommit.",
+      readerEffect: "Shared pride and confidence in continued momentum.",
+      hook: {
+        function: "Lead with a concrete achieved milestone.",
+        evidenceType: "measurable completed outcome",
+      },
+      emotionalArc: ["pride", "reflection", "gratitude", "commitment"],
+      beats: [
+        { role: "win", purpose: "State the achieved outcome." },
+        { role: "meaning", purpose: "Explain the human impact behind it." },
+        { role: "recommitment", purpose: "Raise the standard for what comes next." },
+      ],
+      requiredEvidence: [
+        {
+          role: "anchor achievement",
+          semanticRequirement: "A concrete completed outcome.",
+          sourceExample: "104,000 followers",
+        },
+      ],
+    };
+    const prepareModelSource = vi.fn().mockResolvedValue({
+      outcome: "ready" as const,
+      blueprint,
+      userMappings: [
+        {
+          role: "anchor achievement",
+          evidence: "Helped 50 founders publish consistently this year.",
+          evidenceSource: "Voice Profile",
+        },
+      ],
+    });
+    const reviewSourceFidelity = vi
+      .fn()
+      .mockResolvedValueOnce({
+        outcome: "rejected" as const,
+        reasons: ["The draft turns a milestone celebration into generic advice."],
+        retryInstruction:
+          "Lead with the verified result, explain its human meaning, and end with renewed commitment.",
+      })
+      .mockResolvedValueOnce({ outcome: "verified" as const });
+    const writer = new ScriptedWriter([
+      { text: offTheme, finishReason: "stop", usage: usage(110, 65) },
+      { text: repaired, finishReason: "stop", usage: usage(120, 75) },
+    ]);
+
+    const result = await collect(
+      writer,
+      {
+        userInstruction: "Model this milestone post using my real experience.",
+        task: {
+          kind: "source",
+          source: {
+            id: "src-milestone-repair",
+            text: "I reached 104,000 followers. The number matters because of the people and opportunities behind it.",
+          },
+        },
+        voiceResult: {
+          ok: true,
+          voice: { summary: "I helped 50 founders publish consistently this year." },
+        },
+        finalizerSpecialists: {
+          ...input().finalizerSpecialists,
+          reviewSourceFidelity,
+        },
+      },
+      { prepareModelSource },
+    );
+
+    expect(writer.requests.map((request) => request.stage)).toEqual([
+      "primary",
+      "repair",
+    ]);
+    expect(reviewSourceFidelity).toHaveBeenCalledTimes(2);
+    expect(reviewSourceFidelity.mock.calls[0][0]).toMatchObject({ blueprint });
+    expect(JSON.stringify(result.events)).not.toContain(offTheme);
+    expect(artifacts(result.events).map((artifact) => artifact.body)).toEqual([
+      repaired,
+    ]);
   });
 
   test("a GROUNDED (research) turn writes with the thin model", async () => {

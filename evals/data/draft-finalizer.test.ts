@@ -5,6 +5,7 @@ import {
 } from "@/lib/agent/finalize/finalizer";
 import type { DraftOutputPolicy } from "@/lib/agent/draft-output-policy";
 import { editDraftBodySync } from "@/lib/agent/specialists/editor";
+import type { ModelSourceBlueprint } from "@/lib/agent/specialists/model-source-blueprint";
 
 const COMPLETE_POST = [
   "Most LinkedIn posts do not fail because the writing is bad.",
@@ -456,6 +457,71 @@ describe("DraftFinalizer", () => {
       ok: true,
       sourcePostId: "11111111-1111-4111-8111-111111111111",
     });
+  });
+
+  test("blocks a semantic-theme mismatch when the modeled turn carries a prepared source blueprint", async () => {
+    const blueprint: ModelSourceBlueprint = {
+      schemaVersion: 1,
+      coreTheme: "A milestone matters because of the people behind it.",
+      communicativeJob: "Celebrate, humanize, thank, and recommit.",
+      readerEffect: "Shared pride and trust.",
+      hook: {
+        function: "Open with a concrete achieved outcome.",
+        evidenceType: "measurable milestone",
+      },
+      emotionalArc: ["pride", "gratitude", "forward momentum"],
+      beats: [
+        { role: "win", purpose: "State the achieved milestone." },
+        { role: "meaning", purpose: "Reframe it as human impact." },
+        { role: "mission", purpose: "Recommit to the work." },
+      ],
+      requiredEvidence: [],
+    };
+    const specialists = passThroughSpecialists();
+    specialists.reviewSourceFidelity = vi.fn(async () => ({
+      outcome: "rejected" as const,
+      reasons: [
+        "The draft changed a celebration-and-gratitude story into an educational argument.",
+      ],
+      retryInstruction:
+        "Preserve the milestone celebration, human-impact reframe, gratitude, and renewed mission.",
+    }));
+    const finalizer = createDraftFinalizer({
+      workspaceId: "ws-1",
+      policy: policy(),
+      priorDrafts: [],
+      specialists,
+    });
+
+    const result = await finalizer.finalize({
+      origin: "direct_writer",
+      body: COMPLETE_POST,
+      provenance: {
+        required: true,
+        requestedSourceId: "11111111-1111-4111-8111-111111111111",
+        discoveredSources: [
+          {
+            id: "11111111-1111-4111-8111-111111111111",
+            text: "I reached 104,000 followers on LinkedIn.",
+          },
+        ],
+        userRequest: "Model this source post.",
+        verifiedContext: "The user has a verified milestone.",
+        modelingBlueprint: blueprint,
+      },
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      rejection: {
+        code: "source_fidelity",
+        repairInstruction:
+          "Preserve the milestone celebration, human-impact reframe, gratitude, and renewed mission.",
+      },
+    });
+    expect(specialists.reviewSourceFidelity).toHaveBeenCalledWith(
+      expect.objectContaining({ blueprint }),
+    );
   });
 
   test("deduplicates an already-accepted semantic candidate on retry", async () => {

@@ -255,8 +255,8 @@ export function editStage(ctx: StageContext, state: StageState): StageResult {
 
 // ---------------------------------------------------------------------------
 // Gate 4b — Quality model specialist. Mutually exclusive by design: a turn
-// with a verified source runs fidelity review (telemetry-only for a full
-// post — see finalizer.ts's own comment on why); a turn with no source runs
+// with a verified source runs fidelity review (blocking only when the turn
+// carries a server-validated semantic blueprint); a turn with no source runs
 // AI-tell repair. Exactly one of these two stages ever executes per
 // finalize() call — the caller (finalize()) picks which and only calls that
 // one, rather than both stages being registered and self-selecting, so the
@@ -269,14 +269,15 @@ export async function sourceFidelityStage(
   source: DraftSource,
 ): Promise<StageResult> {
   if (!ctx.candidate.provenance) return pass(state);
-  // Source-fidelity review is telemetry-only. The writer is responsible for
-  // producing an original adaptation; this stage never rejects a modeled
-  // draft for being too similar to the source — it only records the verdict.
+  // Legacy sourced turns remain telemetry-only. Prepared semantic modeling
+  // turns use this verdict as a bounded repair gate because the server has an
+  // explicit acceptance contract to validate against.
   const fidelity = await ctx.specialists.reviewSourceFidelity({
     sourceText: source.text,
     draftBody: state.body,
     userRequest: ctx.candidate.provenance.userRequest,
     verifiedContext: ctx.candidate.provenance.verifiedContext,
+    blueprint: ctx.candidate.provenance.modelingBlueprint,
     workspaceId: ctx.workspaceId,
     signal: ctx.signal,
     adapterHealth: ctx.adapterHealth,
@@ -294,6 +295,17 @@ export async function sourceFidelityStage(
     reasonCode: fidelityRejection?.code,
     latencyMs: 0,
   });
+  // Existing source turns without a prepared semantic blueprint retain the
+  // legacy telemetry-only behavior. A prepared modeled turn has already paid
+  // to establish the source's communicative contract, so a semantic mismatch
+  // is a real content defect and must enter the bounded writer repair chain.
+  if (ctx.candidate.provenance.modelingBlueprint && fidelityRejection) {
+    return fail(
+      fidelityRejection.code,
+      fidelityRejection.reason,
+      fidelityRejection.retryInstruction,
+    );
+  }
   return pass(state);
 }
 

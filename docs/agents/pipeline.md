@@ -137,12 +137,12 @@ flowchart LR
     G2 --> G3[Gate 3: provenance<br/>required source resolved + verified]
     G3 --> G4[Gate 4: quality]
     G4 --> G4a[4a: editStage<br/>deterministic editor<br/>em dashes, cleanup]
-    G4a --> G4b[4b: sourceFidelityStage<br/>sourced turns only, telemetry-only]
+    G4a --> G4b[4b: sourceFidelityStage<br/>sourced turns only<br/>semantic-blueprint turns block on mismatch]
     G4b --> G4c[4c: aiTellRepairStage<br/>EVERY draft — detects + repairs tells]
     G4c --> G4d[4d: finalTransformStage<br/>corruption re-check + hard char cap]
     G4d --> G5[Gate 5: artifact build<br/>dedupe + contract validate]
     G5 --> OK[artifact event]
-    G1 & G2 & G3 & G4c & G4d & G5 -->|reject| RJ[repair instruction → writer retry<br/>→ honest failure after budget]
+    G1 & G2 & G3 & G4b & G4c & G4d & G5 -->|reject| RJ[repair instruction → writer retry<br/>→ honest failure after budget]
 ```
 
 ### Writer-side short-circuits (before the finalizer)
@@ -169,7 +169,7 @@ stub them.
 | `stripEmDashes` | net (rewrite) | deterministic editor (Gate 4a) | em-dash AI tell (voice-aware: suppressed for em-dash writers) | never rejects; rewrites |
 | `aiTellMetrics` | net (detect) | `repairAiTells` trigger + repair output validation + Gate 4c | 20+ tell families: rule-of-three, repeated-opener, negative-parallelism, signposting, colon-reveal, ai-vocabulary… | triggers repair, then blocks delivery if any tell remains |
 | `repairAiTells` | model specialist (forced-tool copy edit) | Gate 4c, **every draft** | any detected tell | repaired body must score 0 tells, ≤1.4× length, uncorrupted; if repair fails, Gate 4c rejects the candidate and sends a targeted retry instruction to the writer |
-| `reviewSourceFidelity` | model specialist | Gate 4b, sourced turns only | grounded draft review | **telemetry-only**, never rejects |
+| `reviewSourceFidelity` | model specialist | Gate 4b, sourced turns only | source-mechanics and semantic-contract review | legacy sourced turns are telemetry-only; turns with a server-validated Model Source blueprint reject semantic mismatches into the bounded writer repair chain |
 | `checkSameness` | model specialist | multi-draft sets (batch coordinator, off the blocking path) | near-duplicate variations | rewrite or reject the duplicate |
 | `rationaleTooGeneric` | net | draft meta.rationale | generic "why I wrote it" captions | caption dropped, draft unaffected |
 | `areDraftsNearDuplicate` | net | multi-draft sets | same draft re-worded | duplicate rejected |

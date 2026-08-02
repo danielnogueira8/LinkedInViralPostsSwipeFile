@@ -27,6 +27,7 @@ import {
   type PersistedHarnessUsage,
 } from "@/evals/cowork-harness-store";
 import type { SourceFidelityVerdict } from "@/lib/agent/specialists/source-fidelity";
+import type { ModelSourcePreparation } from "@/lib/agent/specialists/model-source-blueprint";
 import type {
   DraftWriterAdapter,
   DraftWriterRequest,
@@ -76,6 +77,7 @@ export type CoworkOutcomeScenario = {
     creatorStyleMarkerPersistenceFails?: boolean;
     creatorStyleMarkerTargetMissing?: boolean;
     sourceFidelity?: SourceFidelityVerdict[];
+    modelSourcePreparation?: ModelSourcePreparation;
     directWriter?: Array<
       | DraftWriterResponse
       | { cancelViaDatabase: true; response?: DraftWriterResponse }
@@ -868,6 +870,8 @@ async function runCoworkOutcomeScenarioWithStore(
     () => requestController.abort(),
   );
   const sourceFidelity = [...(scenario.model.sourceFidelity ?? [])];
+  const prepareModelSource = async (): Promise<ModelSourcePreparation> =>
+    scenario.model.modelSourcePreparation ?? { outcome: "unavailable" };
   const telemetryRecords: CoworkTurnTelemetryRecord[] = [];
   const draftAdapterHealth = new AdapterHealthRegistry();
   const modeledBatchRepository =
@@ -886,6 +890,7 @@ async function runCoworkOutcomeScenarioWithStore(
             dependencies: {
               ...input.dependencies,
               writer: directWriter,
+              prepareModelSource,
               recordUsage: logOpenRouterUsage,
               cancelPollMs: 1,
               adapterHealth: draftAdapterHealth,
@@ -936,6 +941,7 @@ async function runCoworkOutcomeScenarioWithStore(
                 dependencies: {
                   ...writerInput.dependencies,
                   writer: directWriter,
+                  prepareModelSource,
                   recordUsage: logOpenRouterUsage,
                   cancelPollMs: 1,
                   adapterHealth: draftAdapterHealth,
