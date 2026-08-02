@@ -12,7 +12,14 @@ import {
   claimWorkspaceCost,
   releaseWorkspaceCost,
 } from "@/lib/workspace-cost-claims";
-import { claimAgentLoopDailyRun } from "@/lib/agent-loop/daily-run";
+import {
+  claimAgentLoopDailyRun,
+  claimAgentLoopDailySynthesis,
+  completeAgentLoopDailySynthesis,
+  loadAgentLoopDailyRunState,
+  releaseAgentLoopDailySynthesis,
+  saveAgentLoopDailySearch,
+} from "@/lib/agent-loop/daily-run";
 import {
   synthesizeNewsOpportunities,
   type NewsOpportunitySynthesis,
@@ -74,6 +81,21 @@ export type ScanNewsjackingOptions = {
   allowRepeat?: boolean;
   synthesize?: NewsOpportunitySynthesis;
 };
+
+type CachedNewsSearch = Awaited<ReturnType<typeof searchNews>>;
+
+function readCachedNewsSearch(value: unknown): CachedNewsSearch | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  if (
+    typeof row.searched !== "number" ||
+    !Number.isFinite(row.searched) ||
+    !Array.isArray(row.results)
+  ) {
+    return null;
+  }
+  return { searched: row.searched, results: row.results as NewsResult[] };
+}
 
 export function newsjackingOperationKey(
   workspaceId: string,
@@ -483,16 +505,21 @@ export async function scanNewsjackingOpportunities(
   now = new Date(),
   options: ScanNewsjackingOptions = {},
 ): Promise<ScanNewsjackingResult> {
+  let cachedSearch: CachedNewsSearch | null = null;
   if (!options.allowRepeat) {
     const claimed = await claimAgentLoopDailyRun(sb, workspaceId, now);
     if (!claimed) {
-      return {
-        searched: 0,
-        fetched: 0,
-        inserted: 0,
-        expired: 0,
-        skipped: 1,
-      };
+      const state = await loadAgentLoopDailyRunState(sb, workspaceId, now);
+      cachedSearch = readCachedNewsSearch(state?.searchPayload);
+      if (!cachedSearch || state?.synthesisCompleted) {
+        return {
+          searched: 0,
+          fetched: 0,
+          inserted: 0,
+          expired: 0,
+          skipped: 1,
+        };
+      }
     }
   }
 
@@ -534,108 +561,143 @@ export async function scanNewsjackingOpportunities(
   );
   const feedback = await loadAgentDismissalFeedback(sb, workspaceId);
 
-  const query = buildNewsjackingQuery(topics);
-  const operationKey = newsjackingOperationKey(workspaceId, now);
-  const costClaim = await claimWorkspaceCost({
-    workspaceId,
-    operationKey,
-    estimatedCostUsd: NEWS_SEARCH_COST_RESERVE_USD,
-    budgetUsd: MONTHLY_BUDGET_USD,
-    ttlSeconds: 15 * 60,
-    sb,
-  });
-  if (!costClaim) {
+  let search = cachedSearch;
+  if (!search) {
+    const query = buildNewsjackingQuery(topics);
+    const operationKey = newsjackingOperationKey(workspaceId, now);
+    const costClaim = await claimWorkspaceCost({
+      workspaceId,
+      operationKey,
+      estimatedCostUsd: NEWS_SEARCH_COST_RESERVE_USD,
+      budgetUsd: MONTHLY_BUDGET_USD,
+      ttlSeconds: 15 * 60,
+      sb,
+    });
+    if (!costClaim) {
+      return {
+        searched: 0,
+        fetched: 0,
+        inserted: 0,
+        expired: (expiredRows ?? []).length,
+        skipped: 1,
+      };
+    }
+
+    try {
+      search = await searchNews({ query, workspaceId, now });
+      if (!options.allowRepeat) {
+        await saveAgentLoopDailySearch(sb, workspaceId, now, search);
+      }
+    } finally {
+      await releaseWorkspaceCost({ workspaceId, operationKey, sb }).catch(
+        (error) => {
+          console.error("Failed to release Newsjacking cost claim", error);
+        },
+      );
+    }
+  }
+  const synthesisClaimToken = options.allowRepeat
+    ? null
+    : await claimAgentLoopDailySynthesis(sb, workspaceId, now);
+  if (!options.allowRepeat && !synthesisClaimToken) {
     return {
-      searched: 0,
-      fetched: 0,
+      searched: cachedSearch ? 0 : search.searched,
+      fetched: search.results.length,
       inserted: 0,
       expired: (expiredRows ?? []).length,
       skipped: 1,
     };
   }
-
-  let search: Awaited<ReturnType<typeof searchNews>>;
+  let synthesisLeaseCompleted = false;
   try {
-    search = await searchNews({
-      query,
+    const trackedPosts = await trackedCreatorPostTexts(
+      sb,
+      context.accountIds,
+      now,
+    );
+    const candidates = rankNewsjackingCandidates(search.results, now, topics)
+      .filter((candidate) => !recentKeys.has(candidate.trendKey))
+      .slice(0, Math.max(MAX_NEWSJACKING_OPPORTUNITIES_PER_RUN * 2, 6));
+    const synthesisResult = await (
+      options.synthesize ?? synthesizeNewsOpportunities
+    )({
       workspaceId,
-      now,
-    });
-  } finally {
-    await releaseWorkspaceCost({ workspaceId, operationKey, sb }).catch(
-      (error) => {
-        console.error("Failed to release Newsjacking cost claim", error);
-      },
-    );
-  }
-  const trackedPosts = await trackedCreatorPostTexts(
-    sb,
-    context.accountIds,
-    now,
-  );
-  const candidates = rankNewsjackingCandidates(search.results, now, topics)
-    .filter((candidate) => !recentKeys.has(candidate.trendKey))
-    .slice(0, Math.max(MAX_NEWSJACKING_OPPORTUNITIES_PER_RUN * 2, 6));
-  const synthesisResult = await (
-    options.synthesize ?? synthesizeNewsOpportunities
-  )({
-    workspaceId,
-    topics,
-    candidates,
-    feedback: feedback.map(
-      (entry) => `${entry.lane}: ${entry.reason} — ${entry.headline}`,
-    ),
-  });
-  const selectedCandidates = synthesisResult.available
-    ? selectRefinedCandidates({
-        candidates,
-        opportunities: synthesisResult.opportunities,
-        key: (candidate) => candidate.trendKey,
-        limit: MAX_NEWSJACKING_OPPORTUNITIES_PER_RUN,
-      })
-    : [];
-
-  let inserted = 0;
-  let skipped = synthesisResult.available ? 0 : candidates.length;
-  for (const candidate of selectedCandidates) {
-    const synthesis = synthesisResult.opportunities.get(candidate.trendKey);
-    const payload = newsjackingOpportunityPayload(
-      candidate.result,
       topics,
-      now,
-      hasCreatorCoverage(candidate.result, trackedPosts)
-        ? "observed"
-        : "none_observed",
-      synthesis,
-      candidate.corroboratingResults ?? [],
-    );
-    const { error } = await sb.from("agent_opportunities").insert({
-      workspace_id: workspaceId,
-      kind: "news",
-      trend_key: candidate.trendKey,
-      source_post_id: null,
-      status: "proposed",
-      score: synthesis?.score ?? candidate.score,
-      payload,
+      candidates,
+      feedback: feedback.map(
+        (entry) => `${entry.lane}: ${entry.reason} — ${entry.headline}`,
+      ),
     });
-    if (error) {
-      if (!String(error.message).includes("duplicate key")) {
-        console.warn(
-          "scanNewsjackingOpportunities insert failed:",
-          error.message,
-        );
-      }
-      skipped += 1;
-      continue;
-    }
-    inserted += 1;
-  }
+    const selectedCandidates = synthesisResult.available
+      ? selectRefinedCandidates({
+          candidates,
+          opportunities: synthesisResult.opportunities,
+          key: (candidate) => candidate.trendKey,
+          limit: MAX_NEWSJACKING_OPPORTUNITIES_PER_RUN,
+        })
+      : [];
 
-  return {
-    searched: search.searched,
-    fetched: search.results.length,
-    inserted,
-    expired: (expiredRows ?? []).length,
-    skipped,
-  };
+    let inserted = 0;
+    let skipped = synthesisResult.available ? 0 : candidates.length;
+    for (const candidate of selectedCandidates) {
+      const synthesis = synthesisResult.opportunities.get(candidate.trendKey);
+      const payload = newsjackingOpportunityPayload(
+        candidate.result,
+        topics,
+        now,
+        hasCreatorCoverage(candidate.result, trackedPosts)
+          ? "observed"
+          : "none_observed",
+        synthesis,
+        candidate.corroboratingResults ?? [],
+      );
+      const { error } = await sb.from("agent_opportunities").insert({
+        workspace_id: workspaceId,
+        kind: "news",
+        trend_key: candidate.trendKey,
+        source_post_id: null,
+        status: "proposed",
+        score: synthesis?.score ?? candidate.score,
+        payload,
+      });
+      if (error) {
+        if (!String(error.message).includes("duplicate key")) {
+          console.warn(
+            "scanNewsjackingOpportunities insert failed:",
+            error.message,
+          );
+        }
+        skipped += 1;
+        continue;
+      }
+      inserted += 1;
+    }
+
+    if (synthesisResult.available && synthesisClaimToken) {
+      await completeAgentLoopDailySynthesis(
+        sb,
+        workspaceId,
+        now,
+        synthesisClaimToken,
+      );
+      synthesisLeaseCompleted = true;
+    }
+
+    return {
+      searched: search.searched,
+      fetched: search.results.length,
+      inserted,
+      expired: (expiredRows ?? []).length,
+      skipped,
+    };
+  } finally {
+    if (synthesisClaimToken && !synthesisLeaseCompleted) {
+      await releaseAgentLoopDailySynthesis(
+        sb,
+        workspaceId,
+        now,
+        synthesisClaimToken,
+      );
+    }
+  }
 }
