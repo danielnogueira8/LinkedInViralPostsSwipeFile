@@ -51,6 +51,7 @@ function fakeDb(dailyClaims = [true]) {
         in: pass,
         gte: pass,
         lt: pass,
+        not: pass,
         order: pass,
         limit: pass,
         update: () => {
@@ -111,7 +112,25 @@ describe("scanNewsjackingOpportunities persistence seam", () => {
       db as never,
       "workspace-1",
       NOW,
-      { allowRepeat: true },
+      {
+        allowRepeat: true,
+        synthesize: async ({ candidates }) => ({
+          available: true,
+          opportunities: new Map(
+            candidates.map((candidate) => [
+              candidate.trendKey,
+              {
+                headline: "AI labels make generic expertise a distribution risk",
+                angle:
+                  "The label changes the incentive from producing more content to publishing claims only the author can substantiate.",
+                viralMechanism:
+                  "Writers will share this because it turns an announcement into an editorial decision.",
+                score: 0.84,
+              },
+            ]),
+          ),
+        }),
+      },
     );
 
     expect(result).toMatchObject({ searched: 1, fetched: 1, inserted: 1 });

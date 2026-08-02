@@ -68,6 +68,9 @@ function repository(initial: AgentInboxIdea[] = []): AgentInboxRepository & {
           .filter((value): value is string => Boolean(value)),
       );
     },
+    async readRecentFeedback() {
+      return [];
+    },
     async releaseDueSnoozed(_workspaceId, now) {
       for (const entry of ideas) {
         if (

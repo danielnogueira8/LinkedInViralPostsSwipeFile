@@ -11,6 +11,7 @@ import {
 import { isExternalOpportunityKind } from "@/lib/agent-loop/opportunity-signal";
 import { weekStart } from "@/lib/agent-loop/week-plan";
 import { markStoredOpportunityDrafted } from "@/lib/agent-loop/week-plan-store";
+import { AGENT_DISCARD_REASONS } from "@/lib/agent-inbox/feedback";
 
 export const runtime = "nodejs";
 // Opportunity modeling runs a full chat turn (voice load + writer + save).
@@ -24,9 +25,15 @@ export const maxDuration = 300;
 //   { action: "handled" } → mark taken to Cowork without generating a draft.
 //   { action: "read" | "unread" } → update message state without consuming it.
 // -----------------------------------------------------------------------------
-const actionSchema = z.object({
-  action: z.enum(["draft", "dismiss", "handled", "read", "unread"]),
-});
+const actionSchema = z.discriminatedUnion("action", [
+  z.object({
+    action: z.literal("dismiss"),
+    reason: z.enum(AGENT_DISCARD_REASONS).optional(),
+  }),
+  z.object({
+    action: z.enum(["draft", "handled", "read", "unread"]),
+  }),
+]);
 
 function alreadyHandledResponse() {
   return NextResponse.json(
@@ -41,7 +48,8 @@ export async function POST(
 ) {
   try {
     const { id } = await params;
-    const { action } = actionSchema.parse(await req.json());
+    const parsed = actionSchema.parse(await req.json());
+    const { action } = parsed;
     const sb = await scopedSupabase();
     // A killed actor can leave a managed opportunity in drafting forever.
     // Reclaim expired leases before deciding whether this click is stale.
@@ -82,12 +90,23 @@ export async function POST(
     }
 
     if (action === "dismiss") {
+      const payload =
+        opportunity.payload && typeof opportunity.payload === "object"
+          ? (opportunity.payload as Record<string, unknown>)
+          : {};
       const dismissed = await updateManagedOpportunityStatus(
         sb.raw,
         sb.workspaceId,
         id,
         "proposed",
-        { status: "dismissed", acted_at: new Date().toISOString() },
+        {
+          status: "dismissed",
+          acted_at: new Date().toISOString(),
+          payload: {
+            ...payload,
+            dismiss_reason: parsed.reason ?? "Not relevant to me",
+          },
+        },
       );
       if (!dismissed) return alreadyHandledResponse();
       return NextResponse.json({ ok: true, status: "dismissed" });

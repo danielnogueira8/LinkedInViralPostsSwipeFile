@@ -6,6 +6,7 @@ import { isCurrentAgentInboxIdea } from "@/lib/agent-inbox";
 import { agentInboxDraftPrompt } from "@/lib/agent-inbox/prompt";
 import { readAgentInboxIdea } from "@/lib/agent-inbox/supabase";
 import { errorResponse } from "@/lib/workspace";
+import { AGENT_DISCARD_REASONS } from "@/lib/agent-inbox/feedback";
 
 const actionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("act") }),
@@ -14,7 +15,7 @@ const actionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("unread") }),
   z.object({
     kind: z.literal("discard"),
-    reason: z.string().trim().min(1).max(120),
+    reason: z.enum(AGENT_DISCARD_REASONS),
   }),
   z.object({ kind: z.literal("restore") }),
 ]);

@@ -122,6 +122,7 @@ function sourcePostRank(
   entry: AgentInboxEvidence,
   now: Date,
   topics: readonly string[],
+  anchors: readonly AgentInboxEvidence[] = [],
 ): number {
   const terms = topics
     .flatMap((topic) => topic.toLocaleLowerCase("en-US").split(/\s+/))
@@ -131,6 +132,20 @@ function sourcePostRank(
   const topicMatch = terms.length
     ? Math.min(1, terms.filter((term) => haystack.includes(term)).length / 3)
     : 0.5;
+  const sourceTerms = new Set(
+    haystack
+      .split(/[^\p{L}\p{N}]+/gu)
+      .filter((term) => term.length >= 4),
+  );
+  const anchorMatch = anchors.reduce((best, anchor) => {
+    const anchorTerms = `${anchor.label} ${anchor.detail}`
+      .toLocaleLowerCase("en-US")
+      .split(/[^\p{L}\p{N}]+/gu)
+      .filter((term) => term.length >= 4);
+    if (anchorTerms.length === 0) return best;
+    const matches = anchorTerms.filter((term) => sourceTerms.has(term)).length;
+    return Math.max(best, Math.min(1, matches / Math.min(6, anchorTerms.length)));
+  }, 0);
   const ageDays = sourcePostDate(entry)
     ? Math.max(0, (now.getTime() - sourcePostDate(entry)) / 86_400_000)
     : 365;
@@ -141,9 +156,13 @@ function sourcePostRank(
   const engagement = Math.min(1, Math.log1p(engagementTotal) / Math.log1p(2_000));
   const curated = entry.sourceOrigin === "bookmark" ? 0.18 : 0;
   return Number(
-    (topicMatch * 0.38 + freshness * 0.32 + engagement * 0.12 + curated).toFixed(
-      4,
-    ),
+    (
+      topicMatch * 0.25 +
+      anchorMatch * 0.25 +
+      freshness * 0.25 +
+      engagement * 0.1 +
+      curated
+    ).toFixed(4),
   );
 }
 
@@ -151,9 +170,13 @@ export function rankSourcePostEvidence(
   entries: readonly AgentInboxEvidence[],
   now: Date,
   topics: readonly string[],
+  anchors: readonly AgentInboxEvidence[] = [],
 ): AgentInboxEvidence[] {
   return entries
-    .map((entry) => ({ ...entry, score: sourcePostRank(entry, now, topics) }))
+    .map((entry) => ({
+      ...entry,
+      score: sourcePostRank(entry, now, topics, anchors),
+    }))
     .sort(
       (left, right) =>
         (right.score ?? 0) - (left.score ?? 0) ||
@@ -259,6 +282,7 @@ async function loadSourcePosts(
   workspaceId: string,
   now: Date,
   topics: readonly string[],
+  anchors: readonly AgentInboxEvidence[],
 ): Promise<AgentInboxEvidence[]> {
   let trackedFailure: unknown = null;
   let bookmarkFailure: unknown = null;
@@ -289,7 +313,7 @@ async function loadSourcePosts(
     .map(sourcePostEvidenceFromCandidate)
     .filter((entry): entry is AgentInboxEvidence => Boolean(entry));
   return dedupeSourcePostEvidence(
-    rankSourcePostEvidence(evidence, now, topics),
+    rankSourcePostEvidence(evidence, now, topics, anchors),
   ).slice(0, SOURCE_POST_OUTPUT_LIMIT);
 }
 
@@ -458,6 +482,45 @@ function knowledgeDetail(kind: string, content: unknown): string {
   return truncateAtWordBoundary(joined, 900);
 }
 
+const KNOWLEDGE_KIND_WEIGHT: Record<string, number> = {
+  proof: 1,
+  story: 0.95,
+  topic_expertise: 0.9,
+  belief: 0.82,
+  audience_insight: 0.72,
+  offer: 0.65,
+};
+
+function knowledgeStrength(entry: AgentInboxEvidence): number {
+  const detail = entry.detail.trim();
+  const words = detail.split(/\s+/).filter(Boolean).length;
+  const completeness = Math.min(1, words / 45);
+  const specificity = /\d|%|\$|\b(?:client|customer|result|revenue|months?|years?|decision|failed|changed|because)\b/i.test(
+    detail,
+  )
+    ? 1
+    : 0.35;
+  return Number(
+    (
+      (KNOWLEDGE_KIND_WEIGHT[entry.subtype ?? ""] ?? 0.6) * 0.5 +
+      completeness * 0.3 +
+      specificity * 0.2
+    ).toFixed(4),
+  );
+}
+
+export function rankKnowledgeEvidence(
+  entries: readonly AgentInboxEvidence[],
+): AgentInboxEvidence[] {
+  return entries
+    .map((entry) => ({ ...entry, score: knowledgeStrength(entry) }))
+    .sort(
+      (left, right) =>
+        (right.score ?? 0) - (left.score ?? 0) ||
+        left.label.localeCompare(right.label),
+    );
+}
+
 async function loadLearning(
   db: SupabaseClient,
   workspaceId: string,
@@ -484,9 +547,9 @@ async function loadKnowledge(
     .eq("active", true)
     .neq("kind", "prohibition")
     .order("updated_at", { ascending: false })
-    .limit(12);
+    .limit(40);
   if (error) throw error;
-  return (data ?? []).flatMap((row) => {
+  const entries = (data ?? []).flatMap((row) => {
     const label = clean(row.title, 240);
     const detail = knowledgeDetail(String(row.kind), row.content);
     if (!label || !detail) return [];
@@ -501,6 +564,7 @@ async function loadKnowledge(
       },
     ];
   });
+  return rankKnowledgeEvidence(entries).slice(0, 16);
 }
 
 async function loadRecentPosts(
@@ -686,6 +750,7 @@ export function createAgentInboxEvidenceLoader(db: SupabaseClient) {
           input.workspaceId,
           input.now,
           sourceTopics,
+          [...knowledge, ...learning],
         )
       : [];
     const needsNews = input.missingLanes.includes("newsjacking");

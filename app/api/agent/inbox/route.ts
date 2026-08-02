@@ -98,6 +98,8 @@ function radarIdeaFromRow(
     payload.creator_coverage === "observed"
       ? "Tracked creator coverage was observed at detection time."
       : "No tracked creator coverage was observed at detection time.";
+  const viralMechanism = textValue(payload.viral_mechanism);
+  const signalConfidence = textValue(payload.signal_confidence);
   const createdAt = row.created_at;
   const status = radarStatus(row.status);
   const sourceRef = row.trend_key ?? sourceName;
@@ -132,15 +134,21 @@ function radarIdeaFromRow(
             ref: sourceName,
           },
         ];
-  const why = isNewsjacking
-    ? [creatorCoverage, `Grounded in ${sourceName}.`]
-    : [
-        textValue(
-          payload.why_now,
-          "Several monitored creators are converging on this conversation.",
-        ),
-        `${representatives.length || 1} representative post${representatives.length === 1 ? "" : "s"} attached for review.`,
-      ];
+  const why = (
+    isNewsjacking
+      ? [viralMechanism, creatorCoverage, `Grounded in ${sourceName}.`]
+      : [
+          signalConfidence
+            ? `${signalConfidence[0].toUpperCase()}${signalConfidence.slice(1)} signal.`
+            : "",
+          textValue(
+            payload.why_now,
+            "Several monitored creators are converging on this conversation.",
+          ),
+          viralMechanism ||
+            `${representatives.length || 1} representative post${representatives.length === 1 ? "" : "s"} attached for review.`,
+        ]
+  ).filter(Boolean);
 
   return {
     id: row.id,
@@ -161,9 +169,15 @@ function radarIdeaFromRow(
     sourceUrl,
     sourceTitle: headline,
     sourcePublishedAt: publishedAt,
-    score: isNewsjacking
-      ? Math.max(0, Math.min(1, Number(row.score ?? 0) / 9))
-      : Math.max(0, Math.min(1, Number(row.score ?? 0))),
+    score: Math.max(
+      0,
+      Math.min(
+        1,
+        isNewsjacking && Number(row.score ?? 0) > 1
+          ? Number(row.score ?? 0) / 9
+          : Number(row.score ?? 0),
+      ),
+    ),
     fingerprint: `${agent}:${row.trend_key ?? row.id}`,
     availableOn: createdAt.slice(0, 10),
     expiresAt: null,
@@ -171,7 +185,10 @@ function radarIdeaFromRow(
     actedAt: row.acted_at,
     discardReason:
       status === "discarded"
-        ? `Dismissed from ${isNewsjacking ? "Newsjacking" : "Trend Radar"}`
+        ? textValue(
+            payload.dismiss_reason,
+            `Dismissed from ${isNewsjacking ? "Newsjacking" : "Trend Radar"}`,
+          )
         : null,
     readAt: row.read_at,
     createdAt,

@@ -52,6 +52,7 @@ describe("Trend Radar creator-cluster ranking", () => {
       posts: 3,
       priorCreators: 1,
       trend: "rising",
+      confidence: "confirmed",
     });
     expect(candidates[0].terms).toContain("agents");
     expect(candidates[0].representativePosts).toHaveLength(3);
@@ -73,6 +74,33 @@ describe("Trend Radar creator-cluster ranking", () => {
     );
 
     expect(candidates).toEqual([]);
+  });
+
+  test("labels two-creator corroboration as emerging", () => {
+    const recent = [
+      post("early-1", "creator-1", "AI agents are changing team planning"),
+      post("early-2", "creator-2", "AI agents are changing team planning"),
+    ];
+    const candidates = rankTrendClusters(
+      recent,
+      [
+        [1, 0],
+        [0.99, 0.01],
+      ],
+      [],
+      [],
+    );
+    expect(candidates[0]).toMatchObject({ confidence: "emerging", posts: 2 });
+  });
+
+  test("keeps a lone breakout clearly labelled as watchlist", () => {
+    const breakout = { ...post("breakout", "creator-1", "AI agents replace planning layers"), is_viral: true };
+    const candidates = rankTrendClusters([breakout], [[1, 0]], [], []);
+    expect(candidates[0]).toMatchObject({
+      confidence: "watchlist",
+      posts: 1,
+      creators: 1,
+    });
   });
 
   test("does not promote a flat evergreen conversation", () => {
@@ -143,6 +171,7 @@ describe("Trend Radar creator-cluster ranking", () => {
       creator_count: 3,
       post_count: 3,
       source_name: "Creator cluster",
+      signal_confidence: "confirmed",
     });
     expect(payload.representative_posts).toHaveLength(3);
     expect(payload.representative_posts?.[0]).toMatchObject({
@@ -212,7 +241,7 @@ function fakeDb(posts: TrendRadarPost[], embeddingRows: unknown[]) {
 }
 
 describe("scanTrendOpportunities persistence seam", () => {
-  test("writes one evidence-backed trend opportunity without a paid call", async () => {
+  test("writes one evidence-backed trend opportunity after quality refinement", async () => {
     const posts = [
       post("recent-1", "creator-1", "AI agents are changing how teams work"),
       post("recent-2", "creator-2", "AI agents are changing how teams hire"),
@@ -230,6 +259,24 @@ describe("scanTrendOpportunities persistence seam", () => {
       db as never,
       "workspace-1",
       NOW,
+      {
+        synthesize: async ({ candidates }) => ({
+          available: true,
+          opportunities: new Map(
+            candidates.map((candidate) => [
+              candidate.trendKey,
+              {
+                headline: "Agent workflows are moving from demos to operating systems",
+                angle:
+                  "The shift is not more agents; it is deciding which work deserves durable orchestration.",
+                viralMechanism:
+                  "Builders will discuss the distinction because it changes what they prioritize.",
+                score: 0.82,
+              },
+            ]),
+          ),
+        }),
+      },
     );
 
     expect(result).toMatchObject({

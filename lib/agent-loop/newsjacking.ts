@@ -13,6 +13,13 @@ import {
   releaseWorkspaceCost,
 } from "@/lib/workspace-cost-claims";
 import { claimAgentLoopDailyRun } from "@/lib/agent-loop/daily-run";
+import {
+  synthesizeNewsOpportunities,
+  type NewsOpportunitySynthesis,
+  type SynthesizedNewsOpportunity,
+} from "@/lib/agent-loop/news-opportunity-synthesis";
+import { loadAgentDismissalFeedback } from "@/lib/agent-inbox/feedback";
+import { selectRefinedCandidates } from "@/lib/agent-inbox/opportunity-quality";
 
 // Newsjacking is deliberately broader than the tracked-creator scanner. It
 // looks for fresh, web-grounded developments that could become a post idea
@@ -38,10 +45,18 @@ export type NewsjackingOpportunityPayload = {
   reason?: "creator_independent" | "verified_external_event";
   trend_key?: string;
   angle_prompt?: string;
+  viral_mechanism?: string;
+  dismiss_reason?: string;
+  corroborating_sources?: Array<{
+    title?: string;
+    source?: string;
+    url?: string;
+  }>;
 };
 
 export type NewsjackingCandidate = {
   result: NewsResult;
+  corroboratingResults?: NewsResult[];
   score: number;
   trendKey: string;
 };
@@ -57,6 +72,7 @@ export type ScanNewsjackingResult = {
 export type ScanNewsjackingOptions = {
   /** Explicit maintenance/manual triggers may intentionally rerun a pass. */
   allowRepeat?: boolean;
+  synthesize?: NewsOpportunitySynthesis;
 };
 
 export function newsjackingOperationKey(
@@ -113,7 +129,11 @@ function topicTokens(topics: readonly string[]): string[] {
   return [
     ...new Set(
       topics
-        .flatMap((topic) => normaliseTopic(topic).toLowerCase().split(/[^a-z0-9]+/))
+        .flatMap((topic) =>
+          normaliseTopic(topic)
+            .toLowerCase()
+            .split(/[^a-z0-9]+/),
+        )
         .filter((token) => token.length > 2 && !NEWS_STOP_WORDS.has(token)),
     ),
   ];
@@ -145,8 +165,79 @@ function isUsableHttpUrl(url: string): boolean {
   }
 }
 
+function isSocialPostUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    if (host === "x.com" || host.endsWith(".x.com")) return true;
+    if (host === "twitter.com" || host.endsWith(".twitter.com")) return true;
+    return (
+      (host === "linkedin.com" || host.endsWith(".linkedin.com")) &&
+      !host.startsWith("news.") &&
+      /\/(?:posts|feed\/update|pulse)\//.test(parsed.pathname)
+    );
+  } catch {
+    return false;
+  }
+}
+
+const ESTABLISHED_VERIFICATION_HOSTS = [
+  "apnews.com",
+  "bbc.com",
+  "bbc.co.uk",
+  "bloomberg.com",
+  "cnbc.com",
+  "ft.com",
+  "theguardian.com",
+  "nytimes.com",
+  "reuters.com",
+  "techcrunch.com",
+  "theverge.com",
+  "wired.com",
+  "wsj.com",
+  "news.linkedin.com",
+  "about.fb.com",
+  "ai.google",
+  "anthropic.com",
+  "blog.google",
+  "github.blog",
+  "google.com",
+  "linkedin.com",
+  "blogs.microsoft.com",
+  "news.microsoft.com",
+  "support.microsoft.com",
+  "microsoft.com",
+  "help.openai.com",
+  "platform.openai.com",
+  "openai.com",
+] as const;
+
+function hostnameMatches(hostname: string, expected: string): boolean {
+  return hostname === expected;
+}
+
+function isAuthoritativeVerification(result: NewsResult): boolean {
+  if (!isUsableHttpUrl(result.url) || isSocialPostUrl(result.url)) return false;
+
+  const parsed = new URL(result.url);
+  const hostname = parsed.hostname.toLowerCase().replace(/^www\./, "");
+  if (
+    hostname.endsWith(".gov") ||
+    hostname.endsWith(".edu") ||
+    ESTABLISHED_VERIFICATION_HOSTS.some((host) =>
+      hostnameMatches(hostname, host),
+    )
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
 /** Stable enough for a 30-day opportunity cooldown and same-run deduping. */
-export function newsjackingKeyForResult(result: Pick<NewsResult, "title" | "url">): string {
+export function newsjackingKeyForResult(
+  result: Pick<NewsResult, "title" | "url">,
+): string {
   const titleKey = result.title
     .normalize("NFKD")
     .replace(/[\u0300-\u036f]/g, "")
@@ -161,7 +252,9 @@ export function newsjackingKeyForResult(result: Pick<NewsResult, "title" | "url"
 
   try {
     const parsed = new URL(result.url);
-    return `url:${parsed.hostname}${parsed.pathname}`.toLowerCase().slice(0, 180);
+    return `url:${parsed.hostname}${parsed.pathname}`
+      .toLowerCase()
+      .slice(0, 180);
   } catch {
     return `url:${result.url.toLowerCase()}`.slice(0, 180);
   }
@@ -180,6 +273,7 @@ export function buildNewsjackingQuery(topics: readonly string[]): string {
     (topicContext
       ? `Prioritise these workspace topics when relevant: ${topicContext}. `
       : "") +
+    `Include corroborating LinkedIn creator posts or public X posts when search can verify them, while using primary or established sources to verify the underlying event. ` +
     `Return developments with a clear factual change, announcement, or conversation that a professional could add an original perspective to. ` +
     `For LinkedIn product or policy changes, prefer LinkedIn News, official LinkedIn pages, or Microsoft documentation; otherwise prefer primary or established sources and include the publication date.`
   );
@@ -197,8 +291,11 @@ export function scoreNewsjackingSignal(
   const freshness = Math.max(0, 1 - ageDays / NEWS_MAX_AGE_DAYS);
   const haystack = `${result.title} ${result.summary}`.toLowerCase();
   const tokens = topicTokens(topics);
-  const topicMatches = tokens.filter((token) => haystack.includes(token)).length;
-  const topicFit = tokens.length > 0 ? Math.min(1, topicMatches / tokens.length) : 0;
+  const topicMatches = tokens.filter((token) =>
+    haystack.includes(token),
+  ).length;
+  const topicFit =
+    tokens.length > 0 ? Math.min(1, topicMatches / tokens.length) : 0;
 
   let firstParty = 0;
   try {
@@ -223,7 +320,7 @@ export function rankNewsjackingCandidates(
   now: Date,
   topics: readonly string[],
 ): NewsjackingCandidate[] {
-  const bestByKey = new Map<string, NewsjackingCandidate>();
+  const groupedByKey = new Map<string, NewsResult[]>();
   for (const result of filterFreshNews(results, now, NEWS_MAX_AGE_DAYS)) {
     if (
       !isUsableHttpUrl(result.url) ||
@@ -232,17 +329,28 @@ export function rankNewsjackingCandidates(
     ) {
       continue;
     }
-    const candidate = {
-      result,
-      score: scoreNewsjackingSignal(result, topics, now),
-      trendKey: newsjackingKeyForResult(result),
-    };
-    const current = bestByKey.get(candidate.trendKey);
-    if (!current || candidate.score > current.score) {
-      bestByKey.set(candidate.trendKey, candidate);
-    }
+    const key = newsjackingKeyForResult(result);
+    groupedByKey.set(key, [...(groupedByKey.get(key) ?? []), result]);
   }
-  return [...bestByKey.values()].sort((a, b) => b.score - a.score);
+  const candidates: NewsjackingCandidate[] = [];
+  for (const [trendKey, grouped] of groupedByKey) {
+    const ranked = [...grouped].sort(
+      (left, right) =>
+        scoreNewsjackingSignal(right, topics, now) -
+        scoreNewsjackingSignal(left, topics, now),
+    );
+    // Social posts are useful corroboration, not sufficient event proof. Keep
+    // an authoritative/established result as the primary evidence source.
+    const result = ranked.find(isAuthoritativeVerification);
+    if (!result) continue;
+    candidates.push({
+      result,
+      corroboratingResults: ranked.filter((entry) => entry !== result),
+      score: scoreNewsjackingSignal(result, topics, now),
+      trendKey,
+    });
+  }
+  return candidates.sort((a, b) => b.score - a.score);
 }
 
 export function newsjackingOpportunityPayload(
@@ -250,11 +358,13 @@ export function newsjackingOpportunityPayload(
   topics: readonly string[],
   _now: Date,
   creatorCoverage: "none_observed" | "observed" = "none_observed",
+  synthesis?: SynthesizedNewsOpportunity,
+  corroboratingResults: readonly NewsResult[] = [],
 ): NewsjackingOpportunityPayload {
   const topic = topics.map(normaliseTopic).find(Boolean) ?? "your audience";
   return {
     signal_type: "newsjacking",
-    headline: result.title.trim().slice(0, 300),
+    headline: synthesis?.headline ?? result.title.trim().slice(0, 300),
     summary: result.summary.trim().slice(0, 1000),
     source_url: result.url.trim().slice(0, 1000),
     source_name: result.source.trim().slice(0, 120),
@@ -264,8 +374,16 @@ export function newsjackingOpportunityPayload(
     reason: "verified_external_event",
     trend_key: newsjackingKeyForResult(result),
     angle_prompt:
-      `“${result.title.trim()}” → what this changes for ${topic}; then add one specific original observation, ` +
-      "example, or implication instead of repeating the announcement.",
+      synthesis?.angle ??
+      `“${result.title.trim()}” → identify the concrete consequence or changed decision for ${topic}; add only an original claim the source supports.`,
+    ...(synthesis?.viralMechanism
+      ? { viral_mechanism: synthesis.viralMechanism }
+      : {}),
+    corroborating_sources: corroboratingResults.slice(0, 4).map((entry) => ({
+      title: entry.title,
+      source: entry.source,
+      url: entry.url,
+    })),
   };
 }
 
@@ -353,7 +471,9 @@ export function hasCreatorCoverage(
   const requiredMatches = tokens.length >= 2 ? 2 : 1;
   return trackedPostTexts.some((text) => {
     const lower = text.toLowerCase();
-    return tokens.filter((token) => lower.includes(token)).length >= requiredMatches;
+    return (
+      tokens.filter((token) => lower.includes(token)).length >= requiredMatches
+    );
   });
 }
 
@@ -406,10 +526,13 @@ export async function scanNewsjackingOpportunities(
       .map((row) => {
         if (typeof row.trend_key === "string") return row.trend_key;
         const payload = row.payload as NewsjackingOpportunityPayload | null;
-        return typeof payload?.trend_key === "string" ? payload.trend_key : null;
+        return typeof payload?.trend_key === "string"
+          ? payload.trend_key
+          : null;
       })
       .filter((key): key is string => Boolean(key)),
   );
+  const feedback = await loadAgentDismissalFeedback(sb, workspaceId);
 
   const query = buildNewsjackingQuery(topics);
   const operationKey = newsjackingOperationKey(workspaceId, now);
@@ -439,9 +562,11 @@ export async function scanNewsjackingOpportunities(
       now,
     });
   } finally {
-    await releaseWorkspaceCost({ workspaceId, operationKey, sb }).catch((error) => {
-      console.error("Failed to release Newsjacking cost claim", error);
-    });
+    await releaseWorkspaceCost({ workspaceId, operationKey, sb }).catch(
+      (error) => {
+        console.error("Failed to release Newsjacking cost claim", error);
+      },
+    );
   }
   const trackedPosts = await trackedCreatorPostTexts(
     sb,
@@ -450,11 +575,30 @@ export async function scanNewsjackingOpportunities(
   );
   const candidates = rankNewsjackingCandidates(search.results, now, topics)
     .filter((candidate) => !recentKeys.has(candidate.trendKey))
-    .slice(0, MAX_NEWSJACKING_OPPORTUNITIES_PER_RUN);
+    .slice(0, Math.max(MAX_NEWSJACKING_OPPORTUNITIES_PER_RUN * 2, 6));
+  const synthesisResult = await (
+    options.synthesize ?? synthesizeNewsOpportunities
+  )({
+    workspaceId,
+    topics,
+    candidates,
+    feedback: feedback.map(
+      (entry) => `${entry.lane}: ${entry.reason} — ${entry.headline}`,
+    ),
+  });
+  const selectedCandidates = synthesisResult.available
+    ? selectRefinedCandidates({
+        candidates,
+        opportunities: synthesisResult.opportunities,
+        key: (candidate) => candidate.trendKey,
+        limit: MAX_NEWSJACKING_OPPORTUNITIES_PER_RUN,
+      })
+    : [];
 
   let inserted = 0;
-  let skipped = 0;
-  for (const candidate of candidates) {
+  let skipped = synthesisResult.available ? 0 : candidates.length;
+  for (const candidate of selectedCandidates) {
+    const synthesis = synthesisResult.opportunities.get(candidate.trendKey);
     const payload = newsjackingOpportunityPayload(
       candidate.result,
       topics,
@@ -462,6 +606,8 @@ export async function scanNewsjackingOpportunities(
       hasCreatorCoverage(candidate.result, trackedPosts)
         ? "observed"
         : "none_observed",
+      synthesis,
+      candidate.corroboratingResults ?? [],
     );
     const { error } = await sb.from("agent_opportunities").insert({
       workspace_id: workspaceId,
@@ -469,12 +615,15 @@ export async function scanNewsjackingOpportunities(
       trend_key: candidate.trendKey,
       source_post_id: null,
       status: "proposed",
-      score: candidate.score,
+      score: synthesis?.score ?? candidate.score,
       payload,
     });
     if (error) {
       if (!String(error.message).includes("duplicate key")) {
-        console.warn("scanNewsjackingOpportunities insert failed:", error.message);
+        console.warn(
+          "scanNewsjackingOpportunities insert failed:",
+          error.message,
+        );
       }
       skipped += 1;
       continue;

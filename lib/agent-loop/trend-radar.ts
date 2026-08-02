@@ -10,6 +10,13 @@ import {
   type TopicClusterVector,
   type TopicTrendState,
 } from "@/lib/agent-loop/topic-clusters";
+import {
+  synthesizeTrendOpportunities,
+  type SynthesizedTrendOpportunity,
+  type TrendOpportunitySynthesis,
+} from "@/lib/agent-loop/trend-opportunity-synthesis";
+import { loadAgentDismissalFeedback } from "@/lib/agent-inbox/feedback";
+import { selectRefinedCandidates } from "@/lib/agent-inbox/opportunity-quality";
 
 // Trend Radar is the local creator-conversation lane. It reads embeddings
 // already produced by the scrape pipeline, so it does not introduce a paid
@@ -17,8 +24,10 @@ import {
 export const TREND_WINDOW_DAYS = 7;
 export const TREND_BASELINE_DAYS = 14;
 export const TREND_SIMILARITY_THRESHOLD = 0.72;
-export const TREND_MIN_CREATORS = 2;
+export const TREND_MIN_CREATORS = 3;
+export const TREND_EMERGING_MIN_CREATORS = 2;
 export const TREND_MIN_POSTS = 3;
+export const TREND_EMERGING_MIN_POSTS = 2;
 const TREND_EXPIRE_AFTER_DAYS = 14;
 const TREND_COOLDOWN_DAYS = 14;
 const MAX_TREND_POSTS = 1500;
@@ -31,6 +40,7 @@ export type TrendOpportunityPayload = {
   source_name?: string;
   published_at?: string;
   signal_state?: "new" | "rising";
+  signal_confidence?: "confirmed" | "emerging" | "watchlist";
   trend_state?: TopicTrendState;
   creator_coverage?: "observed";
   creator_count?: number;
@@ -40,6 +50,8 @@ export type TrendOpportunityPayload = {
   why_now?: string;
   trend_key?: string;
   angle_prompt?: string;
+  viral_mechanism?: string;
+  dismiss_reason?: string;
   representative_posts?: Array<{
     post_id?: string;
     author?: string;
@@ -76,6 +88,7 @@ export type TrendRadarCandidate = {
   posts: number;
   priorCreators: number;
   trend: Extract<TopicTrendState, "new" | "rising">;
+  confidence: "confirmed" | "emerging" | "watchlist";
   terms: string;
   score: number;
   trendKey: string;
@@ -177,6 +190,7 @@ function candidateScore(
   creators: number,
   posts: number,
   priorCreators: number,
+  breakout: boolean,
 ): number {
   const creatorDensity = Math.min(1, creators / 6);
   const postDensity = Math.min(1, posts / 8);
@@ -187,7 +201,10 @@ function candidateScore(
   return Number(
     Math.min(
       1,
-      creatorDensity * 0.45 + postDensity * 0.25 + momentum * 0.3,
+      creatorDensity * 0.45 +
+        postDensity * 0.25 +
+        momentum * 0.3 +
+        (breakout ? 0.25 : 0),
     ).toFixed(4),
   );
 }
@@ -212,8 +229,20 @@ export function rankTrendClusters(
   const candidates: TrendRadarCandidate[] = [];
   for (const cluster of clusters) {
     const creators = uniqueCreators(recentPosts, cluster.members);
-    if (cluster.members.length < TREND_MIN_POSTS) continue;
-    if (creators.length < TREND_MIN_CREATORS) continue;
+    const breakout = cluster.members.some(
+      (index) => recentPosts[index]?.is_viral === true,
+    );
+    const confidence =
+      creators.length >= TREND_MIN_CREATORS &&
+      cluster.members.length >= TREND_MIN_POSTS
+        ? "confirmed"
+        : creators.length >= TREND_EMERGING_MIN_CREATORS &&
+            cluster.members.length >= TREND_EMERGING_MIN_POSTS
+          ? "emerging"
+          : breakout
+            ? "watchlist"
+            : null;
+    if (!confidence) continue;
 
     const priorCreators = new Set<string>();
     for (let index = 0; index < priorVectors.length; index += 1) {
@@ -252,11 +281,13 @@ export function rankTrendClusters(
       posts: cluster.members.length,
       priorCreators: priorCreators.size,
       trend,
+      confidence,
       terms,
       score: candidateScore(
         creators.length,
         cluster.members.length,
         priorCreators.size,
+        breakout,
       ),
       trendKey: stableTrendKey(terms, cluster.centroid),
       latestPostAt,
@@ -274,10 +305,15 @@ export function rankTrendClusters(
 export function trendOpportunityPayload(
   candidate: TrendRadarCandidate,
   topics: readonly string[] = [],
+  synthesis?: SynthesizedTrendOpportunity,
 ): TrendOpportunityPayload {
   const terms = candidate.terms || topics.find(Boolean) || "this conversation";
   const whyNow =
-    candidate.trend === "new"
+    candidate.confidence === "watchlist"
+      ? "A breakout post makes " +
+        terms +
+        " worth watching, but broader creator convergence is not confirmed yet."
+      : candidate.trend === "new"
       ? candidate.creators +
         " distinct tracked creators are converging on " +
         terms +
@@ -290,7 +326,11 @@ export function trendOpportunityPayload(
         " in the comparison window.";
   return {
     signal_type: "trend_radar",
-    headline: terms + ": an emerging creator conversation",
+    headline:
+      synthesis?.headline ??
+      (candidate.confidence === "watchlist"
+        ? terms + ": an early signal to watch"
+        : terms + ": an emerging creator conversation"),
     summary:
       candidate.creators +
       " tracked creators posted " +
@@ -305,6 +345,7 @@ export function trendOpportunityPayload(
       ? { published_at: candidate.latestPostAt }
       : {}),
     signal_state: candidate.trend,
+    signal_confidence: candidate.confidence,
     trend_state: candidate.trend,
     creator_coverage: "observed",
     creator_count: candidate.creators,
@@ -314,9 +355,13 @@ export function trendOpportunityPayload(
     why_now: whyNow,
     trend_key: candidate.trendKey,
     angle_prompt:
-      "Several creators are converging on " +
-      terms +
-      ". Explain what this conversation changes for your audience, then add one observation or practical implication that is yours.",
+      synthesis?.angle ??
+      "Use the attached posts to identify the specific assumption, consequence, or decision that is changing around " +
+        terms +
+        ". Add only a claim you can defend.",
+    ...(synthesis?.viralMechanism
+      ? { viral_mechanism: synthesis.viralMechanism }
+      : {}),
     representative_posts: candidate.representativePosts.map((post) => ({
       post_id: post.id,
       author: accountName(post),
@@ -436,21 +481,11 @@ async function embeddingMap(
   return vectors;
 }
 
-function isSubthreshold(
-  row: TrendRadarPost,
-  thresholds: { reactions: number; comments: number },
-): boolean {
-  return (
-    row.is_viral !== true &&
-    (row.reactions ?? 0) < thresholds.reactions &&
-    (row.comments ?? 0) < thresholds.comments
-  );
-}
-
 export async function scanTrendOpportunities(
   db: SupabaseClient,
   workspaceId: string,
   now = new Date(),
+  options: { synthesize?: TrendOpportunitySynthesis } = {},
 ): Promise<ScanTrendRadarResult> {
   const expireCutoff = new Date(
     now.getTime() - TREND_EXPIRE_AFTER_DAYS * 86_400_000,
@@ -490,18 +525,11 @@ export async function scanTrendOpportunities(
     context.accountIds,
     fullStart.toISOString(),
   );
-  const thresholds = {
-    reactions: Number(process.env.VIRAL_MIN_REACTIONS ?? 500),
-    comments: Number(process.env.VIRAL_MIN_COMMENTS ?? 50),
-  };
-  const recent = rows.filter(
-    (row) =>
-      postTime(row) >= windowStart.getTime() && isSubthreshold(row, thresholds),
-  );
-  const prior = rows.filter(
-    (row) =>
-      postTime(row) < windowStart.getTime() && isSubthreshold(row, thresholds),
-  );
+  // Already-viral posts still carry signal. They are no longer discarded;
+  // instead, a lone breakout is explicitly labelled as watchlist evidence and
+  // needs broader creator convergence before it can become confirmed.
+  const recent = rows.filter((row) => postTime(row) >= windowStart.getTime());
+  const prior = rows.filter((row) => postTime(row) < windowStart.getTime());
   const vectors = await embeddingMap(
     db,
     [...recent, ...prior].map((row) => row.id),
@@ -510,7 +538,7 @@ export async function scanTrendOpportunities(
   const priorWithVec = prior.filter((row) => vectors.has(row.id));
   const recentVectors = recentWithVec.map((row) => vectors.get(row.id)!);
   const priorVectors = priorWithVec.map((row) => vectors.get(row.id)!);
-  if (recentWithVec.length < TREND_MIN_POSTS) {
+  if (recentWithVec.length === 0) {
     return {
       scanned: rows.length,
       eligible: recent.length,
@@ -551,21 +579,42 @@ export async function scanTrendOpportunities(
       })
       .filter((key): key is string => Boolean(key)),
   );
+  const feedback = await loadAgentDismissalFeedback(db, workspaceId);
   const freshCandidates = candidates
     .filter((candidate) => !recentKeys.has(candidate.trendKey))
-    .slice(0, MAX_TREND_OPPORTUNITIES_PER_RUN);
+    .slice(0, Math.max(MAX_TREND_OPPORTUNITIES_PER_RUN * 2, 6));
+
+  const synthesisResult = await (
+    options.synthesize ?? synthesizeTrendOpportunities
+  )({
+    workspaceId,
+    topics: context.topics,
+    candidates: freshCandidates,
+    feedback: feedback.map(
+      (entry) => `${entry.lane}: ${entry.reason} — ${entry.headline}`,
+    ),
+  });
+  const selectedCandidates = synthesisResult.available
+    ? selectRefinedCandidates({
+        candidates: freshCandidates,
+        opportunities: synthesisResult.opportunities,
+        key: (candidate) => candidate.trendKey,
+        limit: MAX_TREND_OPPORTUNITIES_PER_RUN,
+      })
+    : [];
 
   let inserted = 0;
-  let skipped = 0;
-  for (const candidate of freshCandidates) {
-    const payload = trendOpportunityPayload(candidate, context.topics);
+  let skipped = synthesisResult.available ? 0 : freshCandidates.length;
+  for (const candidate of selectedCandidates) {
+    const synthesis = synthesisResult.opportunities.get(candidate.trendKey);
+    const payload = trendOpportunityPayload(candidate, context.topics, synthesis);
     const { error } = await db.from("agent_opportunities").insert({
       workspace_id: workspaceId,
       kind: "trend",
       trend_key: candidate.trendKey,
       source_post_id: null,
       status: "proposed",
-      score: candidate.score,
+      score: synthesis?.score ?? candidate.score,
       payload,
     });
     if (error) {
