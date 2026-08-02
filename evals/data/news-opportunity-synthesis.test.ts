@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { synthesizeNewsOpportunities } from "@/lib/agent-loop/news-opportunity-synthesis";
+import { OPPORTUNITY_ANGLE_CATEGORIES } from "@/lib/agent-inbox/opportunity-quality";
 import type { NewsjackingCandidate } from "@/lib/agent-loop/newsjacking";
 
 const { completeChat } = vi.hoisted(() => ({ completeChat: vi.fn() }));
@@ -35,6 +36,7 @@ describe("Newsjacking opportunity synthesis", () => {
         opportunities: [
           {
             candidate_id: candidate.trendKey,
+            angle_category: "changed_incentive",
             headline: "LinkedIn launches another label",
             thesis: "The announcement is worth sharing with writers.",
             viral_mechanism: "It is recent platform news.",
@@ -48,6 +50,7 @@ describe("Newsjacking opportunity synthesis", () => {
           },
           {
             candidate_id: candidate.trendKey,
+            angle_category: "decision_rule",
             headline: "AI labels make generic expertise a distribution risk",
             thesis:
               "The label changes the incentive from producing more content to publishing claims only the author can substantiate.",
@@ -63,6 +66,7 @@ describe("Newsjacking opportunity synthesis", () => {
           },
           {
             candidate_id: candidate.trendKey,
+            angle_category: "unexpected_consequence",
             headline: "Generic expertise now carries a distribution penalty",
             thesis:
               "The label rewards writers whose claims can only come from firsthand experience!",
@@ -87,6 +91,28 @@ describe("Newsjacking opportunity synthesis", () => {
     expect(result.opportunities.get(candidate.trendKey)).toMatchObject({
       headline: "AI labels make generic expertise a distribution risk",
     });
+    const request = completeChat.mock.calls[0]?.[0] as {
+      tools?: Array<{
+        function?: {
+          parameters?: {
+            properties?: {
+              opportunities?: {
+                items?: {
+                  properties?: Record<string, { enum?: readonly string[] }>;
+                  required?: string[];
+                };
+              };
+            };
+          };
+        };
+      }>;
+    };
+    const itemSchema =
+      request.tools?.[0]?.function?.parameters?.properties?.opportunities?.items;
+    expect(itemSchema?.required).toContain("angle_category");
+    expect(itemSchema?.properties?.angle_category?.enum).toEqual(
+      OPPORTUNITY_ANGLE_CATEGORIES,
+    );
   });
 
   it("rejects a forced topical bridge", async () => {
@@ -99,6 +125,7 @@ describe("Newsjacking opportunity synthesis", () => {
         opportunities: [
           {
             candidate_id: candidate.trendKey,
+            angle_category: "changed_incentive",
             headline: "A LinkedIn update",
             thesis: "Share the news with your audience.",
             viral_mechanism: "It is recent.",
@@ -131,6 +158,7 @@ describe("Newsjacking opportunity synthesis", () => {
         opportunities: [
           {
             candidate_id: candidate.trendKey,
+            angle_category: "decision_rule",
             headline: "AI labels make generic expertise a distribution risk",
             thesis:
               "The label rewards writers whose claims can only come from firsthand experience.",
@@ -146,6 +174,7 @@ describe("Newsjacking opportunity synthesis", () => {
           },
           {
             candidate_id: candidate.trendKey,
+            angle_category: "decision_rule",
             headline: "Generic expertise now carries a distribution penalty",
             thesis:
               "The label rewards writers whose claims can only come from firsthand experience!",
@@ -169,5 +198,39 @@ describe("Newsjacking opportunity synthesis", () => {
       candidates: [candidate],
     });
     expect(result.opportunities.size).toBe(0);
+  });
+
+  it("treats malformed category output as retryable model unavailability", async () => {
+    completeChat.mockResolvedValue({
+      text: "",
+      finishReason: "tool_calls",
+      model: "test-model",
+      usage: undefined,
+      toolArgs: {
+        opportunities: [
+          {
+            candidate_id: candidate.trendKey,
+            headline: "A plausible headline",
+            thesis: "A plausible thesis returned without the required category.",
+            viral_mechanism: "A plausible sharing reason.",
+            quality: {
+              relevance: 0.9,
+              tension: 0.8,
+              novelty: 0.8,
+              timeliness: 0.9,
+              shareability: 0.8,
+            },
+          },
+        ],
+      },
+    });
+
+    const result = await synthesizeNewsOpportunities({
+      workspaceId: "workspace-1",
+      topics: ["LinkedIn writing"],
+      candidates: [candidate],
+    });
+
+    expect(result.available).toBe(false);
   });
 });

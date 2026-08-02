@@ -148,6 +148,36 @@ export type RefinedOpportunity = {
   score: number;
 };
 
+export const OPPORTUNITY_ANGLE_CATEGORIES = [
+  "changed_incentive",
+  "unexpected_consequence",
+  "contrarian_belief",
+  "decision_rule",
+  "identity_tension",
+  "proof_gap",
+] as const;
+export type OpportunityAngleCategory =
+  (typeof OPPORTUNITY_ANGLE_CATEGORIES)[number];
+export const OPPORTUNITY_ANGLE_CATEGORY_JSON_SCHEMA = {
+  type: "string",
+  enum: OPPORTUNITY_ANGLE_CATEGORIES,
+} as const;
+export const OPPORTUNITY_ANGLE_CATEGORY_GUIDANCE = [
+  "changed_incentive: a concrete behavior is newly rewarded or punished",
+  "unexpected_consequence: a second-order outcome follows from the signal",
+  "contrarian_belief: the evidence challenges a common belief",
+  "decision_rule: the audience gets a threshold or choice rule",
+  "identity_tension: the signal conflicts with how the audience sees itself",
+  "proof_gap: the signal exposes a claim that lacks evidence",
+].join("; ");
+
+function readAngleCategory(value: unknown): OpportunityAngleCategory | null {
+  return typeof value === "string" &&
+    (OPPORTUNITY_ANGLE_CATEGORIES as readonly string[]).includes(value)
+    ? (value as OpportunityAngleCategory)
+    : null;
+}
+
 const ANGLE_STOP_WORDS = new Set([
   "about",
   "after",
@@ -198,6 +228,19 @@ function cleanRefinedField(value: unknown, max: number): string {
   );
 }
 
+export function hasInvalidRefinedAngleCategories<C>(input: {
+  rows: unknown;
+  candidates: ReadonlyMap<string, C>;
+}): boolean {
+  if (!Array.isArray(input.rows)) return false;
+  return input.rows.some((value) => {
+    if (!value || typeof value !== "object") return false;
+    const row = value as Record<string, unknown>;
+    const id = cleanRefinedField(row.candidate_id, 240);
+    return input.candidates.has(id) && !readAngleCategory(row.angle_category);
+  });
+}
+
 /**
  * Applies the common model-output boundary for Trend Radar and Newsjacking:
  * known candidate, complete proposal, quality gate, semantic diversity, then
@@ -214,7 +257,10 @@ export function collectDistinctRefinedOpportunities<C>(input: {
     model: unknown;
   }) => ReturnType<typeof scoreOpportunityQuality> | null;
 }): Map<string, RefinedOpportunity> {
-  const proposals = new Map<string, RefinedOpportunity[]>();
+  const proposals = new Map<
+    string,
+    Array<RefinedOpportunity & { angleCategory: OpportunityAngleCategory }>
+  >();
   const rows = Array.isArray(input.rows) ? input.rows : [];
   for (const value of rows) {
     if (!value || typeof value !== "object") continue;
@@ -225,7 +271,8 @@ export function collectDistinctRefinedOpportunities<C>(input: {
     const headline = cleanRefinedField(row.headline, 140);
     const angle = cleanRefinedField(row.thesis, 700);
     const viralMechanism = cleanRefinedField(row.viral_mechanism, 220);
-    if (!headline || !angle || !viralMechanism) continue;
+    const angleCategory = readAngleCategory(row.angle_category);
+    if (!headline || !angle || !viralMechanism || !angleCategory) continue;
     const quality = input.qualityFor({
       candidate,
       headline,
@@ -234,25 +281,37 @@ export function collectDistinctRefinedOpportunities<C>(input: {
     });
     if (!quality) continue;
     const existing = proposals.get(id) ?? [];
-    existing.push({ headline, angle, viralMechanism, score: quality.score });
+    existing.push({
+      headline,
+      angle,
+      viralMechanism,
+      score: quality.score,
+      angleCategory,
+    });
     proposals.set(id, existing);
   }
 
   const selected = new Map<string, RefinedOpportunity>();
   for (const [id, options] of proposals) {
-    const diverse = [...options]
-      .sort((left, right) => right.score - left.score)
-      .reduce<RefinedOpportunity[]>((kept, option) => {
-        if (
-          kept.every((existing) =>
-            areDistinctOpportunityAngles(existing.angle, option.angle),
-          )
-        ) {
-          kept.push(option);
-        }
-        return kept;
-      }, []);
-    if (diverse.length >= 2 && diverse[0]) selected.set(id, diverse[0]);
+    const pairs = options.flatMap((left, leftIndex) =>
+      options.slice(leftIndex + 1).flatMap((right) =>
+        left.angleCategory !== right.angleCategory &&
+        areDistinctOpportunityAngles(left.angle, right.angle)
+          ? [{ left, right, combinedScore: left.score + right.score }]
+          : [],
+      ),
+    );
+    const bestPair = pairs.sort(
+      (left, right) => right.combinedScore - left.combinedScore,
+    )[0];
+    if (bestPair) {
+      const strongest =
+        bestPair.left.score >= bestPair.right.score
+          ? bestPair.left
+          : bestPair.right;
+      const { headline, angle, viralMechanism, score } = strongest;
+      selected.set(id, { headline, angle, viralMechanism, score });
+    }
   }
   return selected;
 }

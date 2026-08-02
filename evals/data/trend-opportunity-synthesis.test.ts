@@ -67,6 +67,7 @@ function coherentOptions(topic: string, supportingPostIds: string[]) {
       candidate_id: candidate.trendKey,
       canonical_topic: topic,
       supporting_post_ids: supportingPostIds,
+      angle_category: "changed_incentive",
       headline: "Claude Code is turning review into part of execution",
       thesis:
         "The important shift is not faster generation; it is moving quality checks inside the agent loop.",
@@ -84,6 +85,7 @@ function coherentOptions(topic: string, supportingPostIds: string[]) {
       candidate_id: candidate.trendKey,
       canonical_topic: topic,
       supporting_post_ids: supportingPostIds,
+      angle_category: "decision_rule",
       headline: "Claude Code makes approval design a product decision",
       thesis:
         "Teams now need to decide which checks belong inside the agent and which still require a person.",
@@ -119,6 +121,7 @@ describe("Trend Radar opportunity synthesis", () => {
               "post-claude-2",
               "post-claude-3",
             ],
+            angle_category: "changed_incentive",
             headline: "Agent workflows are changing",
             thesis: "Teams should pay attention to agent workflows.",
             viral_mechanism: "Agent builders may find it useful.",
@@ -138,6 +141,7 @@ describe("Trend Radar opportunity synthesis", () => {
               "post-claude-2",
               "post-claude-3",
             ],
+            angle_category: "contrarian_belief",
             headline: "Agent orchestration is becoming premature optimization",
             thesis:
               "Teams are adding agent graphs before proving the underlying task deserves an agent.",
@@ -182,6 +186,7 @@ describe("Trend Radar opportunity synthesis", () => {
               "post-claude-2",
               "post-claude-3",
             ],
+            angle_category: "changed_incentive",
             headline: "Claude Code is turning review into part of execution",
             thesis:
               "The important shift is not faster generation; it is moving quality checks inside the agent loop.",
@@ -203,6 +208,7 @@ describe("Trend Radar opportunity synthesis", () => {
               "post-claude-2",
               "post-claude-3",
             ],
+            angle_category: "decision_rule",
             headline: "Claude Code makes approval design a product decision",
             thesis:
               "Teams now need to decide which checks belong inside the agent and which still require a person.",
@@ -354,6 +360,7 @@ describe("Trend Radar opportunity synthesis", () => {
               "post-claude-2",
               "post-claude-3",
             ],
+            angle_category: "changed_incentive",
             headline: "AI agents are trending",
             thesis: "Explain what AI agents mean for your audience.",
             viral_mechanism: "People may find it interesting.",
@@ -392,6 +399,7 @@ describe("Trend Radar opportunity synthesis", () => {
               "post-claude-2",
               "post-claude-3",
             ],
+            angle_category: "contrarian_belief",
             headline: "Agent orchestration is becoming premature optimization",
             thesis:
               "Teams are adding agent graphs before proving the task deserves an agent.",
@@ -415,5 +423,40 @@ describe("Trend Radar opportunity synthesis", () => {
       candidates: [candidate],
     });
     expect(result.opportunities.size).toBe(0);
+  });
+
+  it("treats malformed category output as retryable model unavailability", async () => {
+    completeChat.mockResolvedValue({
+      text: "",
+      finishReason: "tool_calls",
+      model: "test-model",
+      usage: undefined,
+      toolArgs: {
+        opportunities: [
+          {
+            candidate_id: candidate.trendKey,
+            angle_category: "generic_take",
+            headline: "A plausible trend headline",
+            thesis: "A plausible trend thesis with an invented category.",
+            viral_mechanism: "A plausible sharing reason.",
+            quality: {
+              relevance: 0.9,
+              tension: 0.8,
+              novelty: 0.8,
+              timeliness: 0.9,
+              shareability: 0.8,
+            },
+          },
+        ],
+      },
+    });
+
+    const result = await synthesizeTrendOpportunities({
+      workspaceId: "workspace-1",
+      topics: ["AI agents"],
+      candidates: [candidate],
+    });
+
+    expect(result.available).toBe(false);
   });
 });

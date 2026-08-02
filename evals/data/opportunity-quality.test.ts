@@ -84,6 +84,7 @@ describe("opportunity quality", () => {
         {
           candidate_id: "candidate-1",
           headline: "Mediocre version",
+          angle_category: "decision_rule",
           thesis:
             "Teams add agent graphs before proving the task deserves an agent.",
           viral_mechanism: "Names a common mistake.",
@@ -92,6 +93,7 @@ describe("opportunity quality", () => {
         {
           candidate_id: "candidate-1",
           headline: "Strong version",
+          angle_category: "decision_rule",
           thesis:
             "Teams add agent graphs before proving the task deserves an agent!",
           viral_mechanism: "Names an expensive mistake.",
@@ -100,6 +102,7 @@ describe("opportunity quality", () => {
         {
           candidate_id: "candidate-1",
           headline: "Distinct version",
+          angle_category: "proof_gap",
           thesis:
             "The winning workflow starts by measuring the human handoff cost.",
           viral_mechanism: "Offers a useful decision rule.",
@@ -119,5 +122,126 @@ describe("opportunity quality", () => {
       }),
     });
     expect(result.get("candidate-1")?.headline).toBe("Strong version");
+  });
+
+  it("does not count paraphrases in the same editorial category as competing angles", () => {
+    const result = collectDistinctRefinedOpportunities({
+      candidates: new Map([["candidate-1", {}]]),
+      rows: [
+        {
+          candidate_id: "candidate-1",
+          headline: "Measure the handoff",
+          angle_category: "decision_rule",
+          thesis: "Adopt agents only when handoff costs exceed review costs.",
+          viral_mechanism: "Offers a practical threshold.",
+          quality: 0.9,
+        },
+        {
+          candidate_id: "candidate-1",
+          headline: "Use a threshold before automating",
+          angle_category: "decision_rule",
+          thesis: "Automation earns its place when coordination becomes more expensive than checking.",
+          viral_mechanism: "Gives operators a memorable test.",
+          quality: 0.85,
+        },
+      ],
+      qualityFor: ({ model }) => ({
+        score: Number(model),
+        dimensions: {
+          relevance: 0.8,
+          tension: 0.8,
+          evidence: 0.8,
+          novelty: 0.8,
+          timeliness: 0.8,
+          shareability: 0.8,
+        },
+      }),
+    });
+
+    expect(result.size).toBe(0);
+  });
+
+  it("rejects missing and unknown angle categories at the server boundary", () => {
+    const result = collectDistinctRefinedOpportunities({
+      candidates: new Map([["candidate-1", {}]]),
+      rows: [
+        {
+          candidate_id: "candidate-1",
+          headline: "Missing category",
+          thesis:
+            "Automation should be measured by the cost of human handoffs.",
+          viral_mechanism: "Looks useful.",
+          quality: 0.9,
+        },
+        {
+          candidate_id: "candidate-1",
+          angle_category: "generic_take",
+          headline: "Unknown category",
+          thesis: "Audiences distrust expertise claims that contain no proof.",
+          viral_mechanism: "Looks useful.",
+          quality: 0.9,
+        },
+      ],
+      qualityFor: ({ model }) => ({
+        score: Number(model),
+        dimensions: {
+          relevance: 0.8,
+          tension: 0.8,
+          evidence: 0.8,
+          novelty: 0.8,
+          timeliness: 0.8,
+          shareability: 0.8,
+        },
+      }),
+    });
+
+    expect(result.size).toBe(0);
+  });
+
+  it("selects the best valid pair instead of anchoring on the top single option", () => {
+    const result = collectDistinctRefinedOpportunities({
+      candidates: new Map([["candidate-1", {}]]),
+      rows: [
+        {
+          candidate_id: "candidate-1",
+          angle_category: "decision_rule",
+          headline: "Highest single",
+          thesis: "Teams add agent graphs before proving the task deserves an agent.",
+          viral_mechanism: "Names a common mistake.",
+          quality: 1,
+        },
+        {
+          candidate_id: "candidate-1",
+          angle_category: "decision_rule",
+          headline: "Best member of valid pair",
+          thesis: "Coordination cost should determine whether automation earns a place.",
+          viral_mechanism: "Offers a threshold.",
+          quality: 0.8,
+        },
+        {
+          candidate_id: "candidate-1",
+          angle_category: "proof_gap",
+          headline: "Second member of valid pair",
+          thesis: "Teams add agent graphs before proving the task deserves an agent!",
+          viral_mechanism: "Challenges unsupported claims.",
+          quality: 0.7,
+        },
+      ],
+      qualityFor: ({ model }) => ({
+        score: Number(model),
+        dimensions: {
+          relevance: 0.8,
+          tension: 0.8,
+          evidence: 0.8,
+          novelty: 0.8,
+          timeliness: 0.8,
+          shareability: 0.8,
+        },
+      }),
+    });
+
+    expect(result.get("candidate-1")?.headline).toBe(
+      "Best member of valid pair",
+    );
   });
 });
