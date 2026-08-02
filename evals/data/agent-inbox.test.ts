@@ -153,8 +153,13 @@ function laneEvidence(
   bundle: AgentInboxEvidenceBundle,
 ): AgentInboxEvidence[] {
   if (lane === "newsjacking") return bundle.news;
-  if (lane === "personal_story") return bundle.knowledge;
-  return bundle.learning.length ? bundle.learning : bundle.knowledge;
+  if (lane === "personal_story") {
+    return [...bundle.sourcePosts, ...bundle.knowledge];
+  }
+  return [
+    ...bundle.sourcePosts,
+    ...(bundle.learning.length ? bundle.learning : bundle.knowledge),
+  ];
 }
 
 function synthesis(): AgentInboxSynthesis {
@@ -218,6 +223,7 @@ const NEWS_EVIDENCE = {
   learning: [
     {
       kind: "performance" as const,
+      role: "anchor" as const,
       label: "Teardown posts outperform",
       detail: "A measured result",
       ref: "signal-1",
@@ -228,15 +234,26 @@ const NEWS_EVIDENCE = {
   knowledge: [
     {
       kind: "knowledge" as const,
+      role: "anchor" as const,
       label: "The client who fired us",
       detail: "An approved story",
       ref: "knowledge-1",
       subtype: "story",
     },
   ],
+  sourcePosts: [
+    {
+      kind: "source_post" as const,
+      role: "inspiration" as const,
+      label: "A source post worth modeling",
+      detail: "A reusable source structure.",
+      ref: "source-post-1",
+      url: "https://example.com/source-post-1",
+    },
+  ],
 };
 
-const NO_EVIDENCE = { news: [], learning: [], knowledge: [] };
+const NO_EVIDENCE = { news: [], learning: [], knowledge: [], sourcePosts: [] };
 
 describe("AgentInbox", () => {
   test("tops up lanes below capacity and preserves ideas the user has not handled", async () => {
@@ -277,7 +294,12 @@ describe("AgentInbox", () => {
           return synthesis().synthesize(input);
         },
       },
-      loadEvidence: async () => ({ news: [], learning: [], knowledge: [] }),
+      loadEvidence: async () => ({
+        news: [],
+        learning: [],
+        knowledge: [],
+        sourcePosts: [],
+      }),
     });
 
     await inbox.replenish({
@@ -302,7 +324,12 @@ describe("AgentInbox", () => {
     const inbox = createAgentInbox({
       repository: repo,
       synthesis: synthesis(),
-      loadEvidence: async () => ({ news: [], learning: [], knowledge: [] }),
+      loadEvidence: async () => ({
+        news: [],
+        learning: [],
+        knowledge: [],
+        sourcePosts: [],
+      }),
     });
 
     const result = await inbox.replenish({
@@ -339,7 +366,12 @@ describe("AgentInbox", () => {
     const inbox = createAgentInbox({
       repository: repo,
       synthesis: synthesis(),
-      loadEvidence: async () => ({ news: [], learning: [], knowledge: [] }),
+      loadEvidence: async () => ({
+        news: [],
+        learning: [],
+        knowledge: [],
+        sourcePosts: [],
+      }),
     });
 
     const transitioned = await inbox.transition({
@@ -530,16 +562,25 @@ describe("AgentInbox", () => {
               why: ["Grounded in the user's results"],
               evidence: [
                 {
+                  kind: "source_post" as const,
+                  role: "inspiration" as const,
+                  label: "A source structure",
+                  detail: "A reusable source structure",
+                  ref: "source-1",
+                  url: "https://example.com/source-1",
+                },
+                {
                   kind: "performance" as const,
+                  role: "anchor" as const,
                   label: "Teardown posts outperform",
                   detail: "A measured result",
                   ref: "signal-1",
                 },
               ],
-              sourceKind: "workspace_learning" as const,
-              sourceRef: null,
-              sourceUrl: null,
-              sourceTitle: null,
+              sourceKind: "source_post" as const,
+              sourceRef: "source-1",
+              sourceUrl: "https://example.com/source-1",
+              sourceTitle: "A source structure",
               sourcePublishedAt: null,
               score: 0.9,
               fingerprint: "proven-only",
@@ -573,16 +614,25 @@ describe("AgentInbox", () => {
             why: ["Same underlying source"],
             evidence: [
               {
+                kind: "source_post" as const,
+                role: "inspiration" as const,
+                label: "Same source",
+                detail: "One source post, two angles",
+                ref: "same-source",
+                url: "https://example.com/same-source",
+              },
+              {
                 kind: "knowledge" as const,
+                role: "anchor" as const,
                 label: "Same story",
-                detail: "One article, two angles",
+                detail: "One user story, two angles",
                 subtype: "story",
               },
             ],
-            sourceKind: "knowledge" as const,
-            sourceRef: "same-story",
-            sourceUrl: null,
-            sourceTitle: "Same story",
+            sourceKind: "source_post" as const,
+            sourceRef: "same-source",
+            sourceUrl: "https://example.com/same-source",
+            sourceTitle: "Same source",
             sourcePublishedAt: null,
             score: 0.9,
             fingerprint: `same-story-${index}`,

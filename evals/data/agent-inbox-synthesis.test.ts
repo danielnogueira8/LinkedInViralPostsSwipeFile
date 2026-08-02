@@ -79,7 +79,10 @@ describe("citeEvidenceByName", () => {
 });
 
 describe("createAgentInboxSynthesis lane capacity", () => {
-  const evidence: Record<"news" | "learning" | "knowledge", AgentInboxEvidence[]> = {
+  const evidence: Record<
+    "news" | "learning" | "knowledge",
+    AgentInboxEvidence[]
+  > = {
     news: [
       {
         kind: "news",
@@ -97,14 +100,64 @@ describe("createAgentInboxSynthesis lane capacity", () => {
       },
     ],
     learning: [
-      { kind: "performance", label: "Top performing post", detail: "2x baseline" },
-      { kind: "performance", label: "Second performing post", detail: "3x baseline" },
-      { kind: "performance", label: "Third performing post", detail: "4x baseline" },
+      {
+        kind: "performance",
+        role: "anchor",
+        label: "Top performing post",
+        detail: "2x baseline",
+      },
+      {
+        kind: "performance",
+        role: "anchor",
+        label: "Second performing post",
+        detail: "3x baseline",
+      },
+      {
+        kind: "performance",
+        role: "anchor",
+        label: "Third performing post",
+        detail: "4x baseline",
+      },
     ],
     knowledge: [
-      { kind: "knowledge", label: "Approved belief", detail: "A core claim" },
+      {
+        kind: "knowledge",
+        role: "anchor",
+        label: "Approved belief",
+        detail: "A core claim",
+        subtype: "topic_expertise",
+      },
     ],
   };
+  const sourcePosts: AgentInboxEvidence[] = [
+    {
+      kind: "source_post",
+      role: "inspiration",
+      label: "Alex's source post",
+      detail: "A long source post structure worth modeling.",
+      ref: "source-1",
+      url: "https://example.com/source-1",
+      sourceOrigin: "swipe",
+    },
+    {
+      kind: "source_post",
+      role: "inspiration",
+      label: "Jordan's source post",
+      detail: "A second long source post structure worth modeling.",
+      ref: "source-2",
+      url: "https://example.com/source-2",
+      sourceOrigin: "swipe",
+    },
+    {
+      kind: "source_post",
+      role: "inspiration",
+      label: "Taylor's source post",
+      detail: "A third long source post structure worth modeling.",
+      ref: "source-3",
+      url: "https://example.com/source-3",
+      sourceOrigin: "swipe",
+    },
+  ];
 
   function rawIdea(
     lane: string,
@@ -143,7 +196,7 @@ describe("createAgentInboxSynthesis lane capacity", () => {
     return {
       workspaceId: "workspace-1",
       lanes,
-      evidence,
+      evidence: { ...evidence, sourcePosts, recent: [] },
       recentFingerprints: new Set<string>(),
       preferences: {
         enabled: true,
@@ -164,7 +217,7 @@ describe("createAgentInboxSynthesis lane capacity", () => {
     completeChat.mockResolvedValue(
       modelResponse(
         [1, 2, 3].map((index) =>
-          rawIdea("educational", index, [`P${index}`]),
+          rawIdea("educational", index, [`S${index}`, `P${index}`]),
         ),
       ),
     );
@@ -179,7 +232,10 @@ describe("createAgentInboxSynthesis lane capacity", () => {
     completeChat.mockResolvedValue(
       modelResponse(
         [1, 2, 3, 4, 5].map((index) =>
-          rawIdea("educational", index, [`P${((index - 1) % 3) + 1}`]),
+          rawIdea("educational", index, [
+            `S${((index - 1) % 3) + 1}`,
+            `P${((index - 1) % 3) + 1}`,
+          ]),
         ),
       ),
     );
@@ -197,9 +253,9 @@ describe("createAgentInboxSynthesis lane capacity", () => {
   it("validates every idea in a lane, not just the first", async () => {
     completeChat.mockResolvedValue(
       modelResponse([
-        rawIdea("educational", 1, ["P1"]),
-        rawIdea("educational", 2, ["P2"], { angle: "" }),
-        rawIdea("educational", 3, ["P3"]),
+        rawIdea("educational", 1, ["S1", "P1"]),
+        rawIdea("educational", 2, ["S2", "P1"], { angle: "" }),
+        rawIdea("educational", 3, ["S3", "P1"]),
       ]),
     );
     const results = await createAgentInboxSynthesis().synthesize(
@@ -234,7 +290,7 @@ describe("createAgentInboxSynthesis lane capacity", () => {
   it("gives each requested lane its own model call and ignores the model score", async () => {
     completeChat.mockResolvedValue(
       modelResponse([
-        rawIdea("educational", 1, ["P1"], { score: 0.01 }),
+        rawIdea("educational", 1, ["S1", "P1"], { score: 0.01 }),
       ]),
     );
     const results = await createAgentInboxSynthesis().synthesize(

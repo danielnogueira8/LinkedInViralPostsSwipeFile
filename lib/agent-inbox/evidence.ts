@@ -5,8 +5,11 @@ import type {
   AgentInboxEvidenceBundle,
   AgentInboxLane,
   AgentInboxPreferences,
+  AgentInboxSourceOrigin,
 } from "@/lib/agent-inbox";
+import { isModelableSourceText } from "@/lib/agent/model-source-selection-policy";
 import { searchNews, type NewsResult } from "@/lib/news-search";
+import { discoverSourcePosts } from "@/lib/source-post-discovery";
 import {
   firstSentence,
   truncateAtSentenceBoundary,
@@ -42,6 +45,243 @@ function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+export type AgentInboxSourcePostCandidate = {
+  id: string;
+  origin: AgentInboxSourceOrigin;
+  text: string | null;
+  authorName: string | null;
+  url: string | null;
+  publishedAt: string | null;
+  savedAt: string | null;
+  reactions: number | null;
+  comments: number | null;
+};
+
+const SOURCE_POST_POOL_LIMIT = 24;
+const SOURCE_POST_OUTPUT_LIMIT = 8;
+
+function numeric(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function canonicalSourceUrl(url: string | null): string | null {
+  if (!url) return null;
+  try {
+    const parsed = new URL(url);
+    parsed.search = "";
+    parsed.hash = "";
+    return parsed.toString().replace(/\/$/, "");
+  } catch {
+    return url.trim() || null;
+  }
+}
+
+function sourcePostText(candidate: AgentInboxSourcePostCandidate): string | null {
+  const text = clean(candidate.text, 2_400);
+  return text && isModelableSourceText(text) ? text : null;
+}
+
+export function sourcePostEvidenceFromCandidate(
+  candidate: AgentInboxSourcePostCandidate,
+): AgentInboxEvidence | null {
+  const detail = sourcePostText(candidate);
+  const ref = clean(candidate.id, 240);
+  if (!detail || !ref) return null;
+  const authorName = clean(candidate.authorName, 180);
+  const url = canonicalSourceUrl(candidate.url);
+  return {
+    kind: "source_post",
+    role: "inspiration",
+    label: authorName ? `${authorName}'s source post` : "Swipe-file source post",
+    detail,
+    ref,
+    url,
+    publishedAt: candidate.publishedAt,
+    authorName,
+    sourceOrigin: candidate.origin,
+    reactions: candidate.reactions,
+    comments: candidate.comments,
+    score: 0,
+  };
+}
+
+function sourcePostDate(entry: AgentInboxEvidence): number {
+  const value = entry.publishedAt ? Date.parse(entry.publishedAt) : NaN;
+  return Number.isFinite(value) ? value : 0;
+}
+
+function sourcePostDedupeKey(entry: AgentInboxEvidence): string | null {
+  const url = canonicalSourceUrl(entry.url ?? null);
+  if (url) return `url:${url}`;
+  return entry.ref ? `${entry.sourceOrigin ?? "source"}:${entry.ref}` : null;
+}
+
+function sourcePostRank(
+  entry: AgentInboxEvidence,
+  now: Date,
+  topics: readonly string[],
+): number {
+  const terms = topics
+    .flatMap((topic) => topic.toLocaleLowerCase("en-US").split(/\s+/))
+    .map((term) => term.replace(/[^\p{L}\p{N}]/gu, ""))
+    .filter((term) => term.length >= 3);
+  const haystack = `${entry.label} ${entry.detail}`.toLocaleLowerCase("en-US");
+  const topicMatch = terms.length
+    ? Math.min(1, terms.filter((term) => haystack.includes(term)).length / 3)
+    : 0.5;
+  const ageDays = sourcePostDate(entry)
+    ? Math.max(0, (now.getTime() - sourcePostDate(entry)) / 86_400_000)
+    : 365;
+  const freshness = Math.max(0, 1 - ageDays / 90);
+  const engagementTotal =
+    Math.max(0, entry.reactions ?? 0) +
+    Math.max(0, entry.comments ?? 0) * 3;
+  const engagement = Math.min(1, Math.log1p(engagementTotal) / Math.log1p(2_000));
+  const curated = entry.sourceOrigin === "bookmark" ? 0.18 : 0;
+  return Number(
+    (topicMatch * 0.38 + freshness * 0.32 + engagement * 0.12 + curated).toFixed(
+      4,
+    ),
+  );
+}
+
+export function rankSourcePostEvidence(
+  entries: readonly AgentInboxEvidence[],
+  now: Date,
+  topics: readonly string[],
+): AgentInboxEvidence[] {
+  return entries
+    .map((entry) => ({ ...entry, score: sourcePostRank(entry, now, topics) }))
+    .sort(
+      (left, right) =>
+        (right.score ?? 0) - (left.score ?? 0) ||
+        sourcePostDate(right) - sourcePostDate(left),
+    );
+}
+
+export function dedupeSourcePostEvidence(
+  entries: readonly AgentInboxEvidence[],
+): AgentInboxEvidence[] {
+  const seen = new Set<string>();
+  return entries.filter((entry) => {
+    const key = sourcePostDedupeKey(entry);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function accountRecord(value: unknown): Record<string, unknown> {
+  const relation = Array.isArray(value) ? value[0] : value;
+  return record(relation);
+}
+
+async function loadTrackedSourcePostCandidates(
+  db: SupabaseClient,
+  workspaceId: string,
+): Promise<AgentInboxSourcePostCandidate[]> {
+  // Keep the pure evidence helpers importable in lightweight evals and tools
+  // that do not have a Clerk request context. The workspace-scoped adapter is
+  // only needed when a production inbox run actually requests Source Posts.
+  const { trackedAccountIds } = await import("@/lib/supabase-scoped");
+  const accountIds = await trackedAccountIds(workspaceId);
+  if (accountIds.length === 0) return [];
+  const discovery = await discoverSourcePosts(db, {
+    workspaceId,
+    accountIds,
+    columns:
+      "id, text, post_url, posted_at, reactions, comments, accounts!inner(name, linkedin_handle)",
+    filters: { postType: "regular" },
+    order: { column: "posted_at", ascending: false },
+    window: { kind: "limit", limit: SOURCE_POST_POOL_LIMIT },
+  });
+  return discovery.rows.flatMap((row) => {
+    const account = accountRecord(row.accounts);
+    const id = clean(row.id, 240);
+    if (!id) return [];
+    return [
+      {
+        id,
+        origin: "swipe" as const,
+        text: typeof row.text === "string" ? row.text : null,
+        authorName: clean(account.name ?? account.linkedin_handle, 180),
+        url: clean(row.post_url, 2_000),
+        publishedAt: clean(row.posted_at, 80),
+        savedAt: null,
+        reactions: numeric(row.reactions),
+        comments: numeric(row.comments),
+      },
+    ];
+  });
+}
+
+async function loadBookmarkSourcePostCandidates(
+  db: SupabaseClient,
+  workspaceId: string,
+): Promise<AgentInboxSourcePostCandidate[]> {
+  const { data, error } = await db
+    .from("saved_posts")
+    .select(
+      "id, text, text_snippet, post_url, posted_at, saved_at, author_name, reactions, comments",
+    )
+    .eq("workspace_id", workspaceId)
+    .order("saved_at", { ascending: false })
+    .limit(SOURCE_POST_POOL_LIMIT);
+  if (error) throw error;
+  return (data ?? []).flatMap((row) => {
+    const id = clean(row.id, 240);
+    if (!id) return [];
+    return [
+      {
+        id,
+        origin: "bookmark" as const,
+        text:
+          typeof row.text === "string"
+            ? row.text
+            : typeof row.text_snippet === "string"
+              ? row.text_snippet
+              : null,
+        authorName: clean(row.author_name, 180),
+        url: clean(row.post_url, 2_000),
+        publishedAt: clean(row.posted_at, 80),
+        savedAt: clean(row.saved_at, 80),
+        reactions: numeric(row.reactions),
+        comments: numeric(row.comments),
+      },
+    ];
+  });
+}
+
+async function loadSourcePosts(
+  db: SupabaseClient,
+  workspaceId: string,
+  now: Date,
+  topics: readonly string[],
+): Promise<AgentInboxEvidence[]> {
+  const [tracked, bookmarks] = await Promise.all([
+    loadTrackedSourcePostCandidates(db, workspaceId).catch((error) => {
+      console.error("[agent-inbox:source-posts] tracked source read failed", {
+        workspaceId,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return [] as AgentInboxSourcePostCandidate[];
+    }),
+    loadBookmarkSourcePostCandidates(db, workspaceId).catch((error) => {
+      console.error("[agent-inbox:source-posts] bookmark read failed", {
+        workspaceId,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return [] as AgentInboxSourcePostCandidate[];
+    }),
+  ]);
+  const evidence = [...tracked, ...bookmarks]
+    .map(sourcePostEvidenceFromCandidate)
+    .filter((entry): entry is AgentInboxEvidence => Boolean(entry));
+  return dedupeSourcePostEvidence(
+    rankSourcePostEvidence(evidence, now, topics),
+  ).slice(0, SOURCE_POST_OUTPUT_LIMIT);
 }
 
 function newsAgeDays(preferences: AgentInboxPreferences): number {
@@ -187,6 +427,7 @@ function learningEvidence(signals: unknown): AgentInboxEvidence[] {
       subtype: entry.subtype,
       confidence: entry.confidence,
       sampleSize: entry.sampleSize,
+      role: "anchor" as const,
     }));
 }
 
@@ -247,6 +488,7 @@ async function loadKnowledge(
         detail,
         ref: String(row.id),
         subtype: String(row.kind),
+        role: "anchor" as const,
       },
     ];
   });
@@ -285,7 +527,11 @@ async function loadRecentPosts(
     if (!label) return [];
     return [
       {
-        kind: "source_post" as const,
+        // Recent drafts are context, not swipe-file inspiration. Keeping a
+        // distinct kind prevents the model from treating the user's own draft
+        // as an external Source Post to model.
+        kind: "draft" as const,
+        role: "context" as const,
         label,
         detail: cleanProse(row.body, 500) ?? "",
         ref: String(row.id),
@@ -410,10 +656,21 @@ export function createAgentInboxEvidenceLoader(db: SupabaseClient) {
     missingLanes: AgentInboxLane[];
     now: Date;
   }): Promise<AgentInboxEvidenceBundle> => {
-    const [learning, knowledge, recent] = await Promise.all([
+    const needsSourcePosts = input.missingLanes.some(
+      (lane) => lane === "personal_story" || lane === "educational",
+    );
+    const [learning, knowledge, recent, sourcePosts] = await Promise.all([
       loadLearning(db, input.workspaceId),
       loadKnowledge(db, input.workspaceId),
       loadRecentPosts(db, input.workspaceId, input.now),
+      needsSourcePosts
+        ? loadSourcePosts(
+            db,
+            input.workspaceId,
+            input.now,
+            input.preferences.topics,
+          )
+        : Promise.resolve([] as AgentInboxEvidence[]),
     ]);
     const needsNews = input.missingLanes.includes("newsjacking");
     const query = needsNews
@@ -471,6 +728,6 @@ export function createAgentInboxEvidenceLoader(db: SupabaseClient) {
           );
         })()
       : news;
-    return { news: freshNews, learning, knowledge, recent };
+    return { news: freshNews, learning, knowledge, sourcePosts, recent };
   };
 }
