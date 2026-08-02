@@ -1,8 +1,12 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test } from "vitest";
-import { OpportunityCard } from "@/app/(app)/dashboard/agent-inbox";
+import {
+  agentLaneEmptyState,
+  OpportunityCard,
+} from "@/app/(app)/dashboard/agent-inbox";
 import type { CurrentAgentInboxIdea } from "@/lib/agent-inbox";
+import type { AgentFeedLane } from "@/lib/agent-inbox";
 
 function idea(
   overrides: Partial<CurrentAgentInboxIdea> = {},
@@ -39,6 +43,7 @@ function renderCard(props: {
   idea?: CurrentAgentInboxIdea;
   acted?: CurrentAgentInboxIdea;
   snoozed?: CurrentAgentInboxIdea;
+  lane?: AgentFeedLane;
 }): string {
   return renderToStaticMarkup(
     createElement(OpportunityCard, {
@@ -72,12 +77,32 @@ describe("OpportunityCard lane states", () => {
     expect(html).not.toContain("Back tomorrow");
     expect(html).not.toContain("Not today");
     expect(html).not.toContain("Snooze");
+    expect(html).toContain("No expertise angle is ready yet");
+    expect(html).toContain("proven or approved to teach");
+    expect(html).not.toContain("New ideas arrive every day");
   });
 
-  test("a genuinely empty lane keeps the daily-refresh copy", () => {
-    const html = renderCard({});
-    expect(html).toContain("New ideas arrive every day");
-    expect(html).not.toContain("Draft started");
+  test.each([
+    ["personal_story", "No personal story is ready yet", "verified lived experience"],
+    ["educational", "No expertise angle is ready yet", "proven or approved to teach"],
+    ["trend_radar", "No trend signal is ready yet", "recent creator evidence"],
+    ["newsjacking", "No news angle is ready yet", "verified event"],
+  ] as const)(
+    "an empty %s lane explains the evidence it still needs",
+    (lane, title, description) => {
+      const html = renderCard({ lane });
+      expect(html).toContain(title);
+      expect(html).toContain(description);
+      expect(html).not.toContain("New ideas arrive every day");
+    },
+  );
+
+  test("the all-agents empty state explains that recommendations must qualify", () => {
+    expect(agentLaneEmptyState("all")).toEqual({
+      title: "No recommendation cleared quality today",
+      description:
+        "Your agents only show ideas with enough evidence, relevance, and a defensible angle. They will keep looking as new signals arrive.",
+    });
   });
 
   test("a card shows only the decision-critical summary", () => {

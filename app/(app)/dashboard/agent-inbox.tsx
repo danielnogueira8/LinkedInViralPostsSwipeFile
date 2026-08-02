@@ -209,6 +209,42 @@ function IdeaProvenance({
 
 type AgentLaneFilter = "all" | AgentFeedLane;
 
+const laneEmptyStates: Record<
+  AgentLaneFilter,
+  { title: string; description: string }
+> = {
+  all: {
+    title: "No recommendation cleared quality today",
+    description:
+      "Your agents only show ideas with enough evidence, relevance, and a defensible angle. They will keep looking as new signals arrive.",
+  },
+  personal_story: {
+    title: "No personal story is ready yet",
+    description:
+      "Story Miner is waiting for a verified lived experience with enough tension, change, or an earned lesson to make a credible story.",
+  },
+  educational: {
+    title: "No expertise angle is ready yet",
+    description:
+      "Expertise is waiting for a useful claim you have proven or approved to teach, backed by concrete knowledge or performance evidence.",
+  },
+  trend_radar: {
+    title: "No trend signal is ready yet",
+    description:
+      "Radar is still gathering enough recent creator evidence for a confirmed, emerging, or breakout watchlist signal.",
+  },
+  newsjacking: {
+    title: "No news angle is ready yet",
+    description:
+      "Newsjacking is waiting for a verified event with a timely, defensible bridge to your work and audience.",
+  },
+};
+
+// Exported for the inbox rendering evals.
+export function agentLaneEmptyState(filter: AgentLaneFilter) {
+  return laneEmptyStates[filter];
+}
+
 function LaneAvatar({
   lane,
   className,
@@ -372,6 +408,7 @@ export function OpportunityCard({
 }) {
   const cardLane = idea?.lane ?? lane ?? acted?.lane ?? snoozed?.lane;
   const copy = cardLane ? laneCopy[cardLane] : null;
+  const emptyState = agentLaneEmptyState(cardLane ?? "all");
   if (!idea) {
     return (
       <div className="flex min-h-56 flex-col rounded-2xl border border-dashed border-border bg-muted/20 p-5">
@@ -397,25 +434,20 @@ export function OpportunityCard({
                   className="size-4 text-muted-foreground"
                   aria-hidden
                 />
-                New ideas arrive every day
+                {emptyState.title}
               </p>
               <p className="mt-1 max-w-xs text-sm text-muted-foreground">
-                Fresh recommendations will replace this item in the next daily
-                review.
+                {emptyState.description}
               </p>
             </>
           ) : (
             <>
               <p className="flex items-center gap-1.5 text-sm font-medium">
                 <Lightbulb className="size-4 text-muted-foreground" aria-hidden />
-                {cardLane === "trend_radar"
-                  ? "No trend signal is ready yet"
-                  : "New ideas arrive every day"}
+                {emptyState.title}
               </p>
               <p className="mt-1 max-w-xs text-sm text-muted-foreground">
-                {cardLane === "trend_radar"
-                  ? "Radar is still gathering enough recent creator evidence for a confirmed, emerging, or breakout watchlist signal."
-                  : "Fresh recommendations will appear in the next daily review."}
+                {emptyState.description}
               </p>
             </>
           )}
@@ -1277,14 +1309,10 @@ export function AgentInbox() {
                   <div className="flex min-h-[27rem] flex-col items-center justify-center px-6 text-center">
                     <Lightbulb className="size-5 text-muted-foreground" aria-hidden />
                     <p className="mt-3 text-sm font-medium">
-                      {selectedFilter === "trend_radar"
-                        ? "No qualified trend signal today"
-                        : "New ideas arrive every day"}
+                      {agentLaneEmptyState(selectedFilter).title}
                     </p>
                     <p className="mt-1 max-w-xs text-sm leading-5 text-muted-foreground">
-                      {selectedFilter === "trend_radar"
-                        ? "Radar may still be gathering enough recent creator evidence, or no confirmed, emerging, or breakout watchlist signal passed the quality checks."
-                        : "Your agents are looking for the next evidence-backed opportunity."}
+                      {agentLaneEmptyState(selectedFilter).description}
                     </p>
                   </div>
                 )}
