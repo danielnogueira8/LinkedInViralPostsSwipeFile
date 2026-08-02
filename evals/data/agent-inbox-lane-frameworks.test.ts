@@ -97,6 +97,7 @@ describe("framework lanes", () => {
     ]);
     expect([...AGENT_FEED_LANES]).toEqual([
       "trend_radar",
+      "newsjacking",
       "personal_story",
       "educational",
     ]);
@@ -358,7 +359,7 @@ describe("agent names", () => {
   test("every lane has a distinct agent name", () => {
     // The UI labels are short outcomes, not repeated "Agent" suffixes. They
     // stay distinct so the filter bar remains scannable.
-    const laneLabels = ["Trend Radar", "Story Miner", "Expertise"];
+    const laneLabels = ["Trend Radar", "Newsjacking", "Story Miner", "Expertise"];
     for (const name of laneLabels) {
       expect(source).toContain(`label: "${name}"`);
     }

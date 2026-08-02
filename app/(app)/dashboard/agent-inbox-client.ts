@@ -9,11 +9,13 @@ export type AgentInboxPayload = {
   ok: true;
   active: AgentInboxIdea[];
   activity: AgentInboxIdea[];
-  // Trend Radar is persisted by the creator-independent scanner, but the
-  // inbox intentionally exposes it through the same feed response and card
-  // contract as the other replenished lanes.
+  // Both external discovery agents are persisted by the scheduled scanners,
+  // but the inbox exposes them through the same feed response and card
+  // contract as the replenished lanes.
   trends: AgentRadarIdea[];
   trendActivity: AgentRadarIdea[];
+  newsjacking: AgentRadarIdea[];
+  newsjackingActivity: AgentRadarIdea[];
   preferences: AgentInboxPreferences;
 };
 
@@ -37,16 +39,16 @@ export async function completeAgentInboxHandoff(
   ideaId: string,
   lane: AgentFeedLane,
 ): Promise<void> {
-  const trendRadar = lane === "trend_radar";
+  const radar = lane === "trend_radar" || lane === "newsjacking";
   const response = await fetch(
-    trendRadar
+    radar
       ? `/api/agent/opportunities/${ideaId}`
       : `/api/agent/inbox/ideas/${ideaId}`,
     {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(
-        trendRadar ? { action: "handled" } : { kind: "done" },
+        radar ? { action: "handled" } : { kind: "done" },
       ),
     },
   );

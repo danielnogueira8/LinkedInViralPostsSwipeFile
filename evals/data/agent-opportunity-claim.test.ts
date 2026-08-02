@@ -33,6 +33,10 @@ function fakeClient(result: { data: unknown; error: null | Error }) {
       calls.filters.push([column, value]);
       return query;
     },
+    in: (column: string, value: unknown) => {
+      calls.filters.push([column, value]);
+      return query;
+    },
     select: () => query,
     maybeSingle: async () => result,
   };
@@ -154,7 +158,7 @@ describe("agent opportunity claims", () => {
     expect(calls.filters).toEqual([
       ["id", "opp-1"],
       ["workspace_id", "workspace-1"],
-      ["kind", "trend"],
+      ["kind", ["trend", "news"]],
       ["status", "proposed"],
     ]);
   });

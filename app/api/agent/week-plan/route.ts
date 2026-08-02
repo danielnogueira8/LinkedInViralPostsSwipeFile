@@ -60,6 +60,7 @@ async function composeFreshPlan(
     .eq("workspace_id", workspaceId)
     .eq("status", "proposed")
     .neq("kind", "trend")
+    .neq("kind", "news")
     .order("score", { ascending: false })
     .limit(OPPORTUNITY_POOL_LIMIT + excludedOpportunityIds.size);
   if (opportunityError) throw opportunityError;

@@ -33,9 +33,9 @@ export async function updateManagedOpportunityStatus(
 }
 
 /**
- * Mark a proposed Trend Radar message read or unread without consuming the
- * opportunity. Keeping this write here means every delivery surface shares
- * the same workspace, lane, and lifecycle fence.
+ * Mark a proposed external discovery message read or unread without
+ * consuming the opportunity. Keeping this write here means every delivery
+ * surface shares the same workspace, lane, and lifecycle fence.
  */
 export async function updateAgentOpportunityReadState(
   db: SupabaseClient,
@@ -48,7 +48,7 @@ export async function updateAgentOpportunityReadState(
     .update({ read_at: read ? new Date().toISOString() : null })
     .eq("id", opportunityId)
     .eq("workspace_id", workspaceId)
-    .eq("kind", "trend")
+    .in("kind", ["trend", "news"])
     .eq("status", "proposed")
     .select("id")
     .maybeSingle();

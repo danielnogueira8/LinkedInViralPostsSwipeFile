@@ -81,6 +81,7 @@ type BriefingOpportunity = {
     published_at?: string;
     signal_state?: string;
     creator_coverage?: string;
+    signal_type?: string;
     angle_prompt?: string;
   } | null;
   created_at: string;
@@ -504,11 +505,13 @@ export function AgentBriefing() {
   };
 
   const { drafts, opportunities } = briefing;
-  const trendOpportunities = opportunities.filter(
-    (opportunity) => opportunity.kind === "trend",
+  const externalOpportunities = opportunities.filter(
+    (opportunity) =>
+      opportunity.kind === "trend" || opportunity.kind === "news",
   );
   const sourceOpportunities = opportunities.filter(
-    (opportunity) => opportunity.kind !== "trend",
+    (opportunity) =>
+      opportunity.kind !== "trend" && opportunity.kind !== "news",
   );
   const isEmpty = drafts.length === 0 && opportunities.length === 0;
   const planItems = weekPlan?.items ?? [];
@@ -868,18 +871,18 @@ export function AgentBriefing() {
         </div>
       )}
 
-      {trendOpportunities.length > 0 && (
+      {externalOpportunities.length > 0 && (
         <div className="min-w-0 rounded-2xl border border-accent-brand/20 bg-accent-brand/[0.04] p-4">
           <p className="text-xs font-medium uppercase tracking-wide text-accent-brand">
-            Emerging signals
+            Agent signals
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
-            These came from fresh platform and web signals, even when no tracked
-            creator has posted about them yet. Review the evidence before you
-            ask the agent to draft.
+            Newsjacking and Trend Radar surface fresh evidence independently of
+            the source-post modeling queue. Review the signal before you ask
+            the agent to draft.
           </p>
           <ul className="mt-3 grid min-w-0 grid-cols-1 gap-3 lg:grid-cols-2 xl:grid-cols-3">
-            {trendOpportunities.map((opportunity) => (
+            {externalOpportunities.map((opportunity) => (
               <li
                 key={opportunity.id}
                 data-testid="agent-trend-signal-card"
@@ -887,7 +890,7 @@ export function AgentBriefing() {
               >
                 <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide">
                   <span className="rounded-full bg-accent-brand/10 px-2 py-1 text-accent-brand">
-                    Early signal
+                    {opportunity.kind === "news" ? "Newsjacking" : "Trend Radar"}
                   </span>
                   <span className="rounded-full bg-muted px-2 py-1 text-muted-foreground">
                     {opportunity.payload?.creator_coverage === "observed"

@@ -5,8 +5,9 @@ import { truncateAtWordBoundary } from "@/lib/text-truncate";
 // axis described where evidence came from, which let two cards share a
 // framework and read as near-duplicates while sitting in different lanes.
 // Naming the framework makes each lane a different KIND of post by
-// construction. Newsjacking and namejacking remain available as intentional
-// manual Cowork skills, but neither is a daily inbox lane.
+// construction. Newsjacking remains available as an intentional manual
+// Cowork skill, while the scheduled Newsjacking and Trend Radar scanners use
+// the shared radar contract below.
 export const AGENT_INBOX_LANES = [
   "personal_story",
   "educational",
@@ -90,17 +91,17 @@ export type AgentInboxIdea = {
   updatedAt: string;
 };
 
-// Trend Radar is discovered by the creator-independent scanner rather than
-// the Agent Inbox replenishment run. It deliberately reuses the same card
-// contract so the UI does not teach users that one agent is a second-class
-// source with different controls.
+// External discovery is persisted by scheduled scanners rather than the Agent
+// Inbox replenishment run. Both agents reuse the same card contract so the UI
+// does not teach users that one source is second-class.
 export type AgentRadarIdea = Omit<AgentInboxIdea, "lane"> & {
-  lane: "trend_radar";
+  lane: "trend_radar" | "newsjacking";
   radar: true;
 };
 
 export const AGENT_FEED_LANES = [
   "trend_radar",
+  "newsjacking",
   ...AGENT_INBOX_LANES,
 ] as const;
 export type AgentFeedLane = (typeof AGENT_FEED_LANES)[number];

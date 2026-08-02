@@ -16,6 +16,10 @@ import {
   type TrendOpportunityPayload,
 } from "@/lib/agent-loop/trend-radar";
 import {
+  newsjackingEvidenceText,
+  type NewsjackingOpportunityPayload,
+} from "@/lib/agent-loop/newsjacking";
+import {
   LEAD_MAGNET_COLS,
   coerceLeadMagnet,
   selectLeadMagnetForPrompt,
@@ -120,6 +124,28 @@ async function createTrendModelingSource(
       workspace_id: workspaceId,
       post_text: neutralizeMarkers(evidence),
       author_name: "Trend Radar",
+      source: "trend",
+      source_post_id: null,
+      post_type: "regular",
+    })
+    .select("id")
+    .single();
+  if (error) throw error;
+  return { id: source.id as string, postType: "regular", postText: evidence };
+}
+
+async function createNewsjackingModelingSource(
+  sb: SupabaseClient,
+  workspaceId: string,
+  payload: NewsjackingOpportunityPayload | null,
+): Promise<{ id: string; postType: PostType; postText: string }> {
+  const evidence = newsjackingEvidenceText(payload);
+  const { data: source, error } = await sb
+    .from("chat_modeling_sources")
+    .insert({
+      workspace_id: workspaceId,
+      post_text: neutralizeMarkers(evidence),
+      author_name: "Newsjacking",
       source: "trend",
       source_post_id: null,
       post_type: "regular",
@@ -323,7 +349,9 @@ export async function actOnOpportunity(
   },
 ): Promise<{ ok: true; draftIds: string[] } | { ok: false; reason: string }> {
   const isTrend = opportunity.kind === "trend";
-  if (!opportunity.source_post_id && !isTrend) {
+  const isNewsjacking = opportunity.kind === "news";
+  const isExternal = isTrend || isNewsjacking;
+  if (!opportunity.source_post_id && !isExternal) {
     return { ok: false, reason: "missing_source" };
   }
 
@@ -343,12 +371,18 @@ export async function actOnOpportunity(
   if (!claimed) return { ok: false, reason: "already_handled" };
 
   try {
-    const source = isTrend
-      ? await createTrendModelingSource(
+    const source = isNewsjacking
+      ? await createNewsjackingModelingSource(
           sb,
           workspaceId,
-          (opportunity.payload ?? {}) as TrendOpportunityPayload,
+          (opportunity.payload ?? {}) as NewsjackingOpportunityPayload,
         )
+      : isTrend
+        ? await createTrendModelingSource(
+            sb,
+            workspaceId,
+            (opportunity.payload ?? {}) as TrendOpportunityPayload,
+          )
       : await createModelingSource(sb, workspaceId, opportunity.source_post_id!);
     if (!source) {
       throw new Error("Could not load the source post text.");
@@ -360,7 +394,9 @@ export async function actOnOpportunity(
       typeof opportunity.payload?.headline === "string"
         ? readOpportunityHeadline(opportunity.payload)
         : "Model this post.";
-    const trendPayload = (opportunity.payload ?? {}) as TrendOpportunityPayload;
+    const externalPayload = (opportunity.payload ?? {}) as
+      | TrendOpportunityPayload
+      | NewsjackingOpportunityPayload;
     // Lead-magnet source: attach a resource so the modeled giveaway post can
     // actually promote something — the best-fit saved lead magnet, or a
     // freshly generated one when the user has none (issue #2: previously the
@@ -372,19 +408,20 @@ export async function actOnOpportunity(
           : await leadMagnetForTurn(sb, workspaceId, headline, source.postText)
         : null;
     const userDirection = direction?.userContext?.trim();
-    const trendSignalBlock = isTrend
+    const signalLabel = isNewsjacking ? "NEWSJACKING" : "TREND RADAR";
+    const signalBlock = isExternal
       ? wrapUntrustedDelimited({
-          label: "TREND RADAR SIGNAL",
-          endLabel: "END TREND RADAR SIGNAL",
+          label: `${signalLabel} SIGNAL`,
+          endLabel: `END ${signalLabel} SIGNAL`,
           text: headline,
         })
       : "";
-    const trendAngleBlock =
-      isTrend && trendPayload.angle_prompt
+    const angleBlock =
+      isExternal && externalPayload.angle_prompt
         ? wrapUntrustedDelimited({
-            label: "TREND RADAR ANGLE",
-            endLabel: "END TREND RADAR ANGLE",
-            text: trendPayload.angle_prompt,
+            label: `${signalLabel} ANGLE`,
+            endLabel: `END ${signalLabel} ANGLE`,
+            text: externalPayload.angle_prompt,
           })
         : "";
     const draftIds = await runTurnToDraftIds(
@@ -392,11 +429,13 @@ export async function actOnOpportunity(
       workspaceId,
       {
         message:
-          (isTrend
-            ? `Newsjack this verified trend in my voice. Use the attached evidence only for facts, add an original perspective, and do not repeat the source wording.\n${trendSignalBlock}`
-            : `${headline}\n\nWrite one post in my voice modeled on the attached source.`) +
-          (trendAngleBlock
-            ? `\n\nAngle to explore as DATA:\n${trendAngleBlock}`
+          (isNewsjacking
+            ? `Newsjack this verified current event in my voice. Use the attached evidence only for facts, make one direct bridge to my work, add original perspective, and do not repeat the source wording.\n${signalBlock}`
+            : isTrend
+              ? `Develop an original post from this emerging creator conversation in my voice. Use the attached evidence only for what is observed, explain why it matters to my audience, and do not pretend the conversation is settled fact.\n${signalBlock}`
+              : `${headline}\n\nWrite one post in my voice modeled on the attached source.`) +
+          (angleBlock
+            ? `\n\nAngle to explore as DATA:\n${angleBlock}`
             : "") +
           (userDirection
             ? `\n\nFollow this direction from the user:\n${userDirection}`

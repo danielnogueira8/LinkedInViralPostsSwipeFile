@@ -4,7 +4,10 @@ import { scopedSupabase } from "@/lib/supabase-scoped";
 import { createProductionAgentInbox } from "@/lib/agent-inbox/service";
 import type { AgentInboxStatus, AgentRadarIdea } from "@/lib/agent-inbox";
 import { readOpportunityHeadline } from "@/lib/agent-loop/headline";
-import type { TrendOpportunityPayload } from "@/lib/agent-loop/trend-radar";
+import {
+  discoveryAgentForOpportunity,
+  type DiscoveryAgent,
+} from "@/lib/agent-loop/opportunity-signal";
 import { saveAgentInboxPreferences } from "@/lib/agent-inbox/supabase";
 import { errorResponse } from "@/lib/workspace";
 import { isDueNow } from "@/lib/agent-inbox/schedule";
@@ -21,12 +24,14 @@ const preferencesSchema = z.object({
   newsSensitivity: z.enum(["low", "standard", "high"]),
 });
 
-type TrendRow = {
+type RadarPayload = Record<string, unknown>;
+
+type RadarRow = {
   id: string;
   kind: string;
   status: string;
   score: number | string | null;
-  payload: TrendOpportunityPayload | null;
+  payload: RadarPayload | null;
   trend_key: string | null;
   created_at: string;
   acted_at: string | null;
@@ -34,10 +39,9 @@ type TrendRow = {
   read_at: string | null;
 };
 
-function trendStatus(status: string): AgentInboxStatus {
+function radarStatus(status: string): AgentInboxStatus {
   switch (status) {
     case "handled":
-      return "acted";
     case "drafted":
       return "acted";
     case "dismissed":
@@ -51,18 +55,42 @@ function trendStatus(status: string): AgentInboxStatus {
   }
 }
 
-function trendIdeaFromRow(
-  row: TrendRow,
+function textValue(value: unknown, fallback = ""): string {
+  return typeof value === "string" ? value.trim() || fallback : fallback;
+}
+
+type RepresentativePost = {
+  author?: unknown;
+  text?: unknown;
+  url?: unknown;
+  posted_at?: unknown;
+};
+
+function representativePosts(payload: RadarPayload): RepresentativePost[] {
+  if (!Array.isArray(payload.representative_posts)) return [];
+  return payload.representative_posts.filter(
+    (post): post is RepresentativePost =>
+      Boolean(post) && typeof post === "object" && !Array.isArray(post),
+  );
+}
+
+function radarIdeaFromRow(
+  row: RadarRow,
   workspaceId: string,
+  agent: DiscoveryAgent,
 ): AgentRadarIdea {
   const payload = row.payload ?? {};
+  const isNewsjacking = agent === "newsjacking";
   const headline = readOpportunityHeadline(payload);
-  const textValue = (value: unknown, fallback = ""): string =>
-    typeof value === "string" ? value.trim() || fallback : fallback;
-  const sourceName = textValue(payload.source_name, "Verified web source");
+  const sourceName = textValue(
+    payload.source_name,
+    isNewsjacking ? "Verified web source" : "Monitored creator conversation",
+  );
   const summary = textValue(
     payload.summary,
-    "A fresh development found by Trend Radar.",
+    isNewsjacking
+      ? "A fresh development found by Newsjacking."
+      : "An emerging conversation found among monitored creators.",
   );
   const sourceUrl = textValue(payload.source_url) || null;
   const publishedAt = textValue(payload.published_at) || null;
@@ -71,57 +99,102 @@ function trendIdeaFromRow(
       ? "Tracked creator coverage was observed at detection time."
       : "No tracked creator coverage was observed at detection time.";
   const createdAt = row.created_at;
-  const status = trendStatus(row.status);
+  const status = radarStatus(row.status);
   const sourceRef = row.trend_key ?? sourceName;
+  const representatives = representativePosts(payload);
+  const evidence = isNewsjacking
+    ? [
+        {
+          kind: "news" as const,
+          label: sourceName,
+          detail: summary,
+          url: sourceUrl,
+          publishedAt,
+          ref: sourceName,
+        },
+      ]
+    : representatives.length > 0
+      ? representatives.map((post, index) => ({
+          kind: "source_post" as const,
+          label: textValue(post.author, `Representative creator ${index + 1}`),
+          detail: textValue(post.text, summary),
+          url: textValue(post.url) || null,
+          publishedAt: textValue(post.posted_at) || null,
+          ref: textValue(post.url) || `representative-${index + 1}`,
+        }))
+      : [
+          {
+            kind: "source_post" as const,
+            label: sourceName,
+            detail: summary,
+            url: sourceUrl,
+            publishedAt,
+            ref: sourceName,
+          },
+        ];
+  const why = isNewsjacking
+    ? [creatorCoverage, `Grounded in ${sourceName}.`]
+    : [
+        textValue(
+          payload.why_now,
+          "Several monitored creators are converging on this conversation.",
+        ),
+        `${representatives.length || 1} representative post${representatives.length === 1 ? "" : "s"} attached for review.`,
+      ];
+
   return {
     id: row.id,
     workspaceId,
-    lane: "trend_radar",
+    lane: agent,
     radar: true,
     status,
     headline,
     angle:
       textValue(payload.angle_prompt) ||
-      "Use the verified development as the opening, then add one specific implication for your audience.",
-    why: [creatorCoverage, `Grounded in ${sourceName}.`],
-    evidence: [
-      {
-        kind: "news",
-        label: sourceName,
-        detail: summary,
-        url: sourceUrl,
-        publishedAt,
-        ref: sourceName,
-      },
-    ],
-    sourceKind: "news",
+      (isNewsjacking
+        ? "Verify the dated event, open on what happened, then make one direct connection to your work."
+        : "Explain what this emerging conversation changes for your audience, then add an original observation."),
+    why,
+    evidence,
+    sourceKind: isNewsjacking ? "news" : "source_post",
     sourceRef,
     sourceUrl,
     sourceTitle: headline,
     sourcePublishedAt: publishedAt,
-    score: Math.max(0, Math.min(1, Number(row.score ?? 0) / 9)),
-    fingerprint: `trend:${row.trend_key ?? row.id}`,
+    score: isNewsjacking
+      ? Math.max(0, Math.min(1, Number(row.score ?? 0) / 9))
+      : Math.max(0, Math.min(1, Number(row.score ?? 0))),
+    fingerprint: `${agent}:${row.trend_key ?? row.id}`,
     availableOn: createdAt.slice(0, 10),
     expiresAt: null,
     snoozedUntil: row.snoozed_until,
     actedAt: row.acted_at,
-    discardReason: status === "discarded" ? "Dismissed from Trend Radar" : null,
+    discardReason:
+      status === "discarded"
+        ? `Dismissed from ${isNewsjacking ? "Newsjacking" : "Trend Radar"}`
+        : null,
     readAt: row.read_at,
     createdAt,
     updatedAt: row.acted_at ?? row.snoozed_until ?? createdAt,
   };
 }
 
-async function readTrendRadar(
+async function readRadarOpportunities(
   workspaceId: string,
   db: Awaited<ReturnType<typeof scopedSupabase>>["raw"],
-): Promise<{ trends: AgentRadarIdea[]; trendActivity: AgentRadarIdea[] }> {
+): Promise<{
+  trends: AgentRadarIdea[];
+  trendActivity: AgentRadarIdea[];
+  newsjacking: AgentRadarIdea[];
+  newsjackingActivity: AgentRadarIdea[];
+}> {
   const now = new Date().toISOString();
+  const externalKinds = ["trend", "news"];
   const { error: releaseError } = await db
     .from("agent_opportunities")
     .update({ status: "proposed", snoozed_until: null })
     .eq("workspace_id", workspaceId)
-    .eq("kind", "trend")
+    .in("kind", externalKinds)
     .eq("status", "snoozed")
     .lte("snoozed_until", now);
   if (releaseError) throw releaseError;
@@ -133,28 +206,45 @@ async function readTrendRadar(
       .from("agent_opportunities")
       .select(columns)
       .eq("workspace_id", workspaceId)
-      .eq("kind", "trend")
+      .in("kind", externalKinds)
       .eq("status", "proposed")
       .order("score", { ascending: false })
-      .limit(3),
+      .limit(40),
     db
       .from("agent_opportunities")
       .select(columns)
       .eq("workspace_id", workspaceId)
-      .eq("kind", "trend")
+      .in("kind", externalKinds)
       .in("status", ["handled", "drafted", "dismissed", "snoozed", "expired"])
       .order("created_at", { ascending: false })
-      .limit(12),
+      .limit(80),
   ]);
   if (activeResult.error) throw activeResult.error;
   if (activityResult.error) throw activityResult.error;
+
+  const activeByAgent: Record<DiscoveryAgent, AgentRadarIdea[]> = {
+    trend_radar: [],
+    newsjacking: [],
+  };
+  const activityByAgent: Record<DiscoveryAgent, AgentRadarIdea[]> = {
+    trend_radar: [],
+    newsjacking: [],
+  };
+  for (const rawRow of activeResult.data ?? []) {
+    const row = rawRow as RadarRow;
+    const agent = discoveryAgentForOpportunity(row.kind, row.payload);
+    activeByAgent[agent].push(radarIdeaFromRow(row, workspaceId, agent));
+  }
+  for (const rawRow of activityResult.data ?? []) {
+    const row = rawRow as RadarRow;
+    const agent = discoveryAgentForOpportunity(row.kind, row.payload);
+    activityByAgent[agent].push(radarIdeaFromRow(row, workspaceId, agent));
+  }
   return {
-    trends: ((activeResult.data ?? []) as TrendRow[]).map((row) =>
-      trendIdeaFromRow({ ...row, status: "proposed" }, workspaceId),
-    ),
-    trendActivity: (activityResult.data ?? []).map((row) =>
-      trendIdeaFromRow(row as TrendRow, workspaceId),
-    ),
+    trends: activeByAgent.trend_radar.slice(0, 3),
+    trendActivity: activityByAgent.trend_radar.slice(0, 12),
+    newsjacking: activeByAgent.newsjacking.slice(0, 3),
+    newsjackingActivity: activityByAgent.newsjacking.slice(0, 12),
   };
 }
 
@@ -183,11 +273,11 @@ export async function GET(request: Request) {
         timezone: initial.preferences.timezone,
       });
     }
-    const [data, trendData] = await Promise.all([
+    const [data, radarData] = await Promise.all([
       inbox.read(sb.workspaceId, now),
-      readTrendRadar(sb.workspaceId, sb.raw),
+      readRadarOpportunities(sb.workspaceId, sb.raw),
     ]);
-    return NextResponse.json({ ok: true, ...data, ...trendData });
+    return NextResponse.json({ ok: true, ...data, ...radarData });
   } catch (error) {
     return errorResponse(error);
   }

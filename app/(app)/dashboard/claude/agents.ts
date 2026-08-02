@@ -4,6 +4,7 @@ import {
   Clock,
   Lightbulb,
   Magnet,
+  Newspaper,
   Repeat2,
   Search,
   UserPlus,
@@ -103,12 +104,22 @@ export const AGENTS: Agent[] = [
   {
     tag: "Trend Radar Agent",
     slug: "trend-radar",
-    title: "See this week's best posts at a glance",
-    payoff: "A fast read on what's working in your niche right now — hooks, authors, and engagement, ranked.",
+    title: "Spot conversations taking off before they peak",
+    payoff: "See the topic clusters gaining momentum across the posts you track — with the evidence and the angle worth exploring.",
     icon: Search,
     skills: [],
     brief:
-      "Use the SwipeIn connector. search_viral_posts for the top 10 viral posts from the last 7 days in my niche, sorted by reactions. Give me the hook, the author, and engagement for each so I can see what's working at a glance.",
+      "Use the SwipeIn connector. search_viral_posts for the 30 most engaged regular posts from the last 7 days in my niche. Group related posts into topic clusters, rank the clusters by recency, repeated coverage, and engagement, and show me the representative posts, the common idea, what changed, and one original angle I could explore. Do not treat one isolated viral post as a trend.",
+  },
+  {
+    tag: "Newsjacking Agent",
+    slug: "newsjacking",
+    title: "Turn a live event into a point of view",
+    payoff: "Find a timely, verifiable development and connect it to your work before the conversation moves on.",
+    icon: Newspaper,
+    skills: ["anti-slop", "hooks", "voice-match"],
+    brief:
+      "Use the SwipeIn connector. Search the latest relevant posts and platform announcements with search_viral_posts, verify the date and source, then call get_voice and write one original newsjacking post in my voice. Use the event only as factual context, make one direct connection to my work, avoid repeating the source wording, and save the result with create_draft.",
   },
   {
     tag: "Bulk Writer Agent",

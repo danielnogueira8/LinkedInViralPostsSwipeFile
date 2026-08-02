@@ -1,30 +1,30 @@
 import { describe, expect, test } from "vitest";
 import {
-  buildTrendRadarQuery,
+  buildNewsjackingQuery,
   hasCreatorCoverage,
-  rankTrendCandidates,
-  trendRadarOperationKey,
-  trendOpportunityPayload,
-} from "@/lib/agent-loop/trend-radar";
+  newsjackingOperationKey,
+  rankNewsjackingCandidates,
+  newsjackingOpportunityPayload,
+} from "@/lib/agent-loop/newsjacking";
 
 const NOW = new Date("2026-08-01T12:00:00.000Z");
 
-describe("Trend Radar discovery contract", () => {
+describe("Newsjacking discovery contract", () => {
   test("uses one stable operation bucket for the whole day", () => {
     expect(
-      trendRadarOperationKey("workspace-1", new Date("2026-08-01T06:00:00Z")),
+      newsjackingOperationKey("workspace-1", new Date("2026-08-01T06:00:00Z")),
     ).toBe(
-      trendRadarOperationKey("workspace-1", new Date("2026-08-01T23:59:59Z")),
+      newsjackingOperationKey("workspace-1", new Date("2026-08-01T23:59:59Z")),
     );
     expect(
-      trendRadarOperationKey("workspace-1", new Date("2026-08-02T00:00:00Z")),
+      newsjackingOperationKey("workspace-1", new Date("2026-08-02T00:00:00Z")),
     ).not.toBe(
-      trendRadarOperationKey("workspace-1", new Date("2026-08-01T23:59:59Z")),
+      newsjackingOperationKey("workspace-1", new Date("2026-08-01T23:59:59Z")),
     );
   });
 
-  test("builds a creator-independent query with platform and workspace lanes", () => {
-    const query = buildTrendRadarQuery(["B2B SaaS", "founder-led marketing"]);
+  test("builds a current-event query with platform and workspace lanes", () => {
+    const query = buildNewsjackingQuery(["B2B SaaS", "founder-led marketing"]);
 
     expect(query).toContain("LinkedIn");
     expect(query.toLowerCase()).toContain("ai slop");
@@ -34,7 +34,7 @@ describe("Trend Radar discovery contract", () => {
   });
 
   test("keeps only fresh, usable, distinct signals and ranks them by signal quality", () => {
-    const candidates = rankTrendCandidates(
+    const candidates = rankNewsjackingCandidates(
       [
         {
           title: "LinkedIn introduces an AI slop label",
@@ -76,7 +76,7 @@ describe("Trend Radar discovery contract", () => {
     expect(candidates[0].score).toBeGreaterThan(0);
   });
 
-  test("persists a signal as an explicit creator-independent opportunity", () => {
+  test("persists a signal as an explicit verified Newsjacking opportunity", () => {
     const candidate = {
       title: "LinkedIn introduces an AI slop label",
       url: "https://news.linkedin.com/2026/keeping-conversations-real",
@@ -86,20 +86,21 @@ describe("Trend Radar discovery contract", () => {
     };
 
     expect(
-      trendOpportunityPayload(candidate, ["B2B SaaS"], NOW),
+      newsjackingOpportunityPayload(candidate, ["B2B SaaS"], NOW),
     ).toMatchObject({
       headline: "LinkedIn introduces an AI slop label",
       source_url: candidate.url,
       source_name: "LinkedIn News",
       signal_state: "early",
       creator_coverage: "none_observed",
-      reason: "creator_independent",
+      signal_type: "newsjacking",
+      reason: "verified_external_event",
     });
   });
 
   test("does not promote sensitive events and can verify creator coverage", () => {
     expect(
-      rankTrendCandidates(
+      rankNewsjackingCandidates(
         [
           {
             title: "A tragic disaster dominates the news",
