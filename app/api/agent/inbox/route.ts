@@ -6,6 +6,7 @@ import type { AgentInboxStatus, AgentRadarIdea } from "@/lib/agent-inbox";
 import { readOpportunityHeadline } from "@/lib/agent-loop/headline";
 import {
   discoveryAgentForOpportunity,
+  isDisplayableDiscoveryOpportunity,
   type DiscoveryAgent,
 } from "@/lib/agent-loop/opportunity-signal";
 import { saveAgentInboxPreferences } from "@/lib/agent-inbox/supabase";
@@ -225,16 +226,14 @@ async function readRadarOpportunities(
       .eq("workspace_id", workspaceId)
       .in("kind", externalKinds)
       .eq("status", "proposed")
-      .order("score", { ascending: false })
-      .limit(40),
+      .order("score", { ascending: false }),
     db
       .from("agent_opportunities")
       .select(columns)
       .eq("workspace_id", workspaceId)
       .in("kind", externalKinds)
       .in("status", ["handled", "drafted", "dismissed", "snoozed", "expired"])
-      .order("created_at", { ascending: false })
-      .limit(80),
+      .order("created_at", { ascending: false }),
   ]);
   if (activeResult.error) throw activeResult.error;
   if (activityResult.error) throw activityResult.error;
@@ -249,11 +248,13 @@ async function readRadarOpportunities(
   };
   for (const rawRow of activeResult.data ?? []) {
     const row = rawRow as RadarRow;
+    if (!isDisplayableDiscoveryOpportunity(row.kind, row.payload)) continue;
     const agent = discoveryAgentForOpportunity(row.kind, row.payload);
     activeByAgent[agent].push(radarIdeaFromRow(row, workspaceId, agent));
   }
   for (const rawRow of activityResult.data ?? []) {
     const row = rawRow as RadarRow;
+    if (!isDisplayableDiscoveryOpportunity(row.kind, row.payload)) continue;
     const agent = discoveryAgentForOpportunity(row.kind, row.payload);
     activityByAgent[agent].push(radarIdeaFromRow(row, workspaceId, agent));
   }

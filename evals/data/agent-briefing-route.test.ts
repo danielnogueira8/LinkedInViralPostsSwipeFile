@@ -165,6 +165,7 @@ describe("GET /api/agent/briefing source-post contract", () => {
           source_url: "https://news.linkedin.com/2026/keeping-conversations-real",
           source_name: "LinkedIn News",
           creator_coverage: "none_observed",
+          reason: "creator_independent",
         },
         created_at: "2026-08-01T10:00:00.000Z",
         source_post_id: null,
@@ -187,6 +188,30 @@ describe("GET /api/agent/briefing source-post contract", () => {
       },
     });
     expect(database.selects.some(({ table }) => table === "posts")).toBe(false);
+  });
+
+  it("does not expose legacy keyword-only Trend Radar signals", async () => {
+    database.rows.agent_opportunities = [
+      {
+        id: "trend-legacy",
+        kind: "trend",
+        score: 0.8,
+        payload: {
+          signal_type: "trend_radar",
+          headline:
+            "checks, claude, comment, content, effort, lead: an emerging creator conversation",
+        },
+        created_at: "2026-08-01T10:00:00.000Z",
+        source_post_id: null,
+      },
+    ];
+    database.rows.posts = [];
+
+    const response = await GET();
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.opportunities).toEqual([]);
   });
 
   it("starts independent draft and opportunity reads in parallel", async () => {
