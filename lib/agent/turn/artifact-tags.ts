@@ -9,6 +9,7 @@ import type {
   ModelSourceReference,
   ModelSourceRow,
 } from "@/lib/agent/turn/context";
+import type { LinkedInNativeGuidance } from "@/lib/agent/linkedin-native-guidance";
 
 // ---------------------------------------------------------------------------
 // Artifact metadata tagging helpers.
@@ -184,6 +185,25 @@ export function tagArtifactWithNoModelFormat(
     meta: {
       ...(artifact.meta ?? {}),
       no_model_format: format,
+    },
+  };
+}
+
+export function tagArtifactWithLinkedInNativeGuidance(
+  artifact: Artifact,
+  guidance: LinkedInNativeGuidance | null,
+): Artifact {
+  if (!guidance || guidance.exemplars.length === 0) return artifact;
+  if (artifact.kind === "cite") return artifact;
+  return {
+    ...artifact,
+    meta: {
+      ...(artifact.meta ?? {}),
+      linkedin_native_exemplars: guidance.exemplars.map((exemplar) => ({
+        post_id: exemplar.postId,
+        similarity: exemplar.similarity,
+        source: exemplar.source,
+      })),
     },
   };
 }

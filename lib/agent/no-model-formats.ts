@@ -17,9 +17,9 @@ import { withoutSourceDiscoveryOptOut } from "@/lib/agent/source-policy";
 //
 // This module is the missing DECISION layer for the no-model case ONLY. It's a
 // SILENT, DETERMINISTIC (no LLM) router: given the user's message, pick a
-// LinkedIn-native archetype, fetch 1-2 REAL exemplar posts from the DB by id,
-// and hand the writing agent format rules + full examples to model the STRUCTURE
-// of (never the facts/text). It does NOT touch the modeled / template / refine /
+// LinkedIn-native archetype and provide format rules plus curated fallback
+// examples to model the STRUCTURE of (never the facts/text). Semantic exemplar
+// retrieval is owned by the turn guidance module. It does NOT touch the modeled / template / refine /
 // modeled-batch flows — when a source post exists, that source stays the
 // structural authority. See run.ts (noModelFormatBlock) + the stream route for
 // the activation gate.
@@ -488,16 +488,19 @@ export async function loadNoModelFormatExamples(
   // Reserved for future per-workspace exemplar scoping — see note above.
   _workspaceId: string,
   limit = 2,
+  signal?: AbortSignal,
 ): Promise<NoModelExample[]> {
   try {
     const ids = format.exemplarPostIds.slice(0, limit);
     if (ids.length === 0) return [];
-    const { data, error } = await supabaseAdmin()
+    let query = supabaseAdmin()
       .from("posts")
       .select(
         "id, text, reactions, comments, reposts, viral_score, accounts!inner(name, niche)",
       )
       .in("id", ids);
+    if (signal) query = query.abortSignal(signal);
+    const { data, error } = await query;
     if (error || !data) return [];
     const byIdMap = new Map<string, NoModelExample>();
     for (const raw of data as ExampleRow[]) {
@@ -521,7 +524,8 @@ export async function loadNoModelFormatExamples(
     return ids
       .map((id) => byIdMap.get(id))
       .filter((e): e is NoModelExample => !!e);
-  } catch {
+  } catch (error) {
+    if (signal?.aborted) throw error;
     return [];
   }
 }

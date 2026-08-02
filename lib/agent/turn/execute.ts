@@ -53,6 +53,7 @@ import {
   sourceReferenceFromCiteArtifact,
   sourceReferenceFromCiteArtifacts,
   tagArtifactWithCreatorStyle,
+  tagArtifactWithLinkedInNativeGuidance,
   tagArtifactWithLeadMagnet,
   tagArtifactWithModelSourceReference,
   tagArtifactWithNoModelFormat,
@@ -131,6 +132,7 @@ async function* runTurnPlan(
     citedSourceImageSourcePostId: initialCitedSourceImageSourcePostId,
     appliedNoModelFormat,
     selectedNoModelFormat,
+    linkedinNativeGuidance,
     leadMagnetBlock,
     appliedLeadMagnet,
     shouldAttachLeadMagnet,
@@ -207,6 +209,7 @@ async function* runTurnPlan(
     originalTemplateReference:
       originalTemplateReferenceFromMatch(structureMatch) ?? undefined,
     format: selectedNoModelFormat,
+    linkedinNativeGuidance,
     customSkillBodies,
     customSkillNames,
     signal: handlers.signal,
@@ -404,7 +407,10 @@ async function* runTurnPlan(
             tagArtifactWithLeadMagnet(
               tagArtifactWithModelSourceReference(
                 tagArtifactWithNoModelFormat(
-                  tagArtifactWithSkills(ev.artifact, customSkillNames),
+                  tagArtifactWithLinkedInNativeGuidance(
+                    tagArtifactWithSkills(ev.artifact, customSkillNames),
+                    linkedinNativeGuidance,
+                  ),
                   appliedNoModelFormat,
                 ),
                 modelSourceReference,

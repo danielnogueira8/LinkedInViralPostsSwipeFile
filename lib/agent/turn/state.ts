@@ -31,6 +31,7 @@ import type { buildLeadMagnetCampaign } from "@/lib/lead-magnet-campaign";
 import type { ToolResult } from "@/lib/agent/tools";
 import type { NoModelFormat } from "@/lib/agent/no-model-formats";
 import type { NoModelFormatId } from "@/lib/agent/no-model-format-catalog";
+import type { LinkedInNativeGuidance } from "@/lib/agent/linkedin-native-guidance";
 import type { Artifact, AskQuestion } from "@/lib/agent/contracts";
 import type { StructureMatchResult } from "@/lib/structure-match";
 import type { AppliedWorkspaceKnowledge } from "@/lib/knowledge-sources/context";
@@ -117,6 +118,7 @@ export type TurnSetupState = {
     forced: boolean;
   } | null;
   selectedNoModelFormat: NoModelFormat | null;
+  linkedinNativeGuidance: LinkedInNativeGuidance | null;
   leadMagnetBlock: string;
   appliedLeadMagnet: (AppliedLeadMagnet & { id: string }) | null;
   shouldAttachLeadMagnet: boolean;
@@ -205,6 +207,7 @@ export type TurnExecuteContext = Pick<
   | "citedSourceImageSourcePostId"
   | "appliedNoModelFormat"
   | "selectedNoModelFormat"
+  | "linkedinNativeGuidance"
   | "leadMagnetBlock"
   | "appliedLeadMagnet"
   | "shouldAttachLeadMagnet"

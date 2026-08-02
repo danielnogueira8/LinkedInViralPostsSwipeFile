@@ -20,7 +20,7 @@ export const INJECTION_GUARD =
 //   --- END POST ---            --- POST TO MODEL AFTER ---
 //   --- END FILE ---            --- ATTACHED FILE: foo.txt ---
 // Case-insensitive, tolerant of surrounding whitespace.
-const MARKER_LINE = /^(\s*)(-{3,}\s*[A-Z][A-Z ]+(?::.*)?-{3,})(\s*)$/i;
+const MARKER_LINE = /^(\s*)(-{3,}\s*[A-Z0-9][A-Z0-9 ]+(?::.*)?-{3,})(\s*)$/i;
 
 // A zero-width space breaks the exact string match without changing how the
 // text looks to a human or the model.
