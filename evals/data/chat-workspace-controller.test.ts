@@ -23,6 +23,7 @@ describe("ChatWorkspace controller", () => {
 
     expect(turn.resumesPersistedOperation).toBe(false);
     expect(turn.appliesComposerControls).toBe(true);
+    expect(turn.composerAfterTurnStarts).toEqual({ kind: "create" });
     expect(turn.requestFields).toEqual({
       command: { kind: "create", count: 2 },
       skillIds: ["11111111-1111-4111-8111-111111111111"],
@@ -48,6 +49,7 @@ describe("ChatWorkspace controller", () => {
 
     expect(turn.resumesPersistedOperation).toBe(true);
     expect(turn.appliesComposerControls).toBe(false);
+    expect(turn.composerAfterTurnStarts).toBeNull();
     expect(turn.requestFields).toEqual({
       skillIds: ["11111111-1111-4111-8111-111111111111"],
     });
@@ -79,7 +81,22 @@ describe("ChatWorkspace controller", () => {
       scope: "hook",
     });
     expect(turn.requestFields.generationConfig).toBeUndefined();
+    expect(turn.composerAfterTurnStarts).toEqual({ kind: "ask" });
     expect(turn.explorationLaneToRestore).toBe("auto");
+  });
+
+  test("keeps Create selected so a free-text clarification reply still creates", () => {
+    const original = controller.prepareTurn(baseInput);
+    expect(original.composerAfterTurnStarts).toEqual({ kind: "create" });
+
+    const answer = controller.prepareTurn({
+      ...baseInput,
+      composer: original.composerAfterTurnStarts ?? { kind: "ask" },
+      starterId: undefined,
+    });
+
+    expect(answer.requestFields.command).toEqual({ kind: "create", count: 2 });
+    expect(answer.composerAfterTurnStarts).toEqual({ kind: "create" });
   });
 
   test("keeps explicit card commands authoritative without composer controls", () => {

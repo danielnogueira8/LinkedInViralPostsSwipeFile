@@ -3021,8 +3021,8 @@ export function ChatWorkspace({
       if (turnLeadMagnet) setPendingLeadMagnet(null);
       if (turnCreatorStyle) setPendingCreatorStyle(null);
       if (turnStarterId) clearComposerStarter(turnStarterOwnerId);
-      if (turnCommand) {
-        setCoworkComposer({ kind: "ask" });
+      if (turnPlan.composerAfterTurnStarts) {
+        setCoworkComposer(turnPlan.composerAfterTurnStarts);
       }
       const visibleLane = workspaceController.consumeExplorationLane(
         turnPlan,
