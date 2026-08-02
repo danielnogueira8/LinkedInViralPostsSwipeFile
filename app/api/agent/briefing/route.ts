@@ -3,7 +3,10 @@ import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
 import { AGENT_SUGGESTED_BY } from "@/lib/agent-loop/constants";
 import { readOpportunityHeadline } from "@/lib/agent-loop/headline";
-import { discoveryAgentForOpportunity } from "@/lib/agent-loop/opportunity-signal";
+import {
+  discoveryAgentForOpportunity,
+  isDisplayableDiscoveryOpportunity,
+} from "@/lib/agent-loop/opportunity-signal";
 import {
   leadMagnetPostIds,
   opportunityIsLeadMagnet,
@@ -59,8 +62,7 @@ export async function GET() {
         .eq("workspace_id", sb.workspaceId)
         .eq("status", "proposed")
         .in("kind", ["trend", "news"])
-        .order("score", { ascending: false })
-        .limit(3),
+        .order("score", { ascending: false }),
     ]);
     const { data: drafts, error: draftsError } = draftResult;
     if (draftsError) throw draftsError;
@@ -76,7 +78,11 @@ export async function GET() {
     const externalOpportunities = (externalPool ?? [])
       .filter(
         (opportunity) =>
-          opportunity.kind === "trend" || opportunity.kind === "news",
+          (opportunity.kind === "trend" || opportunity.kind === "news") &&
+          isDisplayableDiscoveryOpportunity(
+            opportunity.kind,
+            opportunity.payload,
+          ),
       )
       .map((opportunity) => {
         const payload = (opportunity.payload ?? {}) as Record<string, unknown>;

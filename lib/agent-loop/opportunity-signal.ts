@@ -1,6 +1,7 @@
 export type DiscoveryAgent = "trend_radar" | "newsjacking";
 
 export const EXTERNAL_OPPORTUNITY_KINDS = ["trend", "news"] as const;
+export const TREND_RADAR_CURATION_VERSION = 2 as const;
 
 export function isExternalOpportunityKind(
   kind: string | null | undefined,
@@ -28,4 +29,19 @@ export function discoveryAgentForOpportunity(
     return "newsjacking";
   }
   return "trend_radar";
+}
+
+/**
+ * Keep pre-curation Trend Radar rows out of the inbox. Newsjacking rows have
+ * their own source-verification gate and remain readable across versions.
+ */
+export function isDisplayableDiscoveryOpportunity(
+  kind: string | null | undefined,
+  payload: unknown,
+): boolean {
+  if (discoveryAgentForOpportunity(kind, payload) === "newsjacking") {
+    return true;
+  }
+  const value = payload as { curation_version?: unknown } | null;
+  return value?.curation_version === TREND_RADAR_CURATION_VERSION;
 }

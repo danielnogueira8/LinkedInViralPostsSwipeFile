@@ -17,6 +17,7 @@ import {
 } from "@/lib/agent-loop/trend-opportunity-synthesis";
 import { loadAgentDismissalFeedback } from "@/lib/agent-inbox/feedback";
 import { selectRefinedCandidates } from "@/lib/agent-inbox/opportunity-quality";
+import { TREND_RADAR_CURATION_VERSION } from "@/lib/agent-loop/opportunity-signal";
 
 // Trend Radar is the local creator-conversation lane. It reads embeddings
 // already produced by the scrape pipeline, so it does not introduce a paid
@@ -35,6 +36,7 @@ const MAX_TREND_OPPORTUNITIES_PER_RUN = 3;
 
 export type TrendOpportunityPayload = {
   signal_type?: "trend_radar";
+  curation_version?: typeof TREND_RADAR_CURATION_VERSION;
   headline?: string;
   summary?: string;
   source_name?: string;
@@ -209,6 +211,20 @@ function candidateScore(
   );
 }
 
+function topicLedCopy(topic: string, value: string): string {
+  const normalizedTopic = topic
+    .toLocaleLowerCase("en-US")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+  const normalizedValue = value
+    .toLocaleLowerCase("en-US")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+  return normalizedValue.includes(normalizedTopic)
+    ? value
+    : `${topic}: ${value}`;
+}
+
 /**
  * Turn a recent embedding corpus into quality-gated emerging conversations.
  * Density is counted per creator, while velocity compares the same centroid
@@ -262,10 +278,17 @@ export function rankTrendClusters(
         postTime(recentPosts[right]) - postTime(recentPosts[left]) ||
         recentPosts[left].id.localeCompare(recentPosts[right].id),
     );
-    const representativePosts = members
-      .slice(0, 3)
-      .map((index) => recentPosts[index])
-      .filter((row): row is TrendRadarPost => Boolean(row));
+    const representativePosts: TrendRadarPost[] = [];
+    const representedCreators = new Set<string>();
+    for (const index of members) {
+      const row = recentPosts[index];
+      if (!row) continue;
+      const creatorKey = row.account_id ?? `post:${row.id}`;
+      if (representedCreators.has(creatorKey)) continue;
+      representedCreators.add(creatorKey);
+      representativePosts.push(row);
+      if (representativePosts.length === 3) break;
+    }
     const latestPostAt =
       representativePosts
         .map((row) => row.posted_at)
@@ -307,7 +330,11 @@ export function trendOpportunityPayload(
   topics: readonly string[] = [],
   synthesis?: SynthesizedTrendOpportunity,
 ): TrendOpportunityPayload {
-  const terms = candidate.terms || topics.find(Boolean) || "this conversation";
+  const terms =
+    synthesis?.topic ||
+    candidate.terms ||
+    topics.find(Boolean) ||
+    "this conversation";
   const whyNow =
     candidate.confidence === "watchlist"
       ? "A breakout post makes " +
@@ -326,11 +353,15 @@ export function trendOpportunityPayload(
         " in the comparison window.";
   return {
     signal_type: "trend_radar",
+    ...(synthesis
+      ? { curation_version: TREND_RADAR_CURATION_VERSION }
+      : {}),
     headline:
-      synthesis?.headline ??
-      (candidate.confidence === "watchlist"
-        ? terms + ": an early signal to watch"
-        : terms + ": an emerging creator conversation"),
+      synthesis
+        ? topicLedCopy(terms, synthesis.headline)
+        : candidate.confidence === "watchlist"
+          ? terms + ": an early signal to watch"
+          : terms + ": an emerging creator conversation",
     summary:
       candidate.creators +
       " tracked creators posted " +
@@ -355,10 +386,11 @@ export function trendOpportunityPayload(
     why_now: whyNow,
     trend_key: candidate.trendKey,
     angle_prompt:
-      synthesis?.angle ??
-      "Use the attached posts to identify the specific assumption, consequence, or decision that is changing around " +
-        terms +
-        ". Add only a claim you can defend.",
+      synthesis
+        ? topicLedCopy(terms, synthesis.angle)
+        : "Use the attached posts to identify the specific assumption, consequence, or decision that is changing around " +
+          terms +
+          ". Add only a claim you can defend.",
     ...(synthesis?.viralMechanism
       ? { viral_mechanism: synthesis.viralMechanism }
       : {}),
@@ -604,7 +636,9 @@ export async function scanTrendOpportunities(
     : [];
 
   let inserted = 0;
-  let skipped = synthesisResult.available ? 0 : freshCandidates.length;
+  let skipped = synthesisResult.available
+    ? freshCandidates.length - selectedCandidates.length
+    : freshCandidates.length;
   for (const candidate of selectedCandidates) {
     const synthesis = synthesisResult.opportunities.get(candidate.trendKey);
     const payload = trendOpportunityPayload(candidate, context.topics, synthesis);

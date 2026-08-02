@@ -58,6 +58,32 @@ describe("Trend Radar creator-cluster ranking", () => {
     expect(candidates[0].representativePosts).toHaveLength(3);
   });
 
+  test("shows the judgment stage evidence from distinct creators", () => {
+    const recent = [
+      ...[1, 2, 3].map((index) => ({
+        ...post(
+          `creator-1-${index}`,
+          "creator-1",
+          `Claude Code review workflow example ${index}`,
+        ),
+        reactions: 100 - index,
+      })),
+      post("creator-2-1", "creator-2", "Claude Code changes approval workflows"),
+      post("creator-3-1", "creator-3", "Claude Code adds checks inside agent workflows"),
+    ];
+
+    const [candidate] = rankTrendClusters(
+      recent,
+      recent.map(() => [1, 0, 0]),
+      [],
+      [],
+    );
+
+    expect(
+      new Set(candidate.representativePosts.map((entry) => entry.account_id)),
+    ).toEqual(new Set(["creator-1", "creator-2", "creator-3"]));
+  });
+
   test("does not mistake one creator posting repeatedly for a trend", () => {
     const recent = Array.from({ length: 6 }, (_, index) =>
       post(
@@ -266,6 +292,7 @@ describe("scanTrendOpportunities persistence seam", () => {
             candidates.map((candidate) => [
               candidate.trendKey,
               {
+                topic: "AI agent workflows",
                 headline: "Agent workflows are moving from demos to operating systems",
                 angle:
                   "The shift is not more agents; it is deciding which work deserves durable orchestration.",
@@ -295,9 +322,42 @@ describe("scanTrendOpportunities persistence seam", () => {
       status: "proposed",
       payload: {
         signal_type: "trend_radar",
+        curation_version: 2,
+        terms: "AI agent workflows",
+        headline: expect.stringMatching(/^AI agent workflows:/),
+        angle_prompt: expect.stringMatching(/^AI agent workflows:/),
+        summary: expect.stringContaining("AI agent workflows"),
+        why_now: expect.stringContaining("AI agent workflows"),
         creator_count: 3,
         representative_posts: expect.any(Array),
       },
     });
+  });
+
+  test("reports a semantically rejected cluster as skipped", async () => {
+    const posts = [
+      post("recent-1", "creator-1", "Claude checks content before a comment"),
+      post("recent-2", "creator-2", "Claude reduces review effort for a lead"),
+      post("recent-3", "creator-3", "Claude adds checks to generated content"),
+    ];
+    const db = fakeDb(
+      posts,
+      posts.map((row) => ({ post_id: row.id, embedding: [1, 0, 0] })),
+    );
+
+    const result = await scanTrendOpportunities(
+      db as never,
+      "workspace-1",
+      NOW,
+      {
+        synthesize: async () => ({
+          available: true,
+          opportunities: new Map(),
+        }),
+      },
+    );
+
+    expect(result).toMatchObject({ clusters: 1, inserted: 0, skipped: 1 });
+    expect(db.inserts).toEqual([]);
   });
 });
