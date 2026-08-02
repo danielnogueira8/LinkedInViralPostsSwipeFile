@@ -42,7 +42,10 @@ vi.mock("@/lib/workspace", () => ({
   errorResponse: () => Response.json({ ok: false }, { status: 500 }),
 }));
 
-import { GET } from "@/app/api/cron/agent-loop/route";
+import {
+  GET,
+  trendRadarWorkspaceIds,
+} from "@/app/api/cron/agent-loop/route";
 
 const routeSource = readFileSync("app/api/cron/agent-loop/route.ts", "utf8");
 
@@ -104,6 +107,20 @@ beforeEach(() => {
 });
 
 describe("agent-loop cron workspace fairness", () => {
+  test("rotates the paid Trend Radar batch once per day", () => {
+    const workspaces = Array.from({ length: 12 }, (_, index) => `ws-${index}`);
+    const first = trendRadarWorkspaceIds(
+      workspaces,
+      new Date("2026-08-01T06:00:00.000Z"),
+    );
+    const next = trendRadarWorkspaceIds(
+      workspaces,
+      new Date("2026-08-02T06:00:00.000Z"),
+    );
+
+    expect([...first]).not.toEqual([...next]);
+  });
+
   test("rotates an oversized workspace list across ticks", () => {
     const workspaces = Array.from({ length: 130 }, (_, index) => `ws-${index}`);
     const seen = new Set<string>();

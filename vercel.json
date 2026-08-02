@@ -34,7 +34,7 @@
     },
     {
       "path": "/api/cron/agent-loop",
-      "schedule": "0 * * * *"
+      "schedule": "0 6 * * *"
     },
     {
       "path": "/api/cron/agent-inbox",
