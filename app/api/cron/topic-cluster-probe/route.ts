@@ -2,6 +2,13 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { selectAllRows, selectInChunks } from "@/lib/db-paginate";
 import { EMBEDDING_MODEL } from "@/lib/openrouter";
+import {
+  classifyTopicTrend,
+  clusterVectors,
+  cosineSimilarity,
+  normalizeEmbedding,
+  topicClusterLabel,
+} from "@/lib/agent-loop/topic-clusters";
 
 // PROBE — read-only. Answers one question before any feature is built:
 // do SUB-THRESHOLD posts contain real, nameable topic clusters?
@@ -80,79 +87,6 @@ function parseVector(value: unknown): number[] | null {
   } catch {
     return null;
   }
-}
-
-function normalize(vec: number[]): number[] {
-  let norm = 0;
-  for (const x of vec) norm += x * x;
-  norm = Math.sqrt(norm) || 1;
-  return vec.map((x) => x / norm);
-}
-
-function dot(a: number[], b: number[]): number {
-  let sum = 0;
-  const len = Math.min(a.length, b.length);
-  for (let i = 0; i < len; i++) sum += a[i] * b[i];
-  return sum;
-}
-
-type Cluster = { members: number[]; centroid: number[] };
-
-// Greedy agglomeration against a running centroid. Sufficient to answer "are
-// there nameable clusters?" — this is a probe, not the production job.
-function clusterVectors(
-  vectors: number[][],
-  threshold: number,
-): Cluster[] {
-  const clusters: Cluster[] = [];
-  for (let idx = 0; idx < vectors.length; idx++) {
-    let best: Cluster | null = null;
-    let bestSim = threshold;
-    for (const candidate of clusters) {
-      const sim = dot(vectors[idx], candidate.centroid);
-      if (sim >= bestSim) {
-        bestSim = sim;
-        best = candidate;
-      }
-    }
-    if (!best) {
-      clusters.push({ members: [idx], centroid: [...vectors[idx]] });
-      continue;
-    }
-    best.members.push(idx);
-    const n = best.members.length;
-    for (let d = 0; d < best.centroid.length; d++) {
-      best.centroid[d] =
-        (best.centroid[d] * (n - 1) + vectors[idx][d]) / n;
-    }
-    best.centroid = normalize(best.centroid);
-  }
-  return clusters;
-}
-
-const STOPWORDS = new Set(
-  ("the a an and or but if then than that this these those is are was were be been being of to in on for with at by from as it its you your we our they their me my he she his her not no do does did doing done have has had can could will would should may might must about into over under again more most other some such only own same so too very just now new get got make made way ways thing things people time times year years day days want wants like likes know knows think thinks see sees say says go goes going come comes take takes use uses using work works working need needs one two three what when where who why how all any each few many much every here there out up down off").split(
-    " ",
-  ),
-);
-
-function labelFor(members: number[], posts: PostRow[]): string {
-  const counts = new Map<string, number>();
-  for (const idx of members) {
-    const words = new Set(
-      (posts[idx].text ?? "")
-        .toLowerCase()
-        .replace(/[^\p{L}\p{N}\s]/gu, " ")
-        .split(/\s+/)
-        .filter((word) => word.length > 3 && !STOPWORDS.has(word)),
-    );
-    for (const word of words) counts.set(word, (counts.get(word) ?? 0) + 1);
-  }
-  return [...counts.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 6)
-    .map(([word]) => word)
-    .join(", ");
 }
 
 export async function GET(request: Request) {
@@ -263,7 +197,7 @@ export async function GET(request: Request) {
   );
   for (const row of embeddingRows) {
     const vec = parseVector(row.embedding);
-    if (vec && vec.length) byId.set(row.post_id, normalize(vec));
+    if (vec && vec.length) byId.set(row.post_id, normalizeEmbedding(vec));
   }
 
   const recentWithVec = recent.filter((row) => byId.has(row.id));
@@ -337,26 +271,19 @@ export async function GET(request: Request) {
     // a flat cluster is just a permanent topic, not news.
     const priorCreators = new Set<string>();
     for (let i = 0; i < priorVecs.length; i++) {
-      if (dot(priorVecs[i], cluster.centroid) >= sim) {
+      if (cosineSimilarity(priorVecs[i], cluster.centroid) >= sim) {
         const account = priorWithVec[i].account_id;
         if (account) priorCreators.add(account);
       }
     }
     const before = priorCreators.size;
-    const trend =
-      before === 0
-        ? "new"
-        : creators > before * 1.5
-          ? "rising"
-          : creators < before * 0.67
-            ? "fading"
-            : "flat";
+    const trend = classifyTopicTrend(creators, before);
     return {
       creators,
       posts: cluster.members.length,
       trend,
       creatorsPriorWindow: before,
-      terms: labelFor(cluster.members, recentWithVec),
+      terms: topicClusterLabel(cluster.members, recentWithVec),
       samples: cluster.members
         .slice(0, 3)
         .map((i) => firstLine(recentWithVec[i].text).slice(0, 140)),

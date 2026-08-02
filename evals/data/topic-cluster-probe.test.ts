@@ -1,42 +1,16 @@
 import { describe, expect, test } from "vitest";
 import { readFileSync } from "node:fs";
+import {
+  classifyTopicTrend as trend,
+  clusterVectors,
+  normalizeEmbedding as normalize,
+} from "@/lib/agent-loop/topic-clusters";
 
 // The probe endpoint's clustering, extracted here so its parameters are
 // pinned by tests rather than trusted. A wrong threshold does not error — it
 // silently returns blurry clusters that read as "the data is mush", which
 // would kill a good idea for a bad reason.
 
-function normalize(vec: number[]): number[] {
-  let norm = 0;
-  for (const x of vec) norm += x * x;
-  norm = Math.sqrt(norm) || 1;
-  return vec.map((x) => x / norm);
-}
-function dot(a: number[], b: number[]): number {
-  let sum = 0;
-  for (let i = 0; i < Math.min(a.length, b.length); i++) sum += a[i] * b[i];
-  return sum;
-}
-type Cluster = { members: number[]; centroid: number[] };
-function clusterVectors(vectors: number[][], threshold: number): Cluster[] {
-  const clusters: Cluster[] = [];
-  for (let idx = 0; idx < vectors.length; idx++) {
-    let best: Cluster | null = null;
-    let bestSim = threshold;
-    for (const candidate of clusters) {
-      const sim = dot(vectors[idx], candidate.centroid);
-      if (sim >= bestSim) { bestSim = sim; best = candidate; }
-    }
-    if (!best) { clusters.push({ members: [idx], centroid: [...vectors[idx]] }); continue; }
-    best.members.push(idx);
-    const n = best.members.length;
-    for (let d = 0; d < best.centroid.length; d++) {
-      best.centroid[d] = (best.centroid[d] * (n - 1) + vectors[idx][d]) / n;
-    }
-    best.centroid = normalize(best.centroid);
-  }
-  return clusters;
-}
 
 // Deterministic PRNG so these never flake.
 function seeded(seed: number) {
@@ -82,6 +56,22 @@ describe("topic-cluster probe: similarity threshold", () => {
     expect(sizesAtLeast3(vectors, 0.62)).not.toEqual([4, 4, 4]);
     expect(Math.max(...sizesAtLeast3(vectors, 0.62))).toBeGreaterThan(4);
   });
+
+  test("cluster sizes do not depend on input order", () => {
+    const { vectors } = plantedCorpus(3);
+    expect(sizesAtLeast3([...vectors].reverse(), 0.8)).toEqual(
+      sizesAtLeast3(vectors, 0.8),
+    );
+  });
+
+  test("ignores malformed and dimension-mismatched embeddings", () => {
+    const clusters = clusterVectors(
+      [[1, 0, 0], [0, 1], [Number.NaN, 0, 0], [0.99, 0.01, 0]],
+      0.8,
+    );
+    expect(clusters).toHaveLength(1);
+    expect(clusters[0].members).toEqual([0, 3]);
+  });
 });
 
 describe("topic-cluster probe: density is per-creator", () => {
@@ -112,15 +102,6 @@ describe("topic-cluster probe: density is per-creator", () => {
 });
 
 describe("topic-cluster probe: velocity classification", () => {
-  const trend = (creators: number, before: number) =>
-    before === 0
-      ? "new"
-      : creators > before * 1.5
-        ? "rising"
-        : creators < before * 0.67
-          ? "fading"
-          : "flat";
-
   test("classifies the cases the inbox should act on", () => {
     // "rising" and "new" are the postable windows; "flat" is a permanent
     // topic, not news, and "fading" is already late.
