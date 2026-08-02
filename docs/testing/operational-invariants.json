@@ -121,10 +121,10 @@
     {
       "id": "agent-opportunity-action-transition",
       "boundary": "agent opportunity action state transition",
-      "invariant": "Dismiss and snooze can only transition a still-proposed opportunity; stale actions return a conflict, while a successful draft keeps its cadence linkage.",
+      "invariant": "Dismiss and handled can only transition a still-proposed opportunity; stale actions return a conflict, while a successful draft keeps its cadence linkage.",
       "evidence": [
         { "path": "evals/data/agent-opportunity-transitions.test.ts", "test": "dismiss executes a conditional transition and returns 409 when it loses" },
-        { "path": "evals/data/agent-opportunity-transitions.test.ts", "test": "snooze executes a conditional transition and returns success only after a row changes" },
+        { "path": "evals/data/agent-opportunity-transitions.test.ts", "test": "handled executes a conditional transition and returns 409 when it loses" },
         { "path": "evals/data/agent-opportunity-transitions.test.ts", "test": "draft success still marks the matching cadence opportunity" }
       ]
     },
