@@ -133,11 +133,15 @@ describe("scanNewsjackingOpportunities persistence seam", () => {
     });
   });
 
-  test("does not pay for a second Trend Radar search on the same day", async () => {
+  test("does not pay for a second Newsjacking search on the same day", async () => {
     const db = fakeDb([true, false]);
 
-    await scanTrendOpportunities(db as never, "workspace-1", NOW);
-    const second = await scanTrendOpportunities(db as never, "workspace-1", NOW);
+    await scanNewsjackingOpportunities(db as never, "workspace-1", NOW);
+    const second = await scanNewsjackingOpportunities(
+      db as never,
+      "workspace-1",
+      NOW,
+    );
 
     expect(second).toEqual({
       searched: 0,
