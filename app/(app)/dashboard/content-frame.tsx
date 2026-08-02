@@ -1,6 +1,7 @@
 "use client";
 
 import { usePathname } from "next/navigation";
+import { cn } from "@/lib/utils";
 
 // The main content wrapper. Most dashboard pages sit in a centered, padded
 // column (max-w-[1400px] + generous padding) — that's the right frame for
@@ -15,6 +16,11 @@ export function DashboardContentFrame({ children }: { children: React.ReactNode 
   // Exact match — only the Cowork index goes full-bleed. Sub-routes
   // (/dashboard/posts, /dashboard/creator-styles, …) keep the padded frame.
   const isCowork = pathname === "/dashboard";
+  // The Agent inbox is a normal document-flow page. Giving it this wrapper's
+  // fixed viewport height and independent overflow creates a second scrollport
+  // (and, because overflow-x then computes to auto, a horizontal scrollbar)
+  // that can continue through empty space after the inbox content ends.
+  const usesDocumentScroll = pathname === "/dashboard/agent";
 
   // Cowork fills the main area edge-to-edge (its own full app surface with an
   // internal scroll) — no panel, no padding, no max-width. Every other route
@@ -28,7 +34,12 @@ export function DashboardContentFrame({ children }: { children: React.ReactNode 
   return (
     <div
       data-slot="dashboard-scroll-container"
-      className="lg:h-[calc(100vh-1.5rem)] lg:overflow-y-auto lg:m-3 lg:ml-0 lg:rounded-2xl lg:border lg:border-border lg:bg-card lg:shadow-soft"
+      className={cn(
+        "lg:m-3 lg:ml-0 lg:rounded-2xl lg:border lg:border-border lg:bg-card lg:shadow-soft",
+        !usesDocumentScroll &&
+          "lg:h-[calc(100vh-1.5rem)] lg:overflow-y-auto",
+        usesDocumentScroll && "lg:min-h-[calc(100vh-1.5rem)]",
+      )}
     >
       <div className="max-w-[1400px] mx-auto px-4 sm:px-8 lg:px-10 py-4 sm:py-8 lg:py-10">
         {children}

@@ -10,6 +10,7 @@ const WORKSPACE = "app/(app)/dashboard/chat-workspace.tsx";
 const INBOX = "app/(app)/dashboard/agent-inbox.tsx";
 const INBOX_CLIENT = "app/(app)/dashboard/agent-inbox-client.ts";
 const NAV_BADGES = "app/(app)/dashboard/nav-badges.ts";
+const CONTENT_FRAME = "app/(app)/dashboard/content-frame.tsx";
 const INBOX_ROUTE = "app/api/agent/inbox/route.ts";
 const IDEA_ROUTE = "app/api/agent/inbox/ideas/[id]/route.ts";
 
@@ -29,6 +30,21 @@ describe("Your Agent is a top-level dashboard page", () => {
     expect(page).toContain("export default function AgentPage");
     expect(page).toContain('title="Agent Inbox"');
     expect(page).toContain("<AgentInbox");
+  });
+
+  test("the Agent page follows document height instead of creating an empty inner scrollport", () => {
+    const frame = source(CONTENT_FRAME);
+
+    expect(frame).toContain(
+      'const usesDocumentScroll = pathname === "/dashboard/agent"',
+    );
+    expect(frame).toContain("!usesDocumentScroll &&");
+    expect(frame).toContain(
+      '"lg:h-[calc(100vh-1.5rem)] lg:overflow-y-auto"',
+    );
+    expect(frame).toContain(
+      'usesDocumentScroll && "lg:min-h-[calc(100vh-1.5rem)]"',
+    );
   });
 
   test("the Agent page keeps Cowork's new-session action out of its header", () => {
