@@ -23,6 +23,13 @@ const messageStateSql = readFileSync(
   ),
   "utf8",
 );
+const handledStateSql = readFileSync(
+  new URL(
+    "../../db/migration-170-agent-opportunity-handled.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
 
 describe("agent inbox migration", () => {
   test("stores active ideas per lane and idempotent daily runs", () => {
@@ -129,5 +136,15 @@ describe("agent inbox migration", () => {
       "agent_opportunities_unread_trend_idx",
     );
     expect(messageStateSql).toContain("values (true, 169, now())");
+  });
+
+  test("keeps a Cowork handoff distinct from a generated Trend Radar draft", () => {
+    expect(handledStateSql).toContain(
+      "'proposed','drafting','drafted','dismissed','expired','snoozed','handled'",
+    );
+    expect(handledStateSql).toContain("values (true, 170, now())");
+    expect(handledStateSql).toContain(
+      "distinguish a Cowork handoff from a generated draft",
+    );
   });
 });

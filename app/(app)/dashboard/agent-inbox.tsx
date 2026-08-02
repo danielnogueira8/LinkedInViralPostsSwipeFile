@@ -918,15 +918,15 @@ export function AgentInbox() {
     setBusyId(idea.id);
     try {
       if (action === "open") {
-        await updateMessageState(idea, "read");
-        patchReadAt(idea.id, new Date().toISOString());
-        invalidateNavBadges();
         sessionStorage.setItem(
           `agent-inbox-draft:${idea.id}`,
           agentInboxDraftPrompt(idea),
         );
+        sessionStorage.setItem(`agent-inbox-lane:${idea.id}`, idea.lane);
         setSelectedIdea(null);
-        router.push(`/dashboard?new=1&agentIdea=${idea.id}`);
+        router.push(
+          `/dashboard?new=1&agentIdea=${encodeURIComponent(idea.id)}&agentLane=${encodeURIComponent(idea.lane)}`,
+        );
         return;
       }
       await closeIdea(idea, action, discardReason);

@@ -122,6 +122,27 @@ describe("agent opportunity action transitions", () => {
     );
   });
 
+  test("handled marks a Trend Radar opportunity complete without generating a draft", async () => {
+    mocked.updateManagedOpportunityStatus.mockResolvedValueOnce(true);
+
+    const response = await post({ action: "handled" });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, status: "handled" });
+    expect(mocked.updateManagedOpportunityStatus).toHaveBeenCalledWith(
+      mocked.raw,
+      "workspace-1",
+      "opp-1",
+      "proposed",
+      expect.objectContaining({
+        status: "handled",
+        acted_at: expect.any(String),
+      }),
+    );
+    expect(mocked.actOnOpportunity).not.toHaveBeenCalled();
+    expect(mocked.markStoredOpportunityDrafted).not.toHaveBeenCalled();
+  });
+
   test("snooze executes a conditional transition and returns success only after a row changes", async () => {
     mocked.updateManagedOpportunityStatus.mockResolvedValueOnce(true);
 
