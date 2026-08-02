@@ -14,6 +14,12 @@ export function planProgressTitle(
   plan: PlanStep[],
   liveStatus: string | null,
 ): string {
+  if (liveStatus === "Planning next moves") {
+    const currentStep =
+      plan.find((step) => step.status === "active") ??
+      plan.find((step) => step.status === "pending");
+    if (currentStep) return currentStep.label;
+  }
   if (liveStatus) return liveStatus;
   return plan.length > 0 && plan.every((step) => step.status === "done")
     ? "Plan complete"
