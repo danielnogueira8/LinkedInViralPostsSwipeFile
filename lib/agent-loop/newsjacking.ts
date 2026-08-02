@@ -178,6 +178,55 @@ function signalTokens(result: NewsResult): string[] {
   ];
 }
 
+const EVENT_GENERIC_WORDS = new Set([
+  "linkedin",
+  "creator",
+  "creators",
+  "content",
+  "ai",
+  "marketing",
+  "tool",
+  "tools",
+  "social",
+  "post",
+  "posts",
+  "uses",
+  "using",
+]);
+const EVENT_CHANGE_RE =
+  /\b(?:announces|introduces|(?:has|have|had)\s+(?:announced|launched|introduced|updated|changed|rolled\s+out|released)|(?:is|are|was|were)\s+(?:announcing|launching|introducing|updating|changing|rolling\s+out|releasing)|will\s+(?:announce|launch|introduce|update|change|roll\s+out|release))\b/i;
+const EVERGREEN_CONTENT_RE =
+  /\b(?:guides?|playbooks?|templates?|tips|checklists?|how[-\s]+to|tutorials?|frameworks?)\b/i;
+
+function eventTerms(result: NewsResult): string[] {
+  return signalTokens(result).filter((token) => !EVENT_GENERIC_WORDS.has(token));
+}
+
+function eventBigrams(result: NewsResult): Set<string> {
+  const terms = eventTerms(result);
+  return new Set(terms.slice(0, -1).map((term, index) => `${term}:${terms[index + 1]}`));
+}
+
+function eventSimilarity(left: NewsResult, right: NewsResult): number {
+  if (EVERGREEN_CONTENT_RE.test(`${right.title} ${right.summary}`)) return 0;
+  if (
+    !EVENT_CHANGE_RE.test(`${left.title} ${left.summary}`) ||
+    !EVENT_CHANGE_RE.test(`${right.title} ${right.summary}`)
+  ) {
+    return 0;
+  }
+  const leftTokens = new Set(eventTerms(left));
+  const rightTokens = new Set(eventTerms(right));
+  if (leftTokens.size === 0 || rightTokens.size === 0) return 0;
+  const shared = [...leftTokens].filter((token) => rightTokens.has(token)).length;
+  const rightBigrams = eventBigrams(right);
+  const sharedBigrams = [...eventBigrams(left)].filter((value) =>
+    rightBigrams.has(value),
+  ).length;
+  if (shared < 3 && !(shared >= 2 && sharedBigrams >= 1)) return 0;
+  return shared * 10 + sharedBigrams;
+}
+
 function isUsableHttpUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
@@ -342,6 +391,7 @@ export function rankNewsjackingCandidates(
   now: Date,
   topics: readonly string[],
 ): NewsjackingCandidate[] {
+  const usableResults: NewsResult[] = [];
   const groupedByKey = new Map<string, NewsResult[]>();
   for (const result of filterFreshNews(results, now, NEWS_MAX_AGE_DAYS)) {
     if (
@@ -351,6 +401,7 @@ export function rankNewsjackingCandidates(
     ) {
       continue;
     }
+    usableResults.push(result);
     const key = newsjackingKeyForResult(result);
     groupedByKey.set(key, [...(groupedByKey.get(key) ?? []), result]);
   }
@@ -367,10 +418,70 @@ export function rankNewsjackingCandidates(
     if (!result) continue;
     candidates.push({
       result,
-      corroboratingResults: ranked.filter((entry) => entry !== result),
+      corroboratingResults: ranked
+        .filter((entry) => entry !== result)
+        .filter(
+          (entry, index, entries) =>
+            entries.findIndex((candidate) => candidate.url === entry.url) ===
+            index,
+        ),
       score: scoreNewsjackingSignal(result, topics, now),
       trendKey,
     });
+  }
+  const globallyOwnedSocialUrls = new Set<string>();
+  for (const candidate of [...candidates].sort(
+    (left, right) =>
+      right.score - left.score || left.trendKey.localeCompare(right.trendKey),
+  )) {
+    candidate.corroboratingResults = (
+      candidate.corroboratingResults ?? []
+    ).filter((entry) => {
+      if (!isSocialPostUrl(entry.url)) return true;
+      if (globallyOwnedSocialUrls.has(entry.url)) return false;
+      globallyOwnedSocialUrls.add(entry.url);
+      return true;
+    });
+  }
+  const alreadyCorroborating = new Set(
+    candidates.flatMap((candidate) =>
+      (candidate.corroboratingResults ?? []).map((entry) => entry.url),
+    ),
+  );
+  const socialResults = [
+    ...new Map(
+      usableResults
+        .filter((entry) => isSocialPostUrl(entry.url))
+        .map((entry) => [entry.url, entry]),
+    ).values(),
+  ];
+  const attachments = socialResults.flatMap((social) => {
+    if (alreadyCorroborating.has(social.url)) return [];
+    const match = candidates
+      .map((candidate) => ({
+        candidate,
+        similarity: eventSimilarity(candidate.result, social),
+      }))
+      .filter((entry) => entry.similarity > 0)
+      .sort(
+        (left, right) =>
+          right.similarity - left.similarity ||
+          left.candidate.trendKey.localeCompare(right.candidate.trendKey),
+      )[0];
+    return match ? [{ ...match, social }] : [];
+  });
+  attachments.sort(
+    (left, right) =>
+      right.similarity - left.similarity ||
+      left.social.url.localeCompare(right.social.url),
+  );
+  for (const { candidate, social } of attachments) {
+    if (alreadyCorroborating.has(social.url)) continue;
+    candidate.corroboratingResults = [
+      ...(candidate.corroboratingResults ?? []),
+      social,
+    ];
+    alreadyCorroborating.add(social.url);
   }
   return candidates.sort((a, b) => b.score - a.score);
 }
