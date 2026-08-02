@@ -1041,7 +1041,7 @@ export function chatHistoryWithModelSources(
           ...(m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}),
         });
         if (m.role !== "user") return base;
-        const sourceId = extractModelSourceId(m.tool_calls);
+        const sourceId = extractModelSourceId(m);
         const source = sourceId ? sourcesById.get(sourceId) : null;
         const envelope = source ? modelSourceEnvelope(source) : "";
         const persistedBlocks = Array.isArray(m.content_blocks)
@@ -1316,7 +1316,7 @@ export async function buildTurnContext(
     sbRaw
       .from("chat_messages")
       .select(
-        "role, content, tool_calls, tool_call_id, artifacts, content_blocks",
+        "role, content, tool_calls, tool_call_id, artifacts, content_blocks, model_source_id",
       )
       .eq("chat_id", chatId)
       .eq("workspace_id", workspaceId)
@@ -1449,7 +1449,7 @@ export async function buildTurnContext(
   const modelSourceIds = Array.from(
     new Set([
       ...dbRows
-        .map((m) => extractModelSourceId(m.tool_calls))
+        .map((m) => extractModelSourceId(m))
         .filter((id): id is string => !!id),
       ...(modelSourceId ? [modelSourceId] : []),
     ]),

@@ -47,6 +47,7 @@ vi.mock("@/lib/agent/specialists/ai-tell-repair", async (importOriginal) => {
 import { UsagePersistenceError } from "@/lib/openrouter";
 import {
   GROUNDED_EVIDENCE_TEXT_BUDGET_CHARS,
+  modelSourceClarificationContext,
   runModeledDraftSlot,
   runWriterTurn,
   type ModeledDraftBatchRepository,
@@ -2357,6 +2358,91 @@ describe("DraftEngine — thin path (lean mode)", () => {
         content: "What concrete milestone or result should anchor your version?",
       },
     });
+  });
+
+  test("recovers one same-source clarification and carries only the user's answers forward", () => {
+    const source = {
+      id: "src-milestone",
+      text: "I reached 104,000 followers on LinkedIn.",
+    };
+    const context = modelSourceClarificationContext(
+      [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "Model this post for me." },
+            {
+              type: "text",
+              text: `--- POST TO MODEL AFTER ---\n${source.text}\n--- END POST ---`,
+            },
+          ],
+        },
+        {
+          role: "assistant",
+          content: "What milestone and outcome should anchor your version?",
+        },
+        {
+          role: "user",
+          content:
+            "I reached 2,000 followers and content writing brought me clients.",
+        },
+      ],
+      source,
+    );
+
+    expect(context.alreadyAsked).toBe(true);
+    expect(context.promptBlock).toContain(
+      "I reached 2,000 followers and content writing brought me clients.",
+    );
+    expect(context.promptBlock).not.toContain(source.text);
+  });
+
+  test("does not spend the clarification budget on a question about a different source", () => {
+    const context = modelSourceClarificationContext(
+      [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "Discuss this source." },
+            {
+              type: "text",
+              text: "--- POST TO MODEL AFTER ---\nA different source.\n--- END POST ---",
+            },
+          ],
+        },
+        { role: "assistant", content: "What did you think of it?" },
+        { role: "user", content: "Create my post now." },
+      ],
+      { id: "src-current", text: "The current source." },
+    );
+
+    expect(context).toEqual({ alreadyAsked: false, promptBlock: "" });
+  });
+
+  test("a completed post resets the one-question budget when the source is reused later", () => {
+    const source = { id: "src-current", text: "The current source." };
+    const sourceTurn = {
+      role: "user" as const,
+      content: [
+        { type: "text" as const, text: "Model this post." },
+        {
+          type: "text" as const,
+          text: `--- POST TO MODEL AFTER ---\n${source.text}\n--- END POST ---`,
+        },
+      ],
+    };
+    const context = modelSourceClarificationContext(
+      [
+        sourceTurn,
+        { role: "assistant", content: "Which result should anchor it?" },
+        { role: "user", content: "A client result." },
+        { role: "assistant", content: "Your draft is ready." },
+        sourceTurn,
+      ],
+      source,
+    );
+
+    expect(context).toEqual({ alreadyAsked: false, promptBlock: "" });
   });
 
   test("repairs a semantically different modeled post before emitting it", async () => {

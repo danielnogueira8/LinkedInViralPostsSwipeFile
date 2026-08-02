@@ -31,6 +31,7 @@ type DbRow = {
   content: string;
   tool_calls: ToolCall[] | null;
   tool_call_id: string | null;
+  model_source_id?: string | null;
 };
 
 describe("model-source history", () => {
@@ -156,6 +157,33 @@ describe("model-source history", () => {
     );
     expect(history[2].content).toBe(
       "Use the 30+ posts / 1,000+ comments stat.",
+    );
+  });
+
+  test("the canonical model_source_id column restores source data without a legacy tool marker", () => {
+    const sourceId = "11111111-1111-4111-8111-111111111119";
+    const sourceText = "I reached 104,000 followers on LinkedIn.";
+    const history = chatHistoryWithModelSources(
+      [
+        {
+          role: "user",
+          content: "Model this post for me.",
+          tool_calls: null,
+          tool_call_id: null,
+          model_source_id: sourceId,
+        },
+      ],
+      new Map([
+        [
+          sourceId,
+          { id: sourceId, source: "bookmark", post_text: sourceText },
+        ],
+      ]),
+    );
+
+    expect(JSON.stringify(history[0]?.content)).toContain(sourceText);
+    expect(JSON.stringify(history[0]?.content)).toContain(
+      "--- POST TO MODEL AFTER ---",
     );
   });
 

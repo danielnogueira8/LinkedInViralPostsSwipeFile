@@ -3391,6 +3391,114 @@ describe("production-shaped Cowork outcome harness", () => {
     expect(JSON.stringify(report.persisted.messages)).not.toContain(COMPLETE_POST);
   });
 
+  test("a Model Source clarification is consumed once and an explicit Create continuation cannot restart questioning", async () => {
+    const modelSourceId = "00000000-0000-4000-8000-000000000241";
+    const sourcePostId = "00000000-0000-4000-8000-000000000242";
+    const question =
+      "What milestone and meaningful outcome should anchor your version?";
+    const needsInput = {
+      outcome: "needs_input" as const,
+      blueprint: {
+        schemaVersion: 1 as const,
+        coreTheme: "A milestone matters because of the people behind it.",
+        communicativeJob: "Celebrate and humanize an achieved milestone.",
+        readerEffect: "Shared pride and trust.",
+        hook: {
+          function: "Lead with a completed outcome.",
+          evidenceType: "measurable milestone",
+        },
+        emotionalArc: ["pride", "gratitude", "commitment"],
+        beats: [
+          { role: "win", purpose: "State the milestone." },
+          { role: "meaning", purpose: "Explain the impact behind it." },
+        ],
+        requiredEvidence: [
+          {
+            role: "anchor achievement",
+            semanticRequirement: "A completed milestone and its impact.",
+            sourceExample: "104,000 followers and resulting opportunities",
+          },
+        ],
+      },
+      userMappings: [],
+      missingEvidence: ["a completed milestone and its impact"],
+      question,
+    };
+
+    const sequence = await runCoworkOutcomeSequence([
+      {
+        id: "modeled-source-one-clarification",
+        request: {
+          message: "Model the attached post for me.",
+          command: { kind: "create", count: 1 },
+          modelSourceId,
+        },
+        seed: {
+          bookmarkModelSource: {
+            id: modelSourceId,
+            sourcePostId,
+            postText:
+              "I reached 104,000 followers. The people and opportunities behind the number matter most.",
+            postUrl:
+              "https://www.linkedin.com/feed/update/urn:li:activity:241",
+          },
+        },
+        model: {
+          provider: { rounds: [] },
+          modelSourcePreparation: needsInput,
+          directWriter: [],
+        },
+        expected: {
+          terminal: "done",
+          artifactBodies: [],
+          actionNames: [],
+          assistantContents: [question],
+        },
+      },
+      {
+        id: "modeled-source-create-after-clarification",
+        request: {
+          message:
+            "I reached 2,000 followers through content writing and it has brought me clients. Create it now.",
+          command: { kind: "create", count: 1 },
+          modelSourceId,
+        },
+        model: {
+          provider: { rounds: [] },
+          // Reproduce an over-strict analyzer asking again. The server must
+          // consume the prior clarification and continue autonomously.
+          modelSourcePreparation: needsInput,
+          directWriter: [
+            {
+              text: SECOND_POST,
+              finishReason: "stop",
+              usage: usage(240, 105, 0.00023),
+            },
+          ],
+        },
+        expected: {
+          terminal: "done",
+          artifactBodies: [SECOND_POST],
+          actionNames: [],
+          sourcePostIds: [sourcePostId],
+        },
+      },
+    ]);
+
+    expect(
+      sequence.attempts[1]?.pass,
+      JSON.stringify(sequence.attempts[1]),
+    ).toBe(true);
+    expect(
+      sequence.attempts[0]?.persisted.messages.at(-1)?.terminal_reason,
+    ).toBe("ask");
+    expect(sequence.attempts[1]?.observed.directWriterRequests).toHaveLength(1);
+    expect(sequence.attempts[1]?.persisted.artifacts).toHaveLength(1);
+    expect(sequence.attempts[1]?.persisted.messages.at(-1)?.content).not.toBe(
+      question,
+    );
+  });
+
   test("routes exact partial text through the tool-free writer and repairs its shape", async () => {
     const exactHooks = [
       "1.",
