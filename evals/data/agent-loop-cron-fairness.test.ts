@@ -6,6 +6,8 @@ const mocked = vi.hoisted(() => ({
   db: null as unknown,
   ranges: [] as Array<[string, number]>,
   scan: vi.fn(),
+  newsjacking: vi.fn(),
+  trend: vi.fn(),
   recover: vi.fn(),
   alert: vi.fn(),
 }));
@@ -17,13 +19,11 @@ vi.mock("@/lib/agent-loop/scan", () => ({
   scanAgentOpportunities: (...args: unknown[]) => mocked.scan(...args),
 }));
 vi.mock("@/lib/agent-loop/newsjacking", () => ({
-  scanNewsjackingOpportunities: async () => ({
-    searched: 0,
-    fetched: 0,
-    inserted: 0,
-    expired: 0,
-    skipped: 0,
-  }),
+  scanNewsjackingOpportunities: (...args: unknown[]) =>
+    mocked.newsjacking(...args),
+}));
+vi.mock("@/lib/agent-loop/trend-radar", () => ({
+  scanTrendOpportunities: (...args: unknown[]) => mocked.trend(...args),
 }));
 vi.mock("@/lib/agent-loop/opportunity-claim", () => ({
   recoverStaleAgentOpportunityDrafts: (...args: unknown[]) =>
@@ -97,6 +97,24 @@ beforeEach(() => {
     expired: 0,
     workspaceId,
   }));
+  mocked.newsjacking.mockReset();
+  mocked.newsjacking.mockResolvedValue({
+    searched: 0,
+    fetched: 0,
+    inserted: 0,
+    expired: 0,
+    skipped: 0,
+  });
+  mocked.trend.mockReset();
+  mocked.trend.mockResolvedValue({
+    scanned: 0,
+    eligible: 0,
+    embedded: 0,
+    clusters: 0,
+    inserted: 0,
+    expired: 0,
+    skipped: 0,
+  });
   mocked.recover.mockReset();
   mocked.recover.mockResolvedValue(0);
   mocked.alert.mockReset();
@@ -142,6 +160,8 @@ describe("agent-loop cron workspace fairness", () => {
       expect(response.status).toBe(200);
       expect(mocked.ranges).toContainEqual(["workspace_accounts", 20_000]);
       expect(mocked.scan).toHaveBeenCalledTimes(50);
+      expect(mocked.newsjacking).toHaveBeenCalledTimes(6);
+      expect(mocked.trend).toHaveBeenCalledTimes(6);
       expect(body.workspaces).toHaveLength(50);
       expect(scannedIds).toEqual(rotateForFairness(discovered, now, 50));
       expect(scannedIds.some((id) => !discovered.slice(0, 50).includes(id))).toBe(
