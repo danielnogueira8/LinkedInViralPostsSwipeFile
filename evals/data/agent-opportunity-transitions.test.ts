@@ -150,6 +150,25 @@ describe("agent opportunity action transitions", () => {
     expect(mocked.markStoredOpportunityDrafted).not.toHaveBeenCalled();
   });
 
+  test("handled executes a conditional transition and returns 409 when it loses", async () => {
+    mocked.updateManagedOpportunityStatus.mockResolvedValueOnce(false);
+
+    const response = await post({ action: "handled" });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      ok: false,
+      error: "This opportunity was already handled.",
+    });
+    expect(mocked.updateManagedOpportunityStatus).toHaveBeenCalledWith(
+      mocked.raw,
+      "workspace-1",
+      "opp-1",
+      "proposed",
+      expect.objectContaining({ status: "handled" }),
+    );
+  });
+
   test("draft success still marks the matching cadence opportunity", async () => {
     mocked.actOnOpportunity.mockResolvedValueOnce({
       ok: true,
