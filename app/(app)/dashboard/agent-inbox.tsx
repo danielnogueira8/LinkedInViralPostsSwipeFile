@@ -144,6 +144,61 @@ function ideaEvidenceDate(idea: AgentFeedIdea): string | null {
   return formatted || null;
 }
 
+function ideaProvenance(idea: AgentFeedIdea) {
+  const source = idea.evidence.find(
+    (entry) =>
+      entry.kind === "source_post" &&
+      entry.role === "inspiration" &&
+      (entry.sourceOrigin === "swipe" || entry.sourceOrigin === "bookmark") &&
+      Boolean(entry.ref) &&
+      Boolean(entry.detail),
+  );
+  const anchor = idea.evidence.find(
+    (entry) =>
+      entry.role === "anchor" &&
+      entry.kind !== "draft" &&
+      entry.kind !== "source_post",
+  );
+  return source && anchor ? { source, anchor } : null;
+}
+
+function IdeaProvenance({
+  idea,
+  detailed = false,
+  row = false,
+}: {
+  idea: AgentFeedIdea;
+  detailed?: boolean;
+  row?: boolean;
+}) {
+  const provenance = ideaProvenance(idea);
+  if (!provenance) return null;
+  const sourceLabel = provenance.source.authorName ?? provenance.source.label;
+  if (row) {
+    return (
+      <span className="mt-1 block line-clamp-1 text-[11px] leading-4 text-muted-foreground">
+        Modeled from {sourceLabel} · Grounded in {provenance.anchor.label}
+      </span>
+    );
+  }
+  return detailed ? (
+    <div className="rounded-xl bg-muted/35 px-3.5 py-3 text-sm leading-5">
+      <p>
+        <span className="font-medium text-muted-foreground">Modeled from</span>{" "}
+        {sourceLabel}
+      </p>
+      <p className="mt-1">
+        <span className="font-medium text-muted-foreground">Grounded in</span>{" "}
+        {provenance.anchor.label}
+      </p>
+    </div>
+  ) : (
+    <p className="mt-3 line-clamp-1 text-xs text-muted-foreground">
+      Modeled from {sourceLabel} · Grounded in {provenance.anchor.label}
+    </p>
+  );
+}
+
 type AgentLaneFilter = "all" | AgentFeedLane;
 
 function LaneAvatar({
@@ -391,6 +446,7 @@ export function OpportunityCard({
         <p className="mt-2 line-clamp-2 text-sm leading-5 text-muted-foreground">
           {idea.angle}
         </p>
+        <IdeaProvenance idea={idea} />
       </div>
       {moreCount > 0 && onViewMore ? (
         <div className="mt-3">
@@ -543,6 +599,7 @@ function RecommendationRow({
         <span className="mt-1 block line-clamp-1 text-xs leading-5 text-muted-foreground">
           {idea.angle}
         </span>
+        <IdeaProvenance idea={idea} row />
       </span>
       {busy ? <Loader2 className="mt-1 size-4 animate-spin" /> : null}
     </button>
@@ -597,6 +654,15 @@ function RecommendationDetails({
           </h3>
           <div className="mt-3 rounded-2xl bg-muted/35 p-4 text-sm leading-6">
             {idea.why[0] ?? "Grounded in the evidence attached to this idea."}
+          </div>
+        </section>
+
+        <section>
+          <h3 className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+            How this idea was built
+          </h3>
+          <div className="mt-3">
+            <IdeaProvenance idea={idea} detailed />
           </div>
         </section>
 
@@ -928,10 +994,45 @@ export function AgentInbox() {
           agentInboxDraftPrompt(idea),
         );
         sessionStorage.setItem(`agent-inbox-lane:${idea.id}`, idea.lane);
+        const source = ideaProvenance(idea)?.source;
+        let modelSourceId: string | null = null;
+        let sourceAttachmentWarning: string | null = null;
+        if (source?.sourceOrigin && source.ref) {
+          try {
+            const response = await fetch("/api/model-source", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                source: source.sourceOrigin,
+                postId: source.ref,
+              }),
+            });
+            const payload = await response.json();
+            if (!response.ok || !payload.ok || typeof payload.id !== "string") {
+              throw new Error(payload.error || "Could not attach the source post.");
+            }
+            modelSourceId = payload.id;
+          } catch (sourceError) {
+            sourceAttachmentWarning =
+              sourceError instanceof Error
+                ? sourceError.message
+                : "Could not attach the source post.";
+          }
+        }
         setSelectedIdea(null);
-        router.push(
-          `/dashboard?new=1&agentIdea=${encodeURIComponent(idea.id)}&agentLane=${encodeURIComponent(idea.lane)}`,
-        );
+        const params = new URLSearchParams({
+          new: "1",
+          agentIdea: idea.id,
+          agentLane: idea.lane,
+        });
+        if (modelSourceId) params.set("agentSource", modelSourceId);
+        router.push(`/dashboard?${params.toString()}`);
+        if (sourceAttachmentWarning) {
+          toast.warning(
+            "Cowork opened without the structured source attachment. The source evidence is still in the prompt; you can retry this idea later.",
+            { description: sourceAttachmentWarning },
+          );
+        }
         return;
       }
       await closeIdea(idea, action, discardReason);

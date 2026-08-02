@@ -90,6 +90,7 @@ describe("the standalone Agent page exposes the daily opportunity workflow", () 
     expect(inbox).toContain("idea.evidence.length");
     expect(inbox).toContain("line-clamp-2");
     expect(inbox).toContain("LaneAvatar");
+    expect(inbox).toContain("<IdeaProvenance idea={idea} row />");
     expect(inbox).not.toContain("idea.evidence.slice(0, 2)");
     expect(inbox).toContain("selectedIdea");
     expect(inbox).not.toContain("displayedIdeas[0]");
@@ -122,8 +123,16 @@ describe("the standalone Agent page exposes the daily opportunity workflow", () 
     expect(openBranch).toContain("agent-inbox-lane");
     expect(openBranch).not.toContain("completeAgentInboxHandoff");
     expect(openBranch).not.toContain('updateMessageState(idea, "read")');
-    expect(openBranch).toContain("agentLane=");
+    expect(openBranch).toContain("agentLane: idea.lane");
+    expect(openBranch).toContain("/api/model-source");
+    expect(openBranch).toContain("source.sourceOrigin");
+    expect(openBranch).toContain("sourceAttachmentWarning");
+    expect(openBranch).toContain("The source evidence is still in the prompt");
     expect(workspace).toContain("completeAgentInboxHandoff");
+    expect(workspace).toContain("agentModelSourceParam");
+    expect(workspace).toContain("setModelSourceChatId(id)");
+    expect(workspace).toContain("modelSourceBelongsToChat(targetChatId");
+    expect(workspace).toContain("agentSourceHydrationRef.current = null");
     expect(workspace).toContain("invalidateNavBadges()");
     expect(inboxClient).toContain('{ kind: "done" }');
     expect(inboxClient).toContain('{ action: "handled" }');

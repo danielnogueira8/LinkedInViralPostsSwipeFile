@@ -489,6 +489,21 @@ type ModelSource = {
   kind: "swipe" | "bookmark" | "draft" | "template";
 };
 
+function modelSourceFromApi(source: Record<string, unknown>): ModelSource {
+  return {
+    id: String(source.id),
+    authorName:
+      typeof source.author_name === "string" ? source.author_name : null,
+    authorAvatar:
+      typeof source.author_avatar === "string" ? source.author_avatar : null,
+    postText: String(source.post_text ?? ""),
+    partial: Boolean(source.partial),
+    postType: source.post_type === "lead_magnet" ? "lead_magnet" : "regular",
+    postUrl: typeof source.post_url === "string" ? source.post_url : null,
+    kind: source.source === "bookmark" ? "bookmark" : "swipe",
+  };
+}
+
 export function ChatWorkspace({
   initialChats,
   initialChatId,
@@ -515,6 +530,8 @@ export function ChatWorkspace({
   const router = useRouter();
   const agentIdeaParam = searchParams.get("agentIdea");
   const agentLaneParam = searchParams.get("agentLane");
+  const agentModelSourceParam = searchParams.get("agentSource");
+  const agentModelSourceChatParam = searchParams.get("agentSourceChat");
   const [chats, setChats] = useState<ChatSummary[]>(initialChats);
   const [chatSession] = useState(() =>
     new ChatSession<Message, Artifact, ChatRun>({
@@ -615,6 +632,7 @@ export function ChatWorkspace({
   const [chatSearch, setChatSearch] = useState("");
   const [pendingModelSource, setModelSource] = useState<ModelSource | null>(null);
   const [modelSourceChatId, setModelSourceChatId] = useState<string | null>(null);
+  const agentSourceHydrationRef = useRef<string | null>(null);
   const modelSource = modelSourceBelongsToChat(activeId, modelSourceChatId)
     ? pendingModelSource
     : null;
@@ -1940,6 +1958,26 @@ export function ChatWorkspace({
     (async () => {
       try {
         stashComposerDraft();
+        let attachedAgentSource: ModelSource | null = null;
+        if (agentModelSourceParam) {
+          const sourceResponse = await fetch(
+            `/api/model-source/${encodeURIComponent(agentModelSourceParam)}`,
+          );
+          const sourcePayload = await sourceResponse.json();
+          if (
+            !sourceResponse.ok ||
+            !sourcePayload.ok ||
+            !sourcePayload.source
+          ) {
+            throw new Error(
+              sourcePayload.error || "Could not load the source post.",
+            );
+          }
+          attachedAgentSource = modelSourceFromApi(
+            sourcePayload.source as Record<string, unknown>,
+          );
+        }
+        if (cancelled) return;
         const response = await fetch("/api/chats", { method: "POST" });
         const payload = await response.json();
         if (!payload.ok || !payload.chat?.id) {
@@ -1955,9 +1993,12 @@ export function ChatWorkspace({
             ? storedAgentLane
             : null;
         if (agentLane) {
+          if (cancelled) return;
           try {
             await completeAgentInboxHandoff(agentIdeaParam, agentLane);
+            if (cancelled) return;
           } catch (completionError) {
+            if (cancelled) return;
             toast.error(
               completionError instanceof Error
                 ? completionError.message
@@ -1966,7 +2007,7 @@ export function ChatWorkspace({
           } finally {
             // A resolved request may still have been stale when the handoff
             // began. Force the Agent page to fetch its terminal state next time.
-            invalidateNavBadges();
+            if (!cancelled) invalidateNavBadges();
           }
         } else {
           invalidateNavBadges();
@@ -1982,17 +2023,25 @@ export function ChatWorkspace({
         const id: string = payload.chat.id;
         setChats((current) => prependChatIfMissing(current, payload.chat));
         chatSession.ensureConversation(id);
+        setModelSourceChatId(id);
         writeDraft(id, prompt);
         preserveCommandOnNextChatChangeRef.current = id;
         setActiveId(id);
         setInput(prompt);
-        setModelSource(null);
+        setModelSource(attachedAgentSource);
+        if (attachedAgentSource) {
+          agentSourceHydrationRef.current = `${id}:${attachedAgentSource.id}`;
+        }
         enterCreateCommand(1);
         const url = new URL(window.location.href);
         url.searchParams.set("chat", id);
         url.searchParams.delete("new");
         url.searchParams.delete("agentIdea");
         url.searchParams.delete("agentLane");
+        if (attachedAgentSource) {
+          url.searchParams.set("agentSource", attachedAgentSource.id);
+          url.searchParams.set("agentSourceChat", id);
+        }
         router.replace(`${url.pathname}?${url.searchParams.toString()}`, {
           scroll: false,
         });
@@ -2013,11 +2062,76 @@ export function ChatWorkspace({
   }, [
     agentIdeaParam,
     agentLaneParam,
+    agentModelSourceParam,
     chatSession,
     enterCreateCommand,
     router,
     setActiveId,
     stashComposerDraft,
+  ]);
+
+  // Keep an Agent source attachment alive across a refresh before the user
+  // sends the prepared prompt. The source id is intentionally scoped to the
+  // handoff chat in the URL, so switching to another conversation cannot
+  // attach the wrong post.
+  useEffect(() => {
+    if (
+      !agentModelSourceParam ||
+      !agentModelSourceChatParam ||
+      activeId !== agentModelSourceChatParam
+    ) {
+      return;
+    }
+    const hydrationKey = `${activeId}:${agentModelSourceParam}`;
+    if (agentSourceHydrationRef.current === hydrationKey) return;
+    if (
+      modelSourceChatId === activeId &&
+      pendingModelSource?.id === agentModelSourceParam
+    ) {
+      agentSourceHydrationRef.current = hydrationKey;
+      return;
+    }
+    agentSourceHydrationRef.current = hydrationKey;
+    let cancelled = false;
+    (async () => {
+      try {
+        const response = await fetch(
+          `/api/model-source/${encodeURIComponent(agentModelSourceParam)}`,
+        );
+        const payload = await response.json();
+        if (!response.ok || !payload.ok || !payload.source) {
+          throw new Error(payload.error || "Could not restore the source post.");
+        }
+        if (cancelled) return;
+        setModelSourceChatId(activeId);
+        setModelSource(
+          modelSourceFromApi(payload.source as Record<string, unknown>),
+        );
+      } catch (error) {
+        if (!cancelled) {
+          toast.error(
+            error instanceof Error
+              ? error.message
+              : "Could not restore the source post.",
+          );
+        }
+        if (agentSourceHydrationRef.current === hydrationKey) {
+          agentSourceHydrationRef.current = null;
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (agentSourceHydrationRef.current === hydrationKey) {
+        agentSourceHydrationRef.current = null;
+      }
+    };
+  }, [
+    activeId,
+    agentModelSourceChatParam,
+    agentModelSourceParam,
+    modelSourceChatId,
+    pendingModelSource?.id,
   ]);
 
   // (The Posts "Model in Chat" handoff now goes through the ?model= path above
@@ -2497,6 +2611,15 @@ export function ChatWorkspace({
     if (!text) return;
 
     if (
+      agentModelSourceParam &&
+      agentModelSourceChatParam === activeId &&
+      !modelSource
+    ) {
+      toast.error("The source post is still loading. Please try again shortly.");
+      return;
+    }
+
+    if (
       overrideText === undefined &&
       composerCommandKind === "edit" &&
       !editTargetPost
@@ -2587,6 +2710,22 @@ export function ChatWorkspace({
       // an eager New-session create and an immediate submit overlap.
       () => chatSession.snapshot().activeId,
     );
+    const attachedAgentSource =
+      agentModelSourceParam && agentModelSourceChatParam === targetChatId
+        ? modelSourceBelongsToChat(targetChatId, modelSourceChatId)
+          ? modelSource
+          : null
+        : agentModelSourceParam
+          ? null
+          : modelSource;
+    if (
+      agentModelSourceParam &&
+      agentModelSourceChatParam === targetChatId &&
+      !attachedAgentSource
+    ) {
+      toast.error("The source post is still loading. Please try again shortly.");
+      return;
+    }
     const lockKey = targetChatId ?? "__new__";
     // The session runtime owns the layered in-flight, live-run, and identical-
     // prompt guards so rapid submits cannot bypass run ownership.
@@ -2610,7 +2749,7 @@ export function ChatWorkspace({
       // with a long modeled post. Keep the chip selected until the stream
       // starts: a pre-stream failure means no user message was created and the
       // user should be able to retry without reattaching it.
-      const attached = modelSource;
+      const attached = attachedAgentSource;
       const turnPostFormatApplies = clientShouldApplyPostFormat(text, !!attached);
 
       // Capture the pending custom skills for this turn. We do NOT clear the
@@ -2998,6 +3137,18 @@ export function ChatWorkspace({
           setModelSource((current) =>
             current?.id === attached.id ? null : current,
           );
+          if (typeof window !== "undefined") {
+            const url = new URL(window.location.href);
+            if (url.searchParams.get("agentSource") === attached.id) {
+              url.searchParams.delete("agentSource");
+              url.searchParams.delete("agentSourceChat");
+              window.history.replaceState(
+                window.history.state,
+                "",
+                `${url.pathname}?${url.searchParams.toString()}`,
+              );
+            }
+          }
         }
         // A send got through — clear any stale limit banner.
         setLimitNotice(null);
@@ -3519,6 +3670,10 @@ export function ChatWorkspace({
   }, [
     input,
     modelSource,
+    agentModelSourceChatParam,
+    agentModelSourceParam,
+    activeId,
+    modelSourceChatId,
     attachments,
     pendingSkills,
     pendingPostFormat,
