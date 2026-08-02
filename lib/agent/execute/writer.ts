@@ -443,12 +443,17 @@ function voiceProfileBlock(result: ToolResult): string {
   });
 }
 
-function verifiedModelSourceContext(input: WriterInput): string {
+function verifiedModelSourceContext(
+  input: WriterInput,
+  clarificationContext = "",
+): string {
   // Conversation history can contain quoted Model Sources, examples, or
-  // third-party claims. Only the server-owned semantic Voice Profile belongs
-  // in the verified-evidence lane; the current request is passed separately
-  // and the analyzer may use only clearly stated first-person facts from it.
-  return voiceGroundingBlock(input.voiceResult);
+  // third-party claims. Only the server-owned semantic Voice Profile and the
+  // bounded answers recovered from this source's clarification belong here;
+  // the current request is passed separately.
+  return [voiceGroundingBlock(input.voiceResult), clarificationContext]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 function currentPostBlock(body: string): string {
@@ -626,6 +631,83 @@ function historyMessageText(message: ChatMessage): string {
   return "";
 }
 
+function messageContainsSourceData(
+  message: ChatMessage,
+  sourceText: string,
+): boolean {
+  if (message.role !== "user" || !Array.isArray(message.content)) return false;
+  const source = sourceText.trim();
+  if (!source) return false;
+  return message.content.some(
+    (block, index) =>
+      index > 0 &&
+      block.type === "text" &&
+      /--- (?:POST TO MODEL AFTER|TREND RADAR EVIDENCE|TEMPLATE TO FILL|POST TO REFINE) ---/.test(
+        block.text,
+      ) &&
+      block.text.includes(source),
+  );
+}
+
+/**
+ * Recover the answers to the one permitted Model Source clarification from
+ * persisted conversation history. Source envelopes live in separate content
+ * blocks, so only the user's ordinary text is carried forward as evidence.
+ */
+export function modelSourceClarificationContext(
+  history: ChatMessage[],
+  source: Source,
+): { alreadyAsked: boolean; promptBlock: string } {
+  const currentUserIndex =
+    history.at(-1)?.role === "user" ? history.length - 1 : history.length;
+  const latestCompletedDraftIndex = history.findLastIndex(
+    (message, index) =>
+      index < currentUserIndex &&
+      message.role === "assistant" &&
+      /^(?:Your draft|Your updated draft) is ready\.$/.test(
+        historyMessageText(message).trim(),
+      ),
+  );
+  let clarificationIndex = -1;
+
+  for (
+    let index = Math.max(1, latestCompletedDraftIndex + 1);
+    index < currentUserIndex;
+    index += 1
+  ) {
+    const message = history[index];
+    const previous = history[index - 1];
+    const text = historyMessageText(message).trim();
+    if (
+      message.role === "assistant" &&
+      !message.tool_calls?.length &&
+      text.endsWith("?") &&
+      messageContainsSourceData(previous, source.text)
+    ) {
+      clarificationIndex = index;
+      break;
+    }
+  }
+
+  if (clarificationIndex < 0) {
+    return { alreadyAsked: false, promptBlock: "" };
+  }
+
+  const answers = history
+    .slice(clarificationIndex + 1)
+    .filter((message) => message.role === "user")
+    .map((message) => historyMessageText(message).trim())
+    .filter(Boolean);
+  const promptBlock = answers.length
+    ? wrapUntrustedDelimited({
+        label: "MODEL SOURCE CLARIFICATION DATA",
+        endLabel: "END MODEL SOURCE CLARIFICATION DATA",
+        text: answers.join("\n\n"),
+      })
+    : "";
+  return { alreadyAsked: true, promptBlock };
+}
+
 export function writerHistoryDigest(history: ChatMessage[]): string {
   const prior =
     history.length > 0 && history[history.length - 1].role === "user"
@@ -721,7 +803,7 @@ function compileMessages(
   explorationLane: ExplorationLane | null = null,
   modelSourcePreparation: Exclude<
     ModelSourcePreparation,
-    { outcome: "unavailable" | "needs_input" }
+    { outcome: "unavailable" }
   > | null = null,
 ): CompiledWriterPrompt {
   const instruction =
@@ -992,6 +1074,11 @@ function compileMessages(
             ? [
                 "The following server-prepared blueprint describes what the Model Source is doing and which verified user evidence can fill the same semantic roles:",
                 semanticBlueprint,
+              ]
+            : []),
+          ...(modelSourcePreparation?.outcome === "needs_input"
+            ? [
+                "The single clarification budget has already been used. Treat clearly stated first-person facts in the current request and conversation history as the user's answers, omit optional details that remain unknown, and write the complete post now. Do not ask another question or return an outline.",
               ]
             : []),
           fixedSourceStructureBlock(task.source),
@@ -1412,17 +1499,24 @@ export async function* runSingleDraftTurn(
           ].join("\n"),
         )
       : null;
-  let modelSourcePreparation: Extract<
+  let modelSourcePreparation: Exclude<
     ModelSourcePreparation,
-    { outcome: "ready" }
+    { outcome: "unavailable" }
   > | null = null;
   if (task.kind === "source") {
+    const clarification = modelSourceClarificationContext(
+      input.history ?? [],
+      task.source,
+    );
     let prepared: ModelSourcePreparation;
     try {
       prepared = await deps.prepareModelSource({
         sourceText: task.source.text,
         userRequest: input.userInstruction,
-        verifiedContext: verifiedModelSourceContext(input),
+        verifiedContext: verifiedModelSourceContext(
+          input,
+          clarification.promptBlock,
+        ),
         workspaceId: input.workspaceId,
         signal: turnSignal,
         adapterHealth: deps.adapterHealth,
@@ -1434,7 +1528,7 @@ export async function* runSingleDraftTurn(
       deadlineController.abort();
       throw error;
     }
-    if (prepared.outcome === "needs_input") {
+    if (prepared.outcome === "needs_input" && !clarification.alreadyAsked) {
       clearTimeout(deadlineTimer);
       serverCancellation.abort();
       deadlineController.abort();
@@ -1442,7 +1536,7 @@ export async function* runSingleDraftTurn(
       yield engineDone(prepared.question, 0, 0, "ask");
       return;
     }
-    if (prepared.outcome === "ready") {
+    if (prepared.outcome === "ready" || prepared.outcome === "needs_input") {
       modelSourcePreparation = prepared;
     }
   }
