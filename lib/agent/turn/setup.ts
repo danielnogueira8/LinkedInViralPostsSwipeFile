@@ -587,6 +587,18 @@ export async function setupChatTurn(
         const selectedModelSource = parseModelSourceChoiceId(
           selectedClarificationChoiceId,
         );
+        if (
+          selectedClarificationChoiceId === "create.profile_topic" &&
+          pendingOperation.operation.kind === "create_post"
+        ) {
+          // This server-owned choice explicitly abandons the unresolved
+          // external signal in favor of an original profile-led post. Compile
+          // that resolved intent instead of reusing the original research
+          // wording, which would fail the freshness gate and emit this same
+          // clarification forever.
+          resolvedActionInstruction =
+            "Choose a relevant topic from my Voice Profile and create the requested original LinkedIn post with a useful angle for my audience.";
+        }
         if (selectedModelSource) {
           if (modelSourceId) {
             return turnError(
