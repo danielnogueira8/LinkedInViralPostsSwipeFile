@@ -2395,6 +2395,100 @@ describe("DraftEngine — thin path (lean mode)", () => {
       "I reached 2,000 followers and content writing brought me clients.",
     );
     expect(context.promptBlock).not.toContain(source.text);
+    expect(context.originalInstruction).toBe("Model this post for me.");
+  });
+
+  test("a clarification answer preserves the original open-topic niche instruction", async () => {
+    const source = {
+      id: "src-ai-tools",
+      text: "Most CEOs learn AI tools in the wrong order. Here are nine old-tool to new-tool swaps.",
+    };
+    const originalInstruction =
+      "Model this in my voice, make the content mine, and pick a topic that fits my voice and niche.";
+    const answer = "50K+ followers across all clients.";
+    const destinationPost = [
+      "Most founders build their LinkedIn strategy in the wrong order.",
+      "",
+      "They start by collecting formats and posting tips before deciding what expertise buyers should remember.",
+      "",
+      "Across my clients, clear positioning and consistent writing have helped build audiences totaling more than 50,000 followers.",
+      "",
+      "Start with the buyer problem. Choose the point of view. Then choose the format that makes it easy to understand.",
+    ].join("\n");
+    const prepareModelSource = vi.fn().mockResolvedValue({
+      outcome: "ready" as const,
+      blueprint: {
+        schemaVersion: 1 as const,
+        coreTheme: "Choose the method only after defining the job it must do.",
+        destinationTopic:
+          "LinkedIn positioning and content systems for founder-led personal brands.",
+        communicativeJob: "Replace random tactic collecting with a practical map.",
+        readerEffect: "Confidence choosing a clearer content workflow.",
+        hook: {
+          function: "Challenge the reader's order of operations.",
+          evidenceType: "verified client audience result",
+        },
+        emotionalArc: ["tension", "clarity", "confidence"],
+        beats: [
+          { role: "mistake", purpose: "Name the wrong order." },
+          { role: "proof", purpose: "Ground the alternative in a real result." },
+          { role: "method", purpose: "Teach the replacement sequence." },
+        ],
+        requiredEvidence: [],
+      },
+      userMappings: [
+        {
+          role: "proof",
+          evidence: answer,
+          evidenceSource: "Model Source clarification answer",
+        },
+      ],
+    });
+    const writer = new ScriptedWriter([
+      { text: destinationPost, finishReason: "stop", usage: usage(180, 90) },
+    ]);
+
+    const result = await collect(
+      writer,
+      {
+        userInstruction: answer,
+        history: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: originalInstruction },
+              {
+                type: "text",
+                text: `--- POST TO MODEL AFTER ---\n${source.text}\n--- END POST ---`,
+              },
+            ],
+          },
+          {
+            role: "assistant",
+            content:
+              "What real result, lesson, experience, or belief from your work should this post center on?",
+          },
+          { role: "user", content: answer },
+        ],
+        task: { kind: "source", source },
+        finalizerSpecialists: {
+          ...input().finalizerSpecialists,
+          reviewSourceFidelity: async () => ({ outcome: "verified" }),
+        },
+      },
+      { prepareModelSource },
+    );
+
+    expect(prepareModelSource.mock.calls[0][0].userRequest).toContain(
+      originalInstruction,
+    );
+    expect(prepareModelSource.mock.calls[0][0].userRequest).toContain(answer);
+    expect(JSON.stringify(writer.requests[0].messages)).toContain(
+      "Destination topic: LinkedIn positioning and content systems for founder-led personal brands.",
+    );
+    expect(artifacts(result.events).map((artifact) => artifact.body)).toEqual([
+      destinationPost,
+    ]);
   });
 
   test("does not spend the clarification budget on a question about a different source", () => {

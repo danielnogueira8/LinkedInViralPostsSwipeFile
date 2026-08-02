@@ -188,6 +188,8 @@ const REJECTION_REASON_CLAUSES: Record<string, string> = {
   structure_mismatch:
     "the draft's structure kept drifting too far from what you asked to keep",
   duplicate: "the draft kept staying too close to the original wording",
+  source_topic_mismatch:
+    "the draft kept using the source author's topic instead of one that fits your work",
   source_fidelity:
     "the draft kept drifting from the source post's structure and hook style",
   provenance_missing: "the draft kept losing track of the source it should model",
@@ -657,7 +659,11 @@ function messageContainsSourceData(
 export function modelSourceClarificationContext(
   history: ChatMessage[],
   source: Source,
-): { alreadyAsked: boolean; promptBlock: string } {
+): {
+  alreadyAsked: boolean;
+  promptBlock: string;
+  originalInstruction?: string;
+} {
   const currentUserIndex =
     history.at(-1)?.role === "user" ? history.length - 1 : history.length;
   const latestCompletedDraftIndex = history.findLastIndex(
@@ -705,7 +711,14 @@ export function modelSourceClarificationContext(
         text: answers.join("\n\n"),
       })
     : "";
-  return { alreadyAsked: true, promptBlock };
+  const originalInstruction = historyMessageText(
+    history[clarificationIndex - 1],
+  ).trim();
+  return {
+    alreadyAsked: true,
+    promptBlock,
+    ...(originalInstruction ? { originalInstruction } : {}),
+  };
 }
 
 export function writerHistoryDigest(history: ChatMessage[]): string {
@@ -1039,6 +1052,7 @@ function compileMessages(
           "You are SwipeIn's direct fixed-source LinkedIn post writer.",
           "Return exactly one complete post as plain text. No preamble, labels, analysis, markdown fences, citations, or tool calls.",
           "The authoritative current request controls the topic. If it asks for a topic that fits the user, choose that topic from the voice/profile context and treat the source subject matter as irrelevant.",
+          "When the server-prepared blueprint names a Destination topic, that topic is binding. Center the entire post on it. Do not keep the source author's products, industry, examples, audience, or subject merely because you are preserving the source's structure.",
           "Preserve the same communicative move: the source's overarching theme, communicative job, reader effect, hook function, evidence type, and semantic progression in original language. Preserve its supporting structural mechanics and progression where they carry those semantic roles. Reuse its literal subject only when the authoritative request asks for it.",
           "Semantic fidelity outranks visual similarity. A duration cannot replace an achievement, effort cannot replace a result, expertise cannot replace client proof, and an educational argument cannot replace a celebration, confession, or case study merely because the paragraph count matches.",
           SOURCE_STRUCTURE_REFERENCE_POLICY,
@@ -1537,17 +1551,24 @@ export async function* runSingleDraftTurn(
     { outcome: "unavailable" }
   > | null = null;
   let modelSourceClarificationAlreadyAsked = false;
+  let modelSourceUserRequest = input.userInstruction;
   if (task.kind === "source") {
     const clarification = modelSourceClarificationContext(
       input.history ?? [],
       task.source,
     );
     modelSourceClarificationAlreadyAsked = clarification.alreadyAsked;
+    if (clarification.originalInstruction) {
+      modelSourceUserRequest = [
+        clarification.originalInstruction,
+        `Clarification answer: ${input.userInstruction}`,
+      ].join("\n\n");
+    }
     let prepared: ModelSourcePreparation;
     try {
       prepared = await deps.prepareModelSource({
         sourceText: task.source.text,
-        userRequest: input.userInstruction,
+        userRequest: modelSourceUserRequest,
         verifiedContext: verifiedModelSourceContext(
           input,
           clarification.promptBlock,
@@ -1576,7 +1597,9 @@ export async function* runSingleDraftTurn(
     }
   }
   const compiledPrompt = compileMessages(
-    input,
+    modelSourceUserRequest === input.userInstruction
+      ? input
+      : { ...input, userInstruction: modelSourceUserRequest },
     task,
     variation,
     explorationLane,
@@ -1585,7 +1608,7 @@ export async function* runSingleDraftTurn(
   );
   const baseMessages = compiledPrompt.messages;
   const policyInstruction =
-    task.kind === "refine" ? task.instruction : input.userInstruction;
+    task.kind === "refine" ? task.instruction : modelSourceUserRequest;
   const claimGroundingInstruction =
     withoutOutputControlQuantities(policyInstruction);
   const range = requestedCharacterRange(policyInstruction);
@@ -2036,7 +2059,7 @@ export async function* runSingleDraftTurn(
                 required: true,
                 requestedSourceId: task.source.id,
                 discoveredSources: [task.source],
-                userRequest: input.userInstruction,
+                userRequest: modelSourceUserRequest,
                 verifiedContext: verifiedModelSourceContext(input),
                 ...(modelSourcePreparation
                   ? { modelingBlueprint: modelSourcePreparation.blueprint }

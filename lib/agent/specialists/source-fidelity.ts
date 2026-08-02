@@ -57,9 +57,13 @@ const VERDICT_TOOL: ToolDef = {
     parameters: {
       type: "object",
       additionalProperties: false,
-      required: ["pass", "reasons", "retry_instruction"],
+      required: ["pass", "failure_kind", "reasons", "retry_instruction"],
       properties: {
         pass: { type: "boolean" },
+        failure_kind: {
+          type: "string",
+          enum: ["none", "topic_mismatch", "fidelity_mismatch", "copying"],
+        },
         reasons: {
           type: "array",
           maxItems: 4,
@@ -78,13 +82,17 @@ export type SourceFidelityVerdict =
   | { outcome: "verified" }
   | {
       outcome: "rejected";
+      failureKind?: "topic_mismatch" | "fidelity_mismatch" | "copying";
       reasons: string[];
       retryInstruction: string;
     }
   | { outcome: "unavailable" };
 
 export type SourceFidelityRejection = {
-  code: "source_fidelity" | "source_fidelity_unavailable";
+  code:
+    | "source_topic_mismatch"
+    | "source_fidelity"
+    | "source_fidelity_unavailable";
   reason: string;
   retryInstruction?: string;
 };
@@ -142,6 +150,7 @@ export function buildSourceFidelityUserContent(opts: {
 const POST_FIDELITY_INSTRUCTIONS =
   "You are an independent QA gate for modeled LinkedIn drafts. The user asked to model a source's WRITING MECHANICS and write ORIGINAL content — so judge whether the draft borrows the source's approach, not whether it mirrors it line-for-line. " +
   "When SERVER PREPARED MODEL SOURCE BLUEPRINT DATA is present, it is the semantic acceptance contract: audit the overarching theme as a mechanism, communicative job, intended reader effect, hook function, evidence type, emotional/logical arc, and ordered beat roles before judging surface structure. " +
+  "When that blueprint includes destinationTopic, the draft must center on that destination topic or an obviously equivalent topic from the verified user context. Set failure_kind to topic_mismatch when the draft instead keeps the selected source's literal subject, wanders into a topic unsupported by the user's niche, or uses the user's proof only as decoration inside the source author's subject. Topic relevance outranks matching the source's list items or examples. " +
   "PASS only when the draft clearly preserves the source's communicative move, hook approach, ordered semantic progression, and ending role while changing the subject matter in original language. A matching paragraph count, cadence, list shape, or number pattern cannot compensate for a different communicative job. " +
   "Audit source-specific variables: people, companies, products, offers, audiences, clients, results, numbers, dates, locations, personal anecdotes, relationships, and calls to action. Each must be replaced with a verified user-relevant equivalent, generalized into an honest non-factual statement, or omitted while preserving its structural role. " +
   "FAIL when the draft is structurally unrelated to the source, copies substantial wording, sentences, or examples, OR retains a source-specific variable that the authoritative request and verified context do not support for this user. A shared broad topic is allowed only when the request explicitly calls for it. " +
@@ -215,7 +224,10 @@ export function sourceFidelityRejection(
   }
   const fallback = fidelityFallback(deliverableKind);
   return {
-    code: "source_fidelity",
+    code:
+      verdict.failureKind === "topic_mismatch"
+        ? "source_topic_mismatch"
+        : "source_fidelity",
     reason: verdict.reasons.join(" ") || fallback.reason,
     retryInstruction: verdict.retryInstruction || fallback.retryInstruction,
   };
@@ -285,6 +297,7 @@ async function runSourceFidelityAttempt(
         if (
           !args ||
           typeof args.pass !== "boolean" ||
+          typeof args.failure_kind !== "string" ||
           !Array.isArray(args.reasons) ||
           typeof args.retry_instruction !== "string"
         ) {
@@ -293,6 +306,16 @@ async function runSourceFidelityAttempt(
         if (args.pass) {
           return { outcome: "verified" as const };
         }
+        const failureKind: Exclude<
+          Extract<SourceFidelityVerdict, { outcome: "rejected" }>[
+            "failureKind"
+          ],
+          undefined
+        > =
+          args.failure_kind === "topic_mismatch" ||
+          args.failure_kind === "copying"
+            ? args.failure_kind
+            : "fidelity_mismatch";
         const reasons = args.reasons
           .filter((value): value is string => typeof value === "string")
           .slice(0, 4);
@@ -300,6 +323,7 @@ async function runSourceFidelityAttempt(
         const fallback = fidelityFallback(opts.deliverableKind);
         return {
           outcome: "rejected" as const,
+          failureKind,
           reasons: reasons.length ? reasons : [fallback.reason],
           retryInstruction:
             retryInstruction || fallback.retryInstruction,
