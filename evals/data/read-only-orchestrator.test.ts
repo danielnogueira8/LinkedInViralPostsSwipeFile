@@ -1738,7 +1738,7 @@ describe("read-only orchestrator execution", () => {
     );
   });
 
-  test("returns a grounded swipe-file summary with a read-only source citation and no draft", async () => {
+  test("returns a grounded swipe-file summary without source-card artifacts", async () => {
     const instruction =
       "Find one top-performing regular post in my swipe file about AI agents and summarize why it worked. Do not draft or rewrite.";
     const synthesizeGroundedAnswer = vi.fn(async () => ({
@@ -1794,7 +1794,6 @@ describe("read-only orchestrator execution", () => {
       expect.objectContaining({
         instruction,
         format: "summary",
-        sourcePresentation: "structured_workspace",
         evidence: [
           expect.objectContaining({
             id: "10000000-0000-4000-8000-000000000001",
@@ -1824,21 +1823,95 @@ describe("read-only orchestrator execution", () => {
       message: {
         content:
           "The strongest post used a concrete AI-agent failure as its hook, then converted it into a practical three-step lesson.",
-        artifacts: [
-          {
-            id: "grounded-source:10000000-0000-4000-8000-000000000001",
-            kind: "cite",
-            title: "Verified source post",
-            body: "",
-            meta: {
-              postId: "10000000-0000-4000-8000-000000000001",
-              presentation: "grounded_answer_source",
-              sourceUrl: "https://www.linkedin.com/posts/top-ai-agent-post",
-            },
-          },
-        ],
+        artifacts: [],
       },
     });
+  });
+
+  test("returns five voice-aware brainstorm ideas without source-card artifacts", async () => {
+    const instruction =
+      "Give me 5 post ideas based on what's been going viral across my tracked accounts over the last 30 days. Pull from ALL niches — don't ask me which niche, and don't limit it to mine. Adapt every idea to my voice and my niche. For each, give a one-line angle and the hook style it would use.";
+    const content = Array.from(
+      { length: 5 },
+      (_, index) =>
+        `**${index + 1}. Idea ${index + 1}**\n- *Angle:* One-line angle ${index + 1}.\n- *Hook style:* Contrarian ${index + 1}.`,
+    ).join("\n\n");
+    const synthesizeBrainstormIdeas = vi.fn(async () => ({
+      content,
+      model: CHAT_MODEL,
+      usage: usage(100, 50),
+    }));
+
+    const result = await collect(
+      input({
+        userInstruction: instruction,
+        history: [{ role: "user", content: instruction }],
+        route: {
+          kind: "workspace_research",
+          minimumSources: 5,
+          workspaceSearchMode: "diverse",
+          workspaceSince: "30d",
+          outcome: {
+            kind: "brainstorm_ideas",
+            ideaCount: 5,
+            searchPoolSize: 20,
+          },
+        },
+        writerInput: {
+          ...input().writerInput,
+          userInstruction: instruction,
+          voiceResult: {
+            ok: true,
+            voice: {
+              summary: "Direct, specific, and practical.",
+              audience: "B2B founders building personal brands",
+              topics: ["personal branding", "content systems"],
+            },
+          },
+        },
+      }),
+      [],
+      async () => ({
+        ok: true,
+        posts: Array.from({ length: 5 }, (_, index) => ({
+          id: `${index + 1}0000000-0000-4000-8000-000000000000`,
+          text: `Verified viral source ${index + 1} with a distinct idea and enough concrete detail to support a new angle without copying the source post.`,
+          post_url: `https://www.linkedin.com/posts/source-${index + 1}`,
+          reactions: 1000 - index * 50,
+          comments: 100 - index,
+          accounts: {
+            name: `Creator ${index + 1}`,
+            niche: `Niche ${index + 1}`,
+          },
+        })),
+      }),
+      {
+        synthesizeBrainstormIdeas,
+        synthesizeGroundedAnswer: vi.fn(async () => ({
+          content: "Takeaways",
+          model: CHAT_MODEL,
+          usage: usage(10, 2),
+        })),
+      },
+    );
+
+    expect(synthesizeBrainstormIdeas).toHaveBeenCalledWith(
+      expect.objectContaining({
+        instruction,
+        ideaCount: 5,
+        voiceResult: expect.objectContaining({ ok: true }),
+        evidence: expect.arrayContaining([
+          expect.objectContaining({ kind: "workspace_post" }),
+        ]),
+      }),
+    );
+    const done = result.events.find((event) => event.type === "done");
+    expect(done).toMatchObject({
+      type: "done",
+      message: { content, artifacts: [] },
+    });
+    expect(content.match(/Angle:/g)).toHaveLength(5);
+    expect(content.match(/Hook style:/g)).toHaveLength(5);
   });
 
   test("closes grounded synthesis progress when summarization fails", async () => {

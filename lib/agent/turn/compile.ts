@@ -678,6 +678,11 @@ export type ReadOnlyOrchestratorRoute = {
         kind: "grounded_answer";
         format: "summary" | "takeaways" | "comparison" | "report";
         resultCount?: number;
+      }
+    | {
+        kind: "brainstorm_ideas";
+        ideaCount: 5;
+        searchPoolSize: 20;
       };
   allowExternalSearch?: boolean;
   allowedSearchKinds?: Array<"news" | "web" | "workspace">;
@@ -780,6 +785,8 @@ function composerResearchRoute(
         } as const)
       : context.kind === "post"
       ? ({ kind: "draft", expectedDrafts: context.expectedDraftCount } as const)
+      : context.kind === "ideas" && requirement.lane === "workspace"
+      ? ({ kind: "brainstorm_ideas", ideaCount: 5, searchPoolSize: 20 } as const)
       : ({
           kind: "grounded_answer",
           format: context.kind === "ideas" ? "takeaways" : "summary",
@@ -2151,7 +2158,8 @@ export async function compileTurnPlan(
         : null;
     const servesResearch = Boolean(
       !missingContext &&
-        askResearchRoute?.outcome?.kind === "grounded_answer" &&
+        (askResearchRoute?.outcome?.kind === "grounded_answer" ||
+          askResearchRoute?.outcome?.kind === "brainstorm_ideas") &&
         deps.readOnlyOrchestratorEnabledForWorkspace(),
     );
     const contract: TurnContract = servesResearch
