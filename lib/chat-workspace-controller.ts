@@ -51,6 +51,7 @@ export type PreparedChatWorkspaceTurn = {
   resumesPersistedOperation: boolean;
   appliesComposerControls: boolean;
   requestFields: ComposerRequestFields;
+  composerAfterTurnStarts: CoworkComposerState | null;
   explorationLaneToRestore: ExplorationLaneSelection;
 };
 
@@ -161,6 +162,12 @@ export function createChatWorkspaceController(
         resumesPersistedOperation,
         appliesComposerControls,
         requestFields,
+        composerAfterTurnStarts:
+          command?.kind === "create"
+            ? { kind: "create" }
+            : command
+              ? { kind: "ask" }
+              : null,
         explorationLaneToRestore:
           generationConfig?.explorationLane ?? "auto",
       };
