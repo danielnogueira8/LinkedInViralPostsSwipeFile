@@ -102,6 +102,19 @@ describe("clarification follow-up policy", () => {
     ).toBe(false);
   });
 
+  test("recognizes a writer clarification persisted as an ask outcome", () => {
+    expect(
+      hasPendingAskOnly([
+        {
+          role: "assistant",
+          tool_calls: [],
+          terminal_reason: "ask",
+        },
+        { role: "user" },
+      ]),
+    ).toBe(true);
+  });
+
   test("distinguishes an action-lane ask from an ordinary clarification", () => {
     const actionAsk = {
       ...askCall,

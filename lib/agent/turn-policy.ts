@@ -1,4 +1,4 @@
-import type { Artifact } from "@/lib/agent/contracts";
+import type { AgentEvent, Artifact } from "@/lib/agent/contracts";
 import type { ChatMessage, ToolCall } from "@/lib/openrouter";
 import {
   SKILLS,
@@ -127,16 +127,34 @@ export function hasPendingAskOnly(
   recentMessages: Array<{
     role: ChatMessage["role"];
     tool_calls?: ToolCall[] | null;
+    terminal_reason?:
+      | NonNullable<
+          Extract<AgentEvent, { type: "done" }>["terminalReason"]
+        >
+      | null;
   }>,
 ): boolean {
   const latestNonTool = recentMessages.find(
     (message) => message.role !== "tool",
   );
-  if (latestNonTool?.role !== "assistant") return false;
+  return latestNonTool ? isPendingAskMessage(latestNonTool) : false;
+}
+
+export function isPendingAskMessage(message: {
+  role: ChatMessage["role"];
+  tool_calls?: ToolCall[] | null;
+  terminal_reason?:
+    | NonNullable<Extract<AgentEvent, { type: "done" }>["terminalReason"]>
+    | null;
+}): boolean {
+  if (message.role !== "assistant") return false;
   const names = new Set(
-    (latestNonTool.tool_calls ?? []).map((call) => call.function.name),
+    (message.tool_calls ?? []).map((call) => call.function.name),
   );
-  return names.has("ask_user") && !names.has("render_post");
+  return (
+    !names.has("render_post") &&
+    (names.has("ask_user") || message.terminal_reason === "ask")
+  );
 }
 
 export function hasPendingActionAsk(
