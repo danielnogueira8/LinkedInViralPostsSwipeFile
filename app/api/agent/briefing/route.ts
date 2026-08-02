@@ -3,6 +3,7 @@ import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
 import { AGENT_SUGGESTED_BY } from "@/lib/agent-loop/constants";
 import { readOpportunityHeadline } from "@/lib/agent-loop/headline";
+import { discoveryAgentForOpportunity } from "@/lib/agent-loop/opportunity-signal";
 import {
   leadMagnetPostIds,
   opportunityIsLeadMagnet,
@@ -27,7 +28,7 @@ export async function GET() {
   try {
     const sb = await scopedSupabase();
 
-    const [draftResult, opportunityResult, trendResult] = await Promise.all([
+    const [draftResult, opportunityResult, externalResult] = await Promise.all([
       sb.raw
         .from("chat_artifacts")
         .select("id, title, body, kind, status, created_at, meta")
@@ -47,16 +48,17 @@ export async function GET() {
         .eq("workspace_id", sb.workspaceId)
         .eq("status", "proposed")
         .neq("kind", "trend")
+        .neq("kind", "news")
         .order("score", { ascending: false })
         .limit(WORKING_NOW_POOL_LIMIT),
-      // Keep a separate trend lane so a full source-post pool can never hide a
-      // creator-independent signal before the UI gets a chance to display it.
+      // Keep a separate external lane so a full source-post pool can never
+      // hide a Newsjacking or Trend Radar signal before the UI displays it.
       sb.raw
         .from("agent_opportunities")
         .select("id, kind, score, payload, created_at, source_post_id")
         .eq("workspace_id", sb.workspaceId)
         .eq("status", "proposed")
-        .eq("kind", "trend")
+        .in("kind", ["trend", "news"])
         .order("score", { ascending: false })
         .limit(3),
     ]);
@@ -65,26 +67,34 @@ export async function GET() {
 
     const { data: opportunityPool, error: oppError } = opportunityResult;
     if (oppError) throw oppError;
-    const { data: trendPool, error: trendError } = trendResult;
-    if (trendError) throw trendError;
+    const { data: externalPool, error: externalError } = externalResult;
+    if (externalError) throw externalError;
 
-    // Trend Radar rows are creator-independent and intentionally have no
-    // source_post_id. Keep them outside the source-post mixer so one fresh
-    // signal cannot displace the existing regular/lead-magnet balance.
-    const trendOpportunities = (trendPool ?? [])
-      .filter((opportunity) => opportunity.kind === "trend")
+    // External discovery rows intentionally have no source_post_id. Keep them
+    // outside the source-post mixer so one fresh signal cannot displace the
+    // existing regular/lead-magnet balance.
+    const externalOpportunities = (externalPool ?? [])
+      .filter(
+        (opportunity) =>
+          opportunity.kind === "trend" || opportunity.kind === "news",
+      )
       .map((opportunity) => {
         const payload = (opportunity.payload ?? {}) as Record<string, unknown>;
         return {
           ...opportunity,
           payload: { ...payload, headline: readOpportunityHeadline(payload) },
+          agent_type: discoveryAgentForOpportunity(
+            opportunity.kind,
+            opportunity.payload,
+          ),
           is_lead_magnet: false,
           source_post: null,
         };
       })
       .slice(0, 3);
     const sourceOpportunityPool = (opportunityPool ?? []).filter(
-      (opportunity) => opportunity.kind !== "trend",
+      (opportunity) =>
+        opportunity.kind !== "trend" && opportunity.kind !== "news",
     );
 
     // Which of these model a LEAD MAGNET post? `posts.post_type` is the
@@ -174,7 +184,7 @@ export async function GET() {
     return NextResponse.json({
       ok: true,
       drafts: drafts ?? [],
-      opportunities: [...trendOpportunities, ...normalisedOpportunities],
+      opportunities: [...externalOpportunities, ...normalisedOpportunities],
     });
   } catch (e) {
     return errorResponse(e);

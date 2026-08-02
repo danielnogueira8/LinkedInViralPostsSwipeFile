@@ -8,6 +8,7 @@ import {
   updateAgentOpportunityReadState,
   updateManagedOpportunityStatus,
 } from "@/lib/agent-loop/opportunity-claim";
+import { isExternalOpportunityKind } from "@/lib/agent-loop/opportunity-signal";
 import { weekStart } from "@/lib/agent-loop/week-plan";
 import { markStoredOpportunityDrafted } from "@/lib/agent-loop/week-plan-store";
 
@@ -61,7 +62,10 @@ export async function POST(
     }
 
     if (action === "handled") {
-      if (opportunity.kind !== "trend" || opportunity.status !== "proposed") {
+      if (
+        !isExternalOpportunityKind(opportunity.kind) ||
+        opportunity.status !== "proposed"
+      ) {
         return alreadyHandledResponse();
       }
       // Keep a Cowork handoff distinct from a generated draft. The inbox maps

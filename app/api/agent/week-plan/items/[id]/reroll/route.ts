@@ -63,6 +63,7 @@ async function findOpportunityCandidate(
     .eq("workspace_id", workspaceId)
     .eq("status", "proposed")
     .neq("kind", "trend")
+    .neq("kind", "news")
     .order("score", { ascending: false })
     .limit(OPPORTUNITY_POOL_LIMIT);
   if (error) throw error;

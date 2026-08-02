@@ -87,6 +87,13 @@ const laneCopy: Record<
     tone: "bg-rose-500/10 text-rose-700 dark:text-rose-300",
     avatar: "trend-radar",
   },
+  newsjacking: {
+    label: "Newsjacking",
+    description: "Find a timely event worth reacting to",
+    icon: Newspaper,
+    tone: "bg-amber-500/10 text-amber-700 dark:text-amber-300",
+    avatar: "newsjacking",
+  },
 };
 
 // Evidence metadata keeps the source of a claim scannable in both the queue
@@ -281,7 +288,7 @@ function OpportunityActions({
           onAction={onAction}
           drawer
         />
-        {idea.lane !== "trend_radar" ? (
+        {!('radar' in idea && idea.radar) ? (
           <Button
             variant="ghost"
             size="sm"
@@ -814,6 +821,7 @@ export function AgentInbox() {
     () => [
       ...(data?.active ?? []).filter(isCurrentAgentInboxIdea),
       ...(data?.trends ?? []),
+      ...(data?.newsjacking ?? []),
     ],
     [data],
   );
@@ -822,6 +830,7 @@ export function AgentInbox() {
       [
         ...(data?.activity ?? []).filter(isCurrentAgentInboxIdea),
         ...(data?.trendActivity ?? []),
+        ...(data?.newsjackingActivity ?? []),
       ].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
     [data],
   );
@@ -891,6 +900,8 @@ export function AgentInbox() {
         activity: patch(current.activity),
         trends: patch(current.trends),
         trendActivity: patch(current.trendActivity),
+        newsjacking: patch(current.newsjacking),
+        newsjackingActivity: patch(current.newsjackingActivity),
       };
     });
   }
@@ -899,7 +910,7 @@ export function AgentInbox() {
     idea: AgentFeedIdea,
     next: "read" | "unread",
   ) {
-    if (idea.lane === "trend_radar") {
+    if ("radar" in idea && idea.radar) {
       await jsonRequest(`/api/agent/opportunities/${idea.id}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -962,7 +973,7 @@ export function AgentInbox() {
     action: "done" | "discard",
     discardReason: string,
   ) {
-    if (idea.lane === "trend_radar") {
+    if ("radar" in idea && idea.radar) {
       await jsonRequest(`/api/agent/opportunities/${idea.id}`, {
         method: "POST",
         headers: { "content-type": "application/json" },

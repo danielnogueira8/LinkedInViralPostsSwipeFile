@@ -25,7 +25,9 @@ vi.mock("@/lib/workspace-cost-claims", () => ({
   releaseWorkspaceCost: (...args: unknown[]) => releaseWorkspaceCost(...args),
 }));
 
-const { scanTrendOpportunities } = await import("@/lib/agent-loop/trend-radar");
+const { scanNewsjackingOpportunities } = await import(
+  "@/lib/agent-loop/newsjacking",
+);
 
 const NOW = new Date("2026-08-01T12:00:00.000Z");
 
@@ -84,7 +86,7 @@ function fakeDb(dailyClaims = [true]) {
   };
 }
 
-describe("scanTrendOpportunities persistence seam", () => {
+describe("scanNewsjackingOpportunities persistence seam", () => {
   beforeEach(() => {
     searchNews.mockReset();
     claimWorkspaceCost.mockReset().mockResolvedValue("claim-1");
@@ -103,9 +105,14 @@ describe("scanTrendOpportunities persistence seam", () => {
     });
   });
 
-  test("writes a proposed, grounded trend opportunity without a Source Post", async () => {
+  test("writes a proposed, grounded Newsjacking opportunity without a Source Post", async () => {
     const db = fakeDb();
-    const result = await scanTrendOpportunities(db as never, "workspace-1", NOW);
+    const result = await scanNewsjackingOpportunities(
+      db as never,
+      "workspace-1",
+      NOW,
+      { allowRepeat: true },
+    );
 
     expect(result).toMatchObject({ searched: 1, fetched: 1, inserted: 1 });
     expect(claimWorkspaceCost).toHaveBeenCalledOnce();
@@ -113,23 +120,28 @@ describe("scanTrendOpportunities persistence seam", () => {
     expect(db.inserts).toHaveLength(1);
     expect(db.inserts[0]).toMatchObject({
       workspace_id: "workspace-1",
-      kind: "trend",
+      kind: "news",
       source_post_id: null,
       status: "proposed",
       payload: {
         source_url:
           "https://news.linkedin.com/2026/keeping-conversations-real",
         creator_coverage: "none_observed",
-        reason: "creator_independent",
+        signal_type: "newsjacking",
+        reason: "verified_external_event",
       },
     });
   });
 
-  test("does not pay for a second Trend Radar search on the same day", async () => {
+  test("does not pay for a second Newsjacking search on the same day", async () => {
     const db = fakeDb([true, false]);
 
-    await scanTrendOpportunities(db as never, "workspace-1", NOW);
-    const second = await scanTrendOpportunities(db as never, "workspace-1", NOW);
+    await scanNewsjackingOpportunities(db as never, "workspace-1", NOW);
+    const second = await scanNewsjackingOpportunities(
+      db as never,
+      "workspace-1",
+      NOW,
+    );
 
     expect(second).toEqual({
       searched: 0,

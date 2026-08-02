@@ -16,8 +16,8 @@ vi.mock("@/lib/supabase", () => ({
 vi.mock("@/lib/agent-loop/scan", () => ({
   scanAgentOpportunities: (...args: unknown[]) => mocked.scan(...args),
 }));
-vi.mock("@/lib/agent-loop/trend-radar", () => ({
-  scanTrendOpportunities: async () => ({
+vi.mock("@/lib/agent-loop/newsjacking", () => ({
+  scanNewsjackingOpportunities: async () => ({
     searched: 0,
     fetched: 0,
     inserted: 0,

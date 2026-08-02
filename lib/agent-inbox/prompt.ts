@@ -20,7 +20,9 @@ const LANE_FRAMING: Record<AgentFeedLane, string> = {
   educational:
     "Write this as an educational post that teaches one thing I have demonstrably earned the right to teach, grounded in the Workspace anchor. Use the attached Source Post only for its teaching structure; never copy its claims, names, numbers, or results.",
   trend_radar:
-    "Treat this as a Trend Radar signal for review before writing: establish what is verified, explain what it could change for my audience, and add one original implication. Do not treat the signal itself as a finished post or merely repeat the announcement.",
+    "Treat this as an emerging Trend Radar conversation for review before writing: distinguish repeated creator observations from settled fact, explain what the conversation could change for my audience, and add one original implication. Do not treat the cluster as a finished post or merely repeat the representative posts.",
+  newsjacking:
+    "Treat this as a Newsjacking signal: verify the dated event from the evidence, open with what changed, make one direct bridge to my work, and add original perspective. Do not repeat the source wording or invent facts that are not in the evidence.",
 };
 
 function isAttachableSource(entry: AgentInboxEvidence): boolean {
