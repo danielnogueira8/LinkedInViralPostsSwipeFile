@@ -57,12 +57,24 @@ const synthesisSource = readFileSync(
 function ev(kind: AgentInboxEvidence["kind"]): AgentInboxEvidence {
   return {
     kind,
+    role:
+      kind === "source_post"
+        ? "inspiration"
+        : kind === "draft"
+          ? "context"
+          : "anchor",
     label: kind === "news" ? "LinkedIn announces a new feature" : `${kind} label`,
     detail: "detail",
     ...(kind === "news"
       ? {
           url: "https://example.com/news",
           publishedAt: "2026-07-30T07:00:00.000Z",
+        }
+      : {}),
+    ...(kind === "source_post"
+      ? {
+          ref: "source-post-1",
+          url: "https://example.com/source-post-1",
         }
       : {}),
     ...(kind === "performance"
@@ -101,10 +113,18 @@ describe("laneEvidenceSatisfied", () => {
   test("personal_story requires the user's own material", () => {
     // A "your story" card built from a news article is a news card wearing the
     // wrong label, and shipping one teaches the user the lanes mean nothing.
+    expect(
+      laneEvidenceSatisfied("personal_story", [
+        ev("source_post"),
+        { ...ev("knowledge"), subtype: "story" },
+      ]),
+    ).toBe(true);
     expect(laneEvidenceSatisfied("personal_story", [ev("knowledge")])).toBe(
-      true,
+      false,
     );
-    expect(laneEvidenceSatisfied("personal_story", [ev("voice")])).toBe(true);
+    expect(laneEvidenceSatisfied("personal_story", [ev("source_post")])).toBe(
+      false,
+    );
     expect(laneEvidenceSatisfied("personal_story", [ev("news")])).toBe(false);
     expect(laneEvidenceSatisfied("personal_story", [ev("performance")])).toBe(
       false,
@@ -112,10 +132,21 @@ describe("laneEvidenceSatisfied", () => {
   });
 
   test("educational requires demonstrated expertise, not a news hook", () => {
+    expect(
+      laneEvidenceSatisfied("educational", [
+        ev("source_post"),
+        ev("performance"),
+      ]),
+    ).toBe(true);
+    expect(
+      laneEvidenceSatisfied("educational", [
+        ev("source_post"),
+        { ...ev("knowledge"), subtype: "topic_expertise" },
+      ]),
+    ).toBe(true);
     expect(laneEvidenceSatisfied("educational", [ev("performance")])).toBe(
-      true,
+      false,
     );
-    expect(laneEvidenceSatisfied("educational", [ev("knowledge")])).toBe(true);
     expect(laneEvidenceSatisfied("educational", [ev("source_post")])).toBe(
       false,
     );
@@ -123,6 +154,7 @@ describe("laneEvidenceSatisfied", () => {
     expect(laneEvidenceSatisfied("educational", [ev("news")])).toBe(false);
     expect(
       laneEvidenceSatisfied("educational", [
+        ev("source_post"),
         {
           ...ev("performance"),
           confidence: 0.2,
@@ -141,7 +173,11 @@ describe("laneEvidenceSatisfied", () => {
   });
 
   test("a mixed bundle satisfies whichever lane its kinds support", () => {
-    const mixed = [ev("news"), ev("knowledge")];
+    const mixed = [
+      ev("news"),
+      ev("source_post"),
+      ev("knowledge"),
+    ];
     expect(laneEvidenceSatisfied("newsjacking", mixed)).toBe(true);
     expect(laneEvidenceSatisfied("personal_story", mixed)).toBe(true);
     expect(laneEvidenceSatisfied("educational", mixed)).toBe(true);

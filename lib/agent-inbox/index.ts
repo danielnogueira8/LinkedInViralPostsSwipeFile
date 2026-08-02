@@ -31,19 +31,37 @@ export const AGENT_INBOX_STATUSES = [
 ] as const;
 export type AgentInboxStatus = (typeof AGENT_INBOX_STATUSES)[number];
 
+export type AgentInboxEvidenceRole = "inspiration" | "anchor" | "context";
+export type AgentInboxSourceOrigin = "swipe" | "bookmark";
+
 export type AgentInboxEvidence = {
-  kind: "news" | "performance" | "knowledge" | "source_post" | "voice";
+  kind:
+    | "news"
+    | "performance"
+    | "knowledge"
+    | "source_post"
+    | "draft"
+    | "voice";
+  // The role is optional for historical JSON evidence. New source-aware ideas
+  // always tag each entry so the quality gate can distinguish a modeled post
+  // from the user's own material.
+  role?: AgentInboxEvidenceRole;
   label: string;
   detail: string;
   url?: string | null;
   publishedAt?: string | null;
   ref?: string | null;
+  authorName?: string | null;
+  sourceOrigin?: AgentInboxSourceOrigin | null;
+  reactions?: number | null;
+  comments?: number | null;
   // Structured provenance lets the quality gate distinguish a verified story
   // from a generic knowledge item, and a well-sampled performance signal from
   // an attractive-looking single example.
   subtype?: string | null;
   confidence?: number | null;
   sampleSize?: number | null;
+  score?: number | null;
 };
 
 export type AgentInboxIdea = {
@@ -184,10 +202,23 @@ export function laneLifetimeHours(lane: AgentInboxLane): number {
   }
 }
 
+function isSourceInspiration(entry: AgentInboxEvidence): boolean {
+  return (
+    entry.kind === "source_post" &&
+    entry.role === "inspiration" &&
+    Boolean(entry.ref) &&
+    Boolean(entry.detail)
+  );
+}
+
+function isUserAnchor(entry: AgentInboxEvidence): boolean {
+  return entry.role === "anchor";
+}
+
 // Each lane is a different KIND of post, so each needs a different kind of
-// raw material. This is the gate that keeps a lane honest: a "your story" card
-// built from a news article is not a personal story, it is a news card wearing
-// the wrong label — and shipping one teaches the user the lanes mean nothing.
+// raw material. Story Miner and Expertise now require two distinct roles:
+// a Source Post supplies the structure, while the user's verified material
+// supplies the substance. A source-only card is inspiration, not a ready idea.
 //
 // A lane whose requirement is unmet stays EMPTY. That mirrors the existing
 // newsjacking rule (no verified news → no card) and is the same trade
@@ -196,6 +227,7 @@ export function laneEvidenceSatisfied(
   lane: AgentInboxLane,
   evidence: readonly AgentInboxEvidence[],
 ): boolean {
+  const hasSourceInspiration = evidence.some(isSourceInspiration);
   switch (lane) {
     case "newsjacking":
       // Keep the legacy gate for persisted/test data. New inbox runs never
@@ -209,35 +241,42 @@ export function laneEvidenceSatisfied(
           Number.isFinite(Date.parse(entry.publishedAt ?? "")),
       );
     // The user's own material. `knowledge` is what the interview captured
-    // (story / proof / belief); `voice` is how they tell it. Without one of
-    // those there is no "your" in the story.
+    // (story / proof / belief). A Source Post without a user anchor is only
+    // inspiration, not a personal story.
     case "personal_story":
-      return evidence.some(
-        (entry) =>
-          entry.kind === "voice" ||
-          (entry.kind === "knowledge" &&
+      return (
+        hasSourceInspiration &&
+        evidence.some(
+          (entry) =>
+            isUserAnchor(entry) &&
+            entry.kind === "knowledge" &&
             // Rows created before the subtype field shipped are still
             // verified knowledge. New rows always carry a subtype from the
             // knowledge table, so they get the stricter lane-specific gate.
             (!entry.subtype ||
-              ["story", "belief", "proof"].includes(entry.subtype))),
+              ["story", "belief", "proof"].includes(entry.subtype)),
+        )
       );
     // Expertise the user has actually demonstrated: measured performance, or
     // knowledge they approved. Anything else is a generic explainer.
     case "educational":
-      return evidence.some(
-        (entry) =>
-          (entry.kind === "performance" &&
-            // Legacy performance evidence has no reliability metadata; keep
-            // it usable while enforcing both checks whenever the loader has
-            // supplied them.
-            (entry.confidence == null || entry.confidence >= 0.45) &&
-            (entry.sampleSize == null || entry.sampleSize >= 3)) ||
-          (entry.kind === "knowledge" &&
-            (!entry.subtype ||
-              ["proof", "topic_expertise", "offer"].includes(
-                entry.subtype,
-              ))),
+      return (
+        hasSourceInspiration &&
+        evidence.some(
+          (entry) =>
+            isUserAnchor(entry) &&
+            ((entry.kind === "performance" &&
+              // Legacy performance evidence has no reliability metadata;
+              // keep it usable while enforcing both checks whenever the
+              // loader has supplied them.
+              (entry.confidence == null || entry.confidence >= 0.45) &&
+              (entry.sampleSize == null || entry.sampleSize >= 3)) ||
+              (entry.kind === "knowledge" &&
+                (!entry.subtype ||
+                  ["proof", "topic_expertise", "offer"].includes(
+                    entry.subtype,
+                  )))),
+        )
       );
   }
 }
@@ -246,6 +285,9 @@ export type AgentInboxEvidenceBundle = {
   news: AgentInboxEvidence[];
   learning: AgentInboxEvidence[];
   knowledge: AgentInboxEvidence[];
+  // Actual swipe-file/bookmark posts used as structural inspiration. This is
+  // separate from `recent`, which contains the user's recent drafts.
+  sourcePosts: AgentInboxEvidence[];
   recent?: AgentInboxEvidence[];
 };
 

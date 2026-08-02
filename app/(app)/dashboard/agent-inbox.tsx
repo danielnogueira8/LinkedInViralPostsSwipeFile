@@ -102,7 +102,12 @@ const evidenceKindMeta: Record<
     icon: TrendingUp,
   },
   knowledge: { tag: "Knowledge", full: "Approved knowledge", icon: BookOpen },
-  source_post: { tag: "Draft", full: "Your recent drafts", icon: FileText },
+  source_post: {
+    tag: "Swipe file",
+    full: "Source Post from your Swipe File",
+    icon: FileText,
+  },
+  draft: { tag: "Draft", full: "Your recent drafts", icon: FileText },
   voice: { tag: "Voice", full: "Your voice", icon: AudioLines },
 };
 

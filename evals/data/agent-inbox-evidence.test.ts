@@ -1,6 +1,14 @@
-import { describe, test, expect } from "vitest";
+import { describe, test, expect, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createAgentInboxEvidenceLoader } from "@/lib/agent-inbox/evidence";
+
+const { trackedAccountIds, discoverSourcePosts } = vi.hoisted(() => ({
+  trackedAccountIds: vi.fn(),
+  discoverSourcePosts: vi.fn(),
+}));
+
+vi.mock("@/lib/supabase-scoped", () => ({ trackedAccountIds }));
+vi.mock("@/lib/source-post-discovery", () => ({ discoverSourcePosts }));
 
 // The legacy artifact pipeline titled drafts with the body's first 60 chars
 // sliced mid-word ("…before your content ge"), and the evidence loader
@@ -155,4 +163,111 @@ describe("agent inbox evidence — fresh news only", () => {
     expect(news).toEqual([]);
   });
 
+});
+
+describe("agent inbox evidence — Source Posts", () => {
+  test("loads tracked and bookmarked posts as inspiration while keeping drafts as context", async () => {
+    trackedAccountIds.mockResolvedValue(["account-1"]);
+    discoverSourcePosts.mockResolvedValue({
+      rows: [
+        {
+          id: "swipe-1",
+          text: Array.from(
+            { length: 45 },
+            (_, index) => `Tracked source sentence ${index + 1}.`,
+          ).join(" "),
+          post_url: "https://linkedin.com/posts/swipe-1",
+          posted_at: "2026-07-30T10:00:00.000Z",
+          reactions: 120,
+          comments: 20,
+          accounts: { name: "Tracked Creator" },
+        },
+      ],
+      nextOffset: null,
+    });
+    const loader = createAgentInboxEvidenceLoader(
+      mockDb({
+        chat_artifacts: [
+          {
+            id: "draft-1",
+            title: "My recent draft",
+            body: "A recent draft for context.",
+            created_at: "2026-07-30T09:00:00Z",
+          },
+        ],
+        workspace_learning_snapshots: [
+          {
+            signals: [
+              {
+                kind: "hook",
+                label: "Specific hooks outperform generic openings",
+                score: 0.82,
+                confidence: 0.8,
+                sampleSize: 8,
+              },
+            ],
+          },
+        ],
+        workspace_knowledge_items: [
+          {
+            id: "knowledge-1",
+            kind: "story",
+            title: "A verified customer loss",
+            content: {
+              summary: "A customer chose a cheaper tool after our unclear pitch.",
+              details: "The loss changed how we explain the buying decision.",
+            },
+          },
+        ],
+        saved_posts: [
+          {
+            id: "bookmark-1",
+            text: Array.from(
+              { length: 45 },
+              (_, index) => `Bookmarked source sentence ${index + 1}.`,
+            ).join(" "),
+            text_snippet: null,
+            post_url: "https://linkedin.com/posts/bookmark-1",
+            posted_at: "2026-07-31T10:00:00.000Z",
+            saved_at: "2026-07-31T11:00:00.000Z",
+            author_name: "Bookmarked Creator",
+            reactions: 80,
+            comments: 10,
+          },
+        ],
+      }),
+    );
+
+    const bundle = await loader({
+      workspaceId: "ws-1",
+      preferences: { topics: ["founder content"], newsSensitivity: "standard" } as never,
+      missingLanes: ["personal_story", "educational"],
+      now: new Date("2026-08-01T12:00:00Z"),
+    });
+
+    expect(bundle.sourcePosts.map((entry) => entry.sourceOrigin)).toEqual([
+      "bookmark",
+      "swipe",
+    ]);
+    expect(bundle.sourcePosts.every((entry) => entry.role === "inspiration")).toBe(
+      true,
+    );
+    expect(bundle.recent?.[0]).toMatchObject({
+      kind: "draft",
+      role: "context",
+    });
+    expect(bundle.knowledge[0]).toMatchObject({
+      kind: "knowledge",
+      role: "anchor",
+      subtype: "story",
+    });
+    expect(bundle.learning[0]).toMatchObject({
+      kind: "performance",
+      role: "anchor",
+    });
+    expect(discoverSourcePosts).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ accountIds: ["account-1"], workspaceId: "ws-1" }),
+    );
+  });
 });
