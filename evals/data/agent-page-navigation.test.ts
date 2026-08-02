@@ -46,8 +46,20 @@ describe("Your Agent is a top-level dashboard page", () => {
     expect(badges).toContain('next["/dashboard/agent"] = count');
     expect(source(INBOX)).toContain("Open in Cowork");
     expect(source(INBOX)).toContain('body: JSON.stringify({ kind: next })');
-    expect(source(WORKSPACE)).toContain('setCoworkComposer({ kind: "ask" })');
-    expect(source(WORKSPACE)).not.toContain("enterCreateCommand(1)");
+  });
+
+  test("an Agent handoff opens the new Cowork session in Create mode", () => {
+    const workspace = source(WORKSPACE);
+    const handoffStart = workspace.indexOf("// Agent inbox handoff.");
+    const handoffEnd = workspace.indexOf(
+      "// (The Posts \"Model in Chat\" handoff",
+      handoffStart,
+    );
+    const handoff = workspace.slice(handoffStart, handoffEnd);
+
+    expect(workspace).toContain('agentIdeaParam\n      ? { kind: "create" }');
+    expect(handoff).toContain("enterCreateCommand(1)");
+    expect(handoff).not.toContain('setCoworkComposer({ kind: "ask" })');
   });
 
   test("Cowork no longer owns an embedded agent destination", () => {

@@ -540,7 +540,7 @@ export function ChatWorkspace({
   // may change.
   const [coworkComposer, setCoworkComposer] = useState<CoworkComposerState>(() =>
     agentIdeaParam
-      ? { kind: "ask" }
+      ? { kind: "create" }
       : initialCoworkComposerState(initialChatId),
   );
   const askContextPostId =
@@ -1917,7 +1917,7 @@ export function ChatWorkspace({
 
   // Agent inbox handoff. The Agent chooses an evidence-backed direction; the
   // user still owns the creative act. Open a clean Cowork session with the
-  // prompt prefilled in Ask mode, but never auto-send it or enter Create mode.
+  // prompt prefilled in Create mode, but never auto-send it.
   useEffect(() => {
     if (!agentIdeaParam) return;
     const prompt = sessionStorage.getItem(`agent-inbox-draft:${agentIdeaParam}`);
@@ -1944,7 +1944,7 @@ export function ChatWorkspace({
         setActiveId(id);
         setInput(prompt);
         setModelSource(null);
-        setCoworkComposer({ kind: "ask" });
+        enterCreateCommand(1);
         const url = new URL(window.location.href);
         url.searchParams.set("chat", id);
         url.searchParams.delete("new");
@@ -1969,9 +1969,9 @@ export function ChatWorkspace({
   }, [
     agentIdeaParam,
     chatSession,
+    enterCreateCommand,
     router,
     setActiveId,
-    setCoworkComposer,
     stashComposerDraft,
   ]);
 

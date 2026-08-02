@@ -357,6 +357,16 @@ describe("planProgressTitle — continuous checklist feedback", () => {
     { id: "a", label: "Research", status: "done" as const },
     { id: "b", label: "Draft", status: "done" as const },
   ];
+  const activePlan = [
+    { id: "voice", label: "Applying your voice", status: "done" as const },
+    { id: "write", label: "Writing your post", status: "active" as const },
+  ];
+
+  test("uses the active plan step instead of a generic planning cue", () => {
+    expect(planProgressTitle(activePlan, "Planning next moves")).toBe(
+      "Writing your post",
+    );
+  });
 
   test("keeps showing live work after every listed step is done", () => {
     expect(planProgressTitle(donePlan, "Working")).toBe("Working");
