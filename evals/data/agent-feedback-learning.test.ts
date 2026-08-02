@@ -9,6 +9,11 @@ function fakeDb() {
         headline: "Five generic writing tips",
         discard_reason: "Too generic",
       },
+      {
+        lane: "retired_lane",
+        headline: "Legacy feedback",
+        discard_reason: "Too generic",
+      },
     ],
     agent_opportunities: [
       {
@@ -16,6 +21,28 @@ function fakeDb() {
         payload: {
           headline: "A repeated trend take",
           dismiss_reason: "I've already said this",
+        },
+      },
+      {
+        kind: "news",
+        payload: {
+          headline: "A verified platform announcement",
+          dismiss_reason: "Not timely",
+        },
+      },
+      {
+        kind: "trend",
+        payload: {
+          signal_type: "newsjacking",
+          headline: "A legacy verified announcement",
+          dismiss_reason: "Forced connection",
+        },
+      },
+      {
+        kind: "outlier",
+        payload: {
+          headline: "An unrelated opportunity",
+          dismiss_reason: "Not relevant to me",
         },
       },
     ],
@@ -27,6 +54,7 @@ function fakeDb() {
       Object.assign(chain, {
         select: pass,
         eq: pass,
+        in: pass,
         not: pass,
         order: pass,
         limit: pass,
@@ -60,6 +88,16 @@ describe("shared agent feedback learning", () => {
         lane: "trend_radar",
         headline: "A repeated trend take",
         reason: "I've already said this",
+      },
+      {
+        lane: "newsjacking",
+        headline: "A verified platform announcement",
+        reason: "Not timely",
+      },
+      {
+        lane: "newsjacking",
+        headline: "A legacy verified announcement",
+        reason: "Forced connection",
       },
     ]);
   });
