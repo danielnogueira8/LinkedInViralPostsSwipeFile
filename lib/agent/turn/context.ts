@@ -23,10 +23,12 @@ import {
 } from "@/lib/post-structure-skeleton";
 import {
   isNoModelPostRequest,
-  selectNoModelFormatForTurn,
-  renderNoModelFormatBlock,
   type NoModelFormat,
 } from "@/lib/agent/no-model-formats";
+import {
+  resolveLinkedInNativeGuidance,
+  type LinkedInNativeGuidance,
+} from "@/lib/agent/linkedin-native-guidance";
 import {
   explicitlyForbidsWriting,
   explicitlyRequestsSourceDiscovery,
@@ -1139,6 +1141,7 @@ export type TurnContext = {
   postClarificationPostCount: number | null;
   noModelFormatBlock: string;
   selectedNoModelFormat: NoModelFormat | null;
+  linkedinNativeGuidance: LinkedInNativeGuidance | null;
   appliedNoModelFormat: {
     id: NoModelFormatId;
     label: string;
@@ -1248,9 +1251,11 @@ export async function buildTurnContext(
   let effectiveUserInstruction = userText;
   const orchestratorAttachmentBlocks: ContentBlock[] = [];
   // Built below only for a from-scratch post request (no model/template/refine
-  // source): the selected archetype's rules + full DB exemplars. Empty on every
-  // other turn, so this turn's writer prompt is unchanged for those.
+  // source): the selected archetype's rules plus semantic/curated exemplars.
+  // Empty on every other turn, so this turn's writer prompt is unchanged for
+  // those.
   let noModelFormatBlock = "";
+  let linkedinNativeGuidance: LinkedInNativeGuidance | null = null;
   let appliedNoModelFormat: {
     id: NoModelFormatId;
     label: string;
@@ -1707,17 +1712,12 @@ export async function buildTurnContext(
   modelSourceImageSkipReason = modelSourceImageDecision.skipReason;
   modelSourceImageSourcePostId = modelSourceImageDecision.sourcePostId;
 
-  // No-model format router: when the user asked for a NEW post from scratch,
-  // no Content Template reference was found, and the message reads like a
-  // write-a-post request — silently pick a LinkedIn-native archetype,
-  // fetch 1-2 real exemplar posts from the DB, and inject the format rules +
-  // examples so the writing agent has a concrete structural reference (the
-  // thing the modeled flow gives it, that from-scratch posts lack). It does
-  // NOT run for modeled/template/refine turns (hasModelSource) or for
-  // hooks/analysis/board commands (isNoModelPostRequest gates those out).
-  // skipDecision (a refine) is excluded too — a refine always has a source,
-  // but this is a cheap belt-and-suspenders. Fail-open: the loader never
-  // throws, so a DB blip just yields format-rules-only or an empty block.
+  // No-model format and LinkedIn-native guidance: when the user asked for a
+  // NEW post from scratch and no Content Template reference was found,
+  // silently select an archetype and retrieve a small set of relevant
+  // structure references. It does NOT run for modeled/template/refine turns
+  // (hasModelSource) or hooks/analysis/board commands. Retrieval is best-effort
+  // and falls back to curated examples or format rules when unavailable.
   hasModelSource = Boolean(
     modelSourceId && currentModelEnvelope,
   );
@@ -1761,18 +1761,19 @@ export async function buildTurnContext(
       isNoModelPostRequest(effectiveUserInstruction, hasModelSource))
   ) {
     const forced = !!forcedNoModelFormatId;
-    const format: NoModelFormat = selectNoModelFormatForTurn(
-      effectiveUserInstruction,
-      forcedNoModelFormatId,
-    );
-    // Original posts use the deterministic format rules, voice, preferences,
-    // and feedback without receiving any complete swipe-file post body. This
-    // keeps "original" distinct from the explicit model-source flow.
-    noModelFormatBlock = renderNoModelFormatBlock(format, []);
-    selectedNoModelFormat = format;
+    linkedinNativeGuidance = await resolveLinkedInNativeGuidance({
+      workspaceId,
+      instruction: effectiveUserInstruction,
+      forcedFormatId: forcedNoModelFormatId,
+      signal: setupSignal,
+      telemetry: coworkTelemetry,
+      adapterHealth: coworkAdapterHealth,
+    });
+    noModelFormatBlock = linkedinNativeGuidance.promptBlock;
+    selectedNoModelFormat = linkedinNativeGuidance.format;
     appliedNoModelFormat = {
-      id: format.id,
-      label: noModelFormatLabel(format.id),
+      id: linkedinNativeGuidance.format.id,
+      label: noModelFormatLabel(linkedinNativeGuidance.format.id),
       forced,
     };
   }
@@ -2099,6 +2100,7 @@ export async function buildTurnContext(
     postClarificationPostCount,
     noModelFormatBlock,
     selectedNoModelFormat,
+    linkedinNativeGuidance,
     appliedNoModelFormat,
     shouldAttachLeadMagnet,
     leadMagnetBlock,

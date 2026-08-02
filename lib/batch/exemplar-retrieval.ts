@@ -1,5 +1,9 @@
 import { supabaseAdmin } from "@/lib/supabase";
-import { embedText, retrieveExemplars } from "@/lib/post-embeddings";
+import {
+  embedText,
+  retrieveExemplars,
+  type ExemplarMatch,
+} from "@/lib/post-embeddings";
 import type { PostType } from "@/lib/post-type";
 import {
   EMBEDDING_DIM,
@@ -12,13 +16,12 @@ import {
 } from "@/lib/agent/adapter-health";
 import { runCoworkAdapterAttempt } from "@/lib/agent/cowork-adapter-attempt";
 import type { CoworkTurnTelemetry } from "@/lib/agent/cowork-telemetry";
+import { wrapUntrustedDelimited } from "@/lib/agent/untrusted";
 
-// Retrieval-augmented drafting (the viral-learning loop, PR 3). For a draft
-// being written from a source post, pull the semantically-nearest VIRAL posts
-// (positive exemplars — extra structural angles beyond the one source) and
-// MEDIOCRE posts on the same theme (negatives — patterns that underperformed
-// HERE, to avoid). Both come from the embedded corpus (migration-088) via
-// cosine similarity.
+// Retrieval-augmented drafting (the viral-learning loop). Pull semantically
+// nearest VIRAL posts (positive structural exemplars) and, for the legacy batch
+// lane, MEDIOCRE posts on the same theme (negative patterns to avoid). Both
+// come from the embedded LinkedIn corpus via cosine similarity.
 //
 // Guardrails baked in:
 //   - Relative-virality framing is inherited from the corpus: `is_viral` is
@@ -36,10 +39,18 @@ const OVERFETCH = 8;
 // Trim each exemplar so a few of them can't blow the prompt budget.
 const EXEMPLAR_CHARS = 600;
 
+export type RetrievedExemplar = {
+  postId: string;
+  similarity: number;
+  lane: "viral" | "mediocre";
+  text: string;
+};
+
 export type ExemplarBlock = {
   block: string;
   viralCount: number;
   mediocreCount: number;
+  exemplars: RetrievedExemplar[];
 };
 
 // A cheap lexical fingerprint for the diversity down-sample: the first ~6
@@ -103,17 +114,33 @@ export async function buildExemplarBlock(opts: {
   topicText: string;
   postType?: PostType | null;
   excludeIds?: string[];
+  /** The direct writer uses only positive examples; batch keeps the legacy negative lane. */
+  includeMediocre?: boolean;
+  /** Optional cosine-similarity floor for callers that need topic relevance. */
+  minSimilarity?: number;
   workspaceId?: string;
   signal?: AbortSignal;
   telemetry?: CoworkTurnTelemetry;
   adapterHealth?: AdapterHealthRegistry;
 }): Promise<ExemplarBlock> {
   const topic = opts.topicText.trim();
-  if (!topic) return { block: "", viralCount: 0, mediocreCount: 0 };
+  if (!topic) {
+    return { block: "", viralCount: 0, mediocreCount: 0, exemplars: [] };
+  }
 
+  const includeMediocre = opts.includeMediocre !== false;
+  const retrievalIdentity = includeMediocre
+    ? {
+        adapterKey: `cowork_legacy_exemplar_embedding:${EMBEDDING_MODEL}`,
+        stage: "legacy_exemplar_embedding",
+      }
+    : {
+        adapterKey: `cowork_linkedin_native_exemplar_embedding:${EMBEDDING_MODEL}`,
+        stage: "linkedin_native_exemplar_embedding",
+      };
   const embeddingAttempt = await runCoworkAdapterAttempt({
     registry: opts.adapterHealth ?? coworkAdapterHealth,
-    adapterKey: `cowork_legacy_exemplar_embedding:${EMBEDDING_MODEL}`,
+    adapterKey: retrievalIdentity.adapterKey,
     signal: opts.signal,
     call: () =>
       embedText([topic], {
@@ -145,14 +172,14 @@ export async function buildExemplarBlock(opts: {
       completion_tokens: 0,
     }),
     telemetry: opts.telemetry,
-    stage: "legacy_exemplar_embedding",
+    stage: retrievalIdentity.stage,
     attempt: 1,
     model: EMBEDDING_MODEL,
     rejectedReasonCode: "invalid_exemplar_embedding",
   });
   const queryEmbedding = embeddingAttempt.value;
 
-  const [viralMatches, mediocreMatches] = await Promise.all([
+  const [viralRetrieved, mediocreRetrieved] = await Promise.all([
     retrieveExemplars({
       queryText: topic,
       queryEmbedding,
@@ -163,38 +190,64 @@ export async function buildExemplarBlock(opts: {
       workspaceId: opts.workspaceId,
       signal: opts.signal,
     }),
-    retrieveExemplars({
-      queryText: topic,
-      queryEmbedding,
-      wantViral: false,
-      postType: opts.postType ?? null,
-      excludeIds: opts.excludeIds,
-      matchCount: OVERFETCH,
-      workspaceId: opts.workspaceId,
-      signal: opts.signal,
-    }),
+    includeMediocre
+      ? retrieveExemplars({
+          queryText: topic,
+          queryEmbedding,
+          wantViral: false,
+          postType: opts.postType ?? null,
+          excludeIds: opts.excludeIds,
+          matchCount: OVERFETCH,
+          workspaceId: opts.workspaceId,
+          signal: opts.signal,
+        })
+      : Promise.resolve([]),
   ]);
+  const minSimilarity =
+    typeof opts.minSimilarity === "number" && Number.isFinite(opts.minSimilarity)
+      ? opts.minSimilarity
+      : Number.NEGATIVE_INFINITY;
+  const viralMatches = viralRetrieved.filter(
+    (match) => match.similarity >= minSimilarity,
+  );
+  const mediocreMatches = mediocreRetrieved.filter(
+    (match) => match.similarity >= minSimilarity,
+  );
 
   const bodies = await fetchBodies([
     ...viralMatches.map((m) => m.postId),
     ...mediocreMatches.map((m) => m.postId),
   ], opts.signal);
-  const withBody = (m: { postId: string }): { text: string } | null => {
+  const withBody = (
+    m: ExemplarMatch,
+    lane: RetrievedExemplar["lane"],
+  ): RetrievedExemplar | null => {
     const text = bodies.get(m.postId);
-    return text ? { text } : null;
+    return text
+      ? {
+          postId: m.postId,
+          similarity: m.similarity,
+          lane,
+          text,
+        }
+      : null;
   };
 
   const viral = diversify(
-    viralMatches.map(withBody).filter((x): x is { text: string } => x !== null),
+    viralMatches
+      .map((match) => withBody(match, "viral"))
+      .filter((x): x is RetrievedExemplar => x !== null),
     VIRAL_SHOW,
   );
   const mediocre = diversify(
-    mediocreMatches.map(withBody).filter((x): x is { text: string } => x !== null),
+    mediocreMatches
+      .map((match) => withBody(match, "mediocre"))
+      .filter((x): x is RetrievedExemplar => x !== null),
     MEDIOCRE_SHOW,
   );
 
   if (viral.length === 0 && mediocre.length === 0) {
-    return { block: "", viralCount: 0, mediocreCount: 0 };
+    return { block: "", viralCount: 0, mediocreCount: 0, exemplars: [] };
   }
 
   const trim = (t: string) =>
@@ -206,16 +259,33 @@ export async function buildExemplarBlock(opts: {
   ];
   if (viral.length > 0) {
     parts.push("", "WORKED (emulate the structure, not the content):");
-    viral.forEach((v, i) => parts.push(`${i + 1}. """${trim(v.text)}"""`));
+    viral.forEach((v, i) =>
+      parts.push(
+        `${i + 1}. ${wrapUntrustedDelimited({
+          label: `LINKEDIN VIRAL EXEMPLAR ${i + 1}`,
+          endLabel: `END LINKEDIN VIRAL EXEMPLAR ${i + 1}`,
+          text: trim(v.text),
+        })}`,
+      ),
+    );
   }
   if (mediocre.length > 0) {
     parts.push("", "UNDERPERFORMED on this theme (avoid these moves):");
-    mediocre.forEach((m, i) => parts.push(`${i + 1}. """${trim(m.text)}"""`));
+    mediocre.forEach((m, i) =>
+      parts.push(
+        `${i + 1}. ${wrapUntrustedDelimited({
+          label: `LINKEDIN UNDERPERFORMED EXEMPLAR ${i + 1}`,
+          endLabel: `END LINKEDIN UNDERPERFORMED EXEMPLAR ${i + 1}`,
+          text: trim(m.text),
+        })}`,
+      ),
+    );
   }
 
   return {
     block: parts.join("\n"),
     viralCount: viral.length,
     mediocreCount: mediocre.length,
+    exemplars: [...viral, ...mediocre],
   };
 }

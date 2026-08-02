@@ -64,6 +64,7 @@ import {
   type DraftWriterResponse,
 } from "@/lib/agent/draft-writer";
 import type { NoModelFormat } from "@/lib/agent/no-model-formats";
+import type { LinkedInNativeGuidance } from "@/lib/agent/linkedin-native-guidance";
 import {
   ANTI_AI_READER_TELL_RULES,
   POST_STRUCTURE_SKILL,
@@ -2700,6 +2701,79 @@ describe("prompt-threading assertions ported from legacy runAgent evals (D6)", (
     const prompt = JSON.stringify(writer.requests[0].messages);
     expect(prompt).toContain("Use the Tactical Listicle architecture silently.");
     expect(prompt).toContain("Promise the list");
+  });
+
+  test("LinkedIn-native retrieval guidance reaches the original writer prompt", async () => {
+    const format: NoModelFormat = {
+      id: "tactical_listicle",
+      label: "Tactical Listicle",
+      whenToUse: ["list"],
+      requiredContext: ["topic"],
+      structure: ["Promise the list", "Deliver the list", "CTA"],
+      avoid: ["multiple CTAs"],
+      exemplarPostIds: [],
+    };
+    const guidance: LinkedInNativeGuidance = {
+      format,
+      promptBlock: "LINKEDIN_NATIVE_REFERENCE_SENTINEL",
+      exemplars: [
+        {
+          postId: "post-1",
+          text: "A retrieved reference post.",
+          similarity: 0.9,
+          source: "semantic",
+        },
+      ],
+      retrievalMode: "semantic",
+    };
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(200, 120) },
+    ]);
+
+    await collect(writer, { lean: true, format, linkedinNativeGuidance: guidance });
+
+    const prompt = JSON.stringify(writer.requests[0].messages);
+    expect(prompt).toContain("LINKEDIN_NATIVE_REFERENCE_SENTINEL");
+    expect(prompt).toContain("Never copy their wording");
+  });
+
+  test("rejects an original draft that is a near-duplicate of a retrieved exemplar", async () => {
+    const guidance: LinkedInNativeGuidance = {
+      format: {
+        id: "tactical_listicle",
+        label: "Tactical Listicle",
+        whenToUse: ["list"],
+        requiredContext: ["topic"],
+        structure: ["Promise the list", "Deliver the list"],
+        avoid: ["multiple CTAs"],
+        exemplarPostIds: [],
+      },
+      promptBlock: "LINKEDIN_NATIVE_REFERENCE_SENTINEL",
+      exemplars: [
+        {
+          postId: "post-1",
+          text: COMPLETE_POST,
+          similarity: 0.9,
+          source: "semantic",
+        },
+      ],
+      retrievalMode: "semantic",
+    };
+    const writer = new ScriptedWriter([
+      { text: COMPLETE_POST, finishReason: "stop", usage: usage(200, 120) },
+      { text: DISTINCT_COMPLETE_POST, finishReason: "stop", usage: usage(200, 120) },
+    ]);
+
+    const result = await collect(writer, {
+      lean: true,
+      linkedinNativeGuidance: guidance,
+    });
+
+    expect(writer.requests).toHaveLength(2);
+    expect(JSON.stringify(writer.requests[1]?.messages)).toContain(
+      "genuinely original",
+    );
+    expect(artifacts(result.events)[0]?.body).toBe(DISTINCT_COMPLETE_POST);
   });
 
   test("omitted no-model format keeps the default structure guidance", async () => {

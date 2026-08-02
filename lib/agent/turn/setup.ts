@@ -100,6 +100,7 @@ import { buildLeadMagnetCampaign } from "@/lib/lead-magnet-campaign";
 import type { ToolResult } from "@/lib/agent/tools";
 import type { NoModelFormat } from "@/lib/agent/no-model-formats";
 import type { NoModelFormatId } from "@/lib/agent/no-model-format-catalog";
+import type { LinkedInNativeGuidance } from "@/lib/agent/linkedin-native-guidance";
 import type { Artifact, AskQuestion } from "@/lib/agent/contracts";
 import { truncateAtWordBoundary } from "@/lib/text-truncate";
 
@@ -1574,6 +1575,7 @@ export async function setupChatTurn(
     forced: boolean;
   } | null = null;
   let selectedNoModelFormat: NoModelFormat | null = null;
+  let linkedinNativeGuidance: LinkedInNativeGuidance | null = null;
   let leadMagnetBlock = "";
   let appliedLeadMagnet: (AppliedLeadMagnet & { id: string }) | null = null;
   let shouldAttachLeadMagnet = false;
@@ -1664,6 +1666,7 @@ export async function setupChatTurn(
     postClarificationPostCount = turnContext.postClarificationPostCount;
     preloadedVoiceResult = turnContext.voiceResult;
     selectedNoModelFormat = turnContext.selectedNoModelFormat;
+    linkedinNativeGuidance = turnContext.linkedinNativeGuidance;
     appliedNoModelFormat = turnContext.appliedNoModelFormat;
     shouldAttachLeadMagnet = turnContext.shouldAttachLeadMagnet;
     leadMagnetBlock = turnContext.leadMagnetBlock;
@@ -1974,6 +1977,7 @@ export async function setupChatTurn(
     citedSourceImageSourcePostId,
     appliedNoModelFormat,
     selectedNoModelFormat,
+    linkedinNativeGuidance,
     leadMagnetBlock,
     appliedLeadMagnet,
     shouldAttachLeadMagnet,
