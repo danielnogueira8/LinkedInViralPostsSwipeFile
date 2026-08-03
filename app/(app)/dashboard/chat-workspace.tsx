@@ -842,6 +842,9 @@ export function ChatWorkspace({
   const messages: Message[] = activeId
     ? [...activeBase, ...(activeRun ? runOverlay(activeRun, activeBase) : [])]
     : [];
+  const hasPendingClarification = Boolean(
+    messages.at(-1)?.role === "assistant" && messages.at(-1)?.ask,
+  );
   // Aggregate everything shaping this chat into one referenceable summary for the
   // context rail: the per-message context the transcript already carries + the
   // live source post being modeled. Pure fold — no new data. Empty until a chat
@@ -2802,6 +2805,8 @@ export function ChatWorkspace({
         ...(askContextPost
           ? { askContextPostId: askContextPost.artifactId }
           : {}),
+        hasPendingClarification:
+          overrideText === undefined && !sendOpts && hasPendingClarification,
         ...(sendOpts ? { sendOptions: sendOpts } : {}),
         isProgrammaticSend: overrideText !== undefined,
       });
@@ -3696,6 +3701,7 @@ export function ChatWorkspace({
     setActiveId,
     writerContentFormat,
     enterCreateCommand,
+    hasPendingClarification,
     workspaceController,
   ]);
 

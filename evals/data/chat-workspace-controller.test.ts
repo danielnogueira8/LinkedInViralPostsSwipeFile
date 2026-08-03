@@ -85,7 +85,7 @@ describe("ChatWorkspace controller", () => {
     expect(turn.explorationLaneToRestore).toBe("auto");
   });
 
-  test("keeps Create selected so a free-text clarification reply still creates", () => {
+  test("a composer-typed clarification resumes the pending Create operation", () => {
     const original = controller.prepareTurn(baseInput);
     expect(original.composerAfterTurnStarts).toEqual({ kind: "create" });
 
@@ -93,10 +93,13 @@ describe("ChatWorkspace controller", () => {
       ...baseInput,
       composer: original.composerAfterTurnStarts ?? { kind: "ask" },
       starterId: undefined,
+      hasPendingClarification: true,
     });
 
-    expect(answer.requestFields.command).toEqual({ kind: "create", count: 2 });
-    expect(answer.composerAfterTurnStarts).toEqual({ kind: "create" });
+    expect(answer.resumesPersistedOperation).toBe(true);
+    expect(answer.requestFields.command).toBeUndefined();
+    expect(answer.requestFields.generationConfig).toBeUndefined();
+    expect(answer.composerAfterTurnStarts).toBeNull();
   });
 
   test("keeps explicit card commands authoritative without composer controls", () => {
