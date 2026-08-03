@@ -156,6 +156,8 @@ import {
   composeInterviewAnswers,
   INTERVIEW_SUBMISSION_MAX_CHARS,
   isAskSelectionComplete,
+  isPersistedChatMessageId,
+  latestMatchingAskMessageId,
   resolveAskSubmission,
   toggleAskOption,
 } from "@/lib/chat-ask";
@@ -4411,6 +4413,126 @@ export function ChatWorkspace({
                         : {}),
                     });
                   }}
+                  onResolveTerminal={async (option, renderedAsk) => {
+                    const chatId = activeIdRef.current;
+                    if (!chatId) return false;
+                    try {
+                      let assistantMessageId = m.id;
+                      if (!isPersistedChatMessageId(assistantMessageId)) {
+                        const canonicalResponse = await fetch(
+                          `/api/chats/${chatId}`,
+                          { cache: "no-store" },
+                        );
+                        const canonicalData = await canonicalResponse.json();
+                        if (
+                          !canonicalResponse.ok ||
+                          !canonicalData.ok ||
+                          !Array.isArray(canonicalData.messages)
+                        ) {
+                          throw new Error("The question is still saving. Try again.");
+                        }
+                        const canonicalMessages = hydrate(
+                          canonicalData.messages as RawDbMessage[],
+                        );
+                        const matchedId = latestMatchingAskMessageId(
+                          canonicalMessages,
+                          renderedAsk,
+                        );
+                        if (!matchedId) {
+                          throw new Error("That question is no longer pending.");
+                        }
+                        assistantMessageId = matchedId;
+                        chatSession.reconcile(
+                          chatId,
+                          canonicalMessages,
+                          (canonicalData.messages as RawDbMessage[]).flatMap(
+                            (message) => message.artifacts ?? [],
+                          ),
+                        );
+                      }
+                      const response = await fetch(
+                        `/api/chats/${chatId}/clarification`,
+                        {
+                          method: "PATCH",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({
+                            option,
+                            assistantMessageId,
+                          }),
+                        },
+                      );
+                      const result = await response.json().catch(() => ({}));
+                      if (!response.ok || !result.ok) {
+                        throw new Error(
+                          result.error || "Couldn't close that question",
+                        );
+                      }
+
+                      // Apply the acknowledged terminal state to both possible
+                      // owners immediately. This keeps a failed best-effort GET
+                      // from reviving the card if React remounts the row.
+                      const terminalReason = result.terminalReason as
+                        | "done"
+                        | "cancelled";
+                      const currentBase = chatSession.baseMessages(chatId);
+                      if (
+                        currentBase.some(
+                          (message) => message.id === result.messageId,
+                        )
+                      ) {
+                        chatSession.reconcile(
+                          chatId,
+                          currentBase.map((message) =>
+                            message.id === result.messageId
+                              ? {
+                                  ...message,
+                                  ask: undefined,
+                                  terminalReason,
+                                }
+                              : message,
+                          ),
+                          [...(chatSession.artifactsFor(chatId) ?? [])],
+                        );
+                      }
+                      const terminalTurn = chatSession.turnFor(chatId);
+                      if (
+                        terminalTurn?.run.ask &&
+                        terminalTurn.run.assistantId === m.id
+                      ) {
+                        terminalTurn.update((run) => {
+                          run.ask = undefined;
+                        });
+                      }
+
+                      // Refresh the canonical transcript so the closed card is
+                      // also gone from the session cache, not only this mounted
+                      // component. A remount or reload therefore cannot revive it.
+                      try {
+                        const reload = await fetch(`/api/chats/${chatId}`, {
+                          cache: "no-store",
+                        });
+                        const fresh = await reload.json();
+                        if (fresh.ok && Array.isArray(fresh.messages)) {
+                          chatSession.reconcile(
+                            chatId,
+                            hydrate(fresh.messages as RawDbMessage[]),
+                            (fresh.messages as RawDbMessage[]).flatMap(
+                              (message) => message.artifacts ?? [],
+                            ),
+                          );
+                        }
+                      } catch {
+                        // The terminal outcome is already persisted. The local
+                        // card can close even if this best-effort refresh fails.
+                      }
+                      return true;
+                    } catch (error) {
+                      toast.error(
+                        (error as Error).message || "Couldn't close that question",
+                      );
+                      return false;
+                    }
+                  }}
                 />
               ))}
               {/* Reattach indicator: this chat's turn is running server-side but
@@ -6269,6 +6391,7 @@ function MessageBubble({
   message,
   onRetry,
   onAnswer,
+  onResolveTerminal,
   legacyContentFormat,
 }: {
   message: Message;
@@ -6282,6 +6405,10 @@ function MessageBubble({
     actionSelectionIds: string[],
     clarificationChoiceIndex?: number,
   ) => void;
+  onResolveTerminal: (
+    option: string,
+    ask: AskQuestion,
+  ) => Promise<boolean>;
   legacyContentFormat: ContentFormat;
 }) {
   if (message.role === "user") {
@@ -6461,7 +6588,11 @@ function MessageBubble({
         message.ask.variant === "interview" ? (
           <InterviewCard ask={message.ask} onSubmit={onAnswer} />
         ) : (
-          <AskCard ask={message.ask} onSubmit={onAnswer} />
+          <AskCard
+            ask={message.ask}
+            onSubmit={onAnswer}
+            onResolveTerminal={onResolveTerminal}
+          />
         )
       )}
 
@@ -6495,6 +6626,7 @@ function MessageBubble({
 function AskCard({
   ask,
   onSubmit,
+  onResolveTerminal,
 }: {
   ask: AskQuestion;
   onSubmit: (
@@ -6503,6 +6635,10 @@ function AskCard({
     actionSelectionIds: string[],
     clarificationChoiceIndex?: number,
   ) => void;
+  onResolveTerminal: (
+    option: string,
+    ask: AskQuestion,
+  ) => Promise<boolean>;
 }) {
   const [selected, setSelected] = useState<string[]>([]);
   const [other, setOther] = useState("");
@@ -6511,6 +6647,7 @@ function AskCard({
   const [submitted, setSubmitted] = useState<
     { done: boolean; text: string } | null
   >(null);
+  const [submitting, setSubmitting] = useState(false);
 
   // Single-select unless the model asked for multi. Drives BOTH the control
   // visuals (radios vs checkboxes) and the free-text/pick interaction below.
@@ -6537,11 +6674,17 @@ function AskCard({
 
   // Submit handler: a terminal "done" pick just closes the card (no model
   // turn); anything else sends the composed answer.
-  const submit = () => {
+  const submit = async () => {
+    if (submitting) return;
     const action = resolveAskSubmission(ask, selected, other);
     if (action.kind === "done") {
-      setSubmitted({ done: true, text: ask.doneOption ?? "" });
-      return; // no onSubmit → no send → no AI turn, drafts stay visible
+      setSubmitting(true);
+      const persisted = await onResolveTerminal(ask.doneOption ?? "", ask);
+      setSubmitting(false);
+      if (persisted) {
+        setSubmitted({ done: true, text: ask.doneOption ?? "" });
+      }
+      return;
     }
     setSubmitted({ done: false, text: action.text });
     const actionSelectionIds = selected.flatMap((option) => {
@@ -6636,7 +6779,7 @@ function AskCard({
             if (e.nativeEvent.isComposing) return;
             if (e.key === "Enter" && selectionComplete) {
               e.preventDefault();
-              submit();
+              void submit();
             }
           }}
         />
@@ -6645,10 +6788,10 @@ function AskCard({
         <Button
           size="sm"
           className="h-8"
-          disabled={!selectionComplete}
-          onClick={submit}
+          disabled={!selectionComplete || submitting}
+          onClick={() => void submit()}
         >
-          {isDoneOnly ? "Done" : "Send answer"}
+          {submitting ? "Saving…" : isDoneOnly ? "Done" : "Send answer"}
         </Button>
       </div>
     </div>

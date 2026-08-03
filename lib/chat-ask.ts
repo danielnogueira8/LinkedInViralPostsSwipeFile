@@ -20,6 +20,92 @@ export function recoverDoneOption(
   return terminal.length === 1 ? terminal[0] : undefined;
 }
 
+type PersistedToolCall = {
+  function?: { name?: string; arguments?: string };
+};
+
+export function resolvePersistedTerminalAsk(
+  toolCalls: PersistedToolCall[] | null | undefined,
+  selectedOption: string,
+): { terminalReason: "done" | "cancelled" } | null {
+  const call = toolCalls?.find(
+    (candidate) => candidate.function?.name === "ask_user",
+  );
+  if (!call?.function?.arguments) return null;
+
+  let args: Record<string, unknown>;
+  try {
+    args = JSON.parse(call.function.arguments) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+
+  const options = Array.isArray(args.options)
+    ? args.options.filter((option): option is string => typeof option === "string")
+    : [];
+  const persistedDone =
+    typeof args.doneOption === "string" ? args.doneOption : undefined;
+  const doneOption =
+    args.actionLane === true
+      ? persistedDone && options.includes(persistedDone)
+        ? persistedDone
+        : undefined
+      : recoverDoneOption(options, persistedDone);
+  if (!doneOption || selectedOption !== doneOption) return null;
+
+  const selectedIndex = options.indexOf(selectedOption);
+  const choiceIds = Array.isArray(args.choiceIds) ? args.choiceIds : [];
+  return {
+    terminalReason:
+      choiceIds[selectedIndex] === "cancel" ||
+      /^(cancel|never mind|stop)$/i.test(selectedOption.trim())
+        ? "cancelled"
+        : "done",
+  };
+}
+
+type AskMessageCandidate = {
+  id: string;
+  role: "user" | "assistant";
+  ask?: AskQuestion;
+};
+
+const PERSISTED_MESSAGE_ID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function isPersistedChatMessageId(id: string): boolean {
+  return PERSISTED_MESSAGE_ID_RE.test(id);
+}
+
+function sameOptionalArray(
+  left: readonly string[] | undefined,
+  right: readonly string[] | undefined,
+): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  return left.length === right.length && left.every((value, i) => value === right[i]);
+}
+
+export function latestMatchingAskMessageId(
+  messages: readonly AskMessageCandidate[],
+  renderedAsk: AskQuestion,
+): string | null {
+  const latest = messages.at(-1);
+  const ask = latest?.role === "assistant" ? latest.ask : undefined;
+  if (!latest || !ask) return null;
+  const matches =
+    ask.question === renderedAsk.question &&
+    sameOptionalArray(ask.options, renderedAsk.options) &&
+    ask.allowOther === renderedAsk.allowOther &&
+    ask.multiSelect === renderedAsk.multiSelect &&
+    ask.targetCount === renderedAsk.targetCount &&
+    ask.doneOption === renderedAsk.doneOption &&
+    ask.variant === renderedAsk.variant &&
+    sameOptionalArray(ask.questions, renderedAsk.questions) &&
+    sameOptionalArray(ask.optionIds, renderedAsk.optionIds) &&
+    sameOptionalArray(ask.choiceIds, renderedAsk.choiceIds);
+  return matches ? latest.id : null;
+}
+
 export function isTerminalAskAnswer(text: string): boolean {
   return isTerminalAskOption(text);
 }

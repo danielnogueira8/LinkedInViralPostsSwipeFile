@@ -11,6 +11,7 @@ import {
   resolveAskSubmission,
   toggleAskOption,
   recoverDoneOption,
+  latestMatchingAskMessageId,
 } from "@/lib/chat-ask";
 
 describe("bounded action target selection", () => {
@@ -365,6 +366,40 @@ describe("resolveAskSubmission — done short-circuit vs send", () => {
   });
 });
 
+describe("latestMatchingAskMessageId", () => {
+  const ask: AskQuestion = {
+    question: "What next?",
+    options: ["Write it", "Looks great"],
+    allowOther: true,
+    doneOption: "Looks great",
+  };
+
+  test("recovers the canonical id for the same streamed AskCard", () => {
+    expect(
+      latestMatchingAskMessageId(
+        [{ id: "persisted-1", role: "assistant", ask }],
+        ask,
+      ),
+    ).toBe("persisted-1");
+  });
+
+  test("does not bind a stale card to a different latest question", () => {
+    expect(
+      latestMatchingAskMessageId(
+        [
+          { id: "persisted-1", role: "assistant", ask },
+          {
+            id: "persisted-2",
+            role: "assistant",
+            ask: { ...ask, question: "A newer question?" },
+          },
+        ],
+        ask,
+      ),
+    ).toBeNull();
+  });
+});
+
 // ---------------------------------------------------------------------------
 // toggleAskOption — MULTI-SELECT (ask.multiSelect: true — the after-draft edit
 // menu). Several action options compose ("Tighten the hook" + "Add a CTA"), but
@@ -557,4 +592,3 @@ describe("explicitlyForbidsClarification — honor an explicit 'do not ask' (#11
     }
   });
 });
-

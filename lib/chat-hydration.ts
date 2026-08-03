@@ -510,8 +510,12 @@ export function hydrate(rows: RawDbMessage[]): Message[] {
     return {
       id: row.id,
       role: row.role as "user" | "assistant",
-      text: parsedAsk
-        ? stripAskQuestionFromText(text, parsedAsk.question)
+      text:
+        persistedAsk &&
+        (parsedAsk ||
+          row.terminal_reason === "done" ||
+          row.terminal_reason === "cancelled")
+        ? stripAskQuestionFromText(text, persistedAsk.question)
         : text,
       artifacts: row.artifacts ?? undefined,
       ...(row.role === "assistant" &&
