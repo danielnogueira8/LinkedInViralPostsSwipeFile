@@ -2,10 +2,7 @@ import { z } from "zod";
 import type { GroundedSource } from "@/lib/agent/evidence";
 import type { GroundedAnswerAttempt } from "@/lib/agent/grounded-answer";
 import type { ToolResult } from "@/lib/agent/tools";
-import {
-  unsupportedFactualSpecific,
-  unsupportedFirstPersonClaim,
-} from "@/lib/agent/draft-output-policy";
+import { unsupportedFirstPersonClaim } from "@/lib/agent/draft-output-policy";
 import { FALLBACK_READ_ONLY_ORCHESTRATOR_MODEL } from "@/lib/agent/model-config";
 import { INJECTION_GUARD, wrapUntrustedDelimited } from "@/lib/agent/untrusted";
 import {
@@ -171,17 +168,6 @@ function acceptedIdeas(
     .find(Boolean);
   if (unsupportedClaim) {
     throw new Error("Brainstorm ideas introduced an unsupported user claim.");
-  }
-  const unsupportedSpecificity = normalized
-    .map((idea) =>
-      unsupportedFactualSpecific(
-        `${idea.title}. ${idea.angle}`,
-        groundingContext,
-      ),
-    )
-    .find(Boolean);
-  if (unsupportedSpecificity) {
-    throw new Error("Brainstorm ideas introduced unsupported factual detail.");
   }
   return normalized;
 }
