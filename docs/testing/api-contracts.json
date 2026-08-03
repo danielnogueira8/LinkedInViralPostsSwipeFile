@@ -17,10 +17,22 @@
     },
     {
       "id": "cowork-chats",
-      "success_evidence": ["evals/data/resource-mutation-contracts.test.ts"],
-      "failure_evidence": ["evals/data/chat-stream-preflight.test.ts"],
-      "isolation_evidence": ["evals/data/resource-mutation-contracts.test.ts"],
-      "mutation_evidence": ["evals/data/chat-stop-turn-ownership.test.ts"]
+      "success_evidence": [
+        "evals/data/resource-mutation-contracts.test.ts",
+        "evals/data/chat-clarification-resolution-route.test.ts"
+      ],
+      "failure_evidence": [
+        "evals/data/chat-stream-preflight.test.ts",
+        "evals/data/chat-clarification-resolution-route.test.ts"
+      ],
+      "isolation_evidence": [
+        "evals/data/resource-mutation-contracts.test.ts",
+        "evals/data/chat-clarification-resolution-route.test.ts"
+      ],
+      "mutation_evidence": [
+        "evals/data/chat-stop-turn-ownership.test.ts",
+        "evals/data/chat-clarification-resolution-route.test.ts"
+      ]
     },
     {
       "id": "drafts-artifacts",
