@@ -43,6 +43,7 @@ export type PrepareChatWorkspaceTurnInput = {
   hasPostFormat: boolean;
   hasCreatorStyle: boolean;
   askContextPostId?: string;
+  hasPendingClarification?: boolean;
   sendOptions?: ChatWorkspaceSendOptions;
   isProgrammaticSend?: boolean;
 };
@@ -84,20 +85,22 @@ export function createChatWorkspaceController(
   return {
     prepareTurn(input) {
       const sendOptions = input.sendOptions;
-      const resumesPersistedOperation = resumesPersistedCoworkOperation({
-        ...(sendOptions?.retryOfUserMessageId
-          ? { retryOfUserMessageId: sendOptions.retryOfUserMessageId }
-          : {}),
-        ...(sendOptions?.actionSelectionIds !== undefined
-          ? { actionSelectionIds: sendOptions.actionSelectionIds }
-          : {}),
-        ...(sendOptions?.clarificationAssistantMessageId
-          ? {
-              clarificationAssistantMessageId:
-                sendOptions.clarificationAssistantMessageId,
-            }
-          : {}),
-      });
+      const resumesPersistedOperation =
+        input.hasPendingClarification === true ||
+        resumesPersistedCoworkOperation({
+          ...(sendOptions?.retryOfUserMessageId
+            ? { retryOfUserMessageId: sendOptions.retryOfUserMessageId }
+            : {}),
+          ...(sendOptions?.actionSelectionIds !== undefined
+            ? { actionSelectionIds: sendOptions.actionSelectionIds }
+            : {}),
+          ...(sendOptions?.clarificationAssistantMessageId
+            ? {
+                clarificationAssistantMessageId:
+                  sendOptions.clarificationAssistantMessageId,
+              }
+            : {}),
+        });
       const appliesComposerControls =
         !input.isProgrammaticSend &&
         !resumesPersistedOperation &&
