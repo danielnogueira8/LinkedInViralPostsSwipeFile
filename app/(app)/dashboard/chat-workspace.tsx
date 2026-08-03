@@ -12,6 +12,7 @@ import {
   type PointerEvent,
   type ReactNode,
 } from "react";
+import { flushSync } from "react-dom";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
@@ -161,6 +162,7 @@ import {
   resolveAskSubmission,
   toggleAskOption,
 } from "@/lib/chat-ask";
+import { createChatDeliveryAcknowledgement } from "@/lib/chat-delivery-ack";
 import {
   persistedDraftPanelArtifacts,
   replaceOrAppendArtifact,
@@ -635,6 +637,12 @@ export function ChatWorkspace({
   const [pendingModelSource, setModelSource] = useState<ModelSource | null>(null);
   const [modelSourceChatId, setModelSourceChatId] = useState<string | null>(null);
   const agentSourceHydrationRef = useRef<string | null>(null);
+  // Preserves React identity while a streamed AskCard's temporary a_* id is
+  // atomically replaced by its persisted UUID. Persisted cards without an
+  // alias keep their unique database id, so repeated questions never collide.
+  const [askMessageAliases, setAskMessageAliases] = useState<Map<string, string>>(
+    () => new Map(),
+  );
   const modelSource = modelSourceBelongsToChat(activeId, modelSourceChatId)
     ? pendingModelSource
     : null;
@@ -2606,14 +2614,19 @@ export function ChatWorkspace({
   const send = useCallback(async (
     overrideText?: string,
     sendOpts?: ChatWorkspaceSendOptions,
+    onDelivery?: (accepted: boolean) => void,
   ) => {
+    const delivery = createChatDeliveryAcknowledgement(onDelivery);
     // Caller passes overrideText to send a specific message without going
     // through the composer input — used by the "Continue" recovery button on
     // a cut-off/truncated assistant turn. Default path reads `input`.
     // Every ordinary browser turn carries one explicit command. Retry and a
     // pending structured answer replay server-persisted authority instead.
     let text = (overrideText ?? input).trim();
-    if (!text) return;
+    if (!text) {
+      delivery.reject();
+      return;
+    }
 
     if (
       agentModelSourceParam &&
@@ -2621,6 +2634,7 @@ export function ChatWorkspace({
       !modelSource
     ) {
       toast.error("The source post is still loading. Please try again shortly.");
+      delivery.reject();
       return;
     }
 
@@ -2630,6 +2644,7 @@ export function ChatWorkspace({
       !editTargetPost
     ) {
       toast.error("Select a Post before editing.");
+      delivery.reject();
       return;
     }
 
@@ -2669,6 +2684,7 @@ export function ChatWorkspace({
             const range = firstPlaceholderRange(el.value);
             if (range) el.setSelectionRange(range[0], range[1]);
           });
+          delivery.reject();
           return;
         }
         // Second time (deliberate): proceed without the placeholder, telling the
@@ -2694,6 +2710,7 @@ export function ChatWorkspace({
       toast.error(
         `Message is too long — ${text.length.toLocaleString()} / ${messageLimit.toLocaleString()} characters. Trim it and try again.`,
       );
+      delivery.reject();
       return;
     }
 
@@ -2729,6 +2746,7 @@ export function ChatWorkspace({
       !attachedAgentSource
     ) {
       toast.error("The source post is still loading. Please try again shortly.");
+      delivery.reject();
       return;
     }
     const lockKey = targetChatId ?? "__new__";
@@ -2744,7 +2762,10 @@ export function ChatWorkspace({
     }) as
       | ChatSendLease
       | undefined;
-    if (!sendLease) return;
+    if (!sendLease) {
+      delivery.reject();
+      return;
+    }
 
     try {
       // If a "Model this post" source is attached, send only its id — the server
@@ -2894,6 +2915,7 @@ export function ChatWorkspace({
             setPendingCreatorStyle((cur) => cur ?? turnCreatorStyle);
           chatSession.clearLastSend(lockKey);
           toast.error((e as Error).message);
+          delivery.reject();
           return;
         }
       }
@@ -3136,6 +3158,7 @@ export function ChatWorkspace({
           throw e;
         }
         streamStarted = true;
+        delivery.accept();
         if (attached) {
           // The staged chip is consumed. The source itself is still this
           // chat's context and remains in the context rail, which reads the
@@ -3387,10 +3410,18 @@ export function ChatWorkspace({
           // The request may settle after the user has switched sessions or typed
           // a compose-ahead message. Restore only the failed chat's empty draft
           // slot; never replace a newer draft in this or another session.
-          if (failedChatIsActive && activeComposerIsEmpty) {
+          if (
+            overrideText === undefined &&
+            failedChatIsActive &&
+            activeComposerIsEmpty
+          ) {
             writeDraft(chatId, text);
             setInput(text);
-          } else if (!failedChatIsActive && !readDraft(chatId)) {
+          } else if (
+            overrideText === undefined &&
+            !failedChatIsActive &&
+            !readDraft(chatId)
+          ) {
             writeDraft(chatId, text);
           }
           // Composer accessories are not keyed by chat, so restoring them while
@@ -3452,6 +3483,7 @@ export function ChatWorkspace({
               });
             }
           }
+          delivery.reject();
           return;
         }
       } finally {
@@ -3673,6 +3705,10 @@ export function ChatWorkspace({
       // stream ends), but a throw on the pre-stream path could skip that — so
       // ensure it's always cleared. Idempotent (delete of an absent key no-ops).
       sendLease.release();
+      // Any path that never opened a successful response is a rejected
+      // delivery. The acknowledgement is one-shot, so this is harmless after
+      // delivery.accept() and covers unexpected pre-stream throws.
+      delivery.reject();
     }
   }, [
     input,
@@ -3706,6 +3742,58 @@ export function ChatWorkspace({
     hasPendingClarification,
     workspaceController,
   ]);
+
+  const canonicalAssistantIdForAsk = useCallback(
+    async (
+      chatId: string,
+      renderedId: string,
+      renderedAsk: AskQuestion,
+    ): Promise<string> => {
+      if (isPersistedChatMessageId(renderedId)) return renderedId;
+      const response = await fetch(`/api/chats/${chatId}`, {
+        cache: "no-store",
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok || !Array.isArray(data.messages)) {
+        throw new Error("The question is still saving. Try again.");
+      }
+      const canonicalMessages = hydrate(data.messages as RawDbMessage[]);
+      const matchedId = latestMatchingAskMessageId(
+        canonicalMessages,
+        renderedAsk,
+      );
+      if (!matchedId) {
+        throw new Error("That question is no longer pending.");
+      }
+      // Publish the identity alias before the session's atomic row swap. The
+      // old temp row keeps its own id in this render; the next render replaces
+      // it with the UUID row using the alias, with no duplicate-key frame.
+      flushSync(() => {
+        setAskMessageAliases((current) => {
+          const next = new Map(current);
+          next.set(matchedId, renderedId);
+          return next;
+        });
+      });
+      const canonicalArtifacts = (data.messages as RawDbMessage[]).flatMap(
+        (message) => message.artifacts ?? [],
+      );
+      const askTurn = chatSession.turnFor(chatId);
+      if (
+        askTurn?.run.assistantId === renderedId &&
+        askTurn.run.ask
+      ) {
+        // One session publication swaps the aliased temporary row for the
+        // canonical row and retires the overlay, so duplicate sibling keys
+        // can never coexist.
+        askTurn.complete(canonicalMessages, canonicalArtifacts);
+      } else {
+        chatSession.reconcile(chatId, canonicalMessages, canonicalArtifacts);
+      }
+      return matchedId;
+    },
+    [chatSession],
+  );
 
   // Stop the active chat's in-flight run — really stop it, not just cancel
   // the client's response read. We do TWO things:
@@ -4313,7 +4401,7 @@ export function ChatWorkspace({
             <div className={cn("mx-auto flex max-w-4xl flex-col pb-2", "gap-7")}>
               {messages.map((m) => (
                   <MessageBubble
-                    key={m.id}
+                    key={askMessageAliases.get(m.id) ?? m.id}
                     message={m}
                     legacyContentFormat={writerContentFormat}
                   onRetry={async () => {
@@ -4399,57 +4487,53 @@ export function ChatWorkspace({
                       );
                     }
                   }}
-                  onAnswer={(text, _ask, actionSelectionIds, clarificationChoiceIndex) => {
+                  onAnswer={async (text, _ask, actionSelectionIds, clarificationChoiceIndex) => {
                     // Ask-card answers are free text, not explicit card actions:
                     // only the server may interpret them as Artifact operations.
-                    void send(text, {
-                      actionSelectionIds,
-                      clarificationAssistantMessageId: m.id,
-                      ...(clarificationChoiceIndex !== undefined
-                        ? { clarificationChoiceIndex }
-                        : {}),
-                      ...(_ask.variant === "interview"
-                        ? { isInterviewSubmission: true }
-                        : {}),
+                    const chatId = activeIdRef.current;
+                    if (!chatId) return false;
+                    let assistantMessageId: string;
+                    try {
+                      assistantMessageId = await canonicalAssistantIdForAsk(
+                        chatId,
+                        m.id,
+                        _ask,
+                      );
+                    } catch (error) {
+                      toast.error((error as Error).message);
+                      return false;
+                    }
+                    return new Promise<boolean>((resolve) => {
+                      const cardDelivery = createChatDeliveryAcknowledgement(resolve);
+                      void send(
+                        text,
+                        {
+                          actionSelectionIds,
+                          clarificationAssistantMessageId: assistantMessageId,
+                          ...(clarificationChoiceIndex !== undefined
+                            ? { clarificationChoiceIndex }
+                            : {}),
+                          ...(_ask.variant === "interview"
+                            ? { isInterviewSubmission: true }
+                            : {}),
+                        },
+                        (accepted) => {
+                          if (accepted) cardDelivery.accept();
+                          else cardDelivery.reject();
+                        },
+                      ).catch(() => cardDelivery.reject());
                     });
                   }}
                   onResolveTerminal={async (option, renderedAsk) => {
                     const chatId = activeIdRef.current;
                     if (!chatId) return false;
                     try {
-                      let assistantMessageId = m.id;
-                      if (!isPersistedChatMessageId(assistantMessageId)) {
-                        const canonicalResponse = await fetch(
-                          `/api/chats/${chatId}`,
-                          { cache: "no-store" },
-                        );
-                        const canonicalData = await canonicalResponse.json();
-                        if (
-                          !canonicalResponse.ok ||
-                          !canonicalData.ok ||
-                          !Array.isArray(canonicalData.messages)
-                        ) {
-                          throw new Error("The question is still saving. Try again.");
-                        }
-                        const canonicalMessages = hydrate(
-                          canonicalData.messages as RawDbMessage[],
-                        );
-                        const matchedId = latestMatchingAskMessageId(
-                          canonicalMessages,
+                      const assistantMessageId =
+                        await canonicalAssistantIdForAsk(
+                          chatId,
+                          m.id,
                           renderedAsk,
                         );
-                        if (!matchedId) {
-                          throw new Error("That question is no longer pending.");
-                        }
-                        assistantMessageId = matchedId;
-                        chatSession.reconcile(
-                          chatId,
-                          canonicalMessages,
-                          (canonicalData.messages as RawDbMessage[]).flatMap(
-                            (message) => message.artifacts ?? [],
-                          ),
-                        );
-                      }
                       const response = await fetch(
                         `/api/chats/${chatId}/clarification`,
                         {
@@ -6404,7 +6488,7 @@ function MessageBubble({
     ask: AskQuestion,
     actionSelectionIds: string[],
     clarificationChoiceIndex?: number,
-  ) => void;
+  ) => Promise<boolean>;
   onResolveTerminal: (
     option: string,
     ask: AskQuestion,
@@ -6634,7 +6718,7 @@ function AskCard({
     ask: AskQuestion,
     actionSelectionIds: string[],
     clarificationChoiceIndex?: number,
-  ) => void;
+  ) => Promise<boolean>;
   onResolveTerminal: (
     option: string,
     ask: AskQuestion,
@@ -6686,7 +6770,6 @@ function AskCard({
       }
       return;
     }
-    setSubmitted({ done: false, text: action.text });
     const actionSelectionIds = selected.flatMap((option) => {
       const index = ask.options.indexOf(option);
       const id = index >= 0 ? ask.optionIds?.[index] : undefined;
@@ -6696,7 +6779,8 @@ function AskCard({
       !isMulti && selected.length === 1
         ? ask.options.indexOf(selected[0]!)
         : undefined;
-    onSubmit(
+    setSubmitting(true);
+    const delivered = await onSubmit(
       action.text,
       ask,
       actionSelectionIds,
@@ -6704,6 +6788,10 @@ function AskCard({
         ? clarificationChoiceIndex
         : undefined,
     );
+    setSubmitting(false);
+    if (delivered) {
+      setSubmitted({ done: false, text: action.text });
+    }
   };
 
   if (submitted !== null) {
@@ -6718,7 +6806,13 @@ function AskCard({
   }
 
   return (
-    <div className="agent-card-in rounded-2xl border border-border bg-card/80 px-3.5 py-3 shadow-sm">
+    <div
+      className="agent-card-in rounded-2xl border border-border bg-card/80 px-3.5 py-3 shadow-sm"
+      aria-busy={submitting}
+    >
+      <span className="sr-only" aria-live="polite">
+        {submitting ? "Sending answer" : ""}
+      </span>
       <p className="text-sm font-medium text-foreground">{ask.question}</p>
       <div
         className="mt-2.5 flex flex-col gap-1.5"
@@ -6788,7 +6882,8 @@ function AskCard({
         <Button
           size="sm"
           className="h-8"
-          disabled={!selectionComplete || submitting}
+          disabled={!selectionComplete}
+          aria-disabled={submitting}
           onClick={() => void submit()}
         >
           {submitting ? "Saving…" : isDoneOnly ? "Done" : "Send answer"}
@@ -6820,7 +6915,7 @@ function InterviewCard({
     ask: AskQuestion,
     actionSelectionIds: string[],
     clarificationChoiceIndex?: number,
-  ) => void;
+  ) => Promise<boolean>;
 }) {
   // Fall back to the single `question` for any card persisted before the
   // batched shape shipped, so an in-flight interview still renders.
@@ -6834,6 +6929,7 @@ function InterviewCard({
   );
   const [draft, setDraft] = useState("");
   const [submitted, setSubmitted] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const answerRef = useRef<HTMLTextAreaElement>(null);
 
   const total = questions.length;
@@ -6841,7 +6937,8 @@ function InterviewCard({
 
   // Record this question's answer and either advance locally or, on the last
   // one, send the whole interview as a single message.
-  const commit = (text: string) => {
+  const commit = async (text: string) => {
+    if (submitting) return;
     const collected = answers.map((entry, position) =>
       position === index ? text : entry,
     );
@@ -6852,9 +6949,15 @@ function InterviewCard({
       requestAnimationFrame(() => answerRef.current?.focus());
       return;
     }
-    setSubmitted(true);
     // One message, every pair, in order — the interview's only round-trip.
-    onSubmit(composeInterviewAnswers(questions, collected), ask, []);
+    setSubmitting(true);
+    const delivered = await onSubmit(
+      composeInterviewAnswers(questions, collected),
+      ask,
+      [],
+    );
+    setSubmitting(false);
+    if (delivered) setSubmitted(true);
   };
 
   const back = () => {
@@ -6883,7 +6986,13 @@ function InterviewCard({
   }
 
   return (
-    <div className="agent-card-in w-full max-w-2xl rounded-2xl border border-primary/15 bg-card/90 px-3.5 py-3 shadow-sm shadow-primary/5">
+    <div
+      className="agent-card-in w-full max-w-2xl rounded-2xl border border-primary/15 bg-card/90 px-3.5 py-3 shadow-sm shadow-primary/5"
+      aria-busy={submitting}
+    >
+      <span className="sr-only" aria-live="polite">
+        {submitting ? "Sending interview" : ""}
+      </span>
       <div className="flex items-center justify-between gap-3">
         <span className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-primary/85">
           <AiIcon className="h-3.5 w-3.5 shrink-0" />
@@ -6921,7 +7030,7 @@ function InterviewCard({
             variant="ghost"
             size="sm"
             className="h-8 text-muted-foreground"
-            onClick={() => commit("")}
+            onClick={() => void commit("")}
           >
             Skip
           </Button>
@@ -6930,9 +7039,10 @@ function InterviewCard({
           size="sm"
           className="h-8"
           disabled={!draft.trim()}
-          onClick={() => commit(draft.trim())}
+          aria-disabled={submitting}
+          onClick={() => void commit(draft.trim())}
         >
-          {isLast ? "Finish" : "Next"}
+          {submitting ? "Sending…" : isLast ? "Finish" : "Next"}
         </Button>
       </div>
     </div>
