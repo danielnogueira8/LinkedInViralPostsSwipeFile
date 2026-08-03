@@ -9,6 +9,10 @@ import {
   type CoworkTurnUsage,
 } from "@/lib/cowork-turn-usage";
 import type { ModelSourceAttachment } from "@/lib/model-source-attachments";
+import {
+  persistedAskRemainsPending,
+  type ChatTerminalReason,
+} from "@/lib/chat-ask-lifecycle";
 
 export type AppliedLeadMagnet = {
   id?: string;
@@ -89,7 +93,7 @@ export type RawDbMessage = {
   client_turn_id?: string | null;
   transport_recovery_requested_at?: string | null;
   user_stop_requested_at?: string | null;
-  terminal_reason?: "done" | "ask" | "cancelled" | "deadline" | "error" | null;
+  terminal_reason?: ChatTerminalReason | null;
   applied_skills?: unknown;
   no_model_format_id?: string | null;
   creator_style_context?: unknown;
@@ -475,8 +479,12 @@ export function hydrate(rows: RawDbMessage[]): Message[] {
             .reverse()
             .find((candidate) => candidate.role === "user")
         : undefined;
-    const parsedAsk =
+    const persistedAsk =
       row.role === "assistant" ? extractPersistedAsk(row.tool_calls) : undefined;
+    const parsedAsk =
+      persistedAsk && persistedAskRemainsPending(row.terminal_reason)
+        ? persistedAsk
+        : undefined;
     const text =
       row.role === "assistant" ? stripArtifactFences(row.content) : row.content;
     const recoverable =

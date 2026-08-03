@@ -27,11 +27,11 @@ import { INTERVIEW_SUBMISSION_MAX_CHARS } from "@/lib/chat-ask";
 import {
   hasPendingAskOnly,
   hasPendingActionAsk,
+  hasPendingInterviewAsk,
   hasUnsavedAssistantDraftReferent,
   isPendingAskMessage,
   validatePendingActionAnswer,
 } from "@/lib/agent/turn-policy";
-import { isInterviewAskArgs } from "@/lib/agent/turn/execute-interview";
 import {
   buildTurnContext,
   CREATOR_STYLE_CONTEXT_PERSISTENCE_ERROR,
@@ -459,23 +459,7 @@ export async function setupChatTurn(
     };
     pendingAskOnly = hasPendingAskOnly(recentMessageWindow);
     pendingActionAsk = hasPendingActionAsk(recentMessageWindow);
-    pendingInterviewAsk = (() => {
-      const latestNonTool = recentMessageWindow.find(
-        (message) => message.role !== "tool",
-      );
-      if (latestNonTool?.role !== "assistant") return false;
-      const ask = (latestNonTool.tool_calls ?? []).find(
-        (call) => call.function.name === "ask_user",
-      );
-      if (!ask) return false;
-      try {
-        return isInterviewAskArgs(
-          JSON.parse(ask.function.arguments) as Record<string, unknown>,
-        );
-      } catch {
-        return false;
-      }
-    })();
+    pendingInterviewAsk = hasPendingInterviewAsk(recentMessageWindow);
     // Interview cards are structured source material rather than ordinary
     // prompts. They can contain several complete answers, so apply the larger
     // bound only when the server has verified that the latest message is an

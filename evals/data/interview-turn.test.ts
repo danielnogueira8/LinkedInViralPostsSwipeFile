@@ -3,7 +3,6 @@ import {
   extractInterviewAnswersFromHistory,
   extractInterviewAnswerSubmissionFromHistory,
   INTERVIEW_MAX_QUESTIONS,
-  isInterviewAskArgs,
   parseInterviewOutput,
   recoverInterviewAnswers,
   reconcileInterviewAnswers,
@@ -12,6 +11,8 @@ import type { ChatMessage } from "@/lib/openrouter";
 import { AskQuestionSchema, type AskQuestion } from "@/lib/agent/contracts";
 import { hydrate } from "@/lib/chat-hydration";
 import { composeInterviewAnswers } from "@/lib/chat-ask";
+import { hasPendingInterviewAsk } from "@/lib/agent/turn-policy";
+import { isInterviewAskArgs } from "@/lib/chat-ask-lifecycle";
 
 describe("parseInterviewOutput", () => {
   test("parses a plan carrying the whole question set", () => {
@@ -523,9 +524,8 @@ describe("interview card round-trip", () => {
   });
 });
 
-// isInterviewAskArgs is what setup.ts uses to compute `pendingInterviewAsk`,
-// the signal that decides plan-vs-save. It stays live even though the old
-// per-turn question counter is gone.
+// The persisted ask classifier feeds the shared pending-interview lifecycle
+// rule that decides plan-vs-save.
 describe("isInterviewAskArgs", () => {
   test("detects the interview variant in persisted ask args", () => {
     expect(isInterviewAskArgs({ variant: "interview" })).toBe(true);
@@ -543,6 +543,8 @@ describe("isInterviewAskArgs", () => {
       role: "assistant" as const,
       tool_calls: [
         {
+          id: "ask-interview",
+          type: "function" as const,
           function: {
             name: "ask_user",
             arguments: JSON.stringify({ variant: "interview" }),
@@ -550,23 +552,37 @@ describe("isInterviewAskArgs", () => {
         },
       ],
     };
-    const latestIsCard = (rows: typeof card[]) => {
-      const latest = rows.find((row) => row.role === "assistant");
-      const ask = (latest?.tool_calls ?? []).find(
-        (call) => call.function.name === "ask_user",
-      );
-      if (!ask) return false;
-      return isInterviewAskArgs(
-        JSON.parse(ask.function.arguments) as Record<string, unknown>,
-      );
-    };
     // Newest-first, as setup.ts reads it: card outstanding → pending.
-    expect(latestIsCard([card])).toBe(true);
+    expect(hasPendingInterviewAsk([card])).toBe(true);
     // A finished interview: the save reply is now newest, so a fresh
     // "interview me" plans again rather than trying to save nothing.
     const savedReply = { role: "assistant" as const, tool_calls: [] };
-    expect(latestIsCard([savedReply, card])).toBe(false);
+    expect(hasPendingInterviewAsk([savedReply, card])).toBe(false);
   });
+
+  test.each(["cancelled", "deadline", "error", "done"] as const)(
+    "a %s interview card is not pending",
+    (terminalReason) => {
+      expect(
+        hasPendingInterviewAsk([
+          {
+            role: "assistant",
+            terminal_reason: terminalReason,
+            tool_calls: [
+              {
+                id: "ask-interview",
+                type: "function",
+                function: {
+                  name: "ask_user",
+                  arguments: JSON.stringify({ variant: "interview" }),
+                },
+              },
+            ],
+          },
+        ]),
+      ).toBe(false);
+    },
+  );
 });
 
 // ---------------------------------------------------------------------------

@@ -199,6 +199,31 @@ describe("hydrate — reconstructs an AskCard from a persisted ask_user tool_cal
     expect(out[1].ask).toBeUndefined();
   });
 
+  test.each(["cancelled", "deadline", "error", "done"] as const)(
+    "a %s turn cannot revive its ask card after reload",
+    (terminalReason) => {
+      const rows: RawDbMessage[] = [
+        {
+          id: `terminated-ask-${terminalReason}`,
+          role: "assistant",
+          content: "Which direction?",
+          artifacts: null,
+          terminal_reason: terminalReason,
+          tool_calls: [
+            askToolCall({
+              question: "Which direction?",
+              options: ["A", "B"],
+            }),
+          ],
+        },
+      ];
+
+      const [message] = hydrate(rows);
+      expect(message.ask).toBeUndefined();
+      expect(message.text).toBe("Which direction?");
+    },
+  );
+
   test("assistant with a persisted ask_user tool_call → ask reconstructed with options", () => {
     const rows: RawDbMessage[] = [
       {

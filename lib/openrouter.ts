@@ -440,6 +440,9 @@ export type ChatMessage = {
   // markPersistedToolState, so it can guide deterministic orchestration without
   // leaking an unknown field into provider request JSON.
   persisted_tool_state?: true;
+  // Local-only persisted lifecycle provenance. Non-enumerable so provider
+  // requests never receive this database field.
+  persisted_terminal_reason?: import("@/lib/chat-ask-lifecycle").ChatTerminalReason;
   // OpenRouter's parsed-file annotation. Echoing this assistant annotation on
   // later rounds lets the provider reuse the first parse instead of parsing
   // the same PDF again.

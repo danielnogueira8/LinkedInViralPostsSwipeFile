@@ -32,6 +32,7 @@ type DbRow = {
   tool_calls: ToolCall[] | null;
   tool_call_id: string | null;
   model_source_id?: string | null;
+  terminal_reason?: "done" | "ask" | "cancelled" | "deadline" | "error" | null;
 };
 
 describe("model-source history", () => {
@@ -1125,6 +1126,24 @@ describe("isBatchArtifactFilingRow — the batch content-less assistant filter",
 });
 
 describe("chatHistoryWithModelSources — filters batch filing rows", () => {
+  test("preserves terminal lifecycle locally without sending it to providers", () => {
+    const [message] = chatHistoryWithModelSources(
+      [
+        {
+          role: "assistant",
+          content: "Which direction?",
+          tool_calls: null,
+          tool_call_id: null,
+          terminal_reason: "cancelled",
+        },
+      ],
+      new Map(),
+    );
+
+    expect(message.persisted_terminal_reason).toBe("cancelled");
+    expect(JSON.stringify(message)).not.toContain("terminal_reason");
+  });
+
   test("a batch chat's 7 content-less assistant rows are DROPPED from model history", () => {
     // Realistic batch chat shape: opening asst message + 7 filing rows + closing.
     // The 7 filing rows all have content:"" and no tool_calls. Model history

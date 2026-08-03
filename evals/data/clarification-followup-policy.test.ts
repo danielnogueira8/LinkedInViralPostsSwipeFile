@@ -115,6 +115,22 @@ describe("clarification follow-up policy", () => {
     ).toBe(true);
   });
 
+  test.each(["cancelled", "deadline", "error", "done"] as const)(
+    "does not resume an ask_user tool from a %s turn",
+    (terminalReason) => {
+      expect(
+        hasPendingAskOnly([
+          {
+            role: "assistant",
+            tool_calls: [askCall],
+            terminal_reason: terminalReason,
+          },
+          { role: "user" },
+        ]),
+      ).toBe(false);
+    },
+  );
+
   test("distinguishes an action-lane ask from an ordinary clarification", () => {
     const actionAsk = {
       ...askCall,
@@ -136,6 +152,33 @@ describe("clarification follow-up policy", () => {
     expect(
       hasPendingActionAsk([{ role: "assistant", tool_calls: [askCall] }]),
     ).toBe(false);
+  });
+
+  test("a cancelled action question cannot constrain a later turn", () => {
+    const actionAsk = {
+      ...askCall,
+      function: {
+        ...askCall.function,
+        arguments: JSON.stringify({
+          question: "Which saved draft?",
+          options: ["Pricing", "Hiring"],
+          candidateDraftIds: ["draft-pricing", "draft-hiring"],
+          actionLane: true,
+        }),
+      },
+    };
+    const history = [
+      {
+        role: "assistant" as const,
+        tool_calls: [actionAsk],
+        terminal_reason: "cancelled" as const,
+      },
+    ];
+
+    expect(hasPendingActionAsk(history)).toBe(false);
+    expect(validatePendingActionAnswer(history, "Start a new post")).toEqual({
+      ok: true,
+    });
   });
 
   test("requires an exact persisted target selection before an action turn is claimed", () => {
@@ -249,6 +292,24 @@ describe("clarification follow-up policy", () => {
       role: "assistant",
       content: "What should the post be about?",
     });
+  });
+
+  test("does not reconstruct a clarification from a cancelled ask turn", () => {
+    const history: ChatMessage[] = [
+      { role: "user", content: "Write a post about pricing." },
+      {
+        role: "assistant",
+        content: "Which audience?",
+        tool_calls: [askCall],
+        persisted_terminal_reason: "cancelled",
+      },
+      { role: "user", content: "Start a new post about hiring." },
+    ];
+
+    expect(
+      prepareClarificationTurn(history, "Start a new post about hiring.")
+        .effectiveUserInstruction,
+    ).toBe("Start a new post about hiring.");
   });
 
   test("carries the original post request into a topic answer", () => {
