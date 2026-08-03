@@ -60,6 +60,41 @@ describe("brainstorm idea synthesis", () => {
     expect(String(request.messages[1].content)).toContain("source-6");
   });
 
+  test("accepts editorial list numbers without treating them as invented user facts", async () => {
+    const ideas = fiveIdeas().map((idea, index) =>
+      index === 0
+        ? {
+            ...idea,
+            title: "3 personal-brand myths worth retiring",
+            angle:
+              "A three-part teardown of generic advice for expertise-led founders.",
+            hook_style: "Numbered contrarian list",
+          }
+        : idea,
+    );
+    completeChat.mockResolvedValue({
+      toolArgs: { ideas },
+      model: "primary",
+    });
+
+    const result = await synthesizeBrainstormIdeas({
+      instruction:
+        "Give me 5 post ideas from all niches, each with a one-line angle and hook style.",
+      ideaCount: 5,
+      evidence,
+      voiceResult: {
+        ok: true,
+        voice: {
+          audience: "Expertise-led founders",
+          topics: ["personal branding"],
+        },
+      },
+    });
+
+    expect(result.content).toContain("3 personal-brand myths worth retiring");
+    expect(completeChat).toHaveBeenCalledTimes(1);
+  });
+
   test("falls back when a model invents an unsupported user result", async () => {
     completeChat
       .mockResolvedValueOnce({
