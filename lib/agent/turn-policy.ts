@@ -1,4 +1,4 @@
-import type { AgentEvent, Artifact } from "@/lib/agent/contracts";
+import type { Artifact } from "@/lib/agent/contracts";
 import type { ChatMessage, ToolCall } from "@/lib/openrouter";
 import {
   SKILLS,
@@ -7,6 +7,11 @@ import {
 } from "@/lib/agent/skills";
 import { findOpenSpecializedSkill } from "@/lib/agent/skill-continuation";
 import { latestUserText, windowChatHistory } from "@/lib/agent/history";
+import {
+  isInterviewAskArgs,
+  persistedAskRemainsPending,
+  type ChatTerminalReason,
+} from "@/lib/chat-ask-lifecycle";
 
 export type TurnPolicy = {
   controlHistory: ChatMessage[];
@@ -81,6 +86,14 @@ export function clarificationFollowupInstruction(
   }
   if (assistantIndex < 0) return currentAnswer;
 
+  if (
+    !persistedAskRemainsPending(
+      history[assistantIndex].persisted_terminal_reason,
+    )
+  ) {
+    return currentAnswer;
+  }
+
   const calls = history[assistantIndex].tool_calls ?? [];
   const names = new Set(calls.map((call) => call.function.name));
   if (!names.has("ask_user") || names.has("render_post")) {
@@ -123,16 +136,14 @@ export function prepareClarificationTurn(
  * persistence RPC timestamps tool rows after their assistant owner, so looking
  * only at the newest row would miss every persisted ask card.
  */
+type PersistedAskCandidate = {
+  role: ChatMessage["role"];
+  tool_calls?: ToolCall[] | null;
+  terminal_reason?: ChatTerminalReason | null;
+};
+
 export function hasPendingAskOnly(
-  recentMessages: Array<{
-    role: ChatMessage["role"];
-    tool_calls?: ToolCall[] | null;
-    terminal_reason?:
-      | NonNullable<
-          Extract<AgentEvent, { type: "done" }>["terminalReason"]
-        >
-      | null;
-  }>,
+  recentMessages: PersistedAskCandidate[],
 ): boolean {
   const latestNonTool = recentMessages.find(
     (message) => message.role !== "tool",
@@ -140,14 +151,9 @@ export function hasPendingAskOnly(
   return latestNonTool ? isPendingAskMessage(latestNonTool) : false;
 }
 
-export function isPendingAskMessage(message: {
-  role: ChatMessage["role"];
-  tool_calls?: ToolCall[] | null;
-  terminal_reason?:
-    | NonNullable<Extract<AgentEvent, { type: "done" }>["terminalReason"]>
-    | null;
-}): boolean {
+export function isPendingAskMessage(message: PersistedAskCandidate): boolean {
   if (message.role !== "assistant") return false;
+  if (!persistedAskRemainsPending(message.terminal_reason)) return false;
   const names = new Set(
     (message.tool_calls ?? []).map((call) => call.function.name),
   );
@@ -158,22 +164,42 @@ export function isPendingAskMessage(message: {
 }
 
 export function hasPendingActionAsk(
-  recentMessages: Array<{
-    role: ChatMessage["role"];
-    tool_calls?: ToolCall[] | null;
-  }>,
+  recentMessages: PersistedAskCandidate[],
 ): boolean {
-  const latestNonTool = recentMessages.find(
-    (message) => message.role !== "tool",
-  );
-  if (latestNonTool?.role !== "assistant") return false;
-  const ask = (latestNonTool.tool_calls ?? []).find(
-    (call) => call.function.name === "ask_user",
-  );
+  const ask = latestPendingAskCall(recentMessages);
   if (!ask) return false;
   try {
     const args = JSON.parse(ask.function.arguments) as Record<string, unknown>;
     return args.actionLane === true;
+  } catch {
+    return false;
+  }
+}
+
+function latestPendingAskCall(
+  recentMessages: PersistedAskCandidate[],
+): ToolCall | undefined {
+  const latestNonTool = recentMessages.find(
+    (message) => message.role !== "tool",
+  );
+  if (latestNonTool?.role !== "assistant") return undefined;
+  if (!persistedAskRemainsPending(latestNonTool.terminal_reason)) {
+    return undefined;
+  }
+  return (latestNonTool.tool_calls ?? []).find(
+    (call) => call.function.name === "ask_user",
+  );
+}
+
+export function hasPendingInterviewAsk(
+  recentMessages: PersistedAskCandidate[],
+): boolean {
+  const ask = latestPendingAskCall(recentMessages);
+  if (!ask) return false;
+  try {
+    return isInterviewAskArgs(
+      JSON.parse(ask.function.arguments) as Record<string, unknown>,
+    );
   } catch {
     return false;
   }
@@ -208,22 +234,13 @@ export function hasUnsavedAssistantDraftReferent(
 }
 
 export function validatePendingActionAnswer(
-  recentMessages: Array<{
-    role: ChatMessage["role"];
-    tool_calls?: ToolCall[] | null;
-  }>,
+  recentMessages: PersistedAskCandidate[],
   currentAnswer: string,
   actionSelectionIds: string[] = [],
 ):
   | { ok: true; selectedTargetIds?: string[]; cancelled?: boolean }
   | { ok: false; expected: number } {
-  const latestNonTool = recentMessages.find(
-    (message) => message.role !== "tool",
-  );
-  if (latestNonTool?.role !== "assistant") return { ok: true };
-  const ask = (latestNonTool.tool_calls ?? []).find(
-    (call) => call.function.name === "ask_user",
-  );
+  const ask = latestPendingAskCall(recentMessages);
   if (!ask) return { ok: true };
   try {
     const args = JSON.parse(ask.function.arguments) as Record<string, unknown>;

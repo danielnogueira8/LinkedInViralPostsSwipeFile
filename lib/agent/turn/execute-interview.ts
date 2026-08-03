@@ -43,11 +43,6 @@ import type { TurnExecuteContext } from "@/lib/agent/turn/state";
 export const INTERVIEW_REQUEST_RE =
   /\binterview\s+me\b|\binterview\s+myself\b|\bask\s+me\s+(?:some\s+)?questions?\s+about\s+me\b/i;
 
-/** True when a persisted ask_user tool-call's args belong to the interview lane. */
-export function isInterviewAskArgs(args: Record<string, unknown> | null | undefined): boolean {
-  return args?.variant === "interview";
-}
-
 // The interview's question target. The model proposes, the server clamps —
 // a runaway "47 questions" plan never reaches the card.
 //

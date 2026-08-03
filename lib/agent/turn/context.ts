@@ -46,6 +46,10 @@ import {
 } from "@/lib/composer-task-context";
 import { prepareClarificationTurn } from "@/lib/agent/turn-policy";
 import {
+  markPersistedTerminalReason,
+  type ChatTerminalReason,
+} from "@/lib/chat-ask-lifecycle";
+import {
   isLeadMagnetNoModelFormat,
   noModelFormatLabel,
   type NoModelFormatId,
@@ -219,6 +223,7 @@ export type DbMessage = {
   content_blocks?: ContentBlock[] | null;
   model_source_id?: string | null;
   lead_magnet_id?: string | null;
+  terminal_reason?: ChatTerminalReason | null;
 };
 
 export type ModelSourceRow = {
@@ -1034,12 +1039,15 @@ export function chatHistoryWithModelSources(
       // isBatchArtifactFilingRow above for why the model can't safely see them.
       .filter((m) => !isBatchArtifactFilingRow(m))
       .map((m) => {
-        const base = markPersistedToolState({
-          role: m.role,
-          content: m.content,
-          ...(m.tool_calls ? { tool_calls: m.tool_calls } : {}),
-          ...(m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}),
-        });
+        const base = markPersistedTerminalReason(
+          markPersistedToolState({
+            role: m.role,
+            content: m.content,
+            ...(m.tool_calls ? { tool_calls: m.tool_calls } : {}),
+            ...(m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}),
+          }),
+          m.terminal_reason,
+        );
         if (m.role !== "user") return base;
         const sourceId = extractModelSourceId(m);
         const source = sourceId ? sourcesById.get(sourceId) : null;
@@ -1316,7 +1324,7 @@ export async function buildTurnContext(
     sbRaw
       .from("chat_messages")
       .select(
-        "role, content, tool_calls, tool_call_id, artifacts, content_blocks, model_source_id",
+        "role, content, tool_calls, tool_call_id, artifacts, content_blocks, model_source_id, terminal_reason",
       )
       .eq("chat_id", chatId)
       .eq("workspace_id", workspaceId)
