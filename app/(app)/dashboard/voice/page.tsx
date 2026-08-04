@@ -3,9 +3,6 @@ import { sanitizeVoiceProfile, type VoiceProfile } from "@/lib/claude";
 import { recoverStalePending } from "@/lib/voice-recovery";
 import type { VoiceRow } from "./manager";
 import { VoiceWorkspace } from "./workspace";
-import { listPreferenceResources } from "@/lib/content-resource-operations";
-import { listReviewablePreferences } from "@/lib/preference-evidence";
-import type { ContentFeedback } from "@/lib/content-feedback";
 import { PageHeader, PageShell } from "@/components/app-surface";
 
 export const dynamic = "force-dynamic";
@@ -17,9 +14,6 @@ const REGEN_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
 const VOICE_COLS =
   "id, linkedin_handle, profile_url, display_name, avatar_url, headline, profile, summary, source_post_count, status, error, model, generated_at, created_at, pending_started_at";
 
-const FEEDBACK_COLS =
-  "id, workspace_id, chat_id, artifact_id, draft_id, rating, reasons, note, body_snapshot, created_at";
-
 export default async function VoicePage() {
   const sb = await scopedSupabase();
 
@@ -29,25 +23,8 @@ export default async function VoicePage() {
     .eq("workspace_id", sb.workspaceId)
     .maybeSingle();
 
-  // The workspace's standing writing preferences — durable rules the chat agent
-  // applies to every post. Read here so the manager hydrates without a client
-  // fetch flash. Workspace-scoped (scopedSupabase + RLS).
-  const preferencesPromise = listPreferenceResources({
-    db: sb.raw,
-    workspaceId: sb.workspaceId,
-  });
-
-  const feedbackPromise = sb.raw
-    .from("content_feedback")
-    .select(FEEDBACK_COLS)
-    .eq("workspace_id", sb.workspaceId)
-    .order("created_at", { ascending: false })
-    .limit(20);
-
-  const [{ data }, prefData, { data: feedbackData }] = await Promise.all([
+  const [{ data }] = await Promise.all([
     voicePromise,
-    preferencesPromise,
-    feedbackPromise,
   ]);
 
   // Recover a generation that died mid-flight (tab closed/reloaded mid-run)
@@ -65,13 +42,6 @@ export default async function VoicePage() {
     : recoveredRow;
   const cooldown = regenCooldown(row?.generated_at ?? null);
 
-  const preferences = await listReviewablePreferences({
-    db: sb.raw,
-    workspaceId: sb.workspaceId,
-    preferences: prefData,
-  });
-  const feedback = (feedbackData ?? []) as ContentFeedback[];
-
   return (
     <PageShell width="wide">
       <PageHeader
@@ -83,8 +53,6 @@ export default async function VoicePage() {
         canRegenerate={cooldown.canRegenerate}
         regenAvailableAt={cooldown.regenAvailableAt}
         daysUntilRegen={cooldown.daysUntilRegen}
-        preferences={preferences}
-        feedback={feedback}
       />
     </PageShell>
   );
