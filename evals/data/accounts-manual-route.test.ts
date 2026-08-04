@@ -59,7 +59,12 @@ vi.mock("@/lib/supabase-scoped", () => ({
   }),
 }));
 
-vi.mock("@/lib/linkedin-url", () => ({
+// Override ONLY the network call. A whole-module factory silently replaced
+// every other export with undefined, so the route's normalizeLinkedInProfileUrl
+// call threw and all three tests 500'd — including "invalid profile URL is
+// rejected before any fetch", which was asserting nothing at all.
+vi.mock("@/lib/linkedin-url", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/linkedin-url")>()),
   fetchProfileMeta: async () => ({ name: metaState.name, picUrl: metaState.picUrl }),
   displayNameFromHandle: (h: string) => h,
 }));

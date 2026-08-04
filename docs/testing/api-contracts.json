@@ -3,17 +3,33 @@
   "families": [
     {
       "id": "accounts-sources",
-      "success_evidence": ["evals/data/accounts-manual-route.test.ts"],
-      "failure_evidence": ["evals/data/account-tracking-cap-route.test.ts"],
-      "isolation_evidence": ["evals/data/accounts-manual-isolation.test.ts"],
-      "mutation_evidence": ["evals/data/accounts-manual-isolation.test.ts"]
+      "success_evidence": [
+        "evals/data/accounts-manual-route.test.ts"
+      ],
+      "failure_evidence": [
+        "evals/data/account-tracking-cap-route.test.ts"
+      ],
+      "isolation_evidence": [
+        "evals/data/accounts-manual-isolation.test.ts"
+      ],
+      "mutation_evidence": [
+        "evals/data/accounts-manual-isolation.test.ts"
+      ]
     },
     {
       "id": "bookmarks-sharing",
-      "success_evidence": ["evals/data/saved-post-override-contract.test.ts"],
-      "failure_evidence": ["evals/data/shared-bookmarks-route.test.ts"],
-      "isolation_evidence": ["evals/data/saved-post-override-contract.test.ts"],
-      "mutation_evidence": ["evals/data/shared-bookmarks-route.test.ts"]
+      "success_evidence": [
+        "evals/data/saved-post-override-contract.test.ts"
+      ],
+      "failure_evidence": [
+        "evals/data/shared-bookmarks-route.test.ts"
+      ],
+      "isolation_evidence": [
+        "evals/data/saved-post-override-contract.test.ts"
+      ],
+      "mutation_evidence": [
+        "evals/data/shared-bookmarks-route.test.ts"
+      ]
     },
     {
       "id": "cowork-chats",
@@ -36,31 +52,63 @@
     },
     {
       "id": "drafts-artifacts",
-      "success_evidence": ["evals/data/chat-artifacts-save-dedup.test.ts"],
-      "failure_evidence": ["evals/data/chat-artifacts-cas.test.ts"],
-      "isolation_evidence": ["evals/data/chat-artifacts-cas.test.ts"],
-      "mutation_evidence": ["evals/data/chat-artifacts-cas.test.ts"]
+      "success_evidence": [
+        "evals/data/chat-artifacts-save-dedup.test.ts"
+      ],
+      "failure_evidence": [
+        "evals/data/chat-artifacts-cas.test.ts"
+      ],
+      "isolation_evidence": [
+        "evals/data/chat-artifacts-cas.test.ts"
+      ],
+      "mutation_evidence": [
+        "evals/data/chat-artifacts-cas.test.ts"
+      ]
     },
     {
       "id": "templates-styles-skills",
-      "success_evidence": ["evals/data/resource-mutation-contracts.test.ts"],
-      "failure_evidence": ["evals/data/resource-mutation-contracts.test.ts"],
-      "isolation_evidence": ["evals/data/resource-mutation-contracts.test.ts"],
-      "mutation_evidence": ["evals/data/resource-mutation-contracts.test.ts"]
+      "success_evidence": [
+        "evals/data/resource-mutation-contracts.test.ts"
+      ],
+      "failure_evidence": [
+        "evals/data/resource-mutation-contracts.test.ts"
+      ],
+      "isolation_evidence": [
+        "evals/data/resource-mutation-contracts.test.ts"
+      ],
+      "mutation_evidence": [
+        "evals/data/resource-mutation-contracts.test.ts"
+      ]
     },
     {
       "id": "lead-magnets",
-      "success_evidence": ["evals/data/resource-mutation-contracts.test.ts"],
-      "failure_evidence": ["evals/data/resource-mutation-contracts.test.ts"],
-      "isolation_evidence": ["evals/data/resource-mutation-contracts.test.ts"],
-      "mutation_evidence": ["evals/data/resource-mutation-contracts.test.ts"]
+      "success_evidence": [
+        "evals/data/resource-mutation-contracts.test.ts"
+      ],
+      "failure_evidence": [
+        "evals/data/resource-mutation-contracts.test.ts"
+      ],
+      "isolation_evidence": [
+        "evals/data/resource-mutation-contracts.test.ts"
+      ],
+      "mutation_evidence": [
+        "evals/data/resource-mutation-contracts.test.ts"
+      ]
     },
     {
       "id": "media",
-      "success_evidence": ["evals/data/resource-mutation-contracts.test.ts"],
-      "failure_evidence": ["evals/data/resource-mutation-contracts.test.ts"],
-      "isolation_evidence": ["evals/data/resource-mutation-contracts.test.ts"],
-      "mutation_evidence": ["evals/data/resource-mutation-contracts.test.ts"]
+      "success_evidence": [
+        "evals/data/resource-mutation-contracts.test.ts"
+      ],
+      "failure_evidence": [
+        "evals/data/resource-mutation-contracts.test.ts"
+      ],
+      "isolation_evidence": [
+        "evals/data/resource-mutation-contracts.test.ts"
+      ],
+      "mutation_evidence": [
+        "evals/data/resource-mutation-contracts.test.ts"
+      ]
     },
     {
       "id": "scheduling-publishing",
@@ -83,17 +131,33 @@
     },
     {
       "id": "batches-jobs-cron",
-      "success_evidence": ["evals/data/daily-scrape-recovery-route.test.ts"],
-      "failure_evidence": ["evals/data/daily-scrape-recovery-route.test.ts"],
-      "isolation_evidence": ["evals/data/daily-scrape-recovery-route.test.ts"],
-      "mutation_evidence": ["evals/data/daily-scrape-recovery-route.test.ts"]
+      "success_evidence": [
+        "evals/data/daily-scrape-recovery-route.test.ts"
+      ],
+      "failure_evidence": [
+        "evals/data/daily-scrape-recovery-route.test.ts"
+      ],
+      "isolation_evidence": [
+        "evals/data/daily-scrape-recovery-route.test.ts"
+      ],
+      "mutation_evidence": [
+        "evals/data/daily-scrape-recovery-route.test.ts"
+      ]
     },
     {
       "id": "quotas-cost-controls",
-      "success_evidence": ["evals/data/account-tracking-cap-route.test.ts"],
-      "failure_evidence": ["evals/data/account-tracking-cap-route.test.ts"],
-      "isolation_evidence": ["evals/data/account-tracking-cap-route.test.ts"],
-      "mutation_evidence": ["evals/data/account-tracking-cap-route.test.ts"]
+      "success_evidence": [
+        "evals/data/account-tracking-cap-route.test.ts"
+      ],
+      "failure_evidence": [
+        "evals/data/account-tracking-cap-route.test.ts"
+      ],
+      "isolation_evidence": [
+        "evals/data/account-tracking-cap-route.test.ts"
+      ],
+      "mutation_evidence": [
+        "evals/data/account-tracking-cap-route.test.ts"
+      ]
     },
     {
       "id": "authentication-workspaces",
@@ -116,36 +180,64 @@
     },
     {
       "id": "settings-preferences-feedback",
-      "success_evidence": ["evals/data/content-feedback-route.test.ts"],
-      "failure_evidence": ["evals/data/content-feedback-route.test.ts"],
-      "isolation_evidence": ["evals/data/settings-route-classification.test.ts"],
-      "mutation_evidence": ["evals/data/content-feedback-route.test.ts"]
+      "success_evidence": [
+        "evals/data/content-feedback-route.test.ts"
+      ],
+      "failure_evidence": [
+        "evals/data/content-feedback-route.test.ts"
+      ],
+      "isolation_evidence": [
+        "evals/data/settings-route-classification.test.ts"
+      ],
+      "mutation_evidence": [
+        "evals/data/content-feedback-route.test.ts"
+      ]
     },
     {
       "id": "integrations-account-lifecycle",
-      "success_evidence": ["evals/data/clerk-webhook-purge.test.ts"],
-      "failure_evidence": ["evals/data/clerk-webhook-purge.test.ts"],
-      "isolation_evidence": ["evals/data/clerk-webhook-purge.test.ts"],
-      "mutation_evidence": ["evals/data/clerk-webhook-purge.test.ts"]
+      "success_evidence": [
+        "evals/data/clerk-webhook-purge.test.ts"
+      ],
+      "failure_evidence": [
+        "evals/data/clerk-webhook-purge.test.ts"
+      ],
+      "isolation_evidence": [
+        "evals/data/clerk-webhook-purge.test.ts"
+      ],
+      "mutation_evidence": [
+        "evals/data/clerk-webhook-purge.test.ts"
+      ]
     },
     {
       "id": "leadshark-integration",
-      "success_evidence": ["evals/data/leadshark-integration-route.test.ts"],
-      "failure_evidence": ["evals/data/leadshark-integration-route.test.ts"],
-      "isolation_evidence": ["evals/data/leadshark-integration-route.test.ts"],
-      "mutation_evidence": ["evals/data/leadshark-integration-route.test.ts"]
+      "success_evidence": [
+        "evals/data/leadshark-integration-route.test.ts"
+      ],
+      "failure_evidence": [
+        "evals/data/leadshark-integration-route.test.ts"
+      ],
+      "isolation_evidence": [
+        "evals/data/leadshark-integration-route.test.ts"
+      ],
+      "mutation_evidence": [
+        "evals/data/leadshark-integration-route.test.ts"
+      ]
     },
     {
       "id": "agent-inbox",
       "success_evidence": [
-        "evals/data/agent-page-navigation.test.ts",
-        "evals/data/agent-inbox-message-state.test.ts"
+        "evals/data/agent-briefing-route.test.ts",
+        "evals/data/agent-working-summary-route.test.ts"
       ],
-      "failure_evidence": ["evals/data/agent-inbox-migration.test.ts"],
-      "isolation_evidence": ["evals/data/agent-opportunity-claim.test.ts"],
+      "failure_evidence": [
+        "evals/data/agent-opportunity-transitions.test.ts",
+        "evals/data/week-plan-reroll-route.test.ts"
+      ],
+      "isolation_evidence": [
+        "evals/data/agent-briefing-route.test.ts"
+      ],
       "mutation_evidence": [
-        "evals/data/agent-inbox.test.ts",
-        "evals/data/agent-opportunity-claim.test.ts"
+        "evals/data/agent-opportunity-transitions.test.ts"
       ]
     }
   ]
