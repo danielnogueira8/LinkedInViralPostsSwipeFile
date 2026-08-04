@@ -166,19 +166,18 @@ export async function PUT(
         { status: 400 },
       );
     }
+    // A SwipeIn-hosted resource is optional. Users often give away something
+    // that does not live here — a Notion doc, a Calendly, a file on their own
+    // site — and put that link in the DM themselves. Requiring an attached
+    // resource blocked those automations from being saved at all.
+    //
+    // When a resource IS attached, its id is still stored so {{resourceUrl}}
+    // resolves to the hosted link at send time.
     const leadMagnet = artifactLeadMagnet({
       meta: draft.meta ?? undefined,
     });
-    if (!leadMagnet?.id || !leadMagnet.publicSlug) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error:
-            "Choose a lead magnet resource before saving its automation.",
-        },
-        { status: 409 },
-      );
-    }
+    const leadMagnetId =
+      leadMagnet?.id && leadMagnet.publicSlug ? leadMagnet.id : null;
 
     const parsed = putSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) {
@@ -211,7 +210,7 @@ export async function PUT(
 
     const automation = await upsertAutomationConfig(sb.workspaceId, {
       artifactId: id,
-      leadMagnetId: leadMagnet.id,
+      leadMagnetId,
       ...cfg,
     });
     return NextResponse.json({ ok: true, automation });

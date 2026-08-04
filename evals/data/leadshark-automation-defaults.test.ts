@@ -52,18 +52,42 @@ describe("LeadShark automation defaults", () => {
     expect(result.dmTemplate).not.toContain("{{resource");
   });
 
-  test("requires every rotated DM to include the dynamic resource link", () => {
+  test("a DM without the resource token is allowed", () => {
+    // The token used to be mandatory, which blocked a real workflow: giving
+    // away something that does not live in SwipeIn (a Notion doc, a Calendly,
+    // a file on your own site) by pasting that link into the DM yourself.
     const defaults = defaultLeadSharkAutomationDefaults();
     expect(validateLeadSharkAutomationDefaults(defaults)).toEqual([]);
 
     expect(
       validateLeadSharkAutomationDefaults({
         ...defaults,
+        dmTemplate: "Hey {{firstName}} — grab it here: https://my.site/guide",
         dmTemplateVariations: ["Hey {{firstName}}, here you go."],
       }),
-    ).toContainEqual({
-      field: "dmTemplateVariations",
-      message: "Every DM variation must include {{resourceUrl}}.",
+    ).toEqual([]);
+  });
+
+  test("the token still substitutes when it IS used", () => {
+    // Making it optional must not stop it working for the common case.
+    const defaults = defaultLeadSharkAutomationDefaults();
+    const result = materializeLeadSharkAutomationDefaults(defaults, {
+      name: "Founder playbook",
+      url: "https://tryswipein.com/lm/founder-playbook",
+      keyword: "PLAYBOOK",
     });
+    expect(result.dmTemplate).toContain(
+      "https://tryswipein.com/lm/founder-playbook",
+    );
+    expect(result.dmTemplate).not.toContain("{{resource");
+  });
+
+  test("other content rules still apply", () => {
+    // Only the token requirement was dropped; a DM that is empty or otherwise
+    // invalid must still be rejected, or the save path has no guard at all.
+    const defaults = defaultLeadSharkAutomationDefaults();
+    expect(
+      validateLeadSharkAutomationDefaults({ ...defaults, dmTemplate: "" }),
+    ).not.toEqual([]);
   });
 });
