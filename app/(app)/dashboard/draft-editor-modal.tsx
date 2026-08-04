@@ -243,12 +243,23 @@ export function DraftEditorModal({
   // picker degrades to the "create one first" hint).
   const wantsLeadMagnets =
     open && (isNew ? newKind === "lead_magnet" : draft?.kind === "lead_magnet");
+  // In-flight tracking lives in a ref, NOT in the dependency array.
+  //
+  // The guard used to read `leadMagnetsLoading` while the effect also SET it
+  // and listed it as a dependency. Setting it re-ran the effect, and the
+  // re-run's cleanup marked the in-flight fetch cancelled — but the `finally`
+  // only cleared the flag `if (!cancelled)`. So a fetch interrupted by any
+  // re-render left leadMagnetsLoading stuck true, the guard rejected every
+  // retry, and the Giveaway row showed "Loading…" forever.
+  //
+  // Switching Kind to "Lead Magnet Post" on an existing draft is exactly that
+  // sequence: the PATCH re-renders while the first fetch is still open.
+  const leadMagnetFetchRef = useRef(false);
   useEffect(() => {
-    if (!wantsLeadMagnets || leadMagnetOptions !== null || leadMagnetsLoading) return;
+    if (!wantsLeadMagnets || leadMagnetOptions !== null) return;
+    if (leadMagnetFetchRef.current) return;
+    leadMagnetFetchRef.current = true;
     let cancelled = false;
-    // Flip the loading flag inside the async task (not synchronously in the
-    // effect body) so the render-driven set-state stays out of the effect's
-    // sync path.
     void (async () => {
       setLeadMagnetsLoading(true);
       try {
@@ -267,13 +278,16 @@ export function DraftEditorModal({
         setLeadMagnetOptions([]);
         toast.error((e as Error).message);
       } finally {
-        if (!cancelled) setLeadMagnetsLoading(false);
+        // Always release, even when cancelled — otherwise an interrupted
+        // fetch permanently blocks the retry that replaces it.
+        leadMagnetFetchRef.current = false;
+        setLeadMagnetsLoading(false);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [wantsLeadMagnets, leadMagnetOptions, leadMagnetsLoading]);
+  }, [wantsLeadMagnets, leadMagnetOptions]);
 
   const [newMedia, setNewMedia] = useState<PostMediaAttachment[]>([]);
   // Temporary attachments render a local preview while the canonical upload is
