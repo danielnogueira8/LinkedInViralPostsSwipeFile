@@ -38,7 +38,14 @@ describe("direct-writer live-news gate invariants", () => {
     const section = sectionOf(COMPILE, "const useDirectWriter =");
     expect(section).toContain("directRefineClaimed");
     expect(section).toContain("directCreateClaimed");
-    expect(section).toContain("requiresLiveNewsOrResearch(effectiveUserInstruction)");
+    // The predicate was extracted into a named variable, so assert the gate
+    // through that name AND pin the variable's own definition. Loosening this
+    // to a bare "mentions the gate somewhere" check would defeat the point:
+    // this suite exists because the gate escaped three separate times.
+    expect(section).toContain("directCreateFreshnessGatePasses");
+    expect(sectionOf(COMPILE, "const directCreateFreshnessGatePasses =")).toContain(
+      "requiresLiveNewsOrResearch(effectiveUserInstruction)",
+    );
     // The refine exemption must stay: editing an existing draft never needs
     // a search, so refine lanes bypass the gate deliberately.
     expect(sectionOf(COMPILE, "const directRefineClaimed")).toContain(

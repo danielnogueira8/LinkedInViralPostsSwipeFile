@@ -156,7 +156,10 @@ vi.mock("@/lib/supabase-scoped", () => ({
   }),
 }));
 
-vi.mock("@/lib/linkedin-url", () => ({
+// Override only the network call; keep the module's real URL helpers (see
+// accounts-manual-route.test.ts for why a full-module factory breaks this).
+vi.mock("@/lib/linkedin-url", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/linkedin-url")>()),
   fetchProfileMeta: async () => state.profileMeta,
   displayNameFromHandle: (handle: string) => handle,
 }));

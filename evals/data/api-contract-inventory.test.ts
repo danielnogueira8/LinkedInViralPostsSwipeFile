@@ -25,6 +25,12 @@ const requiredFamilies = [
   "settings-preferences-feedback",
   "integrations-account-lifecycle",
   "leadshark-integration",
+  // The agent surface (briefing, inbox, opportunities, week-plan,
+  // working-summary) is a critical family like any other. It was present in
+  // the JSON inventory but absent from this list, so the two disagreed and
+  // this suite failed — which meant the very check that catches uncovered
+  // families was itself red and nobody saw it.
+  "agent-inbox",
 ];
 
 describe("critical API contract inventory", () => {
