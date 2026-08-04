@@ -616,6 +616,31 @@ export async function scanTrendOpportunities(
     .filter((candidate) => !recentKeys.has(candidate.trendKey))
     .slice(0, Math.max(MAX_TREND_OPPORTUNITIES_PER_RUN * 2, 6));
 
+  // Nothing new to rank — skip the paid synthesis call.
+  //
+  // Every candidate can be in cooldown (TREND_COOLDOWN_DAYS is 30), which is
+  // the normal steady state once a workspace has been running a while. The
+  // loop still woke hourly and called Luna to rank an EMPTY list: 67 synthesis
+  // calls in one day produced 12 opportunities, so ~55 were priced work on
+  // nothing.
+  //
+  // Skipping here cannot lose an opportunity — there is no candidate to lose.
+  // The hourly wake-up is deliberately untouched: it exists so the loop
+  // recovers when the daily scrape lands late (migration 171), and lowering
+  // the cadence would trade a real reliability property for pennies. Guard the
+  // WORK, not the wake-up.
+  if (freshCandidates.length === 0) {
+    return {
+      scanned: rows.length,
+      eligible: recent.length,
+      embedded: recentWithVec.length,
+      clusters: candidates.length,
+      inserted: 0,
+      expired,
+      skipped: 1,
+    };
+  }
+
   const synthesisResult = await (
     options.synthesize ?? synthesizeTrendOpportunities
   )({
