@@ -10,9 +10,15 @@ import {
   type StoredKnowledgeSource,
 } from "@/lib/knowledge-sources/types";
 import type { VoiceRow } from "../voice/manager";
+import { listPreferenceResources } from "@/lib/content-resource-operations";
+import { listReviewablePreferences } from "@/lib/preference-evidence";
+import type { ContentFeedback } from "@/lib/content-feedback";
 import { KnowledgeWorkspace } from "./knowledge-workspace";
 
 export const dynamic = "force-dynamic";
+
+const FEEDBACK_COLS =
+  "id, workspace_id, chat_id, artifact_id, draft_id, rating, reasons, note, body_snapshot, created_at";
 
 const VOICE_COLS =
   "id, linkedin_handle, profile_url, display_name, avatar_url, headline, profile, summary, source_post_count, status, error, model, generated_at, created_at, pending_started_at";
@@ -45,8 +51,28 @@ export default async function KnowledgePage() {
     typeof marker?.version === "number" && marker.version >= 149;
   const retryAvailable =
     typeof marker?.version === "number" && marker.version >= 152;
+  // Standing rules and recent taste live here with the rest of the workspace's
+  // durable context. Read server-side so both hydrate without a client fetch
+  // flash. Workspace-scoped (scopedSupabase + RLS).
+  const preferencesPromise = listPreferenceResources({
+    db: sb.raw,
+    workspaceId: sb.workspaceId,
+  });
+  const feedbackPromise = sb.raw
+    .from("content_feedback")
+    .select(FEEDBACK_COLS)
+    .eq("workspace_id", sb.workspaceId)
+    .order("created_at", { ascending: false })
+    .limit(20);
+
   const knowledgeStore = createWorkspaceKnowledgeStore(sb.raw);
-  const [sources, formInterviewKnowledge, chatInterviewKnowledge] = await Promise.all([
+  const [
+    sources,
+    formInterviewKnowledge,
+    chatInterviewKnowledge,
+    prefData,
+    { data: feedbackData },
+  ] = await Promise.all([
     (async (): Promise<KnowledgeSourceSummary[]> => {
       if (!available) return [];
       const selection = extractionAvailable
@@ -79,7 +105,15 @@ export default async function KnowledgePage() {
       "interview",
       chatInterviewKnowledgeSourcePrefix(sb.workspaceId),
     ),
+    preferencesPromise,
+    feedbackPromise,
   ]);
+  const preferences = await listReviewablePreferences({
+    db: sb.raw,
+    workspaceId: sb.workspaceId,
+    preferences: prefData,
+  });
+  const feedback = (feedbackData ?? []) as ContentFeedback[];
   const interviewKnowledge = [...formInterviewKnowledge, ...chatInterviewKnowledge];
   const knowledgeProposals = interviewKnowledge.filter(
     (item) => item.verification === "proposed",
@@ -102,6 +136,8 @@ export default async function KnowledgePage() {
         initialVoice={voice}
         knowledgeProposals={knowledgeProposals}
         verifiedKnowledge={verifiedKnowledge}
+        preferences={preferences}
+        feedback={feedback}
       />
     </PageShell>
   );
