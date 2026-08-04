@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { ListEditor } from "@/components/leadshark-list-editor";
 import { StatusPill } from "@/components/app-surface";
 import {
   Dialog,
@@ -78,13 +79,6 @@ export function verificationLabel(
 // lead-magnet posts can auto-DM commenters. Three states mirror LinkedInPublishingCard:
 // not connected, connected, and invalid (reconnect). The key is write-only — it
 // is never returned by the API, so there is no "reveal key".
-function lines(value: string): string[] {
-  return value
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
-}
-
 function DefaultsToggle({
   checked,
   onChange,
@@ -310,55 +304,53 @@ export function LeadSharkCard({
                   rows={4}
                 />
                 <p className="text-xs text-muted-foreground">
-                  Keep {RESOURCE_URL_TOKEN} in every DM so the right resource is
-                  always delivered. {RESOURCE_NAME_TOKEN} is optional.
+                  {RESOURCE_URL_TOKEN} is replaced with the post&apos;s selected
+                  resource. Both it and {RESOURCE_NAME_TOKEN} are optional —
+                  paste your own link instead if the resource lives elsewhere.
                 </p>
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="leadshark-default-dm-variations">
-                  DM variations (one per line)
-                </Label>
-                <Textarea
-                  id="leadshark-default-dm-variations"
-                  value={defaults.dmTemplateVariations.join("\n")}
-                  onChange={(event) =>
-                    patchDefaults({
-                      dmTemplateVariations: lines(event.target.value),
-                    })
+                <Label>DM variations</Label>
+                <ListEditor
+                  values={defaults.dmTemplateVariations}
+                  onChange={(next) =>
+                    patchDefaults({ dmTemplateVariations: next })
                   }
-                  rows={4}
-                  placeholder={`Every variation must include ${RESOURCE_URL_TOKEN}`}
+                  placeholder="A second phrasing of the same DM"
+                  addLabel="Add variation"
+                  multiline
+                  max={10}
                 />
               </div>
+              {/* Per-row editing, matching the per-post automation panel.
+                  A newline-delimited textarea made adding a reply feel like
+                  editing a config blob: no obvious way to add another, and a
+                  stray blank line silently became an empty template. */}
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="space-y-1.5">
-                  <Label htmlFor="leadshark-default-replies">
-                    Comment replies (one per line)
-                  </Label>
-                  <Textarea
-                    id="leadshark-default-replies"
-                    value={defaults.commentReplyTemplates.join("\n")}
-                    onChange={(event) =>
-                      patchDefaults({
-                        commentReplyTemplates: lines(event.target.value),
-                      })
+                  <Label>Comment replies</Label>
+                  <ListEditor
+                    values={defaults.commentReplyTemplates}
+                    onChange={(next) =>
+                      patchDefaults({ commentReplyTemplates: next })
                     }
-                    rows={4}
+                    placeholder="{{firstNameMention}} just sent it — check your DMs!"
+                    addLabel="Add reply"
+                    multiline
+                    max={10}
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <Label htmlFor="leadshark-default-nonconnection">
-                    Not connected replies (one per line)
-                  </Label>
-                  <Textarea
-                    id="leadshark-default-nonconnection"
-                    value={defaults.nonConnectionReplyTemplates.join("\n")}
-                    onChange={(event) =>
-                      patchDefaults({
-                        nonConnectionReplyTemplates: lines(event.target.value),
-                      })
+                  <Label>Not connected replies</Label>
+                  <ListEditor
+                    values={defaults.nonConnectionReplyTemplates}
+                    onChange={(next) =>
+                      patchDefaults({ nonConnectionReplyTemplates: next })
                     }
-                    rows={4}
+                    placeholder="{{firstNameMention}}, connect with me and I'll send it over."
+                    addLabel="Add reply"
+                    multiline
+                    max={10}
                   />
                 </div>
               </div>
