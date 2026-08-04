@@ -45,6 +45,7 @@ import {
   type ComposerTaskSelection,
 } from "@/lib/composer-task-context";
 import { prepareClarificationTurn } from "@/lib/agent/turn-policy";
+import { compactedHistoryBlock } from "@/lib/agent/history-compaction";
 import {
   markPersistedTerminalReason,
   type ChatTerminalReason,
@@ -1485,8 +1486,21 @@ export async function buildTurnContext(
   // recovery, and burning cost meanwhile). Trims on a user-turn boundary so
   // assistant+tool groups stay well-formed. The latest user turn — the one being
   // answered, and where blocks are woven below — is always kept.
+  // Summarize what the window is about to discard, BEFORE it is discarded.
+  // Otherwise the drop is silent and total: a fact stated 25 turns ago becomes
+  // unreachable, and the agent cannot distinguish "you never said that" from
+  // "I can no longer see it".
+  const compactedHistory = compactedHistoryBlock(history);
   const preparedTurn = prepareClarificationTurn(history, userText);
   history = preparedTurn.history;
+  // Ride at the HEAD of the windowed transcript as a system message. Every
+  // downstream consumer reads this same array, so one insertion here reaches
+  // the agent loop, the writer, and the specialists without threading a new
+  // field through each. prepareClarificationTurn has already aligned the
+  // window to a user boundary, so prepending cannot disturb that alignment.
+  if (compactedHistory) {
+    history = [{ role: "system", content: compactedHistory }, ...history];
+  }
   effectiveUserInstruction =
     resolvedActionInstruction ?? preparedTurn.effectiveUserInstruction;
   const effectiveBasePostCount = requestedBasePostCount(
