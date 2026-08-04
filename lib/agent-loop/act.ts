@@ -19,13 +19,6 @@ import {
   newsjackingEvidenceText,
   type NewsjackingOpportunityPayload,
 } from "@/lib/agent-loop/newsjacking";
-import {
-  LEAD_MAGNET_COLS,
-  coerceLeadMagnet,
-  selectLeadMagnetForPrompt,
-  type LeadMagnet,
-} from "@/lib/lead-magnets";
-import { leadMagnetSelectionPromptBeforeDraft } from "@/lib/lead-magnet-campaign";
 import type { PostType } from "@/lib/post-type";
 
 // ---------------------------------------------------------------------------
@@ -154,46 +147,6 @@ async function createNewsjackingModelingSource(
     .single();
   if (error) throw error;
   return { id: source.id as string, postType: "regular", postText: evidence };
-}
-
-/**
- * A modeled lead-magnet post needs a resource to promote (the turn pipeline
- * fails closed without one). Pick the workspace's best-fit saved lead magnet
- * for this source; when the user has none, ask the pipeline to generate one
- * from the source post's promise.
- */
-async function leadMagnetForTurn(
-  sb: SupabaseClient,
-  workspaceId: string,
-  headline: string,
-  postText: string,
-): Promise<
-  | { leadMagnetId: string }
-  | { createLeadMagnet: { prompt: string } }
-> {
-  const { data: rows, error } = await sb
-    .from("lead_magnets")
-    .select(LEAD_MAGNET_COLS)
-    .eq("workspace_id", workspaceId)
-    .order("updated_at", { ascending: false })
-    .limit(30);
-  if (error) throw error;
-  const candidates = ((rows ?? []) as LeadMagnet[]).map(coerceLeadMagnet);
-  const selected = selectLeadMagnetForPrompt(
-    leadMagnetSelectionPromptBeforeDraft({
-      userText: headline,
-      sourceText: postText,
-    }),
-    candidates,
-  );
-  if (selected) return { leadMagnetId: selected.id };
-  return {
-    createLeadMagnet: {
-      prompt:
-        "Create a lead magnet resource this post can promote. Base it on the promise of the source post below — same topic, rewritten as the user's own resource.\n\n" +
-        postText.slice(0, 600),
-    },
-  };
 }
 
 async function saveChatArtifactsToBoard(
@@ -397,16 +350,22 @@ export async function actOnOpportunity(
     const externalPayload = (opportunity.payload ?? {}) as
       | TrendOpportunityPayload
       | NewsjackingOpportunityPayload;
-    // Lead-magnet source: attach a resource so the modeled giveaway post can
-    // actually promote something — the best-fit saved lead magnet, or a
-    // freshly generated one when the user has none (issue #2: previously the
-    // turn failed closed with "Select or create a lead magnet").
-    const leadMagnetContext =
-      source.postType === "lead_magnet"
-        ? direction?.leadMagnetId
-          ? { leadMagnetId: direction.leadMagnetId }
-          : await leadMagnetForTurn(sb, workspaceId, headline, source.postText)
-        : null;
+    // An opportunity drafts a REGULAR post unless the user asked for a lead
+    // magnet.
+    //
+    // This used to key off `source.postType`: modelling a lead-magnet source
+    // silently produced a comment-gated giveaway post, even though the user
+    // only clicked "draft this" on a card. The source's type describes the
+    // post being MODELLED, not the post being written — inheriting it turned
+    // a structural resemblance into a change of deliverable, and attached (or
+    // generated) a lead-magnet resource nobody asked for.
+    //
+    // The explicit selection still wins: `direction.leadMagnetId` is set only
+    // when the user picked a lead magnet before drafting, and that path is
+    // unchanged.
+    const leadMagnetContext = direction?.leadMagnetId
+      ? { leadMagnetId: direction.leadMagnetId }
+      : null;
     const userDirection = direction?.userContext?.trim();
     const signalLabel = isNewsjacking ? "NEWSJACKING" : "TREND RADAR";
     const signalBlock = isExternal
