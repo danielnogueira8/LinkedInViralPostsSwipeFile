@@ -1,3 +1,4 @@
+import { synthesizeBrainstormIdeas } from "@/lib/agent/brainstorm-ideas";
 import {
   createChatStreamPost,
 } from "@/app/api/chats/[id]/stream/route";
@@ -95,6 +96,11 @@ export type CoworkOutcomeScenario = {
         >
       >;
       attachmentSources?: GroundedSource[];
+      brainstormIdeas?: {
+        content: string;
+        model?: string;
+        usage?: Usage;
+      };
       groundedAnswer?: {
         content: string;
         model?: string;
@@ -980,8 +986,28 @@ async function runCoworkOutcomeScenarioWithStore(
           usage:
             scenario.model.readOnlyOrchestrator?.groundedAnswer?.usage,
         }),
+        // The brainstorm lane is a SEPARATE dependency from the grounded one.
+        // Unstubbed, a scenario with starterId "brainstorm" fell through to
+        // the real synthesizer, which attempts a live model call — so the turn
+        // failed with no model stage recorded.
+        synthesizeBrainstormIdeas: async (brainstormInput) => {
+          const fixture =
+            scenario.model.readOnlyOrchestrator?.brainstormIdeas ??
+            scenario.model.readOnlyOrchestrator?.groundedAnswer;
+          if (!fixture) {
+            // No fixture: defer to production so scenarios that never reach
+            // this lane keep their existing behaviour and model accounting.
+            return synthesizeBrainstormIdeas(brainstormInput);
+          }
+          return {
+            content: fixture.content,
+            model: fixture.model ?? CHAT_MODEL,
+            usage: fixture.usage,
+          };
+        },
         recordUsage: logOpenRouterUsage,
         cancelPollMs: 1,
+
       },
     });
   };
