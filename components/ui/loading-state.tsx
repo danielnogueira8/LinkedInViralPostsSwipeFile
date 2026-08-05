@@ -8,6 +8,15 @@ type LoadingVariant = "drive" | "dots";
 type LoadingStateProps = Omit<React.ComponentProps<"div">, "children"> & {
   elapsedLabel?: string;
   label?: string;
+  /**
+   * Keep the accessible name but stop painting the label.
+   *
+   * `label` normally renders as shimmering text (background-clip: text over a
+   * gradient), which is right inside the app but reads as "this site is slow"
+   * on a marketing page. Screen readers still get the name from the
+   * container's aria-label.
+   */
+  srOnlyLabel?: boolean;
   variant?: LoadingVariant;
 };
 
@@ -56,6 +65,7 @@ function LoadingPixels({
 
 function LoadingState({
   elapsedLabel,
+  srOnlyLabel,
   label = "Loading",
   variant = "drive",
   className,
@@ -73,14 +83,16 @@ function LoadingState({
       {...props}
     >
       <LoadingPixels variant={variant} />
-      <span
-        className={cn(
-          styles.label,
-          "font-medium text-transparent",
-        )}
-      >
-        {label}
-      </span>
+      {srOnlyLabel ? null : (
+        <span
+          className={cn(
+            styles.label,
+            "font-medium text-transparent",
+          )}
+        >
+          {label}
+        </span>
+      )}
       {elapsedLabel ? (
         <span className="font-mono text-xs tabular-nums text-muted-foreground/75">
           {elapsedLabel}
