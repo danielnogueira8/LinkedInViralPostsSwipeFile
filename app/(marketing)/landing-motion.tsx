@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import Image from "next/image";
 import { Check } from "lucide-react";
 import { formatStatCount } from "@/lib/landing-stats";
 
@@ -70,76 +69,44 @@ export function Reveal({
    masking — this component only feeds --grid-x/y and data-active. Pointer
    tracking is skipped entirely on touch devices and under reduced motion, so
    the grid stays static in both cases. */
-/**
- * Ink-wash landscape behind the hero copy.
- *
- * Replaces DotGridField rather than layering over it: the artwork is
- * stipple-engraved, so a dot grid on top of it produced two competing dot
- * textures that read as moiré instead of calm.
- *
- * Anchored bottom-left because that is where the drawing puts its subject —
- * the pagoda and treeline sit low-left, and the empty sky is deliberately the
- * space the headline occupies.
- *
- * Opacity is low by design (14% light / 8% dark): this is texture, not imagery.
- * The layer is aria-hidden + pointer-events-none because it carries no meaning
- * and must never intercept a click.
- *
- * The wash starts at the very top of the PAGE, not the top of the hero section.
- * Two things held it down, and both had to go:
- *
- *  1. The sticky site header is a real box in `<main>`'s flow, so the hero
- *     section begins ~76px below line 1. `absolute inset-0` is bounded by that
- *     section, so no mask value could ever reach the top of the page — hence
- *     the negative top inset, which lets the layer run up behind the header.
- *  2. The mask began at `transparent 0%`, so even the part that DID reach the
- *     top rendered as nothing.
- *
- * The image is displayed at its natural cover scale — no overscale, no crop
- * offset. An earlier revision blew it up to 160% width to drag the pagoda
- * higher up the page; that worked, but magnified the stipple into coarse
- * blotches and read as a zoomed-in crop rather than a drawing. Showing the
- * whole frame keeps the linework fine, which is the entire point of using an
- * engraving as texture.
- *
- * The header sits on a blurred translucent pill, so artwork passing behind it
- * reads as depth rather than clutter.
- */
-export function HeroLandscapeWash() {
-  return (
-    <div
-      aria-hidden="true"
-      className="pointer-events-none absolute inset-x-0 bottom-0 -top-24 overflow-hidden select-none"
-      style={{
-        // Full strength from line 1 down through the copy, then out before the
-        // product shot so the screenshot sits on clean background.
-        //
-        // Earlier versions ramped UP from transparent at the top, which is what
-        // pushed the visible artwork to a sliver low on the page. The ramp now
-        // runs the other way: present immediately, fading as it descends.
-        maskImage:
-          "linear-gradient(to bottom, black 0%, black 45%, rgba(0,0,0,0.55) 70%, transparent 100%)",
-        WebkitMaskImage:
-          "linear-gradient(to bottom, black 0%, black 45%, rgba(0,0,0,0.55) 70%, transparent 100%)",
-      }}
-    >
-      <Image
-        src="/hero-landscape.webp"
-        alt=""
-        fill
-        // Background texture: never block LCP on it. The headline is the LCP
-        // element and must not wait behind a decorative layer.
-        loading="lazy"
-        sizes="100vw"
-        // 6% was too faint to read as anything on the live page. 14% still sits
-        // well behind the copy — the headline keeps full contrast — while the
-        // pagoda and treeline are actually legible.
-        className="object-cover object-[left_bottom] opacity-[0.14] dark:opacity-[0.08] dark:invert"
-      />
-    </div>
-  );
+export function DotGridField() {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    const section = el?.parentElement;
+    if (!el || !section) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    if (window.matchMedia("(pointer: coarse)").matches) return;
+    let raf = 0;
+    const onMove = (e: PointerEvent) => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        const rect = el.getBoundingClientRect();
+        el.style.setProperty("--grid-x", `${e.clientX - rect.left}px`);
+        el.style.setProperty("--grid-y", `${e.clientY - rect.top}px`);
+        el.dataset.active = "true";
+      });
+    };
+    const onLeave = () => {
+      cancelAnimationFrame(raf);
+      el.dataset.active = "false";
+    };
+    section.addEventListener("pointermove", onMove);
+    section.addEventListener("pointerleave", onLeave);
+    return () => {
+      cancelAnimationFrame(raf);
+      section.removeEventListener("pointermove", onMove);
+      section.removeEventListener("pointerleave", onLeave);
+    };
+  }, []);
+  return <div ref={ref} aria-hidden="true" className="hero-dot-grid absolute inset-0" />;
 }
 
+/* Word-by-word blur entrance for the hero headline (reactbits BlurText).
+   Each word rises out of a blur with a small stagger; the h1 keeps its
+   text-balance wrapping because words stay inline-level with real space text
+   nodes between them. Under reduced motion the CSS animation is disabled and
+   the words render statically. */
 export function BlurWords({
   text,
   baseDelay = 0,
