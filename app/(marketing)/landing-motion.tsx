@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import Image from "next/image";
 import { Check } from "lucide-react";
 import { formatStatCount } from "@/lib/landing-stats";
 
@@ -69,44 +70,52 @@ export function Reveal({
    masking — this component only feeds --grid-x/y and data-active. Pointer
    tracking is skipped entirely on touch devices and under reduced motion, so
    the grid stays static in both cases. */
-export function DotGridField() {
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const el = ref.current;
-    const section = el?.parentElement;
-    if (!el || !section) return;
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    if (window.matchMedia("(pointer: coarse)").matches) return;
-    let raf = 0;
-    const onMove = (e: PointerEvent) => {
-      cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(() => {
-        const rect = el.getBoundingClientRect();
-        el.style.setProperty("--grid-x", `${e.clientX - rect.left}px`);
-        el.style.setProperty("--grid-y", `${e.clientY - rect.top}px`);
-        el.dataset.active = "true";
-      });
-    };
-    const onLeave = () => {
-      cancelAnimationFrame(raf);
-      el.dataset.active = "false";
-    };
-    section.addEventListener("pointermove", onMove);
-    section.addEventListener("pointerleave", onLeave);
-    return () => {
-      cancelAnimationFrame(raf);
-      section.removeEventListener("pointermove", onMove);
-      section.removeEventListener("pointerleave", onLeave);
-    };
-  }, []);
-  return <div ref={ref} aria-hidden="true" className="hero-dot-grid absolute inset-0" />;
+/**
+ * Ink-wash landscape behind the hero copy.
+ *
+ * Replaces DotGridField rather than layering over it: the artwork is
+ * stipple-engraved, so a dot grid on top of it produced two competing dot
+ * textures that read as moiré instead of calm.
+ *
+ * Anchored bottom-left because that is where the drawing puts its subject —
+ * the pagoda and treeline sit low-left, and the empty sky is deliberately the
+ * space the headline occupies. `object-position` keeps that relationship when
+ * the viewport crops the 3:2 frame.
+ *
+ * Opacity is very low by design (6% light / 4% dark): this is texture, not
+ * imagery. The top mask fades it out entirely behind the headline so nothing
+ * competes with the h1, and the whole layer is aria-hidden + pointer-events-none
+ * because it carries no meaning and must never intercept a click.
+ */
+export function HeroLandscapeWash() {
+  return (
+    <div
+      aria-hidden="true"
+      className="pointer-events-none absolute inset-0 overflow-hidden select-none"
+      style={{
+        // Fade from fully transparent at the top (behind the headline) to
+        // fully opaque toward the bottom, so the drawing emerges rather than
+        // sitting flat behind the copy.
+        maskImage:
+          "linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.35) 38%, black 100%)",
+        WebkitMaskImage:
+          "linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.35) 38%, black 100%)",
+      }}
+    >
+      <Image
+        src="/hero-landscape.webp"
+        alt=""
+        fill
+        // Background texture: never block LCP on it. The headline is the LCP
+        // element and must not wait behind a decorative layer.
+        loading="lazy"
+        sizes="100vw"
+        className="object-cover object-[left_bottom] opacity-[0.06] dark:opacity-[0.04] dark:invert"
+      />
+    </div>
+  );
 }
 
-/* Word-by-word blur entrance for the hero headline (reactbits BlurText).
-   Each word rises out of a blur with a small stagger; the h1 keeps its
-   text-balance wrapping because words stay inline-level with real space text
-   nodes between them. Under reduced motion the CSS animation is disabled and
-   the words render statically. */
 export function BlurWords({
   text,
   baseDelay = 0,
