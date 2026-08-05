@@ -57,7 +57,7 @@ import { readVoiceGuidance } from "@/lib/voice-profile-read";
 import { registerPublicResourceTools } from "./register-resources";
 import {
   findBookmarkResource,
-  listBookmarkResources,
+  listModelledBookmarkResources,
   saveBookmarkResource,
   summarizeBookmarkResource,
   type SavedBookmarkResource,
@@ -1275,7 +1275,7 @@ export function registerSwipeTools(server: McpServer) {
     {
       title: "List saved posts",
       description:
-        "Return the workspace's bookmarked LinkedIn posts, newest-first. Use this to surface inspiration the team has manually collected (not part of the daily scrape).",
+        "Return the saved posts this workspace has actually modelled a draft after, most recently used first. These are proven sources the team chose deliberately — not the whole bookmark library.",
       inputSchema: {
         limit: z.number().int().min(1).max(100).optional().describe("Default 20, max 100."),
       },
@@ -1287,7 +1287,10 @@ export function registerSwipeTools(server: McpServer) {
         if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
         const sb = supabaseAdmin();
         const limit = args.limit ?? 20;
-        const saved = await listBookmarkResources({
+        // Only posts genuinely used as a modelling source. Returning the whole
+        // bookmark library made the agent guess which of dozens of saved posts
+        // mattered; a post that was actually modelled is a deliberate signal.
+        const saved = await listModelledBookmarkResources({
           db: sb,
           workspaceId,
           limit,

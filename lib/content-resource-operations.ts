@@ -165,6 +165,71 @@ export async function listBookmarkResources(input: {
   return (data ?? []) as unknown as SavedBookmarkResource[];
 }
 
+/**
+ * Saved posts the workspace has ACTUALLY modelled a draft after.
+ *
+ * listBookmarkResources returns the whole bookmark library, which is right for
+ * a "browse my bookmarks" surface but wrong for the MCP tool: an agent asking
+ * for modelling sources got every post the team ever saved, most of which were
+ * never used, and had to guess which ones mattered.
+ *
+ * chat_modeling_sources is the record of what was really used — a row is
+ * written only when a source is bound to a turn. Bookmark-sourced rows carry
+ * `source = 'bookmark'` and `source_post_id = saved_posts.id`, so that table is
+ * the authoritative "used for modelling" set. Deriving it means no new column
+ * and no backfill: the history is already there.
+ *
+ * Ordered by MOST RECENTLY USED rather than most recently saved, because for
+ * this question recency of use is the useful signal.
+ */
+export async function listModelledBookmarkResources(input: {
+  db: SupabaseClient;
+  workspaceId: string;
+  limit: number;
+}): Promise<SavedBookmarkResource[]> {
+  // Newest use first, then dedupe: one bookmark modelled five times must
+  // appear once, positioned by its latest use.
+  const { data: usedRows, error: usedError } = await input.db
+    .from("chat_modeling_sources")
+    .select("source_post_id, created_at")
+    .eq("workspace_id", input.workspaceId)
+    .eq("source", "bookmark")
+    .not("source_post_id", "is", null)
+    .order("created_at", { ascending: false })
+    .limit(500);
+  if (usedError) throw usedError;
+
+  const orderedIds: string[] = [];
+  const seen = new Set<string>();
+  for (const row of (usedRows ?? []) as Array<{ source_post_id: unknown }>) {
+    const id = row.source_post_id;
+    if (typeof id !== "string" || !id || seen.has(id)) continue;
+    seen.add(id);
+    orderedIds.push(id);
+    if (orderedIds.length >= input.limit) break;
+  }
+  if (orderedIds.length === 0) return [];
+
+  const { data, error } = await input.db
+    .from("saved_posts")
+    .select(BOOKMARK_RESOURCE_COLS)
+    .eq("workspace_id", input.workspaceId)
+    .in("id", orderedIds);
+  if (error) throw error;
+
+  // Restore most-recently-used order; `.in()` does not preserve it. A bookmark
+  // deleted since it was modelled simply drops out.
+  const byId = new Map(
+    ((data ?? []) as unknown as SavedBookmarkResource[]).map((row) => [
+      (row as { id: string }).id,
+      row,
+    ]),
+  );
+  return orderedIds
+    .map((id) => byId.get(id))
+    .filter((row): row is SavedBookmarkResource => Boolean(row));
+}
+
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
