@@ -96,10 +96,19 @@ export function HeroLandscapeWash() {
         // Fade from fully transparent at the top (behind the headline) to
         // fully opaque toward the bottom, so the drawing emerges rather than
         // sitting flat behind the copy.
+        // Reaches full strength by 55% rather than 100%.
+        //
+        // The first version ramped to opaque only at the very bottom of the
+        // section. That was tuned against a SHORT hero; the real one is tall
+        // enough that the copy area sat in the faint part of the ramp and the
+        // drawing was effectively invisible — visible only as a sliver above
+        // the product shot.
+        //
+        // The top stays clear so nothing competes with the h1.
         maskImage:
-          "linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.35) 38%, black 100%)",
+          "linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.55) 22%, black 55%)",
         WebkitMaskImage:
-          "linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.35) 38%, black 100%)",
+          "linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.55) 22%, black 55%)",
       }}
     >
       <Image
@@ -110,7 +119,10 @@ export function HeroLandscapeWash() {
         // element and must not wait behind a decorative layer.
         loading="lazy"
         sizes="100vw"
-        className="object-cover object-[left_bottom] opacity-[0.06] dark:opacity-[0.04] dark:invert"
+        // 6% was too faint to read as anything on the live page. 14% still sits
+        // well behind the copy — the headline keeps full contrast — while the
+        // pagoda and treeline are actually legible.
+        className="object-cover object-[left_bottom] opacity-[0.14] dark:opacity-[0.08] dark:invert"
       />
     </div>
   );
