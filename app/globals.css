@@ -474,6 +474,15 @@
     80%, 100% { transform: scale(2.6); opacity: 0; }
   }
 
+  /* Faint dot grid behind the hero, masked so it dissolves toward the
+     edges instead of ending on a hard line. */
+  .hero-dot-grid {
+    background-image: radial-gradient(rgb(28 28 26 / 0.055) 1px, transparent 1px);
+    background-size: 22px 22px;
+    mask-image: radial-gradient(ellipse 70% 60% at 50% 38%, black 30%, transparent 75%);
+    -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 38%, black 30%, transparent 75%);
+  }
+
   /* Cursor spotlight on the feature cards — SpotlightCard sets
      --spotlight-x/y on mousemove and this radial highlight follows. */
   .spotlight-card {
@@ -562,6 +571,25 @@
     to { visibility: hidden; }
   }
 
+  /* Interactive dot grid — DotGridField (landing-motion.tsx) feeds
+     --grid-x/y and data-active; a brighter copy of the dots wakes up around
+     the cursor while the base grid keeps its edge fade. */
+  .hero-dot-grid::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image: radial-gradient(rgb(28 28 26 / 0.16) 1px, transparent 1px);
+    background-size: 22px 22px;
+    mask-image: radial-gradient(170px circle at var(--grid-x, 50%) var(--grid-y, 35%), black, transparent 70%);
+    -webkit-mask-image: radial-gradient(170px circle at var(--grid-x, 50%) var(--grid-y, 35%), black, transparent 70%);
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    pointer-events: none;
+  }
+  .hero-dot-grid[data-active="true"]::before {
+    opacity: 1;
+  }
+
   /* Word-by-word blur entrance for the hero headline — BlurWords sets the
      stagger per word via the shared --reveal-delay var. */
   .blur-word {
@@ -626,6 +654,7 @@
       -webkit-text-fill-color: var(--muted-foreground);
     }
     .spotlight-card::before,
+    .hero-dot-grid::before,
     .magnetic {
       transition: none;
     }
