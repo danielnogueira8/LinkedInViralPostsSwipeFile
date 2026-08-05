@@ -315,7 +315,16 @@ describe("MCP Apps structuredContent", () => {
   });
 
   test("list_saved_posts adds the scraped native fields to the view payload only", async () => {
-    dbRef.current = makeFakeSupabase({ saved_posts: { rows: [SAVED_ROW] } });
+    // list_saved_posts now returns only bookmarks actually used as a modelling
+    // source, so the modeling-source row is a precondition, not decoration.
+    dbRef.current = makeFakeSupabase({
+      chat_modeling_sources: {
+        rows: [
+          { source_post_id: SAVED_ROW.id, created_at: "2026-08-01T10:00:00Z" },
+        ],
+      },
+      saved_posts: { rows: [SAVED_ROW] },
+    });
 
     const raw = await tools().list_saved_posts({}, extra());
     const text = json(raw);
