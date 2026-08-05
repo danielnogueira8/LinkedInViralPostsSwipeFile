@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import { postCronAlert } from "@/lib/cron-alert";
+import { cronRunStatus, recordCronRun } from "@/lib/cron-run-history";
 import { scanAgentOpportunities } from "@/lib/agent-loop/scan";
 import { scanNewsjackingOpportunities } from "@/lib/agent-loop/newsjacking";
 import { scanTrendOpportunities } from "@/lib/agent-loop/trend-radar";
@@ -89,6 +90,7 @@ async function discoverWorkspaceIds(
 // user-triggered via the Agent feed or weekly cadence; a scheduled job must
 // never create content the user did not request.
 export async function GET(req: Request) {
+  const cronStartedAt = new Date();
   const secret = process.env.CRON_SECRET;
   const auth = req.headers.get("authorization");
   if (!secret || auth !== `Bearer ${secret}`) {
@@ -286,9 +288,32 @@ export async function GET(req: Request) {
       }
     }
 
+    // Per-workspace errors are collected above and the route still returns
+    // ok:true — which is correct (one bad workspace must not sink the tick)
+    // but means a run where 3 of 40 workspaces threw looks identical to a
+    // clean one. Recording the split is the whole point of the history table.
+    const failedWorkspaces = results.filter((entry) => "error" in entry).length;
+    await recordCronRun({
+      job: "agent-loop",
+      status: cronRunStatus({
+        total: results.length,
+        failed: failedWorkspaces,
+      }),
+      startedAt: cronStartedAt,
+      counts: {
+        workspaces: results.length,
+        failed: failedWorkspaces,
+      },
+    });
     return NextResponse.json({ ok: true, workspaces: results });
   } catch (error) {
     console.error("agent-loop cron failed", (error as Error)?.message);
+    await recordCronRun({
+      job: "agent-loop",
+      status: "failed",
+      startedAt: cronStartedAt,
+      error,
+    });
     await postCronAlert({ cron: "agent-loop" }, error);
     return errorResponse(error);
   }

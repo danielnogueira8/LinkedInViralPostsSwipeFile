@@ -21,6 +21,10 @@ const ALLOWED_ADMIN_APP_FILES = new Set([
   "app/api/cron/topic-cluster-probe/route.ts",
   "app/api/health/route.ts",
   "app/api/internal/jobs/health/route.ts",
+  // Cron run history is PLATFORM telemetry: crons run across every workspace,
+  // so there is no workspace to scope to. Admin-or-CRON_SECRET gated, read
+  // only, and the table itself is service-role only (migration 176).
+  "app/api/internal/cron-stats/route.ts",
   "app/lm/[slug]/page.tsx", // intentionally public resource lookup
 ]);
 
