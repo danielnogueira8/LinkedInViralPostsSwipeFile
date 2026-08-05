@@ -7,12 +7,14 @@ import {
 } from "@/lib/agent-inbox/schedule";
 import { listAgentInboxWorkspaces } from "@/lib/agent-inbox/supabase";
 import { supabaseAdmin } from "@/lib/supabase";
+import { cronRunStatus, recordCronRun } from "@/lib/cron-run-history";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 export async function GET(request: Request) {
+  const cronStartedAt = new Date();
   const secret = process.env.CRON_SECRET;
   if (!secret || request.headers.get("authorization") !== `Bearer ${secret}`) {
     return NextResponse.json(
@@ -57,5 +59,23 @@ export async function GET(request: Request) {
       results.push({ workspaceId: workspace.workspaceId, error: "failed" });
     }
   }
+  // Same partial-failure shape as agent-loop: the per-workspace catch keeps a
+  // single bad workspace from sinking the tick, so a run with failures is
+  // indistinguishable from a clean one without this.
+  const failed = results.filter((entry) => "error" in entry).length;
+  await recordCronRun({
+    job: "agent-inbox",
+    status: cronRunStatus({ total: results.length, failed }),
+    startedAt: cronStartedAt,
+    counts: {
+      workspaces: results.length,
+      failed,
+      created: results.reduce(
+        (total, entry) =>
+          total + (typeof entry.created === "number" ? entry.created : 0),
+        0,
+      ),
+    },
+  });
   return NextResponse.json({ ok: true, results });
 }
