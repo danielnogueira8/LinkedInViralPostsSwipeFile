@@ -23,8 +23,8 @@ import type { LandingStats, LandingTopCreator } from "@/lib/landing-stats";
 import {
   AgentTrace,
   BlurWords,
+  HeroLandscapeWash,
   CountUp,
-  DotGridField,
   Magnetic,
   Reveal,
   RotatingPhrases,
@@ -114,7 +114,7 @@ export default function LandingClient({
   return (
     <div className="overflow-x-hidden bg-background text-foreground">
       <section className="relative px-4 pb-14 pt-12 sm:px-6 sm:pt-16 lg:pb-24 lg:pt-20">
-        <DotGridField />
+        <HeroLandscapeWash />
         <div className="relative mx-auto max-w-[1180px]">
           {/* Centred hero copy block; the product shot anchors below. */}
           <div className="flex flex-col items-center text-center">
