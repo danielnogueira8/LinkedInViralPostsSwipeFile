@@ -6,6 +6,8 @@ import {
   planDigest,
   selectDigestPosts,
   utcDayBounds,
+  digestWindow,
+  DIGEST_MAX_POST_AGE_DAYS,
   type DigestPost,
 } from "@/lib/daily-digest";
 
@@ -164,5 +166,46 @@ describe("utcDayBounds", () => {
   it("spans exactly 24 hours", () => {
     const { from, to } = utcDayBounds(new Date("2026-03-01T09:00:00.000Z"));
     expect(Date.parse(to) - Date.parse(from)).toBe(86_400_000);
+  });
+});
+
+describe("digestWindow — the bug that produced zero digests", () => {
+  const now = new Date("2026-08-06T14:15:00.000Z");
+
+  it("anchors on the scrape day, not the publish day", () => {
+    // Filtering on posted_at found almost nothing: the scrape pulls each
+    // creator's most recent post whatever its age, and gating means many
+    // creators are visited every ~36h. Every workspace fell under the floor.
+    const w = digestWindow(now);
+    expect(w.scrapedFrom).toBe("2026-08-06T00:00:00.000Z");
+    expect(w.scrapedTo).toBe("2026-08-07T00:00:00.000Z");
+  });
+
+  it("still bounds how old a post may be", () => {
+    // scraped_at alone over-collects in the other direction: the pipeline
+    // refreshes it on EVERY upsert, so a re-scraped week-old post would read
+    // as today's news.
+    const w = digestWindow(now);
+    expect(w.postedFrom).toBe("2026-08-03T00:00:00.000Z");
+    expect(Date.parse(w.scrapedFrom) - Date.parse(w.postedFrom)).toBe(
+      DIGEST_MAX_POST_AGE_DAYS * 86_400_000,
+    );
+  });
+
+  it("files under the scrape day", () => {
+    expect(digestWindow(now).digestDate).toBe("2026-08-06");
+  });
+
+  it("keeps the publish bound relative to the day, not to 'now'", () => {
+    // Otherwise a 02:00 run and a 14:00 run on the same day would use
+    // different windows and produce different digests for one date.
+    const early = digestWindow(new Date("2026-08-06T02:00:00.000Z"));
+    const late = digestWindow(new Date("2026-08-06T23:00:00.000Z"));
+    expect(early).toEqual(late);
+  });
+
+  it("honours a custom max age", () => {
+    const w = digestWindow(now, 1);
+    expect(w.postedFrom).toBe("2026-08-05T00:00:00.000Z");
   });
 });

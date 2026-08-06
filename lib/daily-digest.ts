@@ -177,3 +177,46 @@ export function utcDayBounds(now: Date): { from: string; to: string } {
   const end = new Date(start.getTime() + 86_400_000);
   return { from: start.toISOString(), to: end.toISOString() };
 }
+
+/**
+ * How far back a post may have been PUBLISHED and still count as today's news.
+ *
+ * The first version filtered on `posted_at >= today`, which produced zero
+ * digests across every workspace: the scrape pulls each creator's single most
+ * recent post whatever its age, and cadence gating means many creators are only
+ * visited every ~36h. So the number of posts a creator PUBLISHED today is far
+ * below the digest floor, even on a healthy scrape day.
+ *
+ * The digest is about what ARRIVED in the swipe file, so the window anchors on
+ * `scraped_at`. But `scraped_at` alone over-collects in the other direction: the
+ * pipeline refreshes it on every upsert (pipeline.ts), so a re-scraped week-old
+ * post looks like it arrived today. Hence both bounds — arrived today AND
+ * published recently enough to be worth calling a trend.
+ */
+export const DIGEST_MAX_POST_AGE_DAYS = 3;
+
+export type DigestWindow = {
+  /** Inclusive lower bound on scraped_at — the start of the UTC day. */
+  scrapedFrom: string;
+  /** Exclusive upper bound on scraped_at — the start of the next UTC day. */
+  scrapedTo: string;
+  /** Inclusive lower bound on posted_at, so stale re-scrapes are excluded. */
+  postedFrom: string;
+  /** The UTC date the digest files under. */
+  digestDate: string;
+};
+
+export function digestWindow(
+  now: Date,
+  maxAgeDays: number = DIGEST_MAX_POST_AGE_DAYS,
+): DigestWindow {
+  const { from, to } = utcDayBounds(now);
+  return {
+    scrapedFrom: from,
+    scrapedTo: to,
+    postedFrom: new Date(
+      Date.parse(from) - maxAgeDays * 86_400_000,
+    ).toISOString(),
+    digestDate: from.slice(0, 10),
+  };
+}
