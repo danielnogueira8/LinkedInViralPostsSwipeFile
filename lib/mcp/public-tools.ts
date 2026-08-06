@@ -29,6 +29,7 @@ export const PUBLIC_MCP_TOOLS = [
   { name: "list_lead_magnets", description: "List the workspace's saved lead magnets.", group: "Content", access: "Read" },
   { name: "get_lead_magnet", description: "Read one lead magnet with its complete Markdown content.", group: "Content", access: "Read" },
   { name: "create_lead_magnet", description: "Create a manual lead magnet from Markdown content.", group: "Content", access: "Create" },
+  { name: "check_draft", description: "Run a draft through SwipeIn's structural AI-tell detectors and get specific, actionable findings back — deterministic, so the same draft always returns the same verdict.", group: "Training", access: "Read" },
   { name: "get_writing_rules", description: "Read the drafting rules SwipeIn applies to its own generations — human-voice rules, the expanded AI-tell reference, structure variety, and the post archetype library — so an external draft can meet the same standard.", group: "Training", access: "Read" },
   { name: "get_voice", description: "Read the workspace's generated writing voice and patterns.", group: "Training", access: "Read" },
   { name: "create_voice", description: "Start voice-profile generation from a LinkedIn profile.", group: "Training", access: "Create" },
