@@ -10,6 +10,7 @@ export const PUBLIC_MCP_TOOLS = [
   { name: "get_post", description: "Read one tracked viral post by its id, including rendered original images when available.", group: "Research", access: "Read" },
   { name: "list_niches", description: "List the niches represented by tracked creators.", group: "Research", access: "Read" },
   { name: "get_top_from_batch", description: "Read the strongest recently published posts from the latest scrape.", group: "Research", access: "Read" },
+  { name: "analyze_posts", description: "Analyze what a set of source posts has in common — hook patterns, structure on the page, and writing mechanics — computed deterministically so the same posts always return the same brief.", group: "Research", access: "Read" },
   { name: "get_post_performance", description: "Read real LinkedIn results for this workspace's published posts — impressions, reach, likes, comments, shares, saves, sends, plus engagements and engagement rate — so advice can be grounded in what worked for this author.", group: "Research", access: "Read" },
   { name: "save_post", description: "Save a LinkedIn post to the workspace bookmark library.", group: "Research", access: "Create" },
   { name: "list_saved_posts", description: "List posts saved to the workspace bookmark library.", group: "Research", access: "Read" },
