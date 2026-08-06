@@ -1,4 +1,8 @@
-import { getThresholds, getTemplateThresholds } from "@/lib/viral";
+import {
+  getRelativeConfig,
+  getThresholds,
+  getTemplateThresholds,
+} from "@/lib/viral";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { SettingsForm } from "./form";
 import { DangerZone } from "./danger-zone";
@@ -12,10 +16,11 @@ export default async function SettingsPage() {
   // instead of short-circuiting to env/defaults. Without this the form
   // showed defaults forever — users thought their saves weren't sticking.
   const sb = await scopedSupabase();
-  const [viral, template, discovery] = await Promise.all([
+  const [viral, template, discovery, relative] = await Promise.all([
     getThresholds(sb.workspaceId),
     getTemplateThresholds(sb.workspaceId),
     getDiscoveryThresholds(sb.workspaceId, sb.raw),
+    getRelativeConfig(sb.workspaceId),
   ]);
   return (
     <PageShell>
@@ -23,7 +28,9 @@ export default async function SettingsPage() {
         title="Settings"
         description="Tune discovery thresholds and workspace-level account controls."
       />
-      <SettingsForm initial={{ viral, template, discovery }} />
+      <SettingsForm
+        initial={{ viral, template, discovery, relativeCutoffPct: relative.cutoffPct }}
+      />
 
       <div className="pt-2">
         <DangerZone />

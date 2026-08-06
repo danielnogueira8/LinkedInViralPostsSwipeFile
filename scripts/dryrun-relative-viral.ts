@@ -90,7 +90,9 @@ function scoreOf(p: { reactions: number; comments: number; reposts: number; vira
 }
 
 async function main() {
-  const cfg = getRelativeConfig();
+  // Env defaults here: the dry-run reports on the global classification, not
+  // on one workspace override.
+  const cfg = await getRelativeConfig();
   console.log("Relative-viral config:", cfg);
   console.log("Flat threshold:", FLAT);
   console.log("");
