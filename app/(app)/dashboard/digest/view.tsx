@@ -13,6 +13,8 @@ import {
   hookCommentary,
   parseDigest,
   referencedPostIds,
+  splitEvidence,
+  splitSectionLead,
   relativeDigestLabel,
   type DigestSectionId,
 } from "@/lib/digest-view-model";
@@ -42,6 +44,57 @@ const DISPLAYED_SECTIONS: DigestSectionId[] = ["theme", "hook", "format"];
  * raw post UUIDs are stripped — the ids are not actionable for a reader, and
  * the asterisks would show literally.
  */
+/**
+ * A section: the claim in readable type, its evidence as scannable rows.
+ *
+ * Everything used to render as ONE dense paragraph — the theme section is 429
+ * characters — so the claim and its supporting numbers had identical weight and
+ * you had to read the whole thing to find the point. The model already marks
+ * the claim in bold; this uses that instead of stripping it.
+ *
+ * Falls back to plain prose when the model marked no claim or the evidence is
+ * genuinely one continuous thought, so a reformat never invents structure that
+ * is not there.
+ */
+function SectionContent({ body }: { body: string }) {
+  const { claim, evidence } = splitSectionLead(body);
+  const items = splitEvidence(evidence);
+
+  if (!claim && items.length === 0) return <Prose body={body} />;
+
+  return (
+    <div className="space-y-3">
+      {claim ? (
+        <p className="text-[15px] font-medium leading-6 text-foreground">
+          {claim}
+        </p>
+      ) : null}
+
+      {items.length > 0 ? (
+        <ul className="space-y-1.5">
+          {items.map((item, i) => (
+            <li
+              key={i}
+              className="flex flex-wrap items-baseline gap-x-2 text-sm leading-6"
+            >
+              <span
+                aria-hidden
+                className="mt-2 size-1 shrink-0 rounded-full bg-muted-foreground/40"
+              />
+              {item.title ? (
+                <span className="font-medium text-foreground">{item.title}</span>
+              ) : null}
+              <span className="text-muted-foreground">{item.detail}</span>
+            </li>
+          ))}
+        </ul>
+      ) : evidence ? (
+        <p className="text-sm leading-6 text-muted-foreground">{evidence}</p>
+      ) : null}
+    </div>
+  );
+}
+
 function Prose({ body }: { body: string }) {
   const paragraphs = body
     .split(/\n{2,}/)
@@ -140,7 +193,7 @@ function DigestBody({
 
         return (
           <SectionCard key={section.id} id={section.id} title={section.title}>
-            <Prose body={section.body} />
+            <SectionContent body={section.body} />
           </SectionCard>
         );
       })}
