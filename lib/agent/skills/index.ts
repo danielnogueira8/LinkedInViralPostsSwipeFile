@@ -269,7 +269,17 @@ Clipped, one-line-paragraph, fragment-heavy LinkedIn cadence is now a tell itsel
 - Do not thesaurus-swap into weirdness, scatter random typos or scrub personality along with the tells.`;
 
 // Combines the field-tested detector protocol from the Claude `anti-ai` skill
-// with the reader-facing audit workflow and reference taxonomy from `de-ai`.
+// with the reader-facing audit workflow and reference taxonomy from `de-ai`,
+// plus the voice-preservation principles, DETECT mode and self-check pass from
+// the Claude `no-ai-slop` skill (SKILL.md + eval.md).
+//
+// The three sources solve different halves of the same problem, which is why
+// they compose rather than duplicate: `anti-ai` is about beating a statistical
+// classifier and licenses heavy roughening; `no-ai-slop` is about a human
+// editor who must NOT flatten the writer while cleaning tells. Its rules apply
+// to surgical and detect work only — detector-first mode explicitly overrides
+// them, because the two goals genuinely conflict.
+//
 // The reference files are inlined in the shared block above because loose
 // markdown files are not guaranteed to ship in the Next.js serverless bundle.
 //
@@ -299,6 +309,7 @@ A clean tell audit does NOT prove a detector pass. Pangram, GPTZero and Original
 
 - Plain \`/anti-ai\`, or any request to pass a detector: use DETECTOR-FIRST mode. You may restructure, cut, reorder and roughen heavily. Preserve the core facts and message, the author's intent and audience, and the format. The detector protocol overrides the surgical-preservation rules below.
 - An explicit request to preserve the piece, keep its structure, or only remove reader-facing tells: use SURGICAL mode. Preserve every point in its original order, keep the format, stay within roughly ±15% of the original length, preserve the hook's and ending's jobs, and keep the author's voice.
+- A request to AUDIT rather than rewrite — "does this read as AI?", "flag what's wrong", "scan this", "don't rewrite it" — use DETECT mode and stop there. Name each pattern that appears, quote the offending line, and give the fix in a few words. Do not rewrite, do not score the draft, and do not claim to know whether an AI wrote it: detectors guess, while a named pattern is evidence the user can check for themselves. Offer to run the edit afterwards.
 
 Never invent anecdotes, names, dates, numbers, quotes, studies or statistics in either mode. If a useful concrete detail is missing, insert a clearly marked placeholder and list it after the draft. Do not silently turn a hypothetical into a real event.
 
@@ -358,6 +369,33 @@ Fix in this order:
 
 ${ANTI_AI_READER_TELL_RULES}
 
+## Editing principles (SURGICAL and DETECT modes)
+
+Detector-first mode overrides these; it is allowed to roughen a piece past
+recognition. In surgical and detect work the opposite risk applies — turning
+distinctive writing into generic polished prose, which is its own kind of slop.
+
+- Make the MINIMUM EFFECTIVE EDIT. Fix the tells, the errors and the genuinely
+  unclear passages. Leave strong human sentences alone. A rough draft with a
+  real voice should still sound like the same person afterwards.
+- Before editing, notice the draft's vocabulary, cadence, bluntness, humor,
+  uncertainty, digressions and level of polish. Keep the traits that feel
+  personal to the writer. Do not make every paragraph equally tidy, and do not
+  rewrite a distinctive line merely for consistency with its neighbours.
+- Keep useful edge: strong opinions, blunt language, humor, profanity,
+  self-interruptions and honest admissions that belong to the writer. Do not
+  swap them for safer or more professional wording.
+- Keep the writer's structure and detours unless the structure is hurting the
+  piece. If you reorganize, say why in the change summary.
+- Cut empty qualifiers, but KEEP "I think", "maybe" or "to be honest" when they
+  carry real uncertainty, self-awareness or the writer's spoken rhythm.
+- Be concrete: names, numbers, dates and mechanisms beat abstractions. Protect a
+  specific fact instead of smoothing it into generic importance — "cut review
+  time from 30 minutes to 8", never "significantly improved productivity".
+- Make verbs do the work ("decided", not "made a decision"). Prefer "is" and
+  "has" where they are clearer than a fake-strong verb.
+- Never invent claims, examples, stats, quotes or opinions to fill a gap. Ask.
+
 ## Step 3: verify and deliver
 
 Check the mode first.
@@ -366,11 +404,26 @@ For detector-first work: is it one incident that cannot be outlined? Does it con
 
 For surgical work: are all original points present in order? Is length within roughly 15%? Did tier 1 reach zero and tier 2 fall below cluster thresholds? Is there no negative parallelism, rule of three or rhetorical Q&A? Are em dashes at one or fewer? Did rhythm improve without fragmentation? Did the author's voice survive?
 
+Then run this pass over your own edit before returning it. Answer each one pass or fail; on any fail, fix the draft and check again. Do this yourself — it does not need a second agent, and skipping it is how a rewrite ships carrying the tells it was supposed to remove.
+
+1. Does the edit preserve the user's point without adding claims, examples, stats, quotes or opinions that were not in the source?
+2. Does it preserve the writer's distinctive vocabulary, cadence, bluntness, humor, uncertainty and level of polish?
+3. Does it leave strong human sentences alone rather than rewriting them for consistency?
+4. Is the amount of cutting proportional to the actual slop, with no aggressive compression that strips out character?
+5. Are banned words, filler phrases and empty adverbs gone unless quoted as examples?
+6. Are binary contrasts, negative lists, rhetorical setups, throat-clearing openers, faux-insight setups and colon reveals removed?
+7. Are importance puffery and weasel attribution replaced with plain facts and named sources, or flagged for the user where no source exists?
+8. Were fake-profound kicker lines DELETED rather than rewritten into better metaphors, and summary-recap endings cut so the piece ends on a concrete point, takeaway or next action?
+9. Is formatting slop gone: emoji headings, decorative mid-sentence bold, bullets that should be prose, headers over two-sentence sections?
+10. Would the writer recognize the result as their own voice, and would it sound natural read aloud to a sharp colleague?
+
 Output:
 
 1. The edited text, ready to copy, with no inline annotations.
 2. \`Tells: N → M\` on one line.
 3. Three to six bullets naming the biggest changes, all placeholders that need real values, and—in interleave mode—which lines remain verbatim human text.
+
+DETECT mode returns no draft at all. List each pattern you found, with the quoted line and a short fix, then offer to make the edit. Never rewrite, never score the draft out of ten, and never assert that an AI wrote it.
 
 No preamble, no permission question and no "I hope this helps."`,
 };

@@ -89,6 +89,70 @@ describe("imported skill content survived the port", () => {
     expect(antiAi).toMatch(/never invent anecdotes, names, dates, numbers/i);
   });
 
+  // ---- no-ai-slop contribution -------------------------------------------
+  //
+  // The `no-ai-slop` skill solves the OTHER half of the problem: anti-ai's
+  // detector protocol licenses heavy roughening, while no-ai-slop is a human
+  // editor that must not flatten the writer while cleaning tells. These pin the
+  // parts that would be easy to lose in a future trim.
+
+  test("anti-ai has an audit-only mode that returns no rewrite", () => {
+    // Without this, "does this read as AI?" gets answered with a rewritten
+    // draft the user never asked for.
+    const antiAi = body("anti-ai");
+    expect(antiAi).toMatch(/DETECT mode/);
+    expect(antiAi).toMatch(/quote the offending line/i);
+    expect(antiAi).toMatch(/DETECT mode returns no draft/i);
+  });
+
+  test("detect mode refuses to score or claim AI authorship", () => {
+    // Detectors guess; a named pattern is evidence the user can check. Scoring
+    // a draft out of ten or asserting "an AI wrote this" is exactly the false
+    // authority the source skill forbids.
+    const antiAi = body("anti-ai");
+    expect(antiAi).toMatch(/detectors guess/i);
+    expect(antiAi).toMatch(/never score the draft out of ten/i);
+    expect(antiAi).toMatch(/never assert that an AI wrote it/i);
+  });
+
+  test("voice preservation is scoped to surgical and detect, not detector-first", () => {
+    // The two goals genuinely conflict: detector-first is SUPPOSED to roughen a
+    // piece past recognition. Applying minimum-effective-edit there would
+    // neuter the protocol, so the override has to stay explicit.
+    const antiAi = body("anti-ai");
+    expect(antiAi).toMatch(/Editing principles \(SURGICAL and DETECT modes\)/);
+    expect(antiAi).toMatch(/MINIMUM EFFECTIVE EDIT/);
+    expect(antiAi).toMatch(/Detector-first mode overrides these/i);
+  });
+
+  test("anti-ai keeps the edit from sanding off the writer", () => {
+    const antiAi = body("anti-ai");
+    // Each of these exists because "cleaning" a draft into generic polished
+    // prose is its own kind of slop.
+    expect(antiAi).toMatch(/Leave strong human sentences alone/i);
+    expect(antiAi).toMatch(/profanity|blunt language/i);
+    expect(antiAi).toMatch(/KEEP "I think", "maybe" or "to be honest"/);
+    expect(antiAi).toMatch(/Never invent claims, examples, stats/i);
+  });
+
+  test("anti-ai self-checks its own edit before returning it", () => {
+    // The eval is the part that makes the rules bite. Skipping it is how a
+    // rewrite ships carrying the tells it was meant to remove — and it must run
+    // inline, not via a second agent we would have to pay for.
+    const antiAi = body("anti-ai");
+    expect(antiAi).toMatch(/Answer each one pass or fail/i);
+    expect(antiAi).toMatch(/on any fail, fix the draft and check again/i);
+    expect(antiAi).toMatch(/does not need a second agent/i);
+  });
+
+  test("kicker lines are deleted, not rewritten into better metaphors", () => {
+    // The specific instruction most likely to be softened by a future edit,
+    // and the one that changes the output most.
+    expect(body("anti-ai")).toMatch(
+      /DELETED rather than rewritten into better metaphors/i,
+    );
+  });
+
   test("the -jacking skills gained worked patterns", () => {
     for (const id of ["newsjacking", "brandjacking", "namejacking"]) {
       expect(body(id), id).toMatch(/Worked patterns/);
