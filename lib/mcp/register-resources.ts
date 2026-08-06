@@ -38,6 +38,7 @@ import {
   sortPerformanceRows,
 } from "@/lib/post-performance";
 import { analyzePostPatterns } from "@/lib/post-pattern-analysis";
+import { buildWritingRules, WRITING_RULE_SECTIONS } from "@/lib/writing-rules";
 import { trackedAccountIdsForService } from "@/lib/supabase-scoped";
 import { selectAllRows, selectInChunks } from "@/lib/db-paginate";
 import { dbErrorContent, errorContent, jsonContent, notFoundContent } from "./util";
@@ -748,6 +749,42 @@ function registerCreatorStyleTools(server: McpServer, workspaceFromExtra: Worksp
         requested_posts: args.post_ids.length,
         ...analysis,
       });
+    } catch (e) { return dbErrorContent("mcp_resource_tool", e); }
+  });
+
+  // -------------------------------------------------------------------------
+  // get_writing_rules
+  //
+  // The craft rules as INSTRUCTIONS. Same strings the writer is given; until
+  // now they only existed inside the pipeline, so a post drafted by an external
+  // agent could not be held to the standard even when the author wanted it to
+  // be. The caller's model spends its own tokens and the quality bar travels
+  // with the rules.
+  //
+  // Sectioned because the corpus is ~24k characters: returning all of it every
+  // call would evict a caller's working context to deliver rules it did not ask
+  // for. No workspace data and no model call — this is a static read.
+  // -------------------------------------------------------------------------
+  server.registerTool("get_writing_rules", {
+    title: "Get SwipeIn's writing rules",
+    description:
+      "Read the drafting rules SwipeIn applies to its own generations: how to write like a human rather than an assistant, the expanded AI-tell reference (banned constructions, word bank, default swaps, the rhythm trap), how to vary post structure, and the archetype library. " +
+      "Load these before drafting or editing a LinkedIn post so the output matches the standard SwipeIn holds itself to. Pair with get_voice — these are the general rules, get_voice is this specific author's habits, and the author's evidenced habits win where the two disagree. " +
+      "Sections: 'voice' (core rules), 'ai_tells' (the detailed reference), 'structure' (architecture variety), 'formats' (post archetypes), 'language'. Defaults to voice + ai_tells; request more only when you need them, as the full set is long.",
+    inputSchema: {
+      sections: z
+        .array(z.enum(WRITING_RULE_SECTIONS))
+        .optional()
+        .describe(
+          "Which rule sections to return. Defaults to ['voice','ai_tells'].",
+        ),
+    },
+  }, async (args) => {
+    try {
+      // Deliberately no workspace lookup: these rules are the same for every
+      // caller, so requiring workspace resolution would add a failure mode to
+      // a static read for no benefit.
+      return jsonContent({ ok: true, ...buildWritingRules(args.sections) });
     } catch (e) { return dbErrorContent("mcp_resource_tool", e); }
   });
 }
