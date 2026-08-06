@@ -8,6 +8,8 @@ import {
   referencedPostIds,
   relativeDigestLabel,
   splitAngles,
+  splitEvidence,
+  splitSectionLead,
 } from "@/lib/digest-view-model";
 
 // The input here is MODEL OUTPUT, so it drifts. Every test is either a real
@@ -224,5 +226,100 @@ describe("referencedPostIds — the evidence behind the brief", () => {
     expect(referencedPostIds("[a5677d81-b17b] and [not-a-uuid-at-all]")).toEqual(
       [],
     );
+  });
+});
+
+describe("splitSectionLead — claim first, evidence after", () => {
+  it("promotes the bolded claim the model already writes", () => {
+    // Every section arrives as ONE dense paragraph (theme is 429 chars), so
+    // the claim and its numbers had equal weight. The model marks the claim in
+    // bold; cleanInline used to strip that signal instead of using it.
+    const { claim, evidence } = splitSectionLead(
+      parseDigest(REAL_DIGEST).sections[0].body,
+    );
+    expect(claim).toBe(
+      "Claude/AI agents turning revenue and content work into operating systems",
+    );
+    expect(evidence).toContain("Complete Claude Revenue System");
+  });
+
+  it("strips trailing punctuation from the claim", () => {
+    expect(splitSectionLead("**A claim here.** And evidence follows.").claim).toBe(
+      "A claim here",
+    );
+  });
+
+  it("returns no claim when the model marked none", () => {
+    // Guessing at a first sentence would put an arbitrary phrase in large type.
+    const { claim, evidence } = splitSectionLead("Just prose, no emphasis at all.");
+    expect(claim).toBeNull();
+    expect(evidence).toBe("Just prose, no emphasis at all.");
+  });
+
+  it("ignores bold that appears mid-paragraph", () => {
+    // Mid-paragraph bold is emphasis, not a heading.
+    expect(splitSectionLead("Some lead-in **then bold** after.").claim).toBeNull();
+  });
+
+  it("keeps a claim with no evidence as plain prose", () => {
+    // A lead with nothing under it is just the section's only sentence.
+    const { claim } = splitSectionLead("**The whole section is this.**");
+    expect(claim).toBeNull();
+  });
+});
+
+describe("splitEvidence — scannable rows", () => {
+  it("splits quoted post titles from their engagement", () => {
+    const { evidence } = splitSectionLead(parseDigest(REAL_DIGEST).sections[0].body);
+    const items = splitEvidence(evidence);
+    expect(items).toHaveLength(2);
+    expect(items[0].title).toBe("Complete Claude Revenue System");
+    expect(items[0].detail).toBe("827 reactions, 2,957 comments");
+  });
+
+  it("leaves no unbalanced bracket on the detail", () => {
+    // The model writes engagement inside "(...)"; splitting mid-wrapper left a
+    // trailing ")" that reads as a typo.
+    const { evidence } = splitSectionLead(parseDigest(REAL_DIGEST).sections[0].body);
+    for (const item of splitEvidence(evidence)) {
+      expect(item.detail).not.toMatch(/[()]/);
+    }
+  });
+
+  it("splits semicolon-separated evidence into one item per clause", () => {
+    // The production FORMAT section lists several posts separated by ";".
+    const items = splitEvidence(
+      "the Revenue System generated 827 reactions; the AEO list generated 659 reactions; the content list generated 79 reactions",
+    );
+    expect(items).toHaveLength(3);
+    expect(items[0].title).toBeNull();
+    expect(items[0].detail).toBe("Revenue System generated 827 reactions");
+  });
+
+  it("leaves a single-clause section as prose", () => {
+    // The fixture's FORMAT section has no semicolons — one continuous thought,
+    // so a list would be invented structure.
+    const { evidence } = splitSectionLead(parseDigest(REAL_DIGEST).sections[2].body);
+    expect(splitEvidence(evidence)).toEqual([]);
+  });
+
+  it("drops the lead-in that restates the claim", () => {
+    // "over-performed as a repeatable structure: the Revenue System
+    // generated..." — the preamble repeats the claim and made item one read
+    // twice as long as the rest.
+    const items = splitEvidence(
+      "over-performed as a repeatable structure: the A list got 10 reactions; the B list got 20 reactions",
+    );
+    expect(items[0].detail).toBe("A list got 10 reactions");
+  });
+
+  it("returns nothing when the evidence is one continuous thought", () => {
+    // The caller then renders a paragraph — a reformat must never invent
+    // structure that is not there.
+    expect(splitEvidence("A single explanatory sentence with no list.")).toEqual([]);
+  });
+
+  it("does not split on a single semicolon into one item", () => {
+    expect(splitEvidence("Only one clause here; ok").length).toBe(0);
   });
 });

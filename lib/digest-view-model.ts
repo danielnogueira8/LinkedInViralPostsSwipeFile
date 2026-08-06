@@ -227,3 +227,94 @@ export function referencedPostIds(content: string): string[] {
     [];
   return [...new Set(matches.map((id) => id.toLowerCase()))];
 }
+
+// ---------------------------------------------------------------------------
+// Readable section shape.
+//
+// Every section arrived as ONE dense paragraph with citations inlined, so the
+// claim and its evidence had equal weight and you could not find the point
+// without reading past the numbers.
+//
+// The model already separates the two: it opens each section with the claim in
+// **bold**, then lists evidence. cleanInline was stripping that emphasis and
+// flattening the result. These helpers use the signal instead of discarding it.
+// ---------------------------------------------------------------------------
+
+export type SectionLead = {
+  /** The claim, if the model marked one. */
+  claim: string | null;
+  /** Everything after it. */
+  evidence: string;
+};
+
+/**
+ * Split a section into its claim and its supporting evidence.
+ *
+ * Only treats leading **bold** as the claim — bold appearing mid-paragraph is
+ * emphasis, not a heading, and promoting it would put a random phrase in large
+ * type. Returns a null claim when the model did not mark one, so the caller
+ * renders ordinary prose rather than guessing at a first sentence.
+ */
+export function splitSectionLead(body: string): SectionLead {
+  const match = body.match(/^\s*\*\*([\s\S]+?)\*\*\s*/);
+  if (!match) return { claim: null, evidence: cleanInline(body) };
+  const claim = cleanInline(match[1]).replace(/[.:;,\s]+$/, "");
+  const evidence = cleanInline(body.slice(match[0].length));
+  // A claim with no evidence behind it is just the section's only sentence;
+  // keep it as prose rather than showing a lead with nothing under it.
+  if (!evidence) return { claim: null, evidence: cleanInline(body) };
+  return { claim, evidence };
+}
+
+export type EvidenceItem = {
+  /** The post title, when the model quoted one. */
+  title: string | null;
+  /** Engagement or other detail. */
+  detail: string;
+};
+
+/**
+ * Break evidence prose into scannable items.
+ *
+ * Two shapes appear in production: quoted post titles each followed by their
+ * numbers ("Complete Claude Revenue System" (827 reactions, 2,957 comments)),
+ * and semicolon-separated clauses. Both become one item per post so the eye can
+ * run down a column instead of parsing a 429-character sentence.
+ *
+ * Returns [] when neither shape is present — the caller then renders the
+ * evidence as a paragraph, which is correct for a section that genuinely is
+ * one continuous thought.
+ */
+export function splitEvidence(evidence: string): EvidenceItem[] {
+  const quoted = [
+    ...evidence.matchAll(/[""]([^""]+)[""]\s*\(?([^""()]*\([^)]*\)|[^""]*?)(?=[""]|$)/g),
+  ];
+  if (quoted.length >= 2) {
+    return quoted.map((match) => ({
+      title: match[1].trim(),
+      // Trailing ")" and "." are left over from the inline "(...)" wrapper the
+      // model writes around engagement; unbalanced they read as a typo.
+      detail: cleanInline(match[2] ?? "")
+        .replace(/^[\s,;:—–(-]+/, "")
+        .replace(/[\s,;:—–.)-]+$/, ""),
+    }));
+  }
+  const clauses = evidence
+    .split(/;\s*/)
+    .map((clause) => {
+      // The first clause usually carries lead-in prose before a colon
+      // ("over-performed as a repeatable structure: the Revenue System
+      // generated..."). That preamble restates the claim, so drop it and keep
+      // the evidence — otherwise item one reads twice as long as the rest.
+      const afterColon = clause.includes(":")
+        ? clause.slice(clause.indexOf(":") + 1)
+        : clause;
+      return cleanInline(afterColon).replace(/^(?:and\s+)?(?:the\s+)?/i, "");
+    })
+    .map((clause) => clause.replace(/[\s.;,]+$/, ""))
+    .filter((clause) => clause.length > 8);
+  if (clauses.length >= 2) {
+    return clauses.map((clause) => ({ title: null, detail: clause }));
+  }
+  return [];
+}
