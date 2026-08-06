@@ -14,6 +14,10 @@ import {
   DIGEST_START_DEADLINE_MS,
   MAX_WORKSPACES_PER_TICK,
   runWithConcurrency,
+  looksTruncated,
+  DIGEST_SYSTEM_PROMPT,
+  digestWorkspaceFilter,
+  isProductionWorkspaceId,
   type DigestPost,
 } from "@/lib/daily-digest";
 
@@ -329,5 +333,104 @@ describe("the tick must fit inside the function budget", () => {
     // ~35s per real reasoning call, 40 serial calls is 23 minutes.
     const worstCaseMs = (MAX_WORKSPACES_PER_TICK / DIGEST_CONCURRENCY) * 40_000;
     expect(worstCaseMs).toBeLessThanOrEqual(DIGEST_START_DEADLINE_MS);
+  });
+});
+
+describe("truncation — the failure that looks like success", () => {
+  it("flags a response that hit the ceiling exactly", () => {
+    // Two of nine digests in the first real run stopped at exactly the cap,
+    // cut mid-token. One died inside section 1's post list, so sections 2-4
+    // never existed — yet the row was written and content was non-empty.
+    expect(looksTruncated(DIGEST_MAX_OUTPUT_TOKENS)).toBe(true);
+    expect(looksTruncated(DIGEST_MAX_OUTPUT_TOKENS + 50)).toBe(true);
+  });
+
+  it("does not flag a response that finished with room to spare", () => {
+    // A false "truncated" on a good digest would be its own bug.
+    expect(looksTruncated(DIGEST_MAX_OUTPUT_TOKENS - 1)).toBe(false);
+    expect(looksTruncated(2984)).toBe(false);
+  });
+
+  it("does not flag missing usage data as truncation", () => {
+    expect(looksTruncated(null)).toBe(false);
+    expect(looksTruncated(undefined)).toBe(false);
+  });
+
+  it("honours an explicit ceiling", () => {
+    expect(looksTruncated(4000, 4000)).toBe(true);
+    expect(looksTruncated(4000, 6000)).toBe(false);
+  });
+});
+
+describe("the prompt bounds its own length", () => {
+  it("caps how many posts each section may cite", () => {
+    // Both truncations died inside an unbounded evidence list. A bigger budget
+    // alone would just let that list run longer.
+    expect(DIGEST_SYSTEM_PROMPT).toMatch(/AT MOST 4 posts/);
+  });
+
+  it("tells the model which sections matter most if space runs short", () => {
+    // The sections lost to truncation were 3 and 4 — the actionable half.
+    expect(DIGEST_SYSTEM_PROMPT).toMatch(/Sections 3 and 4 are the ones the reader acts on/);
+  });
+
+  it("keeps the budget above the observed truncation ceiling", () => {
+    // 4,000 was the value that truncated two of nine.
+    expect(DIGEST_MAX_OUTPUT_TOKENS).toBeGreaterThan(4000);
+  });
+});
+
+describe("production workspaces only", () => {
+  // The exact ids from the first real run: 2 production, 7 dev leftovers that
+  // were each paid for.
+  const REAL_RUN = [
+    "user_3GakrmqrbJ7DbKiyvbCmkMokcbK",
+    "org_3DzZc1zkEeSFKfpxzTjlQTNF4en",
+    "org_3E1hQI93cUNZIq6XGnIyB583O9j",
+    "org_3GMstpTViCJ7WihxbY9VUy1uHDB",
+    "org_3E0ABorFqs4F2mAw1JOEPIkMfF3",
+    "org_3EDzUbrMCekOvq6F1i3dhMBvmxu",
+    "org_3GbDclFJwjEYToWPl1OflyNRVwJ",
+    "org_3EDEX416WBXyu5eHMVLJUxUpXL9",
+    "user_3GrYjpEpqdiqHZ3cpw5faGSRXKd",
+  ];
+
+  it("keeps user_ ids and drops org_ ids", () => {
+    // workspaceId IS the Clerk userId (lib/workspace.ts), so a live workspace
+    // can only be user_*. org_* rows are dev-instance leftovers.
+    expect(isProductionWorkspaceId("user_3GakrmqrbJ7DbKiyvbCmkMokcbK")).toBe(true);
+    expect(isProductionWorkspaceId("org_3DzZc1zkEeSFKfpxzTjlQTNF4en")).toBe(false);
+  });
+
+  it("would have cut the first run from 9 workspaces to 2", () => {
+    const { eligible, excluded } = digestWorkspaceFilter(REAL_RUN, false);
+    expect(eligible).toEqual([
+      "user_3GakrmqrbJ7DbKiyvbCmkMokcbK",
+      "user_3GrYjpEpqdiqHZ3cpw5faGSRXKd",
+    ]);
+    expect(excluded).toHaveLength(7);
+  });
+
+  it("reports what it excluded rather than dropping it silently", () => {
+    // "2 workspaces" with no explanation looks like data loss; the count makes
+    // the filter visible in the same log line as the cost.
+    const { excluded } = digestWorkspaceFilter(REAL_RUN, false);
+    expect(excluded.every((id) => id.startsWith("org_"))).toBe(true);
+  });
+
+  it("can be re-enabled for a backfill without a redeploy", () => {
+    const { eligible, excluded } = digestWorkspaceFilter(REAL_RUN, true);
+    expect(eligible).toHaveLength(9);
+    expect(excluded).toEqual([]);
+  });
+
+  it("rejects an unknown prefix rather than assuming it is production", () => {
+    // Fail closed: an id shape we do not recognise is not silently billed.
+    expect(isProductionWorkspaceId("ws_abc123")).toBe(false);
+    expect(isProductionWorkspaceId("")).toBe(false);
+  });
+
+  it("handles an empty roster", () => {
+    expect(digestWorkspaceFilter([], false)).toEqual({ eligible: [], excluded: [] });
   });
 });
