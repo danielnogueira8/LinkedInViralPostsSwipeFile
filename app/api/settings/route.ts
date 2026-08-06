@@ -7,6 +7,7 @@ import {
   DEFAULT_DISCOVERY_THRESHOLDS,
   normalizeDiscoveryThresholds,
 } from "@/lib/discovery-thresholds";
+import { normalizeCutoffPct, RELATIVE_CUTOFF_DISABLED } from "@/lib/viral";
 
 export const runtime = "nodejs";
 
@@ -30,6 +31,13 @@ const bodySchema = z.object({
       }),
     })
     .default(DEFAULT_DISCOVERY_THRESHOLDS),
+  // Top N% of each creator's own posts. RELATIVE_CUTOFF_DISABLED (100) turns
+  // the per-creator gate off entirely, which is the default.
+  relative: z
+    .object({
+      cutoff_pct: z.number().int().min(1).max(RELATIVE_CUTOFF_DISABLED),
+    })
+    .optional(),
 });
 
 export async function GET() {
@@ -37,7 +45,12 @@ export async function GET() {
     const sb = await scopedSupabase();
     const { data, error } = await sb
       .settings()
-      .in("key", ["viral_thresholds", "template_thresholds", "discovery_thresholds"]);
+      .in("key", [
+        "viral_thresholds",
+        "template_thresholds",
+        "discovery_thresholds",
+        "viral_relative",
+      ]);
     if (error) throw error;
     const byKey = Object.fromEntries((data ?? []).map((r) => [r.key, r.value]));
     // Fallbacks must match DEFAULT_VIRAL / DEFAULT_TEMPLATE in lib/viral.ts so
@@ -50,6 +63,15 @@ export async function GET() {
       discovery: normalizeDiscoveryThresholds(
         byKey.discovery_thresholds ?? DEFAULT_DISCOVERY_THRESHOLDS,
       ),
+      // Must agree with getRelativeConfig()'s default in lib/viral.ts, or the
+      // settings page would show a cutoff the pipeline is not applying.
+      relative: {
+        cutoff_pct:
+          normalizeCutoffPct(
+            (byKey.viral_relative as { cutoff_pct?: unknown } | undefined)
+              ?.cutoff_pct,
+          ) ?? RELATIVE_CUTOFF_DISABLED,
+      },
     });
   } catch (e) {
     return errorResponse(e);
@@ -63,13 +85,17 @@ export async function POST(req: Request) {
     if (!parsed.success) return NextResponse.json({ ok: false, error: parsed.error.message }, { status: 400 });
     const sb = await scopedSupabase();
 
-    const [r1, r2, r3] = await Promise.all([
+    const [r1, r2, r3, r4] = await Promise.all([
       sb.upsertSetting("viral_thresholds", parsed.data.viral),
       sb.upsertSetting("template_thresholds", parsed.data.template),
       sb.upsertSetting("discovery_thresholds", parsed.data.discovery),
+      sb.upsertSetting(
+        "viral_relative",
+        parsed.data.relative ?? { cutoff_pct: RELATIVE_CUTOFF_DISABLED },
+      ),
     ]);
-    if (r1.error || r2.error || r3.error) {
-      return errorResponse(r1.error || r2.error || r3.error);
+    if (r1.error || r2.error || r3.error || r4.error) {
+      return errorResponse(r1.error || r2.error || r3.error || r4.error);
     }
 
     // Finding #9 fix — DO NOT bulk-UPDATE the global posts.is_viral here.

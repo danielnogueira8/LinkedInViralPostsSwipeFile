@@ -272,7 +272,9 @@ export async function runDailyPipeline(
       total: accounts.length,
     });
     const thresholds = await getThresholds(workspaceId ?? null);
-    const relConfig = getRelativeConfig();
+    // Per-workspace: the relative cutoff is a workspace setting now. Read
+    // ONCE here, not per post — decideRelativeViral stays synchronous.
+    const relConfig = await getRelativeConfig(workspaceId ?? null);
     const templateOutlierConfig = getTemplateOutlierConfig();
     // How many rows of per-creator history to keep. Must serve BOTH gates
     // below: relative virality (relConfig.window) and the template-outlier

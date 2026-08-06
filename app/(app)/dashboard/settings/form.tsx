@@ -6,10 +6,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { StatusPill, Toolbar } from "@/components/app-surface";
-import { Gauge, Loader2, Save } from "lucide-react";
+import { Gauge, Loader2, Save, TrendingUp } from "lucide-react";
 import { toast } from "sonner";
 import { fetchJson } from "@/lib/api-fetch";
 import type { DiscoveryThresholds } from "@/lib/discovery-thresholds";
+import { RELATIVE_CUTOFF_DISABLED } from "@/lib/viral";
 
 type Pair = { min_reactions: number; min_comments: number };
 
@@ -62,8 +63,27 @@ function ThresholdSwitch({
 export function SettingsForm({
   initial,
 }: {
-  initial: { viral: Pair; template: Pair; discovery: DiscoveryThresholds };
+  initial: {
+    viral: Pair;
+    template: Pair;
+    discovery: DiscoveryThresholds;
+    relativeCutoffPct: number;
+  };
 }) {
+  // The relative gate is "on" whenever the cutoff is below 100 — 100 means
+  // every post is in the top 100% of its creator's history, i.e. no filter.
+  // Remembering the last real value means toggling off and back on does not
+  // silently reset a workspace's tuned cutoff to the default.
+  const [relativeEnabled, setRelativeEnabled] = useState(
+    initial.relativeCutoffPct < RELATIVE_CUTOFF_DISABLED,
+  );
+  const [relativeCutoff, setRelativeCutoff] = useState(
+    String(
+      initial.relativeCutoffPct < RELATIVE_CUTOFF_DISABLED
+        ? initial.relativeCutoffPct
+        : 20,
+    ),
+  );
   const [regularEnabled, setRegularEnabled] = useState(initial.discovery.regular.enabled);
   const [regularLikes, setRegularLikes] = useState(
     String(initial.discovery.regular.minLikes),
@@ -92,6 +112,13 @@ export function SettingsForm({
         minComments: toNonNegInt(leadMagnetComments),
       },
     };
+    // 1-99 only: 0 would mean "top 0%" (nothing qualifies) and 100 is the
+    // off switch, which the toggle owns rather than the number field.
+    const cutoffPct = toNonNegInt(relativeCutoff);
+    if (relativeEnabled && (cutoffPct < 1 || cutoffPct > 99)) {
+      toast.error("Top-performer cutoff must be between 1 and 99 percent.");
+      return;
+    }
     const fields = [
       discovery.regular.minLikes,
       discovery.leadMagnet.minComments,
@@ -115,6 +142,9 @@ export function SettingsForm({
             viral,
             template,
             discovery,
+            relative: {
+              cutoff_pct: relativeEnabled ? cutoffPct : RELATIVE_CUTOFF_DISABLED,
+            },
           }),
         },
       );
@@ -203,6 +233,62 @@ export function SettingsForm({
                   disabled={!leadMagnetEnabled}
                 />
               </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="overflow-hidden border-border/70 bg-card/90 shadow-soft">
+        <CardHeader className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-2">
+          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-primary/10 bg-primary/[0.07] text-primary">
+            <TrendingUp className="h-4 w-4" />
+          </div>
+          <CardTitle className="min-w-0 text-base">
+            Top performers only
+          </CardTitle>
+          <CardDescription className="col-span-2 sm:col-span-1 sm:col-start-2">
+            Off by default: every post that clears the minimums above counts.
+            Turn this on to also require a post to be among a creator&rsquo;s own
+            best, judged against their recent history rather than a fixed
+            number. A big account&rsquo;s routine post stops qualifying; a small
+            account&rsquo;s breakout still does.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="rounded-xl border border-border p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold">
+                  Compare against the creator&rsquo;s own posts
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  Applies on top of the minimums above
+                </div>
+              </div>
+              <ThresholdSwitch
+                checked={relativeEnabled}
+                onCheckedChange={() => setRelativeEnabled((value) => !value)}
+                label="Only count posts among a creator's own top performers"
+              />
+            </div>
+            <div className="mt-4 space-y-1.5 sm:max-w-xs">
+              <Label htmlFor="relativeCutoff">Top percent to keep</Label>
+              <Input
+                id="relativeCutoff"
+                type="number"
+                min={1}
+                max={99}
+                step={1}
+                value={relativeCutoff}
+                onChange={(event) => setRelativeCutoff(event.target.value)}
+                disabled={!relativeEnabled}
+              />
+              <p className="text-xs text-muted-foreground">
+                20 keeps each creator&rsquo;s top 20%. Lower is stricter.
+                Creators with fewer than 5 stored posts are judged on the
+                minimums alone, since there is not yet enough history to
+                compare against.
+              </p>
             </div>
           </div>
         </CardContent>

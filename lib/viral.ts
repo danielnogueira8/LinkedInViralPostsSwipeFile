@@ -163,18 +163,79 @@ export type RelativeViralConfig = {
   /** How many of the creator's most recent posts feed the baseline. */
   window: number;
   /** Surface the TOP N % of the creator's posts, where N is this value.
-   *  Default 20 → viral posts are in the top 20% by score, per creator. */
+   *  100 disables the per-creator gate entirely: every post is in the top
+   *  100% of its creator's history, so the flat floor alone decides. */
   cutoffPct: number;
 };
+
+/**
+ * The per-creator percentile gate is OFF by default (cutoffPct 100).
+ *
+ * It used to be 20 — only the top fifth of each creator's own posts could be
+ * viral. That is a strong, invisible filter stacked on top of the flat floor
+ * the settings page actually documents: a workspace could set 50/50, watch a
+ * post clear 50/50 comfortably, and still never see it, because the creator
+ * happened to have a strong recent run. Two gates, one of them unexplained.
+ *
+ * So the default is now "no relative filter" and the flat floor is the whole
+ * story, matching what the settings copy promises. Workspaces that liked the
+ * top-slice behaviour can set it back per-workspace (20 reproduces the old
+ * behaviour exactly).
+ *
+ * Nothing about this changes scraping cost: virality is a CLASSIFICATION over
+ * posts we already store, so loosening it surfaces posts that were fetched and
+ * paid for either way.
+ */
+export const RELATIVE_CUTOFF_DISABLED = 100;
 
 const DEFAULT_RELATIVE: RelativeViralConfig = {
   minHistory: Number(process.env.VIRAL_REL_MIN_HISTORY ?? 5),
   window: Number(process.env.VIRAL_REL_WINDOW ?? 15),
-  cutoffPct: Number(process.env.VIRAL_REL_CUTOFF_PCT ?? 20),
+  cutoffPct: Number(
+    process.env.VIRAL_REL_CUTOFF_PCT ?? RELATIVE_CUTOFF_DISABLED,
+  ),
 };
 
-export function getRelativeConfig(): RelativeViralConfig {
-  return { ...DEFAULT_RELATIVE };
+/**
+ * Clamp a stored cutoff to something the percentile maths can use.
+ *
+ * Exported because the settings form and the API both need the same rule, and
+ * a silently-out-of-range value here would mis-classify every post in the
+ * workspace rather than failing loudly.
+ */
+export function normalizeCutoffPct(value: unknown): number | null {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  const rounded = Math.round(n);
+  if (rounded < 1 || rounded > RELATIVE_CUTOFF_DISABLED) return null;
+  return rounded;
+}
+
+/**
+ * Per-workspace relative config.
+ *
+ * `minHistory` and `window` stay env-level: they are statistical sample-size
+ * guards, not editorial choices, and exposing them would let a workspace ask
+ * for a percentile over two posts. Only the cutoff is user-facing.
+ */
+export async function getRelativeConfig(
+  workspaceId: string | null = null,
+): Promise<RelativeViralConfig> {
+  if (!workspaceId) return { ...DEFAULT_RELATIVE };
+  const { data } = await supabaseAdmin()
+    .from("settings")
+    .select("value")
+    .eq("workspace_id", workspaceId)
+    .eq("key", "viral_relative")
+    .maybeSingle();
+  const stored =
+    data?.value && typeof data.value === "object"
+      ? normalizeCutoffPct((data.value as { cutoff_pct?: unknown }).cutoff_pct)
+      : null;
+  return {
+    ...DEFAULT_RELATIVE,
+    cutoffPct: stored ?? DEFAULT_RELATIVE.cutoffPct,
+  };
 }
 
 /** Median of a numeric array. Returns null for an empty array. */
@@ -233,7 +294,11 @@ export function decideRelativeViral(args: {
   flatThresholds: ViralThresholds;
   config?: RelativeViralConfig;
 }): RelativeViralDecision {
-  const cfg = args.config ?? getRelativeConfig();
+  // Stays SYNCHRONOUS and pure: the per-workspace read happens once in the
+  // caller (getRelativeConfig is async now), never per post. An omitted config
+  // falls back to the env defaults rather than silently hitting the database in
+  // a hot loop over every scraped post.
+  const cfg = args.config ?? { ...DEFAULT_RELATIVE };
   const sample = args.priorScores.slice(0, cfg.window);
   const sampleSize = sample.length;
 
@@ -243,6 +308,16 @@ export function decideRelativeViral(args: {
   // when reactions or comments meet the minimum") and it applies to BOTH
   // paths: the cold-start (no history) and the percentile path below.
   const clearsFloor = meetsThreshold(args.reactions, args.comments, args.flatThresholds);
+
+  // Relative gate switched off (cutoff 100, the default): the flat floor is
+  // the whole decision. Handled explicitly rather than leaning on
+  // percentile(sample, 0) returning the sample minimum — that happens to give
+  // the right answer, but only because `score >= min` is true for a member of
+  // its own sample, which is a coincidence of the maths, not a stated rule.
+  // A re-scraped post excluded from its own baseline would break it.
+  if (cfg.cutoffPct >= RELATIVE_CUTOFF_DISABLED) {
+    return { viral: clearsFloor, basis: "flat_fallback", baseline: null, sampleSize };
+  }
 
   // Cold start: not enough history for a per-creator baseline → the floor
   // decides on its own.
