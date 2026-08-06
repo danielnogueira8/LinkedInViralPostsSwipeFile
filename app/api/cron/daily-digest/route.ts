@@ -15,6 +15,8 @@ import {
   DIGEST_SYSTEM_PROMPT,
   MAX_WORKSPACES_PER_TICK,
   digestWindow,
+  digestWorkspaceFilter,
+  looksTruncated,
   planDigest,
   runWithConcurrency,
   type DigestPost,
@@ -83,19 +85,24 @@ export async function GET(request: Request) {
     ).map((row) => row.workspace_id),
   );
 
+  // Production workspaces only. A workspace id IS the Clerk user id, so live
+  // workspaces are `user_*`; the `org_*` rows are leftovers from Clerk's dev
+  // instance and the pre-migration org model. They still carry tracked accounts,
+  // so the first run happily paid to analyse 7 of them. An explicit ?workspace=
+  // is honoured either way — that is a deliberate manual request.
+  const allWorkspaceIds = [
+    ...new Set(
+      (
+        await selectAllRows<{ workspace_id: string }>(() =>
+          db.from("workspace_accounts").select("workspace_id") as never,
+        )
+      ).map((row) => row.workspace_id),
+    ),
+  ];
+  const { eligible, excluded } = digestWorkspaceFilter(allWorkspaceIds);
   const workspaceIds = requested
     ? [requested]
-    : [
-        ...new Set(
-          (
-            await selectAllRows<{ workspace_id: string }>(() =>
-              db
-                .from("workspace_accounts")
-                .select("workspace_id") as never,
-            )
-          ).map((row) => row.workspace_id),
-        ),
-      ]
+    : eligible
         .filter((id) => !existing.has(id))
         .sort()
         .slice(0, MAX_WORKSPACES_PER_TICK);
@@ -256,6 +263,22 @@ export async function GET(request: Request) {
         return;
       }
 
+      // A digest that hit the ceiling was cut mid-answer and is missing its
+      // later sections — but the row is written and the content is non-empty,
+      // so nothing else would ever surface it. Flag it loudly instead.
+      const truncated = looksTruncated(outputTokens);
+      if (truncated) {
+        console.error(
+          "[daily-digest:truncated]",
+          workspaceId,
+          JSON.stringify({
+            output_tokens: outputTokens,
+            max_output_tokens: DIGEST_MAX_OUTPUT_TOKENS,
+            post_count: plan.posts.length,
+          }),
+        );
+      }
+
       results.push({
         workspaceId,
         written: true,
@@ -263,6 +286,7 @@ export async function GET(request: Request) {
         inputTokens,
         outputTokens,
         costUsd,
+        ...(truncated ? { truncated: true } : {}),
       });
     } catch (error) {
       // One workspace's failure must not abort the sweep for the rest.
@@ -312,6 +336,11 @@ export async function GET(request: Request) {
         // was clipped, not that it failed — the next tick picks them up, and
         // the already-digested filter means no completed digest is re-paid for.
         deferred: deferred.length,
+        // Non-production (org_*) workspaces skipped before any spend.
+        excluded_non_production: excluded.length,
+        // Non-zero means some digests were cut off mid-answer and are missing
+        // their later sections, despite being stored and looking complete.
+        truncated: results.filter((r) => r.truncated === true).length,
         total_cost_usd: Number(totalCost.toFixed(6)),
       },
     }),
