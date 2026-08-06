@@ -286,16 +286,29 @@ export type EvidenceItem = {
  * one continuous thought.
  */
 export function splitEvidence(evidence: string): EvidenceItem[] {
+  // Title-then-detail pairs. Matches BOTH quote styles: the model emits curly
+  // quotes in production, and a straight-quote-only class silently matched
+  // nothing — the section fell back to prose and stayed a wall of text.
+  //
+  // The detail runs to the next opening quote (or the end), so engagement
+  // wrapped in "(...)" is captured rather than excluded, which the previous
+  // pattern got wrong by forbidding parens in the detail entirely.
   const quoted = [
-    ...evidence.matchAll(/[""]([^""]+)[""]\s*\(?([^""()]*\([^)]*\)|[^""]*?)(?=[""]|$)/g),
+    ...evidence.matchAll(
+      /["\u201C\u201D]([^"\u201C\u201D]+)["\u201C\u201D]([^"\u201C\u201D]*)/g,
+    ),
   ];
   if (quoted.length >= 2) {
     return quoted.map((match) => ({
       title: match[1].trim(),
       // Trailing ")" and "." are left over from the inline "(...)" wrapper the
       // model writes around engagement; unbalanced they read as a typo.
+      // Trim the connective tissue between items: a leading "(" from the
+      // engagement wrapper, and a trailing "), and" / ", and" before the final
+      // item — both belong to the sentence, not to this row.
       detail: cleanInline(match[2] ?? "")
         .replace(/^[\s,;:—–(-]+/, "")
+        .replace(/[\s,;:—–.)]*\s+and\s*$/i, "")
         .replace(/[\s,;:—–.)-]+$/, ""),
     }));
   }
