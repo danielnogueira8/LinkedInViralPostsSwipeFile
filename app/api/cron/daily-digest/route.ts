@@ -9,10 +9,14 @@ import {
   openRouterUsageCost,
 } from "@/lib/openrouter";
 import {
+  DIGEST_CONCURRENCY,
   DIGEST_MAX_OUTPUT_TOKENS,
+  DIGEST_START_DEADLINE_MS,
   DIGEST_SYSTEM_PROMPT,
+  MAX_WORKSPACES_PER_TICK,
   digestWindow,
   planDigest,
+  runWithConcurrency,
   type DigestPost,
 } from "@/lib/daily-digest";
 
@@ -41,16 +45,6 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-/**
- * Per-tick workspace cap.
- *
- * A 300s function budget against a call that takes a few seconds; this leaves
- * generous headroom and bounds the spend of any single tick while the feature
- * is being cost-tested. Workspaces beyond the cap are picked up by the next
- * run (see the already-digested filter below, which makes that safe).
- */
-const MAX_WORKSPACES_PER_TICK = 40;
-
 type PostRow = {
   id: string;
   account_id: string;
@@ -63,6 +57,7 @@ type PostRow = {
 export async function GET(request: Request) {
   if (!isCronAuthorized(request)) return cronAuthorizationResponse();
 
+  const startedAt = Date.now();
   const db = supabaseAdmin();
   const now = new Date();
   const { scrapedFrom, scrapedTo, postedFrom, digestDate } = digestWindow(now);
@@ -109,7 +104,12 @@ export async function GET(request: Request) {
   let totalCost = 0;
   let totalReasoningTokens = 0;
 
-  for (const workspaceId of workspaceIds) {
+  // Workspaces are independent, so they run in parallel. Sequentially, nine
+  // high-reasoning calls at 20-40s each exceeded the 300s function limit and
+  // the run was killed before it could report anything.
+  const { deferred } = await runWithConcurrency(
+    workspaceIds,
+    async (workspaceId) => {
     try {
       const accountIds = (
         await selectAllRows<{ account_id: string }>(() =>
@@ -121,7 +121,7 @@ export async function GET(request: Request) {
       ).map((row) => row.account_id);
       if (accountIds.length === 0) {
         results.push({ workspaceId, skipped: "no_accounts" });
-        continue;
+        return;
       }
 
       // Posts that ARRIVED today for this workspace's tracked creators.
@@ -161,7 +161,7 @@ export async function GET(request: Request) {
           skipped: plan.reason,
           postCount: plan.postCount,
         });
-        continue;
+        return;
       }
       if (dryRun) {
         results.push({
@@ -170,7 +170,7 @@ export async function GET(request: Request) {
           postCount: plan.posts.length,
           promptChars: plan.prompt.length,
         });
-        continue;
+        return;
       }
 
       const completion = await completeChat({
@@ -234,7 +234,7 @@ export async function GET(request: Request) {
           reasoningTokens,
           finishReason: completion.finishReason,
         });
-        continue;
+        return;
       }
 
       const { error: writeError } = await db.from("daily_digests").upsert(
@@ -253,7 +253,7 @@ export async function GET(request: Request) {
       if (writeError) {
         console.error("[daily-digest:write]", workspaceId, writeError.message);
         results.push({ workspaceId, error: "write_failed" });
-        continue;
+        return;
       }
 
       results.push({
@@ -269,7 +269,15 @@ export async function GET(request: Request) {
       console.error("[daily-digest:workspace]", workspaceId, error);
       results.push({ workspaceId, error: "failed" });
     }
-  }
+    },
+    {
+      concurrency: DIGEST_CONCURRENCY,
+      // Stop STARTING work as the function budget runs out. In-flight calls
+      // still finish, and the summary line still prints — a killed invocation
+      // reports nothing at all, which is what made the first timeout opaque.
+      shouldStart: () => Date.now() - startedAt < DIGEST_START_DEADLINE_MS,
+    },
+  );
 
   // Logged as one line so a single Vercel log entry answers "what did today's
   // digests cost", which is the question this feature was built to test.
@@ -300,6 +308,10 @@ export async function GET(request: Request) {
         // "high" for gpt-5* models), so it belongs in the one line that
         // answers "what did digests cost today".
         reasoning_tokens: totalReasoningTokens,
+        // Workspaces the deadline stopped us starting. Non-zero means the run
+        // was clipped, not that it failed — the next tick picks them up, and
+        // the already-digested filter means no completed digest is re-paid for.
+        deferred: deferred.length,
         total_cost_usd: Number(totalCost.toFixed(6)),
       },
     }),
@@ -309,6 +321,7 @@ export async function GET(request: Request) {
     ok: true,
     digestDate,
     dryRun,
+    deferred: deferred.length,
     totalCostUsd: Number(totalCost.toFixed(6)),
     results,
   });

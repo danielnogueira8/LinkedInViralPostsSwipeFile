@@ -242,3 +242,88 @@ export function digestWindow(
     digestDate: from.slice(0, 10),
   };
 }
+
+// ---------------------------------------------------------------------------
+// Scheduling: fitting N workspaces into one function invocation.
+//
+// The first run that actually generated digests was killed by Vercel's 300s
+// limit. The loop was sequential and MAX_WORKSPACES_PER_TICK was 40 — a cap
+// sized while calls were failing fast and returning nothing. A real
+// high-reasoning call over ~4k tokens of posts takes 20-40s, so nine of them
+// in series is ~315s and blows the budget.
+//
+// Two independent guards, because they fail differently:
+//   - CONCURRENCY makes the work fit at all (parallel, not serial).
+//   - The DEADLINE makes overflow graceful. Without it a slow run is killed
+//     mid-flight and the summary log never prints, which is exactly what turns
+//     "we ran out of time" into an opaque runtime error.
+// ---------------------------------------------------------------------------
+
+/**
+ * Workspaces processed in parallel.
+ *
+ * Deliberately modest: these are model calls, so the ceiling is provider rate
+ * limiting and memory, not CPU. Six concurrent 35s calls clear nine workspaces
+ * in about 70s — comfortably inside the budget with room for a slow outlier.
+ */
+export const DIGEST_CONCURRENCY = 6;
+
+/**
+ * Stop STARTING new workspaces past this point (ms into the run).
+ *
+ * Set well below the 300s function limit so in-flight calls have time to finish
+ * and the summary line still prints. Whatever is left is picked up by the next
+ * run: digests are written per workspace, and the already-digested filter means
+ * a resumed run never re-pays for one that completed.
+ */
+export const DIGEST_START_DEADLINE_MS = 210_000;
+
+/**
+ * Per-workspace cap for one tick.
+ *
+ * Was 40, which no longer fits now that calls actually generate. At
+ * DIGEST_CONCURRENCY and ~35s per call, 24 is roughly 140s of work — inside the
+ * deadline even if several workspaces run slow.
+ */
+export const MAX_WORKSPACES_PER_TICK = 24;
+
+/**
+ * Run tasks with bounded concurrency, stopping cleanly at a deadline.
+ *
+ * Returns the results of everything that RAN plus the ids that were never
+ * started, so the caller can report deferred work instead of silently dropping
+ * it. A task that throws is the caller's problem to catch — this only schedules.
+ */
+export async function runWithConcurrency<T, R>(
+  items: readonly T[],
+  worker: (item: T) => Promise<R>,
+  options: {
+    concurrency?: number;
+    /** Called before each task; false stops new starts. */
+    shouldStart?: () => boolean;
+  } = {},
+): Promise<{ results: R[]; deferred: T[] }> {
+  const concurrency = Math.max(1, options.concurrency ?? DIGEST_CONCURRENCY);
+  const results: R[] = [];
+  const deferred: T[] = [];
+  let next = 0;
+
+  async function drain(): Promise<void> {
+    for (;;) {
+      const index = next++;
+      if (index >= items.length) return;
+      // Checked per task rather than once up front: the point is to stop
+      // starting work as the budget runs out, mid-run.
+      if (options.shouldStart && !options.shouldStart()) {
+        deferred.push(items[index]);
+        continue;
+      }
+      results.push(await worker(items[index]));
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, items.length) }, () => drain()),
+  );
+  return { results, deferred };
+}

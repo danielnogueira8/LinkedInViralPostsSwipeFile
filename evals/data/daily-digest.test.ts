@@ -10,6 +10,10 @@ import {
   DIGEST_MAX_POST_AGE_DAYS,
   DIGEST_MAX_OUTPUT_TOKENS,
   DIGEST_EXPECTED_ANSWER_TOKENS,
+  DIGEST_CONCURRENCY,
+  DIGEST_START_DEADLINE_MS,
+  MAX_WORKSPACES_PER_TICK,
+  runWithConcurrency,
   type DigestPost,
 } from "@/lib/daily-digest";
 
@@ -229,5 +233,101 @@ describe("output budget must cover reasoning AND the answer", () => {
     // The failed run burned ~2,100 output tokens on reasoning alone before
     // producing nothing.
     expect(DIGEST_MAX_OUTPUT_TOKENS).toBeGreaterThan(2100 + DIGEST_EXPECTED_ANSWER_TOKENS);
+  });
+});
+
+describe("runWithConcurrency — fitting the work in one invocation", () => {
+  it("never exceeds the concurrency bound", async () => {
+    // The timeout happened because work ran SERIALLY. Parallel is the fix, but
+    // unbounded parallel would just trade a timeout for rate limiting.
+    let inFlight = 0;
+    let peak = 0;
+    await runWithConcurrency(
+      Array.from({ length: 20 }, (_, i) => i),
+      async () => {
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        await new Promise((r) => setTimeout(r, 1));
+        inFlight -= 1;
+      },
+      { concurrency: 4 },
+    );
+    expect(peak).toBeLessThanOrEqual(4);
+    expect(peak).toBeGreaterThan(1);
+  });
+
+  it("runs every item when there is time", async () => {
+    const { results, deferred } = await runWithConcurrency(
+      [1, 2, 3, 4, 5],
+      async (n) => n * 2,
+      { concurrency: 2 },
+    );
+    expect(results.sort((a, b) => a - b)).toEqual([2, 4, 6, 8, 10]);
+    expect(deferred).toEqual([]);
+  });
+
+  it("defers the rest once the deadline passes, rather than being killed", async () => {
+    // A killed invocation reports NOTHING — no summary line, no cost. Stopping
+    // cleanly is what turns "opaque runtime error" into "we did 3, deferred 7".
+    let started = 0;
+    const { results, deferred } = await runWithConcurrency(
+      Array.from({ length: 10 }, (_, i) => i),
+      async (n) => {
+        started += 1;
+        return n;
+      },
+      { concurrency: 1, shouldStart: () => started < 3 },
+    );
+    expect(results).toHaveLength(3);
+    expect(deferred).toHaveLength(7);
+  });
+
+  it("reports deferred items so the caller can say what was skipped", async () => {
+    const { deferred } = await runWithConcurrency(
+      ["a", "b", "c"],
+      async (x) => x,
+      { concurrency: 1, shouldStart: () => false },
+    );
+    // Deferred work must be nameable, not just counted as missing.
+    expect(deferred).toEqual(["a", "b", "c"]);
+  });
+
+  it("handles an empty list without hanging", async () => {
+    expect(await runWithConcurrency([], async (x) => x)).toEqual({
+      results: [],
+      deferred: [],
+    });
+  });
+
+  it("does not spawn more workers than items", async () => {
+    let peak = 0;
+    let inFlight = 0;
+    await runWithConcurrency(
+      [1, 2],
+      async () => {
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        await new Promise((r) => setTimeout(r, 1));
+        inFlight -= 1;
+      },
+      { concurrency: 10 },
+    );
+    expect(peak).toBeLessThanOrEqual(2);
+  });
+});
+
+describe("the tick must fit inside the function budget", () => {
+  it("leaves headroom below Vercel's 300s limit", () => {
+    // maxDuration is 300s. Starting new work past this point risks a kill
+    // before the summary prints.
+    expect(DIGEST_START_DEADLINE_MS).toBeLessThan(300_000);
+    expect(DIGEST_START_DEADLINE_MS).toBeGreaterThan(60_000);
+  });
+
+  it("caps a tick at work the deadline can actually absorb", () => {
+    // The cap was 40, sized while calls failed fast and returned nothing. At
+    // ~35s per real reasoning call, 40 serial calls is 23 minutes.
+    const worstCaseMs = (MAX_WORKSPACES_PER_TICK / DIGEST_CONCURRENCY) * 40_000;
+    expect(worstCaseMs).toBeLessThanOrEqual(DIGEST_START_DEADLINE_MS);
   });
 });
