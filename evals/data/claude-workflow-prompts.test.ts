@@ -6,9 +6,14 @@ import {
   POST_STRUCTURE_SKILL,
   SKILLS,
 } from "@/lib/agent/skills";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import {
   AGENTS,
   composePrompt,
+  MCP_ANALYZE_GUIDANCE,
+  MCP_CHECK_DRAFT_GUIDANCE,
+  MCP_PERFORMANCE_GUIDANCE,
   MCP_SCHEDULE_CONFIRMATION_GUIDANCE,
   MCP_SEARCH_RESULT_GUIDANCE,
 } from "@/app/(app)/dashboard/claude/agents";
@@ -106,7 +111,14 @@ describe("workflow prompts carry the full skill text", () => {
   });
 
   test("read-only and logistics agents do not receive writing rules", () => {
-    for (const slug of ["timing-strategist", "trend-radar", "roster-manager"]) {
+    for (const slug of [
+      "timing-strategist",
+      "trend-radar",
+      "roster-manager",
+      // Reports on the user's own numbers; it never writes a post, so it has
+      // no reason to carry the writing rules.
+      "performance-analyst",
+    ]) {
       const agent = AGENTS.find((entry) => entry.slug === slug);
       expect(agent?.skills).toEqual([]);
       expect(composePrompt(agent!.brief, [])).not.toContain("WRITING RULES");
@@ -122,6 +134,10 @@ describe("workflow prompts carry the full skill text", () => {
       "schedule_draft",
       "list_drafts",
       "add_account",
+      "get_post_performance",
+      "analyze_posts",
+      "get_writing_rules",
+      "check_draft",
     ];
     for (const agent of AGENTS) {
       expect(agent.brief).toContain("Use the SwipeIn connector");
@@ -177,5 +193,89 @@ describe("workflow prompts carry the full skill text", () => {
 
     expect(prompt).not.toContain(MCP_SEARCH_RESULT_GUIDANCE);
     expect(prompt).not.toContain(MCP_SCHEDULE_CONFIRMATION_GUIDANCE);
+  });
+  // ---- info-layer tools (get_post_performance / analyze_posts / check_draft)
+
+  test("every drafting agent checks its work before saving it", () => {
+    // The prompts already CARRY the writing rules, but rules alone leave the
+    // model marking its own homework. Any agent that calls create_draft must
+    // also run check_draft first, or the quality bar is advisory.
+    const savingAgents = AGENTS.filter((agent) =>
+      agent.brief.includes("create_draft"),
+    );
+    expect(savingAgents.length).toBeGreaterThan(0);
+    for (const agent of savingAgents) {
+      expect(
+        agent.brief.includes("check_draft"),
+        `${agent.tag} saves a draft without checking it`,
+      ).toBe(true);
+    }
+  });
+
+  test("check_draft agents are told to fix blocking findings, not just run it", () => {
+    // Running the tool and ignoring the result is the obvious failure mode.
+    for (const agent of AGENTS.filter((a) => a.brief.includes("check_draft"))) {
+      const prompt = composePrompt(agent.brief, agent.skills);
+      expect(prompt).toContain(MCP_CHECK_DRAFT_GUIDANCE);
+      expect(prompt).toContain("blocking");
+    }
+  });
+
+  test("performance agents are warned about thin evidence and rate vs impressions", () => {
+    const perfAgents = AGENTS.filter((a) =>
+      a.brief.includes("get_post_performance"),
+    );
+    expect(perfAgents.length).toBeGreaterThan(0);
+    for (const agent of perfAgents) {
+      const prompt = composePrompt(agent.brief, agent.skills);
+      expect(prompt).toContain(MCP_PERFORMANCE_GUIDANCE);
+      expect(prompt).toContain("engagement_rate");
+      expect(prompt).toContain("evidence is thin");
+    }
+  });
+
+  test("analysis agents are told not to read frequency as performance", () => {
+    const analyzeAgents = AGENTS.filter((a) => a.brief.includes("analyze_posts"));
+    expect(analyzeAgents.length).toBeGreaterThan(0);
+    for (const agent of analyzeAgents) {
+      const prompt = composePrompt(agent.brief, agent.skills);
+      expect(prompt).toContain(MCP_ANALYZE_GUIDANCE);
+      expect(prompt).toContain("ranked by frequency");
+    }
+  });
+
+  test("connector guidance stays scoped to the tools a brief names", () => {
+    // The guidance is keyed off tool names in the brief, so an agent that does
+    // not use a tool must not inherit its rules.
+    for (const agent of AGENTS) {
+      const prompt = composePrompt(agent.brief, agent.skills);
+      for (const [tool, guidance] of [
+        ["check_draft", MCP_CHECK_DRAFT_GUIDANCE],
+        ["get_post_performance", MCP_PERFORMANCE_GUIDANCE],
+        ["analyze_posts", MCP_ANALYZE_GUIDANCE],
+      ] as const) {
+        expect(
+          prompt.includes(guidance),
+          `${agent.tag} guidance/tool mismatch for ${tool}`,
+        ).toBe(agent.brief.includes(tool));
+      }
+    }
+  });
+
+  test("every agent has an avatar on disk", () => {
+    // A new agent with no <slug>.svg renders a broken image in production.
+    for (const agent of AGENTS) {
+      const svg = join(process.cwd(), "public", "agents", `${agent.slug}.svg`);
+      const png = join(process.cwd(), "public", "agents", `${agent.slug}.png`);
+      expect(
+        existsSync(svg) || existsSync(png),
+        `${agent.tag} has no avatar at public/agents/${agent.slug}.(svg|png)`,
+      ).toBe(true);
+    }
+  });
+
+  test("agent slugs and tags are unique", () => {
+    expect(new Set(AGENTS.map((a) => a.slug)).size).toBe(AGENTS.length);
+    expect(new Set(AGENTS.map((a) => a.tag)).size).toBe(AGENTS.length);
   });
 });
