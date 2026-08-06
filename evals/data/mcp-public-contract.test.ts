@@ -28,6 +28,7 @@ const EXPECTED_PUBLIC_TOOLS = [
   "create_draft",
   "schedule_draft",
   "unschedule_draft",
+  "check_draft",
   "get_writing_rules",
   "get_voice",
   "create_voice",

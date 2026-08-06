@@ -39,6 +39,7 @@ import {
 } from "@/lib/post-performance";
 import { analyzePostPatterns } from "@/lib/post-pattern-analysis";
 import { buildWritingRules, WRITING_RULE_SECTIONS } from "@/lib/writing-rules";
+import { checkDraft } from "@/lib/draft-check";
 import { trackedAccountIdsForService } from "@/lib/supabase-scoped";
 import { selectAllRows, selectInChunks } from "@/lib/db-paginate";
 import { dbErrorContent, errorContent, jsonContent, notFoundContent } from "./util";
@@ -785,6 +786,38 @@ function registerCreatorStyleTools(server: McpServer, workspaceFromExtra: Worksp
       // caller, so requiring workspace resolution would add a failure mode to
       // a static read for no benefit.
       return jsonContent({ ok: true, ...buildWritingRules(args.sections) });
+    } catch (e) { return dbErrorContent("mcp_resource_tool", e); }
+  });
+
+  // -------------------------------------------------------------------------
+  // check_draft
+  //
+  // get_writing_rules hands the caller the standard; this tells it whether the
+  // draft actually MET the standard. Rules alone rely on the caller's model
+  // policing itself — which is precisely what these detectors exist because
+  // models are bad at.
+  //
+  // Deterministic: every finding is a matched pattern with a span, so the same
+  // draft always gets the same verdict and the check costs us nothing per call.
+  // -------------------------------------------------------------------------
+  server.registerTool("check_draft", {
+    title: "Check a draft for AI tells",
+    description:
+      "Run a LinkedIn draft through SwipeIn's structural AI-tell detectors and get back specific, actionable findings: rule-of-three cadence, \"it's not X, it's Y\" constructions, dismissive negation, repeated openers, stock AI vocabulary, em-dash overuse, and machine-even sentence rhythm. " +
+      "Call this on your own draft before saving it with create_draft, then fix what comes back. Findings are matched patterns, not opinions, so the same draft always returns the same verdict. " +
+      "Blocking findings are the reader-facing tells that make a post read as AI-written; advisory findings are worth reviewing but do not fail the draft. Pass the post body exactly as it would be published.",
+    inputSchema: {
+      body: z
+        .string()
+        .min(1)
+        .max(20_000)
+        .describe("The draft post body, exactly as it would be published."),
+    },
+  }, async (args) => {
+    try {
+      // No workspace lookup and no DB read: the detectors are pure functions
+      // over the supplied text, so this works for any authenticated caller.
+      return jsonContent({ ok: true, ...checkDraft(args.body) });
     } catch (e) { return dbErrorContent("mcp_resource_tool", e); }
   });
 }
