@@ -168,7 +168,10 @@ function DigestBody({
               ? "The post the brief cites."
               : `The ${cited.length} posts the brief cites.`}
           </p>
-          <div className="grid gap-4 xl:grid-cols-2">
+          {/* Three across at desktop width. The cards now get the full page
+              width (the history rail moved out of the content column), so two
+              columns left them wider than a post needs to be readable. */}
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {cited.map((post) => (
               <PostCard key={post.id} post={post} clients={[]} />
             ))}
@@ -196,30 +199,17 @@ export function DigestView({
   if (!active) return null;
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_200px] lg:items-start">
-      <div className="min-w-0 space-y-4">
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <h1 className="text-xl font-semibold tracking-tight">
-            {formatDigestDate(active.digestDate)}
-          </h1>
-          <StatusPill tone="neutral" className="h-6">
-            {active.postCount} posts
-          </StatusPill>
-        </div>
-        <DigestBody digest={active} referencedPosts={referencedPosts} />
-      </div>
-
-      {/* History rail. Only shown once there is history — a single-item list
-          is chrome without information. */}
+    // Single column. The rail used to be a 200px grid track beside the
+    // content, which narrowed every section card to less than the page header
+    // above it — the cards read as inset from the page rather than part of it.
+    // As a horizontal strip the rail costs one row of height and lets the cards
+    // span the full width, matching the header.
+    <div className="space-y-4">
+      {/* History. Only shown once there IS history — a one-item list is chrome
+          without information. */}
       {digests.length > 1 ? (
-        <nav
-          aria-label="Earlier digests"
-          className="order-first lg:order-none lg:sticky lg:top-4"
-        >
-          <div className="mb-2 px-1 text-xs font-medium text-muted-foreground">
-            Earlier
-          </div>
-          <div className="flex gap-2 overflow-x-auto pb-1 lg:flex-col lg:overflow-visible lg:pb-0">
+        <nav aria-label="Earlier digests">
+          <div className="flex gap-2 overflow-x-auto pb-1">
             {digests.map((digest) => {
               const isActive = digest.digestDate === active.digestDate;
               return (
@@ -228,7 +218,7 @@ export function DigestView({
                   type="button"
                   onClick={() => setActiveDate(digest.digestDate)}
                   aria-current={isActive ? "true" : undefined}
-                  className={`shrink-0 rounded-lg border px-3 py-2 text-left text-xs transition-colors lg:w-full ${
+                  className={`shrink-0 rounded-lg border px-3 py-2 text-left text-xs transition-colors ${
                     isActive
                       ? "border-primary/30 bg-primary/[0.06] text-foreground"
                       : "border-border text-muted-foreground hover:bg-muted"
@@ -246,6 +236,16 @@ export function DigestView({
           </div>
         </nav>
       ) : null}
+
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <h1 className="text-xl font-semibold tracking-tight">
+          {formatDigestDate(active.digestDate)}
+        </h1>
+        <StatusPill tone="neutral" className="h-6">
+          {active.postCount} posts
+        </StatusPill>
+      </div>
+      <DigestBody digest={active} referencedPosts={referencedPosts} />
     </div>
   );
 }
