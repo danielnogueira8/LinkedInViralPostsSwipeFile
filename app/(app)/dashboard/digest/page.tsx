@@ -1,6 +1,11 @@
 import Link from "next/link";
 import { scopedSupabase } from "@/lib/supabase-scoped";
 import { PageHeader, PageShell } from "@/components/app-surface";
+import { selectInChunks } from "@/lib/db-paginate";
+import { trackedAccountIds } from "@/lib/supabase-scoped";
+import { SWIPE_POST_COLS } from "@/lib/swipe-query";
+import { referencedPostIds } from "@/lib/digest-view-model";
+import type { PostCardRow } from "@/lib/post-card-row";
 import { DigestView, type DigestRow } from "./view";
 
 export const dynamic = "force-dynamic";
@@ -40,11 +45,33 @@ export default async function DigestPage() {
       postCount: Number(row.post_count ?? 0),
     }));
 
+  // The posts the brief cites, so the reader can see the evidence rather than
+  // taking the model's word for it. The ids are ALREADY in the stored content
+  // (the prompt asks for them) — nothing about the cron changes to support
+  // this. Scoped by tracked account, the same predicate every other posts read
+  // uses, so a stale id from another workspace resolves to nothing.
+  const citedIds = referencedPostIds(
+    digests.map((digest) => digest.content).join("\n"),
+  );
+  let referencedPosts: PostCardRow[] = [];
+  if (citedIds.length > 0) {
+    const accountIds = await trackedAccountIds(sb.workspaceId);
+    if (accountIds.length > 0) {
+      referencedPosts = (await selectInChunks<PostCardRow>(citedIds, (ids) =>
+        sb.raw
+          .from("posts")
+          .select(SWIPE_POST_COLS)
+          .in("id", ids)
+          .in("account_id", accountIds) as never,
+      ).catch(() => [])) as PostCardRow[];
+    }
+  }
+
   return (
     <PageShell>
       <PageHeader
         title="Daily Brief"
-        description="What the creators you track posted about today — the theme, the strongest hook, the format that worked, and what to write next."
+        description="What the creators you track posted about today — the theme, the strongest hook, and the format that worked."
       />
       {digests.length === 0 ? (
         <EmptyState />
@@ -52,6 +79,7 @@ export default async function DigestPage() {
         <DigestView
           digests={digests}
           todayIso={now.toISOString().slice(0, 10)}
+          referencedPosts={referencedPosts}
         />
       )}
     </PageShell>

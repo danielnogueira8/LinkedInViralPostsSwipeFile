@@ -208,3 +208,22 @@ export function relativeDigestLabel(isoDate: string, today: Date): string {
   if (isoDate === yesterday) return "Yesterday";
   return formatDigestDate(isoDate);
 }
+
+/**
+ * Post ids the brief cites, in the order the model mentioned them.
+ *
+ * The digest already embeds real `posts.id` UUIDs — the prompt asks for them so
+ * findings can be checked. Nothing about the cron or the stored content changes
+ * to support showing the cards; the ids were always there, they were simply
+ * stripped for display.
+ *
+ * Deduped, because the same post is usually cited in both THEME and FORMAT and
+ * the reader does not want it twice. Order is preserved so the most-discussed
+ * post leads.
+ */
+export function referencedPostIds(content: string): string[] {
+  const matches =
+    (content ?? "").match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi) ??
+    [];
+  return [...new Set(matches.map((id) => id.toLowerCase()))];
+}

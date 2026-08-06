@@ -1,18 +1,19 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
 import { StatusPill } from "@/components/app-surface";
-import { Quote, Telescope, PenLine, LayoutList, ArrowRight } from "lucide-react";
+import { Quote, Telescope, LayoutList, Newspaper } from "lucide-react";
+import { PostCard } from "@/components/post-card";
+import type { PostCardRow } from "@/lib/post-card-row";
 import {
   cleanInline,
   extractHookQuote,
   formatDigestDate,
   hookCommentary,
   parseDigest,
+  referencedPostIds,
   relativeDigestLabel,
-  splitAngles,
   type DigestSectionId,
 } from "@/lib/digest-view-model";
 
@@ -22,12 +23,16 @@ export type DigestRow = {
   postCount: number;
 };
 
-const SECTION_ICON: Record<DigestSectionId, typeof Quote> = {
+// write_next is intentionally absent: the section is no longer displayed.
+// parseDigest still RECOGNISES the heading, so its text terminates the FORMAT
+// section rather than being appended to it.
+const SECTION_ICON: Partial<Record<DigestSectionId, typeof Quote>> = {
   theme: Telescope,
   hook: Quote,
   format: LayoutList,
-  write_next: PenLine,
 };
+
+const DISPLAYED_SECTIONS: DigestSectionId[] = ["theme", "hook", "format"];
 
 /**
  * Render a body as paragraphs.
@@ -62,7 +67,7 @@ function SectionCard({
   title: string;
   children: React.ReactNode;
 }) {
-  const Icon = SECTION_ICON[id];
+  const Icon = SECTION_ICON[id] ?? LayoutList;
   return (
     <section className="rounded-xl border border-border bg-card/60 p-5">
       <div className="mb-3 flex items-center gap-2">
@@ -74,8 +79,20 @@ function SectionCard({
   );
 }
 
-function DigestBody({ digest }: { digest: DigestRow }) {
+function DigestBody({
+  digest,
+  referencedPosts,
+}: {
+  digest: DigestRow;
+  referencedPosts: PostCardRow[];
+}) {
   const { sections, unmatched } = parseDigest(digest.content);
+  // Ordered by first mention, so the post the brief leads with leads here too.
+  const citedOrder = referencedPostIds(digest.content);
+  const byId = new Map(referencedPosts.map((post) => [post.id, post]));
+  const cited = citedOrder
+    .map((id) => byId.get(id))
+    .filter((post): post is PostCardRow => Boolean(post));
 
   // The model drifted from the four-section format. Show the raw text rather
   // than a blank page — losing model output silently is how you end up
@@ -94,7 +111,9 @@ function DigestBody({ digest }: { digest: DigestRow }) {
 
   return (
     <div className="space-y-4">
-      {sections.map((section) => {
+      {sections
+        .filter((section) => DISPLAYED_SECTIONS.includes(section.id))
+        .map((section) => {
         if (section.id === "hook") {
           const quote = extractHookQuote(section.body);
           const rest = quote ? hookCommentary(section.body) : null;
@@ -119,34 +138,6 @@ function DigestBody({ digest }: { digest: DigestRow }) {
           );
         }
 
-        if (section.id === "write_next") {
-          const angles = splitAngles(section.body);
-          return (
-            <SectionCard key={section.id} id={section.id} title={section.title}>
-              <div className="grid gap-3 sm:grid-cols-2">
-                {angles.map((angle, i) => (
-                  <div
-                    key={i}
-                    className="rounded-lg border border-border bg-background/60 p-4"
-                  >
-                    <p className="text-sm leading-6 text-foreground">
-                      {cleanInline(angle.replace(/\n/g, " "))}
-                    </p>
-                  </div>
-                ))}
-              </div>
-              {/* The digest's only job is to make tomorrow's post easier, so
-                  the page ends on the action rather than on more prose. */}
-              <Link
-                href="/dashboard"
-                className="mt-4 inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary px-3.5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/30"
-              >
-                Draft one of these <ArrowRight className="size-4" />
-              </Link>
-            </SectionCard>
-          );
-        }
-
         return (
           <SectionCard key={section.id} id={section.id} title={section.title}>
             <Prose body={section.body} />
@@ -159,6 +150,31 @@ function DigestBody({ digest }: { digest: DigestRow }) {
           <Prose body={unmatched} />
         </SectionCard>
       ) : null}
+
+      {/* The posts the brief actually cites. The ids were already in the
+          stored content, so this is evidence the reader can check rather than
+          taking the model's word for it — and it is the same card as the Swipe
+          File, so Save/Model actions come along unchanged. */}
+      {cited.length > 0 ? (
+        <section className="rounded-xl border border-border bg-card/60 p-5">
+          <div className="mb-1 flex items-center gap-2">
+            <Newspaper className="size-4 text-muted-foreground" aria-hidden />
+            <h2 className="text-sm font-semibold tracking-tight">
+              Posts behind this brief
+            </h2>
+          </div>
+          <p className="mb-4 text-xs text-muted-foreground">
+            {cited.length === 1
+              ? "The post the brief cites."
+              : `The ${cited.length} posts the brief cites.`}
+          </p>
+          <div className="grid gap-4 xl:grid-cols-2">
+            {cited.map((post) => (
+              <PostCard key={post.id} post={post} clients={[]} />
+            ))}
+          </div>
+        </section>
+      ) : null}
     </div>
   );
 }
@@ -166,9 +182,11 @@ function DigestBody({ digest }: { digest: DigestRow }) {
 export function DigestView({
   digests,
   todayIso,
+  referencedPosts,
 }: {
   digests: DigestRow[];
   todayIso: string;
+  referencedPosts: PostCardRow[];
 }) {
   const [activeDate, setActiveDate] = useState(digests[0]?.digestDate ?? "");
   const active =
@@ -188,7 +206,7 @@ export function DigestView({
             {active.postCount} posts
           </StatusPill>
         </div>
-        <DigestBody digest={active} />
+        <DigestBody digest={active} referencedPosts={referencedPosts} />
       </div>
 
       {/* History rail. Only shown once there is history — a single-item list

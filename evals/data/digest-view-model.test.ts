@@ -5,6 +5,7 @@ import {
   formatDigestDate,
   hookCommentary,
   parseDigest,
+  referencedPostIds,
   relativeDigestLabel,
   splitAngles,
 } from "@/lib/digest-view-model";
@@ -176,5 +177,52 @@ describe("date labels", () => {
 
   it("falls back to the raw value rather than showing Invalid Date", () => {
     expect(formatDigestDate("not-a-date")).toBe("not-a-date");
+  });
+});
+
+describe("referencedPostIds — the evidence behind the brief", () => {
+  it("finds every cited post id", () => {
+    // The ids were ALREADY in the stored content; the prompt asks for them so
+    // findings can be checked. Showing the cards needed no change to the cron.
+    expect(referencedPostIds(REAL_DIGEST)).toEqual([
+      "a5677d81-b17b-4b89-a73f-8517dae640c3",
+      "b7a4937f-ae73-4237-9918-27a16af1b962",
+      "7aab6930-af25-4c6a-9664-1843b0292b40",
+    ]);
+  });
+
+  it("dedupes a post cited in more than one section", () => {
+    // THEME and FORMAT routinely cite the same post; the reader does not want
+    // the card twice.
+    const twice = `1. THEME — [a5677d81-b17b-4b89-a73f-8517dae640c3] strong.
+3. FORMAT — again [a5677d81-b17b-4b89-a73f-8517dae640c3] and 827 reactions.`;
+    expect(referencedPostIds(twice)).toEqual([
+      "a5677d81-b17b-4b89-a73f-8517dae640c3",
+    ]);
+  });
+
+  it("preserves first-mention order so the lead post leads", () => {
+    const ordered = `[b7a4937f-ae73-4237-9918-27a16af1b962] then [a5677d81-b17b-4b89-a73f-8517dae640c3]`;
+    expect(referencedPostIds(ordered)[0]).toBe(
+      "b7a4937f-ae73-4237-9918-27a16af1b962",
+    );
+  });
+
+  it("matches ids with or without brackets", () => {
+    expect(
+      referencedPostIds("cited as a5677d81-b17b-4b89-a73f-8517dae640c3 bare"),
+    ).toHaveLength(1);
+  });
+
+  it("returns nothing when the brief cites no ids", () => {
+    expect(referencedPostIds("A brief with no citations at all.")).toEqual([]);
+    expect(referencedPostIds("")).toEqual([]);
+  });
+
+  it("does not match a partial or malformed uuid", () => {
+    // A loose matcher would send junk ids to the database on every page view.
+    expect(referencedPostIds("[a5677d81-b17b] and [not-a-uuid-at-all]")).toEqual(
+      [],
+    );
   });
 });
