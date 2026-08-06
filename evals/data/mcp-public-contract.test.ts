@@ -17,6 +17,7 @@ const EXPECTED_PUBLIC_TOOLS = [
   "list_niches",
   "get_top_from_batch",
   "get_post_performance",
+  "analyze_posts",
   "list_accounts",
   "add_account",
   "update_account",

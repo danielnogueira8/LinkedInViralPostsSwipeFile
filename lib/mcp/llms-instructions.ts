@@ -71,6 +71,7 @@ When these instructions are pasted without a specific task, treat that as a requ
 ### Research and write
 1. Identify the niche, date range, post type, and success metric from the request.
 2. Search SwipeIn for a focused set of source posts, then read only the strongest relevant records.
+   - With several strong sources in hand, call \`analyze_posts\` on their ids before drafting. It reports the hook patterns, structure, and mechanics they share, which is a firmer brief than inferring a pattern from one or two examples. Say how many posts the analysis covered when you rely on it, and treat a small set as suggestive rather than settled.
 3. Load \`get_voice\`, standing preferences, and any specifically requested template/style/skill. When the user has published before, also call \`get_post_performance\` so the angle is informed by what has actually worked for them, not only by what is working for other creators.
 4. Write an original result grounded in the returned evidence.
 5. Save with \`create_draft\` only if the user asked to put it in SwipeIn.

@@ -37,9 +37,18 @@ import {
   performanceTotals,
   sortPerformanceRows,
 } from "@/lib/post-performance";
+import { analyzePostPatterns } from "@/lib/post-pattern-analysis";
+import { trackedAccountIdsForService } from "@/lib/supabase-scoped";
 import { selectAllRows, selectInChunks } from "@/lib/db-paginate";
 import { dbErrorContent, errorContent, jsonContent, notFoundContent } from "./util";
 import { mcpAuthInfo } from "./context";
+
+/**
+ * Cap on analyze_posts input. The analysis itself is cheap (pure functions over
+ * text), so this bounds the DB read and the response size rather than compute —
+ * and keeps a client from passing an unbounded id list.
+ */
+const ANALYZE_POSTS_MAX = 50;
 
 /** Lookback windows for get_post_performance, in days. */
 const SINCE_DAYS: Record<"7d" | "30d" | "90d" | "365d", number> = {
@@ -661,6 +670,83 @@ function registerCreatorStyleTools(server: McpServer, workspaceFromExtra: Worksp
         totals: performanceTotals(rows),
         returned: Math.min(limit, sorted.length),
         posts: sorted.slice(0, limit),
+      });
+    } catch (e) { return dbErrorContent("mcp_resource_tool", e); }
+  });
+
+  // -------------------------------------------------------------------------
+  // analyze_posts
+  //
+  // The step after search_viral_posts. Search answers "which posts did well";
+  // this answers "what do they DO" — the hook move they open with, how they
+  // are shaped on the page, how long they run, the mechanics they share.
+  //
+  // Deterministic: every number is counted or pattern-matched, never judged by
+  // a model. Same input, same answer, no tokens spent, and 50 posts analyze in
+  // milliseconds. Structure and mechanics reuse the very modules the writer is
+  // graded on, so the corpus is described on the same axes drafts are.
+  // -------------------------------------------------------------------------
+  server.registerTool("analyze_posts", {
+    title: "Analyze what a set of posts has in common",
+    description:
+      "Given post ids (typically from search_viral_posts), compute what those posts share: which hook patterns they open with, their structure on the page (length, paragraphing, list usage, P.S. rate), and writing mechanics (casing, punctuation, emoji, list markers). " +
+      "Use this to turn a pile of high-performing posts into a reusable brief before drafting, instead of eyeballing a few examples. Analysis is measured, not estimated, so repeated calls on the same posts return identical results. " +
+      "Hook shares are reported alongside average engagement per pattern, but ranked by frequency — with few posts per pattern an average is easily skewed by one outlier. Treat a small analyzed_posts count as weak evidence.",
+    inputSchema: {
+      post_ids: z
+        .array(z.string().uuid())
+        .min(1)
+        .max(ANALYZE_POSTS_MAX)
+        .describe(
+          `Source-post ids to analyze, from search_viral_posts or get_top_from_batch. Max ${ANALYZE_POSTS_MAX}.`,
+        ),
+    },
+  }, async (args, extra) => {
+    try {
+      const { workspaceId } = ids(extra, workspaceFromExtra);
+      if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
+
+      // Same tenancy predicate every other posts read uses: the corpus table is
+      // shared across workspaces, so scoping is by tracked account, not by a
+      // workspace_id column on the row.
+      const accountIds = await trackedAccountIdsForService(workspaceId);
+      if (accountIds.length === 0) {
+        return jsonContent({
+          ok: true,
+          analyzed_posts: 0,
+          requested_posts: args.post_ids.length,
+          note: "This workspace tracks no creators yet, so none of those posts are readable here.",
+        });
+      }
+
+      const rows = await selectInChunks<{
+        id: string;
+        text: string | null;
+        reactions: number | null;
+        comments: number | null;
+      }>(args.post_ids, (idSlice) =>
+        supabaseAdmin()
+          .from("posts")
+          .select("id, text, reactions, comments")
+          .in("id", idSlice)
+          .in("account_id", accountIds) as never,
+      );
+
+      const analysis = analyzePostPatterns(
+        rows.map((row) => ({
+          id: row.id,
+          body: row.text ?? "",
+          engagement: (row.reactions ?? 0) + (row.comments ?? 0),
+        })),
+      );
+
+      return jsonContent({
+        ok: true,
+        // Both counts, always. A caller that asked about 20 posts and got 12
+        // back (ids from another workspace, or deleted) must be able to see
+        // that rather than reading the analysis as covering all 20.
+        requested_posts: args.post_ids.length,
+        ...analysis,
       });
     } catch (e) { return dbErrorContent("mcp_resource_tool", e); }
   });
