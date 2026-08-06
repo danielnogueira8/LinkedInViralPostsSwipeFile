@@ -26,6 +26,54 @@ function toNonNegInt(raw: string): number {
   return n;
 }
 
+export type RelativeCutoffChoice = {
+  /** What to send. Always a value getRelativeConfig can consume. */
+  cutoffPct: number;
+  /** True when the gate ends up off — the toggle must follow. */
+  disabled: boolean;
+  /** Set only when the input is unusable; the save is aborted. */
+  error?: string;
+};
+
+/**
+ * Resolve the toggle + number pair into ONE stored cutoff.
+ *
+ * Two controls express the same thing, so they have to agree. "Top 100%" keeps
+ * every post, which is exactly what the toggle's off position means — so
+ * typing 100 turns the gate off instead of erroring. Rejecting it would hand
+ * the user an error describing what is not allowed rather than doing the
+ * obvious thing, and would let the switch read "on" over a filter doing
+ * nothing.
+ *
+ * 0 is still refused. It is not a way to say "off": it asks for a filter
+ * nothing can pass, which is never the intent, and silently coercing it to
+ * either 1 or 100 would guess wrong half the time.
+ *
+ * Exported and pure so the rule is unit-testable — the alternative is asserting
+ * on toast text through a rendered component.
+ */
+export function resolveRelativeCutoff(
+  enabled: boolean,
+  raw: string,
+): RelativeCutoffChoice {
+  if (!enabled) {
+    return { cutoffPct: RELATIVE_CUTOFF_DISABLED, disabled: true };
+  }
+  const typed = toNonNegInt(raw);
+  if (typed >= RELATIVE_CUTOFF_DISABLED) {
+    return { cutoffPct: RELATIVE_CUTOFF_DISABLED, disabled: true };
+  }
+  if (typed < 1) {
+    return {
+      cutoffPct: RELATIVE_CUTOFF_DISABLED,
+      disabled: true,
+      error:
+        "Top-performer cutoff must be at least 1 percent. Use 100 (or the toggle) to turn it off.",
+    };
+  }
+  return { cutoffPct: typed, disabled: false };
+}
+
 function ThresholdSwitch({
   checked,
   label,
@@ -112,13 +160,12 @@ export function SettingsForm({
         minComments: toNonNegInt(leadMagnetComments),
       },
     };
-    // 1-99 only: 0 would mean "top 0%" (nothing qualifies) and 100 is the
-    // off switch, which the toggle owns rather than the number field.
-    const cutoffPct = toNonNegInt(relativeCutoff);
-    if (relativeEnabled && (cutoffPct < 1 || cutoffPct > 99)) {
-      toast.error("Top-performer cutoff must be between 1 and 99 percent.");
+    const relativeChoice = resolveRelativeCutoff(relativeEnabled, relativeCutoff);
+    if (relativeChoice.error) {
+      toast.error(relativeChoice.error);
       return;
     }
+    const cutoffPct = relativeChoice.cutoffPct;
     const fields = [
       discovery.regular.minLikes,
       discovery.leadMagnet.minComments,
@@ -142,14 +189,24 @@ export function SettingsForm({
             viral,
             template,
             discovery,
-            relative: {
-              cutoff_pct: relativeEnabled ? cutoffPct : RELATIVE_CUTOFF_DISABLED,
-            },
+            // cutoffPct already resolves to RELATIVE_CUTOFF_DISABLED when the
+            // toggle is off OR the user typed 100.
+            relative: { cutoff_pct: cutoffPct },
           }),
         },
       );
       if (!data.ok) throw new Error(data.error);
-      toast.success("Minimum engagement settings saved");
+      // Typing 100 turns the gate off, so the switch has to follow — otherwise
+      // it keeps reading "on" over a filter that does nothing, which is the
+      // exact disagreement between the two controls this avoids.
+      if (relativeEnabled && relativeChoice.disabled) {
+        setRelativeEnabled(false);
+        toast.success(
+          "Saved. Top 100% keeps every post, so the top-performer filter is off.",
+        );
+      } else {
+        toast.success("Minimum engagement settings saved");
+      }
     } catch (e) { toast.error((e as Error).message); }
     setBusy(false);
   }
@@ -277,17 +334,20 @@ export function SettingsForm({
                 id="relativeCutoff"
                 type="number"
                 min={1}
-                max={99}
+                // 100 is allowed and means "off" — the browser's own max would
+                // otherwise block the value before the save handler could
+                // interpret it.
+                max={RELATIVE_CUTOFF_DISABLED}
                 step={1}
                 value={relativeCutoff}
                 onChange={(event) => setRelativeCutoff(event.target.value)}
                 disabled={!relativeEnabled}
               />
               <p className="text-xs text-muted-foreground">
-                20 keeps each creator&rsquo;s top 20%. Lower is stricter.
-                Creators with fewer than 5 stored posts are judged on the
-                minimums alone, since there is not yet enough history to
-                compare against.
+                20 keeps each creator&rsquo;s top 20%. Lower is stricter; 100
+                keeps everything and turns this filter off. Creators with fewer
+                than 5 stored posts are judged on the minimums alone, since
+                there is not yet enough history to compare against.
               </p>
             </div>
           </div>
