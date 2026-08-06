@@ -29,7 +29,12 @@ import {
 //     instead of a second paid call
 //   - every call logs to usage_events AND denormalizes cost onto the row
 //
-// Measured: ~173 input tokens per post, ~$0.005 for a 100-post day on Luna.
+// Measured: ~173 input tokens per post. The first production run billed
+// ~$0.0034 per workspace at ~4k input tokens — and returned nothing, because
+// reasoning consumed the whole output budget (see DIGEST_MAX_OUTPUT_TOKENS).
+// Expect real cost to land ABOVE the original $0.005/100-post estimate now that
+// the budget fits both the reasoning pass and the answer; the log line reports
+// reasoning_tokens so the split is visible.
 // ---------------------------------------------------------------------------
 
 export const runtime = "nodejs";
@@ -102,6 +107,7 @@ export async function GET(request: Request) {
 
   const results: Array<Record<string, unknown>> = [];
   let totalCost = 0;
+  let totalReasoningTokens = 0;
 
   for (const workspaceId of workspaceIds) {
     try {
@@ -197,9 +203,37 @@ export async function GET(request: Request) {
         completion.usage,
       );
       totalCost += costUsd;
+      totalReasoningTokens +=
+        completion.usage?.completion_tokens_details?.reasoning_tokens ?? 0;
 
       if (!content) {
-        results.push({ workspaceId, error: "empty_completion", inputTokens, outputTokens });
+        // Report the reasoning split, not just "empty". The first empty run
+        // billed real money and the log said only `empty_completion`, which
+        // does not distinguish a refusal from a budget starved by reasoning —
+        // and reasoning was the cause. With these numbers the same failure
+        // names itself: reasoning ≈ output means the cap was consumed before
+        // any visible text.
+        const reasoningTokens =
+          completion.usage?.completion_tokens_details?.reasoning_tokens ?? 0;
+        console.error(
+          "[daily-digest:empty]",
+          workspaceId,
+          JSON.stringify({
+            finish_reason: completion.finishReason,
+            input_tokens: inputTokens,
+            output_tokens: outputTokens,
+            reasoning_tokens: reasoningTokens,
+            max_output_tokens: DIGEST_MAX_OUTPUT_TOKENS,
+          }),
+        );
+        results.push({
+          workspaceId,
+          error: "empty_completion",
+          inputTokens,
+          outputTokens,
+          reasoningTokens,
+          finishReason: completion.finishReason,
+        });
         continue;
       }
 
@@ -262,6 +296,10 @@ export async function GET(request: Request) {
           if (reason) acc[reason] = (acc[reason] ?? 0) + 1;
           return acc;
         }, {}),
+        // Reasoning is the dominant output cost on Luna (effort is forced to
+        // "high" for gpt-5* models), so it belongs in the one line that
+        // answers "what did digests cost today".
+        reasoning_tokens: totalReasoningTokens,
         total_cost_usd: Number(totalCost.toFixed(6)),
       },
     }),

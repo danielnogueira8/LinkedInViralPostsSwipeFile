@@ -29,8 +29,30 @@ export const MIN_POSTS_FOR_DIGEST = 8;
  */
 export const MAX_POSTS_PER_DIGEST = 200;
 
-/** Cap the response too: reasoning bills as output on Luna. */
-export const DIGEST_MAX_OUTPUT_TOKENS = 900;
+/**
+ * Output budget, covering REASONING PLUS the visible answer.
+ *
+ * This was 900, sized for the answer alone, and every call came back empty
+ * while still being billed. lib/openai.ts forces `reasoning: { effort: "high" }`
+ * for any gpt-5* model — Luna included — and reasoning tokens are drawn from
+ * the same max_output_tokens pool. The whole budget went to hidden reasoning
+ * and the model never reached the visible text.
+ *
+ * Measured from that failed run: ~$0.0034 per call at a ~4k-token prompt is
+ * roughly 2,100 output tokens, all reasoning, on a request that produced
+ * nothing. 4,000 leaves room for the reasoning pass AND the ~900-token brief.
+ *
+ * The brief itself is still bounded by the prompt's four-section structure, so
+ * raising this ceiling does not make the OUTPUT longer — it stops the reasoning
+ * from starving it.
+ */
+export const DIGEST_MAX_OUTPUT_TOKENS = 4000;
+
+/**
+ * What the visible brief is expected to cost, for the estimate in the docs.
+ * The rest of the budget above is reasoning overhead.
+ */
+export const DIGEST_EXPECTED_ANSWER_TOKENS = 900;
 
 export type DigestPost = {
   id: string;

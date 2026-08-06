@@ -8,6 +8,8 @@ import {
   utcDayBounds,
   digestWindow,
   DIGEST_MAX_POST_AGE_DAYS,
+  DIGEST_MAX_OUTPUT_TOKENS,
+  DIGEST_EXPECTED_ANSWER_TOKENS,
   type DigestPost,
 } from "@/lib/daily-digest";
 
@@ -207,5 +209,25 @@ describe("digestWindow — the bug that produced zero digests", () => {
   it("honours a custom max age", () => {
     const w = digestWindow(now, 1);
     expect(w.postedFrom).toBe("2026-08-05T00:00:00.000Z");
+  });
+});
+
+describe("output budget must cover reasoning AND the answer", () => {
+  it("leaves real headroom above the expected answer length", () => {
+    // The budget was 900 — sized for the answer alone — and every call came
+    // back EMPTY while still being billed: lib/openai.ts forces
+    // reasoning:{effort:"high"} for gpt-5* models (Luna included) and reasoning
+    // draws from the same max_output_tokens pool. A future trim back toward the
+    // answer size would silently reproduce that outage, so the relationship is
+    // pinned here rather than living only in a comment.
+    expect(DIGEST_MAX_OUTPUT_TOKENS).toBeGreaterThanOrEqual(
+      DIGEST_EXPECTED_ANSWER_TOKENS * 3,
+    );
+  });
+
+  it("is high enough for the reasoning volume actually observed", () => {
+    // The failed run burned ~2,100 output tokens on reasoning alone before
+    // producing nothing.
+    expect(DIGEST_MAX_OUTPUT_TOKENS).toBeGreaterThan(2100 + DIGEST_EXPECTED_ANSWER_TOKENS);
   });
 });
