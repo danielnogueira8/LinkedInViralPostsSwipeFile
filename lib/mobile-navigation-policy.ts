@@ -13,7 +13,7 @@ export const MOBILE_PRIMARY_PATHS = [
 export const MOBILE_MORE_SECTIONS = [
   {
     label: "Inspiration",
-    paths: ["/dashboard/accounts", "/dashboard/templates"],
+    paths: ["/dashboard/digest", "/dashboard/accounts", "/dashboard/templates"],
   },
   {
     label: "Build your system",
