@@ -323,3 +323,59 @@ describe("splitEvidence — scannable rows", () => {
     expect(splitEvidence("Only one clause here; ok").length).toBe(0);
   });
 });
+
+describe("splitEvidence — the production THEME section", () => {
+  // Verbatim from the rendered page. The earlier fixture used STRAIGHT quotes;
+  // production emits CURLY ones, so the matcher silently found nothing and the
+  // whole section fell back to prose — a six-post wall of text that looked
+  // like the formatter simply had not been applied.
+  const THEME_EVIDENCE =
+    "The cluster appears across \u201CComplete Claude Revenue System\u201D (827 reactions, 2,957 comments), " +
+    "\u201CComplete Client Acquisition System\u201D (122 reactions, 534 comments), " +
+    "\u201CThe 10 Levels Of Claude For Content\u201D (79 reactions, 296 comments), " +
+    "\u201C50 AI Agent setup guides\u201D (104 reactions, 243 comments), " +
+    "\u201C7-step outbound workflow\u201D (136 reactions, 177 comments), and " +
+    "\u201C20 Best Claude Agents For Your Entire Sales Operation\u201D (33 reactions, 43 comments).";
+
+  it("splits all six cited posts", () => {
+    expect(splitEvidence(THEME_EVIDENCE)).toHaveLength(6);
+  });
+
+  it("matches curly quotes, not just straight ones", () => {
+    const items = splitEvidence(THEME_EVIDENCE);
+    expect(items[0].title).toBe("Complete Claude Revenue System");
+    expect(items[0].detail).toBe("827 reactions, 2,957 comments");
+  });
+
+  it("captures engagement wrapped in parentheses", () => {
+    // The previous pattern forbade "(" in the detail, so a parenthesised
+    // engagement figure could never be captured.
+    for (const item of splitEvidence(THEME_EVIDENCE)) {
+      expect(item.detail).toMatch(/reactions/);
+      expect(item.detail).not.toMatch(/[()]/);
+    }
+  });
+
+  it("drops the 'and' connecting the final item", () => {
+    // Without this the second-to-last row ended "177 comments), and".
+    const items = splitEvidence(THEME_EVIDENCE);
+    expect(items[4].detail).toBe("136 reactions, 177 comments");
+    expect(items.every((item) => !/\band\s*$/.test(item.detail))).toBe(true);
+  });
+
+  it("still handles straight quotes", () => {
+    // Both styles appear across runs; neither may regress.
+    const items = splitEvidence(
+      '"First title" (10 reactions), "Second title" (20 reactions)',
+    );
+    expect(items).toHaveLength(2);
+    expect(items[1].title).toBe("Second title");
+  });
+
+  it("does not build a list from a single quoted title", () => {
+    // One quoted phrase mid-sentence is a quotation, not a list.
+    expect(
+      splitEvidence("The post \u201CSome title\u201D did well this week."),
+    ).toEqual([]);
+  });
+});
