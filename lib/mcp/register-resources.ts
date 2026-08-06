@@ -32,8 +32,22 @@ import {
   listSkillResources,
   listTemplateResources,
 } from "@/lib/content-resource-operations";
+import {
+  buildPerformanceRows,
+  performanceTotals,
+  sortPerformanceRows,
+} from "@/lib/post-performance";
+import { selectAllRows, selectInChunks } from "@/lib/db-paginate";
 import { dbErrorContent, errorContent, jsonContent, notFoundContent } from "./util";
 import { mcpAuthInfo } from "./context";
+
+/** Lookback windows for get_post_performance, in days. */
+const SINCE_DAYS: Record<"7d" | "30d" | "90d" | "365d", number> = {
+  "7d": 7,
+  "30d": 30,
+  "90d": 90,
+  "365d": 365,
+};
 
 type Extra = ServerContext;
 type WorkspaceResolver = (extra: Extra) => string | null;
@@ -491,6 +505,163 @@ function registerCreatorStyleTools(server: McpServer, workspaceFromExtra: Worksp
       return result.ok
         ? jsonContent({ ok: true, accepted: true, style: result.style })
         : errorContent(result.error);
+    } catch (e) { return dbErrorContent("mcp_resource_tool", e); }
+  });
+
+  // -------------------------------------------------------------------------
+  // get_post_performance
+  //
+  // What actually happened to this workspace's published posts. An external
+  // model can reason about a draft, but it cannot know that THIS author's
+  // teardown posts out-performed their hot takes 4:1 — that lives here.
+  //
+  // Reads post_analytics snapshots only; the daily cron owns refreshing them.
+  // No Zernio call at tool-call time (an MCP client can call this in a loop,
+  // and a third-party API is not something to put behind that), and no model
+  // call anywhere in this path — performance is measured, never inferred.
+  // -------------------------------------------------------------------------
+  server.registerTool("get_post_performance", {
+    title: "Get published post performance",
+    description:
+      "Read real LinkedIn performance for posts this workspace has published: impressions, reach, likes, comments, shares, saves, sends, plus computed engagements and engagement rate. " +
+      "Use this to ground advice in what worked for THIS author rather than general best practice — which topics, hooks, or formats earned engagement, and which underperformed. " +
+      "Sort by 'engagement_rate' to compare posts fairly across different reach, or by 'impressions' for raw distribution. " +
+      "Numbers come from daily snapshots, so a post published in the last day or two may not be measured yet and is omitted. Returns ok:true with an empty list when nothing has been measured.",
+    inputSchema: {
+      since: z
+        .enum(["7d", "30d", "90d", "365d", "all"])
+        .optional()
+        .describe("Window over publish date. Default '90d'."),
+      post_type: z
+        .enum(["regular", "lead_magnet"])
+        .optional()
+        .describe("Only posts of this type."),
+      sort: z
+        .enum([
+          "impressions",
+          "engagements",
+          "engagement_rate",
+          "likes",
+          "comments",
+          "published",
+        ])
+        .optional()
+        .describe("Sort key. Default 'impressions'."),
+      dir: z.enum(["asc", "desc"]).optional().describe("Default 'desc'. Use 'asc' with a metric sort to surface what underperformed."),
+      limit: z.number().int().min(1).max(100).optional().describe("Default 20, max 100."),
+    },
+  }, async (args, extra) => {
+    try {
+      const { workspaceId } = ids(extra, workspaceFromExtra);
+      if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
+
+      const sb = supabaseAdmin();
+      const since = args.since ?? "90d";
+      const publishedSince =
+        since === "all"
+          ? null
+          : new Date(
+              Date.now() - SINCE_DAYS[since] * 24 * 60 * 60 * 1000,
+            ).toISOString();
+
+      // Artifacts first: the window filters on publish date, and starting from
+      // the (much smaller) published set keeps the snapshot read bounded by
+      // what the caller actually asked for.
+      let artifactQuery = sb
+        .from("chat_artifacts")
+        .select("id, title, body, published_at, kind")
+        .eq("workspace_id", workspaceId)
+        .eq("schedule_status", "published")
+        .not("zernio_post_id", "is", null);
+      if (publishedSince) {
+        artifactQuery = artifactQuery.gte("published_at", publishedSince);
+      }
+      if (args.post_type === "lead_magnet") {
+        artifactQuery = artifactQuery.eq("kind", "lead_magnet");
+      } else if (args.post_type === "regular") {
+        artifactQuery = artifactQuery.neq("kind", "lead_magnet");
+      }
+
+      const artifactRows = await selectAllRows<{
+        id: string;
+        title: string | null;
+        body: string | null;
+        published_at: string | null;
+        kind: string | null;
+      }>(() => artifactQuery.order("published_at", { ascending: false }) as never);
+
+      if (artifactRows.length === 0) {
+        return jsonContent({
+          ok: true,
+          window: since,
+          totals: performanceTotals([]),
+          posts: [],
+          note: "No measured posts in this window yet.",
+        });
+      }
+
+      // Chunked: a long `.in(...)` makes PostgREST reject the request with 400
+      // "URL too long". Paged for the same reason the analytics page is — one
+      // snapshot per post per day passes PostgREST's 1000-row cap in weeks, and
+      // a silent truncation here would drop whole posts from the answer.
+      const artifactIds = artifactRows.map((row) => row.id);
+      const snapshotRows = await selectInChunks<{
+        artifact_id: string;
+        snapshot_date: string;
+        impressions: number | null;
+        reach: number | null;
+        likes: number | null;
+        comments: number | null;
+        shares: number | null;
+        saves: number | null;
+        sends: number | null;
+      }>(artifactIds, (idSlice) =>
+        sb
+          .from("post_analytics")
+          .select(
+            "artifact_id, snapshot_date, impressions, reach, likes, comments, shares, saves, sends",
+          )
+          .eq("workspace_id", workspaceId)
+          .in("artifact_id", idSlice) as never,
+      );
+
+      const rows = buildPerformanceRows(
+        artifactRows.map((row) => ({
+          artifactId: row.id,
+          title: row.title,
+          body: row.body,
+          publishedAt: row.published_at,
+          kind: row.kind,
+        })),
+        snapshotRows.map((row) => ({
+          artifactId: row.artifact_id,
+          snapshotDate: row.snapshot_date,
+          impressions: row.impressions,
+          reach: row.reach,
+          likes: row.likes,
+          comments: row.comments,
+          shares: row.shares,
+          saves: row.saves,
+          sends: row.sends,
+        })),
+      );
+
+      const sorted = sortPerformanceRows(
+        rows,
+        args.sort ?? "impressions",
+        args.dir ?? "desc",
+      );
+      const limit = args.limit ?? 20;
+
+      return jsonContent({
+        ok: true,
+        window: since,
+        // Totals describe the whole filtered window, NOT the truncated page —
+        // otherwise "limit: 5" would silently redefine the workspace's average.
+        totals: performanceTotals(rows),
+        returned: Math.min(limit, sorted.length),
+        posts: sorted.slice(0, limit),
+      });
     } catch (e) { return dbErrorContent("mcp_resource_tool", e); }
   });
 }
