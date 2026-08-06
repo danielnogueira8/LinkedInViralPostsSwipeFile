@@ -19,6 +19,11 @@ const ALLOWED_ADMIN_APP_FILES = new Set([
   // topic clusters are a per-niche signal, not a per-workspace one). Writes
   // nothing and calls no model; CRON_SECRET-gated like the other cron routes.
   "app/api/cron/topic-cluster-probe/route.ts",
+  // Daily digest sweeps EVERY workspace in one cron run, so there is no single
+  // workspace to scope a client to. CRON_SECRET-gated; every read carries an
+  // explicit workspace predicate in-loop and the write is keyed to that same
+  // workspace id.
+  "app/api/cron/daily-digest/route.ts",
   "app/api/health/route.ts",
   "app/api/internal/jobs/health/route.ts",
   // Cron run history is PLATFORM telemetry: crons run across every workspace,
