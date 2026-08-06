@@ -11,6 +11,7 @@ import {
   ChartNoAxesColumn,
   LayoutTemplate,
   LibraryBig,
+  Newspaper,
   Plug,
 } from "lucide-react";
 import { ClaudeIcon } from "@/components/claude-icon";
@@ -60,6 +61,7 @@ export const NAV_SECTIONS: NavSection[] = [
     label: "Research",
     items: [
       { href: "/dashboard/swipe", label: "Swipe File", shortLabel: "Swipe", icon: SwipeInIcon, tooltip: "Browse source posts and saved bookmarks to model in Cowork." },
+      { href: "/dashboard/digest", label: "Daily Brief", shortLabel: "Brief", icon: Newspaper, tooltip: "Today's theme, best hook, and what to write next, from the creators you track." },
       { href: "/dashboard/accounts", label: "Creators", icon: SatelliteDish, tooltip: "Creators SwipeIn watches to fill your Swipe File with proven posts." },
     ],
   },

@@ -18,9 +18,12 @@ describe("mobile navigation lifecycle", () => {
   });
 
   test("keeps research tools in the first overflow group", () => {
+    // Daily Brief sits with the other research surfaces, and first within the
+    // group: it is the only one that changes every day, so it is the reason to
+    // open this menu at all.
     expect(MOBILE_MORE_SECTIONS[0]).toEqual({
       label: "Inspiration",
-      paths: ["/dashboard/accounts", "/dashboard/templates"],
+      paths: ["/dashboard/digest", "/dashboard/accounts", "/dashboard/templates"],
     });
   });
 
