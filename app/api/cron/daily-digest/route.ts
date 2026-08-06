@@ -2,12 +2,17 @@ import { NextResponse } from "next/server";
 import { cronAuthorizationResponse, isCronAuthorized } from "../_auth";
 import { supabaseAdmin } from "@/lib/supabase";
 import { selectAllRows, selectInChunks } from "@/lib/db-paginate";
-import { CHAT_MODEL, completeChat, logOpenRouterUsage } from "@/lib/openrouter";
+import {
+  CHAT_MODEL,
+  completeChat,
+  logOpenRouterUsage,
+  openRouterUsageCost,
+} from "@/lib/openrouter";
 import {
   DIGEST_MAX_OUTPUT_TOKENS,
   DIGEST_SYSTEM_PROMPT,
+  digestWindow,
   planDigest,
-  utcDayBounds,
   type DigestPost,
 } from "@/lib/daily-digest";
 
@@ -55,8 +60,7 @@ export async function GET(request: Request) {
 
   const db = supabaseAdmin();
   const now = new Date();
-  const { from, to } = utcDayBounds(now);
-  const digestDate = from.slice(0, 10);
+  const { scrapedFrom, scrapedTo, postedFrom, digestDate } = digestWindow(now);
   const url = new URL(request.url);
   const requested = url.searchParams.get("workspace");
   // Dry run: plan and report WITHOUT calling the model. The whole point of
@@ -114,16 +118,25 @@ export async function GET(request: Request) {
         continue;
       }
 
-      // Today's posts for this workspace's tracked creators. Chunked because
-      // the account `.in()` can otherwise exceed PostgREST's URL limit, and
-      // paged because a busy day across 50 creators can pass the 1000-row cap.
+      // Posts that ARRIVED today for this workspace's tracked creators.
+      //
+      // Anchored on scraped_at, not posted_at: the scrape pulls each creator's
+      // most recent post whatever its age, so filtering on publish date found
+      // almost nothing and skipped every workspace. posted_at still bounds the
+      // other side, because the pipeline refreshes scraped_at on every upsert —
+      // without it, a re-scraped week-old post would read as today's news.
+      //
+      // Chunked because the account `.in()` can otherwise exceed PostgREST's
+      // URL limit, and paged because a busy day across 50 creators can pass the
+      // 1000-row cap.
       const rows = await selectInChunks<PostRow>(accountIds, (ids) =>
         db
           .from("posts")
           .select("id, account_id, text, reactions, comments, posted_at")
           .in("account_id", ids)
-          .gte("posted_at", from)
-          .lt("posted_at", to) as never,
+          .gte("scraped_at", scrapedFrom)
+          .lt("scraped_at", scrapedTo)
+          .gte("posted_at", postedFrom) as never,
       );
 
       const posts: DigestPost[] = rows.map((row) => ({
@@ -174,10 +187,16 @@ export async function GET(request: Request) {
         workspaceId,
         { digest_date: digestDate, post_count: plan.posts.length },
       );
-      const inputTokens = completion.usage?.prompt_tokens ?? null;
-      const outputTokens = completion.usage?.completion_tokens ?? null;
-      const costUsd = completion.usage?.cost ?? null;
-      if (typeof costUsd === "number") totalCost += costUsd;
+      // usage.cost is NEVER set on the OpenAI path (openrouter.ts:1218), and
+      // Luna routes there — reading it directly reported $0 for a run that had
+      // really been billed. openRouterUsageCost computes from tokens when the
+      // provider omits an exact cost, which is the same helper
+      // logOpenRouterUsage uses internally, so the row and usage_events agree.
+      const { inputTokens, outputTokens, costUsd } = openRouterUsageCost(
+        completion.model || CHAT_MODEL,
+        completion.usage,
+      );
+      totalCost += costUsd;
 
       if (!content) {
         results.push({ workspaceId, error: "empty_completion", inputTokens, outputTokens });
@@ -205,6 +224,7 @@ export async function GET(request: Request) {
 
       results.push({
         workspaceId,
+        written: true,
         postCount: plan.posts.length,
         inputTokens,
         outputTokens,
@@ -225,8 +245,23 @@ export async function GET(request: Request) {
         digest_date: digestDate,
         dry_run: dryRun,
         workspaces: workspaceIds.length,
-        written: results.filter((r) => typeof r.postCount === "number" && !r.error && !r.wouldRun)
-          .length,
+        // Count the explicit written flag, NOT "has a postCount". Skipped
+        // results carry postCount too, so the old predicate reported 9 skips as
+        // 9 successful digests — a run that wrote nothing and cost nothing
+        // looked healthy in the log.
+        written: results.filter((r) => r.written === true).length,
+        // Why the rest were skipped, so a silent all-skip run explains itself
+        // in the same line instead of needing an investigation.
+        skipped: results.reduce<Record<string, number>>((acc, r) => {
+          const reason =
+            typeof r.skipped === "string"
+              ? r.skipped
+              : r.error
+                ? `error:${String(r.error)}`
+                : null;
+          if (reason) acc[reason] = (acc[reason] ?? 0) + 1;
+          return acc;
+        }, {}),
         total_cost_usd: Number(totalCost.toFixed(6)),
       },
     }),
