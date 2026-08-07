@@ -5,6 +5,7 @@ import {
   type McpHttpHandler,
 } from "@modelcontextprotocol/server";
 import { MCP_CACHE_HINTS } from "@/lib/mcp/cache-hints";
+import { SWIPE_MCP_INSTRUCTIONS } from "@/lib/mcp/instructions";
 import { mcpProtocolErrorLogLine } from "@/lib/mcp/observability";
 import { registerSwipeTools } from "@/lib/mcp/register";
 import { mcpRequestStateCodec } from "@/lib/mcp/request-state";
@@ -32,6 +33,7 @@ const SERVER_INFO = {
  */
 export function createSwipeMcpServer(): McpServer {
   const server = new McpServer(SERVER_INFO, {
+    instructions: SWIPE_MCP_INSTRUCTIONS,
     cacheHints: MCP_CACHE_HINTS,
     requestState: {
       verify: mcpRequestStateCodec.verify,

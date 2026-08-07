@@ -9,6 +9,14 @@ export const NO_SOURCE_POST_ROWS =
   "00000000-0000-0000-0000-000000000000";
 export const MAX_SOURCE_POST_DISCOVERY_LIMIT = 200;
 export const MAX_SOURCE_POST_PAGE_LIMIT = 100;
+/**
+ * The limit-branch over-fetches so workspace-declassified posts can't shrink a
+ * result below the requested limit. Each attempt multiplies the read size;
+ * both bounds keep a heavily-declassified workspace from scanning the table.
+ */
+export const DISCOVERY_OVERFETCH_MULTIPLIER = 4;
+export const MAX_DISCOVERY_WIDENING_ATTEMPTS = 3;
+export const MAX_SOURCE_POST_DISCOVERY_FETCH = 600;
 
 export type SourcePostFilters = {
   niche?: string | null;
@@ -230,18 +238,45 @@ export async function discoverSourcePosts(
   };
 
   if (window.kind === "limit") {
-    const { data, error } = await retryRead<DiscoveredSourcePost[]>(
-      () => buildQuery(window) as unknown as PromiseLike<{
-        data: DiscoveredSourcePost[] | null;
-        error: { message?: string; code?: string } | null;
-      }>,
-      { signal: request.signal },
-    );
-    if (error) throw new SourcePostDiscoveryError(error);
-    return {
-      rows: (data ?? []).filter(sourcePostPassesWorkspaceViral),
-      nextOffset: null,
-    };
+    // Eligibility is enforced in two places: SQL-side (is_viral, thresholds,
+    // window) and JS-side (sourcePostPassesWorkspaceViral, which drops posts
+    // THIS workspace explicitly declassified). Asking the DB for exactly
+    // `limit` rows and then applying the JS filter under-fills the result by
+    // however many declassified rows happened to rank highest — a request for
+    // 5 could come back with 1, which is what made MCP research answers look
+    // like "only one post exists this week".
+    //
+    // Over-fetch and keep widening until we have `limit` eligible rows or the
+    // table runs out. Bounded so a workspace that declassified nearly
+    // everything can't turn one read into an unbounded scan.
+    const rows: DiscoveredSourcePost[] = [];
+    let fetchSize = window.limit;
+    for (let attempt = 0; attempt < MAX_DISCOVERY_WIDENING_ATTEMPTS; attempt += 1) {
+      fetchSize = Math.min(
+        fetchSize * DISCOVERY_OVERFETCH_MULTIPLIER,
+        MAX_SOURCE_POST_DISCOVERY_FETCH,
+      );
+      const { data, error } = await retryRead<DiscoveredSourcePost[]>(
+        () => buildQuery({ kind: "limit", limit: fetchSize }) as unknown as PromiseLike<{
+          data: DiscoveredSourcePost[] | null;
+          error: { message?: string; code?: string } | null;
+        }>,
+        { signal: request.signal },
+      );
+      if (error) throw new SourcePostDiscoveryError(error);
+      const rawRows = data ?? [];
+      rows.length = 0;
+      for (const row of rawRows) {
+        if (!sourcePostPassesWorkspaceViral(row)) continue;
+        rows.push(row);
+        if (rows.length === window.limit) break;
+      }
+      // Enough eligible rows, or the table is exhausted (the DB returned fewer
+      // than we asked for, so widening again can't surface anything new).
+      if (rows.length === window.limit || rawRows.length < fetchSize) break;
+      if (fetchSize >= MAX_SOURCE_POST_DISCOVERY_FETCH) break;
+    }
+    return { rows, nextOffset: null };
   }
 
   const rows: DiscoveredSourcePost[] = [];
