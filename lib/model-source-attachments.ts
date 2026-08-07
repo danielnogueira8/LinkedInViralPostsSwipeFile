@@ -83,16 +83,27 @@ export async function rehydrateModelSourceAttachments<T extends SourceMessage>(
       .eq("workspace_id", workspaceId)
       .in("id", ids);
     if (error || !rows) return withUnavailableAttachments(messages);
-    const sources = (rows as SourceRow[]).filter(
+    const allSources = rows as SourceRow[];
+    // Swipe/bookmark sources point at a row that can change or disappear, so
+    // they get re-resolved below. Templates and drafts have no live external
+    // row to re-read — the complete body was captured into post_text when the
+    // source was attached — so they rehydrate straight from the stashed text.
+    // Dropping them here is what made a template chip come back as "Source post
+    // no longer available", taking the template body out of chat context.
+    const sources = allSources.filter(
       (source) =>
         (source.source === "swipe" || source.source === "bookmark") &&
         Boolean(source.source_post_id),
     );
-    if (sources.length === 0) return withUnavailableAttachments(messages);
+    const selfContained = allSources.filter(
+      (source) => source.source === "template" || source.source === "draft",
+    );
 
     const swipeIds = sources.filter((source) => source.source === "swipe").map((source) => source.source_post_id!);
     const bookmarkIds = sources.filter((source) => source.source === "bookmark").map((source) => source.source_post_id!);
-    const accountIds = await trackedAccountIds(workspaceId);
+    // Only needed to scope the swipe read; a template/draft-only conversation
+    // shouldn't pay for this lookup.
+    const accountIds = swipeIds.length ? await trackedAccountIds(workspaceId) : [];
     const [swipes, bookmarks] = await Promise.all([
       swipeIds.length
         ? sb.from("posts").select("id, text, post_type, post_url, accounts!inner(name, profile_pic_url)").in("id", swipeIds).in("account_id", accountIds.length ? accountIds : [NO_ROWS_SENTINEL])
@@ -106,6 +117,23 @@ export async function rehydrateModelSourceAttachments<T extends SourceMessage>(
     const swipeById = new Map((swipes.data ?? []).map((row) => [row.id as string, row]));
     const bookmarkById = new Map((bookmarks.data ?? []).map((row) => [row.id as string, row]));
     const attachments = new Map<string, ModelSourceAttachment>();
+    // Templates and drafts: the stashed post_text IS the source of truth, so
+    // they stay available for the life of the conversation. A template has no
+    // author (it isn't a person's post) and no LinkedIn URL.
+    for (const source of selfContained) {
+      const kind = source.source as "template" | "draft";
+      attachments.set(source.id, {
+        id: source.id,
+        kind,
+        state: source.post_text?.trim() ? "available" : "unavailable",
+        authorName: kind === "template" ? null : source.author_name,
+        authorAvatar: kind === "template" ? null : source.author_avatar,
+        postText: source.post_text ?? "",
+        partial: Boolean(source.partial),
+        postType: resolveModelSourcePostType(source.post_type, source.post_text ?? ""),
+        postUrl: null,
+      });
+    }
     for (const source of sources) {
       const current = source.source === "swipe"
         ? swipeById.get(source.source_post_id!)
