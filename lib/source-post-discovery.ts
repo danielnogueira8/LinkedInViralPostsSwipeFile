@@ -246,16 +246,21 @@ export async function discoverSourcePosts(
     // 5 could come back with 1, which is what made MCP research answers look
     // like "only one post exists this week".
     //
-    // Over-fetch and keep widening until we have `limit` eligible rows or the
-    // table runs out. Bounded so a workspace that declassified nearly
-    // everything can't turn one read into an unbounded scan.
+    // The FIRST read still asks for exactly `limit`, so callers that size a
+    // candidate pool deliberately (search_viral_posts' modeling pool, the
+    // Cowork idea pool) keep the exact query shape they tuned for. Only when
+    // that read actually loses rows to the JS filter do we widen — so the
+    // common case costs one query, same as before, and the broken case
+    // recovers instead of silently under-filling.
     const rows: DiscoveredSourcePost[] = [];
     let fetchSize = window.limit;
     for (let attempt = 0; attempt < MAX_DISCOVERY_WIDENING_ATTEMPTS; attempt += 1) {
-      fetchSize = Math.min(
-        fetchSize * DISCOVERY_OVERFETCH_MULTIPLIER,
-        MAX_SOURCE_POST_DISCOVERY_FETCH,
-      );
+      if (attempt > 0) {
+        fetchSize = Math.min(
+          fetchSize * DISCOVERY_OVERFETCH_MULTIPLIER,
+          MAX_SOURCE_POST_DISCOVERY_FETCH,
+        );
+      }
       const { data, error } = await retryRead<DiscoveredSourcePost[]>(
         () => buildQuery({ kind: "limit", limit: fetchSize }) as unknown as PromiseLike<{
           data: DiscoveredSourcePost[] | null;
