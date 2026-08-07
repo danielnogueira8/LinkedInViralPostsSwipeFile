@@ -125,6 +125,10 @@ const POST_WITH_VISUAL_COLS =
 // tool also accepts a window_days override; this external MCP surface keeps the
 // fixed 7-day window for simplicity.)
 const TOP_BATCH_WINDOW_DAYS = 7;
+// "Top posts this week" is a pattern question, so the default result has to be
+// big enough to show a pattern. At 5 a couple of thin rows read as "there is
+// nothing this week"; 10 keeps one round-trip cheap while surviving that.
+const TOP_BATCH_DEFAULT_LIMIT = 10;
 // Two 1 MiB images stay below common serverless response-body limits even
 // after base64 expansion, while the JSON result still exposes every source URL.
 const MAX_RENDERED_POST_IMAGES = 2;
@@ -646,11 +650,28 @@ export function registerSwipeTools(server: McpServer) {
       description:
         "Returns the highest-engagement RECENTLY-PUBLISHED posts (last 7 days before the most recent scrape — 'this week' / what's working now) from your workspace's tracked accounts. Filtered by publish date, not scrape date — a scrape re-ingests old posts too, so ranking by scrape date would surface stale posts. The result's `scrape.scraped_at` is the real scrape date and `scrape.window_days` the window used; each post carries its own `posted_at`. Pass `post_type` to restrict to 'regular' or 'lead_magnet' posts; omit to include both. A one-post request includes rendered original images when available; set include_visual to true for images in a larger result set.",
       inputSchema: {
-        limit: z.number().int().min(1).max(20).optional().describe("Default 5, max 20."),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(20)
+          .optional()
+          .describe(
+            "Default 10, max 20. Raise toward 20 when the user wants to see patterns or a ranking rather than a single example.",
+          ),
         post_type: z
           .enum(POST_TYPES)
           .optional()
           .describe("Restrict to 'regular' or 'lead_magnet' posts. Omit to include both."),
+        window_days: z
+          .number()
+          .int()
+          .min(1)
+          .max(30)
+          .optional()
+          .describe(
+            "How many days before the latest scrape to include, by publish date. Default 7 ('this week'). Widen toward 30 when the default window comes back thin or the user asks about a longer stretch.",
+          ),
         include_visual: z
           .boolean()
           .optional()
@@ -658,7 +679,7 @@ export function registerSwipeTools(server: McpServer) {
       },
       _meta: { ui: { resourceUri: POST_CARDS_RESOURCE_URI } },
     },
-    async ({ limit, post_type, include_visual }, extra) => {
+    async ({ limit, post_type, include_visual, window_days }, extra) => {
       try {
         const workspaceId = workspaceFromExtra(extra);
         if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
@@ -677,10 +698,11 @@ export function registerSwipeTools(server: McpServer) {
         // posts. Window = the N days before the scrape, so "top from the latest
         // scrape" means the best RECENTLY-PUBLISHED posts (see tools.ts).
         const runStartMs = new Date(lastRun.started_at as string).getTime();
+        const windowDays = window_days ?? TOP_BATCH_WINDOW_DAYS;
         const sinceIso = new Date(
-          runStartMs - TOP_BATCH_WINDOW_DAYS * 24 * 60 * 60 * 1000,
+          runStartMs - windowDays * 24 * 60 * 60 * 1000,
         ).toISOString();
-        const resultLimit = limit ?? 5;
+        const resultLimit = limit ?? TOP_BATCH_DEFAULT_LIMIT;
         const includeVisual = shouldIncludePostVisual(resultLimit, include_visual);
         // Always select the visual projection: the attached MCP Apps card view
         // renders avatars and media from it. The model-facing text strips those
@@ -698,14 +720,24 @@ export function registerSwipeTools(server: McpServer) {
           const post = normalizeEmbed(row, includeVisual);
           return includeVisual ? post : stripProfilePicUrl(post);
         });
+        // A thin result means "few posts cleared this workspace's filters in
+        // this window", never "few posts exist". Say so explicitly so the model
+        // widens instead of reporting the shortfall as the state of the world.
+        const sparse = posts.length < resultLimit && windowDays < 30;
         const payload = {
           ok: true,
           scrape: {
             scraped_at: lastRun.finished_at ?? lastRun.started_at,
             posts_published_since: sinceIso,
-            window_days: TOP_BATCH_WINDOW_DAYS,
+            window_days: windowDays,
           },
           count: posts.length,
+          ...(sparse
+            ? {
+                sparse: true,
+                note: `Only ${posts.length} post(s) cleared this workspace's virality threshold in the last ${windowDays} days. This is not the full set of posts published — call again with a larger window_days (up to 30) before concluding the week was quiet.`,
+              }
+            : {}),
           posts,
         };
         const viewPayload = {
