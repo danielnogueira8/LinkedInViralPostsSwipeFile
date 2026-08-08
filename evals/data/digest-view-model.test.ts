@@ -524,3 +524,85 @@ describe("the section's own finding survives", () => {
     expect(items[0].title).toBe("Complete Revenue System");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Third wrapper shape seen in production: `[<id>]`. The brackets were not part
+// of the citation match, so they survived the substitution — an orphaned "[" at
+// the end of the claim and a "]" opening every evidence row.
+// ---------------------------------------------------------------------------
+
+/** Verbatim shape from the 8 August brief. */
+const BRACKET_THEME =
+  "Practical Claude and agentic-AI systems for revenue and content operations " +
+  "have the clearest momentum today: creators are packaging AI into repeatable " +
+  "workflows rather than pitching generic prompting. The strongest evidence is " +
+  "the 20-agent sales operation at [84efa253-e31d-4dd0-ae36-e9d4e28dfaad] — " +
+  "390 reactions, 1,283 comments; the five-layer agentic-AI framework at " +
+  "[60cb589b-c4e2-4fb8-89a1-1e9cc3de7604] — 969 reactions, 208 comments; and " +
+  "Claude-powered video editing at [1e174a9a-fcbc-4661-9b89-47d694e42181] — " +
+  "608 reactions, 299 comments";
+
+const BRACKET_LABELS = new Map([
+  ["84efa253-e31d-4dd0-ae36-e9d4e28dfaad", "Luna Chen"],
+  ["60cb589b-c4e2-4fb8-89a1-1e9cc3de7604", "Luis Rodrigues"],
+  ["1e174a9a-fcbc-4661-9b89-47d694e42181", "Charlie Hills"],
+]);
+
+describe("bracket-wrapped citations", () => {
+  it("leaves no orphaned bracket in the claim", () => {
+    const { claim } = splitSectionLead(BRACKET_THEME, BRACKET_LABELS);
+    expect(claim).not.toMatch(/[[\]]/);
+    expect(claim).not.toMatch(/\bat$/);
+    expect(claim).toContain("repeatable workflows");
+  });
+
+  it("does not open an evidence row with a stray bracket", () => {
+    const { evidence } = splitSectionLead(BRACKET_THEME, BRACKET_LABELS);
+    const items = splitEvidence(evidence, BRACKET_LABELS);
+    expect(items).toHaveLength(3);
+    for (const item of items) {
+      expect(item.detail).not.toMatch(/[[\]]/);
+      expect(item.title ?? "").not.toMatch(/[[\]]/);
+    }
+    // The descriptive phrase stays with ITS post's numbers.
+    expect(items[0]).toEqual({
+      title: "Luna Chen",
+      detail: "the 20-agent sales operation — 390 reactions, 1,283 comments",
+    });
+    expect(items[1].detail).toContain("five-layer agentic-AI framework");
+    expect(items[2]).toEqual({
+      title: "Charlie Hills",
+      detail: "Claude-powered video editing — 608 reactions, 299 comments",
+    });
+  });
+
+  it("keeps the trailing prose of each row out of the next one", () => {
+    const { evidence } = splitSectionLead(BRACKET_THEME, BRACKET_LABELS);
+    const items = splitEvidence(evidence, BRACKET_LABELS);
+    // "the five-layer agentic-AI framework at" belongs to the sentence, not to
+    // row one's engagement numbers.
+    expect(items[0].detail).not.toContain("five-layer");
+  });
+
+  it("substitutes the author for a bracketed id in prose", () => {
+    expect(cleanInline("Seen at [84efa253-e31d-4dd0-ae36-e9d4e28dfaad] today", BRACKET_LABELS))
+      .toBe("Seen at Luna Chen today");
+  });
+
+  it("removes an unresolved bracketed id without leaving its brackets", () => {
+    const cleaned = cleanInline(
+      "Seen at [84efa253-e31d-4dd0-ae36-e9d4e28dfaad] today",
+      new Map(),
+    );
+    expect(cleaned).not.toMatch(/[[\]]/);
+    expect(cleaned).not.toMatch(UUID_ANYWHERE);
+  });
+
+  it("handles all three wrappers identically", () => {
+    const id = "84efa253-e31d-4dd0-ae36-e9d4e28dfaad";
+    const expected = "Seen at Luna Chen today";
+    expect(cleanInline(`Seen at [${id}] today`, BRACKET_LABELS)).toBe(expected);
+    expect(cleanInline(`Seen at \`${id}\` today`, BRACKET_LABELS)).toBe(expected);
+    expect(cleanInline(`Seen at ${id} today`, BRACKET_LABELS)).toBe(expected);
+  });
+});
