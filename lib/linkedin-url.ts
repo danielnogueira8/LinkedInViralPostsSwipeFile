@@ -60,6 +60,86 @@ export function verifiedLinkedInSourceUrl(value: unknown): string | undefined {
   }
 }
 
+// LinkedIn's own shortener. The share sheet and mobile app hand out
+// https://lnkd.in/p/<code> links, which carry no activity id at all — so every
+// save path rejected them with "Couldn't read that URL" even though they point
+// at a perfectly ordinary post.
+const LINKEDIN_SHORTLINK_HOSTS = new Set(["lnkd.in", "www.lnkd.in"]);
+
+// A shortlink can chain (lnkd.in -> lnkd.in -> linkedin.com). Bounded so a
+// redirect loop cannot spin the request.
+const MAX_SHORTLINK_HOPS = 4;
+const SHORTLINK_TIMEOUT_MS = 5_000;
+
+/** Is this one of LinkedIn's own short links? Exported for tests. */
+export function isLinkedInShortLink(value: unknown): boolean {
+  if (typeof value !== "string" || !value) return false;
+  try {
+    const url = new URL(value);
+    return (
+      url.protocol === "https:" &&
+      LINKEDIN_SHORTLINK_HOSTS.has(url.hostname.toLowerCase())
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Expand an lnkd.in short link to the post URL it points at.
+ *
+ * SECURITY: this makes the SERVER fetch a URL a user pasted, and anyone can
+ * mint an lnkd.in link pointing anywhere — so `redirect: "follow"` would hand
+ * an attacker a request to any host we can reach, including link-local
+ * metadata addresses. Instead every hop is resolved MANUALLY and checked:
+ *   - the request only ever goes to a host on the shortlink allowlist
+ *   - a Location is accepted only when it is LinkedIn (verifiedLinkedInSourceUrl)
+ *     or another shortlink hop; anything else ends the walk
+ *   - the response body is cancelled unread — only the Location header matters,
+ *     so there is nothing to size-bound
+ *
+ * Returns null on anything unexpected, and every caller falls back to its
+ * existing "couldn't read that URL" path. Best-effort by design: an expansion
+ * that fails must never be worse than not trying.
+ */
+export async function resolveLinkedInShortLink(
+  value: string,
+): Promise<string | null> {
+  if (!isLinkedInShortLink(value)) return null;
+  let current = value;
+  try {
+    for (let hop = 0; hop < MAX_SHORTLINK_HOPS; hop += 1) {
+      const response = await fetch(current, {
+        method: "GET",
+        redirect: "manual",
+        headers: {
+          "User-Agent": "Mozilla/5.0 (compatible; LinkedInSwipeFile/1.0)",
+          Accept: "text/html",
+        },
+        signal: AbortSignal.timeout(SHORTLINK_TIMEOUT_MS),
+        cache: "no-store",
+      });
+      // Only the header is needed; never pull the page down.
+      await response.body?.cancel().catch(() => undefined);
+
+      const location = response.headers.get("location");
+      // No redirect. lnkd.in serves an interstitial for some links rather than
+      // a 3xx, and there is nothing to expand there.
+      if (!location) return null;
+
+      const next = new URL(location, current).toString();
+      const linkedIn = verifiedLinkedInSourceUrl(next);
+      if (linkedIn) return linkedIn;
+      // Refuse to walk anywhere that is not another LinkedIn shortlink.
+      if (!isLinkedInShortLink(next)) return null;
+      current = next;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Normalize a LinkedIn profile URL while accepting the bare host shape used by
  * older MCP clients. Host and protocol validation happen before the profile

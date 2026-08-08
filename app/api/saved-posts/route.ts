@@ -16,6 +16,8 @@ import {
   postUrlForUrn,
   postUrlFromUrn,
   probeEmbedUrn,
+  isLinkedInShortLink,
+  resolveLinkedInShortLink,
 } from "@/lib/linkedin-url";
 import { fetchEmbedCard } from "@/lib/linkedin-embed-scrape";
 import {
@@ -209,7 +211,17 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: "URL is required" }, { status: 400 });
     }
 
-    const urn = extractUrnFromUrl(rawUrl);
+    // An lnkd.in short link carries no activity id, so every parser below
+    // fails on it even though it points at an ordinary post. Expand it once,
+    // here, and let the rest of the route work with a real LinkedIn URL —
+    // including the author handle and the stored original_url, which would
+    // otherwise keep a shortlink that can rot.
+    let sourceUrl = rawUrl;
+    if (!extractUrnFromUrl(sourceUrl) && isLinkedInShortLink(sourceUrl)) {
+      sourceUrl = (await resolveLinkedInShortLink(sourceUrl)) ?? sourceUrl;
+    }
+
+    const urn = extractUrnFromUrl(sourceUrl);
     if (!urn) {
       return NextResponse.json(
         {
@@ -256,7 +268,7 @@ export async function POST(req: Request) {
     const categoryId = catResult.categoryId;
 
     const canonical = canonicalPostUrl(activityId);
-    const handleFromUrl = authorHandleFromUrl(rawUrl);
+    const handleFromUrl = authorHandleFromUrl(sourceUrl);
 
     // Idempotent: if THIS library already has this post, return the
     // existing row so the UI can just refresh and feel snappy. We
@@ -345,7 +357,7 @@ export async function POST(req: Request) {
           }
           if (card.authorName) patch.author_name = card.authorName;
           const profileUrl = await resolveBookmarkAuthorProfileUrl({
-            rawUrl,
+            rawUrl: sourceUrl,
             canonicalUrl: canonical,
             cardProfileUrl: card.profileUrl,
             oembedProfileUrl: oembed?.authorProfileUrl ?? null,
@@ -456,7 +468,7 @@ export async function POST(req: Request) {
       handle = await fetchHandleViaRedirect(canonical);
     }
     const authorProfileUrl = await resolveBookmarkAuthorProfileUrl({
-      rawUrl,
+      rawUrl: sourceUrl,
       canonicalUrl: canonical,
       cardProfileUrl: card?.profileUrl ?? null,
       oembedProfileUrl: oembed.authorProfileUrl,
@@ -485,7 +497,7 @@ export async function POST(req: Request) {
         // not collecting in their own library). created_by_user_id
         // attributes the contribution.
         post_url: openUrl,
-        original_url: rawUrl,
+        original_url: sourceUrl,
         author_name: authorName,
         author_handle: handle,
         text_snippet: oembed.textSnippet,

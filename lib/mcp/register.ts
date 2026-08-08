@@ -42,6 +42,8 @@ import {
   canonicalPostUrl,
   displayNameFromHandle,
   extractUrnFromUrl,
+  isLinkedInShortLink,
+  resolveLinkedInShortLink,
   fetchHandleViaRedirect,
   fetchOEmbed,
   postUrlForUrn,
@@ -1206,7 +1208,16 @@ export function registerSwipeTools(server: McpServer) {
         const workspaceId = workspaceFromExtra(extra);
         if (!workspaceId) return errorContent(NO_WORKSPACE_MSG);
 
-        const urn = extractUrnFromUrl(args.url);
+        // An lnkd.in short link carries no activity id, so the parsers below
+        // fail on it even though it points at an ordinary post. The share
+        // sheet hands these out, so a user pasting one into an assistant is
+        // the normal case rather than an edge one.
+        let sourceUrl = args.url;
+        if (!extractUrnFromUrl(sourceUrl) && isLinkedInShortLink(sourceUrl)) {
+          sourceUrl = (await resolveLinkedInShortLink(sourceUrl)) ?? sourceUrl;
+        }
+
+        const urn = extractUrnFromUrl(sourceUrl);
         if (!urn) {
           return errorContent(
             "Couldn't read that URL. Paste a LinkedIn post link — /feed/update/urn:li:activity:... or /posts/...",
@@ -1216,7 +1227,7 @@ export function registerSwipeTools(server: McpServer) {
 
         const sb = supabaseAdmin();
         const canonical = canonicalPostUrl(activityId);
-        const handleFromUrl = authorHandleFromUrl(args.url);
+        const handleFromUrl = authorHandleFromUrl(sourceUrl);
 
         const existing = await findBookmarkResource({
           db: sb,
@@ -1277,7 +1288,7 @@ export function registerSwipeTools(server: McpServer) {
             post_url:
               postUrlFromUrn(oembed.embedUrn ?? probedUrn) ??
               postUrlForUrn(urn.type, activityId),
-            original_url: args.url,
+            original_url: sourceUrl,
             author_name: authorName,
             author_handle: handle,
             text_snippet: oembed.textSnippet,
