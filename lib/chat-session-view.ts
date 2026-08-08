@@ -38,6 +38,8 @@ export type SessionViewMessage<Tool, Plan, Ask, Artifact, Recoverable, Usage = u
   text: string;
   contentFormat?: "plain" | "markdown";
   files?: string[];
+  // Live reasoning narration, present only on a streaming assistant message.
+  reasoning?: string;
   tools?: Tool[];
   plan?: Plan[];
   ask?: Ask;
@@ -60,6 +62,7 @@ export function runOverlay<
     userMsg: SessionViewMessage<Tool, Plan, Ask, Artifact, Recoverable, Usage>;
     assistantId: string;
     rawText: string;
+    reasoning?: string;
     contentFormat?: "plain" | "markdown";
     tools: Tool[];
     plan: Plan[];
@@ -81,6 +84,9 @@ export function runOverlay<
     role: "assistant" as const,
     text: stripArtifactFences(run.rawText),
     contentFormat: run.contentFormat,
+    // Only while the turn is live. Once it settles the answer speaks for
+    // itself, and a finished bubble must not keep the scaffolding around.
+    reasoning: run.streaming ? run.reasoning : undefined,
     tools: run.tools,
     plan: run.plan,
     ask: run.ask,

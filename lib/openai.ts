@@ -330,9 +330,11 @@ function responseBody(opts: {
   sessionId?: string;
   cachePrompt?: boolean;
   stream?: boolean;
+  // Conversational answer turn — see nativeOpenAIReasoningEffort.
+  lowLatency?: boolean;
 }): Record<string, unknown> {
   const tools = responsesTools(opts.tools, opts.plugins);
-  const nativeEffort = nativeOpenAIReasoningEffort(opts.model);
+  const nativeEffort = nativeOpenAIReasoningEffort(opts.model, opts.lowLatency);
   const effort =
     opts.disableReasoning
       ? "none"
@@ -360,7 +362,19 @@ function responseBody(opts: {
         : tools
           ? { tool_choice: "auto" }
           : {}),
-    ...(effort ? { reasoning: { effort } } : {}),
+    // `summary: "auto"` turns the reasoning pass into something the user can
+    // watch. At forced high effort there is a long silent gap before the first
+    // visible token, and until now the UI filled it with a fixed script of plan
+    // stages that ran identically whether the model was breezing through or
+    // stuck. The summary stream replaces that with what the model is ACTUALLY
+    // working on. Only requested when reasoning is on — a "none" call has no
+    // reasoning pass to summarize. Summaries cost output tokens, which the
+    // headroom above already accounts for.
+    ...(effort && effort !== "none"
+      ? { reasoning: { effort, summary: "auto" } }
+      : effort
+        ? { reasoning: { effort } }
+        : {}),
     ...(opts.sessionId && opts.cachePrompt !== false
       ? { prompt_cache_key: opts.sessionId }
       : {}),
@@ -368,6 +382,30 @@ function responseBody(opts: {
       ? { prompt_cache_options: { mode: "explicit" } }
       : {}),
   };
+}
+
+const CONVERSATIONAL_EFFORTS = new Set(["minimal", "low", "medium", "high"]);
+
+/**
+ * Reasoning effort for a conversational answer turn, when set.
+ *
+ * The unconditional promotion below is right for writing and research, but the
+ * plain answer path (lib/agent/turn/execute.ts) is neither: it carries no
+ * tools, answers from history, and pays the full high-effort pause before its
+ * first token — on exactly the turns where a user expects a quick reply.
+ *
+ * Lowering it trades answer quality for time-to-first-token, and which side
+ * wins is an empirical question we cannot settle from the transport. So it is
+ * env-gated and UNSET by default: behavior is identical to today until someone
+ * opts in, and it can be A/B'd without a deploy (same convention as
+ * OPENROUTER_CHAT_MODEL). An unrecognized value is ignored rather than
+ * silently degrading every conversational turn.
+ */
+function conversationalReasoningEffort(): string | undefined {
+  const configured = process.env.OPENAI_ANSWER_REASONING_EFFORT?.trim().toLowerCase();
+  return configured && CONVERSATIONAL_EFFORTS.has(configured)
+    ? configured
+    : undefined;
 }
 
 /**
@@ -378,11 +416,19 @@ function responseBody(opts: {
  * silently run below the product-wide quality bar.
  * Explicit `disableReasoning` and `glmReasoning: "none"` still win for small
  * mechanical calls such as title generation.
+ *
+ * `lowLatency` marks a call as conversational — the ONLY way to run below the
+ * bar, and only when OPENAI_ANSWER_REASONING_EFFORT is configured. A caller
+ * cannot drop effort by passing a hint, which is what keeps the promotion
+ * meaningful.
  */
-function nativeOpenAIReasoningEffort(model: string): "high" | undefined {
+function nativeOpenAIReasoningEffort(
+  model: string,
+  lowLatency?: boolean,
+): string | undefined {
   const id = openAIModelId(model).toLowerCase();
-  if (/^(?:gpt-5(?:\.\d+)?|o[134])(?:-|$)/.test(id)) return "high";
-  return undefined;
+  if (!/^(?:gpt-5(?:\.\d+)?|o[134])(?:-|$)/.test(id)) return undefined;
+  return (lowLatency ? conversationalReasoningEffort() : undefined) ?? "high";
 }
 
 function responseOutputText(output: Array<Record<string, unknown>>): string {
@@ -408,6 +454,7 @@ export async function completeChatOpenAI(opts: {
   timeoutMs?: number;
   sessionId?: string;
   cachePrompt?: boolean;
+  lowLatency?: boolean;
 }): Promise<CompleteResult> {
   const timeout = opts.timeoutMs
     ? AbortSignal.timeout(Math.max(1, opts.timeoutMs))
@@ -492,6 +539,7 @@ export async function* streamChatOpenAI(opts: {
   toolChoice?: "auto" | "required" | "none";
   sessionId?: string;
   cachePrompt?: boolean;
+  lowLatency?: boolean;
 }): AsyncGenerator<StreamDelta> {
   const deadline = AbortSignal.timeout(285_000);
   const signal = opts.signal
@@ -540,6 +588,16 @@ export async function* streamChatOpenAI(opts: {
         const type = String(event.type ?? "");
         if (type === "response.output_text.delta" && typeof event.delta === "string") {
           yield { text: event.delta };
+        } else if (
+          // The model's own account of what it is doing, streamed during the
+          // reasoning pass (requested via reasoning.summary in responseBody).
+          // Kept on its own channel rather than merged into `text` — this is
+          // narration ABOUT the answer, not the answer, and callers that only
+          // want the answer must be able to ignore it by doing nothing.
+          type === "response.reasoning_summary_text.delta" &&
+          typeof event.delta === "string"
+        ) {
+          yield { reasoningSummary: event.delta };
         } else if (type === "response.output_item.added") {
           const item = event.item as Record<string, unknown> | undefined;
           const index = Number(event.output_index ?? 0);

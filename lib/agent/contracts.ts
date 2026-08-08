@@ -220,6 +220,10 @@ export type AssistantTurn = z.infer<typeof AssistantTurnSchema>;
 
 export const AgentEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("text"), delta: z.string() }),
+  // The model narrating its own reasoning while it works. Transient: rendered
+  // live to fill the pre-answer gap, never persisted onto the turn and never
+  // part of the answer. A client that drops this event behaves as before.
+  z.object({ type: z.literal("reasoning"), delta: z.string() }),
   z.object({
     type: z.literal("tool_start"),
     id: z.string(),
