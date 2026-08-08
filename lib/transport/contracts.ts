@@ -17,6 +17,10 @@ export const ApiErrorSchema = z.object({
 const ChatSseFrameSchema = z.discriminatedUnion("event", [
   z.object({ event: z.literal("text"), data: z.object({ delta: z.string() }) }),
   z.object({
+    event: z.literal("reasoning"),
+    data: z.object({ delta: z.string() }),
+  }),
+  z.object({
     event: z.literal("tool_start"),
     data: z.object({
       id: z.string(),

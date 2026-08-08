@@ -786,6 +786,11 @@ async function* executeAnswerTurn(
     messages,
     signal,
     sessionId: chatId,
+    // Conversational turn: no tools, answers from history, and the user is
+    // waiting on a reply rather than a draft. Eligible to run below the
+    // promoted reasoning floor, but only if OPENAI_ANSWER_REASONING_EFFORT is
+    // configured — unset, this changes nothing.
+    lowLatency: true,
   });
   let text = "";
   let model = CHAT_MODEL;
@@ -795,6 +800,11 @@ async function* executeAnswerTurn(
       if (delta.model) {
         model = delta.model;
         onModelUsed(model);
+      }
+      // Narration only — deliberately NOT accumulated into `text`, which is
+      // what gets persisted as the assistant's answer.
+      if (delta.reasoningSummary) {
+        yield { type: "reasoning", delta: delta.reasoningSummary };
       }
       if (delta.text) {
         text += delta.text;

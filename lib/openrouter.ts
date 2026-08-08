@@ -855,6 +855,12 @@ export async function generateImage(opts: {
 export type StreamDelta = {
   // incremental assistant text
   text?: string;
+  // Incremental reasoning-summary text: the model narrating its own work
+  // during the reasoning pass, before any answer token exists. Separate from
+  // `text` because it is not part of the answer and must never be persisted
+  // as one — consumers that ignore this field keep exactly today's behavior.
+  // Only the native OpenAI adapter populates it (see reasoning.summary).
+  reasoningSummary?: string;
   // incremental tool-call fragments (OpenAI streams these by index)
   toolCalls?: {
     index: number;
@@ -925,6 +931,10 @@ export async function* streamChat(opts: {
   // Stable chat identifier keeps consecutive turns on one provider cache
   // without globally pinning every OpenRouter model.
   sessionId?: string;
+  // Marks a conversational answer turn, which may run below the promoted
+  // reasoning floor when OPENAI_ANSWER_REASONING_EFFORT is configured.
+  // Native OpenAI only; OpenRouter ignores it.
+  lowLatency?: boolean;
 }): AsyncGenerator<StreamDelta> {
   const model = opts.model || CHAT_MODEL;
   {

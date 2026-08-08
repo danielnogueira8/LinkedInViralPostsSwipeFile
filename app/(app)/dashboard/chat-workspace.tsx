@@ -1759,7 +1759,13 @@ export function ChatWorkspace({
   }
   // Pin to the bottom as content grows, gated on the scroll-away flag. Keyed on
   // a cheap scalar that advances with streaming.
-  const scrollKey = messages.length + (activeRun?.rawText.length ?? 0);
+  // Reasoning counts toward the scroll key too: it is the only thing growing
+  // before the first answer token, so without it a long thinking pass would
+  // stream off-screen with no autoscroll.
+  const scrollKey =
+    messages.length +
+    (activeRun?.rawText.length ?? 0) +
+    (activeRun?.reasoning?.length ?? 0);
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -3188,6 +3194,10 @@ export function ChatWorkspace({
           if (ctrl.signal.aborted) return;
           if (event === "text") {
             ownedRun.rawText += data.delta as string;
+          } else if (event === "reasoning") {
+            // Narration while the user waits. Kept OUT of rawText so it can
+            // never be mistaken for the answer, persisted, or copied.
+            ownedRun.reasoning = (ownedRun.reasoning ?? "") + (data.delta as string);
           } else if (event === "tool_start") {
             ownedRun.tools = [
               ...ownedRun.tools,
@@ -6600,6 +6610,13 @@ function MessageBubble({
 
   return (
     <div className="group flex flex-col gap-3">
+      {/* Live reasoning narration. Shown only before the answer exists — once
+          prose starts streaming it would compete with the thing the user is
+          actually waiting for. */}
+      {message.reasoning && !message.text && (
+        <ReasoningTrace text={message.reasoning} />
+      )}
+
       {/* Agent progress — status-only turns, planned turns, and tool-detail
           turns all use the same card language so Cowork does not jump between
           unrelated "working" UIs. */}
@@ -7124,6 +7141,37 @@ function AgentProgressStatus({ status }: { status: string }) {
         className="agent-step-in text-[13px]"
       />
     </AgentProgressShell>
+  );
+}
+
+/**
+ * The model's own narration while it reasons — the live text that fills the
+ * gap before the first answer token exists.
+ *
+ * Only the tail is shown, and only until the answer starts. This is a signal
+ * that real work is happening on THIS request, not a document to read: the
+ * plan checklist next to it runs a fixed script, while this is specific to
+ * what the model is actually doing right now. Once answer text arrives the
+ * trace disappears, so a settled turn shows the answer and nothing else.
+ */
+function ReasoningTrace({ text }: { text: string }) {
+  const tail = text
+    .trim()
+    .split(/\n+/)
+    .filter(Boolean)
+    .slice(-2)
+    .join(" ");
+  if (!tail) return null;
+  return (
+    <div className="flex flex-col gap-1 text-[13px] leading-6 text-muted-foreground">
+      <span className="inline-flex items-center gap-2 font-medium">
+        <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+        Thinking
+      </span>
+      <p className="line-clamp-2 italic opacity-80" aria-live="polite">
+        {tail}
+      </p>
+    </div>
   );
 }
 

@@ -292,6 +292,12 @@ export function finalizeTurn(
               streamedText += ev.delta;
               send(controller, "text", { delta: ev.delta });
               break;
+            // Forwarded live, never added to streamedText: the reasoning
+            // summary is narration the user watches while waiting, not part
+            // of the answer that gets persisted onto the turn.
+            case "reasoning":
+              send(controller, "reasoning", { delta: ev.delta });
+              break;
             case "tool_start":
               send(controller, "tool_start", {
                 id: ev.id,

@@ -63,12 +63,19 @@ export type Message = {
   recoverable?: RecoverableError;
   usage?: CoworkTurnUsage;
   streaming?: boolean;
+  // Live-only: set by the run overlay while a turn streams. Never written by
+  // hydration, so a reloaded transcript never shows stale reasoning.
+  reasoning?: string;
 };
 
 export type ChatRun = {
   userMsg: Message;
   assistantId: string;
   rawText: string;
+  // The model's live account of its own work, shown while the reasoning pass
+  // runs and the answer does not exist yet. Purely transient: never persisted,
+  // never hydrated from the database, and dropped the moment the turn ends.
+  reasoning?: string;
   contentFormat?: ContentFormat;
   tools: ToolChip[];
   plan: PlanStep[];
