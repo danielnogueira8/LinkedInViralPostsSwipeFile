@@ -56,11 +56,17 @@ const DISPLAYED_SECTIONS: DigestSectionId[] = ["theme", "hook", "format"];
  * genuinely one continuous thought, so a reformat never invents structure that
  * is not there.
  */
-function SectionContent({ body }: { body: string }) {
-  const { claim, evidence } = splitSectionLead(body);
-  const items = splitEvidence(evidence);
+function SectionContent({
+  body,
+  labels,
+}: {
+  body: string;
+  labels: ReadonlyMap<string, string>;
+}) {
+  const { claim, evidence } = splitSectionLead(body, labels);
+  const items = splitEvidence(evidence, labels);
 
-  if (!claim && items.length === 0) return <Prose body={body} />;
+  if (!claim && items.length === 0) return <Prose body={body} labels={labels} />;
 
   return (
     <div className="space-y-3">
@@ -89,16 +95,24 @@ function SectionContent({ body }: { body: string }) {
           ))}
         </ul>
       ) : evidence ? (
-        <p className="text-sm leading-6 text-muted-foreground">{evidence}</p>
+        <p className="text-sm leading-6 text-muted-foreground">
+          {cleanInline(evidence, labels)}
+        </p>
       ) : null}
     </div>
   );
 }
 
-function Prose({ body }: { body: string }) {
+function Prose({
+  body,
+  labels,
+}: {
+  body: string;
+  labels?: ReadonlyMap<string, string>;
+}) {
   const paragraphs = body
     .split(/\n{2,}/)
-    .map((p) => cleanInline(p.replace(/\n/g, " ")))
+    .map((p) => cleanInline(p.replace(/\n/g, " "), labels))
     .filter(Boolean);
   return (
     <div className="space-y-3">
@@ -146,6 +160,15 @@ function DigestBody({
   const cited = citedOrder
     .map((id) => byId.get(id))
     .filter((post): post is PostCardRow => Boolean(post));
+  // id -> author, so a citation reads as evidence ("Jane Doe, 208 reactions")
+  // instead of a UUID the reader can do nothing with. Only posts we actually
+  // resolved get a label; anything else has its id removed rather than
+  // replaced with a guess.
+  const labels = new Map(
+    cited
+      .filter((post) => post.accounts?.name)
+      .map((post) => [post.id.toLowerCase(), post.accounts!.name] as const),
+  );
 
   // The model drifted from the four-section format. Show the raw text rather
   // than a blank page — losing model output silently is how you end up
@@ -169,7 +192,7 @@ function DigestBody({
         .map((section) => {
         if (section.id === "hook") {
           const quote = extractHookQuote(section.body);
-          const rest = quote ? hookCommentary(section.body) : null;
+          const rest = quote ? hookCommentary(section.body, labels) : null;
           return (
             <SectionCard key={section.id} id={section.id} title={section.title}>
               {quote ? (
@@ -185,7 +208,7 @@ function DigestBody({
                   ) : null}
                 </>
               ) : (
-                <Prose body={section.body} />
+                <Prose body={section.body} labels={labels} />
               )}
             </SectionCard>
           );
@@ -193,14 +216,14 @@ function DigestBody({
 
         return (
           <SectionCard key={section.id} id={section.id} title={section.title}>
-            <SectionContent body={section.body} />
+            <SectionContent body={section.body} labels={labels} />
           </SectionCard>
         );
       })}
 
       {unmatched ? (
         <SectionCard id="theme" title="Also noted">
-          <Prose body={unmatched} />
+          <Prose body={unmatched} labels={labels} />
         </SectionCard>
       ) : null}
 

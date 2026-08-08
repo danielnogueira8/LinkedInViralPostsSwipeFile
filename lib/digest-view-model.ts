@@ -128,11 +128,14 @@ export function extractHookQuote(body: string): string | null {
  * front. Returns null when nothing meaningful survives, so the UI shows the
  * pull-quote alone instead of an empty paragraph.
  */
-export function hookCommentary(body: string): string | null {
+export function hookCommentary(
+  body: string,
+  labels?: ReadonlyMap<string, string>,
+): string | null {
   const withoutQuote = body
     .replace(/[""][^""]{4,300}[""]/, "")
     .replace(/"[^"]{4,300}"/, "");
-  const cleaned = cleanInline(withoutQuote);
+  const cleaned = cleanInline(withoutQuote, labels);
   return cleaned.length > 12 ? cleaned : null;
 }
 
@@ -160,7 +163,10 @@ export function splitAngles(body: string): string[] {
  * reader cannot act on, and `**` renders literally without a markdown parser.
  * Engagement numbers are kept — those are the evidence.
  */
-export function cleanInline(text: string): string {
+export function cleanInline(
+  text: string,
+  labels?: ReadonlyMap<string, string>,
+): string {
   return (
     text
       .replace(/\*\*(.+?)\*\*/g, "$1")
@@ -172,6 +178,19 @@ export function cleanInline(text: string): string {
         "(",
       )
       .replace(/\[[0-9a-f]{8}-[0-9a-f-]{27,}\]/gi, "")
+      // Bare and backtick-wrapped ids. The model writes citations as markdown
+      // code spans — `84efa253-…` — which neither pattern above matches, so
+      // raw UUIDs rendered straight onto the page.
+      //
+      // Substituted with the author's name when we can resolve the post, which
+      // is the whole point: "…was Jane Doe (208 reactions)" is evidence a
+      // reader can weigh, where a bare id is noise. Falls back to deleting the
+      // id when the post is not in the resolved set (it aged out, or the model
+      // cited an id that does not exist).
+      .replace(
+        /`?\b([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b`?/gi,
+        (_match, id: string) => labels?.get(id.toLowerCase()) ?? "",
+      )
       // Leftover emphasis markers. Stripping the quoted hook out of the BEST
       // HOOK body left "**** — ," at the start of the remainder.
       .replace(/\*+/g, "")
@@ -255,14 +274,20 @@ export type SectionLead = {
  * type. Returns a null claim when the model did not mark one, so the caller
  * renders ordinary prose rather than guessing at a first sentence.
  */
-export function splitSectionLead(body: string): SectionLead {
+export function splitSectionLead(
+  body: string,
+  labels?: ReadonlyMap<string, string>,
+): SectionLead {
   const match = body.match(/^\s*\*\*([\s\S]+?)\*\*\s*/);
-  if (!match) return { claim: null, evidence: cleanInline(body) };
-  const claim = cleanInline(match[1]).replace(/[.:;,\s]+$/, "");
-  const evidence = cleanInline(body.slice(match[0].length));
+  // NOTE: `evidence` deliberately keeps its raw ids — splitEvidence anchors on
+  // them, and cleaning here would remove the anchors before it ever runs. The
+  // ids are cleaned per-item inside splitEvidence, or by the prose fallback.
+  if (!match) return { claim: null, evidence: body.trim() };
+  const claim = cleanInline(match[1], labels).replace(/[.:;,\s]+$/, "");
+  const evidence = body.slice(match[0].length).trim();
   // A claim with no evidence behind it is just the section's only sentence;
   // keep it as prose rather than showing a lead with nothing under it.
-  if (!evidence) return { claim: null, evidence: cleanInline(body) };
+  if (!evidence) return { claim: null, evidence: body.trim() };
   return { claim, evidence };
 }
 
@@ -285,7 +310,55 @@ export type EvidenceItem = {
  * evidence as a paragraph, which is correct for a section that genuinely is
  * one continuous thought.
  */
-export function splitEvidence(evidence: string): EvidenceItem[] {
+/**
+ * Evidence written as a run of post citations.
+ *
+ * The model's current shape is `<id> (208 reactions, 498 comments), <id> (…)`
+ * — no quoted titles and no semicolons, so BOTH shapes below missed it and
+ * every section fell back to one prose paragraph with raw UUIDs in it.
+ *
+ * Anchoring on the id is stricter than either: a UUID is unambiguous, so this
+ * cannot mistake ordinary prose for a citation list the way a quote or
+ * semicolon heuristic can. The detail runs to the NEXT citation, which is what
+ * captures the engagement numbers regardless of how they are wrapped.
+ *
+ * Splits before cleanInline runs, because cleaning is what removes the anchors.
+ */
+function citedEvidence(
+  evidence: string,
+  labels?: ReadonlyMap<string, string>,
+): EvidenceItem[] {
+  const matches = [
+    ...evidence.matchAll(
+      /`?\b([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b`?/gi,
+    ),
+  ];
+  // One citation is a sentence, not a list — leave it as prose.
+  if (matches.length < 2) return [];
+  return matches
+    .map((match, index) => {
+      const start = (match.index ?? 0) + match[0].length;
+      const next = matches[index + 1]?.index;
+      const end = index + 1 < matches.length && next !== undefined
+        ? next
+        : evidence.length;
+      return {
+        // Null when the post is not in the resolved set; the row then shows
+        // its numbers alone rather than a fabricated name.
+        title: labels?.get(match[1].toLowerCase()) ?? null,
+        detail: cleanInline(evidence.slice(start, end), labels)
+          .replace(/^[\s,;:—–(-]+/, "")
+          .replace(/[\s,;:—–.)]*\s+and\s*$/i, "")
+          .replace(/[\s,;:—–.)-]+$/, ""),
+      };
+    })
+    .filter((item) => item.title || item.detail);
+}
+
+export function splitEvidence(
+  evidence: string,
+  labels?: ReadonlyMap<string, string>,
+): EvidenceItem[] {
   // Title-then-detail pairs. Matches BOTH quote styles: the model emits curly
   // quotes in production, and a straight-quote-only class silently matched
   // nothing — the section fell back to prose and stayed a wall of text.
@@ -306,12 +379,15 @@ export function splitEvidence(evidence: string): EvidenceItem[] {
       // Trim the connective tissue between items: a leading "(" from the
       // engagement wrapper, and a trailing "), and" / ", and" before the final
       // item — both belong to the sentence, not to this row.
-      detail: cleanInline(match[2] ?? "")
+      detail: cleanInline(match[2] ?? "", labels)
         .replace(/^[\s,;:—–(-]+/, "")
         .replace(/[\s,;:—–.)]*\s+and\s*$/i, "")
         .replace(/[\s,;:—–.)-]+$/, ""),
     }));
   }
+  const cited = citedEvidence(evidence, labels);
+  if (cited.length >= 2) return cited;
+
   const clauses = evidence
     .split(/;\s*/)
     .map((clause) => {
@@ -322,7 +398,7 @@ export function splitEvidence(evidence: string): EvidenceItem[] {
       const afterColon = clause.includes(":")
         ? clause.slice(clause.indexOf(":") + 1)
         : clause;
-      return cleanInline(afterColon).replace(/^(?:and\s+)?(?:the\s+)?/i, "");
+      return cleanInline(afterColon, labels).replace(/^(?:and\s+)?(?:the\s+)?/i, "");
     })
     .map((clause) => clause.replace(/[\s.;,]+$/, ""))
     .filter((clause) => clause.length > 8);
