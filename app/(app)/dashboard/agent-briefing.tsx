@@ -40,10 +40,15 @@ import {
   genericContextPlaceholder,
   getWeekPlanDraftReadiness,
 } from "@/lib/agent-loop/week-plan";
+import { toast } from "sonner";
+import { createDraftOperationsClient } from "@/lib/draft-operations-client";
+import { formatScheduleToast } from "@/lib/posting-queue";
 import { cn } from "@/lib/utils";
 import { AgentWorkingSummary } from "./agent-working-summary";
 import { loadAgentBriefing } from "./agent-briefing-client";
 import { invalidateNavBadges } from "./nav-badges";
+
+const draftOperations = createDraftOperationsClient();
 
 // -----------------------------------------------------------------------------
 // "Your Agent" — the agent loop's standalone dashboard surface.
@@ -294,6 +299,58 @@ export function AgentBriefing() {
   // drop it locally right away, and land the user ON the post inside the board.
   // The mark is best-effort: even if it fails we still navigate, because the
   // deep-linked modal is what the user asked for.
+  // One-click schedule: book the agent's draft into the next open queue slot.
+  //
+  // The whole point of a proactively written draft is that the human's only
+  // job is deciding whether to ship it. Requiring them to open the editor,
+  // find the schedule control and pick a time puts three steps in front of a
+  // yes/no. POST /queue with no slot picks the earliest opening itself
+  // (next_posting_queue_occurrence), creates default slots when the workspace
+  // has none, and is concurrency-safe against the unique occurrence index.
+  //
+  // This does NOT weaken the never-auto-publish invariant: the click IS the
+  // human decision, exactly as it is from inside the editor.
+  const [schedulingDraftId, setSchedulingDraftId] = useState<string | null>(null);
+
+  const scheduleNow = async (draftId: string) => {
+    if (schedulingDraftId) return;
+    setSchedulingDraftId(draftId);
+    const timezone =
+      Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+    try {
+      const queued = await draftOperations.queue(draftId, {
+        firstComment: null,
+        timezone,
+      });
+      // Drop it from the review list only after the booking succeeds — a
+      // failed schedule must leave the draft exactly where it was.
+      setBriefing((cur) => ({
+        ...cur,
+        drafts: cur.drafts.filter((d) => d.id !== draftId),
+      }));
+      window.dispatchEvent(new Event("posting-queue-updated"));
+      invalidateNavBadges();
+      toast.success(
+        formatScheduleToast({
+          scheduledAt: queued.scheduledAt,
+          accountTimezone: queued.timezone || timezone,
+          browserTimezone: timezone,
+        }),
+      );
+    } catch (error) {
+      // Surfaced rather than swallowed: the two real failures here are "no
+      // LinkedIn account connected" and "the queue changed underneath you",
+      // and both need the user to know why nothing happened.
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Couldn't add this post to the queue.",
+      );
+    } finally {
+      setSchedulingDraftId(null);
+    }
+  };
+
   const review = (draftId: string) => {
     setBriefing((cur) => ({
       ...cur,
@@ -853,6 +910,18 @@ export function AgentBriefing() {
                   <p className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
                     {(draft.title ?? "").trim() || snippet(draft.body, 60)}
                   </p>
+                  <button
+                    type="button"
+                    onClick={() => void scheduleNow(draft.id)}
+                    disabled={schedulingDraftId !== null}
+                    className={cn(
+                      "inline-flex shrink-0 items-center gap-1 rounded-full border border-primary/30 bg-primary/5 px-3 py-1.5 text-xs font-medium text-primary",
+                      "transition-colors hover:bg-primary/10",
+                      "disabled:cursor-not-allowed disabled:opacity-60",
+                    )}
+                  >
+                    {schedulingDraftId === draft.id ? "Scheduling…" : "Schedule"}
+                  </button>
                   <button
                     type="button"
                     onClick={() => review(draft.id)}
