@@ -3,6 +3,7 @@ import { runProfileHistory, pickProfileMeta } from "@/lib/apify";
 import { sanitizeVoiceProfile, synthesizeVoice, VOICE_MODEL } from "@/lib/claude";
 import { computeMechanicsFingerprint } from "@/lib/voice-mechanics";
 import { classifyPost } from "@/lib/post-type";
+import { mirrorAvatarToStorage } from "@/lib/avatar-mirror";
 
 type VoiceGenerationDb = {
   workspaceId: string;
@@ -119,13 +120,26 @@ export async function runVoiceGeneration(
       profile.interview_context = existingProfile.interview_context as typeof profile.interview_context;
     }
 
+    // Copy the avatar into our own bucket while the provider URL still works.
+    // LinkedIn's CDN URLs expire, and nothing re-scrapes a workspace's own
+    // profile to refresh them, so storing the provider URL guarantees the
+    // avatar breaks eventually. Fail-open: a null mirror keeps exactly the old
+    // behavior rather than risking the generation this is a side-effect of.
+    const providerAvatarUrl = validAvatarUrl(meta.avatar_url)
+      ? meta.avatar_url
+      : null;
+    const mirroredAvatarUrl = providerAvatarUrl
+      ? await mirrorAvatarToStorage(providerAvatarUrl, sb.workspaceId)
+      : null;
+
     const { data: updated, error: upErr } = await sb.raw
       .from("voice_profiles")
       .update({
         linkedin_handle: handle,
         profile_url: profileUrl,
         display_name: meta.name,
-        avatar_url: validAvatarUrl(meta.avatar_url) ? meta.avatar_url : preWrite?.avatar_url ?? null,
+        avatar_url:
+          mirroredAvatarUrl ?? providerAvatarUrl ?? preWrite?.avatar_url ?? null,
         headline: meta.headline,
         profile,
         summary: profile.summary || null,
