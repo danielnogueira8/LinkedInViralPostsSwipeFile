@@ -157,6 +157,28 @@ export function splitAngles(body: string): string[] {
 }
 
 /**
+ * One post citation, together with whatever the model wrapped it in.
+ *
+ * The wrapper is the part that keeps changing. Production has now produced
+ * `[<id>]`, `` `<id>` ``, and a bare `<id>`, and each time the delimiter shifted
+ * something rendered wrong — most recently an orphaned "[" left dangling at the
+ * end of a claim and a "]" opening every evidence row.
+ *
+ * The pattern lived in three places, each supporting a different subset, so a
+ * new wrapper only ever got fixed where someone happened to look. Defining it
+ * ONCE means the next shape is a one-line change here rather than a fourth
+ * partial fix. Matching the delimiters as part of the citation is what stops
+ * them surviving into the output when the id is removed or replaced.
+ */
+const CITATION_SOURCE =
+  "[\\[`]?\\b([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\\b[\\]`]?";
+
+/** A fresh matcher each call — a shared /g regex carries lastIndex between uses. */
+function citationPattern(): RegExp {
+  return new RegExp(CITATION_SOURCE, "gi");
+}
+
+/**
  * Strip inline markdown the page renders as plain text.
  *
  * Bold and post-id brackets are noise in a rendered card: the ids are UUIDs the
@@ -170,27 +192,24 @@ export function cleanInline(
   return (
     text
       .replace(/\*\*(.+?)\*\*/g, "$1")
-      // A post id inside parentheses takes the parens with it. Removing the id
-      // alone left "( — 827 reactions, 2,957 comments)" on the rendered page —
-      // a dangling bracket that reads as a typo.
+      // Citations FIRST, wrapper and all. Running before the fallbacks below
+      // means a resolved author wins over blunt deletion, and the delimiters
+      // leave with the id instead of stranding "[" and "]" in the prose.
+      //
+      // Substituted with the author when we can resolve the post: "…was Jane
+      // Doe (208 reactions)" is evidence a reader can weigh, where a bare id is
+      // noise. Removed outright when the post is not in the resolved set (it
+      // aged out, or the model cited an id that does not exist).
+      .replace(citationPattern(), (_match, id: string) =>
+        labels?.get(id.toLowerCase()) ?? "",
+      )
+      // Fallbacks for MALFORMED ids the pattern above will not match — a
+      // truncated or over-long hex run still needs its brackets taken with it.
       .replace(
         /\(\s*\[?[0-9a-f]{8}-[0-9a-f-]{27,}\]?\s*[—–-]?\s*/gi,
         "(",
       )
       .replace(/\[[0-9a-f]{8}-[0-9a-f-]{27,}\]/gi, "")
-      // Bare and backtick-wrapped ids. The model writes citations as markdown
-      // code spans — `84efa253-…` — which neither pattern above matches, so
-      // raw UUIDs rendered straight onto the page.
-      //
-      // Substituted with the author's name when we can resolve the post, which
-      // is the whole point: "…was Jane Doe (208 reactions)" is evidence a
-      // reader can weigh, where a bare id is noise. Falls back to deleting the
-      // id when the post is not in the resolved set (it aged out, or the model
-      // cited an id that does not exist).
-      .replace(
-        /`?\b([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b`?/gi,
-        (_match, id: string) => labels?.get(id.toLowerCase()) ?? "",
-      )
       // Leftover emphasis markers. Stripping the quoted hook out of the BEST
       // HOOK body left "**** — ," at the start of the remainder.
       .replace(/\*+/g, "")
@@ -308,22 +327,27 @@ function unboldedSectionLead(
   body: string,
   labels?: ReadonlyMap<string, string>,
 ): SectionLead {
-  const ids = [
-    ...body.matchAll(
-      /`?\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b`?/gi,
-    ),
-  ];
+  const ids = [...body.matchAll(citationPattern())];
   const first = ids[0]?.index;
   if (ids.length < 2 || first === undefined) {
     return { claim: null, evidence: body.trim() };
   }
-  // Keep the lead's own trailing connector out of the claim ("The strongest
-  // evidence was" reads as a dangling fragment under its own rows).
-  const lead = cleanInline(body.slice(0, first), labels)
-    .replace(/[\s.:;,—–-]+$/, "")
-    .replace(/\s+(?:was|were|includes?|included|are|is|appeared in)$/i, "");
-  const evidence = body.slice(first).trim();
-  if (!lead) return { claim: null, evidence };
+  // Cut at the last SENTENCE boundary before the first citation, not at the
+  // citation itself. The prose immediately before a citation describes THAT
+  // post ("the 20-agent sales operation at <id>") and belongs on its row —
+  // cutting at the citation stranded that phrase on the claim, which then
+  // ended in a dangling "at".
+  const head = body.slice(0, first);
+  const lastSentence = head.search(/\.(?=[^.]*$)/);
+  const cut = lastSentence > 0 ? lastSentence + 1 : first;
+  const lead = cleanInline(body.slice(0, cut), labels)
+    .replace(/[\s.:;,—–()[\]-]+$/, "")
+    .replace(
+      /\s+(?:was|were|includes?|included|are|is|at|in|from|by|via|appeared in)$/i,
+      "",
+    );
+  const evidence = body.slice(cut).trim();
+  if (!lead || !evidence) return { claim: null, evidence: body.trim() };
   return { claim: lead, evidence };
 }
 
@@ -364,28 +388,54 @@ function citedEvidence(
   evidence: string,
   labels?: ReadonlyMap<string, string>,
 ): EvidenceItem[] {
-  const matches = [
-    ...evidence.matchAll(
-      /`?\b([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b`?/gi,
-    ),
-  ];
+  const matches = [...evidence.matchAll(citationPattern())];
   // One citation is a sentence, not a list — leave it as prose.
   if (matches.length < 2) return [];
-  return matches
-    .map((match, index) => {
-      const start = (match.index ?? 0) + match[0].length;
-      const next = matches[index + 1]?.index;
-      const end = index + 1 < matches.length && next !== undefined
-        ? next
-        : evidence.length;
+
+  // Use the model's own separator when it wrote one. Slicing at the citations
+  // instead pulled the NEXT post's lead-in onto the previous row, so row one
+  // ended "…1,283 comments; the five-layer agentic-AI framework at" — a
+  // description of a different post. A ";" list keeps each post's phrase with
+  // its own numbers.
+  const segments = evidence.split(/;\s*/);
+  const segmented =
+    segments.length === matches.length &&
+    segments.every(
+      (segment) => [...segment.matchAll(citationPattern())].length === 1,
+    );
+
+  const chunks = segmented
+    ? segments
+    : matches.map((match, index) =>
+        evidence.slice(
+          match.index ?? 0,
+          matches[index + 1]?.index ?? evidence.length,
+        ),
+      );
+
+  return chunks
+    .map((chunk) => {
+      const id = citationPattern().exec(chunk)?.[1]?.toLowerCase();
+      const detail = cleanInline(chunk.replace(citationPattern(), " "), labels)
+        // The connector the citation followed ("…operation at <id> — 390") is
+        // left dangling once the id goes. Keep the punctuation that came after
+        // it so the phrase and its numbers stay separated.
+        .replace(/\s+(?:at|in|from|by|via)(\s*[—–,;:-])/i, "$1")
+        .replace(/^[\s,;:—–()[\]-]+/, "")
+        .replace(/^and\s+/i, "")
+        // Lead-in that restates the claim rather than describing this post.
+        .replace(
+          /^(?:the\s+)?(?:strongest|clearest|best)\s+evidence\s+(?:is|was|includes?|included)\s*/i,
+          "",
+        )
+        .replace(/[\s,;:—–.()[\]-]+$/, "")
+        .replace(/\s*\band$/i, "")
+        .trim();
       return {
         // Null when the post is not in the resolved set; the row then shows
         // its numbers alone rather than a fabricated name.
-        title: labels?.get(match[1].toLowerCase()) ?? null,
-        detail: cleanInline(evidence.slice(start, end), labels)
-          .replace(/^[\s,;:—–(-]+/, "")
-          .replace(/[\s,;:—–.)]*\s+and\s*$/i, "")
-          .replace(/[\s,;:—–.)-]+$/, ""),
+        title: (id && labels?.get(id)) || null,
+        detail,
       };
     })
     .filter((item) => item.title || item.detail);
@@ -418,9 +468,9 @@ export function splitEvidence(
       // engagement wrapper, and a trailing "), and" / ", and" before the final
       // item — both belong to the sentence, not to this row.
       detail: cleanInline(match[2] ?? "", labels)
-        .replace(/^[\s,;:—–(-]+/, "")
-        .replace(/[\s,;:—–.)]*\s+and\s*$/i, "")
-        .replace(/[\s,;:—–.)-]+$/, ""),
+        .replace(/^[\s,;:—–()[\]-]+/, "")
+        .replace(/[\s,;:—–.)\]]*\s+and\s*$/i, "")
+        .replace(/[\s,;:—–.()[\]-]+$/, ""),
     }));
   }
   const cited = citedEvidence(evidence, labels);
