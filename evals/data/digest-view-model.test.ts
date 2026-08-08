@@ -379,3 +379,96 @@ describe("splitEvidence — the production THEME section", () => {
     ).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// The model moved to backtick-wrapped ids with no bold claim and no quoted
+// titles. Every parser above missed that shape, so sections fell back to one
+// prose paragraph with raw UUIDs printed on the page.
+// ---------------------------------------------------------------------------
+
+/** Verbatim from the 7 August brief, the shape that shipped the bug. */
+const BACKTICK_THEME =
+  "The clearest cluster was practical B2B sales systems: prospect research and " +
+  "personalization, structured DMs, and pipeline foundations replacing vague " +
+  "“post more” advice with repeatable process. The strongest evidence was " +
+  "`84efa253-e31d-4dd0-ae36-e9d4e28dfaad` (208 reactions, 498 comments), " +
+  "`60cb589b-c4e2-4fb8-89a1-1e9cc3de7604` (421 reactions, 241 comments), and " +
+  "`1e174a9a-fcbc-4661-9b89-47d694e42181` (120 reactions, 99 comments).";
+
+const BACKTICK_LABELS = new Map([
+  ["84efa253-e31d-4dd0-ae36-e9d4e28dfaad", "Ada Lovelace"],
+  ["60cb589b-c4e2-4fb8-89a1-1e9cc3de7604", "Grace Hopper"],
+  ["1e174a9a-fcbc-4661-9b89-47d694e42181", "Alan Turing"],
+]);
+
+const UUID_ANYWHERE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+
+describe("backtick-wrapped citations", () => {
+  it("never leaves a raw UUID on the page", () => {
+    expect(cleanInline(BACKTICK_THEME, BACKTICK_LABELS)).not.toMatch(UUID_ANYWHERE);
+    // Also with no labels at all — an unresolved id must be removed, not shown.
+    expect(cleanInline(BACKTICK_THEME)).not.toMatch(UUID_ANYWHERE);
+  });
+
+  it("substitutes the author so a citation reads as evidence", () => {
+    const cleaned = cleanInline(BACKTICK_THEME, BACKTICK_LABELS);
+    expect(cleaned).toContain("Ada Lovelace (208 reactions, 498 comments)");
+    expect(cleaned).toContain("Grace Hopper (421 reactions, 241 comments)");
+  });
+
+  it("keeps the engagement numbers, which are the actual evidence", () => {
+    const cleaned = cleanInline(BACKTICK_THEME, BACKTICK_LABELS);
+    expect(cleaned).toContain("208 reactions, 498 comments");
+    expect(cleaned).toContain("120 reactions, 99 comments");
+  });
+
+  it("splits a citation run into scannable rows instead of a paragraph", () => {
+    const { evidence } = splitSectionLead(BACKTICK_THEME, BACKTICK_LABELS);
+    const items = splitEvidence(evidence, BACKTICK_LABELS);
+    expect(items).toHaveLength(3);
+    expect(items[0]).toEqual({
+      title: "Ada Lovelace",
+      detail: "208 reactions, 498 comments",
+    });
+    expect(items[2]).toEqual({
+      title: "Alan Turing",
+      detail: "120 reactions, 99 comments",
+    });
+  });
+
+  it("shows numbers alone when a cited post cannot be resolved", () => {
+    const items = splitEvidence(BACKTICK_THEME, new Map());
+    expect(items).toHaveLength(3);
+    expect(items[0].title).toBeNull();
+    expect(items[0].detail).toBe("208 reactions, 498 comments");
+  });
+
+  it("leaves a single citation as prose rather than a one-row list", () => {
+    const oneCitation =
+      "The day's standout was `c244df87-c7a8-4b0d-9432-6773abba27b1` " +
+      "(2,481 reactions, 303 comments).";
+    expect(splitEvidence(oneCitation, BACKTICK_LABELS)).toEqual([]);
+  });
+
+  it("cleans the id out of the hook commentary too", () => {
+    const hookBody =
+      "“Woah, Bending Spoons is cooking.” — " +
+      "`c244df87-c7a8-4b0d-9432-6773abba27b1` — 2,481 reactions, 303 comments.";
+    const commentary = hookCommentary(
+      hookBody,
+      new Map([["c244df87-c7a8-4b0d-9432-6773abba27b1", "Ada Lovelace"]]),
+    );
+    expect(commentary).not.toMatch(UUID_ANYWHERE);
+    expect(commentary).toContain("Ada Lovelace");
+    expect(commentary).toContain("2,481 reactions");
+  });
+
+  it("still resolves cited ids for the post cards", () => {
+    // The ids must survive in the RAW content — the card list depends on them.
+    expect(referencedPostIds(BACKTICK_THEME)).toEqual([
+      "84efa253-e31d-4dd0-ae36-e9d4e28dfaad",
+      "60cb589b-c4e2-4fb8-89a1-1e9cc3de7604",
+      "1e174a9a-fcbc-4661-9b89-47d694e42181",
+    ]);
+  });
+});
