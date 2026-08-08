@@ -45,6 +45,13 @@ vi.mock("@/lib/workspace", () => ({
 import { GET } from "@/app/api/cron/agent-loop/route";
 
 const routeSource = readFileSync("app/api/cron/agent-loop/route.ts", "utf8");
+// Discovery moved to a shared module so pre-drafting cannot drift to a
+// different notion of "a workspace that exists". The pagination invariant
+// moved with it.
+const discoverySource = readFileSync(
+  "lib/agent-loop/workspaces.ts",
+  "utf8",
+);
 
 function makePagedDb() {
   return {
@@ -138,7 +145,8 @@ describe("agent-loop cron workspace fairness", () => {
   test("the cron uses the fair batch and paginates discovery to completion", () => {
     expect(routeSource).toContain("rotateForFairness");
     expect(routeSource).toContain("MAX_WORKSPACES_PER_TICK");
-    expect(routeSource).toContain("for (let from = 0; ; from += PAGE)");
+    expect(routeSource).toContain("discoverAgentWorkspaceIds");
+    expect(discoverySource).toContain("for (let from = 0; ; from += PAGE)");
     expect(routeSource).not.toContain("sort().slice(0, 50)");
   });
 

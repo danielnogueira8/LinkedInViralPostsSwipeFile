@@ -7,6 +7,8 @@ import { SWIPE_POST_COLS } from "@/lib/swipe-query";
 import { referencedPostIds } from "@/lib/digest-view-model";
 import type { PostCardRow } from "@/lib/post-card-row";
 import { DigestView, type DigestRow } from "./view";
+import { AGENT_SUGGESTED_BY } from "@/lib/agent-loop/constants";
+import { TodaysAgentDraft, type TodaysAgentDraft as TodaysAgentDraftRow } from "./todays-draft";
 
 export const dynamic = "force-dynamic";
 
@@ -67,15 +69,38 @@ export default async function DigestPage() {
     }
   }
 
+  // The post the agent wrote today, if it wrote one. Unscheduled only: once a
+  // draft is queued it belongs to the posting queue, not to today's decision.
+  // A pure read like the rest of this page — pre-drafting happens on its own
+  // cron, so opening the Brief never generates anything.
+  const { data: agentDraftRows } = await sb.raw
+    .from("chat_artifacts")
+    .select("id, title, body")
+    .eq("workspace_id", sb.workspaceId)
+    .eq("meta->>suggested_by", AGENT_SUGGESTED_BY)
+    .is("schedule_status", null)
+    .gte("created_at", `${now.toISOString().slice(0, 10)}T00:00:00.000Z`)
+    .order("created_at", { ascending: false })
+    .limit(3);
+
+  const todaysDrafts: TodaysAgentDraftRow[] = (agentDraftRows ?? [])
+    .filter((row) => typeof row.body === "string" && row.body.trim())
+    .map((row) => ({
+      id: String(row.id),
+      title: typeof row.title === "string" ? row.title : null,
+      body: String(row.body),
+    }));
+
   return (
     <PageShell>
       <PageHeader
         title="Daily Brief"
         description="What the creators you track posted about today — the theme, the strongest hook, and the format that worked."
       />
-      {digests.length === 0 ? (
+      <TodaysAgentDraft drafts={todaysDrafts} />
+      {digests.length === 0 && todaysDrafts.length === 0 ? (
         <EmptyState />
-      ) : (
+      ) : digests.length === 0 ? null : (
         <DigestView
           digests={digests}
           todayIso={now.toISOString().slice(0, 10)}

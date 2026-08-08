@@ -16,6 +16,7 @@ import {
   rotateForFairness,
 } from "@/lib/agent-inbox/schedule";
 import { errorResponse } from "@/lib/workspace";
+import { discoverAgentWorkspaceIds } from "@/lib/agent-loop/workspaces";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -47,48 +48,13 @@ function externalDiscoveryWorkspaceIds(
   );
 }
 
-async function discoverWorkspaceIds(
-  sb: ReturnType<typeof supabaseAdmin>,
-): Promise<string[]> {
-  const discovered = new Set<string>();
-  const PAGE = 1000;
-  // A workspace can be useful before it has selected any Creator. Include the
-  // durable app records that establish a personal workspace, while keeping
-  // the old workspace_accounts pagination that protects creator coverage.
-  const tables = ["workspace_accounts", "voice_profiles", "chats"] as const;
-  for (const table of tables) {
-    for (let from = 0; ; from += PAGE) {
-      const query =
-        table === "chats"
-          ? sb
-              .from("chats")
-              .select("workspace_id")
-              .is("archived_at", null)
-              .order("workspace_id", { ascending: true })
-              .range(from, from + PAGE - 1)
-          : sb
-              .from(table)
-              .select("workspace_id")
-              .order("workspace_id", { ascending: true })
-              .range(from, from + PAGE - 1);
-      const { data, error } = await query;
-      if (error) throw error;
-      for (const row of data ?? []) {
-        if (typeof row.workspace_id === "string" && row.workspace_id) {
-          discovered.add(row.workspace_id);
-        }
-      }
-      if ((data ?? []).length < PAGE) break;
-    }
-  }
-  return [...discovered].sort();
-}
 
 // Agent discovery loop (PLAN-agent-loop Phase D3). For every workspace, scan
 // both tracked-creator outliers and the two external discovery agents, leaving
-// all proposals for the user to review. Drafting is deliberately
-// user-triggered via the Agent feed or weekly cadence; a scheduled job must
-// never create content the user did not request.
+// all proposals for the user to review. Drafting itself happens elsewhere:
+// on demand from the Agent feed, and proactively in /api/cron/agent-predraft,
+// which turns the top proposal into a draft so the user's first action is the
+// schedule decision rather than "write this".
 export async function GET(req: Request) {
   const cronStartedAt = new Date();
   const secret = process.env.CRON_SECRET;
@@ -110,7 +76,7 @@ export async function GET(req: Request) {
       // Workspaces are capped per run so a large fleet can't blow the cron
       // budget. Rotate the sorted list so the cap is fair across the fleet.
       workspaceIds = rotateForFairness(
-        await discoverWorkspaceIds(sb),
+        await discoverAgentWorkspaceIds(sb),
         new Date(),
         MAX_WORKSPACES_PER_TICK,
       );
