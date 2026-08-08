@@ -24,6 +24,13 @@ const ALLOWED_ADMIN_APP_FILES = new Set([
   // explicit workspace predicate in-loop and the write is keyed to that same
   // workspace id.
   "app/api/cron/daily-digest/route.ts",
+  // Pre-drafting rotates across the opt-in workspaces, so like the other agent
+  // crons there is no single workspace to scope a client to — the opt-in list
+  // itself is a cross-workspace settings read. CRON_SECRET-gated; every read
+  // and the drafting call carry an explicit workspace id, and the drafting
+  // itself goes through actOnOpportunity, which is workspace-scoped
+  // internally. Writes no user-visible state beyond a board draft.
+  "app/api/cron/agent-predraft/route.ts",
   "app/api/health/route.ts",
   "app/api/internal/jobs/health/route.ts",
   // Cron run history is PLATFORM telemetry: crons run across every workspace,
