@@ -370,7 +370,10 @@ function responseBody(opts: {
     // working on. Only requested when reasoning is on — a "none" call has no
     // reasoning pass to summarize. Summaries cost output tokens, which the
     // headroom above already accounts for.
-    ...(effort && effort !== "none"
+    // Only on the streaming path. completeChatOpenAI's parser reads message and
+    // function_call items and discards reasoning items, so a summary requested
+    // there is output budget spent on text nothing can display.
+    ...(effort && effort !== "none" && opts.stream
       ? { reasoning: { effort, summary: "auto" } }
       : effort
         ? { reasoning: { effort } }
@@ -384,7 +387,11 @@ function responseBody(opts: {
   };
 }
 
-const CONVERSATIONAL_EFFORTS = new Set(["minimal", "low", "medium", "high"]);
+// "minimal" is deliberately absent: the effort chain normalizes a caller's
+// "minimal" to "low", and REASONING_OUTPUT_HEADROOM has no entry for it, so
+// accepting it here would send an effort this codebase never otherwise emits
+// with zero output headroom behind it.
+const CONVERSATIONAL_EFFORTS = new Set(["low", "medium", "high"]);
 
 /**
  * Reasoning effort for a conversational answer turn, when set.

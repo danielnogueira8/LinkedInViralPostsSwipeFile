@@ -62,6 +62,12 @@ const CSP_DIRECTIVES = {
     "https://*.licdn.com",
     "https://api.dicebear.com",
     "https://img.clerk.com",
+    // Mirrored profile avatars (migration 178's public bucket). Supabase was
+    // in connect-src only, so the mirrored <img> was blocked — and because
+    // voice_profiles.avatar_url is OVERWRITTEN with the mirrored URL, the
+    // working LinkedIn URL is gone: avatars would have broken immediately
+    // rather than after weeks, which is worse than the bug being fixed.
+    "https://*.supabase.co",
     "https://*.vercel.app",
     "https://vercel.live",
   ],

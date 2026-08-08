@@ -82,6 +82,43 @@ export function avatarStoragePath(workspaceId: string, extension: string): strin
 }
 
 /**
+ * Read a response body, aborting as soon as it exceeds `limit`.
+ * Returns null when the cap is passed, so an oversized body is never fully
+ * materialized.
+ */
+async function readBounded(
+  response: Response,
+  limit: number,
+): Promise<Uint8Array | null> {
+  if (!response.body) return null;
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      total += value.byteLength;
+      if (total > limit) {
+        await reader.cancel().catch(() => undefined);
+        return null;
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out;
+}
+
+/**
  * Copy a provider avatar into our bucket and return a durable public URL.
  * Returns null whenever the mirror cannot be completed — the caller keeps
  * whatever URL it already had.
@@ -113,9 +150,12 @@ export async function mirrorAvatarToStorage(
     const declared = Number(response.headers.get("content-length") ?? "");
     if (Number.isFinite(declared) && declared > AVATAR_MAX_BYTES) return null;
 
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    // Re-check against what actually arrived: Content-Length is a claim.
-    if (bytes.byteLength === 0 || bytes.byteLength > AVATAR_MAX_BYTES) return null;
+    // Read with a running bound rather than buffering first. arrayBuffer()
+    // pulls the WHOLE body into memory before any size check, so a response
+    // with a missing or malformed Content-Length defeated the cap above — the
+    // stated memory bound was not actually enforced against a hostile body.
+    const bytes = await readBounded(response, AVATAR_MAX_BYTES);
+    if (!bytes || bytes.byteLength === 0) return null;
 
     const storagePath = avatarStoragePath(workspaceId, extension);
     const storage = supabaseAdmin().storage.from(AVATAR_BUCKET);

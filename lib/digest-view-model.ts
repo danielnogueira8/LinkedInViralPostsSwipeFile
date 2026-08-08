@@ -282,13 +282,49 @@ export function splitSectionLead(
   // NOTE: `evidence` deliberately keeps its raw ids — splitEvidence anchors on
   // them, and cleaning here would remove the anchors before it ever runs. The
   // ids are cleaned per-item inside splitEvidence, or by the prose fallback.
-  if (!match) return { claim: null, evidence: body.trim() };
+  if (!match) return unboldedSectionLead(body, labels);
   const claim = cleanInline(match[1], labels).replace(/[.:;,\s]+$/, "");
   const evidence = body.slice(match[0].length).trim();
   // A claim with no evidence behind it is just the section's only sentence;
   // keep it as prose rather than showing a lead with nothing under it.
   if (!evidence) return { claim: null, evidence: body.trim() };
   return { claim, evidence };
+}
+
+/**
+ * The lead for a section the model did NOT open with a bold claim.
+ *
+ * citedEvidence keeps only the text that FOLLOWS each citation, so without
+ * this the sentence before the first id — which is the actual finding, the one
+ * thing worth reading — vanished from the page and the section rendered as
+ * bare engagement rows.
+ *
+ * Splitting at the first citation recovers it: everything before the first id
+ * is the claim, everything from it on is evidence. Only applied when the body
+ * really is a citation list (2+ ids); otherwise the section is one continuous
+ * thought and stays prose.
+ */
+function unboldedSectionLead(
+  body: string,
+  labels?: ReadonlyMap<string, string>,
+): SectionLead {
+  const ids = [
+    ...body.matchAll(
+      /`?\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b`?/gi,
+    ),
+  ];
+  const first = ids[0]?.index;
+  if (ids.length < 2 || first === undefined) {
+    return { claim: null, evidence: body.trim() };
+  }
+  // Keep the lead's own trailing connector out of the claim ("The strongest
+  // evidence was" reads as a dangling fragment under its own rows).
+  const lead = cleanInline(body.slice(0, first), labels)
+    .replace(/[\s.:;,—–-]+$/, "")
+    .replace(/\s+(?:was|were|includes?|included|are|is|appeared in)$/i, "");
+  const evidence = body.slice(first).trim();
+  if (!lead) return { claim: null, evidence };
+  return { claim: lead, evidence };
 }
 
 export type EvidenceItem = {
@@ -373,7 +409,9 @@ export function splitEvidence(
   ];
   if (quoted.length >= 2) {
     return quoted.map((match) => ({
-      title: match[1].trim(),
+      // Cleaned here because splitSectionLead no longer pre-cleans evidence —
+      // otherwise raw "**" and UUIDs render inside the title.
+      title: cleanInline(match[1], labels).trim() || null,
       // Trailing ")" and "." are left over from the inline "(...)" wrapper the
       // model writes around engagement; unbalanced they read as a typo.
       // Trim the connective tissue between items: a leading "(" from the

@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   AVATAR_MAX_BYTES,
@@ -164,5 +166,38 @@ describe("avatar mirror", () => {
     expect(avatarStoragePath("ws_2", "jpg")).toBe("ws_2/avatar.jpg");
     // Path traversal in a workspace id must not escape the prefix.
     expect(avatarStoragePath("../../etc", "png")).toBe("______etc/avatar.png");
+  });
+
+  // The cap was applied only AFTER arrayBuffer() had already buffered the whole
+  // body, so a response with no Content-Length defeated it entirely — the
+  // stated memory bound was not enforced against a hostile body.
+  test("rejects an oversized body that declares no content-length at all", async () => {
+    const oversized = new Uint8Array(AVATAR_MAX_BYTES + 1024);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(new Blob([oversized.buffer as ArrayBuffer]), {
+        status: 200,
+        // No content-length: the pre-check cannot help here.
+        headers: { "content-type": "image/png" },
+      }),
+    );
+
+    const result = await mirrorAvatarToStorage(
+      "https://media.licdn.com/photo.png",
+      "ws_1",
+    );
+    expect(result).toBeNull();
+    expect(uploadMock).not.toHaveBeenCalled();
+  });
+
+  // A mirrored URL the browser refuses to load is worse than an expiring one:
+  // avatar_url is OVERWRITTEN with it, so the working LinkedIn URL is gone and
+  // avatars break immediately instead of in weeks.
+  test("the mirrored host is allowed by img-src, not just connect-src", () => {
+    const config = readFileSync(
+      path.join(process.cwd(), "next.config.ts"),
+      "utf8",
+    );
+    const imgSrc = /"img-src":\s*\[([\s\S]*?)\]/.exec(config)?.[1] ?? "";
+    expect(imgSrc).toContain("supabase.co");
   });
 });
