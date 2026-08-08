@@ -37,6 +37,11 @@ const ALLOWED_ADMIN_APP_FILES = new Set([
   // so there is no workspace to scope to. Admin-or-CRON_SECRET gated, read
   // only, and the table itself is service-role only (migration 176).
   "app/api/internal/cron-stats/route.ts",
+  // Pre-draft outcomes are a PRODUCT question ("is the agent writing posts
+  // anyone wants"), answered across the whole fleet, so there is no workspace
+  // to scope to. Admin-or-CRON_SECRET, read only, and it reads nothing beyond
+  // draft timestamps, schedule status, and edit counts — no bodies.
+  "app/api/internal/agent-predraft-stats/route.ts",
   "app/lm/[slug]/page.tsx", // intentionally public resource lookup
 ]);
 
