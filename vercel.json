@@ -42,7 +42,7 @@
     },
     {
       "path": "/api/cron/agent-predraft",
-      "schedule": "45 * * * *"
+      "schedule": "*/5 * * * *"
     },
     {
       "path": "/api/cron/topic-cluster-probe",

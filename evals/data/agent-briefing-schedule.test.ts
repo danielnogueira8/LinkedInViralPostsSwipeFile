@@ -16,6 +16,13 @@ const BRIEFING = readFileSync(
   "utf8",
 );
 
+// The schedule action is shared by the Daily Brief and the agent briefing, so
+// the invariants below live in the shared module rather than in either caller.
+const SHARED_ACTION = readFileSync(
+  path.join(process.cwd(), "lib/agent-draft-schedule.ts"),
+  "utf8",
+);
+
 const QUEUE_ROUTE = readFileSync(
   path.join(process.cwd(), "app/api/drafts/[id]/queue/route.ts"),
   "utf8",
@@ -26,8 +33,8 @@ describe("agent draft one-click schedule", () => {
     // queueAt() requires a postingSlotId + occurrence date. The briefing card
     // has neither — it only knows "the next free one" — so switching it to
     // queueAt would 400 on every click.
-    expect(BRIEFING).toContain("draftOperations.queue(");
-    expect(BRIEFING).not.toContain("draftOperations.queueAt(");
+    expect(SHARED_ACTION).toContain("draftOperations.queue(");
+    expect(SHARED_ACTION).not.toContain("draftOperations.queueAt(");
   });
 
   it("routes through the allocator that creates slots when none exist", () => {
@@ -44,8 +51,7 @@ describe("agent draft one-click schedule", () => {
       BRIEFING.indexOf("const scheduleNow"),
       BRIEFING.indexOf("const review ="),
     );
-    expect(handler).toContain("await draftOperations.queue(");
-    const bookingAt = handler.indexOf("await draftOperations.queue(");
+    const bookingAt = handler.indexOf("await scheduleAgentDraftToNextSlot(");
     const removalAt = handler.indexOf("drafts: cur.drafts.filter");
     expect(bookingAt).toBeGreaterThan(-1);
     expect(removalAt).toBeGreaterThan(bookingAt);
@@ -59,7 +65,8 @@ describe("agent draft one-click schedule", () => {
       BRIEFING.indexOf("const review ="),
     );
     expect(handler).toContain("toast.error");
-    expect(handler).toContain("catch");
+    // The shared action is what converts a throw into a message.
+    expect(SHARED_ACTION).toContain("catch");
   });
 
   it("guards against a double booking from a double click", () => {
@@ -69,5 +76,58 @@ describe("agent draft one-click schedule", () => {
     );
     expect(handler).toContain("if (schedulingDraftId) return;");
     expect(BRIEFING).toContain("disabled={schedulingDraftId !== null}");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The Daily Brief is the surface pre-drafting is FOR: the brief says what
+// happened, this says "so here is your post". Same one-click action, so the
+// invariants above cover it — these pin the parts unique to this surface.
+// ---------------------------------------------------------------------------
+describe("today's draft on the Daily Brief", () => {
+  const CARD = readFileSync(
+    path.join(process.cwd(), "app/(app)/dashboard/digest/todays-draft.tsx"),
+    "utf8",
+  );
+  const PAGE = readFileSync(
+    path.join(process.cwd(), "app/(app)/dashboard/digest/page.tsx"),
+    "utf8",
+  );
+
+  it("uses the shared action rather than a second copy", () => {
+    expect(CARD).toContain("scheduleAgentDraftToNextSlot");
+    expect(CARD).not.toContain("draftOperations");
+  });
+
+  it("removes the card only after the booking succeeds", () => {
+    const bookingAt = CARD.indexOf("await scheduleAgentDraftToNextSlot(");
+    const removalAt = CARD.indexOf("setDone(");
+    expect(bookingAt).toBeGreaterThan(-1);
+    expect(removalAt).toBeGreaterThan(bookingAt);
+  });
+
+  it("surfaces failures and guards a double click", () => {
+    expect(CARD).toContain("toast.error");
+    expect(CARD).toContain("if (scheduling) return;");
+  });
+
+  it("shows only today's UNSCHEDULED agent drafts", () => {
+    // Already-queued drafts belong to the posting queue, not to today's
+    // decision — showing them would invite a second booking.
+    expect(PAGE).toContain("AGENT_SUGGESTED_BY");
+    expect(PAGE).toContain('.is("schedule_status", null)');
+    expect(PAGE).toContain('.gte("created_at"');
+  });
+
+  it("keeps the Brief a pure read", () => {
+    // Opening the page must never generate a draft; pre-drafting is a cron.
+    expect(PAGE).not.toContain("actOnOpportunity");
+    expect(PAGE).not.toMatch(/\.insert\(|\.update\(|\.upsert\(/);
+  });
+
+  it("still renders the brief when there is no draft, and vice versa", () => {
+    // The empty state must key off BOTH, or a workspace with a draft and no
+    // digest (or the reverse) gets a blank page.
+    expect(PAGE).toContain("digests.length === 0 && todaysDrafts.length === 0");
   });
 });

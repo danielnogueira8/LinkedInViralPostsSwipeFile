@@ -41,14 +41,11 @@ import {
   getWeekPlanDraftReadiness,
 } from "@/lib/agent-loop/week-plan";
 import { toast } from "sonner";
-import { createDraftOperationsClient } from "@/lib/draft-operations-client";
-import { formatScheduleToast } from "@/lib/posting-queue";
+import { scheduleAgentDraftToNextSlot } from "@/lib/agent-draft-schedule";
 import { cn } from "@/lib/utils";
 import { AgentWorkingSummary } from "./agent-working-summary";
 import { loadAgentBriefing } from "./agent-briefing-client";
 import { invalidateNavBadges } from "./nav-badges";
-
-const draftOperations = createDraftOperationsClient();
 
 // -----------------------------------------------------------------------------
 // "Your Agent" — the agent loop's standalone dashboard surface.
@@ -315,13 +312,8 @@ export function AgentBriefing() {
   const scheduleNow = async (draftId: string) => {
     if (schedulingDraftId) return;
     setSchedulingDraftId(draftId);
-    const timezone =
-      Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-    try {
-      const queued = await draftOperations.queue(draftId, {
-        firstComment: null,
-        timezone,
-      });
+    const result = await scheduleAgentDraftToNextSlot(draftId);
+    if (result.ok) {
       // Drop it from the review list only after the booking succeeds — a
       // failed schedule must leave the draft exactly where it was.
       setBriefing((cur) => ({
@@ -330,25 +322,11 @@ export function AgentBriefing() {
       }));
       window.dispatchEvent(new Event("posting-queue-updated"));
       invalidateNavBadges();
-      toast.success(
-        formatScheduleToast({
-          scheduledAt: queued.scheduledAt,
-          accountTimezone: queued.timezone || timezone,
-          browserTimezone: timezone,
-        }),
-      );
-    } catch (error) {
-      // Surfaced rather than swallowed: the two real failures here are "no
-      // LinkedIn account connected" and "the queue changed underneath you",
-      // and both need the user to know why nothing happened.
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : "Couldn't add this post to the queue.",
-      );
-    } finally {
-      setSchedulingDraftId(null);
+      toast.success(result.message);
+    } else {
+      toast.error(result.error);
     }
+    setSchedulingDraftId(null);
   };
 
   const review = (draftId: string) => {
