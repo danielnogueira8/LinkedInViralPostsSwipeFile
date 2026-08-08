@@ -84,7 +84,7 @@ describe("native OpenAI adapter", () => {
     });
     expect(body.model).toBe("gpt-5.6-luna");
     expect(body.store).toBe(false);
-    expect(body.reasoning).toEqual({ effort: "high", summary: "auto" });
+    expect(body.reasoning).toEqual({ effort: "high" });
     expect(body.prompt_cache_options).toEqual({ mode: "explicit" });
     // An assistant turn replayed as history must carry `output_text`; the
     // Responses API rejects `input_text` on the assistant role outright.
@@ -124,7 +124,7 @@ describe("native OpenAI adapter", () => {
     });
 
     const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
-    expect(body.reasoning).toEqual({ effort: "high", summary: "auto" });
+    expect(body.reasoning).toEqual({ effort: "high" });
   });
 
   test("uses high for an older reasoning-capable OpenAI model", async () => {
@@ -143,7 +143,7 @@ describe("native OpenAI adapter", () => {
     });
 
     const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
-    expect(body.reasoning).toEqual({ effort: "high", summary: "auto" });
+    expect(body.reasoning).toEqual({ effort: "high" });
   });
 
   test("preserves explicit reasoning-off requests for mechanical calls", async () => {
@@ -206,7 +206,7 @@ describe("native OpenAI adapter", () => {
     });
 
     const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
-    expect(body.reasoning).toEqual({ effort: "high", summary: "auto" });
+    expect(body.reasoning).toEqual({ effort: "high" });
     // Room for the ~2,100 reasoning tokens measured in #1835 AND the answer.
     expect(body.max_output_tokens).toBe(650 + REASONING_OUTPUT_HEADROOM.high);
     expect(body.max_output_tokens).toBeGreaterThan(2_100 + 650);
@@ -244,7 +244,39 @@ describe("native OpenAI adapter", () => {
     expect(reasoningAwareOutputBudget(900, undefined)).toBe(900);
   });
 
-  test("asks for reasoning summaries whenever reasoning is on", async () => {
+  test("asks for reasoning summaries on the streaming path only", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(
+              new TextEncoder().encode(
+                `data: ${JSON.stringify({ type: "response.completed", response: { model: "gpt-5.6-luna" } })}\n\n`,
+              ),
+            );
+            controller.close();
+          },
+        }),
+        { status: 200 },
+      ),
+    );
+
+    for await (const delta of streamChatOpenAI({
+      model: "openai/gpt-5.6-luna",
+      messages: [{ role: "user", content: "write a post" }],
+    })) {
+      void delta;
+    }
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(body.stream).toBe(true);
+    expect(body.reasoning).toEqual({ effort: "high", summary: "auto" });
+  });
+
+  // completeChatOpenAI's parser reads message and function_call items and
+  // discards reasoning items, so a summary requested there is output budget
+  // spent on text nothing can display.
+  test("does not pay for summaries on a non-streaming call", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       Response.json({
         model: "gpt-5.6-luna",
@@ -259,7 +291,8 @@ describe("native OpenAI adapter", () => {
     });
 
     const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
-    expect(body.reasoning).toEqual({ effort: "high", summary: "auto" });
+    expect(body.reasoning).toEqual({ effort: "high" });
+    expect(body.reasoning.summary).toBeUndefined();
   });
 
   test("asks for no summary on a reasoning-off mechanical call", async () => {
@@ -375,6 +408,22 @@ describe("native OpenAI adapter", () => {
     const writer = JSON.parse(String(fetchMock.mock.calls[1][1]?.body));
     expect(conversational.reasoning.effort).toBe("low");
     expect(writer.reasoning.effort).toBe("high");
+  });
+
+  test("ignores 'minimal', which has no headroom entry and is never emitted", async () => {
+    vi.stubEnv("OPENAI_ANSWER_REASONING_EFFORT", "minimal");
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({ model: "gpt-5.6-luna", status: "completed", output: [] }),
+    );
+
+    await completeChatOpenAI({
+      model: "openai/gpt-5.6-luna",
+      lowLatency: true,
+      messages: [{ role: "user", content: "hello" }],
+    });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(body.reasoning.effort).toBe("high");
   });
 
   test("ignores an unrecognized override rather than degrading every turn", async () => {

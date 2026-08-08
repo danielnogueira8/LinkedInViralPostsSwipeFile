@@ -315,6 +315,12 @@ async function* runTurnPlan(
   for await (const ev of observedStream) {
     switch (ev.type) {
       case "text":
+      // Reasoning narration is relayed, not accumulated: without this case the
+      // event yielded by executeAnswerTurn is swallowed here and the whole
+      // chain behind it — SSE frame, transport contract, ReasoningTrace — never
+      // sees a byte. The feature shipped dead because this switch enumerates
+      // event types and has no default.
+      case "reasoning":
       case "tool_start":
       case "tool_end":
       case "ask":

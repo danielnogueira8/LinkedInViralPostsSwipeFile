@@ -472,3 +472,55 @@ describe("backtick-wrapped citations", () => {
     ]);
   });
 });
+
+describe("the section's own finding survives", () => {
+  it("keeps the lead sentence when the model did not bold its claim", () => {
+    // The regression: citedEvidence keeps only text AFTER each id, so with no
+    // **bold** claim the sentence carrying the actual finding was dropped and
+    // the section rendered as bare engagement rows.
+    const { claim, evidence } = splitSectionLead(BACKTICK_THEME, BACKTICK_LABELS);
+    expect(claim).toContain("practical B2B sales systems");
+    expect(claim).not.toMatch(UUID_ANYWHERE);
+    // And the evidence still splits into rows behind it.
+    expect(splitEvidence(evidence, BACKTICK_LABELS)).toHaveLength(3);
+  });
+
+  it("does not leave the lead as a dangling fragment", () => {
+    const { claim } = splitSectionLead(BACKTICK_THEME, BACKTICK_LABELS);
+    expect(claim).not.toMatch(/\b(?:was|were|is|are|appeared in)$/i);
+  });
+
+  it("still prefers an explicit bold claim when the model marks one", () => {
+    const bolded =
+      "**Lists beat stories today.** Seen in " +
+      "`84efa253-e31d-4dd0-ae36-e9d4e28dfaad` (208 reactions), " +
+      "`60cb589b-c4e2-4fb8-89a1-1e9cc3de7604` (421 reactions).";
+    const { claim } = splitSectionLead(bolded, BACKTICK_LABELS);
+    expect(claim).toBe("Lists beat stories today");
+  });
+
+  it("leaves a single-citation section as one continuous thought", () => {
+    const single =
+      "Only one post cleared the bar today: " +
+      "`84efa253-e31d-4dd0-ae36-e9d4e28dfaad` (208 reactions).";
+    const { claim, evidence } = splitSectionLead(single, BACKTICK_LABELS);
+    expect(claim).toBeNull();
+    expect(evidence).toBe(single);
+  });
+
+  it("cleans markdown and ids out of a quoted evidence title", () => {
+    // splitSectionLead no longer pre-cleans evidence, so the quoted branch has
+    // to clean its own titles or raw ** and UUIDs render inside them.
+    const quoted =
+      '“**Complete Revenue System**” (`84efa253-e31d-4dd0-ae36-e9d4e28dfaad` — 827 reactions), ' +
+      '“**Client Acquisition**” (`60cb589b-c4e2-4fb8-89a1-1e9cc3de7604` — 122 reactions)';
+    const items = splitEvidence(quoted, BACKTICK_LABELS);
+    expect(items.length).toBeGreaterThanOrEqual(2);
+    for (const item of items) {
+      expect(item.title ?? "").not.toContain("*");
+      expect(item.title ?? "").not.toMatch(UUID_ANYWHERE);
+      expect(item.detail).not.toMatch(UUID_ANYWHERE);
+    }
+    expect(items[0].title).toBe("Complete Revenue System");
+  });
+});
