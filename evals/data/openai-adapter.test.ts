@@ -4,6 +4,8 @@ import {
   embedTextOpenAI,
   generateImageOpenAI,
   isOpenAIModel,
+  reasoningAwareOutputBudget,
+  REASONING_OUTPUT_HEADROOM,
   streamChatOpenAI,
 } from "@/lib/openai";
 
@@ -178,6 +180,68 @@ describe("native OpenAI adapter", () => {
         messages: [{ role: "user", content: "draft" }],
       }),
     ).resolves.toMatchObject({ finishReason: "length" });
+  });
+
+  // Reasoning shares max_output_tokens with the visible answer, so a budget
+  // sized for the answer alone gets spent on the reasoning pass and the call
+  // returns empty (#1835, and the auto-beta starvation incident before it).
+  // These pin the headroom at the transport, where no call site can lose it.
+  test("adds reasoning headroom to a small caller budget", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        model: "gpt-5.6-luna",
+        status: "completed",
+        output: [],
+      }),
+    );
+
+    // The read-only planner's real shape: a tight budget, "low" requested, and
+    // a forced tool it cannot emit if reasoning eats the pool.
+    await completeChatOpenAI({
+      model: "openai/gpt-5.6-luna",
+      maxTokens: 650,
+      reasoningEffort: "low",
+      forceTool: "return_read_only_plan",
+      messages: [{ role: "user", content: "plan this" }],
+    });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(body.reasoning).toEqual({ effort: "high" });
+    // Room for the ~2,100 reasoning tokens measured in #1835 AND the answer.
+    expect(body.max_output_tokens).toBe(650 + REASONING_OUTPUT_HEADROOM.high);
+    expect(body.max_output_tokens).toBeGreaterThan(2_100 + 650);
+  });
+
+  test("leaves mechanical reasoning-off budgets exactly as the caller sized them", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        model: "gpt-5.6-luna",
+        status: "completed",
+        output: [],
+      }),
+    );
+
+    await completeChatOpenAI({
+      model: "openai/gpt-5.6-luna",
+      maxTokens: 256,
+      disableReasoning: true,
+      messages: [{ role: "user", content: "name this chat" }],
+    });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(body.reasoning).toEqual({ effort: "none" });
+    expect(body.max_output_tokens).toBe(256);
+  });
+
+  test("keeps relative sizing so a small extraction stays smaller than a draft", () => {
+    // Additive, not a flat floor: a 200-token extraction must not be handed the
+    // same ceiling as a 4096-token draft.
+    const extraction = reasoningAwareOutputBudget(200, "high");
+    const draft = reasoningAwareOutputBudget(4_096, "high");
+    expect(extraction).toBeLessThan(draft);
+    expect(extraction).toBeGreaterThan(2_100);
+    expect(reasoningAwareOutputBudget(900, "none")).toBe(900);
+    expect(reasoningAwareOutputBudget(900, undefined)).toBe(900);
   });
 
   test("streams text, tool calls, and terminal usage without replaying content", async () => {

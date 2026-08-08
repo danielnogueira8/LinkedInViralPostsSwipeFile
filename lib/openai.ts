@@ -271,6 +271,51 @@ function withWebSearchUsage(
   };
 }
 
+/**
+ * Reasoning headroom added on top of the caller's visible-output budget.
+ *
+ * On the Responses API `max_output_tokens` is ONE pool covering hidden
+ * reasoning tokens AND the visible answer. Since nativeOpenAIReasoningEffort
+ * promotes every gpt-5 and o-series call to "high" regardless of what the
+ * caller asked for, a budget sized for the answer alone is eaten by the reasoning
+ * pass: the response comes back status "incomplete" with empty text, and a
+ * forced tool call never arrives. It reads as a refusal or a flake, not as a
+ * budget problem.
+ *
+ * That failure has now shipped twice — the auto-beta reasoning-starvation
+ * incident and the daily digest (#1835, where a 900-token cap billed ~2,100
+ * reasoning tokens per call and wrote nothing). Both times the constraint
+ * lived only in a comment at the call site, so the next small budget
+ * reintroduced it. Enforcing the floor here is what stops a third recurrence:
+ * a caller can size the answer, and cannot accidentally starve the reasoning.
+ *
+ * Additive rather than a flat floor so the caller's relative sizing survives —
+ * a 200-token extraction stays far smaller than a 4096-token draft. The
+ * high-effort value clears the ~2,100 tokens observed in #1835 with margin.
+ *
+ * This does not raise spend. Those reasoning tokens are already generated and
+ * already billed today; the cap only truncates the response after they have
+ * been paid for. The headroom converts "paid for reasoning, got nothing" into
+ * "paid for reasoning, got the answer".
+ */
+export const REASONING_OUTPUT_HEADROOM: Record<string, number> = {
+  high: 3_000,
+  medium: 2_000,
+  low: 1_000,
+};
+
+/**
+ * The caller's visible-output budget plus room for the reasoning pass.
+ * Exported for tests. "none" (mechanical calls) is returned untouched.
+ */
+export function reasoningAwareOutputBudget(
+  requested: number,
+  effort: string | undefined,
+): number {
+  if (!effort || effort === "none") return requested;
+  return requested + (REASONING_OUTPUT_HEADROOM[effort] ?? 0);
+}
+
 function responseBody(opts: {
   messages: ChatMessage[];
   model: string;
@@ -301,7 +346,10 @@ function responseBody(opts: {
   return {
     model: openAIModelId(opts.model),
     input: responsesInput(opts.messages),
-    max_output_tokens: opts.maxTokens ?? (opts.stream ? 4096 : 1024),
+    max_output_tokens: reasoningAwareOutputBudget(
+      opts.maxTokens ?? (opts.stream ? 4096 : 1024),
+      effort,
+    ),
     store: false,
     ...(opts.stream ? { stream: true } : {}),
     ...(tools ? { tools } : {}),
