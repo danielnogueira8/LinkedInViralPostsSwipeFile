@@ -41,6 +41,10 @@
       "schedule": "15 * * * *"
     },
     {
+      "path": "/api/cron/agent-predraft",
+      "schedule": "45 * * * *"
+    },
+    {
       "path": "/api/cron/topic-cluster-probe",
       "schedule": "0 0 1 1 *"
     },
