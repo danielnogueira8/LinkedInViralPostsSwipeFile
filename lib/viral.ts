@@ -188,12 +188,27 @@ export type RelativeViralConfig = {
  */
 export const RELATIVE_CUTOFF_DISABLED = 100;
 
+/**
+ * DELIBERATELY not env-overridable — unlike minHistory/window below.
+ *
+ * There used to be a VIRAL_REL_CUTOFF_PCT escape hatch here, and in production
+ * it was set to 30. That is the worst possible place for this value to live:
+ * the daily scrape runs with no workspace context (app/api/cron/daily passes
+ * workspaceId: null), so getRelativeConfig falls through to these defaults for
+ * EVERY workspace's posts — meaning one unset-and-forgotten env var silently
+ * held the whole fleet at "top 30% of each creator only", while the settings
+ * page showed the filter switched off and offered a toggle that could not
+ * reach it. Posts were stamped is_viral=false at ingest and, since nothing
+ * ever recomputes that column, stayed invisible forever.
+ *
+ * The per-workspace setting (getRelativeConfig, below) is now the ONLY way to
+ * turn the relative gate on. A control the user can see is worth more than a
+ * control an operator can reach faster.
+ */
 const DEFAULT_RELATIVE: RelativeViralConfig = {
   minHistory: Number(process.env.VIRAL_REL_MIN_HISTORY ?? 5),
   window: Number(process.env.VIRAL_REL_WINDOW ?? 15),
-  cutoffPct: Number(
-    process.env.VIRAL_REL_CUTOFF_PCT ?? RELATIVE_CUTOFF_DISABLED,
-  ),
+  cutoffPct: RELATIVE_CUTOFF_DISABLED,
 };
 
 /**

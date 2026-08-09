@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   decideRelativeViral,
   normalizeCutoffPct,
@@ -101,6 +103,73 @@ describe("the DEFAULT config, with no explicit override", () => {
 
   it("is off, not merely permissive", () => {
     expect(RELATIVE_CUTOFF_DISABLED).toBe(100);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// No environment variable may switch the relative gate on.
+//
+// This is a REGRESSION pin, not a style preference. VIRAL_REL_CUTOFF_PCT was
+// set to 30 in production while the settings page showed the filter off. The
+// daily scrape runs with workspaceId: null, so those defaults classified every
+// workspace's posts — the fleet sat at "top 30% per creator" with no visible
+// control, and because is_viral is stamped once at ingest and never recomputed,
+// the posts it rejected were lost permanently rather than just hidden.
+//
+// The module reads its defaults at import time, so re-importing under a hostile
+// environment is what actually proves the read is gone.
+// ---------------------------------------------------------------------------
+describe("the relative cutoff is not reachable from the environment", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  it("ignores VIRAL_REL_CUTOFF_PCT for a global (no-workspace) run", async () => {
+    vi.stubEnv("VIRAL_REL_CUTOFF_PCT", "30");
+    vi.resetModules();
+    const viral = await import("@/lib/viral");
+    // null workspace = the daily cron's path; it returns the module defaults
+    // without touching the database.
+    const config = await viral.getRelativeConfig(null);
+    expect(config.cutoffPct).toBe(viral.RELATIVE_CUTOFF_DISABLED);
+  });
+
+  it("still lets a post outside the top 30% through under that env var", async () => {
+    vi.stubEnv("VIRAL_REL_CUTOFF_PCT", "30");
+    vi.resetModules();
+    const viral = await import("@/lib/viral");
+    const config = await viral.getRelativeConfig(null);
+    // The exact post the production setting was silently rejecting: clears the
+    // floor comfortably, nowhere near this creator's own top slice.
+    const decision = viral.decideRelativeViral({
+      score: 60,
+      reactions: 60,
+      comments: 0,
+      priorScores: STRONG_HISTORY,
+      flatThresholds: FLOOR,
+      config,
+    });
+    expect(decision.viral).toBe(true);
+    expect(decision.basis).toBe("flat_fallback");
+  });
+
+  it("keeps the per-workspace setting as the only way to turn it on", () => {
+    // Assert against CODE, not prose: the comment above the defaults names the
+    // removed variable on purpose, and matching that would pass forever.
+    const source = readFileSync(
+      path.join(process.cwd(), "lib/viral.ts"),
+      "utf8",
+    );
+    const code = source
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .filter((line) => !line.trim().startsWith("//"))
+      .join("\n");
+    // The sample-size guards stay env-tunable; the editorial choice does not.
+    expect(code).toContain("VIRAL_REL_MIN_HISTORY");
+    expect(code).toContain("VIRAL_REL_WINDOW");
+    expect(code).not.toContain("VIRAL_REL_CUTOFF_PCT");
   });
 });
 
