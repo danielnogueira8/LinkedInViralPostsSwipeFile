@@ -92,8 +92,103 @@ export function getCaretCoordinates(
   return coords;
 }
 
-// Convenience: the viewport-relative midpoint above a selection range, used to
-// center a floating toolbar over the highlighted text.
+// ---------------------------------------------------------------------------
+// `position: fixed` is not always relative to the viewport.
+//
+// Any ancestor with a transform (or translate/rotate/scale/filter/perspective,
+// and a few others) becomes the CONTAINING BLOCK for its fixed descendants, so
+// `left: 400px` then means 400px from that ancestor's edge instead of the
+// window's. The draft editor renders inside a Dialog whose content carries
+// `translate-*` utilities and slide-in animations, and that dialog is a
+// RIGHT-ALIGNED drawer — so the selection toolbar was drawn hundreds of pixels
+// to the right of the highlighted word, while looking vertically correct
+// because the drawer is full-height at top: 0.
+//
+// The fix is arithmetic rather than a portal: moving the toolbar to
+// document.body would also move the "Describe changes" input out of the modal,
+// where the dialog's focus trap can pull focus straight back out of it.
+// ---------------------------------------------------------------------------
+
+/** The subset of computed style that decides the question. Plain data so the
+ *  rule is testable without a DOM. */
+export type ContainingBlockStyle = {
+  transform?: string | null;
+  translate?: string | null;
+  rotate?: string | null;
+  scale?: string | null;
+  perspective?: string | null;
+  filter?: string | null;
+  backdropFilter?: string | null;
+  contain?: string | null;
+  willChange?: string | null;
+};
+
+/**
+ * Does an element with this style establish a containing block for `fixed`
+ * descendants?
+ *
+ * NOTE `translate: 0px 0px` counts. Tailwind's `translate-x-0` still emits a
+ * translate, so an element that visually moves nothing still captures fixed
+ * positioning — which is exactly how this shipped unnoticed.
+ */
+export function establishesFixedContainingBlock(
+  style: ContainingBlockStyle,
+): boolean {
+  const set = (value: string | null | undefined): boolean =>
+    Boolean(value) && value !== "none";
+  if (set(style.transform)) return true;
+  if (set(style.translate)) return true;
+  if (set(style.rotate)) return true;
+  if (set(style.scale)) return true;
+  if (set(style.perspective)) return true;
+  if (set(style.filter)) return true;
+  if (set(style.backdropFilter)) return true;
+  if (style.contain && /\b(paint|layout|strict|content)\b/.test(style.contain)) {
+    return true;
+  }
+  if (style.willChange && /\b(transform|filter|perspective)\b/.test(style.willChange)) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Viewport offset of the nearest ancestor that captures fixed positioning, or
+ * {0,0} when nothing does (the normal case outside a dialog).
+ *
+ * Degrades safely: if the walk misses a property that captures fixed
+ * positioning, the result is {0,0} — today's behaviour — rather than a new
+ * kind of wrong.
+ */
+export function fixedContainingBlockOffset(el: Element): {
+  top: number;
+  left: number;
+} {
+  for (let node = el.parentElement; node; node = node.parentElement) {
+    const computed = getComputedStyle(node);
+    if (
+      establishesFixedContainingBlock({
+        transform: computed.transform,
+        translate: computed.translate,
+        rotate: computed.rotate,
+        scale: computed.scale,
+        perspective: computed.perspective,
+        filter: computed.filter,
+        backdropFilter: computed.backdropFilter,
+        contain: computed.contain,
+        willChange: computed.willChange,
+      })
+    ) {
+      const rect = node.getBoundingClientRect();
+      return { top: rect.top, left: rect.left };
+    }
+  }
+  return { top: 0, left: 0 };
+}
+
+// Convenience: the midpoint above a selection range, used to center a floating
+// toolbar over the highlighted text. Returns coordinates for a `fixed` element
+// — viewport-relative, minus any ancestor that captured fixed positioning.
 export function getSelectionAnchor(
   el: HTMLTextAreaElement,
   start: number,
@@ -106,8 +201,9 @@ export function getSelectionAnchor(
   // otherwise center between start and end on the same line.
   const sameLine = Math.abs(a.top - b.top) < 2;
   const left = sameLine ? (a.left + b.left) / 2 : a.left;
+  const origin = fixedContainingBlockOffset(el);
   return {
-    top: rect.top + a.top,
-    left: rect.left + left,
+    top: rect.top + a.top - origin.top,
+    left: rect.left + left - origin.left,
   };
 }
