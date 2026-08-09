@@ -68,6 +68,13 @@ const CSP_DIRECTIVES = {
     // working LinkedIn URL is gone: avatars would have broken immediately
     // rather than after weeks, which is worse than the bug being fixed.
     "https://*.supabase.co",
+    // Post media. Every attachment lives here — toZernioMediaItems REFUSES to
+    // publish a URL on any other host (lib/post-media.ts isZernioMediaUrl) —
+    // so omitting it broke the composer preview for every image: the blob:
+    // object URL renders during upload, then the code swaps in the uploaded
+    // media.zernio.com URL and the browser blocks it. What the user sees is an
+    // image that attaches fine and then turns into a broken icon.
+    "https://media.zernio.com",
     "https://*.vercel.app",
     "https://vercel.live",
   ],
@@ -82,6 +89,13 @@ const CSP_DIRECTIVES = {
     "https://accounts.tryswipein.com",
     "https://*.supabase.co",
     "wss://*.supabase.co",
+    // The direct upload PUTs the file to a presigned URL on this host. Without
+    // it that fetch is blocked, and the failure is INVISIBLE: the catch falls
+    // back to proxying the file through our own server, so uploads still
+    // "work" while quietly routing every byte through the app — and anything
+    // over the 4 MB client-side proxy cap fails outright with a message about
+    // large files that has nothing to do with the real cause.
+    "https://media.zernio.com",
     "https://va.vercel-scripts.com",
     "https://vitals.vercel-insights.com",
     "https://vercel.live",

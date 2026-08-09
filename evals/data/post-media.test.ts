@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, test } from "vitest";
 import {
   classifyPostMedia,
@@ -171,5 +173,67 @@ describe("media library validation", () => {
       previewUrl: "https://example.supabase.co/signed",
       uploadedAt: "2026-07-06T10:00:00.000Z",
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The media host has to be in the CSP, or the composer preview breaks.
+//
+// This is a real defect, not a hypothetical: img-src listed licdn, clerk,
+// supabase and vercel but NOT the host every post attachment actually lives
+// on. Attaching an image showed a blob: preview while it uploaded, then swapped
+// in the uploaded URL and the browser blocked it — an image that attaches
+// successfully and then renders as a broken icon.
+//
+// The host is read out of the validator rather than hardcoded here, so moving
+// the media host fails this test instead of silently breaking previews again.
+// ---------------------------------------------------------------------------
+describe("the media host is reachable from the browser", () => {
+  const MEDIA_HOST = (() => {
+    const source = readFileSync(
+      path.join(process.cwd(), "lib/post-media.ts"),
+      "utf8",
+    );
+    return /hostname === "([^"]+)"/.exec(source)?.[1] ?? "";
+  })();
+
+  const CONFIG = readFileSync(
+    path.join(process.cwd(), "next.config.ts"),
+    "utf8",
+  );
+
+  /**
+   * The ENTRIES of a directive, with comments stripped.
+   *
+   * Stripping matters: the comment explaining why this host is allowed names
+   * the host, so a raw substring check passes on the prose alone. Verified by
+   * mutation — without this, deleting the actual entry still passed.
+   */
+  function directive(name: string): string {
+    const block =
+      new RegExp(`"${name}":\\s*\\[([\\s\\S]*?)\\]`).exec(CONFIG)?.[1] ?? "";
+    return block
+      .split("\n")
+      .filter((line) => !line.trim().startsWith("//"))
+      .join("\n");
+  }
+
+  test("the validator pins a host at all", () => {
+    // Guards the regex above: a refactor that stops matching would make every
+    // assertion below vacuously pass against an empty string.
+    expect(MEDIA_HOST).toBe("media.zernio.com");
+  });
+
+  test("img-src allows the host attachments are served from", () => {
+    // toZernioMediaItems REFUSES to publish media on any other host, so this
+    // is the only origin a post image can ever have.
+    expect(directive("img-src")).toContain(MEDIA_HOST);
+  });
+
+  test("connect-src allows the direct upload PUT", () => {
+    // Without it the upload silently falls back to proxying every byte through
+    // our own server, and files over the client's 4 MB proxy cap fail with a
+    // message that misattributes the cause.
+    expect(directive("connect-src")).toContain(MEDIA_HOST);
   });
 });
